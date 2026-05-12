@@ -281,8 +281,8 @@ A multi-project solution showing agent-to-agent communication:
 | Algorithm | .NET 10 | .NET 8 | NuGet fallback |
 |---|---|---|---|
 | Ed25519 (raw crypto) | `System.Security.Cryptography.EdDSA` | Not available | `NSec.Cryptography` (libsodium‑based, recommended) or `Portable.BouncyCastle` |
-| Ed25519 in JWT | Requires `ScottBrady.IdentityModel.EdDsa` provider for Microsoft.IdentityModel, or use `jose-jwt` directly | Same | `ScottBrady.IdentityModel.EdDsa` / `jose-jwt` |
-| Ed25519 in RFC 9421 | `NSign.BouncyCastle` (or custom provider over `EdDSA`) | Same | `NSign.BouncyCastle` |
+| Ed25519 in JWT | Requires external NuGet on both runtimes: `ScottBrady.IdentityModel.EdDsa` (provider for Microsoft.IdentityModel) or `jose-jwt` (standalone) — Microsoft.IdentityModel does not yet ship a built‑in EdDSA `SignatureProvider` | Same — same external NuGets required | `ScottBrady.IdentityModel.EdDsa` / `jose-jwt` |
+| Ed25519 in RFC 9421 | Requires external NuGet on both runtimes: `NSign.BouncyCastle` (or a custom NSign signature provider wrapping `System.Security.Cryptography.EdDSA` on .NET 10) | Same — `NSign.BouncyCastle` required (no native `EdDSA` to wrap) | `NSign.BouncyCastle` |
 | ECDSA P-256 | `System.Security.Cryptography.ECDsa` | Same | Built-in |
 | RSA | `System.Security.Cryptography.RSA` | Same | Built-in |
 | JWT | `Microsoft.IdentityModel.JsonWebTokens` (`JsonWebTokenHandler`) | Same | `Microsoft.IdentityModel.JsonWebTokens` |
