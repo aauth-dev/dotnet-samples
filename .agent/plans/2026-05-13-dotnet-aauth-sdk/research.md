@@ -115,11 +115,19 @@ Nine packages, organized by concern:
 
 Provides RFC 9421 HTTP Message Signature creation and verification plus the Signature-Key header extension. The AAuth packages wrap this with AAuth-specific header injection.
 
-**.NET equivalent**: No mature RFC 9421 library exists for .NET. This will need to be implemented or a C# port created. Key operations:
-- Serialize covered components into signature base string
-- Sign with Ed25519 / ES256 / RS256
-- Format `Signature-Input` and `Signature` headers per RFC 9421
-- Parse and verify inbound signatures
+**.NET equivalent**: As of mid-2026, a mature general‑purpose RFC 9421 implementation **does** exist for .NET: **[NSign](https://github.com/Unisys/NSign)**. It ships as a family of NuGet packages:
+
+- `NSign.Abstractions` — core types (signature input parameters, components, etc.)
+- `NSign.SignatureProviders` — ECDSA / RSA / HMAC signature providers
+- `NSign.Client` — `DelegatingHandler` for signing outbound requests and verifying responses
+- `NSign.AspNetCore` — middleware for verifying inbound signatures and signing responses
+- `NSign.BouncyCastle` — Ed25519 (EdDSA) signature provider via BouncyCastle
+
+NSign handles all the standard RFC 9421 plumbing — covered components, signature base construction, header parsing, signing and verification. AAuth still needs a thin protocol‑specific layer on top, but the bulk of RFC 9421 no longer has to be hand‑written. Custom code is limited to:
+
+- AAuth‑specific covered‑component selection and validation
+- The `Signature-Key` header (`sig=jwt`, `sig=hwk`, `sig=jkt-jwt`, `sig=jwks_uri`) — not part of stock RFC 9421
+- Resolving the verification key from `Signature-Key` (JWT → `cnf.jwk`, inline `jwk`, JWKS lookup, etc.)
 
 ### 3.3 whoami Resource Server
 
@@ -155,14 +163,15 @@ Foundational types and cryptographic operations shared by all other packages.
 
 | Component | Responsibility | Key .NET APIs |
 |---|---|---|
-| **JWK handling** | Parse, create, serialize JWK / JWKS; compute JWK thumbprint (RFC 7638) | `System.Security.Cryptography`, `Microsoft.IdentityModel.Tokens` |
-| **JWT creation & verification** | Sign/verify `aa-agent+jwt`, `aa-resource+jwt`, `aa-auth+jwt` | `System.IdentityModel.Tokens.Jwt`, `Microsoft.IdentityModel.JsonWebTokens` |
-| **Ed25519 support** | Key generation, signing, verification | .NET 9+ has `EdDSA` in `System.Security.Cryptography`; earlier versions need `NSec` or `BouncyCastle` |
-| **RFC 9421 HTTP signatures** | Create signature base, sign, format headers; parse and verify inbound signatures | Custom implementation (no existing .NET library) |
-| **Signature-Key header** | Parse/create `sig=jwt`, `sig=hwk`, `sig=jkt-jwt`, `sig=jwks_uri` schemes | Custom parser/formatter |
-| **AAuth headers** | Parse/create `AAuth-Requirement`, `AAuth-Access`, `AAuth-Mission`, `AAuth-Capabilities` | Custom, RFC 8941 structured fields |
+| **JWK handling** | Parse, create, serialize JWK / JWKS; compute JWK thumbprint (RFC 7638) | `Microsoft.IdentityModel.Tokens.JsonWebKey` / `JsonWebKeySet`; built‑in `ComputeJwkThumbprint()` (RFC 7638) — no need to hand‑roll canonical JSON + SHA‑256 |
+| **JWT creation & verification** | Sign/verify `aa-agent+jwt`, `aa-resource+jwt`, `aa-auth+jwt` | `JsonWebTokenHandler` from `Microsoft.IdentityModel.JsonWebTokens` (preferred over the older `JwtSecurityTokenHandler`) |
+| **Ed25519 (EdDSA) JWT signing** | Sign/verify JWTs with Ed25519 keys | Native `EdDSA` types in `System.Security.Cryptography` (.NET 10) but `Microsoft.IdentityModel.Tokens` does **not** yet ship a built‑in EdDSA `SignatureProvider`. Use [`ScottBrady.IdentityModel.EdDsa`](https://www.nuget.org/packages/ScottBrady.IdentityModel.EdDsa) (wires an EdDSA provider into Microsoft.IdentityModel) or [`jose-jwt`](https://www.nuget.org/packages/jose-jwt/) (independent JWT library with full Ed25519/JWK/JWS/JWE support) |
+| **Ed25519 core crypto** | Key generation, signing, verification | .NET 10 has `EdDSA` in `System.Security.Cryptography`; for earlier runtimes use [`NSec.Cryptography`](https://www.nuget.org/packages/NSec.Cryptography/) (libsodium‑based, production‑grade) or [`Portable.BouncyCastle`](https://www.nuget.org/packages/Portable.BouncyCastle/) |
+| **RFC 9421 HTTP signatures** | Create signature base, sign, format headers; parse and verify inbound signatures | **[NSign](https://github.com/Unisys/NSign)** (`NSign.Abstractions`, `NSign.SignatureProviders`, `NSign.Client`, `NSign.AspNetCore`, `NSign.BouncyCastle` for Ed25519). Only AAuth‑specific configuration and the `Signature-Key` extension are bespoke. |
+| **Signature-Key header** | Parse/create `sig=jwt`, `sig=hwk`, `sig=jkt-jwt`, `sig=jwks_uri` schemes | AAuth‑specific. Custom parser/formatter built on top of [`StructuredFieldValues`](https://www.nuget.org/packages/StructuredFieldValues/) (RFC 8941 parser/serializer). |
+| **AAuth headers** | Parse/create `AAuth-Requirement`, `AAuth-Access`, `AAuth-Mission`, `AAuth-Capabilities` | AAuth‑specific semantics over [`StructuredFieldValues`](https://www.nuget.org/packages/StructuredFieldValues/) (RFC 8941 structured fields) — no hand‑rolled parser needed. |
 | **Metadata discovery** | Fetch and cache `/.well-known/aauth-{agent,person,resource,access}.json` | `HttpClient` + in-memory cache |
-| **JWKS discovery & cache** | Fetch, cache, refresh JWKS with rate limiting (≥ 1 min between fetches) | `HttpClient` + `IMemoryCache` |
+| **JWKS discovery & cache** | Fetch, cache, refresh JWKS with rate limiting (≥ 1 min between fetches) | `HttpClient` + `IMemoryCache`; for resource/PS servers that publish their own JWKS, use [`NetDevPack.Security.Jwt.AspNetCore`](https://github.com/NetDevPack/Security.Jwt) or [`Jwks.Manager`](https://www.nuget.org/packages/Jwks.Manager/) for hosting and key rotation |
 | **Agent identifiers** | Validate `aauth:local@domain` format | Regex / custom parser |
 | **Server identifiers** | Validate HTTPS-only, no port/path/query | `Uri` parsing |
 
@@ -177,7 +186,7 @@ Agent-side protocol operations.
 
 | Component | Responsibility | Reference impl |
 |---|---|---|
-| **Signed HttpClient** | `DelegatingHandler` that adds `Signature-Input`, `Signature`, `Signature-Key` to every outbound request | `mcp-agent/src/signed-fetch.ts` → `createSignedFetch()` |
+| **Signed HttpClient** | `DelegatingHandler` that adds `Signature-Input`, `Signature`, `Signature-Key` to every outbound request | `mcp-agent/src/signed-fetch.ts` → `createSignedFetch()`. .NET implementation builds on **`NSign.Client`**'s signing handler; AAuth adds the `Signature-Key` header and AAuth‑specific covered components. |
 | **Agent token management** | Create self-issued agent tokens, cache, refresh before expiry | `local-keys/src/agent-token.ts` |
 | **Token exchange** | POST resource_token to PS token_endpoint, receive auth_token | `mcp-agent/src/token-exchange.ts` |
 | **Deferred polling** | Poll `Location` URL respecting `Retry-After`, handle terminal responses | `mcp-agent/src/deferred.ts` |
@@ -191,7 +200,7 @@ Resource server and Person Server protocol operations.
 
 | Component | Responsibility | Reference impl |
 |---|---|---|
-| **ASP.NET middleware** | Verify HTTP signatures on inbound requests, extract token claims | `mcp-server/src/verify.ts` |
+| **ASP.NET middleware** | Verify HTTP signatures on inbound requests, extract token claims | `mcp-server/src/verify.ts`. .NET implementation layers on top of **`NSign.AspNetCore`** for RFC 9421 verification and adds AAuth‑specific `Signature-Key` resolution and token validation. |
 | **Resource token minting** | Create `aa-resource+jwt` with `aud`, `agent`, `agent_jkt`, `scope` | `whoami/src/index.ts` |
 | **Auth token verification** | Verify `aa-auth+jwt` from PS/AS, check `aud`, `scope`, `cnf.jwk` binding | `whoami/src/index.ts` |
 | **Well-known endpoints** | Serve `aauth-resource.json`, `jwks.json` | `whoami/src/index.ts` |
@@ -207,6 +216,8 @@ Resource server and Person Server protocol operations.
 | **Key resolution** | Match JWKS thumbprints against local keys, prefer hardware over software | `local-keys/src/resolve.ts` |
 
 ### 4.5 CLI Tool: `dotnet-aauth`
+
+Implemented as a `dotnet` global tool using **[`System.CommandLine`](https://learn.microsoft.com/dotnet/standard/commandline/)** for subcommand routing, argument parsing/validation, help text, and shell completion.
 
 | Command | Responsibility | Reference impl |
 |---|---|---|
@@ -260,28 +271,44 @@ A multi-project solution showing agent-to-agent communication:
 | ECDSA P-256 key generation | Alternative agent keys | `ECDsa.Create(ECCurve.NamedCurves.nistP256)` |
 | ECDSA P-256 sign/verify | HTTP signatures, JWT signing | `ECDsa.SignData()` / `VerifyData()` |
 | RSA-256 sign/verify | YubiKey compatibility | `RSA.Create()` |
-| JWK thumbprint (RFC 7638) | `agent_jkt`, key matching | Custom: canonical JSON of `{crv, kty, x}` → SHA-256 → base64url |
+| JWK thumbprint (RFC 7638) | `agent_jkt`, key matching | `Microsoft.IdentityModel.Tokens.JsonWebKey.ComputeJwkThumbprint()` (built-in RFC 7638). Hand-rolled canonical JSON + SHA-256 is not required. |
 | SHA-256 hash | Content-Digest header, mission `s256`, R3 `r3_s256` | `SHA256.HashData()` |
 | Base64url encode/decode | JWT, signatures, digests | `Base64Url.EncodeToString()` (.NET 9+) or `WebEncoders.Base64UrlEncode()` |
-| JSON Canonicalization (RFC 8785) | Mission hash verification | Custom or library (no standard .NET impl) |
+| JSON Canonicalization (RFC 8785) | Mission hash verification, R3 hash | [`JsonCanonicalizer`](https://www.nuget.org/packages/JsonCanonicalizer/) — reference port by the RFC 8785 author. [`Stratumn.CanonicalJson`](https://www.nuget.org/packages/Stratumn.CanonicalJson/) is an alternative if a different licensing or API surface is preferred. Either may need a light wrapper for strict JCS edge cases. |
 
 ### 5.2 .NET Crypto Availability
 
 | Algorithm | .NET 10 | .NET 8 | NuGet fallback |
 |---|---|---|---|
-| Ed25519 | `System.Security.Cryptography.EdDSA` | Not available | `NSec.Cryptography` or `BouncyCastle` |
+| Ed25519 (raw crypto) | `System.Security.Cryptography.EdDSA` | Not available | `NSec.Cryptography` (libsodium‑based, recommended) or `Portable.BouncyCastle` |
+| Ed25519 in JWT | Requires `ScottBrady.IdentityModel.EdDsa` provider for Microsoft.IdentityModel, or use `jose-jwt` directly | Same | `ScottBrady.IdentityModel.EdDsa` / `jose-jwt` |
+| Ed25519 in RFC 9421 | `NSign.BouncyCastle` (or custom provider over `EdDSA`) | Same | `NSign.BouncyCastle` |
 | ECDSA P-256 | `System.Security.Cryptography.ECDsa` | Same | Built-in |
 | RSA | `System.Security.Cryptography.RSA` | Same | Built-in |
-| JWT | `Microsoft.IdentityModel.JsonWebTokens` | Same | NuGet `Microsoft.IdentityModel.JsonWebTokens` |
+| JWT | `Microsoft.IdentityModel.JsonWebTokens` (`JsonWebTokenHandler`) | Same | `Microsoft.IdentityModel.JsonWebTokens` |
+| JWK / JWKS / RFC 7638 thumbprint | `Microsoft.IdentityModel.Tokens.JsonWebKey` (`ComputeJwkThumbprint()`) | Same | `Microsoft.IdentityModel.Tokens` |
+| JWKS hosting & rotation (server side) | `NetDevPack.Security.Jwt.AspNetCore` / `Jwks.Manager` | Same | same |
 | Base64url | `System.Buffers.Text.Base64Url` | Not available | `Microsoft.AspNetCore.WebUtilities` |
+| JSON Canonicalization (RFC 8785) | `JsonCanonicalizer` (NuGet) | Same | `JsonCanonicalizer` / `Stratumn.CanonicalJson` |
+| RFC 8941 Structured Fields | `StructuredFieldValues` (NuGet) | Same | `StructuredFieldValues` |
 
-Since the devcontainer targets .NET 10, native Ed25519 and Base64url are available.
+Since the devcontainer targets .NET 10, native Ed25519 raw crypto and Base64url are available. **`NSec.Cryptography`** is still the recommended Ed25519 fallback for any runtime that lacks native `EdDSA`, and is a mature libsodium‑based production library.
 
 ---
 
 ## 6. RFC 9421 HTTP Message Signatures — Implementation Notes
 
-No existing .NET library implements RFC 9421. Key implementation concerns:
+> **Update (2026-05):** A general‑purpose RFC 9421 implementation now exists for .NET — **[NSign](https://github.com/Unisys/NSign)**. The AAuth .NET SDK should build on top of it rather than reimplement RFC 9421 from scratch.
+>
+> - `NSign.Client` provides a signing `DelegatingHandler` and response‑verification helpers.
+> - `NSign.AspNetCore` provides middleware for verifying inbound request signatures and signing responses.
+> - `NSign.BouncyCastle` adds an Ed25519 (EdDSA) signature provider.
+>
+> The bullets below remain useful as a **conceptual specification** of what NSign (plus AAuth's thin wrapper) must produce and verify. AAuth‑specific work is limited to:
+> 1. Selecting the AAuth‑mandated covered components (`@method`, `@authority`, `@path`, `signature-key`, and any others required by the spec).
+> 2. Producing and parsing the `Signature-Key` header (not part of stock RFC 9421).
+> 3. Resolving the verification key from `Signature-Key` (JWT → `cnf.jwk`, inline `jwk`, `jwks_uri` lookup, `jkt-jwt` delegation chain).
+> 4. Enforcing AAuth‑specific freshness / replay rules (e.g., `created` window).
 
 ### 6.1 Signature Base Construction
 
@@ -330,13 +357,13 @@ Signature-Key: sig=jwt;jwt="eyJ..."
 
 ### 7.2 HttpClient Integration
 
-Use `DelegatingHandler` for the agent-side signing:
+Use `DelegatingHandler` for the agent-side signing, built on top of **`NSign.Client`**'s signing handler:
 
 ```
-HttpClient → AAuthSigningHandler → HttpClientHandler → Network
+HttpClient → AAuthSigningHandler (wraps NSign signing handler) → HttpClientHandler → Network
 ```
 
-The handler intercepts outbound requests, adds signature headers, and can auto-handle 401 challenge-response by:
+The AAuth handler intercepts outbound requests, lets NSign produce the `Signature-Input`/`Signature` headers, injects the AAuth‑specific `Signature-Key` header, and can auto-handle 401 challenge-response by:
 1. Detecting `AAuth-Requirement` header
 2. Extracting resource token
 3. Exchanging at PS for auth token
@@ -344,13 +371,13 @@ The handler intercepts outbound requests, adds signature headers, and can auto-h
 
 ### 7.3 ASP.NET Middleware Integration
 
-Use ASP.NET Core middleware for the server side:
+Use ASP.NET Core middleware for the server side, layered on **`NSign.AspNetCore`** for the RFC 9421 verification core:
 
 ```
-Request → AAuthMiddleware (verify sig) → [Controller] → Response
+Request → NSign verification middleware → AAuthMiddleware (Signature-Key + token validation) → [Controller] → Response
 ```
 
-Or use an `IAuthorizationHandler` / policy-based auth for more granular control.
+Or use an `IAuthorizationHandler` / policy-based auth for more granular control. NSign handles signature‑base reconstruction and cryptographic verification; AAuth's middleware resolves the verification key from the `Signature-Key` header and validates the embedded token (`aa-agent+jwt` / `aa-auth+jwt`).
 
 ### 7.4 Key Storage
 
@@ -444,7 +471,7 @@ dotnet-samples/
 
 ### Phase 1 — Core + Minimal Agent (prove the protocol works)
 
-1. **RFC 9421 HTTP signatures** — create and verify. This is the hardest part with no existing .NET library.
+1. **RFC 9421 HTTP signatures** — wire up [`NSign`](https://github.com/Unisys/NSign) (`NSign.Client` + `NSign.BouncyCastle` for Ed25519) and add the AAuth‑specific `Signature-Key` header and covered‑component selection on top.
 2. **JWK / JWKS / JWK thumbprint** — key serialization and discovery.
 3. **Agent token creation** (`aa-agent+jwt`) — self-issued JWT with `cnf.jwk`.
 4. **Signed `HttpClient`** — `DelegatingHandler` that signs outbound requests.
@@ -486,12 +513,22 @@ dotnet-samples/
 
 | Package | Purpose | Version |
 |---|---|---|
-| `Microsoft.IdentityModel.JsonWebTokens` | JWT creation and verification | Latest |
-| `Microsoft.IdentityModel.Tokens` | JWK, JWKS, token validation parameters | Latest |
+| `Microsoft.IdentityModel.JsonWebTokens` | JWT creation and verification (`JsonWebTokenHandler`) | Latest |
+| `Microsoft.IdentityModel.Tokens` | JWK, JWKS, RFC 7638 thumbprints, token validation parameters | Latest |
+| `NSign.Abstractions` / `NSign.SignatureProviders` / `NSign.Client` / `NSign.AspNetCore` | RFC 9421 HTTP Message Signatures (core, signers, HttpClient handler, ASP.NET middleware) | Latest |
+| `NSign.BouncyCastle` | Ed25519 (EdDSA) signature provider for NSign | Latest |
+| `StructuredFieldValues` | RFC 8941 Structured Field Values parser/serializer (used for AAuth headers and `Signature-Key`) | Latest |
+| `JsonCanonicalizer` | RFC 8785 JSON Canonicalization (mission / R3 hashes) | Latest |
+| `ScottBrady.IdentityModel.EdDsa` *(or)* `jose-jwt` | Ed25519 (EdDSA) JWT signing/verification (Microsoft.IdentityModel does not yet ship a built‑in EdDSA provider) | Latest |
+| `NetDevPack.Security.Jwt.AspNetCore` *(or)* `Jwks.Manager` | JWKS endpoint hosting and key rotation for resource/PS servers | Latest |
+| `System.CommandLine` | CLI parsing for `dotnet aauth` tool | Latest |
+| `NSec.Cryptography` | Ed25519 fallback on runtimes without native `EdDSA` (and a mature production library generally) | Latest |
+| `Portable.BouncyCastle` | Alternative Ed25519 / general crypto fallback | Latest |
 | `System.Security.Cryptography` | Ed25519, ECDSA, RSA, SHA-256 (built into .NET 10) | — |
 | `Microsoft.AspNetCore.WebUtilities` | Base64url encoding (if not using .NET 10 built-in) | Latest |
 | `Yubico.YubiKey` | YubiKey PIV operations (Phase 5) | Latest |
-| `NSec.Cryptography` | Ed25519 fallback if targeting < .NET 9 | Latest |
+| `WireMock.Net` | HTTP mocking for integration tests (well‑known, JWKS, token endpoints, 401/202 flows) | Latest |
+| `ModelContextProtocol` / `ModelContextProtocol.AspNetCore` | MCP C# SDK — used by R3 / MCP transport work (Phase 5) | Latest |
 
 ---
 
@@ -520,22 +557,26 @@ The packages-js `e2e` package provides patterns for:
 - Mock HTTP servers (return canned well-known metadata, JWKS, tokens)
 - Challenge flow simulation
 
-The .NET equivalent should use `WebApplicationFactory<T>` for in-process ASP.NET testing and `HttpMessageHandler` mocks for outbound call testing.
+The .NET equivalent should use `WebApplicationFactory<T>` for in-process ASP.NET testing and `HttpMessageHandler` mocks for outbound call testing. For higher-fidelity simulation of remote AP / PS / Resource / AS endpoints (well‑known metadata, JWKS, token issuance, 401/202 challenge flows), **[`WireMock.Net`](https://github.com/WireMock-Net/WireMock.Net)** is recommended in `AAuth.IntegrationTests` alongside `WebApplicationFactory<T>`.
 
 ---
 
 ## 12. Gaps and Open Questions
 
-1. **RFC 9421 in .NET**: No existing library. Must be built from scratch. This is the single biggest implementation effort. Consider contributing to the ecosystem.
+1. **RFC 9421 in .NET**: ~~No existing library. Must be built from scratch.~~ **Resolved (2026-05):** [`NSign`](https://github.com/Unisys/NSign) provides a general RFC 9421 implementation (client handler + ASP.NET middleware + Ed25519 via `NSign.BouncyCastle`). AAuth still needs protocol‑specific configuration, covered‑component selection, and `Signature-Key` header handling on top, but the bulk of RFC 9421 no longer has to be reimplemented.
 
-2. **Ed25519 JWT support in Microsoft.IdentityModel**: The `Microsoft.IdentityModel` libraries have limited Ed25519 support. May need custom `SignatureProvider` and `CryptoProvider` implementations.
+2. **Ed25519 JWT support in Microsoft.IdentityModel**: `Microsoft.IdentityModel.Tokens` still does not ship a built‑in EdDSA `SignatureProvider`. Options: use [`ScottBrady.IdentityModel.EdDsa`](https://www.nuget.org/packages/ScottBrady.IdentityModel.EdDsa) to plug an EdDSA provider into Microsoft.IdentityModel, or use [`jose-jwt`](https://www.nuget.org/packages/jose-jwt/) as an alternative JWT stack that supports Ed25519 natively. A custom `SignatureProvider` / `CryptoProvider` is no longer strictly necessary.
 
-3. **JSON Canonicalization (RFC 8785)**: Needed for mission hash verification. No standard .NET library; need custom implementation or port.
+3. **JSON Canonicalization (RFC 8785)**: Needed for mission hash and R3 hash verification. [`JsonCanonicalizer`](https://www.nuget.org/packages/JsonCanonicalizer/) (port by the RFC 8785 author) is the primary candidate; [`Stratumn.CanonicalJson`](https://www.nuget.org/packages/Stratumn.CanonicalJson/) is a viable alternative. For strict JCS edge cases either may need a light wrapper, but bespoke canonicalization is no longer required.
 
-4. **Agent Gateway**: The Go-based agent gateway binary can be reused as-is. Building a .NET equivalent (using YARP reverse proxy) is optional but would make the demo fully .NET.
+4. **RFC 8941 Structured Fields (AAuth-\* / Signature-Key)**: The `StructuredFieldValues` NuGet package provides an RFC 8941‑compliant parser/serializer. Only the AAuth‑specific *semantics* on top of structured fields (e.g., `sig=jwt;jwt="..."` parameter conventions) need bespoke code.
 
-5. **Person Server**: The demo uses the gateway's built-in PS. A standalone .NET Person Server sample would complete the four-party story.
+5. **Ed25519 raw crypto on older runtimes**: For runtimes without native `System.Security.Cryptography.EdDSA`, [`NSec.Cryptography`](https://www.nuget.org/packages/NSec.Cryptography/) is the recommended fallback — mature, libsodium‑based, suitable for production. [`Portable.BouncyCastle`](https://www.nuget.org/packages/Portable.BouncyCastle/) is a secondary option (and is what `NSign.BouncyCastle` uses internally).
 
-6. **MCP integration**: The `ModelContextProtocol` .NET SDK exists. Integrating AAuth signing with MCP transports is a Phase 5 concern.
+6. **Agent Gateway**: The Go-based agent gateway binary can be reused as-is. Building a .NET equivalent (using YARP reverse proxy) is optional but would make the demo fully .NET.
 
-7. **Scope of "samples" vs "SDK"**: The packages-js repo is a production SDK. The dotnet-samples repo is positioned as samples. Decide whether to build production-quality library code or sample-quality code with appropriate caveats.
+7. **Person Server**: The demo uses the gateway's built-in PS. A standalone .NET Person Server sample would complete the four-party story.
+
+8. **MCP integration**: The MCP C# SDK (`ModelContextProtocol.Core` / `ModelContextProtocol.AspNetCore`) is available. Phase 5 work (`AAuth.Mcp.Stdio`, OpenClaw integration, R3 transport) should layer AAuth signing on top of the SDK's HTTP transport rather than reimplementing MCP plumbing.
+
+9. **Scope of "samples" vs "SDK"**: The packages-js repo is a production SDK. The dotnet-samples repo is positioned as samples. Decide whether to build production-quality library code or sample-quality code with appropriate caveats. Leveraging the libraries above (NSign, Microsoft.IdentityModel, JsonCanonicalizer, StructuredFieldValues, etc.) lets the samples stay relatively small while still being grounded in production‑quality protocol implementations — the bespoke surface is reduced to AAuth‑specific protocol logic (`Signature-Key` semantics, AAuth headers, mission/R3, challenge orchestration).
