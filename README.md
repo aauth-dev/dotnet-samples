@@ -1,6 +1,30 @@
 # dotnet-samples
 
-AAuth samples in .NET
+> **Status: Work in Progress** — This repo is under active development. The .NET AAuth SDK and samples are not yet functional.
+
+AAuth samples and SDK for .NET — demonstrating the [AAuth protocol](https://github.com/dickhardt/AAuth) for agent-to-resource authorization with cryptographic proof-of-possession.
+
+## What is AAuth?
+
+AAuth is a four-party authorization protocol for AI agents. Every HTTP request carries a cryptographic signature — there are no bearer tokens. See the [protocol spec](aauth-spec/draft-hardt-oauth-aauth-protocol.md) for full details.
+
+## Repository Layout
+
+| Path | Description |
+|------|-------------|
+| `aauth-spec/` | Protocol specifications (draft-01) copied from [dickhardt/AAuth](https://github.com/dickhardt/AAuth) — see [SPEC-VERSION.md](aauth-spec/SPEC-VERSION.md) for provenance |
+| `hello-world/` | Minimal .NET 10 console app (placeholder) |
+| `.agent/plans/` | Research and planning documents |
+
+## Planned Components
+
+- **AAuth core library** — RFC 9421 HTTP signatures, JWT token creation/verification, JWK/JWKS handling, metadata discovery
+- **Agent sample** — Console app that signs requests and handles the three-party challenge-response flow
+- **Resource server sample** — ASP.NET Core minimal API equivalent of [whoami](https://github.com/aauth-dev/whoami)
+- **CLI tool** — Key generation, bootstrap, and authenticated fetch
+- **Full demo** — Multi-agent orchestration equivalent of [aauth-full-demo](https://github.com/christian-posta/aauth-full-demo)
+
+See [research.md](.agent/plans/2026-05-13-dotnet-aauth-sdk/research.md) for the full research document and implementation plan.
 
 ## Getting Started
 
@@ -22,17 +46,9 @@ AAuth samples in .NET
 
 A minimal "Hello, World!" console application targeting .NET 10.
 
-**Run the sample:**
-
 ```bash
 cd hello-world
 dotnet run
-```
-
-Expected output:
-
-```
-Hello, World!
 ```
 
 ## Dev Container Details
