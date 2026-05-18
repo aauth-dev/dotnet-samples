@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
 using System.Threading;
@@ -91,12 +92,24 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         var created = _clock().ToUnixTimeSeconds();
 
         var method = request.Method.Method.ToUpperInvariant();
-        var authority = request.RequestUri.Authority;
+        // RFC 9421 §2.2.3 / RFC 3986 §3.2.2: @authority MUST be lowercase.
+        // Uri.Authority preserves the original host casing, so normalize.
+        var authority = request.RequestUri.Authority.ToLowerInvariant();
         var path = request.RequestUri.AbsolutePath;
 
         var paramsLine = BuildSignatureParams(created);
 
         // RFC 9421 §2.5 signature base construction.
+        //
+        // Note on `signature-key`: we append the raw header value as emitted
+        // by FormatJwt (literal `sig=jwt;jwt="..."`). RFC 9421 allows a `;sf`
+        // parameter that asks the verifier to re-serialize the structured
+        // field deterministically before signing; we don't use it here
+        // because (a) the value is emitted by this same library so producer
+        // and verifier see identical bytes and (b) Phase 1 has no real
+        // verifier yet. If any intermediary rewrites the header (whitespace,
+        // quoting, item ordering), signature verification will fail —
+        // revisit `;sf` once the Phase 2 verifier lands.
         var sb = new StringBuilder();
         AppendComponent(sb, "@method", method);
         AppendComponent(sb, "@authority", authority);

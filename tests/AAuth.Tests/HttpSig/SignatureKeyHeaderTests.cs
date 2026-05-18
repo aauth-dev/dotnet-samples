@@ -29,16 +29,16 @@ public class SignatureKeyHeaderTests
     }
 
     [Fact]
-    public void TryGetJwt_Roundtrip()
+    public void GetJwt_Roundtrip()
     {
         var header = SignatureKeyHeader.FormatJwt("abc.def.ghi");
-        Assert.Equal("abc.def.ghi", SignatureKeyHeader.TryGetJwt(header));
+        Assert.Equal("abc.def.ghi", SignatureKeyHeader.GetJwt(header));
     }
 
     [Fact]
-    public void TryGetJwt_OtherSchemeReturnsNull()
+    public void GetJwt_OtherSchemeReturnsNull()
     {
-        Assert.Null(SignatureKeyHeader.TryGetJwt("sig=hwk;jwk=\"{}\""));
+        Assert.Null(SignatureKeyHeader.GetJwt("sig=hwk;jwk=\"{}\""));
     }
 
     [Fact]

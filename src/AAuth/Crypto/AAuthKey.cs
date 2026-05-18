@@ -49,11 +49,15 @@ public sealed class AAuthKey
     public byte[] PrivateKeyBytes =>
         _private?.GetEncoded() ?? throw new InvalidOperationException("Key has no private component.");
 
+    // BouncyCastle's SecureRandom defaults to an OS-RNG-seeded provider. We
+    // cache one static instance to avoid re-seeding on every key generation
+    // and to make the RNG provenance explicit at the call site.
+    private static readonly SecureRandom s_random = new();
+
     /// <summary>Generate a fresh Ed25519 key pair.</summary>
     public static AAuthKey Generate()
     {
-        var random = new SecureRandom();
-        var priv = new Ed25519PrivateKeyParameters(random);
+        var priv = new Ed25519PrivateKeyParameters(s_random);
         var pub = priv.GeneratePublicKey();
         return new AAuthKey(priv, pub);
     }

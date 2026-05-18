@@ -69,6 +69,11 @@ public class KeyStoreTests : IDisposable
     [InlineData("")]
     [InlineData(" ")]
     [InlineData("../escape")]
+    [InlineData("..")]
+    [InlineData(".")]
+    [InlineData("foo/bar")]
+    [InlineData("foo\\bar")]
+    [InlineData("with\0null")]
     public void InvalidName_Throws(string name)
     {
         var store = new KeyStore(_tempDir);

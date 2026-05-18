@@ -115,4 +115,46 @@ public class AAuthSigningHandlerTests
         var pub = AAuthKey.FromJwk(AAuthKey.Generate().ToPublicJwk());
         Assert.Throws<ArgumentException>(() => new AAuthSigningHandler(pub, () => "x"));
     }
+
+    [Fact]
+    public async Task SendAsync_LowercasesAuthorityInSignatureBase()
+    {
+        var key = AAuthKey.Generate();
+        var capture = new CaptureHandler();
+        var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
+        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
+        using var client = new HttpClient(signing);
+
+        // Mixed-case host: RFC 9421 §2.2.3 requires the signed @authority
+        // value to be lowercase per RFC 3986 §3.2.2.
+        await client.GetAsync("https://Resource.EXAMPLE/path");
+
+        var req = capture.Captured!;
+        var sigHeader = string.Join(',', req.Headers.GetValues("Signature"));
+        var paramsHeader = string.Join(',', req.Headers.GetValues("Signature-Input"));
+        var match = Regex.Match(sigHeader, @"^sig=:(?<b64>[^:]+):$");
+        Assert.True(match.Success);
+        var signature = Convert.FromBase64String(match.Groups["b64"].Value);
+        var paramsLine = paramsHeader["sig=".Length..];
+
+        // The reconstructed base must use the lowercase authority for the
+        // signature to verify.
+        var lower = new StringBuilder()
+            .Append("\"@method\": GET\n")
+            .Append("\"@authority\": resource.example\n")
+            .Append("\"@path\": /path\n")
+            .Append("\"signature-key\": sig=jwt;jwt=\"abc.def.ghi\"\n")
+            .Append("\"@signature-params\": ").Append(paramsLine);
+        Assert.True(key.Verify(Encoding.ASCII.GetBytes(lower.ToString()), signature));
+
+        // Cross-check: the original mixed-case authority must NOT verify,
+        // proving the handler emitted the lowercase form into the base.
+        var mixed = new StringBuilder()
+            .Append("\"@method\": GET\n")
+            .Append("\"@authority\": Resource.EXAMPLE\n")
+            .Append("\"@path\": /path\n")
+            .Append("\"signature-key\": sig=jwt;jwt=\"abc.def.ghi\"\n")
+            .Append("\"@signature-params\": ").Append(paramsLine);
+        Assert.False(key.Verify(Encoding.ASCII.GetBytes(mixed.ToString()), signature));
+    }
 }

@@ -33,11 +33,11 @@ public static class SignatureKeyHeader
 
     /// <summary>
     /// Parse a <c>Signature-Key</c> header value and return the JWT if the
-    /// scheme is <c>jwt</c>. Throws on malformed input. Returns <c>null</c>
-    /// for non-<c>jwt</c> schemes (e.g. <c>hwk</c>, <c>jkt-jwt</c>,
-    /// <c>jwks_uri</c>) which are out of scope for Phase 1.
+    /// scheme is <c>jwt</c>. Throws <see cref="FormatException"/> on malformed
+    /// input. Returns <c>null</c> for non-<c>jwt</c> schemes (e.g. <c>hwk</c>,
+    /// <c>jkt-jwt</c>, <c>jwks_uri</c>) which are out of scope for Phase 1.
     /// </summary>
-    public static string? TryGetJwt(string headerValue)
+    public static string? GetJwt(string headerValue)
     {
         ArgumentNullException.ThrowIfNull(headerValue);
 
@@ -92,14 +92,24 @@ public static class SignatureKeyHeader
         return (scheme, parameters);
     }
 
+    // RFC 8941 token = tchar+ where tchar excludes '/' '+' '*' ':' from the
+    // RFC 7230 set. We additionally restrict scheme/parameter-name tokens to
+    // this tighter grammar so that ':' embedded in an unquoted parameter
+    // value (which is not a legal sf-token) is rejected rather than silently
+    // accepted as part of the token run.
     private static string ReadToken(string s, ref int idx)
     {
         var start = idx;
         while (idx < s.Length)
         {
             var c = s[idx];
+            // RFC 8941 §3.3.4 sf-token chars: ALPHA / DIGIT / "-" / "." / "_"
+            // / sub-delims-not-quoted (~ ! # $ & ' ( ) * + , / : ; = ? @)
+            // We use the tighter set that suffices for the AAuth schemes and
+            // parameter names this header supports today: ALPHA / DIGIT /
+            // "-" / "." / "_".
             var ok = c is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9')
-                or '-' or '_' or '.' or '/' or '+' or '*' or ':';
+                or '-' or '_' or '.';
             if (!ok)
             {
                 break;

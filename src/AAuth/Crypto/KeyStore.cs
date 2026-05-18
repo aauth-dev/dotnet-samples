@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -41,11 +40,12 @@ public sealed class KeyStore
     /// <summary>Persist a key under <paramref name="name"/>.</summary>
     /// <remarks>
     /// On Unix-like systems the containing directory is created with mode
-    /// <c>0700</c> and the file is written with mode <c>0600</c> so the
-    /// private key is not world-readable. No equivalent restriction is
-    /// applied on Windows in Phase 1 (file ACLs are inherited from the
-    /// parent directory — user profile defaults are typically already
-    /// owner-only).
+    /// <c>0700</c> and the file is created with mode <c>0600</c> at file
+    /// creation time (no TOCTOU window between open and chmod) so the
+    /// private key is never world-readable on disk. No equivalent
+    /// restriction is applied on Windows in Phase 1 (file ACLs are
+    /// inherited from the parent directory — user profile defaults are
+    /// typically already owner-only).
     /// </remarks>
     public void Save(string name, AAuthKey key)
     {
@@ -53,12 +53,25 @@ public sealed class KeyStore
         ValidateName(name);
 
         System.IO.Directory.CreateDirectory(_directory);
-        TryRestrictUnixPermissions(_directory, isDirectory: true);
+        TryRestrictUnixDirectoryPermissions(_directory);
 
         var path = PathFor(name);
         var jwk = key.ToPrivateJwk();
-        File.WriteAllText(path, jwk.ToJsonString(s_writerOptions));
-        TryRestrictUnixPermissions(path, isDirectory: false);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(jwk.ToJsonString(s_writerOptions));
+
+        var options = new FileStreamOptions
+        {
+            Mode = FileMode.Create,
+            Access = FileAccess.Write,
+            Share = FileShare.None,
+        };
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS() || OperatingSystem.IsFreeBSD())
+        {
+            // Create the file already owner-only; no umask race.
+            options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        }
+        using var stream = new FileStream(path, options);
+        stream.Write(bytes);
     }
 
     /// <summary>Load a key previously saved under <paramref name="name"/>.</summary>
@@ -99,32 +112,31 @@ public sealed class KeyStore
     private static void ValidateName(string name)
     {
         if (string.IsNullOrWhiteSpace(name) ||
+            name is "." or ".." ||
+            name.IndexOfAny(s_forbiddenNameChars) >= 0 ||
             name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
         {
             throw new ArgumentException("Invalid key name.", nameof(name));
         }
     }
 
-    private static void TryRestrictUnixPermissions(string path, bool isDirectory)
+    // Always reject path separators (any platform) and the NUL byte. On
+    // Linux, Path.GetInvalidFileNameChars() only excludes '/' and '\0', so
+    // a name like "..\\foo" (with a literal backslash) or any name
+    // containing the platform's *other* separator would otherwise slip
+    // through and resolve outside the store.
+    private static readonly char[] s_forbiddenNameChars =
+        new[] { '/', '\\', '\0' };
+
+    private static void TryRestrictUnixDirectoryPermissions(string path)
     {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux) &&
-            !RuntimeInformation.IsOSPlatform(OSPlatform.OSX) &&
-            !RuntimeInformation.IsOSPlatform(OSPlatform.FreeBSD))
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS() && !OperatingSystem.IsFreeBSD())
         {
             return;
         }
-
-        // 0700 for directories, 0600 for files.
-        var mode = isDirectory
-            ? UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
-            : UnixFileMode.UserRead | UnixFileMode.UserWrite;
-        if (isDirectory)
-        {
-            File.SetUnixFileMode(path, mode);
-        }
-        else
-        {
-            File.SetUnixFileMode(path, mode);
-        }
+        // 0700 — owner-only access to the keys directory.
+        File.SetUnixFileMode(
+            path,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
     }
 }

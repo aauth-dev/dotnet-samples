@@ -5,13 +5,26 @@ using AAuth.Crypto;
 using AAuth.HttpSig;
 using AAuth.Tokens;
 
-if (args.Length < 1)
+const string Usage = "Usage: AgentConsole <url> [--iss <agent-provider-url>] [--sub <agent-id>] [--kid <key-id>]";
+
+if (args.Length < 1 || args[0] is "--help" or "-h")
 {
-    Console.Error.WriteLine("Usage: AgentConsole <url> [--iss <agent-provider-url>] [--sub <agent-id>] [--kid <key-id>]");
+    Console.Error.WriteLine(Usage);
+    return args.Length < 1 ? 1 : 0;
+}
+
+if (args[0].StartsWith("--", StringComparison.Ordinal))
+{
+    Console.Error.WriteLine("First argument must be a URL.");
+    Console.Error.WriteLine(Usage);
     return 1;
 }
 
-var url = new Uri(args[0]);
+if (!Uri.TryCreate(args[0], UriKind.Absolute, out var url))
+{
+    Console.Error.WriteLine($"Invalid URL: {args[0]}");
+    return 1;
+}
 
 string issuer = "https://ap.example";
 string subject = "aauth:demo@ap.example";
