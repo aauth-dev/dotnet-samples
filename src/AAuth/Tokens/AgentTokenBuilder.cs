@@ -51,7 +51,12 @@ public sealed class AgentTokenBuilder
     /// <summary>Unique token identifier (<c>jti</c>). Defaults to a fresh GUID.</summary>
     public string? TokenId { get; init; }
 
-    /// <summary>Additional claims to merge into the payload. May not collide with required claims.</summary>
+    /// <summary>
+    /// Additional claims to merge into the payload. May not collide with
+    /// required claims (collision check is case-sensitive, matching
+    /// RFC 7519 §4 which defines JWT claim names as case-sensitive — so
+    /// e.g. <c>"ISS"</c> is a distinct, legal claim name from <c>"iss"</c>).
+    /// </summary>
     public IReadOnlyDictionary<string, JsonNode?>? AdditionalClaims { get; init; }
 
     /// <summary>Build and sign the agent token. Returns the compact JWT serialization.</summary>
@@ -72,6 +77,16 @@ public sealed class AgentTokenBuilder
         if (!Key.HasPrivateKey)
         {
             throw new InvalidOperationException("Signing key must include a private component.");
+        }
+        // Spec: Issuer (and PersonServer, when present) MUST be an HTTPS URL.
+        // Fail fast at the issuer rather than waiting for a verifier reject.
+        if (!IsHttpsUrl(Issuer))
+        {
+            throw new InvalidOperationException("Issuer must be an absolute https:// URL.");
+        }
+        if (PersonServer is not null && !IsHttpsUrl(PersonServer))
+        {
+            throw new InvalidOperationException("PersonServer must be an absolute https:// URL.");
         }
 
         var iat = IssuedAt ?? DateTimeOffset.UtcNow;
@@ -124,4 +139,7 @@ public sealed class AgentTokenBuilder
 
         return signingInput + "." + signatureSegment;
     }
+
+    private static bool IsHttpsUrl(string value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == "https";
 }

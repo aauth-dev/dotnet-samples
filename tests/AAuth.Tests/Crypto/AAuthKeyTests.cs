@@ -1,6 +1,7 @@
 using System;
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
+using Microsoft.IdentityModel.Tokens;
 using Xunit;
 
 namespace AAuth.Tests;
@@ -107,5 +108,17 @@ public class AAuthKeyTests
             ["crv"] = "P-256",
         };
         Assert.Throws<ArgumentException>(() => AAuthKey.FromJwk(jwk));
+    }
+
+    [Fact]
+    public void FromJwk_RejectsMismatchedXAndD()
+    {
+        // Take a real private JWK, then swap in a different 'x' so the
+        // public/private halves disagree. FromJwk MUST reject this — otherwise
+        // signed tokens won't verify against their own embedded cnf.jwk.
+        var privateJwk = AAuthKey.Generate().ToPrivateJwk();
+        privateJwk["x"] = Base64UrlEncoder.Encode(AAuthKey.Generate().PublicKeyBytes);
+
+        Assert.Throws<ArgumentException>(() => AAuthKey.FromJwk(privateJwk));
     }
 }

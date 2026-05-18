@@ -23,9 +23,18 @@ public static class SignatureKeyHeader
     public static string FormatJwt(string jwt)
     {
         ArgumentException.ThrowIfNullOrEmpty(jwt);
-        if (jwt.IndexOf('"') >= 0 || jwt.IndexOf('\\') >= 0)
+        foreach (var c in jwt)
         {
-            throw new ArgumentException("JWT must not contain quotes or backslashes.", nameof(jwt));
+            // RFC 8941 sf-string excludes control chars and unescaped
+            // quote/backslash. Reject defensively so this is safe to use
+            // outside HttpClient (which also rejects CR/LF) — e.g. logging,
+            // conformance tooling, server-side header reflection.
+            if (c < 0x20 || c == 0x7F || c == '"' || c == '\\')
+            {
+                throw new ArgumentException(
+                    "JWT must not contain control characters, quotes, or backslashes.",
+                    nameof(jwt));
+            }
         }
 
         return $"sig=jwt;jwt=\"{jwt}\"";
@@ -132,9 +141,20 @@ public static class SignatureKeyHeader
             var sb = new StringBuilder();
             while (idx < s.Length && s[idx] != '"')
             {
-                if (s[idx] == '\\' && idx + 1 < s.Length)
+                if (s[idx] == '\\')
                 {
-                    sb.Append(s[idx + 1]);
+                    // RFC 8941 §3.3.3: only \" and \\ are legal escapes in
+                    // an sf-string. Any other use of backslash is malformed.
+                    if (idx + 1 >= s.Length)
+                    {
+                        throw new FormatException("Unterminated escape sequence.");
+                    }
+                    var next = s[idx + 1];
+                    if (next != '"' && next != '\\')
+                    {
+                        throw new FormatException($"Invalid escape '\\{next}' at position {idx}.");
+                    }
+                    sb.Append(next);
                     idx += 2;
                 }
                 else

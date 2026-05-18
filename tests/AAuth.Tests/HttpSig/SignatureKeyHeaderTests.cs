@@ -19,6 +19,18 @@ public class SignatureKeyHeaderTests
         Assert.Throws<ArgumentException>(() => SignatureKeyHeader.FormatJwt("ey\"J"));
     }
 
+    [Theory]
+    [InlineData("ey\rJ")]
+    [InlineData("ey\nJ")]
+    [InlineData("ey\tJ")]
+    [InlineData("ey\u0000J")]
+    [InlineData("ey\u007FJ")]
+    [InlineData("ey\\J")]
+    public void FormatJwt_RejectsControlCharsAndBackslash(string jwt)
+    {
+        Assert.Throws<ArgumentException>(() => SignatureKeyHeader.FormatJwt(jwt));
+    }
+
     [Fact]
     public void Parse_JwtScheme()
     {
@@ -46,5 +58,19 @@ public class SignatureKeyHeaderTests
     {
         Assert.Throws<FormatException>(() => SignatureKeyHeader.Parse("bogus"));
         Assert.Throws<FormatException>(() => SignatureKeyHeader.Parse("sig=jwt;jwt=\"unterminated"));
+    }
+
+    [Fact]
+    public void Parse_InvalidEscapeInQuotedValue_Throws()
+    {
+        // RFC 8941 §3.3.3: only \" and \\ are legal escapes inside an sf-string.
+        Assert.Throws<FormatException>(() => SignatureKeyHeader.Parse("sig=jwt;jwt=\"a\\nb\""));
+    }
+
+    [Fact]
+    public void Parse_ValidEscapesInQuotedValue_Unescape()
+    {
+        var (_, parameters) = SignatureKeyHeader.Parse("sig=jwt;jwt=\"a\\\"b\\\\c\"");
+        Assert.Equal("a\"b\\c", parameters["jwt"]);
     }
 }

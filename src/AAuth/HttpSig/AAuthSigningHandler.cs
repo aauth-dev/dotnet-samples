@@ -95,7 +95,12 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         // RFC 9421 §2.2.3 / RFC 3986 §3.2.2: @authority MUST be lowercase.
         // Uri.Authority preserves the original host casing, so normalize.
         var authority = request.RequestUri.Authority.ToLowerInvariant();
-        var path = request.RequestUri.AbsolutePath;
+        // RFC 9421 §2.2.7: @path is the path component of the request target
+        // *as transmitted on the wire* — i.e. percent-encoded. Uri.AbsolutePath
+        // can return an unescaped form for some inputs; GetComponents with
+        // UriFormat.UriEscaped guarantees the wire form. GetComponents omits
+        // the leading '/', so re-add it.
+        var path = "/" + request.RequestUri.GetComponents(UriComponents.Path, UriFormat.UriEscaped);
 
         var paramsLine = BuildSignatureParams(created);
 

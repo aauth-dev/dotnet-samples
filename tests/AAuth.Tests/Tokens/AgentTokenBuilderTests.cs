@@ -44,6 +44,39 @@ public class AgentTokenBuilderTests
         Assert.Throws<InvalidOperationException>(() => builder.Build());
     }
 
+    [Theory]
+    [InlineData("http://ap.example")]
+    [InlineData("ap.example")]
+    [InlineData("ftp://ap.example")]
+    [InlineData("/relative/path")]
+    public void Build_RejectsNonHttpsIssuer(string iss)
+    {
+        var builder = new AgentTokenBuilder
+        {
+            Issuer = iss,
+            Subject = "aauth:alice@ap.example",
+            KeyId = "k1",
+            Key = NewKey(),
+        };
+
+        Assert.Throws<InvalidOperationException>(() => builder.Build());
+    }
+
+    [Fact]
+    public void Build_RejectsNonHttpsPersonServer()
+    {
+        var builder = new AgentTokenBuilder
+        {
+            Issuer = "https://ap.example",
+            Subject = "aauth:alice@ap.example",
+            KeyId = "k1",
+            Key = NewKey(),
+            PersonServer = "http://ps.example",
+        };
+
+        Assert.Throws<InvalidOperationException>(() => builder.Build());
+    }
+
     [Fact]
     public void Build_EmitsRequiredHeaderClaims()
     {

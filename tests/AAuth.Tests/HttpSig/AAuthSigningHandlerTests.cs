@@ -157,4 +157,46 @@ public class AAuthSigningHandlerTests
             .Append("\"@signature-params\": ").Append(paramsLine);
         Assert.False(key.Verify(Encoding.ASCII.GetBytes(mixed.ToString()), signature));
     }
+
+    [Fact]
+    public async Task SendAsync_SignsPercentEncodedPathInWireForm()
+    {
+        var key = AAuthKey.Generate();
+        var capture = new CaptureHandler();
+        var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
+        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
+        using var client = new HttpClient(signing);
+
+        // Path contains a space (percent-encoded as %20) and a non-ASCII
+        // character (percent-encoded by Uri). RFC 9421 §2.2.7 requires the
+        // signed @path to match the request-target as transmitted on the
+        // wire — i.e. the percent-encoded form.
+        await client.GetAsync("https://resource.example/api/r%C3%A9sum%C3%A9%20draft");
+
+        var req = capture.Captured!;
+        var sigHeader = string.Join(',', req.Headers.GetValues("Signature"));
+        var paramsHeader = string.Join(',', req.Headers.GetValues("Signature-Input"));
+        var match = Regex.Match(sigHeader, @"^sig=:(?<b64>[^:]+):$");
+        Assert.True(match.Success);
+        var signature = Convert.FromBase64String(match.Groups["b64"].Value);
+        var paramsLine = paramsHeader["sig=".Length..];
+
+        var escaped = new StringBuilder()
+            .Append("\"@method\": GET\n")
+            .Append("\"@authority\": resource.example\n")
+            .Append("\"@path\": /api/r%C3%A9sum%C3%A9%20draft\n")
+            .Append("\"signature-key\": sig=jwt;jwt=\"abc.def.ghi\"\n")
+            .Append("\"@signature-params\": ").Append(paramsLine);
+        Assert.True(key.Verify(Encoding.ASCII.GetBytes(escaped.ToString()), signature));
+
+        // The unescaped form must NOT verify, proving the handler signed
+        // the wire-form (percent-encoded) bytes.
+        var unescaped = new StringBuilder()
+            .Append("\"@method\": GET\n")
+            .Append("\"@authority\": resource.example\n")
+            .Append("\"@path\": /api/résumé draft\n")
+            .Append("\"signature-key\": sig=jwt;jwt=\"abc.def.ghi\"\n")
+            .Append("\"@signature-params\": ").Append(paramsLine);
+        Assert.False(key.Verify(Encoding.UTF8.GetBytes(unescaped.ToString()), signature));
+    }
 }

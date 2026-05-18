@@ -38,6 +38,21 @@ Confirmed before starting implementation:
 - **Single library project**: all Phase 1 code ships in `src/AAuth/AAuth.csproj`. No sub-package splitting until the API stabilizes.
 - **RFC 9421 signing strategy**: Phase 1 hand-rolls a minimal RFC 9421 signer that covers the fixed AAuth set (`@method`, `@authority`, `@path`, `signature-key`). NSign is referenced (so the dependency graph is settled) but its `DefaultMessageSigner` + DI plumbing is **not** wired up yet. Rationale: NSign's value lies mainly in server-side verification (ASP.NET Core middleware) and broader covered-component support; for a client emitting four well-defined components, ~50 lines of direct code is clearer than wiring `IOptions`, `ISigner`, and `MessageContext`. Phase 2 will revisit and likely switch to NSign for the verification side, at which point the signer can be migrated for symmetry.
 - **Spec-traceable conformance tests**: a separate `tests/AAuth.Conformance/` xUnit project mirrors the AAuth spec's section structure. Tests use `[Fact(DisplayName = "§<section> — <clause>")]` so CI output reads like a conformance checklist, with xmldoc summaries quoting the exact spec sentences. Plain xUnit (not Reqnroll/Gherkin) — the spec's `MUST/SHOULD` clauses read naturally as test names without a DSL layer. Phase 1 covers only **issuer-side** clauses for `aa-agent+jwt`; receiver-side clauses ("MUST verify ...") land in Phase 2 alongside the verifier. See [tests/AAuth.Conformance/README.md](../../../tests/AAuth.Conformance/README.md) for the section→file map.
+- **Self-review hardening (recorded 2026-05-18, post-PR-review)**: a third pass found two real correctness bugs the automated reviewer missed plus several smaller polish items. Fixed in Phase 1:
+  - `AAuthKey.FromJwk` now derives the public key from `d` and rejects mismatched `x`/`d` JWKs (would otherwise silently produce tokens whose signatures don't verify against their own `cnf.jwk`).
+  - `AAuthSigningHandler` signs `Uri.GetComponents(Path, UriEscaped)` instead of `AbsolutePath`, so paths with percent-encoded / non-ASCII characters verify against the on-the-wire form per RFC 9421 §2.2.7.
+  - `ComputeJwkThumbprint` constructs the canonical JSON explicitly so future field reordering can't silently change thumbprints.
+  - `SignatureKeyHeader.FormatJwt` rejects all C0 control chars (not just `"`/`\`) so the formatter is safe outside HttpClient.
+  - `SignatureKeyHeader` parser only unescapes RFC 8941 §3.3.3 escapes (`\"`, `\\`); other `\X` sequences are rejected.
+  - `AgentTokenBuilder` validates `Issuer` and `PersonServer` are absolute `https://` URLs at issue time.
+
+### Phase 1 follow-ups deferred to Phase 2
+
+Recorded 2026-05-18 from the self-review. These don't block Phase 1 DoD but should be addressed when the corresponding Phase 2 work lands:
+
+- **Composable `Signature`/`Signature-Input` headers** (`AAuthSigningHandler`): the handler currently `Remove`s the full `Signature` / `Signature-Input` headers before adding its own. Once the Phase 2 inbound verifier exists and we may compose multiple signers (e.g. AAuth + a separate proof-of-possession layer), the handler should merge by RFC 9421 label rather than clobbering the entire header. Track under §2.1.
+- **`KeyStore.Save` overwrite semantics**: `Save` silently truncates an existing key. Add a `bool overwrite = false` parameter (or `SaveNew` variant) when the API stabilizes — defer until Phase 2 surfaces real callers beyond `LoadOrCreate`. Track under §2.2 or a future credential-store refactor.
+- **Receiver-side negative conformance cases**: the Phase 1 conformance suite is all positive structural assertions. The negative cases (`alg=none` rejected, missing `cnf` rejected, mismatched `cnf.jwk` rejected, expired token rejected) land with the verifier in §2.9.
 
 ### 1.1 Project scaffolding
 

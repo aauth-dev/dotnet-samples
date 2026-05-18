@@ -112,16 +112,19 @@ public sealed class AAuthKey
     /// <summary>
     /// Compute the RFC 7638 JWK thumbprint of the public key, base64url-encoded
     /// (no padding). The canonical members for an OKP key are <c>crv</c>,
-    /// <c>kty</c>, and <c>x</c> in lexicographic order.
+    /// <c>kty</c>, and <c>x</c> in lexicographic order with no whitespace.
     /// </summary>
+    /// <remarks>
+    /// The canonical JSON is constructed explicitly (rather than via
+    /// <see cref="JsonSerializer"/> on an anonymous type) so that thumbprint
+    /// output cannot drift if a future maintainer reorders fields or changes
+    /// serializer defaults. The base64url alphabet contains no JSON-special
+    /// characters, so direct string interpolation of <c>x</c> is safe.
+    /// </remarks>
     public string ComputeJwkThumbprint()
     {
-        var canonical = JsonSerializer.Serialize(new
-        {
-            crv = Curve,
-            kty = KeyType,
-            x = Base64UrlEncoder.Encode(PublicKeyBytes),
-        });
+        var x = Base64UrlEncoder.Encode(PublicKeyBytes);
+        var canonical = $"{{\"crv\":\"{Curve}\",\"kty\":\"{KeyType}\",\"x\":\"{x}\"}}";
         var hash = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical));
         return Base64UrlEncoder.Encode(hash);
     }
@@ -145,6 +148,18 @@ public sealed class AAuthKey
         {
             var privateBytes = Base64UrlEncoder.DecodeBytes(d);
             priv = new Ed25519PrivateKeyParameters(privateBytes, 0);
+
+            // Defence in depth: if both halves are supplied they MUST be
+            // consistent. A mismatched JWK would silently produce tokens
+            // whose signatures don't verify against their own embedded
+            // cnf.jwk, which is hard to diagnose at the receiver.
+            var derivedPublic = priv.GeneratePublicKey().GetEncoded();
+            if (!CryptographicOperations.FixedTimeEquals(derivedPublic, publicBytes))
+            {
+                throw new ArgumentException(
+                    "JWK 'x' does not match the public key derived from 'd'.",
+                    nameof(jwk));
+            }
         }
 
         return new AAuthKey(priv, pub);
