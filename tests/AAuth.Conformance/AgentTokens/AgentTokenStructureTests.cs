@@ -14,7 +14,7 @@ namespace AAuth.Conformance.AgentTokens;
 /// </summary>
 /// <remarks>
 /// Receiver-side clauses (§Agent Token Verification) are covered separately
-/// in Phase 2 once the verifier exists.
+/// by the verifier-side conformance tests.
 /// </remarks>
 public class AgentTokenStructureTests
 {

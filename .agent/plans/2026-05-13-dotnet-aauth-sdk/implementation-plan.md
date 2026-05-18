@@ -21,10 +21,11 @@
 
 Confirmed before starting implementation:
 
-- **Target framework**: `net10.0` (matches dev container SDK 10.0.300). Native `System.Security.Cryptography.EdDSA` is **not** present on .NET 10 in this container (verified 2026-05-18 — the type does not resolve at runtime). All Ed25519 operations use BouncyCastle, which arrives transitively via `NSign.BouncyCastle`. See research §5.2 update.
-- **NuGet versions pinned for Phase 1**:
-  - `NSign.Client` 1.2.3 — RFC 9421 outbound signing handler.
-  - `NSign.BouncyCastle` 1.2.3 — Ed25519 signature provider for NSign (NSign does not yet wrap `System.Security.Cryptography.EdDSA` directly).
+- **Target framework**: `net10.0` (matches dev container SDK 10.0.300). Native `System.Security.Cryptography.EdDSA` is **not** present on .NET 10 in this container (verified 2026-05-18 — the type does not resolve at runtime). All Ed25519 operations use BouncyCastle. Phase 1 initially pulled BouncyCastle in transitively via `NSign.BouncyCastle`; Phase 2 self-review (see §"Phase 2 self-review hardening" below) replaced the NSign packages with a direct `BouncyCastle.Cryptography` reference. See research §5.2 update.
+- **NuGet versions pinned for Phase 1** (verified to restore on `net10.0` in this dev container, 2026-05-18). NSign rows have been **removed post-Phase-2 self-review** (see Phase 2 §self-review hardening) and BouncyCastle is now a direct dependency:
+  - ~~`NSign.Client` 1.2.3~~ — removed in Phase 2 self-review.
+  - ~~`NSign.BouncyCastle` 1.2.3~~ — removed in Phase 2 self-review.
+  - `BouncyCastle.Cryptography` 2.6.2 — direct reference (post Phase 2 self-review); previously transitive via NSign.
   - `Microsoft.IdentityModel.Tokens` 8.18.0 — `JsonWebKey` serialization and built-in `ComputeJwkThumbprint()` (RFC 7638).
   - **Removed during PR review (2026-05-18):** `StructuredFieldValues` 0.7.7 was originally pinned for the `Signature-Key` header but the hand-rolled parser made it unused; dropped to keep the transitive closure minimal. Re-add when a future header genuinely needs full RFC 8941 coverage.
   - Tests: `xunit`, `xunit.runner.visualstudio`, `Microsoft.NET.Test.Sdk` (latest at pin time). Shared via `tests/Directory.Build.props`.
@@ -112,12 +113,29 @@ Recorded 2026-05-18 from the self-review. These don't block Phase 1 DoD but shou
 
 **Goal**: A WhoAmI resource server that verifies agent signatures, issues resource tokens, and verifies auth tokens. The agent auto-handles the 401 challenge.
 
+### Phase 2 Implementation Decisions (recorded 2026-05-18)
+
+Confirmed before starting implementation:
+
+- **Inbound RFC 9421 verification is hand-rolled, informed by NSign's implementation.** Symmetric with Phase 1's outbound signer. NSign was originally referenced as a study reference and as a transitive source of BouncyCastle Ed25519; during Phase 2 self-review the `NSign.Client` + `NSign.BouncyCastle` packages were removed (no runtime usage emerged), and `BouncyCastle.Cryptography` is now a direct dependency of `src/AAuth/AAuth.csproj`. Rationale and impact:
+  - AAuth covers a fixed, small set of components (`@method`, `@authority`, `@path`, `signature-key`). The verification base reconstruction mirrors the Phase 1 signer almost line-for-line.
+  - Keeps the dependency graph minimal; no new `IOptions`/DI plumbing.
+  - We read NSign's `SignatureInputParser`, `SignatureInputSpec`, and `MessageContext.GetSignatureBase` to ensure our parser handles the same edge cases (parameter ordering, quoted-string escapes, `created` parameter, structured-field framing).
+  - **Impact**: AAuth owns header parsing and freshness checks. Acceptable while the covered-component set is fixed; if AAuth ever needs full RFC 9421 component coverage (`@query-param`, derived components, Content-Digest binding, etc.), revisit and re-introduce NSign.
+  - Verification entry point is a plain ASP.NET middleware that consumes `HttpContext`; no NSign middleware in the pipeline.
+- **EdDSA JWT verification is hand-rolled with BouncyCastle**, mirroring `AgentTokenBuilder`'s signing path. Rationale and impact:
+  - Consistent with Phase 1's decision; avoids introducing `ScottBrady.IdentityModel.EdDsa` or a second JWT stack solely to verify three token types we already know the structure of.
+  - `TokenVerifier` does Base64Url decode of header/payload/signature, validates `alg=EdDSA` and `typ`, runs BouncyCastle `Ed25519Signer.VerifySignature`, then deserializes claims with `System.Text.Json` and validates them explicitly (`iss`, `aud`, `exp`, `iat`, `cnf.jwk` binding, `agent_jkt`, `scope`).
+  - **Impact**: AAuth ships its own claim-validation logic instead of leaning on `TokenValidationParameters`. Acceptable while the token shapes are spec-fixed and small. Reconsider if/when we need broader algorithm support (ES256, RS256) — at that point switching to `JsonWebTokenHandler` + an EdDSA provider becomes worthwhile.
+- **Three-party integration test uses an in-process mock PS via `WebApplicationFactory`.** A second `WebApplicationFactory<TPersonServerStartup>` in `tests/AAuth.Tests/Integration/` issues `aa-auth+jwt` against a test key, lets the agent retry, and asserts WhoAmI returns `200`. This keeps Phase 2 self-contained — no Phase 3 dependency. **Follow-up**: once Phase 3 lands `samples/MockPersonServer/`, the integration test should be migrated to spin up the real mock binary (or its `WebApplicationFactory`) so the test exercises shipped sample code rather than a private duplicate. Tracked as a Phase 3 §3.1 follow-up.
+
 ### 2.1 HTTP signature verification (inbound)
 
 | File | Responsibility |
 |---|---|
-| `src/AAuth/HttpSig/SignatureKeyParser.cs` | Parse `Signature-Key` header → extract JWT → decode `cnf.jwk` → provide public key to NSign verifier |
-| `src/AAuth/HttpSig/AAuthVerificationMiddleware.cs` | ASP.NET middleware layered on NSign.AspNetCore. Resolves key from `Signature-Key`, validates token type (`aa-agent+jwt` or `aa-auth+jwt`), sets `HttpContext.Items` with parsed claims |
+| `src/AAuth/HttpSig/SignatureKeyParser.cs` | Parse `Signature-Key` header → extract JWT → decode `cnf.jwk` → provide public key to the AAuth verifier |
+| `src/AAuth/HttpSig/AAuthVerifier.cs` | Hand-rolled RFC 9421 verifier (mirror of Phase 1 signer): parses `Signature-Input`, rebuilds signature base, checks `created` freshness window, verifies Ed25519 signature via BouncyCastle. Informed by NSign's parser but no runtime dependency on it. |
+| `src/AAuth/HttpSig/AAuthVerificationMiddleware.cs` | ASP.NET middleware that runs the verifier, validates the embedded token type (`aa-agent+jwt` or `aa-auth+jwt`), and sets `HttpContext.Items` with parsed claims |
 
 ### 2.2 Token verification
 
@@ -137,20 +155,20 @@ Recorded 2026-05-18 from the self-review. These don't block Phase 1 DoD but shou
 
 | File | Responsibility |
 |---|---|
-| `src/AAuth/Server/WellKnownEndpoints.cs` | Extension method: `app.MapAAuthWellKnown(options)` → serves `/.well-known/aauth-resource.json` and `/.well-known/jwks.json` |
+| `src/AAuth/Server/WellKnownEndpoints.cs` | Extension method: `app.MapAAuthResourceWellKnown(options)` → serves `/.well-known/aauth-resource.json` and `/.well-known/jwks.json` |
 
 ### 2.5 AAuth-Requirement response
 
 | File | Responsibility |
 |---|---|
-| `src/AAuth/Headers/AAuthRequirementHeader.cs` | Build `AAuth-Requirement: requirement=auth-token; resource-token="..."` using StructuredFieldValues |
+| `src/AAuth/Headers/AAuthRequirementHeader.cs` | Build and parse `AAuth-Requirement: requirement=auth-token; resource-token="..."` with a hand-rolled parser sharing structure with `SignatureKeyHeader`. Inbound parsing is exposed on the same type via static `Parse`; no separate `AAuthRequirementParser.cs` is shipped. |
 
 ### 2.6 WhoAmI sample server
 
 | File | Responsibility |
 |---|---|
 | `samples/WhoAmI/Program.cs` | Minimal API: `GET /` verifies signature, if agent-token → 401 + resource_token, if auth-token → 200 + claims JSON. Serves well-known endpoints. |
-| `samples/WhoAmI/WhoAmI.csproj` | Web project referencing `AAuth`, `NSign.AspNetCore` |
+| `samples/WhoAmI/WhoAmI.csproj` | Web project referencing `AAuth` (which transitively brings in `BouncyCastle.Cryptography`). No direct NSign reference. |
 
 **Test**: In-process `WebApplicationFactory` test: send signed request → get 401 + resource_token → verify resource_token is valid JWT with correct claims.
 
@@ -165,9 +183,8 @@ Recorded 2026-05-18 from the self-review. These don't block Phase 1 DoD but shou
 | File | Responsibility |
 |---|---|
 | `src/AAuth/Agent/ChallengeHandler.cs` | Detect `AAuth-Requirement` on 401, extract resource_token, call `TokenExchangeClient`, retry original request with auth_token in `Signature-Key` |
-| `src/AAuth/Headers/AAuthRequirementParser.cs` | Parse inbound `AAuth-Requirement` header |
 
-Update `AAuthSigningHandler` to optionally wire in `ChallengeHandler` for automatic retry.
+`AAuthRequirementHeader.Parse` (see §2.5) handles inbound parsing. `AAuthSigningHandler` itself remained unchanged in Phase 2 — challenge-response is composed at the `HttpClient` pipeline level by chaining `ChallengeHandler → AAuthSigningHandler` rather than entangling the two responsibilities in one handler.
 
 ### 2.9 Receiver-side conformance tests
 
@@ -185,12 +202,30 @@ Update [tests/AAuth.Conformance/README.md](../../../tests/AAuth.Conformance/READ
 
 ### Phase 2 Definition of Done
 
-- [ ] WhoAmI server starts, serves well-known, verifies signatures, issues resource tokens
-- [ ] AgentConsole → WhoAmI returns 401 + resource_token (identity-based access also works if PS claim absent)
-- [ ] Integration test: full three-party flow with mock PS returning auth_token
-- [ ] Agent retries with auth_token → WhoAmI returns 200 + claims
-- [ ] Receiver-side conformance tests land for agent-token verification, `Signature-Key` parsing, resource-token structure, and discovery endpoints
-- [ ] `README.md` updated with WhoAmI sample + three-party flow quickstart
+- [x] WhoAmI server starts, serves well-known, verifies signatures, issues resource tokens
+- [x] AgentConsole → WhoAmI returns 401 + resource_token (identity-based access also works if PS claim absent)
+- [x] Integration test: full three-party flow with mock PS returning auth_token
+- [x] Agent retries with auth_token → WhoAmI returns 200 + claims
+- [x] Receiver-side conformance tests land for agent-token verification, `Signature-Key` parsing, resource-token structure, and discovery endpoints
+- [x] `README.md` updated with WhoAmI sample + three-party flow quickstart
+
+### Phase 2 self-review hardening (recorded 2026-05-18, post-PR-review)
+
+Follow-ups landed against PR #6 after the in-repo review (`.copilot-tracking/pr/review/dasithw-phase-2/`):
+
+- **Loopback-aware HTTPS check.** Introduced `src/AAuth/AAuthUrl.cs` with `IsHttpsOrLoopback` and routed all token builders (`AgentTokenBuilder`, `ResourceTokenBuilder`, `AuthTokenBuilder`) plus `WellKnownEndpoints.Validate` through it. The sample's default `http://localhost:5000` issuer now flows through the three-party path without an env-var escape hatch; non-loopback `http://` is still rejected.
+- **Asymmetric `created` freshness window.** `AAuthVerifier` now exposes `MaxFutureSkew` (default 5s) alongside `MaxAge`. The previous symmetric tolerance silently doubled the legitimate replay window into the future.
+- **DI-aware `UseAAuthVerification`.** The middleware extension now passes through to `app.UseMiddleware<AAuthVerificationMiddleware>()` when no verifier is supplied, so a DI-registered `AAuthVerifier` (e.g. WhoAmI's `signature_window`-bound singleton) is honoured. Previously the extension always instantiated a fresh `new AAuthVerifier()`, shadowing DI.
+- **`AAuthTokenHolder._token` made `volatile`.** Documents the release/acquire intent for cross-thread token rotation.
+- **WhoAmI plumbs `signature_window` end-to-end.** `AAuthResourceMetadataOptions.SignatureWindow` (from config) now feeds both the published metadata and the verifier's `MaxAge`. `KeyId` and `Scope` literals are consolidated to `ResourceKid` / `ResourceScope` constants.
+- **NSign removal.** `NSign.Client` and `NSign.BouncyCastle` were study-only references that never imported; both are dropped and replaced with a direct `BouncyCastle.Cryptography` 2.6.2 package reference on `src/AAuth/AAuth.csproj`. Phase 1 §"NuGet versions pinned" wording is now stale — see updated text in Phase 2 §Implementation Decisions above.
+- **401 shape integration test.** Added `WhoAmIFlowTests.ThreePartyChallenge_Returns401WithResourceToken` which bypasses the agent's `ChallengeHandler` and inspects the raw 401 + `AAuth-Requirement` + decoded `resource_token` payload, guarding the spec-mandated shape independently of the happy-path retry.
+- **Phase 3 follow-up TODO.** A `TODO(Phase 3 §3.1)` marker on `WhoAmIFlowTests.StartMockPsAsync` records the planned migration to the shared `samples/MockPersonServer/` binary.
+
+#### Second-round PR review (2026-05-18, commit `ead54c1`)
+
+- **`TokenExchangeClient` SSRF guard.** `ExchangeAsync` now requires the PS-advertised `token_endpoint` to pass `AAuthUrl.IsHttpsOrLoopback` **and** share an origin (scheme/host/port) with the configured `personServer` before the signed POST is dispatched. A malicious or compromised PS metadata document can no longer divert the exchange to an arbitrary host or downgrade it to plain http.
+- **`TokenVerifier.VerifyWithJwksAsync` fail-fast ordering.** The cheap local invariants (`header.alg`, `header.typ`, `payload.dwk`) are now validated immediately after segment decode, **before** any `MetadataClient.FetchAsync` / `JwksClient.ResolveKeyAsync` call. Obviously-invalid tokens no longer cause outbound discovery traffic, removing a DoS-amplification / outbound-probe surface.
 
 ---
 
@@ -202,7 +237,7 @@ Update [tests/AAuth.Conformance/README.md](../../../tests/AAuth.Conformance/READ
 
 | File | Responsibility |
 |---|---|
-| `samples/MockPersonServer/Program.cs` | Minimal API acting as PS: `/.well-known/aauth-person.json`, `/.well-known/jwks.json`, `POST /token` (accepts resource_token, returns auth_token) |
+| `samples/MockPersonServer/Program.cs` | Minimal API acting as PS: `/.well-known/aauth-person.json`, `/.well-known/jwks.json`, `POST /token` (accepts resource_token, returns auth_token). **Phase 2 follow-up**: replace the in-process mock PS used by Phase 2's three-party integration test with this shipped sample once it exists. |
 | `samples/MockPersonServer/MockPersonServer.csproj` | Web project |
 
 This lets the demo run fully self-contained in .NET without external dependencies.

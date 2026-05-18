@@ -13,11 +13,11 @@ namespace AAuth.Tokens;
 /// (draft-hardt-oauth-aauth-protocol §Agent Token Structure).
 /// </summary>
 /// <remarks>
-/// Phase 1 hand-rolls JWT signing because <c>Microsoft.IdentityModel.Tokens</c>
+/// JWT signing is hand-rolled because <c>Microsoft.IdentityModel.Tokens</c>
 /// does not ship a built-in EdDSA <c>SignatureProvider</c>, and native
 /// <c>System.Security.Cryptography.EdDSA</c> is not available on .NET 10 in
 /// this runtime. The format is small enough that an external JWT stack is
-/// unwarranted at this stage.
+/// unwarranted.
 /// </remarks>
 public sealed class AgentTokenBuilder
 {
@@ -80,13 +80,15 @@ public sealed class AgentTokenBuilder
         }
         // Spec: Issuer (and PersonServer, when present) MUST be an HTTPS URL.
         // Fail fast at the issuer rather than waiting for a verifier reject.
-        if (!IsHttpsUrl(Issuer))
+        // Loopback http:// is accepted so the samples can run against the
+        // default Kestrel HTTP binding without a dev cert; see AAuthUrl.
+        if (!AAuthUrl.IsHttpsOrLoopback(Issuer))
         {
-            throw new InvalidOperationException("Issuer must be an absolute https:// URL.");
+            throw new InvalidOperationException("Issuer must be an absolute https:// URL (or http://localhost).");
         }
-        if (PersonServer is not null && !IsHttpsUrl(PersonServer))
+        if (PersonServer is not null && !AAuthUrl.IsHttpsOrLoopback(PersonServer))
         {
-            throw new InvalidOperationException("PersonServer must be an absolute https:// URL.");
+            throw new InvalidOperationException("PersonServer must be an absolute https:// URL (or http://localhost).");
         }
 
         var iat = IssuedAt ?? DateTimeOffset.UtcNow;

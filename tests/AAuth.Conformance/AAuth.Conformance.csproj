@@ -6,4 +6,14 @@
     <ProjectReference Include="..\..\src\AAuth\AAuth.csproj" />
   </ItemGroup>
 
+  <!--
+    The Discovery conformance tests spin up an in-process WebApplication
+    via Microsoft.AspNetCore.TestHost (UseTestServer/GetTestServer) to
+    exercise the well-known endpoints against the same code path real
+    resources use. WebApplicationFactory<T> is not needed here.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="10.0.0" />
+  </ItemGroup>
+
 </Project>

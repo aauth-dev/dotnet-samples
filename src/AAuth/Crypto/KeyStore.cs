@@ -43,7 +43,7 @@ public sealed class KeyStore
     /// <c>0700</c> and the file is created with mode <c>0600</c> at file
     /// creation time (no TOCTOU window between open and chmod) so the
     /// private key is never world-readable on disk. No equivalent
-    /// restriction is applied on Windows in Phase 1 (file ACLs are
+    /// restriction is currently applied on Windows (file ACLs are
     /// inherited from the parent directory — user profile defaults are
     /// typically already owner-only).
     /// </remarks>
