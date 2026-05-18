@@ -32,3 +32,31 @@ if ! command -v gh >/dev/null 2>&1; then
 else
     echo "==> gh already installed: $(gh --version | head -n1)"
 fi
+
+# --- Bash: git completion + git status in prompt ------------------------------
+# Idempotent: only appended once, guarded by a marker line.
+BASHRC="${HOME}/.bashrc"
+MARKER="# >>> aauth devcontainer bash setup >>>"
+if ! grep -qF "${MARKER}" "${BASHRC}" 2>/dev/null; then
+    echo "==> Configuring bash completion and git-aware prompt in ${BASHRC}"
+    cat >> "${BASHRC}" <<'EOF'
+
+# >>> aauth devcontainer bash setup >>>
+# Enable bash completion (provides git tab-completion among others)
+if [ -f /usr/share/bash-completion/bash_completion ]; then
+    . /usr/share/bash-completion/bash_completion
+fi
+
+# Git branch/status in prompt via __git_ps1
+if [ -f /usr/share/git-core/contrib/completion/git-prompt.sh ]; then
+    . /usr/share/git-core/contrib/completion/git-prompt.sh
+    GIT_PS1_SHOWDIRTYSTATE=1
+    GIT_PS1_SHOWUNTRACKEDFILES=1
+    GIT_PS1_SHOWUPSTREAM="auto"
+    PS1='\[\e[32m\]\u@\h\[\e[0m\]:\[\e[34m\]\w\[\e[33m\]$(__git_ps1 " (%s)")\[\e[0m\]\$ '
+fi
+# <<< aauth devcontainer bash setup <<<
+EOF
+else
+    echo "==> bash setup already present in ${BASHRC}"
+fi
