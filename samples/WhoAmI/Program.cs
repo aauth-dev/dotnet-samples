@@ -16,10 +16,15 @@ var builder = WebApplication.CreateBuilder(args);
 // load a stable key from secure storage.
 var resourceKey = AAuthKey.Generate();
 const string ResourceKid = "whoami-1";
+const string ResourceScope = "whoami";
 var resourceUrl = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5000";
+var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
 
 builder.Services.AddSingleton(resourceKey);
-builder.Services.AddSingleton(new AAuthVerifier());
+builder.Services.AddSingleton(new AAuthVerifier
+{
+    MaxAge = TimeSpan.FromSeconds(signatureWindowSeconds),
+});
 builder.Services.AddSingleton(new TokenVerifier());
 builder.Services.AddSingleton<MetadataClient>(sp =>
     new MetadataClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-metadata")));
@@ -41,8 +46,9 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
     SigningKeys = new Dictionary<string, AAuthKey> { [ResourceKid] = resourceKey },
     ScopeDescriptions = new Dictionary<string, string>
     {
-        ["whoami"] = "See basic profile information",
+        [ResourceScope] = "See basic profile information",
     },
+    SignatureWindow = signatureWindowSeconds,
 });
 
 // All other endpoints require an AAuth signature. UseWhen scopes the
@@ -137,8 +143,8 @@ static IResult ChallengeWithResourceToken(
         Agent = agentId,
         AgentJkt = parsed.ConfirmationKey.ComputeJwkThumbprint(),
         Key = resourceKey,
-        KeyId = "whoami-1",
-        Scope = "whoami",
+        KeyId = ResourceKid,
+        Scope = ResourceScope,
     }.Build();
 
     ctx.Response.Headers[AAuthRequirementHeader.Name] =

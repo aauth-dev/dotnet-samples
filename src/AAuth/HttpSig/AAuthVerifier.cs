@@ -31,6 +31,13 @@ public sealed class AAuthVerifier
     /// </summary>
     public TimeSpan MaxAge { get; init; } = TimeSpan.FromSeconds(60);
 
+    /// <summary>
+    /// Tolerated <c>created</c> drift into the future. A small one-sided
+    /// window accommodates real-world NTP skew without widening the legitimate
+    /// replay window the way a symmetric <see cref="MaxAge"/> would.
+    /// </summary>
+    public TimeSpan MaxFutureSkew { get; init; } = TimeSpan.FromSeconds(5);
+
     /// <summary>Clock injection point for deterministic tests.</summary>
     public Func<DateTimeOffset> Clock { get; init; } = () => DateTimeOffset.UtcNow;
 
@@ -76,14 +83,17 @@ public sealed class AAuthVerifier
                 $"({string.Join(' ', AAuthSigningHandler.CoveredComponents)}).");
         }
 
-        // Freshness check on `created` (RFC 9421 §3.2.1).
+        // Freshness check on `created` (RFC 9421 §3.2.1). Asymmetric: allow
+        // up to MaxAge in the past (the spec's `signature_window`) and only a
+        // small MaxFutureSkew window for NTP drift. The previous symmetric
+        // tolerance widened the legitimate replay window by 2x.
         var now = Clock().ToUnixTimeSeconds();
-        var skew = Math.Abs(now - created);
-        if (skew > (long)MaxAge.TotalSeconds)
+        var diff = now - created;
+        if (diff > (long)MaxAge.TotalSeconds || diff < -(long)MaxFutureSkew.TotalSeconds)
         {
             throw new AAuthVerificationException(
-                $"Signature created={created} is outside the freshness window of " +
-                $"{(long)MaxAge.TotalSeconds}s (current={now}).");
+                $"Signature created={created} is outside the freshness window " +
+                $"(MaxAge={(long)MaxAge.TotalSeconds}s, MaxFutureSkew={(long)MaxFutureSkew.TotalSeconds}s, current={now}).");
         }
 
         // Pull the signature bytes out of the Signature header.

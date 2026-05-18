@@ -9,16 +9,17 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.18.0" />
     <!--
-      NSign.Client and NSign.BouncyCastle remain pinned as a study reference
-      for the Phase 2 hand-rolled verifier and as the canonical source of the
-      BouncyCastle Ed25519 transitive. They are *not* wired into the runtime
-      pipeline; AAuth's signer (Phase 1) and verifier (Phase 2) are direct
-      implementations of the small fixed AAuth covered-component set.
-      See `.agent/plans/2026-05-13-dotnet-aauth-sdk/implementation-plan.md`
-      §"Phase 1/2 Implementation Decisions" for the full rationale.
+      BouncyCastle provides the Ed25519 primitives consumed by AAuthKey
+      (signer/verifier and key parameter types). Native EdDSA is not
+      available on this .NET 10 runtime; see the implementation plan's
+      "Phase 1 Implementation Decisions" for the full rationale.
+
+      We depend on BouncyCastle.Cryptography directly. NSign.Client /
+      NSign.BouncyCastle were pinned in earlier phases as study references
+      for the hand-rolled signer and verifier; with both now stable and no
+      runtime use of NSign types, the references were dropped.
     -->
-    <PackageReference Include="NSign.BouncyCastle" Version="1.2.3" />
-    <PackageReference Include="NSign.Client" Version="1.2.3" />
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
   </ItemGroup>
 
   <!--

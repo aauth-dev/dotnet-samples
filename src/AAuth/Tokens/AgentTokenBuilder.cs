@@ -80,13 +80,15 @@ public sealed class AgentTokenBuilder
         }
         // Spec: Issuer (and PersonServer, when present) MUST be an HTTPS URL.
         // Fail fast at the issuer rather than waiting for a verifier reject.
-        if (!IsHttpsUrl(Issuer))
+        // Loopback http:// is accepted so the samples can run against the
+        // default Kestrel HTTP binding without a dev cert; see AAuthUrl.
+        if (!AAuthUrl.IsHttpsOrLoopback(Issuer))
         {
-            throw new InvalidOperationException("Issuer must be an absolute https:// URL.");
+            throw new InvalidOperationException("Issuer must be an absolute https:// URL (or http://localhost).");
         }
-        if (PersonServer is not null && !IsHttpsUrl(PersonServer))
+        if (PersonServer is not null && !AAuthUrl.IsHttpsOrLoopback(PersonServer))
         {
-            throw new InvalidOperationException("PersonServer must be an absolute https:// URL.");
+            throw new InvalidOperationException("PersonServer must be an absolute https:// URL (or http://localhost).");
         }
 
         var iat = IssuedAt ?? DateTimeOffset.UtcNow;

@@ -109,12 +109,19 @@ public sealed class AAuthVerificationMiddleware
 /// <summary>Extension method for plugging <see cref="AAuthVerificationMiddleware"/> in.</summary>
 public static class AAuthVerificationMiddlewareExtensions
 {
-    /// <summary>Add the AAuth HTTP-signature verification middleware to the pipeline.</summary>
+    /// <summary>
+    /// Add the AAuth HTTP-signature verification middleware to the pipeline.
+    /// When <paramref name="verifier"/> is null, the middleware resolves an
+    /// <see cref="AAuthVerifier"/> from DI (or constructs a default one if
+    /// none is registered).
+    /// </summary>
     public static IApplicationBuilder UseAAuthVerification(
         this IApplicationBuilder app,
         AAuthVerifier? verifier = null)
     {
         ArgumentNullException.ThrowIfNull(app);
-        return app.UseMiddleware<AAuthVerificationMiddleware>(verifier ?? new AAuthVerifier());
+        return verifier is null
+            ? app.UseMiddleware<AAuthVerificationMiddleware>()
+            : app.UseMiddleware<AAuthVerificationMiddleware>(verifier);
     }
 }

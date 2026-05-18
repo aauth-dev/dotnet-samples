@@ -17,7 +17,11 @@ namespace AAuth.Agent;
 /// </remarks>
 public sealed class AAuthTokenHolder
 {
-    private string _token;
+    // volatile gives us release/acquire semantics on the reference write so
+    // a parallel reader running on a different thread observes Update()'s
+    // value without needing a full memory barrier. Reference writes are
+    // atomic on .NET; volatile only adds ordering.
+    private volatile string _token;
 
     /// <summary>Create the holder with an initial token (typically the agent token).</summary>
     public AAuthTokenHolder(string initialToken)

@@ -128,6 +128,51 @@ public class WhoAmIFlowTests : IAsyncLifetime
         Assert.NotEqual(agentToken, holder.Current);
     }
 
+    [Fact]
+    public async Task ThreePartyChallenge_Returns401WithResourceToken()
+    {
+        // Send only through the signing pipeline (no ChallengeHandler) so we
+        // can inspect the raw 401 + AAuth-Requirement response that WhoAmI
+        // emits before the agent would retry. This guards against silent
+        // regressions in the 401 shape that the happy-path three-party test
+        // would mask.
+        var agentKey = AAuthKey.Generate();
+        var agentToken = new AgentTokenBuilder
+        {
+            Issuer = "https://ap.example",
+            Subject = "aauth:demo@ap.example",
+            KeyId = "demo",
+            Key = agentKey,
+            PersonServer = PsIssuer,
+        }.Build();
+
+        var holder = new AAuthTokenHolder(agentToken);
+        // BuildAgentClient with personServer:null gives us the signing
+        // pipeline without the auto-retry challenge handler.
+        using var client = BuildAgentClient(agentKey, holder, personServer: null);
+
+        var response = await client.GetAsync($"{WhoAmIIssuer}/");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.True(response.Headers.TryGetValues(AAuthRequirementHeader.Name, out var values),
+            "401 response is missing the AAuth-Requirement header.");
+        var requirement = AAuthRequirementHeader.Parse(string.Join(", ", values!));
+        Assert.Equal(AAuthRequirementHeader.AuthTokenRequirement, requirement.Requirement);
+        Assert.NotNull(requirement.ResourceToken);
+
+        // Decode the resource_token payload and assert the spec-mandated
+        // claim shape: iss=resource, aud=ps, agent + agent_jkt bound to the
+        // signing key.
+        var payloadSegment = requirement.ResourceToken!.Split('.')[1];
+        var payload = (JsonObject)JsonNode.Parse(
+            Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(payloadSegment))!;
+        Assert.Equal(WhoAmIIssuer, (string?)payload["iss"]);
+        Assert.Equal(PsIssuer, (string?)payload["aud"]);
+        Assert.Equal("aauth:demo@ap.example", (string?)payload["agent"]);
+        Assert.Equal(agentKey.ComputeJwkThumbprint(), (string?)payload["agent_jkt"]);
+        Assert.Equal(ResourceTokenBuilder.ResourceDwk, (string?)payload["dwk"]);
+    }
+
     // -------------------------------------------------------------------
     // Agent pipeline
     // -------------------------------------------------------------------
@@ -170,6 +215,11 @@ public class WhoAmIFlowTests : IAsyncLifetime
 
     // -------------------------------------------------------------------
     // Mock Person Server
+    //
+    // TODO(Phase 3 §3.1): once `samples/MockPersonServer/` ships, replace
+    // this in-process mock with the shared sample binary (or its
+    // WebApplicationFactory) so the integration test exercises shipped
+    // sample code rather than a private duplicate.
     // -------------------------------------------------------------------
 
     private static async Task<IHost> StartMockPsAsync(AAuthKey psKey)

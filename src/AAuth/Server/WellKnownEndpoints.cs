@@ -106,15 +106,12 @@ public sealed class AAuthResourceMetadataOptions
         {
             throw new InvalidOperationException("Issuer must be set.");
         }
-        if (!Uri.TryCreate(Issuer, UriKind.Absolute, out var uri) || uri.Scheme != "https")
+        if (!AAuthUrl.IsHttpsOrLoopback(Issuer))
         {
             // Spec mandates https. For Phase 2 we accept http://localhost
             // and http://127.0.0.1 so WebApplicationFactory tests (which
             // bind plain HTTP) can still configure a sensible issuer.
-            if (uri is null || !uri.IsLoopback)
-            {
-                throw new InvalidOperationException("Issuer must be an absolute https:// URL.");
-            }
+            throw new InvalidOperationException("Issuer must be an absolute https:// URL (or http://localhost).");
         }
         if (SigningKeys is null || SigningKeys.Count == 0)
         {

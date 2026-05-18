@@ -68,13 +68,13 @@ public sealed class ResourceTokenBuilder
         {
             throw new InvalidOperationException("Signing key must include a private component.");
         }
-        if (!IsHttpsUrl(Issuer))
+        if (!AAuthUrl.IsHttpsOrLoopback(Issuer))
         {
-            throw new InvalidOperationException("Issuer must be an absolute https:// URL.");
+            throw new InvalidOperationException("Issuer must be an absolute https:// URL (or http://localhost).");
         }
-        if (!IsHttpsUrl(Audience))
+        if (!AAuthUrl.IsHttpsOrLoopback(Audience))
         {
-            throw new InvalidOperationException("Audience must be an absolute https:// URL.");
+            throw new InvalidOperationException("Audience must be an absolute https:// URL (or http://localhost).");
         }
         if (Lifetime > TimeSpan.FromMinutes(5))
         {
@@ -123,6 +123,4 @@ public sealed class ResourceTokenBuilder
         }
     }
 
-    private static bool IsHttpsUrl(string value) =>
-        Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == "https";
 }
