@@ -1,11 +1,14 @@
 ﻿using System;
 using System.Net.Http;
 using System.Threading.Tasks;
+using AAuth.Agent;
 using AAuth.Crypto;
+using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Tokens;
 
-const string Usage = "Usage: AgentConsole <url> [--iss <agent-provider-url>] [--sub <agent-id>] [--kid <key-id>]";
+const string Usage = "Usage: AgentConsole <url> [--iss <agent-provider-url>] [--sub <agent-id>] " +
+    "[--kid <key-id>] [--ps <person-server-url>]";
 
 if (args.Length < 1 || args[0] is "--help" or "-h")
 {
@@ -29,10 +32,11 @@ if (!Uri.TryCreate(args[0], UriKind.Absolute, out var url))
 string issuer = "https://ap.example";
 string subject = "aauth:demo@ap.example";
 string keyId = "demo";
+string? personServer = null;
 for (int i = 1; i < args.Length; i++)
 {
     string flag = args[i];
-    if (flag is "--iss" or "--sub" or "--kid")
+    if (flag is "--iss" or "--sub" or "--kid" or "--ps")
     {
         if (i + 1 >= args.Length)
         {
@@ -45,6 +49,7 @@ for (int i = 1; i < args.Length; i++)
             case "--iss": issuer = value; break;
             case "--sub": subject = value; break;
             case "--kid": keyId = value; break;
+            case "--ps":  personServer = value; break;
         }
     }
     else
@@ -60,24 +65,49 @@ var key = store.LoadOrCreate(keyId);
 Console.WriteLine($"Using key: {keyId}");
 Console.WriteLine($"Public JWK thumbprint: {key.ComputeJwkThumbprint()}");
 
-var token = new AgentTokenBuilder
+var agentToken = new AgentTokenBuilder
 {
     Issuer = issuer,
     Subject = subject,
     KeyId = keyId,
     Key = key,
+    PersonServer = personServer,
 }.Build();
 
 Console.WriteLine();
 Console.WriteLine("Agent token:");
-Console.WriteLine(token);
+Console.WriteLine(agentToken);
 Console.WriteLine();
 
-var handler = new AAuthSigningHandler(key, () => token)
+// Shared carrier-token holder. The signing handler reads from it on every
+// request; the challenge handler updates it when an auth-token is issued.
+var tokenHolder = new AAuthTokenHolder(agentToken);
+
+HttpMessageHandler BuildSigningPipeline(Func<string> tokenSource) =>
+    new AAuthSigningHandler(key, tokenSource)
+    {
+        InnerHandler = new HttpClientHandler(),
+    };
+
+// Resource client: ChallengeHandler on top when a PS is configured,
+// otherwise just the signing pipeline (identity-based mode).
+HttpMessageHandler resourcePipeline = BuildSigningPipeline(() => tokenHolder.Current);
+
+if (personServer is not null)
 {
-    InnerHandler = new HttpClientHandler(),
-};
-using var client = new HttpClient(handler);
+    // Separate pipeline for the exchange: always signs with the agent
+    // token, never the auth token, so the resource_token POST is always
+    // authenticated as the agent itself.
+    var exchangeHttp = new HttpClient(BuildSigningPipeline(() => agentToken));
+    var metadata = new MetadataClient(new HttpClient());
+    var exchange = new TokenExchangeClient(exchangeHttp, metadata);
+    resourcePipeline = new ChallengeHandler(exchange, tokenHolder, personServer)
+    {
+        InnerHandler = resourcePipeline,
+    };
+}
+
+using var client = new HttpClient(resourcePipeline);
 
 var request = new HttpRequestMessage(HttpMethod.Get, url);
 Console.WriteLine($"GET {url}");

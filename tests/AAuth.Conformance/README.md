@@ -22,18 +22,20 @@ Tests are grouped by spec section. Each test:
 - Lives in a folder named after the spec area
   (`AgentTokens/`, `HttpSignatures/`, `ResourceTokens/`, `Discovery/`, ...).
 
-## Scope today (Phase 1)
+## Scope today (Phase 2)
 
-Only **issuer-side** clauses for agent tokens. Receiver-side clauses
-("MUST verify ...") land in Phase 2 alongside the token verifier and HTTP
-signature verification middleware.
+Issuer-side coverage for agent, resource, and (transitively, via the
+verification tests) auth tokens; receiver-side coverage for agent tokens
+and the AAuth HTTP signature profile; discovery endpoints (resource
+metadata + JWKS).
 
 ## Section → file map
 
 | Spec section | Test file | Status |
 |---|---|---|
 | protocol §Agent Token Structure | [AgentTokens/AgentTokenStructureTests.cs](AgentTokens/AgentTokenStructureTests.cs) | Phase 1 |
-| protocol §Agent Token Verification | _pending_ | Phase 2 |
-| signature-key §Header Format | _pending_ | Phase 2 |
-| protocol §Resource Tokens | _pending_ | Phase 2 |
-| protocol §Discovery | _pending_ | Phase 2 |
+| protocol §Agent Token Verification | [AgentTokens/AgentTokenVerificationTests.cs](AgentTokens/AgentTokenVerificationTests.cs) | Phase 2 |
+| signature-key §Header Format | [HttpSignatures/SignatureKeyHeaderTests.cs](HttpSignatures/SignatureKeyHeaderTests.cs) | Phase 2 |
+| protocol §HTTP Signature Profile | [HttpSignatures/CoveredComponentsTests.cs](HttpSignatures/CoveredComponentsTests.cs) | Phase 2 |
+| protocol §Resource Token Structure | [ResourceTokens/ResourceTokenStructureTests.cs](ResourceTokens/ResourceTokenStructureTests.cs) | Phase 2 |
+| protocol §Discovery | [Discovery/WellKnownMetadataTests.cs](Discovery/WellKnownMetadataTests.cs) | Phase 2 |
