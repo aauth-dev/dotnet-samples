@@ -9,6 +9,7 @@
 - Lean on existing NuGet packages (NSign, Microsoft.IdentityModel, StructuredFieldValues).
 - Each phase produces a runnable artifact you can demo.
 - **Every production type ships with tests.** No new public type, header parser, token builder, or HTTP handler lands without an accompanying xUnit test that exercises it. Tests live alongside the code they prove — no separate test phase. A phase is not Done until `dotnet test` passes.
+- **README stays in sync with the code.** Every phase that adds or changes a runnable artifact (library, sample, CLI, server) updates the root `README.md` in the same PR. The README is the public-facing entry point — out-of-date layout tables, missing samples, or stale quickstarts make the repo feel abandoned. A phase is not Done until the README reflects its artifacts.
 
 ---
 
@@ -88,6 +89,7 @@ Confirmed before starting implementation:
 - [x] Every new type in `src/AAuth/` has at least one xUnit test in `tests/AAuth.Tests/`
 - [x] `dotnet test` passes (key gen + JWK round-trip + thumbprint, agent token claims + signature, `Signature-Key` header formatting, signing handler header emission)
 - [x] AgentConsole sends a properly signed request (verifiable by inspecting headers)
+- [x] `README.md` updated with Phase 1 layout (`src/`, `samples/`, `tests/`) and a runnable AgentConsole quickstart
 
 ---
 
@@ -173,6 +175,7 @@ Update [tests/AAuth.Conformance/README.md](../../../tests/AAuth.Conformance/READ
 - [ ] Integration test: full three-party flow with mock PS returning auth_token
 - [ ] Agent retries with auth_token → WhoAmI returns 200 + claims
 - [ ] Receiver-side conformance tests land for agent-token verification, `Signature-Key` parsing, resource-token structure, and discovery endpoints
+- [ ] `README.md` updated with WhoAmI sample + three-party flow quickstart
 
 ---
 
@@ -215,6 +218,7 @@ This lets the demo run fully self-contained in .NET without external dependencie
 - [ ] `demo-run.sh` runs all three flows end-to-end with console output showing each step
 - [ ] All integration tests pass
 - [ ] Can optionally point at real Go Person Server instead of mock
+- [ ] `README.md` documents the demo orchestrator and how to run all three flows
 
 ---
 
@@ -245,6 +249,7 @@ This lets the demo run fully self-contained in .NET without external dependencie
 - [ ] `dotnet tool install` works
 - [ ] `aauth generate` + `aauth sign-token` + `aauth fetch https://whoami-server/` works end-to-end
 - [ ] Config file compatible with packages-js format
+- [ ] `README.md` documents the `dotnet aauth` CLI commands with examples
 
 ---
 
@@ -291,6 +296,7 @@ This lets the demo run fully self-contained in .NET without external dependencie
 - [ ] `docker compose up` brings up all components
 - [ ] Can run through identity-based, PS-asserted, and user-consent flows
 - [ ] Integration tests pass against running stack
+- [ ] `README.md` describes the full-demo topology and `docker compose` quickstart
 
 ---
 
