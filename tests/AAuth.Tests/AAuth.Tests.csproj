@@ -8,11 +8,11 @@
   </ItemGroup>
 
   <!--
-    Phase 2 adds integration tests that spin up the WhoAmI sample (and an
-    in-process mock Person Server) via WebApplicationFactory<T>. The MVC
-    test host package surfaces WebApplicationFactory, TestServer, and the
-    associated handler that lets the agent HttpClient talk to the test
-    server without a real network hop.
+    Integration tests spin up the WhoAmI sample (and an in-process mock
+    Person Server) via WebApplicationFactory<T>. The MVC test host package
+    surfaces WebApplicationFactory, TestServer, and the associated handler
+    that lets the agent HttpClient talk to the test server without a real
+    network hop.
   -->
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0" />

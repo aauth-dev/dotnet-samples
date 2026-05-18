@@ -94,7 +94,7 @@ public sealed class ChallengeHandler : DelegatingHandler
         // the new carrier token (read via the holder) when the clone is
         // sent. Note: the original request body, if any, is forwarded
         // verbatim; streaming bodies that are not re-readable will fail
-        // here, which is a known limitation tracked for Phase 3.
+        // here, which is a known limitation.
         response.Dispose();
         using var retry = await CloneAsync(request, cancellationToken).ConfigureAwait(false);
         return await base.SendAsync(retry, cancellationToken).ConfigureAwait(false);

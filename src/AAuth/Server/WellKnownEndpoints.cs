@@ -108,7 +108,7 @@ public sealed class AAuthResourceMetadataOptions
         }
         if (!AAuthUrl.IsHttpsOrLoopback(Issuer))
         {
-            // Spec mandates https. For Phase 2 we accept http://localhost
+            // Spec mandates https. We additionally accept http://localhost
             // and http://127.0.0.1 so WebApplicationFactory tests (which
             // bind plain HTTP) can still configure a sensible issuer.
             throw new InvalidOperationException("Issuer must be an absolute https:// URL (or http://localhost).");

@@ -18,10 +18,10 @@ namespace AAuth.Tokens;
 /// standard temporal / audience / binding claims.
 /// </summary>
 /// <remarks>
-/// Phase 2 hand-rolls verification with BouncyCastle to mirror the Phase 1
-/// signing path; see the plan's "Phase 2 Implementation Decisions" for the
+/// Verification is hand-rolled with BouncyCastle to mirror the issuer-side
+/// signing path; see the plan's "Implementation Decisions" for the
 /// trade-off. Out of scope here: actor-chain (<c>act</c>) walking, mission
-/// validation, R3 — they land in later phases.
+/// validation, R3.
 /// </remarks>
 public sealed class TokenVerifier
 {

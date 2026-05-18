@@ -11,8 +11,8 @@ namespace AAuth.HttpSig;
 /// <remarks>
 /// The header is an RFC 8941 dictionary. AAuth uses the dictionary key
 /// <c>sig</c> whose item is a token naming the scheme, with scheme-specific
-/// parameters. Phase 1 covers only the <c>jwt</c> scheme used by agent and
-/// auth tokens: <c>Signature-Key: sig=jwt;jwt="eyJ..."</c>.
+/// parameters. The current implementation covers only the <c>jwt</c> scheme
+/// used by agent and auth tokens: <c>Signature-Key: sig=jwt;jwt="eyJ..."</c>.
 /// </remarks>
 public static class SignatureKeyHeader
 {
@@ -44,7 +44,7 @@ public static class SignatureKeyHeader
     /// Parse a <c>Signature-Key</c> header value and return the JWT if the
     /// scheme is <c>jwt</c>. Throws <see cref="FormatException"/> on malformed
     /// input. Returns <c>null</c> for non-<c>jwt</c> schemes (e.g. <c>hwk</c>,
-    /// <c>jkt-jwt</c>, <c>jwks_uri</c>) which are out of scope for Phase 1.
+    /// <c>jkt-jwt</c>, <c>jwks_uri</c>) which are not yet supported.
     /// </summary>
     public static string? GetJwt(string headerValue)
     {

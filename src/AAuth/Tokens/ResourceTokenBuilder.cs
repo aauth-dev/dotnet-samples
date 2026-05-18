@@ -15,8 +15,8 @@ namespace AAuth.Tokens;
 /// <remarks>
 /// Symmetric with <see cref="AgentTokenBuilder"/>: hand-rolls a minimal JWT
 /// writer using BouncyCastle. Resource tokens have audience equal to the
-/// PS (three-party) or AS (four-party); Phase 2 only exercises the
-/// three-party path.
+/// PS (three-party) or AS (four-party); the current code paths exercise
+/// only the three-party path.
 /// </remarks>
 public sealed class ResourceTokenBuilder
 {

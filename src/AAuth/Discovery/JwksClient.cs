@@ -96,7 +96,7 @@ public sealed class JwksClient
                 }
                 catch (ArgumentException)
                 {
-                    // Skip malformed keys; logging is a Phase 5 concern.
+                    // Skip malformed keys; structured logging is a future concern.
                 }
             }
         }

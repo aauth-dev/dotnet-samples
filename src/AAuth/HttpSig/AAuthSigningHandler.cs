@@ -16,8 +16,8 @@ namespace AAuth.HttpSig;
 /// and attaches the carrier token via the <c>Signature-Key</c> header.
 /// </summary>
 /// <remarks>
-/// This is a minimal direct implementation; see Phase 1 implementation
-/// decisions in the plan document for why NSign is not used here yet.
+/// This is a minimal direct implementation; see the implementation plan
+/// for why NSign is not used here.
 /// </remarks>
 public sealed class AAuthSigningHandler : DelegatingHandler
 {
@@ -110,11 +110,11 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         // by FormatJwt (literal `sig=jwt;jwt="..."`). RFC 9421 allows a `;sf`
         // parameter that asks the verifier to re-serialize the structured
         // field deterministically before signing; we don't use it here
-        // because (a) the value is emitted by this same library so producer
-        // and verifier see identical bytes and (b) Phase 1 has no real
-        // verifier yet. If any intermediary rewrites the header (whitespace,
-        // quoting, item ordering), signature verification will fail —
-        // revisit `;sf` once the Phase 2 verifier lands.
+        // because the value is emitted by this same library so producer
+        // and verifier see identical bytes. If any intermediary rewrites
+        // the header (whitespace, quoting, item ordering), signature
+        // verification will fail — revisit `;sf` if we ever need to
+        // interoperate with such intermediaries.
         var sb = new StringBuilder();
         AppendComponent(sb, "@method", method);
         AppendComponent(sb, "@authority", authority);

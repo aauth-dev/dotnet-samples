@@ -12,24 +12,23 @@
       BouncyCastle provides the Ed25519 primitives consumed by AAuthKey
       (signer/verifier and key parameter types). Native EdDSA is not
       available on this .NET 10 runtime; see the implementation plan's
-      "Phase 1 Implementation Decisions" for the full rationale.
+      "Implementation Decisions" for the full rationale.
 
       We depend on BouncyCastle.Cryptography directly. NSign.Client /
-      NSign.BouncyCastle were pinned in earlier phases as study references
-      for the hand-rolled signer and verifier; with both now stable and no
+      NSign.BouncyCastle were originally pinned as study references for
+      the hand-rolled signer and verifier; with both now stable and no
       runtime use of NSign types, the references were dropped.
     -->
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
   </ItemGroup>
 
   <!--
-    Phase 2 introduces ASP.NET Core server-side middleware, well-known
-    endpoint mappers, and minimal-API endpoint extensions. These types
-    require the ASP.NET Core shared framework. Per the single-library
-    decision in the plan, they ship inside `AAuth.csproj` rather than a
-    separate `AAuth.AspNetCore` package. Non-web consumers will still
-    resolve the shared framework but won't load it at runtime unless they
-    instantiate the server types.
+    The server-side middleware, well-known endpoint mappers, and minimal-
+    API endpoint extensions require the ASP.NET Core shared framework.
+    Per the single-library decision in the plan, they ship inside
+    `AAuth.csproj` rather than a separate `AAuth.AspNetCore` package.
+    Non-web consumers will still resolve the shared framework but won't
+    load it at runtime unless they instantiate the server types.
   -->
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />

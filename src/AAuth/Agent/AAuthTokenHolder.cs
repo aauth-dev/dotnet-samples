@@ -9,9 +9,9 @@ namespace AAuth.Agent;
 /// auth token) without rebuilding the HttpClient pipeline.
 /// </summary>
 /// <remarks>
-/// Not thread-safe by design. Phase 2 sample agents are single-threaded.
-/// If a future phase needs concurrent requests through the same agent
-/// pipeline, replace the field with an <see cref="System.Threading.Interlocked"/>
+/// Not thread-safe by design. The current sample agents are single-threaded.
+/// If concurrent requests through the same agent pipeline are ever needed,
+/// replace the field with an <see cref="System.Threading.Interlocked"/>
 /// or <c>AsyncLocal&lt;T&gt;</c> approach so an in-flight exchange does not
 /// race with parallel signed requests.
 /// </remarks>

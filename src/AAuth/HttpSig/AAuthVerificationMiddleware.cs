@@ -95,7 +95,7 @@ public sealed class AAuthVerificationMiddleware
             return false;
         }
         // Multi-value AAuth signature headers are not yet defined (see the
-        // Phase 1 "compose multiple signers" follow-up). Reject for now so
+        // "compose multiple signers" follow-up). Reject for now so
         // an attacker can't sneak a second labelled signature past us.
         if (values.Count != 1 || values[0] is null)
         {

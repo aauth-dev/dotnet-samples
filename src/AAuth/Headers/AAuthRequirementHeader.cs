@@ -12,9 +12,9 @@ namespace AAuth.Headers;
 /// <remarks>
 /// The header is an RFC 8941 dictionary whose first member identifies the
 /// requirement type, with additional members carrying type-specific
-/// parameters. Phase 2 implements <c>requirement=auth-token</c> (with a
-/// <c>resource-token</c> parameter) plus generic parameter parsing for
-/// other requirement types (<c>interaction</c>, <c>clarification</c>,
+/// parameters. The current implementation handles <c>requirement=auth-token</c>
+/// (with a <c>resource-token</c> parameter) plus generic parameter parsing
+/// for other requirement types (<c>interaction</c>, <c>clarification</c>,
 /// <c>claims</c>, <c>approval</c>) so server-side challenge logic and the
 /// agent-side challenge handler can both round-trip the values.
 /// </remarks>

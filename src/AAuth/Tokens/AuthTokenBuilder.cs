@@ -7,8 +7,8 @@ namespace AAuth.Tokens;
 /// <summary>
 /// Builds and signs an <c>aa-auth+jwt</c> per the AAuth protocol spec
 /// (§Auth Token Structure). Used by Person Servers (three-party) and Access
-/// Servers (four-party). Phase 2 ships this for the in-process mock PS in
-/// the integration tests and the future <c>samples/MockPersonServer/</c>.
+/// Servers (four-party). The current consumers are the in-process mock PS
+/// in the integration tests and the future <c>samples/MockPersonServer/</c>.
 /// </summary>
 public sealed class AuthTokenBuilder
 {

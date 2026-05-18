@@ -72,7 +72,7 @@ public sealed class AAuthVerifier
         // Parse the labelled signature parameters from `Signature-Input`.
         // RFC 9421 allows multiple labelled signatures in a dictionary; AAuth
         // emits exactly one with the fixed label `sig`. Anything else is
-        // rejected for now — extensibility is a Phase 2 follow-up.
+        // rejected for now — multi-signer support is a future extension.
         var (paramsLine, components, created) = ParseSignatureInput(signatureInput);
 
         // Validate the covered-component list matches AAuth's fixed shape.

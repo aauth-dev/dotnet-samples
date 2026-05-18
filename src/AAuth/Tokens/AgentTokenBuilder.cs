@@ -13,11 +13,11 @@ namespace AAuth.Tokens;
 /// (draft-hardt-oauth-aauth-protocol §Agent Token Structure).
 /// </summary>
 /// <remarks>
-/// Phase 1 hand-rolls JWT signing because <c>Microsoft.IdentityModel.Tokens</c>
+/// JWT signing is hand-rolled because <c>Microsoft.IdentityModel.Tokens</c>
 /// does not ship a built-in EdDSA <c>SignatureProvider</c>, and native
 /// <c>System.Security.Cryptography.EdDSA</c> is not available on .NET 10 in
 /// this runtime. The format is small enough that an external JWT stack is
-/// unwarranted at this stage.
+/// unwarranted.
 /// </remarks>
 public sealed class AgentTokenBuilder
 {
