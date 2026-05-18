@@ -222,6 +222,11 @@ Follow-ups landed against PR #6 after the in-repo review (`.copilot-tracking/pr/
 - **401 shape integration test.** Added `WhoAmIFlowTests.ThreePartyChallenge_Returns401WithResourceToken` which bypasses the agent's `ChallengeHandler` and inspects the raw 401 + `AAuth-Requirement` + decoded `resource_token` payload, guarding the spec-mandated shape independently of the happy-path retry.
 - **Phase 3 follow-up TODO.** A `TODO(Phase 3 §3.1)` marker on `WhoAmIFlowTests.StartMockPsAsync` records the planned migration to the shared `samples/MockPersonServer/` binary.
 
+#### Second-round PR review (2026-05-18, commit `ead54c1`)
+
+- **`TokenExchangeClient` SSRF guard.** `ExchangeAsync` now requires the PS-advertised `token_endpoint` to pass `AAuthUrl.IsHttpsOrLoopback` **and** share an origin (scheme/host/port) with the configured `personServer` before the signed POST is dispatched. A malicious or compromised PS metadata document can no longer divert the exchange to an arbitrary host or downgrade it to plain http.
+- **`TokenVerifier.VerifyWithJwksAsync` fail-fast ordering.** The cheap local invariants (`header.alg`, `header.typ`, `payload.dwk`) are now validated immediately after segment decode, **before** any `MetadataClient.FetchAsync` / `JwksClient.ResolveKeyAsync` call. Obviously-invalid tokens no longer cause outbound discovery traffic, removing a DoS-amplification / outbound-probe surface.
+
 ---
 
 ## Phase 3: End-to-End Demo with Person Server
