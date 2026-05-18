@@ -8,7 +8,7 @@
 - Single solution, single library project — no premature package splitting.
 - Lean on existing NuGet packages (NSign, Microsoft.IdentityModel, StructuredFieldValues).
 - Each phase produces a runnable artifact you can demo.
-- Tests live alongside the code they prove — no separate test phase.
+- **Every production type ships with tests.** No new public type, header parser, token builder, or HTTP handler lands without an accompanying xUnit test that exercises it. Tests live alongside the code they prove — no separate test phase. A phase is not Done until `dotnet test` passes.
 
 ---
 
@@ -20,20 +20,23 @@
 
 Confirmed before starting implementation:
 
-- **Target framework**: `net10.0` (matches dev container SDK 10.0.300). Native `System.Security.Cryptography.EdDSA` is available — no external NuGet needed for raw Ed25519 key generation, signing, or verification.
+- **Target framework**: `net10.0` (matches dev container SDK 10.0.300). Native `System.Security.Cryptography.EdDSA` is **not** present on .NET 10 in this container (verified 2026-05-18 — the type does not resolve at runtime). All Ed25519 operations use BouncyCastle, which arrives transitively via `NSign.BouncyCastle`. See research §5.2 update.
 - **NuGet versions pinned for Phase 1**:
   - `NSign.Client` 1.2.3 — RFC 9421 outbound signing handler.
   - `NSign.BouncyCastle` 1.2.3 — Ed25519 signature provider for NSign (NSign does not yet wrap `System.Security.Cryptography.EdDSA` directly).
   - `Microsoft.IdentityModel.Tokens` 8.18.0 — `JsonWebKey` serialization and built-in `ComputeJwkThumbprint()` (RFC 7638).
   - `StructuredFieldValues` 0.7.7 — RFC 8941 parser/serializer for the `Signature-Key` header and later AAuth headers.
   - Tests: `xunit`, `xunit.runner.visualstudio`, `Microsoft.NET.Test.Sdk` (latest at pin time).
-- **Agent JWT signing strategy**: hand-roll a minimal JWT writer (Base64Url header + payload + `EdDSA.SignData`) inside `AgentTokenBuilder`. Rationale:
+- **Agent JWT signing strategy**: hand-roll a minimal JWT writer (Base64Url header + payload + BouncyCastle `Ed25519Signer`) inside `AgentTokenBuilder`. Rationale:
   - `Microsoft.IdentityModel.Tokens` 8.18 still ships no built-in EdDSA `SignatureProvider`.
+  - Native `System.Security.Cryptography.EdDSA` is unavailable on .NET 10 in this container.
   - Phase 1 only needs to *issue* one token type; the format is small and well-defined.
   - Avoids pulling in a third JWT stack (`ScottBrady.IdentityModel.Tokens` or `jose-jwt`) before Phase 2's verification path is designed.
-  - Revisit when verification lands in Phase 2 — at that point we will either add an EdDSA provider for `JsonWebTokenHandler` or extend the hand-rolled code with a verifier.
+  - Revisit when verification lands in Phase 2.
 - **Key storage**: file-based JWK JSON under `~/.aauth/keys/` (no OS credential store integration in Phase 1).
 - **Single library project**: all Phase 1 code ships in `src/AAuth/AAuth.csproj`. No sub-package splitting until the API stabilizes.
+- **RFC 9421 signing strategy**: Phase 1 hand-rolls a minimal RFC 9421 signer that covers the fixed AAuth set (`@method`, `@authority`, `@path`, `signature-key`). NSign is referenced (so the dependency graph is settled) but its `DefaultMessageSigner` + DI plumbing is **not** wired up yet. Rationale: NSign's value lies mainly in server-side verification (ASP.NET Core middleware) and broader covered-component support; for a client emitting four well-defined components, ~50 lines of direct code is clearer than wiring `IOptions`, `ISigner`, and `MessageContext`. Phase 2 will revisit and likely switch to NSign for the verification side, at which point the signer can be migrated for symmetry.
+- **Spec-traceable conformance tests**: a separate `tests/AAuth.Conformance/` xUnit project mirrors the AAuth spec's section structure. Tests use `[Fact(DisplayName = "§<section> — <clause>")]` so CI output reads like a conformance checklist, with xmldoc summaries quoting the exact spec sentences. Plain xUnit (not Reqnroll/Gherkin) — the spec's `MUST/SHOULD` clauses read naturally as test names without a DSL layer. Phase 1 covers only **issuer-side** clauses for `aa-agent+jwt`; receiver-side clauses ("MUST verify ...") land in Phase 2 alongside the verifier. See [tests/AAuth.Conformance/README.md](../../../tests/AAuth.Conformance/README.md) for the section→file map.
 
 ### 1.1 Project scaffolding
 
@@ -81,8 +84,9 @@ Confirmed before starting implementation:
 
 ### Phase 1 Definition of Done
 
-- [x] `dotnet build` succeeds
-- [x] `dotnet test` passes (key gen, token creation, signature headers)
+- [x] `dotnet build` succeeds for the whole solution
+- [x] Every new type in `src/AAuth/` has at least one xUnit test in `tests/AAuth.Tests/`
+- [x] `dotnet test` passes (key gen + JWK round-trip + thumbprint, agent token claims + signature, `Signature-Key` header formatting, signing handler header emission)
 - [x] AgentConsole sends a properly signed request (verifiable by inspecting headers)
 
 ---
@@ -148,12 +152,27 @@ Confirmed before starting implementation:
 
 Update `AAuthSigningHandler` to optionally wire in `ChallengeHandler` for automatic retry.
 
+### 2.9 Receiver-side conformance tests
+
+Extend `tests/AAuth.Conformance/` with receiver-side clauses now that a verifier exists:
+
+| File | Spec coverage |
+|---|---|
+| `AgentTokens/AgentTokenVerificationTests.cs` | protocol §Agent Token Verification (steps 1–6) |
+| `HttpSignatures/SignatureKeyHeaderTests.cs` | draft-hardt-httpbis-signature-key |
+| `HttpSignatures/CoveredComponentsTests.cs` | protocol §Resource Access (required components, `created` window) |
+| `ResourceTokens/ResourceTokenStructureTests.cs` | protocol §Resource Tokens |
+| `Discovery/WellKnownMetadataTests.cs` | protocol §Discovery (`/.well-known/aauth-resource.json`, JWKS) |
+
+Update [tests/AAuth.Conformance/README.md](../../../tests/AAuth.Conformance/README.md) section→file map as each lands.
+
 ### Phase 2 Definition of Done
 
-- [x] WhoAmI server starts, serves well-known, verifies signatures, issues resource tokens
-- [x] AgentConsole → WhoAmI returns 401 + resource_token (identity-based access also works if PS claim absent)
-- [x] Integration test: full three-party flow with mock PS returning auth_token
-- [x] Agent retries with auth_token → WhoAmI returns 200 + claims
+- [ ] WhoAmI server starts, serves well-known, verifies signatures, issues resource tokens
+- [ ] AgentConsole → WhoAmI returns 401 + resource_token (identity-based access also works if PS claim absent)
+- [ ] Integration test: full three-party flow with mock PS returning auth_token
+- [ ] Agent retries with auth_token → WhoAmI returns 200 + claims
+- [ ] Receiver-side conformance tests land for agent-token verification, `Signature-Key` parsing, resource-token structure, and discovery endpoints
 
 ---
 
@@ -193,9 +212,9 @@ This lets the demo run fully self-contained in .NET without external dependencie
 
 ### Phase 3 Definition of Done
 
-- [x] `demo-run.sh` runs all three flows end-to-end with console output showing each step
-- [x] All integration tests pass
-- [x] Can optionally point at real Go Person Server instead of mock
+- [ ] `demo-run.sh` runs all three flows end-to-end with console output showing each step
+- [ ] All integration tests pass
+- [ ] Can optionally point at real Go Person Server instead of mock
 
 ---
 
@@ -223,9 +242,9 @@ This lets the demo run fully self-contained in .NET without external dependencie
 
 ### Phase 4 Definition of Done
 
-- [x] `dotnet tool install` works
-- [x] `aauth generate` + `aauth sign-token` + `aauth fetch https://whoami-server/` works end-to-end
-- [x] Config file compatible with packages-js format
+- [ ] `dotnet tool install` works
+- [ ] `aauth generate` + `aauth sign-token` + `aauth fetch https://whoami-server/` works end-to-end
+- [ ] Config file compatible with packages-js format
 
 ---
 
@@ -269,9 +288,9 @@ This lets the demo run fully self-contained in .NET without external dependencie
 
 ### Phase 5 Definition of Done
 
-- [x] `docker compose up` brings up all components
-- [x] Can run through identity-based, PS-asserted, and user-consent flows
-- [x] Integration tests pass against running stack
+- [ ] `docker compose up` brings up all components
+- [ ] Can run through identity-based, PS-asserted, and user-consent flows
+- [ ] Integration tests pass against running stack
 
 ---
 

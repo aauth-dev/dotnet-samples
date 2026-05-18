@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.18.0" />
+    <PackageReference Include="NSign.BouncyCastle" Version="1.2.3" />
+    <PackageReference Include="NSign.Client" Version="1.2.3" />
+    <PackageReference Include="StructuredFieldValues" Version="0.7.7" />
+  </ItemGroup>
+
+</Project>

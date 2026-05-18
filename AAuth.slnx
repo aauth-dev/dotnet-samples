@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/AgentConsole/AgentConsole.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/AAuth/AAuth.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AAuth.Conformance/AAuth.Conformance.csproj" />
+    <Project Path="tests/AAuth.Tests/AAuth.Tests.csproj" />
+  </Folder>
+</Solution>
