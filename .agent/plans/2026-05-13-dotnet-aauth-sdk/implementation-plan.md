@@ -16,6 +16,25 @@
 
 **Goal**: An agent console app that generates a key, creates an `aa-agent+jwt`, and makes a signed HTTP request.
 
+### Phase 1 Implementation Decisions (recorded 2026-05-18)
+
+Confirmed before starting implementation:
+
+- **Target framework**: `net10.0` (matches dev container SDK 10.0.300). Native `System.Security.Cryptography.EdDSA` is available — no external NuGet needed for raw Ed25519 key generation, signing, or verification.
+- **NuGet versions pinned for Phase 1**:
+  - `NSign.Client` 1.2.3 — RFC 9421 outbound signing handler.
+  - `NSign.BouncyCastle` 1.2.3 — Ed25519 signature provider for NSign (NSign does not yet wrap `System.Security.Cryptography.EdDSA` directly).
+  - `Microsoft.IdentityModel.Tokens` 8.18.0 — `JsonWebKey` serialization and built-in `ComputeJwkThumbprint()` (RFC 7638).
+  - `StructuredFieldValues` 0.7.7 — RFC 8941 parser/serializer for the `Signature-Key` header and later AAuth headers.
+  - Tests: `xunit`, `xunit.runner.visualstudio`, `Microsoft.NET.Test.Sdk` (latest at pin time).
+- **Agent JWT signing strategy**: hand-roll a minimal JWT writer (Base64Url header + payload + `EdDSA.SignData`) inside `AgentTokenBuilder`. Rationale:
+  - `Microsoft.IdentityModel.Tokens` 8.18 still ships no built-in EdDSA `SignatureProvider`.
+  - Phase 1 only needs to *issue* one token type; the format is small and well-defined.
+  - Avoids pulling in a third JWT stack (`ScottBrady.IdentityModel.Tokens` or `jose-jwt`) before Phase 2's verification path is designed.
+  - Revisit when verification lands in Phase 2 — at that point we will either add an EdDSA provider for `JsonWebTokenHandler` or extend the hand-rolled code with a verifier.
+- **Key storage**: file-based JWK JSON under `~/.aauth/keys/` (no OS credential store integration in Phase 1).
+- **Single library project**: all Phase 1 code ships in `src/AAuth/AAuth.csproj`. No sub-package splitting until the API stabilizes.
+
 ### 1.1 Project scaffolding
 
 | Action | Detail |

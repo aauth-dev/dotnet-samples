@@ -1,5 +1,5 @@
 {
-  "name": ".NET 10 Dev Container",
+  "name": "AAuth .NET 10 Dev Container",
   "build": {
     "dockerfile": "Dockerfile"
   },
@@ -15,6 +15,6 @@
       }
     }
   },
-  "postCreateCommand": "dotnet restore",
+  "postCreateCommand": "dotnet --info",
   "remoteUser": "root"
 }
