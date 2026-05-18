@@ -10,7 +10,11 @@
 | **AAuth** (spec) | <https://github.com/dickhardt/AAuth> | Protocol specifications (draft-01) | Markdown / IETF |
 | **packages-js** | <https://github.com/aauth-dev/packages-js> | Reference TypeScript SDK (v0.9.0) | TypeScript / Node |
 | **whoami** | <https://github.com/aauth-dev/whoami> | Reference resource server (Cloudflare Worker) | TypeScript / Hono |
-| **aauth-full-demo** | <https://github.com/christian-posta/aauth-full-demo> | Multi-agent demo with gateway & Keycloak | Python / Go / React |
+| **aauth-full-demo** | <https://github.com/christian-posta/aauth-full-demo> | Multi-agent demo (no Keycloak) | Python / Go / React |
+| **aauth-python-library** | <https://github.com/christian-posta/aauth-python-library> | Python signing, key gen, token helpers (≥ 0.3.4) | Python |
+| **aauth-go-library** | <https://github.com/christian-posta/aauth-go-library> | Go signing & verification (used by ExtAuthz service) | Go |
+| **extauth-aauth-resource** | <https://github.com/christian-posta/extauth-aauth-resource> | ExtAuthz gRPC service — turns any resource into AAuth resource | Go |
+| **aauth-person-server** | <https://github.com/christian-posta/aauth-person-server> | Demo Person Server / Agent Provider | Go |
 | **dotnet-samples** | <https://github.com/aauth-dev/dotnet-samples> | This repo — target for .NET implementation | C# / .NET 10 |
 
 Spec commit: `c090879` (2026-05-11). Tagged: `draft-hardt-oauth-aauth-protocol-01`.
@@ -140,18 +144,48 @@ A stateless Cloudflare Worker implementing a minimal AAuth resource server. Key 
 
 ### 3.4 aauth-full-demo
 
-Multi-component demo showing real-world agent-to-agent flows:
+Multi-component demo showing real-world agent-to-agent flows.
+
+> **Updated 2026-05-18**: Keycloak has been removed from the demo. The UI is now
+> unprotected (static "guest" user). The AAuth flows (agent identity, agent tokens,
+> user consent at Person Server) do not depend on a UI login. Several new external
+> components are documented.
+
+#### Architecture Components
 
 | Component | Technology | Port for .NET |
 |---|---|---|
 | Backend API | Python / FastAPI | ASP.NET Core Web API |
 | Supply Chain Agent | Python / A2A protocol | .NET agent service |
 | Market Analysis Agent | Python / A2A protocol | .NET agent service |
-| Agent Gateway | Go binary (envoy-like) | Can reuse Go binary or build ASP.NET YARP proxy |
-| AAuth Service | Go (gRPC ext_authz) | ASP.NET gRPC service or middleware |
-| Supply Chain UI | React / Vite | Blazor or static React (optional) |
-| Keycloak | Java (Docker) | Can reuse Keycloak Docker image |
-| Person Server | Go (in gateway binary) | .NET minimal API |
+| Agent Gateway | [Agentgateway](https://github.com/agentgateway/agentgateway) (Go, v1.1.0) | Reuse binary — configures routes, ExtAuthz, and CEL policy rules |
+| AAuth Service (ExtAuthz) | [extauth-aauth-resource](https://github.com/christian-posta/extauth-aauth-resource) (Go, gRPC :7070) | Reuse binary or port — verifies JWT + RFC 9421 PoP, returns dynamic metadata |
+| Person Server / Agent Provider | [aauth-person-server](https://github.com/christian-posta/aauth-person-server) (Go) | Reuse binary — issues `aa-agent+jwt`, manages consent, issues `aa-auth+jwt` |
+| Python AAuth Library | [aauth-python-library](https://github.com/christian-posta/aauth-python-library) (≥ 0.3.4) | This is what we are replacing with .NET |
+| Supply Chain UI | React / Vite (no auth, guest mode) | Blazor or static React (optional) |
+
+#### External Libraries Referenced
+
+| Library | Language | Purpose |
+|---|---|---|
+| [aauth-python-library](https://github.com/christian-posta/aauth-python-library) | Python | Request signing, key generation, token helpers (used by agents and backend) |
+| [aauth-go-library](https://github.com/christian-posta/aauth-go-library) | Go | Signing and verification consumed by extauth-aauth-resource |
+
+#### Policy Enforcement Architecture
+
+The gateway uses a two-layer approach:
+1. **AAuth Service (ExtAuthz)** — Verifies token validity + HTTP signature PoP per resource config. Returns dynamic metadata (level, scheme, agent, scope, act, sub).
+2. **Agentgateway CEL rules** — Evaluates `extauthz.*` metadata against per-route authorization rules (allowed agents, scopes, actors).
+
+Both must allow before the resource is reached.
+
+#### Demo Walkthrough Steps (from updated docs)
+
+1. Install Agentgateway / Person Server / Agent Provider (`install-aauth.md`)
+2. Agent identity with `aa-agent+jwt` bootstrap (`agent-identity-jwks.md`)
+3. Agent authorization — autonomous flow / identity-based + PS-asserted (`agent-authorization-autonomous.md`)
+4. Agent authorization — user consent flow (`agent-authorization-on-behalf-of.md`)
+5. Apply policy with Agentgateway CEL rules (`apply-policy-agentgateway.md`)
 
 ---
 
@@ -254,8 +288,8 @@ A console app that:
 A multi-project solution showing agent-to-agent communication:
 - ASP.NET Core backend API (replaces Python FastAPI)
 - Agent services communicating via signed HTTP
-- Policy enforcement middleware
-- Integration with Keycloak for user auth (reuse Docker image)
+- Reuse Agentgateway binary + ExtAuthz AAuth Service + Person Server (Go binaries)
+- Policy enforcement via gateway CEL rules (no Keycloak needed)
 - Integration tests
 
 ---
@@ -495,10 +529,10 @@ dotnet-samples/
 
 ### Phase 4 — Full Demo
 
-16. **Backend API** — ASP.NET Core equivalent of the Python FastAPI backend.
+16. **Backend API** — ASP.NET Core equivalent of the Python FastAPI backend (no Keycloak; static guest user).
 17. **Agent services** — supply chain + market analysis.
-18. **Integration tests** — end-to-end flows for Mode 1, Mode 3, user consent.
-19. **Gateway integration** — configure the Go agent gateway with .NET backends (or build YARP-based alternative).
+18. **Integration tests** — end-to-end flows for identity-based, PS-asserted (autonomous), user consent.
+19. **Gateway integration** — configure Agentgateway + ExtAuthz AAuth Service + Person Server (reuse Go binaries) with .NET backends.
 
 ### Phase 5 — Advanced (optional)
 
