@@ -112,12 +112,29 @@ Recorded 2026-05-18 from the self-review. These don't block Phase 1 DoD but shou
 
 **Goal**: A WhoAmI resource server that verifies agent signatures, issues resource tokens, and verifies auth tokens. The agent auto-handles the 401 challenge.
 
+### Phase 2 Implementation Decisions (recorded 2026-05-18)
+
+Confirmed before starting implementation:
+
+- **Inbound RFC 9421 verification is hand-rolled, informed by NSign's implementation.** Symmetric with Phase 1's outbound signer. NSign (`NSign.AspNetCore` + `NSign.SignatureProviders`) stays referenced as a study reference and as the source of the BouncyCastle Ed25519 transitive, but is **not** wired into the middleware pipeline. Rationale and impact:
+  - AAuth covers a fixed, small set of components (`@method`, `@authority`, `@path`, `signature-key`). The verification base reconstruction mirrors the Phase 1 signer almost line-for-line.
+  - Keeps the dependency graph identical to Phase 1; no new `IOptions`/DI plumbing.
+  - We read NSign's `SignatureInputParser`, `SignatureInputSpec`, and `MessageContext.GetSignatureBase` to ensure our parser handles the same edge cases (parameter ordering, quoted-string escapes, `created` parameter, structured-field framing).
+  - **Impact**: AAuth owns header parsing and freshness checks. Acceptable while the covered-component set is fixed; if AAuth ever needs full RFC 9421 component coverage (`@query-param`, derived components, Content-Digest binding, etc.), revisit and switch to NSign.
+  - Verification entry point is a plain `DelegatingHandler`-style ASP.NET middleware that consumes `HttpContext`; no NSign middleware in the pipeline.
+- **EdDSA JWT verification is hand-rolled with BouncyCastle**, mirroring `AgentTokenBuilder`'s signing path. Rationale and impact:
+  - Consistent with Phase 1's decision; avoids introducing `ScottBrady.IdentityModel.EdDsa` or a second JWT stack solely to verify three token types we already know the structure of.
+  - `TokenVerifier` does Base64Url decode of header/payload/signature, validates `alg=EdDSA` and `typ`, runs BouncyCastle `Ed25519Signer.VerifySignature`, then deserializes claims with `System.Text.Json` and validates them explicitly (`iss`, `aud`, `exp`, `iat`, `cnf.jwk` binding, `agent_jkt`, `scope`).
+  - **Impact**: AAuth ships its own claim-validation logic instead of leaning on `TokenValidationParameters`. Acceptable while the token shapes are spec-fixed and small. Reconsider if/when we need broader algorithm support (ES256, RS256) — at that point switching to `JsonWebTokenHandler` + an EdDSA provider becomes worthwhile.
+- **Three-party integration test uses an in-process mock PS via `WebApplicationFactory`.** A second `WebApplicationFactory<TPersonServerStartup>` in `tests/AAuth.Tests/Integration/` issues `aa-auth+jwt` against a test key, lets the agent retry, and asserts WhoAmI returns `200`. This keeps Phase 2 self-contained — no Phase 3 dependency. **Follow-up**: once Phase 3 lands `samples/MockPersonServer/`, the integration test should be migrated to spin up the real mock binary (or its `WebApplicationFactory`) so the test exercises shipped sample code rather than a private duplicate. Tracked as a Phase 3 §3.1 follow-up.
+
 ### 2.1 HTTP signature verification (inbound)
 
 | File | Responsibility |
 |---|---|
-| `src/AAuth/HttpSig/SignatureKeyParser.cs` | Parse `Signature-Key` header → extract JWT → decode `cnf.jwk` → provide public key to NSign verifier |
-| `src/AAuth/HttpSig/AAuthVerificationMiddleware.cs` | ASP.NET middleware layered on NSign.AspNetCore. Resolves key from `Signature-Key`, validates token type (`aa-agent+jwt` or `aa-auth+jwt`), sets `HttpContext.Items` with parsed claims |
+| `src/AAuth/HttpSig/SignatureKeyParser.cs` | Parse `Signature-Key` header → extract JWT → decode `cnf.jwk` → provide public key to the AAuth verifier |
+| `src/AAuth/HttpSig/AAuthVerifier.cs` | Hand-rolled RFC 9421 verifier (mirror of Phase 1 signer): parses `Signature-Input`, rebuilds signature base, checks `created` freshness window, verifies Ed25519 signature via BouncyCastle. Informed by NSign's parser but no runtime dependency on it. |
+| `src/AAuth/HttpSig/AAuthVerificationMiddleware.cs` | ASP.NET middleware that runs the verifier, validates the embedded token type (`aa-agent+jwt` or `aa-auth+jwt`), and sets `HttpContext.Items` with parsed claims |
 
 ### 2.2 Token verification
 
@@ -202,7 +219,7 @@ Update [tests/AAuth.Conformance/README.md](../../../tests/AAuth.Conformance/READ
 
 | File | Responsibility |
 |---|---|
-| `samples/MockPersonServer/Program.cs` | Minimal API acting as PS: `/.well-known/aauth-person.json`, `/.well-known/jwks.json`, `POST /token` (accepts resource_token, returns auth_token) |
+| `samples/MockPersonServer/Program.cs` | Minimal API acting as PS: `/.well-known/aauth-person.json`, `/.well-known/jwks.json`, `POST /token` (accepts resource_token, returns auth_token). **Phase 2 follow-up**: replace the in-process mock PS used by Phase 2's three-party integration test with this shipped sample once it exists. |
 | `samples/MockPersonServer/MockPersonServer.csproj` | Web project |
 
 This lets the demo run fully self-contained in .NET without external dependencies.
