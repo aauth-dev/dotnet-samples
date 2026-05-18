@@ -198,6 +198,29 @@ public sealed class TokenVerifier
         var header = DecodeJsonSegment(segments[0], "header");
         var payload = DecodeJsonSegment(segments[1], "payload");
 
+        // Run the cheap, locally-verifiable invariants (alg/typ/dwk) BEFORE
+        // any network call. Otherwise an obviously-invalid token can still
+        // trigger metadata + JWKS discovery, amplifying load and giving an
+        // attacker a free probe of the resource's outbound destinations.
+        var alg = (string?)header["alg"];
+        if (alg != AAuthKey.Algorithm)
+        {
+            throw new TokenVerificationException(
+                $"Unsupported or missing 'alg' (expected '{AAuthKey.Algorithm}', got '{alg}').");
+        }
+        var typ = (string?)header["typ"];
+        if (typ != expectedType)
+        {
+            throw new TokenVerificationException(
+                $"Unexpected 'typ' (expected '{expectedType}', got '{typ}').");
+        }
+        var dwk = (string?)payload["dwk"];
+        if (dwk != expectedDwk)
+        {
+            throw new TokenVerificationException(
+                $"Unexpected 'dwk' (expected '{expectedDwk}', got '{dwk}').");
+        }
+
         var iss = (string?)payload["iss"]
             ?? throw new TokenVerificationException("Token is missing 'iss'.");
         // Validate the issuer URL shape BEFORE making any network call to

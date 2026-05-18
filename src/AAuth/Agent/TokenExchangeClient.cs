@@ -57,8 +57,30 @@ public sealed class TokenExchangeClient
             ?? throw new InvalidOperationException(
                 $"Person Server metadata at {metadataUrl} is missing 'token_endpoint'.");
 
+        // A malicious or compromised PS metadata document could otherwise
+        // redirect the signed exchange request to an arbitrary URL (SSRF
+        // pivot for the agent) or downgrade it to plain http. Require the
+        // same https-or-loopback policy used elsewhere, and pin the
+        // endpoint to the same origin as the configured PS so a metadata
+        // compromise can't divert the signed exchange off-host.
+        if (!AAuthUrl.IsHttpsOrLoopback(tokenEndpoint)
+            || !Uri.TryCreate(tokenEndpoint, UriKind.Absolute, out var tokenEndpointUri))
+        {
+            throw new InvalidOperationException(
+                $"Person Server 'token_endpoint' must be an absolute https:// URL (or http://localhost): {tokenEndpoint}");
+        }
+        if (!Uri.TryCreate(personServer, UriKind.Absolute, out var psUri)
+            || !string.Equals(
+                tokenEndpointUri.GetLeftPart(UriPartial.Authority),
+                psUri.GetLeftPart(UriPartial.Authority),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Person Server 'token_endpoint' must share an origin with {personServer}: {tokenEndpoint}");
+        }
+
         var body = new JsonObject { ["resource_token"] = resourceToken };
-        using var request = new HttpRequestMessage(HttpMethod.Post, tokenEndpoint)
+        using var request = new HttpRequestMessage(HttpMethod.Post, tokenEndpointUri)
         {
             Content = JsonContent.Create(body),
         };
