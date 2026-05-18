@@ -1,0 +1,9 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Common settings and packages come from tests/Directory.Build.props. -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AAuth\AAuth.csproj" />
+  </ItemGroup>
+
+</Project>

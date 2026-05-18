@@ -312,6 +312,8 @@ A multi-project solution showing agent-to-agent communication:
 
 ### 5.2 .NET Crypto Availability
 
+> **Update (2026-05-18):** Hands-on verification in the dev container (.NET SDK 10.0.300) shows that `System.Security.Cryptography.EdDSA` does **not** resolve at runtime. The .NET 9/10 native EdDSA referenced in earlier rows of the table below did not actually ship in the runtime shipped here. Treat Ed25519 raw crypto as requiring an external NuGet (`NSec.Cryptography`, or BouncyCastle which arrives transitively via `NSign.BouncyCastle`) on all .NET versions for now.
+
 | Algorithm | .NET 10 | .NET 8 | NuGet fallback |
 |---|---|---|---|
 | Ed25519 (raw crypto) | `System.Security.Cryptography.EdDSA` | Not available | `NSec.Cryptography` (libsodium‑based, recommended) or `Portable.BouncyCastle` |

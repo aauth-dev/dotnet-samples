@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.18.0" />
+    <!--
+      NSign.Client and NSign.BouncyCastle are *not* used by Phase 1 source.
+      They are pinned here intentionally so that:
+        1. BouncyCastle (Ed25519) arrives transitively via NSign.BouncyCastle,
+           giving us one canonical source for the BC types we depend on.
+        2. The dependency graph is settled before Phase 2 wires NSign's
+           DefaultMessageSigner / ASP.NET Core verification middleware in.
+      See `.agent/plans/2026-05-13-dotnet-aauth-sdk/implementation-plan.md`
+      §"Phase 1 Implementation Decisions" for the full rationale. Do not
+      trim these without revisiting that decision.
+    -->
+    <PackageReference Include="NSign.BouncyCastle" Version="1.2.3" />
+    <PackageReference Include="NSign.Client" Version="1.2.3" />
+  </ItemGroup>
+
+</Project>
