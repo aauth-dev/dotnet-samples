@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using AAuth.Crypto;
 using Xunit;
 
@@ -72,5 +73,30 @@ public class KeyStoreTests : IDisposable
     {
         var store = new KeyStore(_tempDir);
         Assert.Throws<ArgumentException>(() => store.Exists(name));
+    }
+
+    [Fact]
+    public void Save_OnUnix_RestrictsKeyFilePermissionsToOwnerOnly()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux) &&
+            !RuntimeInformation.IsOSPlatform(OSPlatform.OSX) &&
+            !RuntimeInformation.IsOSPlatform(OSPlatform.FreeBSD))
+        {
+            return; // Permission semantics differ on Windows; covered by docs.
+        }
+
+        var store = new KeyStore(_tempDir);
+        store.Save("agent", AAuthKey.Generate());
+
+        var dirMode = File.GetUnixFileMode(_tempDir);
+        var fileMode = File.GetUnixFileMode(Path.Combine(_tempDir, "agent.jwk.json"));
+
+        // No group/other bits should be set on either the directory or the key file.
+        var forbiddenForBoth = UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
+            | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute;
+        Assert.Equal((UnixFileMode)0, dirMode & forbiddenForBoth);
+        Assert.Equal((UnixFileMode)0, fileMode & forbiddenForBoth);
+        // File must not be executable for the owner either.
+        Assert.Equal((UnixFileMode)0, fileMode & UnixFileMode.UserExecute);
     }
 }

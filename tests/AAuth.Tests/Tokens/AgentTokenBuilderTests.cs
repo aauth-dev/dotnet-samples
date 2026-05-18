@@ -24,6 +24,26 @@ public class AgentTokenBuilderTests
         return (header, payload, signature, signingInput);
     }
 
+    [Theory]
+    [InlineData("", "sub", "kid")]
+    [InlineData(" ", "sub", "kid")]
+    [InlineData("iss", "", "kid")]
+    [InlineData("iss", " ", "kid")]
+    [InlineData("iss", "sub", "")]
+    [InlineData("iss", "sub", " ")]
+    public void Build_RejectsEmptyRequiredClaims(string iss, string sub, string kid)
+    {
+        var builder = new AgentTokenBuilder
+        {
+            Issuer = iss,
+            Subject = sub,
+            KeyId = kid,
+            Key = NewKey(),
+        };
+
+        Assert.Throws<InvalidOperationException>(() => builder.Build());
+    }
+
     [Fact]
     public void Build_EmitsRequiredHeaderClaims()
     {

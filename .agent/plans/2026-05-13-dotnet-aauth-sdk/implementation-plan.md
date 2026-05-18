@@ -26,8 +26,8 @@ Confirmed before starting implementation:
   - `NSign.Client` 1.2.3 — RFC 9421 outbound signing handler.
   - `NSign.BouncyCastle` 1.2.3 — Ed25519 signature provider for NSign (NSign does not yet wrap `System.Security.Cryptography.EdDSA` directly).
   - `Microsoft.IdentityModel.Tokens` 8.18.0 — `JsonWebKey` serialization and built-in `ComputeJwkThumbprint()` (RFC 7638).
-  - `StructuredFieldValues` 0.7.7 — RFC 8941 parser/serializer for the `Signature-Key` header and later AAuth headers.
-  - Tests: `xunit`, `xunit.runner.visualstudio`, `Microsoft.NET.Test.Sdk` (latest at pin time).
+  - **Removed during PR review (2026-05-18):** `StructuredFieldValues` 0.7.7 was originally pinned for the `Signature-Key` header but the hand-rolled parser made it unused; dropped to keep the transitive closure minimal. Re-add when a future header genuinely needs full RFC 8941 coverage.
+  - Tests: `xunit`, `xunit.runner.visualstudio`, `Microsoft.NET.Test.Sdk` (latest at pin time). Shared via `tests/Directory.Build.props`.
 - **Agent JWT signing strategy**: hand-roll a minimal JWT writer (Base64Url header + payload + BouncyCastle `Ed25519Signer`) inside `AgentTokenBuilder`. Rationale:
   - `Microsoft.IdentityModel.Tokens` 8.18 still ships no built-in EdDSA `SignatureProvider`.
   - Native `System.Security.Cryptography.EdDSA` is unavailable on .NET 10 in this container.

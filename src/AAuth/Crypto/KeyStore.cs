@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -38,15 +39,26 @@ public sealed class KeyStore
     }
 
     /// <summary>Persist a key under <paramref name="name"/>.</summary>
+    /// <remarks>
+    /// On Unix-like systems the containing directory is created with mode
+    /// <c>0700</c> and the file is written with mode <c>0600</c> so the
+    /// private key is not world-readable. No equivalent restriction is
+    /// applied on Windows in Phase 1 (file ACLs are inherited from the
+    /// parent directory — user profile defaults are typically already
+    /// owner-only).
+    /// </remarks>
     public void Save(string name, AAuthKey key)
     {
         ArgumentNullException.ThrowIfNull(key);
         ValidateName(name);
 
         System.IO.Directory.CreateDirectory(_directory);
+        TryRestrictUnixPermissions(_directory, isDirectory: true);
+
         var path = PathFor(name);
         var jwk = key.ToPrivateJwk();
         File.WriteAllText(path, jwk.ToJsonString(s_writerOptions));
+        TryRestrictUnixPermissions(path, isDirectory: false);
     }
 
     /// <summary>Load a key previously saved under <paramref name="name"/>.</summary>
@@ -90,6 +102,29 @@ public sealed class KeyStore
             name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
         {
             throw new ArgumentException("Invalid key name.", nameof(name));
+        }
+    }
+
+    private static void TryRestrictUnixPermissions(string path, bool isDirectory)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux) &&
+            !RuntimeInformation.IsOSPlatform(OSPlatform.OSX) &&
+            !RuntimeInformation.IsOSPlatform(OSPlatform.FreeBSD))
+        {
+            return;
+        }
+
+        // 0700 for directories, 0600 for files.
+        var mode = isDirectory
+            ? UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            : UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        if (isDirectory)
+        {
+            File.SetUnixFileMode(path, mode);
+        }
+        else
+        {
+            File.SetUnixFileMode(path, mode);
         }
     }
 }

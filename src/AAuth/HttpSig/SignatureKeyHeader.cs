@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Text;
 
 namespace AAuth.HttpSig;
@@ -59,7 +58,6 @@ public static class SignatureKeyHeader
     {
         ArgumentNullException.ThrowIfNull(headerValue);
 
-        using var reader = new StringReader(headerValue);
         var input = headerValue.Trim();
 
         const string keyPrefix = "sig=";

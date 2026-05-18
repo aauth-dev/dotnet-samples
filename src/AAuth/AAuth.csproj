@@ -10,7 +10,6 @@
     <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.18.0" />
     <PackageReference Include="NSign.BouncyCastle" Version="1.2.3" />
     <PackageReference Include="NSign.Client" Version="1.2.3" />
-    <PackageReference Include="StructuredFieldValues" Version="0.7.7" />
   </ItemGroup>
 
 </Project>

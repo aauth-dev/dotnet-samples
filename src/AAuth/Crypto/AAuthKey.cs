@@ -36,10 +36,16 @@ public sealed class AAuthKey
     /// <summary>True if this instance can sign (i.e. holds the private key).</summary>
     public bool HasPrivateKey => _private is not null;
 
-    /// <summary>32-byte raw public key.</summary>
+    /// <summary>
+    /// 32-byte raw public key. Each access returns a fresh defensive copy;
+    /// callers may mutate the array without affecting the underlying key.
+    /// </summary>
     public byte[] PublicKeyBytes => _public.GetEncoded();
 
-    /// <summary>32-byte raw private seed. Throws when this instance is public-only.</summary>
+    /// <summary>
+    /// 32-byte raw private seed. Each access returns a fresh defensive copy.
+    /// Throws when this instance is public-only.
+    /// </summary>
     public byte[] PrivateKeyBytes =>
         _private?.GetEncoded() ?? throw new InvalidOperationException("Key has no private component.");
 
@@ -53,8 +59,9 @@ public sealed class AAuthKey
     }
 
     /// <summary>Sign the given data with the private key.</summary>
-    public byte[] Sign(ReadOnlySpan<byte> data)
+    public byte[] Sign(byte[] data)
     {
+        ArgumentNullException.ThrowIfNull(data);
         if (_private is null)
         {
             throw new InvalidOperationException("Key has no private component.");
@@ -62,18 +69,19 @@ public sealed class AAuthKey
 
         var signer = new Org.BouncyCastle.Crypto.Signers.Ed25519Signer();
         signer.Init(forSigning: true, _private);
-        signer.BlockUpdate(data.ToArray(), 0, data.Length);
+        signer.BlockUpdate(data, 0, data.Length);
         return signer.GenerateSignature();
     }
 
     /// <summary>Verify a signature with the public key.</summary>
-    public bool Verify(ReadOnlySpan<byte> data, ReadOnlySpan<byte> signature)
+    public bool Verify(byte[] data, byte[] signature)
     {
+        ArgumentNullException.ThrowIfNull(data);
+        ArgumentNullException.ThrowIfNull(signature);
         var signer = new Org.BouncyCastle.Crypto.Signers.Ed25519Signer();
         signer.Init(forSigning: false, _public);
-        var dataArr = data.ToArray();
-        signer.BlockUpdate(dataArr, 0, dataArr.Length);
-        return signer.VerifySignature(signature.ToArray());
+        signer.BlockUpdate(data, 0, data.Length);
+        return signer.VerifySignature(signature);
     }
 
     /// <summary>Export the public half as a JWK JSON document.</summary>

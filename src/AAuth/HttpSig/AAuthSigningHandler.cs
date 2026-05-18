@@ -23,11 +23,20 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     /// <summary>RFC 9421 signature label. AAuth uses <c>sig</c>.</summary>
     public const string SignatureLabel = "sig";
 
-    /// <summary>The AAuth-mandated covered component identifiers, in order.</summary>
-    public static readonly IReadOnlyList<string> CoveredComponents = new[]
+    /// <summary>
+    /// The AAuth-mandated covered component identifiers, in order.
+    /// </summary>
+    /// <remarks>
+    /// Note that <c>@query</c> is intentionally <em>not</em> covered: query
+    /// parameters are not part of the AAuth signature base and therefore can
+    /// be modified by intermediaries without invalidating the signature. The
+    /// AAuth spec deliberately scopes signing to method, authority, path, and
+    /// the carrier token in <c>signature-key</c>.
+    /// </remarks>
+    public static readonly IReadOnlyList<string> CoveredComponents = Array.AsReadOnly(new[]
     {
         "@method", "@authority", "@path", "signature-key",
-    };
+    });
 
     private readonly AAuthKey _key;
     private readonly Func<string> _tokenFactory;
@@ -38,7 +47,9 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     /// <param name="tokenFactory">
     /// Returns the JWT to embed in the <c>Signature-Key</c> header for each
     /// request (typically an agent token; later an auth token after the
-    /// three-party flow).
+    /// three-party flow). Exceptions thrown by the factory propagate verbatim
+    /// out of <see cref="SendAsync"/>; callers are responsible for handling
+    /// token-acquisition failures.
     /// </param>
     /// <param name="clock">Optional clock for deterministic tests.</param>
     public AAuthSigningHandler(

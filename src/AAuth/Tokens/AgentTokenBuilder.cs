@@ -57,6 +57,18 @@ public sealed class AgentTokenBuilder
     /// <summary>Build and sign the agent token. Returns the compact JWT serialization.</summary>
     public string Build()
     {
+        if (string.IsNullOrWhiteSpace(Issuer))
+        {
+            throw new InvalidOperationException("Issuer must be a non-empty string.");
+        }
+        if (string.IsNullOrWhiteSpace(Subject))
+        {
+            throw new InvalidOperationException("Subject must be a non-empty string.");
+        }
+        if (string.IsNullOrWhiteSpace(KeyId))
+        {
+            throw new InvalidOperationException("KeyId must be a non-empty string.");
+        }
         if (!Key.HasPrivateKey)
         {
             throw new InvalidOperationException("Signing key must include a private component.");

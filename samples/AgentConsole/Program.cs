@@ -16,13 +16,28 @@ var url = new Uri(args[0]);
 string issuer = "https://ap.example";
 string subject = "aauth:demo@ap.example";
 string keyId = "demo";
-for (int i = 1; i < args.Length - 1; i++)
+for (int i = 1; i < args.Length; i++)
 {
-    switch (args[i])
+    string flag = args[i];
+    if (flag is "--iss" or "--sub" or "--kid")
     {
-        case "--iss": issuer = args[++i]; break;
-        case "--sub": subject = args[++i]; break;
-        case "--kid": keyId = args[++i]; break;
+        if (i + 1 >= args.Length)
+        {
+            Console.Error.WriteLine($"Missing value for {flag}.");
+            return 1;
+        }
+        var value = args[++i];
+        switch (flag)
+        {
+            case "--iss": issuer = value; break;
+            case "--sub": subject = value; break;
+            case "--kid": keyId = value; break;
+        }
+    }
+    else
+    {
+        Console.Error.WriteLine($"Unknown argument: {flag}");
+        return 1;
     }
 }
 
