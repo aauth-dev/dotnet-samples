@@ -64,28 +64,40 @@ public sealed class ChallengeHandler : DelegatingHandler
             return response;
         }
 
-        AAuthRequirementHeader.ParsedRequirement requirement;
-        try
+        AAuthRequirementHeader.ParsedRequirement? requirement = null;
+        // The header MAY appear more than once; parse each value
+        // independently and pick the first auth-token requirement we
+        // recognise. Concatenating with ',' and re-parsing would only work
+        // if AAuthRequirementHeader.Parse spoke full RFC 9651 dictionary
+        // grammar, which it deliberately doesn't.
+        foreach (var raw in values)
         {
-            // The header MAY appear more than once; concatenate per RFC 9651
-            // (== RFC 8941 §1). The aggregate is also a valid dictionary —
-            // the agent re-parses the joined form.
-            requirement = AAuthRequirementHeader.Parse(string.Join(", ", values));
-        }
-        catch (FormatException)
-        {
-            return response;
+            if (string.IsNullOrWhiteSpace(raw)) { continue; }
+            try
+            {
+                var candidate = AAuthRequirementHeader.Parse(raw);
+                if (candidate.Requirement == AAuthRequirementHeader.AuthTokenRequirement
+                    && candidate.ResourceToken is not null)
+                {
+                    requirement = candidate;
+                    break;
+                }
+            }
+            catch (FormatException)
+            {
+                // Skip malformed individual values; another header line may
+                // still carry a usable requirement.
+            }
         }
 
-        if (requirement.Requirement != AAuthRequirementHeader.AuthTokenRequirement
-            || requirement.ResourceToken is null)
+        if (requirement is null)
         {
             return response;
         }
 
         // Got an auth-token challenge. Exchange and retry.
         var authToken = await _exchange
-            .ExchangeAsync(_personServer, requirement.ResourceToken, cancellationToken)
+            .ExchangeAsync(_personServer, requirement.ResourceToken!, cancellationToken)
             .ConfigureAwait(false);
         _holder.Update(authToken);
 

@@ -155,13 +155,13 @@ Confirmed before starting implementation:
 
 | File | Responsibility |
 |---|---|
-| `src/AAuth/Server/WellKnownEndpoints.cs` | Extension method: `app.MapAAuthWellKnown(options)` → serves `/.well-known/aauth-resource.json` and `/.well-known/jwks.json` |
+| `src/AAuth/Server/WellKnownEndpoints.cs` | Extension method: `app.MapAAuthResourceWellKnown(options)` → serves `/.well-known/aauth-resource.json` and `/.well-known/jwks.json` |
 
 ### 2.5 AAuth-Requirement response
 
 | File | Responsibility |
 |---|---|
-| `src/AAuth/Headers/AAuthRequirementHeader.cs` | Build and parse `AAuth-Requirement: requirement=auth-token; resource-token="..."` using StructuredFieldValues. Inbound parsing is exposed on the same type via static `Parse`; no separate `AAuthRequirementParser.cs` is shipped. |
+| `src/AAuth/Headers/AAuthRequirementHeader.cs` | Build and parse `AAuth-Requirement: requirement=auth-token; resource-token="..."` with a hand-rolled parser sharing structure with `SignatureKeyHeader`. Inbound parsing is exposed on the same type via static `Parse`; no separate `AAuthRequirementParser.cs` is shipped. |
 
 ### 2.6 WhoAmI sample server
 

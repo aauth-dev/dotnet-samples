@@ -112,16 +112,23 @@ public static class AAuthVerificationMiddlewareExtensions
     /// <summary>
     /// Add the AAuth HTTP-signature verification middleware to the pipeline.
     /// When <paramref name="verifier"/> is null, the middleware resolves an
-    /// <see cref="AAuthVerifier"/> from DI (or constructs a default one if
-    /// none is registered).
+    /// <see cref="AAuthVerifier"/> from DI; if none is registered, a default
+    /// instance is constructed at first use.
     /// </summary>
     public static IApplicationBuilder UseAAuthVerification(
         this IApplicationBuilder app,
         AAuthVerifier? verifier = null)
     {
         ArgumentNullException.ThrowIfNull(app);
-        return verifier is null
-            ? app.UseMiddleware<AAuthVerificationMiddleware>()
-            : app.UseMiddleware<AAuthVerificationMiddleware>(verifier);
+        if (verifier is not null)
+        {
+            return app.UseMiddleware<AAuthVerificationMiddleware>(verifier);
+        }
+        // Resolve from DI now (rather than letting UseMiddleware throw if
+        // AAuthVerifier isn't registered) so we can fall back to a default
+        // instance — matching the documented behaviour.
+        var resolved = app.ApplicationServices.GetService(typeof(AAuthVerifier)) as AAuthVerifier
+            ?? new AAuthVerifier();
+        return app.UseMiddleware<AAuthVerificationMiddleware>(resolved);
     }
 }

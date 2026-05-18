@@ -67,6 +67,18 @@ public sealed class AuthTokenBuilder
         Require(Audience, nameof(Audience));
         Require(Agent, nameof(Agent));
         Require(KeyId, nameof(KeyId));
+        // `required` is a compile-time hint; reflection / default! callers
+        // can still pass null. Fail explicitly so the diagnostic points at
+        // the configuration rather than surfacing as a NullReferenceException
+        // deep inside the JWT writer.
+        if (Key is null)
+        {
+            throw new InvalidOperationException("Key must be set.");
+        }
+        if (AgentConfirmationKey is null)
+        {
+            throw new InvalidOperationException("AgentConfirmationKey must be set.");
+        }
         if (!Key.HasPrivateKey)
         {
             throw new InvalidOperationException("Signing key must include a private component.");

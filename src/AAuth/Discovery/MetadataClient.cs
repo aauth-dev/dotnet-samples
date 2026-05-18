@@ -56,13 +56,17 @@ public sealed class MetadataClient
     }
 
     /// <summary>Fetch metadata, returning a cached document when fresh.</summary>
+    /// <remarks>
+    /// Returns a deep clone of the cached document so callers cannot
+    /// mutate the shared cache entry.
+    /// </remarks>
     public async Task<JsonObject> FetchAsync(Uri url, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(url);
         var now = _clock();
         if (_cache.TryGetValue(url, out var entry) && now < entry.Expiry)
         {
-            return entry.Document;
+            return CloneObject(entry.Document);
         }
 
         using var response = await _http.GetAsync(url, cancellationToken).ConfigureAwait(false);
@@ -71,11 +75,14 @@ public sealed class MetadataClient
             ?? throw new InvalidOperationException($"Metadata at {url} is not a JSON object.");
 
         _cache[url] = new CacheEntry(doc, now + _cacheTtl);
-        return doc;
+        return CloneObject(doc);
     }
 
     /// <summary>Discard any cached entry for <paramref name="url"/>.</summary>
     public void Invalidate(Uri url) => _cache.TryRemove(url, out _);
+
+    private static JsonObject CloneObject(JsonObject source) =>
+        (JsonObject)source.DeepClone();
 
     private sealed record CacheEntry(JsonObject Document, DateTimeOffset Expiry);
 }

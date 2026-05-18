@@ -33,7 +33,7 @@ The four parties are:
 |-----------|------|---------|
 | `AAuth.Crypto` | `AAuthKey`, `KeyStore` | Ed25519 key generation, on-disk persistence, JWK import/export |
 | `AAuth.Tokens` | `AgentTokenBuilder` | Builds `aa-agent+jwt` carrying agent identity, DWK, and optional PS pointer |
-| `AAuth.Tokens` | `ResourceTokenBuilder` | Issues `aa-rsrc+jwt` for an RS to challenge an agent |
+| `AAuth.Tokens` | `ResourceTokenBuilder` | Issues `aa-resource+jwt` for an RS to challenge an agent |
 | `AAuth.Tokens` | `AuthTokenBuilder` | Issues `aa-auth+jwt` for a PS to attest a person's delegation |
 | `AAuth.Tokens` | `TokenVerifier` | EdDSA JWT verification with full claim checks (`VerifyWithJwksAsync` for PS-issued tokens) |
 | `AAuth.HttpSig` | `AAuthSigningHandler` | `DelegatingHandler` that signs outbound requests per RFC 9421 |

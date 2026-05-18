@@ -147,9 +147,12 @@ public sealed class TokenVerifier
 
         var iss = (string?)payload["iss"]
             ?? throw new TokenVerificationException("Token is missing 'iss'.");
-        if (!Uri.TryCreate(iss, UriKind.Absolute, out var issUri) || issUri.Scheme != "https")
+        if (!AAuthUrl.IsHttpsOrLoopback(iss))
         {
-            throw new TokenVerificationException("Token 'iss' must be an absolute https:// URL.");
+            // Align with AAuthUrl.IsHttpsOrLoopback so issuers accepted by
+            // the builders (https + loopback http for local dev/tests) also
+            // verify here.
+            throw new TokenVerificationException("Token 'iss' must be an absolute https:// URL (or http://localhost).");
         }
 
         return new VerifiedToken(header, payload, iss, typ);
@@ -197,6 +200,13 @@ public sealed class TokenVerifier
 
         var iss = (string?)payload["iss"]
             ?? throw new TokenVerificationException("Token is missing 'iss'.");
+        // Validate the issuer URL shape BEFORE making any network call to
+        // discovery: an attacker-controlled token could otherwise coerce the
+        // resource into fetching arbitrary internal URLs (classic SSRF).
+        if (!AAuthUrl.IsHttpsOrLoopback(iss))
+        {
+            throw new TokenVerificationException("Token 'iss' must be an absolute https:// URL (or http://localhost).");
+        }
         var kid = (string?)header["kid"]
             ?? throw new TokenVerificationException("Token header is missing 'kid'.");
 
@@ -216,6 +226,14 @@ public sealed class TokenVerifier
         if (!Uri.TryCreate(jwksUriRaw, UriKind.Absolute, out var jwksUri))
         {
             throw new TokenVerificationException($"Issuer metadata 'jwks_uri' is not an absolute URL: {jwksUriRaw}");
+        }
+        // Same SSRF guard for the discovered jwks_uri: a compromised or
+        // malicious metadata document could otherwise redirect the JWKS
+        // fetch to an internal host.
+        if (!AAuthUrl.IsHttpsOrLoopback(jwksUriRaw))
+        {
+            throw new TokenVerificationException(
+                $"Issuer metadata 'jwks_uri' must be an absolute https:// URL (or http://localhost): {jwksUriRaw}");
         }
 
         var issuerKey = await jwks.ResolveKeyAsync(jwksUri, kid, cancellationToken).ConfigureAwait(false)

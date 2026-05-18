@@ -186,7 +186,16 @@ static async Task<IResult> ReturnClaims(
             statusCode: StatusCodes.Status401Unauthorized);
     }
 
-    var authKey = AAuthKey.FromJwk(authCnf);
+    AAuthKey authKey;
+    try
+    {
+        authKey = AAuthKey.FromJwk(authCnf);
+    }
+    catch (Exception ex) when (ex is ArgumentException or FormatException)
+    {
+        return Results.Json(new { error = "invalid_auth_token", detail = $"malformed cnf.jwk: {ex.Message}" },
+            statusCode: StatusCodes.Status401Unauthorized);
+    }
     if (authKey.ComputeJwkThumbprint() != parsed.ConfirmationKey.ComputeJwkThumbprint())
     {
         return Results.Json(new { error = "invalid_auth_token", detail = "cnf.jwk does not match request signing key" },
