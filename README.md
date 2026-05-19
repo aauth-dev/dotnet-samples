@@ -1,6 +1,6 @@
 # dotnet-samples
 
-> **Status: Work in Progress** — Phase 2 of the .NET AAuth SDK is complete: Ed25519 keys, agent JWT, RFC 9421 outbound signing, signature verification middleware, resource & auth token builders, JWKS / metadata discovery clients, and a working three-party challenge/exchange flow. CLI tool and full multi-agent demo land in later phases. See the [implementation plan](.agent/plans/2026-05-13-dotnet-aauth-sdk/implementation-plan.md) for phase status.
+> **Status: Work in Progress** — Phase 3 of the .NET AAuth SDK is complete: Ed25519 keys, agent JWT, RFC 9421 outbound signing, signature verification middleware, resource & auth token builders, JWKS / metadata discovery clients, the working three-party challenge/exchange flow (autonomous **and** deferred user-consent), a reference `MockPersonServer` (with `403 access_denied` denial support), and the Blazor `GuidedTour` walk-through. CLI tool and full multi-agent demo land in later phases. See the [implementation plan](.agent/plans/2026-05-13-dotnet-aauth-sdk/implementation-plan.md) for phase status.
 
 AAuth samples and SDK for .NET — demonstrating the [AAuth protocol](https://github.com/dickhardt/AAuth) for agent-to-resource authorization with cryptographic proof-of-possession.
 
@@ -23,6 +23,8 @@ The four parties are:
 | [src/AAuth/](src/AAuth/) | AAuth SDK library |
 | [samples/AgentConsole/](samples/AgentConsole/) | Console agent: signs requests, handles AAuth challenges, exchanges with a PS |
 | [samples/WhoAmI/](samples/WhoAmI/) | ASP.NET Core resource server that verifies AAuth requests and issues resource tokens |
+| [samples/MockPersonServer/](samples/MockPersonServer/) | Reference Person Server: verifies signed exchange requests and mints auth tokens |
+| [samples/GuidedTour/](samples/GuidedTour/) | Blazor Server walk-through of the three-party flow with payloads, JWTs, and signature bases |
 | [tests/AAuth.Tests/](tests/AAuth.Tests/) | Unit + integration tests for the SDK |
 | [tests/AAuth.Conformance/](tests/AAuth.Conformance/) | Spec-traceable xUnit tests mirroring the AAuth spec section structure |
 | [.agent/plans/](.agent/plans/) | Research and planning documents |
@@ -110,9 +112,48 @@ Flags:
 | `--kid <name>` | `demo`                      | Key id under `~/.aauth/keys/` (generated on first use) |
 | `--ps <url>`   | _(none)_                    | Person Server URL — when set, the agent token includes a `ps` claim and the agent will handle resource-token challenges by exchanging at the PS's `token_endpoint` |
 
-### End-to-end demo against a real PS
+### 3. MockPersonServer (`samples/MockPersonServer/`)
 
-There is no PS sample in this repo yet (it lands in a later phase). The three-party flow is exercised end-to-end in [tests/AAuth.Tests/Integration/WhoAmIFlowTests.cs](tests/AAuth.Tests/Integration/WhoAmIFlowTests.cs), which spins up an in-process mock PS alongside WhoAmI and runs the full challenge → exchange → retry sequence.
+A reference Person Server. Verifies the RFC 9421 signature on the token-exchange request from the agent, parses the embedded `resource_token` (does **not** verify its signature against the RS's JWKS — demo-only), and mints an `aa-auth+jwt` bound to the agent's confirmation key.
+
+```bash
+dotnet run --project samples/MockPersonServer
+```
+
+Listens on `http://localhost:5100` by default.
+
+### 4. GuidedTour (`samples/GuidedTour/`)
+
+A Blazor Server walk-through of the three-party flow aimed at folks new to AAuth. Pauses between each step so you can see the RFC 9421 signature base, the decoded JWTs, and every request/response payload as the flow unfolds across a three-actor sequence diagram.
+
+Run all three samples in separate terminals (or use `make demo` — see [Quick demo](#quick-demo) below):
+
+```bash
+dotnet run --project samples/MockPersonServer   # terminal 1, port 5100
+dotnet run --project samples/WhoAmI             # terminal 2, port 5000
+dotnet run --project samples/GuidedTour         # terminal 3, port 5400
+```
+
+Then open <http://localhost:5400> and click **Run all**.
+
+### Quick demo
+
+A `Makefile` at the repo root exposes one-line commands for the common workflows:
+
+```bash
+make help          # list available targets
+make build         # dotnet build AAuth.slnx
+make test          # dotnet test AAuth.slnx
+make demo          # start WhoAmI + MockPersonServer + GuidedTour together
+make tour          # only the GuidedTour Blazor app (expects WhoAmI + MockPS already running)
+make whoami        # only the resource server
+make ps            # only the MockPersonServer
+make clean         # dotnet clean + remove bin/ obj/
+```
+
+`make demo` runs all three sample processes in parallel, prints their URLs, and tears them down on `Ctrl+C`.
+
+The three-party flow is also exercised end-to-end in [tests/AAuth.Tests/Integration/WhoAmIFlowTests.cs](tests/AAuth.Tests/Integration/WhoAmIFlowTests.cs), which drives the shipped `MockPersonServer` via `WebApplicationFactory` and runs the full challenge → exchange → retry sequence in-process.
 
 ## Testing
 

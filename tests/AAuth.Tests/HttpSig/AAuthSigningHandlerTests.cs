@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -198,5 +199,36 @@ public class AAuthSigningHandlerTests
             .Append("\"signature-key\": sig=jwt;jwt=\"abc.def.ghi\"\n")
             .Append("\"@signature-params\": ").Append(paramsLine);
         Assert.False(key.Verify(Encoding.UTF8.GetBytes(unescaped.ToString()), signature));
+    }
+
+    [Fact]
+    public async Task OnSignatureBase_IsInvokedWithBytesActuallySigned()
+    {
+        var key = AAuthKey.Generate();
+        var capture = new CaptureHandler();
+        string? observedBase = null;
+        HttpRequestMessage? observedRequest = null;
+
+        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi")
+        {
+            InnerHandler = capture,
+            OnSignatureBase = (req, b) =>
+            {
+                observedRequest = req;
+                observedBase = b;
+            },
+        };
+        using var client = new HttpClient(signing);
+
+        await client.GetAsync("https://resource.example/api");
+
+        Assert.NotNull(observedBase);
+        Assert.Same(capture.Captured, observedRequest);
+        // The hook must receive the canonical signature base — the exact
+        // bytes the signature is computed over — so a verifier rebuilding
+        // the same string and re-verifying the emitted signature must succeed.
+        var sigHeader = capture.Captured!.Headers.GetValues("Signature").Single();
+        var b64 = Regex.Match(sigHeader, @":(?<v>[^:]+):").Groups["v"].Value;
+        Assert.True(key.Verify(Encoding.ASCII.GetBytes(observedBase!), Convert.FromBase64String(b64)));
     }
 }

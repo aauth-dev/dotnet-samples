@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Discovery;
+using AAuth.Headers;
 
 namespace AAuth.Agent;
 
@@ -43,9 +45,35 @@ public sealed class TokenExchangeClient
     /// <paramref name="personServer"/> and return the auth token.
     /// </summary>
     /// <returns>The compact <c>aa-auth+jwt</c>.</returns>
+    public Task<string> ExchangeAsync(
+        string personServer,
+        string resourceToken,
+        CancellationToken cancellationToken = default)
+        => ExchangeAsync(personServer, resourceToken, onInteractionRequired: null,
+            pollerOptions: null, cancellationToken);
+
+    /// <summary>
+    /// Submit <paramref name="resourceToken"/> to the PS at
+    /// <paramref name="personServer"/> and return the auth token, with
+    /// support for the deferred / user-consent path (PS returns
+    /// <c>202 Accepted</c> + <c>AAuth-Requirement: requirement=interaction</c>).
+    /// </summary>
+    /// <param name="personServer">PS issuer URL (used to fetch <c>aauth-person.json</c>).</param>
+    /// <param name="resourceToken">Compact <c>aa-resource+jwt</c> from the resource's challenge.</param>
+    /// <param name="onInteractionRequired">
+    /// Invoked when the PS returns <c>202</c> with an interaction requirement,
+    /// before polling begins. Callers display the user-facing URL/code via
+    /// <see cref="AAuthInteraction.BuildUserUrl(string?)"/> and then return —
+    /// polling proceeds in parallel with the user's out-of-band action. If
+    /// <see langword="null"/> and the PS returns <c>202</c>, the call throws.
+    /// </param>
+    /// <param name="pollerOptions">Optional polling cadence/timeout override.</param>
+    /// <param name="cancellationToken">Caller cancellation.</param>
     public async Task<string> ExchangeAsync(
         string personServer,
         string resourceToken,
+        Func<AAuthInteraction, CancellationToken, Task>? onInteractionRequired,
+        DeferredPollerOptions? pollerOptions = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(personServer);
@@ -84,9 +112,130 @@ public sealed class TokenExchangeClient
         {
             Content = JsonContent.Create(body),
         };
-        using var response = await _signedClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        var response = await _signedClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
+        try
+        {
+            // Deferred response: the PS needs user interaction (consent /
+            // authentication) before it can issue an auth token. The
+            // Location header carries the pending URL the agent polls;
+            // the AAuth-Requirement header carries the user-facing URL+code.
+            if (response.StatusCode == HttpStatusCode.Accepted)
+            {
+                if (onInteractionRequired is null)
+                {
+                    throw new HttpRequestException(
+                        $"PS returned {(int)response.StatusCode} (deferred response) but no onInteractionRequired callback was provided.");
+                }
+
+                var interaction = ExtractInteraction(response);
+                if (interaction is not null)
+                {
+                    await onInteractionRequired(interaction, cancellationToken).ConfigureAwait(false);
+                }
+
+                var pendingUrl = ResolveLocation(response, tokenEndpointUri);
+                response.Dispose();
+                try
+                {
+                    response = await new DeferredPoller(_signedClient, pollerOptions)
+                        .PollAsync(pendingUrl, cancellationToken).ConfigureAwait(false);
+                }
+                catch (TimeoutException ex)
+                {
+                    throw new AAuthInteractionTimeoutException(
+                        $"PS deferred interaction did not complete within the polling budget: {ex.Message}",
+                        ex);
+                }
+
+                // 403 access_denied → user explicitly denied. Surface a
+                // distinct typed exception so UIs / retry policies can
+                // treat denial differently from "unknown id" (404) or
+                // transport failure.
+                if (response.StatusCode == HttpStatusCode.Forbidden
+                    && await IsAccessDeniedAsync(response, cancellationToken).ConfigureAwait(false))
+                {
+                    response.Dispose();
+                    throw new AAuthInteractionDeniedException(
+                        "The user denied the AAuth interaction request.");
+                }
+            }
+
+            return await ReadAuthTokenAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            response.Dispose();
+        }
+    }
+
+    private static async Task<bool> IsAccessDeniedAsync(
+        HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        // Buffer the body so the subsequent ReadAuthTokenAsync (if we
+        // decide it isn't access_denied) still sees it. Preserve the
+        // original Content-Type so downstream JSON parsers don't see a
+        // surprise text/plain media type.
+        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        var originalMediaType = response.Content.Headers.ContentType?.MediaType ?? "application/json";
+        var originalCharset = response.Content.Headers.ContentType?.CharSet;
+        // Fall back to UTF-8 for unknown / malformed charset values rather
+        // than surfacing an ArgumentException from Encoding.GetEncoding,
+        // which would mask the real exchange failure the caller is trying
+        // to diagnose.
+        System.Text.Encoding encoding;
+        if (string.IsNullOrEmpty(originalCharset))
+        {
+            encoding = System.Text.Encoding.UTF8;
+        }
+        else
+        {
+            try { encoding = System.Text.Encoding.GetEncoding(originalCharset); }
+            catch (ArgumentException) { encoding = System.Text.Encoding.UTF8; }
+        }
+        response.Content.Dispose();
+        response.Content = new StringContent(body, encoding, originalMediaType);
+        try
+        {
+            var json = JsonNode.Parse(body) as JsonObject;
+            return (string?)json?["error"] == "access_denied";
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static AAuthInteraction? ExtractInteraction(HttpResponseMessage response)
+    {
+        if (!response.Headers.TryGetValues(AAuthRequirementHeader.Name, out var values))
+        {
+            return null;
+        }
+        foreach (var raw in values)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) { continue; }
+            AAuthRequirementHeader.ParsedRequirement parsed;
+            try { parsed = AAuthRequirementHeader.Parse(raw); }
+            catch (FormatException) { continue; }
+            var interaction = AAuthInteraction.FromRequirement(parsed);
+            if (interaction is not null) { return interaction; }
+        }
+        return null;
+    }
+
+    private static Uri ResolveLocation(HttpResponseMessage response, Uri @base)
+    {
+        var location = response.Headers.Location
+            ?? throw new HttpRequestException(
+                "Deferred PS response is missing the Location header — cannot poll.");
+        return location.IsAbsoluteUri ? location : new Uri(@base, location);
+    }
+
+    private static async Task<string> ReadAuthTokenAsync(
+        HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             throw new HttpRequestException(

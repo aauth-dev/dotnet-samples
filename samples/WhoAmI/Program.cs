@@ -212,5 +212,16 @@ static async Task<IResult> ReturnClaims(
     });
 }
 
-// Expose Program so WebApplicationFactory<Program> can find the entry point.
-public partial class Program;
+// Marker type for `WebApplicationFactory<WhoAmI.Entry>` in the
+// integration tests. Avoids the ambiguity between the implicit `Program`
+// type emitted by top-level statements in this sample and the one emitted
+// by the `MockPersonServer` sample when both are referenced from a single
+// test assembly.
+namespace WhoAmI
+{
+    /// <summary>Marker type for <c>WebApplicationFactory&lt;T&gt;</c>.</summary>
+    public sealed class Entry
+    {
+        private Entry() { }
+    }
+}

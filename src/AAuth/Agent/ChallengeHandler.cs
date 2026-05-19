@@ -29,15 +29,25 @@ public sealed class ChallengeHandler : DelegatingHandler
     private readonly TokenExchangeClient _exchange;
     private readonly AAuthTokenHolder _holder;
     private readonly string _personServer;
+    private readonly Func<AAuthInteraction, CancellationToken, Task>? _onInteractionRequired;
+    private readonly DeferredPollerOptions? _pollerOptions;
 
     /// <summary>Create the challenge handler.</summary>
     /// <param name="exchange">Token exchange client (configured with the agent token).</param>
     /// <param name="holder">Shared carrier-token holder used by the signer.</param>
     /// <param name="personServer">PS issuer URL where resource tokens are exchanged.</param>
+    /// <param name="onInteractionRequired">
+    /// Optional callback invoked when the PS returns <c>202 + requirement=interaction</c>
+    /// during the embedded exchange. Hosts wire this to "display URL to user" UI.
+    /// When <see langword="null"/>, a deferred PS response surfaces as an exception.
+    /// </param>
+    /// <param name="pollerOptions">Optional polling cadence/timeout override.</param>
     public ChallengeHandler(
         TokenExchangeClient exchange,
         AAuthTokenHolder holder,
-        string personServer)
+        string personServer,
+        Func<AAuthInteraction, CancellationToken, Task>? onInteractionRequired = null,
+        DeferredPollerOptions? pollerOptions = null)
     {
         ArgumentNullException.ThrowIfNull(exchange);
         ArgumentNullException.ThrowIfNull(holder);
@@ -46,6 +56,8 @@ public sealed class ChallengeHandler : DelegatingHandler
         _exchange = exchange;
         _holder = holder;
         _personServer = personServer;
+        _onInteractionRequired = onInteractionRequired;
+        _pollerOptions = pollerOptions;
     }
 
     /// <inheritdoc />
@@ -97,7 +109,8 @@ public sealed class ChallengeHandler : DelegatingHandler
 
         // Got an auth-token challenge. Exchange and retry.
         var authToken = await _exchange
-            .ExchangeAsync(_personServer, requirement.ResourceToken!, cancellationToken)
+            .ExchangeAsync(_personServer, requirement.ResourceToken!,
+                _onInteractionRequired, _pollerOptions, cancellationToken)
             .ConfigureAwait(false);
         _holder.Update(authToken);
 
@@ -108,8 +121,17 @@ public sealed class ChallengeHandler : DelegatingHandler
         // verbatim; streaming bodies that are not re-readable will fail
         // here, which is a known limitation.
         response.Dispose();
-        using var retry = await CloneAsync(request, cancellationToken).ConfigureAwait(false);
-        return await base.SendAsync(retry, cancellationToken).ConfigureAwait(false);
+        var retry = await CloneAsync(request, cancellationToken).ConfigureAwait(false);
+        var result = await base.SendAsync(retry, cancellationToken).ConfigureAwait(false);
+        // Reassign the response's RequestMessage to the caller-owned
+        // original so diagnostics (EnsureSuccessStatusCode, loggers) keep
+        // working, then dispose the short-lived clone. This avoids both
+        // (a) retaining the cloned ByteArrayContent on the response until
+        // GC and (b) handing callers a response backed by a disposed
+        // request — the trade-off of the previous `using` placement.
+        result.RequestMessage = request;
+        retry.Dispose();
+        return result;
     }
 
     private static async Task<HttpRequestMessage> CloneAsync(

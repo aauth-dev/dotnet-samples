@@ -1,0 +1,72 @@
+@* Renders a JWT as compact-form plus decoded header / payload with JSON syntax highlighting. *@
+
+@if (!string.IsNullOrWhiteSpace(Jwt))
+{
+    <details class="token">
+        <summary>Compact JWT</summary>
+        <pre class="jwt"><code>@Jwt</code></pre>
+    </details>
+}
+
+@if (!string.IsNullOrWhiteSpace(Header))
+{
+    <details open class="token">
+        <summary>Decoded header</summary>
+        <pre class="json"><code>@(Colorize(Header))</code></pre>
+    </details>
+}
+
+@if (!string.IsNullOrWhiteSpace(Payload))
+{
+    <details open class="token">
+        <summary>Decoded payload</summary>
+        <pre class="json"><code>@(Colorize(Payload))</code></pre>
+    </details>
+}
+
+@if (!string.IsNullOrWhiteSpace(Decoded))
+{
+    <details open class="token">
+        <summary>Decoded</summary>
+        <pre><code>@Decoded</code></pre>
+    </details>
+}
+
+@code {
+    [Parameter] public string? Jwt { get; set; }
+    [Parameter] public string? Header { get; set; }
+    [Parameter] public string? Payload { get; set; }
+    [Parameter] public string? Decoded { get; set; }
+
+    private static MarkupString Colorize(string json)
+    {
+        // HTML-escape first, then apply highlighting patterns over the
+        // escaped text so we never inject untrusted JSON content as markup.
+        var escaped = System.Net.WebUtility.HtmlEncode(json);
+
+        // Order matters: keys are quoted strings followed by a colon, so
+        // match those first and tag them. The generic-string pass below
+        // skips already-tagged keys via a lookbehind on the class name.
+        escaped = System.Text.RegularExpressions.Regex.Replace(
+            escaped,
+            "(&quot;[^&]*?&quot;)(\\s*:)",
+            "<span class=\"j-key\">$1</span>$2");
+
+        escaped = System.Text.RegularExpressions.Regex.Replace(
+            escaped,
+            "(?<!class=\"j-key\">)(&quot;[^&]*?&quot;)",
+            "<span class=\"j-str\">$1</span>");
+
+        escaped = System.Text.RegularExpressions.Regex.Replace(
+            escaped,
+            "\\b(true|false|null)\\b",
+            "<span class=\"j-kw\">$1</span>");
+
+        escaped = System.Text.RegularExpressions.Regex.Replace(
+            escaped,
+            "(?<![\\w\"])-?\\d+(?:\\.\\d+)?(?![\\w\"])",
+            "<span class=\"j-num\">$&</span>");
+
+        return new MarkupString(escaped);
+    }
+}
