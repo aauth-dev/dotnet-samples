@@ -8,6 +8,8 @@ hop.
 
 ## What you'll see
 
+<img width="2549" height="1252" alt="image" src="https://github.com/user-attachments/assets/a904601a-dd25-406c-bfa9-9093f24d38dc" />
+
 A swim-lane sequence diagram across three actors — **Agent**, **Resource**,
 **Person Server** — with a payload inspector on the right that decodes each
 JWT and shows the canonical RFC 9421 signature base for every signed
