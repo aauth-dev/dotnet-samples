@@ -60,4 +60,39 @@ public class AAuthInteractionTests
     {
         Assert.Throws<ArgumentException>(() => AAuthInteraction.Format(url, code));
     }
+
+    [Theory]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("data:text/html,<script>")]
+    [InlineData("file:///etc/passwd")]
+    [InlineData("ftp://example.com")]
+    [InlineData("relative/path")]
+    public void Format_RejectsNonHttpsSchemes(string url)
+    {
+        Assert.Throws<ArgumentException>(() => AAuthInteraction.Format(url, "ABCD"));
+    }
+
+    [Theory]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("data:text/html,<script>")]
+    [InlineData("file:///etc/passwd")]
+    public void FromRequirement_RejectsNonHttpsSchemes(string url)
+    {
+        // Construct the header manually to bypass Format()'s own validation
+        // and verify the parser-side guard also fires (defense in depth —
+        // a malicious PS could emit the header bytes directly).
+        var raw = $"requirement=interaction; url=\"{url}\"; code=\"ABCD\"";
+        var parsed = AAuthRequirementHeader.Parse(raw);
+        Assert.Throws<FormatException>(() => AAuthInteraction.FromRequirement(parsed));
+    }
+
+    [Fact]
+    public void FromRequirement_AllowsLoopbackHttp()
+    {
+        var raw = "requirement=interaction; url=\"http://localhost:5100/interaction\"; code=\"ABCD\"";
+        var parsed = AAuthRequirementHeader.Parse(raw);
+        var i = AAuthInteraction.FromRequirement(parsed);
+        Assert.NotNull(i);
+        Assert.Equal("http://localhost:5100/interaction", i!.Url);
+    }
 }

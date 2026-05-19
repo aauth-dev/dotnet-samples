@@ -373,6 +373,42 @@ xUnit integration tests for CI. Both consume the same `src/AAuth/` SDK that
     `.seq-loop.completed.denied` (red ✖ denied),
     `.seq-loop.completed.timeout` (muted ⏱ timed out).
   - **168 tests pass** (47 conformance + 121 unit/integration).
+- **2026-05-19 Phase 3 internal review (post-polish).** Self-review of the
+  branch tracked at `.copilot-tracking/pr/review/feat-phase-3-guided-tour-mock-person-server/in-progress-review.md`
+  surfaced 10 findings (1 medium, 8 low/cosmetic, 1 acknowledged). All 9
+  actionable items applied:
+  - **RI-2 (security, medium).** `AAuthInteraction.Format` +
+    `FromRequirement` now reject non-`http(s)` schemes (loopback `http`
+    still allowed for development) so a hostile PS cannot smuggle
+    `javascript:` / `data:` URLs that the agent host might render as a
+    clickable link. Added `AAuthInteractionTests` covering 5 rejected
+    schemes through `Format`, 3 rejected schemes through
+    `FromRequirement`, and the loopback-allowed case.
+  - **RI-3 (sample security).** MockPersonServer `/token` validates
+    `resource_token.iss` is an absolute http(s) URL before embedding it
+    as the minted auth token's `aud`.
+  - **RI-1 (reliability).** `TourSession` now implements
+    `IAsyncDisposable`, cancelling and awaiting `_pollingTask` on Blazor
+    circuit teardown so the background `Task.Run` doesn't leak past the
+    scope.
+  - **RI-4 (code quality).** `TokenExchangeClient.IsAccessDeniedAsync`
+    disposes the original `HttpContent` and preserves its media type /
+    charset when re-buffering the body.
+  - **RI-10 (code quality).** Dropped `using` on the cloned retry
+    `HttpRequestMessage` in `ChallengeHandler.SendAsync` so the response's
+    `RequestMessage` isn't backed by a disposed object.
+  - **RI-7 (reliability).** `StartPendingPollAsync`'s check-then-assign
+    now runs under `_pollingLock`.
+  - **RI-5 (cosmetic).** Step 10 happy path reads body only from
+    `capture.Last.ResponseBody`.
+  - **RI-9 (code quality).** `CapturingMessageHandler` honors the
+    response's declared charset and base64-renders non-text content
+    types.
+  - **RI-6 (trivial).** Deleted dead `DeferredPoller.TryParseRetryAfterSeconds`
+    and its lone `System.Globalization` import.
+  - **RI-8 (acknowledged).** `/admin/*` + unauthenticated
+    `/interaction/{approve,deny}` documented as demo-only; no change.
+  - **177 tests pass** (47 conformance + 130 unit/integration).
 
 ### 3.1 MockPersonServer
 

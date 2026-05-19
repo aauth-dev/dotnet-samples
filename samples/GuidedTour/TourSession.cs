@@ -19,7 +19,7 @@ namespace GuidedTour;
 /// agent key, token state, and step list. Steps are executed one at a time
 /// via <see cref="RunNextAsync"/>; the UI rerenders after each call.
 /// </summary>
-public sealed class TourSession
+public sealed class TourSession : IAsyncDisposable
 {
     private readonly TourOptions _options;
 
@@ -39,6 +39,7 @@ public sealed class TourSession
     // the polling task; the UI listens to StateChanged and re-renders.
     private CancellationTokenSource? _pollingCts;
     private Task? _pollingTask;
+    private readonly object _pollingLock = new();
 
     public TourSession(IOptions<TourOptions> options)
     {
@@ -208,6 +209,30 @@ public sealed class TourSession
         _interactionCode = null;
         _userApproved = false;
         _aborted = false;
+    }
+
+    /// <summary>
+    /// Cleanup hook for the scoped lifetime (Blazor disposes the DI scope
+    /// when the user's circuit ends). Cancels and awaits any in-flight
+    /// polling task so we don't leak a <see cref="CancellationTokenSource"/>
+    /// or a background <see cref="Task.Run"/> past the circuit's lifetime.
+    /// </summary>
+    public async ValueTask DisposeAsync()
+    {
+        Task? toAwait;
+        lock (_pollingLock)
+        {
+            try { _pollingCts?.Cancel(); } catch { }
+            toAwait = _pollingTask;
+        }
+        if (toAwait is not null)
+        {
+            try { await toAwait.ConfigureAwait(false); }
+            catch { /* swallow — already shutting down */ }
+        }
+        _pollingCts?.Dispose();
+        _pollingCts = null;
+        _pollingTask = null;
     }
 
     /// <summary>Run the next pending step and capture its <see cref="StepRecord"/>.</summary>
@@ -764,6 +789,10 @@ public sealed class TourSession
             }
 
             var ex = capture.Last!;
+            // CapturingMessageHandler already buffered the final response
+            // body — reuse it rather than reading via `terminal.Content`
+            // again, which would force another round-trip through the
+            // disposed-content guard.
             var body = JsonNode.Parse(ex.ResponseBody);
             _authToken = (string?)body?["auth_token"];
 
@@ -821,10 +850,6 @@ public sealed class TourSession
         {
             return Task.CompletedTask;
         }
-        if (_pollingTask is not null && !_pollingTask.IsCompleted)
-        {
-            return _pollingTask;
-        }
         // Step 10 must be the next step in line. If somebody calls this
         // out of order (defensive), bail out silently.
         if (Steps.Count + 1 != 10)
@@ -832,29 +857,41 @@ public sealed class TourSession
             return Task.CompletedTask;
         }
 
-        _pollingCts?.Dispose();
-        _pollingCts = new CancellationTokenSource();
-        var ct = _pollingCts.Token;
-        _pollingTask = Task.Run(async () =>
+        // Serialize the check-then-assign so two near-simultaneous UI
+        // events (e.g. "Open consent" + "Simulate deny") can't both kick
+        // off a poll. Blazor Server's circuit context already serializes
+        // most callbacks, but making the invariant explicit is cheap.
+        lock (_pollingLock)
         {
-            try
+            if (_pollingTask is not null && !_pollingTask.IsCompleted)
             {
-                await Step10PollPendingAsync(ct).ConfigureAwait(false);
+                return _pollingTask;
             }
-            catch (OperationCanceledException)
+
+            _pollingCts?.Dispose();
+            _pollingCts = new CancellationTokenSource();
+            var ct = _pollingCts.Token;
+            _pollingTask = Task.Run(async () =>
             {
-                // User clicked Reset / changed mode while polling.
-            }
-            catch (Exception ex)
-            {
-                RecordTimeoutStep(null, null,
-                    $"Background poll threw {ex.GetType().Name}: {ex.Message}");
-                _aborted = true;
-                IsPolling = false;
-                StateChanged?.Invoke();
-            }
-        });
-        return _pollingTask;
+                try
+                {
+                    await Step10PollPendingAsync(ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // User clicked Reset / changed mode while polling.
+                }
+                catch (Exception ex)
+                {
+                    RecordTimeoutStep(null, null,
+                        $"Background poll threw {ex.GetType().Name}: {ex.Message}");
+                    _aborted = true;
+                    IsPolling = false;
+                    StateChanged?.Invoke();
+                }
+            });
+            return _pollingTask;
+        }
     }
 
     private void RecordDeniedStep(

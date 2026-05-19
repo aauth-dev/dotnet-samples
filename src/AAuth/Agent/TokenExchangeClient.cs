@@ -173,9 +173,17 @@ public sealed class TokenExchangeClient
         HttpResponseMessage response, CancellationToken cancellationToken)
     {
         // Buffer the body so the subsequent ReadAuthTokenAsync (if we
-        // decide it isn't access_denied) still sees it.
+        // decide it isn't access_denied) still sees it. Preserve the
+        // original Content-Type so downstream JSON parsers don't see a
+        // surprise text/plain media type.
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        response.Content = new StringContent(body);
+        var originalMediaType = response.Content.Headers.ContentType?.MediaType ?? "application/json";
+        var originalCharset = response.Content.Headers.ContentType?.CharSet;
+        var encoding = originalCharset is null
+            ? System.Text.Encoding.UTF8
+            : System.Text.Encoding.GetEncoding(originalCharset);
+        response.Content.Dispose();
+        response.Content = new StringContent(body, encoding, originalMediaType);
         try
         {
             var json = JsonNode.Parse(body) as JsonObject;

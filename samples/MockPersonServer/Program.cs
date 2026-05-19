@@ -157,6 +157,15 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
             ?? throw new FormatException("payload is not a JSON object");
         audience = (string?)payload["iss"]
             ?? throw new FormatException("resource_token missing iss");
+        // The resource_token signature is NOT verified by this mock PS (see
+        // file-level comment). Validate at least that `iss` is an absolute
+        // http(s) URL so a forged token can't smuggle a `javascript:` or
+        // garbage `aud` into the minted auth_token.
+        if (!Uri.TryCreate(audience, UriKind.Absolute, out var audUri)
+            || (audUri.Scheme != Uri.UriSchemeHttps && audUri.Scheme != Uri.UriSchemeHttp))
+        {
+            throw new FormatException("resource_token iss must be an absolute http(s) URL");
+        }
     }
     catch (Exception ex) when (ex is FormatException or System.Text.Json.JsonException)
     {

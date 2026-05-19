@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using AAuth;
 
 namespace AAuth.Headers;
 
@@ -65,6 +66,14 @@ public sealed record AAuthInteraction(string Url, string Code)
             throw new FormatException(
                 $"AAuth-Requirement requirement=interaction is missing the '{UrlParameter}' parameter.");
         }
+        if (!AAuthUrl.IsHttpsOrLoopback(url))
+        {
+            // Reject non-http(s) schemes (e.g. `javascript:`, `data:`) so a
+            // hostile or buggy PS cannot smuggle a script URL into the agent
+            // host, which may render it as a clickable link.
+            throw new FormatException(
+                $"AAuth-Requirement requirement=interaction '{UrlParameter}' must be an absolute https URL (loopback http allowed for development).");
+        }
         if (!requirement.Parameters.TryGetValue(CodeParameter, out var code)
             || string.IsNullOrEmpty(code))
         {
@@ -85,6 +94,12 @@ public sealed record AAuthInteraction(string Url, string Code)
     {
         ArgumentException.ThrowIfNullOrEmpty(url);
         ArgumentException.ThrowIfNullOrEmpty(code);
+        if (!AAuthUrl.IsHttpsOrLoopback(url))
+        {
+            throw new ArgumentException(
+                "url must be an absolute https URL (loopback http allowed for development).",
+                nameof(url));
+        }
         Reject(url, nameof(url));
         Reject(code, nameof(code));
         return $"requirement={RequirementType}; {UrlParameter}=\"{url}\"; {CodeParameter}=\"{code}\"";

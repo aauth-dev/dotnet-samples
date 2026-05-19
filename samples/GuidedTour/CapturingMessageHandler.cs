@@ -27,7 +27,10 @@ public sealed class CapturingMessageHandler : DelegatingHandler
 
         var responseHeaders = HeaderFormatter.Format(response.Headers, response.Content.Headers);
         var bodyBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-        var responseBody = System.Text.Encoding.UTF8.GetString(bodyBytes);
+        // Honor the response's declared charset; fall back to UTF-8 for
+        // unmarked text and JSON. Non-text payloads (e.g. binary) get a
+        // base64 rendering so the tour UI doesn't show mojibake.
+        var responseBody = DecodeBody(bodyBytes, response.Content.Headers);
 
         // Rebuild the content so the buffered bytes remain readable downstream.
         var oldContentHeaders = response.Content.Headers;
@@ -47,6 +50,34 @@ public sealed class CapturingMessageHandler : DelegatingHandler
             responseBody);
 
         return response;
+    }
+
+    private static string DecodeBody(byte[] bytes, System.Net.Http.Headers.HttpContentHeaders headers)
+    {
+        if (bytes.Length == 0) { return string.Empty; }
+        var mediaType = headers.ContentType?.MediaType;
+        var isTextual = mediaType is null
+            || mediaType.StartsWith("text/", System.StringComparison.OrdinalIgnoreCase)
+            || mediaType.Equals("application/json", System.StringComparison.OrdinalIgnoreCase)
+            || mediaType.EndsWith("+json", System.StringComparison.OrdinalIgnoreCase)
+            || mediaType.Equals("application/x-www-form-urlencoded", System.StringComparison.OrdinalIgnoreCase)
+            || mediaType.Equals("application/jwk-set+json", System.StringComparison.OrdinalIgnoreCase);
+        if (!isTextual)
+        {
+            return $"[{bytes.Length} bytes, {mediaType}]\n{System.Convert.ToBase64String(bytes)}";
+        }
+        try
+        {
+            var charset = headers.ContentType?.CharSet;
+            var encoding = string.IsNullOrEmpty(charset)
+                ? System.Text.Encoding.UTF8
+                : System.Text.Encoding.GetEncoding(charset);
+            return encoding.GetString(bytes);
+        }
+        catch (System.ArgumentException)
+        {
+            return System.Text.Encoding.UTF8.GetString(bytes);
+        }
     }
 }
 

@@ -121,7 +121,12 @@ public sealed class ChallengeHandler : DelegatingHandler
         // verbatim; streaming bodies that are not re-readable will fail
         // here, which is a known limitation.
         response.Dispose();
-        using var retry = await CloneAsync(request, cancellationToken).ConfigureAwait(false);
+        var retry = await CloneAsync(request, cancellationToken).ConfigureAwait(false);
+        // Note: do NOT wrap `retry` in `using`. The returned response's
+        // RequestMessage references it; disposing here would leave callers
+        // (loggers, EnsureSuccessStatusCode failure paths) holding a
+        // disposed reference. HttpRequestMessage.Dispose only clears the
+        // content stream, which we've already buffered/forwarded.
         return await base.SendAsync(retry, cancellationToken).ConfigureAwait(false);
     }
 

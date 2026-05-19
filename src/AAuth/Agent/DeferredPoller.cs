@@ -1,6 +1,5 @@
 using System;
 using System.Diagnostics;
-using System.Globalization;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -154,12 +153,5 @@ public sealed class DeferredPoller
         }
 
         return delay < _options.MinPollInterval ? _options.MinPollInterval : delay;
-    }
-
-    internal static bool TryParseRetryAfterSeconds(string? value, out int seconds)
-    {
-        seconds = 0;
-        return !string.IsNullOrEmpty(value)
-            && int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out seconds);
     }
 }
