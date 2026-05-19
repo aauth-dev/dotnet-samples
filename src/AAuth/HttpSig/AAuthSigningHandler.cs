@@ -43,6 +43,15 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     private readonly Func<string> _tokenFactory;
     private readonly Func<DateTimeOffset> _clock;
 
+    /// <summary>
+    /// Optional observability hook. When set, the canonical RFC 9421
+    /// signature base string is passed to this callback every time a
+    /// request is signed, immediately before signing. Used by the Guided
+    /// Tour sample to surface the signed-over bytes; not part of the
+    /// production signing path.
+    /// </summary>
+    public Action<HttpRequestMessage, string>? OnSignatureBase { get; init; }
+
     /// <summary>Create a signing handler.</summary>
     /// <param name="key">The agent's signing key.</param>
     /// <param name="tokenFactory">
@@ -122,7 +131,10 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         AppendComponent(sb, "signature-key", signatureKey);
         sb.Append("\"@signature-params\": ").Append(paramsLine);
 
-        var signature = _key.Sign(Encoding.ASCII.GetBytes(sb.ToString()));
+        var signatureBase = sb.ToString();
+        OnSignatureBase?.Invoke(request, signatureBase);
+
+        var signature = _key.Sign(Encoding.ASCII.GetBytes(signatureBase));
 
         request.Headers.Remove(SignatureKeyHeader.Name);
         request.Headers.Remove("Signature-Input");

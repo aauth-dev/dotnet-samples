@@ -1,0 +1,63 @@
+@* Three-actor swim-lane sequence diagram. Each message arrow connects the
+   vertical centerlines of the from/to lanes. The current step is highlighted. *@
+
+@using System.Globalization
+
+<div class="seq">
+    <div class="lanes">
+        <div class="lane agent">Agent</div>
+        <div class="lane resource">Resource</div>
+        <div class="lane ps">Person Server</div>
+    </div>
+    <div class="messages">
+        @for (int i = 0; i < Steps.Count; i++)
+        {
+            var s = Steps[i];
+            var fromCol = ColumnFor(s.From);
+            var toCol = ColumnFor(s.To);
+            var leftCenter = LaneCenters[Math.Min(fromCol, toCol)];
+            var rightCenter = LaneCenters[Math.Max(fromCol, toCol)];
+            var widthPct = rightCenter - leftCenter;
+            var labelCenter = (leftCenter + rightCenter) / 2.0;
+            var rightward = toCol >= fromCol;
+            var isSelf = fromCol == toCol;
+            var rowClass = i == Highlight ? "msg highlight" : "msg";
+
+            <div class="@rowClass">
+                @if (isSelf)
+                {
+                    <div class="arrow self" style="left:@(Fmt(leftCenter - 1.5))%; width:3%;"></div>
+                }
+                else
+                {
+                    <div class="arrow @(rightward ? "rightward" : "leftward")"
+                         style="left:@(Fmt(leftCenter))%; width:@(Fmt(widthPct))%;"></div>
+                }
+                <div class="label" style="left:@(Fmt(labelCenter))%;">@s.Number. @s.Title</div>
+            </div>
+        }
+        @if (Steps.Count == 0)
+        {
+            <div class="empty">(no steps run yet)</div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public IList<StepRecord> Steps { get; set; } = Array.Empty<StepRecord>();
+    [Parameter] public int Highlight { get; set; }
+
+    // Lane center positions as percentages of the messages container width.
+    // Matches the vertical guide-lines drawn in app.css for 3 equal lanes.
+    private static readonly double[] LaneCenters = { 100.0 / 6, 50.0, 5 * 100.0 / 6 };
+
+    private static int ColumnFor(Actor a) => a switch
+    {
+        Actor.Agent => 0,
+        Actor.Resource => 1,
+        Actor.PersonServer => 2,
+        _ => 0,
+    };
+
+    private static string Fmt(double pct) => pct.ToString("0.##", CultureInfo.InvariantCulture);
+}

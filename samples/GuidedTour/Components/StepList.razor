@@ -1,0 +1,24 @@
+@* Step list with status indicators down the left edge. *@
+
+<ol class="step-list">
+    @for (int i = 1; i <= Total; i++)
+    {
+        var idx = i - 1;
+        var done = idx < Steps.Count;
+        var record = done ? Steps[idx] : null;
+        var selected = idx == Selected;
+        var cssClass = (done ? "done " : "pending ") + (selected ? "selected" : string.Empty);
+        var label = record?.Title ?? $"Step {i}";
+        <li class="@cssClass" @onclick="() => OnSelect.InvokeAsync(idx)">
+            <span class="num">@i</span>
+            <span class="title">@label</span>
+        </li>
+    }
+</ol>
+
+@code {
+    [Parameter] public IList<StepRecord> Steps { get; set; } = Array.Empty<StepRecord>();
+    [Parameter] public int Total { get; set; }
+    [Parameter] public int Selected { get; set; }
+    [Parameter] public EventCallback<int> OnSelect { get; set; }
+}

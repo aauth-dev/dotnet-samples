@@ -229,46 +229,225 @@ Follow-ups landed against PR #6 after the in-repo review (`.copilot-tracking/pr/
 
 ---
 
-## Phase 3: End-to-End Demo with Person Server
+## Phase 3: End-to-End Demo with Person Server + Guided Tour
 
-**Goal**: A self-contained demo running all three AAuth resource access flows (identity-based, PS-asserted autonomous, user-consent) using the Go Person Server binary.
+> Restructured 2026-05-19: the original Phase 2.5 "Guided Tour (Blazor Server)"
+> idea was folded into Phase 3. The tour needs `MockPersonServer` to tell the
+> full three-party story; shipping both together avoids a half-feature first
+> drop and lets the tour subsume the planned `demo-run.sh` orchestrator.
 
-### 3.1 Minimal Person Server mock (for testing without Go binary)
+**Goal**: A self-contained, runnable demo of all three AAuth resource access
+flows (identity-based, PS-asserted autonomous, user-consent), exposed two ways:
+a Blazor Server "follow the bouncing ball" guided tour for newcomers, and
+xUnit integration tests for CI. Both consume the same `src/AAuth/` SDK that
+`samples/AgentConsole/` already uses.
+
+### Phase 3 Implementation Decisions (recorded 2026-05-19)
+
+- **`MockPersonServer` ships first.** It is the prerequisite for the
+  three-party leg of the Guided Tour, the integration tests, and the planned
+  Phase 2 follow-up that migrates `WhoAmIFlowTests.StartMockPsAsync` to the
+  shipped binary. Build order within the phase: §3.1 → §3.3 → §3.2 → §3.4.
+- **§3.3 (Guided Tour) before §3.2 (DeferredPoller).** The Blazor tour was
+  the user-facing trigger for opening Phase 3, and its three-party-autonomous
+  spine does not need deferred polling. `DeferredPoller` + `AAuthInteraction`
+  remain in this phase but ship alongside the user-consent integration test
+  (§3.4) once the tour is up.
+- **Guided Tour hosting: Blazor Server.** The SDK's `DelegatingHandler`
+  pipeline, Ed25519 signing, and `HttpClient` plumbing all run server-side in
+  .NET; the browser only renders state pushed over SignalR. WASM would
+  require porting Ed25519 + RFC 9421 signing into the browser, out of scope.
+- **Guided Tour points at running external processes** (`samples/WhoAmI`
+  + `samples/MockPersonServer`) via configured URLs. It does not spawn them
+  in-process. Keeps the tour focused on visualization.
+- **Identity-based fallback.** If `MockPersonServerUrl` is not configured the
+  tour collapses to the identity-based path (steps 1–4 below) and ends at
+  step 4 with a 200. So the tour is still useful without MockPS running.
+- **No new SDK code from the tour.** The tour consumes `src/AAuth/` as-is.
+  If a missing observability hook is discovered (e.g. surfacing the RFC 9421
+  signature base for display), the gap is filled in `src/AAuth/` with an
+  accompanying xUnit test, not patched into the sample.
+- **`demo-run.sh` is dropped.** The Blazor tour subsumes its purpose
+  (orchestrate WhoAmI + MockPS + a client flow, with visible trace). An
+  optional script may resurface later if non-interactive CLI orchestration
+  is needed, but it is not part of Phase 3 DoD.
+
+### Phase 3 progress log
+
+- **2026-05-19 §3.1 complete.** `samples/MockPersonServer/` ships with
+  `aauth-person.json` + `jwks.json` + signed `POST /token`. Five unit tests
+  in `tests/AAuth.Tests/Integration/MockPersonServerTests.cs` cover metadata
+  shape, JWKS shape, happy-path token issuance, rejection of an
+  auth-token-as-carrier, and missing-resource_token. Added to `AAuth.slnx`.
+- **2026-05-19 Phase 2 follow-up cleared.** The private in-process mock PS
+  inside `WhoAmIFlowTests.StartMockPsAsync` has been replaced with
+  `WebApplicationFactory<MockPersonServer.Entry>` against the shipped
+  sample. The integration tests now exercise shipped sample code; ~80 lines
+  of test-only duplication and the temporary `TODO(Phase 3 §3.1)` marker
+  are gone.
+- **2026-05-19 Cross-sample `Program` ambiguity resolved.** Both `WhoAmI`
+  and `MockPersonServer` now expose namespaced `Entry` marker types
+  (`WhoAmI.Entry`, `MockPersonServer.Entry`) instead of `public partial
+  class Program;` so a single test assembly can reference both samples
+  without a CS0433 collision on the implicit `Program` type emitted by
+  top-level statements.
+- **2026-05-19 SDK observability hook added.** `AAuthSigningHandler` now
+  exposes `Action<HttpRequestMessage, string>? OnSignatureBase { get; init; }`
+  invoked with the canonical RFC 9421 signature base immediately before
+  signing. Used by the Guided Tour to display the bytes that were signed.
+  Covered by `AAuthSigningHandlerTests.OnSignatureBase_IsInvokedWithBytesActuallySigned`
+  which round-trips: verifier reconstructs the captured base, recovers the
+  emitted signature, and confirms it validates.
+- **2026-05-19 §3.3 complete.** `samples/GuidedTour/` Blazor Server app
+  ships at `http://localhost:5400`. Three-pane UI: step list (left),
+  three-actor swim-lane sequence diagram (center), payload inspector
+  (right). Eight steps walk the three-party autonomous flow against
+  running `samples/WhoAmI` + `samples/MockPersonServer` instances; the
+  tour collapses to a four-step identity-based path if
+  `GuidedTour:PersonServerUrl` is empty. Each step captures request line,
+  request/response headers, request/response body, RFC 9421 signature
+  base (for signed requests), and decoded JWT header+payload (for steps
+  that mint or receive a token). Smoke-tested: `GET /` returns 200 with
+  the expected page title. Repo `README.md` updated to list the sample.
+
+### 3.1 MockPersonServer
+
+Issues `aa-auth+jwt` against `resource_token` POSTs. Also serves the
+PS-side well-known + JWKS used by `WhoAmI`'s resource-token `aud` and the
+agent's discovery during exchange.
 
 | File | Responsibility |
 |---|---|
-| `samples/MockPersonServer/Program.cs` | Minimal API acting as PS: `/.well-known/aauth-person.json`, `/.well-known/jwks.json`, `POST /token` (accepts resource_token, returns auth_token). **Phase 2 follow-up**: replace the in-process mock PS used by Phase 2's three-party integration test with this shipped sample once it exists. |
-| `samples/MockPersonServer/MockPersonServer.csproj` | Web project |
+| `samples/MockPersonServer/Program.cs` | Minimal API. Serves `/.well-known/aauth-person.json` and `/.well-known/jwks.json`. `POST /token` accepts a signed request whose `Signature-Key` carries the agent token, validates the posted `resource_token`, and returns an `aa-auth+jwt` bound to the same agent key (`cnf.jwk` from the agent token). |
+| `samples/MockPersonServer/MockPersonServer.csproj` | Web project. Net 10. References `src/AAuth/AAuth.csproj`. |
+| `samples/MockPersonServer/appsettings.json` | Issuer URL, signing key id, default scope. |
+| `samples/MockPersonServer/README.md` | Run instructions. |
 
-This lets the demo run fully self-contained in .NET without external dependencies.
+**Phase 2 follow-up cleared in the same PR**: migrate
+`tests/AAuth.Tests/Integration/WhoAmIFlowTests.StartMockPsAsync` from its
+private in-process duplicate to the shipped sample (via
+`WebApplicationFactory<MockPersonServer.Program>` or, if that introduces a
+project-reference loop, a thin `IMockPersonServerHost` interface implemented
+by the sample and consumed by the test).
 
 ### 3.2 Deferred polling (agent side)
 
-| File | Responsibility |
-|---|---|
-| `src/AAuth/Agent/DeferredPoller.cs` | Poll `Location` URL on 202, respect `Retry-After`, return terminal response |
-| `src/AAuth/Headers/AAuthInteraction.cs` | Parse interaction requirements (url, code) from `AAuth-Requirement` |
-
-### 3.3 Demo orchestration script
+Required for the user-consent integration test (§3.4) where PS returns 202
+with interaction details.
 
 | File | Responsibility |
 |---|---|
-| `samples/demo-run.sh` (or `.ps1`) | Starts WhoAmI + MockPersonServer, runs AgentConsole against them, prints flow trace |
+| `src/AAuth/Agent/DeferredPoller.cs` | Poll `Location` URL on 202, respect `Retry-After`, return terminal response. Bounded total wait + cancellation token. |
+| `src/AAuth/Headers/AAuthInteraction.cs` | Parse interaction requirements (`url`, `code`) from `AAuth-Requirement`. Sits beside `AAuthRequirementHeader` from Phase 2; the requirement header parser already exists, this only adds the interaction-specific projection. |
+
+Add unit tests in `tests/AAuth.Tests/Agent/DeferredPollerTests.cs` and
+`tests/AAuth.Tests/Headers/AAuthInteractionTests.cs`.
+
+### 3.3 Guided Tour (Blazor Server)
+
+A `samples/GuidedTour/` Blazor Server app that drives the same SDK pipeline
+as `samples/AgentConsole/` but exposes each stage as a discrete UI step. The
+user clicks "Next" (or "Send"), the app performs one hop of the protocol,
+and the UI highlights the party that just acted in a sequence-diagram view
+while showing the raw request/response payloads alongside human-readable
+explanations.
+
+#### 3.3.1 Project scaffolding
+
+| Action | Detail |
+|---|---|
+| Create `samples/GuidedTour/GuidedTour.csproj` | Blazor Server, `net10.0`, references `src/AAuth/AAuth.csproj` |
+| Create `samples/GuidedTour/Program.cs` | Standard Blazor Server bootstrap; register `TourSession` as scoped, `TourOptions` (URLs for WhoAmI + MockPS) from config |
+| Add to `AAuth.slnx` | Slot under `samples/` |
+
+#### 3.3.2 Tour orchestration service
+
+| File | Responsibility |
+|---|---|
+| `samples/GuidedTour/Services/TourSession.cs` | Scoped service. Owns the agent key, agent token, `AAuthTokenHolder`, the configured `HttpClient` pipeline, and the ordered list of steps. Exposes `AdvanceAsync()` which runs the next protocol action and records what happened. |
+| `samples/GuidedTour/Services/StepRecord.cs` | Record type capturing: step name, party acting, narrative blurb, request method + URL + headers + body, response status + headers + body, decoded JWT payloads (header + claims) for any tokens involved, raw signature base if applicable. |
+| `samples/GuidedTour/Services/TourOptions.cs` | Configured URLs (`WhoAmIUrl`, `MockPersonServerUrl`), default agent metadata (`iss`, `sub`, `kid`). |
+| `samples/GuidedTour/Services/CapturingSigningHandler.cs` | `DelegatingHandler` that wraps `AAuthSigningHandler` (or sits beside it) to capture the outbound request *after signing* and the inbound response, surfacing them to `TourSession` for display. Reads the signature base from a hook on the SDK (see §3.3.6). |
+
+#### 3.3.3 Tour steps
+
+Each step is a discrete `AdvanceAsync` call producing one `StepRecord`. The
+exact list is finalized during implementation, but the planned spine is:
+
+| # | Step | Party acting | Shows |
+|---|---|---|---|
+| 1 | Generate / load Ed25519 key | Agent (local) | Public JWK, JWK thumbprint |
+| 2 | Build agent token | Agent (local) | JWT header, decoded claims (`iss`, `sub`, `cnf.jwk`, `iat`, `exp`, `dwk`, `ps`), encoded JWT |
+| 3 | Discover resource well-known | Agent → WhoAmI | `GET /.well-known/aauth-resource.json`, response JSON |
+| 4 | Send signed `GET /` | Agent → WhoAmI | Signature base, `Signature-Input`, `Signature`, `Signature-Key` headers, body |
+| 5 | Receive 401 + `AAuth-Requirement` | WhoAmI → Agent | Status, `AAuth-Requirement` parsed parameters, decoded `resource_token` claims |
+| 6 | Discover PS well-known | Agent → MockPS | `GET /.well-known/aauth-person.json`, JSON |
+| 7 | Exchange resource_token at PS | Agent → MockPS | Signed `POST /token`, request body, decoded `auth_token` from response |
+| 8 | Retry signed `GET /` with auth_token | Agent → WhoAmI | New `Signature-Key` carrying auth_token, 200 response, identity claims body |
+
+Identity-based mode (`MockPersonServerUrl` not configured) collapses 5–7 and
+ends at step 4 with a 200 response.
+
+#### 3.3.4 UI components
+
+| File | Responsibility |
+|---|---|
+| `samples/GuidedTour/Components/App.razor` | Root component, layout, SignalR-backed Blazor Server pipeline |
+| `samples/GuidedTour/Components/Pages/Tour.razor` | The single page hosting the tour. Three panes: sequence diagram (left), step list + "Next" button (center), payload inspector (right). |
+| `samples/GuidedTour/Components/SequenceDiagram.razor` | Renders Agent / WhoAmI / MockPS as lanes; draws arrows for each completed step; highlights the most recent hop. Pure SVG, no JS library required for v1. |
+| `samples/GuidedTour/Components/PayloadInspector.razor` | Tabbed view: **Request** / **Response** / **Signature base** / **Decoded tokens**. Pretty-prints JSON; uses `<pre>` for raw bytes. |
+| `samples/GuidedTour/Components/StepList.razor` | Ordered list of step names; the active step is highlighted; completed steps are clickable to re-inspect their `StepRecord`. |
+| `samples/GuidedTour/Components/TokenView.razor` | Three-line view of any JWT: header, claims, signature; "encoded" toggle for the raw compact form. |
+
+#### 3.3.5 Wiring & configuration
+
+| File | Responsibility |
+|---|---|
+| `samples/GuidedTour/appsettings.json` | `Tour:WhoAmIUrl`, `Tour:MockPersonServerUrl`, `Tour:Agent:Issuer`, `Tour:Agent:Subject`, `Tour:Agent:KeyId` |
+| `samples/GuidedTour/Properties/launchSettings.json` | Single profile on `http://localhost:5400` |
+| `samples/GuidedTour/README.md` | One-screen quickstart: "in three terminals run WhoAmI, MockPS, GuidedTour, then open <http://localhost:5400>". |
+
+#### 3.3.6 SDK hook (if needed)
+
+The SDK currently does not expose the signature base string it computes. The
+tour wants to display it. If inspection of `src/AAuth/HttpSig/` confirms the
+base is built inside `AAuthSigningHandler` and not surfaced, add a minimal
+hook (e.g. `Action<string>? OnSignatureBase { get; init; }` on the handler)
+**with an accompanying xUnit test** in `tests/AAuth.Tests/HttpSig/`. No
+behavioral change — purely additive observability.
+
+#### 3.3.7 Tests
+
+| File | Coverage |
+|---|---|
+| `tests/AAuth.Tests/GuidedTour/TourSessionTests.cs` | Unit-test `TourSession.AdvanceAsync` against an `HttpMessageHandler` mock for each step transition. Asserts `StepRecord` is populated with the expected headers / decoded tokens. |
+| `tests/AAuth.Tests/HttpSig/AAuthSigningHandlerObservabilityTests.cs` | If §3.3.6 lands: assert the signature-base hook fires with the expected canonical string. |
+
+No Blazor-component rendering tests in this phase — the value is in the
+underlying session model. Add `bunit` later if regressions appear.
 
 ### 3.4 Integration tests (all three flows)
 
 | Test | Flow |
 |---|---|
 | `IdentityBasedFlowTest` | Agent → Resource (no `ps` claim, resource trusts identity) → 200 |
-| `ThreePartyAutonomousFlowTest` | Agent → Resource (401) → PS (auto) → Resource (200) |
-| `ThreePartyUserConsentFlowTest` | Agent → Resource (401) → PS (202 + interaction) → poll → PS (200) → Resource (200) |
+| `ThreePartyAutonomousFlowTest` | Agent → Resource (401) → PS (auto) → Resource (200), using the shipped `MockPersonServer` sample |
+| `ThreePartyUserConsentFlowTest` | Agent → Resource (401) → PS (202 + interaction) → poll → PS (200) → Resource (200), exercising `DeferredPoller` from §3.2 |
+
+The three-party tests replace the private in-process mock PS used by
+Phase 2's `WhoAmIFlowTests` with the shipped `samples/MockPersonServer/`
+binary (or its `WebApplicationFactory`).
 
 ### Phase 3 Definition of Done
 
-- [ ] `demo-run.sh` runs all three flows end-to-end with console output showing each step
-- [ ] All integration tests pass
-- [ ] Can optionally point at real Go Person Server instead of mock
-- [ ] `README.md` documents the demo orchestrator and how to run all three flows
+- [x] `samples/MockPersonServer/` builds, runs, issues `aa-auth+jwt`, and has unit tests for token issuance + well-known shape
+- [ ] `DeferredPoller` + `AAuthInteraction` parser ship with unit tests
+- [x] `dotnet run --project samples/GuidedTour` serves the tour on `http://localhost:5400`
+- [x] Against running `samples/WhoAmI` + `samples/MockPersonServer`, the tour walks the full three-party flow with payloads visible at every step
+- [x] Without `MockPersonServer` configured, the tour walks the identity-based flow (steps 1–4) and ends at 200
+- [ ] All three integration tests in §3.4 pass against the shipped `MockPersonServer`
+- [x] Phase 2's `WhoAmIFlowTests` private mock PS is removed in favour of the shipped binary
+- [x] `README.md` (root) updates: lists the new `MockPersonServer` and `GuidedTour` samples, and a quickstart for running the full three-party demo
 
 ---
 
@@ -374,13 +553,13 @@ Phase 2 (Resource Server + 3-Party)
     │
     ├──────────────────┐
     ▼                  ▼
-Phase 3 (E2E Demo)    Phase 4 (CLI)
+Phase 3 (E2E Demo + Tour)   Phase 4 (CLI)
     │
     ▼
 Phase 5 (Full Multi-Agent Demo)
 ```
 
-Phases 3 and 4 are independent of each other — can be done in parallel or in either order.
+Phases 3 and 4 are independent of each other — can be done in parallel or in either order. Phase 3 ships `MockPersonServer`, `DeferredPoller`, the Blazor Guided Tour, and the three-flow integration tests together; the tour and the integration tests both depend on `MockPersonServer` (§3.1).
 
 ---
 
@@ -390,9 +569,9 @@ Phases 3 and 4 are independent of each other — can be done in parallel or in e
 |---|---|---|
 | 1 | ~12 (lib + sample + tests + sln) | 12 |
 | 2 | ~12 (server middleware + sample + tests) | 24 |
-| 3 | ~8 (mock PS + demo script + integration tests) | 32 |
-| 4 | ~8 (CLI commands + config) | 40 |
-| 5 | ~15 (3 services + docker + gateway config + tests) | 55 |
+| 3 | ~20 (mock PS + deferred poller + Blazor tour + integration tests) | 44 |
+| 4 | ~8 (CLI commands + config) | 52 |
+| 5 | ~15 (3 services + docker + gateway config + tests) | 67 |
 
 ---
 

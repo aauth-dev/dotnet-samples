@@ -1,0 +1,65 @@
+@* Right-pane inspector: narrative + collapsible panels for each captured artifact. *@
+
+<article class="inspector">
+    <h2>@Step.Number. @Step.Title</h2>
+    <p class="from-to"><strong>@Step.From</strong> → <strong>@Step.To</strong></p>
+    <p class="narrative">@(RenderNarrative(Step.Narrative))</p>
+
+    @if (!string.IsNullOrWhiteSpace(Step.RequestLine))
+    {
+        <details open>
+            <summary>Request</summary>
+            <pre><code>@Step.RequestLine
+
+@Step.RequestHeaders@(string.IsNullOrEmpty(Step.RequestBody) ? string.Empty : "\n\n" + Step.RequestBody)</code></pre>
+        </details>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(Step.SignatureBase))
+    {
+        <details>
+            <summary>RFC 9421 signature base</summary>
+            <pre><code>@Step.SignatureBase</code></pre>
+        </details>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(Step.StatusLine))
+    {
+        <details open>
+            <summary>Response</summary>
+            <pre><code>@Step.StatusLine
+
+@Step.ResponseHeaders
+
+@Step.ResponseBody</code></pre>
+        </details>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(Step.TokenJwt)
+        || !string.IsNullOrWhiteSpace(Step.TokenHeader)
+        || !string.IsNullOrWhiteSpace(Step.TokenPayload)
+        || !string.IsNullOrWhiteSpace(Step.TokenDecoded))
+    {
+        <TokenView Jwt="@Step.TokenJwt"
+                   Header="@Step.TokenHeader"
+                   Payload="@Step.TokenPayload"
+                   Decoded="@Step.TokenDecoded" />
+    }
+</article>
+
+@code {
+    [Parameter, EditorRequired] public StepRecord Step { get; set; } = default!;
+
+    // Renders narrative text with backtick-quoted spans (`like-this`) as
+    // <code> elements. Input is HTML-escaped first so user-supplied text
+    // can't inject markup.
+    private static MarkupString RenderNarrative(string text)
+    {
+        var escaped = System.Net.WebUtility.HtmlEncode(text ?? string.Empty);
+        var rendered = System.Text.RegularExpressions.Regex.Replace(
+            escaped,
+            "`([^`]+)`",
+            "<code class=\"inline\">$1</code>");
+        return new MarkupString(rendered);
+    }
+}

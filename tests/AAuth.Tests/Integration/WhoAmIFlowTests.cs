@@ -14,24 +14,22 @@ using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
 using AAuth.Tokens;
-using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Hosting;
 using Xunit;
 
 namespace AAuth.Tests.Integration;
 
 /// <summary>
 /// Three-party autonomous-flow integration test:
-///   AgentConsole-style client → WhoAmI resource → MockPS → WhoAmI.
+///   AgentConsole-style client → WhoAmI resource → MockPersonServer → WhoAmI.
 ///
-/// Both servers run in-process behind <see cref="TestServer"/> / WebApplicationFactory.
-/// A <see cref="MultiHostHandler"/> demuxes outbound HTTP by host name so a
+/// Both servers are the shipped <c>samples/WhoAmI</c> and
+/// <c>samples/MockPersonServer</c> projects, hosted in-process via
+/// <see cref="WebApplicationFactory{TEntryPoint}"/>. A
+/// <see cref="MultiHostHandler"/> demuxes outbound HTTP by host name so a
 /// single signing pipeline can talk to both servers.
 /// </summary>
 public class WhoAmIFlowTests : IAsyncLifetime
@@ -41,17 +39,20 @@ public class WhoAmIFlowTests : IAsyncLifetime
     private static readonly string WhoAmIIssuer = $"https://{WhoAmIHost}";
     private static readonly string PsIssuer = $"https://{PsHost}";
 
-    private WebApplicationFactory<Program>? _whoAmI;
-    private IHost? _ps;
-    private AAuthKey? _psKey;
+    private WebApplicationFactory<WhoAmI.Entry>? _whoAmI;
+    private WebApplicationFactory<MockPersonServer.Entry>? _ps;
 
-    public async Task InitializeAsync()
+    public Task InitializeAsync()
     {
-        _psKey = AAuthKey.Generate();
-        _ps = await StartMockPsAsync(_psKey);
-        var psHandler = _ps.GetTestServer().CreateHandler();
+        _ps = new WebApplicationFactory<MockPersonServer.Entry>().WithWebHostBuilder(b =>
+        {
+            b.UseSetting("AAuth:Issuer", PsIssuer);
+        });
+        // Force the host to start so Server is available.
+        _ps.CreateClient();
+        var psHandler = _ps.Server.CreateHandler();
 
-        _whoAmI = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+        _whoAmI = new WebApplicationFactory<WhoAmI.Entry>().WithWebHostBuilder(b =>
         {
             b.UseSetting("AAuth:Issuer", WhoAmIIssuer);
             b.ConfigureServices(services =>
@@ -66,16 +67,14 @@ public class WhoAmIFlowTests : IAsyncLifetime
             });
         });
         _whoAmI.CreateClient();
+        return Task.CompletedTask;
     }
 
-    public async Task DisposeAsync()
+    public Task DisposeAsync()
     {
-        if (_ps is not null)
-        {
-            await _ps.StopAsync();
-            _ps.Dispose();
-        }
+        _ps?.Dispose();
         _whoAmI?.Dispose();
+        return Task.CompletedTask;
     }
 
     [Fact]
@@ -184,7 +183,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
         HttpMessageHandler RoutingHandler() => new MultiHostHandler(new Dictionary<string, HttpMessageHandler>
         {
             [WhoAmIHost] = _whoAmI!.Server.CreateHandler(),
-            [PsHost] = _ps!.GetTestServer().CreateHandler(),
+            [PsHost] = _ps!.Server.CreateHandler(),
         });
 
         HttpMessageHandler resourceInner = new AAuthSigningHandler(agentKey, () => holder.Current)
@@ -211,92 +210,6 @@ public class WhoAmIFlowTests : IAsyncLifetime
         }
 
         return new HttpClient(resourceInner);
-    }
-
-    // -------------------------------------------------------------------
-    // Mock Person Server
-    //
-    // TODO(Phase 3 §3.1): once `samples/MockPersonServer/` ships, replace
-    // this in-process mock with the shared sample binary (or its
-    // WebApplicationFactory) so the integration test exercises shipped
-    // sample code rather than a private duplicate.
-    // -------------------------------------------------------------------
-
-    private static async Task<IHost> StartMockPsAsync(AAuthKey psKey)
-    {
-        var builder = WebApplication.CreateBuilder();
-        builder.WebHost.UseTestServer();
-        builder.Services.AddSingleton(psKey);
-        builder.Services.AddSingleton(new AAuthVerifier());
-        var app = builder.Build();
-
-        const string PsKid = "ps-1";
-
-        // Well-known endpoints — unsigned.
-        app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
-        {
-            Issuer = PsIssuer,
-            SigningKeys = new Dictionary<string, AAuthKey> { [PsKid] = psKey },
-        });
-        // PS metadata advertises the token endpoint.
-        app.MapGet("/.well-known/aauth-person.json", () => Results.Json(new JsonObject
-        {
-            ["issuer"] = PsIssuer,
-            ["jwks_uri"] = $"{PsIssuer}/.well-known/jwks.json",
-            ["token_endpoint"] = $"{PsIssuer}/token",
-        }));
-
-        // Skip signature verification on /.well-known so metadata / JWKS
-        // are reachable to unsigned discovery requests.
-        app.UseWhen(
-            ctx => !ctx.Request.Path.StartsWithSegments("/.well-known"),
-            branch => branch.UseAAuthVerification());
-
-        app.MapPost("/token", async (HttpContext ctx) =>
-        {
-            // The middleware exposes the parsed agent token; we trust the
-            // payload's `sub` for the agent identifier. We don't fully
-            // verify the resource_token here (cross-server JWKS fetch would
-            // be a more elaborate test); we just mint an auth token bound
-            // to the agent's cnf.jwk.
-            var parsed = (SignatureKeyParser.ParsedSignatureKey)ctx.Items[
-                AAuthVerificationMiddleware.ContextItemKey]!;
-            var agentId = (string?)parsed.Payload["sub"] ?? "unknown";
-
-            var body = await ctx.Request.ReadFromJsonAsync<JsonObject>();
-            var resourceTokenJwt = (string?)body?["resource_token"];
-            if (resourceTokenJwt is null)
-            {
-                ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
-                return Results.Json(new { error = "missing resource_token" });
-            }
-
-            // Read the resource token's iss claim — that becomes the auth
-            // token's aud. (resource_token: iss=resource, aud=PS.
-            //  auth_token:     iss=PS,       aud=resource.)
-            var payloadSegment = resourceTokenJwt.Split('.')[1];
-            var payload = (JsonObject)JsonNode.Parse(
-                Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(payloadSegment))!;
-            var audience = (string?)payload["iss"]
-                ?? throw new InvalidOperationException("resource_token missing iss");
-
-            var authToken = new AuthTokenBuilder
-            {
-                Issuer = PsIssuer,
-                Audience = audience,
-                Agent = agentId,
-                AgentConfirmationKey = parsed.ConfirmationKey,
-                Key = psKey,
-                KeyId = PsKid,
-                Subject = "pairwise-sub",
-                Scope = "whoami",
-            }.Build();
-
-            return Results.Ok(new { auth_token = authToken });
-        });
-
-        await app.StartAsync();
-        return app;
     }
 
     // -------------------------------------------------------------------

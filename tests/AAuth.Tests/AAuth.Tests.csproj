@@ -5,6 +5,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\AAuth\AAuth.csproj" />
     <ProjectReference Include="..\..\samples\WhoAmI\WhoAmI.csproj" />
+    <ProjectReference Include="..\..\samples\MockPersonServer\MockPersonServer.csproj" />
   </ItemGroup>
 
   <!--

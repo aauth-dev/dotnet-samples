@@ -1,0 +1,97 @@
+@page "/"
+@rendermode InteractiveServer
+@inject TourSession Session
+@inject Microsoft.Extensions.Options.IOptions<TourOptions> Options
+
+<PageTitle>AAuth Guided Tour</PageTitle>
+
+<header class="topbar">
+    <h1>AAuth Guided Tour</h1>
+    <div class="config">
+        <span><strong>Resource:</strong> @Options.Value.WhoAmIUrl</span>
+        <span><strong>Person Server:</strong> @(string.IsNullOrWhiteSpace(Options.Value.PersonServerUrl) ? "(none — identity-based flow)" : Options.Value.PersonServerUrl)</span>
+    </div>
+    <div class="actions">
+        <button class="primary" @onclick="NextAsync" disabled="@(Session.IsComplete || _busy)">
+            @(_busy ? "Running…" : Session.IsComplete ? "Done" : $"Run step {Session.Steps.Count + 1} / {Session.TotalSteps}")
+        </button>
+        <button @onclick="RunAllAsync" disabled="@(Session.IsComplete || _busy)">Run all</button>
+        <button @onclick="Reset" disabled="@_busy">Reset</button>
+    </div>
+    @if (_error is not null)
+    {
+        <div class="error">@_error</div>
+    }
+</header>
+
+<div class="layout">
+    <aside class="steps">
+        <StepList Steps="@Session.Steps" Total="@Session.TotalSteps" Selected="@_selected" OnSelect="@(i => _selected = i)" />
+    </aside>
+
+    <section class="diagram">
+        <SequenceDiagram Steps="@Session.Steps" Highlight="@_selected" />
+    </section>
+
+    <section class="payload">
+        @if (Selected is not null)
+        {
+            <PayloadInspector Step="@Selected" />
+        }
+        else
+        {
+            <p class="hint">Run a step to see its payloads here.</p>
+        }
+    </section>
+</div>
+
+@code {
+    private int _selected;
+    private bool _busy;
+    private string? _error;
+
+    private StepRecord? Selected =>
+        _selected >= 0 && _selected < Session.Steps.Count ? Session.Steps[_selected] : null;
+
+    private async Task NextAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            await Session.RunNextAsync();
+            _selected = Session.Steps.Count - 1;
+        }
+        catch (Exception ex)
+        {
+            _error = $"{ex.GetType().Name}: {ex.Message}";
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task RunAllAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            while (!Session.IsComplete)
+            {
+                await Session.RunNextAsync();
+            }
+            _selected = Session.Steps.Count - 1;
+        }
+        catch (Exception ex)
+        {
+            _error = $"{ex.GetType().Name}: {ex.Message}";
+        }
+        finally { _busy = false; }
+    }
+
+    private void Reset()
+    {
+        Session.Reset();
+        _selected = 0;
+        _error = null;
+    }
+}
