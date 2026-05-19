@@ -122,12 +122,16 @@ public sealed class ChallengeHandler : DelegatingHandler
         // here, which is a known limitation.
         response.Dispose();
         var retry = await CloneAsync(request, cancellationToken).ConfigureAwait(false);
-        // Note: do NOT wrap `retry` in `using`. The returned response's
-        // RequestMessage references it; disposing here would leave callers
-        // (loggers, EnsureSuccessStatusCode failure paths) holding a
-        // disposed reference. HttpRequestMessage.Dispose only clears the
-        // content stream, which we've already buffered/forwarded.
-        return await base.SendAsync(retry, cancellationToken).ConfigureAwait(false);
+        var result = await base.SendAsync(retry, cancellationToken).ConfigureAwait(false);
+        // Reassign the response's RequestMessage to the caller-owned
+        // original so diagnostics (EnsureSuccessStatusCode, loggers) keep
+        // working, then dispose the short-lived clone. This avoids both
+        // (a) retaining the cloned ByteArrayContent on the response until
+        // GC and (b) handing callers a response backed by a disposed
+        // request — the trade-off of the previous `using` placement.
+        result.RequestMessage = request;
+        retry.Dispose();
+        return result;
     }
 
     private static async Task<HttpRequestMessage> CloneAsync(

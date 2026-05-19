@@ -179,9 +179,20 @@ public sealed class TokenExchangeClient
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         var originalMediaType = response.Content.Headers.ContentType?.MediaType ?? "application/json";
         var originalCharset = response.Content.Headers.ContentType?.CharSet;
-        var encoding = originalCharset is null
-            ? System.Text.Encoding.UTF8
-            : System.Text.Encoding.GetEncoding(originalCharset);
+        // Fall back to UTF-8 for unknown / malformed charset values rather
+        // than surfacing an ArgumentException from Encoding.GetEncoding,
+        // which would mask the real exchange failure the caller is trying
+        // to diagnose.
+        System.Text.Encoding encoding;
+        if (string.IsNullOrEmpty(originalCharset))
+        {
+            encoding = System.Text.Encoding.UTF8;
+        }
+        else
+        {
+            try { encoding = System.Text.Encoding.GetEncoding(originalCharset); }
+            catch (ArgumentException) { encoding = System.Text.Encoding.UTF8; }
+        }
         response.Content.Dispose();
         response.Content = new StringContent(body, encoding, originalMediaType);
         try
