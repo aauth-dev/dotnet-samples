@@ -49,7 +49,9 @@ default in `appsettings.json`:
 
 ### Deferred / user-consent (11 steps)
 
-1–6. Same as Autonomous.
+Steps 1–6 are the same as **Autonomous**. From step 7 onward:
+
+<!-- markdownlint-disable-next-line MD029 -->
 7. Signed `POST /token` → **`202 Accepted`** with `Location: /pending/{id}`
    and `AAuth-Requirement: requirement=interaction; url; code`.
 8. Agent presents the user-facing `{url}?code={code}` link.
