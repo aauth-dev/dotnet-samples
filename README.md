@@ -114,7 +114,7 @@ Flags:
 
 ### 3. MockPersonServer (`samples/MockPersonServer/`)
 
-A reference Person Server. Verifies the signed token-exchange request from the agent, validates the embedded `resource_token`, and mints an `aa-auth+jwt` bound to the agent's confirmation key.
+A reference Person Server. Verifies the RFC 9421 signature on the token-exchange request from the agent, parses the embedded `resource_token` (does **not** verify its signature against the RS's JWKS — demo-only), and mints an `aa-auth+jwt` bound to the agent's confirmation key.
 
 ```bash
 dotnet run --project samples/MockPersonServer

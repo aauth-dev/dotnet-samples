@@ -19,18 +19,23 @@ namespace AAuth.Tests.Integration;
 /// in <see cref="WhoAmIFlowTests"/> exercise the same sample in the full
 /// three-party flow alongside WhoAmI.
 /// </summary>
-public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPersonServer.Entry>>
+public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPersonServer.Entry>>, IDisposable
 {
     private const string PsIssuer = "https://ps.test";
     private readonly WebApplicationFactory<MockPersonServer.Entry> _factory;
 
     public MockPersonServerTests(WebApplicationFactory<MockPersonServer.Entry> factory)
     {
+        // WithWebHostBuilder returns a NEW factory instance owned by this
+        // test class; the xUnit-managed fixture only owns the original.
+        // Dispose it explicitly in Dispose to release the in-memory host.
         _factory = factory.WithWebHostBuilder(b =>
         {
             b.UseSetting("AAuth:Issuer", PsIssuer);
         });
     }
+
+    public void Dispose() => _factory.Dispose();
 
     [Fact]
     public async Task PersonMetadata_AdvertisesTokenEndpoint()

@@ -358,13 +358,19 @@ public sealed class TourSession
 
     private void Step2BuildAgentToken()
     {
+        // Normalize whitespace/empty PersonServerUrl to null so identity-based
+        // (steps 1–4) mode works — AgentTokenBuilder treats any non-null value
+        // as "present" and validates it as an https URL.
+        var personServer = string.IsNullOrWhiteSpace(_options.PersonServerUrl)
+            ? null
+            : _options.PersonServerUrl;
         _agentToken = new AgentTokenBuilder
         {
             Issuer = "https://ap.example",
             Subject = _options.AgentId,
             KeyId = "tour",
             Key = _agentKey!,
-            PersonServer = _options.PersonServerUrl,
+            PersonServer = personServer,
         }.Build();
 
         Steps.Add(new StepRecord
