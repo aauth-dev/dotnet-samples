@@ -1,24 +1,42 @@
-@* Step list with status indicators down the left edge. *@
+@* Step list. Renders the full planned timeline with two-line entries:
+   bold title + muted description + actor badge. The numbered "pill"
+   on the left shows status — done (✓), current (highlighted accent),
+   pending (muted). Done steps are clickable to re-inspect their
+   captured payloads. *@
 
 <ol class="step-list">
-    @for (int i = 1; i <= Total; i++)
+    @foreach (var p in Plan)
     {
-        var idx = i - 1;
+        var idx = p.Number - 1;
         var done = idx < Steps.Count;
+        var current = idx == Steps.Count && idx < Plan.Count;
+        var selected = idx == Selected && done;
+        var state = done ? "done" : current ? "current" : "pending";
         var record = done ? Steps[idx] : null;
-        var selected = idx == Selected;
-        var cssClass = (done ? "done " : "pending ") + (selected ? "selected" : string.Empty);
-        var label = record?.Title ?? $"Step {i}";
-        <li class="@cssClass" @onclick="() => OnSelect.InvokeAsync(idx)">
-            <span class="num">@i</span>
-            <span class="title">@label</span>
+        var title = record?.Title ?? p.Title;
+        <li class="step @state @(selected ? "selected" : "")"
+            @onclick="@(() => { if (done) OnSelect.InvokeAsync(idx); })">
+            <span class="step__pill">@(done ? "✓" : p.Number.ToString())</span>
+            <div class="step__body">
+                <div class="step__title">@title</div>
+                <div class="step__desc">@p.Description</div>
+                <div class="step__actor">@ActorLabel(p.From) → @ActorLabel(p.To)</div>
+            </div>
         </li>
     }
 </ol>
 
 @code {
     [Parameter] public IList<StepRecord> Steps { get; set; } = Array.Empty<StepRecord>();
-    [Parameter] public int Total { get; set; }
+    [Parameter] public IReadOnlyList<TourPlanStep> Plan { get; set; } = Array.Empty<TourPlanStep>();
     [Parameter] public int Selected { get; set; }
     [Parameter] public EventCallback<int> OnSelect { get; set; }
+
+    private static string ActorLabel(Actor a) => a switch
+    {
+        Actor.Agent => "Agent",
+        Actor.Resource => "Resource",
+        Actor.PersonServer => "Person Server",
+        _ => a.ToString(),
+    };
 }

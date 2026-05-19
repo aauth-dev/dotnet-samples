@@ -48,6 +48,119 @@ button {
 button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
 button.primary { background: var(--accent); color: #0a0d12; border-color: var(--accent); font-weight: 600; }
+button.primary.approve { background: #6ee7b7; border-color: #6ee7b7; }
+a.primary, a.primary.approve {
+  display: inline-block;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid;
+  border-radius: 0.25rem;
+  text-decoration: none;
+  font-weight: 600;
+  color: #0a0d12;
+}
+a.primary.approve { background: #6ee7b7; border-color: #34d399; }
+a.primary.approve:hover { filter: brightness(1.05); }
+button.deny {
+  background: #fecaca;
+  border-color: #f87171;
+  color: #0a0d12;
+  font-weight: 600;
+}
+button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef4444; }
+
+/* Live-polling status card. Shown while step 10's background poll is in flight. */
+.polling {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  margin: 1rem 1.25rem 0;
+  padding: 0.85rem 1.1rem;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.12);
+}
+.polling__spinner {
+  display: inline-block;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-top: 0.15rem;
+  border: 2px solid rgba(88, 166, 255, 0.25);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: polling-spin 0.9s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes polling-spin {
+  to { transform: rotate(360deg); }
+}
+.polling__body { min-width: 0; }
+.polling__title { font-weight: 600; color: var(--fg); }
+.polling__detail {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-top: 0.2rem;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.polling__hint {
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin-top: 0.35rem;
+}
+
+.mode-picker { display: inline-flex; align-items: center; gap: 0.4rem; }
+.mode-picker select {
+  background: #1a1f29;
+  color: inherit;
+  border: 1px solid var(--border, #2a3140);
+  border-radius: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.9rem;
+}
+
+.flow-picker {
+  margin: 1rem 1.25rem 0;
+  padding: 1rem 1.25rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+}
+.flow-picker__label {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.flow-picker__title {
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--fg);
+}
+.flow-picker select {
+  background: var(--panel-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.95rem;
+  min-width: 22rem;
+}
+.flow-picker select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.flow-picker__desc {
+  margin: 0.6rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  max-width: 60rem;
+}
+.flow-picker__desc code {
+  background: var(--code-bg);
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+  color: var(--fg);
+}
 
 .layout {
     display: grid;
@@ -60,22 +173,71 @@ button.primary { background: var(--accent); color: #0a0d12; border-color: var(--
 
 /* step list */
 .step-list { list-style: none; margin: 0; padding: 0; }
-.step-list li {
-    display: flex; align-items: center; gap: 0.6rem;
-    padding: 0.55rem 0.7rem; margin: 0.25rem 0;
-    border-radius: 6px; cursor: pointer;
+.step-list li.step {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem;
+    padding: 0.65rem 0.75rem;
+    margin: 0.35rem 0;
+    border-radius: 8px;
     border: 1px solid transparent;
+    cursor: default;
+    transition: background 0.1s ease, border-color 0.1s ease;
 }
-.step-list li:hover { background: var(--panel-2); }
-.step-list .num {
-    display: inline-block; width: 1.4rem; height: 1.4rem; line-height: 1.4rem;
-    text-align: center; border-radius: 50%; font-size: 0.8rem; font-weight: 700;
-    background: var(--panel-2); color: var(--muted);
+.step-list li.step.done { cursor: pointer; }
+.step-list li.step.done:hover { background: var(--panel-2); }
+.step-list li.step.current {
+    background: var(--panel);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.15);
 }
-.step-list .done .num { background: var(--ok); color: #0a0d12; }
-.step-list .pending .num { background: var(--panel-2); color: var(--muted); }
-.step-list .selected { border-color: var(--accent); background: var(--panel); }
-.step-list .pending .title { color: var(--muted); }
+.step-list li.step.selected {
+    background: var(--panel);
+    border-color: var(--accent);
+}
+.step-list .step__pill {
+    width: 1.7rem; height: 1.7rem; line-height: 1.7rem;
+    text-align: center;
+    border-radius: 50%;
+    font-size: 0.8rem;
+    font-weight: 700;
+    background: var(--panel-2);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.step-list .step.done .step__pill {
+    background: var(--ok);
+    color: #0a0d12;
+    border-color: var(--ok);
+}
+.step-list .step.current .step__pill {
+    background: var(--accent);
+    color: #0a0d12;
+    border-color: var(--accent);
+}
+.step-list .step__body { min-width: 0; }
+.step-list .step__title {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: var(--fg);
+    line-height: 1.25;
+}
+.step-list .step.pending .step__title { color: var(--muted); font-weight: 500; }
+.step-list .step__desc {
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-top: 0.2rem;
+    line-height: 1.35;
+}
+.step-list .step__actor {
+    font-size: 0.7rem;
+    color: var(--muted);
+    margin-top: 0.3rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
 
 /* sequence diagram */
 .seq { display: flex; flex-direction: column; height: 100%; }

@@ -67,3 +67,16 @@ public enum Actor
     Resource,
     PersonServer,
 }
+
+/// <summary>
+/// Static description of a planned tour step. Used by the step list to
+/// render upcoming steps with titles + one-line descriptions before
+/// they've been recorded. Once a step runs its <see cref="StepRecord"/>
+/// supersedes the plan entry in the UI.
+/// </summary>
+public sealed record TourPlanStep(
+    int Number,
+    string Title,
+    string Description,
+    Actor From,
+    Actor To);

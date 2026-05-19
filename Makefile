@@ -47,20 +47,23 @@ whoami: ## Run the WhoAmI resource server (port 5000)
 ps: ## Run the MockPersonServer (port 5100)
 	$(DOTNET) run --project $(PS_PROJECT)
 
+ps-consent: ## Run MockPersonServer with RequireConsent=true (deferred-flow demo)
+	MockPersonServer__RequireConsent=true $(DOTNET) run --project $(PS_PROJECT)
+
 tour: ## Run the GuidedTour Blazor app (port 5400)
 	$(DOTNET) run --project $(TOUR_PROJECT)
 
 agent: ## Run AgentConsole against WhoAmI (override URL=… for a different target)
 	$(DOTNET) run --project $(AGENT_PROJECT) -- $(or $(URL),$(WHOAMI_URL))
 
-demo: ## Start WhoAmI + MockPersonServer + GuidedTour in parallel (Ctrl+C to stop all)
-	@echo "Starting three-party demo..."
+demo: ## Start WhoAmI + MockPersonServer (with consent gate) + GuidedTour in parallel
+	@echo "Starting three-party demo (deferred / user-consent flow)..."
 	@echo "  WhoAmI:           $(WHOAMI_URL)"
-	@echo "  MockPersonServer: $(PS_URL)"
+	@echo "  MockPersonServer: $(PS_URL)  (RequireConsent=true)"
 	@echo "  GuidedTour:       $(TOUR_URL)"
 	@echo ""
 	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \
-	$(DOTNET) run --project $(PS_PROJECT) & \
+	MockPersonServer__RequireConsent=true $(DOTNET) run --project $(PS_PROJECT) & \
 	$(DOTNET) run --project $(WHOAMI_PROJECT) & \
 	$(DOTNET) run --project $(TOUR_PROJECT) & \
 	wait

@@ -202,3 +202,237 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         Assert.Equal("invalid_request", (string?)body!["error"]);
     }
 }
+
+/// <summary>
+/// Consent-gated MockPS scenarios: tests against an instance configured
+/// with <c>MockPersonServer:RequireConsent=true</c>, exercising the
+/// 202 → admin consent → 200 pending loop.
+/// </summary>
+public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsentTests.ConsentFactory>
+{
+    private const string PsIssuer = "https://ps.test";
+    private const string ResourceUrl = "https://whoami.test";
+    private readonly ConsentFactory _factory;
+
+    public MockPersonServerConsentTests(ConsentFactory factory)
+    {
+        _factory = factory;
+    }
+
+    public sealed class ConsentFactory : WebApplicationFactory<MockPersonServer.Entry>
+    {
+        protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
+        {
+            builder.UseSetting("AAuth:Issuer", PsIssuer);
+            builder.UseSetting("MockPersonServer:RequireConsent", "true");
+        }
+    }
+
+    [Fact]
+    public async Task Token_Returns202WithInteractionRequirement_WhenConsentMissing()
+    {
+        var (signedClient, _, _) = BuildSignedAgentClient();
+        var resourceToken = BuildResourceToken("aauth:demo@ap.example", AAuthKey.Generate());
+
+        using var response = await signedClient.PostAsJsonAsync("/token",
+            new JsonObject { ["resource_token"] = resourceToken });
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.NotNull(response.Headers.Location);
+        Assert.True(response.Headers.TryGetValues("AAuth-Requirement", out var values));
+        var parsed = AAuth.Headers.AAuthRequirementHeader.Parse(string.Join(", ", values!));
+        var interaction = AAuth.Headers.AAuthInteraction.FromRequirement(parsed);
+        Assert.NotNull(interaction);
+        Assert.StartsWith($"{PsIssuer}/interaction", interaction!.Url);
+        Assert.False(string.IsNullOrEmpty(interaction.Code));
+    }
+
+    [Fact]
+    public async Task Pending_FlipsFrom202To200_AfterAdminConsent()
+    {
+        var agentKey = AAuthKey.Generate();
+        var agentId = "aauth:demo@ap.example";
+        var (signedClient, plainHttp, _) = BuildSignedAgentClient(agentKey, agentId);
+        var resourceToken = BuildResourceToken(agentId, agentKey);
+
+        using var initial = await signedClient.PostAsJsonAsync("/token",
+            new JsonObject { ["resource_token"] = resourceToken });
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        var pendingPath = initial.Headers.Location!.OriginalString;
+
+        // First poll: still pending.
+        using var pending1 = await signedClient.GetAsync(pendingPath);
+        Assert.Equal(HttpStatusCode.Accepted, pending1.StatusCode);
+
+        // Simulate the user clicking "Approve".
+        using var admin = await plainHttp.PostAsJsonAsync("/admin/consent", new JsonObject
+        {
+            ["agent"] = agentId,
+            ["resource"] = ResourceUrl,
+            ["scope"] = "whoami",
+        });
+        Assert.True(admin.IsSuccessStatusCode);
+
+        // Next poll: terminal 200 + auth_token.
+        using var pending2 = await signedClient.GetAsync(pendingPath);
+        Assert.Equal(HttpStatusCode.OK, pending2.StatusCode);
+        var body = await pending2.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.False(string.IsNullOrEmpty((string?)body!["auth_token"]));
+    }
+
+    [Fact]
+    public async Task Pending_ReturnsImmediate200_WhenConsentPreRecorded()
+    {
+        var agentKey = AAuthKey.Generate();
+        var agentId = "aauth:pre@ap.example";
+        var (signedClient, plainHttp, _) = BuildSignedAgentClient(agentKey, agentId);
+
+        // Pre-record consent before any exchange.
+        using var admin = await plainHttp.PostAsJsonAsync("/admin/consent", new JsonObject
+        {
+            ["agent"] = agentId,
+            ["resource"] = ResourceUrl,
+            ["scope"] = "whoami",
+        });
+        Assert.True(admin.IsSuccessStatusCode);
+
+        var resourceToken = BuildResourceToken(agentId, agentKey);
+        using var response = await signedClient.PostAsJsonAsync("/token",
+            new JsonObject { ["resource_token"] = resourceToken });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.False(string.IsNullOrEmpty((string?)body!["auth_token"]));
+    }
+
+    [Fact]
+    public async Task Interaction_GetRendersConsentForm_ThenPostApproveFlipsPending()
+    {
+        var agentKey = AAuthKey.Generate();
+        var agentId = "aauth:browser@ap.example";
+        var (signedClient, plainHttp, _) = BuildSignedAgentClient(agentKey, agentId);
+        var resourceToken = BuildResourceToken(agentId, agentKey);
+
+        // Agent → 202 with interaction URL + code.
+        using var initial = await signedClient.PostAsJsonAsync("/token",
+            new JsonObject { ["resource_token"] = resourceToken });
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        Assert.True(initial.Headers.TryGetValues("AAuth-Requirement", out var reqValues));
+        var parsed = AAuth.Headers.AAuthRequirementHeader.Parse(string.Join(", ", reqValues!));
+        var interaction = AAuth.Headers.AAuthInteraction.FromRequirement(parsed);
+        Assert.NotNull(interaction);
+
+        // User's browser → GET /interaction?code=…  renders a consent form.
+        using var page = await plainHttp.GetAsync($"/interaction?code={interaction!.Code}");
+        Assert.Equal(HttpStatusCode.OK, page.StatusCode);
+        var html = await page.Content.ReadAsStringAsync();
+        Assert.Contains("/interaction/approve", html);
+        Assert.Contains(agentId, html);
+        Assert.Contains(ResourceUrl, html);
+
+        // User's browser → POST /interaction/approve consumes the code.
+        using var approve = await plainHttp.PostAsync(
+            "/interaction/approve",
+            new FormUrlEncodedContent(new[]
+            {
+                new KeyValuePair<string, string>("code", interaction.Code),
+            }));
+        Assert.True(approve.IsSuccessStatusCode);
+
+        // Agent's next poll → 200 + auth_token.
+        var pendingPath = initial.Headers.Location!.OriginalString;
+        using var pending = await signedClient.GetAsync(pendingPath);
+        Assert.Equal(HttpStatusCode.OK, pending.StatusCode);
+        var body = await pending.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.False(string.IsNullOrEmpty((string?)body!["auth_token"]));
+    }
+
+    [Fact]
+    public async Task Interaction_PostApproveWithUnknownCode_Returns404()
+    {
+        var (_, plainHttp, _) = BuildSignedAgentClient();
+        using var resp = await plainHttp.PostAsync(
+            "/interaction/approve",
+            new FormUrlEncodedContent(new[]
+            {
+                new KeyValuePair<string, string>("code", "definitely-not-a-real-id"),
+            }));
+        Assert.Equal(HttpStatusCode.NotFound, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task Pending_Returns403AccessDenied_AfterDeny()
+    {
+        // Verifies the deny path: POST /interaction/deny marks the
+        // pending entry as denied (rather than removing it), and the
+        // subsequent /pending/{id} poll surfaces a deterministic 403
+        // with body { error: "access_denied" }. This is what
+        // AAuthInteractionDeniedException is keyed off in the SDK.
+        var agentKey = AAuthKey.Generate();
+        var agentId = "aauth:denier@ap.example";
+        var (signedClient, plainHttp, _) = BuildSignedAgentClient(agentKey, agentId);
+        var resourceToken = BuildResourceToken(agentId, agentKey);
+
+        using var initial = await signedClient.PostAsJsonAsync("/token",
+            new JsonObject { ["resource_token"] = resourceToken });
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        var parsed = AAuth.Headers.AAuthRequirementHeader.Parse(
+            string.Join(", ", initial.Headers.GetValues("AAuth-Requirement")));
+        var interaction = AAuth.Headers.AAuthInteraction.FromRequirement(parsed);
+        Assert.NotNull(interaction);
+
+        // User's browser → POST /interaction/deny.
+        using var deny = await plainHttp.PostAsync(
+            "/interaction/deny",
+            new FormUrlEncodedContent(new[]
+            {
+                new KeyValuePair<string, string>("code", interaction!.Code),
+            }));
+        Assert.True(deny.IsSuccessStatusCode);
+
+        // Agent's next poll → 403 access_denied (not 404 / not 202).
+        var pendingPath = initial.Headers.Location!.OriginalString;
+        using var pending = await signedClient.GetAsync(pendingPath);
+        Assert.Equal(HttpStatusCode.Forbidden, pending.StatusCode);
+        var body = await pending.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("access_denied", (string?)body!["error"]);
+    }
+
+    // ----------------------------------------------------------------
+    // Helpers
+    // ----------------------------------------------------------------
+    private (HttpClient Signed, HttpClient Plain, string AgentToken) BuildSignedAgentClient(
+        AAuthKey? agentKey = null, string agentId = "aauth:demo@ap.example")
+    {
+        agentKey ??= AAuthKey.Generate();
+        var agentToken = new AgentTokenBuilder
+        {
+            Issuer = "https://ap.example",
+            Subject = agentId,
+            KeyId = "demo",
+            Key = agentKey,
+            PersonServer = PsIssuer,
+        }.Build();
+        var signing = new AAuthSigningHandler(agentKey, () => agentToken)
+        {
+            InnerHandler = _factory.Server.CreateHandler(),
+        };
+        var signed = new HttpClient(signing) { BaseAddress = new Uri(PsIssuer) };
+        var plain = _factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri(PsIssuer),
+        });
+        return (signed, plain, agentToken);
+    }
+
+    private static string BuildResourceToken(string agent, AAuthKey agentKey)
+        => new ResourceTokenBuilder
+        {
+            Issuer = ResourceUrl,
+            Audience = PsIssuer,
+            Agent = agent,
+            AgentJkt = agentKey.ComputeJwkThumbprint(),
+            Key = AAuthKey.Generate(),
+            KeyId = "whoami-1",
+            Scope = "whoami",
+        }.Build();
+}

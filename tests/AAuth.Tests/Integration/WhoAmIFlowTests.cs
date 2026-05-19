@@ -172,6 +172,214 @@ public class WhoAmIFlowTests : IAsyncLifetime
         Assert.Equal(ResourceTokenBuilder.ResourceDwk, (string?)payload["dwk"]);
     }
 
+    [Fact]
+    public async Task ThreePartyUserConsentFlow_WaitsForApproval()
+    {
+        // Spin up a second PS instance configured with RequireConsent=true
+        // so the autonomous-path tests in this class keep working in their
+        // existing shared factory and only this test pays the consent-gate
+        // setup cost.
+        using var consentPs = new WebApplicationFactory<MockPersonServer.Entry>().WithWebHostBuilder(b =>
+        {
+            b.UseSetting("AAuth:Issuer", PsIssuer);
+            b.UseSetting("MockPersonServer:RequireConsent", "true");
+        });
+        consentPs.CreateClient();
+        var consentPsHandler = consentPs.Server.CreateHandler();
+
+        // Need a WhoAmI variant whose JWKS/metadata clients point at the
+        // consent-mode PS rather than the shared autonomous one.
+        using var whoAmI = new WebApplicationFactory<WhoAmI.Entry>().WithWebHostBuilder(b =>
+        {
+            b.UseSetting("AAuth:Issuer", WhoAmIIssuer);
+            b.ConfigureServices(services =>
+            {
+                services.RemoveAll<MetadataClient>();
+                services.RemoveAll<JwksClient>();
+                services.AddSingleton(new MetadataClient(new HttpClient(consentPsHandler)));
+                services.AddSingleton(new JwksClient(new HttpClient(consentPsHandler)));
+            });
+        });
+        whoAmI.CreateClient();
+
+        var agentKey = AAuthKey.Generate();
+        const string AgentId = "aauth:consent@ap.example";
+        var agentToken = new AgentTokenBuilder
+        {
+            Issuer = "https://ap.example",
+            Subject = AgentId,
+            KeyId = "demo",
+            Key = agentKey,
+            PersonServer = PsIssuer,
+        }.Build();
+
+        // Routing handler so the agent's single signed pipeline can reach
+        // both the consent-PS and the consent-aware WhoAmI by host name.
+        HttpMessageHandler RoutingHandler() => new MultiHostHandler(new Dictionary<string, HttpMessageHandler>
+        {
+            [WhoAmIHost] = whoAmI.Server.CreateHandler(),
+            [PsHost] = consentPsHandler,
+        });
+
+        var holder = new AAuthTokenHolder(agentToken);
+
+        // The interaction callback simulates the user clicking "Approve"
+        // at the PS's real /interaction page: POST the code (= pending id)
+        // to /interaction/approve as a form, exactly as the HTML form in
+        // the user's browser would. Once consent lands, the next poll on
+        // /pending/{id} returns 200 + auth_token.
+        Func<AAuthInteraction, CancellationToken, Task> approveAsUser =
+            async (interaction, ct) =>
+            {
+                Assert.NotNull(interaction.Code);
+                Assert.StartsWith($"{PsIssuer}/interaction", interaction.Url);
+
+                using var browser = new HttpClient(consentPsHandler, disposeHandler: false);
+                using var resp = await browser.PostAsync(
+                    $"{PsIssuer}/interaction/approve",
+                    new FormUrlEncodedContent(new[]
+                    {
+                        new KeyValuePair<string, string>("code", interaction.Code),
+                    }), ct);
+                Assert.True(resp.IsSuccessStatusCode,
+                    $"/interaction/approve failed: {(int)resp.StatusCode}");
+            };
+
+        // Build a signed pipeline that funnels deferred-PS responses through
+        // ChallengeHandler → TokenExchangeClient (deferred-aware overload).
+        var agentTokenAtConstruction = holder.Current;
+        var exchangeSigning = new AAuthSigningHandler(agentKey, () => agentTokenAtConstruction)
+        {
+            InnerHandler = RoutingHandler(),
+        };
+        var exchangeHttp = new HttpClient(exchangeSigning);
+        var metadata = new MetadataClient(new HttpClient(RoutingHandler()));
+        var exchange = new TokenExchangeClient(exchangeHttp, metadata);
+
+        var pollerOptions = new DeferredPollerOptions
+        {
+            MaxTotalWait = TimeSpan.FromSeconds(10),
+            DefaultPollInterval = TimeSpan.FromMilliseconds(20),
+            MinPollInterval = TimeSpan.Zero,
+        };
+        var resourceSigning = new AAuthSigningHandler(agentKey, () => holder.Current)
+        {
+            InnerHandler = RoutingHandler(),
+        };
+        var challenge = new ChallengeHandler(exchange, holder, PsIssuer, approveAsUser, pollerOptions)
+        {
+            InnerHandler = resourceSigning,
+        };
+        using var client = new HttpClient(challenge);
+
+        var response = await client.GetAsync($"{WhoAmIIssuer}/");
+        var rawBody = await response.Content.ReadAsStringAsync();
+        Assert.True(response.IsSuccessStatusCode,
+            $"Status={(int)response.StatusCode}, Body={rawBody}");
+        var body = JsonNode.Parse(rawBody) as JsonObject;
+        Assert.Equal(AgentId, (string?)body!["agent"]);
+        Assert.Equal("pairwise-sub", (string?)body["sub"]);
+
+        // Carrier swapped to the post-exchange auth token, just like the
+        // autonomous flow.
+        Assert.NotEqual(agentToken, holder.Current);
+    }
+
+    [Fact]
+    public async Task ThreePartyUserConsentFlow_ThrowsAAuthInteractionDenied_WhenUserDenies()
+    {
+        // Same plumbing as the approval test, but the interaction
+        // callback simulates the user clicking Deny instead of Approve.
+        // The PS marks the pending entry as denied and the agent's
+        // next /pending/{id} poll receives 403 + access_denied. The
+        // SDK must surface that as AAuthInteractionDeniedException
+        // rather than a generic HttpRequestException.
+        using var consentPs = new WebApplicationFactory<MockPersonServer.Entry>().WithWebHostBuilder(b =>
+        {
+            b.UseSetting("AAuth:Issuer", PsIssuer);
+            b.UseSetting("MockPersonServer:RequireConsent", "true");
+        });
+        consentPs.CreateClient();
+        var consentPsHandler = consentPs.Server.CreateHandler();
+
+        using var whoAmI = new WebApplicationFactory<WhoAmI.Entry>().WithWebHostBuilder(b =>
+        {
+            b.UseSetting("AAuth:Issuer", WhoAmIIssuer);
+            b.ConfigureServices(services =>
+            {
+                services.RemoveAll<MetadataClient>();
+                services.RemoveAll<JwksClient>();
+                services.AddSingleton(new MetadataClient(new HttpClient(consentPsHandler)));
+                services.AddSingleton(new JwksClient(new HttpClient(consentPsHandler)));
+            });
+        });
+        whoAmI.CreateClient();
+
+        var agentKey = AAuthKey.Generate();
+        const string AgentId = "aauth:denier@ap.example";
+        var agentToken = new AgentTokenBuilder
+        {
+            Issuer = "https://ap.example",
+            Subject = AgentId,
+            KeyId = "demo",
+            Key = agentKey,
+            PersonServer = PsIssuer,
+        }.Build();
+
+        HttpMessageHandler RoutingHandler() => new MultiHostHandler(new Dictionary<string, HttpMessageHandler>
+        {
+            [WhoAmIHost] = whoAmI.Server.CreateHandler(),
+            [PsHost] = consentPsHandler,
+        });
+
+        var holder = new AAuthTokenHolder(agentToken);
+
+        Func<AAuthInteraction, CancellationToken, Task> denyAsUser =
+            async (interaction, ct) =>
+            {
+                using var browser = new HttpClient(consentPsHandler, disposeHandler: false);
+                using var resp = await browser.PostAsync(
+                    $"{PsIssuer}/interaction/deny",
+                    new FormUrlEncodedContent(new[]
+                    {
+                        new KeyValuePair<string, string>("code", interaction.Code),
+                    }), ct);
+                Assert.True(resp.IsSuccessStatusCode,
+                    $"/interaction/deny failed: {(int)resp.StatusCode}");
+            };
+
+        var agentTokenAtConstruction = holder.Current;
+        var exchangeSigning = new AAuthSigningHandler(agentKey, () => agentTokenAtConstruction)
+        {
+            InnerHandler = RoutingHandler(),
+        };
+        var exchangeHttp = new HttpClient(exchangeSigning);
+        var metadata = new MetadataClient(new HttpClient(RoutingHandler()));
+        var exchange = new TokenExchangeClient(exchangeHttp, metadata);
+
+        var pollerOptions = new DeferredPollerOptions
+        {
+            MaxTotalWait = TimeSpan.FromSeconds(10),
+            DefaultPollInterval = TimeSpan.FromMilliseconds(20),
+            MinPollInterval = TimeSpan.Zero,
+        };
+        var resourceSigning = new AAuthSigningHandler(agentKey, () => holder.Current)
+        {
+            InnerHandler = RoutingHandler(),
+        };
+        var challenge = new ChallengeHandler(exchange, holder, PsIssuer, denyAsUser, pollerOptions)
+        {
+            InnerHandler = resourceSigning,
+        };
+        using var client = new HttpClient(challenge);
+
+        await Assert.ThrowsAsync<AAuthInteractionDeniedException>(
+            () => client.GetAsync($"{WhoAmIIssuer}/"));
+
+        // Carrier did NOT swap — the agent never received an auth token.
+        Assert.Equal(agentToken, holder.Current);
+    }
+
     // -------------------------------------------------------------------
     // Agent pipeline
     // -------------------------------------------------------------------

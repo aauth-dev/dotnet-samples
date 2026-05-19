@@ -309,6 +309,33 @@ xUnit integration tests for CI. Both consume the same `src/AAuth/` SDK that
   base (for signed requests), and decoded JWT header+payload (for steps
   that mint or receive a token). Smoke-tested: `GET /` returns 200 with
   the expected page title. Repo `README.md` updated to list the sample.
+- **2026-05-19 §3.2 + §3.4 + deferred-mode tour complete.**
+  `src/AAuth/Headers/AAuthInteraction.cs` parses + formats the
+  `requirement=interaction; url; code` projection of `AAuth-Requirement`
+  and produces the user-facing `{url}?code={code}` link.
+  `src/AAuth/Agent/DeferredPoller.cs` polls a `Location` URL honoring
+  `Retry-After` (delta or HTTP-date) against a bounded total budget.
+  `TokenExchangeClient` gained a deferred-aware overload that surfaces
+  `AAuthInteraction` to a caller-supplied callback and drives the poller
+  to a terminal `auth_token`; `ChallengeHandler` accepts the same
+  callback so the agent pipeline composes end-to-end. Eleven new SDK
+  unit tests cover the parser and the poller. MockPS gained a consent
+  store, an `AAuth-Requirement: requirement=interaction` 202 response,
+  a signed `GET /pending/{id}` that flips to 200 once consent is
+  recorded, and unsigned `POST /admin/consent` + `POST /admin/revoke` +
+  `GET /interaction` demo endpoints; three integration tests cover the
+  202→200 flip and the pre-consented happy path. The §3.4
+  `ThreePartyUserConsentFlow_WaitsForApproval` integration test drives
+  the full agent pipeline against a `RequireConsent=true` PS, using the
+  `onInteractionRequired` callback to invoke `/admin/consent` and then
+  letting the poller deliver the auth token. GuidedTour gained a
+  `TourMode` setting (default `Deferred`), an 11-step deferred flow that
+  pauses at step 9 behind an "Approve as user" button, and a
+  `PrepareConsentStateAsync` hook that resets the PS's consent store on
+  every session start. `make demo` now launches MockPS with
+  `RequireConsent=true` so the deferred path is exercised
+  out-of-the-box; `make ps-consent` shortcut added. **164 tests pass**
+  (47 conformance + 117 unit/integration); Phase 3 DoD met.
 
 ### 3.1 MockPersonServer
 
@@ -441,11 +468,11 @@ binary (or its `WebApplicationFactory`).
 ### Phase 3 Definition of Done
 
 - [x] `samples/MockPersonServer/` builds, runs, issues `aa-auth+jwt`, and has unit tests for token issuance + well-known shape
-- [ ] `DeferredPoller` + `AAuthInteraction` parser ship with unit tests
+- [x] `DeferredPoller` + `AAuthInteraction` parser ship with unit tests
 - [x] `dotnet run --project samples/GuidedTour` serves the tour on `http://localhost:5400`
 - [x] Against running `samples/WhoAmI` + `samples/MockPersonServer`, the tour walks the full three-party flow with payloads visible at every step
 - [x] Without `MockPersonServer` configured, the tour walks the identity-based flow (steps 1–4) and ends at 200
-- [ ] All three integration tests in §3.4 pass against the shipped `MockPersonServer`
+- [x] All three integration tests in §3.4 pass against the shipped `MockPersonServer`
 - [x] Phase 2's `WhoAmIFlowTests` private mock PS is removed in favour of the shipped binary
 - [x] `README.md` (root) updates: lists the new `MockPersonServer` and `GuidedTour` samples, and a quickstart for running the full three-party demo
 

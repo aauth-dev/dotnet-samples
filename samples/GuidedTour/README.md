@@ -25,6 +25,28 @@ base for every signed request.
 If `PersonServerUrl` is empty in `appsettings.json` the tour stops at step 4
 in identity-based mode (200 directly).
 
+### Deferred / user-consent mode (default)
+
+When the PS requires user consent (`MockPersonServer__RequireConsent=true`,
+which `make demo` sets automatically) the tour expands to 11 steps:
+
+1–6. Same as above.
+7. Signed `POST /token` → **`202 Accepted`** with `Location: /pending/{id}`
+   and `AAuth-Requirement: requirement=interaction; url; code`.
+8. Agent presents the user-facing `{url}?code={code}` link.
+9. **User opens the PS's consent page.** The "Open consent page →" button
+   opens `{url}?code={code}` in a new browser tab. The Person Server
+   renders its own consent screen (agent + resource + scope), the user
+   clicks **Approve** there, and the PS records consent via
+   `POST /interaction/approve`. The agent is not on this channel.
+10. Agent polls `Location` with a signed `GET` (`DeferredPoller`) → 200 +
+    `auth_token`. The polling budget is 2 minutes to give the human
+    time to click Approve in the other tab.
+11. Signed `GET /` carrying the `auth_token` → 200 + claims.
+
+Switch back to the original 8-step flow by setting `GuidedTour:Mode` to
+`Autonomous` in `appsettings.json`.
+
 ## Run it
 
 In three terminals from the repo root:

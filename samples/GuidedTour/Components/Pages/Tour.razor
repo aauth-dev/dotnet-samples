@@ -1,5 +1,6 @@
 @page "/"
 @rendermode InteractiveServer
+@implements IDisposable
 @inject TourSession Session
 @inject Microsoft.Extensions.Options.IOptions<TourOptions> Options
 
@@ -12,11 +13,24 @@
         <span><strong>Person Server:</strong> @(string.IsNullOrWhiteSpace(Options.Value.PersonServerUrl) ? "(none — identity-based flow)" : Options.Value.PersonServerUrl)</span>
     </div>
     <div class="actions">
-        <button class="primary" @onclick="NextAsync" disabled="@(Session.IsComplete || _busy)">
-            @(_busy ? "Running…" : Session.IsComplete ? "Done" : $"Run step {Session.Steps.Count + 1} / {Session.TotalSteps}")
-        </button>
+        @if (Session.AwaitingUserApproval)
+        {
+            <a class="primary approve" href="@Session.UserInteractionUrl" target="_blank" rel="noopener"
+               @onclick="MarkInteractionOpenedAsync">
+                Open consent page ↗
+            </a>
+            <button class="deny" @onclick="SimulateDenyAsync" disabled="@_busy">
+                Simulate deny
+            </button>
+        }
+        else
+        {
+            <button class="primary" @onclick="NextAsync" disabled="@(Session.IsComplete || _busy)">
+                @(_busy ? "Running…" : Session.IsAborted ? "Aborted" : Session.IsComplete ? "Done" : $"Run step {Session.Steps.Count + 1} / {Session.TotalSteps}")
+            </button>
+        }
         <button @onclick="RunAllAsync" disabled="@(Session.IsComplete || _busy)">Run all</button>
-        <button @onclick="Reset" disabled="@_busy">Reset</button>
+        <button @onclick="ResetAsync" disabled="@_busy">Reset</button>
     </div>
     @if (_error is not null)
     {
@@ -24,9 +38,61 @@
     }
 </header>
 
+@if (Session.CanSwitchMode)
+{
+    <section class="flow-picker">
+        <label class="flow-picker__label" for="flow-select">
+            <span class="flow-picker__title">Pick a flow to demo</span>
+            <select id="flow-select" value="@Session.Mode" @onchange="OnModeChangedAsync" disabled="@_busy">
+                <option value="@TourMode.Autonomous">1 · Autonomous — no user, 8 steps</option>
+                <option value="@TourMode.Deferred">2 · Deferred consent — user approves, 11 steps</option>
+            </select>
+        </label>
+        <p class="flow-picker__desc">
+            @switch (Session.Mode)
+            {
+                case TourMode.Autonomous:
+                    <text>
+                        The agent already has standing consent at the Person Server. <code>POST /token</code>
+                        returns <code>200</code> immediately with an <code>auth_token</code>; the agent retries the
+                        resource and gets <code>200</code>. <strong>No human in the loop.</strong>
+                    </text>
+                    break;
+                case TourMode.Deferred:
+                    <text>
+                        The agent has <em>no</em> consent yet. <code>POST /token</code> returns <code>202 Accepted</code>
+                        with an interaction URL; the user clicks <strong>Approve</strong> at the PS's consent page in
+                        a new tab; the agent polls a pending URL until the PS mints the <code>auth_token</code>.
+                        <strong>Human approval required.</strong>
+                    </text>
+                    break;
+            }
+        </p>
+    </section>
+}
+
+@if (Session.IsPolling)
+{
+    <section class="polling">
+        <span class="polling__spinner" aria-hidden="true"></span>
+        <div class="polling__body">
+            <div class="polling__title">Step 10 — polling pending URL…</div>
+            <div class="polling__detail">
+                Signed <code>GET @Session.PendingUrlPath</code> ·
+                <strong>@Session.PollCount</strong> @(Session.PollCount == 1 ? "poll" : "polls") so far ·
+                elapsed <strong>@ElapsedPolling()</strong>
+            </div>
+            <div class="polling__hint">
+                Waiting for you to click <strong>Approve</strong> or <strong>Deny</strong> on the
+                PS consent tab. You can come back here anytime — the poll loop is live.
+            </div>
+        </div>
+    </section>
+}
+
 <div class="layout">
     <aside class="steps">
-        <StepList Steps="@Session.Steps" Total="@Session.TotalSteps" Selected="@_selected" OnSelect="@(i => _selected = i)" />
+        <StepList Steps="@Session.Steps" Plan="@Session.Plan" Selected="@_selected" OnSelect="@(i => _selected = i)" />
     </aside>
 
     <section class="diagram">
@@ -49,6 +115,41 @@
     private int _selected;
     private bool _busy;
     private string? _error;
+    private bool _initialized;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (_initialized) return;
+        _initialized = true;
+        // Sync the MockPS consent store so each fresh tour session starts
+        // in the right state for its configured mode.
+        await Session.PrepareConsentStateAsync();
+        // The polling task runs in the background and pings us via
+        // StateChanged after each poll — marshal those onto the UI
+        // synchronization context so Blazor re-renders the spinner.
+        Session.StateChanged += OnSessionStateChanged;
+    }
+
+    public void Dispose()
+    {
+        Session.StateChanged -= OnSessionStateChanged;
+    }
+
+    private void OnSessionStateChanged()
+    {
+        // Polling thread → dispatcher. Swallow if the circuit is already
+        // tearing down.
+        try { _ = InvokeAsync(StateHasChanged); } catch { }
+    }
+
+    private string ElapsedPolling()
+    {
+        if (Session.PollingStartedAt is not { } start) { return "0s"; }
+        var elapsed = DateTimeOffset.UtcNow - start;
+        return elapsed.TotalSeconds < 60
+            ? $"{elapsed.TotalSeconds:0}s"
+            : $"{elapsed.Minutes}m {elapsed.Seconds:00}s";
+    }
 
     private StepRecord? Selected =>
         _selected >= 0 && _selected < Session.Steps.Count ? Session.Steps[_selected] : null;
@@ -69,6 +170,49 @@
         finally { _busy = false; }
     }
 
+    private async Task MarkInteractionOpenedAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            // The <a target="_blank"> element opens the PS's interaction
+            // page natively (no popup-blocker friction). This handler
+            // records step 9 in the timeline and immediately kicks off
+            // step 10's background poll so the spinner is live while the
+            // user is in the other tab.
+            await Session.RecordUserApprovalOpenedAsync();
+            _ = Session.StartPendingPollAsync();
+            _selected = Session.Steps.Count - 1;
+        }
+        catch (Exception ex)
+        {
+            _error = $"{ex.GetType().Name}: {ex.Message}";
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task SimulateDenyAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            // Posts directly to MockPS's /interaction/deny on the user's
+            // behalf so the Deny path can be demoed without leaving the
+            // tour. Step 10's background poll will then observe the PS's
+            // 403 access_denied and record a terminal denial step.
+            await Session.SimulateUserDenyAsync();
+            _ = Session.StartPendingPollAsync();
+            _selected = Session.Steps.Count - 1;
+        }
+        catch (Exception ex)
+        {
+            _error = $"{ex.GetType().Name}: {ex.Message}";
+        }
+        finally { _busy = false; }
+    }
+
     private async Task RunAllAsync()
     {
         _busy = true;
@@ -77,6 +221,14 @@
         {
             while (!Session.IsComplete)
             {
+                if (Session.AwaitingUserApproval)
+                {
+                    // "Run all" cannot do user interaction on the user's
+                    // behalf — surface the URL and stop so the user can
+                    // click the consent link themselves.
+                    _error = "Stopped: the next step requires you to open the PS consent page and click Approve. Click the green link above.";
+                    break;
+                }
                 await Session.RunNextAsync();
             }
             _selected = Session.Steps.Count - 1;
@@ -88,10 +240,34 @@
         finally { _busy = false; }
     }
 
-    private void Reset()
+    private async Task ResetAsync()
     {
         Session.Reset();
         _selected = 0;
         _error = null;
+        await Session.PrepareConsentStateAsync();
+    }
+
+    private async Task OnModeChangedAsync(ChangeEventArgs e)
+    {
+        if (!Enum.TryParse<TourMode>(e.Value?.ToString(), out var mode))
+        {
+            return;
+        }
+        _busy = true;
+        _error = null;
+        try
+        {
+            // Mode setter resets the timeline; re-sync the PS's consent
+            // store to match the new mode's expectations.
+            Session.Mode = mode;
+            await Session.PrepareConsentStateAsync();
+            _selected = 0;
+        }
+        catch (Exception ex)
+        {
+            _error = $"{ex.GetType().Name}: {ex.Message}";
+        }
+        finally { _busy = false; }
     }
 }

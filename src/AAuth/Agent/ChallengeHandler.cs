@@ -29,15 +29,25 @@ public sealed class ChallengeHandler : DelegatingHandler
     private readonly TokenExchangeClient _exchange;
     private readonly AAuthTokenHolder _holder;
     private readonly string _personServer;
+    private readonly Func<AAuthInteraction, CancellationToken, Task>? _onInteractionRequired;
+    private readonly DeferredPollerOptions? _pollerOptions;
 
     /// <summary>Create the challenge handler.</summary>
     /// <param name="exchange">Token exchange client (configured with the agent token).</param>
     /// <param name="holder">Shared carrier-token holder used by the signer.</param>
     /// <param name="personServer">PS issuer URL where resource tokens are exchanged.</param>
+    /// <param name="onInteractionRequired">
+    /// Optional callback invoked when the PS returns <c>202 + requirement=interaction</c>
+    /// during the embedded exchange. Hosts wire this to "display URL to user" UI.
+    /// When <see langword="null"/>, a deferred PS response surfaces as an exception.
+    /// </param>
+    /// <param name="pollerOptions">Optional polling cadence/timeout override.</param>
     public ChallengeHandler(
         TokenExchangeClient exchange,
         AAuthTokenHolder holder,
-        string personServer)
+        string personServer,
+        Func<AAuthInteraction, CancellationToken, Task>? onInteractionRequired = null,
+        DeferredPollerOptions? pollerOptions = null)
     {
         ArgumentNullException.ThrowIfNull(exchange);
         ArgumentNullException.ThrowIfNull(holder);
@@ -46,6 +56,8 @@ public sealed class ChallengeHandler : DelegatingHandler
         _exchange = exchange;
         _holder = holder;
         _personServer = personServer;
+        _onInteractionRequired = onInteractionRequired;
+        _pollerOptions = pollerOptions;
     }
 
     /// <inheritdoc />
@@ -97,7 +109,8 @@ public sealed class ChallengeHandler : DelegatingHandler
 
         // Got an auth-token challenge. Exchange and retry.
         var authToken = await _exchange
-            .ExchangeAsync(_personServer, requirement.ResourceToken!, cancellationToken)
+            .ExchangeAsync(_personServer, requirement.ResourceToken!,
+                _onInteractionRequired, _pollerOptions, cancellationToken)
             .ConfigureAwait(false);
         _holder.Update(authToken);
 
