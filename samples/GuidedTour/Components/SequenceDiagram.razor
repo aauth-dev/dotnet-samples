@@ -1,5 +1,9 @@
 @* Three-actor swim-lane sequence diagram. Each message arrow connects the
-   vertical centerlines of the from/to lanes. The current step is highlighted. *@
+   vertical centerlines of the from/to lanes. The current step is highlighted.
+   When a step lives inside a polling loop (e.g. step 10), it is rendered
+   inside a labeled `loop […]` box matching mermaid's `loop … end` syntax;
+   while polling is in flight a "ghost" row with a spinner is shown inside
+   an actively-animated loop box. *@
 
 @using System.Globalization
 
@@ -13,30 +17,32 @@
         @for (int i = 0; i < Steps.Count; i++)
         {
             var s = Steps[i];
-            var fromCol = ColumnFor(s.From);
-            var toCol = ColumnFor(s.To);
-            var leftCenter = LaneCenters[Math.Min(fromCol, toCol)];
-            var rightCenter = LaneCenters[Math.Max(fromCol, toCol)];
-            var widthPct = rightCenter - leftCenter;
-            var labelCenter = (leftCenter + rightCenter) / 2.0;
-            var rightward = toCol >= fromCol;
-            var isSelf = fromCol == toCol;
-            var rowClass = i == Highlight ? "msg highlight" : "msg";
-
-            <div class="@rowClass">
-                @if (isSelf)
-                {
-                    <div class="arrow self" style="left:@(Fmt(leftCenter - 1.5))%; width:3%;"></div>
-                }
-                else
-                {
-                    <div class="arrow @(rightward ? "rightward" : "leftward")"
-                         style="left:@(Fmt(leftCenter))%; width:@(Fmt(widthPct))%;"></div>
-                }
-                <div class="label" style="left:@(Fmt(labelCenter))%;">@s.Number. @s.Title</div>
+            var wrapInLoop = s.Number == LoopAroundStepNumber
+                && !string.IsNullOrEmpty(CompletedLoopLabel);
+            if (wrapInLoop)
+            {
+                <div class="seq-loop completed @(LoopCompletedKind ?? "ok")">
+                    <div class="seq-loop__label">@CompletedLoopLabel</div>
+                    @RenderMessage(s, i)
+                </div>
+            }
+            else
+            {
+                @RenderMessage(s, i)
+            }
+        }
+        @if (IsPolling && LoopGhostStep is { } ghost)
+        {
+            <div class="seq-loop active">
+                <div class="seq-loop__label">
+                    <span class="seq-loop__spinner" aria-hidden="true"></span>
+                    loop&nbsp;[polling pending URL] · <strong>@PollCount</strong>
+                    @(PollCount == 1 ? "poll" : "polls")
+                </div>
+                @RenderGhostMessage(ghost.Number, ghost.Title, ghost.From, ghost.To)
             </div>
         }
-        @if (Steps.Count == 0)
+        @if (Steps.Count == 0 && !IsPolling)
         {
             <div class="empty">(no steps run yet)</div>
         }
@@ -46,6 +52,33 @@
 @code {
     [Parameter] public IList<StepRecord> Steps { get; set; } = Array.Empty<StepRecord>();
     [Parameter] public int Highlight { get; set; }
+
+    /// <summary>
+    /// If a recorded step has this number, it is wrapped in a "completed"
+    /// loop box. <c>0</c> (default) disables the wrap.
+    /// </summary>
+    [Parameter] public int LoopAroundStepNumber { get; set; }
+
+    /// <summary>Label text for the completed loop box.</summary>
+    [Parameter] public string? CompletedLoopLabel { get; set; }
+
+    /// <summary>Visual variant of the completed loop: <c>ok</c>, <c>denied</c>, <c>timeout</c>.</summary>
+    [Parameter] public string? LoopCompletedKind { get; set; }
+
+    /// <summary>True while a poll loop is live and the ghost row should animate.</summary>
+    [Parameter] public bool IsPolling { get; set; }
+
+    /// <summary>Number of completed poll attempts (rendered in the loop label).</summary>
+    [Parameter] public int PollCount { get; set; }
+
+    /// <summary>
+    /// Ghost row shown inside the active loop while polling. Carries the
+    /// step number/title/lanes the loop body would normally use.
+    /// </summary>
+    [Parameter] public GhostStep? LoopGhostStep { get; set; }
+
+    /// <summary>Describes the ghost row drawn inside an active loop box.</summary>
+    public readonly record struct GhostStep(int Number, string Title, Actor From, Actor To);
 
     // Lane center positions as percentages of the messages container width.
     // Matches the vertical guide-lines drawn in app.css for 3 equal lanes.
@@ -60,4 +93,49 @@
     };
 
     private static string Fmt(double pct) => pct.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private RenderFragment RenderMessage(StepRecord s, int i) => __builder =>
+    {
+        var fromCol = ColumnFor(s.From);
+        var toCol = ColumnFor(s.To);
+        var leftCenter = LaneCenters[Math.Min(fromCol, toCol)];
+        var rightCenter = LaneCenters[Math.Max(fromCol, toCol)];
+        var widthPct = rightCenter - leftCenter;
+        var labelCenter = (leftCenter + rightCenter) / 2.0;
+        var rightward = toCol >= fromCol;
+        var isSelf = fromCol == toCol;
+        var rowClass = i == Highlight ? "msg highlight" : "msg";
+
+        <div class="@rowClass">
+            @if (isSelf)
+            {
+                <div class="arrow self" style="left:@(Fmt(leftCenter - 1.5))%; width:3%;"></div>
+            }
+            else
+            {
+                <div class="arrow @(rightward ? "rightward" : "leftward")"
+                     style="left:@(Fmt(leftCenter))%; width:@(Fmt(widthPct))%;"></div>
+            }
+            <div class="label" style="left:@(Fmt(labelCenter))%;">@s.Number. @s.Title</div>
+        </div>
+    };
+
+    private RenderFragment RenderGhostMessage(int number, string title, Actor from, Actor to) => __builder =>
+    {
+        var fromCol = ColumnFor(from);
+        var toCol = ColumnFor(to);
+        var leftCenter = LaneCenters[Math.Min(fromCol, toCol)];
+        var rightCenter = LaneCenters[Math.Max(fromCol, toCol)];
+        var widthPct = rightCenter - leftCenter;
+        var labelCenter = (leftCenter + rightCenter) / 2.0;
+        var rightward = toCol >= fromCol;
+
+        <div class="msg ghost">
+            <div class="arrow @(rightward ? "rightward" : "leftward") pulsing"
+                 style="left:@(Fmt(leftCenter))%; width:@(Fmt(widthPct))%;"></div>
+            <div class="label ghost-label" style="left:@(Fmt(labelCenter))%;">
+                @number. @title
+            </div>
+        </div>
+    };
 }

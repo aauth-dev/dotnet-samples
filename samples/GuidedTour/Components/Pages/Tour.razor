@@ -96,7 +96,14 @@
     </aside>
 
     <section class="diagram">
-        <SequenceDiagram Steps="@Session.Steps" Highlight="@_selected" />
+        <SequenceDiagram Steps="@Session.Steps"
+                         Highlight="@_selected"
+                         IsPolling="@Session.IsPolling"
+                         PollCount="@Session.PollCount"
+                         LoopGhostStep="@(Session.IsDeferredMode ? new SequenceDiagram.GhostStep(10, $"polling /pending/{{id}}…", Actor.Agent, Actor.PersonServer) : null)"
+                         LoopAroundStepNumber="@(Session.IsDeferredMode ? 10 : 0)"
+                         CompletedLoopLabel="@CompletedLoopLabel()"
+                         LoopCompletedKind="@CompletedLoopKind()" />
     </section>
 
     <section class="payload">
@@ -149,6 +156,36 @@
         return elapsed.TotalSeconds < 60
             ? $"{elapsed.TotalSeconds:0}s"
             : $"{elapsed.Minutes}m {elapsed.Seconds:00}s";
+    }
+
+    private StepRecord? Step10Record =>
+        Session.IsDeferredMode
+            ? Session.Steps.FirstOrDefault(s => s.Number == 10)
+            : null;
+
+    private string? CompletedLoopLabel()
+    {
+        var step10 = Step10Record;
+        if (step10 is null) { return null; }
+        var pollCount = Session.PollCount > 0 ? $" · {Session.PollCount} polls" : "";
+        if (step10.Title.Contains("denied", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"loop [polled pending URL]{pollCount} · ✖ denied";
+        }
+        if (step10.Title.Contains("timeout", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"loop [polled pending URL]{pollCount} · ⏱ timed out";
+        }
+        return $"loop [polled pending URL]{pollCount} · ✓ resolved";
+    }
+
+    private string? CompletedLoopKind()
+    {
+        var step10 = Step10Record;
+        if (step10 is null) { return null; }
+        if (step10.Title.Contains("denied", StringComparison.OrdinalIgnoreCase)) return "denied";
+        if (step10.Title.Contains("timeout", StringComparison.OrdinalIgnoreCase)) return "timeout";
+        return "ok";
     }
 
     private StepRecord? Selected =>

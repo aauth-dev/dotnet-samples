@@ -1,6 +1,6 @@
 # dotnet-samples
 
-> **Status: Work in Progress** — Phase 2 of the .NET AAuth SDK is complete: Ed25519 keys, agent JWT, RFC 9421 outbound signing, signature verification middleware, resource & auth token builders, JWKS / metadata discovery clients, and a working three-party challenge/exchange flow. CLI tool and full multi-agent demo land in later phases. See the [implementation plan](.agent/plans/2026-05-13-dotnet-aauth-sdk/implementation-plan.md) for phase status.
+> **Status: Work in Progress** — Phase 3 of the .NET AAuth SDK is complete: Ed25519 keys, agent JWT, RFC 9421 outbound signing, signature verification middleware, resource & auth token builders, JWKS / metadata discovery clients, the working three-party challenge/exchange flow (autonomous **and** deferred user-consent), a reference `MockPersonServer` (with `403 access_denied` denial support), and the Blazor `GuidedTour` walk-through. CLI tool and full multi-agent demo land in later phases. See the [implementation plan](.agent/plans/2026-05-13-dotnet-aauth-sdk/implementation-plan.md) for phase status.
 
 AAuth samples and SDK for .NET — demonstrating the [AAuth protocol](https://github.com/dickhardt/AAuth) for agent-to-resource authorization with cryptographic proof-of-possession.
 

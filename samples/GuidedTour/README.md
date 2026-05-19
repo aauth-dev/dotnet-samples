@@ -34,15 +34,25 @@ which `make demo` sets automatically) the tour expands to 11 steps:
 7. Signed `POST /token` → **`202 Accepted`** with `Location: /pending/{id}`
    and `AAuth-Requirement: requirement=interaction; url; code`.
 8. Agent presents the user-facing `{url}?code={code}` link.
-9. **User opens the PS's consent page.** The "Open consent page →" button
+9. **User opens the PS's consent page.** The "Open consent page ↗" button
    opens `{url}?code={code}` in a new browser tab. The Person Server
-   renders its own consent screen (agent + resource + scope), the user
-   clicks **Approve** there, and the PS records consent via
-   `POST /interaction/approve`. The agent is not on this channel.
-10. Agent polls `Location` with a signed `GET` (`DeferredPoller`) → 200 +
-    `auth_token`. The polling budget is 2 minutes to give the human
-    time to click Approve in the other tab.
-11. Signed `GET /` carrying the `auth_token` → 200 + claims.
+   renders its own consent screen (agent + resource + scope); the user
+   clicks **Approve** or **Deny** there and the PS records the choice
+   via `POST /interaction/{approve,deny}`. The agent is not on this
+   channel. A "Simulate deny" button in the tour topbar is wired to the
+   same `/interaction/deny` endpoint for quick exercising of the
+   denial path.
+10. Agent polls `Location` with a signed `GET` (`DeferredPoller`). While
+    polling, the sequence diagram shows a Mermaid-style
+    `loop [polling pending URL]` box with a live spinner and poll count.
+    The loop resolves in one of three ways:
+    - **Approve** → 200 + `auth_token`; the loop box turns solid green.
+    - **Deny** → 403 + `{"error":"access_denied"}` → SDK throws
+      `AAuthInteractionDeniedException`; the loop box turns red.
+    - **Polling budget expires** (2 minutes by default) → SDK throws
+      `AAuthInteractionTimeoutException`; the loop box turns amber.
+11. Signed `GET /` carrying the `auth_token` → 200 + claims (only on the
+    approve path).
 
 Switch back to the original 8-step flow by setting `GuidedTour:Mode` to
 `Autonomous` in `appsettings.json`.

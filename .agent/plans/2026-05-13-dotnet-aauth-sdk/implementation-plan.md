@@ -336,6 +336,43 @@ xUnit integration tests for CI. Both consume the same `src/AAuth/` SDK that
   `RequireConsent=true` so the deferred path is exercised
   out-of-the-box; `make ps-consent` shortcut added. **164 tests pass**
   (47 conformance + 117 unit/integration); Phase 3 DoD met.
+- **2026-05-19 Phase 3 UX polish (post-DoD).** Iterative pass on the
+  GuidedTour to make the deferred path tangible:
+  - **Per-step descriptions + actor badges.** `TourPlanStep(Number,
+    Title, Description, From, To)` replaces the bare title list;
+    `StepList.razor` renders a two-line entry with an
+    "Agent → Person Server"-style badge under each title.
+  - **Denial / timeout end-to-end.** MockPS keeps denied pending
+    entries and returns `403 access_denied` (instead of dropping them
+    to 404); `POST /interaction/deny` records the denial. New typed
+    `AAuthInteractionDeniedException` / `AAuthInteractionTimeoutException`
+    in `src/AAuth/Agent/`; `TokenExchangeClient` translates the 403 +
+    `error=access_denied` body and `TimeoutException` from
+    `DeferredPoller` into these. Two new integration tests
+    (`Pending_Returns403AccessDenied_AfterDeny`,
+    `ThreePartyUserConsentFlow_ThrowsAAuthInteractionDenied_WhenUserDenies`)
+    cover the path. GuidedTour exposes a "Simulate deny" button beside
+    the consent link.
+  - **Live polling spinner.** `TourSession` runs step 10's
+    `DeferredPoller.PollAsync` on a background `Task.Run` driven by a
+    `CancellationTokenSource`; `DeferredPoller.OnPoll` callback
+    increments `PollCount` and raises a new `event Action?
+    StateChanged` that `Tour.razor` re-renders via
+    `InvokeAsync(StateHasChanged)`. A `.polling` status card shows
+    spinner + `GET /pending/{id}` + live poll count + elapsed time.
+    `RunNextAsync` awaits the in-flight task to avoid double-polling.
+  - **Mermaid-style `loop […]` notation in the sequence diagram.**
+    `SequenceDiagram.razor` gained `LoopAroundStepNumber`,
+    `CompletedLoopLabel`, `LoopCompletedKind`, `IsPolling`,
+    `PollCount`, and `LoopGhostStep` parameters. While polling, a
+    dashed accent-blue `.seq-loop.active` box surrounds a pulsing
+    ghost row (`Agent → Person Server`) with a tab label
+    `loop [polling pending URL] · N polls`. When step 10 resolves, the
+    box turns solid and colour-codes by terminal state:
+    `.seq-loop.completed.ok` (green ✓ resolved),
+    `.seq-loop.completed.denied` (red ✖ denied),
+    `.seq-loop.completed.timeout` (muted ⏱ timed out).
+  - **168 tests pass** (47 conformance + 121 unit/integration).
 
 ### 3.1 MockPersonServer
 

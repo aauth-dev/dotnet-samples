@@ -312,6 +312,76 @@ button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef44
 .msg.highlight .arrow.self { border-color: var(--accent); }
 .empty { color: var(--muted); padding: 1rem; }
 
+/* Sequence-diagram `loop […]` box, mirrors mermaid's loop syntax. */
+.seq-loop {
+    position: relative;
+    margin: 0.9rem 0.4rem 0.6rem;
+    padding: 1.5rem 0 0.4rem;
+    border: 2px dashed var(--muted);
+    border-radius: 8px;
+}
+.seq-loop__label {
+    position: absolute;
+    top: -0.7rem;
+    left: 0.75rem;
+    background: var(--bg);
+    color: var(--muted);
+    padding: 0 0.5rem;
+    font-size: 0.8rem;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    letter-spacing: 0.02em;
+    z-index: 3;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    white-space: nowrap;
+}
+.seq-loop.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.12);
+    animation: seq-loop-pulse 1.6s ease-in-out infinite;
+}
+.seq-loop.active .seq-loop__label { color: var(--accent); }
+@keyframes seq-loop-pulse {
+    0%, 100% { box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.10); }
+    50%      { box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.30); }
+}
+.seq-loop.completed.ok { border-color: var(--ok); border-style: solid; }
+.seq-loop.completed.ok .seq-loop__label { color: var(--ok); }
+.seq-loop.completed.denied { border-color: #f87171; border-style: solid; }
+.seq-loop.completed.denied .seq-loop__label { color: #f87171; }
+.seq-loop.completed.timeout { border-color: var(--muted); border-style: solid; }
+.seq-loop.completed.timeout .seq-loop__label { color: var(--muted); }
+.seq-loop__spinner {
+    display: inline-block;
+    width: 0.8rem;
+    height: 0.8rem;
+    border: 2px solid rgba(88, 166, 255, 0.25);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: polling-spin 0.9s linear infinite;
+}
+
+/* Ghost message row drawn inside an active loop while polling. */
+.msg.ghost .label.ghost-label {
+    border-style: dashed;
+    border-color: var(--accent);
+    color: var(--accent);
+    background: transparent;
+    font-style: italic;
+}
+.msg.ghost .arrow.pulsing {
+    background: var(--accent);
+    opacity: 0.55;
+    animation: arrow-pulse 1.4s ease-in-out infinite;
+}
+.msg.ghost .arrow.pulsing::after { border-left-color: var(--accent); opacity: 1; }
+.msg.ghost .arrow.pulsing::before { border-right-color: var(--accent); opacity: 1; }
+@keyframes arrow-pulse {
+    0%, 100% { opacity: 0.35; }
+    50%      { opacity: 0.85; }
+}
+
 /* inspector */
 .inspector h2 { margin-top: 0; }
 .inspector .from-to { color: var(--muted); font-size: 0.9rem; margin: 0.25rem 0 0.75rem; }
