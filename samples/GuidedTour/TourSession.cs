@@ -66,20 +66,28 @@ public sealed class TourSession : IAsyncDisposable
         }
     }
 
-    /// <summary>True when this configuration supports flow switching (i.e. a PS URL is set).</summary>
-    public bool CanSwitchMode => !string.IsNullOrWhiteSpace(_options.PersonServerUrl);
+    /// <summary>True when a Person Server URL is configured. The picker is always shown; this just controls whether the three-party options are selectable.</summary>
+    public bool HasPersonServer => !string.IsNullOrWhiteSpace(_options.PersonServerUrl);
+
+    /// <summary>Kept for backwards compatibility — always true now that the picker is always rendered.</summary>
+    public bool CanSwitchMode => true;
+
+    /// <summary>
+    /// True when the current flow is the identity-based path. Forced on
+    /// when no PS URL is configured, regardless of <see cref="Mode"/>.
+    /// </summary>
+    public bool IsIdentityMode => !HasPersonServer || _mode == TourMode.Identity;
 
     /// <summary>True when the configured flow is the deferred / user-consent path.</summary>
     public bool IsDeferredMode =>
-        !string.IsNullOrWhiteSpace(_options.PersonServerUrl)
-        && _mode == TourMode.Deferred;
+        HasPersonServer && _mode == TourMode.Deferred;
 
     /// <summary>Total number of steps the tour plans to run given the current configuration.</summary>
     public int TotalSteps
     {
         get
         {
-            if (string.IsNullOrWhiteSpace(_options.PersonServerUrl)) return 4;
+            if (IsIdentityMode) return 4;
             return IsDeferredMode ? 11 : 8;
         }
     }
@@ -94,7 +102,7 @@ public sealed class TourSession : IAsyncDisposable
     {
         get
         {
-            if (string.IsNullOrWhiteSpace(_options.PersonServerUrl)) return IdentityPlan;
+            if (IsIdentityMode) return IdentityPlan;
             return IsDeferredMode ? DeferredPlan : AutonomousPlan;
         }
     }
@@ -383,10 +391,11 @@ public sealed class TourSession : IAsyncDisposable
 
     private void Step2BuildAgentToken()
     {
-        // Normalize whitespace/empty PersonServerUrl to null so identity-based
-        // (steps 1–4) mode works — AgentTokenBuilder treats any non-null value
-        // as "present" and validates it as an https URL.
-        var personServer = string.IsNullOrWhiteSpace(_options.PersonServerUrl)
+        // In identity mode we omit the `ps` claim so the resource takes the
+        // identity-based path (200 directly). Normalize whitespace/empty
+        // PersonServerUrl to null too — AgentTokenBuilder treats any
+        // non-null value as "present" and validates it as an https URL.
+        var personServer = IsIdentityMode || string.IsNullOrWhiteSpace(_options.PersonServerUrl)
             ? null
             : _options.PersonServerUrl;
         _agentToken = new AgentTokenBuilder

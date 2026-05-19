@@ -44,13 +44,21 @@
         <label class="flow-picker__label" for="flow-select">
             <span class="flow-picker__title">Pick a flow to demo</span>
             <select id="flow-select" value="@Session.Mode" @onchange="OnModeChangedAsync" disabled="@_busy">
-                <option value="@TourMode.Autonomous">1 · Autonomous — no user, 8 steps</option>
-                <option value="@TourMode.Deferred">2 · Deferred consent — user approves, 11 steps</option>
+                <option value="@TourMode.Identity">0 · Identity-based — no PS, 4 steps</option>
+                <option value="@TourMode.Autonomous" disabled="@(!Session.HasPersonServer)">1 · Autonomous — no user, 8 steps</option>
+                <option value="@TourMode.Deferred" disabled="@(!Session.HasPersonServer)">2 · Deferred consent — user approves, 11 steps</option>
             </select>
         </label>
         <p class="flow-picker__desc">
             @switch (Session.Mode)
             {
+                case TourMode.Identity:
+                    <text>
+                        The resource trusts the agent token directly. <code>GET /</code> returns
+                        <code>200</code> on the first call — no Person Server is involved.
+                        <strong>No human in the loop, no PS round-trip.</strong>
+                    </text>
+                    break;
                 case TourMode.Autonomous:
                     <text>
                         The agent already has standing consent at the Person Server. <code>POST /token</code>

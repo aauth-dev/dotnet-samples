@@ -11,19 +11,20 @@ hop.
 A swim-lane sequence diagram across three actors — **Agent**, **Resource**,
 **Person Server** — with a payload inspector on the right that decodes each
 JWT and shows the canonical RFC 9421 signature base for every signed
-request. Three flows are available:
+request. Three flows are available, switchable at runtime from the topbar
+**Mode** picker:
 
-* **Identity-based** (4 steps) — when `PersonServerUrl` is empty.
+* **Identity-based** (4 steps) — resource trusts the agent token; no PS
+  involvement.
 * **Autonomous** (8 steps) — three-party flow where the PS mints the
   `auth_token` synchronously. Default.
 * **Deferred / user-consent** (11 steps) — three-party flow where the PS
   parks the request on `202 Accepted` and asks the user to consent before
   the `auth_token` is issued.
 
-Use the **Mode** picker in the topbar to flip between Autonomous and
-Deferred at runtime (the picker is hidden when `PersonServerUrl` is empty,
-since identity-based mode has nothing to switch). You can also set the
-default in `appsettings.json`:
+When `PersonServerUrl` is empty in `appsettings.json`, the picker locks
+to Identity-based (the other two options are disabled). You can also set
+the default in `appsettings.json`:
 
 ```json
 "GuidedTour": { "Mode": "Deferred" }
@@ -119,5 +120,5 @@ with **Run step**).
 | `GuidedTour:WhoAmIUrl` | `http://localhost:5000` | Resource server base URL. |
 | `GuidedTour:PersonServerUrl` | `http://localhost:5100` | Set empty to demo the identity-based flow. |
 | `GuidedTour:AgentId` | `aauth:tour-agent@ap.example` | Value placed in the agent token's `sub`. |
-| `GuidedTour:Mode` | `Autonomous` | Default flow on startup. `Autonomous` or `Deferred`. The topbar picker overrides this at runtime. |
+| `GuidedTour:Mode` | `Autonomous` | Default flow on startup. `Identity`, `Autonomous`, or `Deferred`. The topbar picker overrides this at runtime. |
 
