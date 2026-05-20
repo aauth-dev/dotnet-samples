@@ -1,15 +1,18 @@
 # Implementation Plan: AAuth .NET SDK Gap Remediation
 
 > Created 2026-05-20. Companion to [`/GAPS.md`](../../../GAPS.md) (same PR).
-> Goal: close the spec-conformance gaps identified in `GAPS.md` in a sequenced,
-> demo-able order, keeping the SDK *minimal-but-correct* rather than chasing
-> production polish.
+> Builds on (but does not extend the phase numbering of) the prior plan
+> [`2026-05-13-dotnet-aauth-sdk`](../2026-05-13-dotnet-aauth-sdk/implementation-plan.md),
+> which delivered Phases 1–2 of the SDK (core crypto, agent token, signed
+> request, 3-party PS-asserted flow). This plan is a standalone roadmap to
+> close the spec-conformance gaps catalogued in `GAPS.md`; its phases are
+> numbered from 1 and stand on their own.
 
 This plan describes **what** to build and **why**, plus the alternatives
-considered for each major decision and the implications of each choice. It does
-not prescribe code shape — that belongs in the per-phase PRs.
+considered for each major decision and the implications of each choice. It
+does not prescribe code shape — that belongs in the per-phase PRs.
 
-## Principles (inherited from the 2026-05-13 plan)
+## Principles (carried over from the prior plan)
 
 - Single solution, single library project. New surface area lands inside
   `src/AAuth/` unless a phase explicitly justifies a sub-package.
@@ -22,8 +25,9 @@ not prescribe code shape — that belongs in the per-phase PRs.
 
 ## Source of truth
 
-Every gap below cites the section in [`GAPS.md`](../../../GAPS.md) it closes.
-When the spec changes, update `GAPS.md` first, then re-sequence this plan.
+Every phase below cites the section in [`GAPS.md`](../../../GAPS.md) it
+closes. When the spec changes, update `GAPS.md` first, then re-sequence
+this plan.
 
 ---
 
@@ -37,26 +41,23 @@ add surface area.
 
 | Phase | Theme | Closes |
 |---|---|---|
-| 3 | Verification & error-reporting hardening | GAPS §8, §9, §11, §12 |
-| 4 | Server-side discovery + four-party flow | GAPS §1.2, §2, §10 |
-| 5 | Signature-Key scheme expansion + ECDSA | GAPS §3, §4 |
-| 6 | Bootstrap & refresh | GAPS §7 |
-| 7 | Missions (governance) | GAPS §5 |
-| 8 | R3 (Rich Resource Requests) | GAPS §6 |
-| 9 | Resource-managed (2-party) + specialised flows | GAPS §1.1, §14 |
-
-Phases 1–2 are complete in the 2026-05-13 plan; numbering continues from
-there for traceability in PR titles and commits.
+| 1 | Verification & error-reporting hardening | GAPS §8, §9, §11, §12 |
+| 2 | Server-side discovery + four-party flow | GAPS §1.2, §2, §10 |
+| 3 | Signature-Key scheme expansion + ECDSA | GAPS §3, §4 |
+| 4 | Bootstrap & refresh | GAPS §7 |
+| 5 | Missions (governance) | GAPS §5 |
+| 6 | R3 (Rich Resource Requests) | GAPS §6 |
+| 7 | Resource-managed (2-party) + specialised flows | GAPS §1.1, §8.4, §14 |
 
 ---
 
-## Phase 3: Verification & error-reporting hardening
+## Phase 1: Verification & error-reporting hardening
 
 **Goal**: Make `AAuthVerifier`/`AAuthVerificationMiddleware`/`TokenVerifier`/
 `DeferredPoller` fully spec-conformant on the *paths they already cover*, so
-downstream phases inherit a trustworthy verification core.
+later phases inherit a trustworthy verification core.
 
-### 3.1 Proof-of-possession binding enforcement (GAPS §9)
+### 1.1 Proof-of-possession binding enforcement (GAPS §9)
 
 **Fix**: Enforce `cnf.jwk` (agent/auth tokens) and `agent_jkt` (resource
 tokens) bindings *inside* `TokenVerifier` against the HTTP signature key
@@ -87,7 +88,7 @@ link's actor and enforces a configurable max depth.
 - `act` walking introduces a recursive structure to the verifier; the depth
   limit must be enforced or a malicious AP can DoS verification.
 
-### 3.2 Structured authentication errors (GAPS §8.1, §8.2, §8.3)
+### 1.2 Structured authentication errors (GAPS §8.1, §8.2, §8.3)
 
 **Fix**: Introduce typed error enums for the three error surfaces (signature
 auth, token endpoint, polling), emit them as `Signature-Error` header /
@@ -113,7 +114,7 @@ side as discriminated exception types.
   `invalid_code` aborts without retry). Existing call sites should keep
   working, but anyone overriding the retry policy needs to be aware.
 
-### 3.3 Identifier validation utilities (GAPS §11, §12)
+### 1.3 Identifier validation utilities (GAPS §11, §12)
 
 **Fix**: Add `AAuthAgentId` and tighten `AAuthUrl` to enforce the spec's
 strict server-identifier rules (host-only, no trailing slash, lowercase,
@@ -142,26 +143,27 @@ server or agent identifier from the wire.
 - New public type `AAuthAgentId` becomes part of the API surface, so its
   shape needs care (immutable struct, parse/tryparse, equality).
 
-### 3.4 Token verifier completeness (GAPS §9, residual)
+### 1.4 Token verifier completeness (GAPS §9, residual)
 
 **Fix**: Enforce the remaining structural rules — at least one of `sub` or
 `scope` in auth tokens, `act.sub` equality with token subject, `mission`
 claim shape (parsed but not yet evaluated — full mission semantics land in
-Phase 7).
+Phase 5).
 
 **Alternatives**: minor; the trade-offs are about *where* to fail (parse
 time vs. verify time). Decision: fail at verify time, so token builders
 remain permissive for tests that intentionally produce malformed tokens.
 
-**Implications**: more negative-path conformance tests; no API surface change.
+**Implications**: more negative-path conformance tests; no API surface
+change.
 
-### 3.5 Conformance suite expansion
+### 1.5 Conformance suite expansion
 
-Add the Phase-1/Phase-3 negative cases (`alg=none`, missing/mismatched `cnf`,
-expired, bad audience, identifier-rule violations) and the auth-token
-structure tests that GAPS §13 calls out.
+Add the negative cases (`alg=none`, missing/mismatched `cnf`, expired, bad
+audience, identifier-rule violations) and the auth-token structure tests
+that GAPS §13 calls out.
 
-### Phase 3 Definition of Done
+### Phase 1 Definition of Done
 
 - `dotnet test` green, including new negative cases.
 - `Signature-Error` emitted by middleware for every documented failure mode.
@@ -173,12 +175,12 @@ structure tests that GAPS §13 calls out.
 
 ---
 
-## Phase 4: Server-side discovery + four-party federated flow
+## Phase 2: Server-side discovery + four-party federated flow
 
 **Goal**: Bring the SDK from "client can do 3-party" to "SDK can host any of
 the three server roles for the 4-party flow end-to-end".
 
-### 4.1 Server-side metadata endpoints (GAPS §2, §10)
+### 2.1 Server-side metadata endpoints (GAPS §2, §10)
 
 **Fix**: Generalise `WellKnownEndpoints` from resource-only to a role-aware
 hoster that can serve `aauth-resource.json`, `aauth-person.json`,
@@ -202,11 +204,11 @@ shared registration helper.
 
 - New DI registration surface (`AddAAuthPersonServer`,
   `AddAAuthAccessServer`, `AddAAuthAgentProvider`). Naming needs to be stable
-  before Phase 5.
+  before Phase 3.
 - The metadata client (GAPS §10, "Metadata HTTPS validation on fetch") gets
-  the strict URL validator from Phase 3.3.
+  the strict URL validator from Phase 1.3.
 
-### 4.2 Resource `/authorize` endpoint (GAPS §2)
+### 2.2 Resource `/authorize` endpoint (GAPS §2)
 
 **Fix**: Add a resource-side authorization endpoint helper that lets a
 resource explicitly *initiate* authorization (instead of relying on the 401
@@ -218,7 +220,7 @@ the 401 challenge, so adding `/authorize` is purely additive.
 **Implications**: new test fixture and a sample showing the explicit entry
 flow.
 
-### 4.3 Access Server (AS) implementation (GAPS §1.2)
+### 2.3 Access Server (AS) implementation (GAPS §1.2)
 
 **Fix**: Implement `AS Token Endpoint` + AS-side verification of the
 `agent_token` + `resource_token` pair, returning an auth token whose
@@ -240,16 +242,16 @@ flow.
 
 - New `tests/AAuth.Conformance/Federated/` section with end-to-end fixtures
   using TestServer for AP, PS, AS, and Resource.
-- `AuthTokenBuilder` exits "untested" status (per Phase 1 self-review notes).
+- `AuthTokenBuilder` exits "untested" status (called out in `GAPS.md` §1.2).
 - New sample (`samples/FederatedDemo/`) — README updated to reference it.
 
-### 4.4 Token revocation + refresh-endpoint scaffolding (GAPS §2, §14)
+### 2.4 Token revocation + refresh-endpoint scaffolding (GAPS §2, §14)
 
 **Fix**: Add `POST /revoke` and `POST /refresh` endpoint helpers on AP/PS/AS
 roles and a `RevocationClient`. Refresh semantics are minimal here; the
-two-key refresh flow lands in Phase 6.
+two-key refresh flow lands in Phase 4.
 
-**Alternatives**: revocation could be punted to Phase 7 (it pairs naturally
+**Alternatives**: revocation could be punted to Phase 5 (it pairs naturally
 with missions). Rejected — revocation is a *security hygiene* primitive that
 should ship before any of the long-lived flows that need it.
 
@@ -258,7 +260,7 @@ SDK ships an in-memory default implementation and an abstraction (`IJtiStore`)
 for consumers to plug their own. Documented as "in-memory only — not
 production-grade" in README.
 
-### Phase 4 Definition of Done
+### Phase 2 Definition of Done
 
 - Full 4-party flow runs in conformance tests, end-to-end, with all four
   server roles hosted by SDK code.
@@ -267,12 +269,12 @@ production-grade" in README.
 
 ---
 
-## Phase 5: Signature-Key scheme expansion + ECDSA
+## Phase 3: Signature-Key scheme expansion + ECDSA
 
 **Goal**: Cover the rest of the `Signature-Key` schemes and the second
 mandatory signing algorithm so the SDK can talk to any conformant peer.
 
-### 5.1 `hwk` and `jwks_uri` schemes (GAPS §3)
+### 3.1 `hwk` and `jwks_uri` schemes (GAPS §3)
 
 **Fix**: Extend `SignatureKeyHeader` + `SignatureKeyParser` to format and
 parse `hwk` (inline JWK) and `jwks_uri` (URL reference); have `AAuthVerifier`
@@ -282,7 +284,7 @@ dispatch on the scheme to recover the verifier key.
 
 1. *Only add `jkt-jwt` (defer `hwk`/`jwks_uri` to a later phase)*. Rejected —
    `jwks_uri` is the only path for self-hosted agents (no AP), which the
-   bootstrap spec relies on; adding it together with `jkt-jwt` keeps Phase 6
+   bootstrap spec relies on; adding it together with `jkt-jwt` keeps Phase 4
    focused on the two-key model rather than the wire format.
 2. *Treat `jwks_uri` as a special case of `MetadataClient`*. Partially
    accepted — implementation reuses `JwksClient` caching; the *parser* is
@@ -291,12 +293,12 @@ dispatch on the scheme to recover the verifier key.
 **Implications**: new caching behaviour (`jwks_uri` fetches must respect
 `Cache-Control`) — already covered by `JwksClient`, just needs reuse.
 
-### 5.2 `jkt-jwt` (two-key naming) scheme (GAPS §3)
+### 3.2 `jkt-jwt` (two-key naming) wire format (GAPS §3)
 
-Belongs partly here (wire format), partly in Phase 6 (key model). This phase
-ships the *parser/formatter*; Phase 6 wires it into the bootstrap flow.
+This phase ships the *parser/formatter* for `jkt-jwt`; Phase 4 wires it into
+the bootstrap key model.
 
-### 5.3 ECDSA P-256 (RFC 6979 deterministic) (GAPS §4)
+### 3.3 ECDSA P-256 (RFC 6979 deterministic) (GAPS §4)
 
 **Fix**: Add ECDSA P-256 alongside Ed25519 in `AAuthKey`, `JwtWriter`,
 `AAuthVerifier`, and `JwksClient` (currently silently skips non-Ed25519).
@@ -305,9 +307,10 @@ ships the *parser/formatter*; Phase 6 wires it into the bootstrap flow.
 
 1. *Use BCL `ECDsa` directly*. Preferred for verification and non-
    deterministic signing.
-2. *Use BCL `ECDsa` with deterministic-K shim*. Rejected — BCL does not
+2. *Use BCL `ECDsa` with a deterministic-K shim*. Rejected — BCL does not
    expose RFC 6979 deterministic-K; we need BouncyCastle (already a direct
-   dependency post Phase 2 self-review). Recorded as the chosen path.
+   dependency post Phase 2 self-review of the original plan). Recorded as
+   the chosen path.
 3. *Skip RFC 6979 and use the BCL random-K signer*. Rejected — the spec
    mandates deterministic signatures for reproducibility and PoP equality.
 
@@ -318,20 +321,20 @@ ships the *parser/formatter*; Phase 6 wires it into the bootstrap flow.
 - Public API: `AAuthKey.Generate` grows an algorithm parameter. Keep the
   Ed25519 overload as the default to preserve binary compatibility.
 
-### Phase 5 Definition of Done
+### Phase 3 Definition of Done
 
 - Conformance suite has fixtures for each scheme × each algorithm.
 - `JwksClient` no longer silently drops keys; logs at debug for unsupported.
-- GAPS §3 (except `jkt-jwt` semantics, deferred to Phase 6), §4 closed.
+- GAPS §3 (except `jkt-jwt` semantics, deferred to Phase 4), §4 closed.
 
 ---
 
-## Phase 6: Bootstrap & token refresh
+## Phase 4: Bootstrap & token refresh
 
-**Goal**: Long-running agents — durable key enrolment, ephemeral key issuance,
-refresh.
+**Goal**: Long-running agents — durable key enrolment, ephemeral key
+issuance, refresh.
 
-### 6.1 Two-key model (GAPS §7)
+### 4.1 Two-key model (GAPS §7)
 
 **Fix**: Add a `DurableKey`/`EphemeralKey` distinction in `KeyStore`, the
 naming-JWT construction (durable signs over ephemeral JWK + thumbprint), and
@@ -339,8 +342,8 @@ the `jkt-jwt` Signature-Key payload that names the chain.
 
 **Alternatives considered**:
 
-1. *Single-key model with re-issuance*. Rejected — that's just Phase 1
-   over again and does not match the bootstrap spec.
+1. *Single-key model with re-issuance*. Rejected — that's just the original
+   plan over again and does not match the bootstrap spec.
 2. *Three-key model (durable + intermediate + ephemeral)*. Rejected — the
    spec defines two layers; adding a third without a concrete use case is
    speculative.
@@ -352,14 +355,14 @@ the `jkt-jwt` Signature-Key payload that names the chain.
   optional.
 - New sample showing enrolment + refresh loop.
 
-### 6.2 AP enrolment and refresh endpoint clients (GAPS §7)
+### 4.2 AP enrolment and refresh endpoint clients (GAPS §7)
 
 **Fix**: `AgentProviderClient.EnrolAsync` and `RefreshAsync`.
 
 **Alternatives**: client vs. server hosting — server-side AP hosting is
-already scaffolded in Phase 4.1; this phase only adds the client.
+already scaffolded in Phase 2.1; this phase only adds the client.
 
-### 6.3 Platform attestation abstraction (GAPS §7)
+### 4.3 Platform attestation abstraction (GAPS §7)
 
 **Fix**: Define an `IPlatformAttestor` abstraction with a `NoopAttestor`
 default. WebAuthn / App Attest / Play Integrity implementations are
@@ -376,32 +379,32 @@ explicitly out of scope; we ship the seam only.
 **Implications**: small API surface addition; documented as
 "extensibility seam, no built-in providers".
 
-### Phase 6 Definition of Done
+### Phase 4 Definition of Done
 
-- Refresh sample runnable end-to-end against the Phase-4 AP server.
+- Refresh sample runnable end-to-end against the Phase 2 AP server.
 - GAPS §7 closed (except platform attestation implementations, deferred
   indefinitely per the rationale above).
 
 ---
 
-## Phase 7: Missions (governance)
+## Phase 5: Missions (governance)
 
 **Goal**: Mission lifecycle — proposal, clarification, approval, audit,
 termination.
 
-### 7.1 Mission model + header (GAPS §5)
+### 5.1 Mission model + header (GAPS §5)
 
 **Fix**: `Mission` domain type (`approver`, `s256`, `approved_tools`,
 `capabilities`), `AAuth-Mission` header parser/formatter, `mission` claim
 shape in tokens.
 
-### 7.2 Endpoints (GAPS §2, §5)
+### 5.2 Endpoints (GAPS §2, §5)
 
 `POST /mission`, `POST /permission`, `POST /audit`, `POST /interaction` —
 server-side hosters with `IMissionStore`, `IAuditSink`, `IInteractionRelay`
 seams. In-memory defaults only.
 
-### 7.3 Flow handling (GAPS §5)
+### 5.3 Flow handling (GAPS §5)
 
 - `requirement=clarification` 202 loop in `DeferredPoller`.
 - `requirement=approval` handling.
@@ -419,21 +422,21 @@ seams. In-memory defaults only.
 
 - The `IMissionStore`/`IAuditSink` abstractions land before any real backing
   store; documented as "in-memory only".
-- Mission claim now flows through `TokenVerifier` (Phase 3.4 parsed it; this
+- Mission claim now flows through `TokenVerifier` (Phase 1.4 parsed it; this
   phase evaluates it).
 
-### Phase 7 Definition of Done
+### Phase 5 Definition of Done
 
 - Mission lifecycle conformance section in `tests/AAuth.Conformance/`.
 - Sample showing propose → clarify → approve → execute → audit.
 
 ---
 
-## Phase 8: R3 (Rich Resource Requests)
+## Phase 6: R3 (Rich Resource Requests)
 
 **Goal**: Operation-level authorization with content-addressed R3 documents.
 
-### 8.1 R3 document model + canonicalisation (GAPS §6)
+### 6.1 R3 document model + canonicalisation (GAPS §6)
 
 **Fix**: R3 document type (`version`, `vocabulary`, `operations`, `display`),
 RFC 8785 JCS canonicaliser, SHA-256 content addressing.
@@ -446,14 +449,14 @@ RFC 8785 JCS canonicaliser, SHA-256 content addressing.
 2. *Skip canonicalisation and hash raw bytes*. Rejected — that breaks
    interop with any peer that round-trips the JSON.
 
-### 8.2 R3 endpoints + claims (GAPS §2, §6)
+### 6.2 R3 endpoints + claims (GAPS §2, §6)
 
 `GET /r3/{id}`, `r3_uri`/`r3_s256` resource-token claims,
 `r3_granted`/`r3_conditional` auth-token claims, `r3_vocabularies` in
 resource metadata, AS-side hash verification, per-call approval for
 conditional operations.
 
-### 8.3 Vocabulary support (GAPS §6)
+### 6.3 Vocabulary support (GAPS §6)
 
 Ship MCP and OpenAPI vocabulary parsers as the two reference cases; expose
 an `IR3Vocabulary` seam for the rest. gRPC and GraphQL deferred.
@@ -461,7 +464,7 @@ an `IR3Vocabulary` seam for the rest. gRPC and GraphQL deferred.
 **Alternatives**: ship all five vocabularies up-front (rejected — most of the
 work is the abstraction; adding more parsers is consumer-driven).
 
-### Phase 8 Definition of Done
+### Phase 6 Definition of Done
 
 - R3 flow conformance section.
 - Sample demonstrating an MCP tool call gated by an R3 grant.
@@ -469,34 +472,34 @@ work is the abstraction; adding more parsers is consumer-driven).
 
 ---
 
-## Phase 9: Resource-managed (2-party) + specialised flows
+## Phase 7: Resource-managed (2-party) + specialised flows
 
-**Goal**: The remaining flows in GAPS §1.1 and §14.
+**Goal**: The remaining flows in GAPS §1.1, §8.4, and §14.
 
-### 9.1 Resource-managed 2-party (GAPS §1.1)
+### 7.1 Resource-managed 2-party (GAPS §1.1)
 
 `AAuth-Access` opaque token, `Authorization: AAuth <token>` header,
 resource-side interaction initiation, agent-side 202 handling distinct from
 PS-asserted 202.
 
-### 9.2 Third-party login (GAPS §14)
+### 7.2 Third-party login (GAPS §14)
 
 `POST /login` endpoint, `login_hint`, `login_endpoint` in PS metadata.
 
-### 9.3 Call chaining (GAPS §14)
+### 7.3 Call chaining (GAPS §14)
 
 Resource-acts-as-agent — `upstream_token` parameter in PS→AS federation,
 `act` chain extension.
 
-### 9.4 Payment Required (402) (GAPS §8.4)
+### 7.4 Payment Required (402) (GAPS §8.4)
 
 Typed handling of 402 + Location polling for AS payment flows.
 
-### 9.5 Misc claims (GAPS §14)
+### 7.5 Misc claims (GAPS §14)
 
 `tenant`, `justification`, `platform`, `device`, `claims` requirement.
 
-### Phase 9 Definition of Done
+### Phase 7 Definition of Done
 
 - GAPS §1.1, §8.4, §14 closed.
 - `GAPS.md` reduced to an empty "Gaps" table (any survivors moved to a new
@@ -508,7 +511,7 @@ Typed handling of 402 + Location polling for AS payment flows.
 
 ### Versioning and breaking changes
 
-Phase 3 introduces verification behaviour that breaks consumers who relied on
+Phase 1 introduces verification behaviour that breaks consumers who relied on
 the lax defaults. Until the SDK reaches `1.0.0`, this is acceptable; each
 breaking phase ships with:
 
@@ -529,10 +532,10 @@ way around.
 
 ### Dependency policy
 
-No new NuGet packages without an entry in `research.md` (next to this file)
-explaining why the BCL or an existing dependency is insufficient. Current
-phases anticipate **no** new dependencies beyond what Phase 1–2 already
-established (BouncyCastle, Microsoft.IdentityModel.Tokens).
+No new NuGet packages without an entry in a `research.md` (next to this
+file) explaining why the BCL or an existing dependency is insufficient.
+Current phases anticipate **no** new dependencies beyond what the prior plan
+already established (BouncyCastle, Microsoft.IdentityModel.Tokens).
 
 ### Stored-memory upkeep
 
@@ -541,7 +544,7 @@ Any phase that invalidates a stored repository memory must, in the same PR:
 1. Downvote the stale memory (cite the file/line that changed).
 2. Store the replacement memory describing the new reality.
 
-Phase 3.3 in particular will touch the existing
+Phase 1.3 in particular will touch the existing
 `URL validation uses AAuthUrl.IsHttpsOrLoopback` memory.
 
 ---
@@ -553,8 +556,8 @@ Phase 3.3 in particular will touch the existing
 - Persistent backing stores for missions, audit, JTI denylists — abstractions
   ship; persistence is consumer responsibility.
 - WebAuthn / App Attest / Play Integrity attestor implementations — see
-  Phase 6.3.
-- gRPC and GraphQL R3 vocabularies — see Phase 8.3.
+  Phase 4.3.
+- gRPC and GraphQL R3 vocabularies — see Phase 6.3.
 
 If any of these become in scope later, they get their own dated plan folder
 under `.agent/plans/` rather than being smuggled into one of the phases above.
