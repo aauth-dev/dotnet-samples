@@ -300,26 +300,33 @@ the bootstrap key model.
 
 ### 3.3 ECDSA P-256 (RFC 6979 deterministic) (GAPS §4)
 
-**Fix**: Add ECDSA P-256 alongside Ed25519 in `AAuthKey`, `JwtWriter`,
-`AAuthVerifier`, and `JwksClient` (currently silently skips non-Ed25519).
+**Fix**: Add ECDSA P-256 alongside Ed25519 by introducing an `IAAuthKey`
+interface with `Ed25519AAuthKey` and `EcdsaAAuthKey` implementations. Use
+BouncyCastle's `HMacDsaKCalculator` for RFC 6979 deterministic signing;
+use BCL `ECDsa` for verification (hardware-accelerated, deterministic-K is
+irrelevant for verifiers). Update `JwtWriter`, `AAuthVerifier`, and
+`JwksClient` to dispatch on algorithm via the interface.
 
 **Alternatives considered**:
 
-1. *Use BCL `ECDsa` directly*. Preferred for verification and non-
-   deterministic signing.
-2. *Use BCL `ECDsa` with a deterministic-K shim*. Rejected — BCL does not
-   expose RFC 6979 deterministic-K; we need BouncyCastle (already a direct
-   dependency post Phase 2 self-review of the original plan). Recorded as
-   the chosen path.
+1. *Use BCL `ECDsa` for both signing and verification*. Rejected for signing —
+   BCL does not expose RFC 6979 deterministic-K. Accepted for verification —
+   BCL is faster and deterministic-K is irrelevant on the verify path.
+2. *Keep `AAuthKey` as a concrete struct and add an `Algorithm` property*.
+   Rejected — an interface (`IAAuthKey`) is more extensible for future
+   algorithms (Ed448, PQC) and lets consumers bring hardware-backed key
+   implementations without patching the SDK.
 3. *Skip RFC 6979 and use the BCL random-K signer*. Rejected — the spec
    mandates deterministic signatures for reproducibility and PoP equality.
 
 **Implications**:
 
-- `AAuthKey` becomes algorithm-polymorphic; the JWK serialiser learns the
-  `EC` key type alongside `OKP`.
-- Public API: `AAuthKey.Generate` grows an algorithm parameter. Keep the
-  Ed25519 overload as the default to preserve binary compatibility.
+- `AAuthKey` becomes algorithm-polymorphic via a new `IAAuthKey` interface
+  with `Ed25519AAuthKey` and `EcdsaAAuthKey` implementations. The JWK
+  serialiser learns the `EC` key type alongside `OKP`.
+- Public API: `IAAuthKey.Generate(algorithm)` factory. The Ed25519 overload
+  remains the default to preserve binary compatibility. See `research.md` §4
+  for the full design rationale.
 
 ### Phase 3 Definition of Done
 
@@ -443,9 +450,11 @@ RFC 8785 JCS canonicaliser, SHA-256 content addressing.
 
 **Alternatives considered**:
 
-1. *Use an existing JCS library*. Rejected for the SDK: no maintained .NET
-   JCS package was identified in research; we ship a small focused
-   implementation. Revisit when one matures.
+1. *Use an existing JCS library*. **Accepted** — research identified
+   `JsonCanonicalizer` (NuGet, v1.0.4, MIT) by Anders Rundgren, the
+   RFC 8785 author. This is the reference implementation, actively
+   maintained, with zero transitive dependencies. Prefer it over
+   hand-rolling canonicalisation. See `research.md` §8.1.
 2. *Skip canonicalisation and hash raw bytes*. Rejected — that breaks
    interop with any peer that round-trips the JSON.
 
@@ -532,10 +541,11 @@ way around.
 
 ### Dependency policy
 
-No new NuGet packages without an entry in a `research.md` (next to this
-file) explaining why the BCL or an existing dependency is insufficient.
-Current phases anticipate **no** new dependencies beyond what the prior plan
-already established (BouncyCastle, Microsoft.IdentityModel.Tokens).
+No new NuGet packages without an entry in [`research.md`](./research.md)
+(next to this file) explaining why the BCL or an existing dependency is
+insufficient. Current phases anticipate **one** new dependency beyond what
+the prior plan established: `JsonCanonicalizer` (RFC 8785 JCS, Phase 6).
+See `research.md` §8.1 and §11 for the full assessment.
 
 ### Stored-memory upkeep
 
