@@ -1,11 +1,11 @@
 # Implementation Plan: AAuth .NET SDK Gap Remediation
 
-> Created 2026-05-20. Companion to [`/GAPS.md`](../../../GAPS.md) (same PR).
+> Created 2026-05-20. Companion to [`gaps.md`](./gaps.md) (same PR).
 > Builds on (but does not extend the phase numbering of) the prior plan
 > [`2026-05-13-dotnet-aauth-sdk`](../2026-05-13-dotnet-aauth-sdk/implementation-plan.md),
 > which delivered Phases 1–2 of the SDK (core crypto, agent token, signed
 > request, 3-party PS-asserted flow). This plan is a standalone roadmap to
-> close the spec-conformance gaps catalogued in `GAPS.md`; its phases are
+> close the spec-conformance gaps catalogued in [`gaps.md`](./gaps.md); its phases are
 > numbered from 1 and stand on their own.
 
 This plan describes **what** to build and **why**, plus the alternatives
@@ -25,8 +25,8 @@ does not prescribe code shape — that belongs in the per-phase PRs.
 
 ## Source of truth
 
-Every phase below cites the section in [`GAPS.md`](../../../GAPS.md) it
-closes. When the spec changes, update `GAPS.md` first, then re-sequence
+Every phase below cites the section in [`gaps.md`](./gaps.md) it
+closes. When the spec changes, update `gaps.md` first, then re-sequence
 this plan.
 
 ---
@@ -170,7 +170,7 @@ that GAPS §13 calls out.
 - Stored memory `URL validation uses AAuthUrl.IsHttpsOrLoopback ...` either
   upvoted (still correct) or replaced with a memory describing the new
   strict validator.
-- `GAPS.md` checkboxes for §8, §9, §11, §12 flipped to ✅ (or downgraded with
+- `gaps.md` checkboxes for §8, §9, §11, §12 flipped to ✅ (or downgraded with
   a note for any item explicitly deferred).
 
 ---
@@ -242,7 +242,7 @@ flow.
 
 - New `tests/AAuth.Conformance/Federated/` section with end-to-end fixtures
   using TestServer for AP, PS, AS, and Resource.
-- `AuthTokenBuilder` exits "untested" status (called out in `GAPS.md` §1.2).
+- `AuthTokenBuilder` exits "untested" status (called out in `gaps.md` §1.2).
 - New sample (`samples/FederatedDemo/`) — README updated to reference it.
 
 ### 2.4 Token revocation + refresh-endpoint scaffolding (GAPS §2, §14)
@@ -502,7 +502,7 @@ Typed handling of 402 + Location polling for AS payment flows.
 ### Phase 7 Definition of Done
 
 - GAPS §1.1, §8.4, §14 closed.
-- `GAPS.md` reduced to an empty "Gaps" table (any survivors moved to a new
+- `gaps.md` reduced to an empty "Gaps" table (any survivors moved to a new
   "Deferred" section with explicit rationale).
 
 ---
@@ -527,7 +527,7 @@ quietly re-open the security hole.
 
 Every phase adds spec-traceable `[Fact(DisplayName = "§<section>")]` tests.
 The conformance suite is the single source of truth for "is the SDK
-spec-conformant?"; `GAPS.md` is updated from the test list, not the other
+spec-conformant?"; `gaps.md` is updated from the test list, not the other
 way around.
 
 ### Dependency policy
