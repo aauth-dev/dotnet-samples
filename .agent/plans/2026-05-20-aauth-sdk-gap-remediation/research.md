@@ -701,6 +701,152 @@ in the implementation PR.
 
 ---
 
+## 15. Extensibility Seams Design (SHOULD-level plugin points)
+
+### 15.1 Problem statement
+
+The AAuth spec has multiple SHOULD requirements that depend on deployment
+context (hardware keys, persistent stores, platform attestation, interaction
+UX). A samples repo cannot ship production implementations but MUST NOT make
+it impossible for consumers to add them. The SDK needs clear extension points
+where consumers inject their own behaviour.
+
+### 15.2 Design pattern: interface + default + DI registration
+
+Every extensibility seam follows the same three-part pattern:
+
+```
+┌─────────────────────┐     ┌────────────────────────┐
+│  Interface (public) │◄────│  Default impl (public) │
+│  e.g. IJtiStore     │     │  e.g. InMemoryJtiStore  │
+└─────────────────────┘     └────────────────────────┘
+         ▲
+         │ consumer overrides via DI
+┌────────┴────────────────┐
+│  Consumer impl (theirs) │
+│  e.g. RedisJtiStore     │
+└─────────────────────────┘
+```
+
+DI registration:
+```csharp
+// SDK ships:
+services.AddAAuthVerification(options => { ... });
+// internally calls: services.TryAddSingleton<IJtiStore, InMemoryJtiStore>();
+
+// Consumer overrides:
+services.AddSingleton<IJtiStore, RedisJtiStore>();
+// Must come AFTER AddAAuthVerification, or use Replace().
+```
+
+`TryAdd*` ensures the SDK's default doesn't clobber a consumer's prior
+registration. If no consumer registration exists, the default kicks in.
+
+### 15.3 Interface design rules
+
+1. **Minimal surface**: 1–3 methods per interface. Split large concerns
+   into separate interfaces (e.g. `IJtiStore` vs `IAuditSink` vs
+   `IMissionStore`) rather than one `IAAuthStore` god-interface.
+
+2. **Async-first**: All methods return `Task<T>` or `ValueTask<T>` even
+   if the default is synchronous. Reason: real implementations hit I/O
+   (Redis, SQL, HTTP); forcing async at the seam avoids sync-over-async
+   anti-patterns in consumers.
+
+3. **CancellationToken everywhere**: Every async method accepts
+   `CancellationToken ct` as its last parameter. Defaults pass
+   `CancellationToken.None` internally but consumers can wire to
+   request-scoped tokens.
+
+4. **No ambient static state**: Singletons are fine (caches, stores) but
+   must be thread-safe. Scoped instances (per-request) for anything that
+   carries request-specific context (e.g. `IInteractionPresenter` in a
+   Blazor circuit).
+
+5. **Separate read/write where natural**: e.g. `IJtiStore.TryRecordAsync`
+   (write) vs a hypothetical `IJtiStore.IsRevokedAsync` (read). Keeps
+   implementations focused and testable.
+
+### 15.4 Inventory of seams (consolidated)
+
+| Interface | Lifetime | Default | Phase | Purpose |
+|---|---|---|---|---|
+| `IAAuthKey` | Transient (per key instance) | `Ed25519AAuthKey` | 3 | Algorithm polymorphism; hardware key backends |
+| `IKeyStore` | Singleton | `FileKeyStore` | 1 (exists) | Key persistence; swap for Vault/KMS/HSM |
+| `IJtiStore` | Singleton | `InMemoryJtiStore` | 2 | Replay detection + revocation; swap for Redis/SQL |
+| `IPlatformAttestor` | Singleton | `NoopAttestor` | 4 | Platform attestation; swap for WebAuthn/AppAttest |
+| `IMissionStore` | Singleton | `InMemoryMissionStore` | 5 | Mission persistence; swap for DB/event-store |
+| `IAuditSink` | Singleton | `InMemoryAuditSink` | 5 | Audit event delivery; swap for SIEM/logging |
+| `IInteractionPresenter` | Scoped | `ConsoleInteractionPresenter` | 1 | Interaction UX; swap for browser/push/Blazor |
+| `IMetadataCache` | Singleton | `InMemoryMetadataCache` | 1 (exists) | Metadata caching; swap for IDistributedCache |
+| `IR3Vocabulary` | Singleton (per vocabulary) | `McpVocabulary`, `OpenApiVocabulary` | 6 | Vocabulary parsers; add custom vocabularies |
+| `IOpaqueTokenStore` | Singleton | `InMemoryOpaqueTokenStore` | 7 | Resource-managed access tokens; swap for DB |
+
+### 15.5 `IInteractionPresenter` (new seam)
+
+**Problem**: `TokenExchangeClient` currently accepts a raw
+`Func<AAuthInteraction, Task>` callback for interaction presentation.
+This works for samples but is not DI-composable — consumers can't swap
+the presenter without touching the `HttpClient` pipeline setup.
+
+**Design**:
+```csharp
+public interface IInteractionPresenter
+{
+    /// Present the interaction URL + code to the user.
+    /// Called once per interaction; returns when the user has been notified.
+    /// The agent then polls for completion separately.
+    Task PresentAsync(AAuthInteraction interaction, CancellationToken ct);
+}
+```
+
+**Implementations**:
+- `ConsoleInteractionPresenter`: writes URL + code to `Console.Error`.
+- `GuidedTour` already has a Blazor-based presenter (the "Approve" button).
+- Consumers: browser-open (`Process.Start(url)`), push notification,
+  desktop toast, mobile deep-link, etc.
+
+**DI lifetime**: Scoped. In Blazor Server, each circuit has its own
+presenter instance bound to the SignalR connection. In console apps,
+scoped = singleton (one scope per app lifetime).
+
+**Migration path**: The existing `Func<>` callback remains as a
+convenience overload on `TokenExchangeClient` for non-DI usage.
+`ChallengeHandler` resolves `IInteractionPresenter` from DI when
+available, falling back to throwing `InvalidOperationException` if
+neither is configured.
+
+### 15.6 `IKeyStore` refinement
+
+The existing `KeyStore` (file-based) is a concrete class, not an
+interface. Phase 1 or Phase 4 should extract `IKeyStore`:
+
+```csharp
+public interface IKeyStore
+{
+    Task<IAAuthKey> LoadOrCreateAsync(string keyId, CancellationToken ct);
+    Task<IAAuthKey?> LoadAsync(string keyId, CancellationToken ct);
+    Task SaveAsync(string keyId, IAAuthKey key, CancellationToken ct);
+    Task<bool> ExistsAsync(string keyId, CancellationToken ct);
+}
+```
+
+The existing `KeyStore` becomes `FileKeyStore : IKeyStore`. Consumers
+swap in Azure Key Vault, AWS KMS, etc. Note: `IAAuthKey` (Phase 3) is
+the key type; until then, the interface uses the existing `AAuthKey`.
+
+### 15.7 Alternatives considered for extensibility approach
+
+| Approach | Pros | Cons | Decision |
+|---|---|---|---|
+| **Interfaces + DI** (chosen) | Standard .NET pattern; testable; composable | Requires DI container; more types | ✅ Chosen |
+| **Abstract base classes** | Can carry shared logic; single override point | Fragile base class problem; coupling | ❌ Rejected |
+| **Func/delegate callbacks** | Zero ceremony; works without DI | Not composable; hard to test in isolation | ❌ Rejected for seams (kept for convenience overloads) |
+| **Event-based (pub/sub)** | Decoupled; multiple listeners | Ordering issues; hard to return values | ❌ Rejected |
+| **Middleware-only** | Familiar ASP.NET pattern | Only works server-side; agent-side has no pipeline | ❌ Rejected as sole approach |
+
+---
+
 ## 12. Conformance Suite Strategy
 
 ### 12.1 Section coverage map (target state after all phases)

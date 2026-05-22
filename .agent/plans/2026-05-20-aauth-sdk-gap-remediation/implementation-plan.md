@@ -592,6 +592,64 @@ check).
 
 ## Cross-cutting concerns
 
+### Extensibility seams (SHOULD-level plugin points)
+
+The spec's SHOULD requirements and deployment-specific concerns are handled
+via interface abstractions that the SDK ships with in-memory/no-op defaults.
+Consumers plug in their own implementations via DI registration. Every seam
+follows the same pattern:
+
+1. Interface in `src/AAuth/` (no external dependency).
+2. Default implementation ships alongside (in-memory, file-based, or no-op).
+3. `Add*` DI extension registers the default; consumer overrides via
+   standard `IServiceCollection` replacement.
+4. SDK code resolves via DI (or accepts in constructor for non-DI usage).
+
+| Interface | Default impl | Phase | Consumer plugs in |
+|---|---|---|---|
+| `IAAuthKey` | `Ed25519AAuthKey` | 3 | Hardware-backed key (YubiKey, TPM, Secure Enclave), custom algorithms |
+| `IKeyStore` | `FileKeyStore` (~/.aauth/keys/) | 1 (exists) | OS credential store, Azure Key Vault, AWS KMS, HashiCorp Vault |
+| `IJtiStore` | `InMemoryJtiStore` | 2 | Redis, SQL, distributed cache — for replay detection + revocation |
+| `IPlatformAttestor` | `NoopAttestor` | 4 | WebAuthn relying party, App Attest, Play Integrity |
+| `IMissionStore` | `InMemoryMissionStore` | 5 | Durable DB, event store |
+| `IAuditSink` | `InMemoryAuditSink` | 5 | Structured logging, SIEM, append-only ledger |
+| `IInteractionPresenter` | `ConsoleInteractionPresenter` | 1 | Browser redirect, push notification, desktop notification, Blazor UI callback |
+| `IMetadataCache` | `InMemoryMetadataCache` (5 min TTL) | 1 (exists) | Redis, `IDistributedCache`, CDN-backed |
+| `IR3Vocabulary` | `McpVocabulary`, `OpenApiVocabulary` | 6 | gRPC, GraphQL, AsyncAPI, WSDL, OData — or custom |
+| `IOpaqueTokenStore` | `InMemoryOpaqueTokenStore` | 7 | Persistent store for resource-managed access tokens |
+
+**Design rules for seams**:
+
+- Interfaces are minimal (1–3 methods). Avoid "god interfaces" that force
+  consumers to implement methods they don't need.
+- Async-first (`Task<T>` returns) even if the default is synchronous.
+- `CancellationToken` on every async method.
+- No ambient static state — all instances are DI-scoped or singleton as
+  appropriate.
+- Each seam has a corresponding `Add{Feature}(this IServiceCollection, ...)`
+  extension that wires the default and can be overridden.
+
+**New seam: `IInteractionPresenter`** (not previously in the plan):
+
+When the agent pipeline encounters `requirement=interaction` with a `url` +
+`code`, it needs to *present* this to the user. The current
+`onInteractionRequired` callback in `TokenExchangeClient` is a raw
+`Func<AAuthInteraction, Task>` — good for demos but not DI-friendly. Replace
+with:
+
+```csharp
+public interface IInteractionPresenter
+{
+    /// Present the interaction URL + code to the user.
+    /// Returns when the user has been notified (not when they've completed it).
+    Task PresentAsync(AAuthInteraction interaction, CancellationToken ct);
+}
+```
+
+`ConsoleInteractionPresenter` writes to stdout. `GuidedTour` already has its
+own Blazor-based presenter. Future consumers plug in browser-open, push
+notification, desktop toast, etc.
+
 ### Versioning and breaking changes
 
 Phase 1 introduces verification behaviour that breaks consumers who relied on
@@ -635,13 +693,21 @@ Phase 1.3 in particular will touch the existing
 
 ## Out of scope (recorded, not deferred)
 
-- Production-grade key storage (HSM/KMS integration) — explicit non-goal of
-  the samples repo.
-- Persistent backing stores for missions, audit, JTI denylists — abstractions
-  ship; persistence is consumer responsibility.
-- WebAuthn / App Attest / Play Integrity attestor implementations — see
-  Phase 4.3.
-- gRPC and GraphQL R3 vocabularies — see Phase 6.3.
+The following are explicitly not shipped as built-in implementations.
+However, every item below has a corresponding **extensibility seam**
+(interface) that ships with the SDK so consumers can plug in their own.
+See "Extensibility seams" section above for the full inventory.
+
+| Item | Interface shipped | Consumer provides |
+|---|---|---|
+| Production-grade key storage (HSM/KMS) | `IKeyStore` | Azure Key Vault, AWS KMS, HashiCorp Vault adapter |
+| Persistent JTI / replay / revocation store | `IJtiStore` | Redis, SQL, distributed cache impl |
+| Persistent mission + audit store | `IMissionStore`, `IAuditSink` | Database, event store, SIEM adapter |
+| Platform attestation (WebAuthn, App Attest, Play Integrity) | `IPlatformAttestor` | Platform-specific impl per §4.3 |
+| gRPC, GraphQL, AsyncAPI, WSDL, OData R3 vocabularies | `IR3Vocabulary` | Consumer vocabulary parser |
+| Custom interaction UX (browser, push, desktop toast) | `IInteractionPresenter` | Platform-specific presenter |
+| Distributed metadata cache | `IMetadataCache` | `IDistributedCache` adapter, Redis, CDN |
+| Persistent opaque-token store (resource-managed) | `IOpaqueTokenStore` | Database adapter |
 
 If any of these become in scope later, they get their own dated plan folder
 under `.agent/plans/` rather than being smuggled into one of the phases above.
