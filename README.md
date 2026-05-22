@@ -10,10 +10,12 @@ AAuth is a four-party authorization protocol for AI agents. Every HTTP request c
 
 The four parties are:
 
-- **Agent Provider (AP)** — issues `aa-agent+jwt` tokens that identify an agent and bind its signing key.
-- **Agent** — signs every outbound HTTP request (RFC 9421) and presents the agent token in the `Signature-Key` header.
-- **Resource Server (RS)** — verifies the signature, optionally challenges with a `resource_token` to demand a person-scoped `auth_token`.
-- **Person Server (PS)** — receives a signed exchange request from the agent and returns an `aa-auth+jwt` proving the person delegated the requested scope.
+- **Agent** — signs every outbound HTTP request (RFC 9421) and presents keying material in the `Signature-Key` header.
+- **Resource** — verifies the signature, optionally challenges with a `resource_token` to demand a person-scoped `auth_token`.
+- **Person Server (PS)** — represents the user; manages missions, federates to AS, issues `aa-auth+jwt` proving the person delegated access.
+- **Access Server (AS)** — issues auth tokens; enforces resource access policy.
+
+> **Agent Provider (AP)** is a supporting role that issues `aa-agent+jwt` tokens binding an agent's signing key to its identity.
 
 ## Repository Layout
 
