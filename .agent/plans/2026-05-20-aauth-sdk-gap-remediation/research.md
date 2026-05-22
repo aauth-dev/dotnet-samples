@@ -52,6 +52,56 @@ the JS SDK does not implement `act` walking yet.
 delegation), configurable via `TokenVerifierOptions`. Document that exceeding
 the limit returns `invalid_jwt` error code.
 
+### 1.5 `act` claim as a building obligation (GAPS §9.1)
+
+The spec's auth token verification step 8 states:
+
+> "Verify `act` present and `act.sub` matches agent identifier from signing
+> context."
+
+This is unconditional — there is no "if `act` is present" qualifier. Every
+auth token MUST carry `act`.
+
+**Reference behaviour**:
+
+| SDK | `act` in auth tokens |
+|---|---|
+| **packages-js** `mcp-server/` | Always includes `act: { sub: agentId }` when minting auth tokens |
+| **aauth-go-library** | `BuildAuthToken()` requires `actor` parameter |
+| **aauth-python-library** | `mint_auth_token(actor_sub=...)` — mandatory arg |
+
+**Recommendation**: Make `AuthTokenBuilder.Act` a required property (throw on
+`Build()` if null). Minimum shape: `{ "sub": "<agent-identifier>" }`. For
+call-chaining (Phase 7.3), `act` nests:
+`{ "sub": "B", "act": { "sub": "A" } }` — the builder accepts a
+pre-formed `act` object for this case.
+
+**Impact**: Breaking change for `MockPersonServer` and any integration test
+that builds auth tokens. All must be updated in the same PR.
+
+### 1.6 Dual-`dwk` acceptance for auth tokens (GAPS §9.3)
+
+Auth tokens may be issued by either a PS (`dwk` = `aauth-person.json`) or
+an AS (`dwk` = `aauth-access.json`). A resource server receiving an auth
+token does not necessarily know which role issued it.
+
+**Current behaviour**: `TokenVerifier.VerifyWithJwksAsync` takes
+`expectedDwk` as a parameter. Caller must decide.
+
+**Reference behaviour**: the Go library's `VerifyAuthToken` reads `dwk` from
+the token payload and uses it to construct the metadata URL. It does not
+require the caller to pre-specify which `dwk` to expect.
+
+**Recommendation**: Add a `VerifyAuthTokenAsync` overload that:
+1. Decodes the token header+payload (no signature check yet).
+2. Reads `dwk` from the payload.
+3. Validates `dwk` ∈ { `aauth-person.json`, `aauth-access.json` }.
+4. Constructs the metadata URL as `{iss}/.well-known/{dwk}` and proceeds
+   with discovery + signature verification.
+
+This is additive (existing overload remains for callers that want strict
+expected-`dwk` checking) and unblocks Phase 2.3 (AS) cleanly.
+
 ---
 
 ## 2. Structured Error Model (Plan §1.2)
@@ -115,6 +165,41 @@ without retry, surface a typed `PollingDeniedException` (not a generic
 that 410 *also* means the resource should not be cached (RFC 9110 §15.4.11),
 so the poller must NOT cache the polling URL for reuse.
 
+### 2.7 JTI replay detection vs. revocation (GAPS §8.5)
+
+The spec defines `jti` on all three token types. Two distinct mechanisms
+consume it:
+
+| Mechanism | Actor | Threat mitigated | State lifetime |
+|---|---|---|---|---|
+| **Replay detection** | Token receiver (resource, PS, AS) | Replayed captured token | Until token's `exp` |
+| **Revocation** | Token issuer (AP, PS, AS) | Compromised/stolen token used before natural expiry | Until token's `exp` (then entry can be GC'd) |
+
+Both need a `jti` store, but their write patterns differ:
+- Replay detection: *every* verified token writes its `jti` on first sight.
+- Revocation: only explicitly-revoked tokens are written.
+
+**Recommendation**: A single `IJtiStore` abstraction serves both:
+
+```csharp
+public interface IJtiStore
+{
+    /// Returns true if the jti was successfully recorded (first time seen).
+    /// Returns false if it was already present (replay or revoked).
+    Task<bool> TryRecordAsync(string jti, DateTimeOffset expiry, CancellationToken ct);
+
+    /// Explicitly revoke a jti (issuer-side). Returns false if already recorded.
+    Task<bool> RevokeAsync(string jti, DateTimeOffset expiry, CancellationToken ct);
+}
+```
+
+The in-memory default uses `ConcurrentDictionary<string, DateTimeOffset>` with
+a periodic sweep removing entries whose `expiry` has passed.
+
+`AAuthVerificationMiddleware` calls `TryRecordAsync` when `IJtiStore` is
+registered in DI. When it's absent, replay detection is silently skipped
+(stateless mode) — acceptable for samples, documented as a security trade-off.
+
 ---
 
 ## 3. Identifier Validation (Plan §1.3)
@@ -161,6 +246,16 @@ flag (defaults to `false`). When `true`, `http://localhost` and
 `http://127.0.0.1` pass rule 1. This preserves dev ergonomics from the
 original `AAuthUrl` helper. Production code must not set this flag; the
 README will document this.
+
+**Loopback port carve-out**: The spec's "no port" rule (rule 2) applies to
+server identifiers for production hosts. However, all existing samples use
+ported loopback URLs as issuers (`http://localhost:5000`,
+`http://localhost:5100`, etc.). When `AllowLoopback = true`, ports MUST be
+allowed for loopback addresses. Without this carve-out, every existing
+sample and integration test breaks. The carve-out MUST NOT extend to
+non-loopback hosts — `https://example.com:8443` remains rejected. The
+canonical form for loopback issuers includes the port:
+`http://localhost:5000` (no trailing slash).
 
 ### 3.4 Agent identifiers — spec rules
 
@@ -621,13 +716,16 @@ in the implementation PR.
 | §Polling Errors | `Errors/PollingErrorTests.cs` | 1 |
 | §Agent Token | `AgentTokens/` (existing) | — |
 | §Resource Token | `ResourceTokens/` (existing) | — |
-| §Auth Token | `AuthTokens/AuthTokenTests.cs` | 2 |
+| §Auth Token (structure + `act`) | `AuthTokens/AuthTokenTests.cs` | 1 |
+| §Auth Token (dual-`dwk`) | `AuthTokens/DualDwkTests.cs` | 1 |
+| §Replay Detection | `Verification/JtiReplayTests.cs` | 2 |
 | §Federated flow | `Federated/FederatedFlowTests.cs` | 2 |
 | §Bootstrap / Refresh | `Bootstrap/RefreshTests.cs` | 4 |
 | §Missions | `Missions/MissionLifecycleTests.cs` | 5 |
 | §R3 | `R3/R3FlowTests.cs` | 6 |
 | §Resource-Managed | `ResourceManaged/TwoPartyTests.cs` | 7 |
 | §Call Chaining | `CallChaining/ChainTests.cs` | 7 |
+| §Capabilities | `Headers/CapabilitiesTests.cs` | 7 |
 
 ### 12.2 Negative-case priority (Phase 1)
 
@@ -636,11 +734,15 @@ in the implementation PR.
 | `alg=none` token | Rejected with `unsupported_algorithm` |
 | Missing `cnf` | Rejected with `invalid_jwt` |
 | `cnf.jwk` ≠ HTTP sig key | Rejected with `invalid_jwt` |
+| Auth token missing `act` | Rejected with `invalid_jwt` |
+| Auth token `act.sub` ≠ agent | Rejected with `invalid_jwt` |
 | Expired token | Rejected with `expired_jwt` |
 | Wrong audience | Rejected at `TokenVerifier` level |
+| Replayed `jti` (when `IJtiStore` registered) | Rejected with `invalid_jwt` |
 | Agent ID with uppercase | `AAuthAgentId.TryParse` returns false |
 | Server URL with path | `AAuthServerId.TryParse` returns false |
-| Server URL with port | `AAuthServerId.TryParse` returns false |
+| Server URL with port (non-loopback) | `AAuthServerId.TryParse` returns false |
+| Server URL with port (loopback, AllowLoopback=true) | `AAuthServerId.TryParse` returns **true** |
 
 ---
 
@@ -651,6 +753,11 @@ in the implementation PR.
 | 1 | `JsonCanonicalizer` NuGet exists and is maintained | Phase 6.1 | Use the package instead of hand-rolling JCS. |
 | 2 | `AAuthKey` should become an interface (`IAAuthKey`) for ECDSA + future algorithms | Phase 3.3 | Changed from "AAuthKey becomes polymorphic" to "introduce `IAAuthKey` interface with `Ed25519AAuthKey` and `EcdsaAAuthKey` implementations". |
 | 3 | Spec does NOT mandate deterministic signatures for *verifiers* — only for *signers* | Phase 3.3 | Use BouncyCastle (RFC 6979) for signing, BCL `ECDsa` for verification. Plan text clarified. |
+| 4 | `act` claim is REQUIRED in auth tokens — `AuthTokenBuilder` has no `Act` property | Phase 1.1 | Added `AuthTokenBuilder.Act` as required property + `MockPersonServer` update to plan. |
+| 5 | JTI replay detection is distinct from JTI revocation — both need `IJtiStore` but serve different threat models | Phase 2.4 | Expanded to cover replay detection alongside revocation. Single `IJtiStore` abstraction. |
+| 6 | `AAuth-Capabilities` header not covered anywhere in the plan | Phase 7 | Added §7.5 `AAuth-Capabilities` header. |
+| 7 | Server-identifier "no port" rule breaks loopback samples | Phase 1.3 | Added loopback port carve-out to `AAuthServerId`. |
+| 8 | `TokenVerifier` dual-`dwk` acceptance needed for 4-party flow | Phase 1.4 | Added `VerifyAuthTokenAsync` overload that reads `dwk` from the token. |
 
 These amendments are applied to `implementation-plan.md` in the same commit
 as this file.
@@ -679,3 +786,21 @@ as this file.
 
 5. **Payment (402) flow**: the spec is thin on the Location URL semantics
    for payment. Monitor spec updates before implementing Phase 7.4.
+
+6. **Loopback port in server identifiers**: the spec says server identifiers
+   MUST be host-only (no port). All existing samples use ported loopback
+   URLs. The carve-out allowing ports for loopback is a pragmatic dev
+   exemption with no spec backing. If the spec later clarifies loopback
+   behaviour, the `AAuthServerId` parser may need adjustment.
+
+7. **`AAuth-Capabilities` server-side semantics**: the spec says servers MAY
+   use capabilities to decide response shape but is silent on whether a
+   server MUST honour the absence of a capability (e.g., MUST NOT return
+   `requirement=interaction` if agent didn't advertise `interaction`). Until
+   clarified, the SDK treats capabilities as advisory on both sides.
+
+8. **Scope narrowing enforcement point**: the spec mandates auth-token scope
+   ⊆ resource-token scope, but the resource may not retain the original
+   resource token at auth-token verification time. Determine whether the
+   verifier should accept an optional `maxScope` parameter or whether this
+   is purely application-level logic.

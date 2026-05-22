@@ -41,13 +41,13 @@ add surface area.
 
 | Phase | Theme | Closes |
 |---|---|---|
-| 1 | Verification & error-reporting hardening | GAPS §8, §9, §11, §12 |
-| 2 | Server-side discovery + four-party flow | GAPS §1.2, §2, §10 |
+| 1 | Verification & error-reporting hardening | GAPS §8 (except §8.5), §9, §11, §12 |
+| 2 | Server-side discovery + four-party flow | GAPS §1.2, §2, §8.5, §10 |
 | 3 | Signature-Key scheme expansion + ECDSA | GAPS §3, §4 |
 | 4 | Bootstrap & refresh | GAPS §7 |
 | 5 | Missions (governance) | GAPS §5 |
 | 6 | R3 (Rich Resource Requests) | GAPS §6 |
-| 7 | Resource-managed (2-party) + specialised flows | GAPS §1.1, §8.4, §14 |
+| 7 | Resource-managed (2-party) + specialised flows | GAPS §1.1, §8.4, §14 (incl. §14.1) |
 
 ---
 
@@ -87,6 +87,12 @@ link's actor and enforces a configurable max depth.
   threads through `AAuthVerificationMiddleware` and `ChallengeHandler`.
 - `act` walking introduces a recursive structure to the verifier; the depth
   limit must be enforced or a malicious AP can DoS verification.
+- **`AuthTokenBuilder` must gain a required `Act` property** (GAPS §9.1).
+  The spec requires `act` in every auth token (verification step 8 is
+  unconditional). `MockPersonServer` and any other code that builds auth
+  tokens must be updated in the same PR. `Act` is a record/object with at
+  minimum `sub` (the agent identifier); nested `act` for call-chaining lands
+  in Phase 7.3.
 
 ### 1.2 Structured authentication errors (GAPS §8.1, §8.2, §8.3)
 
@@ -122,6 +128,13 @@ ACE/Punycode for IDN, scheme `https` except loopback in dev). Hook these into
 `MetadataClient`, every token builder, and every endpoint that accepts a
 server or agent identifier from the wire.
 
+**Loopback port carve-out** (GAPS §12 caveat): The spec's "no port" rule
+applies to server identifiers, but all existing samples use
+`http://localhost:<port>` as issuer URLs. `AAuthServerId` MUST allow ports
+for loopback addresses (`localhost`, `127.0.0.1`, `::1`) while rejecting
+them for non-loopback hosts. This is a pragmatic dev exemption; production
+code MUST NOT rely on it. Document explicitly in README.
+
 **Alternatives considered**:
 
 1. *Validate only at the edges (HTTP boundary)*. Rejected — defence-in-depth
@@ -143,35 +156,69 @@ server or agent identifier from the wire.
 - New public type `AAuthAgentId` becomes part of the API surface, so its
   shape needs care (immutable struct, parse/tryparse, equality).
 
-### 1.4 Token verifier completeness (GAPS §9, residual)
+### 1.4 Token verifier completeness (GAPS §9, §9.2, §9.3, residual)
 
 **Fix**: Enforce the remaining structural rules — at least one of `sub` or
 `scope` in auth tokens, `act.sub` equality with token subject, `mission`
 claim shape (parsed but not yet evaluated — full mission semantics land in
 Phase 5).
 
+Additionally:
+- **Dual-`dwk` acceptance** (GAPS §9.3): Add a `VerifyAuthTokenAsync`
+  overload (or `expectedDwk: null` sentinel) that accepts *either*
+  `aauth-person.json` or `aauth-access.json` and discovers the issuer JWKS
+  via the `dwk` value found in the token itself. This is needed before
+  Phase 2.3 (AS implementation) but is simple enough to land here.
+- **Scope narrowing** (GAPS §9.2): Add an optional `expectedMaxScope`
+  parameter to `VerifyAuthTokenAsync` so resource servers can assert
+  auth-token scope ⊆ resource-token scope. Optional because the resource
+  may not retain the original resource token at verification time.
+
 **Alternatives**: minor; the trade-offs are about *where* to fail (parse
 time vs. verify time). Decision: fail at verify time, so token builders
 remain permissive for tests that intentionally produce malformed tokens.
 
-**Implications**: more negative-path conformance tests; no API surface
-change.
+**Implications**: more negative-path conformance tests; the dual-`dwk`
+overload is a new API surface but non-breaking (additive).
 
 ### 1.5 Conformance suite expansion
 
-Add the negative cases (`alg=none`, missing/mismatched `cnf`, expired, bad
-audience, identifier-rule violations) and the auth-token structure tests
-that GAPS §13 calls out.
+The existing conformance suite has a structural blind spot: **auth tokens
+(`aa-auth+jwt`) have zero conformance test coverage**. The original plan's
+Phase 2 §2.9 listed receiver-side tests only for agent tokens + resource
+tokens; auth-token conformance was implicitly deferred. This phase fills
+that gap and adds negative-case coverage for the new verification logic.
+
+New test files in `tests/AAuth.Conformance/`:
+
+| File | Spec section | Tests |
+|---|---|---|
+| `AuthTokens/AuthTokenStructureTests.cs` | §Auth Token | `typ` = `aa-auth+jwt`; `dwk` ∈ {`aauth-person.json`, `aauth-access.json`}; required claims (`iss`, `aud`, `agent`, `cnf.jwk`, `act`, `iat`, `exp`, `jti`); at least one of `sub`/`scope`; lifetime ≤ 1h; `act.sub` = agent identifier |
+| `AuthTokens/AuthTokenVerificationTests.cs` | §Auth Token Verification | Rejects: missing `act`, `act.sub` ≠ agent, `alg=none`, expired, wrong `aud`, `cnf.jwk` ≠ HTTP sig key, missing both `sub` and `scope`, `dwk` not in allowed set, nested `act` exceeds depth limit |
+| `AuthTokens/ScopeNarrowingTests.cs` | §Auth Token scope rules | Auth-token scope ⊆ resource-token scope; rejects broadened scope; accepts narrowed scope; accepts equal scope |
+| `AuthTokens/DualDwkTests.cs` | §Auth Token `dwk` | Verifier accepts `aauth-person.json`; verifier accepts `aauth-access.json`; verifier rejects `aauth-resource.json` as `dwk` for auth tokens |
+| `Errors/SignatureErrorTests.cs` | §Authentication Errors | Each `Signature-Error` code emitted for its condition (8 cases) |
+| `Errors/TokenErrorTests.cs` | §Token Endpoint Errors | Each error code parsed correctly from JSON response (7 cases) |
+| `Errors/PollingErrorTests.cs` | §Polling Errors | `slow_down` (429) increases interval; `invalid_code` (410) aborts without retry; `denied` (403) surfaces typed exception; `expired` (408) surfaces typed exception |
+| `Identifiers/AgentIdTests.cs` | §Agent Identifiers | Valid format accepted; uppercase rejected; missing `aauth:` rejected; local-part > 255 rejected; invalid chars rejected |
+| `Identifiers/ServerIdTests.cs` | §Server Identifiers | Valid accepted; path rejected; port (non-loopback) rejected; trailing slash rejected; mixed case normalised; IDN → ACE; loopback+port accepted when allowed |
+
+Additionally, add negative cases (`alg=none`, missing/mismatched `cnf`,
+expired, bad audience, identifier-rule violations) to the existing
+`AgentTokens/` and `ResourceTokens/` sections where not already present.
 
 ### Phase 1 Definition of Done
 
 - `dotnet test` green, including new negative cases.
 - `Signature-Error` emitted by middleware for every documented failure mode.
+- `AuthTokenBuilder` requires `Act`; `MockPersonServer` updated to supply it.
+- `TokenVerifier` dual-`dwk` overload ships.
+- `AAuthServerId` loopback-port carve-out documented and tested.
 - Stored memory `URL validation uses AAuthUrl.IsHttpsOrLoopback ...` either
   upvoted (still correct) or replaced with a memory describing the new
   strict validator.
-- `gaps.md` checkboxes for §8, §9, §11, §12 flipped to ✅ (or downgraded with
-  a note for any item explicitly deferred).
+- `gaps.md` checkboxes for §8 (except §8.5), §9, §11, §12 flipped to ✅ (or
+  downgraded with a note for any item explicitly deferred).
 
 ---
 
@@ -245,27 +292,42 @@ flow.
 - `AuthTokenBuilder` exits "untested" status (called out in `gaps.md` §1.2).
 - New sample (`samples/FederatedDemo/`) — README updated to reference it.
 
-### 2.4 Token revocation + refresh-endpoint scaffolding (GAPS §2, §14)
+### 2.4 Token revocation + replay detection + refresh scaffolding (GAPS §2, §8.5, §14)
 
 **Fix**: Add `POST /revoke` and `POST /refresh` endpoint helpers on AP/PS/AS
 roles and a `RevocationClient`. Refresh semantics are minimal here; the
 two-key refresh flow lands in Phase 4.
 
+Additionally, introduce **JTI replay detection** (GAPS §8.5) alongside
+revocation. Both share the `IJtiStore` abstraction but serve distinct
+purposes:
+- *Replay detection*: receiver records seen `jti` values during the token's
+  validity window and rejects duplicates. Prevents replay attacks.
+- *Revocation*: issuer pushes a `jti` into the store before natural expiry.
+  Handles compromised tokens.
+
+`AAuthVerificationMiddleware` optionally consults `IJtiStore` when one is
+registered in DI; without it, replay detection is skipped (acceptable for
+stateless samples, documented as a security trade-off).
+
 **Alternatives**: revocation could be punted to Phase 5 (it pairs naturally
 with missions). Rejected — revocation is a *security hygiene* primitive that
-should ship before any of the long-lived flows that need it.
+should ship before any of the long-lived flows that need it. Replay
+detection belongs with revocation because both need `IJtiStore`.
 
-**Implications**: revocation introduces server-side state (JTI denylist). The
-SDK ships an in-memory default implementation and an abstraction (`IJtiStore`)
-for consumers to plug their own. Documented as "in-memory only — not
-production-grade" in README.
+**Implications**: revocation and replay detection introduce server-side state
+(JTI store). The SDK ships an in-memory default implementation and an
+abstraction (`IJtiStore`) for consumers to plug their own. Documented as
+"in-memory only — not production-grade" in README.
 
 ### Phase 2 Definition of Done
 
 - Full 4-party flow runs in conformance tests, end-to-end, with all four
   server roles hosted by SDK code.
 - `samples/FederatedDemo/` runnable via `dotnet run`.
-- GAPS §1.2, §2 (except R3-specific endpoints), §10 closed.
+- `IJtiStore` abstraction + in-memory default ships; middleware honours it
+  when registered.
+- GAPS §1.2, §2 (except R3-specific endpoints), §8.5, §10 closed.
 
 ---
 
@@ -504,13 +566,25 @@ Resource-acts-as-agent — `upstream_token` parameter in PS→AS federation,
 
 Typed handling of 402 + Location polling for AS payment flows.
 
-### 7.5 Misc claims (GAPS §14)
+### 7.5 `AAuth-Capabilities` header (GAPS §14.1)
+
+**Fix**: Add `AAuthCapabilities` model + `AAuthSigningHandler` configuration
+to emit `AAuth-Capabilities: interaction, clarification, payment` (or a
+caller-configured subset) on outbound requests. Without this, compliant
+servers cannot know whether the agent supports interaction flows and may deny
+access rather than offering a deferred path.
+
+Agent-side only; server-side inspection of the header is advisory (the server
+MAY use it to decide response shape but MUST NOT enforce it as a security
+check).
+
+### 7.6 Misc claims (GAPS §14)
 
 `tenant`, `justification`, `platform`, `device`, `claims` requirement.
 
 ### Phase 7 Definition of Done
 
-- GAPS §1.1, §8.4, §14 closed.
+- GAPS §1.1, §8.4, §14 (including §14.1 `AAuth-Capabilities`) closed.
 - `gaps.md` reduced to an empty "Gaps" table (any survivors moved to a new
   "Deferred" section with explicit rationale).
 
