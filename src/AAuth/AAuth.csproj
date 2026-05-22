@@ -7,6 +7,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="AAuth.Tests" />
+    <InternalsVisibleTo Include="AAuth.Conformance" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.18.0" />
     <!--
       BouncyCastle provides the Ed25519 primitives consumed by AAuthKey

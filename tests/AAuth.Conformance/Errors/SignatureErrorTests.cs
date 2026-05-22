@@ -1,0 +1,119 @@
+using System;
+using System.Threading.Tasks;
+using AAuth.Crypto;
+using AAuth.Errors;
+using AAuth.HttpSig;
+using AAuth.Server;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Xunit;
+
+namespace AAuth.Conformance.Errors;
+
+/// <summary>
+/// Conformance tests for <c>Signature-Error</c> header emission per
+/// §Verification (Server) / §Authentication Errors.
+/// </summary>
+public class SignatureErrorTests : IAsyncLifetime
+{
+    private IHost? _host;
+
+    public async Task InitializeAsync()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton(new AAuthVerifier());
+        var app = builder.Build();
+        app.UseAAuthVerification();
+        app.MapGet("/protected", () => Results.Ok("hello"));
+        await app.StartAsync();
+        _host = app;
+    }
+
+    public async Task DisposeAsync()
+    {
+        if (_host is not null)
+        {
+            await _host.StopAsync();
+            _host.Dispose();
+        }
+    }
+
+    private System.Net.Http.HttpClient Client => _host!.GetTestClient();
+
+    [Fact(DisplayName = "§Authentication Errors — missing headers returns invalid_request")]
+    public async Task MissingHeaders_Returns_InvalidRequest()
+    {
+        var response = await Client.GetAsync("/protected");
+        Assert.Equal(StatusCodes.Status401Unauthorized, (int)response.StatusCode);
+        Assert.True(response.Headers.TryGetValues(SignatureError.HeaderName, out var values));
+        Assert.Contains("invalid_request", string.Join(",", values));
+    }
+
+    [Fact(DisplayName = "§Authentication Errors — bad Signature-Key returns invalid_key")]
+    public async Task BadSignatureKey_Returns_InvalidKey()
+    {
+        var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "/protected");
+        request.Headers.TryAddWithoutValidation("Signature", "sig=:AAAA:");
+        request.Headers.TryAddWithoutValidation("Signature-Input", "sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\");created=9999999999");
+        request.Headers.TryAddWithoutValidation("Signature-Key", "sig=jwt;jwt=\"not-a-jwt\"");
+
+        var response = await Client.SendAsync(request);
+        Assert.Equal(StatusCodes.Status401Unauthorized, (int)response.StatusCode);
+        Assert.True(response.Headers.TryGetValues(SignatureError.HeaderName, out var values));
+        var header = string.Join(",", values);
+        Assert.True(header.Contains("invalid_key") || header.Contains("invalid_jwt"),
+            $"Expected invalid_key or invalid_jwt, got: {header}");
+    }
+
+    [Fact(DisplayName = "§Authentication Errors — stale created returns invalid_signature")]
+    public async Task StaleCreated_Returns_InvalidSignature()
+    {
+        var agentKey = AAuthKey.Generate();
+        var agentToken = new AAuth.Tokens.AgentTokenBuilder
+        {
+            Issuer = "https://ap.example",
+            Subject = "aauth:test@ap.example",
+            KeyId = "k1",
+            Key = agentKey,
+        }.Build();
+        var signatureKey = SignatureKeyHeader.FormatJwt(agentToken);
+
+        var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "/protected");
+        request.Headers.TryAddWithoutValidation("Signature-Key", signatureKey);
+
+        var oldCreated = DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeSeconds();
+        var signatureInput = $"sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\");created={oldCreated}";
+        request.Headers.TryAddWithoutValidation("Signature-Input", signatureInput);
+        request.Headers.TryAddWithoutValidation("Signature", "sig=:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:");
+
+        var response = await Client.SendAsync(request);
+        Assert.Equal(StatusCodes.Status401Unauthorized, (int)response.StatusCode);
+        Assert.True(response.Headers.TryGetValues(SignatureError.HeaderName, out var values));
+        Assert.Contains("invalid_signature", string.Join(",", values));
+    }
+
+    [Fact(DisplayName = "§Signature-Error — format round-trips all codes")]
+    public void FormatAndParse_RoundTrips()
+    {
+        foreach (SignatureErrorCode code in Enum.GetValues<SignatureErrorCode>())
+        {
+            var formatted = SignatureError.ToHeaderValue(code);
+            Assert.True(SignatureError.TryParse(formatted, out var parsed));
+            Assert.Equal(code, parsed);
+        }
+    }
+
+    [Fact(DisplayName = "§Signature-Error — invalid_input includes required_input parameter")]
+    public void InvalidInput_IncludesRequiredInput()
+    {
+        var header = SignatureError.Format(SignatureErrorCode.InvalidInput,
+            new[] { "content-digest" });
+        Assert.Contains("invalid_input", header);
+        Assert.Contains("required_input=\"content-digest\"", header);
+    }
+}

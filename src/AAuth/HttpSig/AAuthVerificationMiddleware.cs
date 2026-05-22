@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using AAuth.Errors;
 using AAuth.HttpSig;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Builder;
@@ -55,6 +56,8 @@ public sealed class AAuthVerificationMiddleware
             !TryGetSingle(req, SignatureKeyHeader.Name, out var signatureKey))
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            context.Response.Headers[SignatureError.HeaderName] =
+                SignatureError.Format(SignatureErrorCode.InvalidRequest);
             return;
         }
 
@@ -77,14 +80,34 @@ public sealed class AAuthVerificationMiddleware
                 signatureHeader: signature,
                 publicKey: parsed.ConfirmationKey);
         }
-        catch (AAuthVerificationException)
+        catch (AAuthVerificationException ex)
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            context.Response.Headers[SignatureError.HeaderName] =
+                SignatureError.Format(ClassifyVerificationError(ex));
             return;
         }
 
         context.Items[ContextItemKey] = parsed;
         await _next(context).ConfigureAwait(false);
+    }
+
+    private static SignatureErrorCode ClassifyVerificationError(AAuthVerificationException ex)
+    {
+        var msg = ex.Message;
+        if (msg.Contains("covered components", StringComparison.OrdinalIgnoreCase))
+            return SignatureErrorCode.InvalidInput;
+        if (msg.Contains("freshness window", StringComparison.OrdinalIgnoreCase) ||
+            msg.Contains("signature verification failed", StringComparison.OrdinalIgnoreCase))
+            return SignatureErrorCode.InvalidSignature;
+        if (msg.Contains("scheme is not", StringComparison.OrdinalIgnoreCase) ||
+            msg.Contains("cnf.jwk", StringComparison.OrdinalIgnoreCase) ||
+            msg.Contains("not a valid Ed25519", StringComparison.OrdinalIgnoreCase))
+            return SignatureErrorCode.InvalidKey;
+        if (msg.Contains("not a compact JWS", StringComparison.OrdinalIgnoreCase) ||
+            msg.Contains("missing the 'cnf'", StringComparison.OrdinalIgnoreCase))
+            return SignatureErrorCode.InvalidJwt;
+        return SignatureErrorCode.InvalidSignature;
     }
 
     private static bool TryGetSingle(HttpRequest request, string headerName, out string value)
