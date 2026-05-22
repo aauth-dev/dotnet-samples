@@ -13,16 +13,22 @@ namespace AAuth.Crypto;
 /// because neither .NET 10 (on this runtime) nor <c>Microsoft.IdentityModel</c>
 /// ships a usable EdDSA implementation yet.
 /// </summary>
-public sealed class AAuthKey
+public sealed class AAuthKey : IAAuthKey
 {
     /// <summary>The JOSE <c>alg</c> value for Ed25519.</summary>
-    public const string Algorithm = "EdDSA";
+    public const string Ed25519Algorithm = "EdDSA";
 
     /// <summary>The JOSE <c>crv</c> value for Ed25519.</summary>
     public const string Curve = "Ed25519";
 
     /// <summary>The JOSE <c>kty</c> value for OKP keys.</summary>
     public const string KeyType = "OKP";
+
+    /// <summary>Kept for backward compatibility.</summary>
+    public const string Algorithm = "EdDSA";
+
+    /// <inheritdoc/>
+    string IAAuthKey.Algorithm => Ed25519Algorithm;
 
     private readonly Ed25519PrivateKeyParameters? _private;
     private readonly Ed25519PublicKeyParameters _public;

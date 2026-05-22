@@ -89,8 +89,34 @@ public sealed class AAuthVerificationMiddleware
         }
 
         context.Items[ContextItemKey] = parsed;
+
+        // Replay detection: if a JTI store is attached, check for replay.
+        if (context.Items.TryGetValue(JtiStoreItemKey, out var storeObj) &&
+            storeObj is IJtiStore jtiStore &&
+            parsed.TokenId is { Length: > 0 } jti)
+        {
+            var expiration = parsed.Expiration ?? DateTimeOffset.UtcNow.AddMinutes(5);
+            if (!await jtiStore.TryRecordAsync(jti, expiration, context.RequestAborted))
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                context.Response.Headers[SignatureError.HeaderName] =
+                    SignatureError.Format(SignatureErrorCode.InvalidJwt);
+                return;
+            }
+            if (await jtiStore.IsRevokedAsync(jti, context.RequestAborted))
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                context.Response.Headers[SignatureError.HeaderName] =
+                    SignatureError.Format(SignatureErrorCode.InvalidJwt);
+                return;
+            }
+        }
+
         await _next(context).ConfigureAwait(false);
     }
+
+    /// <summary>Internal key for JTI store stashed in HttpContext.Items by the UseAAuthVerification overload.</summary>
+    internal const string JtiStoreItemKey = "AAuth.JtiStore";
 
     private static SignatureErrorCode ClassifyVerificationError(AAuthVerificationException ex)
     {
@@ -140,16 +166,25 @@ public static class AAuthVerificationMiddlewareExtensions
     /// </summary>
     public static IApplicationBuilder UseAAuthVerification(
         this IApplicationBuilder app,
-        AAuthVerifier? verifier = null)
+        AAuthVerifier? verifier = null,
+        IJtiStore? jtiStore = null)
     {
         ArgumentNullException.ThrowIfNull(app);
+
+        if (jtiStore is not null)
+        {
+            // Stash JTI store so the middleware can access it via HttpContext.Items.
+            app.Use(async (context, next) =>
+            {
+                context.Items[AAuthVerificationMiddleware.JtiStoreItemKey] = jtiStore;
+                await next();
+            });
+        }
+
         if (verifier is not null)
         {
             return app.UseMiddleware<AAuthVerificationMiddleware>(verifier);
         }
-        // Resolve from DI now (rather than letting UseMiddleware throw if
-        // AAuthVerifier isn't registered) so we can fall back to a default
-        // instance — matching the documented behaviour.
         var resolved = app.ApplicationServices.GetService(typeof(AAuthVerifier)) as AAuthVerifier
             ?? new AAuthVerifier();
         return app.UseMiddleware<AAuthVerificationMiddleware>(resolved);

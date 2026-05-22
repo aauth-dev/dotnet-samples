@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using AAuth.Agent;
 using AAuth.Crypto;
 using Microsoft.IdentityModel.Tokens;
 
@@ -51,6 +52,13 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     /// production signing path.
     /// </summary>
     public Action<HttpRequestMessage, string>? OnSignatureBase { get; init; }
+
+    /// <summary>
+    /// Optional capabilities to declare on outbound requests via the
+    /// <c>AAuth-Capabilities</c> header (§14.1). When set, the header is
+    /// emitted on every signed request.
+    /// </summary>
+    public IReadOnlyList<string>? Capabilities { get; init; }
 
     /// <summary>Create a signing handler.</summary>
     /// <param name="key">The agent's signing key.</param>
@@ -143,6 +151,15 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         request.Headers.TryAddWithoutValidation(SignatureKeyHeader.Name, signatureKey);
         request.Headers.TryAddWithoutValidation("Signature-Input", $"{SignatureLabel}={paramsLine}");
         request.Headers.TryAddWithoutValidation("Signature", $"{SignatureLabel}=:{Convert.ToBase64String(signature)}:");
+
+        // Emit capabilities header if configured
+        if (Capabilities is { Count: > 0 })
+        {
+            request.Headers.Remove(AAuthCapabilitiesHeader.Name);
+            request.Headers.TryAddWithoutValidation(
+                AAuthCapabilitiesHeader.Name,
+                AAuthCapabilitiesHeader.Format(Capabilities));
+        }
     }
 
     private static void AppendComponent(StringBuilder sb, string name, string value)

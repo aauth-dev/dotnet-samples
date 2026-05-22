@@ -32,7 +32,166 @@ public static class SignatureKeyParser
         string Jwt,
         JsonObject Header,
         JsonObject Payload,
-        AAuthKey ConfirmationKey);
+        AAuthKey ConfirmationKey)
+    {
+        /// <summary>Token identifier (<c>jti</c>) if present.</summary>
+        public string? TokenId => Payload["jti"]?.GetValue<string>();
+
+        /// <summary>Token expiration (<c>exp</c>) if present.</summary>
+        public DateTimeOffset? Expiration
+        {
+            get
+            {
+                var exp = Payload["exp"];
+                if (exp is null) return null;
+                return DateTimeOffset.FromUnixTimeSeconds(exp.GetValue<long>());
+            }
+        }
+    }
+
+    /// <summary>
+    /// Result of parsing a Signature-Key header with any scheme. For schemes
+    /// where the key is not inline (hwk, jwks_uri), use the reference fields
+    /// to resolve the key externally.
+    /// </summary>
+    public sealed class ParsedSignatureKeyInfo
+    {
+        /// <summary>The scheme name (jwt, hwk, jkt-jwt, jwks_uri).</summary>
+        public required string Scheme { get; init; }
+
+        /// <summary>The confirmation key (available for jwt and jkt-jwt schemes).</summary>
+        public AAuthKey? ConfirmationKey { get; init; }
+
+        /// <summary>JWK thumbprint (available for hwk and jkt-jwt schemes).</summary>
+        public string? Jkt { get; init; }
+
+        /// <summary>JWKS URI (available for jwks_uri scheme).</summary>
+        public string? JwksUri { get; init; }
+
+        /// <summary>Key ID within a JWKS (available for jwks_uri scheme).</summary>
+        public string? Kid { get; init; }
+
+        /// <summary>Raw JWT (available for jwt and jkt-jwt schemes).</summary>
+        public string? Jwt { get; init; }
+
+        /// <summary>Decoded JWT header (available for jwt and jkt-jwt schemes).</summary>
+        public JsonObject? Header { get; init; }
+
+        /// <summary>Decoded JWT payload (available for jwt and jkt-jwt schemes).</summary>
+        public JsonObject? Payload { get; init; }
+    }
+
+    /// <summary>
+    /// Parse a <c>Signature-Key</c> header supporting all schemes: jwt, hwk,
+    /// jkt-jwt, jwks_uri. For non-jwt schemes, the caller must resolve the
+    /// key externally (e.g. from a JWKS endpoint or local key store).
+    /// </summary>
+    public static ParsedSignatureKeyInfo ParseAny(string signatureKeyHeader)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(signatureKeyHeader);
+        var (scheme, parameters) = SignatureKeyHeader.Parse(signatureKeyHeader);
+
+        return scheme switch
+        {
+            "jwt" => ParseJwtScheme(parameters),
+            "hwk" => ParseHwkScheme(parameters),
+            "jkt-jwt" => ParseJktJwtScheme(parameters),
+            "jwks_uri" => ParseJwksUriScheme(parameters),
+            _ => throw new AAuthVerificationException($"Unsupported Signature-Key scheme: '{scheme}'."),
+        };
+    }
+
+    private static ParsedSignatureKeyInfo ParseJwtScheme(IReadOnlyDictionary<string, string> parameters)
+    {
+        if (!parameters.TryGetValue("jwt", out var jwt) || string.IsNullOrEmpty(jwt))
+            throw new AAuthVerificationException("Signature-Key jwt scheme missing 'jwt' parameter.");
+
+        var segments = jwt.Split('.');
+        if (segments.Length != 3)
+            throw new AAuthVerificationException("JWT in Signature-Key is not a compact JWS.");
+
+        var header = DecodeJsonSegment(segments[0], "header");
+        var payload = DecodeJsonSegment(segments[1], "payload");
+
+        var cnf = payload["cnf"] as JsonObject
+            ?? throw new AAuthVerificationException("Token is missing the 'cnf' claim.");
+        var jwk = cnf["jwk"] as JsonObject
+            ?? throw new AAuthVerificationException("Token 'cnf' claim does not contain 'jwk'.");
+
+        AAuthKey key;
+        try { key = AAuthKey.FromJwk(jwk); }
+        catch (Exception ex) when (ex is ArgumentException or FormatException)
+        { throw new AAuthVerificationException("cnf.jwk is not a valid Ed25519 OKP key.", ex); }
+
+        return new ParsedSignatureKeyInfo
+        {
+            Scheme = "jwt",
+            ConfirmationKey = key,
+            Jwt = jwt,
+            Header = header,
+            Payload = payload,
+        };
+    }
+
+    private static ParsedSignatureKeyInfo ParseHwkScheme(IReadOnlyDictionary<string, string> parameters)
+    {
+        if (!parameters.TryGetValue("jkt", out var jkt) || string.IsNullOrEmpty(jkt))
+            throw new AAuthVerificationException("Signature-Key hwk scheme missing 'jkt' parameter.");
+
+        return new ParsedSignatureKeyInfo
+        {
+            Scheme = "hwk",
+            Jkt = jkt,
+        };
+    }
+
+    private static ParsedSignatureKeyInfo ParseJktJwtScheme(IReadOnlyDictionary<string, string> parameters)
+    {
+        if (!parameters.TryGetValue("jkt", out var jkt) || string.IsNullOrEmpty(jkt))
+            throw new AAuthVerificationException("Signature-Key jkt-jwt scheme missing 'jkt' parameter.");
+        if (!parameters.TryGetValue("jwt", out var jwt) || string.IsNullOrEmpty(jwt))
+            throw new AAuthVerificationException("Signature-Key jkt-jwt scheme missing 'jwt' parameter.");
+
+        var segments = jwt.Split('.');
+        if (segments.Length != 3)
+            throw new AAuthVerificationException("JWT in Signature-Key jkt-jwt is not a compact JWS.");
+
+        var header = DecodeJsonSegment(segments[0], "header");
+        var payload = DecodeJsonSegment(segments[1], "payload");
+
+        // Extract cnf.jwk if present (the key that matches the jkt)
+        AAuthKey? key = null;
+        if (payload["cnf"] is JsonObject cnf && cnf["jwk"] is JsonObject jwk)
+        {
+            try { key = AAuthKey.FromJwk(jwk); }
+            catch { /* Key may be ECDSA or other type — caller resolves */ }
+        }
+
+        return new ParsedSignatureKeyInfo
+        {
+            Scheme = "jkt-jwt",
+            Jkt = jkt,
+            ConfirmationKey = key,
+            Jwt = jwt,
+            Header = header,
+            Payload = payload,
+        };
+    }
+
+    private static ParsedSignatureKeyInfo ParseJwksUriScheme(IReadOnlyDictionary<string, string> parameters)
+    {
+        if (!parameters.TryGetValue("uri", out var uri) || string.IsNullOrEmpty(uri))
+            throw new AAuthVerificationException("Signature-Key jwks_uri scheme missing 'uri' parameter.");
+        if (!parameters.TryGetValue("kid", out var kid) || string.IsNullOrEmpty(kid))
+            throw new AAuthVerificationException("Signature-Key jwks_uri scheme missing 'kid' parameter.");
+
+        return new ParsedSignatureKeyInfo
+        {
+            Scheme = "jwks_uri",
+            JwksUri = uri,
+            Kid = kid,
+        };
+    }
 
     /// <summary>
     /// Parse a <c>Signature-Key</c> header value, decode the embedded JWT, and
