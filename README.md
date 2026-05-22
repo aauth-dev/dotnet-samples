@@ -1,5 +1,7 @@
 # dotnet-samples
 
+> 🚧 **Draft Specification** — The AAuth protocol is under active development. APIs and wire formats may change as the spec evolves. See [aauth-spec/](aauth-spec/) for the current draft.
+
 AAuth samples and SDK for .NET — demonstrating the [AAuth protocol](https://github.com/dickhardt/AAuth) for agent-to-resource authorization with cryptographic proof-of-possession.
 
 The SDK supports all four signing modes (`hwk`, `jwks_uri`, `jwt`, `jkt-jwt`), the full three-party challenge/exchange flow (autonomous and deferred user-consent), signature verification middleware, resource & auth token builders, JWKS / metadata discovery, and a Blazor `GuidedTour` walk-through. See the [SDK documentation](docs/) for complete usage guides.
