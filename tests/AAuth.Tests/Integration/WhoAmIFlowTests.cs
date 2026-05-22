@@ -36,8 +36,15 @@ public class WhoAmIFlowTests : IAsyncLifetime
 {
     private const string WhoAmIHost = "whoami.test";
     private const string PsHost = "ps.test";
+    private const string ApHost = "ap.test";
     private static readonly string WhoAmIIssuer = $"https://{WhoAmIHost}";
     private static readonly string PsIssuer = $"https://{PsHost}";
+    private static readonly string ApIssuer = $"https://{ApHost}";
+
+    // AP signing key — all test agent tokens are signed by this key,
+    // and verification discovers it via the AP's JWKS.
+    private static readonly AAuthKey ApKey = AAuthKey.Generate();
+    private const string ApKeyId = "ap-test-key";
 
     private WebApplicationFactory<WhoAmI.Entry>? _whoAmI;
     private WebApplicationFactory<MockPersonServer.Entry>? _ps;
@@ -57,13 +64,18 @@ public class WhoAmIFlowTests : IAsyncLifetime
             b.UseSetting("AAuth:Issuer", WhoAmIIssuer);
             b.ConfigureServices(services =>
             {
-                // Replace the metadata/JWKS clients with versions that talk
-                // to the in-process PS over its TestServer handler instead
-                // of making real network calls.
+                // Replace the metadata/JWKS clients with versions that can
+                // reach both the in-process PS and the stub AP for agent
+                // token verification (JWKS discovery).
                 services.RemoveAll<MetadataClient>();
                 services.RemoveAll<JwksClient>();
-                services.AddSingleton(new MetadataClient(new HttpClient(psHandler)));
-                services.AddSingleton(new JwksClient(new HttpClient(psHandler)));
+                var discoveryHandler = new MultiHostHandler(new Dictionary<string, HttpMessageHandler>
+                {
+                    [PsHost] = psHandler,
+                    [ApHost] = new StubApHandler(ApKey, ApKeyId, ApIssuer),
+                });
+                services.AddSingleton(new MetadataClient(new HttpClient(discoveryHandler)));
+                services.AddSingleton(new JwksClient(new HttpClient(discoveryHandler)));
             });
         });
         _whoAmI.CreateClient();
@@ -84,10 +96,11 @@ public class WhoAmIFlowTests : IAsyncLifetime
         var agentKey = AAuthKey.Generate();
         var agentToken = new AgentTokenBuilder
         {
-            Issuer = "https://ap.example",
-            Subject = "aauth:demo@ap.example",
-            KeyId = "demo",
-            Key = agentKey,
+            Issuer = ApIssuer,
+            Subject = "aauth:demo@ap.test",
+            KeyId = ApKeyId,
+            Key = ApKey,
+            ConfirmationKey = agentKey,
         }.Build();
 
         var holder = new AAuthTokenHolder(agentToken);
@@ -97,7 +110,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
         Assert.Equal("identity-based", (string?)body!["mode"]);
-        Assert.Equal("aauth:demo@ap.example", (string?)body["agent"]);
+        Assert.Equal("aauth:demo@ap.test", (string?)body["agent"]);
     }
 
     [Fact]
@@ -106,10 +119,11 @@ public class WhoAmIFlowTests : IAsyncLifetime
         var agentKey = AAuthKey.Generate();
         var agentToken = new AgentTokenBuilder
         {
-            Issuer = "https://ap.example",
-            Subject = "aauth:demo@ap.example",
-            KeyId = "demo",
-            Key = agentKey,
+            Issuer = ApIssuer,
+            Subject = "aauth:demo@ap.test",
+            KeyId = ApKeyId,
+            Key = ApKey,
+            ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
         }.Build();
 
@@ -120,7 +134,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
         var rawBody = await response.Content.ReadAsStringAsync();
         Assert.True(response.IsSuccessStatusCode, $"Status={(int)response.StatusCode}, Body={rawBody}");
         var body = JsonNode.Parse(rawBody) as JsonObject;
-        Assert.Equal("aauth:demo@ap.example", (string?)body!["agent"]);
+        Assert.Equal("aauth:demo@ap.test", (string?)body!["agent"]);
         Assert.Equal("pairwise-sub", (string?)body["sub"]);
 
         // Holder should now carry the auth token, not the agent token.
@@ -138,10 +152,11 @@ public class WhoAmIFlowTests : IAsyncLifetime
         var agentKey = AAuthKey.Generate();
         var agentToken = new AgentTokenBuilder
         {
-            Issuer = "https://ap.example",
-            Subject = "aauth:demo@ap.example",
-            KeyId = "demo",
-            Key = agentKey,
+            Issuer = ApIssuer,
+            Subject = "aauth:demo@ap.test",
+            KeyId = ApKeyId,
+            Key = ApKey,
+            ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
         }.Build();
 
@@ -167,7 +182,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
             Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(payloadSegment))!;
         Assert.Equal(WhoAmIIssuer, (string?)payload["iss"]);
         Assert.Equal(PsIssuer, (string?)payload["aud"]);
-        Assert.Equal("aauth:demo@ap.example", (string?)payload["agent"]);
+        Assert.Equal("aauth:demo@ap.test", (string?)payload["agent"]);
         Assert.Equal(agentKey.ComputeJwkThumbprint(), (string?)payload["agent_jkt"]);
         Assert.Equal(ResourceTokenBuilder.ResourceDwk, (string?)payload["dwk"]);
     }
@@ -196,20 +211,26 @@ public class WhoAmIFlowTests : IAsyncLifetime
             {
                 services.RemoveAll<MetadataClient>();
                 services.RemoveAll<JwksClient>();
-                services.AddSingleton(new MetadataClient(new HttpClient(consentPsHandler)));
-                services.AddSingleton(new JwksClient(new HttpClient(consentPsHandler)));
+                var discoveryHandler = new MultiHostHandler(new Dictionary<string, HttpMessageHandler>
+                {
+                    [PsHost] = consentPsHandler,
+                    [ApHost] = new StubApHandler(ApKey, ApKeyId, ApIssuer),
+                });
+                services.AddSingleton(new MetadataClient(new HttpClient(discoveryHandler)));
+                services.AddSingleton(new JwksClient(new HttpClient(discoveryHandler)));
             });
         });
         whoAmI.CreateClient();
 
         var agentKey = AAuthKey.Generate();
-        const string AgentId = "aauth:consent@ap.example";
+        const string AgentId = "aauth:consent@ap.test";
         var agentToken = new AgentTokenBuilder
         {
-            Issuer = "https://ap.example",
+            Issuer = ApIssuer,
             Subject = AgentId,
-            KeyId = "demo",
-            Key = agentKey,
+            KeyId = ApKeyId,
+            Key = ApKey,
+            ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
         }.Build();
 
@@ -309,20 +330,26 @@ public class WhoAmIFlowTests : IAsyncLifetime
             {
                 services.RemoveAll<MetadataClient>();
                 services.RemoveAll<JwksClient>();
-                services.AddSingleton(new MetadataClient(new HttpClient(consentPsHandler)));
-                services.AddSingleton(new JwksClient(new HttpClient(consentPsHandler)));
+                var discoveryHandler = new MultiHostHandler(new Dictionary<string, HttpMessageHandler>
+                {
+                    [PsHost] = consentPsHandler,
+                    [ApHost] = new StubApHandler(ApKey, ApKeyId, ApIssuer),
+                });
+                services.AddSingleton(new MetadataClient(new HttpClient(discoveryHandler)));
+                services.AddSingleton(new JwksClient(new HttpClient(discoveryHandler)));
             });
         });
         whoAmI.CreateClient();
 
         var agentKey = AAuthKey.Generate();
-        const string AgentId = "aauth:denier@ap.example";
+        const string AgentId = "aauth:denier@ap.test";
         var agentToken = new AgentTokenBuilder
         {
-            Issuer = "https://ap.example",
+            Issuer = ApIssuer,
             Subject = AgentId,
-            KeyId = "demo",
-            Key = agentKey,
+            KeyId = ApKeyId,
+            Key = ApKey,
+            ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
         }.Build();
 
@@ -445,6 +472,56 @@ public class WhoAmIFlowTests : IAsyncLifetime
             // owning it (we keep the underlying handlers alive for reuse).
             return new HttpMessageInvoker(inner, disposeHandler: false)
                 .SendAsync(request, cancellationToken);
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Stub AP handler — serves metadata + JWKS for agent token verification
+    // -------------------------------------------------------------------
+
+    private sealed class StubApHandler : HttpMessageHandler
+    {
+        private readonly string _metadataJson;
+        private readonly string _jwksJson;
+        private readonly string _issuer;
+
+        public StubApHandler(AAuthKey apKey, string keyId, string issuer)
+        {
+            _issuer = issuer;
+            _metadataJson = new JsonObject
+            {
+                ["issuer"] = issuer,
+                ["jwks_uri"] = $"{issuer}/.well-known/jwks.json",
+                ["enrol_endpoint"] = $"{issuer}/enrol",
+            }.ToJsonString();
+
+            var jwk = apKey.ToPublicJwk();
+            jwk["kid"] = keyId;
+            jwk["use"] = "sig";
+            jwk["alg"] = AAuthKey.Algorithm;
+            _jwksJson = new JsonObject
+            {
+                ["keys"] = new System.Text.Json.Nodes.JsonArray(jwk)
+            }.ToJsonString();
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            string json;
+            if (path == "/.well-known/aauth-agent.json")
+                json = _metadataJson;
+            else if (path == "/.well-known/jwks.json")
+                json = _jwksJson;
+            else
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json"),
+            };
+            return Task.FromResult(response);
         }
     }
 }

@@ -64,11 +64,12 @@ app.UseWhen(
 //
 // Flow:
 //   1. AAuthVerificationMiddleware ensures the request is signed and exposes
-//      the parsed carrier token via HttpContext.Items.
-//   2. If the token is an agent token (aa-agent+jwt), mint a resource_token
-//      and return 401 with AAuth-Requirement: requirement=auth-token.
-//   3. If the token is an auth token (aa-auth+jwt), verify it against the
-//      PS's JWKS (via well-known discovery) and return 200 with claims.
+//      the parsed scheme info via HttpContext.Items.
+//   2. Dispatch on Signature-Key scheme:
+//      - jwt with aa-agent+jwt: challenge (three-party) or identity-accept
+//      - jwt with aa-auth+jwt: verify auth token, return claims
+//      - hwk: pseudonymous identity-based access (return key thumbprint)
+//      - jwks_uri: agent identity-based access (return agent URI + kid)
 // -----------------------------------------------------------------------
 app.MapGet("/", async (
     HttpContext ctx,
@@ -77,14 +78,44 @@ app.MapGet("/", async (
     MetadataClient metadata,
     JwksClient jwks) =>
 {
-    var parsed = (SignatureKeyParser.ParsedSignatureKey)ctx.Items[
+    var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)ctx.Items[
         AAuthVerificationMiddleware.ContextItemKey]!;
 
-    var typ = (string?)parsed.Header["typ"];
+    // ── Pseudonymous mode (hwk): identity-based accept ──────────────
+    // The resource knows a specific key signed this request but nothing
+    // about the agent's identity. Accept with key-level claims.
+    if (parsed.Scheme == "hwk")
+    {
+        return Results.Ok(new
+        {
+            mode = "pseudonymous",
+            scheme = "hwk",
+            jkt = parsed.Jkt,
+            note = "Resource sees key thumbprint only — agent identity unknown.",
+        });
+    }
+
+    // ── Agent Identity mode (jwks_uri): identity-based accept ───────
+    // The resource discovered and verified the agent's public key from
+    // a JWKS endpoint. The URI serves as the agent's identity.
+    if (parsed.Scheme == "jwks_uri")
+    {
+        return Results.Ok(new
+        {
+            mode = "agent-identity",
+            scheme = "jwks_uri",
+            jwks_uri = parsed.JwksUri,
+            kid = parsed.Kid,
+            note = "Resource verified agent's key via JWKS URI — full cryptographic identity.",
+        });
+    }
+
+    // ── Agent Token / Auth Token mode (jwt) ─────────────────────────
+    var typ = (string?)parsed.Header?["typ"];
 
     if (typ == AgentTokenBuilder.TokenType)
     {
-        return ChallengeWithResourceToken(ctx, parsed, tokenVerifier, resourceSigningKey, resourceUrl);
+        return await ChallengeWithResourceToken(ctx, parsed, tokenVerifier, resourceSigningKey, resourceUrl, metadata, jwks);
     }
 
     if (typ == AuthTokenBuilder.TokenType)
@@ -102,19 +133,26 @@ app.Run();
 // -----------------------------------------------------------------------
 // Helper handlers
 // -----------------------------------------------------------------------
-static IResult ChallengeWithResourceToken(
+static async Task<IResult> ChallengeWithResourceToken(
     HttpContext ctx,
-    SignatureKeyParser.ParsedSignatureKey parsed,
+    SignatureKeyParser.ParsedSignatureKeyInfo parsed,
     TokenVerifier verifier,
     AAuthKey resourceKey,
-    string resourceIssuer)
+    string resourceIssuer,
+    MetadataClient metadata,
+    JwksClient jwks)
 {
-    // Verify the agent token's own structure (self-issued: cnf.jwk signs the
-    // token in the sample setup).
+    // §Agent Token Verification: verify JWT signature against the issuer's
+    // JWKS discovered via {iss}/.well-known/{dwk}. The middleware already
+    // verified that cnf.jwk matches the HTTP signing key (step 5).
     AAuth.Tokens.TokenVerifier.VerifiedToken agentToken;
     try
     {
-        agentToken = verifier.VerifySelfIssuedAgentToken(parsed.Jwt, parsed.ConfirmationKey);
+        agentToken = await verifier.VerifyWithJwksAsync(
+            parsed.Jwt!, metadata, jwks,
+            AgentTokenBuilder.TokenType,
+            AgentTokenBuilder.AgentDwk,
+            expectedAudience: null);
     }
     catch (TokenVerificationException ex)
     {
@@ -141,7 +179,7 @@ static IResult ChallengeWithResourceToken(
         Issuer = resourceIssuer,
         Audience = personServer,
         Agent = agentId,
-        AgentJkt = parsed.ConfirmationKey.ComputeJwkThumbprint(),
+        AgentJkt = parsed.ConfirmationKey!.ComputeJwkThumbprint(),
         Key = resourceKey,
         KeyId = ResourceKid,
         Scope = ResourceScope,
@@ -154,7 +192,7 @@ static IResult ChallengeWithResourceToken(
 }
 
 static async Task<IResult> ReturnClaims(
-    SignatureKeyParser.ParsedSignatureKey parsed,
+    SignatureKeyParser.ParsedSignatureKeyInfo parsed,
     TokenVerifier verifier,
     MetadataClient metadata,
     JwksClient jwks,
@@ -164,7 +202,7 @@ static async Task<IResult> ReturnClaims(
     try
     {
         authToken = await verifier.VerifyWithJwksAsync(
-            parsed.Jwt,
+            parsed.Jwt!,
             metadata,
             jwks,
             expectedType: AuthTokenBuilder.TokenType,
@@ -196,7 +234,7 @@ static async Task<IResult> ReturnClaims(
         return Results.Json(new { error = "invalid_auth_token", detail = $"malformed cnf.jwk: {ex.Message}" },
             statusCode: StatusCodes.Status401Unauthorized);
     }
-    if (authKey.ComputeJwkThumbprint() != parsed.ConfirmationKey.ComputeJwkThumbprint())
+    if (authKey.ComputeJwkThumbprint() != parsed.ConfirmationKey!.ComputeJwkThumbprint())
     {
         return Results.Json(new { error = "invalid_auth_token", detail = "cnf.jwk does not match request signing key" },
             statusCode: StatusCodes.Status401Unauthorized);

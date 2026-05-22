@@ -50,7 +50,8 @@ public sealed class AAuthVerifier
     /// <param name="signatureKey">Verbatim <c>Signature-Key</c> header value.</param>
     /// <param name="signatureInput">Verbatim <c>Signature-Input</c> header value.</param>
     /// <param name="signatureHeader">Verbatim <c>Signature</c> header value.</param>
-    /// <param name="publicKey">Public key extracted from the <c>Signature-Key</c> token (cnf.jwk).</param>
+    /// <param name="publicKey">Public key for HTTP-signature verification (resolved from scheme).</param>
+    /// <param name="authorization">Verbatim <c>Authorization</c> header value, or null if absent.</param>
     /// <exception cref="AAuthVerificationException">If any check fails.</exception>
     public void Verify(
         string method,
@@ -59,7 +60,8 @@ public sealed class AAuthVerifier
         string signatureKey,
         string signatureInput,
         string signatureHeader,
-        AAuthKey publicKey)
+        IAAuthKey publicKey,
+        string? authorization = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(method);
         ArgumentException.ThrowIfNullOrEmpty(authority);
@@ -75,12 +77,33 @@ public sealed class AAuthVerifier
         // rejected for now — multi-signer support is a future extension.
         var (paramsLine, components, created) = ParseSignatureInput(signatureInput);
 
-        // Validate the covered-component list matches AAuth's fixed shape.
-        if (!components.SequenceEqual(AAuthSigningHandler.CoveredComponents, StringComparer.Ordinal))
+        // Validate the covered-component list matches AAuth's expected shape.
+        // Base: @method, @authority, @path, signature-key
+        // When authorization is covered, it MUST appear after the base set.
+        var hasAuthzComponent = components.Count == 5
+            && components[4] == "authorization";
+        var baseMatch = components.Count >= 4
+            && components.Take(4).SequenceEqual(AAuthSigningHandler.CoveredComponents, StringComparer.Ordinal);
+
+        if (!baseMatch || (components.Count == 5 && !hasAuthzComponent) || components.Count > 5)
         {
             throw new AAuthVerificationException(
                 "Signature-Input covered components do not match AAuth's required set " +
                 $"({string.Join(' ', AAuthSigningHandler.CoveredComponents)}).");
+        }
+        if (components.Count < 4)
+        {
+            throw new AAuthVerificationException(
+                "Signature-Input covered components do not match AAuth's required set " +
+                $"({string.Join(' ', AAuthSigningHandler.CoveredComponents)}).");
+        }
+
+        // §HTTP Signatures Profile: if Authorization header is present,
+        // the signature MUST cover it.
+        if (authorization is not null && !hasAuthzComponent)
+        {
+            throw new AAuthVerificationException(
+                "Authorization header is present but 'authorization' is not in the covered components.");
         }
 
         // Freshness check on `created` (RFC 9421 §3.2.1). Asymmetric: allow
@@ -106,11 +129,15 @@ public sealed class AAuthVerifier
         AppendComponent(sb, "@authority", authority.ToLowerInvariant());
         AppendComponent(sb, "@path", path);
         AppendComponent(sb, "signature-key", signatureKey);
+        if (hasAuthzComponent)
+        {
+            AppendComponent(sb, "authorization", authorization!);
+        }
         sb.Append("\"@signature-params\": ").Append(paramsLine);
 
         if (!publicKey.Verify(Encoding.ASCII.GetBytes(sb.ToString()), signatureBytes))
         {
-            throw new AAuthVerificationException("Ed25519 signature verification failed.");
+            throw new AAuthVerificationException("HTTP signature verification failed.");
         }
     }
 

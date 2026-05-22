@@ -9,15 +9,12 @@ using Microsoft.AspNetCore.Routing;
 namespace AAuth.Server;
 
 /// <summary>
-/// Extension methods that map AAuth well-known endpoints
-/// (<c>/.well-known/aauth-resource.json</c> and <c>/.well-known/jwks.json</c>)
-/// onto an ASP.NET Core <see cref="IEndpointRouteBuilder"/>.
+/// Extension methods that map AAuth well-known endpoints onto an ASP.NET Core
+/// <see cref="IEndpointRouteBuilder"/>. Resource server role.
 /// </summary>
 public static class WellKnownEndpoints
 {
     /// <summary>Map both the resource metadata and JWKS endpoints.</summary>
-    /// <param name="endpoints">Endpoint route builder (typically <c>app</c>).</param>
-    /// <param name="options">Static metadata + key set for this resource.</param>
     public static IEndpointRouteBuilder MapAAuthResourceWellKnown(
         this IEndpointRouteBuilder endpoints,
         AAuthResourceMetadataOptions options)
@@ -36,6 +33,7 @@ public static class WellKnownEndpoints
 
         return endpoints;
     }
+
 
     private static JsonObject BuildResourceMetadata(AAuthResourceMetadataOptions options)
     {
@@ -61,10 +59,18 @@ public static class WellKnownEndpoints
         {
             doc["signature_window"] = window;
         }
+        if (!string.IsNullOrEmpty(options.AuthorizationEndpoint))
+        {
+            doc["authorization_endpoint"] = options.AuthorizationEndpoint;
+        }
+        if (!string.IsNullOrEmpty(options.RevocationEndpoint))
+        {
+            doc["revocation_endpoint"] = options.RevocationEndpoint;
+        }
         return doc;
     }
 
-    private static JsonObject BuildJwks(IReadOnlyDictionary<string, AAuthKey> signingKeys)
+    internal static JsonObject BuildJwks(IReadOnlyDictionary<string, AAuthKey> signingKeys)
     {
         var keys = new JsonArray();
         foreach (var (kid, key) in signingKeys)
@@ -98,6 +104,12 @@ public sealed class AAuthResourceMetadataOptions
 
     /// <summary>Optional signature-window override (<c>signature_window</c>, seconds).</summary>
     public int? SignatureWindow { get; init; }
+
+    /// <summary>Optional authorization endpoint (§2, resource-initiated flow).</summary>
+    public string? AuthorizationEndpoint { get; init; }
+
+    /// <summary>Optional revocation endpoint.</summary>
+    public string? RevocationEndpoint { get; init; }
 
     /// <summary>Throw if any required field is unset/invalid.</summary>
     public void Validate()

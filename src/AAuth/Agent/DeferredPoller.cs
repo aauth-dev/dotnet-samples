@@ -3,8 +3,11 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using AAuth.Errors;
 
 namespace AAuth.Agent;
 
@@ -50,6 +53,7 @@ public sealed class DeferredPoller
 {
     private readonly HttpClient _signedClient;
     private readonly DeferredPollerOptions _options;
+    private TimeSpan _slowDownExtra;
 
     /// <summary>Optional hook fired after every poll, for tracing/UI.</summary>
     public Action<HttpResponseMessage>? OnPoll { get; init; }
@@ -106,6 +110,43 @@ public sealed class DeferredPoller
 
             if (response.StatusCode != HttpStatusCode.Accepted)
             {
+                // Check for terminal polling errors per §Polling Error Codes.
+                if (response.StatusCode is HttpStatusCode.Forbidden
+                    or HttpStatusCode.RequestTimeout
+                    or HttpStatusCode.Gone
+                    or (HttpStatusCode)429
+                    or HttpStatusCode.InternalServerError)
+                {
+                    var errorCode = await TryParsePollingErrorAsync(response).ConfigureAwait(false);
+                    if (errorCode is not null)
+                    {
+                        var code = errorCode.Value;
+                        // slow_down: increase interval by 5s and continue polling.
+                        if (code == PollingErrorCode.SlowDown)
+                        {
+                            _slowDownExtra += TimeSpan.FromSeconds(5);
+                            var delay2 = ComputeDelay(response.Headers.RetryAfter) + _slowDownExtra;
+                            response.Dispose();
+                            var remaining2 = _options.MaxTotalWait - stopwatch.Elapsed;
+                            if (remaining2 <= TimeSpan.Zero)
+                            {
+                                throw new TimeoutException(
+                                    $"Deferred poll exceeded {_options.MaxTotalWait.TotalSeconds:0.##}s without a terminal response.");
+                            }
+                            if (delay2 > remaining2) { delay2 = remaining2; }
+                            if (delay2 > TimeSpan.Zero)
+                            {
+                                await Task.Delay(delay2, cancellationToken).ConfigureAwait(false);
+                            }
+                            continue;
+                        }
+
+                        // Terminal errors: throw typed exception.
+                        response.Dispose();
+                        throw new PollingErrorException(code, (int)response.StatusCode);
+                    }
+                }
+
                 return response;
             }
 
@@ -153,5 +194,21 @@ public sealed class DeferredPoller
         }
 
         return delay < _options.MinPollInterval ? _options.MinPollInterval : delay;
+    }
+
+    private static async Task<PollingErrorCode?> TryParsePollingErrorAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            var body = await response.Content.ReadFromJsonAsync<JsonObject>().ConfigureAwait(false);
+            var errorStr = (string?)body?["error"];
+            if (PollingErrorException.TryParseCode(errorStr, out var code))
+                return code;
+        }
+        catch
+        {
+            // If we can't parse the body, don't treat it as a polling error.
+        }
+        return null;
     }
 }

@@ -8,17 +8,19 @@ SOLUTION  := AAuth.slnx
 
 WHOAMI_PROJECT := samples/WhoAmI/WhoAmI.csproj
 PS_PROJECT     := samples/MockPersonServer/MockPersonServer.csproj
+AP_PROJECT     := samples/MockAgentProvider/MockAgentProvider.csproj
 TOUR_PROJECT   := samples/GuidedTour/GuidedTour.csproj
 AGENT_PROJECT  := samples/AgentConsole/AgentConsole.csproj
 
 WHOAMI_URL := http://localhost:5000
 PS_URL     := http://localhost:5100
+AP_URL     := http://localhost:5301
 TOUR_URL   := http://localhost:5400
 
 .DEFAULT_GOAL := help
 
 .PHONY: help build restore test test-unit test-conformance \
-        whoami ps tour agent demo \
+        whoami ps ap tour agent demo \
         clean format
 
 help: ## List available targets
@@ -50,21 +52,26 @@ ps: ## Run the MockPersonServer (port 5100)
 ps-consent: ## Run MockPersonServer with RequireConsent=true (deferred-flow demo)
 	MockPersonServer__RequireConsent=true $(DOTNET) run --project $(PS_PROJECT)
 
+ap: ## Run the MockAgentProvider (port 5301)
+	$(DOTNET) run --project $(AP_PROJECT)
+
 tour: ## Run the GuidedTour Blazor app (port 5400)
 	$(DOTNET) run --project $(TOUR_PROJECT)
 
 agent: ## Run AgentConsole against WhoAmI (override URL=… for a different target)
 	$(DOTNET) run --project $(AGENT_PROJECT) -- $(or $(URL),$(WHOAMI_URL))
 
-demo: ## Start WhoAmI + MockPersonServer (with consent gate) + GuidedTour in parallel
-	@echo "Starting three-party demo (deferred / user-consent flow)..."
-	@echo "  WhoAmI:           $(WHOAMI_URL)"
-	@echo "  MockPersonServer: $(PS_URL)  (RequireConsent=true)"
-	@echo "  GuidedTour:       $(TOUR_URL)"
+demo: ## Start WhoAmI + MockPersonServer + MockAgentProvider + GuidedTour in parallel
+	@echo "Starting four-party demo (deferred / user-consent flow)..."
+	@echo "  WhoAmI:             $(WHOAMI_URL)"
+	@echo "  MockPersonServer:   $(PS_URL)  (RequireConsent=true)"
+	@echo "  MockAgentProvider:  $(AP_URL)"
+	@echo "  GuidedTour:         $(TOUR_URL)"
 	@echo ""
 	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \
 	MockPersonServer__RequireConsent=true $(DOTNET) run --project $(PS_PROJECT) & \
 	$(DOTNET) run --project $(WHOAMI_PROJECT) & \
+	$(DOTNET) run --project $(AP_PROJECT) & \
 	$(DOTNET) run --project $(TOUR_PROJECT) & \
 	wait
 

@@ -5,10 +5,9 @@ using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
-using AAuth.Tokens;
 
-const string Usage = "Usage: AgentConsole <url> [--iss <agent-provider-url>] [--sub <agent-id>] " +
-    "[--kid <key-id>] [--ps <person-server-url>]";
+const string Usage = "Usage: AgentConsole <url> --ap <agent-provider-url> [--sub <agent-id>] " +
+    "[--kid <key-id>] [--ps <person-server-url>] [--signing-mode jwt|hwk|jwks_uri]";
 
 if (args.Length < 1 || args[0] is "--help" or "-h")
 {
@@ -29,14 +28,14 @@ if (!Uri.TryCreate(args[0], UriKind.Absolute, out var url))
     return 1;
 }
 
-string issuer = "https://ap.example";
 string subject = "aauth:demo@ap.example";
-string keyId = "demo";
 string? personServer = null;
+string? apUrl = null;
+string? signingMode = null;
 for (int i = 1; i < args.Length; i++)
 {
     string flag = args[i];
-    if (flag is "--iss" or "--sub" or "--kid" or "--ps")
+    if (flag is "--sub" or "--ps" or "--ap" or "--signing-mode")
     {
         if (i + 1 >= args.Length)
         {
@@ -46,10 +45,10 @@ for (int i = 1; i < args.Length; i++)
         var value = args[++i];
         switch (flag)
         {
-            case "--iss": issuer = value; break;
             case "--sub": subject = value; break;
-            case "--kid": keyId = value; break;
             case "--ps":  personServer = value; break;
+            case "--ap":  apUrl = value; break;
+            case "--signing-mode": signingMode = value; break;
         }
     }
     else
@@ -59,21 +58,59 @@ for (int i = 1; i < args.Length; i++)
     }
 }
 
-var store = KeyStore.Default();
-var key = store.LoadOrCreate(keyId);
+// Default: jwt for three-party (with PS), hwk for identity-based (no PS).
+signingMode ??= personServer is not null ? "jwt" : "hwk";
+
+if (signingMode is not ("jwt" or "hwk" or "jwks_uri"))
+{
+    Console.Error.WriteLine($"Unknown signing mode: {signingMode}. Must be jwt, hwk, or jwks_uri.");
+    return 1;
+}
+
+if (personServer is not null && signingMode is not "jwt")
+{
+    Console.Error.WriteLine("Three-party flows (--ps) require --signing-mode jwt per spec.");
+    Console.Error.WriteLine("Non-jwt modes (hwk, jwks_uri) are for identity-based access only.");
+    return 1;
+}
+
+if (personServer is null && signingMode is "jwt")
+{
+    Console.Error.WriteLine("Agent Token mode (jwt) requires a Person Server (--ps).");
+    Console.Error.WriteLine("For identity-based access without a PS, use --signing-mode hwk or jwks_uri.");
+    return 1;
+}
+
+if (apUrl is null)
+{
+    Console.Error.WriteLine("--ap <agent-provider-url> is required.");
+    Console.Error.WriteLine(Usage);
+    return 1;
+}
+
+AAuthKey key;
+string agentToken;
+string keyId;
+
+// Bootstrap with the Agent Provider: discover enrol_endpoint from metadata
+var apBase = apUrl.TrimEnd('/');
+Console.WriteLine($"Discovering Agent Provider metadata at: {apBase}");
+var discoveryClient = new MetadataClient(new HttpClient());
+var metaUrl = MetadataClient.BuildUrl(apBase, "aauth-agent.json");
+var apMeta = await discoveryClient.FetchAsync(metaUrl);
+var enrolEndpoint = (string?)apMeta["enrol_endpoint"] ?? $"{apBase}/enrol";
+Console.WriteLine($"Enrolling at: {enrolEndpoint}");
+
+var apKeyStore = new InMemoryKeyStore();
+var apClient = new AgentProviderClient(new HttpClient(), apKeyStore);
+var result = await apClient.EnrolAsync(apBase, subject, enrolEndpoint, personServer);
+key = result.Key;
+agentToken = result.AgentToken;
+keyId = result.KeyId;
+Console.WriteLine($"Enrolled successfully. Key ID: {keyId}");
 
 Console.WriteLine($"Using key: {keyId}");
 Console.WriteLine($"Public JWK thumbprint: {key.ComputeJwkThumbprint()}");
-
-var agentToken = new AgentTokenBuilder
-{
-    Issuer = issuer,
-    Subject = subject,
-    KeyId = keyId,
-    Key = key,
-    PersonServer = personServer,
-}.Build();
-
 Console.WriteLine();
 Console.WriteLine("Agent token:");
 Console.WriteLine(agentToken);
@@ -83,11 +120,21 @@ Console.WriteLine();
 // request; the challenge handler updates it when an auth-token is issued.
 var tokenHolder = new AAuthTokenHolder(agentToken);
 
+ISignatureKeyProvider BuildProvider(Func<string> tokenSource) => signingMode switch
+{
+    "hwk" => new HwkSignatureKeyProvider(key),
+    "jwks_uri" => new JwksUriSignatureKeyProvider(
+        $"{apBase}/.well-known/jwks.json", keyId),
+    _ => new JwtSignatureKeyProvider(tokenSource),
+};
+
 HttpMessageHandler BuildSigningPipeline(Func<string> tokenSource) =>
-    new AAuthSigningHandler(key, tokenSource)
+    new AAuthSigningHandler(key, BuildProvider(tokenSource))
     {
         InnerHandler = new HttpClientHandler(),
     };
+
+Console.WriteLine($"Signing mode: {signingMode}");
 
 // Resource client: ChallengeHandler on top when a PS is configured,
 // otherwise just the signing pipeline (identity-based mode).

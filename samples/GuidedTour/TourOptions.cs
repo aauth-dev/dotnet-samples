@@ -13,9 +13,40 @@ namespace GuidedTour;
 /// </summary>
 public enum TourMode
 {
+    Bootstrap,
     Identity,
     Autonomous,
     Deferred,
+}
+
+/// <summary>
+/// Which Signature-Key scheme the agent uses for resource requests.
+/// These map to the AAuth signing modes defined in the HTTP Signature Keys
+/// specification. Three-party flows (Autonomous/Deferred) MUST use
+/// <see cref="Jwt"/> per spec (requires a PS-issued token); identity-based
+/// access (no PS) uses <see cref="Hwk"/> or <see cref="JwksUri"/>.
+/// </summary>
+public enum SigningMode
+{
+    /// <summary>
+    /// <c>sig=jwt</c> — Agent Token mode. The full agent token (or auth
+    /// token) travels inline. Resource learns: agent identity, PS URL,
+    /// bound signing key. Requires a Person Server; used in three-party flows.
+    /// </summary>
+    Jwt,
+    /// <summary>
+    /// <c>sig=hwk</c> — Pseudonymous mode. Only the key's JWK thumbprint
+    /// is disclosed. Resource learns: a specific key signed this — identity
+    /// unknown. Use for accountable access, rate-limiting by key.
+    /// </summary>
+    Hwk,
+    /// <summary>
+    /// <c>sig=jwks_uri</c> — Agent Identity mode. The resource fetches the
+    /// agent's JWKS from a well-known URI to resolve the signing key.
+    /// Resource learns: full agent identifier + verifiable public key.
+    /// Use for access control by identity, replacing API keys.
+    /// </summary>
+    JwksUri,
 }
 
 /// <summary>
@@ -39,13 +70,20 @@ public sealed class TourOptions
     public string AgentId { get; set; } = "aauth:tour-agent@ap.example";
 
     /// <summary>
-    /// Which flow to walk by default when the page loads. Defaults to
-    /// <see cref="TourMode.Autonomous"/>; the user can flip to
-    /// <see cref="TourMode.Identity"/> or <see cref="TourMode.Deferred"/>
-    /// via the in-page picker. When <see cref="PersonServerUrl"/> is
-    /// empty, the tour forces <see cref="TourMode.Identity"/> regardless
-    /// of this setting.
+    /// Optional Agent Provider base URL. When set, the bootstrap flow
+    /// discovers the AP's <c>enrol_endpoint</c> from its well-known
+    /// metadata and enrols with the real AP (e.g. http://localhost:5301)
+    /// instead of building a self-signed token locally.
     /// </summary>
-    public TourMode Mode { get; set; } = TourMode.Autonomous;
+    public string? AgentProviderUrl { get; set; }
+
+    /// <summary>
+    /// Which flow to walk by default when the page loads. Defaults to
+    /// <see cref="TourMode.Bootstrap"/>; the user can flip to other
+    /// modes via the in-page picker. When <see cref="PersonServerUrl"/>
+    /// is empty, the tour forces <see cref="TourMode.Identity"/>
+    /// regardless of this setting.
+    /// </summary>
+    public TourMode Mode { get; set; } = TourMode.Bootstrap;
 }
 

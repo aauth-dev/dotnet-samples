@@ -15,12 +15,15 @@ This document identifies features defined in the AAuth specification that are **
 | Protocol Flows | 4 access modes | 2 (identity, 3-party PS-asserted) | 2 |
 | Endpoints | ~15 distinct | 3 (resource well-known, PS token, polling) | ~12 |
 | Token Types | 3 | 3 (agent, resource, auth) | 0 (structure only) |
-| Signature-Key Schemes | 4 | 1 (`jwt`) | 3 |
+| Token Building | Required claims per type | Partial (`act` missing from builder) | 1 |
+| Signature-Key Schemes | 4 | 1 end-to-end (`jwt`); 4 parse/format | 3 pipeline gaps |
 | Cryptographic Algorithms | 2 | 1 (EdDSA/Ed25519) | 1 |
 | Governance (Missions) | Full lifecycle | None | Full |
 | R3 (Rich Resource Requests) | Full lifecycle | None | Full |
 | Bootstrap / Refresh | Full lifecycle | None | Full |
 | Error Handling | Detailed error model | Partial | Significant |
+| Replay Detection | JTI uniqueness per token | None | 1 |
+| Agent Capabilities | `AAuth-Capabilities` header | None | 1 |
 | Conformance Tests | All phases | Phase 2 only | Phases 1, 3+ |
 
 ---
@@ -76,14 +79,50 @@ This document identifies features defined in the AAuth specification that are **
 
 ## 3. Signature-Key Schemes
 
-| Scheme | Purpose | Status |
-|--------|---------|--------|
-| `jwt` | Carry agent/auth token directly | ✅ Implemented |
-| `jkt-jwt` | Two-key delegation (durable→ephemeral) | ❌ Not implemented |
-| `hwk` | Inline hardware-bound key (enrollment) | ❌ Not implemented |
-| `jwks_uri` | Key at endpoint (self-hosted agents) | ❌ Not implemented |
+| Scheme | Purpose | Formatting | Parsing | Signing Handler | Verification Middleware |
+|--------|---------|:---:|:---:|:---:|:---:|
+| `jwt` | Carry agent/auth token directly | ✅ | ✅ | ✅ | ✅ |
+| `jkt-jwt` | Two-key delegation (durable→ephemeral) | ✅ | ✅ | ❌ | ❌ |
+| `hwk` | Inline hardware-bound key (enrollment) | ✅ | ✅ | ❌ | ❌ |
+| `jwks_uri` | Key at endpoint (self-hosted agents) | ✅ | ✅ | ❌ | ❌ |
 
-**Impact:** Without `jkt-jwt`, the SDK cannot support token refresh or the two-key pattern defined in the bootstrap spec.
+> **Update (2026-05):** Formatting (`SignatureKeyHeader.Format*`) and parsing
+> (`SignatureKeyParser.ParseAny`) were implemented in the gap-remediation Phase 3.
+> The remaining gap is **end-to-end pipeline support**: the signing handler
+> (`AAuthSigningHandler`) only produces `sig=jwt`, and the verification
+> middleware only calls `SignatureKeyParser.Parse()` (jwt-only path).
+
+### 3.1 End-to-End Signing Mode Gaps
+
+**Anonymous (no signature):** Trivially supported — resources that don't require
+signatures simply skip the middleware.
+
+**Pseudonymous (`hwk`):**
+- *Signing:* Handler needs a mode that emits `FormatHwk(jkt)` and signs with
+  the corresponding key (no token involved).
+- *Verification:* Middleware receives only a JWK thumbprint. Must resolve the
+  actual public key via an application-supplied `IKeyLookup` (e.g. the AP's
+  enrollment store). Requires a new DI service abstraction.
+
+**Agent Identity (`jwks_uri`):**
+- *Signing:* Handler needs a mode that emits `FormatJwksUri(uri, kid)` and
+  signs with the corresponding key.
+- *Verification:* Middleware fetches the JWKS from the URI (existing `JwksClient`
+  can be reused), extracts the key by `kid`, and verifies. Security: must
+  enforce `https` scheme, rate-limit fetches (spec: ≤1/issuer/min), and
+  respect 24h max cache.
+
+**Delegation (`jkt-jwt`):**
+- *Signing:* Handler needs a mode that takes an ephemeral key (for signing) +
+  a naming JWT (signed by durable key), emits `FormatJktJwt(jkt, jwt)`.
+- *Verification:* Extract `jkt` + `jwt`. Verify the naming JWT signature
+  (from `cnf.jwk` or JWKS). Confirm the HTTP-signing key's thumbprint matches
+  `jkt`. Verify the HTTP signature with that key.
+
+**Impact:** Without end-to-end support, the SDK can only participate in
+Agent Token flows. Pseudonymous enrollment, self-hosted agent identity, and
+two-key refresh are parse-only — cannot produce or verify signed requests in
+those modes.
 
 ---
 
@@ -184,6 +223,15 @@ The entire bootstrap and refresh lifecycle is unimplemented:
 
 **Gap:** Not handled anywhere in the SDK.
 
+### 8.5 JTI Replay Detection (distinct from Revocation)
+**Spec:** All token types carry `jti` (unique token identifier). Receivers SHOULD detect replayed tokens by tracking seen `jti` values within the token's validity window.
+
+**Gap:** Neither `TokenVerifier` nor `AAuthVerificationMiddleware` tracks seen JTI values. A replayed token with a valid signature and unexpired `exp` is accepted every time. This is distinct from §14's token *revocation* (issuer invalidates by JTI before natural expiry):
+- **Replay detection** = receiver rejects a `jti` it has seen before within the token's `exp` window (prevents replay attacks)
+- **Revocation** = issuer pushes a `jti` into a denylist before its natural expiry (handles compromised tokens)
+
+Both require server-side state (`IJtiStore`), but they serve different threat models and operate at different points in the flow.
+
 ---
 
 ## 9. Token Verification Gaps
@@ -200,8 +248,30 @@ The entire bootstrap and refresh lifecycle is unimplemented:
 | Verify `agent_jkt` matches HTTP signature key thumbprint | ❌ Not enforced by SDK |
 | Verify `act` claim structure and `act.sub` matches agent | ❌ Not implemented |
 | Verify at least one of `sub` or `scope` in auth token | ❌ Not enforced in verifier |
+| Verify auth token `scope` ⊆ resource token `scope` (narrowing) | ❌ Not enforced |
 | Verify `mission` claim structure | ❌ Not implemented |
 | Actor-chain (`act`) walking for delegation depth | ❌ Not implemented |
+| Accept `dwk` = either `aauth-person.json` or `aauth-access.json` for auth tokens | ❌ Caller must specify expected `dwk` |
+
+### 9.1 Auth Token Building Gap (`act` claim)
+
+**Spec:** Auth token verification step 8 requires `act` MUST be present and `act.sub` MUST match the agent identifier from the signing context. This is an unconditional MUST.
+
+**Gap:** `AuthTokenBuilder` has **no `Act` property**. Auth tokens built by the SDK (including `MockPersonServer`) are emitted without `act`, making them non-conformant. This is both a **building** and a **verification** gap:
+- Building: `AuthTokenBuilder` should require `Act` (with at minimum `sub` = agent identifier)
+- Verification: `TokenVerifier` should reject auth tokens missing `act`
+
+### 9.2 Scope Narrowing Enforcement
+
+**Spec:** "Auth token's scope MUST NOT be broader than resource token's scope."
+
+**Gap:** Neither `AuthTokenBuilder` nor `TokenVerifier` enforce that the granted scope is a subset of the requested scope. This is primarily a resource-side obligation (the resource issued the resource token and can compare), but the verifier could optionally accept the original resource-token scope for comparison.
+
+### 9.3 Dual-`dwk` Acceptance for Auth Tokens
+
+**Spec:** Auth tokens may carry `dwk` = `aauth-person.json` (PS-issued) or `dwk` = `aauth-access.json` (AS-issued). Both are valid.
+
+**Gap:** `TokenVerifier.VerifyWithJwksAsync` takes a single `expectedDwk` parameter. When verifying an auth token, the caller must know in advance whether the issuer is a PS or AS. For the 4-party flow, the resource receives an auth token and needs to accept either `dwk` value, discovering the issuer's JWKS via the appropriate well-known path.
 
 ---
 
@@ -247,32 +317,52 @@ The entire bootstrap and refresh lifecycle is unimplemented:
 - ACE form for internationalized domain names
 - No port in production URLs
 
+**Loopback port caveat:** The spec's "no port" rule applies to *server identifiers* (issuer URLs). However, the existing samples (`WhoAmI` on `:5000`, `MockPersonServer` on `:5100`, `GuidedTour` on `:5400`) use `http://localhost:<port>` as issuer URLs during development. The new `AAuthServerId` validator must carve out port allowance for loopback addresses — otherwise all existing samples and integration tests break. The spec is silent on whether loopback issuers may include ports; this is a pragmatic dev-mode exemption that MUST NOT extend to non-loopback hosts.
+
 ---
 
 ## 13. Conformance Test Gaps
 
-### Currently Covered (Phase 2):
-- ✅ Agent token structure & verification
-- ✅ Resource token structure
-- ✅ HTTP signature profile (covered components, Signature-Key header)
-- ✅ Discovery (resource metadata, JWKS)
+### Root Cause
 
-### Not Covered:
-- ❌ Auth token structure conformance tests
-- ❌ Auth token verification conformance tests
-- ❌ Resource-managed access flow conformance
-- ❌ Federated (4-party) flow conformance
-- ❌ Authorization endpoint conformance
-- ❌ Token revocation conformance
-- ❌ Mission lifecycle conformance
-- ❌ R3 flow conformance
-- ❌ Bootstrap/refresh conformance
+The conformance suite covers **protocol machinery** (agent-token structure, resource-token structure, HTTP signatures, discovery) but misses **semantic verification requirements** (act chains, scope narrowing, binding enforcement, capabilities). This happened because:
+- The original plan's Phase 2 §2.9 scoped conformance to receiver-side agent-token and resource-token tests only.
+- Auth-token conformance was implicitly deferred — `AuthTokenBuilder` and `TokenVerifier` shipped without corresponding spec-traceable tests.
+- Features like `act` walking, scope narrowing, `AAuth-Capabilities`, and JTI replay were never implemented, so there was nothing to test.
+
+### Currently Covered (47 tests, Phases 1–3 of original plan):
+- ✅ Agent token structure (17 tests) — header, required/optional claims, lifetime
+- ✅ Agent token verification (7 tests) — sig, alg=none, expired, typ, dwk, wrong key
+- ✅ Resource token structure (11 tests) — header, required claims, lifetime ≤ 5min
+- ✅ HTTP signature profile (4 tests) — covered components, created parameter, verifier rejection
+- ✅ Signature-Key header (5 tests) — jwt format, cnf.jwk extraction, control chars
+- ✅ Discovery (7 tests) — metadata fields, JWKS key structure
+
+### Not Covered (by remediation phase):
+
+**Phase 1 (verification hardening):**
+- ❌ Auth token structure conformance (header, required claims, lifetime)
+- ❌ Auth token verification conformance (`act` required, `act.sub` match, binding, dual-`dwk`)
+- ❌ Scope narrowing conformance (auth scope ⊆ resource scope)
 - ❌ Error response format conformance (`Signature-Error` header, JSON error body)
 - ❌ Agent identifier format conformance
 - ❌ Server identifier format conformance
+
+**Phase 2 (4-party + replay):**
+- ❌ Federated (4-party) flow conformance
+- ❌ JTI replay detection conformance
+- ❌ Authorization endpoint conformance
+- ❌ Token revocation conformance
+
+**Phases 3–7 (features):**
+- ❌ ECDSA P-256 algorithm conformance
+- ❌ Bootstrap/refresh conformance
+- ❌ Mission lifecycle conformance
+- ❌ R3 flow conformance
+- ❌ Resource-managed access flow conformance
 - ❌ Third-party login flow conformance
 - ❌ Call-chaining (resource-to-resource delegation) conformance
-- ❌ ECDSA P-256 algorithm conformance
+- ❌ `AAuth-Capabilities` header conformance
 
 ---
 
@@ -281,6 +371,7 @@ The entire bootstrap and refresh lifecycle is unimplemented:
 | Feature | Spec Reference | Status |
 |---------|---------------|--------|
 | `Authorization: AAuth <opaque-token>` header (resource-managed) | Protocol §Resource-Managed | ❌ |
+| `AAuth-Capabilities` request header (`interaction`, `clarification`, `payment`) | Protocol §Capabilities | ❌ |
 | `AAuth-Mission` request header | Protocol §Missions | ❌ |
 | Third-party login flow | Protocol §Third-Party Login | ❌ |
 | Call chaining (resource acts as agent) | Protocol §Call Chaining | ❌ |
@@ -290,8 +381,17 @@ The entire bootstrap and refresh lifecycle is unimplemented:
 | `justification` parameter at PS token endpoint | Protocol §PS Token | ❌ |
 | `platform` / `device` parameters | Protocol §PS Token | ❌ |
 | Token revocation by JTI | Protocol §Revocation | ❌ |
+| JTI replay detection (receiver-side) | Protocol §Verification | ❌ |
 | Scope description validation against PS identity scopes | Protocol §Scopes | ❌ |
 | `claims` requirement type (identity claims request) | Protocol §Requirements | ❌ |
+
+### 14.1 `AAuth-Capabilities` Header
+
+**Spec:** Agents SHOULD include `AAuth-Capabilities` header listing supported interaction modes: `interaction` (can direct user to URL), `clarification` (can engage in chat), `payment` (can handle 402 flows).
+
+**Gap:** The SDK's `AAuthSigningHandler` never emits this header. Servers that check capabilities before offering deferred paths may fall back to denial rather than offering the interaction/clarification flow. Neither builder, handler, nor any configuration surface exposes capability advertisement.
+
+**Impact:** Without this header, a compliant server cannot know whether to return `requirement=interaction` (useless if the agent cannot present a URL to the user) or simply deny access.
 
 ---
 
@@ -340,12 +440,12 @@ src/AAuth/
 ├── Headers/                ← Partial
 │   ├── AAuthInteraction    ✅ Interaction requirement
 │   └── AAuthRequirement    ✅ Auth-token requirement (others parsed but unused)
-├── HttpSig/                ← Complete for jwt scheme
-│   ├── AAuthSigningHandler ✅ Request signing
+├── HttpSig/                ← Parse/format complete; pipeline wired for jwt only
+│   ├── AAuthSigningHandler ✅ Request signing (jwt scheme only)
 │   ├── AAuthVerifier       ✅ Signature verification
-│   ├── SignatureKeyHeader   ✅ jwt scheme only
-│   ├── SignatureKeyParser   ✅ JWT extraction
-│   └── Middleware          ✅ ASP.NET Core integration
+│   ├── SignatureKeyHeader   ✅ All 4 schemes (format)
+│   ├── SignatureKeyParser   ✅ All 4 schemes (parse via ParseAny); jwt-only via Parse()
+│   └── Middleware          ✅ ASP.NET Core integration (jwt scheme only)
 ├── Server/                 ← Resource only
 │   └── WellKnownEndpoints  ✅ Resource metadata + JWKS
 └── Tokens/                 ← Builders complete, verification partial

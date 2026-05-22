@@ -1,4 +1,5 @@
 @* Right-pane inspector: narrative + collapsible panels for each captured artifact. *@
+@inject Microsoft.Extensions.Options.IOptions<TourOptions> Options
 
 <article class="inspector">
     <h2>@Step.Number. @Step.Title</h2>
@@ -9,9 +10,7 @@
     {
         <details open>
             <summary>Request</summary>
-            <pre><code>@Step.RequestLine
-
-@Step.RequestHeaders@(string.IsNullOrEmpty(Step.RequestBody) ? string.Empty : "\n\n" + Step.RequestBody)</code></pre>
+            <pre><code>@(HighlightBlock(Step.RequestLine + "\n\n" + Step.RequestHeaders + (string.IsNullOrEmpty(Step.RequestBody) ? "" : "\n\n" + Step.RequestBody)))</code></pre>
         </details>
     }
 
@@ -19,7 +18,7 @@
     {
         <details>
             <summary>RFC 9421 signature base</summary>
-            <pre><code>@Step.SignatureBase</code></pre>
+            <pre><code>@(HighlightBlock(Step.SignatureBase))</code></pre>
         </details>
     }
 
@@ -27,11 +26,7 @@
     {
         <details open>
             <summary>Response</summary>
-            <pre><code>@Step.StatusLine
-
-@Step.ResponseHeaders
-
-@Step.ResponseBody</code></pre>
+            <pre><code>@(HighlightBlock(Step.StatusLine + "\n\n" + Step.ResponseHeaders + "\n\n" + Step.ResponseBody))</code></pre>
         </details>
     }
 
@@ -49,6 +44,19 @@
 
 @code {
     [Parameter, EditorRequired] public StepRecord Step { get; set; } = default!;
+
+    private EntityHighlighter? _highlighter;
+
+    private EntityHighlighter Highlighter =>
+        _highlighter ??= new EntityHighlighter(Options.Value);
+
+    /// <summary>HTML-escapes then applies entity highlighting.</summary>
+    private MarkupString HighlightBlock(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return new MarkupString(string.Empty);
+        var escaped = System.Net.WebUtility.HtmlEncode(text);
+        return new MarkupString(Highlighter.Highlight(escaped));
+    }
 
     // Renders narrative text with backtick-quoted spans (`like-this`) as
     // <code> elements. Input is HTML-escaped first so user-supplied text

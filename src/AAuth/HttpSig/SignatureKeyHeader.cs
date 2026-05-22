@@ -19,6 +19,34 @@ public static class SignatureKeyHeader
     /// <summary>The HTTP header name.</summary>
     public const string Name = "Signature-Key";
 
+    /// <summary>Build a <c>Signature-Key</c> header value with the <c>jkt-jwt</c> scheme.</summary>
+    /// <param name="jkt">Base64url-encoded JWK thumbprint of the signing key.</param>
+    /// <param name="jwt">The JWT (agent/auth token) that binds this thumbprint.</param>
+    public static string FormatJktJwt(string jkt, string jwt)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(jkt);
+        ArgumentException.ThrowIfNullOrEmpty(jwt);
+        return $"sig=jkt-jwt;jkt=\"{jkt}\";jwt=\"{jwt}\"";
+    }
+
+    /// <summary>Build a <c>Signature-Key</c> header value with the <c>hwk</c> scheme (bare JWK thumbprint).</summary>
+    /// <param name="jkt">Base64url-encoded JWK thumbprint.</param>
+    public static string FormatHwk(string jkt)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(jkt);
+        return $"sig=hwk;jkt=\"{jkt}\"";
+    }
+
+    /// <summary>Build a <c>Signature-Key</c> header value with the <c>jwks_uri</c> scheme.</summary>
+    /// <param name="uri">The JWKS URI where the key can be resolved.</param>
+    /// <param name="kid">The key id within the JWKS.</param>
+    public static string FormatJwksUri(string uri, string kid)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(uri);
+        ArgumentException.ThrowIfNullOrEmpty(kid);
+        return $"sig=jwks_uri;uri=\"{uri}\";kid=\"{kid}\"";
+    }
+
     /// <summary>Build a <c>Signature-Key</c> header value carrying a JWT.</summary>
     public static string FormatJwt(string jwt)
     {
@@ -42,9 +70,7 @@ public static class SignatureKeyHeader
 
     /// <summary>
     /// Parse a <c>Signature-Key</c> header value and return the JWT if the
-    /// scheme is <c>jwt</c>. Throws <see cref="FormatException"/> on malformed
-    /// input. Returns <c>null</c> for non-<c>jwt</c> schemes (e.g. <c>hwk</c>,
-    /// <c>jkt-jwt</c>, <c>jwks_uri</c>) which are not yet supported.
+    /// scheme is <c>jwt</c>. Returns <c>null</c> for other schemes.
     /// </summary>
     public static string? GetJwt(string headerValue)
     {

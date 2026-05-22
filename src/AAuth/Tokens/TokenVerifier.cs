@@ -17,12 +17,6 @@ namespace AAuth.Tokens;
 /// <c>aa-auth+jwt</c>): structural checks, signature verification, and the
 /// standard temporal / audience / binding claims.
 /// </summary>
-/// <remarks>
-/// Verification is hand-rolled with BouncyCastle to mirror the issuer-side
-/// signing path; see the plan's "Implementation Decisions" for the
-/// trade-off. Out of scope here: actor-chain (<c>act</c>) walking, mission
-/// validation, R3.
-/// </remarks>
 public sealed class TokenVerifier
 {
     /// <summary>Clock injection point.</summary>
@@ -30,6 +24,9 @@ public sealed class TokenVerifier
 
     /// <summary>Tolerance applied to <c>exp</c>/<c>iat</c> checks.</summary>
     public TimeSpan ClockSkew { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>Maximum depth of nested <c>act</c> claims allowed.</summary>
+    public int MaxActDepth { get; init; } = 10;
 
     /// <summary>Parsed claims from a verified token.</summary>
     public sealed record VerifiedToken(
@@ -39,16 +36,8 @@ public sealed class TokenVerifier
         string TokenType);
 
     /// <summary>
-    /// Verify a token whose issuer's public key has already been resolved
-    /// (e.g. an <c>aa-agent+jwt</c> in self-issued mode where the issuer
-    /// signs with the same key bound in <c>cnf.jwk</c>, or any token whose
-    /// JWKS has been fetched).
+    /// Verify a token whose issuer's public key has already been resolved.
     /// </summary>
-    /// <param name="jwt">Compact JWT.</param>
-    /// <param name="issuerKey">Public key expected to have signed the JWT.</param>
-    /// <param name="expectedType">Required <c>typ</c> header value.</param>
-    /// <param name="expectedDwk">Required <c>dwk</c> claim value.</param>
-    /// <param name="expectedAudience">If non-null, the required <c>aud</c> claim value.</param>
     public VerifiedToken Verify(
         string jwt,
         AAuthKey issuerKey,
@@ -70,8 +59,6 @@ public sealed class TokenVerifier
         var header = DecodeJsonSegment(segments[0], "header");
         var payload = DecodeJsonSegment(segments[1], "payload");
 
-        // RFC 7515 — refuse `alg: none` and require EdDSA (the only algorithm
-        // AAuth supports today; ES256 lands when the signer does).
         var alg = (string?)header["alg"];
         if (alg != AAuthKey.Algorithm)
         {
@@ -149,9 +136,6 @@ public sealed class TokenVerifier
             ?? throw new TokenVerificationException("Token is missing 'iss'.");
         if (!AAuthUrl.IsHttpsOrLoopback(iss))
         {
-            // Align with AAuthUrl.IsHttpsOrLoopback so issuers accepted by
-            // the builders (https + loopback http for local dev/tests) also
-            // verify here.
             throw new TokenVerificationException("Token 'iss' must be an absolute https:// URL (or http://localhost).");
         }
 
@@ -159,10 +143,199 @@ public sealed class TokenVerifier
     }
 
     /// <summary>
+    /// Verify an auth token with full PoP binding enforcement per §Auth Token Verification.
+    /// </summary>
+    /// <param name="jwt">Compact JWT (<c>aa-auth+jwt</c>).</param>
+    /// <param name="issuerKey">Issuer's public signing key (PS or AS).</param>
+    /// <param name="expectedAudience">Expected <c>aud</c> (resource's own identifier).</param>
+    /// <param name="httpSignatureKey">The public key used to sign the HTTP request (from <c>cnf.jwk</c> of the carrier token).</param>
+    /// <param name="expectedAgentId">Expected agent identifier (from the request's signing context).</param>
+    /// <param name="expectedDwk">
+    /// Expected <c>dwk</c> value. If null, accepts either <c>aauth-person.json</c> or
+    /// <c>aauth-access.json</c> (dual-dwk mode for resource verifiers that don't know which issued the token).
+    /// </param>
+    /// <param name="expectedMaxScope">
+    /// If non-null, verifies that the auth token's scope is a subset of this value
+    /// (scope narrowing: auth-token scope ⊆ resource-token scope).
+    /// </param>
+    public VerifiedToken VerifyAuthToken(
+        string jwt,
+        AAuthKey issuerKey,
+        string expectedAudience,
+        AAuthKey httpSignatureKey,
+        string expectedAgentId,
+        string? expectedDwk = null,
+        string? expectedMaxScope = null)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(jwt);
+        ArgumentNullException.ThrowIfNull(issuerKey);
+        ArgumentException.ThrowIfNullOrEmpty(expectedAudience);
+        ArgumentNullException.ThrowIfNull(httpSignatureKey);
+        ArgumentException.ThrowIfNullOrEmpty(expectedAgentId);
+
+        // Determine which dwk to expect.
+        string actualDwk;
+        if (expectedDwk is not null)
+        {
+            actualDwk = expectedDwk;
+        }
+        else
+        {
+            // Peek at the dwk claim to decide.
+            var segments = jwt.Split('.');
+            if (segments.Length != 3)
+                throw new TokenVerificationException("JWT is not a compact JWS.");
+            var peekPayload = DecodeJsonSegment(segments[1], "payload");
+            actualDwk = (string?)peekPayload["dwk"]
+                ?? throw new TokenVerificationException("Token is missing 'dwk'.");
+            if (actualDwk != AuthTokenBuilder.PersonDwk && actualDwk != AuthTokenBuilder.AccessDwk)
+            {
+                throw new TokenVerificationException(
+                    $"Auth token 'dwk' must be '{AuthTokenBuilder.PersonDwk}' or '{AuthTokenBuilder.AccessDwk}', got '{actualDwk}'.");
+            }
+        }
+
+        var verified = Verify(jwt, issuerKey, AuthTokenBuilder.TokenType, actualDwk, expectedAudience);
+
+        // §Auth Token Verification step 6: agent matches signing context.
+        var agent = (string?)verified.Payload["agent"];
+        if (agent != expectedAgentId)
+        {
+            throw new TokenVerificationException(
+                $"Auth token 'agent' does not match expected agent (expected '{expectedAgentId}', got '{agent}').");
+        }
+
+        // §Auth Token Verification step 7: cnf.jwk matches HTTP signature key.
+        var cnf = verified.Payload["cnf"] as JsonObject;
+        var jwk = cnf?["jwk"] as JsonObject;
+        if (jwk is null)
+        {
+            throw new TokenVerificationException("Auth token is missing 'cnf.jwk'.");
+        }
+        var tokenKeyX = (string?)jwk["x"];
+        var httpKeyX = Base64UrlEncoder.Encode(httpSignatureKey.PublicKeyBytes);
+        if (tokenKeyX != httpKeyX)
+        {
+            throw new TokenVerificationException(
+                "Auth token 'cnf.jwk' does not match the HTTP signature key (PoP binding mismatch).");
+        }
+
+        // §Auth Token Verification step 8: act is present and act.sub matches agent.
+        var act = verified.Payload["act"] as JsonObject;
+        if (act is null)
+        {
+            throw new TokenVerificationException("Auth token is missing required 'act' claim.");
+        }
+        var actSub = (string?)act["sub"];
+        if (actSub != expectedAgentId)
+        {
+            throw new TokenVerificationException(
+                $"Auth token 'act.sub' does not match expected agent (expected '{expectedAgentId}', got '{actSub}').");
+        }
+
+        // Walk nested act claims to enforce depth limit.
+        ValidateActDepth(act, 1);
+
+        // §Auth Token Verification step 9: at least one of sub or scope.
+        var sub = (string?)verified.Payload["sub"];
+        var scope = (string?)verified.Payload["scope"];
+        if (sub is null && string.IsNullOrEmpty(scope))
+        {
+            throw new TokenVerificationException("Auth token must contain at least one of 'sub' or 'scope'.");
+        }
+
+        // Scope narrowing check.
+        if (expectedMaxScope is not null && !string.IsNullOrEmpty(scope))
+        {
+            var allowedScopes = new HashSet<string>(expectedMaxScope.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+            var tokenScopes = scope.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var s in tokenScopes)
+            {
+                if (!allowedScopes.Contains(s))
+                {
+                    throw new TokenVerificationException(
+                        $"Auth token scope '{s}' exceeds allowed scope (scope narrowing violation).");
+                }
+            }
+        }
+
+        return verified;
+    }
+
+    /// <summary>
+    /// Verify an auth token using JWKS discovery (dual-dwk supported).
+    /// Resolves the issuer's JWKS from the token's <c>dwk</c> and verifies PoP binding.
+    /// </summary>
+    public async Task<VerifiedToken> VerifyAuthTokenWithJwksAsync(
+        string jwt,
+        MetadataClient metadata,
+        JwksClient jwks,
+        string expectedAudience,
+        AAuthKey httpSignatureKey,
+        string expectedAgentId,
+        string? expectedMaxScope = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(jwt);
+        ArgumentNullException.ThrowIfNull(metadata);
+        ArgumentNullException.ThrowIfNull(jwks);
+
+        var segments = jwt.Split('.');
+        if (segments.Length != 3)
+            throw new TokenVerificationException("JWT is not a compact JWS.");
+
+        var header = DecodeJsonSegment(segments[0], "header");
+        var payload = DecodeJsonSegment(segments[1], "payload");
+
+        // Cheap local checks first.
+        var alg = (string?)header["alg"];
+        if (alg != AAuthKey.Algorithm)
+            throw new TokenVerificationException($"Unsupported 'alg' (expected '{AAuthKey.Algorithm}', got '{alg}').");
+        var typ = (string?)header["typ"];
+        if (typ != AuthTokenBuilder.TokenType)
+            throw new TokenVerificationException($"Unexpected 'typ' (expected '{AuthTokenBuilder.TokenType}', got '{typ}').");
+        var dwk = (string?)payload["dwk"];
+        if (dwk != AuthTokenBuilder.PersonDwk && dwk != AuthTokenBuilder.AccessDwk)
+            throw new TokenVerificationException(
+                $"Auth token 'dwk' must be '{AuthTokenBuilder.PersonDwk}' or '{AuthTokenBuilder.AccessDwk}', got '{dwk}'.");
+
+        var iss = (string?)payload["iss"]
+            ?? throw new TokenVerificationException("Token is missing 'iss'.");
+        if (!AAuthUrl.IsHttpsOrLoopback(iss))
+            throw new TokenVerificationException("Token 'iss' must be an absolute https:// URL (or http://localhost).");
+
+        var kid = (string?)header["kid"]
+            ?? throw new TokenVerificationException("Token header is missing 'kid'.");
+
+        var metadataUrl = MetadataClient.BuildUrl(iss, dwk);
+        JsonObject metadataDoc;
+        try
+        {
+            metadataDoc = await metadata.FetchAsync(metadataUrl, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            throw new TokenVerificationException($"Failed to fetch issuer metadata from {metadataUrl}.", ex);
+        }
+
+        var jwksUriRaw = (string?)metadataDoc["jwks_uri"]
+            ?? throw new TokenVerificationException($"Issuer metadata at {metadataUrl} is missing 'jwks_uri'.");
+        if (!Uri.TryCreate(jwksUriRaw, UriKind.Absolute, out var jwksUri))
+            throw new TokenVerificationException($"Issuer metadata 'jwks_uri' is not an absolute URL: {jwksUriRaw}");
+        if (!AAuthUrl.IsHttpsOrLoopback(jwksUriRaw))
+            throw new TokenVerificationException(
+                $"Issuer metadata 'jwks_uri' must be an absolute https:// URL (or http://localhost): {jwksUriRaw}");
+
+        var issuerKey = await jwks.ResolveKeyAsync(jwksUri, kid, cancellationToken).ConfigureAwait(false)
+            ?? throw new TokenVerificationException($"No key with kid '{kid}' at {jwksUri}.");
+
+        return VerifyAuthToken(jwt, issuerKey, expectedAudience, httpSignatureKey, expectedAgentId,
+            expectedDwk: dwk, expectedMaxScope: expectedMaxScope);
+    }
+
+    /// <summary>
     /// Verify a self-issued agent token where the issuer's public key equals
-    /// the <c>cnf.jwk</c> bound in the token's payload. This is the simple
-    /// demo mode used by the AgentConsole sample where the agent acts as its
-    /// own AP. Production deployments fetch the AP's JWKS instead.
+    /// the <c>cnf.jwk</c> bound in the token's payload.
     /// </summary>
     public VerifiedToken VerifySelfIssuedAgentToken(string jwt, AAuthKey confirmationKey) =>
         Verify(
@@ -173,8 +346,7 @@ public sealed class TokenVerifier
 
     /// <summary>
     /// Resolve the issuer's signing key via well-known metadata + JWKS, then
-    /// verify the token. Used by resource servers verifying inbound auth
-    /// tokens and by Person Servers verifying resource tokens.
+    /// verify the token.
     /// </summary>
     public async Task<VerifiedToken> VerifyWithJwksAsync(
         string jwt,
@@ -198,10 +370,6 @@ public sealed class TokenVerifier
         var header = DecodeJsonSegment(segments[0], "header");
         var payload = DecodeJsonSegment(segments[1], "payload");
 
-        // Run the cheap, locally-verifiable invariants (alg/typ/dwk) BEFORE
-        // any network call. Otherwise an obviously-invalid token can still
-        // trigger metadata + JWKS discovery, amplifying load and giving an
-        // attacker a free probe of the resource's outbound destinations.
         var alg = (string?)header["alg"];
         if (alg != AAuthKey.Algorithm)
         {
@@ -223,9 +391,6 @@ public sealed class TokenVerifier
 
         var iss = (string?)payload["iss"]
             ?? throw new TokenVerificationException("Token is missing 'iss'.");
-        // Validate the issuer URL shape BEFORE making any network call to
-        // discovery: an attacker-controlled token could otherwise coerce the
-        // resource into fetching arbitrary internal URLs (classic SSRF).
         if (!AAuthUrl.IsHttpsOrLoopback(iss))
         {
             throw new TokenVerificationException("Token 'iss' must be an absolute https:// URL (or http://localhost).");
@@ -250,9 +415,6 @@ public sealed class TokenVerifier
         {
             throw new TokenVerificationException($"Issuer metadata 'jwks_uri' is not an absolute URL: {jwksUriRaw}");
         }
-        // Same SSRF guard for the discovered jwks_uri: a compromised or
-        // malicious metadata document could otherwise redirect the JWKS
-        // fetch to an internal host.
         if (!AAuthUrl.IsHttpsOrLoopback(jwksUriRaw))
         {
             throw new TokenVerificationException(
@@ -263,6 +425,19 @@ public sealed class TokenVerifier
             ?? throw new TokenVerificationException($"No key with kid '{kid}' at {jwksUri}.");
 
         return Verify(jwt, issuerKey, expectedType, expectedDwk, expectedAudience);
+    }
+
+    private void ValidateActDepth(JsonObject act, int depth)
+    {
+        if (depth > MaxActDepth)
+        {
+            throw new TokenVerificationException(
+                $"Nested 'act' chain exceeds maximum depth of {MaxActDepth}.");
+        }
+        if (act["act"] is JsonObject nestedAct)
+        {
+            ValidateActDepth(nestedAct, depth + 1);
+        }
     }
 
     private static bool TryGetUnixTime(JsonObject payload, string claim, out long value)

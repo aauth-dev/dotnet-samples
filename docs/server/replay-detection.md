@@ -1,0 +1,124 @@
+# Replay Detection
+
+> [Signature Security](https://explorer.aauth.dev/foundations/signatures)
+
+## Overview
+
+HTTP signatures have a `created` timestamp and a unique `nonce` parameter, but a valid signature could still be replayed within its validity window. The `IJtiStore` interface prevents replay by tracking seen token IDs (`jti` claims) and rejecting duplicates.
+
+## IJtiStore Interface
+
+```csharp
+namespace AAuth.Server;
+
+public interface IJtiStore
+{
+    /// Returns true if recorded successfully (first time seen), false if duplicate.
+    Task<bool> TryRecordAsync(string jti, DateTimeOffset expiration, CancellationToken ct = default);
+
+    /// Mark a jti as revoked (prevents future use even if not yet expired).
+    Task RevokeAsync(string jti, CancellationToken ct = default);
+
+    /// Check if a jti has been explicitly revoked.
+    Task<bool> IsRevokedAsync(string jti, CancellationToken ct = default);
+}
+```
+
+## Built-in: InMemoryJtiStore
+
+Thread-safe, in-process implementation. Suitable for single-instance deployments and testing.
+
+```csharp
+using AAuth.Server;
+
+var jtiStore = new InMemoryJtiStore();
+
+// Wire into middleware
+app.UseAAuthVerification(
+    verifier: new AAuthVerifier(),
+    jtiStore: jtiStore);
+
+// Optional: periodic cleanup of expired entries
+// (InMemoryJtiStore accumulates expired entries until Cleanup() is called)
+var timer = new PeriodicTimer(TimeSpan.FromMinutes(10));
+_ = Task.Run(async () =>
+{
+    while (await timer.WaitForNextTickAsync())
+        jtiStore.Cleanup();
+});
+```
+
+## Custom Implementations
+
+For distributed deployments, implement `IJtiStore` against a shared store:
+
+```csharp
+public sealed class RedisJtiStore : IJtiStore
+{
+    private readonly IDatabase _redis;
+
+    public RedisJtiStore(IDatabase redis) => _redis = redis;
+
+    public async Task<bool> TryRecordAsync(string jti, DateTimeOffset expiration, CancellationToken ct)
+    {
+        var ttl = expiration - DateTimeOffset.UtcNow;
+        if (ttl <= TimeSpan.Zero) return false;
+
+        // SET NX with TTL — returns true only if key didn't exist
+        return await _redis.StringSetAsync($"jti:{jti}", "1", ttl, When.NotExists);
+    }
+
+    public async Task RevokeAsync(string jti, CancellationToken ct)
+    {
+        await _redis.StringSetAsync($"jti:revoked:{jti}", "1", TimeSpan.FromHours(24));
+    }
+
+    public async Task<bool> IsRevokedAsync(string jti, CancellationToken ct)
+    {
+        return await _redis.KeyExistsAsync($"jti:revoked:{jti}");
+    }
+}
+```
+
+## Revocation Endpoint
+
+The SDK provides a pre-built revocation endpoint for token revocation:
+
+```csharp
+using AAuth.Server;
+
+app.MapAAuthRevocationEndpoint(jtiStore, path: "/revoke");
+```
+
+This maps `POST /revoke` accepting:
+
+```json
+{ "jti": "token-id-to-revoke" }
+```
+
+The endpoint calls `jtiStore.RevokeAsync(jti)` and returns `204 No Content`.
+
+Advertise it in resource metadata:
+
+```csharp
+app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
+{
+    // ...
+    RevocationEndpoint = "https://resource.example/revoke"
+});
+```
+
+## How It Fits Together
+
+```
+Request arrives → Middleware verifies signature
+                → Middleware checks jti via IJtiStore.TryRecordAsync()
+                → If duplicate → 401 + Signature-Error: invalid_request
+                → If new → stores jti with expiration, passes to handler
+```
+
+## Further Reading
+
+- [Verification Middleware](verification-middleware.md)
+- [Token Issuance](token-issuance.md) — token builders auto-generate `jti` values
+- [Error Handling](../advanced/error-handling.md)

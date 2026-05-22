@@ -1,17 +1,18 @@
 @* Three-actor swim-lane sequence diagram. Each message arrow connects the
    vertical centerlines of the from/to lanes. The current step is highlighted.
-   When a step lives inside a polling loop (e.g. step 10), it is rendered
+   When a step lives inside a polling loop (e.g. the poll step), it is rendered
    inside a labeled `loop […]` box matching mermaid's `loop … end` syntax;
    while polling is in flight a "ghost" row with a spinner is shown inside
    an actively-animated loop box. *@
 
 @using System.Globalization
 
-<div class="seq">
+<div class="seq seq--@EffectiveLanes.Length">
     <div class="lanes">
-        <div class="lane agent">Agent</div>
-        <div class="lane resource">Resource</div>
-        <div class="lane ps">Person Server</div>
+        @foreach (var lane in EffectiveLanes)
+        {
+            <div class="lane @lane.CssClass">@lane.Label</div>
+        }
     </div>
     <div class="messages">
         @for (int i = 0; i < Steps.Count; i++)
@@ -80,26 +81,50 @@
     /// <summary>Describes the ghost row drawn inside an active loop box.</summary>
     public readonly record struct GhostStep(int Number, string Title, Actor From, Actor To);
 
-    // Lane center positions as percentages of the messages container width.
-    // Matches the vertical guide-lines drawn in app.css for 3 equal lanes.
-    private static readonly double[] LaneCenters = { 100.0 / 6, 50.0, 5 * 100.0 / 6 };
+    /// <summary>A lane in the sequence diagram.</summary>
+    public readonly record struct LaneDefinition(string Label, string CssClass, Actor Actor);
 
-    private static int ColumnFor(Actor a) => a switch
+    /// <summary>
+    /// Optional lane configuration. When null, defaults to the standard
+    /// 3-lane protocol diagram (Agent / Resource / Person Server).
+    /// </summary>
+    [Parameter] public LaneDefinition[]? Lanes { get; set; }
+
+    private static readonly LaneDefinition[] DefaultLanes =
     {
-        Actor.Agent => 0,
-        Actor.Resource => 1,
-        Actor.PersonServer => 2,
-        _ => 0,
+        new("Agent", "agent", Actor.Agent),
+        new("Resource", "resource", Actor.Resource),
+        new("Person Server", "ps", Actor.PersonServer),
     };
+
+    private LaneDefinition[] EffectiveLanes => Lanes ?? DefaultLanes;
+
+    private double[] ComputeLaneCenters()
+    {
+        var n = EffectiveLanes.Length;
+        var centers = new double[n];
+        for (int i = 0; i < n; i++)
+            centers[i] = (2 * i + 1) * 100.0 / (2 * n);
+        return centers;
+    }
+
+    private int ColumnFor(Actor a)
+    {
+        var lanes = EffectiveLanes;
+        for (int i = 0; i < lanes.Length; i++)
+            if (lanes[i].Actor == a) return i;
+        return 0;
+    }
 
     private static string Fmt(double pct) => pct.ToString("0.##", CultureInfo.InvariantCulture);
 
     private RenderFragment RenderMessage(StepRecord s, int i) => __builder =>
     {
+        var laneCenters = ComputeLaneCenters();
         var fromCol = ColumnFor(s.From);
         var toCol = ColumnFor(s.To);
-        var leftCenter = LaneCenters[Math.Min(fromCol, toCol)];
-        var rightCenter = LaneCenters[Math.Max(fromCol, toCol)];
+        var leftCenter = laneCenters[Math.Min(fromCol, toCol)];
+        var rightCenter = laneCenters[Math.Max(fromCol, toCol)];
         var widthPct = rightCenter - leftCenter;
         var labelCenter = (leftCenter + rightCenter) / 2.0;
         var rightward = toCol >= fromCol;
@@ -122,10 +147,11 @@
 
     private RenderFragment RenderGhostMessage(int number, string title, Actor from, Actor to) => __builder =>
     {
+        var laneCenters = ComputeLaneCenters();
         var fromCol = ColumnFor(from);
         var toCol = ColumnFor(to);
-        var leftCenter = LaneCenters[Math.Min(fromCol, toCol)];
-        var rightCenter = LaneCenters[Math.Max(fromCol, toCol)];
+        var leftCenter = laneCenters[Math.Min(fromCol, toCol)];
+        var rightCenter = laneCenters[Math.Max(fromCol, toCol)];
         var widthPct = rightCenter - leftCenter;
         var labelCenter = (leftCenter + rightCenter) / 2.0;
         var rightward = toCol >= fromCol;
