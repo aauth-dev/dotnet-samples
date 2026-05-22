@@ -54,13 +54,20 @@ public static class SignatureError
         _ => "invalid_request",
     };
 
-    /// <summary>Format a Signature-Error header value, optionally with <c>required_input</c>.</summary>
-    public static string Format(SignatureErrorCode code, string[]? requiredInput = null)
+    /// <summary>Format a Signature-Error header value with optional parameters.</summary>
+    /// <param name="code">The error code.</param>
+    /// <param name="requiredInput">Required covered components (for <c>invalid_input</c>).</param>
+    /// <param name="supportedAlgorithms">Supported algorithms (for <c>unsupported_algorithm</c>).</param>
+    public static string Format(SignatureErrorCode code, string[]? requiredInput = null, string[]? supportedAlgorithms = null)
     {
         var value = ToHeaderValue(code);
         if (requiredInput is { Length: > 0 } && code == SignatureErrorCode.InvalidInput)
         {
             value += "; required_input=\"" + string.Join(" ", requiredInput) + "\"";
+        }
+        if (supportedAlgorithms is { Length: > 0 } && code == SignatureErrorCode.UnsupportedAlgorithm)
+        {
+            value += "; supported_algorithms=\"" + string.Join(" ", supportedAlgorithms) + "\"";
         }
         return value;
     }

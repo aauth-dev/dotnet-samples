@@ -33,6 +33,9 @@ public sealed class AAuthVerificationMiddleware
     /// <summary><see cref="HttpContext.Items"/> key for the parsed Signature-Key info.</summary>
     public const string ContextItemKey = "AAuth.ParsedSignatureKey";
 
+    /// <summary>Algorithms this server supports, emitted in <c>supported_algorithms</c> on unsupported_algorithm errors.</summary>
+    private static readonly string[] SupportedAlgorithms = ["EdDSA"];
+
     private readonly RequestDelegate _next;
     private readonly AAuthVerifier _verifier;
     private readonly ISignatureKeyResolver _resolver;
@@ -90,8 +93,10 @@ public sealed class AAuthVerificationMiddleware
         catch (AAuthVerificationException ex)
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            context.Response.Headers[SignatureError.HeaderName] =
-                SignatureError.Format(ClassifyVerificationError(ex));
+            var errorCode = ClassifyVerificationError(ex);
+            context.Response.Headers[SignatureError.HeaderName] = errorCode == SignatureErrorCode.UnsupportedAlgorithm
+                ? SignatureError.Format(errorCode, supportedAlgorithms: SupportedAlgorithms)
+                : SignatureError.Format(errorCode);
             return;
         }
 
@@ -135,6 +140,12 @@ public sealed class AAuthVerificationMiddleware
         var msg = ex.Message;
         if (msg.Contains("covered components", StringComparison.OrdinalIgnoreCase))
             return SignatureErrorCode.InvalidInput;
+        // Algorithm mismatch: key uses a different curve/type than Ed25519
+        if (msg.Contains("not a valid Ed25519 OKP key", StringComparison.OrdinalIgnoreCase) ||
+            msg.Contains("not an Ed25519 OKP key", StringComparison.OrdinalIgnoreCase) ||
+            msg.Contains("Unsupported or missing 'alg'", StringComparison.OrdinalIgnoreCase) ||
+            msg.Contains("Unsupported 'alg'", StringComparison.OrdinalIgnoreCase))
+            return SignatureErrorCode.UnsupportedAlgorithm;
         if (msg.Contains("freshness window", StringComparison.OrdinalIgnoreCase) ||
             msg.Contains("signature verification failed", StringComparison.OrdinalIgnoreCase))
             return SignatureErrorCode.InvalidSignature;
@@ -144,7 +155,6 @@ public sealed class AAuthVerificationMiddleware
         if (msg.Contains("scheme is not", StringComparison.OrdinalIgnoreCase) ||
             msg.Contains("Unsupported Signature-Key scheme", StringComparison.OrdinalIgnoreCase) ||
             msg.Contains("cnf.jwk", StringComparison.OrdinalIgnoreCase) ||
-            msg.Contains("not a valid Ed25519", StringComparison.OrdinalIgnoreCase) ||
             msg.Contains("IKeyLookup", StringComparison.OrdinalIgnoreCase) ||
             msg.Contains("jkt parameter does not match", StringComparison.OrdinalIgnoreCase))
             return SignatureErrorCode.InvalidKey;
