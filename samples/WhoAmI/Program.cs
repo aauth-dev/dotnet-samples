@@ -77,10 +77,10 @@ app.MapGet("/", async (
     MetadataClient metadata,
     JwksClient jwks) =>
 {
-    var parsed = (SignatureKeyParser.ParsedSignatureKey)ctx.Items[
+    var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)ctx.Items[
         AAuthVerificationMiddleware.ContextItemKey]!;
 
-    var typ = (string?)parsed.Header["typ"];
+    var typ = (string?)parsed.Header?["typ"];
 
     if (typ == AgentTokenBuilder.TokenType)
     {
@@ -104,7 +104,7 @@ app.Run();
 // -----------------------------------------------------------------------
 static async Task<IResult> ChallengeWithResourceToken(
     HttpContext ctx,
-    SignatureKeyParser.ParsedSignatureKey parsed,
+    SignatureKeyParser.ParsedSignatureKeyInfo parsed,
     TokenVerifier verifier,
     AAuthKey resourceKey,
     string resourceIssuer,
@@ -118,7 +118,7 @@ static async Task<IResult> ChallengeWithResourceToken(
     try
     {
         agentToken = await verifier.VerifyWithJwksAsync(
-            parsed.Jwt, metadata, jwks,
+            parsed.Jwt!, metadata, jwks,
             AgentTokenBuilder.TokenType,
             AgentTokenBuilder.AgentDwk,
             expectedAudience: null);
@@ -148,7 +148,7 @@ static async Task<IResult> ChallengeWithResourceToken(
         Issuer = resourceIssuer,
         Audience = personServer,
         Agent = agentId,
-        AgentJkt = parsed.ConfirmationKey.ComputeJwkThumbprint(),
+        AgentJkt = parsed.ConfirmationKey!.ComputeJwkThumbprint(),
         Key = resourceKey,
         KeyId = ResourceKid,
         Scope = ResourceScope,
@@ -161,7 +161,7 @@ static async Task<IResult> ChallengeWithResourceToken(
 }
 
 static async Task<IResult> ReturnClaims(
-    SignatureKeyParser.ParsedSignatureKey parsed,
+    SignatureKeyParser.ParsedSignatureKeyInfo parsed,
     TokenVerifier verifier,
     MetadataClient metadata,
     JwksClient jwks,
@@ -171,7 +171,7 @@ static async Task<IResult> ReturnClaims(
     try
     {
         authToken = await verifier.VerifyWithJwksAsync(
-            parsed.Jwt,
+            parsed.Jwt!,
             metadata,
             jwks,
             expectedType: AuthTokenBuilder.TokenType,
@@ -203,7 +203,7 @@ static async Task<IResult> ReturnClaims(
         return Results.Json(new { error = "invalid_auth_token", detail = $"malformed cnf.jwk: {ex.Message}" },
             statusCode: StatusCodes.Status401Unauthorized);
     }
-    if (authKey.ComputeJwkThumbprint() != parsed.ConfirmationKey.ComputeJwkThumbprint())
+    if (authKey.ComputeJwkThumbprint() != parsed.ConfirmationKey!.ComputeJwkThumbprint())
     {
         return Results.Json(new { error = "invalid_auth_token", detail = "cnf.jwk does not match request signing key" },
             statusCode: StatusCodes.Status401Unauthorized);

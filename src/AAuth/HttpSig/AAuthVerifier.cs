@@ -50,7 +50,7 @@ public sealed class AAuthVerifier
     /// <param name="signatureKey">Verbatim <c>Signature-Key</c> header value.</param>
     /// <param name="signatureInput">Verbatim <c>Signature-Input</c> header value.</param>
     /// <param name="signatureHeader">Verbatim <c>Signature</c> header value.</param>
-    /// <param name="publicKey">Public key extracted from the <c>Signature-Key</c> token (cnf.jwk).</param>
+    /// <param name="publicKey">Public key for HTTP-signature verification (resolved from scheme).</param>
     /// <param name="authorization">Verbatim <c>Authorization</c> header value, or null if absent.</param>
     /// <exception cref="AAuthVerificationException">If any check fails.</exception>
     public void Verify(
@@ -60,7 +60,7 @@ public sealed class AAuthVerifier
         string signatureKey,
         string signatureInput,
         string signatureHeader,
-        AAuthKey publicKey,
+        IAAuthKey publicKey,
         string? authorization = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(method);
@@ -137,7 +137,7 @@ public sealed class AAuthVerifier
 
         if (!publicKey.Verify(Encoding.ASCII.GetBytes(sb.ToString()), signatureBytes))
         {
-            throw new AAuthVerificationException("Ed25519 signature verification failed.");
+            throw new AAuthVerificationException("HTTP signature verification failed.");
         }
     }
 

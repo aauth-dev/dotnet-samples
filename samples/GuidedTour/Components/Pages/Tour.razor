@@ -29,6 +29,15 @@
             <option value="@TourMode.Deferred" disabled="@(!Session.HasPersonServer)">4 · Deferred consent — user approves, 9 steps</option>
         </select>
     </label>
+    <label class="flow-picker__label" for="signing-mode-select">
+        <span class="flow-picker__title">Signing mode</span>
+        <select id="signing-mode-select" value="@Session.SigningMode" @onchange="OnSigningModeChanged" disabled="@_busy">
+            <option value="@SigningMode.Jwt">jwt — token inline</option>
+            <option value="@SigningMode.Hwk">hwk — pseudonymous (jkt)</option>
+            <option value="@SigningMode.JwksUri">jwks_uri — agent identity</option>
+            <option value="@SigningMode.JktJwt">jkt-jwt — delegation</option>
+        </select>
+    </label>
     <div class="flow-picker__actions">
         @if (Session.AwaitingUserApproval)
         {
@@ -309,5 +318,13 @@
             _error = $"{ex.GetType().Name}: {ex.Message}";
         }
         finally { _busy = false; }
+    }
+
+    private void OnSigningModeChanged(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<SigningMode>(e.Value?.ToString(), out var mode))
+        {
+            Session.SigningMode = mode;
+        }
     }
 }

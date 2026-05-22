@@ -7,7 +7,7 @@ using AAuth.Discovery;
 using AAuth.HttpSig;
 
 const string Usage = "Usage: AgentConsole <url> --ap <agent-provider-url> [--sub <agent-id>] " +
-    "[--kid <key-id>] [--ps <person-server-url>]";
+    "[--kid <key-id>] [--ps <person-server-url>] [--signing-mode jwt|hwk|jwks_uri|jkt-jwt]";
 
 if (args.Length < 1 || args[0] is "--help" or "-h")
 {
@@ -31,10 +31,11 @@ if (!Uri.TryCreate(args[0], UriKind.Absolute, out var url))
 string subject = "aauth:demo@ap.example";
 string? personServer = null;
 string? apUrl = null;
+string signingMode = "jwt";
 for (int i = 1; i < args.Length; i++)
 {
     string flag = args[i];
-    if (flag is "--sub" or "--ps" or "--ap")
+    if (flag is "--sub" or "--ps" or "--ap" or "--signing-mode")
     {
         if (i + 1 >= args.Length)
         {
@@ -47,6 +48,7 @@ for (int i = 1; i < args.Length; i++)
             case "--sub": subject = value; break;
             case "--ps":  personServer = value; break;
             case "--ap":  apUrl = value; break;
+            case "--signing-mode": signingMode = value; break;
         }
     }
     else
@@ -54,6 +56,12 @@ for (int i = 1; i < args.Length; i++)
         Console.Error.WriteLine($"Unknown argument: {flag}");
         return 1;
     }
+}
+
+if (signingMode is not ("jwt" or "hwk" or "jwks_uri" or "jkt-jwt"))
+{
+    Console.Error.WriteLine($"Unknown signing mode: {signingMode}. Must be jwt, hwk, jwks_uri, or jkt-jwt.");
+    return 1;
 }
 
 if (apUrl is null)
@@ -95,11 +103,22 @@ Console.WriteLine();
 // request; the challenge handler updates it when an auth-token is issued.
 var tokenHolder = new AAuthTokenHolder(agentToken);
 
+ISignatureKeyProvider BuildProvider(Func<string> tokenSource) => signingMode switch
+{
+    "hwk" => new HwkSignatureKeyProvider(key),
+    "jwks_uri" => new JwksUriSignatureKeyProvider(
+        $"{apBase}/.well-known/jwks.json", keyId),
+    "jkt-jwt" => new JktJwtSignatureKeyProvider(key, tokenSource),
+    _ => new JwtSignatureKeyProvider(tokenSource),
+};
+
 HttpMessageHandler BuildSigningPipeline(Func<string> tokenSource) =>
-    new AAuthSigningHandler(key, tokenSource)
+    new AAuthSigningHandler(key, BuildProvider(tokenSource))
     {
         InnerHandler = new HttpClientHandler(),
     };
+
+Console.WriteLine($"Signing mode: {signingMode}");
 
 // Resource client: ChallengeHandler on top when a PS is configured,
 // otherwise just the signing pipeline (identity-based mode).

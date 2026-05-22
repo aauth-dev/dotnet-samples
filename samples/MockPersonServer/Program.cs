@@ -105,11 +105,11 @@ app.UseWhen(
 // -----------------------------------------------------------------------
 app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore pending) =>
 {
-    var parsed = (SignatureKeyParser.ParsedSignatureKey)ctx.Items[
+    var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)ctx.Items[
         AAuthVerificationMiddleware.ContextItemKey]!;
 
     // Only an agent token may exchange — refuse anything else.
-    var typ = (string?)parsed.Header["typ"];
+    var typ = (string?)parsed.Header?["typ"];
     if (typ != AgentTokenBuilder.TokenType)
     {
         return Results.Json(
@@ -117,7 +117,7 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
             statusCode: StatusCodes.Status401Unauthorized);
     }
 
-    var agentId = (string?)parsed.Payload["sub"];
+    var agentId = (string?)parsed.Payload?["sub"];
     if (string.IsNullOrEmpty(agentId))
     {
         return Results.Json(new { error = "invalid_carrier_token", detail = "missing sub" },
@@ -179,7 +179,7 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
     // endpoint while polling the pending URL.
     if (requireConsent && !consent.IsConsented(agentId, audience, PsScope))
     {
-        var entry = pending.Add(agentId, audience, PsScope, resourceTokenJwt, parsed.ConfirmationKey);
+        var entry = pending.Add(agentId, audience, PsScope, resourceTokenJwt, parsed.ConfirmationKey!);
         var location = $"/pending/{entry.Id}";
         var interactionUrl = $"{psIssuer.TrimEnd('/')}/interaction";
         ctx.Response.Headers.Location = location;
@@ -190,7 +190,7 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
         return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
     }
 
-    var authToken = IssueAuthToken(agentId, audience, parsed.ConfirmationKey);
+    var authToken = IssueAuthToken(agentId, audience, parsed.ConfirmationKey!);
     return Results.Ok(new { auth_token = authToken });
 });
 

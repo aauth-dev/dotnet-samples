@@ -16,7 +16,7 @@ This document identifies features defined in the AAuth specification that are **
 | Endpoints | ~15 distinct | 3 (resource well-known, PS token, polling) | ~12 |
 | Token Types | 3 | 3 (agent, resource, auth) | 0 (structure only) |
 | Token Building | Required claims per type | Partial (`act` missing from builder) | 1 |
-| Signature-Key Schemes | 4 | 1 (`jwt`) | 3 |
+| Signature-Key Schemes | 4 | 1 end-to-end (`jwt`); 4 parse/format | 3 pipeline gaps |
 | Cryptographic Algorithms | 2 | 1 (EdDSA/Ed25519) | 1 |
 | Governance (Missions) | Full lifecycle | None | Full |
 | R3 (Rich Resource Requests) | Full lifecycle | None | Full |
@@ -79,14 +79,50 @@ This document identifies features defined in the AAuth specification that are **
 
 ## 3. Signature-Key Schemes
 
-| Scheme | Purpose | Status |
-|--------|---------|--------|
-| `jwt` | Carry agent/auth token directly | ✅ Implemented |
-| `jkt-jwt` | Two-key delegation (durable→ephemeral) | ❌ Not implemented |
-| `hwk` | Inline hardware-bound key (enrollment) | ❌ Not implemented |
-| `jwks_uri` | Key at endpoint (self-hosted agents) | ❌ Not implemented |
+| Scheme | Purpose | Formatting | Parsing | Signing Handler | Verification Middleware |
+|--------|---------|:---:|:---:|:---:|:---:|
+| `jwt` | Carry agent/auth token directly | ✅ | ✅ | ✅ | ✅ |
+| `jkt-jwt` | Two-key delegation (durable→ephemeral) | ✅ | ✅ | ❌ | ❌ |
+| `hwk` | Inline hardware-bound key (enrollment) | ✅ | ✅ | ❌ | ❌ |
+| `jwks_uri` | Key at endpoint (self-hosted agents) | ✅ | ✅ | ❌ | ❌ |
 
-**Impact:** Without `jkt-jwt`, the SDK cannot support token refresh or the two-key pattern defined in the bootstrap spec.
+> **Update (2026-05):** Formatting (`SignatureKeyHeader.Format*`) and parsing
+> (`SignatureKeyParser.ParseAny`) were implemented in the gap-remediation Phase 3.
+> The remaining gap is **end-to-end pipeline support**: the signing handler
+> (`AAuthSigningHandler`) only produces `sig=jwt`, and the verification
+> middleware only calls `SignatureKeyParser.Parse()` (jwt-only path).
+
+### 3.1 End-to-End Signing Mode Gaps
+
+**Anonymous (no signature):** Trivially supported — resources that don't require
+signatures simply skip the middleware.
+
+**Pseudonymous (`hwk`):**
+- *Signing:* Handler needs a mode that emits `FormatHwk(jkt)` and signs with
+  the corresponding key (no token involved).
+- *Verification:* Middleware receives only a JWK thumbprint. Must resolve the
+  actual public key via an application-supplied `IKeyLookup` (e.g. the AP's
+  enrollment store). Requires a new DI service abstraction.
+
+**Agent Identity (`jwks_uri`):**
+- *Signing:* Handler needs a mode that emits `FormatJwksUri(uri, kid)` and
+  signs with the corresponding key.
+- *Verification:* Middleware fetches the JWKS from the URI (existing `JwksClient`
+  can be reused), extracts the key by `kid`, and verifies. Security: must
+  enforce `https` scheme, rate-limit fetches (spec: ≤1/issuer/min), and
+  respect 24h max cache.
+
+**Delegation (`jkt-jwt`):**
+- *Signing:* Handler needs a mode that takes an ephemeral key (for signing) +
+  a naming JWT (signed by durable key), emits `FormatJktJwt(jkt, jwt)`.
+- *Verification:* Extract `jkt` + `jwt`. Verify the naming JWT signature
+  (from `cnf.jwk` or JWKS). Confirm the HTTP-signing key's thumbprint matches
+  `jkt`. Verify the HTTP signature with that key.
+
+**Impact:** Without end-to-end support, the SDK can only participate in
+Agent Token flows. Pseudonymous enrollment, self-hosted agent identity, and
+two-key refresh are parse-only — cannot produce or verify signed requests in
+those modes.
 
 ---
 
@@ -404,12 +440,12 @@ src/AAuth/
 ├── Headers/                ← Partial
 │   ├── AAuthInteraction    ✅ Interaction requirement
 │   └── AAuthRequirement    ✅ Auth-token requirement (others parsed but unused)
-├── HttpSig/                ← Complete for jwt scheme
-│   ├── AAuthSigningHandler ✅ Request signing
+├── HttpSig/                ← Parse/format complete; pipeline wired for jwt only
+│   ├── AAuthSigningHandler ✅ Request signing (jwt scheme only)
 │   ├── AAuthVerifier       ✅ Signature verification
-│   ├── SignatureKeyHeader   ✅ jwt scheme only
-│   ├── SignatureKeyParser   ✅ JWT extraction
-│   └── Middleware          ✅ ASP.NET Core integration
+│   ├── SignatureKeyHeader   ✅ All 4 schemes (format)
+│   ├── SignatureKeyParser   ✅ All 4 schemes (parse via ParseAny); jwt-only via Parse()
+│   └── Middleware          ✅ ASP.NET Core integration (jwt scheme only)
 ├── Server/                 ← Resource only
 │   └── WellKnownEndpoints  ✅ Resource metadata + JWKS
 └── Tokens/                 ← Builders complete, verification partial

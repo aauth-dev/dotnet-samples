@@ -20,6 +20,22 @@ public enum TourMode
 }
 
 /// <summary>
+/// Which Signature-Key scheme the agent uses for signed requests.
+/// Maps 1:1 to the four AAuth signing modes.
+/// </summary>
+public enum SigningMode
+{
+    /// <summary><c>sig=jwt</c> — carry agent/auth token inline (default).</summary>
+    Jwt,
+    /// <summary><c>sig=hwk</c> — pseudonymous, bare key thumbprint.</summary>
+    Hwk,
+    /// <summary><c>sig=jwks_uri</c> — agent identity via discoverable JWKS.</summary>
+    JwksUri,
+    /// <summary><c>sig=jkt-jwt</c> — two-key delegation (durable → ephemeral).</summary>
+    JktJwt,
+}
+
+/// <summary>
 /// Configuration for the Guided Tour sample. Bound from the
 /// <c>GuidedTour</c> section of <c>appsettings.json</c>.
 /// </summary>

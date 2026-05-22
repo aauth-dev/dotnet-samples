@@ -75,6 +75,13 @@ public sealed class TourSession : IAsyncDisposable
     /// <summary>True when a Person Server URL is configured. The picker is always shown; this just controls whether the three-party options are selectable.</summary>
     public bool HasPersonServer => !string.IsNullOrWhiteSpace(_options.PersonServerUrl);
 
+    /// <summary>
+    /// Which Signature-Key scheme the agent emits on signed requests.
+    /// Can be changed between runs without resetting — the next signed
+    /// step picks up the new mode immediately.
+    /// </summary>
+    public SigningMode SigningMode { get; set; } = SigningMode.Jwt;
+
     /// <summary>Kept for backwards compatibility — always true now that the picker is always rendered.</summary>
     public bool CanSwitchMode => true;
 
@@ -259,6 +266,30 @@ public sealed class TourSession : IAsyncDisposable
         _apEnrolEndpoint = null;
         _userApproved = false;
         _aborted = false;
+    }
+
+    /// <summary>
+    /// Build a signing handler configured for the current <see cref="SigningMode"/>.
+    /// </summary>
+    private AAuthSigningHandler BuildSigningHandler(
+        Func<string> tokenFactory,
+        HttpMessageHandler inner,
+        Action<HttpRequestMessage, string>? onSignatureBase = null)
+    {
+        ISignatureKeyProvider provider = SigningMode switch
+        {
+            SigningMode.Hwk => new HwkSignatureKeyProvider(_agentKey!),
+            SigningMode.JwksUri => new JwksUriSignatureKeyProvider(
+                $"{(_options.AgentProviderUrl ?? "http://localhost:5301").TrimEnd('/')}/.well-known/jwks.json",
+                "tour-key-1"),
+            SigningMode.JktJwt => new JktJwtSignatureKeyProvider(_agentKey!, tokenFactory),
+            _ => new JwtSignatureKeyProvider(tokenFactory),
+        };
+        return new AAuthSigningHandler(_agentKey!, provider)
+        {
+            InnerHandler = inner,
+            OnSignatureBase = onSignatureBase,
+        };
     }
 
     /// <summary>
@@ -659,11 +690,8 @@ public sealed class TourSession : IAsyncDisposable
     {
         string? capturedBase = null;
         var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
-        var signing = new AAuthSigningHandler(_agentKey!, () => _agentToken!)
-        {
-            InnerHandler = capture,
-            OnSignatureBase = (_, b) => capturedBase = b,
-        };
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new HttpClient(signing);
 
         var resp = await client.GetAsync(_options.WhoAmIUrl, ct);
@@ -757,11 +785,8 @@ public sealed class TourSession : IAsyncDisposable
         var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
         // The exchange request is always signed with the AGENT token, never the
         // post-exchange auth token. The PS authenticates the agent identity.
-        var signing = new AAuthSigningHandler(_agentKey!, () => _agentToken!)
-        {
-            InnerHandler = capture,
-            OnSignatureBase = (_, b) => capturedBase = b,
-        };
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new HttpClient(signing);
 
         using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
@@ -802,11 +827,8 @@ public sealed class TourSession : IAsyncDisposable
     {
         string? capturedBase = null;
         var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
-        var signing = new AAuthSigningHandler(_agentKey!, () => _authToken!)
-        {
-            InnerHandler = capture,
-            OnSignatureBase = (_, b) => capturedBase = b,
-        };
+        var signing = BuildSigningHandler(
+            () => _authToken!, capture, (_, b) => capturedBase = b);
         using var client = new HttpClient(signing);
 
         await client.GetAsync(_options.WhoAmIUrl, ct);
@@ -840,11 +862,8 @@ public sealed class TourSession : IAsyncDisposable
     {
         string? capturedBase = null;
         var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
-        var signing = new AAuthSigningHandler(_agentKey!, () => _agentToken!)
-        {
-            InnerHandler = capture,
-            OnSignatureBase = (_, b) => capturedBase = b,
-        };
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new HttpClient(signing);
 
         using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
@@ -953,11 +972,8 @@ public sealed class TourSession : IAsyncDisposable
 
         var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
         string? capturedBase = null;
-        var signing = new AAuthSigningHandler(_agentKey!, () => _agentToken!)
-        {
-            InnerHandler = capture,
-            OnSignatureBase = (_, b) => capturedBase = b,
-        };
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new HttpClient(signing);
         var pollerOptions = new DeferredPollerOptions
         {

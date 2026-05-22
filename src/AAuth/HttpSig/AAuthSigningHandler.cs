@@ -6,7 +6,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Crypto;
-using Microsoft.IdentityModel.Tokens;
 
 namespace AAuth.HttpSig;
 
@@ -40,8 +39,8 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         "@method", "@authority", "@path", "signature-key",
     });
 
-    private readonly AAuthKey _key;
-    private readonly Func<string> _tokenFactory;
+    private readonly IAAuthKey _key;
+    private readonly ISignatureKeyProvider _signatureKeyProvider;
     private readonly Func<DateTimeOffset> _clock;
 
     /// <summary>
@@ -60,7 +59,28 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     /// </summary>
     public IReadOnlyList<string>? Capabilities { get; init; }
 
-    /// <summary>Create a signing handler.</summary>
+    /// <summary>Create a signing handler with a strategy-based key provider.</summary>
+    /// <param name="key">The agent's signing key (must have private component).</param>
+    /// <param name="signatureKeyProvider">Strategy that produces the Signature-Key header value.</param>
+    /// <param name="clock">Optional clock for deterministic tests.</param>
+    public AAuthSigningHandler(
+        IAAuthKey key,
+        ISignatureKeyProvider signatureKeyProvider,
+        Func<DateTimeOffset>? clock = null)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        ArgumentNullException.ThrowIfNull(signatureKeyProvider);
+        if (!key.HasPrivateKey)
+        {
+            throw new ArgumentException("Signing key must include a private component.", nameof(key));
+        }
+
+        _key = key;
+        _signatureKeyProvider = signatureKeyProvider;
+        _clock = clock ?? (() => DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>Create a signing handler (convenience for the <c>jwt</c> scheme).</summary>
     /// <param name="key">The agent's signing key.</param>
     /// <param name="tokenFactory">
     /// Returns the JWT to embed in the <c>Signature-Key</c> header for each
@@ -74,17 +94,8 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         AAuthKey key,
         Func<string> tokenFactory,
         Func<DateTimeOffset>? clock = null)
+        : this(key, new JwtSignatureKeyProvider(tokenFactory), clock)
     {
-        ArgumentNullException.ThrowIfNull(key);
-        ArgumentNullException.ThrowIfNull(tokenFactory);
-        if (!key.HasPrivateKey)
-        {
-            throw new ArgumentException("Signing key must include a private component.", nameof(key));
-        }
-
-        _key = key;
-        _tokenFactory = tokenFactory;
-        _clock = clock ?? (() => DateTimeOffset.UtcNow);
     }
 
     /// <inheritdoc />
@@ -104,8 +115,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
             throw new InvalidOperationException("Request must have a RequestUri.");
         }
 
-        var jwt = _tokenFactory();
-        var signatureKey = SignatureKeyHeader.FormatJwt(jwt);
+        var signatureKey = _signatureKeyProvider.GetSignatureKeyHeader();
         var created = _clock().ToUnixTimeSeconds();
 
         var method = request.Method.Method.ToUpperInvariant();

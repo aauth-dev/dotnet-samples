@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using AAuth.Errors;
+using AAuth.Crypto;
 using AAuth.HttpSig;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Builder;
@@ -11,36 +12,39 @@ namespace AAuth.Server;
 
 /// <summary>
 /// ASP.NET Core middleware that verifies the AAuth HTTP signature on each
-/// inbound request and exposes the parsed token via <see cref="HttpContext.Items"/>.
+/// inbound request and exposes the parsed scheme info via <see cref="HttpContext.Items"/>.
 /// </summary>
 /// <remarks>
 /// Layering:
 /// <list type="number">
 /// <item>Pull <c>Signature</c>, <c>Signature-Input</c>, <c>Signature-Key</c> headers.</item>
-/// <item><see cref="SignatureKeyParser"/> decodes the carrier JWT and exposes <c>cnf.jwk</c>.</item>
+/// <item><see cref="SignatureKeyParser.ParseAny"/> decodes the scheme and extracts key references.</item>
+/// <item><see cref="ISignatureKeyResolver"/> resolves the public key (inline, JWKS, or lookup).</item>
 /// <item><see cref="AAuthVerifier"/> verifies the RFC 9421 signature against that key.</item>
 /// <item>The downstream pipeline can read <see cref="ContextItemKey"/> to inspect claims.</item>
 /// </list>
 /// Token-level verification (JWKS lookup, <c>aud</c>/<c>scope</c> checks) is
 /// the responsibility of route handlers via <see cref="TokenVerifier"/> —
-/// this middleware only ensures the request is signed by the key bound in
-/// the carrier token's <c>cnf.jwk</c>.
+/// this middleware only ensures the request is signed by the key resolved from
+/// the Signature-Key header.
 /// </remarks>
 public sealed class AAuthVerificationMiddleware
 {
-    /// <summary><see cref="HttpContext.Items"/> key for the parsed token.</summary>
+    /// <summary><see cref="HttpContext.Items"/> key for the parsed Signature-Key info.</summary>
     public const string ContextItemKey = "AAuth.ParsedSignatureKey";
 
     private readonly RequestDelegate _next;
     private readonly AAuthVerifier _verifier;
+    private readonly ISignatureKeyResolver _resolver;
 
     /// <summary>Create the middleware.</summary>
-    public AAuthVerificationMiddleware(RequestDelegate next, AAuthVerifier verifier)
+    public AAuthVerificationMiddleware(RequestDelegate next, AAuthVerifier verifier, ISignatureKeyResolver? resolver = null)
     {
         ArgumentNullException.ThrowIfNull(next);
         ArgumentNullException.ThrowIfNull(verifier);
         _next = next;
         _verifier = verifier;
+        _resolver = resolver ?? new DefaultSignatureKeyResolver();
     }
 
     /// <inheritdoc cref="RequestDelegate"/>
@@ -61,13 +65,15 @@ public sealed class AAuthVerificationMiddleware
             return;
         }
 
-        SignatureKeyParser.ParsedSignatureKey parsed;
+        IAAuthKey publicKey;
+        SignatureKeyParser.ParsedSignatureKeyInfo parsedInfo;
         try
         {
-            parsed = SignatureKeyParser.Parse(signatureKey);
-            // RFC 9421 §2.2.7: @path is the wire form. ASP.NET's PathBase +
-            // Path is the decoded form; PathBase.Value + Path.Value preserves
-            // the original encoding. Use Path.ToUriComponent() for safety.
+            parsedInfo = SignatureKeyParser.ParseAny(signatureKey);
+            var resolution = await _resolver.ResolveAsync(parsedInfo, context.RequestAborted)
+                .ConfigureAwait(false);
+            publicKey = resolution.PublicKey;
+
             var path = (req.PathBase + req.Path).ToUriComponent();
             if (string.IsNullOrEmpty(path)) { path = "/"; }
 
@@ -78,7 +84,7 @@ public sealed class AAuthVerificationMiddleware
                 signatureKey: signatureKey,
                 signatureInput: signatureInput,
                 signatureHeader: signature,
-                publicKey: parsed.ConfirmationKey,
+                publicKey: publicKey,
                 authorization: req.Headers.Authorization.FirstOrDefault());
         }
         catch (AAuthVerificationException ex)
@@ -89,14 +95,19 @@ public sealed class AAuthVerificationMiddleware
             return;
         }
 
-        context.Items[ContextItemKey] = parsed;
+        context.Items[ContextItemKey] = parsedInfo;
 
         // Replay detection: if a JTI store is attached, check for replay.
+        // JTI is available for schemes that carry a JWT (jwt, jkt-jwt).
+        var tokenId = parsedInfo.Payload?["jti"]?.GetValue<string>();
         if (context.Items.TryGetValue(JtiStoreItemKey, out var storeObj) &&
             storeObj is IJtiStore jtiStore &&
-            parsed.TokenId is { Length: > 0 } jti)
+            tokenId is { Length: > 0 } jti)
         {
-            var expiration = parsed.Expiration ?? DateTimeOffset.UtcNow.AddMinutes(5);
+            var expNode = parsedInfo.Payload?["exp"];
+            var expiration = expNode is not null
+                ? DateTimeOffset.FromUnixTimeSeconds(expNode.GetValue<long>())
+                : DateTimeOffset.UtcNow.AddMinutes(5);
             if (!await jtiStore.TryRecordAsync(jti, expiration, context.RequestAborted))
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
@@ -127,13 +138,21 @@ public sealed class AAuthVerificationMiddleware
         if (msg.Contains("freshness window", StringComparison.OrdinalIgnoreCase) ||
             msg.Contains("signature verification failed", StringComparison.OrdinalIgnoreCase))
             return SignatureErrorCode.InvalidSignature;
+        if (msg.Contains("unknown key", StringComparison.OrdinalIgnoreCase) ||
+            msg.Contains("key not found", StringComparison.OrdinalIgnoreCase))
+            return SignatureErrorCode.UnknownKey;
         if (msg.Contains("scheme is not", StringComparison.OrdinalIgnoreCase) ||
+            msg.Contains("Unsupported Signature-Key scheme", StringComparison.OrdinalIgnoreCase) ||
             msg.Contains("cnf.jwk", StringComparison.OrdinalIgnoreCase) ||
-            msg.Contains("not a valid Ed25519", StringComparison.OrdinalIgnoreCase))
+            msg.Contains("not a valid Ed25519", StringComparison.OrdinalIgnoreCase) ||
+            msg.Contains("IKeyLookup", StringComparison.OrdinalIgnoreCase) ||
+            msg.Contains("jkt parameter does not match", StringComparison.OrdinalIgnoreCase))
             return SignatureErrorCode.InvalidKey;
         if (msg.Contains("not a compact JWS", StringComparison.OrdinalIgnoreCase) ||
             msg.Contains("missing the 'cnf'", StringComparison.OrdinalIgnoreCase))
             return SignatureErrorCode.InvalidJwt;
+        if (msg.Contains("URI must use https", StringComparison.OrdinalIgnoreCase))
+            return SignatureErrorCode.InvalidKey;
         return SignatureErrorCode.InvalidSignature;
     }
 
@@ -161,14 +180,17 @@ public static class AAuthVerificationMiddlewareExtensions
 {
     /// <summary>
     /// Add the AAuth HTTP-signature verification middleware to the pipeline.
-    /// When <paramref name="verifier"/> is null, the middleware resolves an
-    /// <see cref="AAuthVerifier"/> from DI; if none is registered, a default
-    /// instance is constructed at first use.
     /// </summary>
+    /// <param name="app">The application builder.</param>
+    /// <param name="verifier">Optional verifier instance.</param>
+    /// <param name="jtiStore">Optional JTI store for replay detection.</param>
+    /// <param name="resolver">Optional resolver for key resolution from Signature-Key header.
+    /// Defaults to <see cref="DefaultSignatureKeyResolver"/> which handles all schemes.</param>
     public static IApplicationBuilder UseAAuthVerification(
         this IApplicationBuilder app,
         AAuthVerifier? verifier = null,
-        IJtiStore? jtiStore = null)
+        IJtiStore? jtiStore = null,
+        ISignatureKeyResolver? resolver = null)
     {
         ArgumentNullException.ThrowIfNull(app);
 
@@ -182,12 +204,16 @@ public static class AAuthVerificationMiddlewareExtensions
             });
         }
 
-        if (verifier is not null)
-        {
-            return app.UseMiddleware<AAuthVerificationMiddleware>(verifier);
-        }
-        var resolved = app.ApplicationServices.GetService(typeof(AAuthVerifier)) as AAuthVerifier
+        var resolvedVerifier = verifier
+            ?? app.ApplicationServices.GetService(typeof(AAuthVerifier)) as AAuthVerifier
             ?? new AAuthVerifier();
-        return app.UseMiddleware<AAuthVerificationMiddleware>(resolved);
+        var resolvedResolver = resolver
+            ?? app.ApplicationServices.GetService(typeof(ISignatureKeyResolver)) as ISignatureKeyResolver;
+
+        return app.Use(next =>
+        {
+            var mw = new AAuthVerificationMiddleware(next, resolvedVerifier, resolvedResolver);
+            return mw.InvokeAsync;
+        });
     }
 }
