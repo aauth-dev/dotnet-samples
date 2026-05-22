@@ -152,6 +152,41 @@ still work since `AAuthKey : IAAuthKey`).
 
 ---
 
+## Signing Mode × Flow Matrix (spec-mandated)
+
+Per the AAuth Protocol spec and the [Signing Mode Comparison](https://explorer.aauth.dev/signing/compare):
+
+| Flow | Valid Signing Modes | Rationale |
+|------|--------------------:|-----------|
+| **Identity-based (no PS)** | `hwk`, `jwks_uri` | Resource applies own access control; no PS-issued token available |
+| **PS-asserted (three-party)** | `jwt` only | Spec: "agent MUST present its agent token via Signature-Key using `scheme=jwt`" |
+| **AS-federated (four-party)** | `jwks_uri` (PS→AS), `jwt` (agent→resource) | PS uses JWKS identity to AS; agent presents auth token via jwt |
+| **Bootstrap refresh** | `jkt-jwt` | Two-key delegation: naming JWT from durable key delegates to ephemeral key |
+
+**Key constraint:** `jwt` requires a Person Server (the token carries a `ps` claim and is PS-issued).
+Identity-based access (no PS) cannot use `jwt` — only `hwk` or `jwks_uri`.
+
+### What the resource learns per mode
+
+| Mode | Scheme | Resource learns | Use case |
+|------|--------|-----------------|----------|
+| Anonymous | (none) | Nothing | Public endpoints, no access control |
+| Pseudonymous | `sig=hwk` | Key thumbprint — identity unknown | Accountable access, rate-limiting by key |
+| Agent Identity | `sig=jwks_uri` | Agent identifier + verifiable public key (via JWKS) | Access control by identity, replacing API keys |
+| Agent Token | `sig=jwt` | Agent identity, PS URL, bound signing key, delegation chain | Full PS-AS authorization flows (requires PS) |
+
+### Demo constraints
+
+- **GuidedTour**: Signing mode selector shown **only** in Identity flow (`hwk` / `jwks_uri`).
+  Three-party flows (Autonomous/Deferred) lock to `jwt` per spec — no selector shown.
+  `jwt` is not an option in the Identity picker because it requires a PS.
+- **AgentConsole**: Defaults to `hwk` without `--ps`, `jwt` with `--ps`. Rejects `jwt` without
+  `--ps` and rejects non-`jwt` with `--ps`.
+- **WhoAmI**: Handles `hwk`/`jwks_uri` for identity-based access (returns 200 with scheme-appropriate
+  claims). For `jwt` with `aa-agent+jwt` containing a `ps` claim, issues challenge for three-party flow.
+
+---
+
 ## Out of scope
 
 | Item | Reason |

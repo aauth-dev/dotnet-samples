@@ -64,11 +64,12 @@ app.UseWhen(
 //
 // Flow:
 //   1. AAuthVerificationMiddleware ensures the request is signed and exposes
-//      the parsed carrier token via HttpContext.Items.
-//   2. If the token is an agent token (aa-agent+jwt), mint a resource_token
-//      and return 401 with AAuth-Requirement: requirement=auth-token.
-//   3. If the token is an auth token (aa-auth+jwt), verify it against the
-//      PS's JWKS (via well-known discovery) and return 200 with claims.
+//      the parsed scheme info via HttpContext.Items.
+//   2. Dispatch on Signature-Key scheme:
+//      - jwt with aa-agent+jwt: challenge (three-party) or identity-accept
+//      - jwt with aa-auth+jwt: verify auth token, return claims
+//      - hwk: pseudonymous identity-based access (return key thumbprint)
+//      - jwks_uri: agent identity-based access (return agent URI + kid)
 // -----------------------------------------------------------------------
 app.MapGet("/", async (
     HttpContext ctx,
@@ -80,6 +81,36 @@ app.MapGet("/", async (
     var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)ctx.Items[
         AAuthVerificationMiddleware.ContextItemKey]!;
 
+    // ── Pseudonymous mode (hwk): identity-based accept ──────────────
+    // The resource knows a specific key signed this request but nothing
+    // about the agent's identity. Accept with key-level claims.
+    if (parsed.Scheme == "hwk")
+    {
+        return Results.Ok(new
+        {
+            mode = "pseudonymous",
+            scheme = "hwk",
+            jkt = parsed.Jkt,
+            note = "Resource sees key thumbprint only — agent identity unknown.",
+        });
+    }
+
+    // ── Agent Identity mode (jwks_uri): identity-based accept ───────
+    // The resource discovered and verified the agent's public key from
+    // a JWKS endpoint. The URI serves as the agent's identity.
+    if (parsed.Scheme == "jwks_uri")
+    {
+        return Results.Ok(new
+        {
+            mode = "agent-identity",
+            scheme = "jwks_uri",
+            jwks_uri = parsed.JwksUri,
+            kid = parsed.Kid,
+            note = "Resource verified agent's key via JWKS URI — full cryptographic identity.",
+        });
+    }
+
+    // ── Agent Token / Auth Token mode (jwt) ─────────────────────────
     var typ = (string?)parsed.Header?["typ"];
 
     if (typ == AgentTokenBuilder.TokenType)

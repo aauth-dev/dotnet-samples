@@ -76,11 +76,29 @@ public sealed class TourSession : IAsyncDisposable
     public bool HasPersonServer => !string.IsNullOrWhiteSpace(_options.PersonServerUrl);
 
     /// <summary>
-    /// Which Signature-Key scheme the agent emits on signed requests.
-    /// Can be changed between runs without resetting — the next signed
-    /// step picks up the new mode immediately.
+    /// Which Signature-Key scheme the agent uses for identity-based access.
+    /// Only meaningful in the Identity flow (hwk or jwks_uri) — three-party
+    /// flows (Autonomous/Deferred) always use jwt (requires PS) per spec.
     /// </summary>
-    public SigningMode SigningMode { get; set; } = SigningMode.Jwt;
+    public SigningMode SigningMode
+    {
+        get => _signingMode;
+        set
+        {
+            if (_signingMode == value) return;
+            _signingMode = value;
+            _agentToken = null;
+            ResetTimeline();
+        }
+    }
+    private SigningMode _signingMode = SigningMode.Hwk;
+
+    /// <summary>
+    /// The effective signing mode for the current flow. Identity flow
+    /// respects the user's choice; three-party flows force jwt.
+    /// </summary>
+    private SigningMode EffectiveSigningMode =>
+        Mode is TourMode.Identity ? SigningMode : SigningMode.Jwt;
 
     /// <summary>Kept for backwards compatibility — always true now that the picker is always rendered.</summary>
     public bool CanSwitchMode => true;
@@ -269,20 +287,21 @@ public sealed class TourSession : IAsyncDisposable
     }
 
     /// <summary>
-    /// Build a signing handler configured for the current <see cref="SigningMode"/>.
+    /// Build a signing handler for the current flow's effective signing mode.
+    /// Identity flow respects the user's selected mode; three-party flows
+    /// always use jwt per the AAuth spec requirement.
     /// </summary>
     private AAuthSigningHandler BuildSigningHandler(
         Func<string> tokenFactory,
         HttpMessageHandler inner,
         Action<HttpRequestMessage, string>? onSignatureBase = null)
     {
-        ISignatureKeyProvider provider = SigningMode switch
+        ISignatureKeyProvider provider = EffectiveSigningMode switch
         {
             SigningMode.Hwk => new HwkSignatureKeyProvider(_agentKey!),
             SigningMode.JwksUri => new JwksUriSignatureKeyProvider(
                 $"{(_options.AgentProviderUrl ?? "http://localhost:5301").TrimEnd('/')}/.well-known/jwks.json",
                 "tour-key-1"),
-            SigningMode.JktJwt => new JktJwtSignatureKeyProvider(_agentKey!, tokenFactory),
             _ => new JwtSignatureKeyProvider(tokenFactory),
         };
         return new AAuthSigningHandler(_agentKey!, provider)
@@ -709,15 +728,35 @@ public sealed class TourSession : IAsyncDisposable
         Steps.Add(new StepRecord
         {
             Number = Steps.Count + 1,
-            Title = "Signed GET (agent token)",
+            Title = EffectiveSigningMode switch
+            {
+                SigningMode.Hwk => "Signed GET (pseudonymous — hwk)",
+                SigningMode.JwksUri => "Signed GET (agent identity — jwks_uri)",
+                _ => "Signed GET (agent token — jwt)",
+            },
             From = Actor.Agent,
             To = Actor.Resource,
-            Narrative =
-                "The agent signs the request per RFC 9421 using its private key, " +
-                "covering @method, @authority, @path, and the signature-key header " +
-                "(which carries the agent JWT). If the resource accepts the agent " +
-                "identity directly, the call returns 200. Otherwise it returns 401 " +
-                "with an AAuth-Requirement header and a resource_token for the next leg.",
+            Narrative = EffectiveSigningMode switch
+            {
+                SigningMode.Hwk =>
+                    "The agent signs the request per RFC 9421. The Signature-Key header " +
+                    "carries `sig=hwk` with the key's JWK thumbprint — no token, no " +
+                    "identity. The resource learns only that a specific key signed this " +
+                    "request. Use for: accountable pseudonymous access, rate-limiting by key.",
+                SigningMode.JwksUri =>
+                    "The agent signs the request per RFC 9421. The Signature-Key header " +
+                    "carries `sig=jwks_uri` with a JWKS endpoint + kid. The resource " +
+                    "fetches the agent's public key from that URI and learns the agent's " +
+                    "full cryptographic identity. Use for: access control by agent identity, " +
+                    "replacing API keys.",
+                _ =>
+                    "The agent signs the request per RFC 9421. The Signature-Key header " +
+                    "carries `sig=jwt` with the full agent token inline. The resource " +
+                    "learns: agent identity, PS URL, and the bound signing key via " +
+                    "`cnf.jwk`. If the resource accepts the agent identity directly, " +
+                    "it returns 200. Otherwise it returns 401 with an AAuth-Requirement " +
+                    "header and a resource_token for the PS-asserted flow.",
+            },
             RequestLine = $"{ex.RequestLine}  →  {_options.WhoAmIUrl}",
             RequestHeaders = ex.RequestHeaders,
             StatusLine = ex.StatusLine,
@@ -805,11 +844,12 @@ public sealed class TourSession : IAsyncDisposable
             From = Actor.Agent,
             To = Actor.PersonServer,
             Narrative =
-                "The agent POSTs the resource_token to the PS's token_endpoint. The " +
-                "request is signed with the same agent key — the PS verifies the " +
-                "signature, validates the resource_token, and (in a real PS) checks " +
-                "user consent. On success it returns an `aa-auth+jwt` whose `cnf.jwk` " +
-                "binds the new auth token to the same agent key.",
+                "The agent POSTs the resource_token to the PS's token_endpoint. " +
+                "Per spec, the agent MUST present its agent token via the " +
+                "Signature-Key header using `scheme=jwt`. The PS verifies the " +
+                "signature, validates the resource_token, and (in a real PS) " +
+                "checks user consent. On success it returns an `aa-auth+jwt` " +
+                "whose `cnf.jwk` binds the new auth token to the same agent key.",
             RequestLine = $"{ex.RequestLine}  →  {_tokenEndpoint}",
             RequestHeaders = ex.RequestHeaders,
             RequestBody = PrettyJson(ex.RequestBody),
@@ -841,10 +881,13 @@ public sealed class TourSession : IAsyncDisposable
             From = Actor.Agent,
             To = Actor.Resource,
             Narrative =
-                "Same request as step 4, but now the signature-key header carries the " +
-                "PS-issued auth_token. The resource validates that the JWT is signed " +
-                "by its PS, that its `cnf.jwk` matches the request signer, and returns " +
-                "the protected payload.",
+                "Same request as the initial signed GET, but now the Signature-Key " +
+                "header carries the PS-issued auth_token via `sig=jwt`. Per spec, " +
+                "once an auth token has been issued for a resource, the agent " +
+                "presents the auth token (not the agent token) on subsequent " +
+                "requests. The resource validates that the JWT is signed by its " +
+                "PS, that `cnf.jwk` matches the request signer, and returns the " +
+                "protected payload.",
             RequestLine = $"{ex.RequestLine}  →  {_options.WhoAmIUrl}",
             RequestHeaders = ex.RequestHeaders,
             StatusLine = ex.StatusLine,
@@ -912,9 +955,10 @@ public sealed class TourSession : IAsyncDisposable
             From = Actor.Agent,
             To = Actor.PersonServer,
             Narrative =
-                "The agent POSTs the resource_token, but this PS requires user consent. " +
-                "Instead of an `aa-auth+jwt`, it returns `202 Accepted` with a `Location` " +
-                "pointing at a pending URL the agent will poll, plus an " +
+                "The agent POSTs the resource_token with its agent token via " +
+                "`sig=jwt` (MUST per spec), but this PS requires user consent. " +
+                "Instead of an `aa-auth+jwt`, the PS returns `202 Accepted` with a " +
+                "`Location` pointing at a pending URL the agent will poll, plus an " +
                 "`AAuth-Requirement: requirement=interaction` header carrying the " +
                 "user-facing interaction URL and a single-use code.",
             RequestLine = $"{ex.RequestLine}  →  {_tokenEndpoint}",
@@ -1036,11 +1080,12 @@ public sealed class TourSession : IAsyncDisposable
                 To = Actor.PersonServer,
                 Narrative =
                     "While the user clicks through the PS's interaction page, the agent " +
-                    "polls the pending URL with a signed `GET`. Each request honors the " +
-                    "PS's `Retry-After` cadence. Once consent is recorded the PS responds " +
-                    "with `200 OK` and the long-awaited `aa-auth+jwt`, bound (via " +
-                    "`cnf.jwk`) to the agent's signing key. If the user clicks **Deny** " +
-                    "instead, this step records a `403 access_denied` and the flow aborts.",
+                    "polls the pending URL with a signed `GET` (agent token via `sig=jwt`). " +
+                    "Each request honors the PS's `Retry-After` cadence. Once consent is " +
+                    "recorded the PS responds with `200 OK` and the long-awaited " +
+                    "`aa-auth+jwt`, bound (via `cnf.jwk`) to the agent's signing key. " +
+                    "If the user clicks **Deny** instead, this step records a " +
+                    "`403 access_denied` and the flow aborts.",
                 RequestLine = $"{ex.RequestLine}  →  {_pendingUrl}",
                 RequestHeaders = ex.RequestHeaders,
                 SignatureBase = capturedBase,

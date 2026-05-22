@@ -7,7 +7,7 @@ using AAuth.Discovery;
 using AAuth.HttpSig;
 
 const string Usage = "Usage: AgentConsole <url> --ap <agent-provider-url> [--sub <agent-id>] " +
-    "[--kid <key-id>] [--ps <person-server-url>] [--signing-mode jwt|hwk|jwks_uri|jkt-jwt]";
+    "[--kid <key-id>] [--ps <person-server-url>] [--signing-mode jwt|hwk|jwks_uri]";
 
 if (args.Length < 1 || args[0] is "--help" or "-h")
 {
@@ -31,7 +31,7 @@ if (!Uri.TryCreate(args[0], UriKind.Absolute, out var url))
 string subject = "aauth:demo@ap.example";
 string? personServer = null;
 string? apUrl = null;
-string signingMode = "jwt";
+string? signingMode = null;
 for (int i = 1; i < args.Length; i++)
 {
     string flag = args[i];
@@ -58,9 +58,26 @@ for (int i = 1; i < args.Length; i++)
     }
 }
 
-if (signingMode is not ("jwt" or "hwk" or "jwks_uri" or "jkt-jwt"))
+// Default: jwt for three-party (with PS), hwk for identity-based (no PS).
+signingMode ??= personServer is not null ? "jwt" : "hwk";
+
+if (signingMode is not ("jwt" or "hwk" or "jwks_uri"))
 {
-    Console.Error.WriteLine($"Unknown signing mode: {signingMode}. Must be jwt, hwk, jwks_uri, or jkt-jwt.");
+    Console.Error.WriteLine($"Unknown signing mode: {signingMode}. Must be jwt, hwk, or jwks_uri.");
+    return 1;
+}
+
+if (personServer is not null && signingMode is not "jwt")
+{
+    Console.Error.WriteLine("Three-party flows (--ps) require --signing-mode jwt per spec.");
+    Console.Error.WriteLine("Non-jwt modes (hwk, jwks_uri) are for identity-based access only.");
+    return 1;
+}
+
+if (personServer is null && signingMode is "jwt")
+{
+    Console.Error.WriteLine("Agent Token mode (jwt) requires a Person Server (--ps).");
+    Console.Error.WriteLine("For identity-based access without a PS, use --signing-mode hwk or jwks_uri.");
     return 1;
 }
 
@@ -108,7 +125,6 @@ ISignatureKeyProvider BuildProvider(Func<string> tokenSource) => signingMode swi
     "hwk" => new HwkSignatureKeyProvider(key),
     "jwks_uri" => new JwksUriSignatureKeyProvider(
         $"{apBase}/.well-known/jwks.json", keyId),
-    "jkt-jwt" => new JktJwtSignatureKeyProvider(key, tokenSource),
     _ => new JwtSignatureKeyProvider(tokenSource),
 };
 

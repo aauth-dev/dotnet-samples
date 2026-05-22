@@ -10,7 +10,10 @@
     <h1>AAuth Guided Tour</h1>
     <div class="config">
         <span class="hl-resource"><strong>Resource:</strong> @Options.Value.WhoAmIUrl</span>
-        <span class="hl-ps"><strong>Person Server:</strong> @(string.IsNullOrWhiteSpace(Options.Value.PersonServerUrl) ? "(none)" : Options.Value.PersonServerUrl)</span>
+        @if (!Session.IsIdentityMode)
+        {
+            <span class="hl-ps"><strong>Person Server:</strong> @(string.IsNullOrWhiteSpace(Options.Value.PersonServerUrl) ? "(none)" : Options.Value.PersonServerUrl)</span>
+        }
         <span class="hl-agent"><strong>Agent Provider:</strong> @(string.IsNullOrWhiteSpace(Options.Value.AgentProviderUrl) ? "(none)" : new Uri(Options.Value.AgentProviderUrl).GetLeftPart(UriPartial.Authority))</span>
     </div>
     @if (_error is not null)
@@ -25,19 +28,20 @@
         <select id="flow-select" value="@Session.Mode" @onchange="OnModeChangedAsync" disabled="@_busy">
             <option value="@TourMode.Bootstrap" disabled="@(!Session.HasAgentProvider)">1 · Bootstrap — keygen + AP enrol</option>
             <option value="@TourMode.Identity">2 · Identity-based — no PS, 2 steps</option>
-            <option value="@TourMode.Autonomous" disabled="@(!Session.HasPersonServer)">3 · Autonomous — no user, 6 steps</option>
-            <option value="@TourMode.Deferred" disabled="@(!Session.HasPersonServer)">4 · Deferred consent — user approves, 9 steps</option>
+            <option value="@TourMode.Autonomous" disabled="@(!Session.HasPersonServer)">3 · Autonomous (Agent Token) — no user, 6 steps</option>
+            <option value="@TourMode.Deferred" disabled="@(!Session.HasPersonServer)">4 · Deferred consent (Agent Token) — user approves, 9 steps</option>
         </select>
     </label>
-    <label class="flow-picker__label" for="signing-mode-select">
-        <span class="flow-picker__title">Signing mode</span>
-        <select id="signing-mode-select" value="@Session.SigningMode" @onchange="OnSigningModeChanged" disabled="@_busy">
-            <option value="@SigningMode.Jwt">jwt — token inline</option>
-            <option value="@SigningMode.Hwk">hwk — pseudonymous (jkt)</option>
-            <option value="@SigningMode.JwksUri">jwks_uri — agent identity</option>
-            <option value="@SigningMode.JktJwt">jkt-jwt — delegation</option>
-        </select>
-    </label>
+    @if (Session.Mode == TourMode.Identity)
+    {
+        <label class="flow-picker__label" for="signing-mode-select">
+            <span class="flow-picker__title">Signing mode</span>
+            <select id="signing-mode-select" value="@Session.SigningMode" @onchange="OnSigningModeChanged" disabled="@_busy">
+                <option value="@SigningMode.Hwk">Pseudonymous (hwk) — key only, no identity</option>
+                <option value="@SigningMode.JwksUri">Agent Identity (jwks_uri) — JWKS-discoverable</option>
+            </select>
+        </label>
+    }
     <div class="flow-picker__actions">
         @if (Session.AwaitingUserApproval)
         {
@@ -61,19 +65,34 @@
             case TourMode.Bootstrap:
                 <text>
                     The agent generates a keypair and registers with an Agent Provider to obtain
-                    a signed <code>aa-agent+jwt</code>. This is a one-time setup step before any
-                    protocol flow. <strong>Agent ↔ Agent Provider only.</strong>
+                    a signed <code>aa-agent+jwt</code>. Required before Agent Identity
+                    (<code>jwks_uri</code>) access and all Person Server flows (Autonomous / Deferred).
+                    Not needed for Pseudonymous (<code>hwk</code>) access — that uses a bare key.
+                    <strong>Agent ↔ Agent Provider only.</strong>
                 </text>
                 break;
             case TourMode.Identity:
                 <text>
-                    The resource trusts the agent token directly. <code>GET /</code> returns
-                    <code>200</code> on the first call — no Person Server is involved.
-                    <strong>No human in the loop, no PS round-trip.</strong>
+                    The resource verifies the agent's signature and applies its own access
+                    control — granting or denying based on who (or what key) signed the request.
+                    <code>GET /</code> returns <code>200</code> on the first call — no Person Server involved.
+                    @switch (Session.SigningMode)
+                    {
+                        case SigningMode.Hwk:
+                            <strong>Pseudonymous:</strong>
+                            <text> resource sees a key thumbprint only — no agent identity disclosed.</text>
+                            break;
+                        case SigningMode.JwksUri:
+                            <strong>Agent Identity:</strong>
+                            <text> resource discovers agent's public key via JWKS URI — replaces API keys.</text>
+                            break;
+                    }
                 </text>
                 break;
             case TourMode.Autonomous:
                 <text>
+                    <strong>Signing mode: Agent Token (<code>scheme=jwt</code>)</strong> — required for all
+                    Person Server flows.
                     The agent already has standing consent at the Person Server. <code>POST /token</code>
                     returns <code>200</code> immediately with an <code>auth_token</code>; the agent retries the
                     resource and gets <code>200</code>. <strong>No human in the loop.</strong>
@@ -81,6 +100,8 @@
                 break;
             case TourMode.Deferred:
                 <text>
+                    <strong>Signing mode: Agent Token (<code>scheme=jwt</code>)</strong> — required for all
+                    Person Server flows.
                     The agent has <em>no</em> consent yet. <code>POST /token</code> returns <code>202 Accepted</code>
                     with an interaction URL; the user clicks <strong>Approve</strong> at the PS's consent page in
                     a new tab; the agent polls a pending URL until the PS mints the <code>auth_token</code>.
@@ -151,8 +172,15 @@
         new("Agent Provider", "ap", Actor.AgentProvider),
     };
 
+    private static readonly SequenceDiagram.LaneDefinition[] IdentityLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Resource", "resource", Actor.Resource),
+    };
+
     private SequenceDiagram.LaneDefinition[]? ActiveLanes =>
-        Session.IsBootstrapMode ? BootstrapLanes : null;
+        Session.IsBootstrapMode ? BootstrapLanes :
+        Session.IsIdentityMode ? IdentityLanes : null;
 
     protected override async Task OnInitializedAsync()
     {
@@ -324,7 +352,8 @@
     {
         if (Enum.TryParse<SigningMode>(e.Value?.ToString(), out var mode))
         {
-            Session.SigningMode = mode;
+            Session.SigningMode = mode; // setter resets the timeline
+            _selected = -1;
         }
     }
 }

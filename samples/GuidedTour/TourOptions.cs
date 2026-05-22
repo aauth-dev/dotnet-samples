@@ -20,19 +20,33 @@ public enum TourMode
 }
 
 /// <summary>
-/// Which Signature-Key scheme the agent uses for signed requests.
-/// Maps 1:1 to the four AAuth signing modes.
+/// Which Signature-Key scheme the agent uses for resource requests.
+/// These map to the AAuth signing modes defined in the HTTP Signature Keys
+/// specification. Three-party flows (Autonomous/Deferred) MUST use
+/// <see cref="Jwt"/> per spec (requires a PS-issued token); identity-based
+/// access (no PS) uses <see cref="Hwk"/> or <see cref="JwksUri"/>.
 /// </summary>
 public enum SigningMode
 {
-    /// <summary><c>sig=jwt</c> — carry agent/auth token inline (default).</summary>
+    /// <summary>
+    /// <c>sig=jwt</c> — Agent Token mode. The full agent token (or auth
+    /// token) travels inline. Resource learns: agent identity, PS URL,
+    /// bound signing key. Requires a Person Server; used in three-party flows.
+    /// </summary>
     Jwt,
-    /// <summary><c>sig=hwk</c> — pseudonymous, bare key thumbprint.</summary>
+    /// <summary>
+    /// <c>sig=hwk</c> — Pseudonymous mode. Only the key's JWK thumbprint
+    /// is disclosed. Resource learns: a specific key signed this — identity
+    /// unknown. Use for accountable access, rate-limiting by key.
+    /// </summary>
     Hwk,
-    /// <summary><c>sig=jwks_uri</c> — agent identity via discoverable JWKS.</summary>
+    /// <summary>
+    /// <c>sig=jwks_uri</c> — Agent Identity mode. The resource fetches the
+    /// agent's JWKS from a well-known URI to resolve the signing key.
+    /// Resource learns: full agent identifier + verifiable public key.
+    /// Use for access control by identity, replacing API keys.
+    /// </summary>
     JwksUri,
-    /// <summary><c>sig=jkt-jwt</c> — two-key delegation (durable → ephemeral).</summary>
-    JktJwt,
 }
 
 /// <summary>
