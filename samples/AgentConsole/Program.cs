@@ -5,10 +5,9 @@ using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
-using AAuth.Tokens;
 
-const string Usage = "Usage: AgentConsole <url> [--iss <agent-provider-url>] [--sub <agent-id>] " +
-    "[--kid <key-id>] [--ps <person-server-url>] [--ap <agent-provider-enrol-url>]";
+const string Usage = "Usage: AgentConsole <url> --ap <agent-provider-url> [--sub <agent-id>] " +
+    "[--kid <key-id>] [--ps <person-server-url>]";
 
 if (args.Length < 1 || args[0] is "--help" or "-h")
 {
@@ -29,15 +28,13 @@ if (!Uri.TryCreate(args[0], UriKind.Absolute, out var url))
     return 1;
 }
 
-string issuer = "https://ap.example";
 string subject = "aauth:demo@ap.example";
-string keyId = "demo";
 string? personServer = null;
 string? apUrl = null;
 for (int i = 1; i < args.Length; i++)
 {
     string flag = args[i];
-    if (flag is "--iss" or "--sub" or "--kid" or "--ps" or "--ap")
+    if (flag is "--sub" or "--ps" or "--ap")
     {
         if (i + 1 >= args.Length)
         {
@@ -47,9 +44,7 @@ for (int i = 1; i < args.Length; i++)
         var value = args[++i];
         switch (flag)
         {
-            case "--iss": issuer = value; break;
             case "--sub": subject = value; break;
-            case "--kid": keyId = value; break;
             case "--ps":  personServer = value; break;
             case "--ap":  apUrl = value; break;
         }
@@ -61,35 +56,33 @@ for (int i = 1; i < args.Length; i++)
     }
 }
 
-var store = KeyStore.Default();
+if (apUrl is null)
+{
+    Console.Error.WriteLine("--ap <agent-provider-url> is required.");
+    Console.Error.WriteLine(Usage);
+    return 1;
+}
+
 AAuthKey key;
 string agentToken;
+string keyId;
 
-if (apUrl is not null)
-{
-    // Bootstrap with a real Agent Provider via AgentProviderClient
-    Console.WriteLine($"Enrolling with Agent Provider at: {apUrl}");
-    var apKeyStore = new InMemoryKeyStore();
-    var apClient = new AgentProviderClient(new HttpClient(), apKeyStore);
-    var result = await apClient.EnrolAsync(issuer, subject, apUrl);
-    key = result.Key;
-    agentToken = result.AgentToken;
-    keyId = result.KeyId;
-    Console.WriteLine($"Enrolled successfully. Key ID: {keyId}");
-}
-else
-{
-    // Local self-issued token (original behaviour)
-    key = store.LoadOrCreate(keyId);
-    agentToken = new AgentTokenBuilder
-    {
-        Issuer = issuer,
-        Subject = subject,
-        KeyId = keyId,
-        Key = key,
-        PersonServer = personServer,
-    }.Build();
-}
+// Bootstrap with the Agent Provider: discover enrol_endpoint from metadata
+var apBase = apUrl.TrimEnd('/');
+Console.WriteLine($"Discovering Agent Provider metadata at: {apBase}");
+var discoveryClient = new MetadataClient(new HttpClient());
+var metaUrl = MetadataClient.BuildUrl(apBase, "aauth-agent.json");
+var apMeta = await discoveryClient.FetchAsync(metaUrl);
+var enrolEndpoint = (string?)apMeta["enrol_endpoint"] ?? $"{apBase}/enrol";
+Console.WriteLine($"Enrolling at: {enrolEndpoint}");
+
+var apKeyStore = new InMemoryKeyStore();
+var apClient = new AgentProviderClient(new HttpClient(), apKeyStore);
+var result = await apClient.EnrolAsync(apBase, subject, enrolEndpoint, personServer);
+key = result.Key;
+agentToken = result.AgentToken;
+keyId = result.KeyId;
+Console.WriteLine($"Enrolled successfully. Key ID: {keyId}");
 
 Console.WriteLine($"Using key: {keyId}");
 Console.WriteLine($"Public JWK thumbprint: {key.ComputeJwkThumbprint()}");

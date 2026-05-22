@@ -39,6 +39,14 @@ public sealed class AgentTokenBuilder
     /// <summary>The agent's signing key. Its public half is embedded as <c>cnf.jwk</c>.</summary>
     public required AAuthKey Key { get; init; }
 
+    /// <summary>
+    /// Optional separate confirmation key whose public half is embedded as
+    /// <c>cnf.jwk</c>. When set, <see cref="Key"/> is used only for signing
+    /// the JWT (AP-issued flow). When null, <see cref="Key"/> doubles as
+    /// both signer and confirmation key (self-issued flow).
+    /// </summary>
+    public AAuthKey? ConfirmationKey { get; init; }
+
     /// <summary>Optional Person Server URL (<c>ps</c>).</summary>
     public string? PersonServer { get; init; }
 
@@ -108,7 +116,7 @@ public sealed class AgentTokenBuilder
             ["dwk"] = AgentDwk,
             ["sub"] = Subject,
             ["jti"] = jti,
-            ["cnf"] = new JsonObject { ["jwk"] = Key.ToPublicJwk() },
+            ["cnf"] = new JsonObject { ["jwk"] = (ConfirmationKey ?? Key).ToPublicJwk() },
             ["iat"] = iat.ToUnixTimeSeconds(),
             ["exp"] = exp.ToUnixTimeSeconds(),
         };

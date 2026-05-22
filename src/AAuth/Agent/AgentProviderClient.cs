@@ -46,6 +46,7 @@ public sealed class AgentProviderClient
         string apIssuer,
         string agentId,
         string enrollEndpoint,
+        string? personServer = null,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(apIssuer);
@@ -62,6 +63,10 @@ public sealed class AgentProviderClient
             ["agent_id"] = agentId,
             ["jwk"] = key.ToPublicJwk(),
         };
+        if (!string.IsNullOrEmpty(personServer))
+        {
+            request["ps"] = personServer;
+        }
 
         // Platform attestation if supported
         var attestation = await _attestor.AttestAsync(keyId, ct);

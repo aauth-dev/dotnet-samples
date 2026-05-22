@@ -35,7 +35,7 @@ public sealed class TourSession : IAsyncDisposable
     private bool _aborted;
     private TourMode _mode;
 
-    // Background polling state (deferred mode, step 10). Mutated from
+    // Background polling state (deferred mode, poll step). Mutated from
     // the polling task; the UI listens to StateChanged and re-renders.
     private CancellationTokenSource? _pollingCts;
     private Task? _pollingTask;
@@ -47,12 +47,14 @@ public sealed class TourSession : IAsyncDisposable
         _mode = _options.Mode;
     }
 
-    /// <summary>Ordered list of step records produced so far.</summary>
+    /// <summary>Ordered list of step records produced so far for the active flow.</summary>
     public List<StepRecord> Steps { get; } = new();
 
     /// <summary>
     /// Which flow this session is running. Mutating this resets the
-    /// timeline; the UI re-syncs the PS's consent store afterwards via
+    /// timeline but preserves the agent key and token so protocol flows
+    /// can reuse credentials established during Bootstrap.
+    /// The UI re-syncs the PS's consent store afterwards via
     /// <see cref="PrepareConsentStateAsync"/>.
     /// </summary>
     public TourMode Mode
@@ -62,7 +64,11 @@ public sealed class TourSession : IAsyncDisposable
         {
             if (_mode == value) { return; }
             _mode = value;
-            Reset();
+            // Clear the token (but keep the key) so EnsureAgentReadyAsync
+            // rebuilds it with the correct claims for the new mode (e.g.
+            // identity mode needs no ps claim, autonomous needs one).
+            _agentToken = null;
+            ResetTimeline();
         }
     }
 
@@ -76,23 +82,30 @@ public sealed class TourSession : IAsyncDisposable
     /// True when the current flow is the identity-based path. Forced on
     /// when no PS URL is configured, regardless of <see cref="Mode"/>.
     /// </summary>
-    public bool IsIdentityMode => !HasPersonServer || _mode == TourMode.Identity;
+    public bool IsIdentityMode =>
+        _mode == TourMode.Identity || (!HasPersonServer && _mode != TourMode.Bootstrap);
 
     /// <summary>True when the configured flow is the deferred / user-consent path.</summary>
     public bool IsDeferredMode =>
         HasPersonServer && _mode == TourMode.Deferred;
 
+    /// <summary>True when the current flow is the bootstrap (keygen + AP enrolment) path.</summary>
+    public bool IsBootstrapMode => _mode == TourMode.Bootstrap;
+
+    /// <summary>True when the configured flow is autonomous (standing consent, no user interaction).</summary>
+    public bool IsAutonomousMode => HasPersonServer && _mode == TourMode.Autonomous;
+
     /// <summary>True when an Agent Provider URL is configured for real AP enrolment.</summary>
     public bool HasAgentProvider => !string.IsNullOrWhiteSpace(_options.AgentProviderUrl);
 
-    /// <summary>Total number of steps the tour plans to run given the current configuration.</summary>
+    /// <summary>Total number of steps in the current flow.</summary>
     public int TotalSteps
     {
         get
         {
-            var apExtra = HasAgentProvider ? 1 : 0;
-            if (IsIdentityMode) return 4 + apExtra;
-            return (IsDeferredMode ? 11 : 8) + apExtra;
+            if (IsBootstrapMode) return HasAgentProvider ? 3 : 2;
+            if (IsIdentityMode) return 2;
+            return IsDeferredMode ? 9 : 6;
         }
     }
 
@@ -106,92 +119,55 @@ public sealed class TourSession : IAsyncDisposable
     {
         get
         {
-            if (HasAgentProvider)
-            {
-                if (IsIdentityMode) return ApIdentityPlan;
-                return IsDeferredMode ? ApDeferredPlan : ApAutonomousPlan;
-            }
+            if (IsBootstrapMode) return HasAgentProvider ? ApBootstrapPlan : LocalBootstrapPlan;
             if (IsIdentityMode) return IdentityPlan;
             return IsDeferredMode ? DeferredPlan : AutonomousPlan;
         }
     }
 
+    private static readonly TourPlanStep[] LocalBootstrapPlan =
+    {
+        new(1, "Generate Ed25519 keypair", "Agent mints the durable signing key.", Actor.Agent, Actor.Agent),
+        new(2, "Build agent token", "Agent self-signs an aa-agent+jwt (demo mode).", Actor.Agent, Actor.Agent),
+    };
+
+    private static readonly TourPlanStep[] ApBootstrapPlan =
+    {
+        new(1, "Generate Ed25519 keypair", "Agent mints a fresh signing key.", Actor.Agent, Actor.Agent),
+        new(2, "Discover Agent Provider", "GET /.well-known/aauth-agent.json to learn the AP's enrol endpoint.", Actor.Agent, Actor.AgentProvider),
+        new(3, "Enrol with Agent Provider", "POST /enrol with {agent_id, jwk}; AP issues aa-agent+jwt.", Actor.Agent, Actor.AgentProvider),
+    };
+
     private static readonly TourPlanStep[] IdentityPlan =
     {
-        new(1, "Generate Ed25519 keypair", "Agent mints the durable signing key used on every AAuth request.", Actor.Agent, Actor.Agent),
-        new(2, "Build agent token", "Agent builds an aa-agent+jwt with iss / sub / cnf.jwk.", Actor.Agent, Actor.Agent),
-        new(3, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
-        new(4, "Signed GET / → 200", "Resource trusts identity alone (no PS), returns 200 + claims directly.", Actor.Agent, Actor.Resource),
+        new(1, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
+        new(2, "Signed GET / → 200", "Resource trusts identity alone (no PS), returns 200 + claims directly.", Actor.Agent, Actor.Resource),
     };
 
     private static readonly TourPlanStep[] AutonomousPlan =
     {
-        new(1, "Generate Ed25519 keypair", "Agent mints the durable signing key used on every AAuth request.", Actor.Agent, Actor.Agent),
-        new(2, "Build agent token", "Agent builds an aa-agent+jwt with iss / sub / cnf.jwk / ps claims.", Actor.Agent, Actor.Agent),
-        new(3, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
-        new(4, "Signed GET / → 401", "Resource returns 401 with a resource_token + AAuth-Requirement.", Actor.Agent, Actor.Resource),
-        new(5, "Parse the 401 challenge", "Decode the AAuth-Requirement header and resource_token claims.", Actor.Agent, Actor.Agent),
-        new(6, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint + jwks_uri.", Actor.Agent, Actor.PersonServer),
-        new(7, "Exchange at PS → 200 auth_token", "Signed POST /token with the resource_token; PS mints an aa-auth+jwt immediately.", Actor.Agent, Actor.PersonServer),
-        new(8, "Replay GET / with auth_token", "Signed retry carries the auth_token in Signature-Key → 200 + claims.", Actor.Agent, Actor.Resource),
+        new(1, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
+        new(2, "Signed GET / → 401", "Resource returns 401 with a resource_token + AAuth-Requirement.", Actor.Agent, Actor.Resource),
+        new(3, "Parse the 401 challenge", "Decode the AAuth-Requirement header and resource_token claims.", Actor.Agent, Actor.Agent),
+        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint + jwks_uri.", Actor.Agent, Actor.PersonServer),
+        new(5, "Exchange at PS → 200 auth_token", "Signed POST /token with the resource_token; PS mints an aa-auth+jwt immediately.", Actor.Agent, Actor.PersonServer),
+        new(6, "Replay GET / with auth_token", "Signed retry carries the auth_token in Signature-Key → 200 + claims.", Actor.Agent, Actor.Resource),
     };
 
     private static readonly TourPlanStep[] DeferredPlan =
     {
-        new(1, "Generate Ed25519 keypair", "Agent mints the durable signing key used on every AAuth request.", Actor.Agent, Actor.Agent),
-        new(2, "Build agent token", "Agent builds an aa-agent+jwt with iss / sub / cnf.jwk / ps claims.", Actor.Agent, Actor.Agent),
-        new(3, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
-        new(4, "Signed GET / → 401", "Resource returns 401 with a resource_token + AAuth-Requirement.", Actor.Agent, Actor.Resource),
-        new(5, "Parse the 401 challenge", "Decode the AAuth-Requirement header and resource_token claims.", Actor.Agent, Actor.Agent),
-        new(6, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint + jwks_uri.", Actor.Agent, Actor.PersonServer),
-        new(7, "Exchange → 202 Accepted", "PS lacks consent; returns 202 + Location + interaction URL + single-use code.", Actor.Agent, Actor.PersonServer),
-        new(8, "Direct user to interaction URL", "Agent surfaces the {url}?code={code} link for the user to visit.", Actor.Agent, Actor.Agent),
-        new(9, "User approves at the PS", "User opens the PS consent page in a new tab and clicks Approve; PS records consent.", Actor.PersonServer, Actor.PersonServer),
-        new(10, "Poll pending URL → 200 auth_token", "Signed GETs to /pending/{id} until the PS mints the auth_token.", Actor.Agent, Actor.PersonServer),
-        new(11, "Replay GET / with auth_token", "Signed retry carries the auth_token in Signature-Key → 200 + claims.", Actor.Agent, Actor.Resource),
-    };
-
-    // ── AP-enabled plans (insert discover AP + enrol steps after key gen) ──
-
-    private static readonly TourPlanStep[] ApIdentityPlan =
-    {
-        new(1, "Generate Ed25519 keypair", "Agent mints a fresh signing key.", Actor.Agent, Actor.Agent),
-        new(2, "Discover Agent Provider", "GET /.well-known/aauth-agent.json to learn the AP's enrol endpoint.", Actor.Agent, Actor.AgentProvider),
-        new(3, "Enrol with Agent Provider", "POST /enrol with {agent_id, jwk}; AP issues aa-agent+jwt.", Actor.Agent, Actor.AgentProvider),
-        new(4, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
-        new(5, "Signed GET / → 200", "Resource trusts identity alone (no PS), returns 200 + claims directly.", Actor.Agent, Actor.Resource),
-    };
-
-    private static readonly TourPlanStep[] ApAutonomousPlan =
-    {
-        new(1, "Generate Ed25519 keypair", "Agent mints a fresh signing key.", Actor.Agent, Actor.Agent),
-        new(2, "Discover Agent Provider", "GET /.well-known/aauth-agent.json to learn the AP's enrol endpoint.", Actor.Agent, Actor.AgentProvider),
-        new(3, "Enrol with Agent Provider", "POST /enrol with {agent_id, jwk}; AP issues aa-agent+jwt.", Actor.Agent, Actor.AgentProvider),
-        new(4, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
-        new(5, "Signed GET / → 401", "Resource returns 401 with a resource_token + AAuth-Requirement.", Actor.Agent, Actor.Resource),
-        new(6, "Parse the 401 challenge", "Decode the AAuth-Requirement header and resource_token claims.", Actor.Agent, Actor.Agent),
-        new(7, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint + jwks_uri.", Actor.Agent, Actor.PersonServer),
-        new(8, "Exchange at PS → 200 auth_token", "Signed POST /token with the resource_token; PS mints an aa-auth+jwt immediately.", Actor.Agent, Actor.PersonServer),
+        new(1, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
+        new(2, "Signed GET / → 401", "Resource returns 401 with a resource_token + AAuth-Requirement.", Actor.Agent, Actor.Resource),
+        new(3, "Parse the 401 challenge", "Decode the AAuth-Requirement header and resource_token claims.", Actor.Agent, Actor.Agent),
+        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint + jwks_uri.", Actor.Agent, Actor.PersonServer),
+        new(5, "Exchange → 202 Accepted", "PS lacks consent; returns 202 + Location + interaction URL + single-use code.", Actor.Agent, Actor.PersonServer),
+        new(6, "Direct user to interaction URL", "Agent surfaces the {url}?code={code} link for the user to visit.", Actor.Agent, Actor.Agent),
+        new(7, "User approves at the PS", "User opens the PS consent page in a new tab and clicks Approve; PS records consent.", Actor.PersonServer, Actor.PersonServer),
+        new(8, "Poll pending URL → 200 auth_token", "Signed GETs to /pending/{id} until the PS mints the auth_token.", Actor.Agent, Actor.PersonServer),
         new(9, "Replay GET / with auth_token", "Signed retry carries the auth_token in Signature-Key → 200 + claims.", Actor.Agent, Actor.Resource),
     };
 
-    private static readonly TourPlanStep[] ApDeferredPlan =
-    {
-        new(1, "Generate Ed25519 keypair", "Agent mints a fresh signing key.", Actor.Agent, Actor.Agent),
-        new(2, "Discover Agent Provider", "GET /.well-known/aauth-agent.json to learn the AP's enrol endpoint.", Actor.Agent, Actor.AgentProvider),
-        new(3, "Enrol with Agent Provider", "POST /enrol with {agent_id, jwk}; AP issues aa-agent+jwt.", Actor.Agent, Actor.AgentProvider),
-        new(4, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
-        new(5, "Signed GET / → 401", "Resource returns 401 with a resource_token + AAuth-Requirement.", Actor.Agent, Actor.Resource),
-        new(6, "Parse the 401 challenge", "Decode the AAuth-Requirement header and resource_token claims.", Actor.Agent, Actor.Agent),
-        new(7, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint + jwks_uri.", Actor.Agent, Actor.PersonServer),
-        new(8, "Exchange → 202 Accepted", "PS lacks consent; returns 202 + Location + interaction URL + single-use code.", Actor.Agent, Actor.PersonServer),
-        new(9, "Direct user to interaction URL", "Agent surfaces the {url}?code={code} link for the user to visit.", Actor.Agent, Actor.Agent),
-        new(10, "User approves at the PS", "User opens the PS consent page in a new tab and clicks Approve; PS records consent.", Actor.PersonServer, Actor.PersonServer),
-        new(11, "Poll pending URL → 200 auth_token", "Signed GETs to /pending/{id} until the PS mints the auth_token.", Actor.Agent, Actor.PersonServer),
-        new(12, "Replay GET / with auth_token", "Signed retry carries the auth_token in Signature-Key → 200 + claims.", Actor.Agent, Actor.Resource),
-    };
-
-    /// <summary>True when no more steps remain.</summary>
+    /// <summary>True when no more steps remain in the current flow.</summary>
     public bool IsComplete => _aborted || Steps.Count >= TotalSteps;
 
     /// <summary>
@@ -201,21 +177,19 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public bool IsAborted => _aborted;
 
-    /// <summary>Step offset introduced by AP enrolment (0 or 1).</summary>
-    private int ApStepOffset => HasAgentProvider ? 1 : 0;
-
     /// <summary>The step number at which user approval occurs in deferred mode.</summary>
-    public int UserApprovalStepNumber => 9 + ApStepOffset;
+    public int UserApprovalStepNumber => 7;
 
     /// <summary>The step number at which polling occurs in deferred mode.</summary>
-    public int PollStepNumber => 10 + ApStepOffset;
+    public int PollStepNumber => 8;
 
     /// <summary>
     /// True when the tour is parked on the "User approves" step in deferred mode
     /// and the UI should expose the "Approve as user" action button.
     /// </summary>
     public bool AwaitingUserApproval =>
-        IsDeferredMode && Steps.Count + 1 == UserApprovalStepNumber && !_userApproved;
+        IsDeferredMode
+        && Steps.Count + 1 == UserApprovalStepNumber && !_userApproved;
 
     /// <summary>The user-facing interaction URL captured during step 7 (deferred only).</summary>
     public string? UserInteractionUrl => _interactionUrl is null || _interactionCode is null
@@ -254,6 +228,17 @@ public sealed class TourSession : IAsyncDisposable
     /// <summary>Reset state so the tour can be replayed from step 1.</summary>
     public void Reset()
     {
+        ResetTimeline();
+        _agentKey = null;
+        _agentToken = null;
+    }
+
+    /// <summary>
+    /// Clears the step timeline and protocol state but preserves the
+    /// agent key + token so they survive mode switches.
+    /// </summary>
+    private void ResetTimeline()
+    {
         // Stop any in-flight polling first so the background task
         // doesn't race against the fresh state.
         try { _pollingCts?.Cancel(); } catch { }
@@ -265,8 +250,6 @@ public sealed class TourSession : IAsyncDisposable
         PollingStartedAt = null;
 
         Steps.Clear();
-        _agentKey = null;
-        _agentToken = null;
         _authToken = null;
         _resourceToken = null;
         _tokenEndpoint = null;
@@ -305,74 +288,147 @@ public sealed class TourSession : IAsyncDisposable
     /// <summary>Run the next pending step and capture its <see cref="StepRecord"/>.</summary>
     public async Task RunNextAsync(CancellationToken ct = default)
     {
+        // ── Bootstrap flow ───────────────────────────────────────────────
+        if (IsBootstrapMode)
+        {
+            var bStep = Steps.Count + 1;
+            if (bStep == 1) { BootstrapStep1GenerateKey(); return; }
+            if (HasAgentProvider)
+            {
+                if (bStep == 2) { await BootstrapStepDiscoverApAsync(ct); return; }
+                if (bStep == 3) { await BootstrapStepEnrolAsync(ct); return; }
+            }
+            else
+            {
+                if (bStep == 2) { await BootstrapStepBuildTokenAsync(); return; }
+            }
+            return;
+        }
+
+        // ── Protocol flows: ensure key + agent token exist silently ──────
+        await EnsureAgentReadyAsync(ct);
+
+        // ── Protocol flow ────────────────────────────────────────────────
         var nextStep = Steps.Count + 1;
-
-        // ── Bootstrap steps (key generation + token acquisition) ─────────
-        if (nextStep == 1) { Step1GenerateKey(); return; }
-
-        if (HasAgentProvider)
-        {
-            if (nextStep == 2) { await StepDiscoverApMetadataAsync(ct); return; }
-            if (nextStep == 3) { await StepEnrolWithApAsync(ct); return; }
-        }
-        else
-        {
-            if (nextStep == 2) { await Step2BuildAgentTokenAsync(); return; }
-        }
-
-        // ── Resource flow (same logic, shifted by ApStepOffset) ──────────
-        // logicalStep 1 = "fetch resource metadata", 2 = "signed GET", etc.
-        var logicalStep = nextStep - 2 - ApStepOffset;
 
         if (IsDeferredMode)
         {
-            switch (logicalStep)
+            switch (nextStep)
             {
-                case 1: await Step3FetchResourceMetadataAsync(ct); break;
-                case 2: await Step4SignedGetAsync(ct); break;
-                case 3: Step5ParseChallenge(); break;
-                case 4: await Step6FetchPersonMetadataAsync(ct); break;
-                case 5: await Step7DeferredExchangeAsync(ct); break;
-                case 6: Step8DirectUserToInteraction(); break;
-                case 7: Step9UserApprovesPlaceholder(); break;
+                case 1: await StepFetchResourceMetadataAsync(ct); break;
+                case 2: await StepSignedGetAsync(ct); break;
+                case 3: StepParseChallenge(); break;
+                case 4: await StepFetchPersonMetadataAsync(ct); break;
+                case 5: await StepDeferredExchangeAsync(ct); break;
+                case 6: StepDirectUserToInteraction(); break;
+                case 7: StepUserApprovesPlaceholder(); break;
                 case 8:
-                    // Polling may already have started in the background
-                    // (the UI calls StartPendingPollAsync the moment the
-                    // user opens the consent tab). If so, just await it
-                    // — don't kick off a second loop.
                     if (_pollingTask is { } existing && !existing.IsCompleted)
                     {
                         await existing.ConfigureAwait(false);
                     }
                     else if (Steps.Count + 1 == PollStepNumber)
                     {
-                        await Step10PollPendingAsync(ct);
+                        await StepPollPendingAsync(ct);
                     }
                     break;
-                case 9: await Step11RetryWithAuthTokenAsync(ct); break;
+                case 9: await StepRetryWithAuthTokenAsync(ct); break;
             }
         }
         else
         {
-            switch (logicalStep)
+            switch (nextStep)
             {
-                case 1: await Step3FetchResourceMetadataAsync(ct); break;
-                case 2: await Step4SignedGetAsync(ct); break;
-                // Identity mode stops here (only 2 resource steps)
-                case 3: Step5ParseChallenge(); break;
-                case 4: await Step6FetchPersonMetadataAsync(ct); break;
-                case 5: await Step7TokenExchangeAsync(ct); break;
-                case 6: await Step8RetryWithAuthTokenAsync(ct, Steps.Count + 1); break;
+                case 1: await StepFetchResourceMetadataAsync(ct); break;
+                case 2: await StepSignedGetAsync(ct); break;
+                // Identity mode stops here (only 2 protocol steps)
+                case 3: StepParseChallenge(); break;
+                case 4: await StepFetchPersonMetadataAsync(ct); break;
+                case 5: await StepTokenExchangeAsync(ct); break;
+                case 6: await StepRetryWithAuthTokenAsync(ct); break;
             }
         }
     }
 
     /// <summary>
-    /// Records step 9: the user opened the PS's interaction page in a
+    /// Silently ensures the agent key and token are available before
+    /// running protocol flow steps. Enrols with the Agent Provider so
+    /// the issued token is verifiable via the AP's JWKS (spec §Agent
+    /// Token Verification step 2).
+    /// </summary>
+    private async Task EnsureAgentReadyAsync(CancellationToken ct)
+    {
+        if (_agentKey is not null && _agentToken is not null) return;
+
+        _agentKey ??= AAuthKey.Generate();
+
+        if (_agentToken is null)
+        {
+            if (!string.IsNullOrWhiteSpace(_options.AgentProviderUrl))
+            {
+                // Enrol with the AP to get a properly-signed token whose
+                // JWT signature is verifiable via the AP's JWKS.
+                var apBase = _options.AgentProviderUrl.TrimEnd('/');
+                using var discoveryHttp = new HttpClient();
+                var metaUrl = $"{apBase}/.well-known/aauth-agent.json";
+                var metaResp = await discoveryHttp.GetAsync(metaUrl, ct);
+                var meta = JsonNode.Parse(await metaResp.Content.ReadAsStringAsync(ct));
+                var enrolEndpoint = (string?)meta?["enrol_endpoint"] ?? $"{apBase}/enrol";
+
+                var requestBody = new JsonObject
+                {
+                    ["agent_id"] = _options.AgentId,
+                    ["jwk"] = _agentKey.ToPublicJwk(),
+                };
+                if (!IsIdentityMode && !string.IsNullOrWhiteSpace(_options.PersonServerUrl))
+                {
+                    requestBody["ps"] = _options.PersonServerUrl;
+                }
+
+                using var enrolHttp = new HttpClient();
+                var enrolResp = await enrolHttp.PostAsJsonAsync(enrolEndpoint, requestBody, ct);
+                enrolResp.EnsureSuccessStatusCode();
+                var enrolBody = JsonNode.Parse(await enrolResp.Content.ReadAsStringAsync(ct));
+                _agentToken = (string?)enrolBody?["agent_token"]
+                    ?? throw new InvalidOperationException("AP enrol response missing agent_token");
+            }
+            else
+            {
+                // No AP configured — self-sign (only works if the resource
+                // skips JWKS verification, e.g. in unit tests).
+                var personServer = IsIdentityMode || string.IsNullOrWhiteSpace(_options.PersonServerUrl)
+                    ? null
+                    : _options.PersonServerUrl;
+                _agentToken = new AgentTokenBuilder
+                {
+                    Issuer = "https://ap.example",
+                    Subject = _options.AgentId,
+                    KeyId = "tour",
+                    Key = _agentKey,
+                    PersonServer = personServer,
+                }.Build();
+            }
+
+            // Autonomous mode simulates "standing consent" — pre-register
+            // consent at the Mock Person Server so POST /token returns 200
+            // immediately rather than 202 deferred.
+            if (IsAutonomousMode && !string.IsNullOrWhiteSpace(_options.PersonServerUrl))
+            {
+                using var adminClient = new HttpClient();
+                await adminClient.PostAsJsonAsync(
+                    $"{_options.PersonServerUrl.TrimEnd('/')}/admin/consent",
+                    new { agent = _options.AgentId, resource = _options.WhoAmIUrl.TrimEnd('/') },
+                    ct);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Records the user-approval step: the user opened the PS's interaction page in a
     /// separate browser tab and (hopefully) clicked Approve. The Guided
     /// Tour itself does not make the HTTP call here — that happens
     /// out-of-band, between the user's browser and the Person Server,
-    /// exactly as the spec intends. Step 10's poll picks up the result.
+    /// exactly as the spec intends. The poll step picks up the result.
     /// </summary>
     public Task RecordUserApprovalOpenedAsync(CancellationToken ct = default)
     {
@@ -380,7 +436,7 @@ public sealed class TourSession : IAsyncDisposable
         if (Steps.Count + 1 != UserApprovalStepNumber)
         {
             throw new InvalidOperationException(
-                $"RecordUserApprovalOpenedAsync called at step {Steps.Count + 1}; only valid at step {UserApprovalStepNumber}.");
+                $"RecordUserApprovalOpenedAsync called at protocol step {Steps.Count + 1}; only valid at step {UserApprovalStepNumber}.");
         }
 
         var userUrl = UserInteractionUrl ?? "(no interaction URL captured)";
@@ -399,7 +455,7 @@ public sealed class TourSession : IAsyncDisposable
                 "recorded consent in its store via `POST /interaction/approve`. " +
                 "All of that happens in the user's browser → PS channel — the agent " +
                 "is not on this path. The agent will discover the result on its next " +
-                "poll of the pending URL (step 10).",
+                "poll of the pending URL.",
             ResponseBody = userUrl,
             TokenDecoded =
                 $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
@@ -441,10 +497,10 @@ public sealed class TourSession : IAsyncDisposable
     }
 
     // -----------------------------------------------------------------
-    // Step implementations
+    // Bootstrap step implementations
     // -----------------------------------------------------------------
 
-    private void Step1GenerateKey()
+    private void BootstrapStep1GenerateKey()
     {
         _agentKey = AAuthKey.Generate();
         var jwk = _agentKey.ToPublicJwk().ToJsonString(new JsonSerializerOptions { WriteIndented = true });
@@ -463,9 +519,8 @@ public sealed class TourSession : IAsyncDisposable
         });
     }
 
-    private async Task Step2BuildAgentTokenAsync()
+    private async Task BootstrapStepBuildTokenAsync()
     {
-        // Non-AP path: build a self-signed agent token locally.
         var personServer = IsIdentityMode || string.IsNullOrWhiteSpace(_options.PersonServerUrl)
             ? null
             : _options.PersonServerUrl;
@@ -479,7 +534,7 @@ public sealed class TourSession : IAsyncDisposable
             PersonServer = personServer,
         }.Build();
 
-        await Task.CompletedTask; // keep async signature for consistent dispatch
+        await Task.CompletedTask;
 
         Steps.Add(new StepRecord
         {
@@ -488,37 +543,31 @@ public sealed class TourSession : IAsyncDisposable
             From = Actor.Agent,
             To = Actor.Agent,
             Narrative =
-                "The agent provider issues an `aa-agent+jwt` containing the agent's " +
-                "public key (cnf.jwk), its identifier (sub), and — for the three-party " +
-                "flow — the user's Person Server URL. The JWT is self-signed by the " +
-                "agent's key in this demo.",
+                "The agent self-signs an `aa-agent+jwt` containing its " +
+                "public key (cnf.jwk), identifier (sub), and — for the three-party " +
+                "flow — the user's Person Server URL. In production this token " +
+                "would come from an Agent Provider.",
             TokenJwt = _agentToken,
             TokenHeader = DecodeJwt(_agentToken)?.Header,
             TokenPayload = DecodeJwt(_agentToken)?.Payload,
         });
     }
 
-    // ── AP bootstrap steps ──────────────────────────────────────────────────
-
     private string? _apEnrolEndpoint;
 
-    private async Task StepDiscoverApMetadataAsync(CancellationToken ct)
+    private async Task BootstrapStepDiscoverApAsync(CancellationToken ct)
     {
-        // Derive the AP base URL from the enrol endpoint URL
-        var apBase = _options.AgentProviderUrl!;
-        if (apBase.Contains("/enrol", StringComparison.OrdinalIgnoreCase))
-            apBase = apBase[..apBase.LastIndexOf("/enrol", StringComparison.OrdinalIgnoreCase)];
-
-        var metadataUrl = $"{apBase.TrimEnd('/')}/.well-known/aauth-agent.json";
+        var apBase = _options.AgentProviderUrl!.TrimEnd('/');
+        var metadataUrl = $"{apBase}/.well-known/aauth-agent.json";
 
         var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
         using var client = new HttpClient(capture);
         await client.GetAsync(metadataUrl, ct);
         var ex = capture.Last!;
 
-        // Extract enrol_endpoint from metadata
         var meta = JsonNode.Parse(ex.ResponseBody);
-        _apEnrolEndpoint = (string?)meta?["enrol_endpoint"] ?? _options.AgentProviderUrl!;
+        _apEnrolEndpoint = (string?)meta?["enrol_endpoint"]
+            ?? $"{apBase}/enrol";
 
         Steps.Add(new StepRecord
         {
@@ -527,9 +576,8 @@ public sealed class TourSession : IAsyncDisposable
             From = Actor.Agent,
             To = Actor.AgentProvider,
             Narrative =
-                "Before enrolling, the agent fetches the Agent Provider's well-known " +
-                "metadata to learn its `enrol_endpoint`, `refresh_endpoint`, and JWKS " +
-                "URI. This is the AP equivalent of resource/PS discovery.",
+                "The agent fetches the Agent Provider's well-known metadata to learn " +
+                "its `enrol_endpoint`, `refresh_endpoint`, and JWKS URI.",
             RequestLine = $"{ex.RequestLine}  →  {metadataUrl}",
             RequestHeaders = ex.RequestHeaders,
             StatusLine = ex.StatusLine,
@@ -538,11 +586,11 @@ public sealed class TourSession : IAsyncDisposable
         });
     }
 
-    private async Task StepEnrolWithApAsync(CancellationToken ct)
+    private async Task BootstrapStepEnrolAsync(CancellationToken ct)
     {
-        var enrolUrl = _apEnrolEndpoint ?? _options.AgentProviderUrl!;
+        var enrolUrl = _apEnrolEndpoint
+            ?? $"{_options.AgentProviderUrl!.TrimEnd('/')}/enrol";
 
-        // Build the enrolment request body using the key from Step 1
         var requestBody = new JsonObject
         {
             ["agent_id"] = _options.AgentId,
@@ -554,7 +602,6 @@ public sealed class TourSession : IAsyncDisposable
         using var response = await client.PostAsJsonAsync(enrolUrl, requestBody, ct);
         var ex = capture.Last!;
 
-        // Extract the agent token from the response
         var body = JsonNode.Parse(ex.ResponseBody);
         _agentToken = (string?)body?["agent_token"];
 
@@ -566,9 +613,8 @@ public sealed class TourSession : IAsyncDisposable
             To = Actor.AgentProvider,
             Narrative =
                 "The agent registers with the AP by POSTing its `agent_id` and public " +
-                "`jwk`. The AP verifies the key, creates an agent record, and returns " +
-                "a signed `aa-agent+jwt` that binds the agent's identity to its key. " +
-                "This token is what the agent presents to resources going forward.",
+                "`jwk`. The AP issues a signed `aa-agent+jwt` binding the agent's " +
+                "identity to its key.",
             RequestLine = $"{ex.RequestLine}  →  {enrolUrl}",
             RequestHeaders = ex.RequestHeaders,
             RequestBody = PrettyJson(ex.RequestBody),
@@ -581,7 +627,11 @@ public sealed class TourSession : IAsyncDisposable
         });
     }
 
-    private async Task Step3FetchResourceMetadataAsync(CancellationToken ct)
+    // -----------------------------------------------------------------
+    // Protocol flow step implementations
+    // -----------------------------------------------------------------
+
+    private async Task StepFetchResourceMetadataAsync(CancellationToken ct)
     {
         var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
         using var client = new HttpClient(capture);
@@ -605,7 +655,7 @@ public sealed class TourSession : IAsyncDisposable
         });
     }
 
-    private async Task Step4SignedGetAsync(CancellationToken ct)
+    private async Task StepSignedGetAsync(CancellationToken ct)
     {
         string? capturedBase = null;
         var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
@@ -649,7 +699,7 @@ public sealed class TourSession : IAsyncDisposable
         });
     }
 
-    private void Step5ParseChallenge()
+    private void StepParseChallenge()
     {
         Steps.Add(new StepRecord
         {
@@ -671,7 +721,7 @@ public sealed class TourSession : IAsyncDisposable
         });
     }
 
-    private async Task Step6FetchPersonMetadataAsync(CancellationToken ct)
+    private async Task StepFetchPersonMetadataAsync(CancellationToken ct)
     {
         var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
         using var client = new HttpClient(capture);
@@ -701,7 +751,7 @@ public sealed class TourSession : IAsyncDisposable
         });
     }
 
-    private async Task Step7TokenExchangeAsync(CancellationToken ct)
+    private async Task StepTokenExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
         var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
@@ -748,7 +798,7 @@ public sealed class TourSession : IAsyncDisposable
         });
     }
 
-    private async Task Step8RetryWithAuthTokenAsync(CancellationToken ct, int stepNumber)
+    private async Task StepRetryWithAuthTokenAsync(CancellationToken ct)
     {
         string? capturedBase = null;
         var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
@@ -764,7 +814,7 @@ public sealed class TourSession : IAsyncDisposable
 
         Steps.Add(new StepRecord
         {
-            Number = stepNumber,
+            Number = Steps.Count + 1,
             Title = "Replay GET with auth token",
             From = Actor.Agent,
             To = Actor.Resource,
@@ -786,7 +836,7 @@ public sealed class TourSession : IAsyncDisposable
     // Deferred-flow step variants
     // -----------------------------------------------------------------
 
-    private async Task Step7DeferredExchangeAsync(CancellationToken ct)
+    private async Task StepDeferredExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
         var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
@@ -858,7 +908,7 @@ public sealed class TourSession : IAsyncDisposable
         });
     }
 
-    private void Step8DirectUserToInteraction()
+    private void StepDirectUserToInteraction()
     {
         var userUrl = UserInteractionUrl
             ?? "(no interaction URL captured — is MockPersonServer running with RequireConsent=true?)";
@@ -880,20 +930,20 @@ public sealed class TourSession : IAsyncDisposable
         });
     }
 
-    private void Step9UserApprovesPlaceholder()
+    private void StepUserApprovesPlaceholder()
     {
         // Placeholder branch: should not be reachable because the UI must
-        // call ApproveAsUserAsync() when at step 9. Defensive fallback in
-        // case "Run all" is invoked — it cannot proceed past step 9 on its
+        // call ApproveAsUserAsync() at the user-approval step. Defensive fallback in
+        // case "Run all" is invoked — it cannot proceed past the user-approval step on its
         // own, the user must click "Approve as user".
         if (!_userApproved)
         {
             throw new InvalidOperationException(
-                "Step 9 requires the user to click \"Approve as user\". Call ApproveAsUserAsync() instead of RunNextAsync().");
+                "The user-approval step requires the user to click \"Approve as user\". Call ApproveAsUserAsync() instead of RunNextAsync().");
         }
     }
 
-    private async Task Step10PollPendingAsync(CancellationToken ct)
+    private async Task StepPollPendingAsync(CancellationToken ct)
     {
         if (string.IsNullOrEmpty(_pendingUrl))
         {
@@ -1002,7 +1052,7 @@ public sealed class TourSession : IAsyncDisposable
     }
 
     /// <summary>
-    /// Kicks off step 10's pending-URL poll loop as a fire-and-forget
+    /// Kicks off the pending-URL poll loop as a fire-and-forget
     /// background task so the UI can keep rendering while the user is
     /// in another tab clicking Approve / Deny at the PS consent page.
     /// Subsequent calls while a poll is already in flight are no-ops.
@@ -1041,7 +1091,7 @@ public sealed class TourSession : IAsyncDisposable
             {
                 try
                 {
-                    await Step10PollPendingAsync(ct).ConfigureAwait(false);
+                    await StepPollPendingAsync(ct).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -1126,7 +1176,7 @@ public sealed class TourSession : IAsyncDisposable
         if (!IsDeferredMode || _interactionUrl is null || _interactionCode is null)
         {
             throw new InvalidOperationException(
-                "SimulateUserDenyAsync is only valid in deferred mode after step 7.");
+                "SimulateUserDenyAsync is only valid in deferred mode after the exchange step.");
         }
         if (Steps.Count + 1 != UserApprovalStepNumber)
         {
@@ -1143,7 +1193,7 @@ public sealed class TourSession : IAsyncDisposable
         using var resp = await client.PostAsync(denyUrl, content, ct);
         // Best-effort: even if this 404s (e.g. running against a real PS
         // without a deny endpoint), let the poller catch up and surface
-        // the failure on step 10. Throwing here would leave the timeline
+        // the failure on the poll step. Throwing here would leave the timeline
         // in an inconsistent state.
 
         _userApproved = true; // unblocks AwaitingUserApproval so poll step runs
@@ -1156,7 +1206,7 @@ public sealed class TourSession : IAsyncDisposable
             Narrative =
                 "The tour simulated the user clicking **Deny** on the PS's consent " +
                 "page (`POST /interaction/deny` with the single-use code). The PS " +
-                "marks the pending entry as denied; the next poll (step 10) will see " +
+                "marks the pending entry as denied; the next poll iteration will see " +
                 "`403 access_denied` and the flow will terminate.",
             ResponseBody = denyUrl,
             TokenDecoded =
@@ -1164,9 +1214,6 @@ public sealed class TourSession : IAsyncDisposable
                 $"Status: {(int)resp.StatusCode} {resp.ReasonPhrase}",
         });
     }
-
-    private async Task Step11RetryWithAuthTokenAsync(CancellationToken ct)
-        => await Step8RetryWithAuthTokenAsync(ct, stepNumber: Steps.Count + 1);
 
     // -----------------------------------------------------------------
     // Helpers
@@ -1188,7 +1235,11 @@ public sealed class TourSession : IAsyncDisposable
         try
         {
             var node = JsonNode.Parse(json);
-            return node?.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) ?? json;
+            return node?.ToJsonString(new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            }) ?? json;
         }
         catch (JsonException)
         {

@@ -83,11 +83,14 @@ app.MapPost("/enrol", async (HttpContext ctx) =>
         return Results.BadRequest(new { error = "invalid_key", error_description = ex.Message });
     }
 
+    // Optional: person server URL
+    var ps = (string?)body["ps"];
+
     // Generate a key id for the agent
     var agentKeyId = $"{agentId}:{Guid.NewGuid():N}"[..32];
 
     // Register
-    var record = new AgentRecord(agentId, agentKey, agentKeyId, DateTimeOffset.UtcNow);
+    var record = new AgentRecord(agentId, agentKey, agentKeyId, DateTimeOffset.UtcNow, ps);
     agents[agentId] = record;
 
     // Issue agent token
@@ -181,9 +184,10 @@ string IssueAgentToken(AgentRecord record)
         Subject = record.AgentId,
         KeyId = keyId,
         Key = apKey,
-        PersonServer = null, // Agent can set this themselves
+        ConfirmationKey = record.PublicKey,
+        PersonServer = record.PersonServer,
     }.Build();
 }
 
 // ── Types ───────────────────────────────────────────────────────────────────
-record AgentRecord(string AgentId, AAuthKey PublicKey, string KeyId, DateTimeOffset RegisteredAt);
+record AgentRecord(string AgentId, AAuthKey PublicKey, string KeyId, DateTimeOffset RegisteredAt, string? PersonServer);

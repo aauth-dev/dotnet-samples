@@ -9,28 +9,9 @@
 <header class="topbar">
     <h1>AAuth Guided Tour</h1>
     <div class="config">
-        <span><strong>Resource:</strong> @Options.Value.WhoAmIUrl</span>
-        <span><strong>Person Server:</strong> @(string.IsNullOrWhiteSpace(Options.Value.PersonServerUrl) ? "(none — identity-based flow)" : Options.Value.PersonServerUrl)</span>
-    </div>
-    <div class="actions">
-        @if (Session.AwaitingUserApproval)
-        {
-            <a class="primary approve" href="@Session.UserInteractionUrl" target="_blank" rel="noopener"
-               @onclick="MarkInteractionOpenedAsync">
-                Open consent page ↗
-            </a>
-            <button class="deny" @onclick="SimulateDenyAsync" disabled="@_busy">
-                Simulate deny
-            </button>
-        }
-        else
-        {
-            <button class="primary" @onclick="NextAsync" disabled="@(Session.IsComplete || _busy)">
-                @(_busy ? "Running…" : Session.IsAborted ? "Aborted" : Session.IsComplete ? "Done" : $"Run step {Session.Steps.Count + 1} / {Session.TotalSteps}")
-            </button>
-        }
-        <button @onclick="RunAllAsync" disabled="@(Session.IsComplete || _busy)">Run all</button>
-        <button @onclick="ResetAsync" disabled="@_busy">Reset</button>
+        <span class="hl-resource"><strong>Resource:</strong> @Options.Value.WhoAmIUrl</span>
+        <span class="hl-ps"><strong>Person Server:</strong> @(string.IsNullOrWhiteSpace(Options.Value.PersonServerUrl) ? "(none)" : Options.Value.PersonServerUrl)</span>
+        <span class="hl-agent"><strong>Agent Provider:</strong> @(string.IsNullOrWhiteSpace(Options.Value.AgentProviderUrl) ? "(none)" : new Uri(Options.Value.AgentProviderUrl).GetLeftPart(UriPartial.Authority))</span>
     </div>
     @if (_error is not null)
     {
@@ -38,46 +19,68 @@
     }
 </header>
 
-@if (Session.CanSwitchMode)
-{
-    <section class="flow-picker">
-        <label class="flow-picker__label" for="flow-select">
-            <span class="flow-picker__title">Pick a flow to demo</span>
-            <select id="flow-select" value="@Session.Mode" @onchange="OnModeChangedAsync" disabled="@_busy">
-                <option value="@TourMode.Identity">0 · Identity-based — no PS, 4 steps</option>
-                <option value="@TourMode.Autonomous" disabled="@(!Session.HasPersonServer)">1 · Autonomous — no user, 8 steps</option>
-                <option value="@TourMode.Deferred" disabled="@(!Session.HasPersonServer)">2 · Deferred consent — user approves, 11 steps</option>
-            </select>
-        </label>
-        <p class="flow-picker__desc">
-            @switch (Session.Mode)
-            {
-                case TourMode.Identity:
-                    <text>
-                        The resource trusts the agent token directly. <code>GET /</code> returns
-                        <code>200</code> on the first call — no Person Server is involved.
-                        <strong>No human in the loop, no PS round-trip.</strong>
-                    </text>
-                    break;
-                case TourMode.Autonomous:
-                    <text>
-                        The agent already has standing consent at the Person Server. <code>POST /token</code>
-                        returns <code>200</code> immediately with an <code>auth_token</code>; the agent retries the
-                        resource and gets <code>200</code>. <strong>No human in the loop.</strong>
-                    </text>
-                    break;
-                case TourMode.Deferred:
-                    <text>
-                        The agent has <em>no</em> consent yet. <code>POST /token</code> returns <code>202 Accepted</code>
-                        with an interaction URL; the user clicks <strong>Approve</strong> at the PS's consent page in
-                        a new tab; the agent polls a pending URL until the PS mints the <code>auth_token</code>.
-                        <strong>Human approval required.</strong>
-                    </text>
-                    break;
-            }
-        </p>
-    </section>
-}
+<section class="flow-picker">
+    <label class="flow-picker__label" for="flow-select">
+        <span class="flow-picker__title">Pick a flow to demo</span>
+        <select id="flow-select" value="@Session.Mode" @onchange="OnModeChangedAsync" disabled="@_busy">
+            <option value="@TourMode.Bootstrap" disabled="@(!Session.HasAgentProvider)">1 · Bootstrap — keygen + AP enrol</option>
+            <option value="@TourMode.Identity">2 · Identity-based — no PS, 2 steps</option>
+            <option value="@TourMode.Autonomous" disabled="@(!Session.HasPersonServer)">3 · Autonomous — no user, 6 steps</option>
+            <option value="@TourMode.Deferred" disabled="@(!Session.HasPersonServer)">4 · Deferred consent — user approves, 9 steps</option>
+        </select>
+    </label>
+    <div class="flow-picker__actions">
+        @if (Session.AwaitingUserApproval)
+        {
+            <a class="primary approve" href="@Session.UserInteractionUrl" target="_blank" rel="noopener"
+               @onclick="MarkInteractionOpenedAsync" @onclick:preventDefault="false">
+                Open consent page ↗
+            </a>
+        }
+        else
+        {
+            <button class="primary" @onclick="NextAsync" disabled="@(Session.IsComplete || _busy)">
+                @(_busy ? "Running…" : Session.IsAborted ? "Aborted" : Session.IsComplete ? "Done" : StepButtonLabel())
+            </button>
+        }
+        <button @onclick="RunAllAsync" disabled="@(Session.IsComplete || _busy)">Run all</button>
+        <button @onclick="ResetAsync" disabled="@_busy">Reset</button>
+    </div>
+    <p class="flow-picker__desc">
+        @switch (Session.Mode)
+        {
+            case TourMode.Bootstrap:
+                <text>
+                    The agent generates a keypair and registers with an Agent Provider to obtain
+                    a signed <code>aa-agent+jwt</code>. This is a one-time setup step before any
+                    protocol flow. <strong>Agent ↔ Agent Provider only.</strong>
+                </text>
+                break;
+            case TourMode.Identity:
+                <text>
+                    The resource trusts the agent token directly. <code>GET /</code> returns
+                    <code>200</code> on the first call — no Person Server is involved.
+                    <strong>No human in the loop, no PS round-trip.</strong>
+                </text>
+                break;
+            case TourMode.Autonomous:
+                <text>
+                    The agent already has standing consent at the Person Server. <code>POST /token</code>
+                    returns <code>200</code> immediately with an <code>auth_token</code>; the agent retries the
+                    resource and gets <code>200</code>. <strong>No human in the loop.</strong>
+                </text>
+                break;
+            case TourMode.Deferred:
+                <text>
+                    The agent has <em>no</em> consent yet. <code>POST /token</code> returns <code>202 Accepted</code>
+                    with an interaction URL; the user clicks <strong>Approve</strong> at the PS's consent page in
+                    a new tab; the agent polls a pending URL until the PS mints the <code>auth_token</code>.
+                    <strong>Human approval required.</strong>
+                </text>
+                break;
+        }
+    </p>
+</section>
 
 @if (Session.IsPolling)
 {
@@ -106,6 +109,7 @@
     <section class="diagram">
         <SequenceDiagram Steps="@Session.Steps"
                          Highlight="@_selected"
+                         Lanes="@ActiveLanes"
                          IsPolling="@Session.IsPolling"
                          PollCount="@Session.PollCount"
                          LoopGhostStep="@(Session.IsDeferredMode ? new SequenceDiagram.GhostStep(Session.PollStepNumber, $"polling /pending/{{id}}…", Actor.Agent, Actor.PersonServer) : null)"
@@ -127,10 +131,19 @@
 </div>
 
 @code {
-    private int _selected;
+    private int _selected = -1;
     private bool _busy;
     private string? _error;
     private bool _initialized;
+
+    private static readonly SequenceDiagram.LaneDefinition[] BootstrapLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Agent Provider", "ap", Actor.AgentProvider),
+    };
+
+    private SequenceDiagram.LaneDefinition[]? ActiveLanes =>
+        Session.IsBootstrapMode ? BootstrapLanes : null;
 
     protected override async Task OnInitializedAsync()
     {
@@ -199,6 +212,9 @@
     private StepRecord? Selected =>
         _selected >= 0 && _selected < Session.Steps.Count ? Session.Steps[_selected] : null;
 
+    private string StepButtonLabel() =>
+        $"Run step {Session.Steps.Count + 1} / {Session.TotalSteps}";
+
     private async Task NextAsync()
     {
         _busy = true;
@@ -223,31 +239,10 @@
         {
             // The <a target="_blank"> element opens the PS's interaction
             // page natively (no popup-blocker friction). This handler
-            // records step 9 in the timeline and immediately kicks off
-            // step 10's background poll so the spinner is live while the
+            // records the user-approval step in the timeline and immediately kicks off
+            // the background poll so the spinner is live while the
             // user is in the other tab.
             await Session.RecordUserApprovalOpenedAsync();
-            _ = Session.StartPendingPollAsync();
-            _selected = Session.Steps.Count - 1;
-        }
-        catch (Exception ex)
-        {
-            _error = $"{ex.GetType().Name}: {ex.Message}";
-        }
-        finally { _busy = false; }
-    }
-
-    private async Task SimulateDenyAsync()
-    {
-        _busy = true;
-        _error = null;
-        try
-        {
-            // Posts directly to MockPS's /interaction/deny on the user's
-            // behalf so the Deny path can be demoed without leaving the
-            // tour. Step 10's background poll will then observe the PS's
-            // 403 access_denied and record a terminal denial step.
-            await Session.SimulateUserDenyAsync();
             _ = Session.StartPendingPollAsync();
             _selected = Session.Steps.Count - 1;
         }
@@ -288,7 +283,7 @@
     private async Task ResetAsync()
     {
         Session.Reset();
-        _selected = 0;
+        _selected = -1;
         _error = null;
         await Session.PrepareConsentStateAsync();
     }
@@ -307,7 +302,7 @@
             // store to match the new mode's expectations.
             Session.Mode = mode;
             await Session.PrepareConsentStateAsync();
-            _selected = 0;
+            _selected = -1;
         }
         catch (Exception ex)
         {

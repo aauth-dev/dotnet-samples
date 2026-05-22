@@ -13,28 +13,27 @@
 }
 
 * { box-sizing: border-box; }
-html, body { height: 100%; }
+html, body { height: 100%; margin: 0; }
 body {
-    margin: 0;
     font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
     background: var(--bg);
     color: var(--fg);
+    display: flex;
+    flex-direction: column;
 }
 
 .topbar {
-    padding: 1rem 1.25rem;
+    padding: 0.75rem 1.25rem;
     border-bottom: 1px solid var(--border);
     background: var(--panel);
-    display: grid;
-    grid-template-columns: 1fr auto;
-    grid-template-rows: auto auto;
-    gap: 0.5rem 1rem;
+    display: flex;
     align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
 }
-.topbar h1 { margin: 0; font-size: 1.15rem; grid-column: 1; grid-row: 1; }
-.topbar .config { grid-column: 1; grid-row: 2; font-size: 0.85rem; color: var(--muted); display: flex; gap: 1.5rem; flex-wrap: wrap; }
-.topbar .actions { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 0.5rem; }
-.topbar .error { grid-column: 1 / -1; grid-row: 3; color: var(--accent-2); font-family: ui-monospace, monospace; font-size: 0.85rem; }
+.topbar h1 { margin: 0; font-size: 1.15rem; }
+.topbar .config { font-size: 0.85rem; color: var(--muted); display: flex; gap: 1.5rem; flex-wrap: wrap; }
+.topbar .error { color: var(--accent-2); font-family: ui-monospace, monospace; font-size: 0.85rem; }
 
 button {
     background: var(--panel-2);
@@ -68,7 +67,7 @@ button.deny {
 }
 button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef4444; }
 
-/* Live-polling status card. Shown while step 10's background poll is in flight. */
+/* Live-polling status card. Shown while the poll step's background poll is in flight. */
 .polling {
   display: flex;
   align-items: flex-start;
@@ -161,13 +160,20 @@ button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef44
   border-radius: 4px;
   color: var(--fg);
 }
+.flow-picker__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
 
 .layout {
     display: grid;
     grid-template-columns: 240px 1fr 1fr;
     gap: 1px;
     background: var(--border);
-    height: calc(100vh - 96px);
+    flex: 1;
+    min-height: 0;
 }
 .layout > * { background: var(--bg); padding: 1rem; overflow: auto; }
 
@@ -243,7 +249,8 @@ button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef44
 .seq { display: flex; flex-direction: column; height: 100%; }
 .lanes {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
     text-align: center;
     padding: 0.5rem 0;
     border-bottom: 1px solid var(--border);
@@ -252,13 +259,20 @@ button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef44
 .lanes .agent { color: var(--accent); }
 .lanes .resource { color: var(--ok); }
 .lanes .ps { color: var(--accent-2); }
+.lanes .ap { color: var(--warn); }
 .messages {
     position: relative;
     flex: 1;
+    padding-top: 1rem;
+}
+.seq--3 .messages {
     background-image: linear-gradient(to right, transparent calc(16.66% - 1px), var(--border) calc(16.66% - 1px), var(--border) calc(16.66%), transparent calc(16.66%),
                                                 transparent calc(50% - 1px), var(--border) calc(50% - 1px), var(--border) calc(50%), transparent calc(50%),
                                                 transparent calc(83.33% - 1px), var(--border) calc(83.33% - 1px), var(--border) calc(83.33%), transparent calc(83.33%));
-    padding-top: 1rem;
+}
+.seq--2 .messages {
+    background-image: linear-gradient(to right, transparent calc(25% - 1px), var(--border) calc(25% - 1px), var(--border) 25%, transparent 25%,
+                                                transparent calc(75% - 1px), var(--border) calc(75% - 1px), var(--border) 75%, transparent 75%);
 }
 .msg {
     position: relative;
@@ -420,4 +434,10 @@ pre.json { max-height: none; }
 .json .j-str { color: #a5d6ff; }
 .json .j-num { color: #f0883e; }
 .json .j-kw  { color: #d2a8ff; font-weight: 600; }
+
+/* Entity highlights — URLs/IDs colored by party */
+.hl-agent    { color: var(--accent); font-weight: 600; text-decoration: underline dotted; cursor: help; }
+.hl-resource { color: var(--ok); font-weight: 600; text-decoration: underline dotted; cursor: help; }
+.hl-ps       { color: var(--accent-2); font-weight: 600; text-decoration: underline dotted; cursor: help; }
+
 .hint { color: var(--muted); }

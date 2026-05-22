@@ -119,7 +119,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         // the leading '/', so re-add it.
         var path = "/" + request.RequestUri.GetComponents(UriComponents.Path, UriFormat.UriEscaped);
 
-        var paramsLine = BuildSignatureParams(created);
+        var paramsLine = BuildSignatureParams(created, request);
 
         // RFC 9421 §2.5 signature base construction.
         //
@@ -137,6 +137,11 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         AppendComponent(sb, "@authority", authority);
         AppendComponent(sb, "@path", path);
         AppendComponent(sb, "signature-key", signatureKey);
+        // §HTTP Signatures Profile: authorization MUST be covered when present
+        if (request.Headers.Authorization is not null)
+        {
+            AppendComponent(sb, "authorization", request.Headers.Authorization.ToString());
+        }
         sb.Append("\"@signature-params\": ").Append(paramsLine);
 
         var signatureBase = sb.ToString();
@@ -167,7 +172,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         sb.Append('"').Append(name).Append("\": ").Append(value).Append('\n');
     }
 
-    private static string BuildSignatureParams(long created)
+    private static string BuildSignatureParams(long created, HttpRequestMessage request)
     {
         var sb = new StringBuilder("(");
         for (int i = 0; i < CoveredComponents.Count; i++)
@@ -177,6 +182,11 @@ public sealed class AAuthSigningHandler : DelegatingHandler
                 sb.Append(' ');
             }
             sb.Append('"').Append(CoveredComponents[i]).Append('"');
+        }
+        // §HTTP Signatures Profile: authorization MUST be covered when present
+        if (request.Headers.Authorization is not null)
+        {
+            sb.Append(" \"authorization\"");
         }
         sb.Append(");created=").Append(created);
         return sb.ToString();

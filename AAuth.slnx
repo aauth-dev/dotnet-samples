@@ -13,4 +13,5 @@
     <Project Path="tests/AAuth.Conformance/AAuth.Conformance.csproj" />
     <Project Path="tests/AAuth.Tests/AAuth.Tests.csproj" />
   </Folder>
+  <Project Path="../../tmp/PatternTest/PatternTest.csproj" />
 </Solution>

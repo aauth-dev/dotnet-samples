@@ -26,7 +26,7 @@ Defaults to `http://localhost:5301` (HTTP) / `https://localhost:5300` (HTTPS).
 
 ```bash
 dotnet run --project samples/AgentConsole -- http://localhost:5000 \
-  --ap http://localhost:5301/enrol \
+  --ap http://localhost:5301 \
   --sub "aauth:myagent@ap.example"
 ```
 
@@ -37,7 +37,7 @@ Add to `samples/GuidedTour/appsettings.json`:
 ```json
 {
   "GuidedTour": {
-    "AgentProviderUrl": "http://localhost:5301/enrol"
+    "AgentProviderUrl": "http://localhost:5301"
   }
 }
 ```

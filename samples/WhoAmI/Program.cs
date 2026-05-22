@@ -84,7 +84,7 @@ app.MapGet("/", async (
 
     if (typ == AgentTokenBuilder.TokenType)
     {
-        return ChallengeWithResourceToken(ctx, parsed, tokenVerifier, resourceSigningKey, resourceUrl);
+        return await ChallengeWithResourceToken(ctx, parsed, tokenVerifier, resourceSigningKey, resourceUrl, metadata, jwks);
     }
 
     if (typ == AuthTokenBuilder.TokenType)
@@ -102,19 +102,26 @@ app.Run();
 // -----------------------------------------------------------------------
 // Helper handlers
 // -----------------------------------------------------------------------
-static IResult ChallengeWithResourceToken(
+static async Task<IResult> ChallengeWithResourceToken(
     HttpContext ctx,
     SignatureKeyParser.ParsedSignatureKey parsed,
     TokenVerifier verifier,
     AAuthKey resourceKey,
-    string resourceIssuer)
+    string resourceIssuer,
+    MetadataClient metadata,
+    JwksClient jwks)
 {
-    // Verify the agent token's own structure (self-issued: cnf.jwk signs the
-    // token in the sample setup).
+    // §Agent Token Verification: verify JWT signature against the issuer's
+    // JWKS discovered via {iss}/.well-known/{dwk}. The middleware already
+    // verified that cnf.jwk matches the HTTP signing key (step 5).
     AAuth.Tokens.TokenVerifier.VerifiedToken agentToken;
     try
     {
-        agentToken = verifier.VerifySelfIssuedAgentToken(parsed.Jwt, parsed.ConfirmationKey);
+        agentToken = await verifier.VerifyWithJwksAsync(
+            parsed.Jwt, metadata, jwks,
+            AgentTokenBuilder.TokenType,
+            AgentTokenBuilder.AgentDwk,
+            expectedAudience: null);
     }
     catch (TokenVerificationException ex)
     {

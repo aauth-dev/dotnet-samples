@@ -1,4 +1,5 @@
 @* Renders a JWT as compact-form plus decoded header / payload with JSON syntax highlighting. *@
+@inject Microsoft.Extensions.Options.IOptions<TourOptions> Options
 
 @if (!string.IsNullOrWhiteSpace(Jwt))
 {
@@ -38,7 +39,12 @@
     [Parameter] public string? Payload { get; set; }
     [Parameter] public string? Decoded { get; set; }
 
-    private static MarkupString Colorize(string json)
+    private EntityHighlighter? _highlighter;
+
+    private EntityHighlighter Highlighter =>
+        _highlighter ??= new EntityHighlighter(Options.Value);
+
+    private MarkupString Colorize(string json)
     {
         // HTML-escape first, then apply highlighting patterns over the
         // escaped text so we never inject untrusted JSON content as markup.
@@ -52,10 +58,22 @@
             "(&quot;[^&]*?&quot;)(\\s*:)",
             "<span class=\"j-key\">$1</span>$2");
 
+        // String values: check if the content matches a known entity and
+        // apply entity styling (with tooltip) instead of generic j-str.
+        // [^&<>]*? prevents matching across the <span> tags inserted by the
+        // key pass above.
         escaped = System.Text.RegularExpressions.Regex.Replace(
             escaped,
-            "(?<!class=\"j-key\">)(&quot;[^&]*?&quot;)",
-            "<span class=\"j-str\">$1</span>");
+            "(?<!class=\"j-key\">)(&quot;([^&<>]*?)&quot;)",
+            m =>
+            {
+                var full = m.Groups[1].Value;    // &quot;...&quot;
+                var inner = m.Groups[2].Value;   // content without quotes
+                var entity = Highlighter.Classify(inner);
+                if (entity is (var cssClass, var label))
+                    return $"<span class=\"{cssClass}\" title=\"{label}\">{full}</span>";
+                return $"<span class=\"j-str\">{full}</span>";
+            });
 
         escaped = System.Text.RegularExpressions.Regex.Replace(
             escaped,

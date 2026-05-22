@@ -78,7 +78,8 @@ public sealed class AAuthVerificationMiddleware
                 signatureKey: signatureKey,
                 signatureInput: signatureInput,
                 signatureHeader: signature,
-                publicKey: parsed.ConfirmationKey);
+                publicKey: parsed.ConfirmationKey,
+                authorization: req.Headers.Authorization.FirstOrDefault());
         }
         catch (AAuthVerificationException ex)
         {
