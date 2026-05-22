@@ -17,11 +17,26 @@ The four parties are:
 
 > **Agent Provider (AP)** is a supporting role that issues `aa-agent+jwt` tokens binding an agent's signing key to its identity.
 
+## Documentation
+
+Full SDK documentation lives in the [`docs/`](docs/) directory:
+
+| Section | Description |
+|---------|-------------|
+| [Getting Started](docs/getting-started.md) | Install, generate a key, make your first signed request |
+| [Concepts](docs/concepts.md) | The four participants, three layers, and how the SDK maps to them |
+| [Signing Modes](docs/signing-modes/overview.md) | Pseudonymous, Agent Identity, Agent Token, Key Rotation |
+| [Workflows](docs/workflows/identity-based-access.md) | Identity-based, Resource-managed, PS-asserted, Federated access |
+| [Server Implementation](docs/server/verification-middleware.md) | Verification middleware, metadata, token issuance, replay detection |
+| [Advanced Topics](docs/advanced/key-management.md) | Key management, missions, platform attestation, error handling |
+| [Configuration Reference](docs/reference/configuration.md) | All configuration options |
+
 ## Repository Layout
 
 | Path | Description |
 |------|-------------|
 | [aauth-spec/](aauth-spec/) | Protocol specifications (draft-01) copied from [dickhardt/AAuth](https://github.com/dickhardt/AAuth) — see [SPEC-VERSION.md](aauth-spec/SPEC-VERSION.md) |
+| [docs/](docs/) | SDK documentation — signing modes, workflows, server guides, and reference |
 | [src/AAuth/](src/AAuth/) | AAuth SDK library |
 | [samples/AgentConsole/](samples/AgentConsole/) | Console agent: signs requests, handles AAuth challenges, exchanges with a PS |
 | [samples/WhoAmI/](samples/WhoAmI/) | ASP.NET Core resource server that verifies AAuth requests and issues resource tokens |
