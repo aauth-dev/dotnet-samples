@@ -93,8 +93,21 @@ development and testing.
 
 ### Agent Provider (AP) hosted endpoints
 
-**Reason**: Same as AS — the AP is an external service. The SDK provides
-`AgentProviderClient` for agents to enrol and refresh with any conformant AP.
+**Status**: Implemented as a sample (`samples/MockAgentProvider/`).
+
+The SDK provides `AgentProviderClient` for agents to enrol and refresh
+with any conformant AP. A fully functional `MockAgentProvider` sample was
+added demonstrating:
+
+- AP metadata at `/.well-known/aauth-agent.json`
+- JWKS endpoint at `/.well-known/jwks.json`
+- Enrol endpoint (`POST /enrol`) — accepts `{agent_id, jwk}`, issues agent token
+- Refresh endpoint (`POST /refresh`) — accepts `{agent_token}`, re-issues
+- Dev tool (`GET /agents`) listing registered agents
+
+Both `AgentConsole` and `GuidedTour` were updated with optional
+`--ap`/`AgentProviderUrl` flags to demonstrate enrolment with
+MockAgentProvider rather than self-signing tokens locally.
 
 ### Phase 6 — R3 (Rich Resource Requests)
 
@@ -147,6 +160,7 @@ pipeline to be algorithm-polymorphic. The `IAAuthKey` interface and
 | Decision | Rationale |
 |----------|-----------|
 | No AS/AP server hosting in SDK | Existing external services; SDK focuses on agent + resource roles |
+| AP sample (`MockAgentProvider`) ships alongside library | Demonstrates AP behaviour without polluting the core library |
 | BouncyCastle for ECDSA P-256 signing | RFC 6979 deterministic-K required; BCL `ECDsa` doesn't expose it |
 | `IAAuthKey` interface (not abstract class) | Extensible for hardware keys, cloud KMS, future algorithms |
 | In-memory defaults for all stores | Ship working defaults; consumers plug in Redis/SQL/KMS via DI |

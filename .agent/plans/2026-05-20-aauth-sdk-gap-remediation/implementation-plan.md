@@ -451,6 +451,9 @@ explicitly out of scope; we ship the seam only.
 ### Phase 4 Definition of Done
 
 - Refresh sample runnable end-to-end against the Phase 2 AP server.
+- `MockAgentProvider` sample (`samples/MockAgentProvider/`) demonstrates
+  enrol + refresh endpoints; `AgentConsole --ap` and `GuidedTour`
+  `AgentProviderUrl` setting demonstrate client-side enrolment.
 - GAPS §7 closed (except platform attestation implementations, deferred
   indefinitely per the rationale above).
 

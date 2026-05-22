@@ -82,13 +82,17 @@ public sealed class TourSession : IAsyncDisposable
     public bool IsDeferredMode =>
         HasPersonServer && _mode == TourMode.Deferred;
 
+    /// <summary>True when an Agent Provider URL is configured for real AP enrolment.</summary>
+    public bool HasAgentProvider => !string.IsNullOrWhiteSpace(_options.AgentProviderUrl);
+
     /// <summary>Total number of steps the tour plans to run given the current configuration.</summary>
     public int TotalSteps
     {
         get
         {
-            if (IsIdentityMode) return 4;
-            return IsDeferredMode ? 11 : 8;
+            var apExtra = HasAgentProvider ? 1 : 0;
+            if (IsIdentityMode) return 4 + apExtra;
+            return (IsDeferredMode ? 11 : 8) + apExtra;
         }
     }
 
@@ -102,6 +106,11 @@ public sealed class TourSession : IAsyncDisposable
     {
         get
         {
+            if (HasAgentProvider)
+            {
+                if (IsIdentityMode) return ApIdentityPlan;
+                return IsDeferredMode ? ApDeferredPlan : ApAutonomousPlan;
+            }
             if (IsIdentityMode) return IdentityPlan;
             return IsDeferredMode ? DeferredPlan : AutonomousPlan;
         }
@@ -142,6 +151,46 @@ public sealed class TourSession : IAsyncDisposable
         new(11, "Replay GET / with auth_token", "Signed retry carries the auth_token in Signature-Key → 200 + claims.", Actor.Agent, Actor.Resource),
     };
 
+    // ── AP-enabled plans (insert discover AP + enrol steps after key gen) ──
+
+    private static readonly TourPlanStep[] ApIdentityPlan =
+    {
+        new(1, "Generate Ed25519 keypair", "Agent mints a fresh signing key.", Actor.Agent, Actor.Agent),
+        new(2, "Discover Agent Provider", "GET /.well-known/aauth-agent.json to learn the AP's enrol endpoint.", Actor.Agent, Actor.AgentProvider),
+        new(3, "Enrol with Agent Provider", "POST /enrol with {agent_id, jwk}; AP issues aa-agent+jwt.", Actor.Agent, Actor.AgentProvider),
+        new(4, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
+        new(5, "Signed GET / → 200", "Resource trusts identity alone (no PS), returns 200 + claims directly.", Actor.Agent, Actor.Resource),
+    };
+
+    private static readonly TourPlanStep[] ApAutonomousPlan =
+    {
+        new(1, "Generate Ed25519 keypair", "Agent mints a fresh signing key.", Actor.Agent, Actor.Agent),
+        new(2, "Discover Agent Provider", "GET /.well-known/aauth-agent.json to learn the AP's enrol endpoint.", Actor.Agent, Actor.AgentProvider),
+        new(3, "Enrol with Agent Provider", "POST /enrol with {agent_id, jwk}; AP issues aa-agent+jwt.", Actor.Agent, Actor.AgentProvider),
+        new(4, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
+        new(5, "Signed GET / → 401", "Resource returns 401 with a resource_token + AAuth-Requirement.", Actor.Agent, Actor.Resource),
+        new(6, "Parse the 401 challenge", "Decode the AAuth-Requirement header and resource_token claims.", Actor.Agent, Actor.Agent),
+        new(7, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint + jwks_uri.", Actor.Agent, Actor.PersonServer),
+        new(8, "Exchange at PS → 200 auth_token", "Signed POST /token with the resource_token; PS mints an aa-auth+jwt immediately.", Actor.Agent, Actor.PersonServer),
+        new(9, "Replay GET / with auth_token", "Signed retry carries the auth_token in Signature-Key → 200 + claims.", Actor.Agent, Actor.Resource),
+    };
+
+    private static readonly TourPlanStep[] ApDeferredPlan =
+    {
+        new(1, "Generate Ed25519 keypair", "Agent mints a fresh signing key.", Actor.Agent, Actor.Agent),
+        new(2, "Discover Agent Provider", "GET /.well-known/aauth-agent.json to learn the AP's enrol endpoint.", Actor.Agent, Actor.AgentProvider),
+        new(3, "Enrol with Agent Provider", "POST /enrol with {agent_id, jwk}; AP issues aa-agent+jwt.", Actor.Agent, Actor.AgentProvider),
+        new(4, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
+        new(5, "Signed GET / → 401", "Resource returns 401 with a resource_token + AAuth-Requirement.", Actor.Agent, Actor.Resource),
+        new(6, "Parse the 401 challenge", "Decode the AAuth-Requirement header and resource_token claims.", Actor.Agent, Actor.Agent),
+        new(7, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint + jwks_uri.", Actor.Agent, Actor.PersonServer),
+        new(8, "Exchange → 202 Accepted", "PS lacks consent; returns 202 + Location + interaction URL + single-use code.", Actor.Agent, Actor.PersonServer),
+        new(9, "Direct user to interaction URL", "Agent surfaces the {url}?code={code} link for the user to visit.", Actor.Agent, Actor.Agent),
+        new(10, "User approves at the PS", "User opens the PS consent page in a new tab and clicks Approve; PS records consent.", Actor.PersonServer, Actor.PersonServer),
+        new(11, "Poll pending URL → 200 auth_token", "Signed GETs to /pending/{id} until the PS mints the auth_token.", Actor.Agent, Actor.PersonServer),
+        new(12, "Replay GET / with auth_token", "Signed retry carries the auth_token in Signature-Key → 200 + claims.", Actor.Agent, Actor.Resource),
+    };
+
     /// <summary>True when no more steps remain.</summary>
     public bool IsComplete => _aborted || Steps.Count >= TotalSteps;
 
@@ -152,12 +201,21 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public bool IsAborted => _aborted;
 
+    /// <summary>Step offset introduced by AP enrolment (0 or 1).</summary>
+    private int ApStepOffset => HasAgentProvider ? 1 : 0;
+
+    /// <summary>The step number at which user approval occurs in deferred mode.</summary>
+    public int UserApprovalStepNumber => 9 + ApStepOffset;
+
+    /// <summary>The step number at which polling occurs in deferred mode.</summary>
+    public int PollStepNumber => 10 + ApStepOffset;
+
     /// <summary>
     /// True when the tour is parked on the "User approves" step in deferred mode
     /// and the UI should expose the "Approve as user" action button.
     /// </summary>
     public bool AwaitingUserApproval =>
-        IsDeferredMode && Steps.Count + 1 == 9 && !_userApproved;
+        IsDeferredMode && Steps.Count + 1 == UserApprovalStepNumber && !_userApproved;
 
     /// <summary>The user-facing interaction URL captured during step 7 (deferred only).</summary>
     public string? UserInteractionUrl => _interactionUrl is null || _interactionCode is null
@@ -215,6 +273,7 @@ public sealed class TourSession : IAsyncDisposable
         _pendingUrl = null;
         _interactionUrl = null;
         _interactionCode = null;
+        _apEnrolEndpoint = null;
         _userApproved = false;
         _aborted = false;
     }
@@ -247,20 +306,36 @@ public sealed class TourSession : IAsyncDisposable
     public async Task RunNextAsync(CancellationToken ct = default)
     {
         var nextStep = Steps.Count + 1;
+
+        // ── Bootstrap steps (key generation + token acquisition) ─────────
+        if (nextStep == 1) { Step1GenerateKey(); return; }
+
+        if (HasAgentProvider)
+        {
+            if (nextStep == 2) { await StepDiscoverApMetadataAsync(ct); return; }
+            if (nextStep == 3) { await StepEnrolWithApAsync(ct); return; }
+        }
+        else
+        {
+            if (nextStep == 2) { await Step2BuildAgentTokenAsync(); return; }
+        }
+
+        // ── Resource flow (same logic, shifted by ApStepOffset) ──────────
+        // logicalStep 1 = "fetch resource metadata", 2 = "signed GET", etc.
+        var logicalStep = nextStep - 2 - ApStepOffset;
+
         if (IsDeferredMode)
         {
-            switch (nextStep)
+            switch (logicalStep)
             {
-                case 1: Step1GenerateKey(); break;
-                case 2: Step2BuildAgentToken(); break;
-                case 3: await Step3FetchResourceMetadataAsync(ct); break;
-                case 4: await Step4SignedGetAsync(ct); break;
-                case 5: Step5ParseChallenge(); break;
-                case 6: await Step6FetchPersonMetadataAsync(ct); break;
-                case 7: await Step7DeferredExchangeAsync(ct); break;
-                case 8: Step8DirectUserToInteraction(); break;
-                case 9: Step9UserApprovesPlaceholder(); break;
-                case 10:
+                case 1: await Step3FetchResourceMetadataAsync(ct); break;
+                case 2: await Step4SignedGetAsync(ct); break;
+                case 3: Step5ParseChallenge(); break;
+                case 4: await Step6FetchPersonMetadataAsync(ct); break;
+                case 5: await Step7DeferredExchangeAsync(ct); break;
+                case 6: Step8DirectUserToInteraction(); break;
+                case 7: Step9UserApprovesPlaceholder(); break;
+                case 8:
                     // Polling may already have started in the background
                     // (the UI calls StartPendingPollAsync the moment the
                     // user opens the consent tab). If so, just await it
@@ -269,26 +344,25 @@ public sealed class TourSession : IAsyncDisposable
                     {
                         await existing.ConfigureAwait(false);
                     }
-                    else if (Steps.Count + 1 == 10)
+                    else if (Steps.Count + 1 == PollStepNumber)
                     {
                         await Step10PollPendingAsync(ct);
                     }
                     break;
-                case 11: await Step11RetryWithAuthTokenAsync(ct); break;
+                case 9: await Step11RetryWithAuthTokenAsync(ct); break;
             }
         }
         else
         {
-            switch (nextStep)
+            switch (logicalStep)
             {
-                case 1: Step1GenerateKey(); break;
-                case 2: Step2BuildAgentToken(); break;
-                case 3: await Step3FetchResourceMetadataAsync(ct); break;
-                case 4: await Step4SignedGetAsync(ct); break;
-                case 5: Step5ParseChallenge(); break;
-                case 6: await Step6FetchPersonMetadataAsync(ct); break;
-                case 7: await Step7TokenExchangeAsync(ct); break;
-                case 8: await Step8RetryWithAuthTokenAsync(ct, stepNumber: 8); break;
+                case 1: await Step3FetchResourceMetadataAsync(ct); break;
+                case 2: await Step4SignedGetAsync(ct); break;
+                // Identity mode stops here (only 2 resource steps)
+                case 3: Step5ParseChallenge(); break;
+                case 4: await Step6FetchPersonMetadataAsync(ct); break;
+                case 5: await Step7TokenExchangeAsync(ct); break;
+                case 6: await Step8RetryWithAuthTokenAsync(ct, Steps.Count + 1); break;
             }
         }
     }
@@ -303,10 +377,10 @@ public sealed class TourSession : IAsyncDisposable
     public Task RecordUserApprovalOpenedAsync(CancellationToken ct = default)
     {
         if (!IsDeferredMode) { return Task.CompletedTask; }
-        if (Steps.Count + 1 != 9)
+        if (Steps.Count + 1 != UserApprovalStepNumber)
         {
             throw new InvalidOperationException(
-                $"RecordUserApprovalOpenedAsync called at step {Steps.Count + 1}; only valid at step 9.");
+                $"RecordUserApprovalOpenedAsync called at step {Steps.Count + 1}; only valid at step {UserApprovalStepNumber}.");
         }
 
         var userUrl = UserInteractionUrl ?? "(no interaction URL captured)";
@@ -314,7 +388,7 @@ public sealed class TourSession : IAsyncDisposable
 
         Steps.Add(new StepRecord
         {
-            Number = 9,
+            Number = Steps.Count + 1,
             Title = "User completes interaction at Person Server",
             From = Actor.PersonServer,
             To = Actor.PersonServer,
@@ -376,7 +450,7 @@ public sealed class TourSession : IAsyncDisposable
         var jwk = _agentKey.ToPublicJwk().ToJsonString(new JsonSerializerOptions { WriteIndented = true });
         Steps.Add(new StepRecord
         {
-            Number = 1,
+            Number = Steps.Count + 1,
             Title = "Generate Ed25519 key",
             From = Actor.Agent,
             To = Actor.Agent,
@@ -389,15 +463,13 @@ public sealed class TourSession : IAsyncDisposable
         });
     }
 
-    private void Step2BuildAgentToken()
+    private async Task Step2BuildAgentTokenAsync()
     {
-        // In identity mode we omit the `ps` claim so the resource takes the
-        // identity-based path (200 directly). Normalize whitespace/empty
-        // PersonServerUrl to null too — AgentTokenBuilder treats any
-        // non-null value as "present" and validates it as an https URL.
+        // Non-AP path: build a self-signed agent token locally.
         var personServer = IsIdentityMode || string.IsNullOrWhiteSpace(_options.PersonServerUrl)
             ? null
             : _options.PersonServerUrl;
+
         _agentToken = new AgentTokenBuilder
         {
             Issuer = "https://ap.example",
@@ -407,9 +479,11 @@ public sealed class TourSession : IAsyncDisposable
             PersonServer = personServer,
         }.Build();
 
+        await Task.CompletedTask; // keep async signature for consistent dispatch
+
         Steps.Add(new StepRecord
         {
-            Number = 2,
+            Number = Steps.Count + 1,
             Title = "Build agent token",
             From = Actor.Agent,
             To = Actor.Agent,
@@ -418,6 +492,89 @@ public sealed class TourSession : IAsyncDisposable
                 "public key (cnf.jwk), its identifier (sub), and — for the three-party " +
                 "flow — the user's Person Server URL. The JWT is self-signed by the " +
                 "agent's key in this demo.",
+            TokenJwt = _agentToken,
+            TokenHeader = DecodeJwt(_agentToken)?.Header,
+            TokenPayload = DecodeJwt(_agentToken)?.Payload,
+        });
+    }
+
+    // ── AP bootstrap steps ──────────────────────────────────────────────────
+
+    private string? _apEnrolEndpoint;
+
+    private async Task StepDiscoverApMetadataAsync(CancellationToken ct)
+    {
+        // Derive the AP base URL from the enrol endpoint URL
+        var apBase = _options.AgentProviderUrl!;
+        if (apBase.Contains("/enrol", StringComparison.OrdinalIgnoreCase))
+            apBase = apBase[..apBase.LastIndexOf("/enrol", StringComparison.OrdinalIgnoreCase)];
+
+        var metadataUrl = $"{apBase.TrimEnd('/')}/.well-known/aauth-agent.json";
+
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        using var client = new HttpClient(capture);
+        await client.GetAsync(metadataUrl, ct);
+        var ex = capture.Last!;
+
+        // Extract enrol_endpoint from metadata
+        var meta = JsonNode.Parse(ex.ResponseBody);
+        _apEnrolEndpoint = (string?)meta?["enrol_endpoint"] ?? _options.AgentProviderUrl!;
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Discover Agent Provider",
+            From = Actor.Agent,
+            To = Actor.AgentProvider,
+            Narrative =
+                "Before enrolling, the agent fetches the Agent Provider's well-known " +
+                "metadata to learn its `enrol_endpoint`, `refresh_endpoint`, and JWKS " +
+                "URI. This is the AP equivalent of resource/PS discovery.",
+            RequestLine = $"{ex.RequestLine}  →  {metadataUrl}",
+            RequestHeaders = ex.RequestHeaders,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+        });
+    }
+
+    private async Task StepEnrolWithApAsync(CancellationToken ct)
+    {
+        var enrolUrl = _apEnrolEndpoint ?? _options.AgentProviderUrl!;
+
+        // Build the enrolment request body using the key from Step 1
+        var requestBody = new JsonObject
+        {
+            ["agent_id"] = _options.AgentId,
+            ["jwk"] = _agentKey!.ToPublicJwk(),
+        };
+
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        using var client = new HttpClient(capture);
+        using var response = await client.PostAsJsonAsync(enrolUrl, requestBody, ct);
+        var ex = capture.Last!;
+
+        // Extract the agent token from the response
+        var body = JsonNode.Parse(ex.ResponseBody);
+        _agentToken = (string?)body?["agent_token"];
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Enrol with Agent Provider",
+            From = Actor.Agent,
+            To = Actor.AgentProvider,
+            Narrative =
+                "The agent registers with the AP by POSTing its `agent_id` and public " +
+                "`jwk`. The AP verifies the key, creates an agent record, and returns " +
+                "a signed `aa-agent+jwt` that binds the agent's identity to its key. " +
+                "This token is what the agent presents to resources going forward.",
+            RequestLine = $"{ex.RequestLine}  →  {enrolUrl}",
+            RequestHeaders = ex.RequestHeaders,
+            RequestBody = PrettyJson(ex.RequestBody),
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
             TokenJwt = _agentToken,
             TokenHeader = DecodeJwt(_agentToken)?.Header,
             TokenPayload = DecodeJwt(_agentToken)?.Payload,
@@ -433,7 +590,7 @@ public sealed class TourSession : IAsyncDisposable
         var ex = capture.Last!;
         Steps.Add(new StepRecord
         {
-            Number = 3,
+            Number = Steps.Count + 1,
             Title = "Discover resource metadata",
             From = Actor.Agent,
             To = Actor.Resource,
@@ -473,7 +630,7 @@ public sealed class TourSession : IAsyncDisposable
 
         Steps.Add(new StepRecord
         {
-            Number = 4,
+            Number = Steps.Count + 1,
             Title = "Signed GET (agent token)",
             From = Actor.Agent,
             To = Actor.Resource,
@@ -496,7 +653,7 @@ public sealed class TourSession : IAsyncDisposable
     {
         Steps.Add(new StepRecord
         {
-            Number = 5,
+            Number = Steps.Count + 1,
             Title = "Parse 401 challenge",
             From = Actor.Resource,
             To = Actor.Agent,
@@ -528,7 +685,7 @@ public sealed class TourSession : IAsyncDisposable
 
         Steps.Add(new StepRecord
         {
-            Number = 6,
+            Number = Steps.Count + 1,
             Title = "Discover Person Server metadata",
             From = Actor.Agent,
             To = Actor.PersonServer,
@@ -568,7 +725,7 @@ public sealed class TourSession : IAsyncDisposable
 
         Steps.Add(new StepRecord
         {
-            Number = 7,
+            Number = Steps.Count + 1,
             Title = "Token exchange",
             From = Actor.Agent,
             To = Actor.PersonServer,
@@ -681,7 +838,7 @@ public sealed class TourSession : IAsyncDisposable
 
         Steps.Add(new StepRecord
         {
-            Number = 7,
+            Number = Steps.Count + 1,
             Title = "Exchange → 202 Accepted",
             From = Actor.Agent,
             To = Actor.PersonServer,
@@ -708,7 +865,7 @@ public sealed class TourSession : IAsyncDisposable
 
         Steps.Add(new StepRecord
         {
-            Number = 8,
+            Number = Steps.Count + 1,
             Title = "Direct user to interaction URL",
             From = Actor.Agent,
             To = Actor.Agent,
@@ -807,7 +964,7 @@ public sealed class TourSession : IAsyncDisposable
 
             Steps.Add(new StepRecord
             {
-                Number = 10,
+                Number = Steps.Count + 1,
                 Title = "Poll pending URL → auth_token",
                 From = Actor.Agent,
                 To = Actor.PersonServer,
@@ -859,9 +1016,9 @@ public sealed class TourSession : IAsyncDisposable
         {
             return Task.CompletedTask;
         }
-        // Step 10 must be the next step in line. If somebody calls this
+        // Poll step must be the next step in line. If somebody calls this
         // out of order (defensive), bail out silently.
-        if (Steps.Count + 1 != 10)
+        if (Steps.Count + 1 != PollStepNumber)
         {
             return Task.CompletedTask;
         }
@@ -910,7 +1067,7 @@ public sealed class TourSession : IAsyncDisposable
     {
         Steps.Add(new StepRecord
         {
-            Number = 10,
+            Number = Steps.Count + 1,
             Title = "Poll pending URL → 403 access_denied (user denied)",
             From = Actor.Agent,
             To = Actor.PersonServer,
@@ -937,7 +1094,7 @@ public sealed class TourSession : IAsyncDisposable
     {
         Steps.Add(new StepRecord
         {
-            Number = 10,
+            Number = Steps.Count + 1,
             Title = "Poll pending URL → timeout (user did not respond)",
             From = Actor.Agent,
             To = Actor.PersonServer,
@@ -971,10 +1128,10 @@ public sealed class TourSession : IAsyncDisposable
             throw new InvalidOperationException(
                 "SimulateUserDenyAsync is only valid in deferred mode after step 7.");
         }
-        if (Steps.Count + 1 != 9)
+        if (Steps.Count + 1 != UserApprovalStepNumber)
         {
             throw new InvalidOperationException(
-                $"SimulateUserDenyAsync called at step {Steps.Count + 1}; only valid at step 9.");
+                $"SimulateUserDenyAsync called at step {Steps.Count + 1}; only valid at step {UserApprovalStepNumber}.");
         }
 
         // The interaction URL is `{ps}/interaction`; deny lives at
@@ -989,10 +1146,10 @@ public sealed class TourSession : IAsyncDisposable
         // the failure on step 10. Throwing here would leave the timeline
         // in an inconsistent state.
 
-        _userApproved = true; // unblocks AwaitingUserApproval so step 10 runs
+        _userApproved = true; // unblocks AwaitingUserApproval so poll step runs
         Steps.Add(new StepRecord
         {
-            Number = 9,
+            Number = Steps.Count + 1,
             Title = "User denies interaction at Person Server",
             From = Actor.PersonServer,
             To = Actor.PersonServer,
@@ -1009,7 +1166,7 @@ public sealed class TourSession : IAsyncDisposable
     }
 
     private async Task Step11RetryWithAuthTokenAsync(CancellationToken ct)
-        => await Step8RetryWithAuthTokenAsync(ct, stepNumber: 11);
+        => await Step8RetryWithAuthTokenAsync(ct, stepNumber: Steps.Count + 1);
 
     // -----------------------------------------------------------------
     // Helpers

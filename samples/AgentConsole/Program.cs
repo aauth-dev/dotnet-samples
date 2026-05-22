@@ -8,7 +8,7 @@ using AAuth.HttpSig;
 using AAuth.Tokens;
 
 const string Usage = "Usage: AgentConsole <url> [--iss <agent-provider-url>] [--sub <agent-id>] " +
-    "[--kid <key-id>] [--ps <person-server-url>]";
+    "[--kid <key-id>] [--ps <person-server-url>] [--ap <agent-provider-enrol-url>]";
 
 if (args.Length < 1 || args[0] is "--help" or "-h")
 {
@@ -33,10 +33,11 @@ string issuer = "https://ap.example";
 string subject = "aauth:demo@ap.example";
 string keyId = "demo";
 string? personServer = null;
+string? apUrl = null;
 for (int i = 1; i < args.Length; i++)
 {
     string flag = args[i];
-    if (flag is "--iss" or "--sub" or "--kid" or "--ps")
+    if (flag is "--iss" or "--sub" or "--kid" or "--ps" or "--ap")
     {
         if (i + 1 >= args.Length)
         {
@@ -50,6 +51,7 @@ for (int i = 1; i < args.Length; i++)
             case "--sub": subject = value; break;
             case "--kid": keyId = value; break;
             case "--ps":  personServer = value; break;
+            case "--ap":  apUrl = value; break;
         }
     }
     else
@@ -60,20 +62,37 @@ for (int i = 1; i < args.Length; i++)
 }
 
 var store = KeyStore.Default();
-var key = store.LoadOrCreate(keyId);
+AAuthKey key;
+string agentToken;
+
+if (apUrl is not null)
+{
+    // Bootstrap with a real Agent Provider via AgentProviderClient
+    Console.WriteLine($"Enrolling with Agent Provider at: {apUrl}");
+    var apKeyStore = new InMemoryKeyStore();
+    var apClient = new AgentProviderClient(new HttpClient(), apKeyStore);
+    var result = await apClient.EnrolAsync(issuer, subject, apUrl);
+    key = result.Key;
+    agentToken = result.AgentToken;
+    keyId = result.KeyId;
+    Console.WriteLine($"Enrolled successfully. Key ID: {keyId}");
+}
+else
+{
+    // Local self-issued token (original behaviour)
+    key = store.LoadOrCreate(keyId);
+    agentToken = new AgentTokenBuilder
+    {
+        Issuer = issuer,
+        Subject = subject,
+        KeyId = keyId,
+        Key = key,
+        PersonServer = personServer,
+    }.Build();
+}
 
 Console.WriteLine($"Using key: {keyId}");
 Console.WriteLine($"Public JWK thumbprint: {key.ComputeJwkThumbprint()}");
-
-var agentToken = new AgentTokenBuilder
-{
-    Issuer = issuer,
-    Subject = subject,
-    KeyId = keyId,
-    Key = key,
-    PersonServer = personServer,
-}.Build();
-
 Console.WriteLine();
 Console.WriteLine("Agent token:");
 Console.WriteLine(agentToken);

@@ -60,12 +60,13 @@ public sealed class StepRecord
     public DateTimeOffset Timestamp { get; } = DateTimeOffset.UtcNow;
 }
 
-/// <summary>Actors in the AAuth three-party flow as visualized by the tour.</summary>
+/// <summary>Actors in the AAuth protocol flow as visualized by the tour.</summary>
 public enum Actor
 {
     Agent,
     Resource,
     PersonServer,
+    AgentProvider,
 }
 
 /// <summary>

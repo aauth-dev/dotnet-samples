@@ -39,6 +39,14 @@ public sealed class TourOptions
     public string AgentId { get; set; } = "aauth:tour-agent@ap.example";
 
     /// <summary>
+    /// Optional Agent Provider enrol endpoint URL. When set, Step 2 will
+    /// call <c>AgentProviderClient.EnrolAsync</c> to obtain the agent token
+    /// from a real AP (e.g. MockAgentProvider at http://localhost:5301/enrol)
+    /// instead of building a self-signed token locally.
+    /// </summary>
+    public string? AgentProviderUrl { get; set; }
+
+    /// <summary>
     /// Which flow to walk by default when the page loads. Defaults to
     /// <see cref="TourMode.Autonomous"/>; the user can flip to
     /// <see cref="TourMode.Identity"/> or <see cref="TourMode.Deferred"/>
