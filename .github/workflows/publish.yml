@@ -1,0 +1,50 @@
+name: Publish to NuGet
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version (e.g. 0.1.0-alpha.1)'
+        required: true
+        default: '0.1.0-alpha.1'
+      dry-run:
+        description: 'Dry run (build + pack only, skip publish)'
+        type: boolean
+        default: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore AAuth.slnx
+
+      - name: Build
+        run: dotnet build AAuth.slnx --no-restore -c Release
+
+      - name: Test
+        run: dotnet test AAuth.slnx --no-build -c Release
+
+      - name: Pack
+        run: dotnet pack src/AAuth/AAuth.csproj -c Release -p:PackageVersion=${{ inputs.version }} -o ./nupkg
+
+      - name: NuGet login (OIDC trusted publishing)
+        if: ${{ inputs.dry-run == false }}
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Push to NuGet
+        if: ${{ inputs.dry-run == false }}
+        run: dotnet nuget push ./nupkg/*.nupkg --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
