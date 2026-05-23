@@ -21,10 +21,10 @@ public sealed record DeferredPollerOptions
 
     /// <summary>
     /// Interval to wait between polls when the server does NOT send a
-    /// <c>Retry-After</c> header. The spec example uses <c>Retry-After: 0</c>
-    /// for immediate first poll, then leaves cadence to the agent.
+    /// <c>Retry-After</c> header. Per spec §Deferred Responses the default
+    /// polling interval is 5 seconds.
     /// </summary>
-    public TimeSpan DefaultPollInterval { get; init; } = TimeSpan.FromSeconds(1);
+    public TimeSpan DefaultPollInterval { get; init; } = TimeSpan.FromSeconds(5);
 
     /// <summary>
     /// Minimum delay between polls — clamps a tiny <c>Retry-After: 0</c>
