@@ -255,14 +255,11 @@ public sealed class TourSession : IAsyncDisposable
     public void Reset()
     {
         ResetTimeline();
-        _agentKey = null;
-        _agentToken = null;
-        _assignedKeyId = null;
     }
 
     /// <summary>
-    /// Clears the step timeline and protocol state but preserves the
-    /// agent key + token so they survive mode switches.
+    /// Clears the step timeline and protocol state. Each flow bootstraps
+    /// its own fresh key + enrollment for full isolation.
     /// </summary>
     private void ResetTimeline()
     {
@@ -277,6 +274,9 @@ public sealed class TourSession : IAsyncDisposable
         PollingStartedAt = null;
 
         Steps.Clear();
+        _agentKey = null;
+        _agentToken = null;
+        _assignedKeyId = null;
         _authToken = null;
         _resourceToken = null;
         _tokenEndpoint = null;
