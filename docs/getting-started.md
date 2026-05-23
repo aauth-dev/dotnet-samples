@@ -7,7 +7,7 @@
 ## Install
 
 ```bash
-dotnet add package AAuth
+dotnet add package AAuth --prerelease
 ```
 
 Or, if working within this repository, add a project reference:

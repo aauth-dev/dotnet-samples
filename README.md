@@ -1,5 +1,10 @@
 # AAuth SDK for .NET
 
+[![CI](https://github.com/aauth-dev/dotnet-samples/actions/workflows/ci.yml/badge.svg)](https://github.com/aauth-dev/dotnet-samples/actions/workflows/ci.yml)
+[![NuGet](https://img.shields.io/nuget/vpre/AAuth)](https://www.nuget.org/packages/AAuth)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/AAuth)](https://www.nuget.org/packages/AAuth)
+
+
 > 🚧 **Draft Specification** — The AAuth protocol is under active development. APIs and wire formats may change as the spec evolves. See [aauth-spec/](aauth-spec/) for the current draft.
 
 The [AAuth protocol](https://github.com/dickhardt/AAuth) SDK for .NET — agent-to-resource authorization with cryptographic proof-of-possession.
@@ -18,6 +23,28 @@ The four parties are:
 - **Access Server (AS)** — issues auth tokens; enforces resource access policy.
 
 > **Agent Provider (AP)** is a supporting role that issues `aa-agent+jwt` tokens binding an agent's signing key to its identity.
+
+## Quick Start
+
+```bash
+dotnet add package AAuth --prerelease
+```
+
+```csharp
+using AAuth.Crypto;
+using AAuth.HttpSig;
+
+var key = AAuthKey.Generate();
+
+using var client = new AAuthClientBuilder(key)
+    .UseHwk()
+    .Build();
+
+var response = await client.GetAsync("https://resource.example/data");
+// Every request is signed per RFC 9421 — no bearer tokens
+```
+
+See [Getting Started](docs/getting-started.md) for key persistence, DI integration, and all signing modes.
 
 ## Documentation
 
