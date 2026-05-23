@@ -56,6 +56,9 @@ public sealed class StepRecord
     /// <summary>Free-form decoded text for non-JWT artifacts (e.g. JWK thumbprint).</summary>
     public string? TokenDecoded { get; init; }
 
+    /// <summary>C# SDK code snippet showing how to implement this step programmatically.</summary>
+    public string? CodeSnippet { get; init; }
+
     /// <summary>Time the step was recorded (used for timeline display).</summary>
     public DateTimeOffset Timestamp { get; } = DateTimeOffset.UtcNow;
 }

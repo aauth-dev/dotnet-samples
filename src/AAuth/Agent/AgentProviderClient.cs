@@ -95,6 +95,7 @@ public sealed class AgentProviderClient
             AgentToken = agentToken,
             KeyId = assignedKeyId,
             Key = key,
+            JwksUri = (string?)body["jwks_uri"],
         };
     }
 
@@ -153,4 +154,11 @@ public sealed class EnrollResult
 
     /// <summary>The generated key (for immediate use in signing).</summary>
     public required AAuthKey Key { get; init; }
+
+    /// <summary>
+    /// The per-agent JWKS URI where the AP publishes this agent's public key.
+    /// Used with <c>scheme=jwks_uri</c> for identity-based access.
+    /// Null if the AP didn't provide one.
+    /// </summary>
+    public string? JwksUri { get; init; }
 }

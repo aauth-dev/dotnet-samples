@@ -1,5 +1,8 @@
 ﻿using System;
+using System.IO;
 using System.Net.Http;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Crypto;
@@ -91,23 +94,54 @@ if (apUrl is null)
 AAuthKey key;
 string agentToken;
 string keyId;
+string? agentJwksUri;
 
-// Bootstrap with the Agent Provider: discover enrol_endpoint from metadata
-var apBase = apUrl.TrimEnd('/');
-Console.WriteLine($"Discovering Agent Provider metadata at: {apBase}");
-var discoveryClient = new MetadataClient(new HttpClient());
-var metaUrl = MetadataClient.BuildUrl(apBase, "aauth-agent.json");
-var apMeta = await discoveryClient.FetchAsync(metaUrl);
-var enrolEndpoint = (string?)apMeta["enrol_endpoint"] ?? $"{apBase}/enrol";
-Console.WriteLine($"Enrolling at: {enrolEndpoint}");
+// Per spec, agent keys are long-lived (spanning the agent install).
+// Persist enrollment to a local file so consecutive runs reuse the same
+// key+kid — just as a real agent would across process restarts.
+var enrollCacheFile = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+    "aauth-agent-console", $"{subject}.json");
 
-var apKeyStore = new InMemoryKeyStore();
-var apClient = new AgentProviderClient(new HttpClient(), apKeyStore);
-var result = await apClient.EnrolAsync(apBase, subject, enrolEndpoint, personServer);
-key = result.Key;
-agentToken = result.AgentToken;
-keyId = result.KeyId;
-Console.WriteLine($"Enrolled successfully. Key ID: {keyId}");
+if (File.Exists(enrollCacheFile))
+{
+    var cached = JsonNode.Parse(File.ReadAllText(enrollCacheFile))!;
+    key = AAuthKey.FromJwk((JsonObject)cached["jwk"]!);
+    agentToken = (string)cached["agent_token"]!;
+    keyId = (string)cached["key_id"]!;
+    agentJwksUri = (string?)cached["jwks_uri"];
+    Console.WriteLine($"Loaded cached enrollment. Key ID: {keyId}");
+}
+else
+{
+    // Bootstrap with the Agent Provider: discover enrol_endpoint from metadata
+    var apBase = apUrl.TrimEnd('/');
+    Console.WriteLine($"Discovering Agent Provider metadata at: {apBase}");
+    var discoveryClient = new MetadataClient(new HttpClient());
+    var metaUrl = MetadataClient.BuildUrl(apBase, "aauth-agent.json");
+    var apMeta = await discoveryClient.FetchAsync(metaUrl);
+    var enrolEndpoint = (string?)apMeta["enrol_endpoint"] ?? $"{apBase}/enrol";
+    Console.WriteLine($"Enrolling at: {enrolEndpoint}");
+
+    var apKeyStore = new InMemoryKeyStore();
+    var apClient = new AgentProviderClient(new HttpClient(), apKeyStore);
+    var result = await apClient.EnrolAsync(apBase, subject, enrolEndpoint, personServer);
+    key = result.Key;
+    agentToken = result.AgentToken;
+    keyId = result.KeyId;
+    agentJwksUri = result.JwksUri;
+    Console.WriteLine($"Enrolled successfully. Key ID: {keyId}");
+
+    // Persist for subsequent runs
+    Directory.CreateDirectory(Path.GetDirectoryName(enrollCacheFile)!);
+    File.WriteAllText(enrollCacheFile, JsonSerializer.Serialize(new
+    {
+        jwk = key.ToPrivateJwk(),
+        agent_token = agentToken,
+        key_id = keyId,
+        jwks_uri = agentJwksUri,
+    }));
+}
 
 Console.WriteLine($"Using key: {keyId}");
 Console.WriteLine($"Public JWK thumbprint: {key.ComputeJwkThumbprint()}");
@@ -128,7 +162,8 @@ switch (signingMode)
         builder.UseHwk();
         break;
     case "jwks_uri":
-        builder.UseJwksUri($"{apBase}/.well-known/jwks.json", keyId);
+        var jwksUrl = agentJwksUri ?? $"{apUrl.TrimEnd('/')}/agents/{subject}/jwks.json";
+        builder.UseJwksUri(jwksUrl, keyId);
         break;
     default: // "jwt"
         builder.UseJwt(agentToken);

@@ -9,8 +9,9 @@ Implements the AP endpoints from the AAuth bootstrap spec (§7):
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/.well-known/aauth-agent.json` | GET | AP metadata |
-| `/.well-known/jwks.json` | GET | AP signing keys (JWKS) |
-| `/enrol` | POST | Register an agent — accepts `{agent_id, jwk}`, returns signed agent token |
+| `/.well-known/jwks.json` | GET | AP's own signing key (for verifying agent token JWTs) |
+| `/agents/{agentId}/jwks.json` | GET | Per-agent JWKS — the agent's public key for `sig=jwks_uri` identity-based access |
+| `/enrol` | POST | Register an agent — accepts `{agent_id, jwk}`, returns `{agent_token, key_id, jwks_uri}` |
 | `/refresh` | POST | Refresh an agent token — accepts `{agent_token}`, returns fresh token |
 | `/agents` | GET | Dev tool — list registered agents |
 

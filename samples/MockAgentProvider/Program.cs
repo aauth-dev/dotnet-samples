@@ -42,24 +42,33 @@ app.MapGet("/.well-known/jwks.json", () =>
 {
     var keys = new JsonArray();
 
-    // AP's own signing key (for agent token verification)
+    // AP's own signing key only (for verifying agent token JWTs).
+    // Per spec, this JWKS does NOT contain enrolled agent keys —
+    // those are served at per-agent endpoints below.
     var apJwk = apKey.ToPublicJwk();
     apJwk["kid"] = keyId;
     apJwk["use"] = "sig";
     apJwk["alg"] = AAuthKey.Algorithm;
     keys.Add(apJwk);
 
-    // Enrolled agent keys (for jwks_uri scheme identity-based access)
-    foreach (var (_, record) in agents)
-    {
-        var agentJwk = record.PublicKey.ToPublicJwk();
-        agentJwk["kid"] = record.KeyId;
-        agentJwk["use"] = "sig";
-        agentJwk["alg"] = AAuthKey.Algorithm;
-        keys.Add(agentJwk);
-    }
-
     return Results.Json(new JsonObject { ["keys"] = keys }, contentType: "application/json");
+});
+
+// Per-agent JWKS endpoint: serves the enrolled agent's public key.
+// This is the URI agents use in Signature-Key: sig=jwks_uri;uri="...";kid="..."
+// for identity-based access. Separating it from the AP's own JWKS keeps
+// token-verification keys distinct from agent-identity keys (per spec).
+app.MapGet("/agents/{agentId}/jwks.json", (string agentId) =>
+{
+    if (!agents.TryGetValue(agentId, out var record))
+        return Results.NotFound();
+
+    var agentJwk = record.PublicKey.ToPublicJwk();
+    agentJwk["kid"] = record.KeyId;
+    agentJwk["use"] = "sig";
+    agentJwk["alg"] = AAuthKey.Algorithm;
+
+    return Results.Json(new JsonObject { ["keys"] = new JsonArray { agentJwk } }, contentType: "application/json");
 });
 
 // ── POST /enrol — register a new agent ──────────────────────────────────────
@@ -99,10 +108,22 @@ app.MapPost("/enrol", async (HttpContext ctx) =>
     // Optional: person server URL
     var ps = (string?)body["ps"];
 
-    // Generate a key id for the agent
-    var agentKeyId = $"{agentId}:{Guid.NewGuid():N}"[..32];
+    // Idempotent enrollment: if the same agent_id re-enrolls with the same
+    // key, keep the existing kid so the AP's JWKS stays stable (per spec,
+    // keys are long-lived and the kid is a stable reference). Only generate
+    // a new kid when the key actually changes or the agent is new.
+    string agentKeyId;
+    if (agents.TryGetValue(agentId, out var existing)
+        && existing.PublicKey.ComputeJwkThumbprint() == agentKey.ComputeJwkThumbprint())
+    {
+        agentKeyId = existing.KeyId;
+    }
+    else
+    {
+        agentKeyId = $"{agentId}:{Guid.NewGuid():N}"[..32];
+    }
 
-    // Register
+    // Register (or update ps/timestamp)
     var record = new AgentRecord(agentId, agentKey, agentKeyId, DateTimeOffset.UtcNow, ps);
     agents[agentId] = record;
 
@@ -115,6 +136,7 @@ app.MapPost("/enrol", async (HttpContext ctx) =>
     {
         ["agent_token"] = agentToken,
         ["key_id"] = agentKeyId,
+        ["jwks_uri"] = $"{issuer}/agents/{agentId}/jwks.json",
         ["expires_in"] = 3600,
     });
 });

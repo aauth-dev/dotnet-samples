@@ -6,6 +6,14 @@
     <p class="from-to"><strong>@Step.From</strong> → <strong>@Step.To</strong></p>
     <p class="narrative">@(RenderNarrative(Step.Narrative))</p>
 
+    @if (!string.IsNullOrWhiteSpace(Step.CodeSnippet))
+    {
+        <details open>
+            <summary>SDK code</summary>
+            <pre class="code-snippet"><code>@(HighlightCSharp(Step.CodeSnippet))</code></pre>
+        </details>
+    }
+
     @if (!string.IsNullOrWhiteSpace(Step.RequestLine))
     {
         <details open>
@@ -56,6 +64,36 @@
         if (string.IsNullOrEmpty(text)) return new MarkupString(string.Empty);
         var escaped = System.Net.WebUtility.HtmlEncode(text);
         return new MarkupString(Highlighter.Highlight(escaped));
+    }
+
+    /// <summary>Basic C# syntax highlighting via single-pass regex.</summary>
+    private static MarkupString HighlightCSharp(string code)
+    {
+        var escaped = System.Net.WebUtility.HtmlEncode(code);
+
+        // Single-pass: comments | strings | keywords | types.
+        // First match wins — content inside a string/comment won't be
+        // re-highlighted as a keyword.
+        var pattern =
+            @"(\/\/.*)$" +                                          // group 1: comment
+            @"|(\$?&quot;[^&]*?&quot;)" +                           // group 2: string
+            @"|(\b(?:var|new|await|using|async|null|true|false|return|string|int|void)\b)" + // group 3: keyword
+            @"|(\b(?:AAuthKey|AgentTokenBuilder|AAuthClientBuilder|AgentProviderClient|TokenExchangeClient|DeferredPoller|DeferredPollerOptions|AAuthTokenHolder|AAuthRequirementHeader|JsonNode|TimeSpan|Process|ProcessStartInfo|Uri)\b)"; // group 4: type
+
+        escaped = System.Text.RegularExpressions.Regex.Replace(
+            escaped,
+            pattern,
+            m =>
+            {
+                if (m.Groups[1].Success) return $"<span class=\"cs-comment\">{m.Value}</span>";
+                if (m.Groups[2].Success) return $"<span class=\"cs-string\">{m.Value}</span>";
+                if (m.Groups[3].Success) return $"<span class=\"cs-keyword\">{m.Value}</span>";
+                if (m.Groups[4].Success) return $"<span class=\"cs-type\">{m.Value}</span>";
+                return m.Value;
+            },
+            System.Text.RegularExpressions.RegexOptions.Multiline);
+
+        return new MarkupString(escaped);
     }
 
     // Renders narrative text with backtick-quoted spans (`like-this`) as

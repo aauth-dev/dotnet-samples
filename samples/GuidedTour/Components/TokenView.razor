@@ -62,6 +62,8 @@
         // apply entity styling (with tooltip) instead of generic j-str.
         // [^&<>]*? prevents matching across the <span> tags inserted by the
         // key pass above.
+        // Icons are deferred (placeholder) so the number regex doesn't mangle SVG path data.
+        var deferredIcons = new System.Collections.Generic.List<string>();
         escaped = System.Text.RegularExpressions.Regex.Replace(
             escaped,
             "(?<!class=\"j-key\">)(&quot;([^&<>]*?)&quot;)",
@@ -71,7 +73,20 @@
                 var inner = m.Groups[2].Value;   // content without quotes
                 var entity = Highlighter.Classify(inner);
                 if (entity is (var cssClass, var label))
-                    return $"<span class=\"{cssClass}\" title=\"{label}\">{full}</span>";
+                {
+                    var placeholder = "";
+                    if (inner.StartsWith("http"))
+                    {
+                        var idx = deferredIcons.Count;
+                        deferredIcons.Add(
+                            $"<a class=\"ext-link\" href=\"{inner}\" target=\"_blank\" rel=\"noopener\" title=\"Open in new tab\">"
+                            + "<svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\">"
+                            + "<path d=\"M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3\"/>"
+                            + "</svg></a>");
+                        placeholder = $"\x01ICON{idx}\x01";
+                    }
+                    return $"<span class=\"{cssClass}\" title=\"{label}\">{full}</span>{placeholder}";
+                }
                 return $"<span class=\"j-str\">{full}</span>";
             });
 
@@ -84,6 +99,10 @@
             escaped,
             "(?<![\\w\"])-?\\d+(?:\\.\\d+)?(?![\\w\"])",
             "<span class=\"j-num\">$&</span>");
+
+        // Replace placeholders with actual SVG icons now that number regex is done.
+        for (int i = 0; i < deferredIcons.Count; i++)
+            escaped = escaped.Replace($"\x01ICON{i}\x01", deferredIcons[i]);
 
         return new MarkupString(escaped);
     }

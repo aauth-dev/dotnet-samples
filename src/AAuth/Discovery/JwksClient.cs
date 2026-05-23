@@ -106,6 +106,9 @@ public sealed class JwksClient
         return entry;
     }
 
+    /// <summary>Clear all cached JWKS entries, forcing the next resolve to fetch fresh.</summary>
+    public void ClearCache() => _cache.Clear();
+
     private sealed record CacheEntry(
         IReadOnlyDictionary<string, AAuthKey> Keys,
         DateTimeOffset FetchedAt,

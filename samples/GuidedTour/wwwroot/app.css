@@ -430,6 +430,11 @@ pre {
 }
 pre.jwt { word-break: break-all; white-space: pre-wrap; }
 pre.json { max-height: none; }
+pre.code-snippet { color: #c9d1d9; white-space: pre-wrap; }
+.cs-keyword { color: #569cd6; font-weight: 600; }
+.cs-type    { color: #4ec9b0; }
+.cs-string  { color: #ce9178; }
+.cs-comment { color: #6a9955; font-style: italic; }
 .json .j-key { color: #79c0ff; }
 .json .j-str { color: #a5d6ff; }
 .json .j-num { color: #f0883e; }
@@ -439,5 +444,18 @@ pre.json { max-height: none; }
 .hl-agent    { color: var(--accent); font-weight: 600; text-decoration: underline dotted; cursor: help; }
 .hl-resource { color: var(--ok); font-weight: 600; text-decoration: underline dotted; cursor: help; }
 .hl-ps       { color: var(--accent-2); font-weight: 600; text-decoration: underline dotted; cursor: help; }
+
+/* Clickable external-link icon next to highlighted URLs */
+.ext-link {
+    display: inline-block;
+    margin-left: 0.3em;
+    color: var(--muted);
+    text-decoration: none;
+    vertical-align: middle;
+    opacity: 0.7;
+    transition: opacity 0.15s, color 0.15s;
+}
+.ext-link:hover { opacity: 1; color: var(--accent); }
+.ext-link svg { vertical-align: -1px; }
 
 .hint { color: var(--muted); }

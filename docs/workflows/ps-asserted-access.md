@@ -56,7 +56,7 @@ var agentToken = "..."; // from AgentProviderClient.EnrolAsync()
 var tokenHolder = new AAuthTokenHolder(agentToken);
 
 var signingHandler = new AAuthSigningHandler(key,
-    new JwtSignatureKeyProvider(() => tokenHolder.Token))
+    new JwtSignatureKeyProvider(() => tokenHolder.Current))
 {
     InnerHandler = new HttpClientHandler()
 };
