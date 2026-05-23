@@ -50,6 +50,107 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 
 - [Configuration](reference/configuration.md)
 
+## API Map
+
+### `AAuth.Crypto` — Key management
+
+| Type | Purpose |
+|------|---------|
+| `AAuthKey` | Ed25519 key generation, JWK import/export, thumbprints |
+| `EcdsaAAuthKey` | P-256 ECDSA key (for interop scenarios) |
+| `KeyStore` | On-disk key persistence (`~/.aauth/keys/`) |
+| `IAAuthKey` | Key abstraction (implement for custom key backends) |
+
+### `AAuth.HttpSig` — Signing and verification
+
+| Type | Purpose |
+|------|---------|
+| `AAuthClientBuilder` | Fluent builder → configured `HttpClient` with signing |
+| `AAuthSigningHandler` | `DelegatingHandler` that signs outbound requests (RFC 9421) |
+| `AAuthVerifier` | Server-side signature verification |
+| `AAuthVerificationMiddleware` | ASP.NET middleware wiring for `AAuthVerifier` |
+| `SignatureKeyHeader` / `SignatureKeyParser` | Format/parse the `Signature-Key` header |
+| `HwkSignatureKeyProvider` | `sig=hwk` — inline public key |
+| `JwksUriSignatureKeyProvider` | `sig=jwks_uri` — JWKS-discoverable identity |
+| `JwtSignatureKeyProvider` | `sig=jwt` — agent/auth token inline |
+| `JktJwtSignatureKeyProvider` | `sig=jkt-jwt` — key rotation mode |
+| `BootstrapBuilder` | Fluent builder for bootstrap/enrollment flows |
+| `ChallengeHandlingOptions` | Options for automatic 401 challenge handling |
+| `InteractionHandlingOptions` | Options for deferred/interaction handling |
+
+### `AAuth.Agent` — Client-side three-party flow
+
+| Type | Purpose |
+|------|---------|
+| `AAuthTokenHolder` | Holds current carrier token (agent or auth) |
+| `ChallengeHandler` | `DelegatingHandler` — intercepts 401, exchanges with PS |
+| `InteractionHandler` | `DelegatingHandler` — handles 202 deferred/interaction |
+| `TokenExchangeClient` | Sends signed `POST /token` to the Person Server |
+| `DeferredPoller` | Polls the pending URL until auth_token or timeout |
+| `AgentProviderClient` | Enrols with an Agent Provider (`POST /enrol`) |
+| `IKeyStore` / `InMemoryKeyStore` | Key persistence abstraction |
+| `IInteractionPresenter` | Surface interaction URLs to the user |
+| `IPlatformAttestor` | Platform attestation hook |
+
+### `AAuth.Tokens` — Token builders and verification
+
+| Type | Purpose |
+|------|---------|
+| `AgentTokenBuilder` | Builds `aa-agent+jwt` (agent identity + DWK) |
+| `ResourceTokenBuilder` | Builds `aa-resource+jwt` (401 challenge payload) |
+| `AuthTokenBuilder` | Builds `aa-auth+jwt` (person delegation proof) |
+| `TokenVerifier` | EdDSA JWT verification with claim checks and JWKS resolution |
+
+### `AAuth.Discovery` — Metadata and JWKS
+
+| Type | Purpose |
+|------|---------|
+| `MetadataClient` | Cached fetcher for `/.well-known/aauth-*.json` |
+| `JwksClient` | Cached fetcher for JWKS endpoints |
+| `ServerMetadata` / `ResourceMetadata` | Parsed metadata models |
+
+### `AAuth.Headers` — Protocol headers
+
+| Type | Purpose |
+|------|---------|
+| `AAuthRequirementHeader` | Format/parse the `AAuth-Requirement` challenge header |
+| `AAuthInteraction` | Interaction URL + code from 202 responses |
+| `AAuthCapabilitiesHeader` | Agent capabilities header |
+| `AAuthMissionHeader` | Mission context header |
+
+### `AAuth.Server` — Resource server utilities
+
+| Type | Purpose |
+|------|---------|
+| `WellKnownEndpoints` | `MapAAuthResourceWellKnown()` for ASP.NET minimal APIs |
+| `RevocationEndpoint` | Token revocation endpoint |
+| `IJtiStore` / `InMemoryJtiStore` | Replay detection (JTI tracking) |
+| `IOpaqueTokenStore` | Opaque token storage abstraction |
+
+### `AAuth.DependencyInjection` — ASP.NET Core integration
+
+| Type | Purpose |
+|------|---------|
+| `AAuthAgentServiceCollectionExtensions` | `services.AddAAuthAgent(...)` |
+| `AAuthResourceServiceCollectionExtensions` | `services.AddAAuthResource(...)` |
+| `AAuthDiscoveryServiceCollectionExtensions` | `services.AddAAuthDiscovery(...)` |
+| `AAuthApplicationBuilderExtensions` | `app.UseAAuthVerification()` |
+
+### `AAuth.Errors` — Error types
+
+| Type | Purpose |
+|------|---------|
+| `SignatureError` / `SignatureErrorCode` | Signature verification failures |
+| `TokenError` / `TokenErrorCode` | Token validation failures |
+| `PollingError` / `PollingErrorCode` | Deferred polling failures |
+
+### `AAuth.Identifiers` — AAuth URI parsing
+
+| Type | Purpose |
+|------|---------|
+| `AAuthAgentId` | Parse/validate `aauth:` agent identifiers |
+| `AAuthServerId` | Parse/validate server identifiers |
+
 ## Samples
 
 - [`GuidedTour`](../samples/GuidedTour/) — Interactive Blazor walkthrough of all flows
