@@ -7,8 +7,8 @@ Five sample applications demonstrating AAuth flows end-to-end.
 | [WhoAmI](WhoAmI/) | 5000 | ASP.NET Core resource server — verifies signatures, issues resource tokens |
 | [AgentConsole](AgentConsole/) | — | CLI agent — signs requests, handles challenges, exchanges with a PS |
 | [MockPersonServer](MockPersonServer/) | 5100 | Reference Person Server — verifies exchanges, mints auth tokens |
-| [MockAgentProvider](MockAgentProvider/) | 5200 | Reference Agent Provider — issues agent tokens, hosts JWKS |
-| [GuidedTour](GuidedTour/) | 5400 | Blazor walk-through — visualises the three-party flow step by step |
+| [MockAgentProvider](MockAgentProvider/) | 5301 | Reference Agent Provider — issues agent tokens, hosts JWKS |
+| [GuidedTour](GuidedTour/) | 5400 | Blazor walk-through — visualises all four AAuth flows step by step |
 
 ## Quick Start
 
@@ -18,7 +18,7 @@ The fastest way to run all samples together:
 make demo
 ```
 
-This starts WhoAmI + MockPersonServer + GuidedTour in parallel, prints their URLs, and tears them down on `Ctrl+C`. Then open <http://localhost:5400> and click **Run all**.
+This starts WhoAmI + MockPersonServer + MockAgentProvider + GuidedTour in parallel, prints their URLs, and tears them down on `Ctrl+C`. Then open <http://localhost:5400> and click **Run all**.
 
 ## Running Individually
 
@@ -90,12 +90,18 @@ Requires WhoAmI and MockPersonServer already running. See [GuidedTour/README.md]
 ## Make Targets
 
 ```bash
-make help          # list available targets
-make build         # dotnet build AAuth.slnx
-make test          # dotnet test AAuth.slnx
-make demo          # start WhoAmI + MockPersonServer + GuidedTour together
-make tour          # only the GuidedTour (expects WhoAmI + MockPS running)
-make whoami        # only the resource server
-make ps            # only the MockPersonServer
-make clean         # dotnet clean + remove bin/ obj/
+make help            # list available targets
+make build           # dotnet build AAuth.slnx
+make restore         # restore NuGet packages
+make test            # run all tests (SDK + conformance)
+make test-unit       # SDK unit + integration tests only
+make test-conformance # spec conformance tests only
+make demo            # start WhoAmI + MockPersonServer + MockAgentProvider + GuidedTour
+make whoami          # only the resource server (port 5000)
+make ps              # MockPersonServer (port 5100)
+make ps-consent      # MockPersonServer with RequireConsent=true
+make ap              # MockAgentProvider (port 5301)
+make tour            # GuidedTour (port 5400; expects other services running)
+make agent           # AgentConsole against WhoAmI (override URL=…)
+make clean           # dotnet clean + remove bin/ obj/
 ```

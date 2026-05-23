@@ -75,17 +75,14 @@ See [Getting Started](docs/getting-started.md) for key persistence, DI integrati
 
 ## Documentation
 
-Full SDK documentation lives in the [`docs/`](docs/) directory:
+Full SDK documentation lives in [`docs/`](docs/):
 
-| Section | Description |
-|---------|-------------|
-| [Getting Started](docs/getting-started.md) | Install, generate a key, make your first signed request |
-| [Concepts](docs/concepts.md) | The four participants, three layers, and how the SDK maps to them |
-| [Signing Modes](docs/signing-modes/overview.md) | Pseudonymous, Agent Identity, Agent Token, Key Rotation |
-| [Workflows](docs/workflows/identity-based-access.md) | Identity-based, Resource-managed, PS-asserted, Federated access |
-| [Server Implementation](docs/server/verification-middleware.md) | Verification middleware, metadata, token issuance, replay detection |
-| [Advanced Topics](docs/advanced/key-management.md) | Key management, missions, platform attestation, error handling |
-| [Configuration Reference](docs/reference/configuration.md) | All configuration options |
+- [Getting Started](docs/getting-started.md) — install, generate a key, first signed request
+- [Concepts](docs/concepts.md) — the four participants and how the SDK maps to them
+- [Signing Modes](docs/signing-modes/overview.md) — hwk, jwks_uri, jwt, jkt-jwt
+- [Workflows](docs/workflows/identity-based-access.md) — identity-based, PS-asserted, federated
+- [Server Guide](docs/server/verification-middleware.md) — verification middleware, token issuance
+- [Configuration Reference](docs/reference/configuration.md)
 
 ## Repository Layout
 
@@ -99,33 +96,9 @@ Full SDK documentation lives in the [`docs/`](docs/) directory:
 | [tests/AAuth.Conformance/](tests/AAuth.Conformance/) | Spec-traceable xUnit tests mirroring the AAuth spec section structure |
 | [.agent/plans/](.agent/plans/) | Research and planning documents |
 
-## SDK Components (`src/AAuth/`)
+## Prerequisites
 
-| Namespace | Type | Purpose |
-|-----------|------|---------|
-| `AAuth.Crypto` | `AAuthKey`, `KeyStore` | Ed25519 key generation, on-disk persistence, JWK import/export |
-| `AAuth.Tokens` | `AgentTokenBuilder` | Builds `aa-agent+jwt` carrying agent identity, DWK, and optional PS pointer |
-| `AAuth.Tokens` | `ResourceTokenBuilder` | Issues `aa-resource+jwt` for an RS to challenge an agent |
-| `AAuth.Tokens` | `AuthTokenBuilder` | Issues `aa-auth+jwt` for a PS to attest a person's delegation |
-| `AAuth.Tokens` | `TokenVerifier` | EdDSA JWT verification with full claim checks (`VerifyWithJwksAsync` for PS-issued tokens) |
-| `AAuth.HttpSig` | `AAuthSigningHandler` | `DelegatingHandler` that signs outbound requests per RFC 9421 |
-| `AAuth.HttpSig` | `SignatureKeyHeader`, `SignatureKeyParser` | Format/parse the `Signature-Key` header |
-| `AAuth.HttpSig` | `AAuthVerifier`, `AAuthVerificationMiddleware` | Server-side signature verification (ASP.NET middleware) |
-| `AAuth.Headers` | `AAuthRequirementHeader` | Format/parse the `AAuth-Requirement` challenge header |
-| `AAuth.Discovery` | `MetadataClient`, `JwksClient` | Cached fetchers for `/.well-known/aauth-*` and JWKS |
-| `AAuth.Server` | `WellKnownEndpoints` | `MapAAuthResourceWellKnown` for ASP.NET minimal APIs |
-| `AAuth.Agent` | `AAuthTokenHolder`, `ChallengeHandler`, `TokenExchangeClient` | Client-side three-party flow: holds the current carrier token, intercepts 401s, exchanges with PS |
-
-## Getting Started
-
-### Prerequisites
-
-- [Docker](https://www.docker.com/products/docker-desktop)
-- [Visual Studio Code](https://code.visualstudio.com/) with the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
-
-The dev container provides the .NET 10 SDK and `gh` CLI. Outside the dev container, install the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) directly.
-
-### Build everything
+- [Docker](https://www.docker.com/products/docker-desktop) + [VS Code Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers), **or** the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) installed directly.
 
 ```bash
 dotnet build AAuth.slnx
