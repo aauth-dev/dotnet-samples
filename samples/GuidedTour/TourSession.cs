@@ -666,6 +666,7 @@ public sealed class TourSession : IAsyncDisposable
 
         var body = JsonNode.Parse(ex.ResponseBody);
         _agentToken = (string?)body?["agent_token"];
+        _assignedKeyId = (string?)body?["key_id"];
 
         Steps.Add(new StepRecord
         {
