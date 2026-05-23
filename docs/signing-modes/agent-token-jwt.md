@@ -20,15 +20,27 @@ using AAuth.HttpSig;
 
 var key = AAuthKey.Generate();
 // agentToken obtained from AgentProviderClient.EnrolAsync()
+
+using var client = new AAuthClientBuilder(key)
+    .UseJwt(agentToken)
+    .Build();
+
+var response = await client.GetAsync("https://resource.example/data");
+```
+
+<details>
+<summary>Manual Setup</summary>
+
+```csharp
 var provider = new JwtSignatureKeyProvider(() => agentToken);
 var handler = new AAuthSigningHandler(key, provider)
 {
     InnerHandler = new HttpClientHandler()
 };
-
 using var client = new HttpClient(handler);
-var response = await client.GetAsync("https://resource.example/data");
 ```
+
+</details>
 
 ## What the Resource Sees
 

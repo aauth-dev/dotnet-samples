@@ -22,6 +22,25 @@ sequenceDiagram
 
 ## Code Example
 
+### Using BootstrapBuilder (Recommended)
+
+```csharp
+using AAuth.HttpSig;
+
+var (client, enrolResult) = await AAuthClientBuilder
+    .Bootstrap(
+        enrollEndpoint: "https://ap.example/enrol",
+        agentId: "aauth:myapp@ap.example")
+    .WithPersonServer("https://ps.example")
+    .WithChallengeHandling()
+    .EnrolAndBuildAsync();
+
+// client is ready to use with automatic challenge handling
+// enrolResult.Key, enrolResult.AgentToken, enrolResult.KeyId
+```
+
+### Manual Enrollment
+
 ```csharp
 using AAuth.Agent;
 using AAuth.Crypto;

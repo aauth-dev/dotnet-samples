@@ -17,15 +17,27 @@ using AAuth.Crypto;
 using AAuth.HttpSig;
 
 var key = AAuthKey.Generate();
+
+using var client = new AAuthClientBuilder(key)
+    .UseHwk()
+    .Build();
+
+var response = await client.GetAsync("https://resource.example/data");
+```
+
+<details>
+<summary>Manual Setup</summary>
+
+```csharp
 var provider = new HwkSignatureKeyProvider(key);
 var handler = new AAuthSigningHandler(key, provider)
 {
     InnerHandler = new HttpClientHandler()
 };
-
 using var client = new HttpClient(handler);
-var response = await client.GetAsync("https://resource.example/data");
 ```
+
+</details>
 
 ## What the Resource Sees
 

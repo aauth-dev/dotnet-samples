@@ -17,17 +17,28 @@ using AAuth.Crypto;
 using AAuth.HttpSig;
 
 var key = AAuthKey.Generate();
-var jwksUri = "https://ap.example/.well-known/jwks.json";
-var kid = "my-key-1";
-var provider = new JwksUriSignatureKeyProvider(jwksUri, kid);
+
+using var client = new AAuthClientBuilder(key)
+    .UseJwksUri("https://ap.example/.well-known/jwks.json", "my-key-1")
+    .Build();
+
+var response = await client.GetAsync("https://resource.example/data");
+```
+
+<details>
+<summary>Manual Setup</summary>
+
+```csharp
+var provider = new JwksUriSignatureKeyProvider(
+    "https://ap.example/.well-known/jwks.json", "my-key-1");
 var handler = new AAuthSigningHandler(key, provider)
 {
     InnerHandler = new HttpClientHandler()
 };
-
 using var client = new HttpClient(handler);
-var response = await client.GetAsync("https://resource.example/data");
 ```
+
+</details>
 
 ## What the Resource Sees
 

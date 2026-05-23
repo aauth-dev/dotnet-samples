@@ -30,18 +30,36 @@ public sealed class SignatureKeyResolution
 Handles all four schemes out of the box:
 
 ```csharp
+using AAuth.DependencyInjection;
+
+// DI extension (recommended) — registers resolver automatically
+builder.Services.AddAAuthResource(options =>
+{
+    options.Issuer = "https://resource.example";
+    options.KeyLookup = myKeyLookup; // for hwk thumbprint resolution
+});
+
+app.UseAAuthVerification();
+```
+
+<details>
+<summary>Manual Setup</summary>
+
+```csharp
 using AAuth.HttpSig;
 using AAuth.Discovery;
 
 var resolver = new DefaultSignatureKeyResolver(
-    jwksClient: new JwksClient(new HttpClient()),  // fetches JWKS for jwks_uri and jwt schemes
-    keyLookup: myKeyLookup                         // resolves hwk thumbprints to stored keys
+    jwksClient: new JwksClient(new HttpClient()),
+    keyLookup: myKeyLookup
 );
 
 app.UseAAuthVerification(
     verifier: new AAuthVerifier(),
     resolver: resolver);
 ```
+
+</details>
 
 ### Resolution Logic by Scheme
 

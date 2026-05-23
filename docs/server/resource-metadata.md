@@ -9,6 +9,28 @@ Resources publish a `.well-known/aauth-resource.json` document so agents can dis
 ## Setup
 
 ```csharp
+using AAuth.DependencyInjection;
+
+builder.Services.AddAAuthResource(options =>
+{
+    options.Issuer = "https://resource.example";
+    options.SigningKeys = [("key-1", signingKey)];
+    options.ClientName = "My Resource API";
+    options.ScopeDescriptions = new()
+    {
+        ["read"] = "Read access to your data",
+        ["write"] = "Write access to your data"
+    };
+});
+
+var app = builder.Build();
+app.MapAAuthWellKnown(); // serves /.well-known/aauth-resource.json
+```
+
+<details>
+<summary>Manual Setup</summary>
+
+```csharp
 using AAuth.Server;
 using AAuth.Crypto;
 
@@ -31,6 +53,8 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
     RevocationEndpoint = "https://resource.example/revoke"
 });
 ```
+
+</details>
 
 ## AAuthResourceMetadataOptions
 

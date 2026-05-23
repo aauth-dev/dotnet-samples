@@ -23,7 +23,25 @@ All AAuth signing modes use HTTP Message Signatures (RFC 9421). The difference i
 ## SDK Types
 
 ```csharp
-// All implement ISignatureKeyProvider
+using AAuth.Crypto;
+using AAuth.HttpSig;
+
+var key = AAuthKey.Generate();
+
+// Builder API (recommended)
+using var client = mode switch
+{
+    "hwk"      => new AAuthClientBuilder(key).UseHwk().Build(),
+    "jwks_uri" => new AAuthClientBuilder(key).UseJwksUri(jwksUri, kid).Build(),
+    "jwt"      => new AAuthClientBuilder(key).UseJwt(agentToken).Build(),
+    "jkt-jwt"  => new AAuthClientBuilder(ephemeralKey).UseJktJwt(() => namingJwt).Build(),
+};
+```
+
+<details>
+<summary>Manual Setup (ISignatureKeyProvider)</summary>
+
+```csharp
 ISignatureKeyProvider provider = mode switch
 {
     "hwk"      => new HwkSignatureKeyProvider(key),
@@ -34,6 +52,8 @@ ISignatureKeyProvider provider = mode switch
 
 var handler = new AAuthSigningHandler(key, provider);
 ```
+
+</details>
 
 ## Capability Matrix
 
