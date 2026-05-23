@@ -138,6 +138,19 @@ public sealed class AAuthClientBuilder
     }
 
     /// <summary>
+    /// Enable automatic 401 challenge handling with options. The Person Server URL is
+    /// extracted from the agent token's <c>ps</c> claim.
+    /// </summary>
+    public AAuthClientBuilder WithChallengeHandling(Action<ChallengeHandlingOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        _challengeHandling = true;
+        _personServer = null;
+        _challengeOptionsConfigure = configure;
+        return this;
+    }
+
+    /// <summary>
     /// Enable automatic 401 challenge handling with an explicit Person Server URL.
     /// </summary>
     public AAuthClientBuilder WithChallengeHandling(string personServer)
@@ -209,7 +222,14 @@ public sealed class AAuthClientBuilder
 
     /// <summary>Build the configured <see cref="HttpClient"/>.</summary>
     /// <exception cref="InvalidOperationException">No signing mode was configured.</exception>
-    public HttpClient Build()
+    public HttpClient Build() => new HttpClient(BuildHandler());
+
+    /// <summary>
+    /// Build the configured handler pipeline without wrapping it in an <see cref="HttpClient"/>.
+    /// Useful for DI registration via <c>ConfigurePrimaryHttpMessageHandler</c>.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">No signing mode was configured.</exception>
+    public HttpMessageHandler BuildHandler()
     {
         if (_provider is null)
             throw new InvalidOperationException(
@@ -226,7 +246,7 @@ public sealed class AAuthClientBuilder
             };
 
             if (!_interactionHandling)
-                return new HttpClient(handler);
+                return handler;
 
             // Wrap with interaction handler
             var interactionOpts = new InteractionHandlingOptions();
@@ -238,7 +258,7 @@ public sealed class AAuthClientBuilder
             {
                 InnerHandler = handler,
             };
-            return new HttpClient(interactionHandler);
+            return interactionHandler;
         }
 
         // --- Challenge-handling pipeline ---
@@ -316,7 +336,7 @@ public sealed class AAuthClientBuilder
             topHandler = interactionHandler;
         }
 
-        return new HttpClient(topHandler);
+        return topHandler;
     }
 
     private string ResolveAgentToken()

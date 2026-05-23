@@ -157,15 +157,15 @@ was configured.
 
 ### Definition of Done
 
-- [ ] `WithChallengeHandling()` (no args) reads `ps` claim from agent token.
-- [ ] `WithChallengeHandling(string personServer)` uses explicit PS.
-- [ ] `WithChallengeHandling(string, Action<ChallengeHandlingOptions>)` supports callbacks.
-- [ ] `Build()` wires the full pipeline (exchange client, holder, challenge handler).
-- [ ] `WithTokenRefresh(ITokenRefresher)` and `WithTokenRefresh(Func)` overloads.
-- [ ] Refresh checks `exp` claim, uses semaphore for concurrency.
-- [ ] Unit tests verify handler chain order and option propagation.
-- [ ] Unit tests verify refresh is called when token nears expiry.
-- [ ] Existing builder tests still pass.
+- [x] `WithChallengeHandling()` (no args) reads `ps` claim from agent token.
+- [x] `WithChallengeHandling(string personServer)` uses explicit PS.
+- [x] `WithChallengeHandling(string, Action<ChallengeHandlingOptions>)` supports callbacks.
+- [x] `Build()` wires the full pipeline (exchange client, holder, challenge handler).
+- [x] `WithTokenRefresh(ITokenRefresher)` and `WithTokenRefresh(Func)` overloads.
+- [x] Refresh checks `exp` claim, uses semaphore for concurrency.
+- [x] Unit tests verify handler chain order and option propagation.
+- [x] Unit tests verify refresh is called when token nears expiry.
+- [x] Existing builder tests still pass.
 
 ---
 
@@ -215,13 +215,13 @@ new AAuthClientBuilder(key)
 
 ### Definition of Done
 
-- [ ] `InteractionHandler` intercepts 202 + `requirement=interaction`.
-- [ ] `InteractionHandler` intercepts 202 + `requirement=approval`.
-- [ ] Polls `Location` URL with signed GETs at spec-mandated intervals.
-- [ ] Respects `Retry-After` header; implements 429 linear backoff (+5s).
-- [ ] Builder auto-adds `AAuth-Capabilities: interaction` when handler is attached.
-- [ ] Tests with mock 202 → poll → 200 sequence for both interaction and approval.
-- [ ] Tests verify 429 backoff behavior.
+- [x] `InteractionHandler` intercepts 202 + `requirement=interaction`.
+- [x] `InteractionHandler` intercepts 202 + `requirement=approval`.
+- [x] Polls `Location` URL with signed GETs at spec-mandated intervals.
+- [x] Respects `Retry-After` header; implements 429 linear backoff (+5s).
+- [x] Builder auto-adds `AAuth-Capabilities: interaction` when handler is attached.
+- [x] Tests with mock 202 → poll → 200 sequence for both interaction and approval.
+- [x] Tests verify 429 backoff behavior.
 
 ---
 
