@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore AAuth.slnx
+
+      - name: Build
+        run: dotnet build AAuth.slnx --no-restore -c Release
+
+      - name: Test
+        run: dotnet test AAuth.slnx --no-build -c Release --logger "trx;LogFileName=results.trx"
