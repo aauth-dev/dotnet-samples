@@ -291,24 +291,33 @@ public sealed class TourSession : IAsyncDisposable
     /// Identity flow respects the user's selected mode; three-party flows
     /// always use jwt per the AAuth spec requirement.
     /// </summary>
-    private AAuthSigningHandler BuildSigningHandler(
+    private HttpMessageHandler BuildSigningHandler(
         Func<string> tokenFactory,
         HttpMessageHandler inner,
         Action<HttpRequestMessage, string>? onSignatureBase = null)
     {
-        ISignatureKeyProvider provider = EffectiveSigningMode switch
+        var builder = new AAuthClientBuilder(_agentKey!)
+            .WithInnerHandler(inner);
+
+        switch (EffectiveSigningMode)
         {
-            SigningMode.Hwk => new HwkSignatureKeyProvider(_agentKey!),
-            SigningMode.JwksUri => new JwksUriSignatureKeyProvider(
-                $"{(_options.AgentProviderUrl ?? "http://localhost:5301").TrimEnd('/')}/.well-known/jwks.json",
-                "tour-key-1"),
-            _ => new JwtSignatureKeyProvider(tokenFactory),
-        };
-        return new AAuthSigningHandler(_agentKey!, provider)
-        {
-            InnerHandler = inner,
-            OnSignatureBase = onSignatureBase,
-        };
+            case SigningMode.Hwk:
+                builder.UseHwk();
+                break;
+            case SigningMode.JwksUri:
+                builder.UseJwksUri(
+                    $"{(_options.AgentProviderUrl ?? "http://localhost:5301").TrimEnd('/')}/.well-known/jwks.json",
+                    "tour-key-1");
+                break;
+            default:
+                builder.UseJwt(tokenFactory);
+                break;
+        }
+
+        if (onSignatureBase is not null)
+            builder.OnSignatureBase(onSignatureBase);
+
+        return builder.BuildHandler();
     }
 
     /// <summary>

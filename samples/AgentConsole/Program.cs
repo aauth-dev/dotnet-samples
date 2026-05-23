@@ -116,45 +116,32 @@ Console.WriteLine("Agent token:");
 Console.WriteLine(agentToken);
 Console.WriteLine();
 
-// Shared carrier-token holder. The signing handler reads from it on every
-// request; the challenge handler updates it when an auth-token is issued.
-var tokenHolder = new AAuthTokenHolder(agentToken);
-
-ISignatureKeyProvider BuildProvider(Func<string> tokenSource) => signingMode switch
-{
-    "hwk" => new HwkSignatureKeyProvider(key),
-    "jwks_uri" => new JwksUriSignatureKeyProvider(
-        $"{apBase}/.well-known/jwks.json", keyId),
-    _ => new JwtSignatureKeyProvider(tokenSource),
-};
-
-HttpMessageHandler BuildSigningPipeline(Func<string> tokenSource) =>
-    new AAuthSigningHandler(key, BuildProvider(tokenSource))
-    {
-        InnerHandler = new HttpClientHandler(),
-    };
-
 Console.WriteLine($"Signing mode: {signingMode}");
 
-// Resource client: ChallengeHandler on top when a PS is configured,
-// otherwise just the signing pipeline (identity-based mode).
-HttpMessageHandler resourcePipeline = BuildSigningPipeline(() => tokenHolder.Current);
+// Build the HTTP client using the fluent AAuthClientBuilder.
+var builder = new AAuthClientBuilder(key);
 
-if (personServer is not null)
+// Configure signing mode
+switch (signingMode)
 {
-    // Separate pipeline for the exchange: always signs with the agent
-    // token, never the auth token, so the resource_token POST is always
-    // authenticated as the agent itself.
-    var exchangeHttp = new HttpClient(BuildSigningPipeline(() => agentToken));
-    var metadata = new MetadataClient(new HttpClient());
-    var exchange = new TokenExchangeClient(exchangeHttp, metadata);
-    resourcePipeline = new ChallengeHandler(exchange, tokenHolder, personServer)
-    {
-        InnerHandler = resourcePipeline,
-    };
+    case "hwk":
+        builder.UseHwk();
+        break;
+    case "jwks_uri":
+        builder.UseJwksUri($"{apBase}/.well-known/jwks.json", keyId);
+        break;
+    default: // "jwt"
+        builder.UseJwt(agentToken);
+        break;
 }
 
-using var client = new HttpClient(resourcePipeline);
+// Three-party flows add automatic challenge handling
+if (personServer is not null)
+{
+    builder.WithChallengeHandling(personServer);
+}
+
+using var client = builder.Build();
 
 var request = new HttpRequestMessage(HttpMethod.Get, url);
 Console.WriteLine($"GET {url}");
