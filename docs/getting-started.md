@@ -35,22 +35,43 @@ using AAuth.Crypto;
 using AAuth.HttpSig;
 
 var key = AAuthKey.Generate();
-var provider = new HwkSignatureKeyProvider(key);
-var handler = new AAuthSigningHandler(key, provider)
-{
-    InnerHandler = new HttpClientHandler()
-};
 
-using var client = new HttpClient(handler);
+using var client = new AAuthClientBuilder(key)
+    .UseHwk()
+    .Build();
+
 var response = await client.GetAsync("https://resource.example/data");
 // Request is signed with HTTP Message Signatures (RFC 9421)
 // Resource sees: Signature-Key: sig=hwk;jkt="<thumbprint>"
 ```
 
+### Alternative: One-liner with static factory
+
+```csharp
+using var client = AAuthSigningHandler.CreateClient(key, new HwkSignatureKeyProvider(key));
+```
+
+### Alternative: DI / IHttpClientFactory
+
+```csharp
+// In Program.cs
+builder.Services.AddAAuthClient("agent", options =>
+{
+    options.Key = key;
+    options.SigningMode = new HwkSignatureKeyProvider(key);
+});
+
+// Inject via IHttpClientFactory
+public class MyService(IHttpClientFactory factory)
+{
+    private readonly HttpClient _client = factory.CreateClient("agent");
+}
+```
+
 ## What Just Happened?
 
 - `AAuthKey.Generate()` created an Ed25519 keypair.
-- `HwkSignatureKeyProvider` produces the `Signature-Key: sig=hwk;jkt="..."` header.
+- `AAuthClientBuilder` configured the HWK signing mode and produced an `HttpClient`.
 - `AAuthSigningHandler` signs the request per RFC 9421 covering `@method`, `@authority`, `@path`, and `signature-key`.
 - The resource verifies the signature and sees a pseudonymous key thumbprint.
 

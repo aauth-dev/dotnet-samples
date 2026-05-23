@@ -4,7 +4,23 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+
+    <!-- NuGet package metadata -->
+    <PackageId>AAuth</PackageId>
+    <Version>0.1.0-alpha.1</Version>
+    <Authors>aauth-dev</Authors>
+    <Description>AAuth SDK for .NET — HTTP signature-based agent-to-resource authorization (RFC 9421)</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/aauth-dev/dotnet-samples</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/aauth-dev/dotnet-samples</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>aauth;http-signatures;rfc9421;agent;authorization;ed25519</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../docs/getting-started.md" Pack="true" PackagePath="README.md" />
+  </ItemGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="AAuth.Tests" />

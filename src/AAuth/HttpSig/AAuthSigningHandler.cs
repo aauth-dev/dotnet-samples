@@ -201,4 +201,22 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         sb.Append(");created=").Append(created);
         return sb.ToString();
     }
+
+    /// <summary>
+    /// Create an <see cref="HttpClient"/> that signs every outbound request.
+    /// </summary>
+    /// <param name="key">The agent's signing key (must have private component).</param>
+    /// <param name="provider">Strategy that produces the Signature-Key header value.</param>
+    /// <param name="innerHandler">Optional inner handler (defaults to <see cref="HttpClientHandler"/>).</param>
+    public static HttpClient CreateClient(
+        IAAuthKey key,
+        ISignatureKeyProvider provider,
+        HttpMessageHandler? innerHandler = null)
+    {
+        var handler = new AAuthSigningHandler(key, provider)
+        {
+            InnerHandler = innerHandler ?? new HttpClientHandler()
+        };
+        return new HttpClient(handler);
+    }
 }
