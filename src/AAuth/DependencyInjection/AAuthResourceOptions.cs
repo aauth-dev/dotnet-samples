@@ -32,11 +32,7 @@ public sealed class AAuthResourceOptions
     /// </summary>
     public ISignatureKeyResolver? KeyResolver { get; set; }
 
-    /// <summary>
-    /// Custom <see cref="IKeyLookup"/> for hwk scheme resolution.
-    /// When null, hwk-signed requests will be rejected.
-    /// </summary>
-    public IKeyLookup? KeyLookup { get; set; }
+
 
     /// <summary>Optional human-readable resource name for metadata.</summary>
     public string? ClientName { get; set; }

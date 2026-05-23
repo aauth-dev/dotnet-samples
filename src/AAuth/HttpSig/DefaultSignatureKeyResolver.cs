@@ -13,15 +13,12 @@ namespace AAuth.HttpSig;
 public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
 {
     private readonly JwksClient? _jwksClient;
-    private readonly IKeyLookup? _keyLookup;
 
     /// <summary>Create the resolver.</summary>
-    /// <param name="jwksClient">Required for <c>jwks_uri</c> scheme and <c>jkt-jwt</c> naming JWT verification.</param>
-    /// <param name="keyLookup">Required for <c>hwk</c> scheme. May be null if the server does not accept hwk requests.</param>
-    public DefaultSignatureKeyResolver(JwksClient? jwksClient = null, IKeyLookup? keyLookup = null)
+    /// <param name="jwksClient">Required for <c>jwks_uri</c> scheme resolution.</param>
+    public DefaultSignatureKeyResolver(JwksClient? jwksClient = null)
     {
         _jwksClient = jwksClient;
-        _keyLookup = keyLookup;
     }
 
     public async Task<SignatureKeyResolution> ResolveAsync(
@@ -48,22 +45,15 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
         return info.ConfirmationKey;
     }
 
-    private async Task<IAAuthKey> ResolveHwkAsync(
+    private Task<IAAuthKey> ResolveHwkAsync(
         SignatureKeyParser.ParsedSignatureKeyInfo info, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(info.Jkt))
-            throw new AAuthVerificationException("Signature-Key hwk scheme: missing jkt.");
+        // Per spec: hwk is an "inline public key" scheme — the key is carried
+        // in the Signature-Key header itself. No external lookup required.
+        if (info.ConfirmationKey is null)
+            throw new AAuthVerificationException("Signature-Key hwk scheme: inline jwk could not be extracted.");
 
-        if (_keyLookup is null)
-            throw new AAuthVerificationException(
-                "Signature-Key hwk scheme received but no IKeyLookup is registered. " +
-                "Register an IKeyLookup to support pseudonymous (hwk) verification.");
-
-        var key = await _keyLookup.FindByThumbprintAsync(info.Jkt, ct).ConfigureAwait(false);
-        if (key is null)
-            throw new AAuthVerificationException($"Signature-Key hwk scheme: unknown key (jkt={info.Jkt}).");
-
-        return key;
+        return Task.FromResult<IAAuthKey>(info.ConfirmationKey);
     }
 
     private async Task<IAAuthKey> ResolveJwksUriAsync(

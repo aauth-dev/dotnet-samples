@@ -52,7 +52,7 @@ using var client = new AAuthClientBuilder(key)
 | Status | Signature-Error | Cause |
 |--------|----------------|-------|
 | 401 | `invalid_signature` | Signature doesn't verify |
-| 401 | `unknown_key` | For hwk: key not in `IKeyLookup`; for jwks_uri: kid not found in JWKS |
+| 401 | `unknown_key` | For jwks_uri: kid not found in JWKS |
 | 401 | `unsupported_algorithm` | Key uses wrong algorithm (only EdDSA supported) |
 | 403 | *(none)* | Signature valid but policy denies access |
 

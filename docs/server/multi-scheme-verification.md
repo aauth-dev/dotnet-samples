@@ -36,7 +36,6 @@ using AAuth.DependencyInjection;
 builder.Services.AddAAuthResource(options =>
 {
     options.Issuer = "https://resource.example";
-    options.KeyLookup = myKeyLookup; // for hwk thumbprint resolution
 });
 
 app.UseAAuthVerification();
@@ -50,8 +49,7 @@ using AAuth.HttpSig;
 using AAuth.Discovery;
 
 var resolver = new DefaultSignatureKeyResolver(
-    jwksClient: new JwksClient(new HttpClient()),
-    keyLookup: myKeyLookup
+    jwksClient: new JwksClient(new HttpClient())
 );
 
 app.UseAAuthVerification(
@@ -65,43 +63,16 @@ app.UseAAuthVerification(
 
 | Scheme | How Key Is Resolved |
 |--------|-------------------|
-| `hwk` | Calls `IKeyLookup.FindByThumbprintAsync(jkt)` — resource must know the key |
+| `hwk` | Extracts inline public key from `Signature-Key` header (`jwk` parameter) |
 | `jwks_uri` | Fetches JWKS from the declared URI, finds key by `kid` |
 | `jwt` | Extracts `cnf.jwk` from agent token, fetches AP's JWKS to verify token signature |
-| `jkt_jwt` | Resolves durable key via `IKeyLookup`, verifies JWT delegation to ephemeral key |
+| `jkt_jwt` | Extracts `cnf.jwk` from naming JWT delegation to ephemeral key |
 
-## IKeyLookup — HWK Key Resolution
+## HWK — Inline Public Key
 
-For `hwk` mode, the resource must already know the agent's public key. Implement `IKeyLookup`:
-
-```csharp
-namespace AAuth.HttpSig;
-
-public interface IKeyLookup
-{
-    Task<IAAuthKey?> FindByThumbprintAsync(string jkt, CancellationToken ct = default);
-}
-```
-
-Example implementation:
-
-```csharp
-public sealed class DatabaseKeyLookup : IKeyLookup
-{
-    private readonly IKeyRepository _repo;
-
-    public DatabaseKeyLookup(IKeyRepository repo) => _repo = repo;
-
-    public async Task<IAAuthKey?> FindByThumbprintAsync(string jkt, CancellationToken ct)
-    {
-        var keyData = await _repo.GetByThumbprintAsync(jkt, ct);
-        if (keyData is null) return null;
-        return AAuthKey.FromJwk(keyData.PublicJwk);
-    }
-}
-```
-
-If `IKeyLookup` is not provided and an `hwk` request arrives, verification fails with `SignatureErrorCode.UnknownKey`.
+For `hwk` (pseudonymous) mode, the agent sends its full public key inline in the
+`Signature-Key` header as a base64url-encoded JWK. The resource extracts the key
+directly — no pre-registration or key lookup is required.
 
 ## ParsedSignatureKeyInfo
 

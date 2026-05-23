@@ -2,7 +2,7 @@
 
 ## Overview
 
-The agent proves it holds a specific key without disclosing its identity. The resource sees only a JWK thumbprint. See [live demo](https://explorer.aauth.dev/signing/pseudonymous).
+The agent proves it holds a specific key without disclosing its identity. The full public key is sent inline (base64url-encoded JWK) along with the JWK thumbprint. See [live demo](https://explorer.aauth.dev/signing/pseudonymous).
 
 ## When to Use
 
@@ -41,17 +41,15 @@ using var client = new HttpClient(handler);
 
 ## What the Resource Sees
 
-- `Signature-Key: sig=hwk;jkt="<base64url-sha256-thumbprint>"`
-- The resource can verify the signature but learns nothing about who the agent is
+- `Signature-Key: sig=hwk;jkt="<thumbprint>";jwk="<base64url-encoded-public-JWK>"`
+- The agent sends its full public key inline — the resource extracts it directly
 - Useful for rate-limiting: same thumbprint = same key = same client
 
 ## Verification
 
-Resource must register an `IKeyLookup` to resolve thumbprints to known keys. Without `IKeyLookup`, the middleware returns `unknown_key` error.
-
-```csharp
-builder.Services.AddSingleton<IKeyLookup>(new MyKeyLookup());
-```
+The resource extracts the inline public key from the `Signature-Key` header's `jwk`
+parameter (base64url-decoded JWK). No pre-registration or key lookup is required —
+the key is self-contained in each request.
 
 ## Further Reading
 

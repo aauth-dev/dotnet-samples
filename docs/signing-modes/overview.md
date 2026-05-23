@@ -7,7 +7,7 @@ All AAuth signing modes use HTTP Message Signatures (RFC 9421). The difference i
 | Mode | Scheme | Signature-Key Value | Resource Learns |
 |------|--------|--------------------:|-----------------|
 | Anonymous | (none) | No Signature-Key header | Nothing |
-| Pseudonymous | `sig=hwk` | `sig=hwk;jkt="<thumbprint>"` | Key thumbprint — identity unknown |
+| Pseudonymous | `sig=hwk` | `sig=hwk;jkt="<thumbprint>";jwk="<key>"` | Key thumbprint + inline public key — identity unknown |
 | Agent Identity | `sig=jwks_uri` | `sig=jwks_uri;uri="<url>";kid="<id>"` | Agent identifier + verifiable public key |
 | Agent Token | `sig=jwt` | `sig=jwt;jwt="<compact-jws>"` | Agent identity, PS URL, bound signing key |
 

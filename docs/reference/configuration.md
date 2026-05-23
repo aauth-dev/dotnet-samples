@@ -114,7 +114,6 @@ Methods:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `jwksClient` | `JwksClient?` | null | Client for fetching JWKS endpoints |
-| `keyLookup` | `IKeyLookup?` | null | hwk thumbprint resolver |
 
 ## Signing (Agent-Side)
 
@@ -155,7 +154,6 @@ Standard `DelegatingHandler` — no configurable options. Requires an `ISignatur
 | `MaxSignatureAge` | `TimeSpan?` | No | Override verifier MaxAge |
 | `EnableReplayDetection` | `bool` | No | Register `IJtiStore` (default: false) |
 | `KeyResolver` | `ISignatureKeyResolver?` | No | Custom resolver |
-| `KeyLookup` | `IKeyLookup?` | No | HWK thumbprint lookup |
 | `ClientName` | `string?` | No | Resource display name |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | No | Scope descriptions for metadata |
 

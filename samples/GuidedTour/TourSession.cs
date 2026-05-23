@@ -749,9 +749,10 @@ public sealed class TourSession : IAsyncDisposable
             {
                 SigningMode.Hwk =>
                     "The agent signs the request per RFC 9421. The Signature-Key header " +
-                    "carries `sig=hwk` with the key's JWK thumbprint — no token, no " +
-                    "identity. The resource learns only that a specific key signed this " +
-                    "request. Use for: accountable pseudonymous access, rate-limiting by key.",
+                    "carries `sig=hwk` with the key's JWK thumbprint and the full public " +
+                    "key inline (base64url-encoded JWK). The resource extracts the key " +
+                    "directly — no pre-registration needed. Use for: accountable " +
+                    "pseudonymous access, rate-limiting by key.",
                 SigningMode.JwksUri =>
                     "The agent signs the request per RFC 9421. The Signature-Key header " +
                     "carries `sig=jwks_uri` with a JWKS endpoint + kid. The resource " +

@@ -45,8 +45,7 @@ app.UseAAuthVerification(
     },
     jtiStore: new InMemoryJtiStore(),
     resolver: new DefaultSignatureKeyResolver(
-        jwksClient: new JwksClient(new HttpClient()),
-        keyLookup: myKeyLookup));
+        jwksClient: new JwksClient(new HttpClient())));
 ```
 
 ## AAuthVerifier Configuration
@@ -96,7 +95,7 @@ Error codes (from `SignatureErrorCode`):
 | `InvalidSignature` | `invalid_signature` | Signature bytes don't match |
 | `UnsupportedAlgorithm` | `unsupported_algorithm` | Algorithm not supported |
 | `InvalidKey` | `invalid_key` | Key material is malformed |
-| `UnknownKey` | `unknown_key` | Key not found (hwk lookup failed) |
+| `UnknownKey` | `unknown_key` | Key not found (jwks_uri: kid not in JWKS) |
 | `InvalidJwt` | `invalid_jwt` | Agent token fails validation |
 | `ExpiredJwt` | `expired_jwt` | Agent token `exp` has passed |
 

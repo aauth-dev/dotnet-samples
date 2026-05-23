@@ -95,7 +95,7 @@ public class SigningModeEndToEndTests
     // §Keying Material — "For `pseudonym`: the agent uses `scheme=hwk`"
     // ────────────────────────────────────────────────────────────────────────
 
-    [Fact(DisplayName = "§Signing Modes — hwk scheme: sign and verify round-trip")]
+    [Fact(DisplayName = "§Signing Modes — hwk scheme: sign and verify round-trip (inline key)")]
     public async Task HwkScheme_SignAndVerify()
     {
         var key = AAuthKey.Generate();
@@ -106,15 +106,14 @@ public class SigningModeEndToEndTests
         var sigInput = request.Headers.GetValues("Signature-Input").Single();
         var sig = request.Headers.GetValues("Signature").Single();
 
-        // Parse — hwk only provides a thumbprint
+        // Parse — hwk carries the inline public key per spec
         var info = SignatureKeyParser.ParseAny(sigKeyHeader);
         Assert.Equal("hwk", info.Scheme);
         Assert.Equal(key.ComputeJwkThumbprint(), info.Jkt);
-        Assert.Null(info.ConfirmationKey); // Not inline — requires lookup
+        Assert.NotNull(info.ConfirmationKey); // Inline per spec
 
-        // Verify with the known key (simulating AP-side enrollment lookup)
+        // Verify using the inline key (no external lookup needed)
         var verifier = CreateVerifier();
-        var pubKey = AAuthKey.FromJwk(key.ToPublicJwk());
         verifier.Verify(
             method: "GET",
             authority: "r.example",
@@ -122,7 +121,7 @@ public class SigningModeEndToEndTests
             signatureKey: sigKeyHeader,
             signatureInput: sigInput,
             signatureHeader: sig,
-            publicKey: pubKey);
+            publicKey: info.ConfirmationKey);
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -238,51 +237,18 @@ public class SigningModeEndToEndTests
         Assert.Equal(signingKey.ComputeJwkThumbprint(), result.PublicKey.ComputeJwkThumbprint());
     }
 
-    [Fact(DisplayName = "§Verification — DefaultSignatureKeyResolver resolves hwk via IKeyLookup")]
+    [Fact(DisplayName = "§Verification — DefaultSignatureKeyResolver resolves hwk from inline key")]
     public async Task Resolver_Hwk()
     {
         var key = AAuthKey.Generate();
-        var jkt = key.ComputeJwkThumbprint();
-        var header = SignatureKeyHeader.FormatHwk(jkt);
+        var provider = new HwkSignatureKeyProvider(key);
+        var header = provider.GetSignatureKeyHeader();
         var info = SignatureKeyParser.ParseAny(header);
 
-        var lookup = new InMemoryKeyLookup();
-        lookup.Register(jkt, key);
-
-        var resolver = new DefaultSignatureKeyResolver(keyLookup: lookup);
+        var resolver = new DefaultSignatureKeyResolver();
         var result = await resolver.ResolveAsync(info);
 
-        Assert.Equal(jkt, result.PublicKey.ComputeJwkThumbprint());
-    }
-
-    [Fact(DisplayName = "§Verification — DefaultSignatureKeyResolver returns unknown_key for hwk with no match")]
-    public async Task Resolver_Hwk_UnknownKey()
-    {
-        var key = AAuthKey.Generate();
-        var jkt = key.ComputeJwkThumbprint();
-        var header = SignatureKeyHeader.FormatHwk(jkt);
-        var info = SignatureKeyParser.ParseAny(header);
-
-        var lookup = new InMemoryKeyLookup(); // Empty — no keys registered
-
-        var resolver = new DefaultSignatureKeyResolver(keyLookup: lookup);
-        var ex = await Assert.ThrowsAsync<AAuthVerificationException>(
-            () => resolver.ResolveAsync(info));
-        Assert.Contains("unknown key", ex.Message);
-    }
-
-    [Fact(DisplayName = "§Verification — DefaultSignatureKeyResolver rejects hwk when no IKeyLookup registered")]
-    public async Task Resolver_Hwk_NoKeyLookup()
-    {
-        var key = AAuthKey.Generate();
-        var jkt = key.ComputeJwkThumbprint();
-        var header = SignatureKeyHeader.FormatHwk(jkt);
-        var info = SignatureKeyParser.ParseAny(header);
-
-        var resolver = new DefaultSignatureKeyResolver(); // No key lookup
-        var ex = await Assert.ThrowsAsync<AAuthVerificationException>(
-            () => resolver.ResolveAsync(info));
-        Assert.Contains("IKeyLookup", ex.Message);
+        Assert.Equal(key.ComputeJwkThumbprint(), result.PublicKey.ComputeJwkThumbprint());
     }
 
     [Fact(DisplayName = "§Verification — DefaultSignatureKeyResolver resolves jkt-jwt with thumbprint match")]
@@ -371,19 +337,5 @@ public class SigningModeEndToEndTests
             () => resolver.ResolveAsync(info));
         // The fact that it threw HttpRequestException (not AAuthVerificationException
         // about https) confirms the loopback allowance works.
-    }
-
-    // ────────────────────────────────────────────────────────────────────────
-    // Helper: in-memory key lookup for tests
-    // ────────────────────────────────────────────────────────────────────────
-
-    private sealed class InMemoryKeyLookup : IKeyLookup
-    {
-        private readonly System.Collections.Generic.Dictionary<string, IAAuthKey> _keys = new();
-
-        public void Register(string jkt, IAAuthKey key) => _keys[jkt] = key;
-
-        public Task<IAAuthKey?> FindByThumbprintAsync(string jkt, CancellationToken ct = default)
-            => Task.FromResult(_keys.TryGetValue(jkt, out var key) ? key : null);
     }
 }
