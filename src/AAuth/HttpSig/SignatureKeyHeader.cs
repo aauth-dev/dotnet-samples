@@ -29,12 +29,14 @@ public static class SignatureKeyHeader
         return $"sig=jkt-jwt;jkt=\"{jkt}\";jwt=\"{jwt}\"";
     }
 
-    /// <summary>Build a <c>Signature-Key</c> header value with the <c>hwk</c> scheme (bare JWK thumbprint).</summary>
+    /// <summary>Build a <c>Signature-Key</c> header value with the <c>hwk</c> scheme (inline public key).</summary>
     /// <param name="jkt">Base64url-encoded JWK thumbprint.</param>
-    public static string FormatHwk(string jkt)
+    /// <param name="jwkBase64Url">Base64url-encoded public JWK JSON.</param>
+    public static string FormatHwk(string jkt, string jwkBase64Url)
     {
         ArgumentException.ThrowIfNullOrEmpty(jkt);
-        return $"sig=hwk;jkt=\"{jkt}\"";
+        ArgumentException.ThrowIfNullOrEmpty(jwkBase64Url);
+        return $"sig=hwk;jkt=\"{jkt}\";jwk=\"{jwkBase64Url}\"";
     }
 
     /// <summary>Build a <c>Signature-Key</c> header value with the <c>jwks_uri</c> scheme.</summary>

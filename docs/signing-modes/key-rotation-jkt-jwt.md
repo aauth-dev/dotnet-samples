@@ -20,12 +20,24 @@ var durableKey = AAuthKey.Generate();    // long-lived, possibly hardware-backed
 var ephemeralKey = AAuthKey.Generate();  // short-lived signing key
 
 // namingJwt: signed by durableKey, contains ephemeralKey's thumbprint in claims
+using var client = new AAuthClientBuilder(ephemeralKey)
+    .UseJktJwt(() => namingJwt)
+    .Build();
+```
+
+<details>
+<summary>Manual Setup</summary>
+
+```csharp
 var provider = new JktJwtSignatureKeyProvider(ephemeralKey, () => namingJwt);
 var handler = new AAuthSigningHandler(ephemeralKey, provider)
 {
     InnerHandler = new HttpClientHandler()
 };
+using var client = new HttpClient(handler);
 ```
+
+</details>
 
 ## What the Resource Sees
 

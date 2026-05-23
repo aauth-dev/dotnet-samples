@@ -84,14 +84,18 @@ public sealed class AgentProviderClient
         var agentToken = (string?)body["agent_token"]
             ?? throw new InvalidOperationException("AP enrollment response missing 'agent_token'.");
 
+        // Use the kid assigned by the AP (authoritative), falling back to locally generated one
+        var assignedKeyId = (string?)body["key_id"] ?? keyId;
+
         // Persist the key
-        await _keyStore.StoreAsync(keyId, key, ct);
+        await _keyStore.StoreAsync(assignedKeyId, key, ct);
 
         return new EnrollResult
         {
             AgentToken = agentToken,
-            KeyId = keyId,
+            KeyId = assignedKeyId,
             Key = key,
+            JwksUri = (string?)body["jwks_uri"],
         };
     }
 
@@ -150,4 +154,11 @@ public sealed class EnrollResult
 
     /// <summary>The generated key (for immediate use in signing).</summary>
     public required AAuthKey Key { get; init; }
+
+    /// <summary>
+    /// The per-agent JWKS URI where the AP publishes this agent's public key.
+    /// Used with <c>scheme=jwks_uri</c> for identity-based access.
+    /// Null if the AP didn't provide one.
+    /// </summary>
+    public string? JwksUri { get; init; }
 }

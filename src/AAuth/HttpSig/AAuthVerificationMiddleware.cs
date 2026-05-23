@@ -155,7 +155,7 @@ public sealed class AAuthVerificationMiddleware
         if (msg.Contains("scheme is not", StringComparison.OrdinalIgnoreCase) ||
             msg.Contains("Unsupported Signature-Key scheme", StringComparison.OrdinalIgnoreCase) ||
             msg.Contains("cnf.jwk", StringComparison.OrdinalIgnoreCase) ||
-            msg.Contains("IKeyLookup", StringComparison.OrdinalIgnoreCase) ||
+
             msg.Contains("jkt parameter does not match", StringComparison.OrdinalIgnoreCase))
             return SignatureErrorCode.InvalidKey;
         if (msg.Contains("not a compact JWS", StringComparison.OrdinalIgnoreCase) ||

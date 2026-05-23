@@ -25,6 +25,8 @@ public sealed class TourSession : IAsyncDisposable
 
     private AAuthKey? _agentKey;
     private string? _agentToken;
+    private string? _assignedKeyId;
+    private string? _agentJwksUri;
     private string? _authToken;
     private string? _resourceToken;
     private string? _tokenEndpoint;
@@ -51,9 +53,9 @@ public sealed class TourSession : IAsyncDisposable
     public List<StepRecord> Steps { get; } = new();
 
     /// <summary>
-    /// Which flow this session is running. Mutating this resets the
-    /// timeline but preserves the agent key and token so protocol flows
-    /// can reuse credentials established during Bootstrap.
+    /// Which flow this session is running. Mutating this fully resets
+    /// agent state so each flow demonstrates the complete lifecycle
+    /// from key generation through enrollment.
     /// The UI re-syncs the PS's consent store afterwards via
     /// <see cref="PrepareConsentStateAsync"/>.
     /// </summary>
@@ -64,11 +66,9 @@ public sealed class TourSession : IAsyncDisposable
         {
             if (_mode == value) { return; }
             _mode = value;
-            // Clear the token (but keep the key) so EnsureAgentReadyAsync
-            // rebuilds it with the correct claims for the new mode (e.g.
-            // identity mode needs no ps claim, autonomous needs one).
-            _agentToken = null;
-            ResetTimeline();
+            // Each flow is self-contained: fresh key + enrollment so the
+            // user sees the full sequence every time.
+            Reset();
         }
     }
 
@@ -87,8 +87,9 @@ public sealed class TourSession : IAsyncDisposable
         {
             if (_signingMode == value) return;
             _signingMode = value;
-            _agentToken = null;
-            ResetTimeline();
+            // Fresh enrollment per flow keeps each run isolated and
+            // shows the full bootstrap→request sequence.
+            Reset();
         }
     }
     private SigningMode _signingMode = SigningMode.Hwk;
@@ -256,11 +257,14 @@ public sealed class TourSession : IAsyncDisposable
         ResetTimeline();
         _agentKey = null;
         _agentToken = null;
+        _assignedKeyId = null;
+        _agentJwksUri = null;
     }
 
     /// <summary>
-    /// Clears the step timeline and protocol state but preserves the
-    /// agent key + token so they survive mode switches.
+    /// Clears the step timeline and per-flow protocol state (auth tokens,
+    /// polling, pending URLs). Agent credentials are also cleared so
+    /// <see cref="EnsureAgentReadyAsync"/> re-enrolls on the next run.
     /// </summary>
     private void ResetTimeline()
     {
@@ -291,24 +295,33 @@ public sealed class TourSession : IAsyncDisposable
     /// Identity flow respects the user's selected mode; three-party flows
     /// always use jwt per the AAuth spec requirement.
     /// </summary>
-    private AAuthSigningHandler BuildSigningHandler(
+    private HttpMessageHandler BuildSigningHandler(
         Func<string> tokenFactory,
         HttpMessageHandler inner,
         Action<HttpRequestMessage, string>? onSignatureBase = null)
     {
-        ISignatureKeyProvider provider = EffectiveSigningMode switch
+        var builder = new AAuthClientBuilder(_agentKey!)
+            .WithInnerHandler(inner);
+
+        switch (EffectiveSigningMode)
         {
-            SigningMode.Hwk => new HwkSignatureKeyProvider(_agentKey!),
-            SigningMode.JwksUri => new JwksUriSignatureKeyProvider(
-                $"{(_options.AgentProviderUrl ?? "http://localhost:5301").TrimEnd('/')}/.well-known/jwks.json",
-                "tour-key-1"),
-            _ => new JwtSignatureKeyProvider(tokenFactory),
-        };
-        return new AAuthSigningHandler(_agentKey!, provider)
-        {
-            InnerHandler = inner,
-            OnSignatureBase = onSignatureBase,
-        };
+            case SigningMode.Hwk:
+                builder.UseHwk();
+                break;
+            case SigningMode.JwksUri:
+                builder.UseJwksUri(
+                    _agentJwksUri ?? $"{(_options.AgentProviderUrl ?? "http://localhost:5301").TrimEnd('/')}/agents/{_options.AgentId}/jwks.json",
+                    _assignedKeyId ?? "tour-key-1");
+                break;
+            default:
+                builder.UseJwt(tokenFactory);
+                break;
+        }
+
+        if (onSignatureBase is not null)
+            builder.OnSignatureBase(onSignatureBase);
+
+        return builder.BuildHandler();
     }
 
     /// <summary>
@@ -441,6 +454,8 @@ public sealed class TourSession : IAsyncDisposable
                 var enrolBody = JsonNode.Parse(await enrolResp.Content.ReadAsStringAsync(ct));
                 _agentToken = (string?)enrolBody?["agent_token"]
                     ?? throw new InvalidOperationException("AP enrol response missing agent_token");
+                _assignedKeyId = (string?)enrolBody?["key_id"];
+                _agentJwksUri = (string?)enrolBody?["jwks_uri"];
             }
             else
             {
@@ -566,6 +581,7 @@ public sealed class TourSession : IAsyncDisposable
                 "private key.",
             ResponseBody = jwk,
             TokenDecoded = $"JWK thumbprint:\n{_agentKey.ComputeJwkThumbprint()}",
+            CodeSnippet = CodeSnippets.GenerateKey,
         });
     }
 
@@ -600,6 +616,7 @@ public sealed class TourSession : IAsyncDisposable
             TokenJwt = _agentToken,
             TokenHeader = DecodeJwt(_agentToken)?.Header,
             TokenPayload = DecodeJwt(_agentToken)?.Payload,
+            CodeSnippet = CodeSnippets.SelfSignAgentToken,
         });
     }
 
@@ -633,6 +650,7 @@ public sealed class TourSession : IAsyncDisposable
             StatusLine = ex.StatusLine,
             ResponseHeaders = ex.ResponseHeaders,
             ResponseBody = PrettyJson(ex.ResponseBody),
+            CodeSnippet = CodeSnippets.DiscoverAp,
         });
     }
 
@@ -654,6 +672,8 @@ public sealed class TourSession : IAsyncDisposable
 
         var body = JsonNode.Parse(ex.ResponseBody);
         _agentToken = (string?)body?["agent_token"];
+        _assignedKeyId = (string?)body?["key_id"];
+        _agentJwksUri = (string?)body?["jwks_uri"];
 
         Steps.Add(new StepRecord
         {
@@ -674,6 +694,7 @@ public sealed class TourSession : IAsyncDisposable
             TokenJwt = _agentToken,
             TokenHeader = DecodeJwt(_agentToken)?.Header,
             TokenPayload = DecodeJwt(_agentToken)?.Payload,
+            CodeSnippet = CodeSnippets.EnrolWithAp,
         });
     }
 
@@ -702,6 +723,7 @@ public sealed class TourSession : IAsyncDisposable
             StatusLine = ex.StatusLine,
             ResponseHeaders = ex.ResponseHeaders,
             ResponseBody = PrettyJson(ex.ResponseBody),
+            CodeSnippet = CodeSnippets.DiscoverResource,
         });
     }
 
@@ -740,9 +762,10 @@ public sealed class TourSession : IAsyncDisposable
             {
                 SigningMode.Hwk =>
                     "The agent signs the request per RFC 9421. The Signature-Key header " +
-                    "carries `sig=hwk` with the key's JWK thumbprint — no token, no " +
-                    "identity. The resource learns only that a specific key signed this " +
-                    "request. Use for: accountable pseudonymous access, rate-limiting by key.",
+                    "carries `sig=hwk` with the key's JWK thumbprint and the full public " +
+                    "key inline (base64url-encoded JWK). The resource extracts the key " +
+                    "directly — no pre-registration needed. Use for: accountable " +
+                    "pseudonymous access, rate-limiting by key.",
                 SigningMode.JwksUri =>
                     "The agent signs the request per RFC 9421. The Signature-Key header " +
                     "carries `sig=jwks_uri` with a JWKS endpoint + kid. The resource " +
@@ -763,6 +786,12 @@ public sealed class TourSession : IAsyncDisposable
             ResponseHeaders = ex.ResponseHeaders,
             ResponseBody = PrettyJson(ex.ResponseBody),
             SignatureBase = capturedBase,
+            CodeSnippet = EffectiveSigningMode switch
+            {
+                SigningMode.Hwk => CodeSnippets.SignedGetHwk,
+                SigningMode.JwksUri => CodeSnippets.SignedGetJwksUri,
+                _ => CodeSnippets.SignedGetJwt,
+            },
         });
     }
 
@@ -785,6 +814,7 @@ public sealed class TourSession : IAsyncDisposable
             TokenDecoded = _resourceToken is null
                 ? "(no resource_token in challenge — identity-based flow)"
                 : null,
+            CodeSnippet = CodeSnippets.ParseChallenge,
         });
     }
 
@@ -815,6 +845,7 @@ public sealed class TourSession : IAsyncDisposable
             StatusLine = ex.StatusLine,
             ResponseHeaders = ex.ResponseHeaders,
             ResponseBody = PrettyJson(ex.ResponseBody),
+            CodeSnippet = CodeSnippets.DiscoverPs,
         });
     }
 
@@ -860,6 +891,7 @@ public sealed class TourSession : IAsyncDisposable
             TokenJwt = _authToken,
             TokenHeader = DecodeJwt(_authToken)?.Header,
             TokenPayload = DecodeJwt(_authToken)?.Payload,
+            CodeSnippet = CodeSnippets.TokenExchangeDirect,
         });
     }
 
@@ -894,6 +926,7 @@ public sealed class TourSession : IAsyncDisposable
             ResponseHeaders = ex.ResponseHeaders,
             ResponseBody = PrettyJson(ex.ResponseBody),
             SignatureBase = capturedBase,
+            CodeSnippet = CodeSnippets.ReplayWithAuthToken,
         });
     }
 
@@ -968,6 +1001,7 @@ public sealed class TourSession : IAsyncDisposable
             StatusLine = ex.StatusLine,
             ResponseHeaders = ex.ResponseHeaders,
             ResponseBody = PrettyJson(ex.ResponseBody),
+            CodeSnippet = CodeSnippets.TokenExchangeDeferred,
         });
     }
 
@@ -990,6 +1024,7 @@ public sealed class TourSession : IAsyncDisposable
                 "user session at the PS back to this specific pending request.",
             ResponseBody = userUrl,
             TokenDecoded = $"Interaction URL:  {_interactionUrl}\nCode:             {_interactionCode}",
+            CodeSnippet = CodeSnippets.DirectUserToInteraction,
         });
     }
 
@@ -1095,6 +1130,7 @@ public sealed class TourSession : IAsyncDisposable
                 TokenJwt = _authToken,
                 TokenHeader = DecodeJwt(_authToken)?.Header,
                 TokenPayload = DecodeJwt(_authToken)?.Payload,
+                CodeSnippet = CodeSnippets.PollPending,
             });
         }
         catch (TimeoutException tex)

@@ -135,13 +135,31 @@ public static class SignatureKeyParser
 
     private static ParsedSignatureKeyInfo ParseHwkScheme(IReadOnlyDictionary<string, string> parameters)
     {
-        if (!parameters.TryGetValue("jkt", out var jkt) || string.IsNullOrEmpty(jkt))
-            throw new AAuthVerificationException("Signature-Key hwk scheme missing 'jkt' parameter.");
+        if (!parameters.TryGetValue("jwk", out var jwkB64) || string.IsNullOrEmpty(jwkB64))
+            throw new AAuthVerificationException("Signature-Key hwk scheme missing 'jwk' parameter.");
+
+        AAuthKey key;
+        try
+        {
+            var jwkJson = System.Text.Encoding.UTF8.GetString(
+                Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(jwkB64));
+            var jwkObj = System.Text.Json.Nodes.JsonObject.Parse(jwkJson) as JsonObject
+                ?? throw new AAuthVerificationException("Signature-Key hwk scheme: jwk is not a JSON object.");
+            key = AAuthKey.FromJwk(jwkObj);
+        }
+        catch (AAuthVerificationException) { throw; }
+        catch (Exception ex)
+        {
+            throw new AAuthVerificationException($"Signature-Key hwk scheme: failed to parse inline jwk — {ex.Message}");
+        }
+
+        var jkt = parameters.TryGetValue("jkt", out var j) ? j : key.ComputeJwkThumbprint();
 
         return new ParsedSignatureKeyInfo
         {
             Scheme = "hwk",
             Jkt = jkt,
+            ConfirmationKey = key,
         };
     }
 

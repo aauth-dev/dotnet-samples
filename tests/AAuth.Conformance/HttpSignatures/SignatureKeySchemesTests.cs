@@ -17,14 +17,16 @@ public class SignatureKeySchemesTests
         Assert.Equal("sig=jwt;jwt=\"eyJ.payload.sig\"", header);
     }
 
-    [Fact(DisplayName = "§4 — hwk scheme formats with jkt parameter")]
+    [Fact(DisplayName = "§4 — hwk scheme formats with jkt and inline jwk parameters")]
     public void HwkScheme_FormatsCorrectly()
     {
         var key = AAuthKey.Generate();
         var jkt = key.ComputeJwkThumbprint();
-        var header = SignatureKeyHeader.FormatHwk(jkt);
+        var jwkJson = System.Text.Json.JsonSerializer.Serialize(key.ToPublicJwk());
+        var jwkB64 = Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Encode(jwkJson);
+        var header = SignatureKeyHeader.FormatHwk(jkt, jwkB64);
         Assert.StartsWith("sig=hwk;jkt=\"", header);
-        Assert.EndsWith("\"", header);
+        Assert.Contains(";jwk=\"", header);
     }
 
     [Fact(DisplayName = "§4 — jwks_uri scheme formats with uri and kid parameters")]
@@ -63,17 +65,18 @@ public class SignatureKeySchemesTests
         Assert.NotNull(info.Payload);
     }
 
-    [Fact(DisplayName = "§4 — ParseAny handles hwk scheme")]
+    [Fact(DisplayName = "§4 — ParseAny handles hwk scheme with inline key")]
     public void ParseAny_HwkScheme()
     {
         var key = AAuthKey.Generate();
-        var jkt = key.ComputeJwkThumbprint();
-        var headerValue = SignatureKeyHeader.FormatHwk(jkt);
+        var provider = new HwkSignatureKeyProvider(key);
+        var headerValue = provider.GetSignatureKeyHeader();
 
         var info = SignatureKeyParser.ParseAny(headerValue);
         Assert.Equal("hwk", info.Scheme);
-        Assert.Equal(jkt, info.Jkt);
-        Assert.Null(info.ConfirmationKey); // Must be resolved externally
+        Assert.Equal(key.ComputeJwkThumbprint(), info.Jkt);
+        Assert.NotNull(info.ConfirmationKey); // Inline per spec
+        Assert.Equal(key.ComputeJwkThumbprint(), info.ConfirmationKey.ComputeJwkThumbprint());
     }
 
     [Fact(DisplayName = "§4 — ParseAny handles jwks_uri scheme")]

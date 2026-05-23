@@ -30,6 +30,8 @@ builder.Services.AddSingleton<MetadataClient>(sp =>
     new MetadataClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-metadata")));
 builder.Services.AddSingleton<JwksClient>(sp =>
     new JwksClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-jwks")));
+builder.Services.AddSingleton<ISignatureKeyResolver>(sp =>
+    new DefaultSignatureKeyResolver(sp.GetRequiredService<JwksClient>()));
 builder.Services.AddHttpClient("aauth-metadata");
 builder.Services.AddHttpClient("aauth-jwks");
 

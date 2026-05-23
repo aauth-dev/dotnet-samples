@@ -15,6 +15,13 @@ public class DeferredPollerTests
     private static readonly Uri PendingUrl = new("https://ps.example/pending/abc");
 
     [Fact]
+    public void DefaultPollInterval_Is5Seconds()
+    {
+        var options = new DeferredPollerOptions();
+        Assert.Equal(TimeSpan.FromSeconds(5), options.DefaultPollInterval);
+    }
+
+    [Fact]
     public async Task PollAsync_ReturnsFirstNon202Response()
     {
         var handler = new ScriptedHandler(

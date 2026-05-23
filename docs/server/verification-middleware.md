@@ -8,6 +8,28 @@ Every AAuth request carries an HTTP signature (RFC 9421). The `AAuthVerification
 
 ## Setup
 
+### DI Extension (Recommended)
+
+```csharp
+using AAuth.DependencyInjection;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddAAuthResource(options =>
+{
+    options.Issuer = "https://resource.example";
+    options.MaxSignatureAge = TimeSpan.FromSeconds(60);
+    options.EnableReplayDetection = true;
+});
+
+var app = builder.Build();
+
+app.UseAAuthVerification();
+app.MapAAuthWellKnown(); // serves /.well-known/aauth-resource.json
+```
+
+### Manual Setup (Advanced)
+
 ```csharp
 using AAuth.HttpSig;
 using AAuth.Server;
@@ -15,21 +37,15 @@ using AAuth.Server;
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 
-// Option 1: Extension method (recommended)
 app.UseAAuthVerification(
     verifier: new AAuthVerifier
     {
         MaxAge = TimeSpan.FromSeconds(60),
         MaxFutureSkew = TimeSpan.FromSeconds(5)
     },
-    jtiStore: new InMemoryJtiStore(),      // optional: replay detection
+    jtiStore: new InMemoryJtiStore(),
     resolver: new DefaultSignatureKeyResolver(
-        jwksClient: new JwksClient(new HttpClient()),
-        keyLookup: myKeyLookup));           // optional: hwk key resolution
-
-// Option 2: Manual middleware registration
-app.UseMiddleware<AAuthVerificationMiddleware>(
-    new AAuthVerifier(), resolver);
+        jwksClient: new JwksClient(new HttpClient())));
 ```
 
 ## AAuthVerifier Configuration
@@ -79,7 +95,7 @@ Error codes (from `SignatureErrorCode`):
 | `InvalidSignature` | `invalid_signature` | Signature bytes don't match |
 | `UnsupportedAlgorithm` | `unsupported_algorithm` | Algorithm not supported |
 | `InvalidKey` | `invalid_key` | Key material is malformed |
-| `UnknownKey` | `unknown_key` | Key not found (hwk lookup failed) |
+| `UnknownKey` | `unknown_key` | Key not found (jwks_uri: kid not in JWKS) |
 | `InvalidJwt` | `invalid_jwt` | Agent token fails validation |
 | `ExpiredJwt` | `expired_jwt` | Agent token `exp` has passed |
 

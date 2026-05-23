@@ -7,7 +7,7 @@ All AAuth signing modes use HTTP Message Signatures (RFC 9421). The difference i
 | Mode | Scheme | Signature-Key Value | Resource Learns |
 |------|--------|--------------------:|-----------------|
 | Anonymous | (none) | No Signature-Key header | Nothing |
-| Pseudonymous | `sig=hwk` | `sig=hwk;jkt="<thumbprint>"` | Key thumbprint — identity unknown |
+| Pseudonymous | `sig=hwk` | `sig=hwk;jkt="<thumbprint>";jwk="<key>"` | Key thumbprint + inline public key — identity unknown |
 | Agent Identity | `sig=jwks_uri` | `sig=jwks_uri;uri="<url>";kid="<id>"` | Agent identifier + verifiable public key |
 | Agent Token | `sig=jwt` | `sig=jwt;jwt="<compact-jws>"` | Agent identity, PS URL, bound signing key |
 
@@ -17,13 +17,31 @@ All AAuth signing modes use HTTP Message Signatures (RFC 9421). The difference i
 |------|----------|----------|
 | Anonymous | Public endpoints, no access control | Nothing |
 | Pseudonymous (`hwk`) | Accountable access, rate-limiting by key | Just a keypair |
-| Agent Identity (`jwks_uri`) | Access control by identity, replacing API keys | Agent Provider + JWKS endpoint |
+| Agent Identity (`jwks_uri`) | Access control by identity, replacing API keys | Agent Provider (publishes per-agent JWKS) |
 | Agent Token (`jwt`) | Full PS-AS authorization flows | Agent Provider + Person Server |
 
 ## SDK Types
 
 ```csharp
-// All implement ISignatureKeyProvider
+using AAuth.Crypto;
+using AAuth.HttpSig;
+
+var key = AAuthKey.Generate();
+
+// Builder API (recommended)
+using var client = mode switch
+{
+    "hwk"      => new AAuthClientBuilder(key).UseHwk().Build(),
+    "jwks_uri" => new AAuthClientBuilder(key).UseJwksUri(jwksUri, kid).Build(),
+    "jwt"      => new AAuthClientBuilder(key).UseJwt(agentToken).Build(),
+    "jkt-jwt"  => new AAuthClientBuilder(ephemeralKey).UseJktJwt(() => namingJwt).Build(),
+};
+```
+
+<details>
+<summary>Manual Setup (ISignatureKeyProvider)</summary>
+
+```csharp
 ISignatureKeyProvider provider = mode switch
 {
     "hwk"      => new HwkSignatureKeyProvider(key),
@@ -34,6 +52,8 @@ ISignatureKeyProvider provider = mode switch
 
 var handler = new AAuthSigningHandler(key, provider);
 ```
+
+</details>
 
 ## Capability Matrix
 

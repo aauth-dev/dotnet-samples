@@ -17,10 +17,29 @@ sequenceDiagram
     Agent->>AP: GET /.well-known/aauth-agent.json
     AP-->>Agent: metadata (enrol_endpoint, jwks_uri)
     Agent->>AP: POST /enrol {agent_id, jwk, ps?}
-    AP-->>Agent: {agent_token: "aa-agent+jwt..."}
+    AP-->>Agent: {agent_token, key_id, jwks_uri}
 ```
 
 ## Code Example
+
+### Using BootstrapBuilder (Recommended)
+
+```csharp
+using AAuth.HttpSig;
+
+var (client, enrolResult) = await AAuthClientBuilder
+    .Bootstrap(
+        enrollEndpoint: "https://ap.example/enrol",
+        agentId: "aauth:myapp@ap.example")
+    .WithPersonServer("https://ps.example")
+    .WithChallengeHandling()
+    .EnrolAndBuildAsync();
+
+// client is ready to use with automatic challenge handling
+// enrolResult.Key, enrolResult.AgentToken, enrolResult.KeyId
+```
+
+### Manual Enrollment
 
 ```csharp
 using AAuth.Agent;
@@ -36,7 +55,7 @@ var result = await apClient.EnrolAsync(
     personServer: "https://ps.example" // optional: include if using three-party flows
 );
 
-// result.Token = the aa-agent+jwt
+// result.AgentToken = the aa-agent+jwt
 // result.Key = the generated signing key
 // result.KeyId = the key ID at the AP
 ```
@@ -49,13 +68,15 @@ var result = await apClient.EnrolAsync(
   - `cnf.jwk`: the agent's public key (bound to identity)
   - `ps`: Person Server URL (optional, only if agent has a PS)
 - The agent's private key stored in `IKeyStore`
+- A `key_id` assigned by the AP (stable for the key's lifetime)
+- A `jwks_uri` pointing to the per-agent JWKS endpoint where the AP publishes the agent's public key (used with `scheme=jwks_uri`)
 
 ## Which Flows Need Bootstrap
 
 | Flow | Needs Bootstrap? | Why |
 |------|:----------------:|-----|
 | Pseudonymous (hwk) | No | Just needs a bare keypair |
-| Agent Identity (jwks_uri) | Yes | AP hosts the JWKS endpoint |
+| Agent Identity (jwks_uri) | Yes | AP publishes the agent's key at a per-agent JWKS endpoint |
 | Three-party (jwt) | Yes | Agent token required for PS interactions |
 
 ## Key Persistence

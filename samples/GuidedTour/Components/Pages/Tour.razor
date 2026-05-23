@@ -28,8 +28,8 @@
         <select id="flow-select" value="@Session.Mode" @onchange="OnModeChangedAsync" disabled="@_busy">
             <option value="@TourMode.Bootstrap" disabled="@(!Session.HasAgentProvider)">1 · Bootstrap — keygen + AP enrol</option>
             <option value="@TourMode.Identity">2 · Identity-based — no PS, 2 steps</option>
-            <option value="@TourMode.Autonomous" disabled="@(!Session.HasPersonServer)">3 · Autonomous (Agent Token) — no user, 6 steps</option>
-            <option value="@TourMode.Deferred" disabled="@(!Session.HasPersonServer)">4 · Deferred consent (Agent Token) — user approves, 9 steps</option>
+            <option value="@TourMode.Autonomous" disabled="@(!Session.HasPersonServer)">3 · PS-Asserted (Direct Grant) — no user, 6 steps</option>
+            <option value="@TourMode.Deferred" disabled="@(!Session.HasPersonServer)">4 · PS-Asserted (Deferred) — user approves, 9 steps</option>
         </select>
     </label>
     @if (Session.Mode == TourMode.Identity)
@@ -66,7 +66,7 @@
                 <text>
                     The agent generates a keypair and registers with an Agent Provider to obtain
                     a signed <code>aa-agent+jwt</code>. Required before Agent Identity
-                    (<code>jwks_uri</code>) access and all Person Server flows (Autonomous / Deferred).
+                    (<code>jwks_uri</code>) access and all Person Server flows (Direct Grant / Deferred).
                     Not needed for Pseudonymous (<code>hwk</code>) access — that uses a bare key.
                     <strong>Agent ↔ Agent Provider only.</strong>
                 </text>
@@ -91,7 +91,7 @@
                 break;
             case TourMode.Autonomous:
                 <text>
-                    <strong>Signing mode: Agent Token (<code>scheme=jwt</code>)</strong> — required for all
+                    <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — required for all
                     Person Server flows.
                     The agent already has standing consent at the Person Server. <code>POST /token</code>
                     returns <code>200</code> immediately with an <code>auth_token</code>; the agent retries the
@@ -100,7 +100,7 @@
                 break;
             case TourMode.Deferred:
                 <text>
-                    <strong>Signing mode: Agent Token (<code>scheme=jwt</code>)</strong> — required for all
+                    <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — required for all
                     Person Server flows.
                     The agent has <em>no</em> consent yet. <code>POST /token</code> returns <code>202 Accepted</code>
                     with an interaction URL; the user clicks <strong>Approve</strong> at the PS's consent page in

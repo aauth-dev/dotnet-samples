@@ -35,9 +35,9 @@ public enum SigningMode
     /// </summary>
     Jwt,
     /// <summary>
-    /// <c>sig=hwk</c> — Pseudonymous mode. Only the key's JWK thumbprint
-    /// is disclosed. Resource learns: a specific key signed this — identity
-    /// unknown. Use for accountable access, rate-limiting by key.
+    /// <c>sig=hwk</c> — Pseudonymous mode. The full public key is sent inline
+    /// (base64url-encoded JWK). Resource learns: a specific key signed this —
+    /// identity unknown. Use for accountable access, rate-limiting by key.
     /// </summary>
     Hwk,
     /// <summary>

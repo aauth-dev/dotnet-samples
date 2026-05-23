@@ -29,17 +29,29 @@ public interface IJtiStore
 Thread-safe, in-process implementation. Suitable for single-instance deployments and testing.
 
 ```csharp
+using AAuth.DependencyInjection;
+
+// DI extension (recommended) — registers IJtiStore automatically
+builder.Services.AddAAuthResource(options =>
+{
+    options.Issuer = "https://resource.example";
+    options.EnableReplayDetection = true;
+});
+```
+
+<details>
+<summary>Manual Setup</summary>
+
+```csharp
 using AAuth.Server;
 
 var jtiStore = new InMemoryJtiStore();
 
-// Wire into middleware
 app.UseAAuthVerification(
     verifier: new AAuthVerifier(),
     jtiStore: jtiStore);
 
 // Optional: periodic cleanup of expired entries
-// (InMemoryJtiStore accumulates expired entries until Cleanup() is called)
 var timer = new PeriodicTimer(TimeSpan.FromMinutes(10));
 _ = Task.Run(async () =>
 {
@@ -47,6 +59,8 @@ _ = Task.Run(async () =>
         jtiStore.Cleanup();
 });
 ```
+
+</details>
 
 ## Custom Implementations
 

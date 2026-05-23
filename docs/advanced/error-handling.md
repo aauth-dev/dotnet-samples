@@ -22,7 +22,7 @@ public enum SignatureErrorCode
     InvalidSignature,       // Signature bytes don't verify against key
     UnsupportedAlgorithm,   // Algorithm not supported by this resource
     InvalidKey,             // Key material is malformed or unsupported
-    UnknownKey,             // Key thumbprint not found (hwk scheme, resource doesn't know this key)
+    UnknownKey,             // Key not found (jwks_uri: kid not in JWKS)
     InvalidJwt,             // Agent token JWT fails validation
     ExpiredJwt,             // Agent token exp has passed
 }

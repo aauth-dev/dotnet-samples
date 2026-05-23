@@ -42,7 +42,7 @@ using var client = new AAuthClientBuilder(key)
 
 var response = await client.GetAsync("https://resource.example/data");
 // Request is signed with HTTP Message Signatures (RFC 9421)
-// Resource sees: Signature-Key: sig=hwk;jkt="<thumbprint>"
+// Resource sees: Signature-Key: sig=hwk;jkt="<thumbprint>";jwk="<public-key>"
 ```
 
 ### Alternative: One-liner with static factory
@@ -55,10 +55,10 @@ using var client = AAuthSigningHandler.CreateClient(key, new HwkSignatureKeyProv
 
 ```csharp
 // In Program.cs
-builder.Services.AddAAuthClient("agent", options =>
+builder.Services.AddAAuthAgent("agent", options =>
 {
     options.Key = key;
-    options.SigningMode = new HwkSignatureKeyProvider(key);
+    options.PersonServer = "https://ps.example"; // omit for signing-only
 });
 
 // Inject via IHttpClientFactory
@@ -73,7 +73,7 @@ public class MyService(IHttpClientFactory factory)
 - `AAuthKey.Generate()` created an Ed25519 keypair.
 - `AAuthClientBuilder` configured the HWK signing mode and produced an `HttpClient`.
 - `AAuthSigningHandler` signs the request per RFC 9421 covering `@method`, `@authority`, `@path`, and `signature-key`.
-- The resource verifies the signature and sees a pseudonymous key thumbprint.
+- The resource verifies the signature using the inline public key from `Signature-Key`.
 
 ## Bootstrap with an Agent Provider (Three-Party Flow)
 
@@ -102,25 +102,31 @@ var enrol = await apClient.EnrolAsync(
 ### 2. Build the Signed Client with Challenge Handling
 
 ```csharp
+using var client = new AAuthClientBuilder(enrol.Key)
+    .UseJwt(enrol.AgentToken)
+    .WithChallengeHandling(personServer: "https://ps.example")
+    .Build();
+```
+
+<details>
+<summary>Manual Setup (Advanced)</summary>
+
+```csharp
 // Carrier-token holder — shared between signer and challenge handler.
-// Starts with agent token; upgraded to auth token after a successful exchange.
 var holder = new AAuthTokenHolder(enrol.AgentToken);
 
-// Signing pipeline: signs every request with the current carrier token
 var signingHandler = new AAuthSigningHandler(
     enrol.Key, new JwtSignatureKeyProvider(() => holder.Current))
 {
     InnerHandler = new HttpClientHandler(),
 };
 
-// Exchange pipeline: always signs with the original agent token
 var exchangeHttp = new HttpClient(
     new AAuthSigningHandler(enrol.Key, new JwtSignatureKeyProvider(() => enrol.AgentToken))
     { InnerHandler = new HttpClientHandler() });
 
 var exchange = new TokenExchangeClient(exchangeHttp, new MetadataClient(new HttpClient()));
 
-// Challenge handler: intercepts 401 → extracts resource token → exchanges at PS → retries
 var pipeline = new ChallengeHandler(exchange, holder, "https://ps.example")
 {
     InnerHandler = signingHandler,
@@ -128,6 +134,8 @@ var pipeline = new ChallengeHandler(exchange, holder, "https://ps.example")
 
 using var client = new HttpClient(pipeline);
 ```
+
+</details>
 
 ### 3. Make Requests
 

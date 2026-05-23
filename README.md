@@ -51,7 +51,6 @@ Bootstrap with an Agent Provider, then let the SDK handle 401 challenges automat
 ```csharp
 using AAuth.Agent;
 using AAuth.Crypto;
-using AAuth.Discovery;
 using AAuth.HttpSig;
 
 // 1. Enrol with your Agent Provider to get a key + agent token
@@ -62,29 +61,13 @@ var enrol = await apClient.EnrolAsync(
     enrollEndpoint: "https://ap.example/enrol",
     personServer: "https://ps.example");
 
-// 2. Set up the carrier-token holder (starts with the agent token)
-var holder = new AAuthTokenHolder(enrol.AgentToken);
+// 2. Build a client with automatic challenge handling
+using var client = new AAuthClientBuilder(enrol.Key)
+    .UseJwt(enrol.AgentToken)
+    .WithChallengeHandling(personServer: "https://ps.example")
+    .Build();
 
-// 3. Build the signing pipeline (agent token mode)
-var signingHandler = new AAuthSigningHandler(
-    enrol.Key, new JwtSignatureKeyProvider(() => holder.Current))
-{
-    InnerHandler = new HttpClientHandler(),
-};
-
-// 4. Add the challenge handler — auto-exchanges resource tokens at the PS
-var exchangeHttp = new HttpClient(
-    new AAuthSigningHandler(enrol.Key, new JwtSignatureKeyProvider(() => enrol.AgentToken))
-    { InnerHandler = new HttpClientHandler() });
-var exchange = new TokenExchangeClient(exchangeHttp, new MetadataClient(new HttpClient()));
-
-var pipeline = new ChallengeHandler(exchange, holder, "https://ps.example")
-{
-    InnerHandler = signingHandler,
-};
-
-// 5. Make requests — 401 challenges are handled transparently
-using var client = new HttpClient(pipeline);
+// 3. Make requests — 401 challenges are handled transparently
 var response = await client.GetAsync("https://resource.example/protected");
 ```
 

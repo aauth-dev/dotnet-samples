@@ -26,11 +26,28 @@ sequenceDiagram
 
 ### Client-Side (Agent)
 
-```csharp
-// The ChallengeHandler can be configured to handle interaction requirements
-// For resource-managed flows, the resource's own interaction page handles auth
-// The agent polls until the resource issues an AAuth-Access token
+Use `WithInteractionHandling()` to automatically handle 202 + interaction requirements:
 
+```csharp
+using var client = new AAuthClientBuilder(key)
+    .UseHwk()
+    .WithInteractionHandling(options =>
+    {
+        options.OnInteractionRequired = async (url, code, ct) =>
+        {
+            Console.WriteLine($"Approve at: {url}?code={code}");
+        };
+    })
+    .Build();
+
+var response = await client.GetAsync("https://resource.example/data");
+// Interaction handling polls until the resource resolves the request
+```
+
+<details>
+<summary>Manual Handling</summary>
+
+```csharp
 var response = await client.GetAsync("https://resource.example/data");
 if (response.StatusCode == HttpStatusCode.Accepted)
 {
@@ -41,6 +58,8 @@ if (response.StatusCode == HttpStatusCode.Accepted)
     // Poll pending URL until resolved
 }
 ```
+
+</details>
 
 ### Server-Side (`IOpaqueTokenStore`)
 

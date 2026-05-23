@@ -8,7 +8,7 @@ The agent references its JWKS endpoint and key ID. The resource fetches the publ
 
 - Access control by agent identity (the resource knows WHO is calling)
 - Replacing static API keys with verifiable cryptographic identity
-- Requires an Agent Provider that hosts the JWKS endpoint
+- Requires an Agent Provider that publishes per-agent JWKS endpoints
 
 ## Code Example
 
@@ -17,21 +17,34 @@ using AAuth.Crypto;
 using AAuth.HttpSig;
 
 var key = AAuthKey.Generate();
-var jwksUri = "https://ap.example/.well-known/jwks.json";
-var kid = "my-key-1";
-var provider = new JwksUriSignatureKeyProvider(jwksUri, kid);
+
+// The jwks_uri comes from the AP's enrollment response — it points
+// to the per-agent JWKS endpoint where the AP publishes this agent's key.
+using var client = new AAuthClientBuilder(key)
+    .UseJwksUri("https://ap.example/agents/aauth:myapp@ap.example/jwks.json", "my-key-1")
+    .Build();
+
+var response = await client.GetAsync("https://resource.example/data");
+```
+
+<details>
+<summary>Manual Setup</summary>
+
+```csharp
+var provider = new JwksUriSignatureKeyProvider(
+    "https://ap.example/agents/aauth:myapp@ap.example/jwks.json", "my-key-1");
 var handler = new AAuthSigningHandler(key, provider)
 {
     InnerHandler = new HttpClientHandler()
 };
-
 using var client = new HttpClient(handler);
-var response = await client.GetAsync("https://resource.example/data");
 ```
+
+</details>
 
 ## What the Resource Sees
 
-- `Signature-Key: sig=jwks_uri;uri="https://ap.example/.well-known/jwks.json";kid="my-key-1"`
+- `Signature-Key: sig=jwks_uri;uri="https://ap.example/agents/aauth:myapp@ap.example/jwks.json";kid="my-key-1"`
 - Resource fetches the JWKS, finds the key by `kid`, verifies the signature
 - Resource learns: full agent identifier + verifiable public key
 

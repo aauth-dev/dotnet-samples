@@ -28,12 +28,10 @@ using AAuth.Crypto;
 using AAuth.HttpSig;
 
 var key = AAuthKey.Generate();
-var provider = new HwkSignatureKeyProvider(key);
-var handler = new AAuthSigningHandler(key, provider)
-{
-    InnerHandler = new HttpClientHandler()
-};
-using var client = new HttpClient(handler);
+
+using var client = new AAuthClientBuilder(key)
+    .UseHwk()
+    .Build();
 
 var response = await client.GetAsync("https://resource.example/data");
 // 200 if resource's policy allows this key
@@ -44,12 +42,9 @@ var response = await client.GetAsync("https://resource.example/data");
 ### Agent Identity (`jwks_uri`)
 
 ```csharp
-var provider = new JwksUriSignatureKeyProvider(
-    "https://ap.example/.well-known/jwks.json", "key-1");
-var handler = new AAuthSigningHandler(key, provider)
-{
-    InnerHandler = new HttpClientHandler()
-};
+using var client = new AAuthClientBuilder(key)
+    .UseJwksUri("https://ap.example/.well-known/jwks.json", "key-1")
+    .Build();
 ```
 
 ## Error Scenarios
@@ -57,7 +52,7 @@ var handler = new AAuthSigningHandler(key, provider)
 | Status | Signature-Error | Cause |
 |--------|----------------|-------|
 | 401 | `invalid_signature` | Signature doesn't verify |
-| 401 | `unknown_key` | For hwk: key not in `IKeyLookup`; for jwks_uri: kid not found in JWKS |
+| 401 | `unknown_key` | For jwks_uri: kid not found in JWKS |
 | 401 | `unsupported_algorithm` | Key uses wrong algorithm (only EdDSA supported) |
 | 403 | *(none)* | Signature valid but policy denies access |
 

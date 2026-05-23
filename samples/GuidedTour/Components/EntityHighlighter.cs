@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace GuidedTour.Components;
@@ -41,24 +42,78 @@ public sealed class EntityHighlighter
     private static string BaseOrigin(string url)
         => new Uri(url).GetLeftPart(UriPartial.Authority);
 
+    private const string ExtLinkIcon =
+        "<a class=\"ext-link\" href=\"{0}\" target=\"_blank\" rel=\"noopener\" title=\"Open in new tab\">"
+        + "<svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\">"
+        + "<path d=\"M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3\"/>"
+        + "</svg></a>";
+
     /// <summary>
     /// Wraps occurrences of known entity values in the given HTML-escaped
     /// text with <c>&lt;span class="hl-*" title="..."&gt;</c> elements.
-    /// For URL origins, the match extends to include any trailing path/query
-    /// characters so the full URL is colored.
+    /// Uses single-pass matching to prevent nested/overlapping spans.
+    /// Appends a small open-in-new-tab icon after URL matches.
     /// </summary>
     public string Highlight(string escapedHtml)
     {
+        // Collect all matches from all rules in one pass.
+        var matches = new List<(int Start, int Length, string CssClass, string Label)>();
+
         foreach (var (pattern, cssClass, label) in _rules)
         {
-            // Extend the match to grab any trailing URL path characters
-            // (letters, digits, /, -, _, ., ~, %, :, @, !, $, &, ', (, ), *, +, ,, ;, =, ?)
-            escapedHtml = Regex.Replace(
+            // Extend the match to grab trailing URL path characters.
+            // Excludes & so we don't bleed into HTML entities (&quot; etc.).
+            foreach (Match m in Regex.Matches(
                 escapedHtml,
-                pattern + @"[A-Za-z0-9/\-._~%:@!$&'()*+,;=?]*",
-                $"<span class=\"{cssClass}\" title=\"{label}\">$0</span>");
+                pattern + @"[A-Za-z0-9/\-._~%:@!$'()*+,;=?]*"))
+            {
+                matches.Add((m.Index, m.Length, cssClass, label));
+            }
         }
-        return escapedHtml;
+
+        // Sort by start position; for overlaps, longest match wins.
+        matches.Sort((a, b) => a.Start != b.Start
+            ? a.Start.CompareTo(b.Start)
+            : b.Length.CompareTo(a.Length));
+
+        // Remove overlapping matches — keep the first (longest) at each position.
+        var filtered = new List<(int Start, int Length, string CssClass, string Label)>();
+        int lastEnd = 0;
+        foreach (var m in matches)
+        {
+            if (m.Start >= lastEnd)
+            {
+                filtered.Add(m);
+                lastEnd = m.Start + m.Length;
+            }
+        }
+
+        // Apply from end to start so indices stay valid.
+        var sb = new StringBuilder(escapedHtml);
+        for (int i = filtered.Count - 1; i >= 0; i--)
+        {
+            var (start, length, cssClass, label) = filtered[i];
+            var matchText = sb.ToString(start, length);
+
+            // If the URL is followed by &quot; (closing JSON quote), consume
+            // it so the icon lands outside the quote.
+            var afterEnd = start + length;
+            var trailingQuote = "";
+            if (afterEnd + 6 <= sb.Length && sb.ToString(afterEnd, 6) == "&quot;")
+            {
+                trailingQuote = "&quot;";
+                sb.Remove(afterEnd, 6);
+            }
+
+            sb.Remove(start, length);
+
+            var icon = matchText.StartsWith("http")
+                ? string.Format(ExtLinkIcon, matchText)
+                : "";
+            sb.Insert(start, $"<span class=\"{cssClass}\" title=\"{label}\">{matchText}</span>{trailingQuote}{icon}");
+        }
+
+        return sb.ToString();
     }
 
     /// <summary>
@@ -69,7 +124,7 @@ public sealed class EntityHighlighter
     {
         foreach (var (pattern, cssClass, label) in _rules)
         {
-            if (Regex.IsMatch(escapedValue, "^" + pattern + @"[A-Za-z0-9/\-._~%:@!$&'()*+,;=?]*$"))
+            if (Regex.IsMatch(escapedValue, "^" + pattern + @"[A-Za-z0-9/\-._~%:@!$'()*+,;=?]*$"))
                 return (cssClass, label);
         }
         return null;

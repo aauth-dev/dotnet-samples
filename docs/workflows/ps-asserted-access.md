@@ -23,7 +23,27 @@ sequenceDiagram
 
 ## Code Example
 
-Automatic handling with `ChallengeHandler`:
+Automatic handling with `AAuthClientBuilder`:
+
+```csharp
+using AAuth.Crypto;
+using AAuth.HttpSig;
+
+var key = AAuthKey.Generate();
+var agentToken = "..."; // from AgentProviderClient.EnrolAsync()
+
+using var client = new AAuthClientBuilder(key)
+    .UseJwt(agentToken)
+    .WithChallengeHandling(personServer: "https://ps.example")
+    .Build();
+
+var response = await client.GetAsync("https://resource.example/data");
+// ChallengeHandler intercepts the 401, exchanges the resource token,
+// swaps to the auth token, and retries automatically.
+```
+
+<details>
+<summary>Manual Setup (Advanced)</summary>
 
 ```csharp
 using AAuth.Agent;
@@ -35,19 +55,16 @@ var key = AAuthKey.Generate();
 var agentToken = "..."; // from AgentProviderClient.EnrolAsync()
 var tokenHolder = new AAuthTokenHolder(agentToken);
 
-// Inner handler signs requests
 var signingHandler = new AAuthSigningHandler(key,
-    new JwtSignatureKeyProvider(() => tokenHolder.Token))
+    new JwtSignatureKeyProvider(() => tokenHolder.Current))
 {
     InnerHandler = new HttpClientHandler()
 };
 
-// Token exchange client (needs a signed HTTP client for PS calls)
 var signedClient = new HttpClient(signingHandler);
 var metadata = new MetadataClient(new HttpClient());
 var exchange = new TokenExchangeClient(signedClient, metadata);
 
-// ChallengeHandler auto-handles 401 challenges
 var challengeHandler = new ChallengeHandler(
     exchange, tokenHolder, "https://ps.example")
 {
@@ -56,8 +73,9 @@ var challengeHandler = new ChallengeHandler(
 
 using var client = new HttpClient(challengeHandler);
 var response = await client.GetAsync("https://resource.example/data");
-// ChallengeHandler intercepts the 401, exchanges the resource token,
-// swaps tokenHolder to the auth token, and retries automatically.
+```
+
+</details>
 ```
 
 ## Token Flow
