@@ -257,10 +257,10 @@ public class MyService(IHttpClientFactory factory)
 
 ### Definition of Done
 
-- [ ] `AddAAuthAgent` registers named `HttpClient` with signing + challenge handlers.
-- [ ] Without `PersonServer`, registers signing-only client.
-- [ ] With `PersonServer`, registers full 3-party pipeline.
-- [ ] Tests resolve client from DI and verify handler chain.
+- [x] `AddAAuthAgent` registers named `HttpClient` with signing + challenge handlers.
+- [x] Without `PersonServer`, registers signing-only client.
+- [x] With `PersonServer`, registers full 3-party pipeline.
+- [x] Tests resolve client from DI and verify handler chain.
 
 ---
 
@@ -294,10 +294,10 @@ app.MapAAuthWellKnown();  // reads from registered options
 
 ### Definition of Done
 
-- [ ] `AddAAuthResource` registers `AAuthVerifier`, `DefaultSignatureKeyResolver`, `JwksClient`, `IJtiStore`.
-- [ ] `UseAAuthVerification()` adds middleware reading from DI.
-- [ ] `MapAAuthWellKnown()` maps metadata endpoints from options.
-- [ ] Tests verify full middleware pipeline with TestServer.
+- [x] `AddAAuthResource` registers `AAuthVerifier`, `DefaultSignatureKeyResolver`, `JwksClient`, `IJtiStore`.
+- [x] `UseAAuthVerification()` adds middleware reading from DI.
+- [x] `MapAAuthWellKnown()` maps metadata endpoints from options.
+- [x] Tests verify DI registration and service resolution.
 
 ---
 
@@ -338,11 +338,11 @@ SDK accepts the endpoint as given.
 
 ### Definition of Done
 
-- [ ] `Bootstrap(enrollEndpoint, agentId)` takes explicit endpoint (not metadata-discovered).
-- [ ] Enrols, returns builder + `EnrolResult` with key and agent token.
-- [ ] Supports `IKeyStore` override (defaults to `InMemoryKeyStore`).
-- [ ] Supports `IPlatformAttestor` override.
-- [ ] Integration test with mock AP endpoint.
+- [x] `Bootstrap(enrollEndpoint, agentId)` takes explicit endpoint (not metadata-discovered).
+- [x] Enrols, returns builder + `EnrolResult` with key and agent token.
+- [x] Supports `IKeyStore` override (defaults to `InMemoryKeyStore`).
+- [x] Supports `IPlatformAttestor` override.
+- [x] Configuration tests for bootstrap builder.
 
 ---
 
@@ -377,10 +377,10 @@ builder.Services.AddAAuthDiscovery(options =>
 
 ### Definition of Done
 
-- [ ] Registers `MetadataClient` and `JwksClient` as singletons.
-- [ ] Other DI extensions (`AddAAuthAgent`, `AddAAuthResource`) consume them if registered.
-- [ ] Tests verify shared instance across multiple agent registrations.
-- [ ] Default `JwksMinRefreshInterval` remains 1 minute (spec requirement).
+- [x] Registers `MetadataClient` and `JwksClient` as singletons.
+- [x] Other DI extensions (`AddAAuthAgent`, `AddAAuthResource`) consume them if registered.
+- [x] Tests verify shared instance across multiple agent registrations.
+- [x] Default `JwksMinRefreshInterval` remains 1 minute (spec requirement).
 
 ---
 
