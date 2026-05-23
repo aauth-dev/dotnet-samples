@@ -28,12 +28,10 @@ using AAuth.Crypto;
 using AAuth.HttpSig;
 
 var key = AAuthKey.Generate();
-var provider = new HwkSignatureKeyProvider(key);
-var handler = new AAuthSigningHandler(key, provider)
-{
-    InnerHandler = new HttpClientHandler()
-};
-using var client = new HttpClient(handler);
+
+using var client = new AAuthClientBuilder(key)
+    .UseHwk()
+    .Build();
 
 var response = await client.GetAsync("https://resource.example/data");
 // 200 if resource's policy allows this key
@@ -44,12 +42,9 @@ var response = await client.GetAsync("https://resource.example/data");
 ### Agent Identity (`jwks_uri`)
 
 ```csharp
-var provider = new JwksUriSignatureKeyProvider(
-    "https://ap.example/.well-known/jwks.json", "key-1");
-var handler = new AAuthSigningHandler(key, provider)
-{
-    InnerHandler = new HttpClientHandler()
-};
+using var client = new AAuthClientBuilder(key)
+    .UseJwksUri("https://ap.example/.well-known/jwks.json", "key-1")
+    .Build();
 ```
 
 ## Error Scenarios

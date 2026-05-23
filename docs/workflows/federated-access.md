@@ -22,16 +22,14 @@ sequenceDiagram
 
 ## Agent-Side Code
 
-Identical to PS-asserted — the `ChallengeHandler` and `TokenExchangeClient` handle it the same way. The only difference is the resource token's `aud` points to the AS URL instead of the PS URL.
+Identical to PS-asserted — `WithChallengeHandling()` handles it transparently. The only difference is the resource token's `aud` points to the AS URL instead of the PS URL.
 
 ```csharp
-// Same as ps-asserted-access.md — no agent-side changes needed
-var challengeHandler = new ChallengeHandler(
-    exchange, tokenHolder, "https://ps.example")
-{
-    InnerHandler = signingHandler
-};
-using var client = new HttpClient(challengeHandler);
+using var client = new AAuthClientBuilder(key)
+    .UseJwt(agentToken)
+    .WithChallengeHandling(personServer: "https://ps.example")
+    .Build();
+
 var response = await client.GetAsync("https://resource.example/data");
 ```
 

@@ -60,7 +60,25 @@ catch (AAuthInteractionTimeoutException)
 }
 ```
 
-## Automatic with ChallengeHandler
+## Automatic with AAuthClientBuilder
+
+```csharp
+using var client = new AAuthClientBuilder(key)
+    .UseJwt(agentToken)
+    .WithChallengeHandling("https://ps.example", options =>
+    {
+        options.PollingTimeout = TimeSpan.FromMinutes(5);
+        options.OnInteractionRequired = async (interaction, ct) =>
+        {
+            Console.WriteLine($"Approve at: {interaction.Url}");
+            Console.WriteLine($"Code: {interaction.Code}");
+        };
+    })
+    .Build();
+```
+
+<details>
+<summary>Manual ChallengeHandler Setup (Advanced)</summary>
 
 ```csharp
 var challengeHandler = new ChallengeHandler(
@@ -77,6 +95,8 @@ var challengeHandler = new ChallengeHandler(
     InnerHandler = signingHandler
 };
 ```
+
+</details>
 
 ## Using `IInteractionPresenter`
 
