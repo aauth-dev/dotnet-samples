@@ -22,9 +22,9 @@ violates a MUST-level requirement.
 
 ### Definition of Done
 
-- [ ] `DeferredPollerOptions.DefaultPollInterval` = 5 seconds.
-- [ ] Existing tests updated/passing.
-- [ ] No change to behavior when `Retry-After` is present (already correct).
+- [x] `DeferredPollerOptions.DefaultPollInterval` = 5 seconds.
+- [x] Existing tests updated/passing.
+- [x] No change to behavior when `Retry-After` is present (already correct).
 
 ---
 
