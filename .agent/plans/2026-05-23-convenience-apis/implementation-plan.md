@@ -470,10 +470,10 @@ low-level wiring as "Advanced" alternative where applicable.
 
 ### Definition of Done
 
-- [ ] Each signing-modes doc shows builder API as primary, raw construction as "Manual Setup".
+- [x] Each signing-modes doc shows builder API as primary, raw construction as "Manual Setup".
 - [x] Each workflow doc shows convenience API as primary code example.
 - [x] Server docs show DI extension as primary, manual middleware as "Advanced".
-- [ ] `docs/reference/configuration.md` includes DI options alongside constructor params.
+- [x] `docs/reference/configuration.md` includes DI options alongside constructor params.
 - [x] Examples compile (verified by build of samples).
 
 ---
