@@ -37,6 +37,10 @@ public sealed class AAuthClientBuilder
     private ITokenRefresher? _tokenRefresher;
     private TimeSpan? _refreshThreshold;
 
+    // Interaction handling state
+    private bool _interactionHandling;
+    private Action<InteractionHandlingOptions>? _interactionOptionsConfigure;
+
     // Stored token (for reading claims)
     private string? _agentToken;
     private Func<string>? _tokenFactory;
@@ -181,6 +185,28 @@ public sealed class AAuthClientBuilder
         return this;
     }
 
+    /// <summary>
+    /// Enable automatic handling of 202 responses with
+    /// <c>requirement=interaction</c> or <c>requirement=approval</c>.
+    /// </summary>
+    public AAuthClientBuilder WithInteractionHandling(Action<InteractionHandlingOptions> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        _interactionHandling = true;
+        _interactionOptionsConfigure = configure;
+        return this;
+    }
+
+    /// <summary>
+    /// Enable automatic handling of 202 responses with
+    /// <c>requirement=interaction</c> or <c>requirement=approval</c> (default options).
+    /// </summary>
+    public AAuthClientBuilder WithInteractionHandling()
+    {
+        _interactionHandling = true;
+        return this;
+    }
+
     /// <summary>Build the configured <see cref="HttpClient"/>.</summary>
     /// <exception cref="InvalidOperationException">No signing mode was configured.</exception>
     public HttpClient Build()
@@ -191,14 +217,28 @@ public sealed class AAuthClientBuilder
 
         if (!_challengeHandling)
         {
-            // Simple signing-only pipeline.
+            // Simple signing-only pipeline (possibly with interaction handling).
             var handler = new AAuthSigningHandler(_key, _provider)
             {
                 InnerHandler = _innerHandler ?? new HttpClientHandler(),
-                Capabilities = _capabilities,
+                Capabilities = _interactionHandling ? MergeCapabilities("interaction") : _capabilities,
                 OnSignatureBase = _onSignatureBase,
             };
-            return new HttpClient(handler);
+
+            if (!_interactionHandling)
+                return new HttpClient(handler);
+
+            // Wrap with interaction handler
+            var interactionOpts = new InteractionHandlingOptions();
+            _interactionOptionsConfigure?.Invoke(interactionOpts);
+            var interactionHandler = new InteractionHandler(
+                interactionOpts.OnInteractionRequired,
+                interactionOpts.OnApprovalPending,
+                interactionOpts.PollingTimeout)
+            {
+                InnerHandler = handler,
+            };
+            return new HttpClient(interactionHandler);
         }
 
         // --- Challenge-handling pipeline ---
@@ -219,7 +259,9 @@ public sealed class AAuthClientBuilder
         var outerSigner = new AAuthSigningHandler(_key, holderProvider)
         {
             InnerHandler = _innerHandler ?? new HttpClientHandler(),
-            Capabilities = MergeCapabilities("auth-token"),
+            Capabilities = _interactionHandling
+                ? MergeCapabilities("auth-token", "interaction")
+                : MergeCapabilities("auth-token"),
             OnSignatureBase = _onSignatureBase,
         };
 
@@ -259,6 +301,21 @@ public sealed class AAuthClientBuilder
             topHandler = refreshHandler;
         }
 
+        // If interaction handling is configured, insert it at the top.
+        if (_interactionHandling)
+        {
+            var interactionOpts = new InteractionHandlingOptions();
+            _interactionOptionsConfigure?.Invoke(interactionOpts);
+            var interactionHandler = new InteractionHandler(
+                interactionOpts.OnInteractionRequired,
+                interactionOpts.OnApprovalPending,
+                interactionOpts.PollingTimeout)
+            {
+                InnerHandler = topHandler,
+            };
+            topHandler = interactionHandler;
+        }
+
         return new HttpClient(topHandler);
     }
 
@@ -295,6 +352,18 @@ public sealed class AAuthClientBuilder
         var list = new List<string>(_capabilities);
         if (!list.Contains(required))
             list.Add(required);
+        return list;
+    }
+
+    private IReadOnlyList<string> MergeCapabilities(string required1, string required2)
+    {
+        var list = _capabilities is null || _capabilities.Count == 0
+            ? new List<string>()
+            : new List<string>(_capabilities);
+        if (!list.Contains(required1))
+            list.Add(required1);
+        if (!list.Contains(required2))
+            list.Add(required2);
         return list;
     }
 }
