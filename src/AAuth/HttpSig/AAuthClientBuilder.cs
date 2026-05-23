@@ -28,6 +28,19 @@ public sealed class AAuthClientBuilder
     private IReadOnlyList<string>? _capabilities;
     private Action<HttpRequestMessage, string>? _onSignatureBase;
 
+    /// <summary>
+    /// Start a bootstrap enrollment flow. Returns a <see cref="BootstrapBuilder"/>
+    /// that enrols with the AP and builds a ready-to-use client.
+    /// </summary>
+    /// <param name="enrollEndpoint">The AP's enrollment endpoint URL (not discoverable from metadata).</param>
+    /// <param name="agentId">Desired agent identifier (e.g. <c>aauth:myagent@example.com</c>).</param>
+    public static BootstrapBuilder Bootstrap(string enrollEndpoint, string agentId)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(enrollEndpoint);
+        ArgumentException.ThrowIfNullOrEmpty(agentId);
+        return new BootstrapBuilder(enrollEndpoint, agentId);
+    }
+
     // Challenge handling state
     private bool _challengeHandling;
     private string? _personServer;
