@@ -25,6 +25,7 @@ public sealed class TourSession : IAsyncDisposable
 
     private AAuthKey? _agentKey;
     private string? _agentToken;
+    private string? _assignedKeyId;
     private string? _authToken;
     private string? _resourceToken;
     private string? _tokenEndpoint;
@@ -256,6 +257,7 @@ public sealed class TourSession : IAsyncDisposable
         ResetTimeline();
         _agentKey = null;
         _agentToken = null;
+        _assignedKeyId = null;
     }
 
     /// <summary>
@@ -307,7 +309,7 @@ public sealed class TourSession : IAsyncDisposable
             case SigningMode.JwksUri:
                 builder.UseJwksUri(
                     $"{(_options.AgentProviderUrl ?? "http://localhost:5301").TrimEnd('/')}/.well-known/jwks.json",
-                    "tour-key-1");
+                    _assignedKeyId ?? "tour-key-1");
                 break;
             default:
                 builder.UseJwt(tokenFactory);
@@ -450,6 +452,7 @@ public sealed class TourSession : IAsyncDisposable
                 var enrolBody = JsonNode.Parse(await enrolResp.Content.ReadAsStringAsync(ct));
                 _agentToken = (string?)enrolBody?["agent_token"]
                     ?? throw new InvalidOperationException("AP enrol response missing agent_token");
+                _assignedKeyId = (string?)enrolBody?["key_id"];
             }
             else
             {
