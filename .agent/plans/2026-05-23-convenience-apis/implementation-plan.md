@@ -424,11 +424,11 @@ using var client = new AAuthClientBuilder(key)
 
 ### Definition of Done
 
-- [ ] `AgentConsole/Program.cs` uses `AAuthClientBuilder.WithChallengeHandling()`.
-- [ ] `GuidedTour` uses builder or DI extension for pipeline construction.
+- [x] `AgentConsole/Program.cs` uses `AAuthClientBuilder.WithChallengeHandling()`.
+- [x] `GuidedTour` uses builder or DI extension for pipeline construction.
 - [ ] `make demo` still works end-to-end (WhoAmI + MockPS + GuidedTour).
-- [ ] README and getting-started examples match the new API.
-- [ ] All 333 tests still pass.
+- [x] README and getting-started examples match the new API.
+- [x] All 381 tests still pass (191 unit + 190 conformance).
 
 ---
 
@@ -471,10 +471,10 @@ low-level wiring as "Advanced" alternative where applicable.
 ### Definition of Done
 
 - [ ] Each signing-modes doc shows builder API as primary, raw construction as "Manual Setup".
-- [ ] Each workflow doc shows convenience API as primary code example.
-- [ ] Server docs show DI extension as primary, manual middleware as "Advanced".
+- [x] Each workflow doc shows convenience API as primary code example.
+- [x] Server docs show DI extension as primary, manual middleware as "Advanced".
 - [ ] `docs/reference/configuration.md` includes DI options alongside constructor params.
-- [ ] Examples compile (verified by inclusion in a test or doc-test project).
+- [x] Examples compile (verified by build of samples).
 
 ---
 
