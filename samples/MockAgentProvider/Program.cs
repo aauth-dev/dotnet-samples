@@ -41,11 +41,24 @@ app.MapGet("/.well-known/aauth-agent.json", () => Results.Json(new JsonObject
 app.MapGet("/.well-known/jwks.json", () =>
 {
     var keys = new JsonArray();
-    var jwk = apKey.ToPublicJwk();
-    jwk["kid"] = keyId;
-    jwk["use"] = "sig";
-    jwk["alg"] = AAuthKey.Algorithm;
-    keys.Add(jwk);
+
+    // AP's own signing key (for agent token verification)
+    var apJwk = apKey.ToPublicJwk();
+    apJwk["kid"] = keyId;
+    apJwk["use"] = "sig";
+    apJwk["alg"] = AAuthKey.Algorithm;
+    keys.Add(apJwk);
+
+    // Enrolled agent keys (for jwks_uri scheme identity-based access)
+    foreach (var (_, record) in agents)
+    {
+        var agentJwk = record.PublicKey.ToPublicJwk();
+        agentJwk["kid"] = record.KeyId;
+        agentJwk["use"] = "sig";
+        agentJwk["alg"] = AAuthKey.Algorithm;
+        keys.Add(agentJwk);
+    }
+
     return Results.Json(new JsonObject { ["keys"] = keys }, contentType: "application/json");
 });
 

@@ -84,13 +84,16 @@ public sealed class AgentProviderClient
         var agentToken = (string?)body["agent_token"]
             ?? throw new InvalidOperationException("AP enrollment response missing 'agent_token'.");
 
+        // Use the kid assigned by the AP (authoritative), falling back to locally generated one
+        var assignedKeyId = (string?)body["key_id"] ?? keyId;
+
         // Persist the key
-        await _keyStore.StoreAsync(keyId, key, ct);
+        await _keyStore.StoreAsync(assignedKeyId, key, ct);
 
         return new EnrollResult
         {
             AgentToken = agentToken,
-            KeyId = keyId,
+            KeyId = assignedKeyId,
             Key = key,
         };
     }

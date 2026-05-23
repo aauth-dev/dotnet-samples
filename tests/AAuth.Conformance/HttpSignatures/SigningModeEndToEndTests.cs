@@ -327,7 +327,7 @@ public class SigningModeEndToEndTests
         var info = new SignatureKeyParser.ParsedSignatureKeyInfo
         {
             Scheme = "jwks_uri",
-            JwksUri = "http://localhost:5000/.well-known/jwks.json",
+            JwksUri = "http://localhost:59999/.well-known/jwks.json",
             Kid = "k1",
         };
 

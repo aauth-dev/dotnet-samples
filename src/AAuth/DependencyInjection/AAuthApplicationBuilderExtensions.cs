@@ -1,3 +1,4 @@
+using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Server;
 using Microsoft.AspNetCore.Builder;
@@ -19,7 +20,8 @@ public static class AAuthApplicationBuilderExtensions
     public static IApplicationBuilder UseAAuthVerification(this IApplicationBuilder app)
     {
         var verifier = app.ApplicationServices.GetRequiredService<AAuthVerifier>();
-        var resolver = app.ApplicationServices.GetService<ISignatureKeyResolver>();
+        var resolver = app.ApplicationServices.GetService<ISignatureKeyResolver>()
+            ?? new DefaultSignatureKeyResolver(app.ApplicationServices.GetService<JwksClient>());
         var jtiStore = app.ApplicationServices.GetService<IJtiStore>();
 
         return AAuthVerificationMiddlewareExtensions.UseAAuthVerification(
