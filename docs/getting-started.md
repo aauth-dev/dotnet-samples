@@ -75,6 +75,76 @@ public class MyService(IHttpClientFactory factory)
 - `AAuthSigningHandler` signs the request per RFC 9421 covering `@method`, `@authority`, `@path`, and `signature-key`.
 - The resource verifies the signature and sees a pseudonymous key thumbprint.
 
+## Bootstrap with an Agent Provider (Three-Party Flow)
+
+For production scenarios, agents register with an **Agent Provider (AP)** to get an identity-bound agent token. When a resource challenges with a 401, the SDK automatically exchanges the resource token at the **Person Server (PS)** and retries.
+
+### 1. Enrol with the Agent Provider
+
+```csharp
+using AAuth.Agent;
+using AAuth.Crypto;
+using AAuth.Discovery;
+using AAuth.HttpSig;
+
+var apClient = new AgentProviderClient(new HttpClient(), new InMemoryKeyStore());
+var enrol = await apClient.EnrolAsync(
+    apIssuer: "https://ap.example",
+    agentId: "aauth:myagent@example.com",
+    enrollEndpoint: "https://ap.example/enrol",
+    personServer: "https://ps.example");
+
+// enrol.Key        — your Ed25519 signing key
+// enrol.AgentToken — aa-agent+jwt issued by the AP
+// enrol.KeyId      — persisted key identifier
+```
+
+### 2. Build the Signed Client with Challenge Handling
+
+```csharp
+// Carrier-token holder — shared between signer and challenge handler.
+// Starts with agent token; upgraded to auth token after a successful exchange.
+var holder = new AAuthTokenHolder(enrol.AgentToken);
+
+// Signing pipeline: signs every request with the current carrier token
+var signingHandler = new AAuthSigningHandler(
+    enrol.Key, new JwtSignatureKeyProvider(() => holder.Current))
+{
+    InnerHandler = new HttpClientHandler(),
+};
+
+// Exchange pipeline: always signs with the original agent token
+var exchangeHttp = new HttpClient(
+    new AAuthSigningHandler(enrol.Key, new JwtSignatureKeyProvider(() => enrol.AgentToken))
+    { InnerHandler = new HttpClientHandler() });
+
+var exchange = new TokenExchangeClient(exchangeHttp, new MetadataClient(new HttpClient()));
+
+// Challenge handler: intercepts 401 → extracts resource token → exchanges at PS → retries
+var pipeline = new ChallengeHandler(exchange, holder, "https://ps.example")
+{
+    InnerHandler = signingHandler,
+};
+
+using var client = new HttpClient(pipeline);
+```
+
+### 3. Make Requests
+
+```csharp
+// First request may trigger a 401 challenge — the SDK handles it transparently
+var response = await client.GetAsync("https://resource.example/protected");
+Console.WriteLine(await response.Content.ReadAsStringAsync());
+```
+
+### What Happens Under the Hood
+
+1. Agent sends a signed GET → Resource replies **401** with `AAuth-Requirement: requirement=auth-token` and a `resource_token`.
+2. `ChallengeHandler` extracts the resource token, POSTs it to the Person Server's token endpoint.
+3. The PS validates the agent token, confirms user consent (or defers), and returns an `auth_token`.
+4. `AAuthTokenHolder` is updated; the handler retries the original request signed with the auth token.
+5. Subsequent requests reuse the auth token until it expires.
+
 ## Next Steps
 
 - [Signing Modes Overview](signing-modes/overview.md) — choose the right mode for your use case
