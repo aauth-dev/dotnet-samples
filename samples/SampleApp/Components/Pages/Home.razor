@@ -1,0 +1,23 @@
+﻿@page "/"
+
+<PageTitle>AAuth Sample App</PageTitle>
+
+<h1>AAuth SDK — Sample App</h1>
+
+<p>
+    This app demonstrates all three AAuth signing modes making real HTTP requests
+    to the <strong>WhoAmI</strong> resource server. Each page is a self-contained
+    example showing one mode end-to-end.
+</p>
+
+<h4>Signing Modes</h4>
+<ul>
+    <li><a href="hwk"><strong>HWK</strong></a> — Pseudonymous. No enrollment needed. Signs with a bare keypair.</li>
+    <li><a href="jwt"><strong>JWT</strong></a> — Agent Token. Three-party flow with Person Server consent.</li>
+    <li><a href="jwks-uri"><strong>JWKS URI</strong></a> — Agent Identity. AP publishes key at a per-agent JWKS endpoint.</li>
+</ul>
+
+<h4>Prerequisites</h4>
+<p>Start the mock servers before using this app:</p>
+<pre><code>make demo</code></pre>
+<p>This starts the Agent Provider (<code>:5301</code>), Person Server (<code>:5100</code>), and WhoAmI resource (<code>:5000</code>).</p>

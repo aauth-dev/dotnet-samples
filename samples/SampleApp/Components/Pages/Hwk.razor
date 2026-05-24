@@ -1,0 +1,84 @@
+@page "/hwk"
+@using AAuth.Crypto
+@using AAuth.HttpSig
+@rendermode InteractiveServer
+
+<PageTitle>HWK — Pseudonymous</PageTitle>
+
+<h2>HWK — Pseudonymous Signing</h2>
+
+<p>
+    The simplest mode. No enrollment required. Generate a key and sign requests.
+    The resource sees a stable pseudonymous identity (the key's JWK thumbprint)
+    but cannot link it to a real-world identity.
+</p>
+
+<h5>Setup Code</h5>
+<pre><code>var key = AAuthKey.Generate();
+
+using var client = new AAuthClientBuilder(key)
+    .UseHwk()
+    .Build();</code></pre>
+
+<button class="btn btn-primary" @onclick="SendRequest" disabled="@_loading">
+    @(_loading ? "Sending..." : "Send Signed Request")
+</button>
+
+@if (_response is not null)
+{
+    <div class="mt-3">
+        <h5>Response</h5>
+        <div class="alert @(_success ? "alert-success" : "alert-warning")">
+            <strong>@_statusCode</strong>
+        </div>
+        <pre><code>@_response</code></pre>
+    </div>
+}
+
+@if (_error is not null)
+{
+    <div class="mt-3 alert alert-danger">@_error</div>
+}
+
+@code {
+    [Inject] private IConfiguration Config { get; set; } = default!;
+
+    private bool _loading;
+    private string? _response;
+    private string? _error;
+    private string? _statusCode;
+    private bool _success;
+
+    private async Task SendRequest()
+    {
+        _loading = true;
+        _response = null;
+        _error = null;
+
+        try
+        {
+            // Generate a fresh key (in production, load from keystore)
+            var key = AAuthKey.Generate();
+
+            // Build the signed client — hwk mode, no enrollment
+            using var client = new AAuthClientBuilder(key)
+                .UseHwk()
+                .Build();
+
+            var resourceUrl = Config["AAuth:Resource"]!;
+            var response = await client.GetAsync(resourceUrl);
+
+            _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
+            _success = response.IsSuccessStatusCode;
+            _response = await response.Content.ReadAsStringAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

@@ -1,0 +1,36 @@
+﻿<div class="top-row ps-3 navbar navbar-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="">AAuth Sample</a>
+    </div>
+</div>
+
+<input type="checkbox" title="Navigation menu" class="navbar-toggler" />
+
+<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
+    <nav class="nav flex-column">
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
+            </NavLink>
+        </div>
+
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="hwk">
+                <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> HWK (Pseudonymous)
+            </NavLink>
+        </div>
+
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="jwt">
+                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> JWT (Agent Token)
+            </NavLink>
+        </div>
+
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="jwks-uri">
+                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> JWKS URI (Identity)
+            </NavLink>
+        </div>
+    </nav>
+</div>
+
