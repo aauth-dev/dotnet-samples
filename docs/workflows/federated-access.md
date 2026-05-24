@@ -25,13 +25,41 @@ sequenceDiagram
 Identical to PS-asserted — `WithChallengeHandling()` handles it transparently. The only difference is the resource token's `aud` points to the AS URL instead of the PS URL.
 
 ```csharp
+var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
+
 using var client = new AAuthClientBuilder(key)
-    .UseJwt(agentToken)
+    .WithTokenRefresh(async (ctx, ct) =>
+    {
+        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
+        return await apClient.RefreshAsync(apRefreshEndpoint, ctx.KeyId, ct);
+    })
     .WithChallengeHandling(personServer: "https://ps.example")
     .Build();
 
 var response = await client.GetAsync("https://resource.example/data");
 ```
+
+## DI Registration
+
+Identical to PS-asserted — the federation is transparent to the agent:
+
+```csharp
+var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!);
+var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
+
+builder.Services.AddAAuthAgent("federated", options =>
+{
+    options.Key = key!;
+    options.PersonServer = "https://ps.example";
+    options.TokenRefresher = new DelegateTokenRefresher(async (ctx, ct) =>
+    {
+        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
+        return await apClient.RefreshAsync(apRefreshEndpoint, ctx.KeyId, ct);
+    });
+});
+```
+
+See [Dependency Injection](../reference/dependency-injection.md) for full reference.
 
 ## Key Difference from PS-Asserted
 

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.DependencyInjection;
 using AAuth.Tokens;
@@ -45,12 +46,11 @@ public class AAuthAgentDITests
     [Fact]
     public void AddAAuthAgent_WithPersonServer_RegistersFullPipeline()
     {
-        var token = BuildAgentToken();
         var services = new ServiceCollection();
         services.AddAAuthAgent("my-agent", opts =>
         {
             opts.Key = _key;
-            opts.AgentToken = token;
+            opts.TokenRefresher = new TestTokenRefresher();
             opts.PersonServer = "https://ps.example";
         });
 
@@ -62,14 +62,14 @@ public class AAuthAgentDITests
     }
 
     [Fact]
-    public void AddAAuthAgent_WithoutPersonServer_ReadsPsFromToken()
+    public void AddAAuthAgent_WithTokenRefresherAndPersonServer_RegistersFullPipeline()
     {
-        var token = BuildAgentToken("https://ps.fromtoken.example");
         var services = new ServiceCollection();
         services.AddAAuthAgent("my-agent", opts =>
         {
             opts.Key = _key;
-            opts.AgentToken = token;
+            opts.TokenRefresher = new TestTokenRefresher();
+            opts.PersonServer = "https://ps.example";
         });
 
         var provider = services.BuildServiceProvider();
@@ -104,5 +104,11 @@ public class AAuthAgentDITests
         // The client will fail to connect (no real server), but we can verify
         // it was created successfully. A more thorough test would need a TestServer.
         Assert.NotNull(client);
+    }
+
+    private sealed class TestTokenRefresher : ITokenRefresher
+    {
+        public Task<string> RefreshAsync(TokenRefreshContext context, CancellationToken cancellationToken)
+            => Task.FromResult("eyJhbGciOiJFZERTQSJ9.eyJpc3MiOiJ0ZXN0Iiwic3ViIjoidGVzdCIsImV4cCI6OTk5OTk5OTk5OX0.fake");
     }
 }

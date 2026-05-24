@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
 using AAuth.Tokens;
@@ -142,48 +143,61 @@ app.MapPost("/enrol", async (HttpContext ctx) =>
 });
 
 // ── POST /refresh — refresh an agent token ──────────────────────────────────
-app.MapPost("/refresh", async (HttpContext ctx) =>
+// Per spec: the refresh request is HTTP-signed with the durable key (hwk scheme).
+// The AP verifies the signature and identifies the agent by key thumbprint.
+app.MapPost("/refresh", (HttpContext ctx) =>
 {
-    JsonObject? body;
+    // Extract Signature-Key header — agent must sign with hwk scheme
+    var signatureKeyHeader = ctx.Request.Headers["Signature-Key"].FirstOrDefault();
+    if (string.IsNullOrEmpty(signatureKeyHeader))
+        return Results.Json(new JsonObject { ["error"] = "invalid_request", ["error_description"] = "Missing Signature-Key header — refresh must be signed" }, statusCode: 401);
+
+    // Parse the hwk scheme to get the agent's public key
+    AAuth.HttpSig.SignatureKeyParser.ParsedSignatureKeyInfo parsedKey;
     try
     {
-        body = await ctx.Request.ReadFromJsonAsync<JsonObject>(ctx.RequestAborted);
+        parsedKey = AAuth.HttpSig.SignatureKeyParser.ParseAny(signatureKeyHeader);
     }
     catch
     {
-        return Results.BadRequest(new { error = "invalid_request" });
+        return Results.Json(new JsonObject { ["error"] = "invalid_request", ["error_description"] = "Cannot parse Signature-Key header" }, statusCode: 400);
     }
-    if (body is null)
-        return Results.BadRequest(new { error = "invalid_request" });
 
-    var currentToken = (string?)body["agent_token"];
-    if (string.IsNullOrEmpty(currentToken))
-        return Results.BadRequest(new { error = "invalid_request", error_description = "agent_token is required" });
+    if (parsedKey.Scheme != "hwk" || parsedKey.ConfirmationKey is null)
+        return Results.Json(new JsonObject { ["error"] = "invalid_request", ["error_description"] = "Refresh requires hwk scheme with inline key" }, statusCode: 400);
 
-    // Decode the token to find the agent
-    var segments = currentToken.Split('.');
-    if (segments.Length != 3)
-        return Results.BadRequest(new { error = "invalid_grant", error_description = "Malformed token" });
+    // Verify the HTTP signature
+    var sigInput = ctx.Request.Headers["Signature-Input"].FirstOrDefault();
+    var sigHeader = ctx.Request.Headers["Signature"].FirstOrDefault();
+    if (string.IsNullOrEmpty(sigInput) || string.IsNullOrEmpty(sigHeader))
+        return Results.Json(new JsonObject { ["error"] = "invalid_signature", ["error_description"] = "Missing signature headers" }, statusCode: 401);
 
-    JsonObject payload;
+    var verifier = new AAuth.HttpSig.AAuthVerifier { MaxAge = TimeSpan.FromSeconds(120) };
     try
     {
-        var payloadBytes = Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(segments[1]);
-        payload = System.Text.Json.Nodes.JsonNode.Parse(payloadBytes) as JsonObject
-            ?? throw new Exception();
+        verifier.Verify(
+            ctx.Request.Method,
+            ctx.Request.Host.ToString(),
+            ctx.Request.Path,
+            signatureKeyHeader,
+            sigInput,
+            sigHeader,
+            parsedKey.ConfirmationKey);
     }
-    catch
+    catch (AAuth.HttpSig.AAuthVerificationException ex)
     {
-        return Results.BadRequest(new { error = "invalid_grant", error_description = "Cannot decode token" });
+        return Results.Json(new JsonObject { ["error"] = "invalid_signature", ["error_description"] = ex.Message }, statusCode: 401);
     }
 
-    var sub = (string?)payload["sub"];
-    if (string.IsNullOrEmpty(sub) || !agents.TryGetValue(sub, out var record))
-        return Results.Json(new JsonObject { ["error"] = "invalid_grant", ["error_description"] = "Unknown agent" }, statusCode: 400);
+    // Look up agent by key thumbprint
+    var thumbprint = parsedKey.ConfirmationKey.ComputeJwkThumbprint();
+    var record = agents.Values.FirstOrDefault(a => a.PublicKey.ComputeJwkThumbprint() == thumbprint);
+    if (record is null)
+        return Results.Json(new JsonObject { ["error"] = "invalid_grant", ["error_description"] = "No enrolled agent matches this key" }, statusCode: 400);
 
     // Issue fresh token
     var newToken = IssueAgentToken(record);
-    Console.WriteLine($"[REFRESH] {sub}");
+    Console.WriteLine($"[REFRESH] {record.AgentId} (verified by key thumbprint)");
 
     return Results.Json(new JsonObject
     {

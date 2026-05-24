@@ -44,6 +44,14 @@ internal sealed class TokenRefreshHandler : DelegatingHandler
     private async Task EnsureTokenFreshAsync(CancellationToken cancellationToken)
     {
         var token = _holder.Current;
+
+        // Lazy acquisition: no token yet — must fetch one.
+        if (string.IsNullOrEmpty(token))
+        {
+            await AcquireInitialTokenAsync(cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         var exp = ReadExpClaim(token);
         if (exp is null)
             return;
@@ -64,6 +72,31 @@ internal sealed class TokenRefreshHandler : DelegatingHandler
                 var newToken = await _refresher.RefreshAsync(context, cancellationToken).ConfigureAwait(false);
                 _holder.Update(newToken);
             }
+        }
+        finally
+        {
+            _semaphore.Release();
+        }
+    }
+
+    private async Task AcquireInitialTokenAsync(CancellationToken cancellationToken)
+    {
+        await _semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // Double-check — another thread may have acquired already.
+            if (!string.IsNullOrEmpty(_holder.Current))
+                return;
+
+            var context = new TokenRefreshContext
+            {
+                CurrentToken = string.Empty,
+                ApIssuer = string.Empty,
+                AgentId = string.Empty,
+                KeyId = _keyId,
+            };
+            var newToken = await _refresher.RefreshAsync(context, cancellationToken).ConfigureAwait(false);
+            _holder.Update(newToken);
         }
         finally
         {

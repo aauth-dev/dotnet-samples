@@ -64,7 +64,11 @@ catch (AAuthInteractionTimeoutException)
 
 ```csharp
 using var client = new AAuthClientBuilder(key)
-    .UseJwt(agentToken)
+    .WithTokenRefresh(async (ctx, ct) =>
+    {
+        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
+        return await apClient.RefreshAsync(apRefreshEndpoint, ctx.KeyId, ct);
+    })
     .WithChallengeHandling("https://ps.example", options =>
     {
         options.PollingTimeout = TimeSpan.FromMinutes(5);
@@ -76,6 +80,27 @@ using var client = new AAuthClientBuilder(key)
     })
     .Build();
 ```
+
+## DI Registration
+
+```csharp
+var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!);
+
+builder.Services.AddAAuthAgent("deferred", options =>
+{
+    options.Key = key!;
+    options.PersonServer = "https://ps.example";
+    options.TokenRefresher = tokenRefresher;
+    options.PollingTimeout = TimeSpan.FromMinutes(5);
+    options.OnInteractionRequired = async (interaction, ct) =>
+    {
+        // Present to user — push notification, SignalR, etc.
+        await notifier.SendAsync(interaction.UserUrl, interaction.Code, ct);
+    };
+});
+```
+
+See [Dependency Injection](../reference/dependency-injection.md) for full options reference.
 
 <details>
 <summary>Manual ChallengeHandler Setup (Advanced)</summary>

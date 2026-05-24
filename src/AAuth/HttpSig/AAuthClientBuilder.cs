@@ -30,7 +30,8 @@ public sealed class AAuthClientBuilder
 
     /// <summary>
     /// Start a bootstrap enrollment flow. Returns a <see cref="BootstrapBuilder"/>
-    /// that enrols with the AP and builds a ready-to-use client.
+    /// that enrols with the AP and returns an <see cref="EnrollResult"/>.
+    /// Use the result with <see cref="AAuthClientBuilder"/> to build a client separately.
     /// </summary>
     /// <param name="enrollEndpoint">The AP's enrollment endpoint URL (not discoverable from metadata).</param>
     /// <param name="agentId">Desired agent identifier (e.g. <c>aauth:myagent@example.com</c>).</param>
@@ -71,9 +72,8 @@ public sealed class AAuthClientBuilder
         return this;
     }
 
-    /// <summary>Use the Agent Token (jwt) signing mode.</summary>
-    /// <param name="tokenFactory">Returns the agent token JWT for each request.</param>
-    public AAuthClientBuilder UseJwt(Func<string> tokenFactory)
+    /// <summary>Use the Agent Token (jwt) signing mode. Internal — prefer WithTokenRefresh for lazy acquisition.</summary>
+    internal AAuthClientBuilder UseJwt(Func<string> tokenFactory)
     {
         _tokenFactory = tokenFactory;
         _agentToken = tokenFactory();
@@ -81,9 +81,8 @@ public sealed class AAuthClientBuilder
         return this;
     }
 
-    /// <summary>Use the Agent Token (jwt) signing mode with a fixed token.</summary>
-    /// <param name="agentToken">The agent token JWT.</param>
-    public AAuthClientBuilder UseJwt(string agentToken)
+    /// <summary>Use the Agent Token (jwt) signing mode with a fixed token. Internal — prefer WithTokenRefresh for lazy acquisition.</summary>
+    internal AAuthClientBuilder UseJwt(string agentToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(agentToken);
         _agentToken = agentToken;
@@ -244,14 +243,19 @@ public sealed class AAuthClientBuilder
     /// <exception cref="InvalidOperationException">No signing mode was configured.</exception>
     public HttpMessageHandler BuildHandler()
     {
-        if (_provider is null)
+        if (_provider is null && _tokenRefresher is null)
             throw new InvalidOperationException(
-                "A signing mode must be configured. Call UseHwk(), UseJwt(), UseJwksUri(), or UseJktJwt() before Build().");
+                "A signing mode must be configured. Call UseHwk(), UseJwksUri(), or UseJktJwt() before Build(), or use WithTokenRefresh() for JWT mode.");
 
         if (!_challengeHandling)
         {
+            // When WithTokenRefresh is configured but no explicit provider,
+            // create a JWT signing pipeline with lazy token acquisition.
+            if (_provider is null && _tokenRefresher is not null)
+                return BuildRefreshOnlyHandler();
+
             // Simple signing-only pipeline (possibly with interaction handling).
-            var handler = new AAuthSigningHandler(_key, _provider)
+            var handler = new AAuthSigningHandler(_key, _provider!)
             {
                 InnerHandler = _innerHandler ?? new HttpClientHandler(),
                 Capabilities = _interactionHandling ? MergeCapabilities("interaction") : _capabilities,
@@ -281,8 +285,10 @@ public sealed class AAuthClientBuilder
         var challengeOptions = new ChallengeHandlingOptions();
         _challengeOptionsConfigure?.Invoke(challengeOptions);
 
-        // The token holder starts with the agent token.
-        var tokenHolder = new AAuthTokenHolder(agentToken);
+        // The token holder starts with the agent token (or empty for lazy acquisition).
+        var tokenHolder = agentToken is not null
+            ? new AAuthTokenHolder(agentToken)
+            : new AAuthTokenHolder();
 
         // Build the token factory that reads from the holder (so after refresh
         // or exchange, the signing handler uses the updated token).
@@ -299,7 +305,8 @@ public sealed class AAuthClientBuilder
         };
 
         // Exchange pipeline: separate signing handler pinned to the agent token.
-        var exchangeSigner = new AAuthSigningHandler(_key, _provider)
+        var exchangeProvider = _provider ?? holderProvider;
+        var exchangeSigner = new AAuthSigningHandler(_key, exchangeProvider)
         {
             InnerHandler = new HttpClientHandler(),
         };
@@ -352,20 +359,64 @@ public sealed class AAuthClientBuilder
         return topHandler;
     }
 
-    private string ResolveAgentToken()
+    private HttpMessageHandler BuildRefreshOnlyHandler()
+    {
+        var holder = new AAuthTokenHolder();
+        var provider = new JwtSignatureKeyProvider(() => holder.Current);
+        var keyId = _key.ComputeJwkThumbprint();
+
+        var signingHandler = new AAuthSigningHandler(_key, provider)
+        {
+            InnerHandler = _innerHandler ?? new HttpClientHandler(),
+            Capabilities = _capabilities,
+            OnSignatureBase = _onSignatureBase,
+        };
+
+        var refreshHandler = new TokenRefreshHandler(holder, _tokenRefresher!, keyId, _refreshThreshold)
+        {
+            InnerHandler = signingHandler,
+        };
+
+        if (!_interactionHandling)
+            return refreshHandler;
+
+        var opts = new InteractionHandlingOptions();
+        _interactionOptionsConfigure?.Invoke(opts);
+        return new InteractionHandler(
+            opts.OnInteractionRequired,
+            opts.OnApprovalPending,
+            opts.PollingTimeout)
+        {
+            InnerHandler = refreshHandler,
+        };
+    }
+
+    private string? ResolveAgentToken()
     {
         if (_agentToken is not null)
             return _agentToken;
         if (_tokenFactory is not null)
             return _tokenFactory();
+
+        // Lazy acquisition: no token provided, but WithTokenRefresh will fetch one
+        // on the first request. Return null to signal the holder should start empty.
+        if (_tokenRefresher is not null)
+            return null;
+
         throw new InvalidOperationException(
-            "WithChallengeHandling() requires an agent token. Call UseJwt() before WithChallengeHandling().");
+            "WithChallengeHandling() requires a token source. " +
+            "Configure WithTokenRefresh() for lazy token acquisition.");
     }
 
-    private string ResolvePersonServer(string agentToken)
+    private string ResolvePersonServer(string? agentToken)
     {
         if (_personServer is not null)
             return _personServer;
+
+        if (agentToken is null)
+            throw new InvalidOperationException(
+                "Cannot resolve Person Server without an agent token. " +
+                "Provide an explicit personServer URL via WithChallengeHandling(personServer) when using lazy token acquisition.");
 
         // Read the 'ps' claim from the agent token payload.
         var payload = TokenRefreshHandler.ReadPayloadUnsafe(agentToken);

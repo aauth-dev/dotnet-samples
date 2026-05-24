@@ -15,14 +15,20 @@ The agent presents its full agent token inline. The resource (or Person Server) 
 ## Code Example
 
 ```csharp
-using AAuth.Crypto;
+using AAuth.Agent;
 using AAuth.HttpSig;
 
-var key = AAuthKey.Generate();
-// agentToken obtained from AgentProviderClient.EnrolAsync()
+var keyStore = KeyStore.Default();
+var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!);
+var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
-using var client = new AAuthClientBuilder(key)
-    .UseJwt(agentToken)
+using var client = new AAuthClientBuilder(key!)
+    .WithTokenRefresh(async (ctx, ct) =>
+    {
+        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
+        return await apClient.RefreshAsync(apRefreshEndpoint, ctx.KeyId, ct);
+    })
+    .WithChallengeHandling("https://ps.example")
     .Build();
 
 var response = await client.GetAsync("https://resource.example/data");

@@ -25,27 +25,11 @@ public class AAuthClientBuilderBootstrapTests
     }
 
     [Fact]
-    public async Task EnrolAndBuildAsync_WithMockAP_ReturnsClientAndResult()
+    public void Bootstrap_WithPersonServer_ConfiguresBuilder()
     {
-        // This test uses a mock AP that returns a pre-built agent token.
-        var apKey = AAuthKey.Generate();
-        var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
-        {
-            Issuer = "https://ap.example",
-            Subject = "aauth:test@example.com",
-            KeyId = "k1",
-            Key = apKey,
-            ConfirmationKey = agentKey,
-            PersonServer = "https://ps.example",
-        }.Build();
-
-        // We can't easily mock the internal HttpClient in the bootstrap flow,
-        // so we test that the bootstrap builder can be configured.
         var builder = AAuthClientBuilder
             .Bootstrap("https://ap.example/enrol", "aauth:test@example.com")
             .WithPersonServer("https://ps.example")
-            .WithChallengeHandling()
             .WithKeyStore(new InMemoryKeyStore());
 
         Assert.NotNull(builder);
@@ -58,21 +42,6 @@ public class AAuthClientBuilderBootstrapTests
             .Bootstrap("https://ap.example/enrol", "aauth:test@example.com")
             .WithAttestor(new NoopAttestor())
             .WithKeyStore(new InMemoryKeyStore());
-
-        Assert.NotNull(builder);
-    }
-
-    [Fact]
-    public void Bootstrap_WithInteractionHandling_ConfiguresBuilder()
-    {
-        var builder = AAuthClientBuilder
-            .Bootstrap("https://ap.example/enrol", "aauth:test@example.com")
-            .WithPersonServer("https://ps.example")
-            .WithChallengeHandling()
-            .WithInteractionHandling(opts =>
-            {
-                opts.OnInteractionRequired = (_, _, _) => Task.CompletedTask;
-            });
 
         Assert.NotNull(builder);
     }

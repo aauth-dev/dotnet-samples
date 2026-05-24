@@ -40,22 +40,13 @@ public static class AAuthAgentServiceCollectionExtensions
             {
                 var builder = new AAuthClientBuilder(options.Key);
 
-                if (options.AgentToken is not null)
+                if (options.TokenRefresher is not null)
                 {
-                    builder.UseJwt(options.AgentToken);
+                    builder.WithTokenRefresh(options.TokenRefresher);
 
                     if (options.PersonServer is not null)
                     {
                         builder.WithChallengeHandling(options.PersonServer, opts =>
-                        {
-                            opts.OnInteractionRequired = options.OnInteractionRequired;
-                            opts.PollingTimeout = options.PollingTimeout;
-                        });
-                    }
-                    else
-                    {
-                        // No-arg variant reads PS from token's ps claim.
-                        builder.WithChallengeHandling(opts =>
                         {
                             opts.OnInteractionRequired = options.OnInteractionRequired;
                             opts.PollingTimeout = options.PollingTimeout;
@@ -75,11 +66,6 @@ public static class AAuthAgentServiceCollectionExtensions
                         opts.OnApprovalPending = options.OnApprovalPending;
                         opts.PollingTimeout = options.PollingTimeout;
                     });
-                }
-
-                if (options.TokenRefresher is not null)
-                {
-                    builder.WithTokenRefresh(options.TokenRefresher);
                 }
 
                 return builder.BuildHandler();

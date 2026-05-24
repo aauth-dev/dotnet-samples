@@ -1,7 +1,11 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading;
+using System.Threading.Tasks;
+using AAuth.Agent;
 
 namespace AAuth.Crypto;
 
@@ -10,7 +14,7 @@ namespace AAuth.Crypto;
 /// <c>~/.aauth/keys/</c>. Each key is persisted as a JWK JSON document
 /// (including the private <c>d</c> parameter).
 /// </summary>
-public sealed class KeyStore
+public sealed class KeyStore : IKeyStore
 {
     private static readonly JsonSerializerOptions s_writerOptions = new() { WriteIndented = true };
 
@@ -105,6 +109,56 @@ public sealed class KeyStore
         var key = AAuthKey.Generate();
         Save(name, key);
         return key;
+    }
+
+    // ── IKeyStore async implementation ──────────────────────────────────────
+
+    /// <inheritdoc/>
+    Task<IAAuthKey?> IKeyStore.LoadAsync(string keyId, CancellationToken ct)
+    {
+        ValidateName(keyId);
+        var path = PathFor(keyId);
+        if (!File.Exists(path))
+            return Task.FromResult<IAAuthKey?>(null);
+
+        IAAuthKey key = AAuthKey.FromJwkJson(File.ReadAllText(path));
+        return Task.FromResult<IAAuthKey?>(key);
+    }
+
+    /// <inheritdoc/>
+    Task IKeyStore.StoreAsync(string keyId, IAAuthKey key, CancellationToken ct)
+    {
+        if (key is AAuthKey concreteKey)
+        {
+            Save(keyId, concreteKey);
+        }
+        else
+        {
+            throw new ArgumentException("KeyStore only supports AAuthKey instances.", nameof(key));
+        }
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    Task IKeyStore.DeleteAsync(string keyId, CancellationToken ct)
+    {
+        ValidateName(keyId);
+        var path = PathFor(keyId);
+        if (File.Exists(path))
+            File.Delete(path);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    Task<string[]> IKeyStore.ListAsync(CancellationToken ct)
+    {
+        if (!System.IO.Directory.Exists(_directory))
+            return Task.FromResult(Array.Empty<string>());
+
+        var files = System.IO.Directory.GetFiles(_directory, "*.jwk.json");
+        var names = files.Select(f => Path.GetFileNameWithoutExtension(
+            Path.GetFileNameWithoutExtension(f))).ToArray();
+        return Task.FromResult(names);
     }
 
     private string PathFor(string name) => Path.Combine(_directory, name + ".jwk.json");

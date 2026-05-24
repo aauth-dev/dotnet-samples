@@ -91,14 +91,15 @@ if (apUrl is null)
     return 1;
 }
 
-AAuthKey key;
-string agentToken;
+IAAuthKey key;
 string keyId;
 string? agentJwksUri;
+string refreshEndpoint;
 
 // Per spec, agent keys are long-lived (spanning the agent install).
-// Persist enrollment to a local file so consecutive runs reuse the same
-// key+kid — just as a real agent would across process restarts.
+// The key lives in a durable keystore — we only persist its ID + AP metadata.
+IKeyStore keyStore = KeyStore.Default();
+
 var enrollCacheFile = Path.Combine(
     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
     "aauth-agent-console", $"{subject}.json");
@@ -106,48 +107,45 @@ var enrollCacheFile = Path.Combine(
 if (File.Exists(enrollCacheFile))
 {
     var cached = JsonNode.Parse(File.ReadAllText(enrollCacheFile))!;
-    key = AAuthKey.FromJwk((JsonObject)cached["jwk"]!);
-    agentToken = (string)cached["agent_token"]!;
     keyId = (string)cached["key_id"]!;
     agentJwksUri = (string?)cached["jwks_uri"];
-    Console.WriteLine($"Loaded cached enrollment. Key ID: {keyId}");
+    refreshEndpoint = (string)cached["refresh_endpoint"]!;
+
+    key = await keyStore.LoadAsync(keyId)
+        ?? throw new InvalidOperationException($"Key '{keyId}' not found in store. Delete {enrollCacheFile} and re-enrol.");
+    Console.WriteLine($"Loaded enrolled agent. Key ID: {keyId}");
 }
 else
 {
-    // Bootstrap with the Agent Provider: discover enrol_endpoint from metadata
+    // Bootstrap with the Agent Provider: discover endpoints from metadata
     var apBase = apUrl.TrimEnd('/');
     Console.WriteLine($"Discovering Agent Provider metadata at: {apBase}");
     var discoveryClient = new MetadataClient(new HttpClient());
     var metaUrl = MetadataClient.BuildUrl(apBase, "aauth-agent.json");
     var apMeta = await discoveryClient.FetchAsync(metaUrl);
     var enrolEndpoint = (string?)apMeta["enrol_endpoint"] ?? $"{apBase}/enrol";
+    refreshEndpoint = (string?)apMeta["refresh_endpoint"] ?? $"{apBase}/refresh";
     Console.WriteLine($"Enrolling at: {enrolEndpoint}");
 
-    var apKeyStore = new InMemoryKeyStore();
-    var apClient = new AgentProviderClient(new HttpClient(), apKeyStore);
+    var apClient = new AgentProviderClient(new HttpClient(), keyStore);
     var result = await apClient.EnrolAsync(apBase, subject, enrolEndpoint, personServer);
     key = result.Key;
-    agentToken = result.AgentToken;
     keyId = result.KeyId;
     agentJwksUri = result.JwksUri;
     Console.WriteLine($"Enrolled successfully. Key ID: {keyId}");
 
-    // Persist for subsequent runs
+    // Persist only metadata — key lives in the keystore, token is short-lived
     Directory.CreateDirectory(Path.GetDirectoryName(enrollCacheFile)!);
     File.WriteAllText(enrollCacheFile, JsonSerializer.Serialize(new
     {
-        jwk = key.ToPrivateJwk(),
-        agent_token = agentToken,
         key_id = keyId,
         jwks_uri = agentJwksUri,
+        refresh_endpoint = refreshEndpoint,
     }));
 }
 
 Console.WriteLine($"Using key: {keyId}");
 Console.WriteLine($"Public JWK thumbprint: {key.ComputeJwkThumbprint()}");
-Console.WriteLine();
-Console.WriteLine("Agent token:");
-Console.WriteLine(agentToken);
 Console.WriteLine();
 
 Console.WriteLine($"Signing mode: {signingMode}");
@@ -166,7 +164,13 @@ switch (signingMode)
         builder.UseJwksUri(jwksUrl, keyId);
         break;
     default: // "jwt"
-        builder.UseJwt(agentToken);
+        var endpoint = refreshEndpoint;
+        var refreshKeyId = keyId; // AP-assigned key ID (matches keystore)
+        builder.WithTokenRefresh(async (ctx, ct) =>
+        {
+            var apClient = new AgentProviderClient(new HttpClient(), keyStore);
+            return await apClient.RefreshAsync(endpoint, refreshKeyId, ct);
+        });
         break;
 }
 

@@ -20,23 +20,80 @@ sequenceDiagram
     AP-->>Agent: {agent_token, key_id, jwks_uri}
 ```
 
+## Enrollment Is a Provisioning Step
+
+Enrollment is **not** part of your application's normal startup — it's a separate operational step, analogous to running a database migration or issuing a TLS certificate. You run it once per device/install (in a CLI tool, setup script, or CI pipeline). The durable signing key is generated **inside a keystore** (HSM, TPM, file store) and never extracted — the application references it by ID.
+
+The agent token is short-lived (typically 1 hour, max 24 hours per spec) and refreshed automatically by the SDK at runtime using the durable key.
+
+```mermaid
+flowchart LR
+    subgraph Provisioning["Provisioning (run once)"]
+        E1[EnrolAsync with keyStore]
+        E2[Key generated inside store]
+        E3[Key ID returned]
+        E1 --> E2 --> E3
+    end
+
+    subgraph Runtime["Application Runtime (every startup)"]
+        R1[keyStore.LoadAsync keyId]
+        R2[Load key by reference]
+        R3[SDK refreshes token via AP]
+        R1 --> R2 --> R3
+    end
+
+    E3 -- "config: key ID only" --> R1
+```
+
 ## Code Example
 
-### Using BootstrapBuilder (Recommended)
+### Provisioning: Enrollment Script
+
+Run this in a separate tool, CLI, or setup script — not in your application:
 
 ```csharp
+using AAuth.Agent;
 using AAuth.HttpSig;
 
-var (client, enrolResult) = await AAuthClientBuilder
+// Key is generated INSIDE the store — private material never leaves
+var keyStore = KeyStore.Default(); // or new AzureKeyVaultStore(...), HsmKeyStore(...)
+
+var enrol = await AAuthClientBuilder
     .Bootstrap(
         enrollEndpoint: "https://ap.example/enrol",
         agentId: "aauth:myapp@ap.example")
     .WithPersonServer("https://ps.example")
-    .WithChallengeHandling()
-    .EnrolAndBuildAsync();
+    .WithKeyStore(keyStore)
+    .EnrolAsync();
 
-// client is ready to use with automatic challenge handling
-// enrolResult.Key, enrolResult.AgentToken, enrolResult.KeyId
+// Only the key ID needs to go into app config
+Console.WriteLine($"Enrolled. KeyId: {enrol.KeyId}");
+Console.WriteLine($"Add to appsettings: AAuth:KeyId = {enrol.KeyId}");
+```
+
+### Application: Load Key by ID and Build Client
+
+```csharp
+using AAuth.Agent;
+using AAuth.HttpSig;
+
+// Key stays in the store — loaded by reference, never extracted
+var keyStore = KeyStore.Default();
+var keyId = configuration["AAuth:KeyId"]!;
+var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
+var key = await keyStore.LoadAsync(keyId)
+    ?? throw new InvalidOperationException($"Key '{keyId}' not found. Run enrollment.");
+
+// The SDK acquires the agent token lazily on first request
+// via WithTokenRefresh, then keeps it fresh automatically.
+using var client = new AAuthClientBuilder(key)
+    .WithTokenRefresh(async (ctx, ct) =>
+    {
+        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
+        return await apClient.RefreshAsync(apRefreshEndpoint, ctx.KeyId, ct);
+    })
+    .WithChallengeHandling(personServer: "https://ps.example")
+    .Build();
 ```
 
 ### Manual Enrollment

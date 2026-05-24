@@ -30,6 +30,18 @@ public sealed class AAuthTokenHolder
         _token = initialToken;
     }
 
+    /// <summary>
+    /// Create the holder without an initial token. The first call to
+    /// <see cref="TokenRefreshHandler"/> will acquire the token lazily.
+    /// </summary>
+    public AAuthTokenHolder()
+    {
+        _token = string.Empty;
+    }
+
+    /// <summary>Returns <c>true</c> when a token has been set.</summary>
+    public bool HasToken => _token.Length > 0;
+
     /// <summary>Return the current carrier token.</summary>
     public string Current => _token;
 

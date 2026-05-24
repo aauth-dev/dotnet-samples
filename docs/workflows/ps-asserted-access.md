@@ -26,14 +26,20 @@ sequenceDiagram
 Automatic handling with `AAuthClientBuilder`:
 
 ```csharp
-using AAuth.Crypto;
+using AAuth.Agent;
 using AAuth.HttpSig;
 
-var key = AAuthKey.Generate();
-var agentToken = "..."; // from AgentProviderClient.EnrolAsync()
+var keyStore = KeyStore.Default();
+var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!)
+    ?? throw new InvalidOperationException("Key not found. Run enrollment first.");
+var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
 using var client = new AAuthClientBuilder(key)
-    .UseJwt(agentToken)
+    .WithTokenRefresh(async (ctx, ct) =>
+    {
+        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
+        return await apClient.RefreshAsync(apRefreshEndpoint, ctx.KeyId, ct);
+    })
     .WithChallengeHandling(personServer: "https://ps.example")
     .Build();
 
@@ -45,17 +51,19 @@ var response = await client.GetAsync("https://resource.example/data");
 <details>
 <summary>Manual Setup (Advanced)</summary>
 
+This shows the internal handler pipeline for educational purposes. Use `WithTokenRefresh` + `WithChallengeHandling` in production code.
+
 ```csharp
 using AAuth.Agent;
-using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
 
-var key = AAuthKey.Generate();
-var agentToken = "..."; // from AgentProviderClient.EnrolAsync()
+var keyStore = KeyStore.Default();
+var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!);
+var agentToken = "..."; // acquired via AP refresh endpoint
 var tokenHolder = new AAuthTokenHolder(agentToken);
 
-var signingHandler = new AAuthSigningHandler(key,
+var signingHandler = new AAuthSigningHandler(key!,
     new JwtSignatureKeyProvider(() => tokenHolder.Current))
 {
     InnerHandler = new HttpClientHandler()
@@ -77,6 +85,28 @@ var response = await client.GetAsync("https://resource.example/data");
 
 </details>
 ```
+
+## DI Registration
+
+```csharp
+var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!);
+var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
+
+builder.Services.AddAAuthAgent("ps-asserted", options =>
+{
+    options.Key = key!;
+    options.PersonServer = "https://ps.example";
+    options.TokenRefresher = new DelegateTokenRefresher(async (ctx, ct) =>
+    {
+        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
+        return await apClient.RefreshAsync(apRefreshEndpoint, ctx.KeyId, ct);
+    });
+});
+```
+
+This registers a named `HttpClient` with signing + automatic challenge handling. Inject via `IHttpClientFactory.CreateClient("ps-asserted")`. The `ChallengeHandler` intercepts 401 responses, exchanges the resource token at the PS, and retries transparently.
+
+See [Dependency Injection](../reference/dependency-injection.md) for full options reference.
 
 ## Token Flow
 
