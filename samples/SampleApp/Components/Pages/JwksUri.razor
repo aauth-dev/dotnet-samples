@@ -1,0 +1,135 @@
+@page "/jwks-uri"
+@using AAuth.Agent
+@using AAuth.Crypto
+@using AAuth.HttpSig
+@inject IJSRuntime JS
+@rendermode InteractiveServer
+
+<PageTitle>JWKS URI — Agent Identity</PageTitle>
+
+<h2>JWKS URI — Agent Identity</h2>
+
+<p>
+    Identity-based access: the agent enrols with an AP which publishes the agent's
+    public key at a per-agent JWKS endpoint. Resources verify the signature by
+    fetching that JWKS. No Person Server or token exchange is involved — the
+    agent's identity is the trust anchor.
+</p>
+
+<h5>Setup Code</h5>
+<pre><code class="language-csharp">// After enrollment, the AP provides a jwks_uri for this agent
+var jwksUri = enrollment.JwksUri;
+
+using var client = new AAuthClientBuilder(key)
+    .UseJwksUri(jwksUri, keyId)
+    .Build();</code></pre>
+
+@if (!_enrolled)
+{
+    <button class="btn btn-outline-secondary" @onclick="Enrol" disabled="@_loading">
+        @(_loading ? "Enrolling..." : "1. Enrol with Agent Provider")
+    </button>
+}
+else
+{
+    <div class="alert alert-info">
+        Enrolled. Key ID: <code>@_enrollment!.KeyId</code><br/>
+        JWKS URI: <code>@_enrollment.JwksUri</code>
+    </div>
+
+    <button class="btn btn-primary" @onclick="SendRequest" disabled="@_loading">
+        @(_loading ? "Sending..." : "2. Send Signed Request to Resource")
+    </button>
+}
+
+@if (_response is not null)
+{
+    <div class="mt-3">
+        <h5>Response</h5>
+        <div class="alert @(_success ? "alert-success" : "alert-warning")">
+            <strong>@_statusCode</strong>
+        </div>
+        <pre><code class="language-json">@_response</code></pre>
+    </div>
+}
+
+@if (_error is not null)
+{
+    <div class="mt-3 alert alert-danger">@_error</div>
+}
+
+@code {
+    [Inject] private EnrollmentService _enrollment { get; set; } = default!;
+    [Inject] private IConfiguration Config { get; set; } = default!;
+
+    private bool _loading;
+    private bool _enrolled;
+    private string? _response;
+    private string? _error;
+    private string? _statusCode;
+    private bool _success;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await JS.InvokeVoidAsync("highlightCode");
+    }
+
+    protected override void OnInitialized()
+    {
+        _enrolled = _enrollment.IsEnrolled;
+    }
+
+    private async Task Enrol()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            await _enrollment.EnsureEnrolledAsync();
+            _enrolled = true;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SendRequest()
+    {
+        _loading = true;
+        _response = null;
+        _error = null;
+
+        try
+        {
+            var key = _enrollment.Key;
+            var keyId = _enrollment.KeyId;
+            var jwksUri = _enrollment.JwksUri
+                ?? $"{Config["AAuth:AgentProvider"]!.TrimEnd('/')}/agents/{Config["AAuth:AgentId"]}/jwks.json";
+
+            // Build client with jwks_uri mode — identity-based, no token exchange
+            using var client = new AAuthClientBuilder(key)
+                .UseJwksUri(jwksUri, keyId)
+                .Build();
+
+            var resourceUrl = Config["AAuth:Resource"]!;
+            var response = await client.GetAsync(resourceUrl);
+
+            _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
+            _success = response.IsSuccessStatusCode;
+            _response = await response.Content.ReadAsStringAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

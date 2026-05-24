@@ -1,0 +1,180 @@
+@page "/jwt"
+@using AAuth.Agent
+@using AAuth.Crypto
+@using AAuth.HttpSig
+@inject IJSRuntime JS
+@rendermode InteractiveServer
+
+<PageTitle>JWT — Agent Token</PageTitle>
+
+<h2>JWT — Agent Token (Three-Party)</h2>
+
+<p>
+    Full three-party flow: the agent enrols with an Agent Provider, then presents
+    its agent token when accessing resources. The SDK acquires and refreshes the
+    token lazily via a signed refresh request to the AP. Challenge handling
+    automates the Person Server consent exchange.
+</p>
+
+<h5>Setup Code</h5>
+<pre><code class="language-csharp">// Enrollment (one-time provisioning step)
+var keyStore = KeyStore.Default();
+var apClient = new AgentProviderClient(new HttpClient(), keyStore);
+var result = await apClient.EnrolAsync(apBase, agentId, enrolEndpoint, personServer);
+
+// Application runtime — load key by ID, build client
+var key = await keyStore.LoadAsync(result.KeyId);
+
+using var client = new AAuthClientBuilder(key)
+    .WithTokenRefresh(async (ctx, ct) =>
+    {
+        var ap = new AgentProviderClient(new HttpClient(), keyStore);
+        return await ap.RefreshAsync(refreshEndpoint, keyId, ct);
+    })
+    .WithChallengeHandling(personServer: "https://ps.example")
+    .Build();</code></pre>
+
+
+@if (!_enrolled)
+{
+    <button class="btn btn-outline-secondary" @onclick="Enrol" disabled="@_loading">
+        @(_loading ? "Enrolling..." : "1. Enrol with Agent Provider")
+    </button>
+}
+else
+{
+    <div class="alert alert-info">
+        Enrolled. Key ID: <code>@_enrollment!.KeyId</code>
+    </div>
+
+    <button class="btn btn-primary" @onclick="SendRequest" disabled="@_loading">
+        @(_loading ? "Sending..." : "2. Send Signed Request to Resource")
+    </button>
+}
+
+@if (_response is not null)
+{
+    <div class="mt-3">
+        <h5>Response</h5>
+        <div class="alert @(_success ? "alert-success" : "alert-warning")">
+            <strong>@_statusCode</strong>
+        </div>
+        <pre><code class="language-json">@_response</code></pre>
+    </div>
+}
+
+@if (_error is not null)
+{
+    <div class="mt-3 alert alert-danger">@_error</div>
+}
+
+@code {
+    [Inject] private EnrollmentService _enrollment { get; set; } = default!;
+    [Inject] private IConfiguration Config { get; set; } = default!;
+
+    private bool _loading;
+    private bool _enrolled;
+    private string? _response;
+    private string? _error;
+    private string? _statusCode;
+    private bool _success;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await JS.InvokeVoidAsync("highlightCode");
+    }
+
+    protected override void OnInitialized()
+    {
+        _enrolled = _enrollment.IsEnrolled;
+    }
+
+    private async Task Enrol()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            await _enrollment.EnsureEnrolledAsync();
+            _enrolled = true;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SendRequest()
+    {
+        _loading = true;
+        _response = null;
+        _error = null;
+
+        try
+        {
+            var key = _enrollment.Key;
+            var keyId = _enrollment.KeyId;
+            var keyStore = _enrollment.KeyStore;
+            var refreshEndpoint = _enrollment.RefreshEndpoint;
+            var personServer = Config["AAuth:PersonServer"]!;
+            var resourceUrl = Config["AAuth:Resource"]!;
+
+            // Pre-grant consent so the PS issues a token immediately
+            // (autonomous / direct-grant mode — no user interaction)
+            await GrantConsentAsync();
+
+            // Build client with lazy token refresh + challenge handling
+            using var client = new AAuthClientBuilder(key)
+                .WithTokenRefresh(async (ctx, ct) =>
+                {
+                    var apClient = new AgentProviderClient(new HttpClient(), keyStore);
+                    return await apClient.RefreshAsync(refreshEndpoint, keyId, ct);
+                })
+                .WithChallengeHandling(personServer)
+                .Build();
+
+            var response = await client.GetAsync(resourceUrl);
+
+            _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
+            _success = response.IsSuccessStatusCode;
+            _response = await response.Content.ReadAsStringAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    /// <summary>
+    /// Grant standing consent at the MockPersonServer so it issues an
+    /// auth token immediately (autonomous / direct-grant path).
+    /// </summary>
+    private async Task GrantConsentAsync()
+    {
+        var personServer = Config["AAuth:PersonServer"];
+        if (string.IsNullOrEmpty(personServer)) return;
+
+        var agentId = Config["AAuth:AgentId"]!;
+        var resource = Config["AAuth:Resource"]!;
+
+        using var http = new HttpClient();
+        try
+        {
+            await http.PostAsJsonAsync(
+                $"{personServer.TrimEnd('/')}/admin/consent",
+                new { agent = agentId, resource = resource.TrimEnd('/') });
+        }
+        catch
+        {
+            // /admin/consent only exists on MockPersonServer — swallow errors
+        }
+    }
+}

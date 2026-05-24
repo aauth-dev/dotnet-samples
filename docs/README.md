@@ -154,6 +154,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 
 ## Samples
 
+- [`SampleApp`](../samples/SampleApp/) — Golden example: one page per signing mode (hwk, jwt, jwks_uri)
 - [`GuidedTour`](../samples/GuidedTour/) — Interactive Blazor walkthrough of all flows
 - [`AgentConsole`](../samples/AgentConsole/) — CLI agent demonstrating signing modes
 - [`WhoAmI`](../samples/WhoAmI/) — Minimal resource server with verification middleware
