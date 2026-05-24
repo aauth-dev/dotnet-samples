@@ -17,6 +17,7 @@ WHOAMI_URL := http://localhost:5000
 PS_URL     := http://localhost:5100
 AP_URL     := http://localhost:5301
 TOUR_URL   := http://localhost:5400
+SAMPLE_URL := http://localhost:5240
 
 .DEFAULT_GOAL := help
 
@@ -77,6 +78,20 @@ demo: ## Start WhoAmI + MockPersonServer + MockAgentProvider + GuidedTour in par
 	$(DOTNET) run --project $(WHOAMI_PROJECT) & \
 	$(DOTNET) run --project $(AP_PROJECT) & \
 	$(DOTNET) run --project $(TOUR_PROJECT) & \
+	wait
+
+demo-sample: ## Start WhoAmI + MockPersonServer + MockAgentProvider + SampleApp in parallel
+	@echo "Starting demo with SampleApp..."
+	@echo "  WhoAmI:             $(WHOAMI_URL)"
+	@echo "  MockPersonServer:   $(PS_URL)"
+	@echo "  MockAgentProvider:  $(AP_URL)"
+	@echo "  SampleApp:          $(SAMPLE_URL)"
+	@echo ""
+	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \
+	$(DOTNET) run --project $(PS_PROJECT) & \
+	$(DOTNET) run --project $(WHOAMI_PROJECT) & \
+	$(DOTNET) run --project $(AP_PROJECT) & \
+	$(DOTNET) run --project $(SAMPLE_PROJECT) & \
 	wait
 
 clean: ## dotnet clean + remove bin/ obj/ trees
