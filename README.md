@@ -86,6 +86,28 @@ This repo includes sample services and an interactive Blazor walk-through.
 The dev container gives you everything pre-configured, but you can also
 run locally with the .NET 10 SDK.
 
+### Sample App
+
+Self-contained Blazor app with one page per AAuth flow (HWK, JWKS URI, JWT direct grant, Deferred user consent).
+
+```bash
+make demo-sample   # starts all servers + SampleApp on http://localhost:5240
+```
+
+![Sample App](samples/SampleApp/sample-app.png)
+
+### Guided Tour
+
+Step-by-step walk-through showing every HTTP exchange, header, and token claim across all protocol flows.
+
+```bash
+make demo          # starts all servers + GuidedTour on http://localhost:5400
+```
+
+![Guided Tour](samples/GuidedTour/tour-screenshot.png)
+
+See [samples/README.md](samples/README.md) for the full list of sample projects and configuration options.
+
 ### Dev container (recommended)
 
 Open this repo in VS Code → **Reopen in Container**. The container
@@ -98,19 +120,6 @@ Install the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0), th
 ```bash
 dotnet build AAuth.slnx
 ```
-
-### Run the demo
-
-```bash
-make demo
-```
-
-Starts WhoAmI, MockPersonServer, MockAgentProvider, and the Guided Tour
-together. Open <http://localhost:5400> and click **Run all** (or step
-through each flow individually).
-
-See [samples/README.md](samples/README.md) for per-sample instructions,
-flags, and all Make targets.
 
 ### Testing
 

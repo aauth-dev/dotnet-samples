@@ -88,7 +88,7 @@ demo-sample: ## Start WhoAmI + MockPersonServer + MockAgentProvider + SampleApp 
 	@echo "  SampleApp:          $(SAMPLE_URL)"
 	@echo ""
 	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \
-	$(DOTNET) run --project $(PS_PROJECT) & \
+	MockPersonServer__RequireConsent=true $(DOTNET) run --project $(PS_PROJECT) & \
 	$(DOTNET) run --project $(WHOAMI_PROJECT) & \
 	$(DOTNET) run --project $(AP_PROJECT) & \
 	$(DOTNET) run --project $(SAMPLE_PROJECT) & \

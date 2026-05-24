@@ -5,19 +5,91 @@
 <h1>AAuth SDK — Sample App</h1>
 
 <p>
-    This app demonstrates all three AAuth signing modes making real HTTP requests
-    to the <strong>WhoAmI</strong> resource server. Each page is a self-contained
-    example showing one mode end-to-end.
+    This app demonstrates all AAuth signing modes and consent flows, making real
+    HTTP requests to the <strong>WhoAmI</strong> resource server. Each page is a
+    self-contained example showing one flow end-to-end.
 </p>
 
-<h4>Signing Modes</h4>
-<ul>
-    <li><a href="hwk"><strong>HWK</strong></a> — Pseudonymous. No enrollment needed. Signs with a bare keypair.</li>
-    <li><a href="jwt"><strong>JWT</strong></a> — Agent Token. Three-party flow with Person Server consent.</li>
-    <li><a href="jwks-uri"><strong>JWKS URI</strong></a> — Agent Identity. AP publishes key at a per-agent JWKS endpoint.</li>
-</ul>
+<div class="row row-cols-1 row-cols-md-2 g-4 mt-2">
+    <div class="col">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">🔑 HWK — Pseudonymous</h5>
+                <p class="card-text">
+                    No enrollment needed. Generate a key and sign requests. The resource
+                    sees a stable pseudonymous identity (JWK thumbprint) but cannot link
+                    it to a real-world identity.
+                </p>
+                <span class="badge bg-success">2-party</span>
+                <span class="badge bg-secondary">sig=hwk</span>
+            </div>
+            <div class="card-footer">
+                <a href="hwk" class="btn btn-outline-primary btn-sm">Open demo →</a>
+            </div>
+        </div>
+    </div>
 
-<h4>Prerequisites</h4>
-<p>Start the mock servers before using this app:</p>
-<pre><code>make demo</code></pre>
-<p>This starts the Agent Provider (<code>:5301</code>), Person Server (<code>:5100</code>), and WhoAmI resource (<code>:5000</code>).</p>
+    <div class="col">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">🪪 JWKS URI — Agent Identity</h5>
+                <p class="card-text">
+                    Identity-based access. The AP publishes the agent's public key at a
+                    JWKS endpoint. Resources verify by fetching that URI — no Person
+                    Server or token exchange needed.
+                </p>
+                <span class="badge bg-success">2-party</span>
+                <span class="badge bg-secondary">sig=jwks_uri</span>
+            </div>
+            <div class="card-footer">
+                <a href="jwks-uri" class="btn btn-outline-primary btn-sm">Open demo →</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">🎫 JWT — Agent Token (Direct Grant)</h5>
+                <p class="card-text">
+                    Three-party flow with <strong>standing consent</strong>. The Person
+                    Server issues an auth token immediately — no user interaction needed.
+                    Used when consent was pre-registered.
+                </p>
+                <span class="badge bg-warning text-dark">3-party</span>
+                <span class="badge bg-secondary">sig=jwt</span>
+                <span class="badge bg-info text-dark">autonomous</span>
+            </div>
+            <div class="card-footer">
+                <a href="jwt" class="btn btn-outline-primary btn-sm">Open demo →</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">⏳ Deferred — User Consent</h5>
+                <p class="card-text">
+                    Three-party flow with <strong>deferred consent</strong>. The Person
+                    Server returns 202 + an interaction URL. The user approves in a
+                    separate tab while the SDK polls for the auth token.
+                </p>
+                <span class="badge bg-warning text-dark">3-party</span>
+                <span class="badge bg-secondary">sig=jwt</span>
+                <span class="badge bg-info text-dark">deferred</span>
+            </div>
+            <div class="card-footer">
+                <a href="deferred" class="btn btn-outline-primary btn-sm">Open demo →</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<h4 class="mt-4">Prerequisites</h4>
+<p>Start all mock servers with a single command:</p>
+<pre><code>make demo-sample</code></pre>
+<p>
+    This starts the Agent Provider (<code>:5301</code>), Person Server
+    (<code>:5100</code> with consent required), and WhoAmI resource (<code>:5000</code>).
+</p>

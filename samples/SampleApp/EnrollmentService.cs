@@ -60,6 +60,10 @@ public sealed class EnrollmentService
             var apClient = new AgentProviderClient(new HttpClient(), keyStore);
             var result = await apClient.EnrolAsync(apBase, agentId, enrolEndpoint, personServer);
 
+            // Deliberately discard result.AgentToken — we only keep the key ID.
+            // At runtime the SDK acquires a fresh token via the refresh endpoint
+            // (signed with the durable key). This simulates out-of-band enrollment
+            // where the app never sees the initial token.
             _key = result.Key;
             _keyId = result.KeyId;
             _jwksUri = result.JwksUri;

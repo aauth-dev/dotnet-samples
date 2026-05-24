@@ -2,6 +2,7 @@
 @using AAuth.Agent
 @using AAuth.Crypto
 @using AAuth.HttpSig
+@inject IJSRuntime JS
 @rendermode InteractiveServer
 
 <PageTitle>JWT — Agent Token</PageTitle>
@@ -16,7 +17,7 @@
 </p>
 
 <h5>Setup Code</h5>
-<pre><code>// Enrollment (one-time provisioning step)
+<pre><code class="language-csharp">// Enrollment (one-time provisioning step)
 var keyStore = KeyStore.Default();
 var apClient = new AgentProviderClient(new HttpClient(), keyStore);
 var result = await apClient.EnrolAsync(apBase, agentId, enrolEndpoint, personServer);
@@ -32,6 +33,7 @@ using var client = new AAuthClientBuilder(key)
     })
     .WithChallengeHandling(personServer: "https://ps.example")
     .Build();</code></pre>
+
 
 @if (!_enrolled)
 {
@@ -57,7 +59,7 @@ else
         <div class="alert @(_success ? "alert-success" : "alert-warning")">
             <strong>@_statusCode</strong>
         </div>
-        <pre><code>@_response</code></pre>
+        <pre><code class="language-json">@_response</code></pre>
     </div>
 }
 
@@ -76,6 +78,11 @@ else
     private string? _error;
     private string? _statusCode;
     private bool _success;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await JS.InvokeVoidAsync("highlightCode");
+    }
 
     protected override void OnInitialized()
     {
@@ -114,6 +121,11 @@ else
             var keyStore = _enrollment.KeyStore;
             var refreshEndpoint = _enrollment.RefreshEndpoint;
             var personServer = Config["AAuth:PersonServer"]!;
+            var resourceUrl = Config["AAuth:Resource"]!;
+
+            // Pre-grant consent so the PS issues a token immediately
+            // (autonomous / direct-grant mode — no user interaction)
+            await GrantConsentAsync();
 
             // Build client with lazy token refresh + challenge handling
             using var client = new AAuthClientBuilder(key)
@@ -125,7 +137,6 @@ else
                 .WithChallengeHandling(personServer)
                 .Build();
 
-            var resourceUrl = Config["AAuth:Resource"]!;
             var response = await client.GetAsync(resourceUrl);
 
             _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
@@ -139,6 +150,31 @@ else
         finally
         {
             _loading = false;
+        }
+    }
+
+    /// <summary>
+    /// Grant standing consent at the MockPersonServer so it issues an
+    /// auth token immediately (autonomous / direct-grant path).
+    /// </summary>
+    private async Task GrantConsentAsync()
+    {
+        var personServer = Config["AAuth:PersonServer"];
+        if (string.IsNullOrEmpty(personServer)) return;
+
+        var agentId = Config["AAuth:AgentId"]!;
+        var resource = Config["AAuth:Resource"]!;
+
+        using var http = new HttpClient();
+        try
+        {
+            await http.PostAsJsonAsync(
+                $"{personServer.TrimEnd('/')}/admin/consent",
+                new { agent = agentId, resource = resource.TrimEnd('/') });
+        }
+        catch
+        {
+            // /admin/consent only exists on MockPersonServer — swallow errors
         }
     }
 }
