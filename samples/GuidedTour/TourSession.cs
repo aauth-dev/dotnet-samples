@@ -314,7 +314,7 @@ public sealed class TourSession : IAsyncDisposable
                     _assignedKeyId ?? "tour-key-1");
                 break;
             default:
-                builder.UseJwt(tokenFactory);
+                builder.WithTokenRefresh(async (ctx, ct) => tokenFactory());
                 break;
         }
 

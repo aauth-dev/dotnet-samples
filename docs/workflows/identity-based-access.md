@@ -47,6 +47,31 @@ using var client = new AAuthClientBuilder(key)
     .Build();
 ```
 
+## DI Registration
+
+### Pseudonymous (HWK)
+
+```csharp
+var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!);
+
+builder.Services.AddAAuthAgent("identity-hwk", options =>
+{
+    options.Key = key!;
+});
+```
+
+### Agent Identity (jwks_uri)
+
+```csharp
+builder.Services.AddAAuthAgent("identity-jwks", options =>
+{
+    options.Key = key!;
+    // No PersonServer → identity-only mode (no challenge handling)
+});
+```
+
+Inject via `IHttpClientFactory.CreateClient("identity-hwk")`. See [Dependency Injection](../reference/dependency-injection.md) for full reference.
+
 ## Error Scenarios
 
 | Status | Signature-Error | Cause |

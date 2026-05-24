@@ -33,7 +33,7 @@ using var client = mode switch
 {
     "hwk"      => new AAuthClientBuilder(key).UseHwk().Build(),
     "jwks_uri" => new AAuthClientBuilder(key).UseJwksUri(jwksUri, kid).Build(),
-    "jwt"      => new AAuthClientBuilder(key).UseJwt(agentToken).Build(),
+    "jwt"      => new AAuthClientBuilder(key).WithTokenRefresh(refresher).WithChallengeHandling(ps).Build(),
     "jkt-jwt"  => new AAuthClientBuilder(ephemeralKey).UseJktJwt(() => namingJwt).Build(),
 };
 ```

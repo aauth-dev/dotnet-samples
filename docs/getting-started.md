@@ -77,7 +77,61 @@ public class MyService(IHttpClientFactory factory)
 
 ## Bootstrap with an Agent Provider (Three-Party Flow)
 
-For production scenarios, agents register with an **Agent Provider (AP)** to get an identity-bound agent token. When a resource challenges with a 401, the SDK automatically exchanges the resource token at the **Person Server (PS)** and retries.
+For production scenarios, agents register with an **Agent Provider (AP)** to get an identity-bound agent token. Enrollment is a **provisioning step** that runs once (in a CLI tool or setup script). The durable signing key is generated inside a keystore and never extracted — the app references it by ID. The agent token is short-lived (typically 1 hour) and refreshed automatically by the SDK.
+
+### Provisioning (run once per device/install)
+
+```csharp
+using AAuth.Agent;
+using AAuth.HttpSig;
+
+// Key is generated INSIDE the store — private material never leaves
+var keyStore = KeyStore.Default(); // ~/.aauth/keys/ (or plug in HSM/Key Vault)
+
+var enrol = await AAuthClientBuilder
+    .Bootstrap(
+        enrollEndpoint: "https://ap.example/enrol",
+        agentId: "aauth:myagent@example.com")
+    .WithPersonServer("https://ps.example")
+    .WithKeyStore(keyStore)
+    .EnrolAsync();
+
+// Only the key ID needs to be recorded in app config
+// (the key itself is already in the keystore)
+Console.WriteLine($"Enrolled. Add to config: AAuth:KeyId = {enrol.KeyId}");
+```
+
+### Application (every startup)
+
+Load the key by ID from the store and let the SDK manage agent tokens:
+
+```csharp
+using AAuth.Agent;
+using AAuth.HttpSig;
+
+var keyStore = KeyStore.Default();
+var keyId = configuration["AAuth:KeyId"]!;
+var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
+var key = await keyStore.LoadAsync(keyId)
+    ?? throw new InvalidOperationException($"Key '{keyId}' not found. Run enrollment first.");
+
+// The SDK acquires the agent token lazily on first request
+// via WithTokenRefresh, then keeps it fresh automatically.
+using var client = new AAuthClientBuilder(key)
+    .WithTokenRefresh(async (ctx, ct) =>
+    {
+        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
+        return await apClient.RefreshAsync(apRefreshEndpoint, ctx.KeyId, ct);
+    })
+    .WithChallengeHandling("https://ps.example")
+    .Build();
+
+var response = await client.GetAsync("https://resource.example/protected");
+Console.WriteLine(await response.Content.ReadAsStringAsync());
+```
+
+<details>
+<summary>Step-by-Step (Advanced)</summary>
 
 ### 1. Enrol with the Agent Provider
 
@@ -94,35 +148,54 @@ var enrol = await apClient.EnrolAsync(
     enrollEndpoint: "https://ap.example/enrol",
     personServer: "https://ps.example");
 
-// enrol.Key        — your Ed25519 signing key
-// enrol.AgentToken — aa-agent+jwt issued by the AP
-// enrol.KeyId      — persisted key identifier
+// enrol.Key        — your Ed25519 signing key (in keystore)
+// enrol.KeyId      — persisted key identifier (save this to config)
+// enrol.AgentToken — initial aa-agent+jwt (short-lived, do not persist)
 ```
 
 ### 2. Build the Signed Client with Challenge Handling
 
 ```csharp
 using var client = new AAuthClientBuilder(enrol.Key)
-    .UseJwt(enrol.AgentToken)
+    .WithTokenRefresh(async (ctx, ct) =>
+    {
+        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
+        return await apClient.RefreshAsync("https://ap.example/refresh", ctx.KeyId, ct);
+    })
     .WithChallengeHandling(personServer: "https://ps.example")
     .Build();
 ```
 
-<details>
-<summary>Manual Setup (Advanced)</summary>
+### 3. Make Requests
 
 ```csharp
+var response = await client.GetAsync("https://resource.example/protected");
+Console.WriteLine(await response.Content.ReadAsStringAsync());
+```
+
+</details>
+
+<details>
+<summary>Manual Pipeline Setup (Low-Level)</summary>
+
+This shows the internal handler pipeline for educational purposes. Use `WithTokenRefresh` + `WithChallengeHandling` in production code.
+
+```csharp
+// Acquire a fresh agent token via the AP refresh endpoint
+var apClient = new AgentProviderClient(new HttpClient(), keyStore);
+var agentToken = await apClient.RefreshAsync("https://ap.example/refresh", keyId);
+
 // Carrier-token holder — shared between signer and challenge handler.
-var holder = new AAuthTokenHolder(enrol.AgentToken);
+var holder = new AAuthTokenHolder(agentToken);
 
 var signingHandler = new AAuthSigningHandler(
-    enrol.Key, new JwtSignatureKeyProvider(() => holder.Current))
+    key, new JwtSignatureKeyProvider(() => holder.Current))
 {
     InnerHandler = new HttpClientHandler(),
 };
 
 var exchangeHttp = new HttpClient(
-    new AAuthSigningHandler(enrol.Key, new JwtSignatureKeyProvider(() => enrol.AgentToken))
+    new AAuthSigningHandler(key, new JwtSignatureKeyProvider(() => agentToken))
     { InnerHandler = new HttpClientHandler() });
 
 var exchange = new TokenExchangeClient(exchangeHttp, new MetadataClient(new HttpClient()));
@@ -136,14 +209,6 @@ using var client = new HttpClient(pipeline);
 ```
 
 </details>
-
-### 3. Make Requests
-
-```csharp
-// First request may trigger a 401 challenge — the SDK handles it transparently
-var response = await client.GetAsync("https://resource.example/protected");
-Console.WriteLine(await response.Content.ReadAsStringAsync());
-```
 
 ### What Happens Under the Hood
 

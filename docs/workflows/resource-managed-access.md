@@ -68,6 +68,38 @@ if (response.StatusCode == HttpStatusCode.Accepted)
 builder.Services.AddSingleton<IOpaqueTokenStore>(new InMemoryOpaqueTokenStore());
 ```
 
+## DI Registration
+
+### Agent-Side
+
+```csharp
+var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!);
+
+builder.Services.AddAAuthAgent("resource-managed", options =>
+{
+    options.Key = key!;
+    // No TokenRefresher needed — HWK mode (pseudonymous)
+    options.OnResourceInteraction = async (url, code, ct) =>
+    {
+        await notifier.SendAsync($"Approve at: {url}?code={code}", ct);
+    };
+    options.PollingTimeout = TimeSpan.FromMinutes(3);
+});
+```
+
+### Resource-Side
+
+```csharp
+builder.Services.AddAAuthResource(options =>
+{
+    options.Issuer = "https://resource.example";
+    options.SigningKeys = new() { ["key-1"] = resourceKey };
+});
+builder.Services.AddSingleton<IOpaqueTokenStore>(new InMemoryOpaqueTokenStore());
+```
+
+See [Dependency Injection](../reference/dependency-injection.md) for full reference.
+
 ## Error Scenarios
 
 | Status | Header | Cause |

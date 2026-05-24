@@ -49,6 +49,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 ## Reference
 
 - [Configuration](reference/configuration.md)
+- [Dependency Injection](reference/dependency-injection.md)
 
 ## API Map
 

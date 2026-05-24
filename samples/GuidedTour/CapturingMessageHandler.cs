@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,6 +15,9 @@ public sealed class CapturingMessageHandler : DelegatingHandler
 {
     /// <summary>The most recent exchange, or null if no request has been sent yet.</summary>
     public CapturedExchange? Last { get; private set; }
+
+    /// <summary>All captured exchanges in order.</summary>
+    public List<CapturedExchange> All { get; } = new();
 
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
@@ -48,6 +52,8 @@ public sealed class CapturingMessageHandler : DelegatingHandler
             $"HTTP/{response.Version} {(int)response.StatusCode} {response.ReasonPhrase}",
             responseHeaders,
             responseBody);
+
+        All.Add(Last);
 
         return response;
     }

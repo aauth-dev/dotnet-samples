@@ -69,7 +69,8 @@ internal static class CodeSnippets
 
     public const string SignedGetJwt = """
         using var client = new AAuthClientBuilder(key)
-            .UseJwt(agentToken)
+            .WithTokenRefresh(async (ctx, ct) =>
+                await apClient.RefreshAsync(refreshEndpoint, ctx.KeyId, ct))
             .Build();
 
         var response = await client.GetAsync("https://resource.example/data");
@@ -95,7 +96,8 @@ internal static class CodeSnippets
     public const string TokenExchangeDirect = """
         // Automatic (recommended):
         using var client = new AAuthClientBuilder(key)
-            .UseJwt(agentToken)
+            .WithTokenRefresh(async (ctx, ct) =>
+                await apClient.RefreshAsync(refreshEndpoint, ctx.KeyId, ct))
             .WithChallengeHandling(personServer: "https://ps.example")
             .Build();
 
@@ -144,24 +146,32 @@ internal static class CodeSnippets
         """;
 
     public const string ReplayWithAuthToken = """
-        // The ChallengeHandler does this automatically.
-        // Manual approach:
-        var holder = new AAuthTokenHolder(authToken);
-        using var client = new AAuthClientBuilder(key)
-            .UseJwt(() => holder.Current)
-            .Build();
+        // The ChallengeHandler does this automatically when you use
+        // WithTokenRefresh + WithChallengeHandling.
+        // The SDK signs the retry with the auth_token internally.
 
         var response = await client.GetAsync("https://resource.example/data");
         // Now signed with the auth_token → 200 OK
         """;
 
     public const string FullAutomatic = """
-        // One-shot: bootstrap + challenge handling + deferred consent
-        var (client, enrol) = await AAuthClientBuilder
+        // --- Provisioning (separate tool / CLI — run once per install) ---
+        var keyStore = KeyStore.Default();
+        var enrol = await AAuthClientBuilder
             .Bootstrap("https://ap.example/enrol", "aauth:myapp@ap.example")
             .WithPersonServer("https://ps.example")
-            .WithChallengeHandling()
-            .EnrolAndBuildAsync();
+            .WithKeyStore(keyStore) // key generated inside store, never extracted
+            .EnrolAsync();
+        // Record enrol.KeyId in app config — that's all you need
+
+        // --- Application (every startup — load key by ID) ---
+        var key = await keyStore.LoadAsync(keyId);
+        using var client = new AAuthClientBuilder(key!)
+            .WithTokenRefresh(async (ctx, ct) =>
+                await new AgentProviderClient(new HttpClient(), keyStore)
+                    .RefreshAsync(refreshEndpoint, ctx.KeyId, ct))
+            .WithChallengeHandling("https://ps.example")
+            .Build();
 
         var response = await client.GetAsync("https://resource.example/data");
         // 401 → exchange → poll → retry all handled transparently

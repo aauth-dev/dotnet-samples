@@ -15,12 +15,9 @@ public sealed class AAuthAgentOptions
     /// <summary>The agent's signing key (must have private component).</summary>
     public IAAuthKey Key { get; set; } = null!;
 
-    /// <summary>The agent token JWT. Required for challenge handling.</summary>
-    public string? AgentToken { get; set; }
-
     /// <summary>
-    /// Person Server URL. When set, enables automatic 401 challenge handling.
-    /// If null but <see cref="AgentToken"/> contains a <c>ps</c> claim, that is used.
+    /// Person Server URL. When set together with <see cref="TokenRefresher"/>,
+    /// enables automatic 401 challenge handling with lazy token acquisition.
     /// </summary>
     public string? PersonServer { get; set; }
 

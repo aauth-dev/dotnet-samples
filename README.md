@@ -47,28 +47,23 @@ var response = await client.GetAsync("https://resource.example/data");
 
 ### Three-Party Flow (Agent → Resource → Person Server)
 
-Bootstrap with an Agent Provider, then let the SDK handle 401 challenges automatically:
+Enrollment is a one-time provisioning step (like a DB migration). The durable signing key lives in a keystore and is referenced by ID — never extracted. The agent token is short-lived and refreshed automatically:
 
 ```csharp
 using AAuth.Agent;
-using AAuth.Crypto;
 using AAuth.HttpSig;
 
-// 1. Enrol with your Agent Provider to get a key + agent token
-var apClient = new AgentProviderClient(new HttpClient(), new InMemoryKeyStore());
-var enrol = await apClient.EnrolAsync(
-    apIssuer: "https://ap.example",
-    agentId: "aauth:myagent@example.com",
-    enrollEndpoint: "https://ap.example/enrol",
-    personServer: "https://ps.example");
+// The key lives in the keystore; load it by the ID assigned during enrollment
+var keyStore = KeyStore.Default(); // ~/.aauth/keys/ (or plug in HSM/TPM/Key Vault)
+var key = await keyStore.LoadAsync("my-agent-key");
 
-// 2. Build a client with automatic challenge handling
-using var client = new AAuthClientBuilder(enrol.Key)
-    .UseJwt(enrol.AgentToken)
-    .WithChallengeHandling(personServer: "https://ps.example")
+using var client = new AAuthClientBuilder(key!)
+    .WithTokenRefresh(async (ctx, ct) =>
+        await new AgentProviderClient(new HttpClient(), keyStore)
+            .RefreshAsync("https://ap.example/refresh", ctx.KeyId, ct))
+    .WithChallengeHandling("https://ps.example")
     .Build();
 
-// 3. Make requests — 401 challenges are handled transparently
 var response = await client.GetAsync("https://resource.example/protected");
 ```
 

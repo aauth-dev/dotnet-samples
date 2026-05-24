@@ -100,12 +100,13 @@ public sealed class AgentProviderClient
     }
 
     /// <summary>
-    /// Refresh an agent token before expiration. Uses the existing key to
-    /// authenticate the refresh request.
+    /// Refresh an agent token. Signs the request with the durable key per spec
+    /// (single-key refresh, hwk scheme). The AP identifies the agent by verifying
+    /// the HTTP signature and looking up the enrollment by key thumbprint.
     /// </summary>
     /// <param name="refreshEndpoint">The AP's refresh/token endpoint.</param>
-    /// <param name="currentAgentToken">The current (still valid) agent token.</param>
-    /// <param name="keyId">The key ID to sign the refresh request.</param>
+    /// <param name="currentAgentToken">The current agent token (informational, not required by spec).</param>
+    /// <param name="keyId">The key ID to load from the store and sign with.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>New agent token.</returns>
     public async Task<string> RefreshAsync(
@@ -118,21 +119,53 @@ public sealed class AgentProviderClient
         ArgumentException.ThrowIfNullOrEmpty(currentAgentToken);
         ArgumentException.ThrowIfNullOrEmpty(keyId);
 
+        return await RefreshCoreAsync(refreshEndpoint, keyId, ct);
+    }
+
+    /// <summary>
+    /// Request a fresh agent token from the AP using only the durable key.
+    /// Used for initial token acquisition (lazy startup) when no current token exists.
+    /// The AP identifies the agent by verifying the HTTP signature and looking up
+    /// the enrollment by the key's thumbprint.
+    /// </summary>
+    /// <param name="refreshEndpoint">The AP's refresh/token endpoint.</param>
+    /// <param name="keyId">The key ID to load from the store and sign with.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>New agent token.</returns>
+    public async Task<string> RefreshAsync(
+        string refreshEndpoint,
+        string keyId,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(refreshEndpoint);
+        ArgumentException.ThrowIfNullOrEmpty(keyId);
+
+        return await RefreshCoreAsync(refreshEndpoint, keyId, ct);
+    }
+
+    private async Task<string> RefreshCoreAsync(
+        string refreshEndpoint,
+        string keyId,
+        CancellationToken ct)
+    {
         var key = await _keyStore.LoadAsync(keyId, ct)
             ?? throw new InvalidOperationException($"Key '{keyId}' not found in store.");
 
-        var request = new JsonObject
+        // Per spec: single-key refresh signs the POST with the durable key (hwk scheme).
+        // The body is empty — the AP identifies the agent via the signature.
+        using var signingHandler = new HttpSig.AAuthSigningHandler(
+            key, new HttpSig.HwkSignatureKeyProvider(key))
         {
-            ["grant_type"] = "refresh",
-            ["agent_token"] = currentAgentToken,
+            InnerHandler = new HttpClientHandler(),
         };
+        using var signedClient = new HttpClient(signingHandler);
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, refreshEndpoint)
         {
-            Content = JsonContent.Create(request),
+            Content = JsonContent.Create(new JsonObject()),
         };
 
-        using var response = await _http.SendAsync(httpRequest, ct);
+        using var response = await signedClient.SendAsync(httpRequest, ct);
         response.EnsureSuccessStatusCode();
 
         var body = await response.Content.ReadFromJsonAsync<JsonObject>(ct)
