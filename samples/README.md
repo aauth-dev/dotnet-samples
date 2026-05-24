@@ -1,6 +1,6 @@
 # Samples
 
-Five sample applications demonstrating AAuth flows end-to-end.
+Six sample applications demonstrating AAuth flows end-to-end.
 
 | Sample | Port | Description |
 |--------|------|-------------|
@@ -9,6 +9,7 @@ Five sample applications demonstrating AAuth flows end-to-end.
 | [MockPersonServer](MockPersonServer/) | 5100 | Reference Person Server — verifies exchanges, mints auth tokens |
 | [MockAgentProvider](MockAgentProvider/) | 5301 | Reference Agent Provider — issues agent tokens, hosts JWKS |
 | [GuidedTour](GuidedTour/) | 5400 | Blazor walk-through — visualises all four AAuth flows step by step |
+| [SampleApp](SampleApp/) | 5240 | Golden example — one page per signing mode (hwk, jwt, jwks_uri) |
 
 ## Quick Start
 
@@ -87,6 +88,14 @@ dotnet run --project samples/GuidedTour
 
 Requires WhoAmI and MockPersonServer already running. See [GuidedTour/README.md](GuidedTour/README.md) for mode configuration.
 
+### SampleApp
+
+```bash
+dotnet run --project samples/SampleApp
+```
+
+Simple Blazor app showing each signing mode as a separate page. Open <http://localhost:5240>. Requires WhoAmI, MockPersonServer, and MockAgentProvider running.
+
 ## Make Targets
 
 ```bash
@@ -102,6 +111,7 @@ make ps              # MockPersonServer (port 5100)
 make ps-consent      # MockPersonServer with RequireConsent=true
 make ap              # MockAgentProvider (port 5301)
 make tour            # GuidedTour (port 5400; expects other services running)
+make sampleapp       # SampleApp (port 5240; expects other services running)
 make agent           # AgentConsole against WhoAmI (override URL=…)
 make clean           # dotnet clean + remove bin/ obj/
 ```

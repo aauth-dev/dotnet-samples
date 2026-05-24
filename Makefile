@@ -11,6 +11,7 @@ PS_PROJECT     := samples/MockPersonServer/MockPersonServer.csproj
 AP_PROJECT     := samples/MockAgentProvider/MockAgentProvider.csproj
 TOUR_PROJECT   := samples/GuidedTour/GuidedTour.csproj
 AGENT_PROJECT  := samples/AgentConsole/AgentConsole.csproj
+SAMPLE_PROJECT := samples/SampleApp/SampleApp.csproj
 
 WHOAMI_URL := http://localhost:5000
 PS_URL     := http://localhost:5100
@@ -57,6 +58,9 @@ ap: ## Run the MockAgentProvider (port 5301)
 
 tour: ## Run the GuidedTour Blazor app (port 5400)
 	$(DOTNET) run --project $(TOUR_PROJECT)
+
+sampleapp: ## Run the SampleApp Blazor app (port 5240)
+	$(DOTNET) run --project $(SAMPLE_PROJECT)
 
 agent: ## Run AgentConsole against WhoAmI (override URL=… for a different target)
 	$(DOTNET) run --project $(AGENT_PROJECT) -- $(or $(URL),$(WHOAMI_URL))
