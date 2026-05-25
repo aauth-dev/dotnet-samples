@@ -66,6 +66,27 @@ public static class AAuthApplicationBuilderExtensions
     }
 
     /// <summary>
+    /// Add the AAuth challenge middleware that automatically issues 401 challenges
+    /// with resource tokens when the resource requires an auth token but only an
+    /// agent token is presented. Must be registered AFTER <see cref="UseAAuthFullVerification"/>.
+    /// </summary>
+    /// <param name="app">The application builder.</param>
+    /// <param name="options">Challenge options configuring access mode, resource key, and scopes.</param>
+    public static IApplicationBuilder UseAAuthChallenge(
+        this IApplicationBuilder app,
+        ChallengeOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        ArgumentNullException.ThrowIfNull(options);
+
+        return app.Use(next =>
+        {
+            var mw = new AAuthChallengeMiddleware(next, options);
+            return mw.InvokeAsync;
+        });
+    }
+
+    /// <summary>
     /// Map the <c>/.well-known/aauth-resource.json</c> and <c>/.well-known/jwks.json</c>
     /// endpoints from DI-registered <see cref="AAuthResourceMetadataOptions"/>.
     /// </summary>
