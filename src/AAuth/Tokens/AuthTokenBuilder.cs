@@ -60,6 +60,13 @@ public sealed class AuthTokenBuilder
     /// <summary>Token id. Defaults to a fresh GUID.</summary>
     public string? TokenId { get; init; }
 
+    /// <summary>
+    /// Optional upstream <c>act</c> object for call-chaining scenarios.
+    /// When set, nested inside the token's <c>act</c> claim to preserve
+    /// the full delegation chain (caller → resource → downstream).
+    /// </summary>
+    public JsonObject? UpstreamAct { get; init; }
+
     /// <summary>Build and sign the auth token.</summary>
     public string Build()
     {
@@ -107,10 +114,18 @@ public sealed class AuthTokenBuilder
 
         var header = new JsonObject
         {
-            ["alg"] = AAuthKey.Algorithm,
+            ["alg"] = Key.Algorithm,
             ["typ"] = TokenType,
             ["kid"] = KeyId,
         };
+
+        // Build the act claim. In call-chaining, nest the upstream act
+        // inside the current agent's act to preserve the delegation chain.
+        var act = new JsonObject { ["sub"] = Agent };
+        if (UpstreamAct is not null)
+        {
+            act["act"] = UpstreamAct.DeepClone();
+        }
 
         var payload = new JsonObject
         {
@@ -120,7 +135,7 @@ public sealed class AuthTokenBuilder
             ["jti"] = jti,
             ["agent"] = Agent,
             ["cnf"] = new JsonObject { ["jwk"] = AgentConfirmationKey.ToPublicJwk() },
-            ["act"] = new JsonObject { ["sub"] = Agent },
+            ["act"] = act,
             ["iat"] = iat.ToUnixTimeSeconds(),
             ["exp"] = exp.ToUnixTimeSeconds(),
         };

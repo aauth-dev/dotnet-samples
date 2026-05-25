@@ -110,7 +110,8 @@ public sealed class ChallengeHandler : DelegatingHandler
         // Got an auth-token challenge. Exchange and retry.
         var authToken = await _exchange
             .ExchangeAsync(_personServer, requirement.ResourceToken!,
-                _onInteractionRequired, _pollerOptions, cancellationToken)
+                _onInteractionRequired, _pollerOptions,
+                upstreamToken: null, cancellationToken)
             .ConfigureAwait(false);
         _holder.Update(authToken);
 

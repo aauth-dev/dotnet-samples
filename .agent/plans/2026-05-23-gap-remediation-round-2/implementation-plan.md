@@ -257,12 +257,12 @@
 
 ### Definition of Done
 
-- [ ] `upstream_token` parameter sent in token exchange when provided
-- [ ] Resource can request auth tokens for downstream resources
-- [ ] Downstream auth tokens contain nested `act` chain (caller → resource → downstream)
-- [ ] `TokenVerifier` validates the chained `act` claims correctly
-- [ ] Unit tests: upstream_token exchange, act chain construction
-- [ ] Integration test: Agent → Resource 1 → Resource 2 flow
+- [x] `upstream_token` parameter sent in token exchange when provided
+- [x] Resource can request auth tokens for downstream resources
+- [x] Downstream auth tokens contain nested `act` chain (caller → resource → downstream)
+- [x] `TokenVerifier` validates the chained `act` claims correctly
+- [x] Unit tests: upstream_token exchange, act chain construction
+- [x] Integration test: Agent → Resource 1 → Resource 2 flow
 
 ---
 
