@@ -53,15 +53,15 @@
 
 ### Definition of Done
 
-- [ ] `aa-agent+jwt` signature verified against AP JWKS before PoP is trusted
-- [ ] `aa-auth+jwt` signature verified against PS/AS JWKS + `aud` validated
-- [ ] Auth token `act.sub` validated (reject if missing)
-- [ ] `AuthTokenBuilder` emits `act: { sub: agent }` by default
-- [ ] Forged token with valid PoP but unknown/untrusted issuer → 401 `invalid_jwt`
-- [ ] `TrustedIssuers` allow-list restricts accepted issuers when configured
-- [ ] Existing `AAuthVerificationMiddleware` unchanged (non-breaking)
-- [ ] Unit tests: forged token rejected, valid token accepted, missing act rejected
-- [ ] Integration test: end-to-end with MockPersonServer
+- [x] `aa-agent+jwt` signature verified against AP JWKS before PoP is trusted
+- [x] `aa-auth+jwt` signature verified against PS/AS JWKS + `aud` validated
+- [x] Auth token `act.sub` validated (reject if missing)
+- [x] `AuthTokenBuilder` emits `act: { sub: agent }` by default
+- [x] Forged token with valid PoP but unknown/untrusted issuer → 401 `invalid_jwt`
+- [x] `TrustedIssuers` allow-list restricts accepted issuers when configured
+- [x] Existing `AAuthVerificationMiddleware` unchanged (non-breaking)
+- [x] Unit tests: forged token rejected, valid token accepted, missing act rejected
+- [x] Integration test: end-to-end with MockPersonServer
 
 ---
 
@@ -109,13 +109,13 @@
 
 ### Definition of Done
 
-- [ ] Resource returns 401 + `AAuth-Requirement` header with valid `aa-resource+jwt`
-- [ ] `IdentityOnly` mode passes through after identity verification
-- [ ] `RequireAuthToken` mode challenges when only agent token present
-- [ ] Agent-side `ChallengeHandler` successfully retries after challenge
-- [ ] `AllowedSignatureKeySchemes` rejects unlisted schemes
-- [ ] Unit tests: challenge issued, identity-only passthrough
-- [ ] Integration test: full challenge → exchange → retry flow
+- [x] Resource returns 401 + `AAuth-Requirement` header with valid `aa-resource+jwt`
+- [x] `IdentityOnly` mode passes through after identity verification
+- [x] `RequireAuthToken` mode challenges when only agent token present
+- [x] Agent-side `ChallengeHandler` successfully retries after challenge
+- [x] `AllowedSignatureKeySchemes` rejects unlisted schemes
+- [x] Unit tests: challenge issued, identity-only passthrough
+- [x] Integration test: full challenge → exchange → retry flow
 
 ---
 
@@ -166,12 +166,12 @@
 
 ### Definition of Done
 
-- [ ] `AAuthVerificationResult` stored in `HttpContext.Features` after verification
-- [ ] `HttpContext.User` populated with AAuth claims
-- [ ] `[Authorize(Policy = "AAuth.Authorized")]` requires auth-token level
-- [ ] `[RequireAAuthScope("x")]` rejects requests without scope (403)
-- [ ] Standard `User.HasClaim()` works with AAuth claims
-- [ ] Unit tests for each authorization requirement
+- [x] `AAuthVerificationResult` stored in `HttpContext.Features` after verification
+- [x] `HttpContext.User` populated with AAuth claims
+- [x] `[Authorize(Policy = "AAuth.Authorized")]` requires auth-token level
+- [x] `[RequireAAuthScope("x")]` rejects requests without scope (403)
+- [x] Standard `User.HasClaim()` works with AAuth claims
+- [x] Unit tests for each authorization requirement
 
 ---
 
