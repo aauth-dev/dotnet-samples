@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
@@ -183,6 +184,32 @@ public sealed class AAuthFullVerificationMiddleware
                 parsedInfo.Scheme is "jwt" or "jkt-jwt",
         };
 
+        // Store typed verification result in HttpContext.Features for
+        // AAuthAuthenticationHandler and authorization policies.
+        var tokenType = (string?)parsedInfo.Header?["typ"];
+        var level = DetermineLevel(parsedInfo.Scheme, tokenType);
+        var scopeString = (string?)parsedInfo.Payload?["scope"];
+        var scopes = ParseScopes(scopeString);
+        var actSub = parsedInfo.Payload?["act"]?["sub"]?.GetValue<string>();
+
+        context.Features.Set(new AAuthVerificationResult
+        {
+            Level = level,
+            Scheme = parsedInfo.Scheme,
+            TokenType = tokenType,
+            Issuer = (string?)parsedInfo.Payload?["iss"],
+            Agent = tokenType == AuthTokenBuilder.TokenType
+                ? (string?)parsedInfo.Payload?["agent"]
+                : (string?)parsedInfo.Payload?["sub"],
+            Subject = (string?)parsedInfo.Payload?["sub"],
+            Scopes = scopes,
+            ActorSubject = actSub,
+            Jkt = parsedInfo.ConfirmationKey?.ComputeJwkThumbprint()
+                ?? parsedInfo.Jkt,
+            IssuerVerified = _options.RequireIssuerVerification &&
+                parsedInfo.Scheme is "jwt" or "jkt-jwt",
+        });
+
         await _next(context).ConfigureAwait(false);
     }
 
@@ -360,6 +387,24 @@ public sealed class AAuthFullVerificationMiddleware
             return false;
         value = values[0]!;
         return true;
+    }
+
+    private static AAuthLevel DetermineLevel(string scheme, string? tokenType)
+    {
+        if (scheme == "hwk")
+            return AAuthLevel.Pseudonymous;
+        if (tokenType == AuthTokenBuilder.TokenType)
+            return AAuthLevel.Authorized;
+        return AAuthLevel.Identified;
+    }
+
+    private static HashSet<string> ParseScopes(string? scopeString)
+    {
+        if (string.IsNullOrWhiteSpace(scopeString))
+            return new HashSet<string>();
+        return new HashSet<string>(
+            scopeString.Split(' ', StringSplitOptions.RemoveEmptyEntries),
+            StringComparer.Ordinal);
     }
 }
 
