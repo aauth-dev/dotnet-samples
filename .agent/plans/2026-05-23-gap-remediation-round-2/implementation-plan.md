@@ -301,6 +301,116 @@
 
 ---
 
+## Phase 7: Samples and Documentation Updates (All Gaps)
+
+**Goal:** Update the three sample applications and documentation to reflect all new SDK features from Phases 1–6. Samples become the canonical demonstration of gap remediation features; docs become the authoritative reference.
+
+### Scope Summary
+
+| Target | Role | Primary Gaps Affected |
+|--------|------|----------------------|
+| `samples/GuidedTour/` | Agent-side educational walkthrough | 9 (jkt-jwt mode), 10 (ECDSA), 11 (call chaining), 7 (Prefer) |
+| `samples/AgentConsole/` | CLI agent client | 9 (jkt-jwt mode), 7 (Prefer), 11 (upstream_token) |
+| `samples/SampleApp/` | Blazor app (agent + mini resource) | 1–6 (server-side demos), 7–8 (polling + OTel), 9–10 (ECDSA) |
+| `docs/` | Reference documentation | All gaps |
+
+---
+
+### 7A. GuidedTour Updates
+
+**Context:** Agent-side tour showing protocol flows. Server-side features (Gaps 1–6) do NOT apply directly — those are demonstrated by WhoAmI/SampleApp.
+
+| File | Change | Gap |
+|------|--------|-----|
+| `samples/GuidedTour/TourSession.cs` | Add `jkt-jwt` case in `BuildSigningHandler()` | 9 |
+| `samples/GuidedTour/TourSession.cs` | Update `StepPollPendingAsync()` to send `Prefer: wait=N` | 7 |
+| `samples/GuidedTour/CodeSnippets.cs` | Add `SignedGetJktJwt` snippet | 9 |
+| `samples/GuidedTour/CodeSnippets.cs` | Update polling snippet to show Prefer header | 7 |
+| `samples/GuidedTour/TourOptions.cs` | Add optional `KeyType` enum (Ed25519/P-256) | 10 |
+| `samples/GuidedTour/TourSession.cs` | Optional: ECDSA P-256 key generation in bootstrap step | 10 |
+
+**Not changing:** Protocol flow structure, existing signing mode demos, server-side patterns.
+
+---
+
+### 7B. AgentConsole Updates
+
+**Context:** CLI agent tool. Purely client-side — no middleware needed.
+
+| File | Change | Gap |
+|------|--------|-----|
+| `samples/AgentConsole/Program.cs` | Add `--signing-mode jkt-jwt` option + builder case | 9 |
+| `samples/AgentConsole/Program.cs` | Add `--prefer-wait <seconds>` flag for deferred polling | 7 |
+| `samples/AgentConsole/Program.cs` | Add `--upstream-token <jwt>` flag for call chaining demo | 11 |
+
+**Not changing:** Core enrollment logic, existing signing modes, ChallengeHandler integration.
+
+---
+
+### 7C. SampleApp Updates
+
+**Context:** Blazor Server app — currently agent-only. Extend to also demonstrate server-side features by adding a mini resource endpoint.
+
+| File | Change | Gap |
+|------|--------|-----|
+| `samples/SampleApp/Program.cs` | Add middleware stack: `UseAAuthFullVerification()` + `UseAAuthChallenge()` + auth policies | 1–6 |
+| `samples/SampleApp/ResourceEndpoints.cs` | **New** — mini resource server demonstrating full verification + challenge + authorization | 1–4, 5–6 |
+| `samples/SampleApp/Components/Pages/FullVerification.razor` | **New** — demonstrates JWT issuer verification middleware | 1–2 |
+| `samples/SampleApp/Components/Pages/ScopeAuthorization.razor` | **New** — demonstrates `[Authorize]` + scope policies | 5–6 |
+| `samples/SampleApp/Components/Pages/AdvancedFeatures.razor` | **New** — tabs for jkt-jwt, ECDSA, call chaining, OTel | 7–11 |
+| `samples/SampleApp/Components/Pages/Deferred.razor` | Update to use `PreferWait` option on poller | 7 |
+| `samples/SampleApp/EnrollmentService.cs` | Add optional ECDSA key generation path | 10 |
+| `samples/SampleApp/Components/Layout/NavMenu.razor` | Add navigation for new pages | — |
+
+---
+
+### 7D. Documentation Updates
+
+#### New Files to Create
+
+| File | Purpose | Gap |
+|------|---------|-----|
+| `docs/server/full-verification-middleware.md` | Replaces/extends current verification-middleware.md — documents JWT issuer verification | 1–2 |
+| `docs/server/challenge-middleware.md` | Auto-challenge via `UseAAuthChallenge()` + `AAuthAccessMode` | 3–4 |
+| `docs/server/authentication-handler.md` | `AAuthAuthenticationHandler`, `AAuthVerificationResult`, `AAuthLevel` | 5–6 |
+| `docs/server/authorization-policies.md` | `AAuthScopeRequirement`/`AAuthScopeHandler`, `[Authorize]` integration | 5–6 |
+| `docs/workflows/call-chaining.md` | Multi-hop delegation with `upstream_token` + `act` claim | 11 |
+| `docs/advanced/observability.md` | OpenTelemetry Activity tags + `AAuthDiagnostics` | 8 |
+
+#### Existing Files to Update
+
+| File | Change | Gap |
+|------|--------|-----|
+| `docs/server/verification-middleware.md` | Add migration note pointing to full-verification-middleware.md | 1–2 |
+| `docs/server/token-issuance.md` | Document `act` claim as required for auth tokens in `AuthTokenBuilder` | 1–2 |
+| `docs/server/multi-scheme-verification.md` | Note ECDSA P-256 support in key resolution | 9–10 |
+| `docs/signing-modes/key-rotation-jkt-jwt.md` | Note P-256 keys supported for naming JWT delegation | 9–10 |
+| `docs/advanced/key-management.md` | Add ECDSA (P-256) section alongside Ed25519 | 10 |
+| `docs/workflows/deferred-consent.md` | Document `PreferWait` option in `DeferredPollerOptions` | 7 |
+| `docs/workflows/resource-managed-access.md` | Document `Prefer: wait=N` server-side behavior | 7 |
+| `docs/workflows/identity-based-access.md` | Update server-side to use new middleware APIs | 3–4 |
+| `docs/workflows/ps-asserted-access.md` | Update challenge section to reference auto-challenge middleware | 3–4 |
+| `docs/reference/configuration.md` | Add sections for all new middleware/handler options | 1–8 |
+| `docs/reference/dependency-injection.md` | Add registration examples for new services | 1–6 |
+| `docs/concepts.md` | Add `act` claim, auth levels, call chaining concepts | 1–2, 5–6, 11 |
+| `docs/README.md` | Update API map with new types; link new doc pages | All |
+
+---
+
+### Definition of Done
+
+- [ ] GuidedTour: jkt-jwt signing mode selectable and demonstrated
+- [ ] AgentConsole: `--signing-mode jkt-jwt` works end-to-end
+- [ ] SampleApp: mini resource endpoint demonstrates full verification + challenge + authorization
+- [ ] SampleApp: new Blazor pages render and demonstrate each gap feature
+- [ ] All new doc files created with correct structure and code examples
+- [ ] Existing docs updated to reference new middleware APIs
+- [ ] `docs/README.md` API map covers all new public types
+- [ ] Code examples in docs compile against updated SDK
+- [ ] Sample README.md files updated where applicable
+
+---
+
 ## Out of Scope
 
 | Item | Reason |
