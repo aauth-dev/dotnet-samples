@@ -293,11 +293,11 @@
 
 ### Definition of Done
 
-- [ ] `Prefer: wait=30` sent on poll requests when configured
-- [ ] Activity tags populated after server-side verification
-- [ ] Client spans created for token exchange and polling
-- [ ] No external OTel package dependency
-- [ ] Smoke test: verify Activity tags present
+- [x] `Prefer: wait=30` sent on poll requests when configured
+- [x] Activity tags populated after server-side verification
+- [x] Client spans created for token exchange and polling
+- [x] No external OTel package dependency
+- [x] Smoke test: verify Activity tags present
 
 ---
 

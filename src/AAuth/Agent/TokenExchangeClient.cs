@@ -85,6 +85,8 @@ public sealed class TokenExchangeClient
         ArgumentException.ThrowIfNullOrEmpty(personServer);
         ArgumentException.ThrowIfNullOrEmpty(resourceToken);
 
+        using var activity = AAuthDiagnostics.Source.StartActivity("AAuth.TokenExchange");
+
         var metadataUrl = MetadataClient.BuildUrl(personServer, "aauth-person.json");
         var doc = await _metadata.FetchAsync(metadataUrl, cancellationToken).ConfigureAwait(false);
         var tokenEndpoint = (string?)doc["token_endpoint"]
@@ -148,6 +150,7 @@ public sealed class TokenExchangeClient
                 response.Dispose();
                 try
                 {
+                    using var pollActivity = AAuthDiagnostics.Source.StartActivity("AAuth.DeferredPoll");
                     response = await new DeferredPoller(_signedClient, pollerOptions)
                         .PollAsync(pendingUrl, cancellationToken).ConfigureAwait(false);
                 }

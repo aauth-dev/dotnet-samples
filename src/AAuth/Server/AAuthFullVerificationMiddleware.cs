@@ -210,6 +210,27 @@ public sealed class AAuthFullVerificationMiddleware
                 parsedInfo.Scheme is "jwt" or "jkt-jwt",
         });
 
+        // Enrich the current Activity with AAuth verification tags for
+        // OpenTelemetry-compatible tracing (no hard OTel dependency).
+        var activity = System.Diagnostics.Activity.Current;
+        if (activity is not null)
+        {
+            activity.SetTag(AAuthDiagnostics.TagScheme, parsedInfo.Scheme);
+            activity.SetTag(AAuthDiagnostics.TagLevel, level.ToString());
+            activity.SetTag(AAuthDiagnostics.TagTokenType, tokenType);
+            if (parsedInfo.Payload?["iss"] is not null)
+                activity.SetTag(AAuthDiagnostics.TagIssuer, (string?)parsedInfo.Payload["iss"]);
+            var agent = tokenType == AuthTokenBuilder.TokenType
+                ? (string?)parsedInfo.Payload?["agent"]
+                : (string?)parsedInfo.Payload?["sub"];
+            if (agent is not null)
+                activity.SetTag(AAuthDiagnostics.TagAgent, agent);
+            if (scopeString is not null)
+                activity.SetTag(AAuthDiagnostics.TagScope, scopeString);
+            activity.SetTag(AAuthDiagnostics.TagIssuerVerified,
+                _options.RequireIssuerVerification && parsedInfo.Scheme is "jwt" or "jkt-jwt");
+        }
+
         await _next(context).ConfigureAwait(false);
     }
 

@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
@@ -108,6 +109,7 @@ public sealed class ChallengeHandler : DelegatingHandler
         }
 
         // Got an auth-token challenge. Exchange and retry.
+        using var activity = AAuthDiagnostics.Source.StartActivity("AAuth.ChallengeExchange");
         var authToken = await _exchange
             .ExchangeAsync(_personServer, requirement.ResourceToken!,
                 _onInteractionRequired, _pollerOptions,

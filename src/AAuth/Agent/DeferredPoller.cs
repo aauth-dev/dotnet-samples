@@ -32,6 +32,14 @@ public sealed record DeferredPollerOptions
     /// <see cref="TimeSpan.Zero"/> to honour the server verbatim.
     /// </summary>
     public TimeSpan MinPollInterval { get; init; } = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>
+    /// When set, sends a <c>Prefer: wait=N</c> header on each poll request,
+    /// signalling to the server that the client is willing to long-poll for
+    /// up to N seconds before receiving a response. Per RFC 7240 §4.3.
+    /// When <see langword="null"/> (default), no <c>Prefer</c> header is sent.
+    /// </summary>
+    public int? PreferWaitSeconds { get; init; }
 }
 
 /// <summary>
@@ -97,6 +105,10 @@ public sealed class DeferredPoller
             }
 
             using var request = new HttpRequestMessage(HttpMethod.Get, pendingUrl);
+            if (_options.PreferWaitSeconds is { } waitSeconds)
+            {
+                request.Headers.TryAddWithoutValidation("Prefer", $"wait={waitSeconds}");
+            }
             var response = await _signedClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
             try
             {
