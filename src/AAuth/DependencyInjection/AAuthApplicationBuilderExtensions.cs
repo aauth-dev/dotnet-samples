@@ -29,6 +29,43 @@ public static class AAuthApplicationBuilderExtensions
     }
 
     /// <summary>
+    /// Add the AAuth full verification middleware that performs BOTH HTTP signature
+    /// PoP verification AND JWT issuer signature verification in a single pass.
+    /// </summary>
+    /// <param name="app">The application builder.</param>
+    /// <param name="options">Full verification options. When null, uses default options (issuer verification enabled, no issuer allow-list).</param>
+    public static IApplicationBuilder UseAAuthFullVerification(
+        this IApplicationBuilder app,
+        FullVerificationOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+
+        var verifier = app.ApplicationServices.GetRequiredService<AAuthVerifier>();
+        var resolver = app.ApplicationServices.GetService<ISignatureKeyResolver>()
+            ?? new DefaultSignatureKeyResolver(app.ApplicationServices.GetService<JwksClient>());
+        var metadata = app.ApplicationServices.GetRequiredService<MetadataClient>();
+        var jwks = app.ApplicationServices.GetRequiredService<JwksClient>();
+        var jtiStore = app.ApplicationServices.GetService<IJtiStore>();
+        var resolvedOptions = options ?? new FullVerificationOptions();
+
+        if (jtiStore is not null)
+        {
+            app.Use(async (context, next) =>
+            {
+                context.Items[AAuthVerificationMiddleware.JtiStoreItemKey] = jtiStore;
+                await next();
+            });
+        }
+
+        return app.Use(next =>
+        {
+            var mw = new AAuthFullVerificationMiddleware(
+                next, verifier, resolver, metadata, jwks, resolvedOptions);
+            return mw.InvokeAsync;
+        });
+    }
+
+    /// <summary>
     /// Map the <c>/.well-known/aauth-resource.json</c> and <c>/.well-known/jwks.json</c>
     /// endpoints from DI-registered <see cref="AAuthResourceMetadataOptions"/>.
     /// </summary>
