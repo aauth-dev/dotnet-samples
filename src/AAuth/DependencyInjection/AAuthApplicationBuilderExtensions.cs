@@ -82,4 +82,34 @@ public static class AAuthApplicationBuilderExtensions
         var options = endpoints.ServiceProvider.GetRequiredService<AAuthResourceMetadataOptions>();
         return WellKnownEndpoints.MapAAuthResourceWellKnown(endpoints, options);
     }
+
+    /// <summary>
+    /// Register the standard intermediary-resource middleware in
+    /// spec-compliant order: <see cref="UseAAuthVerification"/> (HTTP
+    /// signature PoP + JWT issuer verification) followed by
+    /// <see cref="UseAAuthChallenge"/> (auto-issuance of the 401 + resource
+    /// token when only an agent token is presented).
+    /// </summary>
+    /// <remarks>
+    /// Suitable for any resource that acts as an agent for downstream
+    /// resources (call-chaining / multi-hop) — see §Call Chaining of the
+    /// AAuth protocol specification. After this call, an endpoint handler
+    /// that runs is guaranteed to have received an <c>aa-auth+jwt</c>
+    /// (verified) caller; the inbound auth token is exposed for
+    /// call-chaining via the <see cref="UpstreamAuthTokenFeature"/> on
+    /// <see cref="Microsoft.AspNetCore.Http.HttpContext.Features"/>.
+    /// </remarks>
+    public static IApplicationBuilder UseAAuthIntermediary(
+        this IApplicationBuilder app,
+        AAuthVerificationOptions verificationOptions,
+        ChallengeOptions challengeOptions)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        ArgumentNullException.ThrowIfNull(verificationOptions);
+        ArgumentNullException.ThrowIfNull(challengeOptions);
+
+        app.UseAAuthVerification(verificationOptions);
+        app.UseAAuthChallenge(challengeOptions);
+        return app;
+    }
 }

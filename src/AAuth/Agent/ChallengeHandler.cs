@@ -29,36 +29,53 @@ public sealed class ChallengeHandler : DelegatingHandler
 {
     private readonly TokenExchangeClient _exchange;
     private readonly AAuthTokenHolder _holder;
-    private readonly string _personServer;
+    private readonly string? _personServer;
     private readonly Func<AAuthInteraction, CancellationToken, Task>? _onInteractionRequired;
     private readonly DeferredPollerOptions? _pollerOptions;
+    private readonly Func<string?>? _upstreamTokenProvider;
 
     /// <summary>Create the challenge handler.</summary>
     /// <param name="exchange">Token exchange client (configured with the agent token).</param>
     /// <param name="holder">Shared carrier-token holder used by the signer.</param>
-    /// <param name="personServer">PS issuer URL where resource tokens are exchanged.</param>
+    /// <param name="personServer">
+    /// PS issuer URL where resource tokens are exchanged. Ignored when
+    /// <paramref name="upstreamTokenProvider"/> returns a non-null value
+    /// — call chaining routes per <see cref="Server.CallChainingRouter"/>.
+    /// </param>
     /// <param name="onInteractionRequired">
     /// Optional callback invoked when the PS returns <c>202 + requirement=interaction</c>
     /// during the embedded exchange. Hosts wire this to "display URL to user" UI.
     /// When <see langword="null"/>, a deferred PS response surfaces as an exception.
     /// </param>
     /// <param name="pollerOptions">Optional polling cadence/timeout override.</param>
+    /// <param name="upstreamTokenProvider">
+    /// Optional provider invoked per challenge that supplies the inbound
+    /// (caller's) auth token. When it returns a non-null value the embedded
+    /// exchange is treated as a call-chaining exchange: the destination
+    /// PS/AS is resolved via <see cref="Server.CallChainingRouter"/> and the
+    /// returned token is passed as <c>upstream_token</c> in the request body.
+    /// </param>
     public ChallengeHandler(
         TokenExchangeClient exchange,
         AAuthTokenHolder holder,
-        string personServer,
+        string? personServer,
         Func<AAuthInteraction, CancellationToken, Task>? onInteractionRequired = null,
-        DeferredPollerOptions? pollerOptions = null)
+        DeferredPollerOptions? pollerOptions = null,
+        Func<string?>? upstreamTokenProvider = null)
     {
         ArgumentNullException.ThrowIfNull(exchange);
         ArgumentNullException.ThrowIfNull(holder);
-        ArgumentException.ThrowIfNullOrEmpty(personServer);
+        if (personServer is null && upstreamTokenProvider is null)
+            throw new ArgumentException(
+                "Either personServer or upstreamTokenProvider must be supplied.",
+                nameof(personServer));
 
         _exchange = exchange;
         _holder = holder;
         _personServer = personServer;
         _onInteractionRequired = onInteractionRequired;
         _pollerOptions = pollerOptions;
+        _upstreamTokenProvider = upstreamTokenProvider;
     }
 
     /// <inheritdoc />
@@ -110,10 +127,21 @@ public sealed class ChallengeHandler : DelegatingHandler
 
         // Got an auth-token challenge. Exchange and retry.
         using var activity = AAuthDiagnostics.Source.StartActivity("AAuth.ChallengeExchange");
+
+        // Call-chaining path: when the host has surfaced an inbound auth
+        // token, send it as upstream_token and route the exchange per
+        // §Call Chaining instead of using the static personServer.
+        var upstreamToken = _upstreamTokenProvider?.Invoke();
+        var targetServer = upstreamToken is not null
+            ? Server.CallChainingRouter.ResolveDownstreamServer(upstreamToken)
+            : _personServer
+                ?? throw new InvalidOperationException(
+                    "ChallengeHandler has no personServer and the upstream token provider returned null.");
+
         var authToken = await _exchange
-            .ExchangeAsync(_personServer, requirement.ResourceToken!,
+            .ExchangeAsync(targetServer, requirement.ResourceToken!,
                 _onInteractionRequired, _pollerOptions,
-                upstreamToken: null, cancellationToken)
+                upstreamToken: upstreamToken, cancellationToken)
             .ConfigureAwait(false);
         _holder.Update(authToken);
 

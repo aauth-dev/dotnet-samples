@@ -55,6 +55,9 @@ public sealed class AAuthClientBuilder
     private bool _interactionHandling;
     private Action<InteractionHandlingOptions>? _interactionOptionsConfigure;
 
+    // Call-chaining state
+    private Func<string?>? _upstreamTokenProvider;
+
     // Stored token (for reading claims)
     private string? _agentToken;
     private Func<string>? _tokenFactory;
@@ -243,6 +246,53 @@ public sealed class AAuthClientBuilder
         return this;
     }
 
+    /// <summary>
+    /// Enable call-chaining: when the client receives a 401 challenge from a
+    /// downstream resource, the SDK exchanges the resource token at the
+    /// PS/AS resolved per §Call Chaining of the AAuth specification and
+    /// passes the supplied upstream auth token as <c>upstream_token</c>
+    /// so the PS can build the nested <c>act</c> claim (§Upstream Token
+    /// Verification). Combine with <see cref="WithChallengeHandling()"/>.
+    /// </summary>
+    /// <param name="upstreamTokenProvider">
+    /// Provider invoked per challenge that returns the inbound (caller's)
+    /// auth token to forward. May return <see langword="null"/> to indicate
+    /// no upstream context is available, in which case the embedded exchange
+    /// falls back to the configured Person Server.
+    /// </param>
+    public AAuthClientBuilder WithCallChaining(Func<string?> upstreamTokenProvider)
+    {
+        ArgumentNullException.ThrowIfNull(upstreamTokenProvider);
+        _upstreamTokenProvider = upstreamTokenProvider;
+        return this;
+    }
+
+    /// <summary>
+    /// Enable call-chaining with a fixed upstream auth token (e.g. one the
+    /// caller has captured from <c>HttpContext.Features</c>).
+    /// </summary>
+    public AAuthClientBuilder WithCallChaining(string upstreamAuthToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(upstreamAuthToken);
+        _upstreamTokenProvider = () => upstreamAuthToken;
+        return this;
+    }
+
+    /// <summary>
+    /// Enable call-chaining sourced from the current ASP.NET Core request:
+    /// reads the verified upstream <c>aa-auth+jwt</c> from
+    /// <see cref="Microsoft.AspNetCore.Http.HttpContext.Features"/> (set
+    /// by <see cref="Server.AAuthVerificationMiddleware"/>) when the
+    /// downstream challenge fires.
+    /// </summary>
+    public AAuthClientBuilder WithCallChaining(Microsoft.AspNetCore.Http.HttpContext httpContext)
+    {
+        ArgumentNullException.ThrowIfNull(httpContext);
+        _upstreamTokenProvider = () =>
+            httpContext.Features.Get<Server.UpstreamAuthTokenFeature>()?.Token;
+        return this;
+    }
+
     /// <summary>Build the configured <see cref="HttpClient"/>.</summary>
     /// <exception cref="InvalidOperationException">No signing mode was configured.</exception>
     public HttpClient Build() => new HttpClient(BuildHandler());
@@ -258,7 +308,7 @@ public sealed class AAuthClientBuilder
             throw new InvalidOperationException(
                 "A signing mode must be configured. Call UseHwk(), UseJwksUri(), or UseJktJwt() before Build(), or use WithTokenRefresh() for JWT mode.");
 
-        if (!_challengeHandling)
+        if (!_challengeHandling && _upstreamTokenProvider is null)
         {
             // When WithTokenRefresh is configured but no explicit provider,
             // create a JWT signing pipeline with lazy token acquisition.
@@ -291,7 +341,9 @@ public sealed class AAuthClientBuilder
 
         // --- Challenge-handling pipeline ---
         var agentToken = ResolveAgentToken();
-        var personServer = ResolvePersonServer(agentToken);
+        var personServer = _upstreamTokenProvider is not null
+            ? ResolvePersonServerOptional(agentToken)
+            : ResolvePersonServer(agentToken);
 
         var challengeOptions = new ChallengeHandlingOptions();
         _challengeOptionsConfigure?.Invoke(challengeOptions);
@@ -336,7 +388,8 @@ public sealed class AAuthClientBuilder
         // Challenge handler sits above the outer signer.
         var challengeHandler = new ChallengeHandler(
             exchangeClient, tokenHolder, personServer,
-            challengeOptions.OnInteractionRequired, pollerOptions)
+            challengeOptions.OnInteractionRequired, pollerOptions,
+            upstreamTokenProvider: _upstreamTokenProvider)
         {
             InnerHandler = outerSigner,
         };
@@ -418,6 +471,14 @@ public sealed class AAuthClientBuilder
         throw new InvalidOperationException(
             "WithChallengeHandling() requires a token source. " +
             "Configure WithTokenRefresh() for lazy token acquisition.");
+    }
+
+    private string? ResolvePersonServerOptional(string? agentToken)
+    {
+        if (_personServer is not null) return _personServer;
+        if (agentToken is null) return null;
+        var payload = TokenRefreshHandler.ReadPayloadUnsafe(agentToken);
+        return (string?)payload["ps"];
     }
 
     private string ResolvePersonServer(string? agentToken)

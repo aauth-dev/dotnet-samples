@@ -204,6 +204,15 @@ public sealed class AAuthVerificationMiddleware
         var scopes = ParseScopes(scopeString);
         var actSub = parsedInfo.Payload?["act"]?["sub"]?.GetValue<string>();
 
+        // Expose the verified upstream auth token to intermediary endpoints
+        // so they can call WithCallChaining(...) without re-parsing
+        // Signature-Key. Spec: this is the caller's auth token that must be
+        // sent as upstream_token on any downstream exchange (§Call Chaining).
+        if (tokenType == AuthTokenBuilder.TokenType && !string.IsNullOrEmpty(parsedInfo.Jwt))
+        {
+            context.Features.Set(new UpstreamAuthTokenFeature(parsedInfo.Jwt));
+        }
+
         context.Features.Set(new AAuthVerificationResult
         {
             Level = level,

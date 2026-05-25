@@ -46,65 +46,80 @@ using var client = new AAuthClientBuilder(key)
 var response = await client.GetAsync("https://orchestrator.example");
 ```
 
-### Intermediate Service — Resource + Agent Pattern
+### Intermediate Service — Simplified API
 
-The intermediate service (Orchestrator) acts as both a resource and an agent:
+An intermediate service registers `UseAAuthIntermediary` once and builds a
+downstream client with `WithCallChaining(HttpContext)`. The SDK handles
+the entire flow — incoming verification, agent-token challenge, downstream
+challenge, `upstream_token` exchange, and retry — with no manual JWT
+inspection, header parsing, or second-client construction.
 
 ```csharp
-// 1. Verify incoming requests with full issuer verification
-app.UseAAuthVerification(new AAuthVerificationOptions
-{
-    ResourceIdentifier = orchestratorUrl,
-    RequireIssuerVerification = true,
-});
+// 1. Server-side: verification + auto-challenge in spec-compliant order.
+app.UseAAuthIntermediary(
+    new AAuthVerificationOptions
+    {
+        ResourceIdentifier = orchestratorUrl,
+        RequireIssuerVerification = true,
+    },
+    new ChallengeOptions
+    {
+        AccessMode        = AAuthAccessMode.RequireAuthToken,
+        ResourceSigningKey = orchestratorKey,
+        ResourceKeyId     = "orch-1",
+        ResourceIdentifier = orchestratorUrl,
+        DefaultScopes     = "orchestrate",
+    });
 
+// 2. Endpoint: only reached with a verified aa-auth+jwt caller.
 app.MapGet("/", async (HttpContext ctx) =>
 {
-    var parsed = (ParsedSignatureKeyInfo)
-        ctx.Items[AAuthVerificationMiddleware.ParsedInfoItemKey]!;
-    var typ = (string?)parsed.Header?["typ"];
-
-    // Agent token → challenge the caller
-    if (typ == "aa-agent+jwt")
-    {
-        var rt = new ResourceTokenBuilder
-        {
-            Issuer = orchestratorUrl,
-            Audience = parsed.Payload?["ps"]?.ToString(),
-            Agent = parsed.Payload?["sub"]?.ToString(),
-            AgentJkt = parsed.ConfirmationKey!.ComputeJwkThumbprint(),
-            Key = orchestratorKey,
-            KeyId = "orch-1",
-            Scope = "orchestrate",
-        }.Build();
-
-        ctx.Response.Headers["AAuth-Requirement"] =
-            AAuthRequirementHeader.FormatAuthToken(rt);
-        return Results.Json(new { error = "auth_token_required" },
-            statusCode: 401);
-    }
-
-    // Auth token → forward downstream with call chaining
-    var upstreamAuthToken = parsed.Jwt; // caller's auth token
-
-    // 2. Exchange at PS WITH upstream_token
-    var exchange = new TokenExchangeClient(signedClient, metadata);
-    var chained = await exchange.ExchangeAsync(
-        personServer, resourceToken,
-        upstreamToken: upstreamAuthToken);
-
-    // 3. Call downstream with the chained auth token
-    using var downstream = new AAuthClientBuilder(myKey)
-        .UseJwt(chained)
+    using var downstream = new AAuthClientBuilder(myAgentKey)
+        .WithTokenRefresh(refreshFunc)
+        .WithChallengeHandling()
+        .WithCallChaining(ctx)         // ← auto-forwards upstream_token
         .Build();
-    var result = await downstream.GetAsync(whoamiUrl);
-    // ...
+
+    var response = await downstream.GetAsync(downstreamUrl);
+    return Results.Ok(await response.Content.ReadAsStringAsync());
 });
+```
+
+Under the hood, `WithCallChaining(ctx)` reads the verified upstream auth
+token from `HttpContext.Features` (set by the verification middleware),
+routes the exchange via `CallChainingRouter` per §Call Chaining of the
+spec, and passes the upstream token as `upstream_token` so the PS builds
+the nested `act` chain (§Upstream Token Verification).
+
+> **Mission propagation:** `WithCallChaining` does not synthesize or
+> strip the `AAuth-Mission` header. Mission context is conveyed by the
+> upstream auth token's `mission.approver` / `mission.s256` claims and by
+> the application's own outbound header emission policy. Mission-aware
+> intermediaries are responsible for emitting `AAuth-Mission` on
+> outbound requests when their application semantics require it.
+
+### Lower-Level Building Blocks
+
+If you need to drive the chained exchange manually (for example, to
+combine it with custom retry/transport logic), the SDK exposes:
+
+```csharp
+// Pure-function routing per §Call Chaining (mission.approver else iss).
+var target = CallChainingRouter.ResolveDownstreamServer(upstreamAuthToken);
+
+// One-shot helper that wraps TokenExchangeClient with the right routing
+// + upstream_token plumbing + 202/interaction propagation.
+var helper = new CallChainingHandler(exchangeClient, options);
+var chained = await helper.ExchangeForDownstreamAsync(
+    upstreamAuthToken,
+    resourceToken,
+    onInteractionRequired: async (interaction, ct) => { /* display URL */ });
 ```
 
 ### UseJwt — Presenting a Pre-Acquired Token
 
-When an intermediary already holds a token (from exchange), use `UseJwt` to present it directly without token refresh:
+When code already holds a token (from a prior exchange or out-of-band
+issuance), use `UseJwt` to present it directly without token refresh:
 
 ```csharp
 // UseJwt(string) — static token
@@ -120,7 +135,8 @@ using var client = new AAuthClientBuilder(key)
 
 ### Token Exchange with upstream_token
 
-When calling `TokenExchangeClient.ExchangeAsync`, pass the upstream auth token:
+When calling `TokenExchangeClient.ExchangeAsync` directly, pass the
+upstream auth token via the `upstreamToken` parameter:
 
 ```csharp
 var exchange = new TokenExchangeClient(signedClient, metadata);
