@@ -188,7 +188,7 @@ else
             _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
             _success = response.IsSuccessStatusCode;
             var raw = await response.Content.ReadAsStringAsync();
-            try { _response = System.Text.Json.JsonSerializer.Serialize(System.Text.Json.JsonDocument.Parse(raw), new System.Text.Json.JsonSerializerOptions { WriteIndented = true }); }
+            try { _response = System.Text.Json.JsonSerializer.Serialize(System.Text.Json.JsonDocument.Parse(raw), new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }); }
             catch { _response = raw; }
         }
         catch (Exception ex)
