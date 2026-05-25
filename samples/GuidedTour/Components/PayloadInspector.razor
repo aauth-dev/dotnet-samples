@@ -97,15 +97,23 @@
     }
 
     // Renders narrative text with backtick-quoted spans (`like-this`) as
-    // <code> elements. Input is HTML-escaped first so user-supplied text
-    // can't inject markup.
+    // <code> elements and **bold** as <strong>. Newlines become <br/>.
+    // Input is HTML-escaped first so user-supplied text can't inject markup.
     private static MarkupString RenderNarrative(string text)
     {
         var escaped = System.Net.WebUtility.HtmlEncode(text ?? string.Empty);
-        var rendered = System.Text.RegularExpressions.Regex.Replace(
+        // **bold**
+        escaped = System.Text.RegularExpressions.Regex.Replace(
+            escaped,
+            @"\*\*([^*]+)\*\*",
+            "<strong>$1</strong>");
+        // `code`
+        escaped = System.Text.RegularExpressions.Regex.Replace(
             escaped,
             "`([^`]+)`",
             "<code class=\"inline\">$1</code>");
-        return new MarkupString(rendered);
+        // newlines → <br/>
+        escaped = escaped.Replace("\n", "<br/>");
+        return new MarkupString(escaped);
     }
 }

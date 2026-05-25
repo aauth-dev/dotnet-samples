@@ -132,6 +132,12 @@ public sealed class TourSession : IAsyncDisposable
     /// <summary>True when the configured flow is autonomous (standing consent, no user interaction).</summary>
     public bool IsAutonomousMode => HasPersonServer && _mode == TourMode.Autonomous;
 
+    /// <summary>True when the configured flow is the call-chain (multi-agent) path.</summary>
+    public bool IsCallChainMode => HasPersonServer && _mode == TourMode.CallChain && HasOrchestrator;
+
+    /// <summary>True when an Orchestrator URL is configured.</summary>
+    public bool HasOrchestrator => !string.IsNullOrWhiteSpace(_options.OrchestratorUrl);
+
     /// <summary>True when an Agent Provider URL is configured for real AP enrolment.</summary>
     public bool HasAgentProvider => !string.IsNullOrWhiteSpace(_options.AgentProviderUrl);
 
@@ -142,6 +148,7 @@ public sealed class TourSession : IAsyncDisposable
         {
             if (IsBootstrapMode) return HasAgentProvider ? 3 : 2;
             if (IsIdentityMode) return 2;
+            if (IsCallChainMode) return 7;
             return IsDeferredMode ? 9 : 6;
         }
     }
@@ -158,6 +165,7 @@ public sealed class TourSession : IAsyncDisposable
         {
             if (IsBootstrapMode) return HasAgentProvider ? ApBootstrapPlan : LocalBootstrapPlan;
             if (IsIdentityMode) return IdentityPlan;
+            if (IsCallChainMode) return CallChainPlan;
             return IsDeferredMode ? DeferredPlan : AutonomousPlan;
         }
     }
@@ -202,6 +210,17 @@ public sealed class TourSession : IAsyncDisposable
         new(7, "User approves at the PS", "User opens the PS consent page in a new tab and clicks Approve; PS records consent.", Actor.PersonServer, Actor.PersonServer),
         new(8, "Poll pending URL → 200 auth_token", "Signed GETs to /pending/{id} until the PS mints the auth_token.", Actor.Agent, Actor.PersonServer),
         new(9, "Replay GET / with auth_token", "Signed retry carries the auth_token in Signature-Key → 200 + claims.", Actor.Agent, Actor.Resource),
+    };
+
+    private static readonly TourPlanStep[] CallChainPlan =
+    {
+        new(1, "Discover Orchestrator metadata", "Unsigned GET /.well-known/aauth-resource.json on the Orchestrator.", Actor.Agent, Actor.Orchestrator),
+        new(2, "Signed GET → 401 (agent token challenge)", "Orchestrator returns 401 with a resource_token — it requires an auth token.", Actor.Agent, Actor.Orchestrator),
+        new(3, "Parse the 401 challenge", "Decode the AAuth-Requirement header and Orchestrator's resource_token.", Actor.Agent, Actor.Agent),
+        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint.", Actor.Agent, Actor.PersonServer),
+        new(5, "Exchange at PS → auth_token", "Signed POST /token with the Orchestrator's resource_token; PS mints auth_token.", Actor.Agent, Actor.PersonServer),
+        new(6, "Retry Orchestrator with auth_token", "Signed GET with auth_token → Orchestrator chains downstream.", Actor.Agent, Actor.Orchestrator),
+        new(7, "Inspect multi-agent result", "Review the combined response showing the full Agent → Orchestrator → WhoAmI chain.", Actor.Agent, Actor.Agent),
     };
 
     /// <summary>True when no more steps remain in the current flow.</summary>
@@ -297,6 +316,7 @@ public sealed class TourSession : IAsyncDisposable
         _interactionUrl = null;
         _interactionCode = null;
         _apEnrolEndpoint = null;
+        _callChainResponseBody = null;
         _userApproved = false;
         _aborted = false;
     }
@@ -412,6 +432,19 @@ public sealed class TourSession : IAsyncDisposable
                 case 9: await StepRetryWithAuthTokenAsync(ct); break;
             }
         }
+        else if (IsCallChainMode)
+        {
+            switch (nextStep)
+            {
+                case 1: await StepCallChainDiscoverOrchestratorAsync(ct); break;
+                case 2: await StepCallChainSignedGetAsync(ct); break;
+                case 3: StepCallChainParseChallenge(); break;
+                case 4: await StepFetchPersonMetadataAsync(ct); break;
+                case 5: await StepCallChainExchangeAsync(ct); break;
+                case 6: await StepCallChainRetryAsync(ct); break;
+                case 7: StepCallChainInspectResult(); break;
+            }
+        }
         else
         {
             switch (nextStep)
@@ -499,6 +532,17 @@ public sealed class TourSession : IAsyncDisposable
                     new { agent = _options.AgentId, resource = _options.WhoAmIUrl.TrimEnd('/') },
                     ct);
             }
+
+            // Call-chain mode needs consent for the Orchestrator audience
+            // (the agent's auth_token targets the Orchestrator, not WhoAmI).
+            if (IsCallChainMode && !string.IsNullOrWhiteSpace(_options.PersonServerUrl))
+            {
+                using var adminClient = new HttpClient();
+                await adminClient.PostAsJsonAsync(
+                    $"{_options.PersonServerUrl.TrimEnd('/')}/admin/consent",
+                    new { agent = _options.AgentId, resource = _options.OrchestratorUrl!.TrimEnd('/') },
+                    ct);
+            }
         }
     }
 
@@ -572,6 +616,22 @@ public sealed class TourSession : IAsyncDisposable
             // a real PS this call will 404 / fail. That's fine — autonomous
             // mode against a real PS doesn't need it, and deferred mode
             // against a real PS won't be exercised in the demo. Swallow.
+        }
+
+        // Call-chain mode also needs consent for the Orchestrator audience.
+        if (IsCallChainMode && !string.IsNullOrWhiteSpace(_options.OrchestratorUrl))
+        {
+            try
+            {
+                await client.PostAsJsonAsync(
+                    $"{_options.PersonServerUrl!.TrimEnd('/')}/admin/consent",
+                    new
+                    {
+                        agent = _options.AgentId,
+                        resource = _options.OrchestratorUrl!.TrimEnd('/'),
+                    }, ct);
+            }
+            catch { /* swallow — same as above */ }
         }
     }
 
@@ -1329,6 +1389,276 @@ public sealed class TourSession : IAsyncDisposable
                 $"Simulated POST /interaction/deny  (form: code={_interactionCode})\n" +
                 $"Status: {(int)resp.StatusCode} {resp.ReasonPhrase}",
         });
+    }
+
+    // -----------------------------------------------------------------
+    // Call-chain (multi-agent) step implementations
+    // -----------------------------------------------------------------
+
+    private string? _callChainResponseBody;
+
+    private string CallChainTargetUrl => _options.OrchestratorUrl!.TrimEnd('/');
+
+    private async Task StepCallChainDiscoverOrchestratorAsync(CancellationToken ct)
+    {
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        using var client = new HttpClient(capture);
+        var url = $"{CallChainTargetUrl}/.well-known/aauth-resource.json";
+        await client.GetAsync(url, ct);
+        var ex = capture.Last!;
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Discover Orchestrator metadata",
+            From = Actor.Agent,
+            To = Actor.Orchestrator,
+            Narrative =
+                "The Orchestrator is itself an AAuth-protected resource. The agent " +
+                "fetches its well-known metadata just like any other resource. The " +
+                "response confirms the Orchestrator's issuer and JWKS endpoint.",
+            RequestLine = $"{ex.RequestLine}  →  {url}",
+            RequestHeaders = ex.RequestHeaders,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            CodeSnippet = CodeSnippets.DiscoverResource,
+        });
+    }
+
+    private async Task StepCallChainSignedGetAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        var resp = await client.GetAsync(CallChainTargetUrl, ct);
+        var ex = capture.Last!;
+
+        if (resp.StatusCode == System.Net.HttpStatusCode.Unauthorized &&
+            resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqHeaders))
+        {
+            var parsed = AAuthRequirementHeader.Parse(reqHeaders.First());
+            _resourceToken = parsed.ResourceToken;
+        }
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Signed GET → 401 (agent token challenge)",
+            From = Actor.Agent,
+            To = Actor.Orchestrator,
+            Narrative =
+                "The agent calls the Orchestrator with its agent token (`sig=jwt`). " +
+                "The Orchestrator recognises this is an agent token (not an auth " +
+                "token) and returns `401` with a resource_token. This tells the " +
+                "agent: \"I need a PS-issued auth_token scoped to me before I'll " +
+                "forward your request downstream.\"",
+            RequestLine = $"{ex.RequestLine}  →  {CallChainTargetUrl}",
+            RequestHeaders = ex.RequestHeaders,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            SignatureBase = capturedBase,
+            CodeSnippet = CodeSnippets.SignedGetJwt,
+        });
+    }
+
+    private void StepCallChainParseChallenge()
+    {
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Parse Orchestrator's 401 challenge",
+            From = Actor.Orchestrator,
+            To = Actor.Agent,
+            Narrative =
+                "The Orchestrator's 401 contains an `aa-resource+jwt` whose `aud` " +
+                "points at the Person Server. The agent will exchange this " +
+                "resource_token at the PS to obtain an auth_token scoped to the " +
+                "Orchestrator.",
+            TokenJwt = _resourceToken,
+            TokenHeader = DecodeJwt(_resourceToken)?.Header,
+            TokenPayload = DecodeJwt(_resourceToken)?.Payload,
+            CodeSnippet = CodeSnippets.ParseChallenge,
+        });
+    }
+
+    private async Task StepCallChainExchangeAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
+        {
+            resource_token = _resourceToken,
+        }, ct);
+
+        var ex = capture.Last!;
+        var body = JsonNode.Parse(ex.ResponseBody);
+        _authToken = (string?)body?["auth_token"];
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Exchange at PS → auth_token (for Orchestrator)",
+            From = Actor.Agent,
+            To = Actor.PersonServer,
+            Narrative =
+                "The agent exchanges the Orchestrator's resource_token at the PS. " +
+                "The PS mints an `aa-auth+jwt` whose `aud` is the Orchestrator " +
+                "(not WhoAmI). This auth_token proves: \"this person consented to " +
+                "this agent calling the Orchestrator on their behalf.\"",
+            RequestLine = $"{ex.RequestLine}  →  {_tokenEndpoint}",
+            RequestHeaders = ex.RequestHeaders,
+            RequestBody = PrettyJson(ex.RequestBody),
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            SignatureBase = capturedBase,
+            TokenJwt = _authToken,
+            TokenHeader = DecodeJwt(_authToken)?.Header,
+            TokenPayload = DecodeJwt(_authToken)?.Payload,
+            CodeSnippet = CodeSnippets.TokenExchangeDirect,
+        });
+    }
+
+    private async Task StepCallChainRetryAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _authToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        await client.GetAsync(CallChainTargetUrl, ct);
+        var ex = capture.Last!;
+        _callChainResponseBody = ex.ResponseBody;
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Retry Orchestrator with auth_token → 200",
+            From = Actor.Agent,
+            To = Actor.Orchestrator,
+            Narrative =
+                "The agent retries with the auth_token. The Orchestrator now:\n\n" +
+                "1. **Validates** the auth_token (signature, audience, key binding)\n" +
+                "2. **Extracts** the auth_token as `upstream_token`\n" +
+                "3. **Calls WhoAmI** with its own agent token → gets 401 challenge\n" +
+                "4. **Exchanges** at the PS with `upstream_token` → PS builds a **nested `act` claim**\n" +
+                "5. **Retries WhoAmI** with the chained auth_token → 200\n" +
+                "6. **Returns** the combined result to us\n\n" +
+                "All of steps 2–6 happen server-side inside the Orchestrator. " +
+                "From our perspective, we just see a single 200 response. " +
+                "The sub-arrows in the diagram show the internal flow.",
+            RequestLine = $"{ex.RequestLine}  →  {CallChainTargetUrl}",
+            RequestHeaders = ex.RequestHeaders,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            SignatureBase = capturedBase,
+            CodeSnippet = CodeSnippets.CallChainRetry,
+            SubSteps = new SubStep[]
+            {
+                new("GET / (agent token)", Actor.Orchestrator, Actor.Resource),
+                new("401 + resource_token", Actor.Resource, Actor.Orchestrator),
+                new("POST /token + upstream_token", Actor.Orchestrator, Actor.PersonServer),
+                new("200 + chained auth_token (nested act)", Actor.PersonServer, Actor.Orchestrator),
+                new("GET / (chained auth_token)", Actor.Orchestrator, Actor.Resource),
+                new("200 + claims", Actor.Resource, Actor.Orchestrator),
+            },
+        });
+    }
+
+    private void StepCallChainInspectResult()
+    {
+        var parsed = _callChainResponseBody is not null
+            ? JsonNode.Parse(_callChainResponseBody) : null;
+
+        var downstream = parsed?["downstream"];
+        var downstreamAct = downstream?["act"];
+
+        // Build a narrative explaining the nested act chain
+        var actExplanation = downstreamAct is not null
+            ? $"\n\nThe `act` claim in the downstream response shows the delegation " +
+              $"chain: the outermost `act.sub` is the Orchestrator's identity, and " +
+              $"any nested `act.act.sub` is the original calling agent (you). This " +
+              $"proves end-to-end that WhoAmI was accessed on behalf of a specific " +
+              $"person, delegated through a known intermediary."
+            : "";
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Inspect multi-agent chain result",
+            From = Actor.Agent,
+            To = Actor.Agent,
+            Narrative =
+                "The Orchestrator's response contains three sections:\n\n" +
+                "- **upstream**: how we (the calling agent) authenticated to the Orchestrator\n" +
+                "- **orchestrator**: the Orchestrator's own identity and what it did\n" +
+                "- **downstream**: the WhoAmI response, which includes the full " +
+                "delegation chain via nested `act` claims\n\n" +
+                "This demonstrates **multi-agent call chaining**: each hop in the " +
+                "chain is cryptographically accountable. The Person Server built " +
+                "a nested auth_token that records the full delegation path, and " +
+                "the final resource (WhoAmI) can see exactly who acted on whose behalf." +
+                actExplanation,
+            ResponseBody = PrettyJson(_callChainResponseBody),
+            TokenDecoded = FormatChainSummary(parsed),
+        });
+    }
+
+    private static string FormatChainSummary(JsonNode? result)
+    {
+        if (result is null) return "(no response to inspect)";
+        var lines = new System.Text.StringBuilder();
+        lines.AppendLine("═══ Call Chain Summary ═══");
+        lines.AppendLine();
+
+        var upstream = result["upstream"];
+        if (upstream is not null)
+        {
+            lines.AppendLine($"  Caller (you):");
+            lines.AppendLine($"    scheme:     {upstream["scheme"]}");
+            lines.AppendLine($"    agent:      {upstream["agent"]}");
+            lines.AppendLine($"    tokenType:  {upstream["tokenType"]}");
+            lines.AppendLine();
+        }
+
+        var orch = result["orchestrator"];
+        if (orch is not null)
+        {
+            lines.AppendLine($"  Orchestrator:");
+            lines.AppendLine($"    identity:   {orch["identity"]}");
+            lines.AppendLine($"    action:     {orch["action"]}");
+            lines.AppendLine();
+        }
+
+        var downstream = result["downstream"];
+        if (downstream is not null)
+        {
+            lines.AppendLine($"  Downstream (WhoAmI):");
+            lines.AppendLine($"    scheme:     {downstream["scheme"]}");
+            lines.AppendLine($"    agent:      {downstream["agent"]}");
+            var act = downstream["act"];
+            if (act is not null)
+            {
+                lines.AppendLine($"    act.sub:    {act["sub"]}  (Orchestrator)");
+                var innerAct = act["act"];
+                if (innerAct is not null)
+                {
+                    lines.AppendLine($"    act.act.sub: {innerAct["sub"]}  (original caller = you)");
+                }
+            }
+        }
+
+        return lines.ToString();
     }
 
     // -----------------------------------------------------------------

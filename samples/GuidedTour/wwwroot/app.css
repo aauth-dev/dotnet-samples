@@ -258,12 +258,14 @@ button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef44
 .lanes .lane { font-weight: 600; padding: 0.5rem; background: var(--panel-2); margin: 0 0.25rem; border-radius: 6px; }
 .lanes .agent { color: var(--accent); }
 .lanes .resource { color: var(--ok); }
+.lanes .resource2 { color: var(--ok); }
 .lanes .ps { color: var(--accent-2); }
 .lanes .ap { color: var(--warn); }
 .messages {
     position: relative;
     flex: 1;
     padding-top: 1rem;
+    min-height: 200px;
 }
 .seq--3 .messages {
     background-image: linear-gradient(to right, transparent calc(16.66% - 1px), var(--border) calc(16.66% - 1px), var(--border) calc(16.66%), transparent calc(16.66%),
@@ -273,6 +275,19 @@ button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef44
 .seq--2 .messages {
     background-image: linear-gradient(to right, transparent calc(25% - 1px), var(--border) calc(25% - 1px), var(--border) 25%, transparent 25%,
                                                 transparent calc(75% - 1px), var(--border) calc(75% - 1px), var(--border) 75%, transparent 75%);
+}
+.seq--4 .messages {
+    background-image: linear-gradient(to right,
+        transparent calc(12.5% - 1px), var(--border) calc(12.5% - 1px), var(--border) calc(12.5%), transparent calc(12.5%),
+        transparent calc(37.5% - 1px), var(--border) calc(37.5% - 1px), var(--border) calc(37.5%), transparent calc(37.5%),
+        transparent calc(62.5% - 1px), var(--border) calc(62.5% - 1px), var(--border) calc(62.5%), transparent calc(62.5%),
+        transparent calc(87.5% - 1px), var(--border) calc(87.5% - 1px), var(--border) calc(87.5%), transparent calc(87.5%));
+}
+.seq--4 .msg .label {
+    font-size: 0.75rem;
+    max-width: 28ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .msg {
     position: relative;
@@ -325,6 +340,48 @@ button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef44
 }
 .msg.highlight .arrow.self { border-color: var(--accent); }
 .empty { color: var(--muted); padding: 1rem; }
+
+/* Sub-step arrows (server-side actions shown within a parent step). */
+.substeps {
+    position: relative;
+    margin: 0.3rem 0 0.5rem;
+    padding: 1.4rem 0 0.3rem;
+    border: 1px dashed var(--muted);
+    border-radius: 6px;
+}
+.substeps::before {
+    content: "inside orchestrator";
+    position: absolute;
+    top: -0.55rem;
+    left: 0.6rem;
+    background: var(--bg);
+    color: var(--muted);
+    padding: 0 0.4rem;
+    font-size: 0.7rem;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.msg.substep {
+    height: 2rem;
+    margin: 0.25rem 0;
+    opacity: 0.7;
+}
+.msg.substep .label {
+    font-size: 0.72rem;
+    padding: 0.15rem 0.4rem;
+    border-style: dashed;
+    color: var(--muted);
+    max-width: 22ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.msg.substep .arrow {
+    background: var(--muted);
+    opacity: 0.5;
+}
+.msg.substep .arrow.rightward::after { border-left-color: var(--muted); opacity: 0.5; }
+.msg.substep .arrow.leftward::before { border-right-color: var(--muted); opacity: 0.5; }
 
 /* Sequence-diagram `loop […]` box, mirrors mermaid's loop syntax. */
 .seq-loop {

@@ -10,10 +10,10 @@ hop.
 
 ![Tour Screenshot](tour-screenshot.png)
 
-A swim-lane sequence diagram across four actors — **Agent**,
-**Agent Provider**, **Resource**, **Person Server** — with a payload
+A swim-lane sequence diagram across up to four actors — **Agent**,
+**Orchestrator**, **Resource**, **Person Server** — with a payload
 inspector on the right that decodes each JWT and shows the canonical
-RFC 9421 signature base for every signed request. Four flows are
+RFC 9421 signature base for every signed request. Five flows are
 available, switchable at runtime from the topbar **Mode** picker:
 
 * **Bootstrap** (2–3 steps) — generate the agent's signing key and build
@@ -25,6 +25,9 @@ available, switchable at runtime from the topbar **Mode** picker:
 * **PS-Asserted (Deferred)** (9 steps) — three-party flow where the PS
   parks the request on `202 Accepted` and asks the user to consent before
   the `auth_token` is issued.
+* **Call Chain / Multi-Agent** (7 steps) — the agent calls an Orchestrator
+  (intermediate service) which chains downstream to a Resource, producing
+  nested `act` claims that record the full delegation path.
 
 When `PersonServerUrl` is empty in `appsettings.json`, the picker locks
 to Identity-based (the three-party options are disabled). You can also set
@@ -96,10 +99,29 @@ Steps 1–4 are the same as **Direct Grant**. From step 5 onward:
 9. Signed `GET /` carrying the `auth_token` → 200 + claims (only on the
    approve path).
 
+### Call Chain / Multi-Agent (7 steps)
+
+Demonstrates multi-agent delegation. The agent calls an Orchestrator
+(an intermediate AAuth-protected service) which itself calls a downstream
+Resource (WhoAmI), forwarding the caller's auth_token as `upstream_token`
+to produce a nested `act` claim.
+
+1. Discover Orchestrator metadata — unsigned `GET /.well-known/aauth-resource.json`.
+2. Signed `GET /` → **`401`** (agent token challenge from Orchestrator).
+3. Parse the Orchestrator's 401 challenge (resource_token).
+4. Discover Person Server — unsigned `GET /.well-known/aauth-person.json`.
+5. Signed `POST /token` (exchange) → **`200`** + `auth_token` scoped to
+   the Orchestrator.
+6. Signed `GET /` carrying the `auth_token` → **`200`**. Internally the
+   Orchestrator performs its own challenge/exchange/retry cycle against
+   WhoAmI, shown as sub-step arrows in the sequence diagram.
+7. Inspect multi-agent result — view the combined response with nested
+   `act` claims proving the full Agent → Orchestrator → Resource chain.
+
 > [!TIP]
 > The PS-Asserted (Deferred) flow only fires when the Person Server is
 > configured with `MockPersonServer:RequireConsent=true`. `make demo` from
-> the repo root launches all four services with consent gating enabled.
+> the repo root launches all five services with consent gating enabled.
 
 ## Run it
 
@@ -111,24 +133,27 @@ From the repo root:
 make demo
 ```
 
-Starts WhoAmI, MockPersonServer (with `RequireConsent=true`),
+Starts WhoAmI, Orchestrator, MockPersonServer (with `RequireConsent=true`),
 MockAgentProvider, and the Guided Tour together. Open
-<http://localhost:5400> and flip the topbar mode picker to **Deferred** to
-exercise the PS-Asserted (Deferred) path.
+<http://localhost:5400> and flip the topbar mode picker to **Call Chain**
+or **Deferred** to exercise those paths.
 
-### Option 2: four terminals
+### Option 2: five terminals
 
 ```bash
 # Terminal 1 — Resource (port 5000)
 dotnet run --project samples/WhoAmI
 
-# Terminal 2 — Person Server (port 5100)
+# Terminal 2 — Orchestrator (port 5200)
+dotnet run --project samples/Orchestrator
+
+# Terminal 3 — Person Server (port 5100)
 MockPersonServer__RequireConsent=true dotnet run --project samples/MockPersonServer
 
-# Terminal 3 — Agent Provider (port 5301)
+# Terminal 4 — Agent Provider (port 5301)
 dotnet run --project samples/MockAgentProvider
 
-# Terminal 4 — Tour UI (port 5400)
+# Terminal 5 — Tour UI (port 5400)
 dotnet run --project samples/GuidedTour
 ```
 
@@ -142,8 +167,9 @@ with **Run step**).
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `GuidedTour:WhoAmIUrl` | `http://localhost:5000` | Resource server base URL. |
+| `GuidedTour:OrchestratorUrl` | `http://localhost:5200` | Orchestrator base URL for the call-chain flow. Set empty to disable that picker option. |
 | `GuidedTour:PersonServerUrl` | `http://localhost:5100` | PS base URL. Set empty to lock the picker to identity-based mode. |
 | `GuidedTour:AgentProviderUrl` | `http://localhost:5301` | AP base URL. When set, bootstrap enrols with the real AP instead of self-signing. |
 | `GuidedTour:AgentId` | `aauth:tour-agent@ap.example` | Value placed in the agent token's `sub`. |
-| `GuidedTour:Mode` | `Bootstrap` | Default flow on startup. `Bootstrap`, `Identity`, `Autonomous` (Direct Grant), or `Deferred`. The topbar picker overrides this at runtime. |
+| `GuidedTour:Mode` | `Bootstrap` | Default flow on startup. `Bootstrap`, `Identity`, `Autonomous` (Direct Grant), `Deferred`, or `CallChain`. The topbar picker overrides this at runtime. |
 

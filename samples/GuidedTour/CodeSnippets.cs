@@ -167,6 +167,23 @@ internal static class CodeSnippets
         // Now signed with the auth_token → 200 OK
         """;
 
+    public const string CallChainRetry = """
+        // Retry Orchestrator with the auth_token.
+        // From our side this looks like a normal retry — the chaining
+        // happens server-side inside the Orchestrator:
+        //   1. Orchestrator validates our auth_token
+        //   2. Extracts it as upstream_token
+        //   3. Calls downstream WhoAmI with its own agent token
+        //   4. Exchanges at PS with upstream_token → nested act
+        //   5. Retries WhoAmI with chained auth_token → 200
+        using var chainClient = new AAuthClientBuilder(key)
+            .UseJwt(authToken) // present the auth_token directly
+            .Build();
+
+        var response = await chainClient.GetAsync("https://orchestrator.example/");
+        // 200 → combined result with full delegation chain
+        """;
+
     public const string FullAutomatic = """
         // --- Provisioning (separate tool / CLI — run once per install) ---
         var keyStore = KeyStore.Default();

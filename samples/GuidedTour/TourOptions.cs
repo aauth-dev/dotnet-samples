@@ -17,6 +17,7 @@ public enum TourMode
     Identity,
     Autonomous,
     Deferred,
+    CallChain,
 }
 
 /// <summary>
@@ -83,6 +84,12 @@ public sealed class TourOptions
     /// instead of building a self-signed token locally.
     /// </summary>
     public string? AgentProviderUrl { get; set; }
+
+    /// <summary>
+    /// Optional Orchestrator URL for the call-chain flow. When set, the
+    /// call-chain tour targets this URL instead of WhoAmI.
+    /// </summary>
+    public string? OrchestratorUrl { get; set; }
 
     /// <summary>
     /// Which flow to walk by default when the page loads. Defaults to
