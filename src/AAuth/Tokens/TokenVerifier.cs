@@ -40,7 +40,7 @@ public sealed class TokenVerifier
     /// </summary>
     public VerifiedToken Verify(
         string jwt,
-        AAuthKey issuerKey,
+        IAAuthKey issuerKey,
         string expectedType,
         string expectedDwk,
         string? expectedAudience = null)
@@ -60,10 +60,10 @@ public sealed class TokenVerifier
         var payload = DecodeJsonSegment(segments[1], "payload");
 
         var alg = (string?)header["alg"];
-        if (alg != AAuthKey.Algorithm)
+        if (alg != issuerKey.Algorithm)
         {
             throw new TokenVerificationException(
-                $"Unsupported or missing 'alg' (expected '{AAuthKey.Algorithm}', got '{alg}').");
+                $"Unsupported or missing 'alg' (expected '{issuerKey.Algorithm}', got '{alg}').");
         }
 
         var typ = (string?)header["typ"];
@@ -160,9 +160,9 @@ public sealed class TokenVerifier
     /// </param>
     public VerifiedToken VerifyAuthToken(
         string jwt,
-        AAuthKey issuerKey,
+        IAAuthKey issuerKey,
         string expectedAudience,
-        AAuthKey httpSignatureKey,
+        IAAuthKey httpSignatureKey,
         string expectedAgentId,
         string? expectedDwk = null,
         string? expectedMaxScope = null)
@@ -212,9 +212,12 @@ public sealed class TokenVerifier
         {
             throw new TokenVerificationException("Auth token is missing 'cnf.jwk'.");
         }
-        var tokenKeyX = (string?)jwk["x"];
-        var httpKeyX = Base64UrlEncoder.Encode(httpSignatureKey.PublicKeyBytes);
-        if (tokenKeyX != httpKeyX)
+        // Compare via JWK thumbprint — algorithm-agnostic PoP binding check.
+        var tokenKey = KeyFactory.TryFromJwk(jwk)
+            ?? throw new TokenVerificationException("Auth token 'cnf.jwk' is not a supported key type.");
+        var tokenKeyThumbprint = tokenKey.ComputeJwkThumbprint();
+        var httpKeyThumbprint = httpSignatureKey.ComputeJwkThumbprint();
+        if (tokenKeyThumbprint != httpKeyThumbprint)
         {
             throw new TokenVerificationException(
                 "Auth token 'cnf.jwk' does not match the HTTP signature key (PoP binding mismatch).");
@@ -271,7 +274,7 @@ public sealed class TokenVerifier
         MetadataClient metadata,
         JwksClient jwks,
         string expectedAudience,
-        AAuthKey httpSignatureKey,
+        IAAuthKey httpSignatureKey,
         string expectedAgentId,
         string? expectedMaxScope = null,
         CancellationToken cancellationToken = default)
@@ -289,8 +292,8 @@ public sealed class TokenVerifier
 
         // Cheap local checks first.
         var alg = (string?)header["alg"];
-        if (alg != AAuthKey.Algorithm)
-            throw new TokenVerificationException($"Unsupported 'alg' (expected '{AAuthKey.Algorithm}', got '{alg}').");
+        if (alg is null || (alg != AAuthKey.Algorithm && alg != EcdsaAAuthKey.Alg))
+            throw new TokenVerificationException($"Unsupported 'alg' '{alg}'. Supported: {AAuthKey.Algorithm}, {EcdsaAAuthKey.Alg}.");
         var typ = (string?)header["typ"];
         if (typ != AuthTokenBuilder.TokenType)
             throw new TokenVerificationException($"Unexpected 'typ' (expected '{AuthTokenBuilder.TokenType}', got '{typ}').");
@@ -337,7 +340,7 @@ public sealed class TokenVerifier
     /// Verify a self-issued agent token where the issuer's public key equals
     /// the <c>cnf.jwk</c> bound in the token's payload.
     /// </summary>
-    public VerifiedToken VerifySelfIssuedAgentToken(string jwt, AAuthKey confirmationKey) =>
+    public VerifiedToken VerifySelfIssuedAgentToken(string jwt, IAAuthKey confirmationKey) =>
         Verify(
             jwt,
             confirmationKey,
@@ -371,10 +374,15 @@ public sealed class TokenVerifier
         var payload = DecodeJsonSegment(segments[1], "payload");
 
         var alg = (string?)header["alg"];
-        if (alg != AAuthKey.Algorithm)
+        if (alg is null)
+        {
+            throw new TokenVerificationException("Token header is missing 'alg'.");
+        }
+        // Validate supported algorithms.
+        if (alg != AAuthKey.Algorithm && alg != EcdsaAAuthKey.Alg)
         {
             throw new TokenVerificationException(
-                $"Unsupported or missing 'alg' (expected '{AAuthKey.Algorithm}', got '{alg}').");
+                $"Unsupported 'alg' '{alg}'. Supported: {AAuthKey.Algorithm}, {EcdsaAAuthKey.Alg}.");
         }
         var typ = (string?)header["typ"];
         if (typ != expectedType)

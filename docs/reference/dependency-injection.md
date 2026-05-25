@@ -100,7 +100,7 @@ builder.Services.AddAAuthAgent("refreshing", options =>
 
 ## Resource Registration (Inbound Verification)
 
-### Basic Verification
+### Verification Middleware
 
 ```csharp
 builder.Services.AddAAuthResource(options =>
@@ -111,7 +111,7 @@ builder.Services.AddAAuthResource(options =>
 });
 
 var app = builder.Build();
-app.UseAAuthVerification(); // signature verification middleware
+app.UseAAuthVerification(); // HTTP sig + JWT issuer verification middleware
 app.MapAAuthWellKnown();    // /.well-known/aauth-resource.json + /jwks.json
 ```
 
@@ -199,7 +199,8 @@ builder.Services.AddAAuthAgent("external-api", options =>
 
 ## Complete Example: Agent + Resource in One App
 
-An app that verifies inbound AAuth requests AND makes signed outbound requests:
+An app that verifies inbound AAuth requests AND makes signed outbound requests.
+See `samples/Orchestrator` for a full working implementation with call chaining.
 
 ```csharp
 var builder = WebApplication.CreateBuilder(args);
@@ -227,7 +228,7 @@ app.MapGet("/data", async (HttpContext ctx, IHttpClientFactory factory) =>
 {
     // Inbound request was verified by middleware
     var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)
-        ctx.Items[AAuthVerificationMiddleware.ContextItemKey]!;
+        ctx.Items[AAuthVerificationMiddleware.ParsedInfoItemKey]!;
 
     // Make signed outbound request
     var client = factory.CreateClient("downstream");

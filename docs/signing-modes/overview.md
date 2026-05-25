@@ -36,6 +36,9 @@ using var client = mode switch
     "jwt"      => new AAuthClientBuilder(key).WithTokenRefresh(refresher).WithChallengeHandling(ps).Build(),
     "jkt-jwt"  => new AAuthClientBuilder(ephemeralKey).UseJktJwt(() => namingJwt).Build(),
 };
+
+// Direct token (when you already hold a JWT — e.g., call chaining)
+using var direct = new AAuthClientBuilder(key).UseJwt(preAcquiredToken).Build();
 ```
 
 <details>

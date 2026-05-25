@@ -48,7 +48,7 @@ public sealed class JwksClient
 
     /// <summary>Resolve a key by <c>kid</c> from the JWKS at <paramref name="jwksUri"/>.</summary>
     /// <returns>The public key, or null if no key matches.</returns>
-    public async Task<AAuthKey?> ResolveKeyAsync(Uri jwksUri, string kid, CancellationToken cancellationToken = default)
+    public async Task<IAAuthKey?> ResolveKeyAsync(Uri jwksUri, string kid, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(jwksUri);
         ArgumentException.ThrowIfNullOrEmpty(kid);
@@ -76,28 +76,18 @@ public sealed class JwksClient
             ?? throw new InvalidOperationException($"JWKS at {jwksUri} is not a JSON object.");
 
         var now = _clock();
-        var keys = new Dictionary<string, AAuthKey>(StringComparer.Ordinal);
+        var keys = new Dictionary<string, IAAuthKey>(StringComparer.Ordinal);
         if (doc["keys"] is JsonArray array)
         {
             foreach (var node in array)
             {
                 if (node is not JsonObject jwk) { continue; }
                 if ((string?)jwk["kid"] is not { } kid) { continue; }
-                if ((string?)jwk["kty"] != AAuthKey.KeyType || (string?)jwk["crv"] != AAuthKey.Curve)
-                {
-                    // Skip non-Ed25519 keys silently; future support lands
-                    // when ES256/RS256 are added.
-                    continue;
-                }
 
-                try
-                {
-                    keys[kid] = AAuthKey.FromJwk(jwk);
-                }
-                catch (ArgumentException)
-                {
-                    // Skip malformed keys; structured logging is a future concern.
-                }
+                var key = KeyFactory.TryFromJwk(jwk);
+                if (key is null) { continue; }
+
+                keys[kid] = key;
             }
         }
 
@@ -110,7 +100,7 @@ public sealed class JwksClient
     public void ClearCache() => _cache.Clear();
 
     private sealed record CacheEntry(
-        IReadOnlyDictionary<string, AAuthKey> Keys,
+        IReadOnlyDictionary<string, IAAuthKey> Keys,
         DateTimeOffset FetchedAt,
         DateTimeOffset Expiry);
 }

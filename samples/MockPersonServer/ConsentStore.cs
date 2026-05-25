@@ -37,7 +37,8 @@ public sealed class PendingStore
         string Resource,
         string Scope,
         string ResourceTokenJwt,
-        AAuth.Crypto.AAuthKey AgentConfirmationKey)
+        AAuth.Crypto.IAAuthKey AgentConfirmationKey,
+        System.Text.Json.Nodes.JsonObject? UpstreamAct = null)
     {
         /// <summary>
         /// True once the user has explicitly denied this request. The
@@ -50,10 +51,10 @@ public sealed class PendingStore
     private readonly ConcurrentDictionary<string, Entry> _entries = new();
 
     public Entry Add(string agent, string resource, string scope, string resourceTokenJwt,
-        AAuth.Crypto.AAuthKey agentConfirmationKey)
+        AAuth.Crypto.IAAuthKey agentConfirmationKey, System.Text.Json.Nodes.JsonObject? upstreamAct = null)
     {
         var id = Guid.NewGuid().ToString("N");
-        var entry = new Entry(id, agent, resource, scope, resourceTokenJwt, agentConfirmationKey);
+        var entry = new Entry(id, agent, resource, scope, resourceTokenJwt, agentConfirmationKey, upstreamAct);
         _entries[id] = entry;
         return entry;
     }

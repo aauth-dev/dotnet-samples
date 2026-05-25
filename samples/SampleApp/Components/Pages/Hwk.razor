@@ -14,12 +14,41 @@
     but cannot link it to a real-world identity.
 </p>
 
-<h5>Setup Code</h5>
+<div class="row">
+<div class="col-md-6">
+<h5>Client Code</h5>
 <pre><code class="language-csharp">var key = AAuthKey.Generate();
 
 using var client = new AAuthClientBuilder(key)
     .UseHwk()
     .Build();</code></pre>
+</div>
+<div class="col-md-6">
+<h5>Server Code</h5>
+<pre><code class="language-csharp">builder.Services.AddSingleton(new AAuthVerifier());
+
+var app = builder.Build();
+
+// HWK carries the public key inline; no JWKS needed.
+app.UseAAuthVerification(new AAuthVerificationOptions
+{
+    RequireIssuerVerification = false,
+});
+
+app.MapGet("/hwk", (HttpContext ctx) =>
+{
+    var parsed = (ParsedSignatureKeyInfo)
+        ctx.Items[AAuthVerificationMiddleware
+            .ParsedInfoItemKey]!;
+    return Results.Ok(new
+    {
+        mode = "pseudonymous",
+        scheme = "hwk",
+        jkt = parsed.Jkt,
+    });
+});</code></pre>
+</div>
+</div>
 
 <button class="btn btn-primary" @onclick="SendRequest" disabled="@_loading">
     @(_loading ? "Sending..." : "Send Signed Request")
@@ -72,11 +101,13 @@ using var client = new AAuthClientBuilder(key)
                 .Build();
 
             var resourceUrl = Config["AAuth:Resource"]!;
-            var response = await client.GetAsync(resourceUrl);
+            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/hwk");
 
             _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
             _success = response.IsSuccessStatusCode;
-            _response = await response.Content.ReadAsStringAsync();
+            var raw = await response.Content.ReadAsStringAsync();
+            try { _response = System.Text.Json.JsonSerializer.Serialize(System.Text.Json.JsonDocument.Parse(raw), new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }); }
+            catch { _response = raw; }
         }
         catch (Exception ex)
         {

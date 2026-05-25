@@ -143,6 +143,35 @@
             }
             <div class="label" style="left:@(Fmt(labelCenter))%;">@s.Number. @s.Title</div>
         </div>
+        @if (s.SubSteps is { Count: > 0 } subs)
+        {
+            <div class="substeps">
+                @foreach (var sub in subs)
+                {
+                    var subFromCol = ColumnFor(sub.From);
+                    var subToCol = ColumnFor(sub.To);
+                    var subLeft = laneCenters[Math.Min(subFromCol, subToCol)];
+                    var subRight = laneCenters[Math.Max(subFromCol, subToCol)];
+                    var subWidth = subRight - subLeft;
+                    var subLabelCenter = (subLeft + subRight) / 2.0;
+                    var subRightward = subToCol >= subFromCol;
+                    var subSelf = subFromCol == subToCol;
+
+                    <div class="msg substep">
+                        @if (subSelf)
+                        {
+                            <div class="arrow self" style="left:@(Fmt(subLeft - 1.5))%; width:3%;"></div>
+                        }
+                        else
+                        {
+                            <div class="arrow @(subRightward ? "rightward" : "leftward")"
+                                 style="left:@(Fmt(subLeft))%; width:@(Fmt(subWidth))%;"></div>
+                        }
+                        <div class="label" style="left:@(Fmt(subLabelCenter))%;">@sub.Label</div>
+                    </div>
+                }
+            </div>
+        }
     };
 
     private RenderFragment RenderGhostMessage(int number, string title, Actor from, Actor to) => __builder =>

@@ -16,23 +16,74 @@
     automates the Person Server consent exchange.
 </p>
 
-<h5>Setup Code</h5>
-<pre><code class="language-csharp">// Enrollment (one-time provisioning step)
+<div class="row">
+<div class="col-md-6">
+<h5>Client Code</h5>
+<pre><code class="language-csharp">// Enrollment (one-time provisioning)
 var keyStore = KeyStore.Default();
-var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-var result = await apClient.EnrolAsync(apBase, agentId, enrolEndpoint, personServer);
+var apClient = new AgentProviderClient(
+    new HttpClient(), keyStore);
+var result = await apClient.EnrolAsync(
+    apBase, agentId, enrolEndpoint, personServer);
 
-// Application runtime — load key by ID, build client
+// Runtime — build signed client
 var key = await keyStore.LoadAsync(result.KeyId);
 
 using var client = new AAuthClientBuilder(key)
     .WithTokenRefresh(async (ctx, ct) =>
     {
-        var ap = new AgentProviderClient(new HttpClient(), keyStore);
-        return await ap.RefreshAsync(refreshEndpoint, keyId, ct);
+        var ap = new AgentProviderClient(
+            new HttpClient(), keyStore);
+        return await ap.RefreshAsync(
+            refreshEndpoint, keyId, ct);
     })
-    .WithChallengeHandling(personServer: "https://ps.example")
+    .WithChallengeHandling(personServer)
     .Build();</code></pre>
+</div>
+<div class="col-md-6">
+<h5>Server Code</h5>
+<pre><code class="language-csharp">builder.Services.AddSingleton(new AAuthVerifier());
+builder.Services.AddSingleton(sp =&gt;
+    new MetadataClient(httpClient));
+builder.Services.AddSingleton(sp =&gt;
+    new JwksClient(httpClient));
+
+var app = builder.Build();
+
+// Middleware verifies HTTP signature AND the
+// JWT issuer (via JWKS discovery), then stores
+// the result in HttpContext.Features.
+app.UseAAuthVerification(new AAuthVerificationOptions
+{
+    ResourceIdentifier = "https://resource.example",
+    RequireIssuerVerification = true,
+});
+
+// Auto-challenge: returns 401 with a resource
+// token if only an agent token is presented.
+// On retry the PS provides an auth token.
+app.UseAAuthChallenge(new ChallengeOptions
+{
+    AccessMode = AAuthAccessMode.RequireAuthToken,
+});
+
+app.MapGet("/", (HttpContext ctx) =&gt;
+{
+    // Middleware already verified the auth token.
+    // Claims are available via Features:
+    var r = ctx.Features
+        .Get&lt;AAuthVerificationResult&gt;()!;
+    return Results.Ok(new
+    {
+        mode = "three-party",
+        agent = r.Agent,
+        sub = r.Subject,
+        scope = r.Scopes,
+        iss = r.Issuer,
+    });
+});</code></pre>
+</div>
+</div>
 
 
 @if (!_enrolled)
@@ -141,7 +192,9 @@ else
 
             _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
             _success = response.IsSuccessStatusCode;
-            _response = await response.Content.ReadAsStringAsync();
+            var raw = await response.Content.ReadAsStringAsync();
+            try { _response = System.Text.Json.JsonSerializer.Serialize(System.Text.Json.JsonDocument.Parse(raw), new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }); }
+            catch { _response = raw; }
         }
         catch (Exception ex)
         {

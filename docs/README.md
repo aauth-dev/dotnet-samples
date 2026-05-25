@@ -30,10 +30,13 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 - [Federated Access](workflows/federated-access.md)
 - [Bootstrap & Enrollment](workflows/bootstrap-enrollment.md)
 - [Deferred Consent](workflows/deferred-consent.md)
+- [Call Chaining](workflows/call-chaining.md)
 
 ## Server Implementation
 
-- [Verification Middleware](server/verification-middleware.md)
+- [Verification Middleware](server/verification-middleware.md) — HTTP signature + JWT issuer verification
+- [Challenge Middleware](server/challenge-middleware.md) — Auto-challenge for auth token upgrade
+- [Authorization Policies](server/authorization-policies.md) — Scope-based `[Authorize]` integration
 - [Resource Metadata](server/resource-metadata.md)
 - [Token Issuance](server/token-issuance.md)
 - [Replay Detection](server/replay-detection.md)
@@ -45,6 +48,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 - [Platform Attestation](advanced/platform-attestation.md)
 - [Key Management](advanced/key-management.md)
 - [Error Handling](advanced/error-handling.md)
+- [Observability](advanced/observability.md) — OpenTelemetry Activity tracing
 
 ## Reference
 
@@ -69,7 +73,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `AAuthClientBuilder` | Fluent builder → configured `HttpClient` with signing |
 | `AAuthSigningHandler` | `DelegatingHandler` that signs outbound requests (RFC 9421) |
 | `AAuthVerifier` | Server-side signature verification |
-| `AAuthVerificationMiddleware` | ASP.NET middleware wiring for `AAuthVerifier` |
+| `AAuthVerificationMiddleware` | ASP.NET middleware — HTTP sig + JWT issuer verification |
 | `SignatureKeyHeader` / `SignatureKeyParser` | Format/parse the `Signature-Key` header |
 | `HwkSignatureKeyProvider` | `sig=hwk` — inline public key |
 | `JwksUriSignatureKeyProvider` | `sig=jwks_uri` — JWKS-discoverable identity |
@@ -123,10 +127,24 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 
 | Type | Purpose |
 |------|---------|
+| `AAuthVerificationMiddleware` | HTTP sig PoP + JWT issuer verification middleware |
+| `AAuthChallengeMiddleware` | Auto-challenge: issues 401 with resource token |
+| `AAuthAuthenticationHandler` | Maps `AAuthVerificationResult` to `ClaimsPrincipal` |
+| `AAuthVerificationResult` | Typed verification result in `HttpContext.Features` |
+| `AAuthLevel` | Pseudonymous / Identified / Authorized |
+| `AAuthScopeRequirement` | ASP.NET Core authorization requirement for scopes |
+| `AAuthScopeHandler` | Evaluates scope requirements against verified scopes |
+| `CallChainingHandler` | Multi-hop delegation routing for resource-as-agent |
 | `WellKnownEndpoints` | `MapAAuthResourceWellKnown()` for ASP.NET minimal APIs |
 | `RevocationEndpoint` | Token revocation endpoint |
 | `IJtiStore` / `InMemoryJtiStore` | Replay detection (JTI tracking) |
 | `IOpaqueTokenStore` | Opaque token storage abstraction |
+
+### `AAuth` — Diagnostics
+
+| Type | Purpose |
+|------|---------|
+| `AAuthDiagnostics` | Shared `ActivitySource` + tag key constants for OTel tracing |
 
 ### `AAuth.DependencyInjection` — ASP.NET Core integration
 

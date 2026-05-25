@@ -17,24 +17,75 @@
     endpoint, and retries the resource request once consent is granted.
 </p>
 
-<h5>Setup Code</h5>
+<div class="row">
+<div class="col-md-6">
+<h5>Client Code</h5>
 <pre><code class="language-csharp">using var client = new AAuthClientBuilder(key)
     .WithTokenRefresh(async (ctx, ct) =>
     {
-        var ap = new AgentProviderClient(new HttpClient(), keyStore);
-        return await ap.RefreshAsync(refreshEndpoint, keyId, ct);
+        var ap = new AgentProviderClient(
+            new HttpClient(), keyStore);
+        return await ap.RefreshAsync(
+            refreshEndpoint, keyId, ct);
     })
     .WithChallengeHandling(personServer, opts =>
     {
-        opts.OnInteractionRequired = async (interaction, ct) =>
+        opts.OnInteractionRequired =
+            async (interaction, ct) =>
         {
             var url = interaction.BuildUserUrl();
-            // Surface URL to the user (browser, QR code, notification, etc.)
+            // Surface URL to user
         };
-        opts.PollingTimeout = TimeSpan.FromMinutes(2);
-        opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
+        opts.PollingTimeout =
+            TimeSpan.FromMinutes(2);
+        opts.DefaultPollInterval =
+            TimeSpan.FromSeconds(1);
     })
     .Build();</code></pre>
+</div>
+<div class="col-md-6">
+<h5>Server Code</h5>
+<pre><code class="language-csharp">// Same as JWT three-party — deferred consent
+// is transparent to the resource server.
+builder.Services.AddSingleton(new AAuthVerifier());
+builder.Services.AddSingleton(sp =&gt;
+    new MetadataClient(httpClient));
+builder.Services.AddSingleton(sp =&gt;
+    new JwksClient(httpClient));
+
+var app = builder.Build();
+
+// Middleware verifies HTTP signature AND the
+// JWT issuer (via JWKS discovery).
+app.UseAAuthVerification(new AAuthVerificationOptions
+{
+    ResourceIdentifier = "https://resource.example",
+    RequireIssuerVerification = true,
+});
+
+app.UseAAuthChallenge(new ChallengeOptions
+{
+    AccessMode = AAuthAccessMode.RequireAuthToken,
+});
+
+// Resource challenges on first call, accepts
+// on retry after user approves via PS.
+app.MapGet("/", (HttpContext ctx) =&gt;
+{
+    // Middleware already verified the auth token.
+    var r = ctx.Features
+        .Get&lt;AAuthVerificationResult&gt;()!;
+    return Results.Ok(new
+    {
+        mode = "three-party",
+        agent = r.Agent,
+        sub = r.Subject,
+        scope = r.Scopes,
+        iss = r.Issuer,
+    });
+});</code></pre>
+</div>
+</div>
 
 @if (!_enrolled)
 {
@@ -200,7 +251,9 @@ else
             _waitingForApproval = false;
             _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
             _success = response.IsSuccessStatusCode;
-            _response = await response.Content.ReadAsStringAsync();
+            var raw = await response.Content.ReadAsStringAsync();
+            try { _response = System.Text.Json.JsonSerializer.Serialize(System.Text.Json.JsonDocument.Parse(raw), new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }); }
+            catch { _response = raw; }
         }
         catch (AAuthInteractionDeniedException)
         {

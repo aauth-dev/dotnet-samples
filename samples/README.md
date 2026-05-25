@@ -1,14 +1,15 @@
 # Samples
 
-Six sample applications demonstrating AAuth flows end-to-end.
+Seven sample applications demonstrating AAuth flows end-to-end.
 
 | Sample | Port | Description |
 |--------|------|-------------|
-| [WhoAmI](WhoAmI/) | 5000 | ASP.NET Core resource server — verifies signatures, issues resource tokens |
+| [WhoAmI](WhoAmI/) | 5000 | ASP.NET Core resource server — per-endpoint verification (`/hwk`, `/jwks-uri`, `/`) |
+| [Orchestrator](Orchestrator/) | 5200 | Intermediate service — call chaining with nested `act` delegation |
 | [MockPersonServer](MockPersonServer/) | 5100 | Reference Person Server — verifies exchanges, mints auth tokens |
 | [MockAgentProvider](MockAgentProvider/) | 5301 | Reference Agent Provider — issues agent tokens, hosts JWKS |
 | [GuidedTour](GuidedTour/) | 5400 | Blazor walk-through — visualises all four AAuth flows step by step |
-| [SampleApp](SampleApp/) | 5240 | Golden example — one page per signing mode (hwk, jwt, jwks_uri) |
+| [SampleApp](SampleApp/) | 5240 | Golden example — one page per signing mode (hwk, jwt, jwks_uri, call chain) |
 | [AgentConsole](AgentConsole/) | — | CLI agent — signs requests, handles challenges, exchanges with a PS |
 
 ## Quick Start
@@ -29,10 +30,15 @@ This starts WhoAmI + MockPersonServer + MockAgentProvider + GuidedTour in parall
 dotnet run --project samples/WhoAmI
 ```
 
-- Serves `/.well-known/aauth-resource.json` and `/.well-known/jwks.json`
-- Verifies RFC 9421 signature on every non-discovery request
-- If agent token presented: mints a `resource_token` and replies `401 AAuth-Requirement: requirement=auth-token`
-- If auth token presented: verifies against PS's JWKS and returns `200` with resolved claims
+Exposes three endpoints, one per signing mode:
+
+| Path | Mode | Verification |
+|------|------|-------------|
+| `/hwk` | Pseudonymous | HTTP signature only |
+| `/jwks-uri` | Agent Identity | Signature verified via published JWKS |
+| `/` | Three-party JWT | Full issuer verification + aud + PoP + act.sub |
+
+All paths serve `/.well-known/aauth-resource.json` and `/.well-known/jwks.json` without requiring a signature.
 
 Override the issuer: `--AAuth:Issuer https://my-rs.example` (or env var `AAuth__Issuer`).
 
@@ -45,16 +51,24 @@ curl http://localhost:5000/.well-known/jwks.json
 
 ### AgentConsole
 
+**Pseudonymous (HWK) access** — default when no `--ps` is provided:
+
 ```bash
-dotnet run --project samples/AgentConsole -- http://localhost:5000
+dotnet run --project samples/AgentConsole -- http://localhost:5000/hwk --ap http://localhost:5301
 ```
 
-Generates (or loads) an Ed25519 key under `~/.aauth/keys/<kid>/`, builds an `aa-agent+jwt`, signs an HTTP `GET`, and prints the response.
+**Agent Identity (JWKS-URI) access:**
+
+```bash
+dotnet run --project samples/AgentConsole -- http://localhost:5000/jwks-uri \
+  --ap http://localhost:5301 --signing-mode jwks_uri
+```
 
 **Three-party flow** (agent advertises a PS; resource challenges; agent exchanges):
 
 ```bash
-dotnet run --project samples/AgentConsole -- http://localhost:5000 --ps http://localhost:5100
+dotnet run --project samples/AgentConsole -- http://localhost:5000 \
+  --ap http://localhost:5301 --ps http://localhost:5100
 ```
 
 | Flag | Default | Purpose |

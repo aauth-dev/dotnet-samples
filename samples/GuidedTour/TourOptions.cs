@@ -17,6 +17,7 @@ public enum TourMode
     Identity,
     Autonomous,
     Deferred,
+    CallChain,
 }
 
 /// <summary>
@@ -47,6 +48,13 @@ public enum SigningMode
     /// Use for access control by identity, replacing API keys.
     /// </summary>
     JwksUri,
+    /// <summary>
+    /// <c>sig=jkt-jwt</c> — Key Rotation mode. A naming JWT binds the current
+    /// signing key to the agent's stable identity via JWK thumbprint confirmation.
+    /// Supports key rotation without re-enrolment. Works with both Ed25519 and
+    /// ECDSA P-256 keys.
+    /// </summary>
+    JktJwt,
 }
 
 /// <summary>
@@ -76,6 +84,12 @@ public sealed class TourOptions
     /// instead of building a self-signed token locally.
     /// </summary>
     public string? AgentProviderUrl { get; set; }
+
+    /// <summary>
+    /// Optional Orchestrator URL for the call-chain flow. When set, the
+    /// call-chain tour targets this URL instead of WhoAmI.
+    /// </summary>
+    public string? OrchestratorUrl { get; set; }
 
     /// <summary>
     /// Which flow to walk by default when the page loads. Defaults to

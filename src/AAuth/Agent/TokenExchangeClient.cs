@@ -50,7 +50,7 @@ public sealed class TokenExchangeClient
         string resourceToken,
         CancellationToken cancellationToken = default)
         => ExchangeAsync(personServer, resourceToken, onInteractionRequired: null,
-            pollerOptions: null, cancellationToken);
+            pollerOptions: null, upstreamToken: null, cancellationToken);
 
     /// <summary>
     /// Submit <paramref name="resourceToken"/> to the PS at
@@ -68,16 +68,24 @@ public sealed class TokenExchangeClient
     /// <see langword="null"/> and the PS returns <c>202</c>, the call throws.
     /// </param>
     /// <param name="pollerOptions">Optional polling cadence/timeout override.</param>
+    /// <param name="upstreamToken">
+    /// Optional upstream auth token for call-chaining scenarios. When provided,
+    /// included as <c>upstream_token</c> in the POST body so the PS/AS can
+    /// construct nested <c>act</c> claims preserving the delegation chain.
+    /// </param>
     /// <param name="cancellationToken">Caller cancellation.</param>
     public async Task<string> ExchangeAsync(
         string personServer,
         string resourceToken,
         Func<AAuthInteraction, CancellationToken, Task>? onInteractionRequired,
         DeferredPollerOptions? pollerOptions = null,
+        string? upstreamToken = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(personServer);
         ArgumentException.ThrowIfNullOrEmpty(resourceToken);
+
+        using var activity = AAuthDiagnostics.Source.StartActivity("AAuth.TokenExchange");
 
         var metadataUrl = MetadataClient.BuildUrl(personServer, "aauth-person.json");
         var doc = await _metadata.FetchAsync(metadataUrl, cancellationToken).ConfigureAwait(false);
@@ -108,6 +116,10 @@ public sealed class TokenExchangeClient
         }
 
         var body = new JsonObject { ["resource_token"] = resourceToken };
+        if (!string.IsNullOrEmpty(upstreamToken))
+        {
+            body["upstream_token"] = upstreamToken;
+        }
         using var request = new HttpRequestMessage(HttpMethod.Post, tokenEndpointUri)
         {
             Content = JsonContent.Create(body),
@@ -138,6 +150,7 @@ public sealed class TokenExchangeClient
                 response.Dispose();
                 try
                 {
+                    using var pollActivity = AAuthDiagnostics.Source.StartActivity("AAuth.DeferredPoll");
                     response = await new DeferredPoller(_signedClient, pollerOptions)
                         .PollAsync(pendingUrl, cancellationToken).ConfigureAwait(false);
                 }

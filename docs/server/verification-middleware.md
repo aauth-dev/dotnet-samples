@@ -1,133 +1,128 @@
 # Verification Middleware
 
-> [Signature Verification](https://explorer.aauth.dev/foundations/signatures) | [Error Codes](https://explorer.aauth.dev/foundations/errors)
+`AAuthVerificationMiddleware` performs HTTP signature verification (RFC 9421 PoP) and JWT issuer signature verification in a single pass.
 
-## Overview
-
-Every AAuth request carries an HTTP signature (RFC 9421). The `AAuthVerificationMiddleware` validates the signature and extracts the parsed key information, making it available to downstream handlers.
-
-## Setup
-
-### DI Extension (Recommended)
+## Registration
 
 ```csharp
 using AAuth.DependencyInjection;
-
-var builder = WebApplication.CreateBuilder(args);
-
-builder.Services.AddAAuthResource(options =>
-{
-    options.Issuer = "https://resource.example";
-    options.MaxSignatureAge = TimeSpan.FromSeconds(60);
-    options.EnableReplayDetection = true;
-});
-
-var app = builder.Build();
-
-app.UseAAuthVerification();
-app.MapAAuthWellKnown(); // serves /.well-known/aauth-resource.json
-```
-
-### Manual Setup (Advanced)
-
-```csharp
+using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Server;
 
-var builder = WebApplication.CreateBuilder(args);
+// Required services
+builder.Services.AddSingleton(new AAuthVerifier());
+builder.Services.AddSingleton(sp => new MetadataClient(httpClient));
+builder.Services.AddSingleton(sp => new JwksClient(httpClient));
+
 var app = builder.Build();
 
-app.UseAAuthVerification(
-    verifier: new AAuthVerifier
-    {
-        MaxAge = TimeSpan.FromSeconds(60),
-        MaxFutureSkew = TimeSpan.FromSeconds(5)
-    },
-    jtiStore: new InMemoryJtiStore(),
-    resolver: new DefaultSignatureKeyResolver(
-        jwksClient: new JwksClient(new HttpClient())));
-```
-
-## AAuthVerifier Configuration
-
-| Property | Default | Description |
-|----------|---------|-------------|
-| `MaxAge` | 60 seconds | Maximum age of a signature before rejection |
-| `MaxFutureSkew` | 5 seconds | Tolerance for clock skew into the future |
-| `Clock` | `DateTimeOffset.UtcNow` | Clock function (override for testing) |
-
-## Accessing Parsed Key Info
-
-After the middleware runs, the parsed signature key info is stored in `HttpContext.Items`:
-
-```csharp
-app.MapGet("/data", (HttpContext context) =>
+app.UseAAuthVerification(new AAuthVerificationOptions
 {
-    var keyInfo = context.Items[AAuthVerificationMiddleware.ContextItemKey]
-        as SignatureKeyParser.ParsedSignatureKeyInfo;
-
-    // keyInfo.Scheme — "hwk", "jwks_uri", "jwt", or "jkt_jwt"
-    // keyInfo.Jkt — the agent's key thumbprint
-    // keyInfo.ConfirmationKey — the resolved public key
-    // keyInfo.Jwt — raw JWT (for jwt/jkt_jwt schemes)
-    // keyInfo.JwksUri — URI (for jwks_uri scheme)
-    // keyInfo.Kid — key ID (for jwks_uri scheme)
-    
-    return Results.Ok(new { scheme = keyInfo?.Scheme, jkt = keyInfo?.Jkt });
+    ResourceIdentifier = "https://resource.example",
+    RequireIssuerVerification = true,
 });
 ```
 
-## Error Responses — Signature-Error Header
+## What It Verifies
 
-When verification fails, the middleware returns 401 with the `Signature-Error` header:
+1. **HTTP Signature (RFC 9421)**: Validates `Signature`, `Signature-Input`, and `Signature-Key` headers. Confirms covered components (`@method`, `@authority`, `@path`, `signature-key`) match the request.
 
-```http
-HTTP/1.1 401 Unauthorized
-Signature-Error: invalid_signature
-```
+2. **Signature-Key Resolution**: Parses the scheme (`jwt`, `hwk`, `jkt-jwt`, `jwks_uri`) and resolves the public key accordingly.
 
-Error codes (from `SignatureErrorCode`):
+3. **JWT Issuer Verification** (when `RequireIssuerVerification = true`): Fetches the issuer's JWKS via metadata discovery and verifies the token's signature against the issuer's published keys.
 
-| Code | Wire Value | Meaning |
-|------|-----------|---------|
-| `InvalidRequest` | `invalid_request` | Missing required headers |
-| `InvalidInput` | `invalid_input` | Malformed Signature-Input |
-| `InvalidSignature` | `invalid_signature` | Signature bytes don't match |
-| `UnsupportedAlgorithm` | `unsupported_algorithm` | Algorithm not supported |
-| `InvalidKey` | `invalid_key` | Key material is malformed |
-| `UnknownKey` | `unknown_key` | Key not found (jwks_uri: kid not in JWKS) |
-| `InvalidJwt` | `invalid_jwt` | Agent token fails validation |
-| `ExpiredJwt` | `expired_jwt` | Agent token `exp` has passed |
-
-## Combining with Token Challenges
-
-Typically you validate the signature first (middleware), then challenge for a resource token in the endpoint:
+## Options
 
 ```csharp
-app.UseAAuthVerification(verifier: new AAuthVerifier());
-
-app.MapGet("/protected", (HttpContext context) =>
+public class AAuthVerificationOptions
 {
-    var keyInfo = context.Items[AAuthVerificationMiddleware.ContextItemKey]
-        as SignatureKeyParser.ParsedSignatureKeyInfo;
+    // The resource's own identifier (used for audience checks).
+    // When null, audience validation is skipped entirely.
+    public string? ResourceIdentifier { get; set; }
 
-    if (keyInfo is null) return Results.Unauthorized();
+    // Whether to verify JWT signatures against the issuer's JWKS (default: true)
+    public bool RequireIssuerVerification { get; set; } = true;
 
-    // Issue a challenge if no auth token presented
-    var authHeader = context.Request.Headers.Authorization.FirstOrDefault();
-    if (authHeader is null)
+    // Optional allow-list of trusted agent provider issuers
+    public IReadOnlySet<string>? TrustedAgentProviderIssuers { get; set; }
+
+    // Optional allow-list of trusted auth token issuers (PS/AS)
+    public IReadOnlySet<string>? TrustedAuthTokenIssuers { get; set; }
+}
+```
+
+### Behavior by Configuration
+
+| `RequireIssuerVerification` | `ResourceIdentifier` | Effect |
+|:--:|:--:|:--|
+| `true` | set | Full verification: HTTP sig + JWT issuer JWKS + aud + PoP + act.sub |
+| `true` | `null` | Verifies JWT issuer sig + PoP, but skips `aud` check |
+| `false` | any | HTTP signature only — no JWT issuer verification |
+
+## Per-Path Configuration
+
+Use `UseWhen` to apply different verification options per endpoint path. This is the pattern used in the WhoAmI sample where each signing mode has a dedicated endpoint:
+
+```csharp
+// Pseudonymous (hwk) — signature only, no JWT verification
+app.UseWhen(
+    ctx => ctx.Request.Path.StartsWithSegments("/hwk"),
+    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
     {
-        var resourceToken = new ResourceTokenBuilder { ... }.Build();
-        context.Response.Headers["WWW-Authenticate"] = $"AAuth resource_token={resourceToken}";
-        return Results.Unauthorized();
-    }
+        RequireIssuerVerification = false,
+    }));
 
-    return Results.Ok("Access granted");
+// Agent identity (jwks_uri) — verifies key against published JWKS
+app.UseWhen(
+    ctx => ctx.Request.Path.StartsWithSegments("/jwks-uri"),
+    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+    {
+        RequireIssuerVerification = false,
+    }));
+
+// Three-party (jwt) — full issuer + audience verification
+app.UseWhen(
+    ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
+        && !ctx.Request.Path.StartsWithSegments("/hwk")
+        && !ctx.Request.Path.StartsWithSegments("/jwks-uri"),
+    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+    {
+        ResourceIdentifier = "https://resource.example",
+        RequireIssuerVerification = true,
+    }));
+```
+
+See `samples/WhoAmI` for the complete working example.
+
+## Verification Result
+
+After successful verification, the middleware stores an `AAuthVerificationResult` in `HttpContext.Features`:
+
+```csharp
+app.MapGet("/protected", (HttpContext ctx) =>
+{
+    var result = ctx.Features.Get<AAuthVerificationResult>()!;
+    // result.Level: Pseudonymous | Identified | Authorized
+    // result.Scheme: "jwt" | "hwk" | "jkt-jwt" | "jwks_uri"
+    // result.Agent: agent identifier
+    // result.Scopes: granted scopes (auth tokens only)
+    // result.IssuerVerified: whether JWKS verification passed
+    // result.Jkt: key thumbprint
 });
 ```
 
-## Further Reading
+## Error Responses
 
-- [Multi-Scheme Verification](multi-scheme-verification.md) — handling all four signing modes
-- [Replay Detection](replay-detection.md) — preventing signature reuse
-- [Resource Metadata](resource-metadata.md) — advertising verification capabilities
+On verification failure, the middleware returns `401 Unauthorized` with a `Signature-Error` header:
+
+| Error Code | Meaning |
+|------------|---------|
+| `invalid_request` | Missing required signature headers |
+| `invalid_signature` | Signature verification failed |
+| `invalid_jwt` | JWT parsing/issuer verification failed |
+| `expired` | Token or signature timestamp expired |
+
+## OpenTelemetry Integration
+
+When `Activity.Current` is present, the middleware enriches it with tags. See [Observability](../advanced/observability.md).

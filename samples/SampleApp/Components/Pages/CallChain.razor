@@ -1,0 +1,223 @@
+@page "/call-chain"
+@using AAuth.Agent
+@using AAuth.Crypto
+@using AAuth.HttpSig
+@inject IJSRuntime JS
+@rendermode InteractiveServer
+
+<PageTitle>Call Chain — Multi-Agent</PageTitle>
+
+<h2>Call Chain — Multi-Agent Delegation</h2>
+
+<p>
+    Demonstrates multi-hop call chaining: <strong>Agent&nbsp;A</strong> (this app) calls
+    the <strong>Orchestrator</strong> (an intermediate service), which then calls the
+    <strong>WhoAmI</strong> resource. Each hop carries its own AAuth identity. The final
+    response shows all three participants in the chain.
+</p>
+
+<div class="row">
+<div class="col-md-6">
+<h5>Agent (Client) Code</h5>
+<pre><code class="language-csharp">// Agent A builds a signed client with challenge
+// handling — the SDK automatically:
+//   1. Sends agent token → gets 401 + resource_token
+//   2. Exchanges at PS → gets auth token
+//   3. Retries with auth token
+using var client = new AAuthClientBuilder(key)
+    .WithTokenRefresh(async (ctx, ct) =&gt;
+    {
+        var ap = new AgentProviderClient(
+            new HttpClient(), keyStore);
+        return await ap.RefreshAsync(
+            refreshEndpoint, keyId, ct);
+    })
+    .WithChallengeHandling(personServer)
+    .Build();
+
+// Calls the Orchestrator (not WhoAmI directly).
+// The challenge is handled transparently.
+var response = await client.GetAsync(
+    orchestratorUrl);</code></pre>
+</div>
+<div class="col-md-6">
+<h5>Orchestrator (Server) Setup</h5>
+<pre><code class="language-csharp">// The Orchestrator is BOTH a resource AND an agent.
+// DI setup:
+builder.Services.AddSingleton(new TokenVerifier());
+builder.Services.AddSingleton&lt;MetadataClient&gt;(...);
+builder.Services.AddSingleton&lt;JwksClient&gt;(...);
+
+// Full issuer verification — validates JWT signatures
+// via JWKS discovery for both agent and auth tokens.
+app.UseAAuthVerification(new AAuthVerificationOptions
+{
+    ResourceIdentifier = orchestratorUrl,
+    RequireIssuerVerification = true,
+});</code></pre>
+<h5 class="mt-3">Orchestrator Handler</h5>
+<pre><code class="language-csharp">app.MapGet("/", async (HttpContext ctx) =&gt;
+{
+    var parsed = (ParsedSignatureKeyInfo)
+        ctx.Items[ParsedInfoItemKey]!;
+    var typ = (string?)parsed.Header?["typ"];
+
+    // Agent token → challenge (like any resource)
+    if (typ == "aa-agent+jwt")
+    {
+        var rt = new ResourceTokenBuilder { ... };
+        ctx.Response.Headers["AAuth-Requirement"]
+            = FormatAuthToken(rt.Build());
+        return Results.Unauthorized();
+    }
+
+    // Auth token → forward with call chaining.
+    // The caller's auth token becomes upstream_token.
+    var exchange = new TokenExchangeClient(client, meta);
+    var chained = await exchange.ExchangeAsync(
+        personServer, resourceToken,
+        upstreamToken: parsed.Jwt);
+    // ...retry downstream with chained auth token
+});</code></pre>
+</div>
+</div>
+
+@if (!_enrolled)
+{
+    <button class="btn btn-outline-secondary" @onclick="Enrol" disabled="@_loading">
+        @(_loading ? "Enrolling..." : "1. Enrol with Agent Provider")
+    </button>
+}
+else
+{
+    <div class="alert alert-info">
+        Enrolled. Key ID: <code>@_enrollment!.KeyId</code>
+    </div>
+
+    <button class="btn btn-primary" @onclick="SendChainedRequest" disabled="@_loading">
+        @(_loading ? "Sending..." : "2. Send Chained Request (Agent → Orchestrator → WhoAmI)")
+    </button>
+}
+
+@if (_response is not null)
+{
+    <div class="mt-3">
+        <h5>Response (shows full chain)</h5>
+        <div class="alert @(_success ? "alert-success" : "alert-warning")">
+            <strong>@_statusCode</strong>
+        </div>
+        <pre><code class="language-json">@_response</code></pre>
+    </div>
+}
+
+@if (_error is not null)
+{
+    <div class="mt-3 alert alert-danger">@_error</div>
+}
+
+@code {
+    [Inject] private EnrollmentService _enrollment { get; set; } = default!;
+    [Inject] private IConfiguration Config { get; set; } = default!;
+
+    private bool _loading;
+    private bool _enrolled;
+    private string? _response;
+    private string? _error;
+    private string? _statusCode;
+    private bool _success;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await JS.InvokeVoidAsync("highlightCode");
+    }
+
+    protected override void OnInitialized()
+    {
+        _enrolled = _enrollment.IsEnrolled;
+    }
+
+    private async Task Enrol()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            await _enrollment.EnsureEnrolledAsync();
+            _enrolled = true;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SendChainedRequest()
+    {
+        _loading = true;
+        _response = null;
+        _error = null;
+
+        try
+        {
+            var key = _enrollment.Key;
+            var keyId = _enrollment.KeyId;
+            var keyStore = _enrollment.KeyStore;
+            var refreshEndpoint = _enrollment.RefreshEndpoint;
+            var personServer = Config["AAuth:PersonServer"]!;
+            var orchestratorUrl = Config["AAuth:Orchestrator"]!;
+
+            // Pre-grant consent so the PS issues tokens immediately
+            await GrantConsentAsync(orchestratorUrl);
+
+            // Build signed client — same as JWT mode, but targets Orchestrator
+            using var client = new AAuthClientBuilder(key)
+                .WithTokenRefresh(async (ctx, ct) =>
+                {
+                    var apClient = new AgentProviderClient(new HttpClient(), keyStore);
+                    return await apClient.RefreshAsync(refreshEndpoint, keyId, ct);
+                })
+                .WithChallengeHandling(personServer)
+                .Build();
+
+            var response = await client.GetAsync(orchestratorUrl);
+
+            _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
+            _success = response.IsSuccessStatusCode;
+            var raw = await response.Content.ReadAsStringAsync();
+            try { _response = System.Text.Json.JsonSerializer.Serialize(System.Text.Json.JsonDocument.Parse(raw), new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }); }
+            catch { _response = raw; }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task GrantConsentAsync(string resource)
+    {
+        var personServer = Config["AAuth:PersonServer"];
+        if (string.IsNullOrEmpty(personServer)) return;
+
+        var agentId = Config["AAuth:AgentId"]!;
+
+        using var http = new HttpClient();
+        try
+        {
+            await http.PostAsJsonAsync(
+                $"{personServer.TrimEnd('/')}/admin/consent",
+                new { agent = agentId, resource = resource.TrimEnd('/') });
+        }
+        catch
+        {
+            // /admin/consent only exists on MockPersonServer — swallow
+        }
+    }
+}

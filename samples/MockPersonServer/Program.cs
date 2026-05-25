@@ -1,5 +1,7 @@
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
+using AAuth.DependencyInjection;
+using AAuth.Discovery;
 using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
@@ -39,6 +41,13 @@ builder.Services.AddSingleton(new AAuthVerifier
 {
     MaxAge = TimeSpan.FromSeconds(signatureWindowSeconds),
 });
+builder.Services.AddSingleton(new TokenVerifier());
+builder.Services.AddSingleton<MetadataClient>(sp =>
+    new MetadataClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-metadata")));
+builder.Services.AddSingleton<JwksClient>(sp =>
+    new JwksClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-jwks")));
+builder.Services.AddHttpClient("aauth-metadata");
+builder.Services.AddHttpClient("aauth-jwks");
 builder.Services.AddSingleton<ConsentStore>();
 builder.Services.AddSingleton<PendingStore>();
 
@@ -82,7 +91,10 @@ app.UseWhen(
     ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
         && !ctx.Request.Path.StartsWithSegments("/admin")
         && !ctx.Request.Path.StartsWithSegments("/interaction"),
-    branch => branch.UseAAuthVerification());
+    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+    {
+        RequireIssuerVerification = false,
+    }));
 
 // -----------------------------------------------------------------------
 // POST /token — the exchange endpoint.
@@ -106,7 +118,7 @@ app.UseWhen(
 app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore pending) =>
 {
     var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)ctx.Items[
-        AAuthVerificationMiddleware.ContextItemKey]!;
+        AAuthVerificationMiddleware.ParsedInfoItemKey]!;
 
     // Only an agent token may exchange — refuse anything else.
     var typ = (string?)parsed.Header?["typ"];
@@ -140,6 +152,58 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
     {
         return Results.Json(new { error = "invalid_request", detail = "missing resource_token" },
             statusCode: StatusCodes.Status400BadRequest);
+    }
+
+    // Call-chaining: read and VERIFY upstream_token if present
+    // (§Upstream Token Verification steps 1-3).
+    var upstreamTokenJwt = (string?)body?["upstream_token"];
+    JsonObject? upstreamAct = null;
+    if (!string.IsNullOrEmpty(upstreamTokenJwt))
+    {
+        try
+        {
+            var tokenVerifier = app.Services.GetRequiredService<TokenVerifier>();
+            var metaClient = app.Services.GetRequiredService<MetadataClient>();
+            var jwksClient = app.Services.GetRequiredService<JwksClient>();
+
+            // Step 1: Full auth token verification (signature via issuer JWKS).
+            // The "agent" in this context is the intermediary (the one making
+            // this request), and cnf.jwk in the upstream token must have been
+            // bound to the intermediary's signing key. Since the intermediary
+            // is presenting the upstream token via POST body (not HTTP sig),
+            // we use VerifyWithJwksAsync which verifies the JWT signature but
+            // skips the HTTP PoP check.
+            var verified = await tokenVerifier.VerifyWithJwksAsync(
+                upstreamTokenJwt, metaClient, jwksClient,
+                expectedType: AuthTokenBuilder.TokenType,
+                expectedDwk: AuthTokenBuilder.PersonDwk,
+                expectedAudience: null);
+
+            // Step 3: Verify aud matches the resource that is now acting as
+            // an agent (i.e., the intermediary). The intermediary's identity
+            // isn't directly available here, but aud must be a valid URL that
+            // we previously issued a token for. For a mock, accept any valid
+            // aud — a production PS would check against known resources.
+            var upAud = (string?)verified.Payload["aud"];
+            if (string.IsNullOrEmpty(upAud))
+            {
+                return Results.Json(new { error = "invalid_upstream_token", detail = "missing aud" },
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            // Extract the verified act claim for nesting.
+            upstreamAct = verified.Payload["act"] as JsonObject;
+        }
+        catch (TokenVerificationException ex)
+        {
+            return Results.Json(new { error = "invalid_upstream_token", detail = ex.Message },
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+        catch (Exception ex) when (ex is FormatException or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            return Results.Json(new { error = "invalid_upstream_token", detail = ex.Message },
+                statusCode: StatusCodes.Status400BadRequest);
+        }
     }
 
     // Decode the resource token's `iss` claim — that's the resource URL
@@ -179,7 +243,7 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
     // endpoint while polling the pending URL.
     if (requireConsent && !consent.IsConsented(agentId, audience, PsScope))
     {
-        var entry = pending.Add(agentId, audience, PsScope, resourceTokenJwt, parsed.ConfirmationKey!);
+        var entry = pending.Add(agentId, audience, PsScope, resourceTokenJwt, parsed.ConfirmationKey!, upstreamAct);
         var location = $"/pending/{entry.Id}";
         var interactionUrl = $"{psIssuer.TrimEnd('/')}/interaction";
         ctx.Response.Headers.Location = location;
@@ -190,7 +254,7 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
         return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
     }
 
-    var authToken = IssueAuthToken(agentId, audience, parsed.ConfirmationKey!);
+    var authToken = IssueAuthToken(agentId, audience, parsed.ConfirmationKey!, upstreamAct);
     return Results.Ok(new { auth_token = authToken });
 });
 
@@ -234,7 +298,7 @@ app.MapGet("/pending/{id}", (HttpContext ctx, string id, ConsentStore consent, P
     // intentionally leave the entry in place so a slow poller still gets
     // a deterministic answer on its next request; a production PS would
     // expire pending entries on a timer.
-    var authToken = IssueAuthToken(entry.Agent, entry.Resource, entry.AgentConfirmationKey);
+    var authToken = IssueAuthToken(entry.Agent, entry.Resource, entry.AgentConfirmationKey, entry.UpstreamAct);
     return Results.Ok(new { auth_token = authToken });
 });
 
@@ -373,7 +437,7 @@ app.Run();
 // -----------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------
-string IssueAuthToken(string agentId, string audience, AAuthKey confirmationKey)
+string IssueAuthToken(string agentId, string audience, IAAuthKey confirmationKey, JsonObject? upstreamAct = null)
     => new AuthTokenBuilder
     {
         Issuer = psIssuer,
@@ -384,6 +448,7 @@ string IssueAuthToken(string agentId, string audience, AAuthKey confirmationKey)
         KeyId = PsKid,
         Subject = "pairwise-sub",
         Scope = PsScope,
+        UpstreamAct = upstreamAct,
     }.Build();
 
 async Task<(string? Agent, string? Resource, string? Scope, IResult? Error)> ReadAdminBodyAsync(HttpContext ctx)

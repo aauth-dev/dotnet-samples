@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
+using AAuth.DependencyInjection;
 using AAuth.Discovery;
 using AAuth.Headers;
 using AAuth.HttpSig;
@@ -53,25 +54,85 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
     SignatureWindow = signatureWindowSeconds,
 });
 
-// All other endpoints require an AAuth signature. UseWhen scopes the
-// middleware so that /.well-known/* discovery endpoints remain reachable
-// without a signature (they are mapped above but routing matches them
-// after middleware runs, so a blanket UseAAuthVerification would 401 them).
+// -----------------------------------------------------------------------
+// Per-path middleware: each access mode gets the correct verification level.
+// -----------------------------------------------------------------------
+
+// /hwk — pseudonymous: only HTTP signature verification, no JWT issuer check.
 app.UseWhen(
-    ctx => !ctx.Request.Path.StartsWithSegments("/.well-known"),
-    branch => branch.UseAAuthVerification());
+    ctx => ctx.Request.Path.StartsWithSegments("/hwk"),
+    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+    {
+        RequireIssuerVerification = false,
+    }));
+
+// /jwks-uri — agent identity: HTTP signature verified against published JWKS.
+app.UseWhen(
+    ctx => ctx.Request.Path.StartsWithSegments("/jwks-uri"),
+    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+    {
+        RequireIssuerVerification = false,
+    }));
+
+// /jwt and / — three-party: FULL issuer verification via JWKS discovery.
+app.UseWhen(
+    ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
+        && !ctx.Request.Path.StartsWithSegments("/hwk")
+        && !ctx.Request.Path.StartsWithSegments("/jwks-uri"),
+    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+    {
+        ResourceIdentifier = resourceUrl,
+        RequireIssuerVerification = true,
+    }));
 
 // -----------------------------------------------------------------------
-// GET / — the WhoAmI endpoint.
+// GET /hwk — Pseudonymous access (no agent identity known).
+// -----------------------------------------------------------------------
+app.MapGet("/hwk", (HttpContext ctx) =>
+{
+    var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)ctx.Items[
+        AAuthVerificationMiddleware.ParsedInfoItemKey]!;
+
+    return Results.Ok(new
+    {
+        mode = "pseudonymous",
+        scheme = "hwk",
+        jkt = parsed.Jkt,
+        note = "Resource sees key thumbprint only — agent identity unknown.",
+    });
+});
+
+// -----------------------------------------------------------------------
+// GET /jwks-uri — Agent Identity access (agent's key verified via JWKS).
+// -----------------------------------------------------------------------
+app.MapGet("/jwks-uri", (HttpContext ctx) =>
+{
+    var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)ctx.Items[
+        AAuthVerificationMiddleware.ParsedInfoItemKey]!;
+
+    return Results.Ok(new
+    {
+        mode = "agent-identity",
+        scheme = "jwks_uri",
+        jwks_uri = parsed.JwksUri,
+        kid = parsed.Kid,
+        note = "Resource verified agent's key via JWKS URI — full cryptographic identity.",
+    });
+});
+
+// -----------------------------------------------------------------------
+// GET / — Three-party JWT access (full issuer verification by middleware).
+//
+// The middleware has already:
+//   - Verified the HTTP signature
+//   - Verified the JWT issuer signature via JWKS discovery
+//   - Verified cnf.jwk PoP binding
+//   - Verified act.sub matches the signing agent
+//   - Verified aud matches this resource's identifier
 //
 // Flow:
-//   1. AAuthVerificationMiddleware ensures the request is signed and exposes
-//      the parsed scheme info via HttpContext.Items.
-//   2. Dispatch on Signature-Key scheme:
-//      - jwt with aa-agent+jwt: challenge (three-party) or identity-accept
-//      - jwt with aa-auth+jwt: verify auth token, return claims
-//      - hwk: pseudonymous identity-based access (return key thumbprint)
-//      - jwks_uri: agent identity-based access (return agent URI + kid)
+//   - Agent token → 401 challenge with resource token
+//   - Auth token → return verified claims (including act chain)
 // -----------------------------------------------------------------------
 app.MapGet("/", async (
     HttpContext ctx,
@@ -81,38 +142,8 @@ app.MapGet("/", async (
     JwksClient jwks) =>
 {
     var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)ctx.Items[
-        AAuthVerificationMiddleware.ContextItemKey]!;
+        AAuthVerificationMiddleware.ParsedInfoItemKey]!;
 
-    // ── Pseudonymous mode (hwk): identity-based accept ──────────────
-    // The resource knows a specific key signed this request but nothing
-    // about the agent's identity. Accept with key-level claims.
-    if (parsed.Scheme == "hwk")
-    {
-        return Results.Ok(new
-        {
-            mode = "pseudonymous",
-            scheme = "hwk",
-            jkt = parsed.Jkt,
-            note = "Resource sees key thumbprint only — agent identity unknown.",
-        });
-    }
-
-    // ── Agent Identity mode (jwks_uri): identity-based accept ───────
-    // The resource discovered and verified the agent's public key from
-    // a JWKS endpoint. The URI serves as the agent's identity.
-    if (parsed.Scheme == "jwks_uri")
-    {
-        return Results.Ok(new
-        {
-            mode = "agent-identity",
-            scheme = "jwks_uri",
-            jwks_uri = parsed.JwksUri,
-            kid = parsed.Kid,
-            note = "Resource verified agent's key via JWKS URI — full cryptographic identity.",
-        });
-    }
-
-    // ── Agent Token / Auth Token mode (jwt) ─────────────────────────
     var typ = (string?)parsed.Header?["typ"];
 
     if (typ == AgentTokenBuilder.TokenType)
@@ -122,7 +153,19 @@ app.MapGet("/", async (
 
     if (typ == AuthTokenBuilder.TokenType)
     {
-        return await ReturnClaims(parsed, tokenVerifier, metadata, jwks, resourceUrl);
+        // Middleware already verified signature, aud, cnf.jwk, and act.sub.
+        // Just return the verified claims.
+        var result = ctx.Features.Get<AAuthVerificationResult>()!;
+        return Results.Ok(new
+        {
+            mode = "three-party",
+            scheme = "jwt",
+            agent = result.Agent,
+            sub = result.Subject,
+            scope = result.Scopes,
+            iss = result.Issuer,
+            act = parsed.Payload?["act"],
+        });
     }
 
     return Results.Json(
@@ -191,65 +234,6 @@ static async Task<IResult> ChallengeWithResourceToken(
         AAuthRequirementHeader.FormatAuthToken(resourceToken);
     return Results.Json(new { error = "auth_token_required" },
         statusCode: StatusCodes.Status401Unauthorized);
-}
-
-static async Task<IResult> ReturnClaims(
-    SignatureKeyParser.ParsedSignatureKeyInfo parsed,
-    TokenVerifier verifier,
-    MetadataClient metadata,
-    JwksClient jwks,
-    string resourceIssuer)
-{
-    AAuth.Tokens.TokenVerifier.VerifiedToken authToken;
-    try
-    {
-        authToken = await verifier.VerifyWithJwksAsync(
-            parsed.Jwt!,
-            metadata,
-            jwks,
-            expectedType: AuthTokenBuilder.TokenType,
-            expectedDwk: AuthTokenBuilder.PersonDwk,
-            expectedAudience: resourceIssuer);
-    }
-    catch (TokenVerificationException ex)
-    {
-        return Results.Json(new { error = "invalid_auth_token", detail = ex.Message },
-            statusCode: StatusCodes.Status401Unauthorized);
-    }
-
-    // cnf.jwk binding: the auth token's cnf.jwk MUST equal the key that
-    // signed the HTTP request.
-    var authCnf = authToken.Payload["cnf"]?["jwk"] as JsonObject;
-    if (authCnf is null)
-    {
-        return Results.Json(new { error = "invalid_auth_token", detail = "missing cnf.jwk" },
-            statusCode: StatusCodes.Status401Unauthorized);
-    }
-
-    AAuthKey authKey;
-    try
-    {
-        authKey = AAuthKey.FromJwk(authCnf);
-    }
-    catch (Exception ex) when (ex is ArgumentException or FormatException)
-    {
-        return Results.Json(new { error = "invalid_auth_token", detail = $"malformed cnf.jwk: {ex.Message}" },
-            statusCode: StatusCodes.Status401Unauthorized);
-    }
-    if (authKey.ComputeJwkThumbprint() != parsed.ConfirmationKey!.ComputeJwkThumbprint())
-    {
-        return Results.Json(new { error = "invalid_auth_token", detail = "cnf.jwk does not match request signing key" },
-            statusCode: StatusCodes.Status401Unauthorized);
-    }
-
-    return Results.Ok(new
-    {
-        mode = "three-party",
-        agent = (string?)authToken.Payload["agent"],
-        sub = (string?)authToken.Payload["sub"],
-        scope = (string?)authToken.Payload["scope"],
-        iss = authToken.Issuer,
-    });
 }
 
 // Marker type for `WebApplicationFactory<WhoAmI.Entry>` in the

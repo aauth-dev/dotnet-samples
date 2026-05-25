@@ -14,18 +14,63 @@ namespace AAuth.DependencyInjection;
 public static class AAuthApplicationBuilderExtensions
 {
     /// <summary>
-    /// Add AAuth signature verification middleware, resolving the verifier,
-    /// key resolver, and JTI store from DI.
+    /// Add AAuth verification middleware that performs HTTP signature PoP verification
+    /// and (optionally) JWT issuer signature verification.
     /// </summary>
-    public static IApplicationBuilder UseAAuthVerification(this IApplicationBuilder app)
+    /// <param name="app">The application builder.</param>
+    /// <param name="options">Verification options. When null, uses default options (issuer verification enabled).</param>
+    public static IApplicationBuilder UseAAuthVerification(
+        this IApplicationBuilder app,
+        AAuthVerificationOptions? options = null)
     {
+        ArgumentNullException.ThrowIfNull(app);
+
         var verifier = app.ApplicationServices.GetRequiredService<AAuthVerifier>();
         var resolver = app.ApplicationServices.GetService<ISignatureKeyResolver>()
-            ?? new DefaultSignatureKeyResolver(app.ApplicationServices.GetService<JwksClient>());
+            ?? new DefaultSignatureKeyResolver(
+                app.ApplicationServices.GetService<JwksClient>(),
+                app.ApplicationServices.GetService<MetadataClient>());
+        var metadata = app.ApplicationServices.GetService<MetadataClient>();
+        var jwks = app.ApplicationServices.GetService<JwksClient>();
         var jtiStore = app.ApplicationServices.GetService<IJtiStore>();
+        var resolvedOptions = options ?? new AAuthVerificationOptions();
 
-        return AAuthVerificationMiddlewareExtensions.UseAAuthVerification(
-            app, verifier, jtiStore, resolver);
+        if (jtiStore is not null)
+        {
+            app.Use(async (context, next) =>
+            {
+                context.Items[AAuthVerificationMiddleware.JtiStoreItemKey] = jtiStore;
+                await next();
+            });
+        }
+
+        return app.Use(next =>
+        {
+            var mw = new AAuthVerificationMiddleware(
+                next, verifier, resolver, metadata, jwks, resolvedOptions);
+            return mw.InvokeAsync;
+        });
+    }
+
+    /// <summary>
+    /// Add the AAuth challenge middleware that automatically issues 401 challenges
+    /// with resource tokens when the resource requires an auth token but only an
+    /// agent token is presented. Must be registered AFTER <see cref="UseAAuthVerification"/>.
+    /// </summary>
+    /// <param name="app">The application builder.</param>
+    /// <param name="options">Challenge options configuring access mode, resource key, and scopes.</param>
+    public static IApplicationBuilder UseAAuthChallenge(
+        this IApplicationBuilder app,
+        ChallengeOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        ArgumentNullException.ThrowIfNull(options);
+
+        return app.Use(next =>
+        {
+            var mw = new AAuthChallengeMiddleware(next, options);
+            return mw.InvokeAsync;
+        });
     }
 
     /// <summary>

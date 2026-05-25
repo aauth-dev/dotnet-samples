@@ -77,6 +77,17 @@ internal static class CodeSnippets
         // Signature-Key: sig=jwt;jwt="<aa-agent+jwt>"
         """;
 
+    public const string SignedGetJktJwt = """
+        // jkt-jwt mode: naming JWT binds key via thumbprint confirmation.
+        // Supports key rotation without re-enrolment.
+        using var client = new AAuthClientBuilder(key)
+            .UseJktJwt(() => namingJwt)
+            .Build();
+
+        var response = await client.GetAsync("https://resource.example/data");
+        // Signature-Key: sig=jkt-jwt;jwt="<naming-jwt>";jkt="<thumbprint>"
+        """;
+
     public const string ParseChallenge = """
         // Parse the 401's AAuth-Requirement header
         var header = response.Headers
@@ -138,6 +149,8 @@ internal static class CodeSnippets
             {
                 MaxTotalWait = TimeSpan.FromMinutes(5),
                 DefaultPollInterval = TimeSpan.FromSeconds(2),
+                // Long-poll: server can hold the connection open (RFC 7240)
+                PreferWaitSeconds = 30,
             });
 
         var result = await poller.PollAsync(pendingUri);
@@ -152,6 +165,23 @@ internal static class CodeSnippets
 
         var response = await client.GetAsync("https://resource.example/data");
         // Now signed with the auth_token → 200 OK
+        """;
+
+    public const string CallChainRetry = """
+        // Retry Orchestrator with the auth_token.
+        // From our side this looks like a normal retry — the chaining
+        // happens server-side inside the Orchestrator:
+        //   1. Orchestrator validates our auth_token
+        //   2. Extracts it as upstream_token
+        //   3. Calls downstream WhoAmI with its own agent token
+        //   4. Exchanges at PS with upstream_token → nested act
+        //   5. Retries WhoAmI with chained auth_token → 200
+        using var chainClient = new AAuthClientBuilder(key)
+            .UseJwt(authToken) // present the auth_token directly
+            .Build();
+
+        var response = await chainClient.GetAsync("https://orchestrator.example/");
+        // 200 → combined result with full delegation chain
         """;
 
     public const string FullAutomatic = """

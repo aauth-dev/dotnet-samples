@@ -48,6 +48,8 @@ try
         {
             MaxTotalWait = TimeSpan.FromMinutes(5),
             DefaultPollInterval = TimeSpan.FromSeconds(2),
+            // Long-poll: server holds connection open up to 30s (RFC 7240)
+            PreferWaitSeconds = 30,
         });
 }
 catch (AAuthInteractionDeniedException)
@@ -72,6 +74,7 @@ using var client = new AAuthClientBuilder(key)
     .WithChallengeHandling("https://ps.example", options =>
     {
         options.PollingTimeout = TimeSpan.FromMinutes(5);
+        options.PreferWaitSeconds = 30; // long-poll (RFC 7240 §4.3)
         options.OnInteractionRequired = async (interaction, ct) =>
         {
             Console.WriteLine($"Approve at: {interaction.Url}");

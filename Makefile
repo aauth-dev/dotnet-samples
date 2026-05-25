@@ -12,10 +12,12 @@ AP_PROJECT     := samples/MockAgentProvider/MockAgentProvider.csproj
 TOUR_PROJECT   := samples/GuidedTour/GuidedTour.csproj
 AGENT_PROJECT  := samples/AgentConsole/AgentConsole.csproj
 SAMPLE_PROJECT := samples/SampleApp/SampleApp.csproj
+ORCH_PROJECT   := samples/Orchestrator/Orchestrator.csproj
 
 WHOAMI_URL := http://localhost:5000
 PS_URL     := http://localhost:5100
 AP_URL     := http://localhost:5301
+ORCH_URL   := http://localhost:5200
 TOUR_URL   := http://localhost:5400
 SAMPLE_URL := http://localhost:5240
 
@@ -63,12 +65,16 @@ tour: ## Run the GuidedTour Blazor app (port 5400)
 sampleapp: ## Run the SampleApp Blazor app (port 5240)
 	$(DOTNET) run --project $(SAMPLE_PROJECT)
 
+orchestrator: ## Run the Orchestrator service (port 5200)
+	$(DOTNET) run --project $(ORCH_PROJECT)
+
 agent: ## Run AgentConsole against WhoAmI (override URL=… for a different target)
 	$(DOTNET) run --project $(AGENT_PROJECT) -- $(or $(URL),$(WHOAMI_URL))
 
-demo: ## Start WhoAmI + MockPersonServer + MockAgentProvider + GuidedTour in parallel
-	@echo "Starting four-party demo (deferred / user-consent flow)..."
+demo: ## Start WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + GuidedTour in parallel
+	@echo "Starting five-party demo (all flows including call-chain)..."
 	@echo "  WhoAmI:             $(WHOAMI_URL)"
+	@echo "  Orchestrator:       $(ORCH_URL)"
 	@echo "  MockPersonServer:   $(PS_URL)  (RequireConsent=true)"
 	@echo "  MockAgentProvider:  $(AP_URL)"
 	@echo "  GuidedTour:         $(TOUR_URL)"
@@ -76,13 +82,15 @@ demo: ## Start WhoAmI + MockPersonServer + MockAgentProvider + GuidedTour in par
 	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \
 	MockPersonServer__RequireConsent=true $(DOTNET) run --project $(PS_PROJECT) & \
 	$(DOTNET) run --project $(WHOAMI_PROJECT) & \
+	$(DOTNET) run --project $(ORCH_PROJECT) & \
 	$(DOTNET) run --project $(AP_PROJECT) & \
 	$(DOTNET) run --project $(TOUR_PROJECT) & \
 	wait
 
-demo-sample: ## Start WhoAmI + MockPersonServer + MockAgentProvider + SampleApp in parallel
-	@echo "Starting demo with SampleApp..."
+demo-sample: ## Start WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + SampleApp in parallel
+	@echo "Starting demo with SampleApp + Orchestrator..."
 	@echo "  WhoAmI:             $(WHOAMI_URL)"
+	@echo "  Orchestrator:       $(ORCH_URL)"
 	@echo "  MockPersonServer:   $(PS_URL)"
 	@echo "  MockAgentProvider:  $(AP_URL)"
 	@echo "  SampleApp:          $(SAMPLE_URL)"
@@ -90,6 +98,7 @@ demo-sample: ## Start WhoAmI + MockPersonServer + MockAgentProvider + SampleApp 
 	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \
 	MockPersonServer__RequireConsent=true $(DOTNET) run --project $(PS_PROJECT) & \
 	$(DOTNET) run --project $(WHOAMI_PROJECT) & \
+	$(DOTNET) run --project $(ORCH_PROJECT) & \
 	$(DOTNET) run --project $(AP_PROJECT) & \
 	$(DOTNET) run --project $(SAMPLE_PROJECT) & \
 	wait

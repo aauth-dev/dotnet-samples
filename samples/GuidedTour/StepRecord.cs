@@ -59,9 +59,22 @@ public sealed class StepRecord
     /// <summary>C# SDK code snippet showing how to implement this step programmatically.</summary>
     public string? CodeSnippet { get; init; }
 
+    /// <summary>
+    /// Optional sub-steps rendered as smaller arrows in the sequence diagram
+    /// beneath this step's main arrow. Used to depict server-side actions
+    /// (e.g. what the Orchestrator does internally on call-chaining).
+    /// </summary>
+    public IReadOnlyList<SubStep>? SubSteps { get; init; }
+
     /// <summary>Time the step was recorded (used for timeline display).</summary>
     public DateTimeOffset Timestamp { get; } = DateTimeOffset.UtcNow;
 }
+
+/// <summary>
+/// A lightweight visual-only arrow in the sequence diagram, rendered as
+/// part of a parent step. Does not appear in the step list or inspector.
+/// </summary>
+public sealed record SubStep(string Label, Actor From, Actor To);
 
 /// <summary>Actors in the AAuth protocol flow as visualized by the tour.</summary>
 public enum Actor
@@ -70,6 +83,7 @@ public enum Actor
     Resource,
     PersonServer,
     AgentProvider,
+    Orchestrator,
 }
 
 /// <summary>

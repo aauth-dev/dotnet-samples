@@ -46,7 +46,7 @@ ASPNETCORE_URLS=http://localhost:5000 \
 
 # Terminal 3
 dotnet run --project samples/AgentConsole -- \
-  http://localhost:5000/ --ps http://localhost:5100
+  http://localhost:5000 --ap http://localhost:5301 --ps http://localhost:5100
 ```
 
 ## Configuration

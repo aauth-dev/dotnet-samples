@@ -44,19 +44,24 @@ builder.Services.AddAAuthResource(options =>
 
 ```csharp
 using AAuth.Server;
+using AAuth.DependencyInjection;
 
-var jtiStore = new InMemoryJtiStore();
+builder.Services.AddSingleton(new AAuthVerifier());
+builder.Services.AddSingleton<IJtiStore>(new InMemoryJtiStore());
 
-app.UseAAuthVerification(
-    verifier: new AAuthVerifier(),
-    jtiStore: jtiStore);
+var app = builder.Build();
+app.UseAAuthVerification(new AAuthVerificationOptions
+{
+    RequireIssuerVerification = false,
+});
 
 // Optional: periodic cleanup of expired entries
+var jtiStore = app.Services.GetRequiredService<IJtiStore>() as InMemoryJtiStore;
 var timer = new PeriodicTimer(TimeSpan.FromMinutes(10));
 _ = Task.Run(async () =>
 {
     while (await timer.WaitForNextTickAsync())
-        jtiStore.Cleanup();
+        jtiStore?.Cleanup();
 });
 ```
 

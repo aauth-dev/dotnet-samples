@@ -10,6 +10,10 @@
     <h1>AAuth Guided Tour</h1>
     <div class="config">
         <span class="hl-resource"><strong>Resource:</strong> @Options.Value.WhoAmIUrl</span>
+        @if (Session.IsCallChainMode)
+        {
+            <span class="hl-resource"><strong>Orchestrator:</strong> @Options.Value.OrchestratorUrl</span>
+        }
         @if (!Session.IsIdentityMode)
         {
             <span class="hl-ps"><strong>Person Server:</strong> @(string.IsNullOrWhiteSpace(Options.Value.PersonServerUrl) ? "(none)" : Options.Value.PersonServerUrl)</span>
@@ -30,6 +34,7 @@
             <option value="@TourMode.Identity">2 · Identity-based — no PS, 2 steps</option>
             <option value="@TourMode.Autonomous" disabled="@(!Session.HasPersonServer)">3 · PS-Asserted (Direct Grant) — no user, 6 steps</option>
             <option value="@TourMode.Deferred" disabled="@(!Session.HasPersonServer)">4 · PS-Asserted (Deferred) — user approves, 9 steps</option>
+            <option value="@TourMode.CallChain" disabled="@(!Session.HasPersonServer || !Session.HasOrchestrator)">5 · Call Chain (Multi-Agent) — 7 steps</option>
         </select>
     </label>
     @if (Session.Mode == TourMode.Identity)
@@ -108,6 +113,17 @@
                     <strong>Human approval required.</strong>
                 </text>
                 break;
+            case TourMode.CallChain:
+                <text>
+                    <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — multi-agent delegation.
+                    The agent calls an <strong>Orchestrator</strong> (an intermediate service) which itself calls
+                    a downstream resource (WhoAmI). The Orchestrator passes the agent's auth_token as
+                    <code>upstream_token</code> during its own PS exchange, producing a <strong>nested <code>act</code>
+                    claim</strong> that records the full delegation chain. The final resource sees exactly who
+                    acted on whose behalf. <strong>No human in the loop — standing consent for
+                    both hops.</strong>
+                </text>
+                break;
         }
     </p>
 </section>
@@ -178,9 +194,18 @@
         new("Resource", "resource", Actor.Resource),
     };
 
+    private static readonly SequenceDiagram.LaneDefinition[] CallChainLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Orchestrator", "resource", Actor.Orchestrator),
+        new("Resource", "resource2", Actor.Resource),
+        new("Person Server", "ps", Actor.PersonServer),
+    };
+
     private SequenceDiagram.LaneDefinition[]? ActiveLanes =>
         Session.IsBootstrapMode ? BootstrapLanes :
-        Session.IsIdentityMode ? IdentityLanes : null;
+        Session.IsIdentityMode ? IdentityLanes :
+        Session.IsCallChainMode ? CallChainLanes : null;
 
     protected override async Task OnInitializedAsync()
     {

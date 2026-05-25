@@ -88,7 +88,7 @@ run locally with the .NET 10 SDK.
 
 ### Sample App
 
-Self-contained Blazor app with one page per AAuth flow (HWK, JWKS URI, JWT direct grant, Deferred user consent).
+Self-contained Blazor app with one page per AAuth flow (HWK, JWKS URI, JWT direct grant, Deferred user consent, Call Chain multi-agent delegation).
 
 ```bash
 make demo-sample   # starts all servers + SampleApp on http://localhost:5240

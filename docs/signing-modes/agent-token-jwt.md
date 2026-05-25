@@ -60,6 +60,7 @@ When the resource sees a `ps` claim, it can issue a resource token challenging t
 
 ## Further Reading
 
+- [Call Chaining](../workflows/call-chaining.md) — multi-hop delegation with `UseJwt` and `upstream_token`
 - [Federated Demo](https://explorer.aauth.dev/access/federated)
 - [PS-Asserted Access](../workflows/ps-asserted-access.md)
 - [Bootstrap](../workflows/bootstrap-enrollment.md)

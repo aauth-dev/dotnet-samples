@@ -2,8 +2,9 @@
 
 > **Created:** 2026-05-23
 > **Validated:** 2026-05-23 (against actual SDK source code)
+> **Re-validated:** 2026-05-25 (deep spec read + subagent verification per gap — all 11 gaps confirmed active)
 > **Source:** Comparison of [Christian Posta AAuth Full Demo](https://blog.christianposta.com/aauth-full-demo/) against our .NET SDK
-> **Spec:** `draft-hardt-oauth-aauth-protocol` (2026-05-06)
+> **Spec:** `draft-hardt-oauth-aauth-protocol` (2026-05-06, commit c090879)
 > **SDK path:** `src/AAuth/`
 
 This document identifies gaps validated by reading SDK source code directly. Prior analysis from blog comparison and round 1 carry-forwards has been verified against actual implementation state. Gaps that were found to already be implemented have been removed or reclassified.
@@ -14,17 +15,19 @@ This document identifies gaps validated by reading SDK source code directly. Pri
 
 | # | Gap | Severity | Spec Gap? | Status |
 |---|-----|----------|:---:|:---:|
-| 1 | Middleware-level JWT issuer verification (agent token) | Critical | **YES — MUST** | Confirmed |
-| 2 | Middleware-level JWT issuer verification (auth token) | Critical | **YES — MUST** | Confirmed |
-| 3 | Auto-challenge middleware (401 + resource token) | Medium | **YES — MUST** | Partially implemented |
-| 4 | Configurable access mode | Medium | No — impl pattern | Confirmed |
-| 5 | Typed verification result (structured claims) | Low | No — impl pattern | Partially implemented |
-| 6 | ASP.NET authorization policy integration | Medium | No — platform | Confirmed |
-| 7 | Prefer: wait=N long-poll support | Low | No — MAY | Confirmed |
-| 8 | OpenTelemetry trace enrichment | Low | No — not in spec | Confirmed |
-| 9 | jkt-jwt naming JWT signature verification | Medium | **Conditional MUST** | Confirmed (TODO in code) |
-| 10 | ECDSA P-256 pipeline wiring | Low | SHOULD | Confirmed |
-| 11 | Call chaining (resource as agent) | Medium | **MUST (conditional)** | Confirmed |
+| # | Gap | Severity | Spec Gap? | Status (2026-05-25) |
+|---|-----|----------|:---:|:---:|
+| 1 | Middleware-level JWT issuer verification (agent token) | Critical | **YES — MUST** | ❌ Open |
+| 2 | Middleware-level JWT issuer verification (auth token) | Critical | **YES — MUST** | ❌ Open |
+| 3 | Auto-challenge middleware (401 + resource token) | Medium | **YES — MUST** | ❌ Open (building blocks exist) |
+| 4 | Configurable access mode | Medium | No — impl pattern | ❌ Open |
+| 5 | Typed verification result (structured claims) | Low | No — impl pattern | ❌ Open |
+| 6 | ASP.NET authorization policy integration | Medium | No — platform | ❌ Open |
+| 7 | Prefer: wait=N long-poll support | Low | No — MAY | ❌ Open |
+| 8 | OpenTelemetry trace enrichment | Low | No — not in spec | ❌ Open |
+| 9 | jkt-jwt naming JWT signature verification | Medium | **Conditional MUST** | ❌ Open (TODO in code L102-104) |
+| 10 | ECDSA P-256 pipeline wiring | Low | SHOULD | ❌ Open (3 blocking points) |
+| 11 | Call chaining (resource as agent) | Medium | **MUST (conditional)** | ❌ Open |
 
 > **Spec gaps: 5** (Gaps 1, 2, 3, 9, 11)
 > **SHOULD: 1** (Gap 10)
@@ -243,6 +246,29 @@ The following gaps from the initial analysis were found to be **already implemen
 
 ---
 
+### Gap 12: Interaction Chaining (Consent Propagation Through Call Chain)
+
+**Severity:** Medium-High | **Spec gap: MUST (for resources acting as agents that encounter deferred consent)**
+**Spec:** §Interaction Chaining: *"When a resource acting as an agent receives a 202 Accepted response with AAuth-Requirement: requirement=interaction, and the resource needs to propagate this interaction requirement to its caller, it MUST return a 202 Accepted response to the original agent with its own AAuth-Requirement header containing requirement=interaction and its own interaction code."*
+
+**Code evidence:**
+- `CallChainingHandler.ExchangeForDownstreamAsync()` passes `onInteractionRequired: null` — throws on 202.
+- No `IPendingRequestStore` or pending-request parking pattern.
+- No interaction proxy endpoint for browser redirects.
+- No pending poll endpoint for callers to check completion.
+- `DeferredPoller` exists (reusable for downstream polling) but not wired into call-chaining path.
+- `AAuthInteraction.Format()` exists (reusable for generating upstream 202 responses).
+
+**Required:**
+- `IPendingRequestStore` — park incoming requests awaiting downstream consent
+- `InteractionChainingMiddleware` — `/aauth/pending/{id}` (poll) + `/aauth/interaction/{id}` (browser redirect)
+- `CallChainingHandler` propagation — handle 202 from downstream PS, create pending entry, return 202 upstream
+- End-to-end flow: Agent A → Resource B → PS (consent) → user approves → B completes → A gets result
+
+**Scenario:** Multi-hop consent bubble-up (Agent A → B → C → Resource, C needs consent, bubbles to A)
+
+---
+
 ## Implementation Priority
 
 ### Phase 1: Critical Security — Integrated Verification Middleware (Gaps 1–2)
@@ -268,3 +294,7 @@ Enable resource-as-agent pattern for multi-hop flows.
 ### Phase 6: DX and Observability (Gaps 7–8)
 
 Prefer: wait=N, OpenTelemetry. Nice-to-have improvements.
+
+### Phase 8: Interaction Chaining (Gap 12)
+
+Enable consent propagation through multi-hop call chains. When a downstream PS requires user consent, each intermediate resource parks the original request, returns 202 with its own interaction URL/code to the upstream caller, and completes the request once the user approves.
