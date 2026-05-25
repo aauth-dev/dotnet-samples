@@ -2,9 +2,10 @@
 
 > **Created:** 2026-05-23
 > **Validated against code:** 2026-05-23
+> **Re-validated:** 2026-05-25 (deep spec read of all 3 drafts + per-gap subagent code analysis)
 > **Source:** [Christian Posta AAuth Full Demo](https://blog.christianposta.com/aauth-full-demo/)
 > **Reference implementations:** Python AAuth Library, Go AAuth Library, AAuth Person Server, ExtAuthz AAuth Resource
-> **Spec:** `draft-hardt-oauth-aauth-protocol` (2026-05-06)
+> **Spec:** `draft-hardt-oauth-aauth-protocol` (2026-05-06, commit c090879)
 
 ---
 
@@ -343,3 +344,78 @@ This is an intentional layered architecture. The `TokenVerifier` class has full 
 | §12.4.4 | Terminal status codes | ✅ | Typed `PollingErrorCode` enum |
 | §14.1 | PoP (cnf.jwk) | ✅ | Full binding in `TokenVerifier.VerifyAuthToken()` |
 | RFC 9421 | HTTP Message Signatures | ✅ | Ed25519 end-to-end |
+
+---
+
+## 8. Spec-Level Observations from Deep Read (2026-05-25)
+
+> **Update (2026-05-25):** The following observations come from a complete read of all three spec drafts (protocol, bootstrap, R3) and are relevant to prioritizing implementation work.
+
+### 8.1 Auth Token `act` Claim Is Always Required
+
+The spec §Auth Token Structure lists `act` as a Required payload claim:
+
+> *"In direct authorization, `act.sub` is the agent identifier. In call chaining, `act` nests to record the full delegation chain."*
+
+Our `AuthTokenBuilder` currently does NOT emit an `act` claim. This is a conformance gap (not listed in the original 11 because the builder works — but auth tokens without `act` are non-conformant). The `TokenVerifier.VerifyAuthToken()` does validate `act.sub` when present (step 8), but would need updating if `act` becomes mandatory for all auth tokens.
+
+**Action:** `AuthTokenBuilder` should always emit `act: { sub: <agent identifier> }`. This is a minor change to add to Phase 1.
+
+### 8.2 Resource Token Audience Logic (Spec §Resource Tokens)
+
+The spec defines clear priority for resource token audience:
+
+1. If resource has its own AS → `aud` = AS URL (four-party)
+2. If resource has no AS but agent has PS (`ps` claim) → `aud` = PS URL (three-party)
+3. If neither → resource handles authorization itself (two-party)
+
+The auto-challenge middleware (Phase 2) needs to resolve the audience dynamically based on configuration. This is not a simple hardcoded value — it depends on whether the resource has an AS configured and whether the agent token contains a `ps` claim.
+
+### 8.3 `AAuth-Mission` Header Format Mismatch
+
+The spec defines `AAuth-Mission` as:
+
+```http
+AAuth-Mission: approver="https://ps.example"; s256="dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+```
+
+But the SDK's `AAuthMissionHeader.Format(string missionId)` takes a plain string ID — it does NOT format the `approver` + `s256` structured dictionary. This is a conformance gap in the mission model, but since missions are out of scope for this round (noted in the plan's Out of Scope table), it is documented here for future reference.
+
+### 8.4 ECDSA Is SHOULD, Not MUST — Prioritize Correctly
+
+Spec §Signature Algorithms:
+
+> *"Agents and resources MUST support EdDSA using Ed25519. Agents and resources SHOULD support ECDSA using P-256 with deterministic signatures (RFC 6979)."*
+
+Gap 10 is a **SHOULD**. The Ed25519-only pipeline is fully conformant. ECDSA wiring can be deferred below all MUST gaps.
+
+### 8.5 Call Chaining Routing Logic (Gap 11 Detail)
+
+The spec §Call Chaining defines routing based on the upstream auth token:
+
+| Condition | Route downstream to | Rationale |
+|---|---|---|
+| `mission.approver` present in upstream auth token | PS at `mission.approver` URL | Governed path — PS has mission context |
+| No mission, `iss` is a PS (three-party upstream) | PS at `iss` URL | PS evaluates without mission context |
+| No mission, `iss` is an AS (four-party upstream) | AS at `iss` URL | No PS involved — AS evaluates |
+
+The `upstream_token` is passed alongside `resource_token` in the POST body. The PS/AS constructs nested `act` claims preserving the delegation chain.
+
+### 8.6 Spec Reference for jkt-jwt (Gap 9)
+
+The jkt-jwt scheme is defined in the companion spec `draft-hardt-httpbis-signature-key`, not in the main AAuth protocol spec. The main spec references it normatively. The naming JWT (`typ: jkt-s256+jwt`) contains:
+- `iss`: AP issuer URL (same as agent token issuer)
+- `cnf.jwk`: ephemeral public key
+- Signature: made by the durable key (AP-bound)
+
+Verification requires fetching `{iss}/.well-known/aauth-agent.json` → `jwks_uri` → JWKS containing the durable key → verify naming JWT signature.
+
+### 8.7 Token Type Values
+
+For reference in Phase 1 middleware dispatch:
+
+| Token | `typ` header value | `dwk` payload claim |
+|---|---|---|
+| Agent token | `aa-agent+jwt` | `aauth-agent.json` |
+| Resource token | `aa-resource+jwt` | `aauth-resource.json` |
+| Auth token | `aa-auth+jwt` | `aauth-person.json` (PS) or `aauth-access.json` (AS) |

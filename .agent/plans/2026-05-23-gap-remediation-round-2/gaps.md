@@ -2,8 +2,9 @@
 
 > **Created:** 2026-05-23
 > **Validated:** 2026-05-23 (against actual SDK source code)
+> **Re-validated:** 2026-05-25 (deep spec read + subagent verification per gap — all 11 gaps confirmed active)
 > **Source:** Comparison of [Christian Posta AAuth Full Demo](https://blog.christianposta.com/aauth-full-demo/) against our .NET SDK
-> **Spec:** `draft-hardt-oauth-aauth-protocol` (2026-05-06)
+> **Spec:** `draft-hardt-oauth-aauth-protocol` (2026-05-06, commit c090879)
 > **SDK path:** `src/AAuth/`
 
 This document identifies gaps validated by reading SDK source code directly. Prior analysis from blog comparison and round 1 carry-forwards has been verified against actual implementation state. Gaps that were found to already be implemented have been removed or reclassified.
@@ -14,17 +15,19 @@ This document identifies gaps validated by reading SDK source code directly. Pri
 
 | # | Gap | Severity | Spec Gap? | Status |
 |---|-----|----------|:---:|:---:|
-| 1 | Middleware-level JWT issuer verification (agent token) | Critical | **YES — MUST** | Confirmed |
-| 2 | Middleware-level JWT issuer verification (auth token) | Critical | **YES — MUST** | Confirmed |
-| 3 | Auto-challenge middleware (401 + resource token) | Medium | **YES — MUST** | Partially implemented |
-| 4 | Configurable access mode | Medium | No — impl pattern | Confirmed |
-| 5 | Typed verification result (structured claims) | Low | No — impl pattern | Partially implemented |
-| 6 | ASP.NET authorization policy integration | Medium | No — platform | Confirmed |
-| 7 | Prefer: wait=N long-poll support | Low | No — MAY | Confirmed |
-| 8 | OpenTelemetry trace enrichment | Low | No — not in spec | Confirmed |
-| 9 | jkt-jwt naming JWT signature verification | Medium | **Conditional MUST** | Confirmed (TODO in code) |
-| 10 | ECDSA P-256 pipeline wiring | Low | SHOULD | Confirmed |
-| 11 | Call chaining (resource as agent) | Medium | **MUST (conditional)** | Confirmed |
+| # | Gap | Severity | Spec Gap? | Status (2026-05-25) |
+|---|-----|----------|:---:|:---:|
+| 1 | Middleware-level JWT issuer verification (agent token) | Critical | **YES — MUST** | ❌ Open |
+| 2 | Middleware-level JWT issuer verification (auth token) | Critical | **YES — MUST** | ❌ Open |
+| 3 | Auto-challenge middleware (401 + resource token) | Medium | **YES — MUST** | ❌ Open (building blocks exist) |
+| 4 | Configurable access mode | Medium | No — impl pattern | ❌ Open |
+| 5 | Typed verification result (structured claims) | Low | No — impl pattern | ❌ Open |
+| 6 | ASP.NET authorization policy integration | Medium | No — platform | ❌ Open |
+| 7 | Prefer: wait=N long-poll support | Low | No — MAY | ❌ Open |
+| 8 | OpenTelemetry trace enrichment | Low | No — not in spec | ❌ Open |
+| 9 | jkt-jwt naming JWT signature verification | Medium | **Conditional MUST** | ❌ Open (TODO in code L102-104) |
+| 10 | ECDSA P-256 pipeline wiring | Low | SHOULD | ❌ Open (3 blocking points) |
+| 11 | Call chaining (resource as agent) | Medium | **MUST (conditional)** | ❌ Open |
 
 > **Spec gaps: 5** (Gaps 1, 2, 3, 9, 11)
 > **SHOULD: 1** (Gap 10)

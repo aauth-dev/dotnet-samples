@@ -2,6 +2,7 @@
 
 > **Created:** 2026-05-23
 > **Validated against code:** 2026-05-23
+> **Re-validated:** 2026-05-25 (all 11 gaps confirmed active; spec deep-read refinements added)
 > **Gaps document:** [gaps.md](gaps.md)
 > **Research:** [research.md](research.md)
 
@@ -40,14 +41,26 @@
 3. Handle caching: JWKS fetched via existing `JwksClient` (already has TTL cache)
 4. Handle errors: return 401 with `Signature-Error` header and appropriate code (`invalid_jwt`, `unknown_key`)
 
+### Implementation Decisions (2026-05-25)
+
+> Added after deep spec read — these pin design choices before coding begins.
+
+- **Token type dispatch:** Use `typ` JWT header claim (`aa-agent+jwt` / `aa-auth+jwt`) for routing verification logic. See research.md §8.7 for the full `typ`→`dwk` mapping.
+- **`act` claim enforcement:** Spec requires `act` in ALL auth tokens (not just call-chaining). The middleware should reject auth tokens missing `act.sub`. `AuthTokenBuilder` should also emit `act: { sub: <agent> }` always.
+- **Covered components for RFC 9421:** `@method`, `@authority`, `@path`, `signature-key` (matches current SDK — no change needed).
+- **JWKS resolution reuse:** The middleware reuses existing `JwksClient` (already has TTL caching + rate limiting). No new HTTP client needed.
+- **`dwk`→well-known URL mapping:** `aauth-agent.json` → AP, `aauth-person.json` → PS, `aauth-access.json` → AS. Construct base URL from `iss` claim.
+
 ### Definition of Done
 
 - [ ] `aa-agent+jwt` signature verified against AP JWKS before PoP is trusted
 - [ ] `aa-auth+jwt` signature verified against PS/AS JWKS + `aud` validated
+- [ ] Auth token `act.sub` validated (reject if missing)
+- [ ] `AuthTokenBuilder` emits `act: { sub: agent }` by default
 - [ ] Forged token with valid PoP but unknown/untrusted issuer → 401 `invalid_jwt`
 - [ ] `TrustedIssuers` allow-list restricts accepted issuers when configured
 - [ ] Existing `AAuthVerificationMiddleware` unchanged (non-breaking)
-- [ ] Unit tests: forged token rejected, valid token accepted
+- [ ] Unit tests: forged token rejected, valid token accepted, missing act rejected
 - [ ] Integration test: end-to-end with MockPersonServer
 
 ---
@@ -84,6 +97,10 @@
    - Runs AFTER `AAuthFullVerificationMiddleware`
    - If `AccessMode == RequireAuthToken` AND verified token type is `aa-agent+jwt`:
      - Extract `agent` and `agent_jkt` from verified claims
+     - Resolve audience for resource token (see §8.2 in research.md):
+       - If resource has own AS → `aud` = AS URL
+       - Else if agent token contains `ps` claim → `aud` = PS URL
+       - Else → resource handles authorization itself (no challenge needed)
      - Mint `aa-resource+jwt` via `ResourceTokenBuilder`
      - Return 401 with `AAuth-Requirement: requirement=auth-token; resource-token="<jwt>"`
    - If `aa-auth+jwt` is present → pass through
@@ -180,10 +197,11 @@
 
 ### Implementation steps
 
-1. **jkt-jwt fix:** In `ResolveJktJwt()`:
+1. **jkt-jwt fix:** In `ResolveJktJwt()` (see research.md §8.6 for spec detail):
    - Read `iss` from naming JWT payload
-   - Fetch JWKS at `{iss}/.well-known/aauth-agent.json` (or appropriate dwk)
-   - Verify naming JWT signature against durable key
+   - Fetch `{iss}/.well-known/aauth-agent.json` → extract `jwks_uri`
+   - Fetch JWKS → find durable key (by `kid` from naming JWT header)
+   - Verify naming JWT signature (`typ: jkt-s256+jwt`) against durable key
    - Only then trust the delegation to ephemeral key (cnf.jwk)
 2. **KeyFactory:** Create `IAAuthKey FromJwk(JsonObject jwk)` that dispatches:
    - `kty=OKP, crv=Ed25519` → `AAuthKey.FromJwk()`
@@ -227,7 +245,10 @@
    - When provided, include `upstream_token` in POST body alongside `resource_token`
 2. Create `CallChainingHandler` (DelegatingHandler):
    - Extracts incoming auth token from current request context
-   - When making downstream requests, requests new auth token with `upstream_token`
+   - Routes downstream token request based on upstream auth token (see research.md §8.5):
+     - `mission.approver` present → PS at approver URL
+     - No mission, `iss` is PS → PS at `iss` URL
+     - No mission, `iss` is AS → AS at `iss` URL
    - Signs downstream requests with resource's own agent identity
 3. Create `CallChainingOptions`:
    - `DownstreamResources` — map of resource identifiers to PS endpoints
@@ -290,3 +311,4 @@
 | Gateway/proxy integration (ExtAuthz gRPC) | Platform-specific |
 | `AAuthSigningHandler` emitting non-jwt schemes | Agent-side scheme selection is a separate feature |
 | Payment Required (402) flow | Not demonstrated in blog |
+| `AAuth-Mission` header format mismatch (`approver`+`s256` structured dict) | See research.md §8.3 — missions are a separate initiative |
