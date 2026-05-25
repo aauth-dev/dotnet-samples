@@ -100,7 +100,7 @@ builder.Services.AddAAuthAgent("refreshing", options =>
 
 ## Resource Registration (Inbound Verification)
 
-### Basic Verification
+### Verification Middleware
 
 ```csharp
 builder.Services.AddAAuthResource(options =>
@@ -111,7 +111,7 @@ builder.Services.AddAAuthResource(options =>
 });
 
 var app = builder.Build();
-app.UseAAuthVerification(); // signature verification middleware
+app.UseAAuthVerification(); // HTTP sig + JWT issuer verification middleware
 app.MapAAuthWellKnown();    // /.well-known/aauth-resource.json + /jwks.json
 ```
 
@@ -227,7 +227,7 @@ app.MapGet("/data", async (HttpContext ctx, IHttpClientFactory factory) =>
 {
     // Inbound request was verified by middleware
     var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)
-        ctx.Items[AAuthVerificationMiddleware.ContextItemKey]!;
+        ctx.Items[AAuthVerificationMiddleware.ParsedInfoItemKey]!;
 
     // Make signed outbound request
     var client = factory.CreateClient("downstream");

@@ -48,13 +48,15 @@ app.UseAAuthVerification();
 using AAuth.HttpSig;
 using AAuth.Discovery;
 
-var resolver = new DefaultSignatureKeyResolver(
-    jwksClient: new JwksClient(new HttpClient())
-);
+// Register required services
+builder.Services.AddSingleton(new AAuthVerifier());
+builder.Services.AddSingleton(sp => new JwksClient(new HttpClient()));
+builder.Services.AddSingleton(sp => new MetadataClient(new HttpClient()));
 
-app.UseAAuthVerification(
-    verifier: new AAuthVerifier(),
-    resolver: resolver);
+app.UseAAuthVerification(new AAuthVerificationOptions
+{
+    RequireIssuerVerification = true,
+});
 ```
 
 </details>
@@ -76,7 +78,7 @@ directly — no pre-registration or key lookup is required.
 
 ## ParsedSignatureKeyInfo
 
-After resolution, the parsed info is available via `HttpContext.Items[AAuthVerificationMiddleware.ContextItemKey]`:
+After resolution, the parsed info is available via `HttpContext.Items[AAuthVerificationMiddleware.ParsedInfoItemKey]`:
 
 ```csharp
 public sealed class ParsedSignatureKeyInfo

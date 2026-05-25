@@ -40,7 +40,7 @@ app.UseAntiforgery();
 // in HttpContext.Features for the authentication handler.
 app.UseWhen(ctx => ctx.Request.Path.StartsWithSegments("/api"), branch =>
 {
-    branch.UseAAuthFullVerification(new FullVerificationOptions
+    branch.UseAAuthVerification(new AAuthVerificationOptions
     {
         ResourceIdentifier = builder.Configuration["AAuth:ResourceId"] ?? "http://localhost:5010",
         RequireIssuerVerification = false, // demo mode: skip JWKS fetch

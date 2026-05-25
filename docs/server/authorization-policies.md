@@ -42,7 +42,7 @@ public IActionResult GetData() => Ok("data");
 
 ## AAuthAuthenticationHandler
 
-The authentication handler reads `AAuthVerificationResult` from `HttpContext.Features` (set by `UseAAuthFullVerification`) and maps it to a `ClaimsPrincipal`:
+The authentication handler reads `AAuthVerificationResult` from `HttpContext.Features` (set by `UseAAuthVerification`) and maps it to a `ClaimsPrincipal`:
 
 | Claim | Source |
 |-------|--------|
@@ -80,7 +80,7 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddAAuthAuthorization();
 
 var app = builder.Build();
-app.UseAAuthFullVerification();
+app.UseAAuthVerification();
 app.UseAAuthChallenge(new ChallengeOptions
 {
     AccessMode = AAuthAccessMode.RequireAuthToken,

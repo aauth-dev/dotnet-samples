@@ -87,7 +87,7 @@ public static class AAuthResourceServiceCollectionExtensions
     /// <remarks>
     /// Call this after <c>AddAuthentication()</c> or as the default scheme.
     /// The handler reads from <c>HttpContext.Features</c>, which is populated
-    /// by <see cref="AAuthFullVerificationMiddleware"/>.
+    /// by <see cref="AAuthVerificationMiddleware"/>.
     /// </remarks>
     public static IServiceCollection AddAAuthAuthentication(this IServiceCollection services)
     {

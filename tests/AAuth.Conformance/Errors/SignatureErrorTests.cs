@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using AAuth.Crypto;
+using AAuth.DependencyInjection;
 using AAuth.Errors;
 using AAuth.HttpSig;
 using AAuth.Server;
@@ -29,7 +30,10 @@ public class SignatureErrorTests : IAsyncLifetime
         builder.WebHost.UseTestServer();
         builder.Services.AddSingleton(new AAuthVerifier());
         var app = builder.Build();
-        app.UseAAuthVerification();
+        app.UseAAuthVerification(new AAuthVerificationOptions
+        {
+            RequireIssuerVerification = false,
+        });
         app.MapGet("/protected", () => Results.Ok("hello"));
         await app.StartAsync();
         _host = app;

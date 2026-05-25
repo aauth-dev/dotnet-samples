@@ -14,8 +14,7 @@ namespace AAuth.Server;
 /// token but only an agent token is presented.
 /// </summary>
 /// <remarks>
-/// Must run AFTER <see cref="AAuthFullVerificationMiddleware"/> (or
-/// <see cref="AAuthVerificationMiddleware"/>) so that parsed token info is
+/// Must run AFTER <see cref="AAuthVerificationMiddleware"/> so that parsed token info is
 /// available in <c>HttpContext.Items</c>.
 /// <list type="bullet">
 /// <item>If <see cref="ChallengeOptions.AccessMode"/> is <see cref="AAuthAccessMode.IdentityOnly"/>,
@@ -51,16 +50,16 @@ public sealed class AAuthChallengeMiddleware
             return;
         }
 
-        // Read the verification result from the upstream full verification middleware.
-        FullVerificationResult? result = null;
-        if (context.Items.TryGetValue(AAuthFullVerificationMiddleware.ContextItemKey, out var obj))
+        // Read the verification result from the upstream verification middleware.
+        VerificationResult? result = null;
+        if (context.Items.TryGetValue(AAuthVerificationMiddleware.ContextItemKey, out var obj))
         {
-            result = obj as FullVerificationResult;
+            result = obj as VerificationResult;
         }
 
-        // If no result, also check the base middleware's parsed info (for simpler pipelines).
+        // Also read the parsed info for scheme/token type if needed.
         SignatureKeyParser.ParsedSignatureKeyInfo? parsedInfo = null;
-        if (context.Items.TryGetValue(AAuthVerificationMiddleware.ContextItemKey, out var parsedObj))
+        if (context.Items.TryGetValue(AAuthVerificationMiddleware.ParsedInfoItemKey, out var parsedObj))
         {
             parsedInfo = parsedObj as SignatureKeyParser.ParsedSignatureKeyInfo;
         }
@@ -104,7 +103,7 @@ public sealed class AAuthChallengeMiddleware
 
     private Task IssueChallenge(
         HttpContext context,
-        FullVerificationResult? result,
+        VerificationResult? result,
         SignatureKeyParser.ParsedSignatureKeyInfo? parsedInfo)
     {
         // Resolve agent ID and agent_jkt from verification result or parsed info.

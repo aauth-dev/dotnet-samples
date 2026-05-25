@@ -331,7 +331,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
             new JwksClient(sp.GetRequiredService<HttpClient>()));
 
         var app = builder.Build();
-        app.UseAAuthFullVerification(new FullVerificationOptions
+        app.UseAAuthVerification(new AAuthVerificationOptions
         {
             ResourceIdentifier = ResourceId,
             RequireIssuerVerification = true,

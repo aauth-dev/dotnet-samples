@@ -14,31 +14,14 @@ namespace AAuth.DependencyInjection;
 public static class AAuthApplicationBuilderExtensions
 {
     /// <summary>
-    /// Add AAuth signature verification middleware, resolving the verifier,
-    /// key resolver, and JTI store from DI.
-    /// </summary>
-    public static IApplicationBuilder UseAAuthVerification(this IApplicationBuilder app)
-    {
-        var verifier = app.ApplicationServices.GetRequiredService<AAuthVerifier>();
-        var resolver = app.ApplicationServices.GetService<ISignatureKeyResolver>()
-            ?? new DefaultSignatureKeyResolver(
-                app.ApplicationServices.GetService<JwksClient>(),
-                app.ApplicationServices.GetService<MetadataClient>());
-        var jtiStore = app.ApplicationServices.GetService<IJtiStore>();
-
-        return AAuthVerificationMiddlewareExtensions.UseAAuthVerification(
-            app, verifier, jtiStore, resolver);
-    }
-
-    /// <summary>
-    /// Add the AAuth full verification middleware that performs BOTH HTTP signature
-    /// PoP verification AND JWT issuer signature verification in a single pass.
+    /// Add AAuth verification middleware that performs HTTP signature PoP verification
+    /// and (optionally) JWT issuer signature verification.
     /// </summary>
     /// <param name="app">The application builder.</param>
-    /// <param name="options">Full verification options. When null, uses default options (issuer verification enabled, no issuer allow-list).</param>
-    public static IApplicationBuilder UseAAuthFullVerification(
+    /// <param name="options">Verification options. When null, uses default options (issuer verification enabled).</param>
+    public static IApplicationBuilder UseAAuthVerification(
         this IApplicationBuilder app,
-        FullVerificationOptions? options = null)
+        AAuthVerificationOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(app);
 
@@ -47,10 +30,10 @@ public static class AAuthApplicationBuilderExtensions
             ?? new DefaultSignatureKeyResolver(
                 app.ApplicationServices.GetService<JwksClient>(),
                 app.ApplicationServices.GetService<MetadataClient>());
-        var metadata = app.ApplicationServices.GetRequiredService<MetadataClient>();
-        var jwks = app.ApplicationServices.GetRequiredService<JwksClient>();
+        var metadata = app.ApplicationServices.GetService<MetadataClient>();
+        var jwks = app.ApplicationServices.GetService<JwksClient>();
         var jtiStore = app.ApplicationServices.GetService<IJtiStore>();
-        var resolvedOptions = options ?? new FullVerificationOptions();
+        var resolvedOptions = options ?? new AAuthVerificationOptions();
 
         if (jtiStore is not null)
         {
@@ -63,7 +46,7 @@ public static class AAuthApplicationBuilderExtensions
 
         return app.Use(next =>
         {
-            var mw = new AAuthFullVerificationMiddleware(
+            var mw = new AAuthVerificationMiddleware(
                 next, verifier, resolver, metadata, jwks, resolvedOptions);
             return mw.InvokeAsync;
         });
@@ -72,7 +55,7 @@ public static class AAuthApplicationBuilderExtensions
     /// <summary>
     /// Add the AAuth challenge middleware that automatically issues 401 challenges
     /// with resource tokens when the resource requires an auth token but only an
-    /// agent token is presented. Must be registered AFTER <see cref="UseAAuthFullVerification"/>.
+    /// agent token is presented. Must be registered AFTER <see cref="UseAAuthVerification"/>.
     /// </summary>
     /// <param name="app">The application builder.</param>
     /// <param name="options">Challenge options configuring access mode, resource key, and scopes.</param>

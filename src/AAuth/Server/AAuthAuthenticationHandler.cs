@@ -16,8 +16,7 @@ namespace AAuth.Server;
 /// </summary>
 /// <remarks>
 /// This handler does NOT perform verification itself — it reads the result
-/// produced by the upstream <see cref="AAuthFullVerificationMiddleware"/> (or
-/// <see cref="AAuthVerificationMiddleware"/>). Register using
+/// produced by the upstream <see cref="AAuthVerificationMiddleware"/>. Register using
 /// <c>services.AddAAuthAuthentication()</c>.
 /// </remarks>
 public sealed class AAuthAuthenticationHandler : AuthenticationHandler<AuthenticationSchemeOptions>

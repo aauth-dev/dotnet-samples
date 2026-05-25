@@ -113,7 +113,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
         var app = builder.Build();
 
         // Verification middleware populates Features.
-        app.UseAAuthFullVerification(new FullVerificationOptions
+        app.UseAAuthVerification(new AAuthVerificationOptions
         {
             ResourceIdentifier = ResourceId,
             RequireIssuerVerification = true,

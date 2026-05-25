@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
+using AAuth.DependencyInjection;
 using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
@@ -82,7 +83,10 @@ app.UseWhen(
     ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
         && !ctx.Request.Path.StartsWithSegments("/admin")
         && !ctx.Request.Path.StartsWithSegments("/interaction"),
-    branch => branch.UseAAuthVerification());
+    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+    {
+        RequireIssuerVerification = false,
+    }));
 
 // -----------------------------------------------------------------------
 // POST /token — the exchange endpoint.
@@ -106,7 +110,7 @@ app.UseWhen(
 app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore pending) =>
 {
     var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)ctx.Items[
-        AAuthVerificationMiddleware.ContextItemKey]!;
+        AAuthVerificationMiddleware.ParsedInfoItemKey]!;
 
     // Only an agent token may exchange — refuse anything else.
     var typ = (string?)parsed.Header?["typ"];

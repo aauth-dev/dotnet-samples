@@ -13,10 +13,8 @@ using Microsoft.AspNetCore.Http;
 namespace AAuth.Server;
 
 /// <summary>
-/// ASP.NET Core middleware that performs BOTH HTTP signature PoP verification
-/// AND JWT issuer signature verification in a single pass. This closes the
-/// security gap where <see cref="AAuthVerificationMiddleware"/> only verifies
-/// proof-of-possession but not the issuer's JWT signature.
+/// ASP.NET Core middleware that verifies AAuth HTTP signatures (RFC 9421 PoP)
+/// and JWT issuer signatures in a single pass.
 /// </summary>
 /// <remarks>
 /// <list type="number">
@@ -27,35 +25,42 @@ namespace AAuth.Server;
 /// <item>For <c>aa-agent+jwt</c>: verify JWT signature against AP JWKS.</item>
 /// <item>For <c>aa-auth+jwt</c>: verify JWT signature against PS/AS JWKS, validate
 ///   <c>aud</c>, verify PoP binding (<c>cnf.jwk</c>), require <c>act</c> claim.</item>
-/// <item>Store <see cref="FullVerificationResult"/> in HttpContext.Items.</item>
+/// <item>Store <see cref="VerificationResult"/> in HttpContext.Items.</item>
 /// </list>
 /// </remarks>
-public sealed class AAuthFullVerificationMiddleware
+public sealed class AAuthVerificationMiddleware
 {
-    /// <summary><see cref="HttpContext.Items"/> key for the full verification result.</summary>
-    public const string ContextItemKey = "AAuth.FullVerificationResult";
+    /// <summary><see cref="HttpContext.Items"/> key for the <see cref="VerificationResult"/>.</summary>
+    public const string ContextItemKey = "AAuth.VerificationResult";
+
+    /// <summary><see cref="HttpContext.Items"/> key for the parsed <see cref="SignatureKeyParser.ParsedSignatureKeyInfo"/>.</summary>
+    public const string ParsedInfoItemKey = "AAuth.ParsedSignatureKey";
+
+    /// <summary>Internal key for JTI store stashed in HttpContext.Items.</summary>
+    internal const string JtiStoreItemKey = "AAuth.JtiStore";
+
+    /// <summary>Algorithms this server supports, emitted in unsupported_algorithm errors.</summary>
+    private static readonly string[] SupportedAlgorithms = ["EdDSA"];
 
     private readonly RequestDelegate _next;
     private readonly AAuthVerifier _verifier;
     private readonly ISignatureKeyResolver _resolver;
-    private readonly MetadataClient _metadata;
-    private readonly JwksClient _jwks;
-    private readonly FullVerificationOptions _options;
+    private readonly MetadataClient? _metadata;
+    private readonly JwksClient? _jwks;
+    private readonly AAuthVerificationOptions _options;
 
     /// <summary>Create the middleware.</summary>
-    public AAuthFullVerificationMiddleware(
+    public AAuthVerificationMiddleware(
         RequestDelegate next,
         AAuthVerifier verifier,
         ISignatureKeyResolver resolver,
-        MetadataClient metadata,
-        JwksClient jwks,
-        FullVerificationOptions options)
+        MetadataClient? metadata,
+        JwksClient? jwks,
+        AAuthVerificationOptions options)
     {
         ArgumentNullException.ThrowIfNull(next);
         ArgumentNullException.ThrowIfNull(verifier);
         ArgumentNullException.ThrowIfNull(resolver);
-        ArgumentNullException.ThrowIfNull(metadata);
-        ArgumentNullException.ThrowIfNull(jwks);
         ArgumentNullException.ThrowIfNull(options);
         _next = next;
         _verifier = verifier;
@@ -106,14 +111,16 @@ public sealed class AAuthFullVerificationMiddleware
         catch (AAuthVerificationException ex)
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            context.Response.Headers[SignatureError.HeaderName] =
-                SignatureError.Format(ClassifyVerificationError(ex));
+            var errorCode = ClassifyVerificationError(ex);
+            context.Response.Headers[SignatureError.HeaderName] = errorCode == SignatureErrorCode.UnsupportedAlgorithm
+                ? SignatureError.Format(errorCode, supportedAlgorithms: SupportedAlgorithms)
+                : SignatureError.Format(errorCode);
             return;
         }
 
-        // Replay detection (same as base middleware).
+        // Replay detection.
         var tokenId = parsedInfo.Payload?["jti"]?.GetValue<string>();
-        if (context.Items.TryGetValue(AAuthVerificationMiddleware.JtiStoreItemKey, out var storeObj) &&
+        if (context.Items.TryGetValue(JtiStoreItemKey, out var storeObj) &&
             storeObj is IJtiStore jtiStore &&
             tokenId is { Length: > 0 } jti)
         {
@@ -144,6 +151,11 @@ public sealed class AAuthFullVerificationMiddleware
             parsedInfo.Header is not null &&
             parsedInfo.Payload is not null)
         {
+            if (_metadata is null || _jwks is null)
+                throw new InvalidOperationException(
+                    "RequireIssuerVerification is enabled but MetadataClient/JwksClient are not registered. " +
+                    "Register them in DI or set RequireIssuerVerification = false.");
+
             var typ = (string?)parsedInfo.Header["typ"];
             try
             {
@@ -170,9 +182,9 @@ public sealed class AAuthFullVerificationMiddleware
             }
         }
 
-        // Store both the parsed info and the full verification result.
-        context.Items[AAuthVerificationMiddleware.ContextItemKey] = parsedInfo;
-        context.Items[ContextItemKey] = new FullVerificationResult
+        // Store both the parsed info and the verification result.
+        context.Items[ParsedInfoItemKey] = parsedInfo;
+        context.Items[ContextItemKey] = new VerificationResult
         {
             Scheme = parsedInfo.Scheme,
             TokenType = (string?)parsedInfo.Header?["typ"],
@@ -283,7 +295,7 @@ public sealed class AAuthFullVerificationMiddleware
         JsonObject metadataDoc;
         try
         {
-            metadataDoc = await _metadata.FetchAsync(metadataUrl, ct).ConfigureAwait(false);
+            metadataDoc = await _metadata!.FetchAsync(metadataUrl, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -298,7 +310,7 @@ public sealed class AAuthFullVerificationMiddleware
             throw new TokenVerificationException(
                 $"AP metadata 'jwks_uri' must be https (or http://localhost): {jwksUriRaw}");
 
-        var issuerKey = await _jwks.ResolveKeyAsync(jwksUri, kid, ct).ConfigureAwait(false)
+        var issuerKey = await _jwks!.ResolveKeyAsync(jwksUri, kid, ct).ConfigureAwait(false)
             ?? throw new TokenVerificationException($"No key with kid '{kid}' at {jwksUri}.");
 
         var tokenVerifier = new TokenVerifier();
@@ -337,7 +349,7 @@ public sealed class AAuthFullVerificationMiddleware
         JsonObject metadataDoc;
         try
         {
-            metadataDoc = await _metadata.FetchAsync(metadataUrl, ct).ConfigureAwait(false);
+            metadataDoc = await _metadata!.FetchAsync(metadataUrl, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -352,7 +364,7 @@ public sealed class AAuthFullVerificationMiddleware
             throw new TokenVerificationException(
                 $"Issuer metadata 'jwks_uri' must be https (or http://localhost): {jwksUriRaw}");
 
-        var issuerKey = await _jwks.ResolveKeyAsync(jwksUri, kid, ct).ConfigureAwait(false)
+        var issuerKey = await _jwks!.ResolveKeyAsync(jwksUri, kid, ct).ConfigureAwait(false)
             ?? throw new TokenVerificationException($"No key with kid '{kid}' at {jwksUri}.");
 
         // Full auth token verification: signature + aud + PoP + act.
@@ -430,11 +442,11 @@ public sealed class AAuthFullVerificationMiddleware
 }
 
 /// <summary>
-/// Result of full verification (HTTP sig + JWT issuer verification).
+/// Result of AAuth verification (HTTP sig + JWT issuer verification).
 /// Stored in <see cref="HttpContext.Items"/> under
-/// <see cref="AAuthFullVerificationMiddleware.ContextItemKey"/>.
+/// <see cref="AAuthVerificationMiddleware.ContextItemKey"/>.
 /// </summary>
-public sealed class FullVerificationResult
+public sealed class VerificationResult
 {
     /// <summary>The Signature-Key scheme (jwt, hwk, jwks_uri, jkt-jwt).</summary>
     public required string Scheme { get; init; }

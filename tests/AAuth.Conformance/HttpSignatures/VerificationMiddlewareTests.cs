@@ -25,11 +25,10 @@ using Xunit;
 namespace AAuth.Conformance.HttpSignatures;
 
 /// <summary>
-/// Conformance tests for <see cref="AAuthFullVerificationMiddleware"/>:
-/// verifies that JWT issuer signatures are checked (Gaps 1 and 2) in addition
-/// to HTTP signature PoP.
+/// Conformance tests for <see cref="AAuthVerificationMiddleware"/>:
+/// verifies that JWT issuer signatures are checked in addition to HTTP signature PoP.
 /// </summary>
-public class FullVerificationMiddlewareTests : IAsyncLifetime
+public class VerificationMiddlewareTests : IAsyncLifetime
 {
     // ── Test fixtures ──────────────────────────────────────────────────────
 
@@ -63,7 +62,7 @@ public class FullVerificationMiddlewareTests : IAsyncLifetime
             new JwksClient(sp.GetRequiredService<HttpClient>()));
 
         var app = builder.Build();
-        app.UseAAuthFullVerification(new FullVerificationOptions
+        app.UseAAuthVerification(new AAuthVerificationOptions
         {
             ResourceIdentifier = ResourceId,
             RequireIssuerVerification = true,
@@ -190,7 +189,7 @@ public class FullVerificationMiddlewareTests : IAsyncLifetime
 
     // ── Tests ──────────────────────────────────────────────────────────────
 
-    [Fact(DisplayName = "§Full Verification — accepts AP-issued agent token with valid JWKS")]
+    [Fact(DisplayName = "§Verification — accepts AP-issued agent token with valid JWKS")]
     public async Task AcceptsValidAgentToken()
     {
         var token = BuildAgentToken();
@@ -198,7 +197,7 @@ public class FullVerificationMiddlewareTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Full Verification — accepts valid auth token with PS JWKS")]
+    [Fact(DisplayName = "§Verification — accepts valid auth token with PS JWKS")]
     public async Task AcceptsValidAuthToken()
     {
         var token = BuildAuthToken();
@@ -206,7 +205,7 @@ public class FullVerificationMiddlewareTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Full Verification — rejects agent token signed by unknown key")]
+    [Fact(DisplayName = "§Verification — rejects agent token signed by unknown key")]
     public async Task RejectsAgentTokenWithUnknownKey()
     {
         // Sign the agent token with a different key than the AP's published JWKS.
@@ -225,7 +224,7 @@ public class FullVerificationMiddlewareTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Full Verification — rejects auth token signed by unknown key")]
+    [Fact(DisplayName = "§Verification — rejects auth token signed by unknown key")]
     public async Task RejectsAuthTokenWithUnknownKey()
     {
         var forgerKey = AAuthKey.Generate();
@@ -246,7 +245,7 @@ public class FullVerificationMiddlewareTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Full Verification — rejects auth token with wrong audience")]
+    [Fact(DisplayName = "§Verification — rejects auth token with wrong audience")]
     public async Task RejectsAuthTokenWithWrongAudience()
     {
         var wrongAudToken = new AuthTokenBuilder
@@ -266,7 +265,7 @@ public class FullVerificationMiddlewareTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Full Verification — rejects agent token from untrusted issuer")]
+    [Fact(DisplayName = "§Verification — rejects agent token from untrusted issuer")]
     public async Task RejectsAgentTokenFromUntrustedIssuer()
     {
         // Reconfigure with an issuer allow-list.
@@ -279,7 +278,7 @@ public class FullVerificationMiddlewareTests : IAsyncLifetime
         builder.Services.AddSingleton(sp => new MetadataClient(sp.GetRequiredService<HttpClient>()));
         builder.Services.AddSingleton(sp => new JwksClient(sp.GetRequiredService<HttpClient>()));
         var app = builder.Build();
-        app.UseAAuthFullVerification(new FullVerificationOptions
+        app.UseAAuthVerification(new AAuthVerificationOptions
         {
             ResourceIdentifier = ResourceId,
             TrustedAgentProviderIssuers = new HashSet<string> { "https://trusted-only.example" },
@@ -293,7 +292,7 @@ public class FullVerificationMiddlewareTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Full Verification — rejects auth token from untrusted PS issuer")]
+    [Fact(DisplayName = "§Verification — rejects auth token from untrusted PS issuer")]
     public async Task RejectsAuthTokenFromUntrustedPsIssuer()
     {
         // Reconfigure with an auth token issuer allow-list.
@@ -306,7 +305,7 @@ public class FullVerificationMiddlewareTests : IAsyncLifetime
         builder.Services.AddSingleton(sp => new MetadataClient(sp.GetRequiredService<HttpClient>()));
         builder.Services.AddSingleton(sp => new JwksClient(sp.GetRequiredService<HttpClient>()));
         var app = builder.Build();
-        app.UseAAuthFullVerification(new FullVerificationOptions
+        app.UseAAuthVerification(new AAuthVerificationOptions
         {
             ResourceIdentifier = ResourceId,
             TrustedAuthTokenIssuers = new HashSet<string> { "https://trusted-ps-only.example" },
@@ -320,7 +319,7 @@ public class FullVerificationMiddlewareTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Full Verification — rejects auth token missing act claim")]
+    [Fact(DisplayName = "§Verification — rejects auth token missing act claim")]
     public async Task RejectsAuthTokenMissingAct()
     {
         // Manually construct a token without the act claim.
@@ -350,14 +349,14 @@ public class FullVerificationMiddlewareTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Full Verification — missing headers returns 401")]
+    [Fact(DisplayName = "§Verification — missing headers returns 401")]
     public async Task MissingHeaders_Returns401()
     {
         var response = await _host!.GetTestClient().GetAsync("/protected");
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Full Verification — hwk scheme passes without JWT verification")]
+    [Fact(DisplayName = "§Verification — hwk scheme passes without JWT verification")]
     public async Task HwkScheme_PassesWithoutJwtVerification()
     {
         // hwk has no JWT to verify — should pass with PoP only.
@@ -381,7 +380,7 @@ public class FullVerificationMiddlewareTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Full Verification — self-issued agent token passes")]
+    [Fact(DisplayName = "§Verification — self-issued agent token passes")]
     public async Task SelfIssuedAgentToken_Passes()
     {
         // Self-issued: kid == thumbprint of cnf.jwk.
@@ -417,7 +416,7 @@ public class FullVerificationMiddlewareTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Full Verification — stores FullVerificationResult in HttpContext.Items")]
+    [Fact(DisplayName = "§Verification — stores VerificationResult in HttpContext.Items")]
     public async Task StoresVerificationResult()
     {
         // Reconfigure to expose the result.
@@ -430,13 +429,13 @@ public class FullVerificationMiddlewareTests : IAsyncLifetime
         builder.Services.AddSingleton(sp => new MetadataClient(sp.GetRequiredService<HttpClient>()));
         builder.Services.AddSingleton(sp => new JwksClient(sp.GetRequiredService<HttpClient>()));
         var app = builder.Build();
-        app.UseAAuthFullVerification(new FullVerificationOptions
+        app.UseAAuthVerification(new AAuthVerificationOptions
         {
             ResourceIdentifier = ResourceId,
         });
         app.MapGet("/protected", (HttpContext ctx) =>
         {
-            var result = ctx.Items[AAuthFullVerificationMiddleware.ContextItemKey] as FullVerificationResult;
+            var result = ctx.Items[AAuthVerificationMiddleware.ContextItemKey] as VerificationResult;
             return Results.Json(new
             {
                 scheme = result?.Scheme,

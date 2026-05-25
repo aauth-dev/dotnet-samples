@@ -4,11 +4,11 @@ using System.Collections.Generic;
 namespace AAuth.Server;
 
 /// <summary>
-/// Configuration for <see cref="AAuthFullVerificationMiddleware"/> which
+/// Configuration for <see cref="AAuthVerificationMiddleware"/> which
 /// performs both HTTP signature PoP verification AND JWT issuer signature
 /// verification in a single pass.
 /// </summary>
-public sealed class FullVerificationOptions
+public sealed class AAuthVerificationOptions
 {
     /// <summary>
     /// Optional allow-list of trusted Agent Provider issuers (for <c>aa-agent+jwt</c>).

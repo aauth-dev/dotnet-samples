@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
+using AAuth.DependencyInjection;
 using AAuth.Discovery;
 using AAuth.Headers;
 using AAuth.HttpSig;
@@ -59,7 +60,10 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 // after middleware runs, so a blanket UseAAuthVerification would 401 them).
 app.UseWhen(
     ctx => !ctx.Request.Path.StartsWithSegments("/.well-known"),
-    branch => branch.UseAAuthVerification());
+    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+    {
+        RequireIssuerVerification = false,
+    }));
 
 // -----------------------------------------------------------------------
 // GET / — the WhoAmI endpoint.
@@ -81,7 +85,7 @@ app.MapGet("/", async (
     JwksClient jwks) =>
 {
     var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)ctx.Items[
-        AAuthVerificationMiddleware.ContextItemKey]!;
+        AAuthVerificationMiddleware.ParsedInfoItemKey]!;
 
     // ── Pseudonymous mode (hwk): identity-based accept ──────────────
     // The resource knows a specific key signed this request but nothing

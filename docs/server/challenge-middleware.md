@@ -8,7 +8,7 @@
 using AAuth.DependencyInjection;
 using AAuth.Server;
 
-// Must be registered AFTER UseAAuthFullVerification
+// Must be registered AFTER UseAAuthVerification
 app.UseAAuthChallenge(new ChallengeOptions
 {
     AccessMode = AAuthAccessMode.RequireAuthToken,
@@ -30,7 +30,7 @@ public enum AAuthAccessMode
 
 ## How It Works
 
-1. `UseAAuthFullVerification` runs first and stores `AAuthVerificationResult` in features
+1. `UseAAuthVerification` runs first and stores `AAuthVerificationResult` in features
 2. If `AccessMode` is `RequireAuthToken` and the token is an agent token (not auth token):
    - Middleware mints a resource token (`aa-resource+jwt`) scoped to the request
    - Returns `401 Unauthorized` with `AAuth-Requirement: requirement=auth-token; resource-token="<jwt>"`
@@ -61,7 +61,7 @@ public class ChallengeOptions
 ## Typical Pipeline
 
 ```csharp
-app.UseAAuthFullVerification(new FullVerificationOptions
+app.UseAAuthVerification(new AAuthVerificationOptions
 {
     ResourceIdentifier = "https://resource.example",
     RequireIssuerVerification = true,

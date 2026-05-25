@@ -22,7 +22,7 @@ builder.Services.AddOpenTelemetry()
 
 ## Server-Side Tags
 
-After successful verification, `AAuthFullVerificationMiddleware` enriches `Activity.Current` with these tags:
+After successful verification, `AAuthVerificationMiddleware` enriches `Activity.Current` with these tags:
 
 | Tag | Description | Example |
 |-----|-------------|---------|

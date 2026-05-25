@@ -34,10 +34,9 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 
 ## Server Implementation
 
-- [Full Verification Middleware](server/full-verification-middleware.md) — Combined PoP + JWT issuer verification
+- [Verification Middleware](server/verification-middleware.md) — HTTP signature + JWT issuer verification
 - [Challenge Middleware](server/challenge-middleware.md) — Auto-challenge for auth token upgrade
 - [Authorization Policies](server/authorization-policies.md) — Scope-based `[Authorize]` integration
-- [Verification Middleware](server/verification-middleware.md) — Basic PoP-only (legacy)
 - [Resource Metadata](server/resource-metadata.md)
 - [Token Issuance](server/token-issuance.md)
 - [Replay Detection](server/replay-detection.md)
@@ -74,7 +73,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `AAuthClientBuilder` | Fluent builder → configured `HttpClient` with signing |
 | `AAuthSigningHandler` | `DelegatingHandler` that signs outbound requests (RFC 9421) |
 | `AAuthVerifier` | Server-side signature verification |
-| `AAuthVerificationMiddleware` | ASP.NET middleware wiring for `AAuthVerifier` |
+| `AAuthVerificationMiddleware` | ASP.NET middleware — HTTP sig + JWT issuer verification |
 | `SignatureKeyHeader` / `SignatureKeyParser` | Format/parse the `Signature-Key` header |
 | `HwkSignatureKeyProvider` | `sig=hwk` — inline public key |
 | `JwksUriSignatureKeyProvider` | `sig=jwks_uri` — JWKS-discoverable identity |
@@ -128,7 +127,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 
 | Type | Purpose |
 |------|---------|
-| `AAuthFullVerificationMiddleware` | Combined PoP + JWT issuer verification middleware |
+| `AAuthVerificationMiddleware` | HTTP sig PoP + JWT issuer verification middleware |
 | `AAuthChallengeMiddleware` | Auto-challenge: issues 401 with resource token |
 | `AAuthAuthenticationHandler` | Maps `AAuthVerificationResult` to `ClaimsPrincipal` |
 | `AAuthVerificationResult` | Typed verification result in `HttpContext.Features` |
