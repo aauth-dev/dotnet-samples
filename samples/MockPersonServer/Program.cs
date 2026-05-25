@@ -373,7 +373,7 @@ app.Run();
 // -----------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------
-string IssueAuthToken(string agentId, string audience, AAuthKey confirmationKey)
+string IssueAuthToken(string agentId, string audience, IAAuthKey confirmationKey)
     => new AuthTokenBuilder
     {
         Issuer = psIssuer,

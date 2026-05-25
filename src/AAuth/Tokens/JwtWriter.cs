@@ -14,7 +14,7 @@ namespace AAuth.Tokens;
 internal static class JwtWriter
 {
     /// <summary>Serialize, sign, and return the compact JWS string.</summary>
-    public static string SignCompact(JsonObject header, JsonObject payload, AAuthKey key)
+    public static string SignCompact(JsonObject header, JsonObject payload, IAAuthKey key)
     {
         var headerBytes = Encoding.UTF8.GetBytes(header.ToJsonString());
         var payloadBytes = Encoding.UTF8.GetBytes(payload.ToJsonString());

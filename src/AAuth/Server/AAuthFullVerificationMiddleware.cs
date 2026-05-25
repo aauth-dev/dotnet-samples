@@ -250,7 +250,7 @@ public sealed class AAuthFullVerificationMiddleware
                 var verifier = new TokenVerifier();
                 verifier.Verify(
                     info.Jwt!,
-                    (AAuthKey)info.ConfirmationKey,
+                    info.ConfirmationKey,
                     AgentTokenBuilder.TokenType,
                     AgentTokenBuilder.AgentDwk);
                 return;
@@ -344,7 +344,7 @@ public sealed class AAuthFullVerificationMiddleware
             info.Jwt!,
             issuerKey,
             expectedAudience ?? (string?)payload["aud"] ?? "",
-            (AAuthKey)httpSignatureKey,
+            httpSignatureKey,
             expectedAgent,
             expectedDwk: dwk);
     }

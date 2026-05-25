@@ -213,13 +213,13 @@
 
 ### Definition of Done
 
-- [ ] jkt-jwt naming JWT signature verified against issuer JWKS
-- [ ] Forged jkt-jwt naming JWT rejected
-- [ ] `JwksClient` resolves both Ed25519 and P-256 keys from JWKS documents
-- [ ] `TokenVerifier` accepts both EdDSA and ES256 tokens
-- [ ] HTTP signature verification works with P-256 keys
-- [ ] Existing Ed25519 flows unaffected (backward compatible)
-- [ ] Unit tests: ES256 key round-trip, mixed JWKS, jkt-jwt verification
+- [x] jkt-jwt naming JWT signature verified against issuer JWKS
+- [x] Forged jkt-jwt naming JWT rejected
+- [x] `JwksClient` resolves both Ed25519 and P-256 keys from JWKS documents
+- [x] `TokenVerifier` accepts both EdDSA and ES256 tokens
+- [x] HTTP signature verification works with P-256 keys
+- [x] Existing Ed25519 flows unaffected (backward compatible)
+- [x] Unit tests: ES256 key round-trip, mixed JWKS, jkt-jwt verification
 
 ---
 

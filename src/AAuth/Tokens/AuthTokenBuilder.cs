@@ -31,10 +31,10 @@ public sealed class AuthTokenBuilder
     public required string Agent { get; init; }
 
     /// <summary>The agent's public confirmation key (<c>cnf.jwk</c>).</summary>
-    public required AAuthKey AgentConfirmationKey { get; init; }
+    public required IAAuthKey AgentConfirmationKey { get; init; }
 
     /// <summary>The issuer's signing key.</summary>
-    public required AAuthKey Key { get; init; }
+    public required IAAuthKey Key { get; init; }
 
     /// <summary>The issuer's key id (<c>kid</c>).</summary>
     public required string KeyId { get; init; }

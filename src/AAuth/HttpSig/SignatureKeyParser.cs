@@ -60,7 +60,7 @@ public static class SignatureKeyParser
         public required string Scheme { get; init; }
 
         /// <summary>The confirmation key (available for jwt and jkt-jwt schemes).</summary>
-        public AAuthKey? ConfirmationKey { get; init; }
+        public IAAuthKey? ConfirmationKey { get; init; }
 
         /// <summary>JWK thumbprint (available for hwk and jkt-jwt schemes).</summary>
         public string? Jkt { get; init; }
@@ -138,14 +138,14 @@ public static class SignatureKeyParser
         if (!parameters.TryGetValue("jwk", out var jwkB64) || string.IsNullOrEmpty(jwkB64))
             throw new AAuthVerificationException("Signature-Key hwk scheme missing 'jwk' parameter.");
 
-        AAuthKey key;
+        IAAuthKey key;
         try
         {
             var jwkJson = System.Text.Encoding.UTF8.GetString(
                 Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(jwkB64));
             var jwkObj = System.Text.Json.Nodes.JsonObject.Parse(jwkJson) as JsonObject
                 ?? throw new AAuthVerificationException("Signature-Key hwk scheme: jwk is not a JSON object.");
-            key = AAuthKey.FromJwk(jwkObj);
+            key = Crypto.KeyFactory.FromJwk(jwkObj);
         }
         catch (AAuthVerificationException) { throw; }
         catch (Exception ex)
@@ -178,11 +178,10 @@ public static class SignatureKeyParser
         var payload = DecodeJsonSegment(segments[1], "payload");
 
         // Extract cnf.jwk if present (the key that matches the jkt)
-        AAuthKey? key = null;
+        IAAuthKey? key = null;
         if (payload["cnf"] is JsonObject cnf && cnf["jwk"] is JsonObject jwk)
         {
-            try { key = AAuthKey.FromJwk(jwk); }
-            catch { /* Key may be ECDSA or other type — caller resolves */ }
+            key = Crypto.KeyFactory.TryFromJwk(jwk);
         }
 
         return new ParsedSignatureKeyInfo

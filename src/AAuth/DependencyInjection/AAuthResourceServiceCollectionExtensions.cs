@@ -56,7 +56,8 @@ public static class AAuthResourceServiceCollectionExtensions
             services.TryAddSingleton<ISignatureKeyResolver>(sp =>
             {
                 var jwksClient = sp.GetRequiredService<JwksClient>();
-                return new DefaultSignatureKeyResolver(jwksClient);
+                var metadataClient = sp.GetService<MetadataClient>();
+                return new DefaultSignatureKeyResolver(jwksClient, metadataClient);
             });
         }
 

@@ -21,7 +21,9 @@ public static class AAuthApplicationBuilderExtensions
     {
         var verifier = app.ApplicationServices.GetRequiredService<AAuthVerifier>();
         var resolver = app.ApplicationServices.GetService<ISignatureKeyResolver>()
-            ?? new DefaultSignatureKeyResolver(app.ApplicationServices.GetService<JwksClient>());
+            ?? new DefaultSignatureKeyResolver(
+                app.ApplicationServices.GetService<JwksClient>(),
+                app.ApplicationServices.GetService<MetadataClient>());
         var jtiStore = app.ApplicationServices.GetService<IJtiStore>();
 
         return AAuthVerificationMiddlewareExtensions.UseAAuthVerification(
@@ -42,7 +44,9 @@ public static class AAuthApplicationBuilderExtensions
 
         var verifier = app.ApplicationServices.GetRequiredService<AAuthVerifier>();
         var resolver = app.ApplicationServices.GetService<ISignatureKeyResolver>()
-            ?? new DefaultSignatureKeyResolver(app.ApplicationServices.GetService<JwksClient>());
+            ?? new DefaultSignatureKeyResolver(
+                app.ApplicationServices.GetService<JwksClient>(),
+                app.ApplicationServices.GetService<MetadataClient>());
         var metadata = app.ApplicationServices.GetRequiredService<MetadataClient>();
         var jwks = app.ApplicationServices.GetRequiredService<JwksClient>();
         var jtiStore = app.ApplicationServices.GetService<IJtiStore>();
