@@ -57,13 +57,21 @@ public static class CallChainingRouter
         }
 
         // Route 1: mission.approver present → PS at approver URL.
-        if (payload["mission"] is JsonObject mission)
+        // A mission.approver field that violates the https-or-loopback
+        // policy is treated as a malformed upstream token rather than as
+        // grounds for falling through to iss-based routing — silently
+        // ignoring an invalid approver would let a compromised upstream
+        // re-route a chained request to a different governance authority.
+        if (payload["mission"] is JsonObject mission &&
+            mission["approver"] is not null)
         {
             var approver = (string?)mission["approver"];
-            if (!string.IsNullOrEmpty(approver) && AAuthUrl.IsHttpsOrLoopback(approver))
+            if (string.IsNullOrEmpty(approver) || !AAuthUrl.IsHttpsOrLoopback(approver))
             {
-                return approver;
+                throw new InvalidOperationException(
+                    $"upstream_token mission.approver must be an absolute https:// URL (or http://localhost): {approver}");
             }
+            return approver;
         }
 
         // Route 2/3: Use iss (PS or AS — the exchange client resolves the
