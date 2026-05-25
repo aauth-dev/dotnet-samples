@@ -159,6 +159,7 @@ app.MapGet("/", async (
         return Results.Ok(new
         {
             mode = "three-party",
+            scheme = "jwt",
             agent = result.Agent,
             sub = result.Subject,
             scope = result.Scopes,
