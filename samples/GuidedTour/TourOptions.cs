@@ -47,6 +47,13 @@ public enum SigningMode
     /// Use for access control by identity, replacing API keys.
     /// </summary>
     JwksUri,
+    /// <summary>
+    /// <c>sig=jkt-jwt</c> — Key Rotation mode. A naming JWT binds the current
+    /// signing key to the agent's stable identity via JWK thumbprint confirmation.
+    /// Supports key rotation without re-enrolment. Works with both Ed25519 and
+    /// ECDSA P-256 keys.
+    /// </summary>
+    JktJwt,
 }
 
 /// <summary>

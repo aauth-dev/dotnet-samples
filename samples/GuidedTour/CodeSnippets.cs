@@ -77,6 +77,17 @@ internal static class CodeSnippets
         // Signature-Key: sig=jwt;jwt="<aa-agent+jwt>"
         """;
 
+    public const string SignedGetJktJwt = """
+        // jkt-jwt mode: naming JWT binds key via thumbprint confirmation.
+        // Supports key rotation without re-enrolment.
+        using var client = new AAuthClientBuilder(key)
+            .UseJktJwt(() => namingJwt)
+            .Build();
+
+        var response = await client.GetAsync("https://resource.example/data");
+        // Signature-Key: sig=jkt-jwt;jwt="<naming-jwt>";jkt="<thumbprint>"
+        """;
+
     public const string ParseChallenge = """
         // Parse the 401's AAuth-Requirement header
         var header = response.Headers
@@ -138,6 +149,8 @@ internal static class CodeSnippets
             {
                 MaxTotalWait = TimeSpan.FromMinutes(5),
                 DefaultPollInterval = TimeSpan.FromSeconds(2),
+                // Long-poll: server can hold the connection open (RFC 7240)
+                PreferWaitSeconds = 30,
             });
 
         var result = await poller.PollAsync(pendingUri);

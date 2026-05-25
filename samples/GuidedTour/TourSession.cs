@@ -313,6 +313,9 @@ public sealed class TourSession : IAsyncDisposable
                     _agentJwksUri ?? $"{(_options.AgentProviderUrl ?? "http://localhost:5301").TrimEnd('/')}/agents/{_options.AgentId}/jwks.json",
                     _assignedKeyId ?? "tour-key-1");
                 break;
+            case SigningMode.JktJwt:
+                builder.UseJktJwt(tokenFactory);
+                break;
             default:
                 builder.WithTokenRefresh(async (ctx, ct) => tokenFactory());
                 break;
@@ -754,6 +757,7 @@ public sealed class TourSession : IAsyncDisposable
             {
                 SigningMode.Hwk => "Signed GET (pseudonymous — hwk)",
                 SigningMode.JwksUri => "Signed GET (agent identity — jwks_uri)",
+                SigningMode.JktJwt => "Signed GET (key rotation — jkt-jwt)",
                 _ => "Signed GET (agent token — jwt)",
             },
             From = Actor.Agent,
@@ -1061,6 +1065,10 @@ public sealed class TourSession : IAsyncDisposable
             MaxTotalWait = TimeSpan.FromMinutes(2),
             DefaultPollInterval = TimeSpan.FromMilliseconds(500),
             MinPollInterval = TimeSpan.Zero,
+            // Signal willingness to long-poll for up to 30s per request
+            // (RFC 7240 §4.3). The PS can hold the connection open rather
+            // than immediately returning 202.
+            PreferWaitSeconds = 30,
         };
         var poller = new DeferredPoller(client, pollerOptions)
         {

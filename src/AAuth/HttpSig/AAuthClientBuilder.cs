@@ -319,6 +319,7 @@ public sealed class AAuthClientBuilder
         {
             MaxTotalWait = challengeOptions.PollingTimeout,
             DefaultPollInterval = challengeOptions.DefaultPollInterval,
+            PreferWaitSeconds = challengeOptions.PreferWaitSeconds,
         };
 
         // Challenge handler sits above the outer signer.

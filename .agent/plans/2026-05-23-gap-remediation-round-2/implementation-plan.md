@@ -399,15 +399,15 @@
 
 ### Definition of Done
 
-- [ ] GuidedTour: jkt-jwt signing mode selectable and demonstrated
-- [ ] AgentConsole: `--signing-mode jkt-jwt` works end-to-end
-- [ ] SampleApp: mini resource endpoint demonstrates full verification + challenge + authorization
-- [ ] SampleApp: new Blazor pages render and demonstrate each gap feature
-- [ ] All new doc files created with correct structure and code examples
-- [ ] Existing docs updated to reference new middleware APIs
-- [ ] `docs/README.md` API map covers all new public types
-- [ ] Code examples in docs compile against updated SDK
-- [ ] Sample README.md files updated where applicable
+- [x] GuidedTour: jkt-jwt signing mode selectable and demonstrated
+- [x] AgentConsole: `--signing-mode jkt-jwt` works end-to-end
+- [x] SampleApp: mini resource endpoint demonstrates full verification + challenge + authorization
+- [x] SampleApp: new Blazor pages render and demonstrate each gap feature
+- [x] All new doc files created with correct structure and code examples
+- [x] Existing docs updated to reference new middleware APIs
+- [x] `docs/README.md` API map covers all new public types
+- [x] Code examples in docs compile against updated SDK
+- [x] Sample README.md files updated where applicable
 
 ---
 

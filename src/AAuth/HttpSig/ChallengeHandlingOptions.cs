@@ -28,4 +28,12 @@ public sealed class ChallengeHandlingOptions
     /// Per spec, default is 5 seconds.
     /// </summary>
     public TimeSpan DefaultPollInterval { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// When set, sends a <c>Prefer: wait=N</c> header on each poll request,
+    /// signalling to the server that the client is willing to long-poll for
+    /// up to N seconds. Per RFC 7240 §4.3. When <see langword="null"/>
+    /// (default), no <c>Prefer</c> header is sent.
+    /// </summary>
+    public int? PreferWaitSeconds { get; set; }
 }

@@ -30,10 +30,14 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 - [Federated Access](workflows/federated-access.md)
 - [Bootstrap & Enrollment](workflows/bootstrap-enrollment.md)
 - [Deferred Consent](workflows/deferred-consent.md)
+- [Call Chaining](workflows/call-chaining.md)
 
 ## Server Implementation
 
-- [Verification Middleware](server/verification-middleware.md)
+- [Full Verification Middleware](server/full-verification-middleware.md) — Combined PoP + JWT issuer verification
+- [Challenge Middleware](server/challenge-middleware.md) — Auto-challenge for auth token upgrade
+- [Authorization Policies](server/authorization-policies.md) — Scope-based `[Authorize]` integration
+- [Verification Middleware](server/verification-middleware.md) — Basic PoP-only (legacy)
 - [Resource Metadata](server/resource-metadata.md)
 - [Token Issuance](server/token-issuance.md)
 - [Replay Detection](server/replay-detection.md)
@@ -45,6 +49,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 - [Platform Attestation](advanced/platform-attestation.md)
 - [Key Management](advanced/key-management.md)
 - [Error Handling](advanced/error-handling.md)
+- [Observability](advanced/observability.md) — OpenTelemetry Activity tracing
 
 ## Reference
 
@@ -123,10 +128,24 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 
 | Type | Purpose |
 |------|---------|
+| `AAuthFullVerificationMiddleware` | Combined PoP + JWT issuer verification middleware |
+| `AAuthChallengeMiddleware` | Auto-challenge: issues 401 with resource token |
+| `AAuthAuthenticationHandler` | Maps `AAuthVerificationResult` to `ClaimsPrincipal` |
+| `AAuthVerificationResult` | Typed verification result in `HttpContext.Features` |
+| `AAuthLevel` | Pseudonymous / Identified / Authorized |
+| `AAuthScopeRequirement` | ASP.NET Core authorization requirement for scopes |
+| `AAuthScopeHandler` | Evaluates scope requirements against verified scopes |
+| `CallChainingHandler` | Multi-hop delegation routing for resource-as-agent |
 | `WellKnownEndpoints` | `MapAAuthResourceWellKnown()` for ASP.NET minimal APIs |
 | `RevocationEndpoint` | Token revocation endpoint |
 | `IJtiStore` / `InMemoryJtiStore` | Replay detection (JTI tracking) |
 | `IOpaqueTokenStore` | Opaque token storage abstraction |
+
+### `AAuth` — Diagnostics
+
+| Type | Purpose |
+|------|---------|
+| `AAuthDiagnostics` | Shared `ActivitySource` + tag key constants for OTel tracing |
 
 ### `AAuth.DependencyInjection` — ASP.NET Core integration
 
