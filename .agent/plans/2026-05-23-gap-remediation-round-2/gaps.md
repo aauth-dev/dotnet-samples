@@ -246,6 +246,29 @@ The following gaps from the initial analysis were found to be **already implemen
 
 ---
 
+### Gap 12: Interaction Chaining (Consent Propagation Through Call Chain)
+
+**Severity:** Medium-High | **Spec gap: MUST (for resources acting as agents that encounter deferred consent)**
+**Spec:** §Interaction Chaining: *"When a resource acting as an agent receives a 202 Accepted response with AAuth-Requirement: requirement=interaction, and the resource needs to propagate this interaction requirement to its caller, it MUST return a 202 Accepted response to the original agent with its own AAuth-Requirement header containing requirement=interaction and its own interaction code."*
+
+**Code evidence:**
+- `CallChainingHandler.ExchangeForDownstreamAsync()` passes `onInteractionRequired: null` — throws on 202.
+- No `IPendingRequestStore` or pending-request parking pattern.
+- No interaction proxy endpoint for browser redirects.
+- No pending poll endpoint for callers to check completion.
+- `DeferredPoller` exists (reusable for downstream polling) but not wired into call-chaining path.
+- `AAuthInteraction.Format()` exists (reusable for generating upstream 202 responses).
+
+**Required:**
+- `IPendingRequestStore` — park incoming requests awaiting downstream consent
+- `InteractionChainingMiddleware` — `/aauth/pending/{id}` (poll) + `/aauth/interaction/{id}` (browser redirect)
+- `CallChainingHandler` propagation — handle 202 from downstream PS, create pending entry, return 202 upstream
+- End-to-end flow: Agent A → Resource B → PS (consent) → user approves → B completes → A gets result
+
+**Scenario:** Multi-hop consent bubble-up (Agent A → B → C → Resource, C needs consent, bubbles to A)
+
+---
+
 ## Implementation Priority
 
 ### Phase 1: Critical Security — Integrated Verification Middleware (Gaps 1–2)
@@ -271,3 +294,7 @@ Enable resource-as-agent pattern for multi-hop flows.
 ### Phase 6: DX and Observability (Gaps 7–8)
 
 Prefer: wait=N, OpenTelemetry. Nice-to-have improvements.
+
+### Phase 8: Interaction Chaining (Gap 12)
+
+Enable consent propagation through multi-hop call chains. When a downstream PS requires user consent, each intermediate resource parks the original request, returns 202 with its own interaction URL/code to the upstream caller, and completes the request once the user approves.

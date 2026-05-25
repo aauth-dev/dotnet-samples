@@ -2,7 +2,7 @@
 
 > **Created:** 2026-05-23
 > **Validated against code:** 2026-05-23
-> **Re-validated:** 2026-05-25 (all 11 gaps confirmed active; spec deep-read refinements added)
+> **Re-validated:** 2026-05-25 (all 12 gaps confirmed active; spec deep-read refinements added; interaction chaining added as Gap 12)
 > **Gaps document:** [gaps.md](gaps.md)
 > **Research:** [research.md](research.md)
 
@@ -408,6 +408,92 @@
 - [ ] `docs/README.md` API map covers all new public types
 - [ ] Code examples in docs compile against updated SDK
 - [ ] Sample README.md files updated where applicable
+
+---
+
+## Phase 8: Interaction Chaining (Gap 12)
+
+**Goal:** Enable consent requirements from downstream resources to propagate back through the call chain to the original agent (where the user is), so the user can approve downstream access requests.
+
+**Spec reference:** §Interaction Chaining — MUST-level requirement for resources acting as agents.
+
+**Scenario:** Agent A → Resource B → Resource C → PS returns `202 interaction` — consent bubbles back to Agent A.
+
+### Existing building blocks
+
+- `DeferredPoller` — resource can poll downstream PS after consent
+- `AAuthInteraction` — parse and format interaction requirements
+- `TokenExchangeClient.onInteractionRequired` — callback receives downstream 202
+- `CallChainingHandler` — routes downstream token requests (currently throws on 202)
+- `InMemoryJtiStore` pattern — ConcurrentDictionary reusable for pending store
+
+### Files to create/modify
+
+| File | Change |
+|------|--------|
+| `src/AAuth/Server/IPendingRequestStore.cs` | **New** — interface for parking requests awaiting downstream consent |
+| `src/AAuth/Server/InMemoryPendingRequestStore.cs` | **New** — in-memory implementation with TTL expiry |
+| `src/AAuth/Server/PendingRequest.cs` | **New** — model: id, downstream interaction, completion state, result |
+| `src/AAuth/Server/InteractionChainingMiddleware.cs` | **New** — middleware that exposes `/aauth/pending/{id}` poll + `/aauth/interaction/{id}` proxy |
+| `src/AAuth/Server/CallChainingHandler.cs` | Modify — accept `onInteractionRequired` callback; propagate 202 |
+| `src/AAuth/DependencyInjection/AAuthApplicationBuilderExtensions.cs` | Add `UseAAuthInteractionChaining()` extension |
+
+### Implementation steps
+
+1. **Define `IPendingRequestStore`:**
+   - `CreateAsync(downstreamInteraction, originalRequestContext)` → returns pending ID
+   - `GetAsync(id)` → returns status + result when complete
+   - `CompleteAsync(id, result)` — called when downstream auth token obtained and request fulfilled
+   - `ExpireAsync()` — cleanup for abandoned requests (TTL-based)
+
+2. **Create `InMemoryPendingRequestStore`:**
+   - `ConcurrentDictionary<string, PendingRequest>`
+   - Configurable TTL (default 10 min)
+   - Background cleanup via `IHostedService` or lazy eviction
+
+3. **Create `InteractionChainingMiddleware`:**
+   - Maps two endpoints:
+     - `GET /aauth/pending/{id}` — returns `202 { "status": "pending" }` or `200 + result`
+     - `GET /aauth/interaction/{id}` — redirects user browser to downstream PS interaction URL
+   - Pending poll endpoint is signed (standard AAuth verification) to prevent unauthorized polling
+   - Interaction proxy endpoint is browser-accessible (no signature — user navigates here)
+
+4. **Extend `CallChainingHandler.ExchangeForDownstreamAsync`:**
+   - Accept optional `Func<AAuthInteraction, CancellationToken, Task<string>>` callback
+   - When downstream PS returns 202:
+     - Park the original request via `IPendingRequestStore`
+     - Return a `PendingExchangeResult` containing the pending ID + interaction info
+   - When callback is null and 202 received → throw (current behavior, backward compatible)
+
+5. **Propagation flow in middleware:**
+   - Resource receives request from upstream caller
+   - Resource needs to call downstream → uses `CallChainingHandler`
+   - Downstream PS returns 202
+   - Resource creates pending entry in store
+   - Resource returns 202 to upstream caller with:
+     - `Location: /aauth/pending/{id}`
+     - `AAuth-Requirement: requirement=interaction; url="/aauth/interaction/{id}"; code="{code}"`
+   - User (via Agent A) navigates to B's interaction URL
+   - B redirects to PS interaction URL
+   - User approves at PS
+   - B polls PS → gets auth token → calls C → gets result → stores result at pending ID
+   - Agent A polls B's pending URL → gets 200 + result
+
+6. **Optional: DelegatingHandler integration:**
+   - For resources using `HttpClient` pipelines, provide a `CallChainingDelegatingHandler`
+   - Automatically handles 401 → challenge → exchange → 202 → park → poll cycle
+
+### Definition of Done
+
+- [ ] `IPendingRequestStore` interface defined with create/get/complete/expire
+- [ ] `InMemoryPendingRequestStore` stores and expires pending requests
+- [ ] `/aauth/pending/{id}` returns 202/200 based on completion state
+- [ ] `/aauth/interaction/{id}` redirects to downstream PS interaction URL
+- [ ] `CallChainingHandler` propagates 202 instead of throwing
+- [ ] Resource returns 202 + own interaction code to upstream caller
+- [ ] End-to-end test: Agent → Resource → PS (consent) → propagation → completion
+- [ ] TTL expiry cleans up abandoned pending requests
+- [ ] Backward compatible — existing `CallChainingHandler` callers unaffected
 
 ---
 

@@ -329,6 +329,7 @@ This is an intentional layered architecture. The `TokenVerifier` class has full 
 | jkt-jwt naming JWT not signature-verified | `DefaultSignatureKeyResolver.ResolveJktJwt()` line 98: "TODO: Full verification of the naming JWT signature" |
 | ECDSA skipped in JwksClient | `JwksClient.FetchAsync()` line 90: `if (kty != AAuthKey.KeyType \|\| crv != AAuthKey.Curve) continue;` |
 | No `upstream_token` | Zero matches in `src/AAuth/` |
+| No interaction chaining | Zero matches for "interaction chaining" or pending-request propagation in `src/AAuth/` |
 
 ### 7.4 Revised SDK Coverage Table
 
@@ -419,3 +420,108 @@ For reference in Phase 1 middleware dispatch:
 | Agent token | `aa-agent+jwt` | `aauth-agent.json` |
 | Resource token | `aa-resource+jwt` | `aauth-resource.json` |
 | Auth token | `aa-auth+jwt` | `aauth-person.json` (PS) or `aauth-access.json` (AS) |
+
+### 8.8 Interaction Chaining (Gap 12 Detail)
+
+**Spec reference:** §Interaction Chaining (line 1662–1666 of `draft-hardt-oauth-aauth-protocol.md`)
+
+**Normative requirement (MUST-level):**
+
+> When a resource acting as an agent receives a `202 Accepted` response with `AAuth-Requirement: requirement=interaction`, and the resource needs to propagate this interaction requirement to its caller, it MUST return a `202 Accepted` response to the original agent with its own `AAuth-Requirement` header containing `requirement=interaction` and its own interaction code. The resource MUST provide its own `Location` URL for the original agent to poll. When the user completes interaction and the resource obtains the downstream auth token, the resource completes the original request and returns the result at its pending URL.
+
+**Scenario: Agent A → Resource B → Resource C → PS (consent required)**
+
+```
+User      Agent A     Resource B      Resource C    PS
+  |         |              |               |          |
+  |         | HTTPSig req  |               |          |
+  |         |------------->|               |          |
+  |         |              | HTTPSig req   |          |
+  |         |              | (as agent)    |          |
+  |         |              |-------------->|          |
+  |         |              |               |          |
+  |         |              | 401 + res_tok |          |
+  |         |              |<--------------|          |
+  |         |              |               |          |
+  |         |              | POST token_ep |          |
+  |         |              | (res_tok +    |          |
+  |         |              |  upstream_tok)|          |
+  |         |              |------------------------->|
+  |         |              |               |          |
+  |         |              | 202 Accepted  |          |
+  |         |              | interaction   |          |
+  |         |              | code="WXYZ"   |          |
+  |         |              |<-------------------------|
+  |         |              |               |          |
+  |         | 202 Accepted |               |          |
+  |         | interaction  |               |          |
+  |         | code="MNOP"  |               |          |
+  |         | Location:    |               |          |
+  |         |  /pending/x  |               |          |
+  |         |<-------------|               |          |
+  |         |              |               |          |
+  | direct user to B's URL |               |          |
+  |<--------|              |               |          |
+  |         |              |               |          |
+  | B redirects to PS interaction          |          |
+  |----------------------------------------------->  |
+  |         |              |               |          |
+  | user approves at PS    |               |          |
+  |----------------------------------------------->  |
+  |         |              |               |          |
+  |         |         [B polls PS,         |          |
+  |         |          gets auth_token,    |          |
+  |         |          calls C,            |          |
+  |         |          completes /pending/x]          |
+  |         |              |               |          |
+  |         | polls /pending/x             |          |
+  |         |------------->|               |          |
+  |         |              |               |          |
+  |         | 200 OK       |               |          |
+  |         |<-------------|               |          |
+```
+
+**Key architectural requirements for the SDK:**
+
+1. **Pending Request Store** — Each intermediate resource must park the original incoming request while awaiting downstream consent. Needs a store (in-memory or distributed) keyed by a unique pending ID.
+
+2. **Interaction Proxy Endpoint** — Each resource publishes a URL (e.g., `/aauth/interaction/{id}`) that:
+   - Accepts the user browser redirect
+   - Redirects the user to the actual downstream PS interaction URL
+   - This creates the chain: user → B's URL → PS URL
+
+3. **Pending Poll Endpoint** — Each resource exposes `Location: /aauth/pending/{id}` that:
+   - Returns `202 { "status": "pending" }` while downstream consent is incomplete
+   - Returns `200 + result` once downstream consent completes and the original request is fulfilled
+
+4. **Propagation in CallChainingHandler** — When the downstream PS returns 202:
+   - Resource parks its caller's request
+   - Returns 202 with its own interaction code + pending URL to caller
+   - Begins polling downstream or subscribing to completion signal
+
+5. **Completion Callback** — When the downstream auth token arrives:
+   - Resource uses it to call the downstream resource
+   - Gets the response
+   - Stores the response at its pending URL
+   - Caller's next poll returns 200
+
+**Existing SDK building blocks:**
+
+| Component | Exists? | Reusable for interaction chaining? |
+|-----------|---------|-----------------------------------|
+| `DeferredPoller` | ✅ | Yes — resource can poll downstream PS |
+| `AAuthInteraction` parser | ✅ | Yes — parse downstream 202 response |
+| `AAuthInteraction.Format()` | ✅ | Yes — format resource's own 202 |
+| `TokenExchangeClient` + `onInteractionRequired` | ✅ | Yes — receives the 202 from PS |
+| `InMemoryJtiStore` pattern | ✅ | Pattern reusable for pending store (ConcurrentDictionary) |
+| `AAuthChallengeMiddleware` | ✅ | Pattern reusable for interaction chaining middleware |
+| Pending request parking | ❌ | Needs new `IPendingRequestStore` |
+| Interaction proxy endpoint | ❌ | Needs new mapped endpoint |
+| Pending poll endpoint | ❌ | Needs new mapped endpoint |
+| `CallChainingHandler` propagation | ❌ | Currently passes `onInteractionRequired: null` |
+
+**Complexity assessment:** HIGH. This is a stateful middleware pattern requiring:
+- Request parking (storing context while awaiting async consent)
+- Two new HTTP endpoints per resource (interaction proxy + pending poll)
+- Integration with `CallChainingHandler`
+- Proper cleanup/timeout for abandoned pending requests
