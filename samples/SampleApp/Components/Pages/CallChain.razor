@@ -1,36 +1,31 @@
-@page "/jwt"
+@page "/call-chain"
 @using AAuth.Agent
 @using AAuth.Crypto
 @using AAuth.HttpSig
 @inject IJSRuntime JS
 @rendermode InteractiveServer
 
-<PageTitle>JWT — Agent Token</PageTitle>
+<PageTitle>Call Chain — Multi-Agent</PageTitle>
 
-<h2>JWT — Agent Token (Three-Party)</h2>
+<h2>Call Chain — Multi-Agent Delegation</h2>
 
 <p>
-    Full three-party flow: the agent enrols with an Agent Provider, then presents
-    its agent token when accessing resources. The SDK acquires and refreshes the
-    token lazily via a signed refresh request to the AP. Challenge handling
-    automates the Person Server consent exchange.
+    Demonstrates multi-hop call chaining: <strong>Agent&nbsp;A</strong> (this app) calls
+    the <strong>Orchestrator</strong> (an intermediate service), which then calls the
+    <strong>WhoAmI</strong> resource. Each hop carries its own AAuth identity. The final
+    response shows all three participants in the chain.
 </p>
 
 <div class="row">
 <div class="col-md-6">
-<h5>Client Code</h5>
-<pre><code class="language-csharp">// Enrollment (one-time provisioning)
-var keyStore = KeyStore.Default();
-var apClient = new AgentProviderClient(
-    new HttpClient(), keyStore);
-var result = await apClient.EnrolAsync(
-    apBase, agentId, enrolEndpoint, personServer);
-
-// Runtime — build signed client
-var key = await keyStore.LoadAsync(result.KeyId);
-
+<h5>Agent (Client) Code</h5>
+<pre><code class="language-csharp">// Agent A builds a signed client with challenge
+// handling — the SDK automatically:
+//   1. Sends agent token → gets 401 + resource_token
+//   2. Exchanges at PS → gets auth token
+//   3. Retries with auth token
 using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(async (ctx, ct) =>
+    .WithTokenRefresh(async (ctx, ct) =&gt;
     {
         var ap = new AgentProviderClient(
             new HttpClient(), keyStore);
@@ -38,53 +33,54 @@ using var client = new AAuthClientBuilder(key)
             refreshEndpoint, keyId, ct);
     })
     .WithChallengeHandling(personServer)
-    .Build();</code></pre>
+    .Build();
+
+// Calls the Orchestrator (not WhoAmI directly).
+// The challenge is handled transparently.
+var response = await client.GetAsync(
+    orchestratorUrl);</code></pre>
 </div>
 <div class="col-md-6">
-<h5>Server Code</h5>
-<pre><code class="language-csharp">builder.Services.AddSingleton(new AAuthVerifier());
-builder.Services.AddSingleton(sp =&gt;
-    new MetadataClient(httpClient));
-builder.Services.AddSingleton(sp =&gt;
-    new JwksClient(httpClient));
+<h5>Orchestrator (Server) Setup</h5>
+<pre><code class="language-csharp">// The Orchestrator is BOTH a resource AND an agent.
+// DI setup:
+builder.Services.AddSingleton(new TokenVerifier());
+builder.Services.AddSingleton&lt;MetadataClient&gt;(...);
+builder.Services.AddSingleton&lt;JwksClient&gt;(...);
 
-var app = builder.Build();
-
-// Middleware verifies HTTP signature AND the
-// JWT issuer (via JWKS discovery), then stores
-// the result in HttpContext.Features.
+// Full issuer verification — validates JWT signatures
+// via JWKS discovery for both agent and auth tokens.
 app.UseAAuthVerification(new AAuthVerificationOptions
 {
-    ResourceIdentifier = "https://resource.example",
+    ResourceIdentifier = orchestratorUrl,
     RequireIssuerVerification = true,
-});
-
-// Auto-challenge: returns 401 with a resource
-// token if only an agent token is presented.
-// On retry the PS provides an auth token.
-app.UseAAuthChallenge(new ChallengeOptions
+});</code></pre>
+<h5 class="mt-3">Orchestrator Handler</h5>
+<pre><code class="language-csharp">app.MapGet("/", async (HttpContext ctx) =&gt;
 {
-    AccessMode = AAuthAccessMode.RequireAuthToken,
-});
+    var parsed = (ParsedSignatureKeyInfo)
+        ctx.Items[ParsedInfoItemKey]!;
+    var typ = (string?)parsed.Header?["typ"];
 
-app.MapGet("/", (HttpContext ctx) =&gt;
-{
-    // Middleware already verified the auth token.
-    // Claims are available via Features:
-    var r = ctx.Features
-        .Get&lt;AAuthVerificationResult&gt;()!;
-    return Results.Ok(new
+    // Agent token → challenge (like any resource)
+    if (typ == "aa-agent+jwt")
     {
-        mode = "three-party",
-        agent = r.Agent,
-        sub = r.Subject,
-        scope = r.Scopes,
-        iss = r.Issuer,
-    });
+        var rt = new ResourceTokenBuilder { ... };
+        ctx.Response.Headers["AAuth-Requirement"]
+            = FormatAuthToken(rt.Build());
+        return Results.Unauthorized();
+    }
+
+    // Auth token → forward with call chaining.
+    // The caller's auth token becomes upstream_token.
+    var exchange = new TokenExchangeClient(client, meta);
+    var chained = await exchange.ExchangeAsync(
+        personServer, resourceToken,
+        upstreamToken: parsed.Jwt);
+    // ...retry downstream with chained auth token
 });</code></pre>
 </div>
 </div>
-
 
 @if (!_enrolled)
 {
@@ -98,15 +94,15 @@ else
         Enrolled. Key ID: <code>@_enrollment!.KeyId</code>
     </div>
 
-    <button class="btn btn-primary" @onclick="SendRequest" disabled="@_loading">
-        @(_loading ? "Sending..." : "2. Send Signed Request to Resource")
+    <button class="btn btn-primary" @onclick="SendChainedRequest" disabled="@_loading">
+        @(_loading ? "Sending..." : "2. Send Chained Request (Agent → Orchestrator → WhoAmI)")
     </button>
 }
 
 @if (_response is not null)
 {
     <div class="mt-3">
-        <h5>Response</h5>
+        <h5>Response (shows full chain)</h5>
         <div class="alert @(_success ? "alert-success" : "alert-warning")">
             <strong>@_statusCode</strong>
         </div>
@@ -159,7 +155,7 @@ else
         }
     }
 
-    private async Task SendRequest()
+    private async Task SendChainedRequest()
     {
         _loading = true;
         _response = null;
@@ -172,13 +168,12 @@ else
             var keyStore = _enrollment.KeyStore;
             var refreshEndpoint = _enrollment.RefreshEndpoint;
             var personServer = Config["AAuth:PersonServer"]!;
-            var resourceUrl = Config["AAuth:Resource"]!;
+            var orchestratorUrl = Config["AAuth:Orchestrator"]!;
 
-            // Pre-grant consent so the PS issues a token immediately
-            // (autonomous / direct-grant mode — no user interaction)
-            await GrantConsentAsync();
+            // Pre-grant consent so the PS issues tokens immediately
+            await GrantConsentAsync(orchestratorUrl);
 
-            // Build client with lazy token refresh + challenge handling
+            // Build signed client — same as JWT mode, but targets Orchestrator
             using var client = new AAuthClientBuilder(key)
                 .WithTokenRefresh(async (ctx, ct) =>
                 {
@@ -188,7 +183,7 @@ else
                 .WithChallengeHandling(personServer)
                 .Build();
 
-            var response = await client.GetAsync(resourceUrl);
+            var response = await client.GetAsync(orchestratorUrl);
 
             _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
             _success = response.IsSuccessStatusCode;
@@ -206,17 +201,12 @@ else
         }
     }
 
-    /// <summary>
-    /// Grant standing consent at the MockPersonServer so it issues an
-    /// auth token immediately (autonomous / direct-grant path).
-    /// </summary>
-    private async Task GrantConsentAsync()
+    private async Task GrantConsentAsync(string resource)
     {
         var personServer = Config["AAuth:PersonServer"];
         if (string.IsNullOrEmpty(personServer)) return;
 
         var agentId = Config["AAuth:AgentId"]!;
-        var resource = Config["AAuth:Resource"]!;
 
         using var http = new HttpClient();
         try
@@ -227,7 +217,7 @@ else
         }
         catch
         {
-            // /admin/consent only exists on MockPersonServer — swallow errors
+            // /admin/consent only exists on MockPersonServer — swallow
         }
     }
 }

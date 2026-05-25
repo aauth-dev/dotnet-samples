@@ -4,6 +4,7 @@
     <Project Path="samples/GuidedTour/GuidedTour.csproj" />
     <Project Path="samples/MockAgentProvider/MockAgentProvider.csproj" />
     <Project Path="samples/MockPersonServer/MockPersonServer.csproj" />
+    <Project Path="samples/Orchestrator/Orchestrator.csproj" />
     <Project Path="samples/SampleApp/SampleApp.csproj" />
     <Project Path="samples/WhoAmI/WhoAmI.csproj" />
   </Folder>

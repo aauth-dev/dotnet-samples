@@ -72,8 +72,15 @@ public sealed class AAuthClientBuilder
         return this;
     }
 
-    /// <summary>Use the Agent Token (jwt) signing mode. Internal — prefer WithTokenRefresh for lazy acquisition.</summary>
-    internal AAuthClientBuilder UseJwt(Func<string> tokenFactory)
+    /// <summary>
+    /// Use the JWT signing mode with a token factory. Each request calls
+    /// <paramref name="tokenFactory"/> to get the current token.
+    /// For lazy acquisition via the AP refresh endpoint, prefer
+    /// <see cref="WithTokenRefresh(ITokenRefresher, TimeSpan?)"/>.
+    /// For call-chaining where you already have a chained auth token,
+    /// use <see cref="UseJwt(string)"/>.
+    /// </summary>
+    public AAuthClientBuilder UseJwt(Func<string> tokenFactory)
     {
         _tokenFactory = tokenFactory;
         _agentToken = tokenFactory();
@@ -81,8 +88,12 @@ public sealed class AAuthClientBuilder
         return this;
     }
 
-    /// <summary>Use the Agent Token (jwt) signing mode with a fixed token. Internal — prefer WithTokenRefresh for lazy acquisition.</summary>
-    internal AAuthClientBuilder UseJwt(string agentToken)
+    /// <summary>
+    /// Use the JWT signing mode with a fixed token string. Ideal for
+    /// call-chaining scenarios where the Orchestrator has already obtained
+    /// a chained auth token via <c>upstream_token</c> exchange.
+    /// </summary>
+    public AAuthClientBuilder UseJwt(string agentToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(agentToken);
         _agentToken = agentToken;

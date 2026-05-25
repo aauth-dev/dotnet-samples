@@ -186,6 +186,16 @@ switch (signingMode)
             var apClient2 = new AgentProviderClient(new HttpClient(), keyStore);
             return apClient2.RefreshAsync(jktEndpoint, jktKeyId).GetAwaiter().GetResult();
         });
+        // Three-party challenge handling still needs a full agent token
+        // for the exchange with the PS.
+        if (personServer is not null)
+        {
+            builder.WithTokenRefresh(async (ctx, ct) =>
+            {
+                var apClient = new AgentProviderClient(new HttpClient(), keyStore);
+                return await apClient.RefreshAsync(jktEndpoint, jktKeyId, ct);
+            });
+        }
         break;
     default: // "jwt"
         var endpoint = refreshEndpoint;

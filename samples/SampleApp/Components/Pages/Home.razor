@@ -84,6 +84,25 @@
             </div>
         </div>
     </div>
+
+    <div class="col">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">🔗 Call Chain — Multi-Agent</h5>
+                <p class="card-text">
+                    Multi-hop delegation: Agent&nbsp;A → Orchestrator → WhoAmI. Each hop
+                    authenticates independently. The PS builds a nested <code>act</code>
+                    chain so the final resource sees the full delegation path.
+                </p>
+                <span class="badge bg-danger">multi-hop</span>
+                <span class="badge bg-secondary">sig=jwt</span>
+                <span class="badge bg-info text-dark">upstream_token</span>
+            </div>
+            <div class="card-footer">
+                <a href="call-chain" class="btn btn-outline-primary btn-sm">Open demo →</a>
+            </div>
+        </div>
+    </div>
 </div>
 
 <h4 class="mt-4">Prerequisites</h4>
@@ -91,5 +110,6 @@
 <pre><code>make demo-sample</code></pre>
 <p>
     This starts the Agent Provider (<code>:5301</code>), Person Server
-    (<code>:5100</code> with consent required), and WhoAmI resource (<code>:5000</code>).
+    (<code>:5100</code> with consent required), WhoAmI resource (<code>:5000</code>),
+    and Orchestrator (<code>:5200</code>).
 </p>

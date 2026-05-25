@@ -105,6 +105,17 @@ public sealed class TourSession : IAsyncDisposable
     public bool CanSwitchMode => true;
 
     /// <summary>
+    /// The effective WhoAmI endpoint URL for the current signing mode.
+    /// Identity-based modes target dedicated paths; three-party targets root.
+    /// </summary>
+    private string EffectiveResourceUrl => EffectiveSigningMode switch
+    {
+        SigningMode.Hwk => $"{_options.WhoAmIUrl.TrimEnd('/')}/hwk",
+        SigningMode.JwksUri => $"{_options.WhoAmIUrl.TrimEnd('/')}/jwks-uri",
+        _ => _options.WhoAmIUrl,
+    };
+
+    /// <summary>
     /// True when the current flow is the identity-based path. Forced on
     /// when no PS URL is configured, regardless of <see cref="Mode"/>.
     /// </summary>
@@ -738,7 +749,7 @@ public sealed class TourSession : IAsyncDisposable
             () => _agentToken!, capture, (_, b) => capturedBase = b);
         using var client = new HttpClient(signing);
 
-        var resp = await client.GetAsync(_options.WhoAmIUrl, ct);
+        var resp = await client.GetAsync(EffectiveResourceUrl, ct);
         var ex = capture.Last!;
 
         // On a three-party challenge, the resource_token travels in the
@@ -784,7 +795,7 @@ public sealed class TourSession : IAsyncDisposable
                     "it returns 200. Otherwise it returns 401 with an AAuth-Requirement " +
                     "header and a resource_token for the PS-asserted flow.",
             },
-            RequestLine = $"{ex.RequestLine}  →  {_options.WhoAmIUrl}",
+            RequestLine = $"{ex.RequestLine}  →  {EffectiveResourceUrl}",
             RequestHeaders = ex.RequestHeaders,
             StatusLine = ex.StatusLine,
             ResponseHeaders = ex.ResponseHeaders,
@@ -907,7 +918,7 @@ public sealed class TourSession : IAsyncDisposable
             () => _authToken!, capture, (_, b) => capturedBase = b);
         using var client = new HttpClient(signing);
 
-        await client.GetAsync(_options.WhoAmIUrl, ct);
+        await client.GetAsync(EffectiveResourceUrl, ct);
         var ex = capture.Last!;
 
         Steps.Add(new StepRecord
@@ -924,7 +935,7 @@ public sealed class TourSession : IAsyncDisposable
                 "requests. The resource validates that the JWT is signed by its " +
                 "PS, that `cnf.jwk` matches the request signer, and returns the " +
                 "protected payload.",
-            RequestLine = $"{ex.RequestLine}  →  {_options.WhoAmIUrl}",
+            RequestLine = $"{ex.RequestLine}  →  {EffectiveResourceUrl}",
             RequestHeaders = ex.RequestHeaders,
             StatusLine = ex.StatusLine,
             ResponseHeaders = ex.ResponseHeaders,

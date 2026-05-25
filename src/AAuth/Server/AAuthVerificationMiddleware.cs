@@ -373,13 +373,43 @@ public sealed class AAuthVerificationMiddleware
             ?? throw new TokenVerificationException("Auth token is missing 'agent'.");
 
         var tokenVerifier = new TokenVerifier();
-        tokenVerifier.VerifyAuthToken(
-            info.Jwt!,
-            issuerKey,
-            expectedAudience ?? (string?)payload["aud"] ?? "",
-            httpSignatureKey,
-            expectedAgent,
-            expectedDwk: dwk);
+        if (expectedAudience is not null)
+        {
+            // Full verification: signature, aud binding, PoP, and act.
+            tokenVerifier.VerifyAuthToken(
+                info.Jwt!,
+                issuerKey,
+                expectedAudience,
+                httpSignatureKey,
+                expectedAgent,
+                expectedDwk: dwk);
+        }
+        else
+        {
+            // Signature is verified but aud is not validated because
+            // ResourceIdentifier was not configured. PoP and act are
+            // still checked via the underlying Verify + manual checks.
+            var verified = tokenVerifier.Verify(
+                info.Jwt!, issuerKey,
+                AuthTokenBuilder.TokenType, dwk, expectedAudience: null);
+
+            // §Step 7: cnf.jwk matches HTTP signature key.
+            var cnf = verified.Payload["cnf"] as JsonObject;
+            var jwk = cnf?["jwk"] as JsonObject;
+            if (jwk is null)
+                throw new TokenVerificationException("Auth token is missing 'cnf.jwk'.");
+            var tokenKey = KeyFactory.TryFromJwk(jwk)
+                ?? throw new TokenVerificationException("Auth token 'cnf.jwk' is not a supported key type.");
+            if (tokenKey.ComputeJwkThumbprint() != httpSignatureKey.ComputeJwkThumbprint())
+                throw new TokenVerificationException("Auth token 'cnf.jwk' does not match the HTTP signature key.");
+
+            // §Step 8: act.sub matches agent.
+            var act = verified.Payload["act"] as JsonObject;
+            if (act is null)
+                throw new TokenVerificationException("Auth token is missing required 'act' claim.");
+            if ((string?)act["sub"] != expectedAgent)
+                throw new TokenVerificationException("Auth token 'act.sub' does not match expected agent.");
+        }
     }
 
     private static SignatureErrorCode ClassifyVerificationError(AAuthVerificationException ex)

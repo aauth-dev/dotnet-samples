@@ -16,13 +16,44 @@
     agent's identity is the trust anchor.
 </p>
 
-<h5>Setup Code</h5>
-<pre><code class="language-csharp">// After enrollment, the AP provides a jwks_uri for this agent
+<div class="row">
+<div class="col-md-6">
+<h5>Client Code</h5>
+<pre><code class="language-csharp">// After enrollment, the AP provides a jwks_uri
 var jwksUri = enrollment.JwksUri;
 
 using var client = new AAuthClientBuilder(key)
     .UseJwksUri(jwksUri, keyId)
     .Build();</code></pre>
+</div>
+<div class="col-md-6">
+<h5>Server Code</h5>
+<pre><code class="language-csharp">builder.Services.AddSingleton(new AAuthVerifier());
+builder.Services.AddSingleton(sp =&gt; new JwksClient(httpClient));
+
+var app = builder.Build();
+
+// Resolves the agent's key from their jwks_uri.
+app.UseAAuthVerification(new AAuthVerificationOptions
+{
+    RequireIssuerVerification = false,
+});
+
+app.MapGet("/jwks-uri", (HttpContext ctx) =>
+{
+    var parsed = (ParsedSignatureKeyInfo)
+        ctx.Items[AAuthVerificationMiddleware
+            .ParsedInfoItemKey]!;
+    return Results.Ok(new
+    {
+        mode = "agent-identity",
+        scheme = "jwks_uri",
+        jwks_uri = parsed.JwksUri,
+        kid = parsed.Kid,
+    });
+});</code></pre>
+</div>
+</div>
 
 @if (!_enrolled)
 {
@@ -117,11 +148,13 @@ else
                 .Build();
 
             var resourceUrl = Config["AAuth:Resource"]!;
-            var response = await client.GetAsync(resourceUrl);
+            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/jwks-uri");
 
             _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
             _success = response.IsSuccessStatusCode;
-            _response = await response.Content.ReadAsStringAsync();
+            var raw = await response.Content.ReadAsStringAsync();
+            try { _response = System.Text.Json.JsonSerializer.Serialize(System.Text.Json.JsonDocument.Parse(raw), new System.Text.Json.JsonSerializerOptions { WriteIndented = true }); }
+            catch { _response = raw; }
         }
         catch (Exception ex)
         {
