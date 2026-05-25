@@ -199,7 +199,8 @@ builder.Services.AddAAuthAgent("external-api", options =>
 
 ## Complete Example: Agent + Resource in One App
 
-An app that verifies inbound AAuth requests AND makes signed outbound requests:
+An app that verifies inbound AAuth requests AND makes signed outbound requests.
+See `samples/Orchestrator` for a full working implementation with call chaining.
 
 ```csharp
 var builder = WebApplication.CreateBuilder(args);

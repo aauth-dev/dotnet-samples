@@ -37,7 +37,8 @@ app.UseAAuthVerification(new AAuthVerificationOptions
 ```csharp
 public class AAuthVerificationOptions
 {
-    // The resource's own identifier (used for audience checks)
+    // The resource's own identifier (used for audience checks).
+    // When null, audience validation is skipped entirely.
     public string? ResourceIdentifier { get; set; }
 
     // Whether to verify JWT signatures against the issuer's JWKS (default: true)
@@ -50,6 +51,49 @@ public class AAuthVerificationOptions
     public IReadOnlySet<string>? TrustedAuthTokenIssuers { get; set; }
 }
 ```
+
+### Behavior by Configuration
+
+| `RequireIssuerVerification` | `ResourceIdentifier` | Effect |
+|:--:|:--:|:--|
+| `true` | set | Full verification: HTTP sig + JWT issuer JWKS + aud + PoP + act.sub |
+| `true` | `null` | Verifies JWT issuer sig + PoP, but skips `aud` check |
+| `false` | any | HTTP signature only — no JWT issuer verification |
+
+## Per-Path Configuration
+
+Use `UseWhen` to apply different verification options per endpoint path. This is the pattern used in the WhoAmI sample where each signing mode has a dedicated endpoint:
+
+```csharp
+// Pseudonymous (hwk) — signature only, no JWT verification
+app.UseWhen(
+    ctx => ctx.Request.Path.StartsWithSegments("/hwk"),
+    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+    {
+        RequireIssuerVerification = false,
+    }));
+
+// Agent identity (jwks_uri) — verifies key against published JWKS
+app.UseWhen(
+    ctx => ctx.Request.Path.StartsWithSegments("/jwks-uri"),
+    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+    {
+        RequireIssuerVerification = false,
+    }));
+
+// Three-party (jwt) — full issuer + audience verification
+app.UseWhen(
+    ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
+        && !ctx.Request.Path.StartsWithSegments("/hwk")
+        && !ctx.Request.Path.StartsWithSegments("/jwks-uri"),
+    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+    {
+        ResourceIdentifier = "https://resource.example",
+        RequireIssuerVerification = true,
+    }));
+```
+
+See `samples/WhoAmI` for the complete working example.
 
 ## Verification Result
 

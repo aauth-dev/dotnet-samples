@@ -128,6 +128,15 @@ app.MapGet("/", async (HttpContext ctx) =>
 
     var typ = (string?)parsedInfo.Header?["typ"];
 
+    // ── Reject non-JWT callers (HWK/JWKS-URI) ───────────────────────
+    // The Orchestrator only supports three-party JWT flows for call chaining.
+    if (typ is null)
+    {
+        return Results.Json(
+            new { error = "unsupported_scheme", detail = "Orchestrator requires sig=jwt (agent or auth token)." },
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+
     // ── Agent token: challenge the caller with a resource token ──────
     // The Orchestrator is itself a resource — callers must present an auth
     // token (obtained from a PS) before we forward calls downstream.
@@ -164,7 +173,7 @@ app.MapGet("/", async (HttpContext ctx) =>
     // ── Auth token: proceed with downstream call chaining ────────────
     // The middleware verified: JWT signature, aud=orchestratorUrl, cnf.jwk
     // binding, and act.sub. The caller's auth token becomes our upstream_token.
-    var upstreamAuthToken = parsedInfo.Jwt;
+    var upstreamAuthToken = parsedInfo.Jwt!;
 
     // Step 2: Ensure we have our own agent identity.
     await EnsureEnrolledAsync();
@@ -205,49 +214,30 @@ app.MapGet("/", async (HttpContext ctx) =>
         var requirementRaw = firstResponse.Headers.GetValues(AAuthRequirementHeader.Name).First();
         var requirement = AAuthRequirementHeader.Parse(requirementRaw);
 
-        if (requirement.ResourceToken is not null && upstreamAuthToken is not null)
-        {
-            // Step 6: Exchange at PS WITH upstream_token (call-chaining).
-            // This causes the PS to build a nested act claim.
-            var metadata = app.Services.GetRequiredService<MetadataClient>();
-            var exchangeClient = new TokenExchangeClient(client, metadata);
-            var chainedAuthToken = await exchangeClient.ExchangeAsync(
-                psUrl,
-                requirement.ResourceToken,
-                onInteractionRequired: null,
-                pollerOptions: null,
-                upstreamToken: upstreamAuthToken);
+        // Step 6: Exchange at PS WITH upstream_token (call-chaining).
+        // This causes the PS to build a nested act claim.
+        var metadata = app.Services.GetRequiredService<MetadataClient>();
+        var exchangeClient = new TokenExchangeClient(client, metadata);
+        var chainedAuthToken = await exchangeClient.ExchangeAsync(
+            psUrl,
+            requirement.ResourceToken!,
+            onInteractionRequired: null,
+            pollerOptions: null,
+            upstreamToken: upstreamAuthToken);
 
-            // Step 7: Retry with the chained auth token.
-            // Build a new client that uses the auth token directly.
-            using var chainedClient = new AAuthClientBuilder(enrolledKey!)
-                .UseJwt(chainedAuthToken)
-                .Build();
+        // Step 7: Retry with the chained auth token.
+        using var chainedClient = new AAuthClientBuilder(enrolledKey!)
+            .UseJwt(chainedAuthToken)
+            .Build();
 
-            var retryResponse = await chainedClient.GetAsync(downstreamUrl);
-            var retryBody = await retryResponse.Content.ReadAsStringAsync();
-            try { downstreamJson = JsonNode.Parse(retryBody); } catch { }
-        }
-        else
-        {
-            // Fallback: no upstream token (caller used HWK/JWKS-URI).
-            // Use simple challenge handling without chaining.
-            using var fallbackClient = new AAuthClientBuilder(enrolledKey!)
-                .WithTokenRefresh(async (_, ct) =>
-                {
-                    var apClient = new AgentProviderClient(new HttpClient(), keyStore!);
-                    return await apClient.RefreshAsync(refreshEndpoint!, enrolledKeyId!, ct);
-                })
-                .WithChallengeHandling(psUrl)
-                .Build();
-            var fallbackResponse = await fallbackClient.GetAsync(downstreamUrl);
-            var fallbackBody = await fallbackResponse.Content.ReadAsStringAsync();
-            try { downstreamJson = JsonNode.Parse(fallbackBody); } catch { }
-        }
+        var retryResponse = await chainedClient.GetAsync(downstreamUrl);
+        var retryBody = await retryResponse.Content.ReadAsStringAsync();
+        try { downstreamJson = JsonNode.Parse(retryBody); } catch { }
     }
     else
     {
-        // No challenge — resource accepted directly.
+        // No challenge — resource accepted directly (shouldn't happen in
+        // normal flow, but handle gracefully).
         var body = await firstResponse.Content.ReadAsStringAsync();
         try { downstreamJson = JsonNode.Parse(body); } catch { }
     }

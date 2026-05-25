@@ -12,13 +12,14 @@ All configurable options across the AAuth .NET SDK, grouped by component.
 | `MaxFutureSkew` | `TimeSpan` | 5 seconds | Clock skew tolerance into the future |
 | `Clock` | `Func<DateTimeOffset>` | `UtcNow` | Clock source (override for testing) |
 
-### AAuthVerificationMiddleware (via UseAAuthVerification)
+### AAuthVerificationOptions (via UseAAuthVerification)
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `verifier` | `AAuthVerifier?` | `new()` | Verifier instance with timing config |
-| `jtiStore` | `IJtiStore?` | `null` | Replay detection store (null = disabled) |
-| `resolver` | `ISignatureKeyResolver?` | `null` | Multi-scheme resolver (null = inline key only) |
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `ResourceIdentifier` | `string?` | `null` | Resource's own identifier for `aud` checks. When `null`, audience validation is skipped. |
+| `RequireIssuerVerification` | `bool` | `true` | When `true`, verifies JWT signatures against the issuer's published JWKS via metadata discovery. |
+| `TrustedAgentProviderIssuers` | `IReadOnlySet<string>?` | `null` | Optional allow-list of trusted AP issuers (null = any) |
+| `TrustedAuthTokenIssuers` | `IReadOnlySet<string>?` | `null` | Optional allow-list of trusted auth token issuers (null = any) |
 
 ## Token Builders
 

@@ -57,7 +57,7 @@ When `AgentProviderUrl` is set, the tour enrols with a real AP:
 Assumes the agent is already bootstrapped (key + token exist).
 
 1. Discover resource metadata — unsigned `GET /.well-known/aauth-resource.json`.
-2. Signed `GET /` → 200 + claims (resource trusts identity alone).
+2. Signed `GET /hwk` or `GET /jwks-uri` → 200 + claims (path depends on signing mode picker).
 
 ### PS-Asserted / Direct Grant (6 steps)
 
