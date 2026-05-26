@@ -187,12 +187,12 @@ InteractionHandler (optional)
 
 ### Definition of Done
 
-- [ ] Three `WithCallChaining` overloads compile and pass null guards.
-- [ ] `WithCallChaining` implicitly enables challenge handling.
-- [ ] `personServer` is not required when `upstreamTokenProvider` is set.
-- [ ] Built client signs requests with intermediary's own key.
-- [ ] Integration test: builder + mock 401 → exchange with upstream_token → retry.
-- [ ] HttpContext overload reads from `UpstreamAuthTokenFeature`.
+- [x] Three `WithCallChaining` overloads compile and pass null guards.
+- [x] `WithCallChaining` implicitly enables challenge handling.
+- [x] `personServer` is not required when `upstreamTokenProvider` is set.
+- [x] Built client signs requests with intermediary's own key.
+- [x] Integration test: builder + mock 401 → exchange with upstream_token → retry.
+- [x] HttpContext overload reads from `UpstreamAuthTokenFeature`.
 
 ---
 
