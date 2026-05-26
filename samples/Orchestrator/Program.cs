@@ -17,9 +17,8 @@ const string OrchestratorKid = "orch-1";
 const string OrchestratorScope = "orchestrate";
 var orchestratorUrl = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5200";
 var downstreamUrl = builder.Configuration["AAuth:Downstream"] ?? "http://localhost:5000";
-var apUrl = builder.Configuration["AAuth:AgentProvider"] ?? "http://localhost:5301";
 var psUrl = builder.Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
-var agentId = builder.Configuration["AAuth:AgentId"] ?? "aauth:orchestrator@ap.example";
+var agentId = builder.Configuration["AAuth:AgentId"] ?? "aauth:orchestrator@localhost:5200";
 
 builder.Services.AddSingleton(orchestratorKey);
 builder.Services.AddSingleton(new AAuthVerifier());

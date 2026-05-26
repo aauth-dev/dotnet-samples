@@ -1,7 +1,7 @@
 @page "/call-chain"
-@using AAuth.Agent
 @using AAuth.Crypto
 @using AAuth.HttpSig
+@using AAuth.Tokens
 @inject IJSRuntime JS
 @rendermode InteractiveServer
 
@@ -86,22 +86,13 @@ app.UseAAuthVerification(new AAuthVerificationOptions
 </div>
 </div>
 
-@if (!_enrolled)
-{
-    <button class="btn btn-outline-secondary" @onclick="Enrol" disabled="@_loading">
-        @(_loading ? "Enrolling..." : "1. Enrol with Agent Provider")
-    </button>
-}
-else
-{
-    <div class="alert alert-info">
-        Enrolled. Key ID: <code>@_enrollment!.KeyId</code>
-    </div>
+<div class="alert alert-info">
+    Self-issued agent identity. Key ID: <code>@_identity.KeyId</code>
+</div>
 
-    <button class="btn btn-primary" @onclick="SendChainedRequest" disabled="@_loading">
-        @(_loading ? "Sending..." : "2. Send Chained Request (Agent → Orchestrator → WhoAmI)")
-    </button>
-}
+<button class="btn btn-primary" @onclick="SendChainedRequest" disabled="@_loading">
+    @(_loading ? "Sending..." : "Send Chained Request (Agent → Orchestrator → WhoAmI)")
+</button>
 
 @if (_response is not null)
 {
@@ -120,11 +111,10 @@ else
 }
 
 @code {
-    [Inject] private EnrollmentService _enrollment { get; set; } = default!;
+    [Inject] private SelfIssuedIdentity _identity { get; set; } = default!;
     [Inject] private IConfiguration Config { get; set; } = default!;
 
     private bool _loading;
-    private bool _enrolled;
     private string? _response;
     private string? _error;
     private string? _statusCode;
@@ -135,30 +125,6 @@ else
         await JS.InvokeVoidAsync("highlightCode");
     }
 
-    protected override void OnInitialized()
-    {
-        _enrolled = _enrollment.IsEnrolled;
-    }
-
-    private async Task Enrol()
-    {
-        _loading = true;
-        _error = null;
-        try
-        {
-            await _enrollment.EnsureEnrolledAsync();
-            _enrolled = true;
-        }
-        catch (Exception ex)
-        {
-            _error = ex.Message;
-        }
-        finally
-        {
-            _loading = false;
-        }
-    }
-
     private async Task SendChainedRequest()
     {
         _loading = true;
@@ -167,22 +133,24 @@ else
 
         try
         {
-            var key = _enrollment.Key;
-            var keyId = _enrollment.KeyId;
-            var keyStore = _enrollment.KeyStore;
-            var refreshEndpoint = _enrollment.RefreshEndpoint;
             var personServer = Config["AAuth:PersonServer"]!;
             var orchestratorUrl = Config["AAuth:Orchestrator"]!;
 
             // Pre-grant consent so the PS issues tokens immediately
             await GrantConsentAsync(orchestratorUrl);
 
-            // Build signed client — same as JWT mode, but targets Orchestrator
-            using var client = new AAuthClientBuilder(key)
+            // Self-issued token refresh — no AP round-trip needed
+            using var client = new AAuthClientBuilder(_identity.Key)
                 .WithTokenRefresh(async (ctx, ct) =>
                 {
-                    var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-                    return await apClient.RefreshAsync(refreshEndpoint, keyId, ct);
+                    return new AgentTokenBuilder
+                    {
+                        Issuer = _identity.Issuer,
+                        Subject = _identity.AgentId,
+                        KeyId = _identity.KeyId,
+                        Key = _identity.Key,
+                        PersonServer = personServer,
+                    }.Build();
                 })
                 .WithChallengeHandling(personServer)
                 .Build();
@@ -210,7 +178,7 @@ else
         var personServer = Config["AAuth:PersonServer"];
         if (string.IsNullOrEmpty(personServer)) return;
 
-        var agentId = Config["AAuth:AgentId"]!;
+        var agentId = _identity.AgentId;
 
         using var http = new HttpClient();
         try
