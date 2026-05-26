@@ -459,9 +459,12 @@ the SDK actually accepts ES256 (P-256) as well. Spec says ES256 is a SHOULD.
 
 ### Definition of Done
 
-- [ ] `SupportedAlgorithms` includes `"ES256"`.
-- [ ] Error messages accurately reflect supported algorithms.
-- [ ] No behavioral change (ES256 already works functionally).
+- [x] `SupportedAlgorithms` includes `"ES256"`.
+- [x] Error messages accurately reflect supported algorithms.
+- [x] No behavioral change (ES256 already works functionally).
+
+> **Note:** Already implemented prior to this plan — `SupportedAlgorithms` was
+> `["EdDSA", "ES256"]` in the codebase. No code change needed.
 
 ---
 
@@ -705,17 +708,18 @@ public static class ActChainReader
 
 ### Definition of Done
 
-- [ ] `UpstreamTokenValidator.ValidateAsync` implements spec steps 1–3.
-- [ ] Returns `UpstreamAct` ready for nesting into `AuthTokenBuilder`.
-- [ ] `ActChainBuilder.BuildNestedAct` correctly wraps upstream act inside new intermediary act.
-- [ ] `ActChainBuilder.ValidateChain` checks sub presence + depth.
-- [ ] `ActChainReader.GetDelegationChain` walks full nested `act` chain.
-- [ ] `ActChainReader.GetOriginalActor` returns innermost `act.sub`.
-- [ ] Multi-hop resource-side verification tests pass (2-hop, 3-hop, 10-hop).
-- [ ] Multi-hop PS construction tests pass (direct→2-hop, 2-hop→3-hop).
-- [ ] Untrusted issuer and audience mismatch correctly rejected.
-- [ ] Existing `TokenVerifier` depth logic reused (not duplicated).
-- [ ] All new tests added to `AAuth.Conformance` project.
+- [x] `UpstreamTokenValidator.ValidateAsync` implements spec steps 1–4 (including chain validation and optional nested act construction).
+- [x] Returns `UpstreamAct` ready for nesting into `AuthTokenBuilder`.
+- [x] `ActChainBuilder.BuildNestedAct` correctly wraps upstream act inside new intermediary act.
+- [x] `ActChainBuilder.ValidateChain` checks sub presence + depth.
+- [x] `ActChainReader.GetDelegationChain` walks full nested `act` chain.
+- [x] `ActChainReader.GetOriginalActor` returns innermost `act.sub`.
+- [x] Multi-hop resource-side verification tests pass (2-hop, 3-hop, 10-hop).
+- [x] Multi-hop PS construction tests pass (direct→2-hop, 2-hop→3-hop).
+- [x] Untrusted issuer and audience mismatch correctly rejected.
+- [x] Existing `TokenVerifier` depth logic reused (not duplicated).
+- [x] All new tests added to `AAuth.Conformance` project.
+- [x] `AuthTokenResponseValidator` added for §Auth Token Delivery verification (steps 1–7) — identified as spec-required gap during review.
 
 ---
 
