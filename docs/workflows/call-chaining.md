@@ -48,7 +48,53 @@ var response = await client.GetAsync("https://orchestrator.example");
 
 ### Intermediate Service — Resource + Agent Pattern
 
-The intermediate service (Orchestrator) acts as both a resource and an agent:
+The intermediate service (Orchestrator) acts as both a resource and an agent.
+
+#### Simplified Pattern (Recommended)
+
+Use `UseAAuthIntermediary` for verification + challenge, and `WithCallChaining(ctx)` for automatic downstream routing:
+
+```csharp
+// Middleware: verify callers + auto-challenge agent tokens
+app.UseWhen(
+    ctx => !ctx.Request.Path.StartsWithSegments("/.well-known"),
+    branch => branch.UseAAuthIntermediary(
+        new AAuthVerificationOptions
+        {
+            ResourceIdentifier = orchestratorUrl,
+            RequireIssuerVerification = true,
+        },
+        new ChallengeOptions
+        {
+            AccessMode = AAuthAccessMode.RequireAuthToken,
+            ResourceSigningKey = orchestratorKey,
+            ResourceKeyId = "orch-1",
+            ResourceIdentifier = orchestratorUrl,
+        }));
+
+// Only auth-token callers reach this handler
+app.MapGet("/", async (HttpContext ctx) =>
+{
+    using var downstream = new AAuthClientBuilder(myKey)
+        .WithTokenRefresh(refreshFunc)
+        .WithCallChaining(ctx)  // reads upstream token from UpstreamAuthTokenFeature
+        .Build();
+
+    var response = await downstream.GetAsync(downstreamUrl);
+    var body = await response.Content.ReadAsStringAsync();
+    return Results.Ok(JsonNode.Parse(body));
+});
+```
+
+`WithCallChaining(ctx)` automatically:
+- Reads the upstream auth token from `UpstreamAuthTokenFeature` (set by verification middleware)
+- Routes the downstream exchange to the correct PS/AS via `CallChainingRouter`
+- Passes `upstream_token` in the exchange POST body to preserve the delegation chain
+- Handles the full 401 → exchange → retry cycle transparently
+
+#### Lower-Level Pattern
+
+For full control over the exchange, use the building blocks directly:
 
 ```csharp
 // 1. Verify incoming requests with full issuer verification

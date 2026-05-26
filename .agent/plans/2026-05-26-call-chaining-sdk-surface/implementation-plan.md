@@ -281,10 +281,10 @@ app.MapGet("/", async (HttpContext ctx) =>
 
 ### Definition of Done
 
-- [ ] Orchestrator endpoint ≤ 25 lines (down from ~80).
-- [ ] Sample still passes end-to-end with running servers (`make demo`).
-- [ ] Doc shows both simplified and lower-level patterns.
-- [ ] No behavioral change: same wire-format, same token exchanges.
+- [x] Orchestrator endpoint ≤ 25 lines (down from ~80).
+- [x] Sample still passes end-to-end with running servers (`make demo`).
+- [x] Doc shows both simplified and lower-level patterns.
+- [x] No behavioral change: same wire-format, same token exchanges.
 
 ---
 
