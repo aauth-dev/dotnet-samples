@@ -47,20 +47,25 @@ var response = await client.GetAsync("https://resource.example/data");
 
 ### Three-Party Flow (Agent → Resource → Person Server)
 
-Enrollment is a one-time provisioning step (like a DB migration). The durable signing key lives in a keystore and is referenced by ID — never extracted. The agent token is short-lived and refreshed automatically:
+Hosted services self-issue agent tokens (no external AP needed). CLI/desktop agents enrol with an Agent Provider instead.
 
 ```csharp
-using AAuth.Agent;
+using AAuth.Crypto;
 using AAuth.HttpSig;
+using AAuth.Tokens;
 
-// The key lives in the keystore; load it by the ID assigned during enrollment
-var keyStore = KeyStore.Default(); // ~/.aauth/keys/ (or plug in HSM/TPM/Key Vault)
-var key = await keyStore.LoadAsync("my-agent-key");
+// Hosted service: generate key at startup, self-issue tokens
+var key = AAuthKey.Generate();
 
-using var client = new AAuthClientBuilder(key!)
-    .WithTokenRefresh(async (ctx, ct) =>
-        await new AgentProviderClient(new HttpClient(), keyStore)
-            .RefreshAsync("https://ap.example/refresh", ctx.KeyId, ct))
+using var client = new AAuthClientBuilder(key)
+    .WithTokenRefresh(async (ctx, ct) => new AgentTokenBuilder
+    {
+        Issuer = "https://my-service.example",
+        Subject = "aauth:my-service@my-service.example",
+        KeyId = "svc-key-1",
+        Key = key,
+        PersonServer = "https://ps.example",
+    }.Build())
     .WithChallengeHandling("https://ps.example")
     .Build();
 

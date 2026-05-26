@@ -4,18 +4,27 @@ Register AAuth services in ASP.NET Core and hosted applications using the built-
 
 ## Key Principle
 
-Enrollment is a **provisioning step** — like a database migration or certificate issuance — that runs outside of your application's normal lifecycle. It generates a durable signing key **inside a keystore** (the private material never leaves) and registers the public key with the AP. Your application only needs the **key ID** to load the key at startup.
+How your agent obtains its token depends on its deployment model:
 
-The agent token is short-lived (typically 1 hour) and refreshed automatically by the SDK at runtime. You never persist it.
+- **Hosted services** (web apps, APIs, orchestrators with a stable URL): Self-issue agent tokens at runtime. Generate a key at startup, publish `/.well-known/aauth-agent.json`, and build tokens locally. No external AP needed.
+- **CLI / desktop / mobile agents** (no stable URL): Enrol with an Agent Provider once (provisioning step), then refresh tokens from the AP at runtime.
+
+In both cases, the agent token is short-lived (typically 1 hour) and refreshed automatically by the SDK. You never persist it.
 
 ```mermaid
 flowchart LR
-    P["Provisioning: EnrolAsync(keyStore)"] --> C["App config: AAuth:KeyId = key ID string"]
-    C --> S["App startup: keyStore.LoadAsync → AddAAuthAgent with TokenRefresher"]
-    S --> R["Runtime: SDK calls ITokenRefresher before token expires"]
+    subgraph Hosted
+        H1["Startup: Generate key"] --> H2["Publish /.well-known/aauth-agent.json"]
+        H2 --> H3["Runtime: self-issue token via AgentTokenBuilder"]
+    end
+    subgraph CLI/Desktop
+        P["Provisioning: EnrolAsync(keyStore)"] --> C["App config: AAuth:KeyId"]
+        C --> S["Startup: keyStore.LoadAsync → AddAAuthAgent"]
+        S --> R["Runtime: SDK calls AP refresh before expiry"]
+    end
 ```
 
-See [Bootstrap & Enrollment](../workflows/bootstrap-enrollment.md) for the provisioning step.
+See [Bootstrap & Enrollment](../workflows/bootstrap-enrollment.md) for the CLI/desktop provisioning step, or [Getting Started](../getting-started.md#self-issued-agent-tokens-hosted-services) for the self-issued path.
 
 ## Agent Registration (Outbound Requests)
 
@@ -33,7 +42,33 @@ builder.Services.AddAAuthAgent("signing-only", options =>
 });
 ```
 
-### Identity-Based (JWT) — With Challenge Handling
+### Identity-Based (JWT) — Self-Issued (Hosted Services)
+
+No AP enrollment needed. The service generates a key and self-issues tokens:
+
+```csharp
+var key = AAuthKey.Generate();
+const string Kid = "svc-key-1";
+var issuer = "https://my-service.example";
+
+builder.Services.AddAAuthAgent("self-issued", options =>
+{
+    options.Key = key;
+    options.PersonServer = "https://ps.example";
+    options.TokenRefresher = new SelfIssuedTokenRefresher(key, Kid, issuer,
+        agentId: "aauth:my-service@my-service.example",
+        personServer: "https://ps.example");
+});
+
+// Also publish agent metadata so verifiers can discover the JWKS
+app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
+{
+    Issuer = issuer,
+    SigningKeys = new Dictionary<string, AAuthKey> { [Kid] = key },
+});
+```
+
+### Identity-Based (JWT) — AP-Enrolled (CLI/Desktop Agents)
 
 Load the key by ID from the store and configure token refresh:
 
