@@ -73,12 +73,12 @@ public sealed class UpstreamAuthTokenFeature
 
 ### Definition of Done
 
-- [ ] `CallChainingRouter.ResolveDownstreamServer` handles all 3 routing cases.
-- [ ] Invalid `mission.approver` throws (does NOT fall through to `iss`).
-- [ ] `UpstreamAuthTokenFeature` set by middleware only for `aa-auth+jwt`.
-- [ ] `AAuthVerificationOptions.MaxActDepth` and `ClockSkew` threaded to `TokenVerifier` in middleware.
-- [ ] All 8+ routing tests pass.
-- [ ] Existing middleware tests unchanged (no regression).
+- [x] `CallChainingRouter.ResolveDownstreamServer` handles all 3 routing cases.
+- [x] Invalid `mission.approver` throws (does NOT fall through to `iss`).
+- [x] `UpstreamAuthTokenFeature` set by middleware only for `aa-auth+jwt`.
+- [x] `AAuthVerificationOptions.MaxActDepth` and `ClockSkew` threaded to `TokenVerifier` in middleware.
+- [x] All 8+ routing tests pass.
+- [x] Existing middleware tests unchanged (no regression).
 
 ---
 

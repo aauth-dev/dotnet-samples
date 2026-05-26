@@ -222,6 +222,17 @@ public sealed class AAuthVerificationMiddleware
                 parsedInfo.Scheme is "jwt" or "jkt-jwt",
         });
 
+        // Set UpstreamAuthTokenFeature for aa-auth+jwt tokens so that
+        // call-chaining middleware can read the verified upstream token
+        // without re-parsing Signature-Key.
+        if (tokenType == AuthTokenBuilder.TokenType &&
+            parsedInfo.Jwt is not null &&
+            _options.RequireIssuerVerification &&
+            parsedInfo.Scheme is "jwt" or "jkt-jwt")
+        {
+            context.Features.Set(new UpstreamAuthTokenFeature(parsedInfo.Jwt));
+        }
+
         // Enrich the current Activity with AAuth verification tags for
         // OpenTelemetry-compatible tracing (no hard OTel dependency).
         var activity = System.Diagnostics.Activity.Current;
@@ -280,7 +291,11 @@ public sealed class AAuthVerificationMiddleware
             {
                 // Self-issued: verify signature with cnf.jwk (already done as HTTP sig
                 // verified with the same key). Structural check is sufficient.
-                var verifier = new TokenVerifier();
+                var verifier = new TokenVerifier
+                {
+                    MaxActDepth = _options.MaxActDepth,
+                    ClockSkew = _options.ClockSkew,
+                };
                 verifier.Verify(
                     info.Jwt!,
                     info.ConfirmationKey,
@@ -313,7 +328,11 @@ public sealed class AAuthVerificationMiddleware
         var issuerKey = await _jwks!.ResolveKeyAsync(jwksUri, kid, ct).ConfigureAwait(false)
             ?? throw new TokenVerificationException($"No key with kid '{kid}' at {jwksUri}.");
 
-        var tokenVerifier = new TokenVerifier();
+        var tokenVerifier = new TokenVerifier
+        {
+            MaxActDepth = _options.MaxActDepth,
+            ClockSkew = _options.ClockSkew,
+        };
         tokenVerifier.Verify(info.Jwt!, issuerKey, AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk);
     }
 
@@ -372,7 +391,11 @@ public sealed class AAuthVerificationMiddleware
         var expectedAgent = (string?)payload["agent"]
             ?? throw new TokenVerificationException("Auth token is missing 'agent'.");
 
-        var tokenVerifier = new TokenVerifier();
+        var tokenVerifier = new TokenVerifier
+        {
+            MaxActDepth = _options.MaxActDepth,
+            ClockSkew = _options.ClockSkew,
+        };
         if (expectedAudience is not null)
         {
             // Full verification: signature, aud binding, PoP, and act.
