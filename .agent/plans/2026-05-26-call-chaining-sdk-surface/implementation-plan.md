@@ -312,9 +312,9 @@ URL management, background polling, response rewriting). Instead:
 
 ### Definition of Done
 
-- [ ] `docs/advanced/interaction-chaining.md` exists with spec-correct guidance.
-- [ ] Sample shows `onInteractionRequired` callback usage.
-- [ ] Open question documented: automatic propagation middleware (future).
+- [x] `docs/advanced/interaction-chaining.md` exists with spec-correct guidance.
+- [x] Sample shows `onInteractionRequired` callback usage.
+- [x] Open question documented: automatic propagation middleware (future).
 
 ---
 

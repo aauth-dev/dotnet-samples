@@ -169,6 +169,42 @@ app.MapGet("/", async (HttpContext ctx) =>
     });
 });
 
+// -----------------------------------------------------------------------
+// Interaction Chaining Example (commented out)
+//
+// If the downstream PS requires user consent, use onInteractionRequired
+// to propagate the 202 back to the caller. See docs/advanced/interaction-chaining.md.
+//
+// app.MapGet("/with-interaction", async (HttpContext ctx) =>
+// {
+//     await EnsureEnrolledAsync();
+//
+//     using var downstream = new AAuthClientBuilder(enrolledKey!)
+//         .WithTokenRefresh(async (_, ct) =>
+//         {
+//             var apClient = new AgentProviderClient(new HttpClient(), keyStore!);
+//             return await apClient.RefreshAsync(refreshEndpoint!, enrolledKeyId!, ct);
+//         })
+//         .WithCallChaining(ctx)
+//         .WithChallengeHandling(opts =>
+//         {
+//             opts.OnInteractionRequired = async (interaction, ct) =>
+//             {
+//                 // Propagate interaction requirement to caller
+//                 ctx.Response.StatusCode = 202;
+//                 ctx.Response.Headers["Location"] = "/pending/123";
+//                 ctx.Response.Headers["AAuth-Requirement"] =
+//                     $"requirement=interaction; url=\"{interaction.Url}\"; code=\"{interaction.Code}\"";
+//                 await ctx.Response.StartAsync(ct);
+//             };
+//         })
+//         .Build();
+//
+//     var response = await downstream.GetAsync(downstreamUrl);
+//     return Results.Ok(await response.Content.ReadAsStringAsync());
+// });
+// -----------------------------------------------------------------------
+
 app.Run();
 
 // Marker type for WebApplicationFactory in tests.
