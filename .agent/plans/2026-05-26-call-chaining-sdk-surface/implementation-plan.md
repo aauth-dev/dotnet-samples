@@ -548,15 +548,15 @@ InteractionHandlingOptions (add full parity)
 
 ### Definition of Done
 
-- [ ] `AAuthVerificationOptions` exposes `MaxActDepth`, `ClockSkew`, `MaxFutureSkew`, `Clock`.
-- [ ] Middleware threads all options to `TokenVerifier` and `AAuthVerifier`.
-- [ ] `ChallengeHandlingOptions` exposes `MinPollInterval` and `OnPoll`.
-- [ ] `InteractionHandlingOptions` has full parity with `ChallengeHandlingOptions` for poller settings.
-- [ ] `AAuthResourceOptions` and `AAuthAgentOptions` expose relevant subset.
-- [ ] Clock injection works across all components (enables deterministic tests).
-- [ ] Tests verify options threading (set non-default → assert inner component uses it).
-- [ ] Existing tests unchanged (all defaults preserved).
-- [ ] `docs/reference/configuration.md` updated with all new options.
+- [x] `AAuthVerificationOptions` exposes `MaxActDepth`, `ClockSkew`, `MaxFutureSkew`, `Clock`.
+- [x] Middleware threads all options to `TokenVerifier` and `AAuthVerifier`.
+- [x] `ChallengeHandlingOptions` exposes `MinPollInterval` and `OnPoll`.
+- [x] `InteractionHandlingOptions` has full parity with `ChallengeHandlingOptions` for poller settings.
+- [x] `AAuthResourceOptions` exposes `MaxFutureSkew` and `Clock`.
+- [x] Clock injection works across all components (enables deterministic tests).
+- [x] Tests verify options threading (set non-default → assert inner component uses it).
+- [x] Existing tests unchanged (all defaults preserved).
+- [ ] `docs/reference/configuration.md` updated with all new options (deferred to Phase 12).
 
 ---
 

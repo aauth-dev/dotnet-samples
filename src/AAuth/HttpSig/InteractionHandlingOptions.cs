@@ -1,4 +1,5 @@
 using System;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -28,4 +29,27 @@ public sealed class InteractionHandlingOptions
     /// Default: 5 minutes.
     /// </summary>
     public TimeSpan PollingTimeout { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Default poll interval when no <c>Retry-After</c> header is present.
+    /// Default: 5 seconds.
+    /// </summary>
+    public TimeSpan DefaultPollInterval { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// When set, sends a <c>Prefer: wait=N</c> header on each poll request.
+    /// When <see langword="null"/> (default), no <c>Prefer</c> header is sent.
+    /// </summary>
+    public int? PreferWaitSeconds { get; set; }
+
+    /// <summary>
+    /// Minimum delay between polls regardless of server's <c>Retry-After</c>.
+    /// Prevents runaway polling. Default: 100 ms.
+    /// </summary>
+    public TimeSpan MinPollInterval { get; set; } = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>
+    /// Optional callback invoked after each poll response.
+    /// </summary>
+    public Action<System.Net.Http.HttpResponseMessage>? OnPoll { get; set; }
 }

@@ -36,4 +36,16 @@ public sealed class ChallengeHandlingOptions
     /// (default), no <c>Prefer</c> header is sent.
     /// </summary>
     public int? PreferWaitSeconds { get; set; }
+
+    /// <summary>
+    /// Minimum delay between polls regardless of server's <c>Retry-After</c>.
+    /// Prevents runaway polling. Default: 100 ms.
+    /// </summary>
+    public TimeSpan MinPollInterval { get; set; } = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>
+    /// Optional callback invoked after each poll response. Useful for logging
+    /// or progress UI during deferred exchanges.
+    /// </summary>
+    public Action<System.Net.Http.HttpResponseMessage>? OnPoll { get; set; }
 }

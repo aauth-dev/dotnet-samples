@@ -23,6 +23,17 @@ public sealed class AAuthResourceOptions
     /// <summary>Maximum allowed age of inbound signatures. Default: 60 seconds.</summary>
     public TimeSpan MaxSignatureAge { get; set; } = TimeSpan.FromSeconds(60);
 
+    /// <summary>
+    /// Maximum allowed skew into the future for HTTP signature timestamps.
+    /// Default: 5 seconds.
+    /// </summary>
+    public TimeSpan MaxFutureSkew { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Clock function for deterministic testing. Default: <c>null</c> (uses UtcNow).
+    /// </summary>
+    public Func<DateTimeOffset>? Clock { get; set; }
+
     /// <summary>Enable JTI-based replay detection. Default: true.</summary>
     public bool EnableReplayDetection { get; set; } = true;
 

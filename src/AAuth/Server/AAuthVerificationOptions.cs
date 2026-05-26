@@ -45,4 +45,17 @@ public sealed class AAuthVerificationOptions
     /// Default: 30 seconds.
     /// </summary>
     public TimeSpan ClockSkew { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Maximum allowed skew into the future for HTTP signature timestamps.
+    /// Default: 5 seconds.
+    /// </summary>
+    public TimeSpan MaxFutureSkew { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Clock function for time-dependent checks (signature freshness, token expiry).
+    /// Default: <c>null</c> (uses <see cref="DateTimeOffset.UtcNow"/>).
+    /// Inject a fixed clock for deterministic testing.
+    /// </summary>
+    public Func<DateTimeOffset>? Clock { get; init; }
 }

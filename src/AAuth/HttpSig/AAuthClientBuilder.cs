@@ -328,7 +328,11 @@ public sealed class AAuthClientBuilder
             var interactionHandler = new InteractionHandler(
                 interactionOpts.OnInteractionRequired,
                 interactionOpts.OnApprovalPending,
-                interactionOpts.PollingTimeout)
+                interactionOpts.PollingTimeout,
+                interactionOpts.DefaultPollInterval,
+                interactionOpts.MinPollInterval,
+                interactionOpts.PreferWaitSeconds,
+                interactionOpts.OnPoll)
             {
                 InnerHandler = handler,
             };
@@ -379,6 +383,8 @@ public sealed class AAuthClientBuilder
             MaxTotalWait = challengeOptions.PollingTimeout,
             DefaultPollInterval = challengeOptions.DefaultPollInterval,
             PreferWaitSeconds = challengeOptions.PreferWaitSeconds,
+            MinPollInterval = challengeOptions.MinPollInterval,
+            OnPoll = challengeOptions.OnPoll,
         };
 
         // Challenge handler sits above the outer signer.
@@ -410,7 +416,11 @@ public sealed class AAuthClientBuilder
             var interactionHandler = new InteractionHandler(
                 interactionOpts.OnInteractionRequired,
                 interactionOpts.OnApprovalPending,
-                interactionOpts.PollingTimeout)
+                interactionOpts.PollingTimeout,
+                interactionOpts.DefaultPollInterval,
+                interactionOpts.MinPollInterval,
+                interactionOpts.PreferWaitSeconds,
+                interactionOpts.OnPoll)
             {
                 InnerHandler = topHandler,
             };
@@ -458,7 +468,11 @@ public sealed class AAuthClientBuilder
         return new InteractionHandler(
             opts.OnInteractionRequired,
             opts.OnApprovalPending,
-            opts.PollingTimeout)
+            opts.PollingTimeout,
+            opts.DefaultPollInterval,
+            opts.MinPollInterval,
+            opts.PreferWaitSeconds,
+            opts.OnPoll)
         {
             InnerHandler = refreshHandler,
         };
