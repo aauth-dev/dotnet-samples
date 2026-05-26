@@ -93,7 +93,10 @@ Keys are stored as JWK JSON files:
 
 ## Custom Backend Example
 
+The following `AzureKeyVaultStore` is a **sample implementation of the SDK's `AAuth.Crypto.IKeyStore` interface** — it is not shipped with the SDK. It depends on `SecretClient`, `KeyVaultSecret`, and `RequestFailedException` from the `Azure.Security.KeyVault.Secrets` / `Azure` NuGet packages, which are likewise not part of the AAuth SDK.
+
 ```csharp
+// Sample implementation of AAuth.Crypto.IKeyStore — not part of the SDK.
 public sealed class AzureKeyVaultStore : IKeyStore
 {
     private readonly SecretClient _client;

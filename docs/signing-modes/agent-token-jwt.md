@@ -42,6 +42,7 @@ var response = await client.GetAsync("https://resource.example/data");
 
 ```csharp
 using AAuth.Agent;
+using AAuth.Crypto;
 using AAuth.HttpSig;
 
 var keyStore = KeyStore.Default();

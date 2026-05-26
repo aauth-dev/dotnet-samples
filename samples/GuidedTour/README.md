@@ -94,7 +94,7 @@ Steps 1–4 are the same as **Direct Grant**. From step 5 onward:
     * **Approve** → 200 + `auth_token`; the loop box turns solid green.
     * **Deny** → 403 + `{"error":"access_denied"}` → SDK throws
       `AAuthInteractionDeniedException`; the loop box turns red.
-    * **Polling budget expires** (2 minutes by default) → SDK throws
+    * **Polling budget expires** (5 minutes by default) → SDK throws
       `AAuthInteractionTimeoutException`; the loop box turns amber.
 9. Signed `GET /` carrying the `auth_token` → 200 + claims (only on the
    approve path).

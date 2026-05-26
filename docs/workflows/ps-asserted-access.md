@@ -130,7 +130,8 @@ builder.Services.AddAAuthAgent("ps-asserted", options =>
     options.TokenRefresher = new ApTokenRefresher(keyStore, apRefreshEndpoint);
 });
 
-// ITokenRefresher implementation for AP-based refresh
+// Sample implementation — not part of the SDK.
+// Implements AAuth.Agent.ITokenRefresher for refresh via an Agent Provider.
 class ApTokenRefresher(IKeyStore keyStore, string apRefreshEndpoint) : ITokenRefresher
 {
     public async Task<string> RefreshAsync(TokenRefreshContext ctx, CancellationToken ct)
@@ -140,6 +141,8 @@ class ApTokenRefresher(IKeyStore keyStore, string apRefreshEndpoint) : ITokenRef
     }
 }
 ```
+
+`ApTokenRefresher` is an example wiring of `ITokenRefresher`; it is not shipped with the SDK. The example relies on the SDK types `IKeyStore`, `ITokenRefresher`, `TokenRefreshContext`, and `AgentProviderClient` (all in `AAuth.Agent`).
 
 This registers a named `HttpClient` with signing + automatic challenge handling. Inject via `IHttpClientFactory.CreateClient("ps-asserted")`. The `ChallengeHandler` intercepts 401 responses, exchanges the resource token at the PS, and retries transparently.
 

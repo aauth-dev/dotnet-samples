@@ -2,6 +2,8 @@
 
 A minimal Agent Provider (AP) sample for development and testing.
 
+> **Sample only — not part of the AAuth SDK.** This project is illustrative wiring built on top of the SDK. Do not depend on its types or HTTP surface in production code.
+
 ## What it does
 
 Implements the AP endpoints from the AAuth bootstrap spec (§7):
@@ -49,5 +51,5 @@ Settings in `appsettings.json`:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `Issuer` | `http://localhost:5301` | AP issuer claim in tokens |
-| `KeyId` | `ap-key-1` | Key identifier for the AP signing key |
+| `AgentProvider:Issuer` | `http://localhost:5301` | AP issuer claim in tokens |
+| `AgentProvider:KeyId` | `ap-key-1` | Key identifier for the AP signing key |

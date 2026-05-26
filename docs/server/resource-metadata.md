@@ -76,9 +76,7 @@ The extension maps `GET /.well-known/aauth-resource.json` returning:
 {
   "issuer": "https://resource.example",
   "client_name": "My Resource API",
-  "jwks": {
-    "keys": [{ "kid": "key-1", "kty": "OKP", "crv": "Ed25519", "x": "..." }]
-  },
+  "jwks_uri": "https://resource.example/.well-known/jwks.json",
   "scope_descriptions": {
     "read": "Read access to your data",
     "write": "Write access to your data"
@@ -88,6 +86,8 @@ The extension maps `GET /.well-known/aauth-resource.json` returning:
   "revocation_endpoint": "https://resource.example/revoke"
 }
 ```
+
+The keys themselves are served separately at `/.well-known/jwks.json` (also mapped by `MapAAuthWellKnown()` / `MapAAuthResourceWellKnown()`).
 
 ## Agent-Side Discovery
 
@@ -99,7 +99,7 @@ using AAuth.Discovery;
 var metadata = new MetadataClient(new HttpClient(), cacheTtl: TimeSpan.FromMinutes(15));
 var url = MetadataClient.BuildUrl("https://resource.example", "aauth-resource.json");
 var doc = await metadata.FetchAsync(url);
-// doc["issuer"], doc["jwks"], etc.
+// doc["issuer"], doc["jwks_uri"], etc.
 ```
 
 ## Further Reading

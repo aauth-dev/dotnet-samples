@@ -53,9 +53,14 @@ Run this in a separate tool, CLI, or setup script — not in your application:
 
 ```csharp
 using AAuth.Agent;
+using AAuth.Crypto;
 using AAuth.HttpSig;
 
-// Key is generated INSIDE the store — private material never leaves
+// Key is generated INSIDE the store — private material never leaves.
+// KeyStore.Default() returns the in-process IKeyStore shipped with the SDK
+// (file/keychain-backed depending on platform). AzureKeyVaultStore and
+// HsmKeyStore are placeholders for your own custom IKeyStore
+// implementations — they are NOT part of the SDK.
 var keyStore = KeyStore.Default(); // or new AzureKeyVaultStore(...), HsmKeyStore(...)
 
 var enrol = await AAuthClientBuilder

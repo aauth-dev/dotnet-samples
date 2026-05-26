@@ -93,9 +93,13 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `TokenExchangeClient` | Sends signed `POST /token` to the Person Server |
 | `DeferredPoller` | Polls the pending URL until auth_token or timeout |
 | `AgentProviderClient` | Enrols with an Agent Provider (CLI/desktop agents; hosted services self-issue) |
-| `IKeyStore` / `InMemoryKeyStore` | Key persistence abstraction |
+| `AAuthMission` / `AAuthMissionHeader` | Mission state + the `AAuth-Mission` header helpers |
+| `MissionForwardingHandler` | `DelegatingHandler` that forwards mission context downstream |
+| `AAuthCapabilitiesHeader` | Helpers for the `AAuth-Capabilities` request header |
+| `IKeyStore` / `InMemoryKeyStore` | Key persistence abstraction + in-memory implementation |
 | `IInteractionPresenter` | Surface interaction URLs to the user |
-| `IPlatformAttestor` | Platform attestation hook |
+| `IPlatformAttestor` / `NoopAttestor` | Platform attestation hook + built-in no-op implementation |
+| `ITokenRefresher` | Pluggable agent-token refresh strategy |
 
 ### `AAuth.Tokens` — Token builders and verification
 
@@ -120,8 +124,8 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 |------|---------|
 | `AAuthRequirementHeader` | Format/parse the `AAuth-Requirement` challenge header |
 | `AAuthInteraction` | Interaction URL + code from 202 responses |
-| `AAuthCapabilitiesHeader` | Agent capabilities header |
-| `AAuthMissionHeader` | Mission context header |
+
+> The `AAuthCapabilitiesHeader` and `AAuthMissionHeader` types live in the `AAuth.Agent` namespace (alongside `AAuthMission` and `MissionForwardingHandler`), not in `AAuth.Headers`.
 
 ### `AAuth.Server` — Resource server utilities
 

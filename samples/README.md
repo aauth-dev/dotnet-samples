@@ -6,8 +6,8 @@ Seven sample applications demonstrating AAuth flows end-to-end.
 |--------|------|-------------|
 | [WhoAmI](WhoAmI/) | 5000 | ASP.NET Core resource server — per-endpoint verification (`/hwk`, `/jwks-uri`, `/`) |
 | [Orchestrator](Orchestrator/) | 5200 | Intermediate service — call chaining with nested `act` delegation |
-| [MockPersonServer](MockPersonServer/) | 5100 | Reference Person Server — verifies exchanges, mints auth tokens |
-| [MockAgentProvider](MockAgentProvider/) | 5301 | Reference Agent Provider — issues agent tokens, hosts JWKS |
+| [MockPersonServer](MockPersonServer/) | 5100 | Reference Person Server — verifies exchanges, mints auth tokens. **Sample only — not part of the AAuth SDK.** |
+| [MockAgentProvider](MockAgentProvider/) | 5301 | Reference Agent Provider — issues agent tokens, hosts JWKS. **Sample only — not part of the AAuth SDK.** |
 | [GuidedTour](GuidedTour/) | 5400 | Blazor walk-through — visualises all four AAuth flows step by step |
 | [SampleApp](SampleApp/) | 5240 | Golden example — one page per signing mode (hwk, jwt, jwks_uri, call chain) |
 | [AgentConsole](AgentConsole/) | — | CLI agent — signs requests, handles challenges, exchanges with a PS |

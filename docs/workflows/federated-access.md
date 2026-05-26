@@ -54,7 +54,8 @@ builder.Services.AddAAuthAgent("federated", options =>
     options.TokenRefresher = new ApTokenRefresher(keyStore, apRefreshEndpoint);
 });
 
-// ITokenRefresher implementation for AP-based refresh
+// Sample implementation — not part of the SDK.
+// Implements AAuth.Agent.ITokenRefresher for refresh via an Agent Provider.
 class ApTokenRefresher(IKeyStore keyStore, string apRefreshEndpoint) : ITokenRefresher
 {
     public async Task<string> RefreshAsync(TokenRefreshContext ctx, CancellationToken ct)
@@ -65,7 +66,7 @@ class ApTokenRefresher(IKeyStore keyStore, string apRefreshEndpoint) : ITokenRef
 }
 ```
 
-See [Dependency Injection](../reference/dependency-injection.md) for full reference.
+The example uses these SDK types: `IKeyStore` / `ITokenRefresher` / `TokenRefreshContext` (all in `AAuth.Agent`) and `AgentProviderClient` (in `AAuth.Agent`). `ApTokenRefresher` itself is illustrative only — implement your own `ITokenRefresher` for production refresh strategies.
 
 ## Key Difference from PS-Asserted
 
