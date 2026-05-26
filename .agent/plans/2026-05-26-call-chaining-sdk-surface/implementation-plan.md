@@ -132,15 +132,15 @@ public ChallengeHandler(
 
 ### Definition of Done
 
-- [ ] `ChallengeHandler` accepts and uses `upstreamTokenProvider`.
-- [ ] When upstream token is present, routes via `CallChainingRouter`.
-- [ ] When upstream token is null and `personServer` is set, falls back to static PS.
-- [ ] Throws `ArgumentException` if both personServer and upstreamTokenProvider are null.
-- [ ] `TokenExchangeClient` sends `Prefer: wait=45` on initial POST (configurable via `DeferredPollerOptions.PreferWaitSeconds`).
-- [ ] Existing challenge-handling tests unchanged (backward compatible).
-- [ ] New test: upstream token with `mission.approver` routes correctly.
-- [ ] New test: upstream token without mission routes to `iss`.
-- [ ] New test: initial exchange POST includes `Prefer` header.
+- [x] `ChallengeHandler` accepts and uses `upstreamTokenProvider`.
+- [x] When upstream token is present, routes via `CallChainingRouter`.
+- [x] When upstream token is null and `personServer` is set, falls back to static PS.
+- [x] Throws `ArgumentException` if both personServer and upstreamTokenProvider are null.
+- [x] `TokenExchangeClient` sends `Prefer: wait=45` on initial POST (configurable via `DeferredPollerOptions.PreferWaitSeconds`).
+- [x] Existing challenge-handling tests unchanged (backward compatible).
+- [x] New test: upstream token with `mission.approver` routes correctly.
+- [x] New test: upstream token without mission routes to `iss`.
+- [x] New test: initial exchange POST includes `Prefer` header.
 
 ---
 
