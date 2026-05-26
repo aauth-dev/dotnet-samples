@@ -145,24 +145,20 @@ public class UpstreamTokenValidationTests
         Assert.Equal("aauth:original@example", (string?)nested!["sub"]);
     }
 
-    [Fact(DisplayName = "§Upstream Token Verification — intermediaryAgentId builds nested act")]
-    public async Task IntermediaryAgentId_BuildsNestedAct()
+    [Fact(DisplayName = "§Upstream Token Verification — returns raw upstream act for nesting")]
+    public async Task ReturnsRawUpstreamAct()
     {
         var token = BuildValidUpstreamToken();
         var validator = CreateValidator();
         var trusted = new HashSet<string> { PsIssuer };
-        const string intermediary = "aauth:resource1@example";
 
-        var result = await validator.ValidateAsync(token, ResourceAudience, trusted, intermediary);
+        var result = await validator.ValidateAsync(token, ResourceAudience, trusted);
 
         Assert.True(result.IsValid);
         Assert.NotNull(result.UpstreamAct);
-        // Outer act.sub should be the intermediary
-        Assert.Equal(intermediary, (string?)result.UpstreamAct!["sub"]);
-        // Inner act.sub should be the original agent
-        var inner = result.UpstreamAct["act"] as JsonObject;
-        Assert.NotNull(inner);
-        Assert.Equal(AgentId, (string?)inner!["sub"]);
+        // UpstreamAct returns the RAW upstream act (not pre-nested).
+        // AuthTokenBuilder performs the nesting: { sub: intermediary, act: UpstreamAct }.
+        Assert.Equal(AgentId, (string?)result.UpstreamAct!["sub"]);
     }
 
     [Fact(DisplayName = "§Upstream Token Verification — chain depth exceeded rejected")]

@@ -121,6 +121,8 @@ public sealed class AuthTokenBuilder
 
         // Build the act claim. In call-chaining, nest the upstream act
         // inside the current agent's act to preserve the delegation chain.
+        // UpstreamAct is the RAW act from the upstream token; the builder
+        // performs the single nesting per §Upstream Token Verification step 4.
         var act = new JsonObject { ["sub"] = Agent };
         if (UpstreamAct is not null)
         {

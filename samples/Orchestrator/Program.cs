@@ -1,5 +1,4 @@
 using System.Text.Json.Nodes;
-using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.DependencyInjection;
 using AAuth.Discovery;
@@ -58,38 +57,21 @@ app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 });
 
 // -----------------------------------------------------------------------
-// Enrollment state (lazy — enrols with the AP on first request).
+// Self-issued agent identity: per §Call Chaining Identity, the Orchestrator
+// is its own AP — it self-issues agent tokens signed by its own key.
+// This ensures agent_token.iss == resource URL, satisfying §Upstream Token
+// Verification step 3 (aud in upstream_token matches intermediary resource).
 // -----------------------------------------------------------------------
-IAAuthKey? enrolledKey = null;
-string? enrolledKeyId = null;
-IKeyStore? keyStore = null;
-string? refreshEndpoint = null;
-var enrollLock = new SemaphoreSlim(1, 1);
-
-async Task EnsureEnrolledAsync()
+string SelfIssueAgentToken()
 {
-    if (enrolledKey is not null) return;
-    await enrollLock.WaitAsync();
-    try
+    return new AgentTokenBuilder
     {
-        if (enrolledKey is not null) return;
-
-        keyStore = KeyStore.Default();
-        var metadataClient = new MetadataClient(new HttpClient());
-        var metaUrl = MetadataClient.BuildUrl(apUrl, "aauth-agent.json");
-        var apMeta = await metadataClient.FetchAsync(metaUrl);
-        var enrolEndpoint = (string?)apMeta["enrol_endpoint"] ?? $"{apUrl}/enrol";
-        refreshEndpoint = (string?)apMeta["refresh_endpoint"] ?? $"{apUrl}/refresh";
-
-        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-        var result = await apClient.EnrolAsync(apUrl, agentId, enrolEndpoint, psUrl);
-        enrolledKey = result.Key;
-        enrolledKeyId = result.KeyId;
-    }
-    finally
-    {
-        enrollLock.Release();
-    }
+        Issuer = orchestratorUrl,
+        Subject = agentId,
+        KeyId = OrchestratorKid,
+        Key = orchestratorKey,
+        PersonServer = psUrl,
+    }.Build();
 }
 
 // -----------------------------------------------------------------------
@@ -124,8 +106,6 @@ app.UseWhen(
 // -----------------------------------------------------------------------
 app.MapGet("/", async (HttpContext ctx) =>
 {
-    await EnsureEnrolledAsync();
-
     // Grant consent at the PS (demo convenience — real deployments pre-grant).
     using var adminHttp = new HttpClient();
     try
@@ -137,12 +117,10 @@ app.MapGet("/", async (HttpContext ctx) =>
     catch { /* /admin/consent only exists on MockPersonServer */ }
 
     // Build a call-chaining client: upstream token routing + auto-challenge.
-    using var downstream = new AAuthClientBuilder(enrolledKey!)
-        .WithTokenRefresh(async (_, ct) =>
-        {
-            var apClient = new AgentProviderClient(new HttpClient(), keyStore!);
-            return await apClient.RefreshAsync(refreshEndpoint!, enrolledKeyId!, ct);
-        })
+    // Self-issued agent token (iss = orchestratorUrl) satisfies §Upstream Token
+    // Verification step 3 — the PS can match upstream_token.aud against iss.
+    using var downstream = new AAuthClientBuilder(orchestratorKey)
+        .WithTokenRefresh(async (_, ct) => SelfIssueAgentToken())
         .WithCallChaining(ctx)
         .Build();
 

@@ -18,10 +18,10 @@ public sealed record UpstreamTokenValidationResult
     /// <summary>Error description when invalid.</summary>
     public string? Error { get; init; }
 
-    /// <summary>The <c>act</c> object ready for nesting into the downstream token.
-    /// When <c>intermediaryAgentId</c> was provided to <see cref="UpstreamTokenValidator.ValidateAsync"/>,
-    /// this is the fully constructed nested act (intermediary wrapping upstream).
-    /// Otherwise, this is the raw upstream act for the caller to nest manually.</summary>
+    /// <summary>The raw <c>act</c> object from the upstream token.
+    /// Pass this to <see cref="AuthTokenBuilder.UpstreamAct"/> — the builder
+    /// performs the nesting (wrapping inside the intermediary's act) per
+    /// §Upstream Token Verification step 4.</summary>
     public JsonObject? UpstreamAct { get; init; }
 
     /// <summary>The upstream token's issuer.</summary>
@@ -61,17 +61,12 @@ public sealed class UpstreamTokenValidator
     /// <param name="upstreamToken">The compact JWS auth token to validate.</param>
     /// <param name="expectedAudience">The intermediary resource's own URL (must match <c>aud</c>).</param>
     /// <param name="trustedIssuers">Set of trusted AS/PS issuer URLs.</param>
-    /// <param name="intermediaryAgentId">
-    /// The agent identity of the intermediary resource presenting the upstream token.
-    /// When provided, used to construct the nested act claim (step 4).
-    /// </param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Validation result with parsed claims or error.</returns>
     public async Task<UpstreamTokenValidationResult> ValidateAsync(
         string upstreamToken,
         string expectedAudience,
         IReadOnlySet<string> trustedIssuers,
-        string? intermediaryAgentId = null,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(upstreamToken);
@@ -140,15 +135,13 @@ public sealed class UpstreamTokenValidator
             };
         }
 
-        // Build the nested act for the downstream token if intermediaryAgentId provided (step 4).
-        JsonObject? nestedAct = intermediaryAgentId is not null
-            ? ActChainBuilder.BuildNestedAct(intermediaryAgentId, act)
-            : act.DeepClone() as JsonObject;
-
+        // Return the raw upstream act. The caller (AuthTokenBuilder) performs
+        // the nesting (wrapping this inside { sub: intermediary, act: ... })
+        // per §Upstream Token Verification step 4.
         return new UpstreamTokenValidationResult
         {
             IsValid = true,
-            UpstreamAct = nestedAct,
+            UpstreamAct = act.DeepClone() as JsonObject,
             Issuer = verified.Issuer,
             Agent = agent,
             Subject = (string?)verified.Payload["sub"],

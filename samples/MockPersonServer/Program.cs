@@ -164,11 +164,18 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
         // For this mock PS, trust all issuers. Production would maintain
         // a set of known ASes whose tokens the PS has previously brokered.
         var trustedIssuers = new HashSet<string> { psIssuer };
+
+        // §Upstream Token Verification step 3: aud must match the intermediary
+        // resource. Per §Call Chaining Identity, the intermediary self-issues
+        // its agent token (iss = its resource URL). So agent_token.iss IS the
+        // intermediary's resource identifier.
+        var intermediaryResourceUrl = (string?)parsed.Payload?["iss"]
+            ?? throw new InvalidOperationException("Agent token missing 'iss' claim.");
+
         var result = await validator.ValidateAsync(
             upstreamTokenJwt,
-            expectedAudience: agentId, // aud must match the intermediary resource
-            trustedIssuers,
-            intermediaryAgentId: agentId);
+            expectedAudience: intermediaryResourceUrl,
+            trustedIssuers);
 
         if (!result.IsValid)
         {

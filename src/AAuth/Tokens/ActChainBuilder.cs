@@ -13,9 +13,14 @@ public static class ActChainBuilder
     /// Construct the nested act claim for a downstream auth token.
     /// Wraps the upstream token's act inside a new act identifying the intermediary.
     /// </summary>
+    /// <remarks>
+    /// This is a standalone utility for manual act chain construction.
+    /// Do NOT pass the result to <see cref="AuthTokenBuilder.UpstreamAct"/> — the builder
+    /// performs its own nesting. Pass the raw upstream act to the builder instead.
+    /// </remarks>
     /// <param name="intermediaryAgentId">The intermediary resource's agent identifier.</param>
     /// <param name="upstreamAct">The act claim from the validated upstream token.</param>
-    /// <returns>A new JsonObject suitable for <see cref="AuthTokenBuilder.UpstreamAct"/>.</returns>
+    /// <returns>A new JsonObject representing the full nested act chain.</returns>
     /// <example>
     /// Input: intermediaryAgentId = "aauth:orch@example", upstreamAct = { "sub": "aauth:agent@example" }
     /// Output: { "sub": "aauth:orch@example", "act": { "sub": "aauth:agent@example" } }
