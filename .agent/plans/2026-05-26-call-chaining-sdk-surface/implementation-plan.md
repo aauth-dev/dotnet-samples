@@ -829,20 +829,20 @@ references for consumers.
 
 ### Definition of Done
 
-- [ ] Orchestrator sample uses `UseAAuthIntermediary()` + `WithCallChaining(ctx)` — no manual exchange loop.
-- [ ] Orchestrator sample uses `MapAAuthAgentWellKnown()` — no hand-coded JSON endpoint.
-- [ ] MockPersonServer uses `UpstreamTokenValidator` + `MapAAuthPersonServerWellKnown()`.
+- [x] Orchestrator sample uses `UseAAuthIntermediary()` + `WithCallChaining(ctx)` — already modernized.
+- [x] Orchestrator sample uses `MapAAuthAgentWellKnown()` — already modernized.
+- [x] MockPersonServer uses `UpstreamTokenValidator` + `MapAAuthPersonServerWellKnown()`.
 - [ ] AgentConsole wires `--upstream-token` through `WithCallChaining()`.
 - [ ] SampleApp CallChain.razor uses `WithCallChaining(httpContext)`.
-- [ ] MockAgentProvider uses `MapAAuthAgentWellKnown()`.
+- [ ] MockAgentProvider uses `MapAAuthAgentWellKnown()` (blocked: no AP-specific helper yet).
 - [ ] GuidedTour CodeSnippets updated with new convenience patterns.
-- [ ] `docs/workflows/call-chaining.md` covers all new APIs with examples.
-- [ ] `docs/reference/configuration.md` lists all Phase 11 settings.
+- [x] `docs/workflows/call-chaining.md` covers all new APIs with examples.
+- [x] `docs/reference/configuration.md` lists all Phase 11 settings.
 - [ ] `docs/reference/dependency-injection.md` documents all new builder methods.
 - [ ] `docs/server/verification-middleware.md` documents new verification options.
 - [ ] `docs/advanced/missions.md` documents Phase 7 auto-forwarding.
 - [ ] All code examples in docs compile (verified via GuidedTour or build).
-- [ ] No sample references deprecated or removed API surfaces.
+- [x] No sample references deprecated or removed API surfaces.
 
 ---
 

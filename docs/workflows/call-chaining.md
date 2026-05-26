@@ -241,3 +241,104 @@ The final resource (WhoAmI) validates the chained auth token using standard midd
 - `act.sub` matches the presenting agent
 
 The `act` claim is available in the response for audit/logging purposes but is not verified recursively — that responsibility lies with the PS that minted the token.
+
+## PS-Side — Upstream Token Validation
+
+When a PS receives an `upstream_token` parameter during a call-chaining exchange, it must validate the token per §Upstream Token Verification. Use `UpstreamTokenValidator`:
+
+```csharp
+// Register in DI
+builder.Services.AddSingleton(sp =>
+    new UpstreamTokenValidator(
+        sp.GetRequiredService<MetadataClient>(),
+        sp.GetRequiredService<JwksClient>()));
+
+// In the token endpoint handler
+var validator = app.Services.GetRequiredService<UpstreamTokenValidator>();
+var trustedIssuers = new HashSet<string> { psIssuer };
+
+var result = await validator.ValidateAsync(
+    upstreamToken,
+    expectedAudience: intermediaryResourceUrl, // aud must match the caller
+    trustedIssuers,
+    intermediaryAgentId: intermediaryAgentId);  // constructs nested act
+
+if (!result.IsValid)
+    return Results.BadRequest(new { error = "invalid_upstream_token", detail = result.Error });
+
+// result.UpstreamAct is ready to use in AuthTokenBuilder
+var authToken = new AuthTokenBuilder
+{
+    Issuer = psIssuer,
+    Audience = downstreamResource,
+    Agent = intermediaryAgentId,
+    AgentConfirmationKey = intermediaryKey,
+    Key = psKey, KeyId = "ps-1",
+    Scope = "downstream:read",
+    UpstreamAct = result.UpstreamAct, // fully nested delegation chain
+}.Build();
+```
+
+The validator performs:
+1. JWT signature verification via issuer JWKS discovery
+2. Issuer trust check against provided set
+3. Audience binding (aud == intermediary resource URL)
+4. Act chain well-formedness (each level has `sub`, depth within limits)
+5. Consistency check (`act.sub` == `agent` claim)
+6. Nested act construction when `intermediaryAgentId` is provided
+
+## PS-Side — Auth Token Delivery Validation
+
+When the PS receives an auth token response from an AS (four-party flow), it must verify the response before returning it to the agent. Use `AuthTokenResponseValidator`:
+
+```csharp
+var deliveryValidator = new AuthTokenResponseValidator(metadata, jwks);
+
+var result = await deliveryValidator.ValidateAsync(
+    authToken: responseFromAs,
+    expectedIssuer: asUrl,             // must match the AS we sent to
+    expectedAudience: resourceUrl,     // downstream resource
+    expectedAgentId: agentId,          // the requesting agent
+    agentKey: agentSigningKey,         // cnf.jwk binding check
+    expectedActContext: upstreamAct,   // chain consistency (optional)
+    requestedScope: "data.read");      // scope narrowing check
+
+if (!result.IsValid)
+    return Results.BadRequest(new { error = "delivery_verification_failed" });
+```
+
+## Act Chain Utilities
+
+### Reading the Delegation Chain
+
+Resources can inspect the full delegation chain for authorization policy:
+
+```csharp
+var payload = verifiedToken.Payload;
+var chain = ActChainReader.GetDelegationChain(payload);
+// ["aauth:orchestrator@ap.example", "aauth:agent-a@ap.example"]
+
+var immediate = ActChainReader.GetImmediateActor(payload);
+// "aauth:orchestrator@ap.example"
+
+var original = ActChainReader.GetOriginalActor(payload);
+// "aauth:agent-a@ap.example"
+
+var depth = ActChainReader.GetChainDepth(payload);
+// 2
+```
+
+### Building Nested Act Claims
+
+PS implementations constructing downstream tokens can use `ActChainBuilder`:
+
+```csharp
+// Wrap upstream act inside new intermediary act
+var nestedAct = ActChainBuilder.BuildNestedAct(
+    intermediaryAgentId: "aauth:orch@ap.example",
+    upstreamAct: validatedUpstreamAct);
+// { "sub": "aauth:orch@ap.example", "act": { "sub": "aauth:agent@ap.example" } }
+
+// Validate chain before issuing
+bool valid = ActChainBuilder.ValidateChain(nestedAct, maxDepth: 10);
+```
