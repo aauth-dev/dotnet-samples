@@ -2,7 +2,7 @@
 
 > [Signature-Key Schemes](https://explorer.aauth.dev/foundations/schemes)
 
-Overview: Before an agent can use `jwks_uri` or `jwt` signing modes, it must register with an Agent Provider (AP) to get an agent token. This is the bootstrap step. For `hwk` (pseudonymous), no bootstrap is needed.
+Overview: CLI tools, desktop apps, and mobile agents that lack a stable URL register with an Agent Provider (AP) to get an agent token. This is the bootstrap step. Hosted services with a stable URL can instead self-issue tokens (see [Getting Started](../getting-started.md#self-issued-agent-tokens-hosted-services)). For `hwk` (pseudonymous), no bootstrap is needed.
 
 ## Prerequisites
 

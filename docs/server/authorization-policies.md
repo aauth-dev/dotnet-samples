@@ -7,13 +7,16 @@ The AAuth SDK integrates with ASP.NET Core's authorization system via `AAuthScop
 ```csharp
 using AAuth.DependencyInjection;
 
-builder.Services.AddAuthorization();
+builder.Services.AddAAuthAuthentication();
 builder.Services.AddAAuthAuthorization();
 ```
 
-`AddAAuthAuthorization()` registers:
+`AddAAuthAuthentication()` registers:
 - `AAuthAuthenticationHandler` as the default authentication scheme
+
+`AddAAuthAuthorization()` registers:
 - `AAuthScopeHandler` as an `IAuthorizationHandler`
+- Built-in policies: `AAuth.Authenticated`, `AAuth.Identified`, `AAuth.Authorized`
 
 ## Scope-Based Policies
 
@@ -77,6 +80,7 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("DataRead", policy =>
         policy.Requirements.Add(new AAuthScopeRequirement("data:read")));
 });
+builder.Services.AddAAuthAuthentication();
 builder.Services.AddAAuthAuthorization();
 
 var app = builder.Build();
@@ -84,6 +88,9 @@ app.UseAAuthVerification();
 app.UseAAuthChallenge(new ChallengeOptions
 {
     AccessMode = AAuthAccessMode.RequireAuthToken,
+    ResourceSigningKey = resourceKey,
+    ResourceKeyId = "key-1",
+    ResourceIdentifier = "https://resource.example",
 });
 app.UseAuthorization();
 

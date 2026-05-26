@@ -35,32 +35,32 @@ app.UseAAuthVerification(new AAuthVerificationOptions
 ## Options
 
 ```csharp
-public class AAuthVerificationOptions
+public sealed class AAuthVerificationOptions
 {
     // The resource's own identifier (used for audience checks).
     // When null, audience validation is skipped entirely.
-    public string? ResourceIdentifier { get; set; }
+    public string? ResourceIdentifier { get; init; }
 
     // Whether to verify JWT signatures against the issuer's JWKS (default: true)
-    public bool RequireIssuerVerification { get; set; } = true;
+    public bool RequireIssuerVerification { get; init; } = true;
 
     // Optional allow-list of trusted agent provider issuers
-    public IReadOnlySet<string>? TrustedAgentProviderIssuers { get; set; }
+    public IReadOnlySet<string>? TrustedAgentProviderIssuers { get; init; }
 
     // Optional allow-list of trusted auth token issuers (PS/AS)
-    public IReadOnlySet<string>? TrustedAuthTokenIssuers { get; set; }
+    public IReadOnlySet<string>? TrustedAuthTokenIssuers { get; init; }
 
     // Maximum depth of nested act claims (default: 10)
-    public int MaxActDepth { get; set; } = 10;
+    public int MaxActDepth { get; init; } = 10;
 
     // Tolerance for exp/iat validation (default: 30s)
-    public TimeSpan ClockSkew { get; set; } = TimeSpan.FromSeconds(30);
+    public TimeSpan ClockSkew { get; init; } = TimeSpan.FromSeconds(30);
 
     // Maximum future skew for HTTP signature timestamps (default: 5s)
-    public TimeSpan MaxFutureSkew { get; set; } = TimeSpan.FromSeconds(5);
+    public TimeSpan MaxFutureSkew { get; init; } = TimeSpan.FromSeconds(5);
 
     // Clock source for all time checks (null = UtcNow; inject for testing)
-    public Func<DateTimeOffset>? Clock { get; set; }
+    public Func<DateTimeOffset>? Clock { get; init; }
 }
 ```
 

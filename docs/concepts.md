@@ -50,7 +50,7 @@ See [Missions](https://explorer.aauth.dev/missions/compare).
 
 | Token | Type Header | Issued By | Purpose | SDK |
 |-------|-------------|-----------|---------|-----|
-| Agent Token | `aa-agent+jwt` | Agent Provider | Binds key → identity | `AgentTokenBuilder` |
+| Agent Token | `aa-agent+jwt` | Agent Provider or Self | Binds key → identity | `AgentTokenBuilder` |
 | Resource Token | `aa-resource+jwt` | Resource | Challenge: "get auth from my PS/AS" | `ResourceTokenBuilder` |
 | Auth Token | `aa-auth+jwt` | PS or AS | Proves user authorized this agent | `AuthTokenBuilder` |
 

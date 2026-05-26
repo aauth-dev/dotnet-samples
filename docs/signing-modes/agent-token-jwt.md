@@ -10,9 +10,35 @@ The agent presents its full agent token inline. The resource (or Person Server) 
 - When the resource needs to discover the agent's Person Server (from the `ps` claim)
 - When the resource needs verified agent identity with issuer attestation
 
-**Prerequisite:** Agent must have enrolled with an Agent Provider to obtain an `aa-agent+jwt`.
+**Prerequisite:** Agent must have an `aa-agent+jwt` — either self-issued (hosted services that publish their own JWKS) or obtained from an Agent Provider (CLI/desktop agents that enrol).
 
 ## Code Example
+
+**Hosted service (self-issued):**
+
+```csharp
+using AAuth.Crypto;
+using AAuth.HttpSig;
+using AAuth.Tokens;
+
+var key = AAuthKey.Generate();
+
+using var client = new AAuthClientBuilder(key)
+    .WithTokenRefresh((ctx, ct) => Task.FromResult(new AgentTokenBuilder
+    {
+        Issuer = "https://my-service.example",
+        Subject = "aauth:my-service@my-service.example",
+        KeyId = "svc-key-1",
+        Key = key,
+        PersonServer = "https://ps.example",
+    }.Build()))
+    .WithChallengeHandling("https://ps.example")
+    .Build();
+
+var response = await client.GetAsync("https://resource.example/data");
+```
+
+**CLI/Desktop agent (AP-enrolled):**
 
 ```csharp
 using AAuth.Agent;
@@ -51,8 +77,8 @@ using var client = new HttpClient(handler);
 ## What the Resource Sees
 
 - `Signature-Key: sig=jwt;jwt="eyJhbGciOi..."`
-- Resource decodes the JWT: finds `iss` (AP), `sub` (agent ID), `cnf.jwk` (bound key), optionally `ps` (Person Server URL)
-- Resource verifies: JWT signature (against AP's JWKS) + request signature (against `cnf.jwk`)
+- Resource decodes the JWT: finds `iss` (agent's own URL or AP), `sub` (agent ID), `cnf.jwk` (bound key), optionally `ps` (Person Server URL)
+- Resource verifies: JWT signature (against issuer's JWKS via `{iss}/.well-known/aauth-agent.json`) + request signature (against `cnf.jwk`)
 
 ## Verification
 

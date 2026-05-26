@@ -14,7 +14,7 @@ using AAuth.DependencyInjection;
 builder.Services.AddAAuthResource(options =>
 {
     options.Issuer = "https://resource.example";
-    options.SigningKeys = [("key-1", signingKey)];
+    options.SigningKeys = new() { ["key-1"] = signingKey };
     options.ClientName = "My Resource API";
     options.ScopeDescriptions = new()
     {

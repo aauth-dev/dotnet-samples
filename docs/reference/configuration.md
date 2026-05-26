@@ -31,11 +31,11 @@ All configurable options across the AAuth .NET SDK, grouped by component.
 |----------|------|---------|-------------|
 | `Issuer` | `string` | — (required) | HTTPS issuer URL for this resource |
 | `SigningKeys` | `Dictionary<string, AAuthKey>` | `{}` | Key-id → signing key map |
-| `MaxSignatureAge` | `TimeSpan` | 60 seconds | Maximum allowed age of inbound signatures |
-| `MaxFutureSkew` | `TimeSpan` | 5 seconds | Future skew tolerance for signature timestamps |
-| `Clock` | `Func<DateTimeOffset>?` | `null` (UtcNow) | Clock source (threaded to `AAuthVerifier`) |
-| `EnableReplayDetection` | `bool` | `true` | Enable JTI-based replay detection |
-| `KeyResolver` | `ISignatureKeyResolver?` | `null` | Custom key resolver (null = default) |
+| `ClientName` | `string?` | `null` | Human-readable resource name |
+| `ScopeDescriptions` | `Dictionary<string, string>?` | `null` | Scope → description map for metadata |
+| `SignatureWindow` | `int?` | `null` | Advertised signature validity (seconds) |
+| `AuthorizationEndpoint` | `string?` | `null` | AS authorization URL |
+| `RevocationEndpoint` | `string?` | `null` | Revocation endpoint URL |
 
 ## Token Builders
 
@@ -179,33 +179,37 @@ Standard `DelegatingHandler` — no configurable options. Requires an `ISignatur
 | Property | Type | Required | Description |
 |----------|------|:--------:|-------------|
 | `Key` | `IAAuthKey` | Yes | Agent signing key |
-| `AgentToken` | `string?` | No | Agent token JWT (enables jwt mode) |
-| `PersonServer` | `string?` | No | Person Server URL (enables challenge handling) |
-| `OnInteractionRequired` | `Func<..., Task>?` | No | Callback for deferred consent interaction |
-| `OnResourceInteraction` | `Func<..., Task>?` | No | Callback for resource-managed interaction |
-| `OnApprovalPending` | `Func<CancellationToken, Task>?` | No | Callback during approval polling |
+| `BaseAddress` | `Uri?` | No | Target resource URL |
+| `SignatureKeyProvider` | `ISignatureKeyProvider?` | No | Custom signature key provider |
+| `PersonServer` | `string?` | No | Person Server URL (for challenge handling) |
+| `ChallengeHandling` | `bool` | No | Enable challenge handling |
+| `ChallengeHandlingOptions` | `Action<ChallengeHandlingOptions>?` | No | Configure challenge handling behavior |
+| `InteractionHandling` | `bool` | No | Enable interaction handling |
+| `InteractionHandlingOptions` | `Action<InteractionHandlingOptions>?` | No | Configure interaction handling behavior |
 | `TokenRefresher` | `ITokenRefresher?` | No | Custom token refresh logic |
-| `PollingTimeout` | `TimeSpan?` | No | Max deferred polling time (default: 5 min) |
+| `RefreshThreshold` | `TimeSpan?` | No | Time before expiry to trigger refresh |
+| `Capabilities` | `string[]?` | No | Agent capabilities to advertise |
+| `InnerHandler` | `HttpMessageHandler?` | No | Custom inner HTTP handler |
+| `CallChainProvider` | `Func<string?>?` | No | Provider for upstream auth token (call chaining) |
 
 ### AAuthResourceOptions (AddAAuthResource)
 
 | Property | Type | Required | Description |
 |----------|------|:--------:|-------------|
 | `Issuer` | `string` | Yes | Resource canonical URL |
-| `SigningKeys` | `List<(string Kid, IAAuthKey Key)>` | Yes | Signing key pairs |
-| `MaxSignatureAge` | `TimeSpan?` | No | Override verifier MaxAge |
-| `EnableReplayDetection` | `bool` | No | Register `IJtiStore` (default: false) |
-| `KeyResolver` | `ISignatureKeyResolver?` | No | Custom resolver |
+| `SigningKeys` | `Dictionary<string, AAuthKey>` | Yes | Key-id → signing key map |
 | `ClientName` | `string?` | No | Resource display name |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | No | Scope descriptions for metadata |
+| `SignatureWindow` | `int?` | No | Advertised signature validity (seconds) |
+| `AuthorizationEndpoint` | `string?` | No | AS authorization URL |
+| `RevocationEndpoint` | `string?` | No | Revocation endpoint URL |
 
 ### AAuthDiscoveryOptions (AddAAuthDiscovery)
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `MetadataCacheTtl` | `TimeSpan` | 5 minutes | Metadata document cache lifetime |
-| `JwksCacheTtl` | `TimeSpan` | 1 hour | JWKS cache lifetime |
-| `JwksMinRefreshInterval` | `TimeSpan` | 1 minute | Minimum time between JWKS fetches (spec: ≥1 min) |
+| `MetadataCacheDuration` | `TimeSpan` | 5 minutes | Metadata document cache lifetime |
+| `JwksCacheDuration` | `TimeSpan` | 5 minutes | JWKS cache lifetime |
 
 ### ChallengeHandlingOptions (WithChallengeHandling)
 

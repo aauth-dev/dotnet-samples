@@ -79,7 +79,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `JwksUriSignatureKeyProvider` | `sig=jwks_uri` — JWKS-discoverable identity |
 | `JwtSignatureKeyProvider` | `sig=jwt` — agent/auth token inline |
 | `JktJwtSignatureKeyProvider` | `sig=jkt-jwt` — key rotation mode |
-| `BootstrapBuilder` | Fluent builder for bootstrap/enrollment flows |
+| `BootstrapBuilder` | Fluent builder for AP enrollment (CLI/desktop agents) |
 | `ChallengeHandlingOptions` | Options for automatic 401 challenge handling |
 | `InteractionHandlingOptions` | Options for deferred/interaction handling |
 
@@ -92,7 +92,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `InteractionHandler` | `DelegatingHandler` — handles 202 deferred/interaction |
 | `TokenExchangeClient` | Sends signed `POST /token` to the Person Server |
 | `DeferredPoller` | Polls the pending URL until auth_token or timeout |
-| `AgentProviderClient` | Enrols with an Agent Provider (`POST /enrol`) |
+| `AgentProviderClient` | Enrols with an Agent Provider (CLI/desktop agents; hosted services self-issue) |
 | `IKeyStore` / `InMemoryKeyStore` | Key persistence abstraction |
 | `IInteractionPresenter` | Surface interaction URLs to the user |
 | `IPlatformAttestor` | Platform attestation hook |

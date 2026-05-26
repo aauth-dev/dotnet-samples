@@ -17,8 +17,8 @@ All AAuth signing modes use HTTP Message Signatures (RFC 9421). The difference i
 |------|----------|----------|
 | Anonymous | Public endpoints, no access control | Nothing |
 | Pseudonymous (`hwk`) | Accountable access, rate-limiting by key | Just a keypair |
-| Agent Identity (`jwks_uri`) | Access control by identity, replacing API keys | Agent Provider (publishes per-agent JWKS) |
-| Agent Token (`jwt`) | Full PS-AS authorization flows | Agent Provider + Person Server |
+| Agent Identity (`jwks_uri`) | Access control by identity, replacing API keys | JWKS host (AP or self-hosted) |
+| Agent Token (`jwt`) | Full PS-AS authorization flows | Token issuer (AP or self-issued) + Person Server |
 
 ## SDK Types
 

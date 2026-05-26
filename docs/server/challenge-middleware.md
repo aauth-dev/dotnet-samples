@@ -39,22 +39,29 @@ public enum AAuthAccessMode
 ## Challenge Options
 
 ```csharp
-public class ChallengeOptions
+public sealed class ChallengeOptions
 {
     // How to handle access decisions
-    public AAuthAccessMode AccessMode { get; set; } = AAuthAccessMode.RequireAuthToken;
+    public AAuthAccessMode AccessMode { get; init; } = AAuthAccessMode.RequireAuthToken;
 
     // Resource signing key for minting resource tokens
-    public IAAuthKey? ResourceKey { get; set; }
+    public AAuthKey? ResourceSigningKey { get; init; }
 
-    // Resource identifier (audience in resource tokens)
-    public string? ResourceIdentifier { get; set; }
+    // Key identifier for the resource signing key (kid in the resource token header)
+    public string? ResourceKeyId { get; init; }
 
-    // Scopes to request in the challenge
-    public string? RequiredScope { get; set; }
+    // Resource identifier (used as iss in the resource token)
+    public string? ResourceIdentifier { get; init; }
+
+    // Explicit audience for resource tokens (e.g. the AS URL in a four-party flow).
+    // When null, audience is resolved from the agent token's ps claim (three-party).
+    public string? PersonServerAudience { get; init; }
+
+    // Default scopes to request in the resource token (space-separated)
+    public string? DefaultScopes { get; init; }
 
     // Allowed Signature-Key schemes (null = allow all)
-    public IReadOnlyList<string>? AllowedSchemes { get; set; }
+    public IReadOnlySet<string>? AllowedSignatureKeySchemes { get; init; }
 }
 ```
 

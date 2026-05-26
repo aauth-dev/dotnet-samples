@@ -105,7 +105,7 @@ public sealed class AzureKeyVaultStore : IKeyStore
         try
         {
             var secret = await _client.GetSecretAsync(keyId, cancellationToken: ct);
-            return AAuthKey.FromJwk(secret.Value.Value);
+            return AAuthKey.FromJwkJson(secret.Value.Value);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
@@ -115,7 +115,7 @@ public sealed class AzureKeyVaultStore : IKeyStore
 
     public async Task StoreAsync(string keyId, IAAuthKey key, CancellationToken ct)
     {
-        var jwk = ((AAuthKey)key).ExportJwk(includePrivate: true);
+        var jwk = ((AAuthKey)key).ToPrivateJwk().ToJsonString();
         await _client.SetSecretAsync(new KeyVaultSecret(keyId, jwk), ct);
     }
 

@@ -54,9 +54,8 @@ dotnet run --project samples/Orchestrator
 |-----|---------|---------|
 | `AAuth:Issuer` | `http://localhost:5200` | Orchestrator's resource identifier |
 | `AAuth:Downstream` | `http://localhost:5000` | Downstream resource (WhoAmI) URL |
-| `AAuth:AgentProvider` | `http://localhost:5301` | AP for enrollment |
 | `AAuth:PersonServer` | `http://localhost:5100` | PS for token exchange |
-| `AAuth:AgentId` | `aauth:orchestrator@ap.example` | Orchestrator's agent identity |
+| `AAuth:AgentId` | `aauth:orchestrator@localhost:5200` | Orchestrator's agent identity |
 
 ## Using with AgentConsole
 
@@ -68,7 +67,7 @@ curl -X POST http://localhost:5100/admin/consent \
 
 curl -X POST http://localhost:5100/admin/consent \
   -H "Content-Type: application/json" \
-  -d '{"agent":"aauth:orchestrator@ap.example","resource":"http://localhost:5000"}'
+  -d '{"agent":"aauth:orchestrator@localhost:5200","resource":"http://localhost:5000"}'
 
 # Call through the chain
 dotnet run --project samples/AgentConsole -- http://localhost:5200 \
@@ -77,6 +76,6 @@ dotnet run --project samples/AgentConsole -- http://localhost:5200 \
 
 ## Key Implementation Details
 
-1. **Lazy enrollment**: The Orchestrator enrolls with the AP on first request (not at startup).
+1. **Self-issued identity**: The Orchestrator acts as its own AP per spec §Self-Hosted Agents — it publishes agent metadata at `/.well-known/aauth-agent.json` and self-signs agent tokens with its published key.
 2. **Per-request consent grant**: Grants consent for itself at the PS before each downstream call (demo simplification).
 3. **Fallback path**: If the caller used HWK/JWKS-URI (no upstream auth token), falls back to standard challenge handling without chaining.
