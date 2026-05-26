@@ -71,17 +71,13 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
     SignatureWindow = signatureWindowSeconds,
 });
 
-// PS-specific metadata document. The shared helper publishes
-// /.well-known/aauth-resource.json; the PS spec additionally requires
-// /.well-known/aauth-person.json with a `token_endpoint`.
-var personMetadata = new JsonObject
+// PS-specific metadata document.
+app.MapAAuthPersonServerWellKnown(new AAuthPersonServerMetadataOptions
 {
-    ["issuer"] = psIssuer,
-    ["jwks_uri"] = $"{psIssuer.TrimEnd('/')}/.well-known/jwks.json",
-    ["token_endpoint"] = $"{psIssuer.TrimEnd('/')}/token",
-};
-app.MapGet("/.well-known/aauth-person.json",
-    () => Results.Json(personMetadata, contentType: "application/json"));
+    Issuer = psIssuer,
+    TokenEndpoint = $"{psIssuer.TrimEnd('/')}/token",
+    SigningKeys = new Dictionary<string, AAuthKey> { [PsKid] = psKey },
+});
 
 // All other endpoints require an AAuth signature — except the
 // /admin/* helpers, which are demo-only consent toggles and intentionally

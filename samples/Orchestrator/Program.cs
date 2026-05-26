@@ -50,11 +50,12 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 });
 
 // Agent metadata: downstream resources discover this to verify our identity.
-app.MapGet("/.well-known/aauth-agent.json", () => Results.Json(new JsonObject
+app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 {
-    ["issuer"] = orchestratorUrl,
-    ["jwks_uri"] = $"{orchestratorUrl.TrimEnd('/')}/.well-known/jwks.json",
-}));
+    Issuer = orchestratorUrl,
+    ClientName = "Orchestrator Demo",
+    SigningKeys = new Dictionary<string, AAuthKey> { [OrchestratorKid] = orchestratorKey },
+});
 
 // -----------------------------------------------------------------------
 // Enrollment state (lazy — enrols with the AP on first request).

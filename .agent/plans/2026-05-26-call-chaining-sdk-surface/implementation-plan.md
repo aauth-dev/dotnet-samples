@@ -435,14 +435,14 @@ All four helpers share the same JWKS mapping pattern:
 
 ### Definition of Done
 
-- [ ] `MapAAuthAgentWellKnown` serves correct JSON with required fields.
-- [ ] `MapAAuthPersonServerWellKnown` serves correct JSON with required fields.
-- [ ] `MapAAuthAccessServerWellKnown` serves correct JSON with required fields.
-- [ ] Existing `MapAAuthResourceWellKnown` unchanged (backward compatible).
-- [ ] JWKS endpoint includes keys from all registered helpers.
-- [ ] Orchestrator sample uses `MapAAuthAgentWellKnown` (no hand-coded JSON).
-- [ ] MockPersonServer sample uses `MapAAuthPersonServerWellKnown`.
-- [ ] Conformance tests verify all four metadata responses match spec fields.
+- [x] `MapAAuthAgentWellKnown` serves correct JSON with required fields.
+- [x] `MapAAuthPersonServerWellKnown` serves correct JSON with required fields.
+- [x] `MapAAuthAccessServerWellKnown` serves correct JSON with required fields.
+- [x] Existing `MapAAuthResourceWellKnown` unchanged (backward compatible).
+- [x] JWKS endpoint includes keys from all registered helpers.
+- [x] Orchestrator sample uses `MapAAuthAgentWellKnown` (no hand-coded JSON).
+- [x] MockPersonServer sample uses `MapAAuthPersonServerWellKnown`.
+- [x] Conformance tests verify all four metadata responses match spec fields.
 
 ---
 
