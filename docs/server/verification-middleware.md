@@ -49,6 +49,18 @@ public class AAuthVerificationOptions
 
     // Optional allow-list of trusted auth token issuers (PS/AS)
     public IReadOnlySet<string>? TrustedAuthTokenIssuers { get; set; }
+
+    // Maximum depth of nested act claims (default: 10)
+    public int MaxActDepth { get; set; } = 10;
+
+    // Tolerance for exp/iat validation (default: 30s)
+    public TimeSpan ClockSkew { get; set; } = TimeSpan.FromSeconds(30);
+
+    // Maximum future skew for HTTP signature timestamps (default: 5s)
+    public TimeSpan MaxFutureSkew { get; set; } = TimeSpan.FromSeconds(5);
+
+    // Clock source for all time checks (null = UtcNow; inject for testing)
+    public Func<DateTimeOffset>? Clock { get; set; }
 }
 ```
 
@@ -126,3 +138,35 @@ On verification failure, the middleware returns `401 Unauthorized` with a `Signa
 ## OpenTelemetry Integration
 
 When `Activity.Current` is present, the middleware enriches it with tags. See [Observability](../advanced/observability.md).
+
+## Call Chaining Verification
+
+When verifying auth tokens from call-chaining scenarios, the middleware validates the nested `act` chain:
+
+- `act.sub` must match the HTTP request signer's agent identity
+- Nested `act` depth cannot exceed `MaxActDepth` (default 10)
+- Each nested level must contain a `sub` field
+
+The `UpstreamAuthTokenFeature` is set on the HttpContext when a valid auth token is verified, making the upstream token available to downstream `WithCallChaining(httpContext)` calls:
+
+```csharp
+app.UseAAuthVerification(new AAuthVerificationOptions
+{
+    ResourceIdentifier = "https://orchestrator.example",
+    RequireIssuerVerification = true,
+    MaxActDepth = 5,              // limit chain depth for this resource
+    ClockSkew = TimeSpan.FromSeconds(60), // generous skew for distributed systems
+});
+
+app.MapGet("/", async (HttpContext ctx) =>
+{
+    // Middleware verified the auth token and set the feature.
+    // WithCallChaining reads the upstream token from it automatically.
+    using var client = new AAuthClientBuilder(myKey)
+        .WithTokenRefresh(refreshFunc)
+        .WithCallChaining(ctx)
+        .Build();
+
+    return await client.GetStringAsync("https://downstream.example");
+});
+```

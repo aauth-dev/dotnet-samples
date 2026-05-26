@@ -261,6 +261,8 @@ app.Run();
 | `Issuer` | `string` | required | Resource HTTPS URL (metadata + audience) |
 | `SigningKeys` | `Dictionary<string, AAuthKey>` | empty | Keys for signing resource tokens |
 | `MaxSignatureAge` | `TimeSpan` | 60s | Max inbound signature age |
+| `MaxFutureSkew` | `TimeSpan` | 5s | Future clock skew tolerance |
+| `Clock` | `Func<DateTimeOffset>?` | `null` | Clock source (null = UtcNow) |
 | `EnableReplayDetection` | `bool` | `true` | JTI-based replay protection |
 | `KeyResolver` | `ISignatureKeyResolver?` | `null` | Custom resolver (null = default) |
 | `ClientName` | `string?` | `null` | Human-readable name in metadata |
@@ -273,3 +275,33 @@ app.Run();
 | `MetadataCacheTtl` | `TimeSpan` | 5 min | How long to cache well-known metadata |
 | `JwksCacheTtl` | `TimeSpan` | 1 hour | How long to cache JWKS documents |
 | `JwksMinRefreshInterval` | `TimeSpan` | 1 min | Minimum time between JWKS fetches |
+
+## Call Chaining (AAuthClientBuilder)
+
+For intermediary services that act as both resource and agent, `AAuthClientBuilder` provides call-chaining methods:
+
+```csharp
+// From HttpContext (reads UpstreamAuthTokenFeature set by middleware)
+var client = new AAuthClientBuilder(key)
+    .WithTokenRefresh(refreshFunc)
+    .WithCallChaining(httpContext)
+    .Build();
+
+// From a raw upstream token string
+var client = new AAuthClientBuilder(key)
+    .WithTokenRefresh(refreshFunc)
+    .WithCallChaining(upstreamAuthToken)
+    .Build();
+
+// From a dynamic provider
+var client = new AAuthClientBuilder(key)
+    .WithTokenRefresh(refreshFunc)
+    .WithCallChaining(() => GetUpstreamToken())
+    .Build();
+```
+
+`WithCallChaining` automatically:
+- Routes downstream exchanges to the correct PS/AS via `CallChainingRouter`
+- Passes `upstream_token` in exchange POST body
+- Inserts `MissionForwardingHandler` to propagate `AAuth-Mission` headers
+- Handles the full 401 → exchange → retry cycle

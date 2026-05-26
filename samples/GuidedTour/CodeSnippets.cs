@@ -184,6 +184,19 @@ internal static class CodeSnippets
         // 200 → combined result with full delegation chain
         """;
 
+    public const string CallChainConvenience = """
+        // Convenience: WithCallChaining routes downstream exchanges
+        // automatically, passing upstream_token to the PS/AS.
+        // Use this when building an intermediary service:
+        using var downstream = new AAuthClientBuilder(myKey)
+            .WithTokenRefresh(refreshFunc)
+            .WithCallChaining(httpContext) // reads upstream token from request
+            .Build();
+
+        var result = await downstream.GetAsync("https://downstream.example/");
+        // SDK handles: challenge → exchange with upstream_token → retry
+        """;
+
     public const string FullAutomatic = """
         // --- Provisioning (separate tool / CLI — run once per install) ---
         var keyStore = KeyStore.Default();

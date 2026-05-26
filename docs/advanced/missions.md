@@ -105,3 +105,37 @@ app.MapGet("/data", (HttpContext context) =>
 
 - [PS-Asserted Access](../workflows/ps-asserted-access.md) — single-exchange alternative
 - [Deferred Consent](../workflows/deferred-consent.md) — user approval patterns
+- [Call Chaining](../workflows/call-chaining.md) — multi-hop delegation with mission forwarding
+
+## Auto-Forwarding in Call Chains
+
+When an intermediary resource calls downstream resources within a mission context, it must forward the `AAuth-Mission` header so the PS can evaluate the downstream request against the mission scope. The SDK handles this automatically via `MissionForwardingHandler`.
+
+### Automatic (via WithCallChaining)
+
+When `WithCallChaining` is configured, mission forwarding is enabled automatically:
+
+```csharp
+using var client = new AAuthClientBuilder(key)
+    .WithTokenRefresh(refreshFunc)
+    .WithCallChaining(httpContext) // also enables mission forwarding
+    .Build();
+
+// If the upstream auth token contains mission.approver + mission.s256,
+// all downstream requests include AAuth-Mission header automatically.
+await client.GetAsync("https://downstream.example");
+```
+
+### How It Works
+
+The `MissionForwardingHandler` reads the upstream auth token's claims:
+- `mission.approver` — the PS that governs the mission
+- `mission.s256` — the mission content hash
+
+It formats these into a structured `AAuth-Mission` header on every downstream request:
+
+```
+AAuth-Mission: approver="https://ps.example"; s256="abc123..."
+```
+
+This ensures the PS receiving the downstream exchange has full mission context for policy evaluation, enabling governed multi-hop access per §Call Chaining.

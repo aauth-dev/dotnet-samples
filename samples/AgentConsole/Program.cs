@@ -211,17 +211,19 @@ switch (signingMode)
 // Three-party flows add automatic challenge handling
 if (personServer is not null)
 {
-    if (preferWaitSeconds is not null)
+    builder.WithChallengeHandling(personServer, opts =>
     {
-        builder.WithChallengeHandling(personServer, opts =>
-        {
+        if (preferWaitSeconds is not null)
             opts.PreferWaitSeconds = preferWaitSeconds;
-        });
-    }
-    else
-    {
-        builder.WithChallengeHandling(personServer);
-    }
+        opts.MinPollInterval = TimeSpan.FromMilliseconds(200);
+        opts.OnPoll = response => Console.WriteLine($"  [poll] {(int)response.StatusCode}");
+    });
+}
+
+// Call chaining: pass upstream token to downstream exchanges
+if (upstreamToken is not null)
+{
+    builder.WithCallChaining(upstreamToken);
 }
 
 if (preferWaitSeconds is not null)

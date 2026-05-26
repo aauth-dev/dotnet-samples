@@ -71,13 +71,17 @@ app.UseAAuthVerification(new AAuthVerificationOptions
         return Results.Unauthorized();
     }
 
-    // Auth token → forward with call chaining.
-    // The caller's auth token becomes upstream_token.
-    var exchange = new TokenExchangeClient(client, meta);
-    var chained = await exchange.ExchangeAsync(
-        personServer, resourceToken,
-        upstreamToken: parsed.Jwt);
-    // ...retry downstream with chained auth token
+    // Auth token → call downstream with chaining.
+    // WithCallChaining reads the upstream token from
+    // the verified auth token automatically.
+    using var client = new AAuthClientBuilder(key)
+        .WithTokenRefresh(refreshFunc)
+        .WithCallChaining(ctx) // upstream_token + mission
+        .Build();
+    var result = await client.GetAsync(downstreamUrl);
+    return Results.Content(
+        await result.Content.ReadAsStringAsync(),
+        "application/json");
 });</code></pre>
 </div>
 </div>
