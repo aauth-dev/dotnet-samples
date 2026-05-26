@@ -417,6 +417,18 @@ public sealed class AAuthClientBuilder
             topHandler = interactionHandler;
         }
 
+        // If call-chaining is configured, add mission forwarding at the top.
+        // Per §Call Chaining, intermediaries in a mission context MUST include
+        // AAuth-Mission on downstream requests.
+        if (_upstreamTokenProvider is not null)
+        {
+            var missionHandler = new MissionForwardingHandler(_upstreamTokenProvider)
+            {
+                InnerHandler = topHandler,
+            };
+            topHandler = missionHandler;
+        }
+
         return topHandler;
     }
 

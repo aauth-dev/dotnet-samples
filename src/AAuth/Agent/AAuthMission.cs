@@ -59,4 +59,17 @@ public static class AAuthMissionHeader
         ArgumentException.ThrowIfNullOrEmpty(missionId);
         return missionId;
     }
+
+    /// <summary>
+    /// Format the structured header value with approver and s256 per §Call Chaining.
+    /// </summary>
+    /// <remarks>
+    /// Produces: <c>approver="https://ps.example"; s256="dBjf..."</c>
+    /// </remarks>
+    public static string FormatStructured(string approver, string s256)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(approver);
+        ArgumentException.ThrowIfNullOrEmpty(s256);
+        return $"approver=\"{approver}\"; s256=\"{s256}\"";
+    }
 }

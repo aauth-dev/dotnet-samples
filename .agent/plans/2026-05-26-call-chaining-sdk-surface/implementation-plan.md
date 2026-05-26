@@ -356,12 +356,12 @@ MissionForwardingHandler (reads upstream token, emits header)
 
 ### Definition of Done
 
-- [ ] `AAuthMissionHeader.FormatStructured()` produces spec-correct structured header.
-- [ ] `MissionForwardingHandler` emits header when mission.approver present.
-- [ ] No header emitted when upstream token has no mission claims.
-- [ ] `WithCallChaining` auto-wires the handler (no extra builder call needed).
-- [ ] Test: mission present → header emitted with correct approver + s256.
-- [ ] Test: no mission → no header.
+- [x] `AAuthMissionHeader.FormatStructured()` produces spec-correct structured header.
+- [x] `MissionForwardingHandler` emits header when mission.approver present.
+- [x] No header emitted when upstream token has no mission claims.
+- [x] `WithCallChaining` auto-wires the handler (no extra builder call needed).
+- [x] Test: mission present → header emitted with correct approver + s256.
+- [x] Test: no mission → no header.
 
 ---
 
