@@ -26,6 +26,37 @@ sequenceDiagram
 Automatic handling with `AAuthClientBuilder`:
 
 ```csharp
+using AAuth.Crypto;
+using AAuth.HttpSig;
+using AAuth.Tokens;
+
+// Hosted service: self-issue (no AP needed)
+var key = AAuthKey.Generate();
+var issuer = "https://my-service.example";
+
+using var client = new AAuthClientBuilder(key)
+    .WithTokenRefresh(async (ctx, ct) => new AgentTokenBuilder
+    {
+        Issuer = issuer,
+        Subject = "aauth:my-service@my-service.example",
+        KeyId = "svc-key-1",
+        Key = key,
+        PersonServer = "https://ps.example",
+    }.Build())
+    .WithChallengeHandling(personServer: "https://ps.example")
+    .Build();
+
+var response = await client.GetAsync("https://resource.example/data");
+// ChallengeHandler intercepts the 401, exchanges the resource token,
+// swaps to the auth token, and retries automatically.
+```
+
+<details>
+<summary>CLI/Desktop Agent (AP Enrollment)</summary>
+
+For agents without a stable URL, enrol with an Agent Provider:
+
+```csharp
 using AAuth.Agent;
 using AAuth.HttpSig;
 
@@ -44,9 +75,9 @@ using var client = new AAuthClientBuilder(key)
     .Build();
 
 var response = await client.GetAsync("https://resource.example/data");
-// ChallengeHandler intercepts the 401, exchanges the resource token,
-// swaps to the auth token, and retries automatically.
 ```
+
+</details>
 
 <details>
 <summary>Manual Setup (Advanced)</summary>

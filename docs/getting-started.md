@@ -75,9 +75,43 @@ public class MyService(IHttpClientFactory factory)
 - `AAuthSigningHandler` signs the request per RFC 9421 covering `@method`, `@authority`, `@path`, and `signature-key`.
 - The resource verifies the signature using the inline public key from `Signature-Key`.
 
-## Bootstrap with an Agent Provider (Three-Party Flow)
+## Self-Issued Agent Tokens (Hosted Services)
 
-For production scenarios, agents register with an **Agent Provider (AP)** to get an identity-bound agent token. Enrollment is a **provisioning step** that runs once (in a CLI tool or setup script). The durable signing key is generated inside a keystore and never extracted — the app references it by ID. The agent token is short-lived (typically 1 hour) and refreshed automatically by the SDK.
+Hosted services (web apps, APIs, orchestrators) that have a stable URL act as their own Agent Provider per spec §Self-Hosted Agents. They generate a key at startup, publish agent metadata at `/.well-known/aauth-agent.json`, and self-sign agent tokens. No external AP enrollment is needed.
+
+```csharp
+using AAuth.Crypto;
+using AAuth.HttpSig;
+using AAuth.Server;
+using AAuth.Tokens;
+
+var key = AAuthKey.Generate();
+const string Kid = "my-service-1";
+var issuer = "https://my-service.example";
+
+// Publish agent metadata so verifiers can discover the JWKS
+app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
+{
+    Issuer = issuer,
+    SigningKeys = new Dictionary<string, AAuthKey> { [Kid] = key },
+});
+
+// Self-issue agent tokens for outbound requests
+using var client = new AAuthClientBuilder(key)
+    .WithTokenRefresh(async (ctx, ct) => new AgentTokenBuilder
+    {
+        Issuer = issuer,
+        Subject = "aauth:my-service@my-service.example",
+        KeyId = Kid,
+        Key = key,
+    }.Build())
+    .WithChallengeHandling("https://ps.example")
+    .Build();
+```
+
+## Bootstrap with an Agent Provider (CLI / Desktop Agents)
+
+For agents that do NOT have a stable URL (CLI tools, desktop apps, mobile apps), registration with an external **Agent Provider (AP)** provides identity and key discovery. Enrollment is a **provisioning step** that runs once (in a CLI tool or setup script). The durable signing key is generated inside a keystore and never extracted — the app references it by ID. The agent token is short-lived (typically 1 hour) and refreshed automatically by the SDK.
 
 ### Provisioning (run once per device/install)
 
