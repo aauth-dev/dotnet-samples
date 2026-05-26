@@ -40,7 +40,7 @@ public sealed class AAuthVerificationMiddleware
     internal const string JtiStoreItemKey = "AAuth.JtiStore";
 
     /// <summary>Algorithms this server supports, emitted in unsupported_algorithm errors.</summary>
-    private static readonly string[] SupportedAlgorithms = ["EdDSA"];
+    private static readonly string[] SupportedAlgorithms = ["EdDSA", "ES256"];
 
     private readonly RequestDelegate _next;
     private readonly AAuthVerifier _verifier;
