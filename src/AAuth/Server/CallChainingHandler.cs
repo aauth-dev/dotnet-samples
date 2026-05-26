@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Discovery;
+using AAuth.Headers;
 
 namespace AAuth.Server;
 
@@ -52,11 +53,19 @@ public sealed class CallChainingHandler
     /// <param name="resourceToken">
     /// The resource token issued by the downstream resource's challenge.
     /// </param>
+    /// <param name="onInteractionRequired">
+    /// Optional callback invoked when the downstream PS/AS returns <c>202</c>
+    /// with an interaction requirement. When <see langword="null"/> and a 202
+    /// is received, the call throws.
+    /// </param>
+    /// <param name="pollerOptions">Optional polling cadence/timeout override.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The chained auth token for the downstream resource.</returns>
     public async Task<string> ExchangeForDownstreamAsync(
         string upstreamAuthToken,
         string resourceToken,
+        Func<AAuthInteraction, CancellationToken, Task>? onInteractionRequired = null,
+        DeferredPollerOptions? pollerOptions = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(upstreamAuthToken);
@@ -68,8 +77,8 @@ public sealed class CallChainingHandler
         return await _exchangeClient.ExchangeAsync(
             targetServer,
             resourceToken,
-            onInteractionRequired: null,
-            pollerOptions: null,
+            onInteractionRequired: onInteractionRequired,
+            pollerOptions: pollerOptions,
             upstreamToken: upstreamAuthToken,
             cancellationToken).ConfigureAwait(false);
     }

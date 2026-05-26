@@ -236,12 +236,12 @@ public async Task<string> ExchangeForDownstreamAsync(
 
 ### Definition of Done
 
-- [ ] `UseAAuthIntermediary` composes verification + challenge in correct order.
-- [ ] `CallChainingHandler.ResolveDownstreamServer` delegates to `CallChainingRouter`.
-- [ ] `ExchangeForDownstreamAsync` accepts interaction/poller callbacks.
-- [ ] Existing conformance tests adapted to new signature.
-- [ ] New test: `UseAAuthIntermediary` rejects agent tokens with 401.
-- [ ] New test: `UseAAuthIntermediary` passes auth tokens through.
+- [x] `UseAAuthIntermediary` composes verification + challenge in correct order.
+- [x] `CallChainingHandler.ResolveDownstreamServer` delegates to `CallChainingRouter`.
+- [x] `ExchangeForDownstreamAsync` accepts interaction/poller callbacks.
+- [x] Existing conformance tests adapted to new signature.
+- [x] New test: `UseAAuthIntermediary` rejects agent tokens with 401.
+- [x] New test: `UseAAuthIntermediary` passes auth tokens through.
 
 ---
 
