@@ -127,12 +127,18 @@ builder.Services.AddAAuthAgent("ps-asserted", options =>
 {
     options.Key = key!;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = new DelegateTokenRefresher(async (ctx, ct) =>
+    options.TokenRefresher = new ApTokenRefresher(keyStore, apRefreshEndpoint);
+});
+
+// ITokenRefresher implementation for AP-based refresh
+class ApTokenRefresher(IKeyStore keyStore, string apRefreshEndpoint) : ITokenRefresher
+{
+    public async Task<string> RefreshAsync(TokenRefreshContext ctx, CancellationToken ct)
     {
         var apClient = new AgentProviderClient(new HttpClient(), keyStore);
         return await apClient.RefreshAsync(apRefreshEndpoint, ctx.KeyId, ct);
-    });
-});
+    }
+}
 ```
 
 This registers a named `HttpClient` with signing + automatic challenge handling. Inject via `IHttpClientFactory.CreateClient("ps-asserted")`. The `ChallengeHandler` intercepts 401 responses, exchanges the resource token at the PS, and retries transparently.

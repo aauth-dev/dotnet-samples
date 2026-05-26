@@ -84,7 +84,7 @@ After resolution, the parsed info is available via `HttpContext.Items[AAuthVerif
 public sealed class ParsedSignatureKeyInfo
 {
     public required string Scheme { get; init; }     // "hwk", "jwks_uri", "jwt", "jkt_jwt"
-    public AAuthKey? ConfirmationKey { get; init; }  // resolved public key
+    public IAAuthKey? ConfirmationKey { get; init; } // resolved public key
     public string? Jkt { get; init; }                // key thumbprint
     public string? JwksUri { get; init; }            // declared JWKS URI (jwks_uri scheme)
     public string? Kid { get; init; }                // key ID (jwks_uri scheme)

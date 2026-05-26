@@ -38,7 +38,7 @@ var key = AAuthKey.Generate(); // or load from persistent storage
 builder.Services.AddAAuthAgent("signing-only", options =>
 {
     options.Key = key;
-    // No AgentToken → defaults to HWK mode
+    options.UseHwk();
 });
 ```
 
@@ -55,9 +55,14 @@ builder.Services.AddAAuthAgent("self-issued", options =>
 {
     options.Key = key;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = new SelfIssuedTokenRefresher(key, Kid, issuer,
-        agentId: "aauth:my-service@my-service.example",
-        personServer: "https://ps.example");
+    options.UseJwt(() => new AgentTokenBuilder
+    {
+        Issuer = issuer,
+        Subject = "aauth:my-service@my-service.example",
+        KeyId = Kid,
+        Key = key,
+        PersonServer = "https://ps.example",
+    }.Build());
 });
 
 // Also publish agent metadata so verifiers can discover the JWKS
@@ -107,13 +112,16 @@ builder.Services.AddAAuthAgent("interactive", options =>
     options.Key = key;
     options.PersonServer = "https://ps.example";
     options.TokenRefresher = new ApTokenRefresher(apRefreshEndpoint, keyStore, keyId);
-    options.OnInteractionRequired = async (interaction, ct) =>
+    options.InteractionHandling = true;
+    options.InteractionHandlingOptions = io =>
     {
-        // Present interaction.UserUrl and interaction.Code to user
-        logger.LogInformation("Approve at {Url} with code {Code}",
-            interaction.UserUrl, interaction.Code);
+        io.OnInteractionRequired = async (url, code, ct) =>
+        {
+            // Present URL and code to user
+            logger.LogInformation("Approve at {Url} with code {Code}", url, code);
+        };
+        io.PollingTimeout = TimeSpan.FromMinutes(3);
     };
-    options.PollingTimeout = TimeSpan.FromMinutes(3);
 });
 ```
 
@@ -142,7 +150,6 @@ builder.Services.AddAAuthResource(options =>
 {
     options.Issuer = "https://my-resource.example";
     options.SigningKeys = new() { ["key-1"] = resourceKey };
-    options.EnableReplayDetection = true; // JTI-based (default)
 });
 
 var app = builder.Build();
@@ -166,16 +173,16 @@ builder.Services.AddAAuthResource(options =>
 });
 ```
 
-### Custom Key Resolver
+### Custom Authorization Endpoint
 
-Override the default resolver for advanced scenarios (e.g., restricted schemes):
+Override the authorization endpoint for advanced scenarios (e.g., custom access server):
 
 ```csharp
 builder.Services.AddAAuthResource(options =>
 {
     options.Issuer = "https://my-resource.example";
     options.SigningKeys = new() { ["key-1"] = resourceKey };
-    options.KeyResolver = new DefaultSignatureKeyResolver(jwksClient);
+    options.AuthorizationEndpoint = "https://as.example/authorize";
 });
 ```
 
@@ -186,9 +193,8 @@ Register shared `MetadataClient` and `JwksClient` singletons with custom cache s
 ```csharp
 builder.Services.AddAAuthDiscovery(options =>
 {
-    options.MetadataCacheTtl = TimeSpan.FromMinutes(10);
-    options.JwksCacheTtl = TimeSpan.FromHours(2);
-    options.JwksMinRefreshInterval = TimeSpan.FromMinutes(1); // spec minimum
+    options.MetadataCacheDuration = TimeSpan.FromMinutes(10);
+    options.JwksCacheDuration = TimeSpan.FromHours(2);
 });
 ```
 
@@ -282,12 +288,18 @@ app.Run();
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `Key` | `IAAuthKey` | required | Agent signing key (must have private component) |
-| `PersonServer` | `string?` | `null` | PS URL; with TokenRefresher, enables challenge handling |
-| `OnInteractionRequired` | `Func<...>?` | `null` | Callback for user interaction prompts |
-| `OnResourceInteraction` | `Func<...>?` | `null` | Callback for resource-initiated interaction |
-| `OnApprovalPending` | `Func<...>?` | `null` | Callback for approval-pending state |
+| `BaseAddress` | `Uri?` | `null` | Target resource URL |
+| `SignatureKeyProvider` | `ISignatureKeyProvider?` | `null` | Custom signature key provider |
+| `PersonServer` | `string?` | `null` | PS URL; with ChallengeHandling, enables challenge flow |
+| `ChallengeHandling` | `bool` | `false` | Enable challenge handling |
+| `ChallengeHandlingOptions` | `Action<ChallengeHandlingOptions>?` | `null` | Configure challenge handling behavior |
+| `InteractionHandling` | `bool` | `false` | Enable interaction handling |
+| `InteractionHandlingOptions` | `Action<InteractionHandlingOptions>?` | `null` | Configure interaction handling behavior |
 | `TokenRefresher` | `ITokenRefresher?` | `null` | Auto-refresh before token expiry |
-| `PollingTimeout` | `TimeSpan` | 5 min | Max time to poll for deferred responses |
+| `RefreshThreshold` | `TimeSpan?` | `null` | Time before expiry to trigger refresh |
+| `Capabilities` | `string[]?` | `null` | Agent capabilities to advertise |
+| `InnerHandler` | `HttpMessageHandler?` | `null` | Custom inner HTTP handler |
+| `CallChainProvider` | `Func<string?>?` | `null` | Provider for upstream auth token (call chaining) |
 
 ### AAuthResourceOptions
 
@@ -295,21 +307,18 @@ app.Run();
 |----------|------|---------|-------------|
 | `Issuer` | `string` | required | Resource HTTPS URL (metadata + audience) |
 | `SigningKeys` | `Dictionary<string, AAuthKey>` | empty | Keys for signing resource tokens |
-| `MaxSignatureAge` | `TimeSpan` | 60s | Max inbound signature age |
-| `MaxFutureSkew` | `TimeSpan` | 5s | Future clock skew tolerance |
-| `Clock` | `Func<DateTimeOffset>?` | `null` | Clock source (null = UtcNow) |
-| `EnableReplayDetection` | `bool` | `true` | JTI-based replay protection |
-| `KeyResolver` | `ISignatureKeyResolver?` | `null` | Custom resolver (null = default) |
 | `ClientName` | `string?` | `null` | Human-readable name in metadata |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | `null` | Scope descriptions in metadata |
+| `SignatureWindow` | `int?` | `null` | Advertised signature validity (seconds) |
+| `AuthorizationEndpoint` | `string?` | `null` | AS authorization URL |
+| `RevocationEndpoint` | `string?` | `null` | Revocation endpoint URL |
 
 ### AAuthDiscoveryOptions
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `MetadataCacheTtl` | `TimeSpan` | 5 min | How long to cache well-known metadata |
-| `JwksCacheTtl` | `TimeSpan` | 1 hour | How long to cache JWKS documents |
-| `JwksMinRefreshInterval` | `TimeSpan` | 1 min | Minimum time between JWKS fetches |
+| `MetadataCacheDuration` | `TimeSpan` | 5 min | How long to cache well-known metadata |
+| `JwksCacheDuration` | `TimeSpan` | 5 min | How long to cache JWKS documents |
 
 ## Call Chaining (AAuthClientBuilder)
 
@@ -318,19 +327,22 @@ For intermediary services that act as both resource and agent, `AAuthClientBuild
 ```csharp
 // From HttpContext (reads UpstreamAuthTokenFeature set by middleware)
 var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(refreshFunc)
+    .UseJwt(() => tokenHolder.Token)
+    .WithTokenRefresh(refresher)
     .WithCallChaining(httpContext)
     .Build();
 
 // From a raw upstream token string
 var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(refreshFunc)
+    .UseJwt(() => tokenHolder.Token)
+    .WithTokenRefresh(refresher)
     .WithCallChaining(upstreamAuthToken)
     .Build();
 
 // From a dynamic provider
 var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(refreshFunc)
+    .UseJwt(() => tokenHolder.Token)
+    .WithTokenRefresh(refresher)
     .WithCallChaining(() => GetUpstreamToken())
     .Build();
 ```

@@ -98,7 +98,7 @@ builder.Services.AddAAuthAgent("deferred", options =>
     options.OnInteractionRequired = async (interaction, ct) =>
     {
         // Present to user — push notification, SignalR, etc.
-        await notifier.SendAsync(interaction.UserUrl, interaction.Code, ct);
+        await notifier.SendAsync(interaction.Url, interaction.Code, ct);
     };
 });
 ```
@@ -148,7 +148,7 @@ class BrowserPresenter : IInteractionPresenter
 | Property | Default | Description |
 |----------|---------|-------------|
 | `MaxTotalWait` | 5 minutes | Maximum total polling time before timeout |
-| `DefaultPollInterval` | 1 second | Time between polls (server may override via Retry-After) |
+| `DefaultPollInterval` | 5 seconds | Time between polls (server may override via Retry-After) |
 | `MinPollInterval` | 100ms | Floor for poll interval |
 
 ## Error Scenarios

@@ -109,13 +109,15 @@ using AAuth.Server;
 app.MapAAuthRevocationEndpoint(jtiStore, path: "/revoke");
 ```
 
-This maps `POST /revoke` accepting:
+This maps `POST /revoke` accepting form-encoded data:
 
-```json
-{ "jti": "token-id-to-revoke" }
+```
+Content-Type: application/x-www-form-urlencoded
+
+token=token-id-to-revoke
 ```
 
-The endpoint calls `jtiStore.RevokeAsync(jti)` and returns `204 No Content`.
+The endpoint calls `jtiStore.RevokeAsync(token)` and returns `200 OK`.
 
 Advertise it in resource metadata:
 

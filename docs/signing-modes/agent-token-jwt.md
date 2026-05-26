@@ -24,14 +24,14 @@ using AAuth.Tokens;
 var key = AAuthKey.Generate();
 
 using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(async (ctx, ct) => new AgentTokenBuilder
+    .WithTokenRefresh((ctx, ct) => Task.FromResult(new AgentTokenBuilder
     {
         Issuer = "https://my-service.example",
         Subject = "aauth:my-service@my-service.example",
         KeyId = "svc-key-1",
         Key = key,
         PersonServer = "https://ps.example",
-    }.Build())
+    }.Build()))
     .WithChallengeHandling("https://ps.example")
     .Build();
 

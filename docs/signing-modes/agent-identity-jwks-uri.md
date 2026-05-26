@@ -8,9 +8,28 @@ The agent references its JWKS endpoint and key ID. The resource fetches the publ
 
 - Access control by agent identity (the resource knows WHO is calling)
 - Replacing static API keys with verifiable cryptographic identity
-- Requires an Agent Provider that publishes per-agent JWKS endpoints
+- Requires a JWKS endpoint — either self-hosted (hosted services) or published by an Agent Provider (CLI/desktop agents)
 
 ## Code Example
+
+**Hosted service (self-hosted JWKS):**
+
+```csharp
+using AAuth.Crypto;
+using AAuth.HttpSig;
+
+var key = AAuthKey.Generate();
+
+// Hosted services publish their own JWKS at a stable URL.
+// The resource fetches this URL to verify the agent's signature.
+using var client = new AAuthClientBuilder(key)
+    .UseJwksUri("https://my-service.example/.well-known/jwks.json", "svc-key-1")
+    .Build();
+
+var response = await client.GetAsync("https://resource.example/data");
+```
+
+**CLI/Desktop agent (AP-enrolled):**
 
 ```csharp
 using AAuth.Crypto;

@@ -121,7 +121,7 @@ make restore         # restore NuGet packages
 make test            # run all tests (SDK + conformance)
 make test-unit       # SDK unit + integration tests only
 make test-conformance # spec conformance tests only
-make demo            # start WhoAmI + MockPersonServer + MockAgentProvider + GuidedTour
+make demo            # start WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + GuidedTour
 make whoami          # only the resource server (port 5000)
 make ps              # MockPersonServer (port 5100)
 make ps-consent      # MockPersonServer with RequireConsent=true
