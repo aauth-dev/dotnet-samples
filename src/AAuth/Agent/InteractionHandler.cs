@@ -23,21 +23,32 @@ namespace AAuth.Agent;
 public sealed class InteractionHandler : DelegatingHandler
 {
     private const string ApprovalRequirement = "approval";
-    private static readonly TimeSpan DefaultPollInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan BackoffIncrement = TimeSpan.FromSeconds(5);
 
     private readonly Func<string, string, CancellationToken, Task>? _onInteractionRequired;
     private readonly Func<CancellationToken, Task>? _onApprovalPending;
     private readonly TimeSpan _pollingTimeout;
+    private readonly TimeSpan _defaultPollInterval;
+    private readonly TimeSpan _minPollInterval;
+    private readonly int? _preferWaitSeconds;
+    private readonly Action<HttpResponseMessage>? _onPoll;
 
     public InteractionHandler(
         Func<string, string, CancellationToken, Task>? onInteractionRequired = null,
         Func<CancellationToken, Task>? onApprovalPending = null,
-        TimeSpan? pollingTimeout = null)
+        TimeSpan? pollingTimeout = null,
+        TimeSpan? defaultPollInterval = null,
+        TimeSpan? minPollInterval = null,
+        int? preferWaitSeconds = null,
+        Action<HttpResponseMessage>? onPoll = null)
     {
         _onInteractionRequired = onInteractionRequired;
         _onApprovalPending = onApprovalPending;
         _pollingTimeout = pollingTimeout ?? TimeSpan.FromMinutes(5);
+        _defaultPollInterval = defaultPollInterval ?? TimeSpan.FromSeconds(5);
+        _minPollInterval = minPollInterval ?? TimeSpan.FromMilliseconds(100);
+        _preferWaitSeconds = preferWaitSeconds;
+        _onPoll = onPoll;
     }
 
     protected override async Task<HttpResponseMessage> SendAsync(
@@ -113,7 +124,7 @@ public sealed class InteractionHandler : DelegatingHandler
         }
 
         // Get initial Retry-After from the 202 response
-        var initialDelay = GetRetryAfter(response.Headers.RetryAfter) ?? DefaultPollInterval;
+        var initialDelay = GetRetryAfter(response.Headers.RetryAfter) ?? _defaultPollInterval;
         response.Dispose();
 
         // Poll loop
@@ -131,17 +142,26 @@ public sealed class InteractionHandler : DelegatingHandler
                     $"Interaction/approval polling exceeded {_pollingTimeout.TotalSeconds:0}s timeout.");
             }
 
+            // Enforce minimum poll interval
+            if (delay < _minPollInterval)
+                delay = _minPollInterval;
+
             if (delay > TimeSpan.Zero)
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
 
             using var pollRequest = new HttpRequestMessage(HttpMethod.Get, locationUri);
+            if (_preferWaitSeconds is { } waitSec)
+                pollRequest.Headers.TryAddWithoutValidation("Prefer", $"wait={waitSec}");
+
             var pollResponse = await base.SendAsync(pollRequest, cancellationToken).ConfigureAwait(false);
+
+            _onPoll?.Invoke(pollResponse);
 
             if (pollResponse.StatusCode == (HttpStatusCode)429)
             {
                 // Linear backoff: +5s per 429
                 backoff += BackoffIncrement;
-                delay = (GetRetryAfter(pollResponse.Headers.RetryAfter) ?? DefaultPollInterval) + backoff;
+                delay = (GetRetryAfter(pollResponse.Headers.RetryAfter) ?? _defaultPollInterval) + backoff;
                 pollResponse.Dispose();
                 continue;
             }
@@ -152,7 +172,7 @@ public sealed class InteractionHandler : DelegatingHandler
             }
 
             // Still 202, keep polling
-            delay = GetRetryAfter(pollResponse.Headers.RetryAfter) ?? DefaultPollInterval;
+            delay = GetRetryAfter(pollResponse.Headers.RetryAfter) ?? _defaultPollInterval;
             delay += backoff;
             pollResponse.Dispose();
         }

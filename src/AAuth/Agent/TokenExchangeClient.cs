@@ -124,6 +124,14 @@ public sealed class TokenExchangeClient
         {
             Content = JsonContent.Create(body),
         };
+
+        // Signal willingness to long-poll on the initial exchange request
+        // per spec: "agent signals its willingness to wait using the Prefer header".
+        if (pollerOptions?.PreferWaitSeconds is { } preferWait)
+        {
+            request.Headers.TryAddWithoutValidation("Prefer", $"wait={preferWait}");
+        }
+
         var response = await _signedClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
         try

@@ -1,9 +1,7 @@
 using System.Text.Json.Nodes;
-using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.DependencyInjection;
 using AAuth.Discovery;
-using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
 using AAuth.Tokens;
@@ -19,9 +17,8 @@ const string OrchestratorKid = "orch-1";
 const string OrchestratorScope = "orchestrate";
 var orchestratorUrl = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5200";
 var downstreamUrl = builder.Configuration["AAuth:Downstream"] ?? "http://localhost:5000";
-var apUrl = builder.Configuration["AAuth:AgentProvider"] ?? "http://localhost:5301";
 var psUrl = builder.Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
-var agentId = builder.Configuration["AAuth:AgentId"] ?? "aauth:orchestrator@ap.example";
+var agentId = builder.Configuration["AAuth:AgentId"] ?? "aauth:orchestrator@localhost:5200";
 
 builder.Services.AddSingleton(orchestratorKey);
 builder.Services.AddSingleton(new AAuthVerifier());
@@ -51,134 +48,64 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 });
 
 // Agent metadata: downstream resources discover this to verify our identity.
-app.MapGet("/.well-known/aauth-agent.json", () => Results.Json(new JsonObject
+app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 {
-    ["issuer"] = orchestratorUrl,
-    ["jwks_uri"] = $"{orchestratorUrl.TrimEnd('/')}/.well-known/jwks.json",
-}));
+    Issuer = orchestratorUrl,
+    ClientName = "Orchestrator Demo",
+    SigningKeys = new Dictionary<string, AAuthKey> { [OrchestratorKid] = orchestratorKey },
+});
 
 // -----------------------------------------------------------------------
-// Enrollment state (lazy — enrols with the AP on first request).
+// Self-issued agent identity: per §Call Chaining Identity, the Orchestrator
+// is its own AP — it self-issues agent tokens signed by its own key.
+// This ensures agent_token.iss == resource URL, satisfying §Upstream Token
+// Verification step 3 (aud in upstream_token matches intermediary resource).
 // -----------------------------------------------------------------------
-IAAuthKey? enrolledKey = null;
-string? enrolledKeyId = null;
-IKeyStore? keyStore = null;
-string? refreshEndpoint = null;
-var enrollLock = new SemaphoreSlim(1, 1);
-
-async Task EnsureEnrolledAsync()
+string SelfIssueAgentToken()
 {
-    if (enrolledKey is not null) return;
-    await enrollLock.WaitAsync();
-    try
+    return new AgentTokenBuilder
     {
-        if (enrolledKey is not null) return;
-
-        keyStore = KeyStore.Default();
-        var metadataClient = new MetadataClient(new HttpClient());
-        var metaUrl = MetadataClient.BuildUrl(apUrl, "aauth-agent.json");
-        var apMeta = await metadataClient.FetchAsync(metaUrl);
-        var enrolEndpoint = (string?)apMeta["enrol_endpoint"] ?? $"{apUrl}/enrol";
-        refreshEndpoint = (string?)apMeta["refresh_endpoint"] ?? $"{apUrl}/refresh";
-
-        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-        var result = await apClient.EnrolAsync(apUrl, agentId, enrolEndpoint, psUrl);
-        enrolledKey = result.Key;
-        enrolledKeyId = result.KeyId;
-    }
-    finally
-    {
-        enrollLock.Release();
-    }
+        Issuer = orchestratorUrl,
+        Subject = agentId,
+        KeyId = OrchestratorKid,
+        Key = orchestratorKey,
+        PersonServer = psUrl,
+    }.Build();
 }
 
 // -----------------------------------------------------------------------
-// Verification middleware: validates the HTTP signature and verifies the
-// JWT issuer (both agent tokens and auth tokens) via JWKS discovery.
-// The ResourceIdentifier ensures auth token `aud` is checked against us.
+// Verification + Challenge middleware: validates the HTTP signature,
+// verifies the JWT issuer, and auto-challenges agent tokens with a
+// resource token requiring an auth token for access.
 // -----------------------------------------------------------------------
 app.UseWhen(
     ctx => !ctx.Request.Path.StartsWithSegments("/.well-known"),
-    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
-    {
-        ResourceIdentifier = orchestratorUrl,
-        RequireIssuerVerification = true,
-    }));
+    branch => branch.UseAAuthIntermediary(
+        new AAuthVerificationOptions
+        {
+            ResourceIdentifier = orchestratorUrl,
+            RequireIssuerVerification = true,
+        },
+        new ChallengeOptions
+        {
+            AccessMode = AAuthAccessMode.RequireAuthToken,
+            ResourceSigningKey = orchestratorKey,
+            ResourceKeyId = OrchestratorKid,
+            ResourceIdentifier = orchestratorUrl,
+            DefaultScopes = OrchestratorScope,
+        }));
 
 // -----------------------------------------------------------------------
-// GET / — Orchestrator endpoint.
+// GET / — Orchestrator endpoint (call chaining via WithCallChaining).
 //
-// Demonstrates spec-compliant call chaining (§Multi-Hop Resource Access):
-//   1. Verify the incoming signed request (middleware did this).
-//   2. Extract the upstream auth token from the caller's Signature-Key.
-//   3. Call the downstream resource (WhoAmI) — get a 401 challenge.
-//   4. Exchange the resource token at the PS WITH the upstream_token
-//      so the PS builds the nested act chain.
-//   5. Retry with the chained auth token.
-//   6. Return the downstream response (which now shows the full chain).
+// The middleware handles verification + 401 challenge automatically.
+// Only auth-token callers reach this handler. WithCallChaining(ctx) reads
+// the upstream auth token from UpstreamAuthTokenFeature and routes the
+// downstream exchange to the correct PS/AS automatically.
 // -----------------------------------------------------------------------
 app.MapGet("/", async (HttpContext ctx) =>
 {
-    // Step 1: Get info about the incoming caller from middleware.
-    // The middleware already verified the HTTP signature AND the JWT issuer
-    // (agent or auth token) via JWKS discovery.
-    var upstreamResult = ctx.Features.Get<AAuthVerificationResult>();
-    var parsedInfo = (SignatureKeyParser.ParsedSignatureKeyInfo)
-        ctx.Items[AAuthVerificationMiddleware.ParsedInfoItemKey]!;
-
-    var typ = (string?)parsedInfo.Header?["typ"];
-
-    // ── Reject non-JWT callers (HWK/JWKS-URI) ───────────────────────
-    // The Orchestrator only supports three-party JWT flows for call chaining.
-    if (typ is null)
-    {
-        return Results.Json(
-            new { error = "unsupported_scheme", detail = "Orchestrator requires sig=jwt (agent or auth token)." },
-            statusCode: StatusCodes.Status400BadRequest);
-    }
-
-    // ── Agent token: challenge the caller with a resource token ──────
-    // The Orchestrator is itself a resource — callers must present an auth
-    // token (obtained from a PS) before we forward calls downstream.
-    if (typ == AgentTokenBuilder.TokenType)
-    {
-        // Middleware already verified the agent token's signature via JWKS.
-        // Extract the PS URL and agent identity from the verified payload.
-        var callerAgent = (string?)parsedInfo.Payload?["sub"] ?? "unknown";
-        var callerPs = (string?)parsedInfo.Payload?["ps"];
-        if (string.IsNullOrEmpty(callerPs))
-        {
-            return Results.Json(new { error = "no_person_server", detail = "Agent token must contain 'ps' claim for three-party flow." },
-                statusCode: StatusCodes.Status401Unauthorized);
-        }
-
-        // Build and return a resource token for this Orchestrator.
-        var resourceToken = new ResourceTokenBuilder
-        {
-            Issuer = orchestratorUrl,
-            Audience = callerPs,
-            Agent = callerAgent,
-            AgentJkt = parsedInfo.ConfirmationKey!.ComputeJwkThumbprint(),
-            Key = orchestratorKey,
-            KeyId = OrchestratorKid,
-            Scope = OrchestratorScope,
-        }.Build();
-
-        ctx.Response.Headers[AAuthRequirementHeader.Name] =
-            AAuthRequirementHeader.FormatAuthToken(resourceToken);
-        return Results.Json(new { error = "auth_token_required" },
-            statusCode: StatusCodes.Status401Unauthorized);
-    }
-
-    // ── Auth token: proceed with downstream call chaining ────────────
-    // The middleware verified: JWT signature, aud=orchestratorUrl, cnf.jwk
-    // binding, and act.sub. The caller's auth token becomes our upstream_token.
-    var upstreamAuthToken = parsedInfo.Jwt!;
-
-    // Step 2: Ensure we have our own agent identity.
-    await EnsureEnrolledAsync();
-
-    // Step 3: Grant consent at the PS for the Orchestrator to call WhoAmI.
+    // Grant consent at the PS (demo convenience — real deployments pre-grant).
     using var adminHttp = new HttpClient();
     try
     {
@@ -186,63 +113,22 @@ app.MapGet("/", async (HttpContext ctx) =>
             $"{psUrl.TrimEnd('/')}/admin/consent",
             new { agent = agentId, resource = downstreamUrl.TrimEnd('/') });
     }
-    catch
-    {
-        // /admin/consent only exists on MockPersonServer — swallow
-    }
+    catch { /* /admin/consent only exists on MockPersonServer */ }
 
-    // Step 4: Build the Orchestrator's own signed client (agent token mode).
-    // This client does NOT have WithChallengeHandling — we handle the
-    // challenge manually so we can pass upstream_token.
-    using var client = new AAuthClientBuilder(enrolledKey!)
-        .WithTokenRefresh(async (_, ct) =>
-        {
-            var apClient = new AgentProviderClient(new HttpClient(), keyStore!);
-            return await apClient.RefreshAsync(refreshEndpoint!, enrolledKeyId!, ct);
-        })
+    // Build a call-chaining client: upstream token routing + auto-challenge.
+    // Self-issued agent token (iss = orchestratorUrl) satisfies §Upstream Token
+    // Verification step 3 — the PS can match upstream_token.aud against iss.
+    using var downstream = new AAuthClientBuilder(orchestratorKey)
+        .WithTokenRefresh(async (_, ct) => SelfIssueAgentToken())
+        .WithCallChaining(ctx)
         .Build();
 
-    // Step 5: First call to downstream — expect a 401 challenge.
-    var firstResponse = await client.GetAsync(downstreamUrl);
-
+    var response = await downstream.GetAsync(downstreamUrl);
+    var body = await response.Content.ReadAsStringAsync();
     JsonNode? downstreamJson = null;
+    try { downstreamJson = JsonNode.Parse(body); } catch { }
 
-    if (firstResponse.StatusCode == System.Net.HttpStatusCode.Unauthorized
-        && firstResponse.Headers.Contains(AAuthRequirementHeader.Name))
-    {
-        // Parse the resource token from the challenge.
-        var requirementRaw = firstResponse.Headers.GetValues(AAuthRequirementHeader.Name).First();
-        var requirement = AAuthRequirementHeader.Parse(requirementRaw);
-
-        // Step 6: Exchange at PS WITH upstream_token (call-chaining).
-        // This causes the PS to build a nested act claim.
-        var metadata = app.Services.GetRequiredService<MetadataClient>();
-        var exchangeClient = new TokenExchangeClient(client, metadata);
-        var chainedAuthToken = await exchangeClient.ExchangeAsync(
-            psUrl,
-            requirement.ResourceToken!,
-            onInteractionRequired: null,
-            pollerOptions: null,
-            upstreamToken: upstreamAuthToken);
-
-        // Step 7: Retry with the chained auth token.
-        using var chainedClient = new AAuthClientBuilder(enrolledKey!)
-            .UseJwt(chainedAuthToken)
-            .Build();
-
-        var retryResponse = await chainedClient.GetAsync(downstreamUrl);
-        var retryBody = await retryResponse.Content.ReadAsStringAsync();
-        try { downstreamJson = JsonNode.Parse(retryBody); } catch { }
-    }
-    else
-    {
-        // No challenge — resource accepted directly (shouldn't happen in
-        // normal flow, but handle gracefully).
-        var body = await firstResponse.Content.ReadAsStringAsync();
-        try { downstreamJson = JsonNode.Parse(body); } catch { }
-    }
-
-    // Step 8: Return combined result showing the full chain.
+    var upstreamResult = ctx.Features.Get<AAuthVerificationResult>();
     return Results.Ok(new
     {
         chain = "Agent → Orchestrator → WhoAmI",
@@ -260,6 +146,42 @@ app.MapGet("/", async (HttpContext ctx) =>
         downstream = downstreamJson,
     });
 });
+
+// -----------------------------------------------------------------------
+// Interaction Chaining Example (commented out)
+//
+// If the downstream PS requires user consent, use onInteractionRequired
+// to propagate the 202 back to the caller. See docs/advanced/interaction-chaining.md.
+//
+// app.MapGet("/with-interaction", async (HttpContext ctx) =>
+// {
+//     await EnsureEnrolledAsync();
+//
+//     using var downstream = new AAuthClientBuilder(enrolledKey!)
+//         .WithTokenRefresh(async (_, ct) =>
+//         {
+//             var apClient = new AgentProviderClient(new HttpClient(), keyStore!);
+//             return await apClient.RefreshAsync(refreshEndpoint!, enrolledKeyId!, ct);
+//         })
+//         .WithCallChaining(ctx)
+//         .WithChallengeHandling(opts =>
+//         {
+//             opts.OnInteractionRequired = async (interaction, ct) =>
+//             {
+//                 // Propagate interaction requirement to caller
+//                 ctx.Response.StatusCode = 202;
+//                 ctx.Response.Headers["Location"] = "/pending/123";
+//                 ctx.Response.Headers["AAuth-Requirement"] =
+//                     $"requirement=interaction; url=\"{interaction.Url}\"; code=\"{interaction.Code}\"";
+//                 await ctx.Response.StartAsync(ct);
+//             };
+//         })
+//         .Build();
+//
+//     var response = await downstream.GetAsync(downstreamUrl);
+//     return Results.Ok(await response.Content.ReadAsStringAsync());
+// });
+// -----------------------------------------------------------------------
 
 app.Run();
 

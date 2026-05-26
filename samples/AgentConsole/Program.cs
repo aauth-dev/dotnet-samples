@@ -10,7 +10,7 @@ using AAuth.Discovery;
 using AAuth.HttpSig;
 
 const string Usage = "Usage: AgentConsole <url> --ap <agent-provider-url> [--sub <agent-id>] " +
-    "[--kid <key-id>] [--ps <person-server-url>] [--signing-mode jwt|hwk|jwks_uri|jkt-jwt] " +
+    "[--ps <person-server-url>] [--signing-mode jwt|hwk|jwks_uri|jkt-jwt] " +
     "[--prefer-wait <seconds>] [--upstream-token <jwt>]";
 
 if (args.Length < 1 || args[0] is "--help" or "-h")
@@ -211,17 +211,24 @@ switch (signingMode)
 // Three-party flows add automatic challenge handling
 if (personServer is not null)
 {
-    if (preferWaitSeconds is not null)
+    builder.WithChallengeHandling(personServer, opts =>
     {
-        builder.WithChallengeHandling(personServer, opts =>
-        {
+        if (preferWaitSeconds is not null)
             opts.PreferWaitSeconds = preferWaitSeconds;
-        });
-    }
-    else
-    {
-        builder.WithChallengeHandling(personServer);
-    }
+        opts.MinPollInterval = TimeSpan.FromMilliseconds(200);
+        opts.OnPoll = response => Console.WriteLine($"  [poll] {(int)response.StatusCode}");
+        opts.OnInteractionRequired = (interaction, ct) =>
+        {
+            Console.WriteLine($"  [interaction] User approval required: {interaction.BuildUserUrl()}");
+            return Task.CompletedTask;
+        };
+    });
+}
+
+// Call chaining: pass upstream token to downstream exchanges
+if (upstreamToken is not null)
+{
+    builder.WithCallChaining(upstreamToken);
 }
 
 if (preferWaitSeconds is not null)

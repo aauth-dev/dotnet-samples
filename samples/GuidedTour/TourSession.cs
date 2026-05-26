@@ -22,6 +22,7 @@ namespace GuidedTour;
 public sealed class TourSession : IAsyncDisposable
 {
     private readonly TourOptions _options;
+    private readonly TourAgentIdentity _selfIdentity;
 
     private AAuthKey? _agentKey;
     private string? _agentToken;
@@ -43,9 +44,10 @@ public sealed class TourSession : IAsyncDisposable
     private Task? _pollingTask;
     private readonly object _pollingLock = new();
 
-    public TourSession(IOptions<TourOptions> options)
+    public TourSession(IOptions<TourOptions> options, TourAgentIdentity selfIdentity)
     {
         _options = options.Value;
+        _selfIdentity = selfIdentity;
         _mode = _options.Mode;
     }
 
@@ -341,8 +343,8 @@ public sealed class TourSession : IAsyncDisposable
                 break;
             case SigningMode.JwksUri:
                 builder.UseJwksUri(
-                    _agentJwksUri ?? $"{(_options.AgentProviderUrl ?? "http://localhost:5301").TrimEnd('/')}/agents/{_options.AgentId}/jwks.json",
-                    _assignedKeyId ?? "tour-key-1");
+                    _agentJwksUri ?? $"{_selfIdentity.Issuer.TrimEnd('/')}/.well-known/jwks.json",
+                    _assignedKeyId ?? _selfIdentity.KeyId);
                 break;
             case SigningMode.JktJwt:
                 builder.UseJktJwt(tokenFactory);
@@ -462,64 +464,32 @@ public sealed class TourSession : IAsyncDisposable
 
     /// <summary>
     /// Silently ensures the agent key and token are available before
-    /// running protocol flow steps. Enrols with the Agent Provider so
-    /// the issued token is verifiable via the AP's JWKS (spec §Agent
-    /// Token Verification step 2).
+    /// running protocol flow steps. Self-issues an agent token — the
+    /// GuidedTour server is its own AP per §Self-Hosted Agents.
+    /// Bootstrap mode is the only flow that demos external AP enrollment.
     /// </summary>
     private async Task EnsureAgentReadyAsync(CancellationToken ct)
     {
         if (_agentKey is not null && _agentToken is not null) return;
 
-        _agentKey ??= AAuthKey.Generate();
+        // Use the shared singleton key so the published JWKS matches.
+        _agentKey ??= _selfIdentity.Key;
 
         if (_agentToken is null)
         {
-            if (!string.IsNullOrWhiteSpace(_options.AgentProviderUrl))
+            // Self-issue: the tour server is a hosted service with a stable
+            // URL, so it acts as its own AP (spec §Self-Hosted Agents).
+            var personServer = IsIdentityMode || string.IsNullOrWhiteSpace(_options.PersonServerUrl)
+                ? null
+                : _options.PersonServerUrl;
+            _agentToken = new AgentTokenBuilder
             {
-                // Enrol with the AP to get a properly-signed token whose
-                // JWT signature is verifiable via the AP's JWKS.
-                var apBase = _options.AgentProviderUrl.TrimEnd('/');
-                using var discoveryHttp = new HttpClient();
-                var metaUrl = $"{apBase}/.well-known/aauth-agent.json";
-                var metaResp = await discoveryHttp.GetAsync(metaUrl, ct);
-                var meta = JsonNode.Parse(await metaResp.Content.ReadAsStringAsync(ct));
-                var enrolEndpoint = (string?)meta?["enrol_endpoint"] ?? $"{apBase}/enrol";
-
-                var requestBody = new JsonObject
-                {
-                    ["agent_id"] = _options.AgentId,
-                    ["jwk"] = _agentKey.ToPublicJwk(),
-                };
-                if (!IsIdentityMode && !string.IsNullOrWhiteSpace(_options.PersonServerUrl))
-                {
-                    requestBody["ps"] = _options.PersonServerUrl;
-                }
-
-                using var enrolHttp = new HttpClient();
-                var enrolResp = await enrolHttp.PostAsJsonAsync(enrolEndpoint, requestBody, ct);
-                enrolResp.EnsureSuccessStatusCode();
-                var enrolBody = JsonNode.Parse(await enrolResp.Content.ReadAsStringAsync(ct));
-                _agentToken = (string?)enrolBody?["agent_token"]
-                    ?? throw new InvalidOperationException("AP enrol response missing agent_token");
-                _assignedKeyId = (string?)enrolBody?["key_id"];
-                _agentJwksUri = (string?)enrolBody?["jwks_uri"];
-            }
-            else
-            {
-                // No AP configured — self-sign (only works if the resource
-                // skips JWKS verification, e.g. in unit tests).
-                var personServer = IsIdentityMode || string.IsNullOrWhiteSpace(_options.PersonServerUrl)
-                    ? null
-                    : _options.PersonServerUrl;
-                _agentToken = new AgentTokenBuilder
-                {
-                    Issuer = "https://ap.example",
-                    Subject = _options.AgentId,
-                    KeyId = "tour",
-                    Key = _agentKey,
-                    PersonServer = personServer,
-                }.Build();
-            }
+                Issuer = _selfIdentity.Issuer,
+                Subject = _options.AgentId,
+                KeyId = _selfIdentity.KeyId,
+                Key = _selfIdentity.Key,
+                PersonServer = personServer,
+            }.Build();
 
             // Autonomous mode simulates "standing consent" — pre-register
             // consent at the Mock Person Server so POST /token returns 200

@@ -20,7 +20,7 @@ The fastest way to run all samples together:
 make demo
 ```
 
-This starts WhoAmI + MockPersonServer + MockAgentProvider + GuidedTour in parallel, prints their URLs, and tears them down on `Ctrl+C`. Then open <http://localhost:5400> and click **Run all**.
+This starts WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + GuidedTour in parallel, prints their URLs, and tears them down on `Ctrl+C`. Then open <http://localhost:5400> and click **Run all**.
 
 ## Running Individually
 
@@ -73,10 +73,12 @@ dotnet run --project samples/AgentConsole -- http://localhost:5000 \
 
 | Flag | Default | Purpose |
 |------|---------|---------|
-| `--iss <url>` | `https://ap.example` | Agent Provider issuer URL embedded in agent token |
+| `--ap <url>` | _(required)_ | Agent Provider URL (enrol + refresh endpoints) |
 | `--sub <id>` | `aauth:demo@ap.example` | Agent subject identifier |
-| `--kid <name>` | `demo` | Key id under `~/.aauth/keys/` (generated on first use) |
 | `--ps <url>` | _(none)_ | Person Server URL — enables three-party flow |
+| `--signing-mode <mode>` | `jwt` (with PS) / `hwk` (without) | One of `jwt`, `hwk`, `jwks_uri`, `jkt-jwt` |
+| `--prefer-wait <seconds>` | _(none)_ | Long-poll hint for deferred PS responses |
+| `--upstream-token <jwt>` | _(none)_ | Upstream auth token for call-chaining scenarios |
 
 ### MockPersonServer
 
@@ -100,7 +102,7 @@ Implements AP enrollment and JWKS hosting. See [MockAgentProvider/README.md](Moc
 dotnet run --project samples/GuidedTour
 ```
 
-Requires WhoAmI and MockPersonServer already running. See [GuidedTour/README.md](GuidedTour/README.md) for mode configuration.
+Requires WhoAmI, MockPersonServer, Orchestrator, and MockAgentProvider already running (or use `make demo`). See [GuidedTour/README.md](GuidedTour/README.md) for mode configuration.
 
 ### SampleApp
 
@@ -108,7 +110,7 @@ Requires WhoAmI and MockPersonServer already running. See [GuidedTour/README.md]
 dotnet run --project samples/SampleApp
 ```
 
-Simple Blazor app showing each signing mode as a separate page. Open <http://localhost:5240>. Requires WhoAmI, MockPersonServer, and MockAgentProvider running.
+Simple Blazor app showing each signing mode as a separate page. Open <http://localhost:5240>. Requires WhoAmI, MockPersonServer, and Orchestrator running. MockAgentProvider is needed only for the JWKS-URI enrollment page.
 
 ## Make Targets
 

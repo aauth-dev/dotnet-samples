@@ -20,6 +20,22 @@ All configurable options across the AAuth .NET SDK, grouped by component.
 | `RequireIssuerVerification` | `bool` | `true` | When `true`, verifies JWT signatures against the issuer's published JWKS via metadata discovery. |
 | `TrustedAgentProviderIssuers` | `IReadOnlySet<string>?` | `null` | Optional allow-list of trusted AP issuers (null = any) |
 | `TrustedAuthTokenIssuers` | `IReadOnlySet<string>?` | `null` | Optional allow-list of trusted auth token issuers (null = any) |
+| `MaxActDepth` | `int` | `10` | Maximum delegation chain depth for nested `act` claims |
+| `ClockSkew` | `TimeSpan` | 30 seconds | Tolerance applied to `exp`/`iat` checks |
+| `MaxFutureSkew` | `TimeSpan` | 5 seconds | Maximum allowed skew into the future for HTTP signature timestamps |
+| `Clock` | `Func<DateTimeOffset>?` | `null` (UtcNow) | Clock source for all time-dependent checks. Inject for deterministic testing. |
+
+### AAuthResourceOptions (via AddAAuthResource)
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `Issuer` | `string` | — (required) | HTTPS issuer URL for this resource |
+| `SigningKeys` | `Dictionary<string, AAuthKey>` | `{}` | Key-id → signing key map |
+| `MaxSignatureAge` | `TimeSpan` | 60 seconds | Maximum allowed age of inbound signatures |
+| `MaxFutureSkew` | `TimeSpan` | 5 seconds | Future skew tolerance for signature timestamps |
+| `Clock` | `Func<DateTimeOffset>?` | `null` (UtcNow) | Clock source (threaded to `AAuthVerifier`) |
+| `EnableReplayDetection` | `bool` | `true` | Enable JTI-based replay detection |
+| `KeyResolver` | `ISignatureKeyResolver?` | `null` | Custom key resolver (null = default) |
 
 ## Token Builders
 
@@ -65,10 +81,35 @@ All configurable options across the AAuth .NET SDK, grouped by component.
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `MaxTotalWait` | `TimeSpan` | 5 minutes | Maximum time to poll before timeout |
-| `DefaultPollInterval` | `TimeSpan` | 1 second | Base interval between polls |
+| `DefaultPollInterval` | `TimeSpan` | 5 seconds | Base interval between polls |
 | `MinPollInterval` | `TimeSpan` | 100ms | Minimum interval floor |
+| `PreferWaitSeconds` | `int?` | `null` | Send `Prefer: wait=N` header (long-poll) |
+| `OnPoll` | `Action<HttpResponseMessage>?` | `null` | Callback after each poll response |
 
 Server `Retry-After` headers override `DefaultPollInterval` (clamped to `MinPollInterval`).
+
+### ChallengeHandlingOptions
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `OnInteractionRequired` | `Func<AAuthInteraction, CancellationToken, Task>?` | `null` | Callback for 202+interaction |
+| `PollingTimeout` | `TimeSpan` | 5 minutes | Maximum polling time |
+| `DefaultPollInterval` | `TimeSpan` | 5 seconds | Interval between polls |
+| `PreferWaitSeconds` | `int?` | `null` | `Prefer: wait=N` header value |
+| `MinPollInterval` | `TimeSpan` | 100ms | Minimum poll interval floor |
+| `OnPoll` | `Action<HttpResponseMessage>?` | `null` | Callback after each poll |
+
+### InteractionHandlingOptions
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `OnInteractionRequired` | `Func<string, string, CancellationToken, Task>?` | `null` | Callback for 202+interaction (URL, code) |
+| `OnApprovalPending` | `Func<CancellationToken, Task>?` | `null` | Callback for 202+approval |
+| `PollingTimeout` | `TimeSpan` | 5 minutes | Maximum polling time |
+| `DefaultPollInterval` | `TimeSpan` | 5 seconds | Interval between polls |
+| `PreferWaitSeconds` | `int?` | `null` | `Prefer: wait=N` header value |
+| `MinPollInterval` | `TimeSpan` | 100ms | Minimum poll interval floor |
+| `OnPoll` | `Action<HttpResponseMessage>?` | `null` | Callback after each poll |
 
 ## Discovery
 

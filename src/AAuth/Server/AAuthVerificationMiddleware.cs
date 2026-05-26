@@ -40,7 +40,7 @@ public sealed class AAuthVerificationMiddleware
     internal const string JtiStoreItemKey = "AAuth.JtiStore";
 
     /// <summary>Algorithms this server supports, emitted in unsupported_algorithm errors.</summary>
-    private static readonly string[] SupportedAlgorithms = ["EdDSA"];
+    private static readonly string[] SupportedAlgorithms = ["EdDSA", "ES256"];
 
     private readonly RequestDelegate _next;
     private readonly AAuthVerifier _verifier;
@@ -68,6 +68,19 @@ public sealed class AAuthVerificationMiddleware
         _metadata = metadata;
         _jwks = jwks;
         _options = options;
+        _tokenVerifier = CreateTokenVerifier(options);
+    }
+
+    private readonly TokenVerifier _tokenVerifier;
+
+    private static TokenVerifier CreateTokenVerifier(AAuthVerificationOptions options)
+    {
+        return new TokenVerifier
+        {
+            MaxActDepth = options.MaxActDepth,
+            ClockSkew = options.ClockSkew,
+            Clock = options.Clock ?? (() => DateTimeOffset.UtcNow),
+        };
     }
 
     /// <inheritdoc cref="RequestDelegate"/>
@@ -222,6 +235,17 @@ public sealed class AAuthVerificationMiddleware
                 parsedInfo.Scheme is "jwt" or "jkt-jwt",
         });
 
+        // Set UpstreamAuthTokenFeature for aa-auth+jwt tokens so that
+        // call-chaining middleware can read the verified upstream token
+        // without re-parsing Signature-Key.
+        if (tokenType == AuthTokenBuilder.TokenType &&
+            parsedInfo.Jwt is not null &&
+            _options.RequireIssuerVerification &&
+            parsedInfo.Scheme is "jwt" or "jkt-jwt")
+        {
+            context.Features.Set(new UpstreamAuthTokenFeature(parsedInfo.Jwt));
+        }
+
         // Enrich the current Activity with AAuth verification tags for
         // OpenTelemetry-compatible tracing (no hard OTel dependency).
         var activity = System.Diagnostics.Activity.Current;
@@ -280,8 +304,7 @@ public sealed class AAuthVerificationMiddleware
             {
                 // Self-issued: verify signature with cnf.jwk (already done as HTTP sig
                 // verified with the same key). Structural check is sufficient.
-                var verifier = new TokenVerifier();
-                verifier.Verify(
+                _tokenVerifier.Verify(
                     info.Jwt!,
                     info.ConfirmationKey,
                     AgentTokenBuilder.TokenType,
@@ -313,8 +336,7 @@ public sealed class AAuthVerificationMiddleware
         var issuerKey = await _jwks!.ResolveKeyAsync(jwksUri, kid, ct).ConfigureAwait(false)
             ?? throw new TokenVerificationException($"No key with kid '{kid}' at {jwksUri}.");
 
-        var tokenVerifier = new TokenVerifier();
-        tokenVerifier.Verify(info.Jwt!, issuerKey, AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk);
+        _tokenVerifier.Verify(info.Jwt!, issuerKey, AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk);
     }
 
     private async Task VerifyAuthTokenIssuerAsync(
@@ -372,11 +394,10 @@ public sealed class AAuthVerificationMiddleware
         var expectedAgent = (string?)payload["agent"]
             ?? throw new TokenVerificationException("Auth token is missing 'agent'.");
 
-        var tokenVerifier = new TokenVerifier();
         if (expectedAudience is not null)
         {
             // Full verification: signature, aud binding, PoP, and act.
-            tokenVerifier.VerifyAuthToken(
+            _tokenVerifier.VerifyAuthToken(
                 info.Jwt!,
                 issuerKey,
                 expectedAudience,
@@ -389,7 +410,7 @@ public sealed class AAuthVerificationMiddleware
             // Signature is verified but aud is not validated because
             // ResourceIdentifier was not configured. PoP and act are
             // still checked via the underlying Verify + manual checks.
-            var verified = tokenVerifier.Verify(
+            var verified = _tokenVerifier.Verify(
                 info.Jwt!, issuerKey,
                 AuthTokenBuilder.TokenType, dwk, expectedAudience: null);
 

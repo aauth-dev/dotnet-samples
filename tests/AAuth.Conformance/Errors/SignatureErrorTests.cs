@@ -153,6 +153,6 @@ public class SignatureErrorTests : IAsyncLifetime
         Assert.True(response.Headers.TryGetValues(SignatureError.HeaderName, out var values));
         var headerValue = string.Join(",", values);
         Assert.Contains("unsupported_algorithm", headerValue);
-        Assert.Contains("supported_algorithms=\"EdDSA\"", headerValue);
+        Assert.Contains("supported_algorithms=\"EdDSA ES256\"", headerValue);
     }
 }

@@ -6,6 +6,8 @@ using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Server;
+using Microsoft.AspNetCore.Http;
 
 namespace AAuth.HttpSig;
 
@@ -46,6 +48,9 @@ public sealed class AAuthClientBuilder
     private bool _challengeHandling;
     private string? _personServer;
     private Action<ChallengeHandlingOptions>? _challengeOptionsConfigure;
+
+    // Call-chaining state
+    private Func<string?>? _upstreamTokenProvider;
 
     // Token refresh state
     private ITokenRefresher? _tokenRefresher;
@@ -199,6 +204,47 @@ public sealed class AAuthClientBuilder
     }
 
     /// <summary>
+    /// Enable call-chaining with a delegate that provides the upstream auth token.
+    /// Implicitly enables challenge handling; <c>personServer</c> becomes optional
+    /// (resolved from the upstream token at runtime via <see cref="CallChainingRouter"/>).
+    /// </summary>
+    /// <param name="upstreamTokenProvider">Returns the upstream <c>aa-auth+jwt</c>, or null if unavailable.</param>
+    public AAuthClientBuilder WithCallChaining(Func<string?> upstreamTokenProvider)
+    {
+        ArgumentNullException.ThrowIfNull(upstreamTokenProvider);
+        _upstreamTokenProvider = upstreamTokenProvider;
+        _challengeHandling = true;
+        return this;
+    }
+
+    /// <summary>
+    /// Enable call-chaining with a fixed upstream auth token (captured at construction time).
+    /// Implicitly enables challenge handling.
+    /// </summary>
+    /// <param name="upstreamAuthToken">The upstream <c>aa-auth+jwt</c> token string.</param>
+    public AAuthClientBuilder WithCallChaining(string upstreamAuthToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(upstreamAuthToken);
+        _upstreamTokenProvider = () => upstreamAuthToken;
+        _challengeHandling = true;
+        return this;
+    }
+
+    /// <summary>
+    /// Enable call-chaining by reading the upstream auth token from
+    /// <see cref="UpstreamAuthTokenFeature"/> on the given <see cref="HttpContext"/>.
+    /// Implicitly enables challenge handling.
+    /// </summary>
+    /// <param name="httpContext">The current HTTP context (must have been verified by <see cref="AAuthVerificationMiddleware"/>).</param>
+    public AAuthClientBuilder WithCallChaining(HttpContext httpContext)
+    {
+        ArgumentNullException.ThrowIfNull(httpContext);
+        _upstreamTokenProvider = () => httpContext.Features.Get<UpstreamAuthTokenFeature>()?.Token;
+        _challengeHandling = true;
+        return this;
+    }
+
+    /// <summary>
     /// Register a custom token refresher that is invoked when the agent
     /// token nears expiry.
     /// </summary>
@@ -282,7 +328,11 @@ public sealed class AAuthClientBuilder
             var interactionHandler = new InteractionHandler(
                 interactionOpts.OnInteractionRequired,
                 interactionOpts.OnApprovalPending,
-                interactionOpts.PollingTimeout)
+                interactionOpts.PollingTimeout,
+                interactionOpts.DefaultPollInterval,
+                interactionOpts.MinPollInterval,
+                interactionOpts.PreferWaitSeconds,
+                interactionOpts.OnPoll)
             {
                 InnerHandler = handler,
             };
@@ -291,7 +341,9 @@ public sealed class AAuthClientBuilder
 
         // --- Challenge-handling pipeline ---
         var agentToken = ResolveAgentToken();
-        var personServer = ResolvePersonServer(agentToken);
+        var personServer = _upstreamTokenProvider is not null
+            ? ResolvePersonServerOptional(agentToken)
+            : ResolvePersonServer(agentToken);
 
         var challengeOptions = new ChallengeHandlingOptions();
         _challengeOptionsConfigure?.Invoke(challengeOptions);
@@ -331,12 +383,15 @@ public sealed class AAuthClientBuilder
             MaxTotalWait = challengeOptions.PollingTimeout,
             DefaultPollInterval = challengeOptions.DefaultPollInterval,
             PreferWaitSeconds = challengeOptions.PreferWaitSeconds,
+            MinPollInterval = challengeOptions.MinPollInterval,
+            OnPoll = challengeOptions.OnPoll,
         };
 
         // Challenge handler sits above the outer signer.
         var challengeHandler = new ChallengeHandler(
             exchangeClient, tokenHolder, personServer,
-            challengeOptions.OnInteractionRequired, pollerOptions)
+            challengeOptions.OnInteractionRequired, pollerOptions,
+            _upstreamTokenProvider)
         {
             InnerHandler = outerSigner,
         };
@@ -361,11 +416,27 @@ public sealed class AAuthClientBuilder
             var interactionHandler = new InteractionHandler(
                 interactionOpts.OnInteractionRequired,
                 interactionOpts.OnApprovalPending,
-                interactionOpts.PollingTimeout)
+                interactionOpts.PollingTimeout,
+                interactionOpts.DefaultPollInterval,
+                interactionOpts.MinPollInterval,
+                interactionOpts.PreferWaitSeconds,
+                interactionOpts.OnPoll)
             {
                 InnerHandler = topHandler,
             };
             topHandler = interactionHandler;
+        }
+
+        // If call-chaining is configured, add mission forwarding at the top.
+        // Per §Call Chaining, intermediaries in a mission context MUST include
+        // AAuth-Mission on downstream requests.
+        if (_upstreamTokenProvider is not null)
+        {
+            var missionHandler = new MissionForwardingHandler(_upstreamTokenProvider)
+            {
+                InnerHandler = topHandler,
+            };
+            topHandler = missionHandler;
         }
 
         return topHandler;
@@ -397,7 +468,11 @@ public sealed class AAuthClientBuilder
         return new InteractionHandler(
             opts.OnInteractionRequired,
             opts.OnApprovalPending,
-            opts.PollingTimeout)
+            opts.PollingTimeout,
+            opts.DefaultPollInterval,
+            opts.MinPollInterval,
+            opts.PreferWaitSeconds,
+            opts.OnPoll)
         {
             InnerHandler = refreshHandler,
         };
@@ -438,6 +513,19 @@ public sealed class AAuthClientBuilder
                 "Cannot resolve Person Server: agent token does not contain a 'ps' claim. " +
                 "Provide an explicit personServer URL via WithChallengeHandling(personServer).");
         return ps;
+    }
+
+    private string? ResolvePersonServerOptional(string? agentToken)
+    {
+        if (_personServer is not null)
+            return _personServer;
+
+        if (agentToken is null)
+            return null;
+
+        // Try the 'ps' claim but don't throw — upstream token routing will handle it.
+        var payload = TokenRefreshHandler.ReadPayloadUnsafe(agentToken);
+        return (string?)payload["ps"];
     }
 
     private IReadOnlyList<string>? MergeCapabilities(string required)

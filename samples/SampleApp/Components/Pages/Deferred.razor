@@ -3,6 +3,7 @@
 @using AAuth.Crypto
 @using AAuth.Headers
 @using AAuth.HttpSig
+@using AAuth.Tokens
 @inject IJSRuntime JS
 @rendermode InteractiveServer
 
@@ -87,27 +88,18 @@ app.MapGet("/", (HttpContext ctx) =&gt;
 </div>
 </div>
 
-@if (!_enrolled)
-{
-    <button class="btn btn-outline-secondary" @onclick="Enrol" disabled="@_loading">
-        @(_loading ? "Enrolling..." : "1. Enrol with Agent Provider")
-    </button>
-}
-else
-{
-    <div class="alert alert-info">
-        Enrolled. Key ID: <code>@_enrollment!.KeyId</code>
-    </div>
+<div class="alert alert-info">
+    Self-issued agent identity. Key ID: <code>@_identity.KeyId</code>
+</div>
 
-    @if (!_waitingForApproval && _response is null)
-    {
-        <button class="btn btn-primary" @onclick="SendRequest" disabled="@_loading">
-            @(_loading ? "Sending..." : "2. Send Signed Request to Resource")
-        </button>
-        <p class="text-muted mt-1">
-            <small>The Person Server will require consent. An interaction URL will appear below.</small>
-        </p>
-    }
+@if (!_waitingForApproval && _response is null)
+{
+    <button class="btn btn-primary" @onclick="SendRequest" disabled="@_loading">
+        @(_loading ? "Sending..." : "Send Signed Request to Resource")
+    </button>
+    <p class="text-muted mt-1">
+        <small>The Person Server will require consent. An interaction URL will appear below.</small>
+    </p>
 }
 
 @if (_waitingForApproval)
@@ -145,11 +137,10 @@ else
 }
 
 @code {
-    [Inject] private EnrollmentService _enrollment { get; set; } = default!;
+    [Inject] private SelfIssuedIdentity _identity { get; set; } = default!;
     [Inject] private IConfiguration Config { get; set; } = default!;
 
     private bool _loading;
-    private bool _enrolled;
     private bool _waitingForApproval;
     private string? _interactionUrl;
     private int _pollCount;
@@ -161,32 +152,6 @@ else
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         await JS.InvokeVoidAsync("highlightCode");
-    }
-
-    protected override void OnInitialized()
-    {
-        _enrolled = _enrollment.IsEnrolled;
-    }
-
-    private async Task Enrol()
-    {
-        _loading = true;
-        _error = null;
-        try
-        {
-            // Revoke any existing consent so the PS genuinely returns 202
-            await RevokeConsentAsync();
-            await _enrollment.EnsureEnrolledAsync();
-            _enrolled = true;
-        }
-        catch (Exception ex)
-        {
-            _error = ex.Message;
-        }
-        finally
-        {
-            _loading = false;
-        }
     }
 
     private async Task SendRequest()
@@ -203,18 +168,20 @@ else
             // Revoke consent so the deferred path triggers fresh each time
             await RevokeConsentAsync();
 
-            var key = _enrollment.Key;
-            var keyId = _enrollment.KeyId;
-            var keyStore = _enrollment.KeyStore;
-            var refreshEndpoint = _enrollment.RefreshEndpoint;
             var personServer = Config["AAuth:PersonServer"]!;
 
-            // Build client with deferred consent support
-            using var client = new AAuthClientBuilder(key)
+            // Self-issued token refresh + deferred consent support
+            using var client = new AAuthClientBuilder(_identity.Key)
                 .WithTokenRefresh(async (ctx, ct) =>
                 {
-                    var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-                    return await apClient.RefreshAsync(refreshEndpoint, keyId, ct);
+                    return new AgentTokenBuilder
+                    {
+                        Issuer = _identity.Issuer,
+                        Subject = _identity.AgentId,
+                        KeyId = _identity.KeyId,
+                        Key = _identity.Key,
+                        PersonServer = personServer,
+                    }.Build();
                 })
                 .WithChallengeHandling(personServer, opts =>
                 {
@@ -276,16 +243,12 @@ else
         }
     }
 
-    /// <summary>
-    /// Revoke consent at the MockPersonServer so it returns 202 (deferred)
-    /// rather than issuing an auth token immediately.
-    /// </summary>
     private async Task RevokeConsentAsync()
     {
         var personServer = Config["AAuth:PersonServer"];
         if (string.IsNullOrEmpty(personServer)) return;
 
-        var agentId = Config["AAuth:AgentId"]!;
+        var agentId = _identity.AgentId;
         var resource = Config["AAuth:Resource"]!;
 
         using var http = new HttpClient();

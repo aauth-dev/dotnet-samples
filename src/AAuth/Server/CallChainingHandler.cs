@@ -1,11 +1,9 @@
 using System;
-using System.Net.Http;
-using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Discovery;
-using AAuth.HttpSig;
+using AAuth.Headers;
 
 namespace AAuth.Server;
 
@@ -55,11 +53,19 @@ public sealed class CallChainingHandler
     /// <param name="resourceToken">
     /// The resource token issued by the downstream resource's challenge.
     /// </param>
+    /// <param name="onInteractionRequired">
+    /// Optional callback invoked when the downstream PS/AS returns <c>202</c>
+    /// with an interaction requirement. When <see langword="null"/> and a 202
+    /// is received, the call throws.
+    /// </param>
+    /// <param name="pollerOptions">Optional polling cadence/timeout override.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The chained auth token for the downstream resource.</returns>
     public async Task<string> ExchangeForDownstreamAsync(
         string upstreamAuthToken,
         string resourceToken,
+        Func<AAuthInteraction, CancellationToken, Task>? onInteractionRequired = null,
+        DeferredPollerOptions? pollerOptions = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(upstreamAuthToken);
@@ -71,8 +77,8 @@ public sealed class CallChainingHandler
         return await _exchangeClient.ExchangeAsync(
             targetServer,
             resourceToken,
-            onInteractionRequired: null,
-            pollerOptions: null,
+            onInteractionRequired: onInteractionRequired,
+            pollerOptions: pollerOptions,
             upstreamToken: upstreamAuthToken,
             cancellationToken).ConfigureAwait(false);
     }
@@ -82,45 +88,5 @@ public sealed class CallChainingHandler
     /// based on the upstream auth token's claims.
     /// </summary>
     internal static string ResolveDownstreamServer(string upstreamAuthToken)
-    {
-        // Decode the upstream auth token payload (no verification needed here —
-        // it was already verified by the resource's verification middleware).
-        var segments = upstreamAuthToken.Split('.');
-        if (segments.Length != 3)
-            throw new InvalidOperationException("upstream_token is not a valid JWT.");
-
-        JsonObject payload;
-        try
-        {
-            var payloadJson = System.Text.Encoding.UTF8.GetString(
-                Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(segments[1]));
-            payload = JsonNode.Parse(payloadJson) as JsonObject
-                ?? throw new InvalidOperationException("upstream_token payload is not a JSON object.");
-        }
-        catch (Exception ex) when (ex is not InvalidOperationException)
-        {
-            throw new InvalidOperationException("Failed to decode upstream_token payload.", ex);
-        }
-
-        // Route 1: mission.approver present → PS at approver URL.
-        if (payload["mission"] is JsonObject mission)
-        {
-            var approver = (string?)mission["approver"];
-            if (!string.IsNullOrEmpty(approver) && AAuthUrl.IsHttpsOrLoopback(approver))
-            {
-                return approver;
-            }
-        }
-
-        // Route 2/3: Use iss (PS or AS — the exchange client resolves the
-        // correct metadata document based on the server's discovery).
-        var iss = (string?)payload["iss"]
-            ?? throw new InvalidOperationException("upstream_token is missing 'iss' claim.");
-
-        if (!AAuthUrl.IsHttpsOrLoopback(iss))
-            throw new InvalidOperationException(
-                $"upstream_token 'iss' must be an absolute https:// URL (or http://localhost): {iss}");
-
-        return iss;
-    }
+        => CallChainingRouter.ResolveDownstreamServer(upstreamAuthToken);
 }

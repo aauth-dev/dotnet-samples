@@ -82,4 +82,27 @@ public static class AAuthApplicationBuilderExtensions
         var options = endpoints.ServiceProvider.GetRequiredService<AAuthResourceMetadataOptions>();
         return WellKnownEndpoints.MapAAuthResourceWellKnown(endpoints, options);
     }
+
+    /// <summary>
+    /// Compose AAuth verification and challenge middleware for an intermediary
+    /// resource that participates in call-chaining. Equivalent to calling
+    /// <see cref="UseAAuthVerification"/> followed by <see cref="UseAAuthChallenge"/>
+    /// with the supplied options.
+    /// </summary>
+    /// <param name="app">The application builder.</param>
+    /// <param name="verificationOptions">Verification options (signature + issuer verification).</param>
+    /// <param name="challengeOptions">Challenge options (access mode, resource key, scopes).</param>
+    public static IApplicationBuilder UseAAuthIntermediary(
+        this IApplicationBuilder app,
+        AAuthVerificationOptions verificationOptions,
+        ChallengeOptions challengeOptions)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        ArgumentNullException.ThrowIfNull(verificationOptions);
+        ArgumentNullException.ThrowIfNull(challengeOptions);
+
+        app.UseAAuthVerification(verificationOptions);
+        app.UseAAuthChallenge(challengeOptions);
+        return app;
+    }
 }

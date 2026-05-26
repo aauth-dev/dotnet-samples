@@ -459,7 +459,7 @@ public sealed class TokenVerifier
         return false;
     }
 
-    private static JsonObject DecodeJsonSegment(string segment, string label)
+    internal static JsonObject DecodeJsonSegment(string segment, string label)
     {
         byte[] bytes;
         try

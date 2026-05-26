@@ -50,6 +50,10 @@ builder.Services.AddHttpClient("aauth-metadata");
 builder.Services.AddHttpClient("aauth-jwks");
 builder.Services.AddSingleton<ConsentStore>();
 builder.Services.AddSingleton<PendingStore>();
+builder.Services.AddSingleton(sp =>
+    new UpstreamTokenValidator(
+        sp.GetRequiredService<MetadataClient>(),
+        sp.GetRequiredService<JwksClient>()));
 
 var app = builder.Build();
 
@@ -71,17 +75,13 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
     SignatureWindow = signatureWindowSeconds,
 });
 
-// PS-specific metadata document. The shared helper publishes
-// /.well-known/aauth-resource.json; the PS spec additionally requires
-// /.well-known/aauth-person.json with a `token_endpoint`.
-var personMetadata = new JsonObject
+// PS-specific metadata document.
+app.MapAAuthPersonServerWellKnown(new AAuthPersonServerMetadataOptions
 {
-    ["issuer"] = psIssuer,
-    ["jwks_uri"] = $"{psIssuer.TrimEnd('/')}/.well-known/jwks.json",
-    ["token_endpoint"] = $"{psIssuer.TrimEnd('/')}/token",
-};
-app.MapGet("/.well-known/aauth-person.json",
-    () => Results.Json(personMetadata, contentType: "application/json"));
+    Issuer = psIssuer,
+    TokenEndpoint = $"{psIssuer.TrimEnd('/')}/token",
+    SigningKeys = new Dictionary<string, AAuthKey> { [PsKid] = psKey },
+});
 
 // All other endpoints require an AAuth signature — except the
 // /admin/* helpers, which are demo-only consent toggles and intentionally
@@ -154,56 +154,37 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
             statusCode: StatusCodes.Status400BadRequest);
     }
 
-    // Call-chaining: read and VERIFY upstream_token if present
-    // (§Upstream Token Verification steps 1-3).
+    // Call-chaining: validate upstream_token if present using UpstreamTokenValidator
+    // (§Upstream Token Verification steps 1-4).
     var upstreamTokenJwt = (string?)body?["upstream_token"];
     JsonObject? upstreamAct = null;
     if (!string.IsNullOrEmpty(upstreamTokenJwt))
     {
-        try
+        var validator = app.Services.GetRequiredService<UpstreamTokenValidator>();
+        // For this mock PS, trust all issuers. Production would maintain
+        // a set of known ASes whose tokens the PS has previously brokered.
+        var trustedIssuers = new HashSet<string> { psIssuer };
+
+        // §Upstream Token Verification step 3: aud must match the intermediary
+        // resource. Per §Call Chaining Identity, the intermediary self-issues
+        // its agent token (iss = its resource URL). So agent_token.iss IS the
+        // intermediary's resource identifier.
+        var intermediaryResourceUrl = (string?)parsed.Payload?["iss"]
+            ?? throw new InvalidOperationException("Agent token missing 'iss' claim.");
+
+        var result = await validator.ValidateAsync(
+            upstreamTokenJwt,
+            expectedAudience: intermediaryResourceUrl,
+            trustedIssuers);
+
+        if (!result.IsValid)
         {
-            var tokenVerifier = app.Services.GetRequiredService<TokenVerifier>();
-            var metaClient = app.Services.GetRequiredService<MetadataClient>();
-            var jwksClient = app.Services.GetRequiredService<JwksClient>();
-
-            // Step 1: Full auth token verification (signature via issuer JWKS).
-            // The "agent" in this context is the intermediary (the one making
-            // this request), and cnf.jwk in the upstream token must have been
-            // bound to the intermediary's signing key. Since the intermediary
-            // is presenting the upstream token via POST body (not HTTP sig),
-            // we use VerifyWithJwksAsync which verifies the JWT signature but
-            // skips the HTTP PoP check.
-            var verified = await tokenVerifier.VerifyWithJwksAsync(
-                upstreamTokenJwt, metaClient, jwksClient,
-                expectedType: AuthTokenBuilder.TokenType,
-                expectedDwk: AuthTokenBuilder.PersonDwk,
-                expectedAudience: null);
-
-            // Step 3: Verify aud matches the resource that is now acting as
-            // an agent (i.e., the intermediary). The intermediary's identity
-            // isn't directly available here, but aud must be a valid URL that
-            // we previously issued a token for. For a mock, accept any valid
-            // aud — a production PS would check against known resources.
-            var upAud = (string?)verified.Payload["aud"];
-            if (string.IsNullOrEmpty(upAud))
-            {
-                return Results.Json(new { error = "invalid_upstream_token", detail = "missing aud" },
-                    statusCode: StatusCodes.Status400BadRequest);
-            }
-
-            // Extract the verified act claim for nesting.
-            upstreamAct = verified.Payload["act"] as JsonObject;
-        }
-        catch (TokenVerificationException ex)
-        {
-            return Results.Json(new { error = "invalid_upstream_token", detail = ex.Message },
+            return Results.Json(new { error = "invalid_upstream_token", detail = result.Error },
                 statusCode: StatusCodes.Status400BadRequest);
         }
-        catch (Exception ex) when (ex is FormatException or System.Text.Json.JsonException or InvalidOperationException)
-        {
-            return Results.Json(new { error = "invalid_upstream_token", detail = ex.Message },
-                statusCode: StatusCodes.Status400BadRequest);
-        }
+
+        // The result contains the fully nested act (intermediary wrapping upstream).
+        upstreamAct = result.UpstreamAct;
     }
 
     // Decode the resource token's `iss` claim — that's the resource URL

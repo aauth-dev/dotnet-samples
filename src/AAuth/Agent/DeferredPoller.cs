@@ -40,6 +40,12 @@ public sealed record DeferredPollerOptions
     /// When <see langword="null"/> (default), no <c>Prefer</c> header is sent.
     /// </summary>
     public int? PreferWaitSeconds { get; init; }
+
+    /// <summary>
+    /// Optional callback invoked after each poll response. Useful for logging
+    /// or progress UI during deferred exchanges.
+    /// </summary>
+    public Action<HttpResponseMessage>? OnPoll { get; init; }
 }
 
 /// <summary>
@@ -63,7 +69,8 @@ public sealed class DeferredPoller
     private readonly DeferredPollerOptions _options;
     private TimeSpan _slowDownExtra;
 
-    /// <summary>Optional hook fired after every poll, for tracing/UI.</summary>
+    /// <summary>Optional hook fired after every poll, for tracing/UI.
+    /// When not set explicitly, falls back to <see cref="DeferredPollerOptions.OnPoll"/>.</summary>
     public Action<HttpResponseMessage>? OnPoll { get; init; }
 
     /// <summary>Create a poller.</summary>
@@ -112,7 +119,7 @@ public sealed class DeferredPoller
             var response = await _signedClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
             try
             {
-                OnPoll?.Invoke(response);
+                (OnPoll ?? _options.OnPoll)?.Invoke(response);
             }
             catch
             {
