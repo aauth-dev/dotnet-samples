@@ -82,17 +82,17 @@ if (signingMode is not ("jwt" or "hwk" or "jwks_uri" or "jkt-jwt"))
     return 1;
 }
 
-if (personServer is not null && signingMode is not ("jwt" or "jkt-jwt"))
+if (personServer is not null && signingMode is not "jwt")
 {
-    Console.Error.WriteLine("Three-party flows (--ps) require --signing-mode jwt or jkt-jwt per spec.");
-    Console.Error.WriteLine("Non-jwt modes (hwk, jwks_uri) are for identity-based access only.");
+    Console.Error.WriteLine("Three-party flows (--ps) require --signing-mode jwt.");
+    Console.Error.WriteLine("Pseudonymous modes (hwk, jwks_uri, jkt-jwt) are for identity-based access only.");
     return 1;
 }
 
-if (personServer is null && signingMode is "jwt" or "jkt-jwt")
+if (personServer is null && signingMode is "jwt")
 {
-    Console.Error.WriteLine("Agent Token mode (jwt/jkt-jwt) requires a Person Server (--ps).");
-    Console.Error.WriteLine("For identity-based access without a PS, use --signing-mode hwk or jwks_uri.");
+    Console.Error.WriteLine("Agent Token mode (jwt) requires a Person Server (--ps).");
+    Console.Error.WriteLine("For identity-based access without a PS, use --signing-mode hwk, jwks_uri, or jkt-jwt.");
     return 1;
 }
 
@@ -258,8 +258,9 @@ if (url.AbsolutePath is "/" or "")
     targetUrl = signingMode switch
     {
         "hwk" => new Uri(url, "/hwk"),
+        "jkt-jwt" => new Uri(url, "/jkt-jwt"),
         "jwks_uri" => new Uri(url, "/jwks-uri"),
-        _ => url, // jwt and jkt-jwt use the root path (three-party)
+        _ => url, // jwt uses the root path (three-party)
     };
 }
 

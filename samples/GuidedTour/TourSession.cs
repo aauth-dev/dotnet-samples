@@ -25,6 +25,7 @@ public sealed class TourSession : IAsyncDisposable
     private readonly TourAgentIdentity _selfIdentity;
 
     private AAuthKey? _agentKey;
+    private AAuthKey? _ephemeralKey;
     private string? _agentToken;
     private string? _assignedKeyId;
     private string? _agentJwksUri;
@@ -113,6 +114,7 @@ public sealed class TourSession : IAsyncDisposable
     private string EffectiveResourceUrl => EffectiveSigningMode switch
     {
         SigningMode.Hwk => $"{_options.WhoAmIUrl.TrimEnd('/')}/hwk",
+        SigningMode.JktJwt => $"{_options.WhoAmIUrl.TrimEnd('/')}/jkt-jwt",
         SigningMode.JwksUri => $"{_options.WhoAmIUrl.TrimEnd('/')}/jwks-uri",
         _ => _options.WhoAmIUrl,
     };
@@ -288,6 +290,7 @@ public sealed class TourSession : IAsyncDisposable
     {
         ResetTimeline();
         _agentKey = null;
+        _ephemeralKey = null;
         _agentToken = null;
         _assignedKeyId = null;
         _agentJwksUri = null;
@@ -349,8 +352,17 @@ public sealed class TourSession : IAsyncDisposable
                     _assignedKeyId ?? _selfIdentity.KeyId);
                 break;
             case SigningMode.JktJwt:
-                builder.UseJktJwt(tokenFactory);
-                break;
+                // jkt-jwt: ephemeral key signs the HTTP request; durable key signs the naming JWT.
+                _ephemeralKey ??= AAuthKey.Generate();
+                var apIssuer = _options.AgentProviderUrl!.TrimEnd('/');
+                var durableThumbprint = _agentKey!.ComputeJwkThumbprint();
+                builder = new AAuthClientBuilder(_ephemeralKey)
+                    .WithInnerHandler(inner);
+                if (onSignatureBase is not null)
+                    builder.OnSignatureBase(onSignatureBase);
+                builder.UseJktJwt(() => NamingJwtBuilder.Build(
+                    _agentKey!, _ephemeralKey, apIssuer, durableThumbprint));
+                return builder.BuildHandler();
             default:
                 builder.WithTokenRefresh(async (ctx, ct) => tokenFactory());
                 break;

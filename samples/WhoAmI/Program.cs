@@ -66,6 +66,15 @@ app.UseWhen(
         RequireIssuerVerification = false,
     }));
 
+// /jkt-jwt — pseudonymous with key delegation: HTTP signature verified against
+// the ephemeral key bound in the naming JWT. No issuer check needed.
+app.UseWhen(
+    ctx => ctx.Request.Path.StartsWithSegments("/jkt-jwt"),
+    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+    {
+        RequireIssuerVerification = false,
+    }));
+
 // /jwks-uri — agent identity: HTTP signature verified against published JWKS.
 app.UseWhen(
     ctx => ctx.Request.Path.StartsWithSegments("/jwks-uri"),
@@ -78,6 +87,7 @@ app.UseWhen(
 app.UseWhen(
     ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
         && !ctx.Request.Path.StartsWithSegments("/hwk")
+        && !ctx.Request.Path.StartsWithSegments("/jkt-jwt")
         && !ctx.Request.Path.StartsWithSegments("/jwks-uri"),
     branch => branch.UseAAuthVerification(new AAuthVerificationOptions
     {
@@ -99,6 +109,26 @@ app.MapGet("/hwk", (HttpContext ctx) =>
         scheme = "hwk",
         jkt = parsed.Jkt,
         note = "Resource sees key thumbprint only — agent identity unknown.",
+    });
+});
+
+// -----------------------------------------------------------------------
+// GET /jkt-jwt — Pseudonymous access with key delegation.
+// The naming JWT proves delegation from a hardware-backed durable key to
+// an ephemeral signing key. The resource identifies the agent by the
+// durable key's JWK thumbprint (jkt).
+// -----------------------------------------------------------------------
+app.MapGet("/jkt-jwt", (HttpContext ctx) =>
+{
+    var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)ctx.Items[
+        AAuthVerificationMiddleware.ParsedInfoItemKey]!;
+
+    return Results.Ok(new
+    {
+        mode = "pseudonymous",
+        scheme = "jkt-jwt",
+        jkt = parsed.Jkt,
+        note = "Delegation from hardware-backed key via naming JWT — agent known by durable key thumbprint.",
     });
 });
 
