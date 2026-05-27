@@ -19,11 +19,12 @@
 <div class="row">
 <div class="col-md-6">
 <h5>Client Code</h5>
-<pre><code class="language-csharp">// After enrollment, the AP provides a jwks_uri
+<pre><code class="language-csharp">// After enrollment, the AP provides a jwks_uri and key_id
 var jwksUri = enrollment.JwksUri;
+var kid = enrollment.AgentTokenKid; // AP-published kid
 
 using var client = new AAuthClientBuilder(key)
-    .UseJwksUri(jwksUri, keyId)
+    .UseJwksUri(jwksUri, kid)
     .Build();</code></pre>
 </div>
 <div class="col-md-6">
@@ -138,13 +139,19 @@ else
         try
         {
             var key = _enrollment.Key;
-            var keyId = _enrollment.LocalKeyHandle;
+            // Per spec, the kid must match what the AP publishes in its per-agent
+            // JWKS. The AP returns this as key_id at enrollment (AgentTokenKid).
+            // There is no valid fallback — if the AP didn't provide a key_id,
+            // it doesn't support jwks_uri identity mode.
+            var kid = _enrollment.AgentTokenKid
+                ?? throw new InvalidOperationException(
+                    "Cannot use jwks_uri mode: AP did not return a key_id at enrollment.");
             var jwksUri = _enrollment.JwksUri
                 ?? $"{Config["AAuth:AgentProvider"]!.TrimEnd('/')}/agents/{Config["AAuth:AgentId"]}/jwks.json";
 
             // Build client with jwks_uri mode — identity-based, no token exchange
             using var client = new AAuthClientBuilder(key)
-                .UseJwksUri(jwksUri, keyId)
+                .UseJwksUri(jwksUri, kid)
                 .Build();
 
             var resourceUrl = Config["AAuth:Resource"]!;

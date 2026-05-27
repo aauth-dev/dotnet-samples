@@ -10,14 +10,16 @@ AAuth agents need persistent signing keys. The SDK provides two built-in storage
 
 The `IKeyStore` interface defines async key storage for agent workflows (enrollment, token refresh). The SDK ships two built-in implementations: `InMemoryKeyStore` and `FileKeyStore`.
 
+> **Note:** For AP-enrolled agents, the `handle` parameter passed to `IKeyStore` methods is the `LocalKeyHandle` returned by `EnrolAsync` (defaults to the durable key's JWK thumbprint). It is a purely local identifier — not an AP-assigned value. The AP identifies the agent at refresh time from the HTTP signature, never from this string.
+
 ```csharp
 namespace AAuth.Crypto;
 
 public interface IKeyStore
 {
-    Task<IAAuthKey?> LoadAsync(string keyId, CancellationToken ct = default);
-    Task StoreAsync(string keyId, IAAuthKey key, CancellationToken ct = default);
-    Task DeleteAsync(string keyId, CancellationToken ct = default);
+    Task<IAAuthKey?> LoadAsync(string handle, CancellationToken ct = default);
+    Task StoreAsync(string handle, IAAuthKey key, CancellationToken ct = default);
+    Task DeleteAsync(string handle, CancellationToken ct = default);
     Task<string[]> ListAsync(CancellationToken ct = default);
 }
 ```

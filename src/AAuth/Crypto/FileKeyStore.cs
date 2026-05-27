@@ -113,10 +113,10 @@ public sealed class FileKeyStore : IKeyStore
     // ── IKeyStore async implementation ──────────────────────────────────────
 
     /// <inheritdoc/>
-    Task<IAAuthKey?> IKeyStore.LoadAsync(string keyId, CancellationToken ct)
+    Task<IAAuthKey?> IKeyStore.LoadAsync(string handle, CancellationToken ct)
     {
-        ValidateName(keyId);
-        var path = PathFor(keyId);
+        ValidateName(handle);
+        var path = PathFor(handle);
         if (!File.Exists(path))
             return Task.FromResult<IAAuthKey?>(null);
 
@@ -125,11 +125,11 @@ public sealed class FileKeyStore : IKeyStore
     }
 
     /// <inheritdoc/>
-    Task IKeyStore.StoreAsync(string keyId, IAAuthKey key, CancellationToken ct)
+    Task IKeyStore.StoreAsync(string handle, IAAuthKey key, CancellationToken ct)
     {
         if (key is AAuthKey concreteKey)
         {
-            Save(keyId, concreteKey);
+            Save(handle, concreteKey);
         }
         else
         {
@@ -139,10 +139,10 @@ public sealed class FileKeyStore : IKeyStore
     }
 
     /// <inheritdoc/>
-    Task IKeyStore.DeleteAsync(string keyId, CancellationToken ct)
+    Task IKeyStore.DeleteAsync(string handle, CancellationToken ct)
     {
-        ValidateName(keyId);
-        var path = PathFor(keyId);
+        ValidateName(handle);
+        var path = PathFor(handle);
         if (File.Exists(path))
             File.Delete(path);
         return Task.CompletedTask;

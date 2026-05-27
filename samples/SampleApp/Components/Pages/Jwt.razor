@@ -35,7 +35,7 @@ using var client = new AAuthClientBuilder(key)
         var ap = new AgentProviderClient(
             new HttpClient(), keyStore);
         return await ap.RefreshAsync(
-            refreshEndpoint, keyId, ct);
+            refreshEndpoint, localKeyHandle, ct);
     })
     .WithChallengeHandling(personServer)
     .Build();</code></pre>

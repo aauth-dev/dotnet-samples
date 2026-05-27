@@ -16,6 +16,7 @@ public sealed class EnrollmentService
 
     private IAAuthKey? _key;
     private string? _localKeyHandle;
+    private string? _agentTokenKid;
     private string? _jwksUri;
     private string? _refreshEndpoint;
     private IKeyStore? _keyStore;
@@ -27,6 +28,7 @@ public sealed class EnrollmentService
 
     public IAAuthKey Key => _key ?? throw new InvalidOperationException("Not enrolled yet.");
     public string LocalKeyHandle => _localKeyHandle ?? throw new InvalidOperationException("Not enrolled yet.");
+    public string? AgentTokenKid => _agentTokenKid;
     public string? JwksUri => _jwksUri;
     public string RefreshEndpoint => _refreshEndpoint ?? throw new InvalidOperationException("Not enrolled yet.");
     public IKeyStore KeyStore => _keyStore ?? throw new InvalidOperationException("Not enrolled yet.");
@@ -66,6 +68,7 @@ public sealed class EnrollmentService
             // where the app never sees the initial token.
             _key = result.Key;
             _localKeyHandle = result.LocalKeyHandle;
+            _agentTokenKid = result.AgentTokenKid;
             _jwksUri = result.JwksUri;
         }
         finally

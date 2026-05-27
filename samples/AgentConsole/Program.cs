@@ -104,13 +104,13 @@ if (apUrl is null)
 }
 
 IAAuthKey key;
-string keyId;
+string localKeyHandle;
 string? agentTokenKid;
 string? agentJwksUri;
 string refreshEndpoint;
 
 // Per spec, agent keys are long-lived (spanning the agent install).
-// The key lives in a durable keystore — we only persist its ID + AP metadata.
+// The key lives in a durable keystore — we only persist its handle + AP metadata.
 IKeyStore keyStore = FileKeyStore.Default();
 
 var enrollCacheFile = Path.Combine(
@@ -120,14 +120,14 @@ var enrollCacheFile = Path.Combine(
 if (File.Exists(enrollCacheFile))
 {
     var cached = JsonNode.Parse(File.ReadAllText(enrollCacheFile))!;
-    keyId = (string)cached["key_id"]!;
+    localKeyHandle = (string)cached["key_id"]!;
     agentTokenKid = (string?)cached["agent_token_kid"];
     agentJwksUri = (string?)cached["jwks_uri"];
     refreshEndpoint = (string)cached["refresh_endpoint"]!;
 
-    key = await keyStore.LoadAsync(keyId)
-        ?? throw new InvalidOperationException($"Key '{keyId}' not found in store. Delete {enrollCacheFile} and re-enrol.");
-    Console.WriteLine($"Loaded enrolled agent. Key ID: {keyId}");
+    key = await keyStore.LoadAsync(localKeyHandle)
+        ?? throw new InvalidOperationException($"Key '{localKeyHandle}' not found in store. Delete {enrollCacheFile} and re-enrol.");
+    Console.WriteLine($"Loaded enrolled agent. Local key handle: {localKeyHandle}");
 }
 else
 {
@@ -144,23 +144,23 @@ else
     var apClient = new AgentProviderClient(new HttpClient(), keyStore);
     var result = await apClient.EnrolAsync(apBase, subject, enrolEndpoint, personServer);
     key = result.Key;
-    keyId = result.LocalKeyHandle;
+    localKeyHandle = result.LocalKeyHandle;
     agentTokenKid = result.AgentTokenKid;
     agentJwksUri = result.JwksUri;
-    Console.WriteLine($"Enrolled successfully. Key ID: {keyId}");
+    Console.WriteLine($"Enrolled successfully. Local key handle: {localKeyHandle}");
 
     // Persist only metadata — key lives in the keystore, token is short-lived
     Directory.CreateDirectory(Path.GetDirectoryName(enrollCacheFile)!);
     File.WriteAllText(enrollCacheFile, JsonSerializer.Serialize(new
     {
-        key_id = keyId,
+        key_id = localKeyHandle,
         agent_token_kid = agentTokenKid,
         jwks_uri = agentJwksUri,
         refresh_endpoint = refreshEndpoint,
     }));
 }
 
-Console.WriteLine($"Using key: {keyId}");
+Console.WriteLine($"Using key handle: {localKeyHandle}");
 Console.WriteLine($"Public JWK thumbprint: {key.ComputeJwkThumbprint()}");
 Console.WriteLine();
 
@@ -177,36 +177,40 @@ switch (signingMode)
         break;
     case "jwks_uri":
         var jwksUrl = agentJwksUri ?? $"{apUrl.TrimEnd('/')}/agents/{subject}/jwks.json";
-        // Per spec (§ Signature Verification), the receiver looks up the key in
-        // the JWKS by `kid`. Use the AP-published kid (AgentTokenKid) when
-        // available — the local key handle is the JWK thumbprint which does not
-        // generally match the AP's published kid. Fall back to the thumbprint
-        // only when the AP returned no kid (in which case the AP is expected to
-        // publish the JWK keyed by its thumbprint).
-        builder.UseJwksUri(jwksUrl, agentTokenKid ?? keyId);
+        // Per spec, the receiver looks up the key in the JWKS by `kid`.
+        // The AP chooses the kid and returns it as `key_id` at enrollment.
+        // If the AP didn't provide one, jwks_uri mode cannot work — the agent
+        // has no way to know what kid the AP published the key under.
+        if (agentTokenKid is null)
+            throw new InvalidOperationException(
+                "Cannot use jwks_uri signing mode: the AP did not return a key_id at enrollment. " +
+                "Re-enrol with an AP that supports jwks_uri identity.");
+        builder.UseJwksUri(jwksUrl, agentTokenKid);
         break;
     case "jkt-jwt":
-        var jktEndpoint = refreshEndpoint;
-        var jktKeyId = keyId;
-        builder.UseJktJwt(() =>
-        {
-            // In jkt-jwt mode the naming JWT is refreshed from the AP
-            // just like a regular agent token — the AP signs a JWT that
-            // binds the current key thumbprint via cnf.jkt.
-            var apClient2 = new AgentProviderClient(new HttpClient(), keyStore);
-            return apClient2.RefreshAsync(jktEndpoint, jktKeyId).GetAwaiter().GetResult();
-        });
-        // Three-party challenge handling still needs a full agent token
-        // for the exchange with the PS.
+        // Two-key refresh: do initial refresh to get ephemeral key + naming JWT.
+        // The durable key signs the naming JWT; the ephemeral key signs HTTP requests.
+        var twoKeyClient = new AgentProviderClient(new HttpClient(), keyStore);
+        var twoKeyResult = twoKeyClient.RefreshTwoKeyAsync(
+            refreshEndpoint, localKeyHandle, apUrl.TrimEnd('/')).GetAwaiter().GetResult();
+        // Rebuild the builder with the ephemeral key (not the durable key)
+        builder = new AAuthClientBuilder(twoKeyResult.EphemeralKey);
+        // TODO: In a long-running client, the naming JWT (5-min expiry) and ephemeral key
+        // must be regenerated on refresh. For this single-request demo, the initial pair suffices.
+        var currentNamingJwt = NamingJwtBuilder.Build(
+            key, twoKeyResult.EphemeralKey, apUrl.TrimEnd('/'), key.ComputeJwkThumbprint());
+        builder.UseJktJwt(() => currentNamingJwt);
+        // Three-party challenge handling uses the refreshed agent token
         if (personServer is not null)
         {
-            builder.WithTokenRefresh(AgentProviderTokenRefresher.Create(jktEndpoint, keyId)
+            builder.WithTokenRefresh(AgentProviderTokenRefresher.Create(refreshEndpoint, localKeyHandle)
                 .WithKeyStore(keyStore)
+                .WithRefreshMode(RefreshMode.TwoKey, apUrl.TrimEnd('/'))
                 .Build());
         }
         break;
     default: // "jwt"
-        builder.WithTokenRefresh(AgentProviderTokenRefresher.Create(refreshEndpoint, keyId)
+        builder.WithTokenRefresh(AgentProviderTokenRefresher.Create(refreshEndpoint, localKeyHandle)
             .WithKeyStore(keyStore)
             .Build());
         break;
@@ -246,8 +250,21 @@ if (upstreamToken is not null)
 
 using var client = builder.Build();
 
-var request = new HttpRequestMessage(HttpMethod.Get, url);
-Console.WriteLine($"GET {url}");
+// If the target URL has no path (or just "/"), append the signing-mode-specific
+// path so the WhoAmI sample routes to the correct verification middleware.
+var targetUrl = url;
+if (url.AbsolutePath is "/" or "")
+{
+    targetUrl = signingMode switch
+    {
+        "hwk" => new Uri(url, "/hwk"),
+        "jwks_uri" => new Uri(url, "/jwks-uri"),
+        _ => url, // jwt and jkt-jwt use the root path (three-party)
+    };
+}
+
+var request = new HttpRequestMessage(HttpMethod.Get, targetUrl);
+Console.WriteLine($"GET {targetUrl}");
 
 HttpResponseMessage response;
 try

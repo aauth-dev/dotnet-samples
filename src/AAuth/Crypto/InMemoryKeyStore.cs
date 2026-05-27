@@ -15,25 +15,25 @@ public sealed class InMemoryKeyStore : IKeyStore
     private readonly ConcurrentDictionary<string, IAAuthKey> _keys = new();
 
     /// <inheritdoc/>
-    public Task<IAAuthKey?> LoadAsync(string keyId, CancellationToken ct = default)
+    public Task<IAAuthKey?> LoadAsync(string handle, CancellationToken ct = default)
     {
-        _keys.TryGetValue(keyId, out var key);
+        _keys.TryGetValue(handle, out var key);
         return Task.FromResult(key);
     }
 
     /// <inheritdoc/>
-    public Task StoreAsync(string keyId, IAAuthKey key, CancellationToken ct = default)
+    public Task StoreAsync(string handle, IAAuthKey key, CancellationToken ct = default)
     {
-        ArgumentException.ThrowIfNullOrEmpty(keyId);
+        ArgumentException.ThrowIfNullOrEmpty(handle);
         ArgumentNullException.ThrowIfNull(key);
-        _keys[keyId] = key;
+        _keys[handle] = key;
         return Task.CompletedTask;
     }
 
     /// <inheritdoc/>
-    public Task DeleteAsync(string keyId, CancellationToken ct = default)
+    public Task DeleteAsync(string handle, CancellationToken ct = default)
     {
-        _keys.TryRemove(keyId, out _);
+        _keys.TryRemove(handle, out _);
         return Task.CompletedTask;
     }
 
