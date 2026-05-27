@@ -14,7 +14,7 @@ sequenceDiagram
     participant Resource
     participant User
     Agent->>Resource: GET /data (signed)
-    Resource-->>Agent: 202 + AAuth-Requirement: interaction;url="...";code="..."
+    Resource-->>Agent: 202 + AAuth-Requirement: interaction (url, code)
     User->>Resource: Completes interaction at resource's page
     Agent->>Resource: GET /pending/<id> (poll)
     Resource-->>Agent: 200 + AAuth-Access: <opaque-token>

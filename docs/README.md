@@ -45,6 +45,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 ## Advanced Topics
 
 - [Missions](advanced/missions.md)
+- [Interaction Chaining](advanced/interaction-chaining.md)
 - [Platform Attestation](advanced/platform-attestation.md)
 - [Key Management](advanced/key-management.md)
 - [Error Handling](advanced/error-handling.md)
