@@ -91,7 +91,7 @@ internal sealed class TokenRefreshHandler : DelegatingHandler
             var context = new TokenRefreshContext
             {
                 CurrentToken = string.Empty,
-                ApIssuer = string.Empty,
+                Issuer = string.Empty,
                 AgentId = string.Empty,
                 KeyId = _keyId,
             };
@@ -112,7 +112,7 @@ internal sealed class TokenRefreshHandler : DelegatingHandler
         return new TokenRefreshContext
         {
             CurrentToken = token,
-            ApIssuer = iss,
+            Issuer = iss,
             AgentId = sub,
             KeyId = _keyId,
         };

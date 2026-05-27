@@ -87,7 +87,7 @@ public class TokenRefreshHandlerTests
 
         await client.GetAsync("https://resource.example/api");
         Assert.NotNull(captured);
-        Assert.Equal("https://ap.example", captured!.ApIssuer);
+        Assert.Equal("https://ap.example", captured!.Issuer);
         Assert.Equal("aauth:test@example.com", captured.AgentId);
         Assert.Equal("my-kid", captured.KeyId);
         Assert.Equal(expiringToken, captured.CurrentToken);

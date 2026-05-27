@@ -80,6 +80,7 @@ Console.WriteLine($"Add to appsettings: AAuth:KeyId = {enrol.KeyId}");
 
 ```csharp
 using AAuth.Agent;
+using AAuth.Crypto;
 using AAuth.HttpSig;
 
 // Key stays in the store — loaded by reference, never extracted
@@ -92,11 +93,7 @@ var key = await keyStore.LoadAsync(keyId)
 // The SDK acquires the agent token lazily on first request
 // via WithTokenRefresh, then keeps it fresh automatically.
 using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(async (ctx, ct) =>
-    {
-        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-        return await apClient.RefreshAsync(apRefreshEndpoint, ctx.KeyId, ct);
-    })
+    .WithTokenRefresh(new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint))
     .WithChallengeHandling(personServer: "https://ps.example")
     .Build();
 ```

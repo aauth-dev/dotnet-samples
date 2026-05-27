@@ -12,8 +12,11 @@ public sealed record TokenRefreshContext
     /// <summary>The current (expiring) agent token.</summary>
     public required string CurrentToken { get; init; }
 
-    /// <summary>AP issuer URL (extracted from the token's <c>iss</c> claim).</summary>
-    public required string ApIssuer { get; init; }
+    /// <summary>
+    /// Token issuer URL (from the <c>iss</c> claim). For AP-enrolled agents this is the
+    /// Agent Provider URL; for self-issued agents this is the service's own URL.
+    /// </summary>
+    public required string Issuer { get; init; }
 
     /// <summary>Agent identifier (extracted from the token's <c>sub</c> claim).</summary>
     public required string AgentId { get; init; }

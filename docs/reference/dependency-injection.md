@@ -82,12 +82,13 @@ var keyStore = FileKeyStore.Default();
 var keyId = configuration["AAuth:KeyId"]!;
 var key = await keyStore.LoadAsync(keyId)
     ?? throw new InvalidOperationException($"Key '{keyId}' not found.");
+var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
 builder.Services.AddAAuthAgent("identity", options =>
 {
     options.Key = key;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = new ApTokenRefresher(apRefreshEndpoint, keyStore, keyId);
+    options.TokenRefresher = new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint);
 });
 ```
 
@@ -98,7 +99,7 @@ builder.Services.AddAAuthAgent("identity", options =>
 {
     options.Key = key;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = new ApTokenRefresher(apRefreshEndpoint, keyStore, keyId);
+    options.TokenRefresher = new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint);
 });
 ```
 
@@ -111,7 +112,7 @@ builder.Services.AddAAuthAgent("interactive", options =>
 {
     options.Key = key;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = new ApTokenRefresher(apRefreshEndpoint, keyStore, keyId);
+    options.TokenRefresher = new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint);
     options.InteractionHandling = true;
     options.InteractionHandlingOptions = io =>
     {
@@ -134,10 +135,10 @@ builder.Services.AddAAuthAgent("refreshing", options =>
 {
     options.Key = key;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = new AgentProviderRefresher(
-        apRefreshEndpoint: "https://ap.example/refresh",
+    options.TokenRefresher = new AgentProviderTokenRefresher(
+        http: new HttpClient(),
         keyStore: keyStore,
-        keyId: keyId);
+        refreshEndpoint: "https://ap.example/refresh");
 });
 ```
 
@@ -258,7 +259,7 @@ builder.Services.AddAAuthAgent("downstream", options =>
 {
     options.Key = agentKey;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = new ApTokenRefresher(apRefreshEndpoint, keyStore, keyId);
+    options.TokenRefresher = new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint);
 });
 
 var app = builder.Build();

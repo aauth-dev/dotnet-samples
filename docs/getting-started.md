@@ -117,6 +117,7 @@ For agents that do NOT have a stable URL (CLI tools, desktop apps, mobile apps),
 
 ```csharp
 using AAuth.Agent;
+using AAuth.Crypto;
 using AAuth.HttpSig;
 
 // Key is generated INSIDE the store — private material never leaves
@@ -141,6 +142,7 @@ Load the key by ID from the store and let the SDK manage agent tokens:
 
 ```csharp
 using AAuth.Agent;
+using AAuth.Crypto;
 using AAuth.HttpSig;
 
 var keyStore = FileKeyStore.Default();
@@ -152,11 +154,7 @@ var key = await keyStore.LoadAsync(keyId)
 // The SDK acquires the agent token lazily on first request
 // via WithTokenRefresh, then keeps it fresh automatically.
 using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(async (ctx, ct) =>
-    {
-        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-        return await apClient.RefreshAsync(apRefreshEndpoint, ctx.KeyId, ct);
-    })
+    .WithTokenRefresh(new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint))
     .WithChallengeHandling("https://ps.example")
     .Build();
 
@@ -191,11 +189,7 @@ var enrol = await apClient.EnrolAsync(
 
 ```csharp
 using var client = new AAuthClientBuilder(enrol.Key)
-    .WithTokenRefresh(async (ctx, ct) =>
-    {
-        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-        return await apClient.RefreshAsync("https://ap.example/refresh", ctx.KeyId, ct);
-    })
+    .WithTokenRefresh(new AgentProviderTokenRefresher(new HttpClient(), keyStore, "https://ap.example/refresh"))
     .WithChallengeHandling(personServer: "https://ps.example")
     .Build();
 ```

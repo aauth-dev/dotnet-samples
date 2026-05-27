@@ -26,23 +26,20 @@ sequenceDiagram
 Automatic handling with `AAuthClientBuilder`:
 
 ```csharp
+using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.HttpSig;
-using AAuth.Tokens;
 
 // Hosted service: self-issue (no AP needed)
 var key = AAuthKey.Generate();
-var issuer = "https://my-service.example";
 
 using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(async (ctx, ct) => new AgentTokenBuilder
-    {
-        Issuer = issuer,
-        Subject = "aauth:my-service@my-service.example",
-        KeyId = "svc-key-1",
-        Key = key,
-        PersonServer = "https://ps.example",
-    }.Build())
+    .WithTokenRefresh(new SelfIssuedTokenRefresher(
+        key,
+        issuer: "https://my-service.example",
+        subject: "aauth:my-service@my-service.example",
+        keyId: "svc-key-1",
+        personServer: "https://ps.example"))
     .WithChallengeHandling(personServer: "https://ps.example")
     .Build();
 
@@ -58,6 +55,7 @@ For agents without a stable URL, enrol with an Agent Provider:
 
 ```csharp
 using AAuth.Agent;
+using AAuth.Crypto;
 using AAuth.HttpSig;
 
 var keyStore = FileKeyStore.Default();
@@ -66,11 +64,7 @@ var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!)
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
 using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(async (ctx, ct) =>
-    {
-        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-        return await apClient.RefreshAsync(apRefreshEndpoint, ctx.KeyId, ct);
-    })
+    .WithTokenRefresh(new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint))
     .WithChallengeHandling(personServer: "https://ps.example")
     .Build();
 
@@ -86,6 +80,7 @@ This shows the internal handler pipeline for educational purposes. Use `WithToke
 
 ```csharp
 using AAuth.Agent;
+using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
 
@@ -120,6 +115,10 @@ var response = await client.GetAsync("https://resource.example/data");
 ## DI Registration
 
 ```csharp
+using AAuth.Agent;
+using AAuth.Crypto;
+
+var keyStore = FileKeyStore.Default();
 var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!);
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
@@ -127,22 +126,9 @@ builder.Services.AddAAuthAgent("ps-asserted", options =>
 {
     options.Key = key!;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = new ApTokenRefresher(keyStore, apRefreshEndpoint);
+    options.TokenRefresher = new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint);
 });
-
-// Sample implementation — not part of the SDK.
-// Implements AAuth.Agent.ITokenRefresher for refresh via an Agent Provider.
-class ApTokenRefresher(IKeyStore keyStore, string apRefreshEndpoint) : ITokenRefresher
-{
-    public async Task<string> RefreshAsync(TokenRefreshContext ctx, CancellationToken ct)
-    {
-        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-        return await apClient.RefreshAsync(apRefreshEndpoint, ctx.KeyId, ct);
-    }
-}
 ```
-
-`ApTokenRefresher` is an example wiring of `ITokenRefresher`; it is not shipped with the SDK. The example relies on the SDK types `IKeyStore` (in `AAuth.Crypto`), `ITokenRefresher`, `TokenRefreshContext`, and `AgentProviderClient` (in `AAuth.Agent`).
 
 This registers a named `HttpClient` with signing + automatic challenge handling. Inject via `IHttpClientFactory.CreateClient("ps-asserted")`. The `ChallengeHandler` intercepts 401 responses, exchanges the resource token at the PS, and retries transparently.
 

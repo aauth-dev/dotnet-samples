@@ -63,7 +63,9 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 |------|---------|
 | `AAuthKey` | Ed25519 key generation, JWK import/export, thumbprints |
 | `EcdsaAAuthKey` | P-256 ECDSA key (for interop scenarios) |
-| `FileKeyStore` | On-disk key persistence (`~/.aauth/keys/`) |
+| `IKeyStore` | Key storage interface (implement for custom backends) |
+| `FileKeyStore` | Built-in `IKeyStore` — on-disk persistence (`~/.aauth/keys/`) |
+| `InMemoryKeyStore` | Built-in `IKeyStore` — in-memory (testing/ephemeral) |
 | `IAAuthKey` | Key abstraction (implement for custom key backends) |
 
 ### `AAuth.HttpSig` — Signing and verification
@@ -96,10 +98,11 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `AAuthMission` / `AAuthMissionHeader` | Mission state + the `AAuth-Mission` header helpers |
 | `MissionForwardingHandler` | `DelegatingHandler` that forwards mission context downstream |
 | `AAuthCapabilitiesHeader` | Helpers for the `AAuth-Capabilities` request header |
-| `IKeyStore` / `InMemoryKeyStore` | Key persistence abstraction + in-memory implementation |
 | `IInteractionPresenter` | Surface interaction URLs to the user |
 | `IPlatformAttestor` / `NoopAttestor` | Platform attestation hook + built-in no-op implementation |
 | `ITokenRefresher` | Pluggable agent-token refresh strategy |
+| `AgentProviderTokenRefresher` | Built-in `ITokenRefresher` that refreshes via an Agent Provider |
+| `SelfIssuedTokenRefresher` | Built-in `ITokenRefresher` for hosted services that self-issue tokens |
 
 ### `AAuth.Tokens` — Token builders and verification
 

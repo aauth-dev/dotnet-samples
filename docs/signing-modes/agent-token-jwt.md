@@ -50,11 +50,7 @@ var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!);
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
 using var client = new AAuthClientBuilder(key!)
-    .WithTokenRefresh(async (ctx, ct) =>
-    {
-        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-        return await apClient.RefreshAsync(apRefreshEndpoint, ctx.KeyId, ct);
-    })
+    .WithTokenRefresh(new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint))
     .WithChallengeHandling("https://ps.example")
     .Build();
 

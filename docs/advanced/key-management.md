@@ -6,12 +6,12 @@
 
 AAuth agents need persistent signing keys. The SDK provides two built-in storage backends and an interface for custom implementations.
 
-## IKeyStore (Agent Namespace)
+## IKeyStore Interface (Crypto Namespace)
 
-Async key storage for agent workflows (enrollment, token operations):
+The `IKeyStore` interface defines async key storage for agent workflows (enrollment, token refresh). The SDK ships two built-in implementations: `InMemoryKeyStore` and `FileKeyStore`.
 
 ```csharp
-namespace AAuth.Agent;
+namespace AAuth.Crypto;
 
 public interface IKeyStore
 {
@@ -22,7 +22,7 @@ public interface IKeyStore
 }
 ```
 
-### InMemoryKeyStore
+### InMemoryKeyStore (implements IKeyStore)
 
 In-process storage for testing. Keys are lost when the process exits:
 
@@ -32,23 +32,28 @@ await keyStore.StoreAsync("my-agent-key", AAuthKey.Generate());
 var key = await keyStore.LoadAsync("my-agent-key");
 ```
 
-## FileKeyStore (Crypto Namespace)
+## FileKeyStore (implements IKeyStore, Crypto Namespace)
 
-File-based synchronous storage. Default location: `~/.aauth/keys/`
+File-based storage. Default location: `~/.aauth/keys/`
 
 ```csharp
 namespace AAuth.Crypto;
 
-public sealed class FileKeyStore
+public sealed class FileKeyStore : IKeyStore
 {
     public string Directory { get; }
 
     public FileKeyStore(string directory);
     public static FileKeyStore Default();          // ~/.aauth/keys/
+
+    // Synchronous convenience methods
     public void Save(string name, AAuthKey key);
     public AAuthKey Load(string name);
     public bool Exists(string name);
     public AAuthKey LoadOrCreate(string name);  // generates if missing
+
+    // IKeyStore async interface (explicit implementation)
+    // LoadAsync, StoreAsync, DeleteAsync, ListAsync
 }
 ```
 
@@ -85,11 +90,11 @@ Keys are stored as JWK JSON files:
 
 ## Choosing a Backend
 
-| Backend | Use Case | Thread-Safe | Async |
-|---------|----------|:-----------:|:-----:|
+| Implementation | Use Case | Thread-Safe | Async |
+|----------------|----------|:-----------:|:-----:|
 | `InMemoryKeyStore` | Unit tests, ephemeral agents | Yes | Yes |
 | `FileKeyStore` | CLI tools, dev environments | No | No |
-| Custom `IKeyStore` | Production (KMS, HSM, Vault) | You decide | Yes |
+| Custom `IKeyStore` impl | Production (KMS, HSM, Vault) | You decide | Yes |
 
 ## Custom Backend Example
 

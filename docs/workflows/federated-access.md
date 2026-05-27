@@ -25,14 +25,17 @@ sequenceDiagram
 Identical to PS-asserted — `WithChallengeHandling()` handles it transparently. The only difference is the resource token's `aud` points to the AS URL instead of the PS URL.
 
 ```csharp
+using AAuth.Agent;
+using AAuth.Crypto;
+using AAuth.HttpSig;
+
+var keyStore = FileKeyStore.Default();
+var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!)
+    ?? throw new InvalidOperationException("Key not found. Run enrollment first.");
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
 using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(async (ctx, ct) =>
-    {
-        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-        return await apClient.RefreshAsync(apRefreshEndpoint, ctx.KeyId, ct);
-    })
+    .WithTokenRefresh(new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint))
     .WithChallengeHandling(personServer: "https://ps.example")
     .Build();
 
@@ -44,6 +47,10 @@ var response = await client.GetAsync("https://resource.example/data");
 Identical to PS-asserted — the federation is transparent to the agent:
 
 ```csharp
+using AAuth.Agent;
+using AAuth.Crypto;
+
+var keyStore = FileKeyStore.Default();
 var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!);
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
@@ -51,22 +58,11 @@ builder.Services.AddAAuthAgent("federated", options =>
 {
     options.Key = key!;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = new ApTokenRefresher(keyStore, apRefreshEndpoint);
+    options.TokenRefresher = new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint);
 });
-
-// Sample implementation — not part of the SDK.
-// Implements AAuth.Agent.ITokenRefresher for refresh via an Agent Provider.
-class ApTokenRefresher(IKeyStore keyStore, string apRefreshEndpoint) : ITokenRefresher
-{
-    public async Task<string> RefreshAsync(TokenRefreshContext ctx, CancellationToken ct)
-    {
-        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-        return await apClient.RefreshAsync(apRefreshEndpoint, ctx.KeyId, ct);
-    }
-}
 ```
 
-The example uses these SDK types: `IKeyStore` (in `AAuth.Crypto`), `ITokenRefresher` / `TokenRefreshContext` (in `AAuth.Agent`), and `AgentProviderClient` (in `AAuth.Agent`). `ApTokenRefresher` itself is illustrative only — implement your own `ITokenRefresher` for production refresh strategies.
+See [Dependency Injection](../reference/dependency-injection.md) for full reference.
 
 ## Key Difference from PS-Asserted
 
