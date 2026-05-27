@@ -40,6 +40,8 @@ var key = AAuthKey.Generate();
 
 // The jwks_uri comes from the AP's enrollment response — it points
 // to the per-agent JWKS endpoint where the AP publishes this agent's key.
+// "my-key-1" is the AP-published kid (EnrollResult.AgentTokenKid).
+// The AP chooses this value — there is no valid fallback if the AP didn't provide it.
 using var client = new AAuthClientBuilder(key)
     .UseJwksUri("https://ap.example/agents/aauth:myapp@ap.example/jwks.json", "my-key-1")
     .Build();

@@ -25,6 +25,7 @@ public sealed class TourSession : IAsyncDisposable
     private readonly TourAgentIdentity _selfIdentity;
 
     private AAuthKey? _agentKey;
+    private AAuthKey? _ephemeralKey;
     private string? _agentToken;
     private string? _assignedKeyId;
     private string? _agentJwksUri;
@@ -113,6 +114,7 @@ public sealed class TourSession : IAsyncDisposable
     private string EffectiveResourceUrl => EffectiveSigningMode switch
     {
         SigningMode.Hwk => $"{_options.WhoAmIUrl.TrimEnd('/')}/hwk",
+        SigningMode.JktJwt => $"{_options.WhoAmIUrl.TrimEnd('/')}/jkt-jwt",
         SigningMode.JwksUri => $"{_options.WhoAmIUrl.TrimEnd('/')}/jwks-uri",
         _ => _options.WhoAmIUrl,
     };
@@ -288,6 +290,7 @@ public sealed class TourSession : IAsyncDisposable
     {
         ResetTimeline();
         _agentKey = null;
+        _ephemeralKey = null;
         _agentToken = null;
         _assignedKeyId = null;
         _agentJwksUri = null;
@@ -342,13 +345,24 @@ public sealed class TourSession : IAsyncDisposable
                 builder.UseHwk();
                 break;
             case SigningMode.JwksUri:
+                // Spec: In AP-enrolled flows, _assignedKeyId is the AP's published kid (opaque).
+                // In self-hosted flows (this tour), the server's own kid is used as fallback.
                 builder.UseJwksUri(
                     _agentJwksUri ?? $"{_selfIdentity.Issuer.TrimEnd('/')}/.well-known/jwks.json",
                     _assignedKeyId ?? _selfIdentity.KeyId);
                 break;
             case SigningMode.JktJwt:
-                builder.UseJktJwt(tokenFactory);
-                break;
+                // jkt-jwt: ephemeral key signs the HTTP request; durable key signs the naming JWT.
+                _ephemeralKey ??= AAuthKey.Generate();
+                var apIssuer = _options.AgentProviderUrl!.TrimEnd('/');
+                var durableThumbprint = _agentKey!.ComputeJwkThumbprint();
+                builder = new AAuthClientBuilder(_ephemeralKey)
+                    .WithInnerHandler(inner);
+                if (onSignatureBase is not null)
+                    builder.OnSignatureBase(onSignatureBase);
+                builder.UseJktJwt(() => NamingJwtBuilder.Build(
+                    _agentKey!, _ephemeralKey, apIssuer, durableThumbprint));
+                return builder.BuildHandler();
             default:
                 builder.WithTokenRefresh(async (ctx, ct) => tokenFactory());
                 break;
@@ -817,6 +831,13 @@ public sealed class TourSession : IAsyncDisposable
                     "fetches the agent's public key from that URI and learns the agent's " +
                     "full cryptographic identity. Use for: access control by agent identity, " +
                     "replacing API keys.",
+                SigningMode.JktJwt =>
+                    "The agent signs the request per RFC 9421. The Signature-Key header " +
+                    "carries `sig=jkt-jwt` with a naming JWT and the durable key's JWK " +
+                    "thumbprint. The naming JWT (signed by the durable key) binds the " +
+                    "current ephemeral signing key via `cnf.jwk`. The resource verifies " +
+                    "the HTTP signature against the ephemeral key — enabling key rotation " +
+                    "without re-enrolment.",
                 _ =>
                     "The agent signs the request per RFC 9421. The Signature-Key header " +
                     "carries `sig=jwt` with the full agent token inline. The resource " +
@@ -835,6 +856,7 @@ public sealed class TourSession : IAsyncDisposable
             {
                 SigningMode.Hwk => CodeSnippets.SignedGetHwk,
                 SigningMode.JwksUri => CodeSnippets.SignedGetJwksUri,
+                SigningMode.JktJwt => CodeSnippets.SignedGetJktJwt,
                 _ => CodeSnippets.SignedGetJwt,
             },
         });

@@ -44,6 +44,26 @@ public sealed class AAuthClientBuilder
         return new BootstrapBuilder(enrollEndpoint, agentId);
     }
 
+    /// <summary>
+    /// Create a builder pre-configured from an <see cref="EnrollResult"/>.
+    /// If the enrollment includes a <c>JwksUri</c> and <c>AgentTokenKid</c>,
+    /// the builder is configured for <c>jwks_uri</c> signing mode.
+    /// Callers may chain additional methods (e.g. <see cref="WithTokenRefresh"/>
+    /// for JWT mode, <see cref="WithChallengeHandling(string)"/>) which will
+    /// override the default signing mode.
+    /// </summary>
+    /// <param name="result">The enrollment result from <see cref="AgentProviderClient.EnrolAsync"/>.</param>
+    public static AAuthClientBuilder From(EnrollResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        var builder = new AAuthClientBuilder(result.Key);
+        if (result.JwksUri is not null && result.AgentTokenKid is not null)
+        {
+            builder.UseJwksUri(result.JwksUri, result.AgentTokenKid);
+        }
+        return builder;
+    }
+
     // Challenge handling state
     private bool _challengeHandling;
     private string? _personServer;

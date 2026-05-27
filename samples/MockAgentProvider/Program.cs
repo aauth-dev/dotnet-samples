@@ -6,6 +6,7 @@ using AAuth.Tokens;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
+using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
@@ -143,16 +144,18 @@ app.MapPost("/enrol", async (HttpContext ctx) =>
 });
 
 // ── POST /refresh — refresh an agent token ──────────────────────────────────
-// Per spec: the refresh request is HTTP-signed with the durable key (hwk scheme).
-// The AP verifies the signature and identifies the agent by key thumbprint.
+// Per spec: supports both single-key (hwk) and two-key (jkt-jwt) refresh.
+// - hwk: AP verifies signature against durable key, looks up agent by thumbprint.
+// - jkt-jwt: AP verifies naming JWT (signed by durable key), verifies HTTP sig
+//   against ephemeral key, issues token with ephemeral key as cnf.jwk.
 app.MapPost("/refresh", (HttpContext ctx) =>
 {
-    // Extract Signature-Key header — agent must sign with hwk scheme
+    // Extract Signature-Key header — agent must sign the refresh request
     var signatureKeyHeader = ctx.Request.Headers["Signature-Key"].FirstOrDefault();
     if (string.IsNullOrEmpty(signatureKeyHeader))
         return Results.Json(new JsonObject { ["error"] = "invalid_request", ["error_description"] = "Missing Signature-Key header — refresh must be signed" }, statusCode: 401);
 
-    // Parse the hwk scheme to get the agent's public key
+    // Parse the scheme
     AAuth.HttpSig.SignatureKeyParser.ParsedSignatureKeyInfo parsedKey;
     try
     {
@@ -163,8 +166,8 @@ app.MapPost("/refresh", (HttpContext ctx) =>
         return Results.Json(new JsonObject { ["error"] = "invalid_request", ["error_description"] = "Cannot parse Signature-Key header" }, statusCode: 400);
     }
 
-    if (parsedKey.Scheme != "hwk" || parsedKey.ConfirmationKey is null)
-        return Results.Json(new JsonObject { ["error"] = "invalid_request", ["error_description"] = "Refresh requires hwk scheme with inline key" }, statusCode: 400);
+    if (parsedKey.Scheme is not ("hwk" or "jkt-jwt"))
+        return Results.Json(new JsonObject { ["error"] = "invalid_request", ["error_description"] = "Refresh requires hwk or jkt-jwt scheme" }, statusCode: 400);
 
     // Verify the HTTP signature
     var sigInput = ctx.Request.Headers["Signature-Input"].FirstOrDefault();
@@ -172,6 +175,58 @@ app.MapPost("/refresh", (HttpContext ctx) =>
     if (string.IsNullOrEmpty(sigInput) || string.IsNullOrEmpty(sigHeader))
         return Results.Json(new JsonObject { ["error"] = "invalid_signature", ["error_description"] = "Missing signature headers" }, statusCode: 401);
 
+    // Determine the signing key and the durable key for enrollment lookup
+    IAAuthKey signingKey;
+    AAuthKey? ephemeralKey = null;
+    AgentRecord? record;
+
+    if (parsedKey.Scheme == "hwk")
+    {
+        // Single-key: the signing key IS the durable key
+        if (parsedKey.ConfirmationKey is null)
+            return Results.Json(new JsonObject { ["error"] = "invalid_request", ["error_description"] = "hwk scheme missing inline key" }, statusCode: 400);
+        signingKey = parsedKey.ConfirmationKey;
+
+        var thumbprint = signingKey.ComputeJwkThumbprint();
+        record = agents.Values.FirstOrDefault(a => a.PublicKey.ComputeJwkThumbprint() == thumbprint);
+    }
+    else // jkt-jwt
+    {
+        // Two-key: naming JWT is signed by durable key, HTTP sig by ephemeral key
+        if (parsedKey.ConfirmationKey is null || parsedKey.Jwt is null || parsedKey.Header is null)
+            return Results.Json(new JsonObject { ["error"] = "invalid_request", ["error_description"] = "jkt-jwt scheme missing required fields" }, statusCode: 400);
+
+        // The ephemeral key (from cnf.jwk in naming JWT) is what signed the HTTP request
+        signingKey = parsedKey.ConfirmationKey;
+        ephemeralKey = signingKey as AAuthKey ?? AAuthKey.FromJwk(parsedKey.Payload!["cnf"]!["jwk"]!.AsObject());
+
+        // Look up agent by durable key thumbprint from naming JWT's kid header
+        var durableKid = (string?)parsedKey.Header["kid"];
+        if (string.IsNullOrEmpty(durableKid))
+            return Results.Json(new JsonObject { ["error"] = "invalid_request", ["error_description"] = "Naming JWT header missing kid" }, statusCode: 400);
+
+        // The kid in the naming JWT is the durable key's thumbprint
+        record = agents.Values.FirstOrDefault(a => a.PublicKey.ComputeJwkThumbprint() == durableKid);
+        if (record is null)
+            return Results.Json(new JsonObject { ["error"] = "invalid_grant", ["error_description"] = "No enrolled agent matches durable key thumbprint in naming JWT kid" }, statusCode: 400);
+
+        // Verify the naming JWT signature against the enrolled durable key
+        var namingJwtParts = parsedKey.Jwt.Split('.');
+        if (namingJwtParts.Length != 3)
+            return Results.Json(new JsonObject { ["error"] = "invalid_request", ["error_description"] = "Naming JWT is not a valid compact JWS" }, statusCode: 400);
+
+        var signingInputBytes = System.Text.Encoding.ASCII.GetBytes(namingJwtParts[0] + "." + namingJwtParts[1]);
+        var namingSig = Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(namingJwtParts[2]);
+        if (!record.PublicKey.Verify(signingInputBytes, namingSig))
+            return Results.Json(new JsonObject { ["error"] = "invalid_signature", ["error_description"] = "Naming JWT signature verification failed against enrolled durable key" }, statusCode: 401);
+
+        // Validate naming JWT expiration
+        var exp = (long?)parsedKey.Payload?["exp"];
+        if (exp is null || DateTimeOffset.UtcNow.ToUnixTimeSeconds() > exp.Value)
+            return Results.Json(new JsonObject { ["error"] = "invalid_grant", ["error_description"] = "Naming JWT has expired" }, statusCode: 401);
+    }
+
+    // Verify the HTTP message signature
     var verifier = new AAuth.HttpSig.AAuthVerifier { MaxAge = TimeSpan.FromSeconds(120) };
     try
     {
@@ -182,22 +237,36 @@ app.MapPost("/refresh", (HttpContext ctx) =>
             signatureKeyHeader,
             sigInput,
             sigHeader,
-            parsedKey.ConfirmationKey);
+            signingKey);
     }
     catch (AAuth.HttpSig.AAuthVerificationException ex)
     {
         return Results.Json(new JsonObject { ["error"] = "invalid_signature", ["error_description"] = ex.Message }, statusCode: 401);
     }
 
-    // Look up agent by key thumbprint
-    var thumbprint = parsedKey.ConfirmationKey.ComputeJwkThumbprint();
-    var record = agents.Values.FirstOrDefault(a => a.PublicKey.ComputeJwkThumbprint() == thumbprint);
+    if (record is null)
+    {
+        // For hwk: look up was done above but might be null
+        var thumbprint = signingKey.ComputeJwkThumbprint();
+        record = agents.Values.FirstOrDefault(a => a.PublicKey.ComputeJwkThumbprint() == thumbprint);
+    }
     if (record is null)
         return Results.Json(new JsonObject { ["error"] = "invalid_grant", ["error_description"] = "No enrolled agent matches this key" }, statusCode: 400);
 
-    // Issue fresh token
-    var newToken = IssueAgentToken(record);
-    Console.WriteLine($"[REFRESH] {record.AgentId} (verified by key thumbprint)");
+    // Issue fresh token — for two-key refresh, use the ephemeral key as cnf.jwk
+    string newToken;
+    if (ephemeralKey is not null)
+    {
+        // Two-key: agent token's cnf.jwk is the NEW ephemeral key
+        var twoKeyRecord = record with { PublicKey = ephemeralKey };
+        newToken = IssueAgentToken(twoKeyRecord);
+        Console.WriteLine($"[REFRESH] {record.AgentId} (two-key: verified durable key, new ephemeral key)");
+    }
+    else
+    {
+        newToken = IssueAgentToken(record);
+        Console.WriteLine($"[REFRESH] {record.AgentId} (single-key: verified by key thumbprint)");
+    }
 
     return Results.Json(new JsonObject
     {

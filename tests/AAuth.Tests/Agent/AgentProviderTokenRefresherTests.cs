@@ -34,7 +34,7 @@ public class AgentProviderTokenRefresherTests
     }
 
     [Fact]
-    public void Constructor_ThrowsOnEmptyEnrolledKeyId()
+    public void Constructor_ThrowsOnEmptyLocalKeyHandle()
     {
         var keyStore = new InMemoryKeyStore();
         Assert.Throws<ArgumentException>(() =>

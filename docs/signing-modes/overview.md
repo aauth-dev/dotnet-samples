@@ -29,6 +29,7 @@ using AAuth.HttpSig;
 var key = AAuthKey.Generate();
 
 // Builder API (recommended)
+// For jwks_uri: kid = AP-published JWKS kid (AgentTokenKid) or self-chosen kid for self-hosted
 using var client = mode switch
 {
     "hwk"      => new AAuthClientBuilder(key).UseHwk().Build(),

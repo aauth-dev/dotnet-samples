@@ -46,7 +46,7 @@ using AAuth.Crypto;
 using AAuth.HttpSig;
 
 var keyStore = FileKeyStore.Default();
-var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!);
+var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!);
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
 using var client = new AAuthClientBuilder(key!)

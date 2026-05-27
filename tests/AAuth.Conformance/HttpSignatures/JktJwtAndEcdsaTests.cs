@@ -328,8 +328,8 @@ public class JktJwtAndEcdsaTests
         metadataHost.Dispose();
     }
 
-    [Fact(DisplayName = "§jkt-jwt — expired naming JWT rejected")]
-    public async Task JktJwtExpiredNamingJwtRejected()
+    [Fact(DisplayName = "§jkt-jwt — resolver returns key even when naming JWT is expired (exp enforced by middleware)")]
+    public async Task JktJwtExpiredNamingJwt_ResolverStillReturnsKey()
     {
         var durableKey = AAuthKey.Generate();
         var ephemeralKey = AAuthKey.Generate();
@@ -346,9 +346,9 @@ public class JktJwtAndEcdsaTests
         var signatureKeyHeader = $"sig=jkt-jwt;jkt=\"{jkt}\";jwt=\"{namingJwt}\"";
         var info = SignatureKeyParser.ParseAny(signatureKeyHeader);
 
-        var ex = await Assert.ThrowsAsync<AAuthVerificationException>(() =>
-            resolver.ResolveAsync(info));
-        Assert.Contains("expired", ex.Message);
+        // Resolver should succeed — exp is validated by the middleware, not here.
+        var resolution = await resolver.ResolveAsync(info);
+        Assert.NotNull(resolution.PublicKey);
 
         await metadataHost.StopAsync();
         metadataHost.Dispose();

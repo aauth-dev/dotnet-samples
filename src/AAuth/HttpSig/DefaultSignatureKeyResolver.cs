@@ -117,15 +117,8 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
             throw new AAuthVerificationException(
                 "Signature-Key jkt-jwt scheme: naming JWT 'iss' must be an absolute https:// URL (or http://localhost).");
 
-        // Validate expiration — an expired naming JWT must not be trusted.
-        var expNode = info.Payload["exp"];
-        if (expNode is not null)
-        {
-            var exp = DateTimeOffset.FromUnixTimeSeconds(expNode.GetValue<long>());
-            if (exp < DateTimeOffset.UtcNow)
-                throw new AAuthVerificationException(
-                    "Signature-Key jkt-jwt scheme: naming JWT has expired.");
-        }
+        // Note: expiration is validated by the middleware (clock-skew-aware),
+        // not here in the resolver. The resolver's job is key resolution only.
 
         var kid = (string?)info.Header["kid"];
         if (string.IsNullOrEmpty(kid))
