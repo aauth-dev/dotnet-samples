@@ -27,6 +27,7 @@ builder.Services.AddSingleton(new AAuthVerifier
     MaxAge = TimeSpan.FromSeconds(signatureWindowSeconds),
 });
 builder.Services.AddSingleton(new TokenVerifier());
+builder.Services.AddSingleton<IJtiStore, InMemoryJtiStore>();
 builder.Services.AddSingleton<MetadataClient>(sp =>
     new MetadataClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-metadata")));
 builder.Services.AddSingleton<JwksClient>(sp =>

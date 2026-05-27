@@ -157,6 +157,24 @@ public sealed class AAuthVerificationMiddleware
             }
         }
 
+        // Naming JWT expiration check: for jkt-jwt scheme, reject expired naming JWTs
+        // regardless of RequireIssuerVerification. The naming JWT has a short lifetime
+        // (typically 5 min) to limit the window of delegation from the durable key.
+        if (parsedInfo.Scheme == "jkt-jwt" &&
+            parsedInfo.Payload?["exp"] is JsonNode expClaim)
+        {
+            var now = (_options.Clock ?? (() => DateTimeOffset.UtcNow))();
+            var expTime = DateTimeOffset.FromUnixTimeSeconds(expClaim.GetValue<long>());
+            if (now > expTime + _options.ClockSkew)
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                context.Response.Headers[SignatureError.HeaderName] =
+                    SignatureError.Format(SignatureErrorCode.InvalidJwt);
+                context.Response.Headers["AAuth-Error"] = "Naming JWT has expired.";
+                return;
+            }
+        }
+
         // Step 4-6: JWT issuer verification (for jwt and jkt-jwt schemes with carrier tokens).
         if (_options.RequireIssuerVerification &&
             parsedInfo.Scheme is "jwt" or "jkt-jwt" &&

@@ -236,11 +236,105 @@ The MockAgentProvider's `/refresh` endpoint currently only accepts `scheme=hwk`.
 - [x] `dotnet test` passes
 - [x] AgentConsole `--signing-mode jkt-jwt` returns 200 against mock servers
 
+## Phase 7 — jkt-jwt resource endpoint and sample routing
+
+> **Added 2026-05-27.** Spec review revealed jkt-jwt is pseudonymous (2-party) like hwk, not three-party like jwt. All samples incorrectly routed jkt-jwt to the three-party `GET /` endpoint which requires issuer verification — failing with 401 because naming JWTs are not agent tokens. Additionally, GuidedTour was passing the agent token (not the naming JWT) to `UseJktJwt()`.
+
+### 7a. Dedicated `/jkt-jwt` endpoint on WhoAmI
+
+| File | Change |
+|------|--------|
+| `samples/WhoAmI/Program.cs` | Add `UseWhen` middleware branch for `/jkt-jwt` with `RequireIssuerVerification = false` (same pattern as `/hwk`) |
+| `samples/WhoAmI/Program.cs` | Add `app.MapGet("/jkt-jwt", ...)` endpoint returning `{ mode, scheme, jkt, note }` |
+| `samples/WhoAmI/Program.cs` | Exclude `/jkt-jwt` from three-party catch-all middleware (alongside `/hwk`) |
+
+### 7b. Fix sample routing — all samples target `/jkt-jwt`
+
+| File | Change |
+|------|--------|
+| `samples/AgentConsole/Program.cs` | Route jkt-jwt to `/jkt-jwt` in the target-URL path switch |
+| `samples/GuidedTour/TourSession.cs` | `EffectiveResourceUrl` for `SigningMode.JktJwt` → append `/jkt-jwt` |
+| `samples/SampleApp/Components/Pages/JktJwt.razor` | Send request to `resourceUrl + "/jkt-jwt"` |
+
+### 7c. Fix GuidedTour naming JWT construction
+
+| File | Change |
+|------|--------|
+| `samples/GuidedTour/TourSession.cs` | Add `_ephemeralKey` field; in `BuildSigningHandler` JktJwt case: generate ephemeral key, build naming JWT via `NamingJwtBuilder.Build(agentKey, ephemeralKey, apIssuer, durableThumbprint)`, use `AAuthClientBuilder(ephemeralKey).UseJktJwt(() => namingJwt)` |
+| `samples/GuidedTour/TourSession.cs` | Clear `_ephemeralKey` in `Reset()` |
+
+### 7d. SampleApp JktJwt page
+
+| File | Change |
+|------|--------|
+| `samples/SampleApp/Components/Pages/JktJwt.razor` | **New file.** Blazor page demonstrating 3-step jkt-jwt flow (Enrol → TwoKeyRefresh → SendRequest). Content separates "Setup (agent ↔ AP)" from "Resource access (2-party, no AP)". |
+| `samples/SampleApp/Components/Layout/NavMenu.razor` | Add jkt-jwt nav link |
+| `samples/SampleApp/Components/Layout/NavMenu.razor.css` | Add `.bi-arrow-repeat-nav-menu` CSS class |
+| `samples/SampleApp/Components/Pages/Home.razor` | Add jkt-jwt card (badge: 2-party, sig=jkt-jwt, two-key) |
+
+### 7e. Fix AgentConsole `--ps` validation
+
+| File | Change |
+|------|--------|
+| `samples/AgentConsole/Program.cs` | Remove jkt-jwt from PS-required check. Only `jwt` mode requires `--ps`. Update error messages to list jkt-jwt as a pseudonymous mode alongside hwk/jwks_uri. |
+
+### Definition of Done
+
+- [x] WhoAmI has dedicated `/jkt-jwt` endpoint with `RequireIssuerVerification = false`
+- [x] `/jkt-jwt` excluded from three-party catch-all middleware
+- [x] AgentConsole routes jkt-jwt to `/jkt-jwt`
+- [x] GuidedTour routes jkt-jwt to `/jkt-jwt`
+- [x] GuidedTour generates ephemeral key and proper naming JWT in `BuildSigningHandler`
+- [x] SampleApp `JktJwt.razor` page created with 3-step flow
+- [x] SampleApp NavMenu, Home page, and CSS wired
+- [x] JktJwt.razor content correctly separates AP setup from 2-party resource access
+- [x] AgentConsole `--ps` validation fixed (only `jwt` requires PS)
+- [x] `dotnet build` passes (0 errors, 0 warnings)
+- [x] `dotnet test` passes (571 tests, 0 failures)
+- [x] AgentConsole `--signing-mode jkt-jwt` returns 200 against mock servers (smoke tested)
+
+## Phase 8 — Naming JWT security hardening
+
+> **Added 2026-05-27.** Implements two items previously out of scope: naming JWT `exp` validation and `jti` replay detection at the resource.
+
+### 8a. Naming JWT expiration validation (middleware)
+
+| File | Change |
+|------|--------|
+| `src/AAuth/Server/AAuthVerificationMiddleware.cs` | After replay detection block, add `exp` validation for `jkt-jwt` scheme: parse `exp` claim, compare against `_options.Clock` + `_options.ClockSkew`, return 401 with `SignatureError.InvalidJwt` if expired |
+| `src/AAuth/HttpSig/DefaultSignatureKeyResolver.cs` | Remove the resolver-level `exp` check (was using `DateTimeOffset.UtcNow`, not clock-aware). Add comment noting exp is validated by the middleware |
+
+### 8b. jti replay detection for naming JWTs (WhoAmI sample)
+
+| File | Change |
+|------|--------|
+| `samples/WhoAmI/Program.cs` | Register `InMemoryJtiStore` singleton after `TokenVerifier` — enables the existing middleware jti replay detection for all endpoints |
+
+### 8c. Tests
+
+| File | Change |
+|------|--------|
+| `tests/AAuth.Conformance/HttpSignatures/NamingJwtValidationTests.cs` | **New file.** Five tests: valid exp succeeds, expired exp returns 401, expired-within-clock-skew succeeds, duplicate jti rejected, different jti values both succeed |
+| `tests/AAuth.Conformance/HttpSignatures/JktJwtAndEcdsaTests.cs` | Update `JktJwtExpiredNamingJwtRejected` → `JktJwtExpiredNamingJwt_ResolverStillReturnsKey` (resolver no longer throws on expired JWT — middleware handles it) |
+
+### Definition of Done
+
+- [x] Middleware validates naming JWT `exp` with clock-skew support
+- [x] Resolver no longer checks `exp` (avoids `DateTimeOffset.UtcNow` in non-clock-aware code)
+- [x] WhoAmI registers `InMemoryJtiStore` for replay detection
+- [x] `NamingJwtValidationTests.cs` — 5 tests passing
+- [x] `JktJwtAndEcdsaTests.cs` — updated test passes (resolver returns key even for expired JWT)
+- [x] `dotnet build` passes (0 errors, 0 warnings)
+- [x] `dotnet test` passes (576 tests, 0 failures)
+
 ## Validation
 
-* `dotnet build` and `dotnet test` from the repo root.
+* `dotnet build` and `dotnet test` from the repo root (576 tests, 0 failures).
 * Visual review of bootstrap-enrollment.md.
 * All four AgentConsole signing modes (`hwk`, `jwks_uri`, `jwt`, `jkt-jwt`) return 200 against mock servers.
+* jkt-jwt works without `--ps` (pseudonymous 2-party access, no Person Server required).
+* Naming JWT exp validation rejects expired tokens, accepts within clock skew.
+* jti replay detection rejects duplicate naming JWTs.
 
 ## Commit / PR shape
 
@@ -251,6 +345,9 @@ Single PR (alpha repo, all changes are coupled):
 3. Sample updates.
 4. Documentation updates.
 5. Review fix-ups (kid bug, variable naming, doc gaps).
+6. SDK improvements (IKeyStore rename, two-key refresh, convenience API).
+7. jkt-jwt resource endpoint + sample routing + PS validation fix.
+8. Naming JWT security hardening (exp validation + jti replay detection + tests).
 
 PR title: "Rename EnrolledKeyId → LocalKeyHandle; clarify AP enrollment key identifiers"
 
@@ -259,3 +356,4 @@ PR title: "Rename EnrolledKeyId → LocalKeyHandle; clarify AP enrollment key id
 | Item | Reason |
 |------|--------|
 | AP-side identifier policy in MockAgentProvider | Already does correct thumbprint-based lookup at refresh — no change needed |
+| Stale naming JWT refresh in long-running agents | AgentConsole is a single-request demo; long-lived agents need periodic ephemeral key + naming JWT rotation. Documented as TODO in code. |

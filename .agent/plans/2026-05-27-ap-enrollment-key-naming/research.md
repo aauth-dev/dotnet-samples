@@ -111,7 +111,9 @@ Docs:
 
 ## Out of scope
 
-* Two-key (`jkt-jwt`) refresh: the SDK only implements single-key (`hwk`) refresh today; renaming is orthogonal to that work.
+> **Update (2026-05-27):** Two-key (`jkt-jwt`) refresh was pulled into scope as Phase 6c–6e. Resource-side jkt-jwt endpoint and sample routing were added as Phase 7.
+
+* ~~Two-key (`jkt-jwt`) refresh: the SDK only implements single-key (`hwk`) refresh today; renaming is orthogonal to that work.~~ → **Done in Phase 6.**
 * AP-side identifier policy in the MockAgentProvider (it already does the correct thumbprint-based lookup at refresh).
 
 ---
@@ -248,6 +250,69 @@ samples/SampleApp/appsettings.json — may contain AAuth section
 ### Finding 11: Research claims "collapse the two `RefreshAsync` overloads" but the implementation is clean
 
 The research noted the `currentAgentToken` parameter was unused. The implementation correctly removed it and collapsed to one overload. This is **good** — spec-aligned because the spec says the request body is empty and identification is by signature alone.
+
+---
+
+## jkt-jwt Spec Classification and Resource Access Model
+
+> **Update (2026-05-27):** Discovered during Phase 7 (WhoAmI endpoint + sample routing fixes) that the jkt-jwt signing mode was being incorrectly treated as three-party by the samples.
+
+### Key Finding: jkt-jwt is pseudonymous, not three-party
+
+Source: `aauth-spec/draft-hardt-oauth-aauth-protocol.md`, line 2076:
+
+> "For pseudonym: the agent uses scheme=hwk (inline public key) or scheme=jkt-jwt (delegation from a hardware-backed key)."
+
+**jkt-jwt and hwk belong to the same category**: pseudonymous keying material schemes. They are **2-party** at resource access time — the resource verifies the HTTP signature directly without contacting the AP.
+
+| Scheme | Category | Parties at resource access | AP role |
+|--------|----------|---------------------------|---------|
+| `jwt` | Three-party | Agent ↔ AP ↔ Resource | AP issues agent token; resource verifies via AP JWKS |
+| `jwks_uri` | Identity-based | Agent ↔ Resource (AP publishes JWKS) | AP publishes per-agent JWKS; resource fetches it |
+| `hwk` | Pseudonymous | Agent ↔ Resource (2-party) | None at resource access time |
+| `jkt-jwt` | Pseudonymous | Agent ↔ Resource (2-party) | None at resource access time |
+
+### How jkt-jwt resource access works (2-party)
+
+1. Agent generates an ephemeral key pair.
+2. Agent signs a naming JWT with the durable key, embedding the ephemeral public key as `cnf.jwk`.
+3. Agent signs the HTTP request with the ephemeral key.
+4. Agent attaches `Signature-Key: sig=jkt-jwt;jkt="<ephemeral-thumbprint>";jwt="<naming-jwt>"` to the request.
+5. Resource verifies the HTTP signature against the ephemeral key (extracted from `cnf.jwk` in the naming JWT). No AP contact needed.
+6. Resource identifies the agent by the durable key's JWK thumbprint (from the naming JWT's `kid` header).
+
+### How jkt-jwt differs from hwk
+
+- **hwk**: single key signs HTTP requests; resource identifies agent by that key's thumbprint.
+- **jkt-jwt**: two keys — durable key (long-lived, hardware-backed) delegates to ephemeral key (short-lived). Resource still identifies agent by the durable key's thumbprint, but the actual HTTP signature is made by the ephemeral key. This allows hardware keys that can't do per-request signing to delegate to a software ephemeral key.
+
+### Where AP *is* involved for jkt-jwt
+
+The AP is involved only during **enrollment and refresh** (bootstrap phase), not during resource access:
+- **Enrollment**: Agent enrols its durable public key with the AP (same as all modes).
+- **Two-key refresh**: Agent signs the refresh request with the ephemeral key under `jkt-jwt` scheme. AP verifies the naming JWT signature against the enrolled durable key, then issues a fresh agent token.
+
+### Why this matters for WhoAmI routing
+
+The original WhoAmI `GET /` endpoint used `AAuthVerificationMiddleware` which performs **issuer verification** — it contacts the AP to verify the agent token. This is correct for `jwt` mode (three-party) but wrong for `jkt-jwt`:
+- jkt-jwt has no agent token at resource access time.
+- The `Signature-Key` header contains `typ=naming+jwt` (not `aa-agent+jwt`), which the issuer-verifying middleware rejects.
+
+**Solution**: Dedicated `/jkt-jwt` endpoint with `RequireIssuerVerification = false` — same pattern as the existing `/hwk` endpoint for pseudonymous access.
+
+### AgentConsole `--ps` validation was wrong
+
+The original code (prior to fix):
+```csharp
+if (personServer is null && signingMode is "jwt" or "jkt-jwt")
+{
+    Console.Error.WriteLine("Agent Token mode (jwt/jkt-jwt) requires a Person Server (--ps).");
+}
+```
+
+This incorrectly grouped `jkt-jwt` with `jwt` as requiring a Person Server. Per the spec, jkt-jwt is pseudonymous — it doesn't need PS for resource access. The PS is only needed for three-party `jwt` mode where the AP delegates consent decisions to the Person Server.
+
+**Fix**: Only `jwt` mode requires `--ps`. The `jkt-jwt` mode works without PS (same as `hwk`).
 
 ---
 
