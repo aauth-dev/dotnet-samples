@@ -11,7 +11,7 @@ AAuth is a protocol for autonomous agent authorization. This page maps protocol 
 | **Person Server (PS)** | Represents the user. Manages consent, federates to AS. | `TokenExchangeClient`, `ServerMetadata` |
 | **Access Server (AS)** | Issues auth tokens. Enforces resource access policy. | `AuthTokenBuilder` |
 
-> **Agent Provider (AP)** is a supporting role — it issues agent tokens binding keys to identities (`AgentProviderClient`) but is not one of the four protocol participants.
+> **Agent Provider (AP)** is a supporting role — it issues agent tokens binding keys to identities (`AgentProviderClient`) but is not one of the four protocol participants. The AP and the agent never share a keystore: the agent holds the **private** durable key locally in its own `IKeyStore`; the AP holds only the **public** key, indexed by JWK thumbprint. At refresh time the AP identifies the agent from the HTTP signature, not from any string the agent sends. See [Bootstrap & Enrollment](workflows/bootstrap-enrollment.md#key-identifiers-what-goes-where) for the three identifiers in play.
 
 ## Three Layers
 

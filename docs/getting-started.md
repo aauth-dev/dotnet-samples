@@ -131,14 +131,14 @@ var enrol = await AAuthClientBuilder
     .WithKeyStore(keyStore)
     .EnrolAsync();
 
-// Only the key ID needs to be recorded in app config
-// (the key itself is already in the keystore)
-Console.WriteLine($"Enrolled. Add to config: AAuth:KeyId = {enrol.EnrolledKeyId}");
+// Only the local key handle needs to be recorded in app config
+// (the key itself is already in the keystore; defaults to the JWK thumbprint)
+Console.WriteLine($"Enrolled. Add to config: AAuth:LocalKeyHandle = {enrol.LocalKeyHandle}");
 ```
 
 ### Application (every startup)
 
-Load the key by ID from the store and let the SDK manage agent tokens:
+Load the key by handle from the store and let the SDK manage agent tokens:
 
 ```csharp
 using AAuth.Agent;
@@ -146,15 +146,15 @@ using AAuth.Crypto;
 using AAuth.HttpSig;
 
 var keyStore = FileKeyStore.Default();
-var keyId = configuration["AAuth:KeyId"]!;
+var localKeyHandle = configuration["AAuth:LocalKeyHandle"]!;
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
-var key = await keyStore.LoadAsync(keyId)
-    ?? throw new InvalidOperationException($"Key '{keyId}' not found. Run enrollment first.");
+var key = await keyStore.LoadAsync(localKeyHandle)
+    ?? throw new InvalidOperationException($"Key '{localKeyHandle}' not found. Run enrollment first.");
 
 // The SDK acquires the agent token lazily on first request
 // via WithTokenRefresh, then keeps it fresh automatically.
 using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(AgentProviderTokenRefresher.Create(apRefreshEndpoint, keyId)
+    .WithTokenRefresh(AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
         .WithKeyStore(keyStore)
         .Build())
     .WithChallengeHandling("https://ps.example")
@@ -182,16 +182,17 @@ var enrol = await apClient.EnrolAsync(
     enrollEndpoint: "https://ap.example/enrol",
     personServer: "https://ps.example");
 
-// enrol.Key        — your Ed25519 signing key (in keystore)
-// enrol.EnrolledKeyId      — persisted key identifier (save this to config)
-// enrol.AgentToken — initial aa-agent+jwt (short-lived, do not persist)
+// enrol.Key            — your Ed25519 signing key (in keystore)
+// enrol.LocalKeyHandle — agent-local IKeyStore handle (defaults to JWK thumbprint); persist this
+// enrol.AgentTokenKid  — AP-internal JWT `kid` (opaque; diagnostic only)
+// enrol.AgentToken     — initial aa-agent+jwt (short-lived, do not persist)
 ```
 
 ### 2. Build the Signed Client with Challenge Handling
 
 ```csharp
 using var client = new AAuthClientBuilder(enrol.Key)
-    .WithTokenRefresh(AgentProviderTokenRefresher.Create("https://ap.example/refresh", enrol.EnrolledKeyId)
+    .WithTokenRefresh(AgentProviderTokenRefresher.Create("https://ap.example/refresh", enrol.LocalKeyHandle)
         .WithKeyStore(keyStore)
         .Build())
     .WithChallengeHandling(personServer: "https://ps.example")

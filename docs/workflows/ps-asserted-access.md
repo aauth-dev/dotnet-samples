@@ -59,13 +59,13 @@ using AAuth.Crypto;
 using AAuth.HttpSig;
 
 var keyStore = FileKeyStore.Default();
-var keyId = configuration["AAuth:KeyId"]!;
-var key = await keyStore.LoadAsync(keyId)
+var localKeyHandle = configuration["AAuth:LocalKeyHandle"]!;
+var key = await keyStore.LoadAsync(localKeyHandle)
     ?? throw new InvalidOperationException("Key not found. Run enrollment first.");
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
 using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(AgentProviderTokenRefresher.Create(apRefreshEndpoint, keyId)
+    .WithTokenRefresh(AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
         .WithKeyStore(keyStore)
         .Build())
     .WithChallengeHandling(personServer: "https://ps.example")
@@ -88,7 +88,7 @@ using AAuth.Discovery;
 using AAuth.HttpSig;
 
 var keyStore = FileKeyStore.Default();
-var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!);
+var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!);
 var agentToken = "..."; // acquired via AP refresh endpoint
 var tokenHolder = new AAuthTokenHolder(agentToken);
 
@@ -122,15 +122,15 @@ using AAuth.Agent;
 using AAuth.Crypto;
 
 var keyStore = FileKeyStore.Default();
-var keyId = configuration["AAuth:KeyId"]!;
-var key = await keyStore.LoadAsync(keyId);
+var localKeyHandle = configuration["AAuth:LocalKeyHandle"]!;
+var key = await keyStore.LoadAsync(localKeyHandle);
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
 builder.Services.AddAAuthAgent("ps-asserted", options =>
 {
     options.Key = key!;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, keyId)
+    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
         .WithKeyStore(keyStore)
         .Build();
 });

@@ -73,7 +73,7 @@ builder.Services.AddSingleton<IOpaqueTokenStore>(new InMemoryOpaqueTokenStore())
 ### Agent-Side
 
 ```csharp
-var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!);
+var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!);
 
 builder.Services.AddAAuthAgent("resource-managed", options =>
 {

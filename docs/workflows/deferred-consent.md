@@ -70,7 +70,7 @@ using AAuth.Crypto;
 using AAuth.HttpSig;
 
 var keyStore = FileKeyStore.Default();
-var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!)
+var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!)
     ?? throw new InvalidOperationException("Key not found. Run enrollment first.");
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
@@ -92,7 +92,7 @@ using var client = new AAuthClientBuilder(key)
 ## DI Registration
 
 ```csharp
-var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!);
+var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!);
 
 builder.Services.AddAAuthAgent("deferred", options =>
 {

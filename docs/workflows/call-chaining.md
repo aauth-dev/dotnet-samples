@@ -37,13 +37,13 @@ using AAuth.Crypto;
 using AAuth.HttpSig;
 
 var keyStore = FileKeyStore.Default();
-var keyId = configuration["AAuth:KeyId"]!;
-var key = await keyStore.LoadAsync(keyId)
+var localKeyHandle = configuration["AAuth:LocalKeyHandle"]!;
+var key = await keyStore.LoadAsync(localKeyHandle)
     ?? throw new InvalidOperationException("Key not found.");
 var refreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
 using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(AgentProviderTokenRefresher.Create(refreshEndpoint, keyId)
+    .WithTokenRefresh(AgentProviderTokenRefresher.Create(refreshEndpoint, localKeyHandle)
         .WithKeyStore(keyStore)
         .Build())
     .WithChallengeHandling(personServer)

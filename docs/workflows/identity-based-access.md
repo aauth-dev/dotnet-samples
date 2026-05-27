@@ -56,7 +56,7 @@ using AAuth.Agent;
 using AAuth.Crypto;
 
 IKeyStore keyStore = FileKeyStore.Default();
-var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!);
+var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!);
 
 builder.Services.AddAAuthAgent("identity-hwk", options =>
 {

@@ -17,12 +17,14 @@ sequenceDiagram
     Agent->>AP: GET /.well-known/aauth-agent.json
     AP-->>Agent: metadata (enrol_endpoint, jwks_uri)
     Agent->>AP: POST /enrol {agent_id, jwk, ps?}
-    AP-->>Agent: {agent_token, key_id, jwks_uri}
+    AP-->>Agent: {agent_token, key_id?, jwks_uri}
 ```
 
 ## Enrollment Is a Provisioning Step
 
-Enrollment is **not** part of your application's normal startup — it's a separate operational step, analogous to running a database migration or issuing a TLS certificate. You run it once per device/install (in a CLI tool, setup script, or CI pipeline). The durable signing key is generated **inside a keystore** (HSM, TPM, file store) and never extracted — the application references it by ID.
+Enrollment is **not** part of your application's normal startup — it's a separate operational step, analogous to running a database migration or issuing a TLS certificate. You run it once per device/install (in a CLI tool, setup script, or CI pipeline). The durable signing key is generated **inside a keystore** (HSM, TPM, file store) and never extracted — the application references it by a local handle.
+
+> **The agent and the AP never share a keystore.** The agent holds the **private** durable key locally in its own `IKeyStore`. The AP holds only the **public** key, indexed in its enrollment database by JWK thumbprint. At refresh time the AP identifies the agent from the HTTP signature — never from any string the agent sends.
 
 The agent token is short-lived (typically 1 hour, max 24 hours per spec) and refreshed automatically by the SDK at runtime using the durable key.
 
@@ -31,18 +33,18 @@ flowchart LR
     subgraph Provisioning["Provisioning (run once)"]
         E1[EnrolAsync with keyStore]
         E2[Key generated inside store]
-        E3[Key ID returned]
+        E3[Local key handle returned<br/>defaults to JWK thumbprint]
         E1 --> E2 --> E3
     end
 
     subgraph Runtime["Application Runtime (every startup)"]
-        R1[keyStore.LoadAsync keyId]
+        R1[keyStore.LoadAsync localKeyHandle]
         R2[Load key by reference]
         R3[SDK refreshes token via AP]
         R1 --> R2 --> R3
     end
 
-    E3 -- "config: key ID only" --> R1
+    E3 -- "config: local key handle only" --> R1
 ```
 
 ## Code Example
@@ -71,12 +73,13 @@ var enrol = await AAuthClientBuilder
     .WithKeyStore(keyStore)
     .EnrolAsync();
 
-// Only the key ID needs to go into app config
-Console.WriteLine($"Enrolled. KeyId: {enrol.EnrolledKeyId}");
-Console.WriteLine($"Add to appsettings: AAuth:KeyId = {enrol.EnrolledKeyId}");
+// Only the local key handle needs to go into app config.
+// (Defaults to the durable key's JWK thumbprint — opaque to the AP.)
+Console.WriteLine($"Enrolled. Local key handle: {enrol.LocalKeyHandle}");
+Console.WriteLine($"Add to appsettings: AAuth:LocalKeyHandle = {enrol.LocalKeyHandle}");
 ```
 
-### Application: Load Key by ID and Build Client
+### Application: Load Key by Local Handle and Build Client
 
 ```csharp
 using AAuth.Agent;
@@ -85,15 +88,15 @@ using AAuth.HttpSig;
 
 // Key stays in the store — loaded by reference, never extracted
 var keyStore = FileKeyStore.Default();
-var keyId = configuration["AAuth:KeyId"]!;
+var localKeyHandle = configuration["AAuth:LocalKeyHandle"]!;
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
-var key = await keyStore.LoadAsync(keyId)
-    ?? throw new InvalidOperationException($"Key '{keyId}' not found. Run enrollment.");
+var key = await keyStore.LoadAsync(localKeyHandle)
+    ?? throw new InvalidOperationException($"Key '{localKeyHandle}' not found. Run enrollment.");
 
 // The SDK acquires the agent token lazily on first request
 // via WithTokenRefresh, then keeps it fresh automatically.
 using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(AgentProviderTokenRefresher.Create(apRefreshEndpoint, keyId)
+    .WithTokenRefresh(AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
         .WithKeyStore(keyStore)
         .Build())
     .WithChallengeHandling(personServer: "https://ps.example")
@@ -116,9 +119,11 @@ var result = await apClient.EnrolAsync(
     personServer: "https://ps.example" // optional: include if using three-party flows
 );
 
-// result.AgentToken = the aa-agent+jwt
-// result.Key = the generated signing key
-// result.EnrolledKeyId = the key ID at the AP
+// result.AgentToken     = the aa-agent+jwt issued by the AP
+// result.Key            = the generated durable signing key
+// result.LocalKeyHandle = agent-local IKeyStore handle (defaults to the JWK thumbprint)
+// result.AgentTokenKid  = AP-internal JWT `kid` (opaque; diagnostic only)
+// result.JwksUri        = per-agent JWKS URI (for jwks_uri signing mode)
 ```
 
 ## What Bootstrap Produces
@@ -128,8 +133,9 @@ var result = await apClient.EnrolAsync(
   - `sub`: agent identifier (`aauth:local@domain`)
   - `cnf.jwk`: the agent's public key (bound to identity)
   - `ps`: Person Server URL (optional, only if agent has a PS)
-- The agent's private key stored in `IKeyStore`
-- A `key_id` assigned by the AP (stable for the key's lifetime)
+- The agent's **private** key stored in `IKeyStore` (the AP only ever sees the public key)
+- A **local key handle** (`EnrollResult.LocalKeyHandle`) for `IKeyStore.LoadAsync` — defaults to the durable key's JWK thumbprint (RFC 7638). Purely agent-local; never sent to the AP.
+- Optionally, an **AP-internal JWT `kid`** (`EnrollResult.AgentTokenKid`) carried inside the issued agent token — opaque to receivers and diagnostic-only for the agent.
 - A `jwks_uri` pointing to the per-agent JWKS endpoint where the AP publishes the agent's public key (used with `scheme=jwks_uri`)
 
 ## Token Refresh
@@ -138,24 +144,24 @@ Agent tokens are short-lived (typically 1 hour, max 24 hours per spec). The SDK 
 
 ### AP-Enrolled Agents (CLI, desktop, mobile)
 
-The AP issued the original token during enrollment. At refresh time the SDK signs a POST to the AP's refresh endpoint with the enrolled key — the AP verifies the signature, looks up the agent by key ID, and returns a fresh token.
+The AP issued the original token during enrollment. At refresh time the SDK signs a POST to the AP's refresh endpoint with the **durable key** — the AP verifies the signature, looks the enrollment up by the key's **JWK thumbprint**, and returns a fresh token. **No identifier travels in the request body**; the signature alone identifies the agent.
 
 ```mermaid
 sequenceDiagram
     participant Agent
     participant AP as Agent Provider
     Note over Agent: Token nearing expiry
-    Agent->>AP: POST /refresh (signed with enrolled key)
-    AP->>AP: Verify signature, look up key_id
+    Agent->>AP: POST /refresh (signed with durable key)
+    AP->>AP: Verify signature, look up by JWK thumbprint
     AP-->>Agent: New aa-agent+jwt
 ```
 
 ```csharp
-// keyId = the AP-assigned key identifier from enrollment (e.g. "aauth:myapp@ap.example:c34078382e")
-// This is the ID the AP uses to look up the agent's public key for signature verification.
-// It is also the filename/reference under which IKeyStore stores the private key.
+// localKeyHandle = the agent-local IKeyStore handle returned by EnrolAsync
+// (defaults to the durable key's JWK thumbprint).
+// Used only by IKeyStore.LoadAsync — it is never sent to the AP.
 using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(AgentProviderTokenRefresher.Create(apRefreshEndpoint, keyId)
+    .WithTokenRefresh(AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
         .WithKeyStore(keyStore)
         .Build())
     .Build();
@@ -178,29 +184,36 @@ using var client = new AAuthClientBuilder(key)
     .Build();
 ```
 
-## Key IDs: What Goes Where
+## Key Identifiers: What Goes Where
 
-The term "key ID" appears in several contexts. This table clarifies which value is which:
+The term "key ID" gets overloaded in AP enrollment. There are actually **three different identifiers** in play, and the spec keeps them disjoint:
+
+| Identifier | Owner / origin | Travels where | Used for |
+|-----------|----------------|---------------|----------|
+| **JWK thumbprint** of the durable key (RFC 7638) | derived from the public key | implicit on every signed request | The AP looks the agent up in its enrollment DB by this thumbprint at refresh time |
+| **Local key handle** (`EnrollResult.LocalKeyHandle`) | the agent (SDK chooses; defaults to the JWK thumbprint) | never leaves the agent process | `IKeyStore.LoadAsync(localKeyHandle)` — loads the private key at app startup |
+| **AP-internal JWT `kid`** (`EnrollResult.AgentTokenKid`) | the AP picks (opaque) | inside the issued `aa-agent+jwt` header | Opaque to receivers (spec § "Agent Identifier Strategies"); diagnostic-only for the agent — **the agent never sends this back to refresh** |
+
+For the second flavour of enrollment, **self-issued** (hosted services), only one identifier matters:
 
 | Scenario | Key ID value | Who assigns it | Where it's stored | What uses it |
 |----------|-------------|----------------|-------------------|--------------|
-| AP-enrolled | `aauth:myapp@ap.example:c34078382e` | Agent Provider (during enrollment) | Agent's local `IKeyStore` (filename) + `appsettings.json` (reference) | `IKeyStore.LoadAsync(keyId)` loads the private key for signing. The AP never receives this string — it identifies the agent by verifying the HTTP signature and matching the JWK thumbprint against its enrollment database. |
 | Self-issued | Any stable string (e.g. `"svc-key-1"`) or JWK thumbprint | You (the developer) | Hardcoded or in config | JWT `kid` header — resources use it to select the correct key from your JWKS |
 
 ### AP-Enrolled: Key ID Flow
 
 ```mermaid
 flowchart LR
-    AP["Agent Provider<br/>assigns key_id at enrollment"] --> Store["Agent's local IKeyStore<br/>stores private key under key_id"]
-    Store --> Config["appsettings.json<br/>persists key_id string"]
-    Config --> Load["keyStore.LoadAsync(keyId)<br/>loads private key"]
+    AP["Agent Provider<br/>records public key<br/>by JWK thumbprint"] --> Store["Agent's local IKeyStore<br/>stores private key under<br/>local key handle<br/>(defaults to thumbprint)"]
+    Store --> Config["appsettings.json<br/>persists local key handle"]
+    Config --> Load["keyStore.LoadAsync(localKeyHandle)<br/>loads private key"]
     Load --> Sign["Signs refresh request<br/>(HTTP Signature, hwk scheme)"]
-    Sign --> APVerify["AP verifies signature<br/>matches JWK thumbprint<br/>in enrollment DB"]
+    Sign --> APVerify["AP verifies signature,<br/>looks up enrollment<br/>by JWK thumbprint"]
 ```
 
-1. **Enrollment** — AP generates `key_id` (e.g. `aauth:myapp@ap.example:c34078382e`) and the SDK stores the private key locally under that ID. The AP stores only the public key, indexed by JWK thumbprint.
-2. **Config** — You persist only the `key_id` string in `appsettings.json` (a local keystore reference).
-3. **Runtime** — `keyStore.LoadAsync(keyId)` retrieves the private key from the agent's local store. The refresher signs the HTTP request. The AP identifies the agent by verifying the signature against its enrolled public keys (matched by thumbprint) — it never receives the `key_id` string itself.
+1. **Enrollment** — the agent generates a durable key inside its `IKeyStore`. The AP records only the **public** key, indexed by JWK thumbprint. The SDK stores the **private** key locally under a local key handle (default: the same thumbprint, for convenience).
+2. **Config** — you persist only the `localKeyHandle` string in `appsettings.json` (a local keystore reference). The AP doesn't know or care about it.
+3. **Runtime** — `keyStore.LoadAsync(localKeyHandle)` retrieves the private key from the agent's local store. The refresher signs the HTTP request with that key. The AP identifies the agent purely by verifying the signature against its enrolled public keys (matched by JWK thumbprint).
 
 ### Self-Issued: Key ID Flow
 

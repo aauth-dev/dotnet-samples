@@ -18,7 +18,7 @@ flowchart LR
         H2 --> H3["Runtime: self-issue token via AgentTokenBuilder"]
     end
     subgraph CLI/Desktop
-        P["Provisioning: EnrolAsync(keyStore)"] --> C["App config: AAuth:KeyId"]
+        P["Provisioning: EnrolAsync(keyStore)"] --> C["App config: AAuth:LocalKeyHandle"]
         C --> S["Startup: keyStore.LoadAsync → AddAAuthAgent"]
         S --> R["Runtime: SDK calls AP refresh before expiry"]
     end
@@ -75,20 +75,20 @@ app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 
 ### Identity-Based (JWT) — AP-Enrolled (CLI/Desktop Agents)
 
-Load the key by ID from the store and configure token refresh:
+Load the key by local handle from the store and configure token refresh:
 
 ```csharp
 var keyStore = FileKeyStore.Default();
-var keyId = configuration["AAuth:KeyId"]!;
-var key = await keyStore.LoadAsync(keyId)
-    ?? throw new InvalidOperationException($"Key '{keyId}' not found.");
+var localKeyHandle = configuration["AAuth:LocalKeyHandle"]!;
+var key = await keyStore.LoadAsync(localKeyHandle)
+    ?? throw new InvalidOperationException($"Key '{localKeyHandle}' not found.");
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
 builder.Services.AddAAuthAgent("identity", options =>
 {
     options.Key = key;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, keyId)
+    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
         .WithKeyStore(keyStore)
         .Build();
 });
@@ -101,7 +101,7 @@ builder.Services.AddAAuthAgent("identity", options =>
 {
     options.Key = key;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, keyId)
+    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
         .WithKeyStore(keyStore)
         .Build();
 });
@@ -116,7 +116,7 @@ builder.Services.AddAAuthAgent("interactive", options =>
 {
     options.Key = key;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, keyId)
+    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
         .WithKeyStore(keyStore)
         .Build();
     options.InteractionHandling = true;
@@ -141,7 +141,7 @@ builder.Services.AddAAuthAgent("refreshing", options =>
 {
     options.Key = key;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = AgentProviderTokenRefresher.Create("https://ap.example/refresh", keyId)
+    options.TokenRefresher = AgentProviderTokenRefresher.Create("https://ap.example/refresh", localKeyHandle)
         .WithKeyStore(keyStore)
         .Build();
 });
@@ -264,7 +264,7 @@ builder.Services.AddAAuthAgent("downstream", options =>
 {
     options.Key = agentKey;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, keyId)
+    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
         .WithKeyStore(keyStore)
         .Build();
 });
