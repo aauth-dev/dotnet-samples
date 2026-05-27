@@ -71,6 +71,22 @@ dotnet run --project samples/AgentConsole -- http://localhost:5000 \
   --ap http://localhost:5301 --ps http://localhost:5100
 ```
 
+> **Note:** `make demo` starts MockPersonServer with `RequireConsent=true`, so three-party flows (`jwt`, `jkt-jwt`) will print an interaction URL for user approval:
+>
+> ```
+> [interaction] User approval required: http://localhost:5100/interaction?code=...
+> ```
+>
+> Open that URL in a browser and click **Approve**, or pre-approve programmatically:
+>
+> ```bash
+> curl -X POST http://localhost:5100/admin/consent \
+>   -H "Content-Type: application/json" \
+>   -d '{"agent":"aauth:demo@ap.example","resource":"http://localhost:5000","scope":"whoami"}'
+> ```
+>
+> To skip consent entirely, start MockPersonServer separately without the flag: `dotnet run --project samples/MockPersonServer`
+
 | Flag | Default | Purpose |
 |------|---------|---------|
 | `--ap <url>` | _(required)_ | Agent Provider URL (enrol + refresh endpoints) |

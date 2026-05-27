@@ -51,10 +51,10 @@ public sealed class AgentProviderTokenRefresher : ITokenRefresher
 
 ### Definition of Done
 
-- [ ] `AgentProviderTokenRefresher` compiles and is public in `AAuth.Agent`
-- [ ] Unit tests pass (argument validation, delegation to `AgentProviderClient`)
-- [ ] Integration test: `AAuthClientBuilder` + `WithTokenRefresh(new AgentProviderTokenRefresher(...))` succeeds
-- [ ] Existing 556 tests still pass
+- [x] `AgentProviderTokenRefresher` compiles and is public in `AAuth.Agent`
+- [x] Unit tests pass (argument validation, delegation to `AgentProviderClient`)
+- [x] Integration test: `AAuthClientBuilder` + `WithTokenRefresh(new AgentProviderTokenRefresher(...))` succeeds
+- [x] Existing 556 tests still pass
 
 ---
 
@@ -134,10 +134,10 @@ public sealed class SelfIssuedTokenRefresher : ITokenRefresher
 
 ### Definition of Done
 
-- [ ] `SelfIssuedTokenRefresher` compiles and is public in `AAuth.Agent`
-- [ ] Unit tests pass (JWT validation, argument checks, lifetime)
-- [ ] Integration test: `AAuthClientBuilder` + `WithTokenRefresh(new SelfIssuedTokenRefresher(...))` succeeds
-- [ ] Existing tests still pass
+- [x] `SelfIssuedTokenRefresher` compiles and is public in `AAuth.Agent`
+- [x] Unit tests pass (JWT validation, argument checks, lifetime)
+- [x] Integration test: `AAuthClientBuilder` + `WithTokenRefresh(new SelfIssuedTokenRefresher(...))` succeeds
+- [x] Existing tests still pass
 
 ---
 
@@ -158,10 +158,10 @@ Replace all sample `ApTokenRefresher` implementations with the SDK type.
 
 ### Definition of Done
 
-- [ ] No doc file defines a sample `ApTokenRefresher` class
-- [ ] All DI examples use `AgentProviderTokenRefresher` or `SelfIssuedTokenRefresher`
-- [ ] `docs/README.md` API table includes both new types
-- [ ] Doc code blocks compile conceptually (correct `using` statements, constructor args)
+- [x] No doc file defines a sample `ApTokenRefresher` class
+- [x] All DI examples use `AgentProviderTokenRefresher` or `SelfIssuedTokenRefresher`
+- [x] `docs/README.md` API table includes both new types
+- [x] Doc code blocks compile conceptually (correct `using` statements, constructor args)
 
 ---
 
@@ -176,9 +176,10 @@ Replace all sample `ApTokenRefresher` implementations with the SDK type.
 
 ### Definition of Done
 
-- [ ] Samples compile and use SDK types where appropriate
-- [ ] `dotnet build` passes
-- [ ] `dotnet test` passes
+- [x] Samples compile and use SDK types where appropriate
+- [x] `dotnet build` passes
+- [x] `dotnet test` passes
+- [x] AgentConsole runs successfully with all 4 signing modes (hwk, jwks_uri, jwt, jkt-jwt)
 
 ---
 
