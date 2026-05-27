@@ -88,7 +88,9 @@ builder.Services.AddAAuthAgent("identity", options =>
 {
     options.Key = key;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint);
+    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, keyId)
+        .WithKeyStore(keyStore)
+        .Build();
 });
 ```
 
@@ -99,7 +101,9 @@ builder.Services.AddAAuthAgent("identity", options =>
 {
     options.Key = key;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint);
+    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, keyId)
+        .WithKeyStore(keyStore)
+        .Build();
 });
 ```
 
@@ -112,7 +116,9 @@ builder.Services.AddAAuthAgent("interactive", options =>
 {
     options.Key = key;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint);
+    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, keyId)
+        .WithKeyStore(keyStore)
+        .Build();
     options.InteractionHandling = true;
     options.InteractionHandlingOptions = io =>
     {
@@ -135,10 +141,9 @@ builder.Services.AddAAuthAgent("refreshing", options =>
 {
     options.Key = key;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = new AgentProviderTokenRefresher(
-        http: new HttpClient(),
-        keyStore: keyStore,
-        refreshEndpoint: "https://ap.example/refresh");
+    options.TokenRefresher = AgentProviderTokenRefresher.Create("https://ap.example/refresh", keyId)
+        .WithKeyStore(keyStore)
+        .Build();
 });
 ```
 
@@ -259,7 +264,9 @@ builder.Services.AddAAuthAgent("downstream", options =>
 {
     options.Key = agentKey;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint);
+    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, keyId)
+        .WithKeyStore(keyStore)
+        .Build();
 });
 
 var app = builder.Build();

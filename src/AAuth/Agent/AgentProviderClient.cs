@@ -93,7 +93,7 @@ public sealed class AgentProviderClient
         return new EnrollResult
         {
             AgentToken = agentToken,
-            KeyId = assignedKeyId,
+            EnrolledKeyId = assignedKeyId,
             Key = key,
             JwksUri = (string?)body["jwks_uri"],
         };
@@ -102,54 +102,54 @@ public sealed class AgentProviderClient
     /// <summary>
     /// Refresh an agent token. Signs the request with the durable key per spec
     /// (single-key refresh, hwk scheme). The AP identifies the agent by verifying
-    /// the HTTP signature and looking up the enrollment by key thumbprint.
+    /// the HTTP signature and matching the JWK thumbprint against its enrollment database.
     /// </summary>
     /// <param name="refreshEndpoint">The AP's refresh/token endpoint.</param>
     /// <param name="currentAgentToken">The current agent token (informational, not required by spec).</param>
-    /// <param name="keyId">The key ID to load from the store and sign with.</param>
+    /// <param name="enrolledKeyId">Local keystore reference to load the durable signing key.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>New agent token.</returns>
     public async Task<string> RefreshAsync(
         string refreshEndpoint,
         string currentAgentToken,
-        string keyId,
+        string enrolledKeyId,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(refreshEndpoint);
         ArgumentException.ThrowIfNullOrEmpty(currentAgentToken);
-        ArgumentException.ThrowIfNullOrEmpty(keyId);
+        ArgumentException.ThrowIfNullOrEmpty(enrolledKeyId);
 
-        return await RefreshCoreAsync(refreshEndpoint, keyId, ct);
+        return await RefreshCoreAsync(refreshEndpoint, enrolledKeyId, ct);
     }
 
     /// <summary>
     /// Request a fresh agent token from the AP using only the durable key.
     /// Used for initial token acquisition (lazy startup) when no current token exists.
-    /// The AP identifies the agent by verifying the HTTP signature and looking up
-    /// the enrollment by the key's thumbprint.
+    /// The AP identifies the agent by verifying the HTTP signature and matching
+    /// the JWK thumbprint against its enrollment database.
     /// </summary>
     /// <param name="refreshEndpoint">The AP's refresh/token endpoint.</param>
-    /// <param name="keyId">The key ID to load from the store and sign with.</param>
+    /// <param name="enrolledKeyId">Local keystore reference to load the durable signing key.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>New agent token.</returns>
     public async Task<string> RefreshAsync(
         string refreshEndpoint,
-        string keyId,
+        string enrolledKeyId,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(refreshEndpoint);
-        ArgumentException.ThrowIfNullOrEmpty(keyId);
+        ArgumentException.ThrowIfNullOrEmpty(enrolledKeyId);
 
-        return await RefreshCoreAsync(refreshEndpoint, keyId, ct);
+        return await RefreshCoreAsync(refreshEndpoint, enrolledKeyId, ct);
     }
 
     private async Task<string> RefreshCoreAsync(
         string refreshEndpoint,
-        string keyId,
+        string enrolledKeyId,
         CancellationToken ct)
     {
-        var key = await _keyStore.LoadAsync(keyId, ct)
-            ?? throw new InvalidOperationException($"Key '{keyId}' not found in store.");
+        var key = await _keyStore.LoadAsync(enrolledKeyId, ct)
+            ?? throw new InvalidOperationException($"Key '{enrolledKeyId}' not found in store.");
 
         // Per spec: single-key refresh signs the POST with the durable key (hwk scheme).
         // The body is empty — the AP identifies the agent via the signature.
@@ -182,8 +182,8 @@ public sealed class EnrollResult
     /// <summary>The issued agent token.</summary>
     public required string AgentToken { get; init; }
 
-    /// <summary>The key identifier in the key store.</summary>
-    public required string KeyId { get; init; }
+    /// <summary>The AP-assigned key identifier used as the local keystore reference. The AP identifies the agent by JWK thumbprint at refresh time, not by this string.</summary>
+    public required string EnrolledKeyId { get; init; }
 
     /// <summary>The generated key (for immediate use in signing).</summary>
     public required AAuthKey Key { get; init; }

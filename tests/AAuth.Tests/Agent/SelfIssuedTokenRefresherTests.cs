@@ -36,7 +36,7 @@ public class SelfIssuedTokenRefresherTests
     }
 
     [Fact]
-    public void Constructor_ThrowsOnEmptyKeyId()
+    public void Constructor_ThrowsOnEmptyKid()
     {
         Assert.Throws<ArgumentException>(() =>
             new SelfIssuedTokenRefresher(_key, "https://svc.example", "aauth:svc@svc.example", ""));
@@ -54,7 +54,7 @@ public class SelfIssuedTokenRefresherTests
             CurrentToken = "",
             Issuer = "https://svc.example",
             AgentId = "aauth:svc@svc.example",
-            KeyId = "k1",
+            SigningKeyThumbprint = "k1",
         };
 
         var token = await refresher.RefreshAsync(context, CancellationToken.None);
@@ -77,7 +77,7 @@ public class SelfIssuedTokenRefresherTests
             CurrentToken = "",
             Issuer = "https://svc.example",
             AgentId = "aauth:svc@svc.example",
-            KeyId = "k1",
+            SigningKeyThumbprint = "k1",
         };
 
         var token = await refresher.RefreshAsync(context, CancellationToken.None);
@@ -104,7 +104,7 @@ public class SelfIssuedTokenRefresherTests
             CurrentToken = "",
             Issuer = "https://svc.example",
             AgentId = "aauth:svc@svc.example",
-            KeyId = "k1",
+            SigningKeyThumbprint = "k1",
         };
 
         var token = await refresher.RefreshAsync(context, CancellationToken.None);
@@ -129,7 +129,7 @@ public class SelfIssuedTokenRefresherTests
             CurrentToken = "",
             Issuer = "https://svc.example",
             AgentId = "aauth:svc@svc.example",
-            KeyId = "k1",
+            SigningKeyThumbprint = "k1",
         };
 
         var token = await refresher.RefreshAsync(context, CancellationToken.None);

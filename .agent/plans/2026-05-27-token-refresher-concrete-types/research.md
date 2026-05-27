@@ -17,7 +17,7 @@ The SDK exposes `ITokenRefresher` (in `AAuth.Agent`) as a pluggable interface bu
 | Type | Namespace | Role |
 |------|-----------|------|
 | `ITokenRefresher` | `AAuth.Agent` | Interface — single method `RefreshAsync(TokenRefreshContext, CancellationToken)` |
-| `TokenRefreshContext` | `AAuth.Agent` | Record with `CurrentToken`, `ApIssuer`, `AgentId`, `KeyId` |
+| `TokenRefreshContext` | `AAuth.Agent` | Record with `CurrentToken`, `Issuer`, `AgentId`, `KeyId` |
 | `DelegateTokenRefresher` | `AAuth.HttpSig` (internal) | Lambda-wrapping adapter used by `AAuthClientBuilder.WithTokenRefresh(Func<...>)` |
 | `TokenRefreshHandler` | `AAuth.Agent` (internal) | `DelegatingHandler` that calls `ITokenRefresher` before expiry |
 | `AgentProviderClient` | `AAuth.Agent` | Already has `RefreshAsync(endpoint, keyId, ct)` and `RefreshAsync(endpoint, currentToken, keyId, ct)` |

@@ -400,8 +400,8 @@ public sealed class AAuthClientBuilder
         HttpMessageHandler topHandler = challengeHandler;
         if (_tokenRefresher is not null)
         {
-            var keyId = _key.ComputeJwkThumbprint();
-            var refreshHandler = new TokenRefreshHandler(tokenHolder, _tokenRefresher, keyId, _refreshThreshold)
+            var signingKeyThumbprint = _key.ComputeJwkThumbprint();
+            var refreshHandler = new TokenRefreshHandler(tokenHolder, _tokenRefresher, signingKeyThumbprint, _refreshThreshold)
             {
                 InnerHandler = challengeHandler,
             };
@@ -446,7 +446,7 @@ public sealed class AAuthClientBuilder
     {
         var holder = new AAuthTokenHolder();
         var provider = new JwtSignatureKeyProvider(() => holder.Current);
-        var keyId = _key.ComputeJwkThumbprint();
+        var signingKeyThumbprint = _key.ComputeJwkThumbprint();
 
         var signingHandler = new AAuthSigningHandler(_key, provider)
         {
@@ -455,7 +455,7 @@ public sealed class AAuthClientBuilder
             OnSignatureBase = _onSignatureBase,
         };
 
-        var refreshHandler = new TokenRefreshHandler(holder, _tokenRefresher!, keyId, _refreshThreshold)
+        var refreshHandler = new TokenRefreshHandler(holder, _tokenRefresher!, signingKeyThumbprint, _refreshThreshold)
         {
             InnerHandler = signingHandler,
         };

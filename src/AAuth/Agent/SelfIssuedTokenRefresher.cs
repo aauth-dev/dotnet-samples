@@ -25,28 +25,28 @@ public sealed class SelfIssuedTokenRefresher : ITokenRefresher
     private readonly TimeSpan? _lifetime;
 
     /// <summary>Create a self-issued token refresher.</summary>
-    /// <param name="key">The agent's signing key (must include private component).</param>
+    /// <param name="key">The agent's signing key.</param>
     /// <param name="issuer">Issuer URL (the service's own HTTPS URL).</param>
     /// <param name="subject">Agent identifier (e.g. <c>aauth:my-service@my-service.example</c>).</param>
-    /// <param name="keyId">Key ID for the JWT header.</param>
+    /// <param name="kid">JWT <c>kid</c> header value (resources match this against your JWKS to find the verification key).</param>
     /// <param name="personServer">Optional Person Server URL to embed in the token.</param>
     /// <param name="lifetime">Optional token lifetime (defaults to <see cref="AgentTokenBuilder"/> default of 1 hour).</param>
     public SelfIssuedTokenRefresher(
-        IAAuthKey key,
+        AAuthKey key,
         string issuer,
         string subject,
-        string keyId,
+        string kid,
         string? personServer = null,
         TimeSpan? lifetime = null)
     {
         ArgumentNullException.ThrowIfNull(key);
         ArgumentException.ThrowIfNullOrEmpty(issuer);
         ArgumentException.ThrowIfNullOrEmpty(subject);
-        ArgumentException.ThrowIfNullOrEmpty(keyId);
-        _key = key is AAuthKey concrete ? concrete : throw new ArgumentException("Key must be an AAuthKey instance.", nameof(key));
+        ArgumentException.ThrowIfNullOrEmpty(kid);
+        _key = key;
         _issuer = issuer;
         _subject = subject;
-        _keyId = keyId;
+        _keyId = kid;
         _personServer = personServer;
         _lifetime = lifetime;
     }
@@ -65,5 +65,48 @@ public sealed class SelfIssuedTokenRefresher : ITokenRefresher
         };
 
         return Task.FromResult(builder.Build());
+    }
+
+    /// <summary>Start building a self-issued refresher with required parameters.</summary>
+    /// <param name="key">The agent's signing key.</param>
+    /// <param name="issuer">Issuer URL (the service's own HTTPS URL).</param>
+    /// <param name="subject">Agent identifier (e.g. <c>aauth:my-service@my-service.example</c>).</param>
+    public static RefresherBuilder Create(AAuthKey key, string issuer, string subject) => new(key, issuer, subject);
+
+    /// <summary>Fluent builder for <see cref="SelfIssuedTokenRefresher"/>.</summary>
+    public sealed class RefresherBuilder
+    {
+        private readonly AAuthKey _key;
+        private readonly string _issuer;
+        private readonly string _subject;
+        private string? _keyId;
+        private string? _personServer;
+        private TimeSpan? _lifetime;
+
+        internal RefresherBuilder(AAuthKey key, string issuer, string subject)
+        {
+            ArgumentNullException.ThrowIfNull(key);
+            ArgumentException.ThrowIfNullOrEmpty(issuer);
+            ArgumentException.ThrowIfNullOrEmpty(subject);
+            _key = key;
+            _issuer = issuer;
+            _subject = subject;
+        }
+
+        /// <summary>Set a custom JWT <c>kid</c> header value. Defaults to the key's JWK thumbprint.</summary>
+        public RefresherBuilder WithKid(string kid) { _keyId = kid; return this; }
+
+        /// <summary>Embed a Person Server URL in the token.</summary>
+        public RefresherBuilder WithPersonServer(string personServer) { _personServer = personServer; return this; }
+
+        /// <summary>Set a custom token lifetime. Defaults to 1 hour.</summary>
+        public RefresherBuilder WithLifetime(TimeSpan lifetime) { _lifetime = lifetime; return this; }
+
+        /// <summary>Build the refresher.</summary>
+        public SelfIssuedTokenRefresher Build()
+            => new(_key, _issuer, _subject, _keyId ?? _key.ComputeJwkThumbprint(), _personServer, _lifetime);
+
+        /// <summary>Implicit conversion so the builder can be passed directly where <see cref="ITokenRefresher"/> is expected.</summary>
+        public static implicit operator SelfIssuedTokenRefresher(RefresherBuilder b) => b.Build();
     }
 }

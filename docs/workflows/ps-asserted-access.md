@@ -59,12 +59,15 @@ using AAuth.Crypto;
 using AAuth.HttpSig;
 
 var keyStore = FileKeyStore.Default();
-var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!)
+var keyId = configuration["AAuth:KeyId"]!;
+var key = await keyStore.LoadAsync(keyId)
     ?? throw new InvalidOperationException("Key not found. Run enrollment first.");
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
 using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint))
+    .WithTokenRefresh(AgentProviderTokenRefresher.Create(apRefreshEndpoint, keyId)
+        .WithKeyStore(keyStore)
+        .Build())
     .WithChallengeHandling(personServer: "https://ps.example")
     .Build();
 
@@ -119,14 +122,17 @@ using AAuth.Agent;
 using AAuth.Crypto;
 
 var keyStore = FileKeyStore.Default();
-var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!);
+var keyId = configuration["AAuth:KeyId"]!;
+var key = await keyStore.LoadAsync(keyId);
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
 builder.Services.AddAAuthAgent("ps-asserted", options =>
 {
     options.Key = key!;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint);
+    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, keyId)
+        .WithKeyStore(keyStore)
+        .Build();
 });
 ```
 

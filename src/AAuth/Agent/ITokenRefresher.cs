@@ -21,8 +21,8 @@ public sealed record TokenRefreshContext
     /// <summary>Agent identifier (extracted from the token's <c>sub</c> claim).</summary>
     public required string AgentId { get; init; }
 
-    /// <summary>Key ID used for signing.</summary>
-    public required string KeyId { get; init; }
+    /// <summary>JWK thumbprint of the signing key (computed by the SDK).</summary>
+    public required string SigningKeyThumbprint { get; init; }
 }
 
 /// <summary>

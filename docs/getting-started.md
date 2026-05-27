@@ -133,7 +133,7 @@ var enrol = await AAuthClientBuilder
 
 // Only the key ID needs to be recorded in app config
 // (the key itself is already in the keystore)
-Console.WriteLine($"Enrolled. Add to config: AAuth:KeyId = {enrol.KeyId}");
+Console.WriteLine($"Enrolled. Add to config: AAuth:KeyId = {enrol.EnrolledKeyId}");
 ```
 
 ### Application (every startup)
@@ -154,7 +154,9 @@ var key = await keyStore.LoadAsync(keyId)
 // The SDK acquires the agent token lazily on first request
 // via WithTokenRefresh, then keeps it fresh automatically.
 using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint))
+    .WithTokenRefresh(AgentProviderTokenRefresher.Create(apRefreshEndpoint, keyId)
+        .WithKeyStore(keyStore)
+        .Build())
     .WithChallengeHandling("https://ps.example")
     .Build();
 
@@ -181,7 +183,7 @@ var enrol = await apClient.EnrolAsync(
     personServer: "https://ps.example");
 
 // enrol.Key        — your Ed25519 signing key (in keystore)
-// enrol.KeyId      — persisted key identifier (save this to config)
+// enrol.EnrolledKeyId      — persisted key identifier (save this to config)
 // enrol.AgentToken — initial aa-agent+jwt (short-lived, do not persist)
 ```
 
@@ -189,7 +191,9 @@ var enrol = await apClient.EnrolAsync(
 
 ```csharp
 using var client = new AAuthClientBuilder(enrol.Key)
-    .WithTokenRefresh(new AgentProviderTokenRefresher(new HttpClient(), keyStore, "https://ap.example/refresh"))
+    .WithTokenRefresh(AgentProviderTokenRefresher.Create("https://ap.example/refresh", enrol.EnrolledKeyId)
+        .WithKeyStore(keyStore)
+        .Build())
     .WithChallengeHandling(personServer: "https://ps.example")
     .Build();
 ```

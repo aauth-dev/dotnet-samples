@@ -89,7 +89,7 @@ public class TokenRefreshHandlerTests
         Assert.NotNull(captured);
         Assert.Equal("https://ap.example", captured!.Issuer);
         Assert.Equal("aauth:test@example.com", captured.AgentId);
-        Assert.Equal("my-kid", captured.KeyId);
+        Assert.Equal("my-kid", captured.SigningKeyThumbprint);
         Assert.Equal(expiringToken, captured.CurrentToken);
     }
 
