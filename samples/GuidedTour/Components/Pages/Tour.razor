@@ -44,6 +44,7 @@
             <select id="signing-mode-select" value="@Session.SigningMode" @onchange="OnSigningModeChanged" disabled="@_busy">
                 <option value="@SigningMode.Hwk">Pseudonymous (hwk) — key only, no identity</option>
                 <option value="@SigningMode.JwksUri">Agent Identity (jwks_uri) — JWKS-discoverable</option>
+                <option value="@SigningMode.JktJwt">Key Rotation (jkt-jwt) — ephemeral keys</option>
             </select>
         </label>
     }
@@ -90,6 +91,10 @@
                         case SigningMode.JwksUri:
                             <strong>Agent Identity:</strong>
                             <text> resource discovers agent's public key via JWKS URI — replaces API keys.</text>
+                            break;
+                        case SigningMode.JktJwt:
+                            <strong>Key Rotation:</strong>
+                            <text> durable key signs a naming JWT binding an ephemeral signing key — enables rotation without re-enrolment.</text>
                             break;
                     }
                 </text>
