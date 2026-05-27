@@ -27,7 +27,7 @@ var result = await apClient.EnrolAsync(
     apBase, agentId, enrolEndpoint, personServer);
 
 // Runtime — build signed client
-var key = await keyStore.LoadAsync(result.EnrolledKeyId);
+var key = await keyStore.LoadAsync(result.LocalKeyHandle);
 
 using var client = new AAuthClientBuilder(key)
     .WithTokenRefresh(async (ctx, ct) =>

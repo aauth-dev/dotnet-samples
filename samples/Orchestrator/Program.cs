@@ -161,7 +161,7 @@ app.MapGet("/", async (HttpContext ctx) =>
 //         .WithTokenRefresh(async (_, ct) =>
 //         {
 //             var apClient = new AgentProviderClient(new HttpClient(), keyStore!);
-//             return await apClient.RefreshAsync(refreshEndpoint!, enrolledKeyId!, ct);
+//             return await apClient.RefreshAsync(refreshEndpoint!, localKeyHandle!, ct);
 //         })
 //         .WithCallChaining(ctx)
 //         .WithChallengeHandling(opts =>

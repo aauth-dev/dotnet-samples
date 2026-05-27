@@ -39,7 +39,8 @@ internal static class CodeSnippets
 
         // result.Key             — Ed25519 signing key
         // result.AgentToken      — aa-agent+jwt from the AP
-        // result.EnrolledKeyId   — key ID at the AP
+        // result.LocalKeyHandle  — agent-local IKeyStore handle (defaults to the durable key's JWK thumbprint)
+        // result.AgentTokenKid   — AP-internal JWT `kid` (opaque; diagnostic only)
         // result.JwksUri         — per-agent JWKS endpoint
         """;
 
@@ -60,7 +61,7 @@ internal static class CodeSnippets
 
     public const string SignedGetJwksUri = """
         using var client = new AAuthClientBuilder(key)
-            .UseJwksUri(result.JwksUri, result.EnrolledKeyId)
+            .UseJwksUri(result.JwksUri, result.LocalKeyHandle)
             .Build();
 
         var response = await client.GetAsync("https://resource.example/data");
@@ -207,7 +208,7 @@ internal static class CodeSnippets
             .WithPersonServer("https://ps.example")
             .WithKeyStore(keyStore) // key generated inside store, never extracted
             .EnrolAsync();
-        // Record enrol.EnrolledKeyId in app config — that's all you need
+        // Record enrol.LocalKeyHandle in app config — that's all you need
 
         // --- Application (every startup — load key by ID) ---
         var key = await keyStore.LoadAsync(keyId);

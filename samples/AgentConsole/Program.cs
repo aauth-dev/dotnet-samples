@@ -142,7 +142,7 @@ else
     var apClient = new AgentProviderClient(new HttpClient(), keyStore);
     var result = await apClient.EnrolAsync(apBase, subject, enrolEndpoint, personServer);
     key = result.Key;
-    keyId = result.EnrolledKeyId;
+    keyId = result.LocalKeyHandle;
     agentJwksUri = result.JwksUri;
     Console.WriteLine($"Enrolled successfully. Key ID: {keyId}");
 

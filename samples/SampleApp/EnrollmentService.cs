@@ -7,7 +7,7 @@ namespace SampleApp;
 /// <summary>
 /// Manages one-time enrollment with the Agent Provider.
 /// In production, enrollment is a separate provisioning step — only the
-/// key ID is persisted. Here we enrol on first use for demo simplicity.
+/// local key handle is persisted. Here we enrol on first use for demo simplicity.
 /// </summary>
 public sealed class EnrollmentService
 {
@@ -15,7 +15,7 @@ public sealed class EnrollmentService
     private readonly SemaphoreSlim _semaphore = new(1, 1);
 
     private IAAuthKey? _key;
-    private string? _keyId;
+    private string? _localKeyHandle;
     private string? _jwksUri;
     private string? _refreshEndpoint;
     private IKeyStore? _keyStore;
@@ -26,7 +26,7 @@ public sealed class EnrollmentService
     }
 
     public IAAuthKey Key => _key ?? throw new InvalidOperationException("Not enrolled yet.");
-    public string EnrolledKeyId => _keyId ?? throw new InvalidOperationException("Not enrolled yet.");
+    public string LocalKeyHandle => _localKeyHandle ?? throw new InvalidOperationException("Not enrolled yet.");
     public string? JwksUri => _jwksUri;
     public string RefreshEndpoint => _refreshEndpoint ?? throw new InvalidOperationException("Not enrolled yet.");
     public IKeyStore KeyStore => _keyStore ?? throw new InvalidOperationException("Not enrolled yet.");
@@ -60,12 +60,12 @@ public sealed class EnrollmentService
             var apClient = new AgentProviderClient(new HttpClient(), keyStore);
             var result = await apClient.EnrolAsync(apBase, agentId, enrolEndpoint, personServer);
 
-            // Deliberately discard result.AgentToken — we only keep the key ID.
+            // Deliberately discard result.AgentToken — we only keep the local key handle.
             // At runtime the SDK acquires a fresh token via the refresh endpoint
             // (signed with the durable key). This simulates out-of-band enrollment
             // where the app never sees the initial token.
             _key = result.Key;
-            _keyId = result.EnrolledKeyId;
+            _localKeyHandle = result.LocalKeyHandle;
             _jwksUri = result.JwksUri;
         }
         finally
