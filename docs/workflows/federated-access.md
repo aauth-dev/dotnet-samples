@@ -66,7 +66,7 @@ class ApTokenRefresher(IKeyStore keyStore, string apRefreshEndpoint) : ITokenRef
 }
 ```
 
-The example uses these SDK types: `IKeyStore` / `ITokenRefresher` / `TokenRefreshContext` (all in `AAuth.Agent`) and `AgentProviderClient` (in `AAuth.Agent`). `ApTokenRefresher` itself is illustrative only — implement your own `ITokenRefresher` for production refresh strategies.
+The example uses these SDK types: `IKeyStore` (in `AAuth.Crypto`), `ITokenRefresher` / `TokenRefreshContext` (in `AAuth.Agent`), and `AgentProviderClient` (in `AAuth.Agent`). `ApTokenRefresher` itself is illustrative only — implement your own `ITokenRefresher` for production refresh strategies.
 
 ## Key Difference from PS-Asserted
 

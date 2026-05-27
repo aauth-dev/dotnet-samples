@@ -26,7 +26,7 @@ public class KeyStoreTests : IDisposable
     [Fact]
     public void SaveAndLoad_RoundTrips()
     {
-        var store = new KeyStore(_tempDir);
+        var store = new FileKeyStore(_tempDir);
         var key = AAuthKey.Generate();
 
         store.Save("agent", key);
@@ -40,7 +40,7 @@ public class KeyStoreTests : IDisposable
     [Fact]
     public void Exists_ReflectsFilesystem()
     {
-        var store = new KeyStore(_tempDir);
+        var store = new FileKeyStore(_tempDir);
         Assert.False(store.Exists("agent"));
 
         store.Save("agent", AAuthKey.Generate());
@@ -50,7 +50,7 @@ public class KeyStoreTests : IDisposable
     [Fact]
     public void LoadOrCreate_GeneratesOnce()
     {
-        var store = new KeyStore(_tempDir);
+        var store = new FileKeyStore(_tempDir);
 
         var first = store.LoadOrCreate("agent");
         var second = store.LoadOrCreate("agent");
@@ -61,7 +61,7 @@ public class KeyStoreTests : IDisposable
     [Fact]
     public void Load_MissingKey_Throws()
     {
-        var store = new KeyStore(_tempDir);
+        var store = new FileKeyStore(_tempDir);
         Assert.Throws<FileNotFoundException>(() => store.Load("missing"));
     }
 
@@ -76,7 +76,7 @@ public class KeyStoreTests : IDisposable
     [InlineData("with\0null")]
     public void InvalidName_Throws(string name)
     {
-        var store = new KeyStore(_tempDir);
+        var store = new FileKeyStore(_tempDir);
         Assert.Throws<ArgumentException>(() => store.Exists(name));
     }
 
@@ -90,7 +90,7 @@ public class KeyStoreTests : IDisposable
             return; // Permission semantics differ on Windows; covered by docs.
         }
 
-        var store = new KeyStore(_tempDir);
+        var store = new FileKeyStore(_tempDir);
         store.Save("agent", AAuthKey.Generate());
 
         var dirMode = File.GetUnixFileMode(_tempDir);

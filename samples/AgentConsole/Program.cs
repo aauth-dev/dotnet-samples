@@ -110,7 +110,7 @@ string refreshEndpoint;
 
 // Per spec, agent keys are long-lived (spanning the agent install).
 // The key lives in a durable keystore — we only persist its ID + AP metadata.
-IKeyStore keyStore = KeyStore.Default();
+IKeyStore keyStore = FileKeyStore.Default();
 
 var enrollCacheFile = Path.Combine(
     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

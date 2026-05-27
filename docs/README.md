@@ -63,7 +63,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 |------|---------|
 | `AAuthKey` | Ed25519 key generation, JWK import/export, thumbprints |
 | `EcdsaAAuthKey` | P-256 ECDSA key (for interop scenarios) |
-| `KeyStore` | On-disk key persistence (`~/.aauth/keys/`) |
+| `FileKeyStore` | On-disk key persistence (`~/.aauth/keys/`) |
 | `IAAuthKey` | Key abstraction (implement for custom key backends) |
 
 ### `AAuth.HttpSig` — Signing and verification

@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using AAuth.Agent;
+using AAuth.Crypto;
 using Xunit;
 
 namespace AAuth.Conformance.AgentTokens;

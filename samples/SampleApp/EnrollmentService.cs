@@ -46,7 +46,7 @@ public sealed class EnrollmentService
             var personServer = _config["AAuth:PersonServer"];
 
             // Use a file-based key store so the key survives app restarts
-            var keyStore = AAuth.Crypto.KeyStore.Default();
+            var keyStore = AAuth.Crypto.FileKeyStore.Default();
             _keyStore = keyStore;
 
             // Discover AP metadata

@@ -52,9 +52,10 @@ using var client = new AAuthClientBuilder(key)
 ### Pseudonymous (HWK)
 
 ```csharp
+using AAuth.Agent;
 using AAuth.Crypto;
 
-IKeyStore keyStore = KeyStore.Default();
+IKeyStore keyStore = FileKeyStore.Default();
 var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!);
 
 builder.Services.AddAAuthAgent("identity-hwk", options =>

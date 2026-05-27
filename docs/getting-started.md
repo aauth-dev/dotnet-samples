@@ -120,7 +120,7 @@ using AAuth.Agent;
 using AAuth.HttpSig;
 
 // Key is generated INSIDE the store — private material never leaves
-var keyStore = KeyStore.Default(); // ~/.aauth/keys/ (or plug in HSM/Key Vault)
+var keyStore = FileKeyStore.Default(); // ~/.aauth/keys/ (or plug in HSM/Key Vault)
 
 var enrol = await AAuthClientBuilder
     .Bootstrap(
@@ -143,7 +143,7 @@ Load the key by ID from the store and let the SDK manage agent tokens:
 using AAuth.Agent;
 using AAuth.HttpSig;
 
-var keyStore = KeyStore.Default();
+var keyStore = FileKeyStore.Default();
 var keyId = configuration["AAuth:KeyId"]!;
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 var key = await keyStore.LoadAsync(keyId)

@@ -60,7 +60,7 @@ For agents without a stable URL, enrol with an Agent Provider:
 using AAuth.Agent;
 using AAuth.HttpSig;
 
-var keyStore = KeyStore.Default();
+var keyStore = FileKeyStore.Default();
 var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!)
     ?? throw new InvalidOperationException("Key not found. Run enrollment first.");
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
@@ -89,7 +89,7 @@ using AAuth.Agent;
 using AAuth.Discovery;
 using AAuth.HttpSig;
 
-var keyStore = KeyStore.Default();
+var keyStore = FileKeyStore.Default();
 var key = await keyStore.LoadAsync(configuration["AAuth:KeyId"]!);
 var agentToken = "..."; // acquired via AP refresh endpoint
 var tokenHolder = new AAuthTokenHolder(agentToken);
@@ -142,7 +142,7 @@ class ApTokenRefresher(IKeyStore keyStore, string apRefreshEndpoint) : ITokenRef
 }
 ```
 
-`ApTokenRefresher` is an example wiring of `ITokenRefresher`; it is not shipped with the SDK. The example relies on the SDK types `IKeyStore`, `ITokenRefresher`, `TokenRefreshContext`, and `AgentProviderClient` (all in `AAuth.Agent`).
+`ApTokenRefresher` is an example wiring of `ITokenRefresher`; it is not shipped with the SDK. The example relies on the SDK types `IKeyStore` (in `AAuth.Crypto`), `ITokenRefresher`, `TokenRefreshContext`, and `AgentProviderClient` (in `AAuth.Agent`).
 
 This registers a named `HttpClient` with signing + automatic challenge handling. Inject via `IHttpClientFactory.CreateClient("ps-asserted")`. The `ChallengeHandler` intercepts 401 responses, exchanges the resource token at the PS, and retries transparently.
 

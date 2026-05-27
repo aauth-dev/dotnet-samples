@@ -32,19 +32,19 @@ await keyStore.StoreAsync("my-agent-key", AAuthKey.Generate());
 var key = await keyStore.LoadAsync("my-agent-key");
 ```
 
-## KeyStore (Crypto Namespace)
+## FileKeyStore (Crypto Namespace)
 
 File-based synchronous storage. Default location: `~/.aauth/keys/`
 
 ```csharp
 namespace AAuth.Crypto;
 
-public sealed class KeyStore
+public sealed class FileKeyStore
 {
     public string Directory { get; }
 
-    public KeyStore(string directory);
-    public static KeyStore Default();          // ~/.aauth/keys/
+    public FileKeyStore(string directory);
+    public static FileKeyStore Default();          // ~/.aauth/keys/
     public void Save(string name, AAuthKey key);
     public AAuthKey Load(string name);
     public bool Exists(string name);
@@ -58,10 +58,10 @@ public sealed class KeyStore
 using AAuth.Crypto;
 
 // Default location (~/.aauth/keys/)
-var store = KeyStore.Default();
+var store = FileKeyStore.Default();
 
 // Or custom directory
-var store = new KeyStore("/opt/myapp/keys");
+var store = new FileKeyStore("/opt/myapp/keys");
 
 // Load or generate on first run
 var agentKey = store.LoadOrCreate("agent-signing-key");
@@ -88,7 +88,7 @@ Keys are stored as JWK JSON files:
 | Backend | Use Case | Thread-Safe | Async |
 |---------|----------|:-----------:|:-----:|
 | `InMemoryKeyStore` | Unit tests, ephemeral agents | Yes | Yes |
-| `KeyStore` | CLI tools, dev environments | No | No |
+| `FileKeyStore` | CLI tools, dev environments | No | No |
 | Custom `IKeyStore` | Production (KMS, HSM, Vault) | You decide | Yes |
 
 ## Custom Backend Example
@@ -150,7 +150,7 @@ See [Key Rotation (jkt_jwt)](../signing-modes/key-rotation-jkt-jwt.md) for detai
 ## Security Considerations
 
 - Never expose private keys in logs or error messages
-- Use file permissions (600) for `KeyStore` directory
+- Use file permissions (600) for `FileKeyStore` directory
 - Prefer KMS/HSM backends for production workloads
 - Rotate keys periodically (jkt_jwt enables seamless rotation)
 

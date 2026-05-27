@@ -1,9 +1,7 @@
-using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
-using AAuth.Crypto;
 
-namespace AAuth.Agent;
+namespace AAuth.Crypto;
 
 /// <summary>
 /// Abstraction for storing and retrieving agent keys. Consumers plug in

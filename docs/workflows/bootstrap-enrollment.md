@@ -57,11 +57,11 @@ using AAuth.Crypto;
 using AAuth.HttpSig;
 
 // Key is generated INSIDE the store — private material never leaves.
-// KeyStore.Default() returns the in-process IKeyStore shipped with the SDK
-// (file/keychain-backed depending on platform). AzureKeyVaultStore and
+// FileKeyStore.Default() returns the in-process IKeyStore shipped with the SDK
+// (file-backed at ~/.aauth/keys/). AzureKeyVaultStore and
 // HsmKeyStore are placeholders for your own custom IKeyStore
 // implementations — they are NOT part of the SDK.
-var keyStore = KeyStore.Default(); // or new AzureKeyVaultStore(...), HsmKeyStore(...)
+var keyStore = FileKeyStore.Default(); // or new AzureKeyVaultStore(...), HsmKeyStore(...)
 
 var enrol = await AAuthClientBuilder
     .Bootstrap(
@@ -83,7 +83,7 @@ using AAuth.Agent;
 using AAuth.HttpSig;
 
 // Key stays in the store — loaded by reference, never extracted
-var keyStore = KeyStore.Default();
+var keyStore = FileKeyStore.Default();
 var keyId = configuration["AAuth:KeyId"]!;
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 var key = await keyStore.LoadAsync(keyId)
@@ -107,7 +107,7 @@ using var client = new AAuthClientBuilder(key)
 using AAuth.Agent;
 using AAuth.Crypto;
 
-var keyStore = new InMemoryKeyStore(); // or KeyStore for file-based persistence
+var keyStore = new InMemoryKeyStore(); // or FileKeyStore for file-based persistence
 var apClient = new AgentProviderClient(new HttpClient(), keyStore);
 
 var result = await apClient.EnrolAsync(
@@ -145,7 +145,7 @@ var result = await apClient.EnrolAsync(
 
 ```csharp
 // File-based (persists to ~/.aauth/keys/)
-var keyStore = KeyStore.Default();
+var keyStore = FileKeyStore.Default();
 
 // In-memory (testing only)
 var keyStore = new InMemoryKeyStore();

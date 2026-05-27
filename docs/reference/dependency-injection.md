@@ -78,7 +78,7 @@ app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 Load the key by ID from the store and configure token refresh:
 
 ```csharp
-var keyStore = KeyStore.Default();
+var keyStore = FileKeyStore.Default();
 var keyId = configuration["AAuth:KeyId"]!;
 var key = await keyStore.LoadAsync(keyId)
     ?? throw new InvalidOperationException($"Key '{keyId}' not found.");

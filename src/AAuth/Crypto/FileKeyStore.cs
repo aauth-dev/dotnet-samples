@@ -13,7 +13,7 @@ namespace AAuth.Crypto;
 /// <c>~/.aauth/keys/</c>. Each key is persisted as a JWK JSON document
 /// (including the private <c>d</c> parameter).
 /// </summary>
-public sealed class KeyStore : IKeyStore
+public sealed class FileKeyStore : IKeyStore
 {
     private static readonly JsonSerializerOptions s_writerOptions = new() { WriteIndented = true };
 
@@ -23,7 +23,7 @@ public sealed class KeyStore : IKeyStore
     public string Directory => _directory;
 
     /// <summary>Create a key store rooted at <paramref name="directory"/>.</summary>
-    public KeyStore(string directory)
+    public FileKeyStore(string directory)
     {
         if (string.IsNullOrWhiteSpace(directory))
         {
@@ -34,10 +34,10 @@ public sealed class KeyStore : IKeyStore
     }
 
     /// <summary>Create a key store at the default <c>~/.aauth/keys/</c> location.</summary>
-    public static KeyStore Default()
+    public static FileKeyStore Default()
     {
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        return new KeyStore(Path.Combine(home, ".aauth", "keys"));
+        return new FileKeyStore(Path.Combine(home, ".aauth", "keys"));
     }
 
     /// <summary>Persist a key under <paramref name="name"/>.</summary>

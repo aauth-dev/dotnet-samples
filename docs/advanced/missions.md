@@ -89,7 +89,7 @@ app.MapGet("/data", (HttpContext context) =>
     if (missionId is null)
     {
         // Propose a new mission
-        var newMission = new { id = Guid.NewGuid().ToString(), status = "proposed",
+        var newMission = new { id = Guid.NewGuid().ToString(), status = "pending",
             requirements = new[] { new { type = "auth_token", scope = "read" } } };
         context.Response.Headers.Append(AAuthMissionHeader.Name, 
             AAuthMissionHeader.Format(newMission.id));

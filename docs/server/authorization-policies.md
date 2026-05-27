@@ -53,7 +53,7 @@ The authentication handler reads `AAuthVerificationResult` from `HttpContext.Fea
 | `aauth:agent` | `AAuthVerificationResult.Agent` |
 | `aauth:scope` | One claim per scope in `AAuthVerificationResult.Scopes` |
 | `aauth:issuer` | `AAuthVerificationResult.Issuer` |
-| `aauth:level` | `AAuthVerificationResult.Level` (string) |
+| `aauth:level` | `AAuthVerificationResult.Level` (`AAuthLevel` enum, serialized as string) |
 | `aauth:scheme` | `AAuthVerificationResult.Scheme` (`hwk`, `jwks_uri`, `jwt`, `jkt-jwt`) |
 | `aauth:jkt` | `AAuthVerificationResult.Jkt` (JWK thumbprint of the signing key) |
 | `aauth:act_sub` | `AAuthVerificationResult.ActorSubject` (intermediary in call-chaining) |
