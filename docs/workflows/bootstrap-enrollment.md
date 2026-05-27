@@ -122,7 +122,7 @@ var result = await apClient.EnrolAsync(
 // result.AgentToken     = the aa-agent+jwt issued by the AP
 // result.Key            = the generated durable signing key
 // result.LocalKeyHandle = agent-local IKeyStore handle (defaults to the JWK thumbprint)
-// result.AgentTokenKid  = AP-internal JWT `kid` (opaque; diagnostic only)
+// result.AgentTokenKid  = AP-published kid for jwks_uri mode (required for UseJwksUri)
 // result.JwksUri        = per-agent JWKS URI (for jwks_uri signing mode)
 ```
 
@@ -135,7 +135,7 @@ var result = await apClient.EnrolAsync(
   - `ps`: Person Server URL (optional, only if agent has a PS)
 - The agent's **private** key stored in `IKeyStore` (the AP only ever sees the public key)
 - A **local key handle** (`EnrollResult.LocalKeyHandle`) for `IKeyStore.LoadAsync` — defaults to the durable key's JWK thumbprint (RFC 7638). Purely agent-local; never sent to the AP.
-- Optionally, an **AP-internal JWT `kid`** (`EnrollResult.AgentTokenKid`) carried inside the issued agent token — opaque to receivers and diagnostic-only for the agent.
+- An **AP-published JWT `kid`** (`EnrollResult.AgentTokenKid`) — the AP chooses this value and publishes it in the per-agent JWKS. Required for `jwks_uri` signing mode (passed to `UseJwksUri(url, kid)`); opaque to receivers per spec § "Agent Identifier Strategies".
 - A `jwks_uri` pointing to the per-agent JWKS endpoint where the AP publishes the agent's public key (used with `scheme=jwks_uri`)
 
 ## Token Refresh
@@ -167,6 +167,35 @@ using var client = new AAuthClientBuilder(key)
     .Build();
 ```
 
+### Two-Key Refresh (jkt-jwt — key rotation)
+
+For agents using the `jkt-jwt` signing mode, the refresh flow uses **two keys**: the enrolled durable key for identity proof, and a fresh ephemeral key for signing HTTP requests. This enables key rotation without re-enrollment.
+
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant AP as Agent Provider
+    Note over Agent: Token nearing expiry
+    Agent->>Agent: Generate ephemeral Ed25519 key
+    Agent->>Agent: Build naming JWT (signed by durable key,<br/>embeds ephemeral key as cnf.jwk)
+    Agent->>AP: POST /refresh (signed with ephemeral key,<br/>Signature-Key: sig=jkt-jwt;jwt="naming-jwt")
+    AP->>AP: Extract durable key thumbprint from naming JWT kid
+    AP->>AP: Verify naming JWT signature against enrolled durable key
+    AP->>AP: Verify HTTP signature against ephemeral key
+    AP-->>Agent: New aa-agent+jwt (cnf.jwk = ephemeral key)
+```
+
+```csharp
+// Spec: "The AP verifies the durable-key signature on the naming JWT,
+//        looks up the enrollment by the durable key's thumbprint"
+using var client = new AAuthClientBuilder(key)
+    .WithTokenRefresh(AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
+        .WithKeyStore(keyStore)
+        .WithRefreshMode(RefreshMode.TwoKey, apIssuer)
+        .Build())
+    .Build();
+```
+
 ### Self-Issued Tokens (hosted services)
 
 Hosted services with a stable HTTPS URL act as their own issuer — no AP is needed. The SDK mints a fresh JWT locally on each refresh, signed with the service's own key.
@@ -192,7 +221,7 @@ The term "key ID" gets overloaded in AP enrollment. There are actually **three d
 |-----------|----------------|---------------|----------|
 | **JWK thumbprint** of the durable key (RFC 7638) | derived from the public key | implicit on every signed request | The AP looks the agent up in its enrollment DB by this thumbprint at refresh time |
 | **Local key handle** (`EnrollResult.LocalKeyHandle`) | the agent (SDK chooses; defaults to the JWK thumbprint) | never leaves the agent process | `IKeyStore.LoadAsync(localKeyHandle)` — loads the private key at app startup |
-| **AP-internal JWT `kid`** (`EnrollResult.AgentTokenKid`) | the AP picks (opaque) | inside the issued `aa-agent+jwt` header | Opaque to receivers (spec § "Agent Identifier Strategies"); diagnostic-only for the agent — **the agent never sends this back to refresh** |
+| **AP-published JWT `kid`** (`EnrollResult.AgentTokenKid`) | the AP picks (opaque) | inside the issued `aa-agent+jwt` header; in `Signature-Key` for `jwks_uri` mode | Required for `UseJwksUri(url, kid)` — the agent passes it when building the client. Opaque to receivers per spec § "Agent Identifier Strategies". **Not sent back to the AP at refresh** — refresh uses the HTTP signature only. |
 
 For the second flavour of enrollment, **self-issued** (hosted services), only one identifier matters:
 
@@ -234,6 +263,7 @@ flowchart LR
 |------|:----------------:|-----|
 | Pseudonymous (hwk) | No | Just needs a bare keypair |
 | Agent Identity (jwks_uri) | Yes | AP publishes the agent's key at a per-agent JWKS endpoint |
+| Key Rotation (jkt-jwt) | Yes | Durable key must be enrolled; AP issues tokens bound to ephemeral keys |
 | Three-party (jwt) | Yes | Agent token required for PS interactions |
 
 ## Key Persistence

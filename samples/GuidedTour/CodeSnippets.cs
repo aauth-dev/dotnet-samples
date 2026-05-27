@@ -84,9 +84,16 @@ internal static class CodeSnippets
         """;
 
     public const string SignedGetJktJwt = """
-        // jkt-jwt mode: naming JWT binds key via thumbprint confirmation.
-        // Supports key rotation without re-enrolment.
-        using var client = new AAuthClientBuilder(key)
+        // jkt-jwt mode: the durable key signs a naming JWT that binds
+        // the ephemeral signing key via cnf.jwk. The ephemeral key signs
+        // the HTTP request. Supports key rotation without re-enrolment.
+        //
+        // Spec: "The AP verifies the durable-key signature on the naming JWT,
+        //         looks up the enrollment by the durable key's thumbprint"
+        var namingJwt = NamingJwtBuilder.Build(
+            durableKey, ephemeralKey, apIssuer, durableKey.ComputeJwkThumbprint());
+
+        using var client = new AAuthClientBuilder(ephemeralKey)
             .UseJktJwt(() => namingJwt)
             .Build();
 

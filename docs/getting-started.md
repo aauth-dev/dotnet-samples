@@ -164,6 +164,22 @@ var response = await client.GetAsync("https://resource.example/protected");
 Console.WriteLine(await response.Content.ReadAsStringAsync());
 ```
 
+> **Shortcut — `From(EnrollResult)`**: If you still have the enrollment result object
+> (e.g. in a CLI that enrols and immediately calls a resource), use the convenience factory
+> to auto-configure the signing mode:
+>
+> ```csharp
+> using var client = AAuthClientBuilder.From(enrol)
+>     .WithTokenRefresh(AgentProviderTokenRefresher.Create(enrol.ApRefreshEndpoint, enrol.LocalKeyHandle)
+>         .WithKeyStore(keyStore)
+>         .Build())
+>     .WithChallengeHandling("https://ps.example")
+>     .Build();
+> ```
+>
+> `From()` sets up `UseJwksUri` when the enrollment includes a `JwksUri` and `AgentTokenKid`,
+> falling back to the default `jwt` mode otherwise.
+
 <details>
 <summary>Step-by-Step (Advanced)</summary>
 

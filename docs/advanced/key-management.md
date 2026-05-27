@@ -110,11 +110,14 @@ public sealed class AzureKeyVaultStore : IKeyStore
 
     public AzureKeyVaultStore(SecretClient client) => _client = client;
 
-    public async Task<IAAuthKey?> LoadAsync(string keyId, CancellationToken ct)
+    // Spec: 'handle' is agent-chosen, never leaves the agent.
+    // It is distinct from the AP-published kid (AgentTokenKid) and
+    // the JWK thumbprint used for cryptographic identity.
+    public async Task<IAAuthKey?> LoadAsync(string handle, CancellationToken ct)
     {
         try
         {
-            var secret = await _client.GetSecretAsync(keyId, cancellationToken: ct);
+            var secret = await _client.GetSecretAsync(handle, cancellationToken: ct);
             return AAuthKey.FromJwkJson(secret.Value.Value);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
@@ -123,15 +126,15 @@ public sealed class AzureKeyVaultStore : IKeyStore
         }
     }
 
-    public async Task StoreAsync(string keyId, IAAuthKey key, CancellationToken ct)
+    public async Task StoreAsync(string handle, IAAuthKey key, CancellationToken ct)
     {
         var jwk = ((AAuthKey)key).ToPrivateJwk().ToJsonString();
-        await _client.SetSecretAsync(new KeyVaultSecret(keyId, jwk), ct);
+        await _client.SetSecretAsync(new KeyVaultSecret(handle, jwk), ct);
     }
 
-    public async Task DeleteAsync(string keyId, CancellationToken ct)
+    public async Task DeleteAsync(string handle, CancellationToken ct)
     {
-        await _client.StartDeleteSecretAsync(keyId, ct);
+        await _client.StartDeleteSecretAsync(handle, ct);
     }
 
     public async Task<string[]> ListAsync(CancellationToken ct)

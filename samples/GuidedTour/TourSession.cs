@@ -342,6 +342,8 @@ public sealed class TourSession : IAsyncDisposable
                 builder.UseHwk();
                 break;
             case SigningMode.JwksUri:
+                // Spec: In AP-enrolled flows, _assignedKeyId is the AP's published kid (opaque).
+                // In self-hosted flows (this tour), the server's own kid is used as fallback.
                 builder.UseJwksUri(
                     _agentJwksUri ?? $"{_selfIdentity.Issuer.TrimEnd('/')}/.well-known/jwks.json",
                     _assignedKeyId ?? _selfIdentity.KeyId);
@@ -817,6 +819,13 @@ public sealed class TourSession : IAsyncDisposable
                     "fetches the agent's public key from that URI and learns the agent's " +
                     "full cryptographic identity. Use for: access control by agent identity, " +
                     "replacing API keys.",
+                SigningMode.JktJwt =>
+                    "The agent signs the request per RFC 9421. The Signature-Key header " +
+                    "carries `sig=jkt-jwt` with a naming JWT and the durable key's JWK " +
+                    "thumbprint. The naming JWT (signed by the durable key) binds the " +
+                    "current ephemeral signing key via `cnf.jwk`. The resource verifies " +
+                    "the HTTP signature against the ephemeral key — enabling key rotation " +
+                    "without re-enrolment.",
                 _ =>
                     "The agent signs the request per RFC 9421. The Signature-Key header " +
                     "carries `sig=jwt` with the full agent token inline. The resource " +
@@ -835,6 +844,7 @@ public sealed class TourSession : IAsyncDisposable
             {
                 SigningMode.Hwk => CodeSnippets.SignedGetHwk,
                 SigningMode.JwksUri => CodeSnippets.SignedGetJwksUri,
+                SigningMode.JktJwt => CodeSnippets.SignedGetJktJwt,
                 _ => CodeSnippets.SignedGetJwt,
             },
         });

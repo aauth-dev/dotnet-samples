@@ -27,7 +27,7 @@
         var ap = new AgentProviderClient(
             new HttpClient(), keyStore);
         return await ap.RefreshAsync(
-            refreshEndpoint, keyId, ct);
+            refreshEndpoint, localKeyHandle, ct);
     })
     .WithChallengeHandling(personServer, opts =>
     {
