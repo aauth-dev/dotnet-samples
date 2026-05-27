@@ -105,6 +105,7 @@ if (apUrl is null)
 
 IAAuthKey key;
 string keyId;
+string? agentTokenKid;
 string? agentJwksUri;
 string refreshEndpoint;
 
@@ -120,6 +121,7 @@ if (File.Exists(enrollCacheFile))
 {
     var cached = JsonNode.Parse(File.ReadAllText(enrollCacheFile))!;
     keyId = (string)cached["key_id"]!;
+    agentTokenKid = (string?)cached["agent_token_kid"];
     agentJwksUri = (string?)cached["jwks_uri"];
     refreshEndpoint = (string)cached["refresh_endpoint"]!;
 
@@ -143,6 +145,7 @@ else
     var result = await apClient.EnrolAsync(apBase, subject, enrolEndpoint, personServer);
     key = result.Key;
     keyId = result.LocalKeyHandle;
+    agentTokenKid = result.AgentTokenKid;
     agentJwksUri = result.JwksUri;
     Console.WriteLine($"Enrolled successfully. Key ID: {keyId}");
 
@@ -151,6 +154,7 @@ else
     File.WriteAllText(enrollCacheFile, JsonSerializer.Serialize(new
     {
         key_id = keyId,
+        agent_token_kid = agentTokenKid,
         jwks_uri = agentJwksUri,
         refresh_endpoint = refreshEndpoint,
     }));
@@ -173,7 +177,13 @@ switch (signingMode)
         break;
     case "jwks_uri":
         var jwksUrl = agentJwksUri ?? $"{apUrl.TrimEnd('/')}/agents/{subject}/jwks.json";
-        builder.UseJwksUri(jwksUrl, keyId);
+        // Per spec (§ Signature Verification), the receiver looks up the key in
+        // the JWKS by `kid`. Use the AP-published kid (AgentTokenKid) when
+        // available — the local key handle is the JWK thumbprint which does not
+        // generally match the AP's published kid. Fall back to the thumbprint
+        // only when the AP returned no kid (in which case the AP is expected to
+        // publish the JWK keyed by its thumbprint).
+        builder.UseJwksUri(jwksUrl, agentTokenKid ?? keyId);
         break;
     case "jkt-jwt":
         var jktEndpoint = refreshEndpoint;
