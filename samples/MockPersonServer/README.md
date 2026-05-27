@@ -2,6 +2,8 @@
 
 A minimal AAuth Person Server for end-to-end demos and integration tests.
 
+> **Sample only — not part of the AAuth SDK.** This project illustrates how a Person Server can be built on top of the SDK; it is not a supported runtime component.
+
 ## What it does
 
 - Serves PS discovery metadata at `/.well-known/aauth-person.json` (with `token_endpoint`).

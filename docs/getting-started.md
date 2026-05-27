@@ -117,10 +117,11 @@ For agents that do NOT have a stable URL (CLI tools, desktop apps, mobile apps),
 
 ```csharp
 using AAuth.Agent;
+using AAuth.Crypto;
 using AAuth.HttpSig;
 
 // Key is generated INSIDE the store — private material never leaves
-var keyStore = KeyStore.Default(); // ~/.aauth/keys/ (or plug in HSM/Key Vault)
+var keyStore = FileKeyStore.Default(); // ~/.aauth/keys/ (or plug in HSM/Key Vault)
 
 var enrol = await AAuthClientBuilder
     .Bootstrap(
@@ -132,7 +133,7 @@ var enrol = await AAuthClientBuilder
 
 // Only the key ID needs to be recorded in app config
 // (the key itself is already in the keystore)
-Console.WriteLine($"Enrolled. Add to config: AAuth:KeyId = {enrol.KeyId}");
+Console.WriteLine($"Enrolled. Add to config: AAuth:KeyId = {enrol.EnrolledKeyId}");
 ```
 
 ### Application (every startup)
@@ -141,9 +142,10 @@ Load the key by ID from the store and let the SDK manage agent tokens:
 
 ```csharp
 using AAuth.Agent;
+using AAuth.Crypto;
 using AAuth.HttpSig;
 
-var keyStore = KeyStore.Default();
+var keyStore = FileKeyStore.Default();
 var keyId = configuration["AAuth:KeyId"]!;
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 var key = await keyStore.LoadAsync(keyId)
@@ -152,11 +154,9 @@ var key = await keyStore.LoadAsync(keyId)
 // The SDK acquires the agent token lazily on first request
 // via WithTokenRefresh, then keeps it fresh automatically.
 using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(async (ctx, ct) =>
-    {
-        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-        return await apClient.RefreshAsync(apRefreshEndpoint, ctx.KeyId, ct);
-    })
+    .WithTokenRefresh(AgentProviderTokenRefresher.Create(apRefreshEndpoint, keyId)
+        .WithKeyStore(keyStore)
+        .Build())
     .WithChallengeHandling("https://ps.example")
     .Build();
 
@@ -183,7 +183,7 @@ var enrol = await apClient.EnrolAsync(
     personServer: "https://ps.example");
 
 // enrol.Key        — your Ed25519 signing key (in keystore)
-// enrol.KeyId      — persisted key identifier (save this to config)
+// enrol.EnrolledKeyId      — persisted key identifier (save this to config)
 // enrol.AgentToken — initial aa-agent+jwt (short-lived, do not persist)
 ```
 
@@ -191,11 +191,9 @@ var enrol = await apClient.EnrolAsync(
 
 ```csharp
 using var client = new AAuthClientBuilder(enrol.Key)
-    .WithTokenRefresh(async (ctx, ct) =>
-    {
-        var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-        return await apClient.RefreshAsync("https://ap.example/refresh", ctx.KeyId, ct);
-    })
+    .WithTokenRefresh(AgentProviderTokenRefresher.Create("https://ap.example/refresh", enrol.EnrolledKeyId)
+        .WithKeyStore(keyStore)
+        .Build())
     .WithChallengeHandling(personServer: "https://ps.example")
     .Build();
 ```

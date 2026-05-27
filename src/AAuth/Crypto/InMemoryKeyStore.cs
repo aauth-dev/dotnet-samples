@@ -3,9 +3,8 @@ using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using AAuth.Crypto;
 
-namespace AAuth.Agent;
+namespace AAuth.Crypto;
 
 /// <summary>
 /// In-memory <see cref="IKeyStore"/> for development and testing.

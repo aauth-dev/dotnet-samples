@@ -6,12 +6,12 @@
 
 AAuth agents need persistent signing keys. The SDK provides two built-in storage backends and an interface for custom implementations.
 
-## IKeyStore (Agent Namespace)
+## IKeyStore Interface (Crypto Namespace)
 
-Async key storage for agent workflows (enrollment, token operations):
+The `IKeyStore` interface defines async key storage for agent workflows (enrollment, token refresh). The SDK ships two built-in implementations: `InMemoryKeyStore` and `FileKeyStore`.
 
 ```csharp
-namespace AAuth.Agent;
+namespace AAuth.Crypto;
 
 public interface IKeyStore
 {
@@ -22,7 +22,7 @@ public interface IKeyStore
 }
 ```
 
-### InMemoryKeyStore
+### InMemoryKeyStore (implements IKeyStore)
 
 In-process storage for testing. Keys are lost when the process exits:
 
@@ -32,23 +32,28 @@ await keyStore.StoreAsync("my-agent-key", AAuthKey.Generate());
 var key = await keyStore.LoadAsync("my-agent-key");
 ```
 
-## KeyStore (Crypto Namespace)
+## FileKeyStore (implements IKeyStore, Crypto Namespace)
 
-File-based synchronous storage. Default location: `~/.aauth/keys/`
+File-based storage. Default location: `~/.aauth/keys/`
 
 ```csharp
 namespace AAuth.Crypto;
 
-public sealed class KeyStore
+public sealed class FileKeyStore : IKeyStore
 {
     public string Directory { get; }
 
-    public KeyStore(string directory);
-    public static KeyStore Default();          // ~/.aauth/keys/
+    public FileKeyStore(string directory);
+    public static FileKeyStore Default();          // ~/.aauth/keys/
+
+    // Synchronous convenience methods
     public void Save(string name, AAuthKey key);
     public AAuthKey Load(string name);
     public bool Exists(string name);
     public AAuthKey LoadOrCreate(string name);  // generates if missing
+
+    // IKeyStore async interface (explicit implementation)
+    // LoadAsync, StoreAsync, DeleteAsync, ListAsync
 }
 ```
 
@@ -58,10 +63,10 @@ public sealed class KeyStore
 using AAuth.Crypto;
 
 // Default location (~/.aauth/keys/)
-var store = KeyStore.Default();
+var store = FileKeyStore.Default();
 
 // Or custom directory
-var store = new KeyStore("/opt/myapp/keys");
+var store = new FileKeyStore("/opt/myapp/keys");
 
 // Load or generate on first run
 var agentKey = store.LoadOrCreate("agent-signing-key");
@@ -85,15 +90,18 @@ Keys are stored as JWK JSON files:
 
 ## Choosing a Backend
 
-| Backend | Use Case | Thread-Safe | Async |
-|---------|----------|:-----------:|:-----:|
+| Implementation | Use Case | Thread-Safe | Async |
+|----------------|----------|:-----------:|:-----:|
 | `InMemoryKeyStore` | Unit tests, ephemeral agents | Yes | Yes |
-| `KeyStore` | CLI tools, dev environments | No | No |
-| Custom `IKeyStore` | Production (KMS, HSM, Vault) | You decide | Yes |
+| `FileKeyStore` | CLI tools, dev environments | No | No |
+| Custom `IKeyStore` impl | Production (KMS, HSM, Vault) | You decide | Yes |
 
 ## Custom Backend Example
 
+The following `AzureKeyVaultStore` is a **sample implementation of the SDK's `AAuth.Crypto.IKeyStore` interface** — it is not shipped with the SDK. It depends on `SecretClient`, `KeyVaultSecret`, and `RequestFailedException` from the `Azure.Security.KeyVault.Secrets` / `Azure` NuGet packages, which are likewise not part of the AAuth SDK.
+
 ```csharp
+// Sample implementation of AAuth.Crypto.IKeyStore — not part of the SDK.
 public sealed class AzureKeyVaultStore : IKeyStore
 {
     private readonly SecretClient _client;
@@ -147,7 +155,7 @@ See [Key Rotation (jkt_jwt)](../signing-modes/key-rotation-jkt-jwt.md) for detai
 ## Security Considerations
 
 - Never expose private keys in logs or error messages
-- Use file permissions (600) for `KeyStore` directory
+- Use file permissions (600) for `FileKeyStore` directory
 - Prefer KMS/HSM backends for production workloads
 - Rotate keys periodically (jkt_jwt enables seamless rotation)
 

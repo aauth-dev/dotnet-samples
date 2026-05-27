@@ -32,6 +32,7 @@ var response = await client.GetAsync("https://resource.example/data");
 **CLI/Desktop agent (AP-enrolled):**
 
 ```csharp
+using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.HttpSig;
 

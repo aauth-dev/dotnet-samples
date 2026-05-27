@@ -99,6 +99,10 @@ public sealed class ParsedSignatureKeyInfo
 For non-standard schemes or additional validation:
 
 ```csharp
+// Sample implementation — not part of the SDK.
+// Implements AAuth.HttpSig.ISignatureKeyResolver by wrapping the SDK's
+// DefaultSignatureKeyResolver and consulting an application-provided
+// IPolicyService (also not part of the SDK).
 public sealed class PolicyEnforcingResolver : ISignatureKeyResolver
 {
     private readonly DefaultSignatureKeyResolver _inner;

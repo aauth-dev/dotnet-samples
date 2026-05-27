@@ -143,7 +143,7 @@ Methods:
 
 ## Key Storage
 
-### KeyStore (File-Based)
+### FileKeyStore (File-Based)
 
 | Property/Method | Description |
 |----------------|-------------|

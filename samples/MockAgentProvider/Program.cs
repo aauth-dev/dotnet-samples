@@ -15,7 +15,7 @@ var issuer = app.Configuration["AgentProvider:Issuer"] ?? "http://localhost:5301
 var keyId = app.Configuration["AgentProvider:KeyId"] ?? "ap-key-1";
 
 // AP signing key — persisted so restarting keeps issued tokens verifiable.
-var keyStore = new KeyStore(Path.Combine(
+var keyStore = new FileKeyStore(Path.Combine(
     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
     ".aauth", "ap-keys"));
 var apKey = keyStore.LoadOrCreate(keyId);

@@ -18,19 +18,19 @@ internal sealed class TokenRefreshHandler : DelegatingHandler
 {
     private readonly AAuthTokenHolder _holder;
     private readonly ITokenRefresher _refresher;
-    private readonly string _keyId;
+    private readonly string _signingKeyThumbprint;
     private readonly TimeSpan _refreshThreshold;
     private readonly SemaphoreSlim _semaphore = new(1, 1);
 
     public TokenRefreshHandler(
         AAuthTokenHolder holder,
         ITokenRefresher refresher,
-        string keyId,
+        string signingKeyThumbprint,
         TimeSpan? refreshThreshold = null)
     {
         _holder = holder;
         _refresher = refresher;
-        _keyId = keyId;
+        _signingKeyThumbprint = signingKeyThumbprint;
         _refreshThreshold = refreshThreshold ?? TimeSpan.FromSeconds(60);
     }
 
@@ -91,9 +91,9 @@ internal sealed class TokenRefreshHandler : DelegatingHandler
             var context = new TokenRefreshContext
             {
                 CurrentToken = string.Empty,
-                ApIssuer = string.Empty,
+                Issuer = string.Empty,
                 AgentId = string.Empty,
-                KeyId = _keyId,
+                SigningKeyThumbprint = _signingKeyThumbprint,
             };
             var newToken = await _refresher.RefreshAsync(context, cancellationToken).ConfigureAwait(false);
             _holder.Update(newToken);
@@ -112,9 +112,9 @@ internal sealed class TokenRefreshHandler : DelegatingHandler
         return new TokenRefreshContext
         {
             CurrentToken = token,
-            ApIssuer = iss,
+            Issuer = iss,
             AgentId = sub,
-            KeyId = _keyId,
+            SigningKeyThumbprint = _signingKeyThumbprint,
         };
     }
 

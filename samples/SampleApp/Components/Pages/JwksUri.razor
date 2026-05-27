@@ -64,7 +64,7 @@ app.MapGet("/jwks-uri", (HttpContext ctx) =>
 else
 {
     <div class="alert alert-info">
-        Enrolled. Key ID: <code>@_enrollment!.KeyId</code><br/>
+        Enrolled. Key ID: <code>@_enrollment!.EnrolledKeyId</code><br/>
         JWKS URI: <code>@_enrollment.JwksUri</code>
     </div>
 
@@ -138,7 +138,7 @@ else
         try
         {
             var key = _enrollment.Key;
-            var keyId = _enrollment.KeyId;
+            var keyId = _enrollment.EnrolledKeyId;
             var jwksUri = _enrollment.JwksUri
                 ?? $"{Config["AAuth:AgentProvider"]!.TrimEnd('/')}/agents/{Config["AAuth:AgentId"]}/jwks.json";
 

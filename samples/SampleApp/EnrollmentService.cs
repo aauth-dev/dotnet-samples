@@ -26,7 +26,7 @@ public sealed class EnrollmentService
     }
 
     public IAAuthKey Key => _key ?? throw new InvalidOperationException("Not enrolled yet.");
-    public string KeyId => _keyId ?? throw new InvalidOperationException("Not enrolled yet.");
+    public string EnrolledKeyId => _keyId ?? throw new InvalidOperationException("Not enrolled yet.");
     public string? JwksUri => _jwksUri;
     public string RefreshEndpoint => _refreshEndpoint ?? throw new InvalidOperationException("Not enrolled yet.");
     public IKeyStore KeyStore => _keyStore ?? throw new InvalidOperationException("Not enrolled yet.");
@@ -46,7 +46,7 @@ public sealed class EnrollmentService
             var personServer = _config["AAuth:PersonServer"];
 
             // Use a file-based key store so the key survives app restarts
-            var keyStore = AAuth.Crypto.KeyStore.Default();
+            var keyStore = AAuth.Crypto.FileKeyStore.Default();
             _keyStore = keyStore;
 
             // Discover AP metadata
@@ -65,7 +65,7 @@ public sealed class EnrollmentService
             // (signed with the durable key). This simulates out-of-band enrollment
             // where the app never sees the initial token.
             _key = result.Key;
-            _keyId = result.KeyId;
+            _keyId = result.EnrolledKeyId;
             _jwksUri = result.JwksUri;
         }
         finally

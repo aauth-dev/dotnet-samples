@@ -37,10 +37,10 @@ internal static class CodeSnippets
             enrollEndpoint: "https://ap.example/enrol",
             personServer: "https://ps.example");
 
-        // result.Key        — Ed25519 signing key
-        // result.AgentToken — aa-agent+jwt from the AP
-        // result.KeyId      — key ID at the AP
-        // result.JwksUri    — per-agent JWKS endpoint
+        // result.Key             — Ed25519 signing key
+        // result.AgentToken      — aa-agent+jwt from the AP
+        // result.EnrolledKeyId   — key ID at the AP
+        // result.JwksUri         — per-agent JWKS endpoint
         """;
 
     public const string DiscoverResource = """
@@ -60,7 +60,7 @@ internal static class CodeSnippets
 
     public const string SignedGetJwksUri = """
         using var client = new AAuthClientBuilder(key)
-            .UseJwksUri(result.JwksUri, result.KeyId)
+            .UseJwksUri(result.JwksUri, result.EnrolledKeyId)
             .Build();
 
         var response = await client.GetAsync("https://resource.example/data");
@@ -69,8 +69,9 @@ internal static class CodeSnippets
 
     public const string SignedGetJwt = """
         using var client = new AAuthClientBuilder(key)
-            .WithTokenRefresh(async (ctx, ct) =>
-                await apClient.RefreshAsync(refreshEndpoint, ctx.KeyId, ct))
+            .WithTokenRefresh(AgentProviderTokenRefresher.Create(refreshEndpoint, keyId)
+                .WithKeyStore(keyStore)
+                .Build())
             .Build();
 
         var response = await client.GetAsync("https://resource.example/data");
@@ -107,8 +108,9 @@ internal static class CodeSnippets
     public const string TokenExchangeDirect = """
         // Automatic (recommended):
         using var client = new AAuthClientBuilder(key)
-            .WithTokenRefresh(async (ctx, ct) =>
-                await apClient.RefreshAsync(refreshEndpoint, ctx.KeyId, ct))
+            .WithTokenRefresh(AgentProviderTokenRefresher.Create(refreshEndpoint, keyId)
+                .WithKeyStore(keyStore)
+                .Build())
             .WithChallengeHandling(personServer: "https://ps.example")
             .Build();
 
@@ -199,20 +201,20 @@ internal static class CodeSnippets
 
     public const string FullAutomatic = """
         // --- Provisioning (separate tool / CLI — run once per install) ---
-        var keyStore = KeyStore.Default();
+        var keyStore = FileKeyStore.Default();
         var enrol = await AAuthClientBuilder
             .Bootstrap("https://ap.example/enrol", "aauth:myapp@ap.example")
             .WithPersonServer("https://ps.example")
             .WithKeyStore(keyStore) // key generated inside store, never extracted
             .EnrolAsync();
-        // Record enrol.KeyId in app config — that's all you need
+        // Record enrol.EnrolledKeyId in app config — that's all you need
 
         // --- Application (every startup — load key by ID) ---
         var key = await keyStore.LoadAsync(keyId);
         using var client = new AAuthClientBuilder(key!)
-            .WithTokenRefresh(async (ctx, ct) =>
-                await new AgentProviderClient(new HttpClient(), keyStore)
-                    .RefreshAsync(refreshEndpoint, ctx.KeyId, ct))
+            .WithTokenRefresh(AgentProviderTokenRefresher.Create(refreshEndpoint, keyId)
+                .WithKeyStore(keyStore)
+                .Build())
             .WithChallengeHandling("https://ps.example")
             .Build();
 

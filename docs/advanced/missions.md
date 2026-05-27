@@ -14,7 +14,7 @@ namespace AAuth.Agent;
 public sealed class AAuthMission
 {
     public required string Id { get; init; }
-    public required string Status { get; init; }        // "proposed", "active", "complete", "failed"
+    public required string Status { get; init; }        // "pending", "approved", "denied", "completed"
     public JsonArray? Requirements { get; init; }       // outstanding requirements
     public string? Description { get; init; }           // human-readable description
     public string? StatusUrl { get; init; }             // poll for status changes
@@ -89,7 +89,7 @@ app.MapGet("/data", (HttpContext context) =>
     if (missionId is null)
     {
         // Propose a new mission
-        var newMission = new { id = Guid.NewGuid().ToString(), status = "proposed",
+        var newMission = new { id = Guid.NewGuid().ToString(), status = "pending",
             requirements = new[] { new { type = "auth_token", scope = "read" } } };
         context.Response.Headers.Append(AAuthMissionHeader.Name, 
             AAuthMissionHeader.Format(newMission.id));

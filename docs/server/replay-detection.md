@@ -69,9 +69,11 @@ _ = Task.Run(async () =>
 
 ## Custom Implementations
 
-For distributed deployments, implement `IJtiStore` against a shared store:
+For distributed deployments, implement `IJtiStore` against a shared store. The example below is a sample sketch (not part of the SDK) showing how to implement `IJtiStore` against Redis using `IDatabase` from the `StackExchange.Redis` package (also not part of the SDK):
 
 ```csharp
+// Sample implementation — not part of the SDK.
+// Implements AAuth.Server.IJtiStore using a Redis IDatabase (StackExchange.Redis).
 public sealed class RedisJtiStore : IJtiStore
 {
     private readonly IDatabase _redis;

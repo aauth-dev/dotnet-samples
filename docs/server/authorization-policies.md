@@ -49,11 +49,16 @@ The authentication handler reads `AAuthVerificationResult` from `HttpContext.Fea
 
 | Claim | Source |
 |-------|--------|
-| `sub` | `AAuthVerificationResult.Subject` |
-| `agent` | `AAuthVerificationResult.Agent` |
-| `scope` | Each scope as a separate claim |
-| `iss` | `AAuthVerificationResult.Issuer` |
-| `level` | `AAuthVerificationResult.Level` |
+| `System.Security.Claims.ClaimTypes.NameIdentifier` (`sub`) | `AAuthVerificationResult.Subject` |
+| `aauth:agent` | `AAuthVerificationResult.Agent` |
+| `aauth:scope` | One claim per scope in `AAuthVerificationResult.Scopes` |
+| `aauth:issuer` | `AAuthVerificationResult.Issuer` |
+| `aauth:level` | `AAuthVerificationResult.Level` (`AAuthLevel` enum, serialized as string) |
+| `aauth:scheme` | `AAuthVerificationResult.Scheme` (`hwk`, `jwks_uri`, `jwt`, `jkt-jwt`) |
+| `aauth:jkt` | `AAuthVerificationResult.Jkt` (JWK thumbprint of the signing key) |
+| `aauth:act_sub` | `AAuthVerificationResult.ActorSubject` (intermediary in call-chaining) |
+
+Claim type constants are exposed as `public const string` fields on `AAuthAuthenticationHandler` (for example `AAuthAuthenticationHandler.ScopeClaimType`).
 
 ## AAuthLevel
 

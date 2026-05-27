@@ -110,7 +110,7 @@ string refreshEndpoint;
 
 // Per spec, agent keys are long-lived (spanning the agent install).
 // The key lives in a durable keystore — we only persist its ID + AP metadata.
-IKeyStore keyStore = KeyStore.Default();
+IKeyStore keyStore = FileKeyStore.Default();
 
 var enrollCacheFile = Path.Combine(
     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -142,7 +142,7 @@ else
     var apClient = new AgentProviderClient(new HttpClient(), keyStore);
     var result = await apClient.EnrolAsync(apBase, subject, enrolEndpoint, personServer);
     key = result.Key;
-    keyId = result.KeyId;
+    keyId = result.EnrolledKeyId;
     agentJwksUri = result.JwksUri;
     Console.WriteLine($"Enrolled successfully. Key ID: {keyId}");
 
@@ -190,21 +190,15 @@ switch (signingMode)
         // for the exchange with the PS.
         if (personServer is not null)
         {
-            builder.WithTokenRefresh(async (ctx, ct) =>
-            {
-                var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-                return await apClient.RefreshAsync(jktEndpoint, jktKeyId, ct);
-            });
+            builder.WithTokenRefresh(AgentProviderTokenRefresher.Create(jktEndpoint, keyId)
+                .WithKeyStore(keyStore)
+                .Build());
         }
         break;
     default: // "jwt"
-        var endpoint = refreshEndpoint;
-        var refreshKeyId = keyId; // AP-assigned key ID (matches keystore)
-        builder.WithTokenRefresh(async (ctx, ct) =>
-        {
-            var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-            return await apClient.RefreshAsync(endpoint, refreshKeyId, ct);
-        });
+        builder.WithTokenRefresh(AgentProviderTokenRefresher.Create(refreshEndpoint, keyId)
+            .WithKeyStore(keyStore)
+            .Build());
         break;
 }
 

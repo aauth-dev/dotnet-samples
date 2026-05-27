@@ -20,9 +20,10 @@ public interface IPlatformAttestor
 
 ## NoopAttestor (Default)
 
-When no attestation is required, the `NoopAttestor` returns an empty attestation:
+When no attestation is required, the SDK-provided `NoopAttestor` returns an empty attestation. `NoopAttestor` is part of the SDK (`AAuth.Agent.NoopAttestor`) and is the default `IPlatformAttestor` used by `AgentProviderClient` when no attestor is supplied:
 
 ```csharp
+// Part of the SDK: AAuth.Agent.NoopAttestor — shown here for reference.
 public sealed class NoopAttestor : IPlatformAttestor
 {
     public Task<string> AttestAsync(string challenge, CancellationToken ct)
@@ -34,11 +35,13 @@ This is the default behavior — attestation is opt-in.
 
 ## Custom Attestation
 
-Implement `IPlatformAttestor` to integrate with platform-specific attestation:
+Implement `IPlatformAttestor` to integrate with platform-specific attestation. The examples below are illustrative — `WebAuthnAttestor`, `AppAttestAttestor`, the `IWebAuthnService` interface, and the `DeviceCheck` helper are **not** part of the AAuth SDK; only `IPlatformAttestor` (in `AAuth.Agent`) is.
 
 ### WebAuthn Example
 
 ```csharp
+// Sample implementation of AAuth.Agent.IPlatformAttestor — not part of the SDK.
+// IWebAuthnService is also illustrative; supply your own WebAuthn integration.
 public sealed class WebAuthnAttestor : IPlatformAttestor
 {
     private readonly IWebAuthnService _webauthn;
@@ -57,6 +60,9 @@ public sealed class WebAuthnAttestor : IPlatformAttestor
 ### Apple App Attest Example
 
 ```csharp
+// Sample implementation of AAuth.Agent.IPlatformAttestor — not part of the SDK.
+// `DeviceCheck` here is a placeholder for your platform-specific binding to
+// Apple's DCAppAttestService; it is not provided by the AAuth SDK.
 public sealed class AppAttestAttestor : IPlatformAttestor
 {
     public async Task<string> AttestAsync(string challenge, CancellationToken ct)

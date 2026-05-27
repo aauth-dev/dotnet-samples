@@ -32,12 +32,20 @@ The Orchestrator runs on port 5200, acting as both resource (verifies callers) a
 The calling agent uses standard challenge handling. The SDK automatically handles the 401 → exchange → retry cycle:
 
 ```csharp
+using AAuth.Agent;
+using AAuth.Crypto;
+using AAuth.HttpSig;
+
+var keyStore = FileKeyStore.Default();
+var keyId = configuration["AAuth:KeyId"]!;
+var key = await keyStore.LoadAsync(keyId)
+    ?? throw new InvalidOperationException("Key not found.");
+var refreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
+
 using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(async (ctx, ct) =>
-    {
-        var ap = new AgentProviderClient(new HttpClient(), keyStore);
-        return await ap.RefreshAsync(refreshEndpoint, keyId, ct);
-    })
+    .WithTokenRefresh(AgentProviderTokenRefresher.Create(refreshEndpoint, keyId)
+        .WithKeyStore(keyStore)
+        .Build())
     .WithChallengeHandling(personServer)
     .Build();
 
