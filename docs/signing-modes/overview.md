@@ -69,13 +69,23 @@ var handler = new AAuthSigningHandler(key, provider);
 | Remote key discovery (JWKS) | — | — | ✓ | — |
 | Person Server binding | — | — | — | ✓ |
 
-## Valid Combinations per Flow
+## Valid Combinations per Access Mode
 
-| Flow | Valid Modes | Rationale |
-|------|-----------|-----------|
-| Identity-based (no PS) | `hwk`, `jwks_uri` | No PS-issued token available |
-| Three-party (with PS) | `jwt` only | Spec: agent MUST present agent token via `scheme=jwt` |
-| Bootstrap key rotation | `jkt-jwt` | Two-key delegation from durable to ephemeral |
+Signing modes and access modes are orthogonal concepts:
+- **Signing mode** = what appears in `Signature-Key` (how the agent proves identity)
+- **Access mode** = how the resource decides authorization (who grants access)
+
+The access mode determines which signing modes are valid:
+
+| Access Mode | Valid Signing Modes | Why |
+|-------------|--------------------:|-----|
+| **Identity-Based** | `hwk`, `jwks_uri` | Resource decides from the signature alone. `hwk` gives pseudonymous access (key thumbprint only); `jwks_uri` gives named agent identity. No PS involvement, so `jwt` is not applicable. |
+| **Resource-Managed** (two-party) | `hwk`, `jwks_uri`, `jwt` | Resource handles its own authorization (interaction, internal policy). Any signing mode works because the resource doesn't issue resource tokens to a PS — it manages access itself. |
+| **PS-Asserted** (three-party) | `jwt` only | The resource issues a `resource_token` with `aud=PS`. The PS must verify the agent's identity via the agent token (`aa-agent+jwt`), which requires `scheme=jwt` in `Signature-Key`. |
+| **Federated** (four-party) | `jwt` only | Same as PS-Asserted — the PS federates with the AS, but the agent-side requirement is identical: present the agent token via `scheme=jwt`. |
+| **Bootstrap key rotation** | `jkt-jwt` | Special case: an ephemeral key is bound to a durable identity via a naming JWT. Used during key rotation, not as a primary access mode. |
+
+> **Common confusion**: "Identity-Based" access mode supports the `hwk` (pseudonymous) signing mode even though `hwk` doesn't disclose a named identity. The term "Identity-Based" refers to the *access pattern* — the resource grants or denies based solely on the cryptographic signature, with no token exchange. The resource may allowlist specific key thumbprints (pseudonymous) or specific agent identifiers (`jwks_uri`). Both are "identity-based" in the sense that no PS or AS is involved.
 
 ## Anatomy of a Signed Request
 
