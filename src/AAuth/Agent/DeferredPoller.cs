@@ -116,7 +116,27 @@ public sealed class DeferredPoller
             {
                 request.Headers.TryAddWithoutValidation("Prefer", $"wait={waitSeconds}");
             }
-            var response = await _signedClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            // Use a per-request timeout that accounts for long-poll wait time
+            // plus generous buffer, so we don't hit the HttpClient.Timeout
+            // (100s default) mid-poll. The overall budget is enforced by the
+            // stopwatch check above.
+            var perRequestTimeout = TimeSpan.FromSeconds(
+                (_options.PreferWaitSeconds ?? 0) + 60);
+            var remaining0 = _options.MaxTotalWait - stopwatch.Elapsed;
+            if (perRequestTimeout > remaining0) { perRequestTimeout = remaining0; }
+            using var requestCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            requestCts.CancelAfter(perRequestTimeout);
+            HttpResponseMessage response;
+            try
+            {
+                response = await _signedClient.SendAsync(request, requestCts.Token).ConfigureAwait(false);
+            }
+            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Per-request timeout fired (not caller cancellation).
+                // Treat as a transient failure — loop back to the budget check.
+                continue;
+            }
             try
             {
                 (OnPoll ?? _options.OnPoll)?.Invoke(response);

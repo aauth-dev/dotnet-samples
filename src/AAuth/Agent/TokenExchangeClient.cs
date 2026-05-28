@@ -120,6 +120,12 @@ public sealed class TokenExchangeClient
         {
             body["upstream_token"] = upstreamToken;
         }
+        // Signal interaction capability so the PS knows the agent can
+        // handle a 202 + user-facing consent redirect (§14.1).
+        if (onInteractionRequired is not null)
+        {
+            body["capabilities"] = new JsonArray("interaction");
+        }
         using var request = new HttpRequestMessage(HttpMethod.Post, tokenEndpointUri)
         {
             Content = JsonContent.Create(body),
@@ -166,6 +172,13 @@ public sealed class TokenExchangeClient
                 {
                     throw new AAuthInteractionTimeoutException(
                         $"PS deferred interaction did not complete within the polling budget: {ex.Message}",
+                        ex);
+                }
+                catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // HttpClient.Timeout or per-request CTS fired — not caller cancellation.
+                    throw new AAuthInteractionTimeoutException(
+                        $"PS deferred interaction timed out (HttpClient.Timeout or poll budget): {ex.Message}",
                         ex);
                 }
 
