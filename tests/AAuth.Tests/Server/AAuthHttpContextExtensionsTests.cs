@@ -115,6 +115,9 @@ public class AAuthHttpContextExtensionsTests
         Assert.Equal(
             AAuthRequirementHeader.FormatAuthToken("eyJ.test.sig"),
             ctx.Response.Headers[AAuthConstants.Headers.AAuthRequirement].ToString());
+
+        var statusResult = Assert.IsAssignableFrom<IStatusCodeHttpResult>(result);
+        Assert.Equal(StatusCodes.Status401Unauthorized, statusResult.StatusCode);
     }
 
     // -----------------------------------------------------------------------
