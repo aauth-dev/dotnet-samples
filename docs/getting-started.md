@@ -118,7 +118,7 @@ AAuth supports four resource access modes. Each adds parties and capabilities:
 | Flow | Parties | When to Use | Signing Mode |
 |------|---------|-------------|--------------|
 | **Identity-Based** | Agent + Resource | API-key replacement, simple access control by identity | `hwk` or `jwks_uri` |
-| **Resource-Managed** (two-party) | Agent + Resource | Resource handles its own auth (interaction, existing OAuth) | Any |
+| **Resource-Managed** (two-party) | Agent + Resource | Resource handles its own auth (interaction, existing OAuth) | Any (`hwk`, `jwks_uri`, or `jwt`) |
 | **PS-Asserted** (three-party) | Agent + Resource + PS | User consent required, resource delegates auth to PS | `jwt` |
 | **Federated** (four-party) | Agent + Resource + PS + AS | Cross-domain policy, resource has its own Access Server | `jwt` |
 
