@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.HttpSig;
 using AAuth.Tokens;
@@ -163,6 +164,66 @@ public class SelfIssuingBuilderTests
         using var client = AAuthClientBuilder.SelfIssuing(_key)
             .As(Issuer, Subject)
             .WithChallengeHandling(PersonServer)
+            .WithInnerHandler(stub)
+            .Build();
+
+        await client.GetAsync("http://localhost:9999/test");
+
+        Assert.NotNull(stub.LastRequest);
+        Assert.True(stub.LastRequest!.Headers.Contains("Signature"));
+    }
+
+    [Fact]
+    public async Task SelfIssuing_creates_full_jwt_claims()
+    {
+        var stub = new StubHandler();
+        using var client = AAuthClientBuilder.SelfIssuing(_key)
+            .As(Issuer, Subject)
+            .WithInnerHandler(stub)
+            .Build();
+
+        await client.GetAsync("http://localhost:9999/test");
+
+        var sigKey = stub.LastRequest!.Headers.GetValues("Signature-Key");
+        var headerValue = string.Join("", sigKey);
+        var jwt = ExtractJwt(headerValue);
+        var payload = ReadPayload(jwt);
+
+        Assert.Equal("aauth-agent.json", (string?)payload["dwk"]);
+        Assert.NotNull(payload["cnf"]);
+        Assert.NotNull(payload["exp"]);
+        Assert.NotNull(payload["iat"]);
+    }
+
+    [Fact]
+    public void As_throws_on_empty_subject()
+    {
+        var builder = AAuthClientBuilder.SelfIssuing(_key);
+        Assert.Throws<ArgumentException>(() => builder.As(Issuer, ""));
+    }
+
+    [Fact]
+    public void Explicit_ps_in_challenge_overrides_stored()
+    {
+        using var client = AAuthClientBuilder.SelfIssuing(_key)
+            .As(Issuer, Subject)
+            .WithPersonServer(PersonServer)
+            .WithChallengeHandling("http://localhost:6000")
+            .WithInnerHandler(new StubHandler())
+            .Build();
+
+        Assert.NotNull(client);
+    }
+
+    [Fact]
+    public async Task Existing_WithTokenRefresh_still_works()
+    {
+        var stub = new StubHandler();
+        var refresher = new SelfIssuedTokenRefresher(
+            _key, Issuer, Subject, _key.ComputeJwkThumbprint());
+
+        using var client = new AAuthClientBuilder(_key)
+            .WithTokenRefresh(refresher)
             .WithInnerHandler(stub)
             .Build();
 

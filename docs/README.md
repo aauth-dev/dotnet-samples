@@ -76,7 +76,6 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `AAuthClientBuilder` | Fluent builder → configured `HttpClient` with signing |
 | `AAuthClientBuilder.SelfIssuing(key)` | Fluent factory for self-hosted services (self-issued identity) |
 | `AAuthClientBuilder.Enrolled(key)` | Fluent factory for AP-enrolled agents |
-| `.WithSelfIssuedToken()` | Instance shorthand for self-issued token refresh |
 | `.WithPersonServer()` | Sets PS for both token `ps` claim and challenge handling |
 | `app.MapAAuthResource()` | Unified resource pipeline (well-known + verification + challenge) |
 | `AAuthSigningHandler` | `DelegatingHandler` that signs outbound requests (RFC 9421) |

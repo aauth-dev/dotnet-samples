@@ -135,23 +135,6 @@ public sealed class AAuthClientBuilder
         return new EnrolledBuilder(key);
     }
 
-    /// <summary>
-    /// Create a builder pre-configured for a self-issued agent identity.
-    /// Equivalent to <c>new AAuthClientBuilder(key).WithSelfIssuedToken(issuer, subject, kid)</c>.
-    /// </summary>
-    /// <param name="key">The agent's signing key.</param>
-    /// <param name="issuer">Issuer URL (the service's own HTTPS URL).</param>
-    /// <param name="subject">Agent identifier (e.g. <c>aauth:my-service@my-service.example</c>).</param>
-    /// <param name="kid">Optional key ID. Defaults to the key's JWK thumbprint.</param>
-    [Obsolete("Use SelfIssuing(key).As(issuer, subject) for improved fluency.")]
-    public static AAuthClientBuilder SelfIssued(IAAuthKey key, string issuer, string subject, string? kid = null)
-    {
-        ArgumentNullException.ThrowIfNull(key);
-        ArgumentException.ThrowIfNullOrEmpty(issuer);
-        ArgumentException.ThrowIfNullOrEmpty(subject);
-        return new AAuthClientBuilder(key).WithSelfIssuedToken(issuer, subject, kid);
-    }
-
     /// <summary>Use the pseudonymous (hwk) signing mode.</summary>
     public AAuthClientBuilder UseHwk()
     {
@@ -331,10 +314,7 @@ public sealed class AAuthClientBuilder
     /// for both HTTP signing and token signing. A <see cref="SelfIssuedTokenRefresher"/>
     /// is created internally — no separate <see cref="WithTokenRefresh"/> call is needed.
     /// </summary>
-    /// <param name="issuer">Issuer URL (the service's own HTTPS URL).</param>
-    /// <param name="subject">Agent identifier (e.g. <c>aauth:my-service@my-service.example</c>).</param>
-    /// <param name="kid">Optional key ID. Defaults to the key's JWK thumbprint.</param>
-    public AAuthClientBuilder WithSelfIssuedToken(string issuer, string subject, string? kid = null)
+    internal AAuthClientBuilder WithSelfIssuedToken(string issuer, string subject, string? kid = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(issuer);
         ArgumentException.ThrowIfNullOrEmpty(subject);
