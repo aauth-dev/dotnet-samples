@@ -31,54 +31,155 @@ The SDK supports all four signing modes (`hwk`, `jwks_uri`, `jwt`, `jkt-jwt`), t
 dotnet add package AAuth --prerelease
 ```
 
+The simplest mode is **pseudonymous (HWK)** — the agent signs every request with an inline public key. No Agent Provider, no Person Server, no registration. The resource sees a stable key thumbprint it can use for rate-limiting or access control, but doesn't know the agent's identity.
+
 ```csharp
 using AAuth.Crypto;
 using AAuth.HttpSig;
 
-var key = AAuthKey.Generate();
+var key = AAuthKey.Generate(); // Ed25519 keypair
 
 using var client = new AAuthClientBuilder(key)
-    .UseHwk()
+    .UseHwk() // Pseudonymous mode: inline public key in Signature-Key header
     .Build();
 
 var response = await client.GetAsync("https://resource.example/data");
-// Every request is signed per RFC 9421 — no bearer tokens
+// Request is signed per RFC 9421 — the resource verifies the signature
+// using the public key from the Signature-Key: sig=hwk;jkt="...";jwk="..." header
 ```
 
 ### Three-Party Flow (Agent → Resource → Person Server)
 
-Hosted services self-issue agent tokens (no external AP needed). CLI/desktop agents enrol with an Agent Provider instead.
+The PS-Asserted flow is the primary authorization model. The resource delegates authorization to the agent's Person Server, which prompts the user for consent:
+
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant Resource
+    participant PS as Person Server
+    participant User
+
+    Agent->>Resource: GET /data (signed, agent token)
+    Resource-->>Agent: 401 + resource_token (aud=PS)
+    Agent->>PS: POST /token (signed, resource_token)
+    PS->>User: Consent prompt (scope, justification)
+    User-->>PS: Grant consent
+    PS-->>Agent: auth_token (aa-auth+jwt)
+    Agent->>Resource: GET /data (signed, auth_token)
+    Resource-->>Agent: 200 OK
+```
+
+#### Self-Hosted Agent (Server-Side)
+
+Hosted services act as their own Agent Provider — generate a key, publish metadata, and self-issue tokens:
 
 ```csharp
 using AAuth.Crypto;
 using AAuth.HttpSig;
+using AAuth.Server;
 using AAuth.Tokens;
 
-// Hosted service: generate key at startup, self-issue tokens
+var builder = WebApplication.CreateBuilder(args);
 var key = AAuthKey.Generate();
+const string Kid = "svc-key-1";
+var issuer = "https://my-service.example";
 
+var app = builder.Build();
+
+// Publish agent metadata so resources can discover the JWKS
+app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
+{
+    Issuer = issuer,
+    SigningKeys = new Dictionary<string, AAuthKey> { [Kid] = key },
+});
+
+// Build signed client with automatic token refresh and challenge handling
 using var client = new AAuthClientBuilder(key)
     .WithTokenRefresh(async (ctx, ct) => new AgentTokenBuilder
     {
-        Issuer = "https://my-service.example",
+        Issuer = issuer,
         Subject = "aauth:my-service@my-service.example",
-        KeyId = "svc-key-1",
+        KeyId = Kid,
         Key = key,
         PersonServer = "https://ps.example",
     }.Build())
     .WithChallengeHandling("https://ps.example")
     .Build();
-
-var response = await client.GetAsync("https://resource.example/protected");
 ```
 
-See [Getting Started](docs/getting-started.md) for key persistence, DI integration, and all signing modes.
+#### Resource (Server-Side)
+
+The resource verifies signatures, publishes metadata, and issues resource token challenges:
+
+```csharp
+using AAuth.Crypto;
+using AAuth.DependencyInjection;
+using AAuth.Server;
+
+var builder = WebApplication.CreateBuilder(args);
+var resourceKey = AAuthKey.Generate();
+
+// Register AAuth resource services
+builder.Services.AddAAuthResource(options =>
+{
+    options.Issuer = "https://resource.example";
+    options.SigningKeys = new() { ["resource-key-1"] = resourceKey };
+    options.ScopeDescriptions = new() { ["read"] = "Read your data" };
+});
+
+var app = builder.Build();
+
+// Serve /.well-known/aauth-resource.json + JWKS
+app.MapAAuthWellKnown();
+
+// Verify HTTP signatures and auth tokens from trusted Person Servers
+app.UseAAuthVerification(new AAuthVerificationOptions
+{
+    ResourceIdentifier = "https://resource.example",
+    RequireIssuerVerification = true,
+    TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" },
+});
+
+// Issue 401 + resource_token when agent presents only an agent token
+app.UseAAuthChallenge(new ChallengeOptions
+{
+    ResourceSigningKey = resourceKey,
+    ResourceKeyId = "resource-key-1",
+    ResourceIdentifier = "https://resource.example",
+});
+```
+
+The `UseAAuthChallenge` middleware (registered after verification) automatically returns `401` with an `AAuth-Requirement` header containing a resource token when the agent lacks an auth token. The `TrustedAuthTokenIssuers` allow-list restricts which Person Servers the resource will accept auth tokens from.
+
+#### Agent Calls the Resource
+
+With `WithChallengeHandling`, the entire 401 → exchange → retry cycle is automatic:
+
+```csharp
+var response = await client.GetAsync("https://resource.example/data");
+// 1. Agent signs GET with agent token → Resource verifies, returns 401 + resource_token
+// 2. ChallengeHandler POSTs resource_token to PS token endpoint
+// 3. PS validates agent, prompts user for consent, issues auth_token
+// 4. Agent retries GET signed with auth_token → Resource verifies → 200 OK
+```
+
+**What happens step by step:**
+
+1. Agent signs the request with its agent token (`Signature-Key: sig=jwt;jwt="..."`)
+2. Resource verifies the signature, reads the `ps` claim, returns `401` with a `resource_token` (audience = PS URL)
+3. Agent POSTs the `resource_token` to the PS's token endpoint (signed request)
+4. PS validates the agent token, prompts the user for consent on the requested scope
+5. User grants consent; PS issues an `auth_token` (`aa-auth+jwt`) containing identity claims (`sub`, `email`, etc.)
+6. Agent retries the original request signed with the `auth_token`
+7. Resource verifies the auth token signature and claims → `200 OK`
+
+See [Getting Started](docs/getting-started.md#three-party-flow-deep-dive) for a detailed walk-through, including deferred consent and the resource-side token issuance code.
 
 ## Documentation
 
 Full SDK documentation lives in [`docs/`](docs/):
 
-- [Getting Started](docs/getting-started.md) — install, generate a key, first signed request
+- [Getting Started](docs/getting-started.md) — install, generate a key, three-party flow deep dive, enrollment models
 - [Concepts](docs/concepts.md) — the four participants and how the SDK maps to them
 - [Signing Modes](docs/signing-modes/overview.md) — hwk, jwks_uri, jwt, jkt-jwt
 - [Workflows](docs/workflows/identity-based-access.md) — identity-based, PS-asserted, federated
