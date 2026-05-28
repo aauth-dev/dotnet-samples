@@ -76,9 +76,12 @@ using AAuth.HttpSig;
 using AAuth.Server;
 using AAuth.Tokens;
 
+var builder = WebApplication.CreateBuilder(args);
 var key = AAuthKey.Generate();
 const string Kid = "svc-key-1";
 var issuer = "https://my-service.example";
+
+var app = builder.Build();
 
 // Publish agent metadata so resources can discover the JWKS
 app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
@@ -103,12 +106,14 @@ using var client = new AAuthClientBuilder(key)
 
 #### Resource (Server-Side)
 
-The resource verifies signatures, publishes metadata, and issues resource tokens as challenges:
+The resource verifies signatures, publishes metadata, and issues resource token challenges:
 
 ```csharp
+using AAuth.Crypto;
 using AAuth.DependencyInjection;
 using AAuth.Server;
 
+var builder = WebApplication.CreateBuilder(args);
 var resourceKey = AAuthKey.Generate();
 
 // Register AAuth resource services
@@ -129,13 +134,19 @@ app.UseAAuthVerification(new AAuthVerificationOptions
 {
     ResourceIdentifier = "https://resource.example",
     RequireIssuerVerification = true,
-    // Trust specific PSes — the resource verifies auth tokens against their JWKS.
-    // Omit to accept any PS (claims are namespaced by issuer per spec).
     TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" },
+});
+
+// Issue 401 + resource_token when agent presents only an agent token
+app.UseAAuthChallenge(new ChallengeOptions
+{
+    ResourceSigningKey = resourceKey,
+    ResourceKeyId = "resource-key-1",
+    ResourceIdentifier = "https://resource.example",
 });
 ```
 
-When an agent presents an `auth_token`, the resource verifies its signature against the PS's published JWKS (discovered at `{iss}/.well-known/aauth-person.json`). The `TrustedAuthTokenIssuers` allow-list restricts which Person Servers the resource will accept auth tokens from.
+The `UseAAuthChallenge` middleware (registered after verification) automatically returns `401` with an `AAuth-Requirement` header containing a resource token when the agent lacks an auth token. The `TrustedAuthTokenIssuers` allow-list restricts which Person Servers the resource will accept auth tokens from.
 
 #### Agent Calls the Resource
 

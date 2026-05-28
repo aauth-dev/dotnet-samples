@@ -172,10 +172,10 @@ The resource verifies the HTTP signature, extracts the `ps` claim from the agent
 
 ```
 HTTP/1.1 401 Unauthorized
-AAuth-Requirement: requirement=auth-token;resource_token="<resource-token>"
+AAuth-Requirement: requirement=auth-token; resource-token="<resource-token>"
 ```
 
-The resource token contains: issuer (resource URL), audience (PS URL), agent identifier, agent key thumbprint (`jkt`), and requested scope.
+The resource token contains: issuer (resource URL), audience (PS URL), agent identifier, agent key thumbprint (`agent_jkt`), and requested scope.
 
 **3. Agent → Person Server (token exchange)**
 
@@ -201,7 +201,7 @@ The PS:
 **5. Consent: immediate vs deferred**
 
 - **Immediate**: User is online and grants consent in real time. PS returns the auth token directly.
-- **Deferred**: User is not available. PS returns `202 Accepted` with `requirement=interaction` and a `pending` URL. The agent polls until the user consents (SDK handles this via `InteractionWaitMode`).
+- **Deferred**: User is not available. PS returns `202 Accepted` with `requirement=interaction` and a `pending` URL. The agent polls until the user consents (SDK handles this via `InteractionHandlingOptions`).
 
 **6. Person Server → Agent (auth token)**
 
@@ -209,7 +209,7 @@ The PS issues an `auth_token` (`aa-auth+jwt`) containing:
 - `iss`: PS URL
 - `aud`: Resource URL
 - `sub`: User identifier (stable, PS-scoped)
-- `cnf.jkt`: Agent's key thumbprint (proof-of-possession binding)
+- `cnf.jwk`: Agent's public key (proof-of-possession binding)
 - `scope`: Granted scope
 - Optional identity claims: `email`, `tenant`, `groups`, `roles`
 
@@ -228,7 +228,7 @@ Signature: sig=:<base64-signature>:
 The resource verifies the auth token:
 - Fetches the PS's JWKS (from `{iss}/.well-known/aauth-person.json`) and verifies the JWT signature
 - Checks `aud` matches its own identifier
-- Confirms `cnf.jkt` matches the signing key on the HTTP request (proof-of-possession)
+- Confirms `cnf.jwk` matches the key used to sign the HTTP request (proof-of-possession)
 - Evaluates the granted `scope` against the requested operation
 - Optionally checks the issuer is in `TrustedAuthTokenIssuers`
 
@@ -316,7 +316,15 @@ app.UseAAuthVerification(new AAuthVerificationOptions
     TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" },
 });
 
-// Protected endpoint — if agent lacks auth, middleware issues 401 + resource_token
+// Issue 401 + resource_token when agent presents only an agent token
+app.UseAAuthChallenge(new ChallengeOptions
+{
+    ResourceSigningKey = resourceKey,
+    ResourceKeyId = "resource-key-1",
+    ResourceIdentifier = "https://resource.example",
+});
+
+// Protected endpoint — reached only after auth token is verified
 app.MapGet("/data", (HttpContext ctx) =>
 {
     var agent = ctx.GetAAuthAgent(); // parsed from verified signature
@@ -347,7 +355,7 @@ The `ChallengeHandler` intercepts the `401`, extracts the resource token, exchan
 | Key lifecycle | Generated at startup, published via JWKS | Generated in keystore at enrollment, loaded by handle |
 | Token acquisition | Self-signed at startup | AP refresh endpoint (automatic via SDK) |
 | Metadata | Publishes `/.well-known/aauth-agent.json` | AP publishes it |
-| Code entry point | `MapAAuthAgentWellKnown()` + `AgentTokenBuilder` | `AAuthClientBuilder.Bootstrap().EnrolAsync()` |
+| Code entry point | `MapAAuthAgentWellKnown()` + `AgentTokenBuilder` | `AAuthClientBuilder.Bootstrap(url, agentId).EnrolAsync()` |
 
 ## Self-Issued Agent Tokens (Hosted Services)
 
