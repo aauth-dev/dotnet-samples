@@ -31,18 +31,21 @@ The SDK supports all four signing modes (`hwk`, `jwks_uri`, `jwt`, `jkt-jwt`), t
 dotnet add package AAuth --prerelease
 ```
 
+The simplest mode is **pseudonymous (HWK)** — the agent signs every request with an inline public key. No Agent Provider, no Person Server, no registration. The resource sees a stable key thumbprint it can use for rate-limiting or access control, but doesn't know the agent's identity.
+
 ```csharp
 using AAuth.Crypto;
 using AAuth.HttpSig;
 
-var key = AAuthKey.Generate();
+var key = AAuthKey.Generate(); // Ed25519 keypair
 
 using var client = new AAuthClientBuilder(key)
-    .UseHwk()
+    .UseHwk() // Pseudonymous mode: inline public key in Signature-Key header
     .Build();
 
 var response = await client.GetAsync("https://resource.example/data");
-// Every request is signed per RFC 9421 — no bearer tokens
+// Request is signed per RFC 9421 — the resource verifies the signature
+// using the public key from the Signature-Key: sig=hwk;jkt="...";jwk="..." header
 ```
 
 ### Three-Party Flow (Agent → Resource → Person Server)
