@@ -114,12 +114,11 @@ app.UseAAuthVerification(new AAuthVerificationOptions
 
 app.MapGet("/", async (HttpContext ctx) =>
 {
-    var parsed = (ParsedSignatureKeyInfo)
-        ctx.Items[AAuthVerificationMiddleware.ParsedInfoItemKey]!;
-    var typ = (string?)parsed.Header?["typ"];
+    var parsed = ctx.GetAAuthParsedKey()!;
+    var tokenType = ctx.GetAAuthTokenType();
 
     // Agent token → challenge the caller
-    if (typ == "aa-agent+jwt")
+    if (tokenType == AAuthTokenType.AgentToken)
     {
         var rt = new ResourceTokenBuilder
         {
@@ -132,10 +131,7 @@ app.MapGet("/", async (HttpContext ctx) =>
             Scope = "orchestrate",
         }.Build();
 
-        ctx.Response.Headers["AAuth-Requirement"] =
-            AAuthRequirementHeader.FormatAuthToken(rt);
-        return Results.Json(new { error = "auth_token_required" },
-            statusCode: 401);
+        return ctx.ChallengeAAuth(rt);
     }
 
     // Auth token → forward downstream with call chaining

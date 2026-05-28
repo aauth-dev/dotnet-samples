@@ -159,13 +159,13 @@ public sealed class AAuthSigningHandler : DelegatingHandler
 
         var signature = _key.Sign(Encoding.ASCII.GetBytes(signatureBase));
 
-        request.Headers.Remove(SignatureKeyHeader.Name);
-        request.Headers.Remove("Signature-Input");
-        request.Headers.Remove("Signature");
+        request.Headers.Remove(AAuthConstants.Headers.SignatureKey);
+        request.Headers.Remove(AAuthConstants.Headers.SignatureInput);
+        request.Headers.Remove(AAuthConstants.Headers.Signature);
 
-        request.Headers.TryAddWithoutValidation(SignatureKeyHeader.Name, signatureKey);
-        request.Headers.TryAddWithoutValidation("Signature-Input", $"{SignatureLabel}={paramsLine}");
-        request.Headers.TryAddWithoutValidation("Signature", $"{SignatureLabel}=:{Convert.ToBase64String(signature)}:");
+        request.Headers.TryAddWithoutValidation(AAuthConstants.Headers.SignatureKey, signatureKey);
+        request.Headers.TryAddWithoutValidation(AAuthConstants.Headers.SignatureInput, $"{SignatureLabel}={paramsLine}");
+        request.Headers.TryAddWithoutValidation(AAuthConstants.Headers.Signature, $"{SignatureLabel}=:{Convert.ToBase64String(signature)}:");
 
         // Emit capabilities header if configured
         if (Capabilities is { Count: > 0 })

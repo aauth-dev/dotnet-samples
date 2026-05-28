@@ -242,7 +242,6 @@ A hosted service (web app, API, orchestrator) acts as its own Agent Provider:
 using AAuth.Crypto;
 using AAuth.HttpSig;
 using AAuth.Server;
-using AAuth.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 var key = AAuthKey.Generate();
@@ -259,16 +258,11 @@ app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 });
 
 // Build a signed HTTP client with automatic token refresh and challenge handling
-using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(async (ctx, ct) => new AgentTokenBuilder
-    {
-        Issuer = issuer,
-        Subject = "aauth:my-service@my-service.example",
-        KeyId = Kid,
-        Key = key,
-        PersonServer = "https://ps.example",
-    }.Build())
-    .WithChallengeHandling("https://ps.example")
+using var client = AAuthClientBuilder.SelfIssuing(key)
+    .As(issuer, "aauth:my-service@my-service.example")
+    .WithKid(Kid)
+    .WithPersonServer("https://ps.example")
+    .WithChallengeHandling()
     .Build();
 
 // Every request is signed; 401 challenges are handled automatically
@@ -365,7 +359,6 @@ Hosted services (web apps, APIs, orchestrators) that have a stable URL act as th
 using AAuth.Crypto;
 using AAuth.HttpSig;
 using AAuth.Server;
-using AAuth.Tokens;
 
 var key = AAuthKey.Generate();
 const string Kid = "my-service-1";
@@ -379,15 +372,11 @@ app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 });
 
 // Self-issue agent tokens for outbound requests
-using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(async (ctx, ct) => new AgentTokenBuilder
-    {
-        Issuer = issuer,
-        Subject = "aauth:my-service@my-service.example",
-        KeyId = Kid,
-        Key = key,
-    }.Build())
-    .WithChallengeHandling("https://ps.example")
+using var client = AAuthClientBuilder.SelfIssuing(key)
+    .As(issuer, "aauth:my-service@my-service.example")
+    .WithKid(Kid)
+    .WithPersonServer("https://ps.example")
+    .WithChallengeHandling()
     .Build();
 ```
 
@@ -435,10 +424,9 @@ var key = await keyStore.LoadAsync(localKeyHandle)
 
 // The SDK acquires the agent token lazily on first request
 // via WithTokenRefresh, then keeps it fresh automatically.
-using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
-        .WithKeyStore(keyStore)
-        .Build())
+using var client = AAuthClientBuilder.Enrolled(key)
+    .RefreshingFrom(apRefreshEndpoint, localKeyHandle)
+    .WithKeyStore(keyStore)
     .WithChallengeHandling("https://ps.example")
     .Build();
 
@@ -451,10 +439,9 @@ Console.WriteLine(await response.Content.ReadAsStringAsync());
 > to auto-configure the signing mode:
 >
 > ```csharp
-> using var client = AAuthClientBuilder.From(enrol)
->     .WithTokenRefresh(AgentProviderTokenRefresher.Create(enrol.ApRefreshEndpoint, enrol.LocalKeyHandle)
->         .WithKeyStore(keyStore)
->         .Build())
+> using var client = AAuthClientBuilder.Enrolled(enrol.Key)
+>     .RefreshingFrom(enrol.ApRefreshEndpoint, enrol.LocalKeyHandle)
+>     .WithKeyStore(keyStore)
 >     .WithChallengeHandling("https://ps.example")
 >     .Build();
 > ```
@@ -489,10 +476,9 @@ var enrol = await apClient.EnrolAsync(
 ### 2. Build the Signed Client with Challenge Handling
 
 ```csharp
-using var client = new AAuthClientBuilder(enrol.Key)
-    .WithTokenRefresh(AgentProviderTokenRefresher.Create("https://ap.example/refresh", enrol.LocalKeyHandle)
-        .WithKeyStore(keyStore)
-        .Build())
+using var client = AAuthClientBuilder.Enrolled(enrol.Key)
+    .RefreshingFrom("https://ap.example/refresh", enrol.LocalKeyHandle)
+    .WithKeyStore(keyStore)
     .WithChallengeHandling(personServer: "https://ps.example")
     .Build();
 ```

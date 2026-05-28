@@ -93,10 +93,10 @@ public static class SignatureKeyParser
 
         return scheme switch
         {
-            "jwt" => ParseJwtScheme(parameters),
-            "hwk" => ParseHwkScheme(parameters),
-            "jkt-jwt" => ParseJktJwtScheme(parameters),
-            "jwks_uri" => ParseJwksUriScheme(parameters),
+            AAuthConstants.Schemes.Jwt => ParseJwtScheme(parameters),
+            AAuthConstants.Schemes.Hwk => ParseHwkScheme(parameters),
+            AAuthConstants.Schemes.JktJwt => ParseJktJwtScheme(parameters),
+            AAuthConstants.Schemes.JwksUri => ParseJwksUriScheme(parameters),
             _ => throw new AAuthVerificationException($"Unsupported Signature-Key scheme: '{scheme}'."),
         };
     }

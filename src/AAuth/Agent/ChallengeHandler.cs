@@ -200,7 +200,7 @@ public sealed class ChallengeHandler : DelegatingHandler
         foreach (var header in source.Headers)
         {
             // Strip prior signature headers so the signer re-emits them.
-            if (header.Key is "Signature" or "Signature-Input" or "Signature-Key")
+            if (header.Key is AAuthConstants.Headers.Signature or AAuthConstants.Headers.SignatureInput or AAuthConstants.Headers.SignatureKey)
             {
                 continue;
             }

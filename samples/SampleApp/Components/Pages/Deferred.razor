@@ -3,7 +3,6 @@
 @using AAuth.Crypto
 @using AAuth.Headers
 @using AAuth.HttpSig
-@using AAuth.Tokens
 @inject IJSRuntime JS
 @rendermode InteractiveServer
 
@@ -21,15 +20,11 @@
 <div class="row">
 <div class="col-md-6">
 <h5>Client Code</h5>
-<pre><code class="language-csharp">using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(async (ctx, ct) =>
-    {
-        var ap = new AgentProviderClient(
-            new HttpClient(), keyStore);
-        return await ap.RefreshAsync(
-            refreshEndpoint, localKeyHandle, ct);
-    })
-    .WithChallengeHandling(personServer, opts =>
+<pre><code class="language-csharp">using var client = AAuthClientBuilder.Enrolled(key)
+    .RefreshingFrom(refreshEndpoint, localKeyHandle)
+    .WithKeyStore(keyStore)
+    .WithPersonServer(personServer)
+    .WithChallengeHandling(opts =>
     {
         opts.OnInteractionRequired =
             async (interaction, ct) =>
@@ -171,19 +166,11 @@ app.MapGet("/", (HttpContext ctx) =&gt;
             var personServer = Config["AAuth:PersonServer"]!;
 
             // Self-issued token refresh + deferred consent support
-            using var client = new AAuthClientBuilder(_identity.Key)
-                .WithTokenRefresh(async (ctx, ct) =>
-                {
-                    return new AgentTokenBuilder
-                    {
-                        Issuer = _identity.Issuer,
-                        Subject = _identity.AgentId,
-                        KeyId = _identity.KeyId,
-                        Key = _identity.Key,
-                        PersonServer = personServer,
-                    }.Build();
-                })
-                .WithChallengeHandling(personServer, opts =>
+            using var client = AAuthClientBuilder.SelfIssuing(_identity.Key)
+                .As(_identity.Issuer, _identity.AgentId)
+                .WithKid(_identity.KeyId)
+                .WithPersonServer(personServer)
+                .WithChallengeHandling(opts =>
                 {
                     opts.OnInteractionRequired = async (interaction, ct) =>
                     {

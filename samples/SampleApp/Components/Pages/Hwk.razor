@@ -37,9 +37,7 @@ app.UseAAuthVerification(new AAuthVerificationOptions
 
 app.MapGet("/hwk", (HttpContext ctx) =>
 {
-    var parsed = (ParsedSignatureKeyInfo)
-        ctx.Items[AAuthVerificationMiddleware
-            .ParsedInfoItemKey]!;
+    var parsed = ctx.GetAAuthParsedKey()!;
     return Results.Ok(new
     {
         mode = "pseudonymous",

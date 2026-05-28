@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using AAuth;
 using AAuth.Crypto;
 using AAuth.DependencyInjection;
 using AAuth.Discovery;
@@ -117,15 +118,14 @@ app.UseWhen(
 // -----------------------------------------------------------------------
 app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore pending) =>
 {
-    var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)ctx.Items[
-        AAuthVerificationMiddleware.ParsedInfoItemKey]!;
+    var parsed = ctx.GetAAuthParsedKey()!;
 
     // Only an agent token may exchange — refuse anything else.
-    var typ = (string?)parsed.Header?["typ"];
-    if (typ != AgentTokenBuilder.TokenType)
+    var tokenType = ctx.GetAAuthTokenType();
+    if (tokenType != AAuthTokenType.AgentToken)
     {
         return Results.Json(
-            new { error = "invalid_carrier_token", detail = $"expected {AgentTokenBuilder.TokenType}, got {typ}" },
+            new { error = "invalid_carrier_token", detail = $"expected {AAuthConstants.TokenTypes.AgentToken}, got {tokenType}" },
             statusCode: StatusCodes.Status401Unauthorized);
     }
 

@@ -66,32 +66,33 @@ public sealed class AAuthChallengeMiddleware
 
         // Determine the scheme and token type.
         var scheme = result?.Scheme ?? parsedInfo?.Scheme;
-        var tokenType = result?.TokenType ?? (string?)parsedInfo?.Header?["typ"];
+        var tokenType = AAuthTokenTypeExtensions.ParseTokenType(
+            result?.TokenType ?? (string?)parsedInfo?.Header?["typ"]);
 
         // Scheme filtering.
         if (scheme is not null && _options.AllowedSignatureKeySchemes is { } allowed && !allowed.Contains(scheme))
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            context.Response.Headers["AAuth-Error"] = $"Scheme '{scheme}' is not allowed by this resource.";
+            context.Response.Headers[AAuthConstants.Headers.AAuthError] = $"Scheme '{scheme}' is not allowed by this resource.";
             return;
         }
 
         // Non-JWT schemes (hwk, jwks_uri) pass through — they have no token upgrade path.
-        if (scheme is "hwk" or "jwks_uri")
+        if (scheme is AAuthConstants.Schemes.Hwk or AAuthConstants.Schemes.JwksUri)
         {
             await _next(context).ConfigureAwait(false);
             return;
         }
 
         // Auth token already present → pass through.
-        if (tokenType == AuthTokenBuilder.TokenType)
+        if (tokenType == AAuthTokenType.AuthToken)
         {
             await _next(context).ConfigureAwait(false);
             return;
         }
 
         // Agent token → challenge.
-        if (tokenType == AgentTokenBuilder.TokenType)
+        if (tokenType == AAuthTokenType.AgentToken)
         {
             await IssueChallenge(context, result, parsedInfo).ConfigureAwait(false);
             return;
@@ -132,7 +133,7 @@ public sealed class AAuthChallengeMiddleware
             // No PS available and no explicit audience configured.
             // Return 401 without resource token — the resource cannot issue a valid challenge.
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            context.Response.Headers["AAuth-Error"] =
+            context.Response.Headers[AAuthConstants.Headers.AAuthError] =
                 "Auth token required but no Person Server audience could be resolved.";
             return Task.CompletedTask;
         }

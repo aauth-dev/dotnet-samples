@@ -34,8 +34,9 @@ var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!)
     ?? throw new InvalidOperationException("Key not found. Run enrollment first.");
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
-using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint))
+using var client = AAuthClientBuilder.Enrolled(key)
+    .RefreshingFrom(apRefreshEndpoint, configuration["AAuth:LocalKeyHandle"]!)
+    .WithKeyStore(keyStore)
     .WithChallengeHandling(personServer: "https://ps.example")
     .Build();
 
@@ -58,7 +59,9 @@ builder.Services.AddAAuthAgent("federated", options =>
 {
     options.Key = key!;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint);
+    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, configuration["AAuth:LocalKeyHandle"]!)
+        .WithKeyStore(keyStore)
+        .Build();
 });
 ```
 

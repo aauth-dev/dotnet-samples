@@ -35,10 +35,10 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
 
         IAAuthKey key = info.Scheme switch
         {
-            "jwt" => ResolveJwt(info),
-            "hwk" => await ResolveHwkAsync(info, ct).ConfigureAwait(false),
-            "jwks_uri" => await ResolveJwksUriAsync(info, ct).ConfigureAwait(false),
-            "jkt-jwt" => await ResolveJktJwtAsync(info, ct).ConfigureAwait(false),
+            AAuthConstants.Schemes.Jwt => ResolveJwt(info),
+            AAuthConstants.Schemes.Hwk => await ResolveHwkAsync(info, ct).ConfigureAwait(false),
+            AAuthConstants.Schemes.JwksUri => await ResolveJwksUriAsync(info, ct).ConfigureAwait(false),
+            AAuthConstants.Schemes.JktJwt => await ResolveJktJwtAsync(info, ct).ConfigureAwait(false),
             _ => throw new AAuthVerificationException($"Unsupported Signature-Key scheme: '{info.Scheme}'."),
         };
 

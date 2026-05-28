@@ -16,8 +16,8 @@ public sealed class AAuthVerificationResult
     /// <summary>The Signature-Key scheme (jwt, hwk, jwks_uri, jkt-jwt).</summary>
     public required string Scheme { get; init; }
 
-    /// <summary>Token type from JWT <c>typ</c> header (aa-agent+jwt, aa-auth+jwt), or null for non-JWT schemes.</summary>
-    public string? TokenType { get; init; }
+    /// <summary>Token type from JWT <c>typ</c> header.</summary>
+    public AAuthTokenType TokenType { get; init; }
 
     /// <summary>Issuer (<c>iss</c>) from the JWT, or null for non-JWT schemes.</summary>
     public string? Issuer { get; init; }

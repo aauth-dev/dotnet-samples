@@ -114,7 +114,7 @@ After successful verification, the middleware stores an `AAuthVerificationResult
 ```csharp
 app.MapGet("/protected", (HttpContext ctx) =>
 {
-    var result = ctx.Features.Get<AAuthVerificationResult>()!;
+    var result = ctx.GetAAuthVerification()!;
     // result.Level: Pseudonymous | Identified | Authorized
     // result.Scheme: "jwt" | "hwk" | "jkt-jwt" | "jwks_uri"
     // result.Agent: agent identifier

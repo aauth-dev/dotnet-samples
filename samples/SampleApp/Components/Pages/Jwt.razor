@@ -1,7 +1,6 @@
 @page "/jwt"
 @using AAuth.Crypto
 @using AAuth.HttpSig
-@using AAuth.Tokens
 @inject IJSRuntime JS
 @rendermode InteractiveServer
 
@@ -29,14 +28,9 @@ var result = await apClient.EnrolAsync(
 // Runtime — build signed client
 var key = await keyStore.LoadAsync(result.LocalKeyHandle);
 
-using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(async (ctx, ct) =>
-    {
-        var ap = new AgentProviderClient(
-            new HttpClient(), keyStore);
-        return await ap.RefreshAsync(
-            refreshEndpoint, localKeyHandle, ct);
-    })
+using var client = AAuthClientBuilder.Enrolled(key)
+    .RefreshingFrom(refreshEndpoint, localKeyHandle)
+    .WithKeyStore(keyStore)
     .WithChallengeHandling(personServer)
     .Build();</code></pre>
 </div>
@@ -141,19 +135,11 @@ app.MapGet("/", (HttpContext ctx) =&gt;
             await GrantConsentAsync();
 
             // Self-issued token refresh — no AP round-trip needed
-            using var client = new AAuthClientBuilder(_identity.Key)
-                .WithTokenRefresh(async (ctx, ct) =>
-                {
-                    return new AgentTokenBuilder
-                    {
-                        Issuer = _identity.Issuer,
-                        Subject = _identity.AgentId,
-                        KeyId = _identity.KeyId,
-                        Key = _identity.Key,
-                        PersonServer = personServer,
-                    }.Build();
-                })
-                .WithChallengeHandling(personServer)
+            using var client = AAuthClientBuilder.SelfIssuing(_identity.Key)
+                .As(_identity.Issuer, _identity.AgentId)
+                .WithKid(_identity.KeyId)
+                .WithPersonServer(personServer)
+                .WithChallengeHandling()
                 .Build();
 
             var response = await client.GetAsync(resourceUrl);

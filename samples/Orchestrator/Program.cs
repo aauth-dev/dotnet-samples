@@ -61,17 +61,6 @@ app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 // This ensures agent_token.iss == resource URL, satisfying §Upstream Token
 // Verification step 3 (aud in upstream_token matches intermediary resource).
 // -----------------------------------------------------------------------
-string SelfIssueAgentToken()
-{
-    return new AgentTokenBuilder
-    {
-        Issuer = orchestratorUrl,
-        Subject = agentId,
-        KeyId = OrchestratorKid,
-        Key = orchestratorKey,
-        PersonServer = psUrl,
-    }.Build();
-}
 
 // -----------------------------------------------------------------------
 // Verification + Challenge middleware: validates the HTTP signature,
@@ -118,8 +107,10 @@ app.MapGet("/", async (HttpContext ctx) =>
     // Build a call-chaining client: upstream token routing + auto-challenge.
     // Self-issued agent token (iss = orchestratorUrl) satisfies §Upstream Token
     // Verification step 3 — the PS can match upstream_token.aud against iss.
-    using var downstream = new AAuthClientBuilder(orchestratorKey)
-        .WithTokenRefresh(async (_, ct) => SelfIssueAgentToken())
+    using var downstream = AAuthClientBuilder.SelfIssuing(orchestratorKey)
+        .As(orchestratorUrl, agentId)
+        .WithKid(OrchestratorKid)
+        .WithPersonServer(psUrl)
         .WithCallChaining(ctx)
         .Build();
 
@@ -128,7 +119,7 @@ app.MapGet("/", async (HttpContext ctx) =>
     JsonNode? downstreamJson = null;
     try { downstreamJson = JsonNode.Parse(body); } catch { }
 
-    var upstreamResult = ctx.Features.Get<AAuthVerificationResult>();
+    var upstreamResult = ctx.GetAAuthVerification();
     return Results.Ok(new
     {
         chain = "Agent → Orchestrator → WhoAmI",

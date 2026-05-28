@@ -77,7 +77,6 @@ Hosted services act as their own Agent Provider — generate a key, publish meta
 using AAuth.Crypto;
 using AAuth.HttpSig;
 using AAuth.Server;
-using AAuth.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 var key = AAuthKey.Generate();
@@ -94,16 +93,11 @@ app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 });
 
 // Build signed client with automatic token refresh and challenge handling
-using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(async (ctx, ct) => new AgentTokenBuilder
-    {
-        Issuer = issuer,
-        Subject = "aauth:my-service@my-service.example",
-        KeyId = Kid,
-        Key = key,
-        PersonServer = "https://ps.example",
-    }.Build())
-    .WithChallengeHandling("https://ps.example")
+using var client = AAuthClientBuilder.SelfIssuing(key)
+    .As(issuer, "aauth:my-service@my-service.example")
+    .WithKid(Kid)
+    .WithPersonServer("https://ps.example")
+    .WithChallengeHandling()
     .Build();
 ```
 

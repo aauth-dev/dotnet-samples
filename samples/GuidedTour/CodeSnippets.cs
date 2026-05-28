@@ -73,10 +73,9 @@ internal static class CodeSnippets
         """;
 
     public const string SignedGetJwt = """
-        using var client = new AAuthClientBuilder(key)
-            .WithTokenRefresh(AgentProviderTokenRefresher.Create(refreshEndpoint, localKeyHandle)
-                .WithKeyStore(keyStore)
-                .Build())
+        using var client = AAuthClientBuilder.Enrolled(key)
+            .RefreshingFrom(refreshEndpoint, localKeyHandle)
+            .WithKeyStore(keyStore)
             .Build();
 
         var response = await client.GetAsync("https://resource.example/data");
@@ -119,10 +118,9 @@ internal static class CodeSnippets
 
     public const string TokenExchangeDirect = """
         // Automatic (recommended):
-        using var client = new AAuthClientBuilder(key)
-            .WithTokenRefresh(AgentProviderTokenRefresher.Create(refreshEndpoint, localKeyHandle)
-                .WithKeyStore(keyStore)
-                .Build())
+        using var client = AAuthClientBuilder.Enrolled(key)
+            .RefreshingFrom(refreshEndpoint, localKeyHandle)
+            .WithKeyStore(keyStore)
             .WithChallengeHandling(personServer: "https://ps.example")
             .Build();
 
@@ -202,8 +200,9 @@ internal static class CodeSnippets
         // Convenience: WithCallChaining routes downstream exchanges
         // automatically, passing upstream_token to the PS/AS.
         // Use this when building an intermediary service:
-        using var downstream = new AAuthClientBuilder(myKey)
-            .WithTokenRefresh(refreshFunc)
+        using var downstream = AAuthClientBuilder.SelfIssuing(myKey)
+            .As(myIssuer, myAgentId)
+            .WithPersonServer(psUrl)
             .WithCallChaining(httpContext) // reads upstream token from request
             .Build();
 
@@ -223,11 +222,9 @@ internal static class CodeSnippets
 
         // --- Application (every startup — load key by handle) ---
         var key = await keyStore.LoadAsync(localKeyHandle);
-        // From() auto-configures signing mode from the enrollment result
-        using var client = AAuthClientBuilder.From(enrolResult)
-            .WithTokenRefresh(AgentProviderTokenRefresher.Create(refreshEndpoint, localKeyHandle)
-                .WithKeyStore(keyStore)
-                .Build())
+        using var client = AAuthClientBuilder.Enrolled(key)
+            .RefreshingFrom(refreshEndpoint, localKeyHandle)
+            .WithKeyStore(keyStore)
             .WithChallengeHandling("https://ps.example")
             .Build();
 

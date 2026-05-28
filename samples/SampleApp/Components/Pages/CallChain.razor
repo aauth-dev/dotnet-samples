@@ -1,7 +1,6 @@
 @page "/call-chain"
 @using AAuth.Crypto
 @using AAuth.HttpSig
-@using AAuth.Tokens
 @inject IJSRuntime JS
 @rendermode InteractiveServer
 
@@ -24,14 +23,9 @@
 //   1. Sends agent token → gets 401 + resource_token
 //   2. Exchanges at PS → gets auth token
 //   3. Retries with auth token
-using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(async (ctx, ct) =&gt;
-    {
-        var ap = new AgentProviderClient(
-            new HttpClient(), keyStore);
-        return await ap.RefreshAsync(
-            refreshEndpoint, localKeyHandle, ct);
-    })
+using var client = AAuthClientBuilder.Enrolled(key)
+    .RefreshingFrom(refreshEndpoint, localKeyHandle)
+    .WithKeyStore(keyStore)
     .WithChallengeHandling(personServer)
     .Build();
 
@@ -56,26 +50,18 @@ app.UseAAuthVerification(new AAuthVerificationOptions
     RequireIssuerVerification = true,
 });</code></pre>
 <h5 class="mt-3">Orchestrator Handler</h5>
-<pre><code class="language-csharp">app.MapGet("/", async (HttpContext ctx) =&gt;
+<pre><code class="language-csharp">// Middleware: auto-challenges agent tokens with a resource token.
+// Only auth-token callers reach the handler.
+app.UseAAuthIntermediary(verificationOptions, challengeOptions);
+
+app.MapGet("/", async (HttpContext ctx) =&gt;
 {
-    var parsed = (ParsedSignatureKeyInfo)
-        ctx.Items[ParsedInfoItemKey]!;
-    var typ = (string?)parsed.Header?["typ"];
-
-    // Agent token → challenge (like any resource)
-    if (typ == "aa-agent+jwt")
-    {
-        var rt = new ResourceTokenBuilder { ... };
-        ctx.Response.Headers["AAuth-Requirement"]
-            = FormatAuthToken(rt.Build());
-        return Results.Unauthorized();
-    }
-
     // Auth token → call downstream with chaining.
     // WithCallChaining reads the upstream token from
     // the verified auth token automatically.
-    using var client = new AAuthClientBuilder(key)
-        .WithTokenRefresh(refreshFunc)
+    using var client = AAuthClientBuilder.SelfIssuing(key)
+        .As(orchestratorUrl, agentId)
+        .WithPersonServer(psUrl)
         .WithCallChaining(ctx) // upstream_token + mission
         .Build();
     var result = await client.GetAsync(downstreamUrl);
@@ -140,19 +126,11 @@ app.UseAAuthVerification(new AAuthVerificationOptions
             await GrantConsentAsync(orchestratorUrl);
 
             // Self-issued token refresh — no AP round-trip needed
-            using var client = new AAuthClientBuilder(_identity.Key)
-                .WithTokenRefresh(async (ctx, ct) =>
-                {
-                    return new AgentTokenBuilder
-                    {
-                        Issuer = _identity.Issuer,
-                        Subject = _identity.AgentId,
-                        KeyId = _identity.KeyId,
-                        Key = _identity.Key,
-                        PersonServer = personServer,
-                    }.Build();
-                })
-                .WithChallengeHandling(personServer)
+            using var client = AAuthClientBuilder.SelfIssuing(_identity.Key)
+                .As(_identity.Issuer, _identity.AgentId)
+                .WithKid(_identity.KeyId)
+                .WithPersonServer(personServer)
+                .WithChallengeHandling()
                 .Build();
 
             var response = await client.GetAsync(orchestratorUrl);
