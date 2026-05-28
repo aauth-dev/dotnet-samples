@@ -1,8 +1,8 @@
 using System.Text.Json.Nodes;
+using AAuth;
 using AAuth.Crypto;
 using AAuth.DependencyInjection;
 using AAuth.Discovery;
-using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
 using AAuth.Tokens;
@@ -101,8 +101,7 @@ app.UseWhen(
 // -----------------------------------------------------------------------
 app.MapGet("/hwk", (HttpContext ctx) =>
 {
-    var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)ctx.Items[
-        AAuthVerificationMiddleware.ParsedInfoItemKey]!;
+    var parsed = ctx.GetAAuthParsedKey()!;
 
     return Results.Ok(new
     {
@@ -121,8 +120,7 @@ app.MapGet("/hwk", (HttpContext ctx) =>
 // -----------------------------------------------------------------------
 app.MapGet("/jkt-jwt", (HttpContext ctx) =>
 {
-    var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)ctx.Items[
-        AAuthVerificationMiddleware.ParsedInfoItemKey]!;
+    var parsed = ctx.GetAAuthParsedKey()!;
 
     return Results.Ok(new
     {
@@ -138,8 +136,7 @@ app.MapGet("/jkt-jwt", (HttpContext ctx) =>
 // -----------------------------------------------------------------------
 app.MapGet("/jwks-uri", (HttpContext ctx) =>
 {
-    var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)ctx.Items[
-        AAuthVerificationMiddleware.ParsedInfoItemKey]!;
+    var parsed = ctx.GetAAuthParsedKey()!;
 
     return Results.Ok(new
     {
@@ -172,21 +169,19 @@ app.MapGet("/", async (
     MetadataClient metadata,
     JwksClient jwks) =>
 {
-    var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)ctx.Items[
-        AAuthVerificationMiddleware.ParsedInfoItemKey]!;
+    var parsed = ctx.GetAAuthParsedKey()!;
+    var tokenType = ctx.GetAAuthTokenType();
 
-    var typ = (string?)parsed.Header?["typ"];
-
-    if (typ == AgentTokenBuilder.TokenType)
+    if (tokenType == AAuthTokenType.AgentToken)
     {
         return await ChallengeWithResourceToken(ctx, parsed, tokenVerifier, resourceSigningKey, resourceUrl, metadata, jwks);
     }
 
-    if (typ == AuthTokenBuilder.TokenType)
+    if (tokenType == AAuthTokenType.AuthToken)
     {
         // Middleware already verified signature, aud, cnf.jwk, and act.sub.
         // Just return the verified claims.
-        var result = ctx.Features.Get<AAuthVerificationResult>()!;
+        var result = ctx.GetAAuthVerification()!;
         return Results.Ok(new
         {
             mode = "three-party",
@@ -200,7 +195,7 @@ app.MapGet("/", async (
     }
 
     return Results.Json(
-        new { error = "unsupported_token_type", typ },
+        new { error = "unsupported_token_type", tokenType = tokenType.ToString() },
         statusCode: StatusCodes.Status401Unauthorized);
 });
 
@@ -261,10 +256,7 @@ static async Task<IResult> ChallengeWithResourceToken(
         Scope = ResourceScope,
     }.Build();
 
-    ctx.Response.Headers[AAuthRequirementHeader.Name] =
-        AAuthRequirementHeader.FormatAuthToken(resourceToken);
-    return Results.Json(new { error = "auth_token_required" },
-        statusCode: StatusCodes.Status401Unauthorized);
+    return ctx.ChallengeAAuth(resourceToken);
 }
 
 // Marker type for `WebApplicationFactory<WhoAmI.Entry>` in the

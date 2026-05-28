@@ -55,14 +55,10 @@ builder.Services.AddAAuthAgent("self-issued", options =>
 {
     options.Key = key;
     options.PersonServer = "https://ps.example";
-    options.UseJwt(() => new AgentTokenBuilder
-    {
-        Issuer = issuer,
-        Subject = "aauth:my-service@my-service.example",
-        KeyId = Kid,
-        Key = key,
-        PersonServer = "https://ps.example",
-    }.Build());
+    options.TokenRefresher = SelfIssuedTokenRefresher.Create(key, issuer, "aauth:my-service@my-service.example")
+        .WithKid(Kid)
+        .WithPersonServer("https://ps.example")
+        .Build();
 });
 
 // Also publish agent metadata so verifiers can discover the JWKS
@@ -276,8 +272,7 @@ app.MapAAuthWellKnown();
 app.MapGet("/data", async (HttpContext ctx, IHttpClientFactory factory) =>
 {
     // Inbound request was verified by middleware
-    var parsed = (SignatureKeyParser.ParsedSignatureKeyInfo)
-        ctx.Items[AAuthVerificationMiddleware.ParsedInfoItemKey]!;
+    var parsed = ctx.GetAAuthParsedKey()!;
 
     // Make signed outbound request
     var client = factory.CreateClient("downstream");

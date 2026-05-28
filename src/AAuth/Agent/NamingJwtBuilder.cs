@@ -28,7 +28,7 @@ public static class NamingJwtBuilder
         var header = new JsonObject
         {
             ["alg"] = AAuthKey.Algorithm,
-            ["typ"] = "naming+jwt",
+            ["typ"] = AAuthConstants.TokenTypes.NamingJwt,
             ["kid"] = kid,
         };
 

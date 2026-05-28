@@ -42,9 +42,7 @@ app.UseAAuthVerification(new AAuthVerificationOptions
 
 app.MapGet("/jwks-uri", (HttpContext ctx) =>
 {
-    var parsed = (ParsedSignatureKeyInfo)
-        ctx.Items[AAuthVerificationMiddleware
-            .ParsedInfoItemKey]!;
+    var parsed = ctx.GetAAuthParsedKey()!;
     return Results.Ok(new
     {
         mode = "agent-identity",

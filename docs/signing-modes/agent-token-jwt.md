@@ -19,10 +19,26 @@ The agent presents its full agent token inline. The resource (or Person Server) 
 ```csharp
 using AAuth.Crypto;
 using AAuth.HttpSig;
-using AAuth.Tokens;
 
 var key = AAuthKey.Generate();
 
+using var client = AAuthClientBuilder.SelfIssuing(key)
+    .As("https://my-service.example", "aauth:my-service@my-service.example")
+    .WithKid("svc-key-1")
+    .WithPersonServer("https://ps.example")
+    .WithChallengeHandling()
+    .Build();
+
+var response = await client.GetAsync("https://resource.example/data");
+```
+
+<details>
+<summary>Advanced: Custom Token Building</summary>
+
+For scenarios requiring additional claims, custom lifetimes, or non-standard flows,
+use the full `AgentTokenBuilder` via `WithTokenRefresh`:
+
+```csharp
 using var client = new AAuthClientBuilder(key)
     .WithTokenRefresh((ctx, ct) => Task.FromResult(new AgentTokenBuilder
     {
@@ -31,12 +47,16 @@ using var client = new AAuthClientBuilder(key)
         KeyId = "svc-key-1",
         Key = key,
         PersonServer = "https://ps.example",
+        AdditionalClaims = new Dictionary<string, JsonNode?>
+        {
+            ["attestation"] = "platform-verified",
+        },
     }.Build()))
     .WithChallengeHandling("https://ps.example")
     .Build();
-
-var response = await client.GetAsync("https://resource.example/data");
 ```
+
+</details>
 
 **CLI/Desktop agent (AP-enrolled):**
 
@@ -49,8 +69,9 @@ var keyStore = FileKeyStore.Default();
 var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!);
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
-using var client = new AAuthClientBuilder(key!)
-    .WithTokenRefresh(new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint))
+using var client = AAuthClientBuilder.Enrolled(key!)
+    .RefreshingFrom(apRefreshEndpoint, configuration["AAuth:LocalKeyHandle"]!)
+    .WithKeyStore(keyStore)
     .WithChallengeHandling("https://ps.example")
     .Build();
 

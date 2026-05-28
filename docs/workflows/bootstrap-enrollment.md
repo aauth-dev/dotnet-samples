@@ -95,10 +95,9 @@ var key = await keyStore.LoadAsync(localKeyHandle)
 
 // The SDK acquires the agent token lazily on first request
 // via WithTokenRefresh, then keeps it fresh automatically.
-using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
-        .WithKeyStore(keyStore)
-        .Build())
+using var client = AAuthClientBuilder.Enrolled(key)
+    .RefreshingFrom(apRefreshEndpoint, localKeyHandle)
+    .WithKeyStore(keyStore)
     .WithChallengeHandling(personServer: "https://ps.example")
     .Build();
 ```
@@ -160,10 +159,9 @@ sequenceDiagram
 // localKeyHandle = the agent-local IKeyStore handle returned by EnrolAsync
 // (defaults to the durable key's JWK thumbprint).
 // Used only by IKeyStore.LoadAsync — it is never sent to the AP.
-using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
-        .WithKeyStore(keyStore)
-        .Build())
+using var client = AAuthClientBuilder.Enrolled(key)
+    .RefreshingFrom(apRefreshEndpoint, localKeyHandle)
+    .WithKeyStore(keyStore)
     .Build();
 ```
 
@@ -188,11 +186,10 @@ sequenceDiagram
 ```csharp
 // Spec: "The AP verifies the durable-key signature on the naming JWT,
 //        looks up the enrollment by the durable key's thumbprint"
-using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
-        .WithKeyStore(keyStore)
-        .WithRefreshMode(RefreshMode.TwoKey, apIssuer)
-        .Build())
+using var client = AAuthClientBuilder.Enrolled(key)
+    .RefreshingFrom(apRefreshEndpoint, localKeyHandle)
+    .WithKeyStore(keyStore)
+    .WithRefreshMode(RefreshMode.TwoKey, apIssuer)
     .Build();
 ```
 
@@ -202,14 +199,12 @@ Hosted services with a stable HTTPS URL act as their own issuer — no AP is nee
 
 ```csharp
 // keyId = any stable identifier you choose for the JWT "kid" header.
-// Defaults to the key's JWK thumbprint if omitted via the fluent API.
+// Defaults to the key's JWK thumbprint if omitted.
 // Resources resolve this key by fetching your /.well-known/jwks.json.
-using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(SelfIssuedTokenRefresher.Create(key,
-            issuer: "https://my-service.example",
-            subject: "aauth:my-service@my-service.example")
-        .WithPersonServer("https://ps.example")
-        .Build())
+using var client = AAuthClientBuilder.SelfIssuing(key)
+    .As("https://my-service.example", "aauth:my-service@my-service.example")
+    .WithPersonServer("https://ps.example")
+    .WithChallengeHandling()
     .Build();
 ```
 

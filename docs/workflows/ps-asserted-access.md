@@ -33,14 +33,11 @@ using AAuth.HttpSig;
 // Hosted service: self-issue (no AP needed)
 var key = AAuthKey.Generate();
 
-using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(new SelfIssuedTokenRefresher(
-        key,
-        issuer: "https://my-service.example",
-        subject: "aauth:my-service@my-service.example",
-        keyId: "svc-key-1",
-        personServer: "https://ps.example"))
-    .WithChallengeHandling(personServer: "https://ps.example")
+using var client = AAuthClientBuilder.SelfIssuing(key)
+    .As("https://my-service.example", "aauth:my-service@my-service.example")
+    .WithKid("svc-key-1")
+    .WithPersonServer("https://ps.example")
+    .WithChallengeHandling()
     .Build();
 
 var response = await client.GetAsync("https://resource.example/data");

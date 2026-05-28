@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Server;
@@ -81,6 +84,66 @@ public static class AAuthApplicationBuilderExtensions
     {
         var options = endpoints.ServiceProvider.GetRequiredService<AAuthResourceMetadataOptions>();
         return WellKnownEndpoints.MapAAuthResourceWellKnown(endpoints, options);
+    }
+
+    /// <summary>
+    /// Configure the full AAuth resource pipeline in one call: maps well-known endpoints,
+    /// adds verification middleware, and adds challenge middleware. Uses the
+    /// DI-registered <see cref="AAuthResourceMetadataOptions"/> for configuration.
+    /// </summary>
+    /// <remarks>
+    /// Equivalent to calling <see cref="MapAAuthWellKnown"/>, <see cref="UseAAuthVerification"/>,
+    /// and <see cref="UseAAuthChallenge"/> separately. For per-path customization, use the
+    /// individual middleware methods instead.
+    /// </remarks>
+    /// <param name="app">The web application (both endpoint routing and middleware).</param>
+    /// <param name="configure">Optional configuration for verification and challenge behavior.</param>
+    public static WebApplication MapAAuthResource(
+        this WebApplication app,
+        Action<AAuthResourcePipelineOptions>? configure = null)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+
+        var metadataOptions = app.Services.GetRequiredService<AAuthResourceMetadataOptions>();
+        var pipelineOptions = new AAuthResourcePipelineOptions();
+        configure?.Invoke(pipelineOptions);
+
+        // 1. Map well-known endpoints
+        WellKnownEndpoints.MapAAuthResourceWellKnown(app, metadataOptions);
+
+        // 2. Verification middleware
+        app.UseAAuthVerification(new AAuthVerificationOptions
+        {
+            ResourceIdentifier = metadataOptions.Issuer,
+            RequireIssuerVerification = pipelineOptions.RequireIssuerVerification,
+            TrustedAuthTokenIssuers = pipelineOptions.TrustedAuthTokenIssuers,
+            TrustedAgentProviderIssuers = pipelineOptions.TrustedAgentProviderIssuers,
+        });
+
+        // 3. Challenge middleware (only if there's a signing key available)
+        if (metadataOptions.SigningKeys.Count > 0)
+        {
+            // Use the first signing key for challenges
+            string? kid = null;
+            AAuth.Crypto.AAuthKey? key = null;
+            foreach (var kvp in metadataOptions.SigningKeys)
+            {
+                kid = kvp.Key;
+                key = kvp.Value;
+                break;
+            }
+
+            app.UseAAuthChallenge(new ChallengeOptions
+            {
+                ResourceSigningKey = key,
+                ResourceKeyId = kid,
+                ResourceIdentifier = metadataOptions.Issuer,
+                AccessMode = pipelineOptions.AccessMode,
+                DefaultScopes = pipelineOptions.DefaultScopes,
+            });
+        }
+
+        return app;
     }
 
     /// <summary>

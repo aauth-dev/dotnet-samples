@@ -69,6 +69,12 @@ public sealed class AAuthClientBuilder
     private string? _personServer;
     private Action<ChallengeHandlingOptions>? _challengeOptionsConfigure;
 
+    // Self-issued token state
+    private string? _selfIssuedPersonServer;
+    private string? _selfIssuedIssuer;
+    private string? _selfIssuedSubject;
+    private string? _selfIssuedKid;
+
     // Call-chaining state
     private Func<string?>? _upstreamTokenProvider;
 
@@ -88,6 +94,62 @@ public sealed class AAuthClientBuilder
     {
         ArgumentNullException.ThrowIfNull(key);
         _key = key;
+    }
+
+    /// <summary>
+    /// Start building a self-issued agent identity with a fluent sub-builder.
+    /// Call <see cref="SelfIssuingBuilder.As"/> to set issuer and subject.
+    /// </summary>
+    /// <param name="key">The agent's signing key.</param>
+    /// <example>
+    /// <code>
+    /// using var client = AAuthClientBuilder.SelfIssuing(key)
+    ///     .As(issuer, subject)
+    ///     .WithPersonServer(ps)
+    ///     .Build();
+    /// </code>
+    /// </example>
+    public static SelfIssuingBuilder SelfIssuing(IAAuthKey key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return new SelfIssuingBuilder(key);
+    }
+
+    /// <summary>
+    /// Start building an AP-enrolled agent client with a fluent sub-builder.
+    /// Call <see cref="EnrolledBuilder.RefreshingFrom"/> to set the refresh endpoint.
+    /// </summary>
+    /// <param name="key">The agent's durable signing key (loaded from the key store).</param>
+    /// <example>
+    /// <code>
+    /// using var client = AAuthClientBuilder.Enrolled(key)
+    ///     .RefreshingFrom(refreshEndpoint, localKeyHandle)
+    ///     .WithKeyStore(keyStore)
+    ///     .WithChallengeHandling(ps)
+    ///     .Build();
+    /// </code>
+    /// </example>
+    public static EnrolledBuilder Enrolled(IAAuthKey key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return new EnrolledBuilder(key);
+    }
+
+    /// <summary>
+    /// Create a builder pre-configured for a self-issued agent identity.
+    /// Equivalent to <c>new AAuthClientBuilder(key).WithSelfIssuedToken(issuer, subject, kid)</c>.
+    /// </summary>
+    /// <param name="key">The agent's signing key.</param>
+    /// <param name="issuer">Issuer URL (the service's own HTTPS URL).</param>
+    /// <param name="subject">Agent identifier (e.g. <c>aauth:my-service@my-service.example</c>).</param>
+    /// <param name="kid">Optional key ID. Defaults to the key's JWK thumbprint.</param>
+    [Obsolete("Use SelfIssuing(key).As(issuer, subject) for improved fluency.")]
+    public static AAuthClientBuilder SelfIssued(IAAuthKey key, string issuer, string subject, string? kid = null)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        ArgumentException.ThrowIfNullOrEmpty(issuer);
+        ArgumentException.ThrowIfNullOrEmpty(subject);
+        return new AAuthClientBuilder(key).WithSelfIssuedToken(issuer, subject, kid);
     }
 
     /// <summary>Use the pseudonymous (hwk) signing mode.</summary>
@@ -176,24 +238,24 @@ public sealed class AAuthClientBuilder
 
     /// <summary>
     /// Enable automatic 401 challenge handling. The Person Server URL is
-    /// extracted from the agent token's <c>ps</c> claim.
+    /// extracted from the agent token's <c>ps</c> claim, or from
+    /// <see cref="WithPersonServer"/> if previously configured.
     /// </summary>
     public AAuthClientBuilder WithChallengeHandling()
     {
         _challengeHandling = true;
-        _personServer = null;
         return this;
     }
 
     /// <summary>
     /// Enable automatic 401 challenge handling with options. The Person Server URL is
-    /// extracted from the agent token's <c>ps</c> claim.
+    /// extracted from the agent token's <c>ps</c> claim, or from
+    /// <see cref="WithPersonServer"/> if previously configured.
     /// </summary>
     public AAuthClientBuilder WithChallengeHandling(Action<ChallengeHandlingOptions> configure)
     {
         ArgumentNullException.ThrowIfNull(configure);
         _challengeHandling = true;
-        _personServer = null;
         _challengeOptionsConfigure = configure;
         return this;
     }
@@ -265,6 +327,37 @@ public sealed class AAuthClientBuilder
     }
 
     /// <summary>
+    /// Configure a self-issued agent token identity. The builder's key is used
+    /// for both HTTP signing and token signing. A <see cref="SelfIssuedTokenRefresher"/>
+    /// is created internally — no separate <see cref="WithTokenRefresh"/> call is needed.
+    /// </summary>
+    /// <param name="issuer">Issuer URL (the service's own HTTPS URL).</param>
+    /// <param name="subject">Agent identifier (e.g. <c>aauth:my-service@my-service.example</c>).</param>
+    /// <param name="kid">Optional key ID. Defaults to the key's JWK thumbprint.</param>
+    public AAuthClientBuilder WithSelfIssuedToken(string issuer, string subject, string? kid = null)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(issuer);
+        ArgumentException.ThrowIfNullOrEmpty(subject);
+        _selfIssuedIssuer = issuer;
+        _selfIssuedSubject = subject;
+        _selfIssuedKid = kid;
+        return this;
+    }
+
+    /// <summary>
+    /// Set the Person Server URL for both the agent token's <c>ps</c> claim and
+    /// challenge handling. Calling <see cref="WithChallengeHandling()"/> after this
+    /// method uses the stored PS automatically.
+    /// </summary>
+    public AAuthClientBuilder WithPersonServer(string personServer)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(personServer);
+        _selfIssuedPersonServer = personServer;
+        _personServer = personServer;
+        return this;
+    }
+
+    /// <summary>
     /// Register a custom token refresher that is invoked when the agent
     /// token nears expiry.
     /// </summary>
@@ -320,9 +413,23 @@ public sealed class AAuthClientBuilder
     /// <exception cref="InvalidOperationException">No signing mode was configured.</exception>
     public HttpMessageHandler BuildHandler()
     {
+        // Materialize self-issued token refresher if WithSelfIssuedToken was called.
+        if (_selfIssuedIssuer is not null && _tokenRefresher is null)
+        {
+            if (_key is not AAuthKey concreteKey)
+                throw new InvalidOperationException(
+                    "WithSelfIssuedToken() requires the key to be an AAuthKey instance.");
+            _tokenRefresher = new SelfIssuedTokenRefresher(
+                concreteKey,
+                _selfIssuedIssuer,
+                _selfIssuedSubject!,
+                _selfIssuedKid ?? _key.ComputeJwkThumbprint(),
+                _selfIssuedPersonServer);
+        }
+
         if (_provider is null && _tokenRefresher is null)
             throw new InvalidOperationException(
-                "A signing mode must be configured. Call UseHwk(), UseJwksUri(), or UseJktJwt() before Build(), or use WithTokenRefresh() for JWT mode.");
+                "A signing mode must be configured. Call UseHwk(), UseJwksUri(), WithSelfIssuedToken(), or UseJktJwt() before Build(), or use WithTokenRefresh() for JWT mode.");
 
         if (!_challengeHandling)
         {

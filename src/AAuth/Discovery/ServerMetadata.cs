@@ -98,7 +98,7 @@ public static class MetadataClientExtensions
     public static async Task<ResourceMetadata> FetchResourceMetadataAsync(
         this MetadataClient client, string issuer, CancellationToken ct = default)
     {
-        var url = MetadataClient.BuildUrl(issuer, "aauth-resource.json");
+        var url = MetadataClient.BuildUrl(issuer, AAuthConstants.DwkFiles.Resource);
         var doc = await client.FetchAsync(url, ct);
         return ResourceMetadata.FromJson(doc);
     }
@@ -107,7 +107,7 @@ public static class MetadataClientExtensions
     public static async Task<ServerMetadata> FetchPersonServerMetadataAsync(
         this MetadataClient client, string issuer, CancellationToken ct = default)
     {
-        var url = MetadataClient.BuildUrl(issuer, "aauth-person.json");
+        var url = MetadataClient.BuildUrl(issuer, AAuthConstants.DwkFiles.Person);
         var doc = await client.FetchAsync(url, ct);
         return ServerMetadata.FromJson(doc);
     }
@@ -116,7 +116,7 @@ public static class MetadataClientExtensions
     public static async Task<ServerMetadata> FetchAccessServerMetadataAsync(
         this MetadataClient client, string issuer, CancellationToken ct = default)
     {
-        var url = MetadataClient.BuildUrl(issuer, "aauth-access.json");
+        var url = MetadataClient.BuildUrl(issuer, AAuthConstants.DwkFiles.Access);
         var doc = await client.FetchAsync(url, ct);
         return ServerMetadata.FromJson(doc);
     }

@@ -74,9 +74,11 @@ var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!)
     ?? throw new InvalidOperationException("Key not found. Run enrollment first.");
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
-using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(new AgentProviderTokenRefresher(new HttpClient(), keyStore, apRefreshEndpoint))
-    .WithChallengeHandling("https://ps.example", options =>
+using var client = AAuthClientBuilder.Enrolled(key)
+    .RefreshingFrom(apRefreshEndpoint, configuration["AAuth:LocalKeyHandle"]!)
+    .WithKeyStore(keyStore)
+    .WithPersonServer("https://ps.example")
+    .WithChallengeHandling(options =>
     {
         options.PollingTimeout = TimeSpan.FromMinutes(5);
         options.PreferWaitSeconds = 30; // long-poll (RFC 7240 §4.3)

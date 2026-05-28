@@ -82,7 +82,7 @@ app.UseAAuthChallenge(new ChallengeOptions
 // Endpoints below here see only authorized requests
 app.MapGet("/data", (HttpContext ctx) =>
 {
-    var result = ctx.Features.Get<AAuthVerificationResult>()!;
+    var result = ctx.GetAAuthVerification()!;
     // result.Level == AAuthLevel.Authorized
 });
 ```

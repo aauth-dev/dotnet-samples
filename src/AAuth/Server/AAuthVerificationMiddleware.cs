@@ -88,9 +88,9 @@ public sealed class AAuthVerificationMiddleware
     {
         var req = context.Request;
 
-        if (!TryGetSingle(req, "Signature", out var signature) ||
-            !TryGetSingle(req, "Signature-Input", out var signatureInput) ||
-            !TryGetSingle(req, SignatureKeyHeader.Name, out var signatureKey))
+        if (!TryGetSingle(req, AAuthConstants.Headers.Signature, out var signature) ||
+            !TryGetSingle(req, AAuthConstants.Headers.SignatureInput, out var signatureInput) ||
+            !TryGetSingle(req, AAuthConstants.Headers.SignatureKey, out var signatureKey))
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             context.Response.Headers[SignatureError.HeaderName] =
@@ -160,7 +160,7 @@ public sealed class AAuthVerificationMiddleware
         // Naming JWT expiration check: for jkt-jwt scheme, reject expired naming JWTs
         // regardless of RequireIssuerVerification. The naming JWT has a short lifetime
         // (typically 5 min) to limit the window of delegation from the durable key.
-        if (parsedInfo.Scheme == "jkt-jwt" &&
+        if (parsedInfo.Scheme == AAuthConstants.Schemes.JktJwt &&
             parsedInfo.Payload?["exp"] is JsonNode expClaim)
         {
             var now = (_options.Clock ?? (() => DateTimeOffset.UtcNow))();
@@ -170,14 +170,14 @@ public sealed class AAuthVerificationMiddleware
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 context.Response.Headers[SignatureError.HeaderName] =
                     SignatureError.Format(SignatureErrorCode.InvalidJwt);
-                context.Response.Headers["AAuth-Error"] = "Naming JWT has expired.";
+                context.Response.Headers[AAuthConstants.Headers.AAuthError] = "Naming JWT has expired.";
                 return;
             }
         }
 
         // Step 4-6: JWT issuer verification (for jwt and jkt-jwt schemes with carrier tokens).
         if (_options.RequireIssuerVerification &&
-            parsedInfo.Scheme is "jwt" or "jkt-jwt" &&
+            parsedInfo.Scheme is AAuthConstants.Schemes.Jwt or AAuthConstants.Schemes.JktJwt &&
             parsedInfo.Jwt is not null &&
             parsedInfo.Header is not null &&
             parsedInfo.Payload is not null)
@@ -208,7 +208,7 @@ public sealed class AAuthVerificationMiddleware
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 context.Response.Headers[SignatureError.HeaderName] =
                     SignatureError.Format(SignatureErrorCode.InvalidJwt);
-                context.Response.Headers["AAuth-Error"] = ex.Message;
+                context.Response.Headers[AAuthConstants.Headers.AAuthError] = ex.Message;
                 return;
             }
         }
@@ -224,12 +224,13 @@ public sealed class AAuthVerificationMiddleware
             Subject = (string?)parsedInfo.Payload?["sub"],
             Scope = (string?)parsedInfo.Payload?["scope"],
             IssuerVerified = _options.RequireIssuerVerification &&
-                parsedInfo.Scheme is "jwt" or "jkt-jwt",
+                parsedInfo.Scheme is AAuthConstants.Schemes.Jwt or AAuthConstants.Schemes.JktJwt,
         };
 
         // Store typed verification result in HttpContext.Features for
         // AAuthAuthenticationHandler and authorization policies.
         var tokenType = (string?)parsedInfo.Header?["typ"];
+        var tokenTypeEnum = AAuthTokenTypeExtensions.ParseTokenType(tokenType);
         var level = DetermineLevel(parsedInfo.Scheme, tokenType);
         var scopeString = (string?)parsedInfo.Payload?["scope"];
         var scopes = ParseScopes(scopeString);
@@ -239,7 +240,7 @@ public sealed class AAuthVerificationMiddleware
         {
             Level = level,
             Scheme = parsedInfo.Scheme,
-            TokenType = tokenType,
+            TokenType = tokenTypeEnum,
             Issuer = (string?)parsedInfo.Payload?["iss"],
             Agent = tokenType == AuthTokenBuilder.TokenType
                 ? (string?)parsedInfo.Payload?["agent"]
@@ -250,7 +251,7 @@ public sealed class AAuthVerificationMiddleware
             Jkt = parsedInfo.ConfirmationKey?.ComputeJwkThumbprint()
                 ?? parsedInfo.Jkt,
             IssuerVerified = _options.RequireIssuerVerification &&
-                parsedInfo.Scheme is "jwt" or "jkt-jwt",
+                parsedInfo.Scheme is AAuthConstants.Schemes.Jwt or AAuthConstants.Schemes.JktJwt,
         });
 
         // Set UpstreamAuthTokenFeature for aa-auth+jwt tokens so that
@@ -259,7 +260,7 @@ public sealed class AAuthVerificationMiddleware
         if (tokenType == AuthTokenBuilder.TokenType &&
             parsedInfo.Jwt is not null &&
             _options.RequireIssuerVerification &&
-            parsedInfo.Scheme is "jwt" or "jkt-jwt")
+            parsedInfo.Scheme is AAuthConstants.Schemes.Jwt or AAuthConstants.Schemes.JktJwt)
         {
             context.Features.Set(new UpstreamAuthTokenFeature(parsedInfo.Jwt));
         }
@@ -282,7 +283,7 @@ public sealed class AAuthVerificationMiddleware
             if (scopeString is not null)
                 activity.SetTag(AAuthDiagnostics.TagScope, scopeString);
             activity.SetTag(AAuthDiagnostics.TagIssuerVerified,
-                _options.RequireIssuerVerification && parsedInfo.Scheme is "jwt" or "jkt-jwt");
+                _options.RequireIssuerVerification && parsedInfo.Scheme is AAuthConstants.Schemes.Jwt or AAuthConstants.Schemes.JktJwt);
         }
 
         await _next(context).ConfigureAwait(false);
@@ -493,7 +494,7 @@ public sealed class AAuthVerificationMiddleware
 
     private static AAuthLevel DetermineLevel(string scheme, string? tokenType)
     {
-        if (scheme == "hwk")
+        if (scheme == AAuthConstants.Schemes.Hwk)
             return AAuthLevel.Pseudonymous;
         if (tokenType == AuthTokenBuilder.TokenType)
             return AAuthLevel.Authorized;
