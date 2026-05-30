@@ -141,6 +141,7 @@ app.MapGet("/", async (HttpContext ctx) =>
     var exchange = new TokenExchangeClient(signedClient, metadata);
     var chained = await exchange.ExchangeAsync(
         personServer, resourceToken,
+        onInteractionRequired: null,
         upstreamToken: upstreamAuthToken);
 
     // 3. Call downstream with the chained auth token

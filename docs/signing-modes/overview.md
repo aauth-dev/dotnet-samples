@@ -99,6 +99,49 @@ Signature: sig=:base64url-ed25519-signature:
 
 The `AAuthSigningHandler` handles construction automatically.
 
+## Adaptive Signature Components
+
+Every signed request always covers the four base AAuth components shown above
+(`@method`, `@authority`, `@path`, `signature-key`), plus `authorization` when
+that header is present. A resource MAY require **additional** covered components
+(for example `content-digest` for request-body integrity, or `content-type`).
+The agent discovers these in one of two ways:
+
+1. **From resource metadata.** If you know a resource publishes
+   `additional_signature_components`, seed them so the very first request
+   already covers them:
+
+   ```csharp
+   using var client = new AAuthClientBuilder(key)
+       .WithTokenRefresh(refresher)
+       .WithChallengeHandling(ps, options =>
+       {
+           options.AdditionalSignatureComponents =
+               new Dictionary<string, IReadOnlyList<string>>
+               {
+                   ["https://resource.example"] = new[] { "content-digest" },
+               };
+       })
+       .Build();
+   ```
+
+   The dictionary is keyed by origin (`scheme://host:port`).
+
+2. **From a `401` response.** When a resource rejects a request with
+   `Signature-Error: invalid_input; required_input="content-digest"`, the
+   challenge handler learns the required components, re-signs the request
+   covering them, and retries **once**. Learned components are cached per
+   origin, so subsequent requests to the same resource cover them up front.
+
+Additional components are always **additive** — the base components can never
+be dropped or reordered. The component value is taken from the request's own
+headers at signing time, so a required header (such as `content-digest`) must
+be present on the request; if it is absent, signing fails fast with an
+`InvalidOperationException`.
+
+See [Error Handling](../advanced/error-handling.md) for the
+`Signature-Error` codes and `SignatureError.ParseRequiredInput`.
+
 ## Further Reading
 
 - [Signing Mode Comparison](https://explorer.aauth.dev/signing/compare)

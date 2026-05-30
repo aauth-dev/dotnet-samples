@@ -131,9 +131,13 @@ On verification failure, the middleware returns `401 Unauthorized` with a `Signa
 | Error Code | Meaning |
 |------------|---------|
 | `invalid_request` | Missing required signature headers |
+| `invalid_input` | Covered components don't match the required set (see the `required_input` parameter) |
 | `invalid_signature` | Signature verification failed |
+| `unsupported_algorithm` | Signature algorithm not supported |
+| `invalid_key` | Signature key malformed or unusable |
+| `unknown_key` | Referenced key could not be resolved |
 | `invalid_jwt` | JWT parsing/issuer verification failed |
-| `expired` | Token or signature timestamp expired |
+| `expired_jwt` | Token JWT expired |
 
 ## OpenTelemetry Integration
 

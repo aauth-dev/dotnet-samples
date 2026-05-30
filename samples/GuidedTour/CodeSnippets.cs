@@ -17,6 +17,7 @@ internal static class CodeSnippets
         {
             Issuer = "https://ap.example",
             Subject = "aauth:myapp@ap.example",
+            KeyId = "sample-key-1",
             Key = key,
             PersonServer = "https://ps.example",
         }.Build();

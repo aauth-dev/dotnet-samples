@@ -18,7 +18,7 @@ namespace AAuth.Errors;
 public enum SignatureErrorCode
 {
     InvalidRequest,         // Missing required headers (Signature, Signature-Input, Signature-Key)
-    InvalidInput,           // Malformed Signature-Input structured field
+    InvalidInput,           // Covered components don't match the required set (see required_input)
     InvalidSignature,       // Signature bytes don't verify against key
     UnsupportedAlgorithm,   // Algorithm not supported by this resource
     InvalidKey,             // Key material is malformed or unsupported
@@ -48,7 +48,22 @@ if (SignatureError.TryParse(response.Headers["Signature-Error"], out var code))
 {
     Console.WriteLine($"Signature rejected: {code}");
 }
+
+// Extract the components a resource demands on an invalid_input error
+string[] required = SignatureError.ParseRequiredInput(
+    response.Headers["Signature-Error"]);
+// → ["content-digest"]   (empty array when no required_input is present)
 ```
+
+### Adaptive Retry on `invalid_input`
+
+When challenge handling is enabled, the agent handles `invalid_input` with a
+`required_input` list automatically: it learns the additional covered
+components, re-signs the request covering them, and retries once. Learned
+components are cached per origin. See
+[Adaptive Signature Components](../signing-modes/overview.md#adaptive-signature-components)
+for how to seed components proactively from resource metadata. `ParseRequiredInput`
+is exposed for callers implementing this handshake manually.
 
 ## Token Errors (PS/AS → Agent)
 
@@ -66,8 +81,9 @@ public enum TokenErrorCode
     ExpiredAgentToken,      // Agent token exp has passed
     InvalidResourceToken,   // Resource token fails validation
     ExpiredResourceToken,   // Resource token exp has passed
-    InteractionRequired,    // User must approve (deferred consent)
-    ServerError,            // Internal server error
+    InteractionRequired,    // User must approve (deferred consent, non-terminal 202)
+    UserUnreachable,        // No channel to the user; agent declared no interaction capability (terminal 400)
+    ServerError,            // Internal server error (transient, retryable)
 }
 ```
 
@@ -80,10 +96,48 @@ public sealed record TokenErrorResponse(TokenErrorCode Error, string? ErrorDescr
 }
 ```
 
-The `TokenExchangeClient` throws when it receives an error response from the PS. Check the HTTP status code and parse the body:
+The `TokenExchangeClient` throws when it receives an error response from the PS.
+
+When the PS returns a non-success status with a structured AAuth error body
+(`{ "error": ..., "error_description": ... }`), the exchange throws a typed
+`AAuthTokenExchangeException` carrying the parsed fields. Responses that are not
+parseable AAuth error objects fall back to a plain `HttpRequestException`.
 
 ```csharp
-// If you're calling the PS manually:
+public sealed class AAuthTokenExchangeException : Exception
+{
+    public string ErrorCode { get; }          // e.g. "invalid_resource_token"
+    public string? ErrorDescription { get; }  // optional human-readable text
+    public int StatusCode { get; }            // HTTP status from the token endpoint
+    public bool IsTerminal { get; }           // false only for "server_error" (retryable)
+}
+```
+
+```csharp
+try
+{
+    var authToken = await exchangeClient.ExchangeAsync(personServer, resourceToken);
+}
+catch (AAuthTokenExchangeException ex)
+{
+    Console.WriteLine($"Token exchange failed: {ex.ErrorCode} (HTTP {ex.StatusCode})");
+    if (!ex.IsTerminal)
+    {
+        // Transient (server_error) — a later retry may succeed.
+    }
+}
+catch (HttpRequestException ex)
+{
+    // Transport failure, or a non-success response without a parseable
+    // AAuth error body.
+    Console.WriteLine($"Transport error: {ex.Message}");
+}
+```
+
+If you're calling the PS manually, parse the body yourself with
+`TokenErrorResponse`:
+
+```csharp
 var response = await signedClient.PostAsync(psTokenEndpoint, content);
 if (!response.IsSuccessStatusCode)
 {
@@ -178,9 +232,10 @@ catch (TokenVerificationException ex)
 |-----------|----------|---------|
 | `AAuthVerificationException` | `AAuthVerifier` | Signature bytes invalid |
 | `TokenVerificationException` | `TokenVerifier` | JWT fails validation |
+| `AAuthTokenExchangeException` | `TokenExchangeClient` / `ChallengeHandler` | PS token endpoint returned a structured error |
 | `AAuthInteractionDeniedException` | `DeferredPoller` / `ChallengeHandler` | User denied |
 | `AAuthInteractionTimeoutException` | `DeferredPoller` / `ChallengeHandler` | Polling timed out |
-| `PollingErrorException` | `DeferredPoller` | PS returned terminal error |
+| `PollingErrorException` | `DeferredPoller` | PS returned terminal error during polling |
 
 ## Server-Side Error Emission
 

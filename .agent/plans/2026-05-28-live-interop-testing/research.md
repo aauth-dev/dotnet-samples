@@ -348,3 +348,40 @@ Our SDK sends:
 - ✅ PS caches consent — subsequent requests get 200 immediately (no interaction)
 - ✅ Poll uses `Prefer: wait=45` — PS holds connection open (long-poll semantics)
 - ✅ On 200 from PS, response body is `{ auth_token: "<compact-jwt>" }`
+
+---
+
+## 7. Phase 5: Edge Case Validation (2026-05-30)
+
+Audited each edge case against the implemented SDK and existing tests. Most
+were already covered; findings below.
+
+| # | Edge case | Status | Implementation / Test |
+|---|---|---|---|
+| 1 | Interaction timeout (user never approves) → timeout | ✅ Covered | `DeferredPoller.PollAsync` throws `TimeoutException` on `MaxTotalWait`; `TokenExchangeClient` wraps as `AAuthInteractionTimeoutException`. Tests: `DeferredPollerTests`, `InteractionHandlerTests.TimesOut_WhenPollKeepsReturning202`. |
+| 2 | User explicitly denies → terminal | ✅ Covered | `TokenExchangeClient` maps `403 + access_denied` to `AAuthInteractionDeniedException`. Tests: `MockPersonServerConsentTests`, `WhoAmIFlowTests` deny path. |
+| 3 | `user_unreachable` (400, terminal) | ✅ Fixed | Added explicit `TokenErrorCode.UserUnreachable` (wire `user_unreachable`); `AAuthTokenExchangeException.IsTerminalCode` returns terminal. Tests: `TokenErrorTests.UserUnreachable_IsTerminal`, `ChallengeHandlerTests.Exchange_NonSuccessWithErrorBody_ThrowsTyped` inline case. |
+| 4 | Expired / revoked agent keys | ✅ Covered | `SignatureErrorCode.ExpiredJwt`; expiry validated in middleware (clock-skew aware). Tests: `TokenVerifierTests.Verify_RejectsExpiredToken`, `AAuthVerifierTests.Verify_RejectsExpiredCreated`. |
+| 5 | Mismatched `kid` (unknown_key) | ✅ Covered | `JwksClient.ResolveKeyAsync` returns null for unknown kid (rate-limited refresh); resolver raises `unknown_key`. Tests: `JwksClientTests` unknown-kid + refresh cases. |
+| 6 | Different scope values | ⚪ Out of scope | Scope is a resource-token / response concern (`ResourceTokenBuilder.Scope`, `AuthTokenResponseValidator`), not an agent-supplied token-endpoint param. Spec §7.1.3 token-endpoint params do not include `scope`; not added speculatively. Live scope behavior remains a manual LiveWhoAmITest concern. |
+
+**New gap register entries:** none. Item 3 was already in scope under Gap E (upcoming-changes-02 item 2); it is now explicit rather than incidental. Item 6 confirmed out of scope.
+
+## 8. Phase 6: Documentation Validation (2026-05-30)
+
+Dispatched 6 parallel Explore subagents covering all Markdown, GuidedTour `CodeSnippets.cs`, SampleApp code, and `upcoming-changes-02.md`. Each finding was re-verified against source before applying. Stylistic `using`-omission complaints were rejected (consistent docs convention).
+
+| File | Inaccuracy | Fix |
+|---|---|---|
+| `docs/README.md` | `TokenError`/`PollingError` type names wrong | `TokenErrorResponse`/`PollingErrorException`; added `AAuthTokenExchangeException` row |
+| `docs/reference/configuration.md` | `MetadataCacheDuration`/`JwksCacheDuration` wrong; JWKS default wrong; ChallengeHandlingOptions table incomplete | Renamed to `*CacheTtl`, added `JwksMinRefreshInterval`, JWKS default 1h, completed options table |
+| `docs/reference/dependency-injection.md` | Same `*CacheDuration` names + default | Renamed to `*CacheTtl`, JWKS default 1h |
+| `docs/server/verification-middleware.md` | Error-code table incomplete; `expired` not a wire code | Listed all 8 `SignatureErrorCode` wire codes incl. `expired_jwt`, `invalid_input` |
+| `docs/server/token-issuance.md` | Used `WWW-Authenticate: AAuth resource_token=...` | Use `context.ChallengeAAuth(resourceToken)` (sets `AAuth-Requirement`) |
+| `docs/workflows/call-chaining.md` | `ExchangeAsync` skipped required `onInteractionRequired` positional param | Added `onInteractionRequired: null` |
+| `samples/GuidedTour/CodeSnippets.cs` | `SelfSignAgentToken` missing `required` `KeyId` | Added `KeyId = "sample-key-1"` |
+
+Confirmed accurate (no change): root `README.md`, `concepts.md`, `getting-started.md`, `docs/advanced/*`, remaining `docs/server/*` (incl. `resource-metadata.md` correctly omitting `additional_signature_components`), all `docs/signing-modes/*`, remaining `docs/workflows/*`, all sample READMEs, SampleApp code, and `upcoming-changes-02.md` (all 3 items implemented).
+
+Validation: full solution builds clean (0 warnings/errors); 320 unit + 342 conformance tests pass.
+

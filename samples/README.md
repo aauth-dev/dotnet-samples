@@ -1,6 +1,6 @@
 # Samples
 
-Seven sample applications demonstrating AAuth flows end-to-end.
+Eight sample applications demonstrating AAuth flows end-to-end.
 
 | Sample | Port | Description |
 |--------|------|-------------|
@@ -11,6 +11,7 @@ Seven sample applications demonstrating AAuth flows end-to-end.
 | [GuidedTour](GuidedTour/) | 5400 | Blazor walk-through — visualises all four AAuth flows step by step |
 | [SampleApp](SampleApp/) | 5240 | Golden example — one page per signing mode (hwk, jwt, jwks_uri, call chain) |
 | [AgentConsole](AgentConsole/) | — | CLI agent — signs requests, handles challenges, exchanges with a PS |
+| [LiveWhoAmITest](LiveWhoAmITest/) | 5199 | Live interop test against `whoami.aauth.dev` + `person.hello.coop` — exercises all 3 protocol modes over a public tunnel |
 
 ## Quick Start
 
@@ -128,6 +129,20 @@ dotnet run --project samples/SampleApp
 
 Simple Blazor app showing each signing mode as a separate page. Open <http://localhost:5240>. Requires WhoAmI, MockPersonServer, and Orchestrator running. MockAgentProvider is needed only for the JWKS-URI enrollment page.
 
+### LiveWhoAmITest
+
+```bash
+dotnet run --project samples/LiveWhoAmITest
+```
+
+Live interop test that runs against the public reference servers (`whoami.aauth.dev` and `person.hello.coop`) instead of the local mocks. It generates an agent key, starts a local metadata + JWKS endpoint on port 5199, exposes it via a `cloudflared` quick tunnel, and exercises all three protocol modes:
+
+- **Mode 1** — unsigned request returns `401` + `Accept-Signature`.
+- **Mode 2** — `aa-agent+jwt` returns the agent identity (no scope) or a `401` + `AAuth-Requirement` resource token (scoped).
+- **Mode 3** — full three-party flow: agent token → resource token → PS exchange → auth token → identity claims.
+
+Requires `cloudflared` on the `PATH` (preinstalled in the dev container) and outbound network access. Mode 3 may prompt for user consent at `person.hello.coop`; the agent prints the interaction URL to approve in a browser.
+
 ## Make Targets
 
 ```bash
@@ -145,5 +160,6 @@ make ap              # MockAgentProvider (port 5301)
 make tour            # GuidedTour (port 5400; expects other services running)
 make sampleapp       # SampleApp (port 5240; expects other services running)
 make agent           # AgentConsole against WhoAmI (override URL=…)
+make live            # LiveWhoAmITest against whoami.aauth.dev (needs cloudflared + network)
 make clean           # dotnet clean + remove bin/ obj/
 ```

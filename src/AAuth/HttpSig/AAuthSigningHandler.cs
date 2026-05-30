@@ -39,6 +39,18 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         "@method", "@authority", "@path", "signature-key",
     });
 
+    /// <summary>
+    /// Per-request option carrying additional HTTP message component
+    /// identifiers (e.g. <c>content-type</c>, <c>content-digest</c>) that
+    /// MUST be covered by the signature in addition to the base AAuth
+    /// components (§Covered Components). Set via
+    /// <c>request.Options.Set(AdditionalComponentsKey, ...)</c>; the signer
+    /// reads it on each <see cref="Sign(HttpRequestMessage)"/>. The values
+    /// are resolved from the request's header fields at signing time.
+    /// </summary>
+    public static readonly HttpRequestOptionsKey<IReadOnlyList<string>> AdditionalComponentsKey
+        = new("AAuth.AdditionalSignatureComponents");
+
     private readonly IAAuthKey _key;
     private readonly ISignatureKeyProvider _signatureKeyProvider;
     private readonly Func<DateTimeOffset> _clock;
@@ -129,7 +141,14 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         // the leading '/', so re-add it.
         var path = "/" + request.RequestUri.GetComponents(UriComponents.Path, UriFormat.UriEscaped);
 
-        var paramsLine = BuildSignatureParams(created, request);
+        // Additional covered components required by the resource (from its
+        // metadata or a prior invalid_input error). Resolve each to its
+        // current header value so it can be both listed in @signature-params
+        // and appended to the signature base. Unresolvable components are
+        // skipped here and validated below.
+        var additional = ResolveAdditionalComponents(request);
+
+        var paramsLine = BuildSignatureParams(created, request, additional);
 
         // RFC 9421 §2.5 signature base construction.
         //
@@ -151,6 +170,10 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         if (request.Headers.Authorization is not null)
         {
             AppendComponent(sb, "authorization", request.Headers.Authorization.ToString());
+        }
+        foreach (var (name, value) in additional)
+        {
+            AppendComponent(sb, name, value);
         }
         sb.Append("\"@signature-params\": ").Append(paramsLine);
 
@@ -182,7 +205,9 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         sb.Append('"').Append(name).Append("\": ").Append(value).Append('\n');
     }
 
-    private static string BuildSignatureParams(long created, HttpRequestMessage request)
+    private static string BuildSignatureParams(
+        long created, HttpRequestMessage request,
+        IReadOnlyList<(string Name, string Value)> additional)
     {
         var sb = new StringBuilder("(");
         for (int i = 0; i < CoveredComponents.Count; i++)
@@ -198,8 +223,78 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         {
             sb.Append(" \"authorization\"");
         }
+        foreach (var (name, _) in additional)
+        {
+            sb.Append(" \"").Append(name).Append('"');
+        }
         sb.Append(");created=").Append(created);
         return sb.ToString();
+    }
+
+    // Resolve the resource-required additional components (carried in
+    // request.Options) to (name, value) pairs in declared order. Each name
+    // is a lowercase HTTP field identifier; its value is taken from the
+    // request's content headers (e.g. content-type, content-digest) or
+    // request headers. Names are de-duplicated and the base AAuth components
+    // (already covered) are never re-added. A required component whose value
+    // is not present on the request is rejected, because signing over an
+    // absent field would not satisfy the resource.
+    private static IReadOnlyList<(string Name, string Value)> ResolveAdditionalComponents(
+        HttpRequestMessage request)
+    {
+        if (!request.Options.TryGetValue(AdditionalComponentsKey, out var requested)
+            || requested is not { Count: > 0 })
+        {
+            return Array.Empty<(string, string)>();
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var baseComponent in CoveredComponents)
+        {
+            seen.Add(baseComponent);
+        }
+        seen.Add("authorization");
+
+        var resolved = new List<(string, string)>();
+        foreach (var raw in requested)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                continue;
+            }
+            var name = raw.Trim().ToLowerInvariant();
+            if (!seen.Add(name))
+            {
+                continue;
+            }
+            if (!TryResolveFieldValue(request, name, out var value))
+            {
+                throw new InvalidOperationException(
+                    $"Resource requires signature component '{name}', but the request has no such header to sign over.");
+            }
+            resolved.Add((name, value));
+        }
+        return resolved;
+    }
+
+    private static bool TryResolveFieldValue(
+        HttpRequestMessage request, string name, out string value)
+    {
+        // Content headers (content-type, content-digest, content-length, ...)
+        // live on request.Content; everything else on request.Headers. RFC
+        // 9421 §2.1: multiple field values are combined with ", ".
+        if (request.Content?.Headers.TryGetValues(name, out var contentValues) == true)
+        {
+            value = string.Join(", ", contentValues);
+            return true;
+        }
+        if (request.Headers.TryGetValues(name, out var headerValues))
+        {
+            value = string.Join(", ", headerValues);
+            return true;
+        }
+        value = string.Empty;
+        return false;
     }
 
     /// <summary>

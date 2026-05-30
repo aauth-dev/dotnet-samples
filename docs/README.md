@@ -172,8 +172,9 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | Type | Purpose |
 |------|---------|
 | `SignatureError` / `SignatureErrorCode` | Signature verification failures |
-| `TokenError` / `TokenErrorCode` | Token validation failures |
-| `PollingError` / `PollingErrorCode` | Deferred polling failures |
+| `TokenErrorResponse` / `TokenErrorCode` | Token validation failures |
+| `AAuthTokenExchangeException` | Structured PS token-endpoint errors |
+| `PollingErrorException` / `PollingErrorCode` | Deferred polling failures |
 
 ### `AAuth.Identifiers` — AAuth URI parsing
 

@@ -22,6 +22,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using AAuth.Crypto;
+using AAuth.Errors;
 using AAuth.HttpSig;
 using AAuth.Server;
 
@@ -253,6 +254,24 @@ HttpResponseMessage? mode3Resp = null;
 try
 {
     mode3Resp = await mode3Client.SendAsync(new HttpRequestMessage(HttpMethod.Get, $"{WhoAmIUrl}?scope=email"));
+}
+catch (AAuthTokenExchangeException ex)
+{
+    Console.WriteLine();
+    Console.WriteLine($"  Token exchange error: {ex.ErrorCode} (HTTP {ex.StatusCode}, terminal={ex.IsTerminal})");
+    if (!string.IsNullOrEmpty(ex.ErrorDescription))
+    {
+        Console.WriteLine($"    {ex.ErrorDescription}");
+    }
+    Console.WriteLine();
+    Console.WriteLine("  This is expected if:");
+    Console.WriteLine("    - The user has no Hellō account / registered devices");
+    Console.WriteLine("    - The agent has no callback_endpoint for interaction");
+    Console.WriteLine("  The PS couldn't reach the user to obtain consent.");
+    Console.WriteLine();
+    Console.WriteLine("  To complete Mode 3, you need a Hellō account linked to");
+    Console.WriteLine("  person.hello.coop. The PS would then send you a push/redirect");
+    Console.WriteLine("  for consent, and return an auth_token with your identity claims.");
 }
 catch (HttpRequestException ex)
 {

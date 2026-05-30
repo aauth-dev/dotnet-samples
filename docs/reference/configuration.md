@@ -208,8 +208,9 @@ Standard `DelegatingHandler` — no configurable options. Requires an `ISignatur
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `MetadataCacheDuration` | `TimeSpan` | 5 minutes | Metadata document cache lifetime |
-| `JwksCacheDuration` | `TimeSpan` | 5 minutes | JWKS cache lifetime |
+| `MetadataCacheTtl` | `TimeSpan` | 5 minutes | Metadata document cache lifetime |
+| `JwksCacheTtl` | `TimeSpan` | 1 hour | JWKS cache lifetime |
+| `JwksMinRefreshInterval` | `TimeSpan` | 1 minute | Minimum interval between JWKS fetches (rate limit) |
 
 ### ChallengeHandlingOptions (WithChallengeHandling)
 
@@ -218,6 +219,12 @@ Standard `DelegatingHandler` — no configurable options. Requires an `ISignatur
 | `OnInteractionRequired` | `Func<AAuthInteraction, CancellationToken, Task>?` | null | Deferred consent callback |
 | `PollingTimeout` | `TimeSpan` | 5 minutes | Max deferred polling time |
 | `DefaultPollInterval` | `TimeSpan` | 5 seconds | Poll interval (overridden by Retry-After) |
+| `PreferWaitSeconds` | `int?` | null | Sends `Prefer: wait=N` to long-poll |
+| `MinPollInterval` | `TimeSpan` | 100 ms | Minimum delay between polls |
+| `OnPoll` | `Action<HttpResponseMessage>?` | null | Per-poll callback (logging/progress) |
+| `Capabilities` | `IList<string>?` | null | Capabilities sent to the PS (null = infer) |
+| `Prompt` | `string?` | null | OIDC `prompt` sent to the PS |
+| `AdditionalSignatureComponents` | `IReadOnlyDictionary<string, IReadOnlyList<string>>?` | null | Per-origin extra covered components to seed |
 
 ### InteractionHandlingOptions (WithInteractionHandling)
 

@@ -33,6 +33,33 @@ else
     echo "==> gh already installed: $(gh --version | head -n1)"
 fi
 
+# --- cloudflared --------------------------------------------------------------
+# Installs `cloudflared` from Cloudflare's official apt repository.
+# Required by the LiveWhoAmITest sample, which exposes its local agent metadata
+# endpoint over a quick tunnel so the live resource server can fetch its JWKS.
+# Docs: https://pkg.cloudflare.com/
+if ! command -v cloudflared >/dev/null 2>&1; then
+    echo "==> Installing cloudflared"
+
+    sudo_cmd=""
+    if [[ $EUID -ne 0 ]]; then
+        sudo_cmd="sudo"
+    fi
+
+    $sudo_cmd install -d -m 0755 /etc/apt/keyrings
+    curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
+        | $sudo_cmd tee /etc/apt/keyrings/cloudflare-main.gpg >/dev/null
+    $sudo_cmd chmod go+r /etc/apt/keyrings/cloudflare-main.gpg
+
+    echo "deb [signed-by=/etc/apt/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" \
+        | $sudo_cmd tee /etc/apt/sources.list.d/cloudflared.list >/dev/null
+
+    $sudo_cmd apt-get update
+    $sudo_cmd apt-get install -y cloudflared
+else
+    echo "==> cloudflared already installed: $(cloudflared --version | head -n1)"
+fi
+
 # --- Bash: git completion + git status in prompt ------------------------------
 # Idempotent: only appended once, guarded by a marker line.
 BASHRC="${HOME}/.bashrc"

@@ -80,7 +80,7 @@ public sealed class CallChainingHandler
             onInteractionRequired: onInteractionRequired,
             pollerOptions: pollerOptions,
             upstreamToken: upstreamAuthToken,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

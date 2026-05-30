@@ -23,6 +23,14 @@ public enum TokenErrorCode
     /// <summary>User interaction is needed but not available.</summary>
     InteractionRequired,
 
+    /// <summary>
+    /// The PS has no channel to reach the user and the agent did not declare
+    /// the <c>interaction</c> capability. Terminal (HTTP 400) — distinct from
+    /// <see cref="InteractionRequired"/>, which is a non-terminal 202 carrying
+    /// an interaction URL. Per draft-02 §Token Endpoint Error Codes.
+    /// </summary>
+    UserUnreachable,
+
     /// <summary>Internal error.</summary>
     ServerError,
 }
@@ -43,6 +51,7 @@ public sealed record TokenErrorResponse(TokenErrorCode Error, string? ErrorDescr
         TokenErrorCode.InvalidResourceToken => "invalid_resource_token",
         TokenErrorCode.ExpiredResourceToken => "expired_resource_token",
         TokenErrorCode.InteractionRequired => "interaction_required",
+        TokenErrorCode.UserUnreachable => "user_unreachable",
         TokenErrorCode.ServerError => "server_error",
         _ => "server_error",
     };
@@ -58,11 +67,12 @@ public sealed record TokenErrorResponse(TokenErrorCode Error, string? ErrorDescr
             "invalid_resource_token" => TokenErrorCode.InvalidResourceToken,
             "expired_resource_token" => TokenErrorCode.ExpiredResourceToken,
             "interaction_required" => TokenErrorCode.InteractionRequired,
+            "user_unreachable" => TokenErrorCode.UserUnreachable,
             "server_error" => TokenErrorCode.ServerError,
             _ => default,
         };
         return code is "invalid_request" or "invalid_agent_token" or "expired_agent_token"
             or "invalid_resource_token" or "expired_resource_token"
-            or "interaction_required" or "server_error";
+            or "interaction_required" or "user_unreachable" or "server_error";
     }
 }

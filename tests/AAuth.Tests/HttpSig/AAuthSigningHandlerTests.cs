@@ -231,4 +231,106 @@ public class AAuthSigningHandlerTests
         var b64 = Regex.Match(sigHeader, @":(?<v>[^:]+):").Groups["v"].Value;
         Assert.True(key.Verify(Encoding.ASCII.GetBytes(observedBase!), Convert.FromBase64String(b64)));
     }
+
+    [Fact]
+    public async Task SendAsync_NoAdditionalComponents_SignsBaseComponentsOnly()
+    {
+        // Regression guard: when no additional components are requested, the
+        // Signature-Input must contain only the four base AAuth components.
+        var key = AAuthKey.Generate();
+        var capture = new CaptureHandler();
+        var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
+        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
+        using var client = new HttpClient(signing);
+
+        await client.GetAsync("https://resource.example/api");
+
+        var input = string.Join(',', capture.Captured!.Headers.GetValues("Signature-Input"));
+        Assert.Equal(
+            $"sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\");created={clock.ToUnixTimeSeconds()}",
+            input);
+    }
+
+    [Fact]
+    public async Task SendAsync_AdditionalComponents_AppendedAfterBaseAndVerify()
+    {
+        var key = AAuthKey.Generate();
+        var capture = new CaptureHandler();
+        var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
+        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
+        using var client = new HttpClient(signing);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "https://resource.example/api")
+        {
+            Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+        };
+        request.Content.Headers.Add("Content-Digest", "sha-256=:abc:");
+        request.Options.Set(
+            AAuthSigningHandler.AdditionalComponentsKey,
+            new[] { "content-type", "content-digest" });
+
+        await client.SendAsync(request);
+
+        var req = capture.Captured!;
+        var input = string.Join(',', req.Headers.GetValues("Signature-Input"));
+        Assert.Equal(
+            $"sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\" \"content-type\" \"content-digest\");created={clock.ToUnixTimeSeconds()}",
+            input);
+
+        // The additional components must be covered by the signature too.
+        var sigHeader = string.Join(',', req.Headers.GetValues("Signature"));
+        var signature = Convert.FromBase64String(
+            Regex.Match(sigHeader, @"^sig=:(?<b64>[^:]+):$").Groups["b64"].Value);
+        var paramsLine = input["sig=".Length..];
+        var baseStr = new StringBuilder()
+            .Append("\"@method\": POST\n")
+            .Append("\"@authority\": resource.example\n")
+            .Append("\"@path\": /api\n")
+            .Append("\"signature-key\": sig=jwt;jwt=\"abc.def.ghi\"\n")
+            .Append("\"content-type\": application/json; charset=utf-8\n")
+            .Append("\"content-digest\": sha-256=:abc:\n")
+            .Append("\"@signature-params\": ").Append(paramsLine)
+            .ToString();
+        Assert.True(key.Verify(Encoding.ASCII.GetBytes(baseStr), signature));
+    }
+
+    [Fact]
+    public async Task SendAsync_AdditionalComponents_DeduplicatesAndIgnoresBaseComponents()
+    {
+        var key = AAuthKey.Generate();
+        var capture = new CaptureHandler();
+        var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
+        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
+        using var client = new HttpClient(signing);
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "https://resource.example/api");
+        request.Headers.Add("X-Custom", "v1");
+        // Base components and duplicates must be filtered out.
+        request.Options.Set(
+            AAuthSigningHandler.AdditionalComponentsKey,
+            new[] { "@method", "signature-key", "x-custom", "x-custom" });
+
+        await client.SendAsync(request);
+
+        var input = string.Join(',', capture.Captured!.Headers.GetValues("Signature-Input"));
+        Assert.Equal(
+            $"sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\" \"x-custom\");created={clock.ToUnixTimeSeconds()}",
+            input);
+    }
+
+    [Fact]
+    public async Task SendAsync_AdditionalComponentMissingFromRequest_Throws()
+    {
+        var key = AAuthKey.Generate();
+        var capture = new CaptureHandler();
+        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi") { InnerHandler = capture };
+        using var client = new HttpClient(signing);
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "https://resource.example/api");
+        request.Options.Set(
+            AAuthSigningHandler.AdditionalComponentsKey,
+            new[] { "content-digest" });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.SendAsync(request));
+    }
 }
