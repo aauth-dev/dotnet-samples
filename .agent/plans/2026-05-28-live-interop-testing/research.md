@@ -232,29 +232,60 @@ Each gap references the relevant AAuth spec section from `draft-hardt-oauth-aaut
 
 | # | Question | Resolution |
 |---|---|---|
-| 1 | Are `prompt` and `provider_hint` standardized AAuth fields or Hellō-specific? | **Hellō-specific.** Spec §Agent Token Request (L830) does not list them. |
+| 1 | Are `prompt` and `provider_hint` standardized AAuth fields or Hellō-specific? | **`prompt` will be standard in -02** (OIDC values: `none`, `login`, `consent`, `select_account`). `provider_hint` stays Hellō-specific. |
 | 2 | Does the PS accept capabilities beyond `"interaction"`? | **Spec defines:** `interaction`, `clarification`, `payment` (§AAuth-Capabilities, L1756). PS behavior unconfirmed for `clarification`/`payment`. |
-| 3 | PS polling timeout — how long before expiring? | **Server-controlled.** Spec §Deferred Responses says server returns `expired` (408) when it decides. No client max mandated. |
+| 3 | PS polling timeout - how long before expiring? | **Server-controlled.** Spec §Deferred Responses says server returns `expired` (408) when it decides. No client max mandated. |
 | 4 | Does PS support `Prefer: wait=N` on initial POST or only polls? | **Both.** Spec example (L857) shows `Prefer: wait=45` on initial POST. Confirmed working with person.hello.coop. |
 | 5 | What claims does whoami return for different scopes? | **Tested:** Returns `sub`, `iss` always. Scope-dependent claims not yet tested (whoami may not support scopes). |
+| 6 | Is `capabilities` in POST body spec-standard or PS-specific? | **Will be standard in -02.** Spec lead confirmed body is the correct place. See §5b. |
+| 7 | Is `user_unreachable` a valid error code? | **Yes, will be added in -02.** Distinct from `interaction_required`. See §5b. |
 
-## 5a. Critical Finding: `capabilities` Header vs Body
+## 5a. Resolved: `capabilities` Header vs Body
 
-The most significant discrepancy discovered:
+> **Resolved 2026-05-30** - Spec lead confirmed our fix is correct. Will be standardized in -02.
 
-- **Spec** (§AAuth-Capabilities, L1776): "The header is not used on requests to PS endpoints — the PS learns the agent's capabilities through the mission approval flow."
-- **Live PS** (person.hello.coop): Requires `capabilities: ["interaction"]` in the POST **body** or returns `400 user_unreachable`.
-- **web-agent-demo**: Sends `capabilities` in the POST body (matching PS expectation).
-- **Spec error table** (L2016): Defines `interaction_required` (403) for this case. PS returns `user_unreachable` (400) — a non-standard error code.
+Original discrepancy:
 
-**Implications for SDK design:**
+- **Spec -01** (§AAuth-Capabilities, L1776): "The header is not used on requests to PS endpoints - the PS learns the agent's capabilities through the mission approval flow."
+- **Live PS** (person.hello.coop): Requires `capabilities: ["interaction"]` in the POST body.
 
-1. To interop with live Hellō PS → must send `capabilities` in body (current fix)
-2. Spec-compliant approach would be the `AAuth-Capabilities` header, but the spec explicitly says this header is NOT for PS endpoints
-3. The spec says PSes learn capabilities "through the mission approval flow" — but the mission-less flow (our case) has no such mechanism
-4. This appears to be a spec gap for mission-less agents that need interaction
+**Resolution from spec lead:**
 
-**Recommendation:** Keep `capabilities` in POST body as a pragmatic interop choice. Flag as PS-specific extension. May need spec clarification for mission-less flows.
+- `capabilities` belongs in the token request body, not headers.
+- The `AAuth-Capabilities` header exclusion on PS endpoints (§12.1) stands - that header is for resource calls.
+- Headers are only used where there's a conflict with a pre-existing API; for the PS token endpoint, body is correct.
+- When a mission is active, the agent doesn't need to re-send `capabilities` (PS has them from approval flow) but MAY include them.
+- **Spec -02 will list `capabilities` as a standard token endpoint parameter.**
+
+**SDK action:** Current fix is correct. Promote from "partially fixed" to "confirmed correct".
+
+## 5b. Spec Lead Response (2026-05-30)
+
+Full clarification from spec lead on our three questions:
+
+### `capabilities` in token endpoint body
+
+- Will be added to §7.1.3 Agent Token Request as a standard OPTIONAL parameter.
+- Array of strings from the capabilities registry (`interaction`, `clarification`, `payment`).
+- Mission-less agents: MUST send if they need interaction. Mission agents: MAY send (PS already knows from approval).
+
+### `user_unreachable` vs `interaction_required`
+
+These are two **distinct** conditions:
+
+| Error | Status | Type | Meaning |
+|-------|--------|------|--------|
+| `interaction_required` | 202 | Non-terminal | PS needs the agent to direct the user somewhere (URL + code). Polling continues. |
+| `user_unreachable` | 400 | Terminal | PS has no channel to the user AND agent didn't declare `interaction`. Hard stop. |
+
+- `user_unreachable` will be added to the spec error table in -02.
+- Hellourrent behavior is correct.
+
+### `prompt` parameter
+
+- Will be added to §7.1.3 in -02 with OIDC values: `none`, `login`, `consent`, `select_account`.
+- Consistent with spec already reusing OIDC vocabulary for `login_hint`, `tenant`, `domain_hint`.
+- `provider_hint` stays Hellospecific (steers between consumer providers, doesn't generalize).
 
 ---
 
