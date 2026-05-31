@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -111,11 +112,57 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     }
 
     /// <inheritdoc />
-    protected override Task<HttpResponseMessage> SendAsync(
+    protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        await EnsureRequiredContentDigestAsync(request, cancellationToken).ConfigureAwait(false);
         Sign(request);
-        return base.SendAsync(request, cancellationToken);
+        return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+    }
+
+    // When a resource requires `content-digest` as an additional covered
+    // component (RFC 9530) and the request carries a body without an explicit
+    // Content-Digest header, compute it here so the signer can cover it. Only
+    // SHA-256 is emitted. Requests without a body, or that already carry the
+    // header, are left untouched. This buffering only happens when a resource
+    // has actually demanded `content-digest`, so the common no-digest path is
+    // unaffected. Direct callers of the synchronous <see cref="Sign"/> must
+    // pre-populate Content-Digest themselves.
+    private static async Task EnsureRequiredContentDigestAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        if (request.Content is null)
+        {
+            return;
+        }
+        if (!request.Options.TryGetValue(AdditionalComponentsKey, out var requested)
+            || requested is not { Count: > 0 })
+        {
+            return;
+        }
+
+        var needsDigest = false;
+        foreach (var raw in requested)
+        {
+            if (!string.IsNullOrWhiteSpace(raw)
+                && string.Equals(raw.Trim(), "content-digest", StringComparison.OrdinalIgnoreCase))
+            {
+                needsDigest = true;
+                break;
+            }
+        }
+        if (!needsDigest || request.Content.Headers.Contains("Content-Digest"))
+        {
+            return;
+        }
+
+        var body = await request.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+        var hash = SHA256.HashData(body);
+        // RFC 9530 §3: Content-Digest is a Dictionary structured field whose
+        // member value is a Byte Sequence (`:...:`). RFC 9421 then signs over
+        // the serialized field value verbatim.
+        var value = $"sha-256=:{Convert.ToBase64String(hash)}:";
+        request.Content.Headers.TryAddWithoutValidation("Content-Digest", value);
     }
 
     /// <summary>Apply AAuth signature headers to <paramref name="request"/>.</summary>
@@ -269,8 +316,16 @@ public sealed class AAuthSigningHandler : DelegatingHandler
             }
             if (!TryResolveFieldValue(request, name, out var value))
             {
+                var origin = request.RequestUri is { } uri
+                    ? uri.GetComponents(
+                        UriComponents.Scheme | UriComponents.Host | UriComponents.Port,
+                        UriFormat.UriEscaped)
+                    : "(unknown origin)";
                 throw new InvalidOperationException(
-                    $"Resource requires signature component '{name}', but the request has no such header to sign over.");
+                    $"Resource at {origin} requires signature component '{name}', but the request "
+                    + "has no such header to sign over. Components AAuth can compute automatically "
+                    + "(e.g. 'content-digest' on a body-bearing request) are added before signing; "
+                    + "any other required component must be set on the request by the caller.");
             }
             resolved.Add((name, value));
         }

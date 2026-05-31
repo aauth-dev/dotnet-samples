@@ -90,11 +90,15 @@ var tunnelProcess = new Process
 };
 tunnelProcess.Start();
 
+// Everything past this point runs inside try/finally so the tunnel process and
+// the local Kestrel host are always torn down, even if a mode throws.
+try
+{
+
 tunnelUrl = await WaitForTunnelUrl(tunnelProcess);
 if (tunnelUrl is null)
 {
     Console.Error.WriteLine("ERROR: Failed to get tunnel URL from cloudflared.");
-    tunnelProcess.Kill();
     return 1;
 }
 
@@ -323,9 +327,16 @@ if (mode3Resp is not null)
 Console.WriteLine();
 Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 Console.WriteLine("Done. Shutting down...");
-tunnelProcess.Kill();
-await app.StopAsync();
 return 0;
+
+}
+finally
+{
+    try { if (!tunnelProcess.HasExited) { tunnelProcess.Kill(); } }
+    catch { /* process may already be gone */ }
+    tunnelProcess.Dispose();
+    await app.StopAsync();
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 static async Task<string?> WaitForTunnelUrl(Process process)

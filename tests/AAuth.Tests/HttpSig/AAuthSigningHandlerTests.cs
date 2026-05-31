@@ -333,4 +333,75 @@ public class AAuthSigningHandlerTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => client.SendAsync(request));
     }
+
+    [Fact]
+    public async Task SendAsync_RequiredContentDigest_ComputedAndCovered()
+    {
+        var key = AAuthKey.Generate();
+        var capture = new CaptureHandler();
+        var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
+        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
+        using var client = new HttpClient(signing);
+
+        const string bodyText = "{\"hello\":\"world\"}";
+        var request = new HttpRequestMessage(HttpMethod.Post, "https://resource.example/api")
+        {
+            Content = new StringContent(bodyText, Encoding.UTF8, "application/json"),
+        };
+        // Resource requires content-digest, but the caller did not set it.
+        request.Options.Set(
+            AAuthSigningHandler.AdditionalComponentsKey,
+            new[] { "content-digest" });
+
+        await client.SendAsync(request);
+
+        var req = capture.Captured!;
+        var expectedDigest =
+            $"sha-256=:{Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(bodyText)))}:";
+        Assert.Equal(expectedDigest, string.Join(", ", req.Content!.Headers.GetValues("Content-Digest")));
+
+        var input = string.Join(',', req.Headers.GetValues("Signature-Input"));
+        Assert.Equal(
+            $"sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\" \"content-digest\");created={clock.ToUnixTimeSeconds()}",
+            input);
+
+        // The auto-computed digest must be covered by the signature.
+        var sigHeader = string.Join(',', req.Headers.GetValues("Signature"));
+        var signature = Convert.FromBase64String(
+            Regex.Match(sigHeader, @"^sig=:(?<b64>[^:]+):$").Groups["b64"].Value);
+        var paramsLine = input["sig=".Length..];
+        var baseStr = new StringBuilder()
+            .Append("\"@method\": POST\n")
+            .Append("\"@authority\": resource.example\n")
+            .Append("\"@path\": /api\n")
+            .Append("\"signature-key\": sig=jwt;jwt=\"abc.def.ghi\"\n")
+            .Append("\"content-digest\": ").Append(expectedDigest).Append('\n')
+            .Append("\"@signature-params\": ").Append(paramsLine)
+            .ToString();
+        Assert.True(key.Verify(Encoding.ASCII.GetBytes(baseStr), signature));
+    }
+
+    [Fact]
+    public async Task SendAsync_RequiredContentDigest_DoesNotOverwriteCallerHeader()
+    {
+        var key = AAuthKey.Generate();
+        var capture = new CaptureHandler();
+        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi") { InnerHandler = capture };
+        using var client = new HttpClient(signing);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "https://resource.example/api")
+        {
+            Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+        };
+        request.Content.Headers.Add("Content-Digest", "sha-256=:caller-supplied:");
+        request.Options.Set(
+            AAuthSigningHandler.AdditionalComponentsKey,
+            new[] { "content-digest" });
+
+        await client.SendAsync(request);
+
+        Assert.Equal(
+            "sha-256=:caller-supplied:",
+            string.Join(", ", capture.Captured!.Content!.Headers.GetValues("Content-Digest")));
+    }
 }

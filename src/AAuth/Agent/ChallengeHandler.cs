@@ -192,10 +192,15 @@ public sealed class ChallengeHandler : DelegatingHandler
 
         var authToken = await _exchange
             .ExchangeAsync(targetServer, requirement.ResourceToken!,
-                _onInteractionRequired, _pollerOptions,
-                upstreamToken: upstreamToken,
-                capabilities: Capabilities, prompt: Prompt,
-                cancellationToken: cancellationToken)
+                new TokenExchangeRequest
+                {
+                    OnInteractionRequired = _onInteractionRequired,
+                    PollerOptions = _pollerOptions,
+                    UpstreamToken = upstreamToken,
+                    Capabilities = Capabilities,
+                    Prompt = Prompt,
+                },
+                cancellationToken)
             .ConfigureAwait(false);
         _holder.Update(authToken);
 
@@ -260,10 +265,13 @@ public sealed class ChallengeHandler : DelegatingHandler
 
         // Learn the components for this origin (additive: base components and
         // anything previously learned are preserved), then re-sign and retry
-        // exactly once.
+        // exactly once. AddOrUpdate keeps concurrent 401s for the same origin
+        // from clobbering each other (each produces a superset).
         var origin = GetOrigin(request.RequestUri);
-        var merged = MergeComponents(origin, required);
-        _learnedComponents[origin] = merged;
+        var merged = _learnedComponents.AddOrUpdate(
+            origin,
+            _ => MergeComponents(origin, required),
+            (_, _) => MergeComponents(origin, required));
 
         response.Dispose();
         var retry = await CloneAsync(request, cancellationToken).ConfigureAwait(false);
@@ -284,14 +292,25 @@ public sealed class ChallengeHandler : DelegatingHandler
         }
 
         var origin = GetOrigin(request.RequestUri);
-        if (!_learnedComponents.TryGetValue(origin, out var components))
+        var hasLearnedOrSeeded =
+            _learnedComponents.ContainsKey(origin)
+            || AdditionalSignatureComponents?.ContainsKey(origin) == true;
+        if (!hasLearnedOrSeeded)
         {
-            AdditionalSignatureComponents?.TryGetValue(origin, out components);
+            // Nothing to seed for this origin; leave any caller-set
+            // components on the request untouched.
+            return;
         }
 
-        if (components is { Count: > 0 })
+        // Merge metadata-seeded + learned components with any components the
+        // caller already set on the request (additive, order-preserving,
+        // de-duplicated) so a per-request AdditionalComponentsKey value is
+        // never clobbered.
+        request.Options.TryGetValue(AAuthSigningHandler.AdditionalComponentsKey, out var callerSet);
+        var merged = MergeComponents(origin, callerSet ?? Array.Empty<string>());
+        if (merged.Count > 0)
         {
-            request.Options.Set(AAuthSigningHandler.AdditionalComponentsKey, components);
+            request.Options.Set(AAuthSigningHandler.AdditionalComponentsKey, merged);
         }
     }
 
@@ -362,11 +381,16 @@ public sealed class ChallengeHandler : DelegatingHandler
             clone.Headers.TryAddWithoutValidation(header.Key, header.Value);
         }
 
-        // HttpRequestMessage.Options copying is intentionally omitted —
-        // AAuth headers and the retry semantics here do not depend on
-        // request options, and the HttpRequestOptions API on .NET 10 has
-        // no public bulk-copy helper. Revisit if a future phase plumbs
-        // request-scoped state through options.
+        // Carry request-scoped options onto the clone so caller state (a
+        // per-request AdditionalComponentsKey, telemetry/Polly context, etc.)
+        // survives the retry. AAuth-specific keys are re-applied downstream
+        // (SeedAdditionalComponents / the adaptive retry), but copying here
+        // preserves anything else the caller attached. HttpRequestOptions
+        // exposes IDictionary<string, object?> for writes.
+        foreach (var option in source.Options)
+        {
+            ((IDictionary<string, object?>)clone.Options)[option.Key] = option.Value;
+        }
 
         return clone;
     }

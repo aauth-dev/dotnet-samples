@@ -20,6 +20,7 @@ public class ChallengeHandlerTests
 {
     private const string PsUrl = "http://localhost:5555";
     private const string ResourceUrl = "http://localhost:6000";
+    private static readonly HttpRequestOptionsKey<string> CustomOptionKey = new("Test.CallerState");
 
     // ── Upstream token routing ──────────────────────────────────────────────
 
@@ -223,9 +224,10 @@ public class ChallengeHandlerTests
 
         await exchangeClient.ExchangeAsync(
             PsUrl, "fake-resource-token",
-            onInteractionRequired: null,
-            pollerOptions: new DeferredPollerOptions { PreferWaitSeconds = 45 },
-            upstreamToken: null);
+            new TokenExchangeRequest
+            {
+                PollerOptions = new DeferredPollerOptions { PreferWaitSeconds = 45 },
+            });
 
         Assert.Equal("wait=45", capturedPrefer);
     }
@@ -245,9 +247,7 @@ public class ChallengeHandlerTests
 
         await exchangeClient.ExchangeAsync(
             PsUrl, "fake-resource-token",
-            onInteractionRequired: null,
-            pollerOptions: null,
-            upstreamToken: null);
+            new TokenExchangeRequest());
 
         Assert.Null(capturedPrefer);
     }
@@ -382,11 +382,12 @@ public class ChallengeHandlerTests
 
         await exchangeClient.ExchangeAsync(
             PsUrl, "fake-resource-token",
-            onInteractionRequired: onInteractionRequired,
-            pollerOptions: null,
-            upstreamToken: null,
-            capabilities: capabilities,
-            prompt: prompt);
+            new TokenExchangeRequest
+            {
+                OnInteractionRequired = onInteractionRequired,
+                Capabilities = capabilities,
+                Prompt = prompt,
+            });
 
         return capturedBody;
     }
@@ -488,6 +489,46 @@ public class ChallengeHandlerTests
         Assert.Equal(1, resource.CallCount);
     }
 
+    [Fact(DisplayName = "ChallengeHandler — seed merges caller-set components additively")]
+    public async Task AdaptiveSigning_Seed_MergesCallerSetComponents()
+    {
+        var resource = new AdaptiveResourceHandler(_ => Ok());
+        var seed = new Dictionary<string, IReadOnlyList<string>>
+        {
+            [ResourceUrl] = new[] { "content-type" },
+        };
+
+        using var client = BuildAdaptiveClient(resource, out _, seed);
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "/data");
+        request.Options.Set(
+            AAuthSigningHandler.AdditionalComponentsKey, new[] { "x-caller" });
+        await client.SendAsync(request);
+
+        Assert.Equal(1, resource.CallCount);
+        // Caller-set component is preserved additively alongside the seed.
+        Assert.Equal(new[] { "content-type", "x-caller" }, resource.Observed[0]!);
+    }
+
+    [Fact(DisplayName = "ChallengeHandler — non-AAuth request option survives the adaptive retry clone")]
+    public async Task AdaptiveSigning_CloneAsync_PreservesCallerOption()
+    {
+        var resource = new AdaptiveResourceHandler(
+            _ => InvalidInput("content-type"),
+            _ => Ok());
+
+        using var client = BuildAdaptiveClient(resource, out _);
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "/data");
+        request.Options.Set(CustomOptionKey, "caller-state");
+        await client.SendAsync(request);
+
+        Assert.Equal(2, resource.CallCount);
+        // Both the first attempt and the retried clone carry the caller option.
+        Assert.Equal("caller-state", resource.ObservedCustom[0]);
+        Assert.Equal("caller-state", resource.ObservedCustom[1]);
+    }
+
     [Fact(DisplayName = "ChallengeHandler — adaptive retry happens at most once")]
     public async Task AdaptiveSigning_RetriesAtMostOnce()
     {
@@ -500,6 +541,26 @@ public class ChallengeHandlerTests
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Equal(2, resource.CallCount);
+    }
+
+    [Fact(DisplayName = "ChallengeHandler — learned components persist for later requests to the same origin")]
+    public async Task AdaptiveSigning_LearnedComponents_PersistAcrossRequests()
+    {
+        var resource = new AdaptiveResourceHandler(
+            _ => InvalidInput("content-digest"), // request 1, attempt 1
+            _ => Ok(),                            // request 1, retry (learns content-digest)
+            _ => Ok());                           // request 2, first attempt
+
+        using var client = BuildAdaptiveClient(resource, out _);
+
+        await client.GetAsync("/data");
+        await client.GetAsync("/data");
+
+        Assert.Equal(3, resource.CallCount);
+        Assert.Null(resource.Observed[0]);
+        Assert.Equal(new[] { "content-digest" }, resource.Observed[1]!);
+        // Second request signs content-digest up front from the learned set.
+        Assert.Equal(new[] { "content-digest" }, resource.Observed[2]!);
     }
 
     private static HttpClient BuildAdaptiveClient(
@@ -553,6 +614,7 @@ public class ChallengeHandlerTests
     {
         private readonly Queue<Func<HttpRequestMessage, HttpResponseMessage>> _script;
         public System.Collections.Generic.List<IReadOnlyList<string>?> Observed { get; } = new();
+        public System.Collections.Generic.List<string?> ObservedCustom { get; } = new();
         public int CallCount { get; private set; }
 
         public AdaptiveResourceHandler(params Func<HttpRequestMessage, HttpResponseMessage>[] script)
@@ -564,6 +626,8 @@ public class ChallengeHandlerTests
             CallCount++;
             request.Options.TryGetValue(AAuthSigningHandler.AdditionalComponentsKey, out var comps);
             Observed.Add(comps);
+            ObservedCustom.Add(
+                request.Options.TryGetValue(CustomOptionKey, out var custom) ? custom : null);
             var step = _script.Count > 0
                 ? _script.Dequeue()
                 : (_ => new HttpResponseMessage(HttpStatusCode.OK));

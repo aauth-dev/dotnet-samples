@@ -38,18 +38,21 @@ try
     var authToken = await exchange.ExchangeAsync(
         "https://ps.example",
         resourceToken,
-        onInteractionRequired: async (interaction, ct) =>
+        new TokenExchangeRequest
         {
-            // Present to user — open browser, show notification, etc.
-            Console.WriteLine($"Approve at: {interaction.Url}");
-            Console.WriteLine($"Code: {interaction.Code}");
-        },
-        pollerOptions: new DeferredPollerOptions
-        {
-            MaxTotalWait = TimeSpan.FromMinutes(5),
-            DefaultPollInterval = TimeSpan.FromSeconds(2),
-            // Long-poll: server holds connection open up to 30s (RFC 7240)
-            PreferWaitSeconds = 30,
+            OnInteractionRequired = async (interaction, ct) =>
+            {
+                // Present to user - open browser, show notification, etc.
+                Console.WriteLine($"Approve at: {interaction.Url}");
+                Console.WriteLine($"Code: {interaction.Code}");
+            },
+            PollerOptions = new DeferredPollerOptions
+            {
+                MaxTotalWait = TimeSpan.FromMinutes(5),
+                DefaultPollInterval = TimeSpan.FromSeconds(2),
+                // Long-poll: server holds connection open up to 30s (RFC 7240)
+                PreferWaitSeconds = 30,
+            },
         });
 }
 catch (AAuthInteractionDeniedException)
@@ -61,6 +64,8 @@ catch (AAuthInteractionTimeoutException)
     // Polling timed out without resolution
 }
 ```
+
+> **Note:** When you set `PreferWaitSeconds` (long-poll) on a directly constructed `TokenExchangeClient`/`DeferredPoller`, the `HttpClient` you supply must allow a per-request timeout longer than the wait value. Set `HttpClient.Timeout` greater than `PreferWaitSeconds` (or to `Timeout.InfiniteTimeSpan`); otherwise the default 100s timeout can abort an in-flight long-poll with a `TaskCanceledException`. Clients built via `AAuthClientBuilder` already use `Timeout.InfiniteTimeSpan`.
 
 ## Automatic with AAuthClientBuilder
 

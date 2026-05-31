@@ -54,6 +54,12 @@ public sealed class AAuthTokenExchangeException : Exception
     /// (a hard stop when the PS has no channel to the user and the agent did
     /// not declare the <c>interaction</c> capability).
     /// </summary>
+    /// <remarks>
+    /// This runs only on a non-success status. <c>interaction_required</c> is
+    /// delivered as <c>202 Accepted</c> (a success status handled by the
+    /// deferred poller), so it never reaches this classifier despite not being
+    /// a terminal outcome.
+    /// </remarks>
     public static bool IsTerminalCode(string? errorCode)
         => !string.Equals(errorCode, "server_error", StringComparison.Ordinal);
 

@@ -141,8 +141,7 @@ app.MapGet("/", async (HttpContext ctx) =>
     var exchange = new TokenExchangeClient(signedClient, metadata);
     var chained = await exchange.ExchangeAsync(
         personServer, resourceToken,
-        onInteractionRequired: null,
-        upstreamToken: upstreamAuthToken);
+        new TokenExchangeRequest { UpstreamToken = upstreamAuthToken });
 
     // 3. Call downstream with the chained auth token
     using var downstream = new AAuthClientBuilder(myKey)
@@ -178,9 +177,7 @@ var exchange = new TokenExchangeClient(signedClient, metadata);
 var downstreamToken = await exchange.ExchangeAsync(
     personServer: "https://ps.example",
     resourceToken: resourceToken,
-    onInteractionRequired: null,
-    pollerOptions: null,
-    upstreamToken: incomingAuthToken); // preserves delegation chain
+    new TokenExchangeRequest { UpstreamToken = incomingAuthToken }); // preserves delegation chain
 ```
 
 The SDK includes the upstream token as `upstream_token` in the POST body to the PS token endpoint.

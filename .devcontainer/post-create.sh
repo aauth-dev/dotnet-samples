@@ -61,6 +61,7 @@ else
 fi
 
 # --- Bash: git completion + git status in prompt ------------------------------
+
 # Idempotent: only appended once, guarded by a marker line.
 BASHRC="${HOME}/.bashrc"
 MARKER="# >>> aauth devcontainer bash setup >>>"

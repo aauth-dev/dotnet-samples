@@ -60,7 +60,10 @@ string[] required = SignatureError.ParseRequiredInput(
 When challenge handling is enabled, the agent handles `invalid_input` with a
 `required_input` list automatically: it learns the additional covered
 components, re-signs the request covering them, and retries once. Learned
-components are cached per origin. See
+components are cached per origin. If `content-digest` is among the required
+components, the signing handler computes it (RFC 9530, `sha-256`) from the
+request body before re-signing, so the retry succeeds without caller
+intervention. See
 [Adaptive Signature Components](../signing-modes/overview.md#adaptive-signature-components)
 for how to seed components proactively from resource metadata. `ParseRequiredInput`
 is exposed for callers implementing this handshake manually.

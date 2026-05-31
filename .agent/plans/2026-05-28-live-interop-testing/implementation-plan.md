@@ -284,6 +284,125 @@ For each Markdown file (and each embedded code snippet), dispatch the **Explore*
 
 ---
 
+## Phase 7: PR #27 Review Remediation
+
+**Objective**: Address the findings from the two PR #27 review passes (external `copilot-pull-request-reviewer` + internal PR Review subagent). Full findings, severities, spec/SDK evidence, and accuracy verdicts are recorded in research.md §9.
+
+**Design decisions (confirmed with user 2026-05-31):**
+
+- **H2** → Full implement: compute and attach `Content-Digest` (RFC 9530, SHA-256) before signing when it is a required/learned component.
+- **H1** → Options object refactor: introduce a `TokenExchangeRequest` parameter object. **Backward compatibility is NOT a constraint** (pre-1.0 alpha); replace the old positional overload outright rather than preserving it. Keep only the overloads that make the new surface clean.
+- **M3** → Comment + docs only: reword the misleading `InfiniteTimeSpan` assertion as a stated requirement; do not re-add a per-request CTS (preserves the Fix 4.1 single-timeout-layer decision).
+- **Nits L1–L5** → Included in this phase.
+
+### Validation Protocol (applies to every fix)
+
+Same as Phase 4: after each fix, dispatch the **Explore** subagent (read-only) to compare the change against (1) the spec section it implements, (2) prior SDK behavior, (3) samples/docs needing updates; report spec-compliance, correctness, missing tests, stale docs, regressions. Incorporate feedback before marking done.
+
+### Docs / Samples Update Protocol (applies to every fix)
+
+Backward compatibility is not a concern, so any surface or behavior change must be propagated everywhere it is referenced. After implementing each fix, dispatch a **dedicated subagent per fix** charged to find and update all affected: `docs/**`, `samples/**` (incl. each sample's `README.md`), `samples/GuidedTour/CodeSnippets.cs` snippets, `samples/SampleApp/**` code and inline docs, and root/`docs/README.md`. The subagent must (a) search for every reference to the changed symbol/behavior, (b) update it to the new surface, (c) confirm GuidedTour/SampleApp snippets still compile. Record the subagent's file list in the fix checklist.
+
+---
+
+### Fix 7.1 — H2: Compute `Content-Digest` for adaptive signing
+
+**Files**: `src/AAuth/HttpSig/AAuthSigningHandler.cs` (~L256-271 `ResolveAdditionalComponents`), plus a digest helper.
+
+When `content-digest` is a required/learned additional component and the request has a body, compute `Content-Digest: sha-256=:<base64>:` (RFC 9530 structured-field dictionary form) from the buffered body and attach it before the signature base is built, so the component resolves instead of throwing. Keep the hard throw only for genuinely unsatisfiable components (no header and not auto-computable), but make its message name the unmet component + origin.
+
+#### Definition of Done
+
+- [x] `Content-Digest` computed (SHA-256, RFC 9530 SF form) when required and body present
+- [x] Buffered-body read does not break streaming/no-body requests
+- [x] Header not duplicated if caller already set `Content-Digest`
+- [x] Unsatisfiable-component error names the component + origin
+- [x] Unit tests: digest value correctness, required-component path, no-body path, caller-preset header, unsatisfiable non-digest component
+- [x] Adaptive retry loop (`ChallengeHandler`) no longer throws for `content-digest`
+- [x] Dedicated docs/samples subagent dispatched; affected docs (`signing-modes/overview.md`, `advanced/error-handling.md`) and any snippets updated
+- [x] Subagent validation passed
+
+### Fix 7.2 — M1 + M2: Treat per-request components as additive on seed and clone
+
+**Files**: `src/AAuth/Agent/ChallengeHandler.cs` (`SeedAdditionalComponents` ~L303, `CloneAsync` ~L334, reuse `MergeComponents` ~L311).
+
+In `SeedAdditionalComponents`, read any existing `request.Options[AAuthSigningHandler.AdditionalComponentsKey]` and fold it into `MergeComponents` before `Set`, so a caller-set value is preserved additively instead of clobbered. In `CloneAsync`, copy `source.Options` onto the clone (iterate `HttpRequestOptions` as `IEnumerable<KeyValuePair<string,object?>>`) so request-scoped state survives retries; update the existing "options intentionally omitted" comment to reflect the new behavior.
+
+#### Definition of Done
+
+- [x] `SeedAdditionalComponents` merges caller-set components additively (order-preserving, de-duped)
+- [x] `CloneAsync` copies `HttpRequestMessage.Options` to the clone
+- [x] Stale "options intentionally omitted" comment corrected
+- [x] Unit tests: caller-set components preserved through seed + retry; non-AAuth option survives clone
+- [x] No regression: `SendAsync_NoAdditionalComponents_SignsBaseComponentsOnly` still passes
+- [x] Dedicated docs/samples subagent dispatched; affected docs/snippets updated (none reference low-level option semantics — verified by search)
+- [x] Subagent validation passed
+
+### Fix 7.3 — H1: `TokenExchangeRequest` options object
+
+**Files**: `src/AAuth/Agent/TokenExchangeClient.cs`, call sites (`src/AAuth/Server/CallChainingHandler.cs` ~L83, `src/AAuth/Agent/ChallengeHandler.cs` ~L193-198).
+
+Introduce a `TokenExchangeRequest` (or equivalently named) parameter object carrying `onInteractionRequired`, `pollerOptions`, `upstreamToken`, `capabilities`, `prompt`. Add an `ExchangeAsync(string personServer, string resourceToken, TokenExchangeRequest request, CancellationToken cancellationToken = default)` overload. Keep the 3-arg convenience overload. Backward compatibility is not required: **remove** the old 7-positional-arg full overload outright. The fluent builder surface (`AAuthClientBuilder` + `ChallengeHandlingOptions`) must remain unchanged — `ChallengeHandlingOptions` stays the canonical config path; `TokenExchangeClient` is the low-level API. Update internal call sites to the new shape.
+
+#### Definition of Done
+
+- [x] `TokenExchangeRequest` type added (public, init-only properties)
+- [x] New `ExchangeAsync` overload accepting the object; 3-arg convenience overload retained; old positional full overload removed
+- [x] `CancellationToken` remains the last parameter on every overload
+- [x] Fluent builder surface (`AAuthClientBuilder`, `ChallengeHandlingOptions`) unchanged
+- [x] Internal call sites updated (`CallChainingHandler`, `ChallengeHandler`)
+- [x] Unit tests cover the object-based overload (capabilities/prompt/upstream/deferred paths)
+- [x] Dedicated docs/samples subagent dispatched; `workflows/call-chaining.md` + any `ExchangeAsync` snippets updated
+- [x] Subagent validation passed
+
+### Fix 7.4 — M3: Correct `DeferredPoller` timeout comment
+
+**Files**: `src/AAuth/Agent/DeferredPoller.cs` (~L119-122 inline comment, class `<remarks>` ~L58-65).
+
+Reword the inline comment so the `InfiniteTimeSpan` configuration reads as a *requirement/assumption* of the supplied `HttpClient`, not a guaranteed fact. Add the requirement to the class-level `<remarks>` beside the existing "must be signed" note. No behavioral change; no per-request CTS.
+
+#### Definition of Done
+
+- [x] Inline comment reworded as a requirement scoped to the builder-created client
+- [x] Class `<remarks>` documents the infinite-timeout expectation for external callers
+- [x] No behavioral/code change beyond comments + XML docs
+- [x] Dedicated docs/samples subagent dispatched; any `DeferredPoller` usage docs updated
+- [x] Subagent validation passed
+
+### Fix 7.5 — L1–L5: Low-severity cleanup
+
+**Files**: as listed per item.
+
+- **L1** `ChallengeHandler.cs` ~L255-257: replace the read-modify-write of `_learnedComponents` with `AddOrUpdate` using a merge function for strict accumulation under concurrent 401s.
+- **L2** `SignatureError.cs` ~L111-135 (`ParseRequiredInput`): replace naive `IndexOf("required_input")` with a `;`-split / word-boundary parse robust against tokens like `x-required_input`.
+- **L3** `AAuthTokenExchangeException.cs` ~L52-53: add a clarifying comment that `interaction_required` is non-terminal (202) and unreachable on this `!IsSuccessStatusCode` path; keep behavior.
+- **L4** `samples/LiveWhoAmITest/Program.cs` ~L78-93: wrap tunnel + Kestrel lifecycle in `try/finally`; dispose `tunnelProcess`; dispose per-mode `HttpResponseMessage`s.
+- **L5** `.devcontainer/post-create.sh` ~L36: restore the cosmetic blank line removed adjacent to the cloudflared block.
+
+#### Definition of Done
+
+- [x] L1 `AddOrUpdate` accumulation; unit test for concurrent merge (or documented as benign)
+- [x] L2 robust `required_input` parse; unit test with a decoy token
+- [x] L3 clarifying comment added
+- [x] L4 sample lifecycle in `try/finally`; disposables disposed
+- [x] L5 cosmetic diff reverted
+- [x] Dedicated docs/samples subagent dispatched; any affected docs/snippets updated
+- [x] Subagent validation passed
+
+### Phase 7 Definition of Done
+
+- [x] Fixes 7.1–7.5 implemented and individually validated
+- [x] Unit tests added for H2, M1/M2, H1, L1, L2
+- [x] **A dedicated docs/samples subagent was dispatched per fix** and every affected doc, sample README, GuidedTour `CodeSnippets.cs` snippet, and SampleApp reference updated to the new surface
+- [x] GuidedTour + SampleApp snippets still compile
+- [x] LiveWhoAmITest still passes all modes (manual live run)
+- [x] No regressions (full unit + conformance suite)
+- [x] Repo builds clean (0 warnings / 0 errors)
+- [x] Each fix's subagent validation incorporated
+- [x] research.md §9 statuses updated (Open → Fixed)
+
+---
+
 ## Out of Scope
 
 | Item | Reason |

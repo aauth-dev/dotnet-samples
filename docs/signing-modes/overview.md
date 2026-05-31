@@ -135,9 +135,12 @@ The agent discovers these in one of two ways:
 
 Additional components are always **additive** — the base components can never
 be dropped or reordered. The component value is taken from the request's own
-headers at signing time, so a required header (such as `content-digest`) must
-be present on the request; if it is absent, signing fails fast with an
-`InvalidOperationException`.
+headers at signing time. When a resource requires `content-digest` (RFC 9530)
+on a body-bearing request, the signing handler **computes and attaches it
+automatically** (`sha-256`) before signing, so callers do not need to set it
+themselves. Any required component AAuth cannot derive on its own must be
+present on the request; if such a component is absent, signing fails fast with
+an `InvalidOperationException` that names the resource origin.
 
 See [Error Handling](../advanced/error-handling.md) for the
 `Signature-Error` codes and `SignatureError.ParseRequiredInput`.

@@ -114,25 +114,35 @@ public static class SignatureError
             return System.Array.Empty<string>();
 
         const string marker = "required_input";
-        var idx = headerValue.IndexOf(marker, System.StringComparison.Ordinal);
-        if (idx < 0)
-            return System.Array.Empty<string>();
 
-        // Find the '=' after the marker, then the quoted value.
-        var eq = headerValue.IndexOf('=', idx + marker.Length);
-        if (eq < 0)
-            return System.Array.Empty<string>();
+        // The header is a list of ';'-separated parameters
+        // (e.g. invalid_input; required_input="..."). Match the parameter whose
+        // name is exactly "required_input" so tokens like "x-required_input" do
+        // not falsely match.
+        foreach (var segment in headerValue.Split(';'))
+        {
+            var eq = segment.IndexOf('=');
+            if (eq < 0)
+                continue;
 
-        var firstQuote = headerValue.IndexOf('"', eq + 1);
-        if (firstQuote < 0)
-            return System.Array.Empty<string>();
+            var name = segment[..eq].Trim();
+            if (!string.Equals(name, marker, System.StringComparison.Ordinal))
+                continue;
 
-        var secondQuote = headerValue.IndexOf('"', firstQuote + 1);
-        if (secondQuote < 0)
-            return System.Array.Empty<string>();
+            var value = segment[(eq + 1)..].Trim();
+            var firstQuote = value.IndexOf('"');
+            if (firstQuote < 0)
+                return System.Array.Empty<string>();
 
-        var inner = headerValue[(firstQuote + 1)..secondQuote];
-        return inner.Split(' ', System.StringSplitOptions.RemoveEmptyEntries
-            | System.StringSplitOptions.TrimEntries);
+            var secondQuote = value.IndexOf('"', firstQuote + 1);
+            if (secondQuote < 0)
+                return System.Array.Empty<string>();
+
+            var inner = value[(firstQuote + 1)..secondQuote];
+            return inner.Split(' ', System.StringSplitOptions.RemoveEmptyEntries
+                | System.StringSplitOptions.TrimEntries);
+        }
+
+        return System.Array.Empty<string>();
     }
 }

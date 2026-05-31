@@ -49,55 +49,38 @@ public sealed class TokenExchangeClient
         string personServer,
         string resourceToken,
         CancellationToken cancellationToken = default)
-        => ExchangeAsync(personServer, resourceToken, onInteractionRequired: null,
-            pollerOptions: null, upstreamToken: null, cancellationToken: cancellationToken);
+        => ExchangeAsync(personServer, resourceToken, new TokenExchangeRequest(), cancellationToken);
 
     /// <summary>
     /// Submit <paramref name="resourceToken"/> to the PS at
     /// <paramref name="personServer"/> and return the auth token, with
     /// support for the deferred / user-consent path (PS returns
-    /// <c>202 Accepted</c> + <c>AAuth-Requirement: requirement=interaction</c>).
+    /// <c>202 Accepted</c> + <c>AAuth-Requirement: requirement=interaction</c>),
+    /// call chaining, and capability/prompt declaration.
     /// </summary>
     /// <param name="personServer">PS issuer URL (used to fetch <c>aauth-person.json</c>).</param>
     /// <param name="resourceToken">Compact <c>aa-resource+jwt</c> from the resource's challenge.</param>
-    /// <param name="onInteractionRequired">
-    /// Invoked when the PS returns <c>202</c> with an interaction requirement,
-    /// before polling begins. Callers display the user-facing URL/code via
-    /// <see cref="AAuthInteraction.BuildUserUrl(string?)"/> and then return —
-    /// polling proceeds in parallel with the user's out-of-band action. If
-    /// <see langword="null"/> and the PS returns <c>202</c>, the call throws.
-    /// </param>
-    /// <param name="pollerOptions">Optional polling cadence/timeout override.</param>
-    /// <param name="upstreamToken">
-    /// Optional upstream auth token for call-chaining scenarios. When provided,
-    /// included as <c>upstream_token</c> in the POST body so the PS/AS can
-    /// construct nested <c>act</c> claims preserving the delegation chain.
-    /// </param>
-    /// <param name="capabilities">
-    /// Capabilities to declare to the PS in the token request body. When
-    /// <see langword="null"/> (default), capabilities are inferred from the
-    /// flow: <c>"interaction"</c> is sent when <paramref name="onInteractionRequired"/>
-    /// is non-null. An explicit (possibly empty) list overrides inference.
-    /// </param>
-    /// <param name="prompt">
-    /// Optional OIDC <c>prompt</c> value (e.g. <c>"consent"</c>, <c>"login"</c>,
-    /// <c>"none"</c>, <c>"select_account"</c>) sent to the PS to influence the
-    /// consent/login experience. When <see langword="null"/> (default), no
-    /// <c>prompt</c> is sent.
+    /// <param name="options">
+    /// Optional exchange parameters (interaction callback, poller options,
+    /// upstream token, capabilities, prompt). Pass a default-constructed
+    /// instance for the plain exchange.
     /// </param>
     /// <param name="cancellationToken">Caller cancellation.</param>
     public async Task<string> ExchangeAsync(
         string personServer,
         string resourceToken,
-        Func<AAuthInteraction, CancellationToken, Task>? onInteractionRequired,
-        DeferredPollerOptions? pollerOptions = null,
-        string? upstreamToken = null,
-        IReadOnlyList<string>? capabilities = null,
-        string? prompt = null,
+        TokenExchangeRequest options,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(personServer);
         ArgumentException.ThrowIfNullOrEmpty(resourceToken);
+        ArgumentNullException.ThrowIfNull(options);
+
+        var onInteractionRequired = options.OnInteractionRequired;
+        var pollerOptions = options.PollerOptions;
+        var upstreamToken = options.UpstreamToken;
+        var capabilities = options.Capabilities;
+        var prompt = options.Prompt;
 
         using var activity = AAuthDiagnostics.Source.StartActivity("AAuth.TokenExchange");
 

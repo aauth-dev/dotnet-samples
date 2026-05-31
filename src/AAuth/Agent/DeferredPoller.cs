@@ -62,6 +62,13 @@ public sealed record DeferredPollerOptions
 /// <para>The supplied <see cref="HttpClient"/> is expected to be configured
 /// with the agent's <see cref="HttpSig.AAuthSigningHandler"/> so each GET
 /// to the pending URL is signed — the PS will reject otherwise.</para>
+/// <para>When <see cref="DeferredPollerOptions.PreferWaitSeconds"/> is set, the
+/// supplied <see cref="HttpClient"/> must allow a per-request timeout longer
+/// than the long-poll wait (set <see cref="HttpClient.Timeout"/> to a value
+/// greater than <c>PreferWaitSeconds</c>, or to <see cref="System.Threading.Timeout.InfiniteTimeSpan"/>).
+/// Clients built by <c>AAuthClientBuilder</c> use <see cref="System.Threading.Timeout.InfiniteTimeSpan"/>
+/// already; a directly constructed poller using a default client (100s timeout)
+/// with a larger <c>PreferWaitSeconds</c> will abort the in-flight poll.</para>
 /// </remarks>
 public sealed class DeferredPoller
 {
@@ -116,10 +123,12 @@ public sealed class DeferredPoller
             {
                 request.Headers.TryAddWithoutValidation("Prefer", $"wait={waitSeconds}");
             }
-            // The exchange HttpClient is configured with Timeout.InfiniteTimeSpan
-            // (see AAuthClientBuilder), so long-poll requests are not aborted by
-            // the default 100s HttpClient.Timeout. The overall budget is enforced
-            // by the MaxTotalWait stopwatch check above.
+            // Long-poll requests rely on the HttpClient allowing a per-request
+            // timeout longer than PreferWaitSeconds. Clients built by
+            // AAuthClientBuilder use Timeout.InfiniteTimeSpan; a directly
+            // constructed poller must configure HttpClient.Timeout accordingly
+            // (see class remarks). The overall budget is enforced by the
+            // MaxTotalWait stopwatch check above.
             var response = await _signedClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
             try
             {

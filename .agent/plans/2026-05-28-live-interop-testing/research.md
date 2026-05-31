@@ -385,3 +385,43 @@ Confirmed accurate (no change): root `README.md`, `concepts.md`, `getting-starte
 
 Validation: full solution builds clean (0 warnings/errors); 320 unit + 342 conformance tests pass.
 
+## 9. PR #27 Review Findings (2026-05-31)
+
+Two independent review passes against PR #27 (branch `feat/live-interop-testing`): (a) the GitHub automated reviewer (`copilot-pull-request-reviewer`, 4 inline comments) and (b) an internal PR Review subagent run spec-first then SDK. The internal pass corroborated all 4 external comments and surfaced additional findings. Each item below was verified against the spec (`aauth-spec/draft-hardt-oauth-aauth-protocol.md` §Covered Components L2098, §Verification L2111, `additional_signature_components` L2266-2281) and the SDK source.
+
+### 9.1 Consolidated Findings Table
+
+| ID | Severity | File / Location | Issue | Source | Status |
+|---|---|---|---|---|---|
+| H1 | High | `src/AAuth/Agent/TokenExchangeClient.cs` ~L88-96 | `ExchangeAsync` full overload inserts optional `capabilities`/`prompt` before `CancellationToken` — source + binary break; positional `cancellationToken` callers now bind to `capabilities` (compile error). All internal call sites already switched to named `cancellationToken:`. | External #3 + internal | Fixed (7.3) |
+| H2 | High | `src/AAuth/HttpSig/AAuthSigningHandler.cs` ~L256-271 (`ResolveAdditionalComponents`) | Adaptive learn-and-retry throws `InvalidOperationException` when a required component has no header. SDK never computes `Content-Digest`, yet that is the spec's canonical additional component (L2098, L2266). Retry throws instead of satisfying a resource demanding `content-digest` on a body request. | Internal only (new) | Fixed (7.1) |
+| M1 | Medium | `src/AAuth/Agent/ChallengeHandler.cs` ~L303 (`SeedAdditionalComponents`) | Unconditional `request.Options.Set(AdditionalComponentsKey, components)` clobbers any caller-set per-request components. `MergeComponents` (~L311) exists but is not consulted here. | External #2 + internal | Fixed (7.2) |
+| M2 | Medium | `src/AAuth/Agent/ChallengeHandler.cs` ~L334 (`CloneAsync`) | Clone intentionally omits `HttpRequestMessage.Options`. Mitigated for AAuth's own key (re-applied on both retry paths) but loses any other request-scoped option (Polly context, telemetry, caller-set key). | External #1 + internal | Fixed (7.2) |
+| M3 | Medium | `src/AAuth/Agent/DeferredPoller.cs` ~L119-122 | Inline comment asserts the HttpClient is always `Timeout.InfiniteTimeSpan`, but the class is `public` and constructible with any `HttpClient`. `MaxTotalWait` only gates between polls, so a default client (100s) with `PreferWaitSeconds > ~100` aborts an in-flight long-poll with an uncaught `TaskCanceledException`. | External #4 + internal | Fixed (7.4) |
+| L1 | Low | `src/AAuth/Agent/ChallengeHandler.cs` ~L255-257 | `_learnedComponents` read-modify-write not atomic; concurrent 401s for one origin race (last-writer-wins). Benign — both produce supersets. Could use `AddOrUpdate`. | Internal only | Fixed (7.5) |
+| L2 | Low | `src/AAuth/Errors/SignatureError.cs` ~L111-135 (`ParseRequiredInput`) | Naive `IndexOf("required_input")` could match a token like `x-required_input`. Fine for own output; word-boundary/`;`-split parse more robust vs third-party servers. | Internal only | Fixed (7.5) |
+| L3 | Nit | `src/AAuth/Errors/AAuthTokenExchangeException.cs` ~L52-53 | `IsTerminalCode` marks `interaction_required` terminal; per `upcoming-changes-02.md` it is 202/non-terminal. Currently unreachable (only runs on `!IsSuccessStatusCode`; 202 is success). Worth a comment. | Internal only | Fixed (7.5) |
+| L4 | Nit | `samples/LiveWhoAmITest/Program.cs` ~L78-93 | `tunnelProcess` (`IDisposable`) never disposed; `Kill()`/`StopAsync()` not in `finally` — leaks tunnel + Kestrel if an exception precedes cleanup. Per-mode `HttpResponseMessage`s not disposed. Demo-only. | Internal only | Fixed (7.5) |
+| L5 | Nit | `.devcontainer/post-create.sh` ~L36 | Stray blank-line removal adjacent to cloudflared block; cosmetic. cloudflared install correctly uses `signed-by` keyring and is idempotent. | Internal only | Fixed (7.5) |
+
+### 9.2 External Comment Accuracy Verdicts
+
+All four GitHub-reviewer comments were accurate (no false positives), though two were narrower or softer than stated:
+
+- **#1 (CloneAsync drops Options):** Valid but narrow. High-level paths (metadata `AdditionalSignatureComponents` dict + runtime `_learnedComponents` cache) survive because the cloned request is re-seeded; only a caller-set low-level `AdditionalComponentsKey` not also in dict/cache is genuinely lost. = M2.
+- **#2 (SeedAdditionalComponents overwrites):** Valid. Same root cause as #1 — the public per-request option is not treated as an additive input. = M1.
+- **#3 (ExchangeAsync ordering):** Valid, but the comment's "now binds to `capabilities`" implies a silent rebind; it is a *compile-time* break (`CancellationToken` not convertible to `IReadOnlyList<string>?`), not silent. Internal pass adds the binary-compat angle. = H1.
+- **#4 (DeferredPoller comment):** Valid, doc-only at minimum; internal pass shows a real abort risk for external callers using a default client. = M3.
+
+### 9.3 Confirmed Correct (both passes)
+
+`capabilities`/`prompt` sent in the token request *body* (matches `upcoming-changes-02.md` L17-31; `AAuth-Capabilities` header stays resource-only); `"interaction"` capability inference from a wired callback (overridable); `user_unreachable` distinct terminal code (400/terminal per spec delta); `AdditionalComponentsKey` signing logic (RFC 9421 §2.1 ordering, base-component de-dup, `", "` multi-value join); issuer formatting (scheme+host, lowercased, no trailing slash, §Identifiers); non-JSON error-body fallback to `HttpRequestException`; no injected secrets.
+
+### 9.4 Recommended Remediation Order
+
+1. **H2** — spec-correctness gap (new): implement `Content-Digest` (RFC 9530) when required, or downgrade the hard throw to an actionable error naming the unmet component + origin and document the caller-pre-populate contract.
+2. **M1 + M2** — one cohesive fix: treat per-request `AdditionalComponentsKey` as an additive merge input on both seed and clone (reuse `MergeComponents`); copy or deliberately reset `Options` on the clone with an accurate comment.
+3. **M3** — reword the comment to a requirement and/or enforce a per-request linked CTS.
+4. **H1** — add a back-compat overload or a `TokenExchangeRequest` options object (decision gated on whether the alpha SDK offers source-compat guarantees).
+5. **L1-L5** — cleanup pass.
+
