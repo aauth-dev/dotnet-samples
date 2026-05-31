@@ -25,9 +25,9 @@ var resourceToken = new ResourceTokenBuilder
     Lifetime = TimeSpan.FromMinutes(5),       // default: 5 min
 }.Build();
 
-// Return as 401 challenge
-context.Response.Headers["WWW-Authenticate"] = $"AAuth resource_token={resourceToken}";
-return Results.Unauthorized();
+// Return as 401 challenge (sets the AAuth-Requirement header:
+// requirement=auth-token; resource-token="...")
+return context.ChallengeAAuth(resourceToken);
 ```
 
 ### ResourceTokenBuilder Properties

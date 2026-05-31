@@ -49,41 +49,38 @@ public sealed class TokenExchangeClient
         string personServer,
         string resourceToken,
         CancellationToken cancellationToken = default)
-        => ExchangeAsync(personServer, resourceToken, onInteractionRequired: null,
-            pollerOptions: null, upstreamToken: null, cancellationToken);
+        => ExchangeAsync(personServer, resourceToken, new TokenExchangeRequest(), cancellationToken);
 
     /// <summary>
     /// Submit <paramref name="resourceToken"/> to the PS at
     /// <paramref name="personServer"/> and return the auth token, with
     /// support for the deferred / user-consent path (PS returns
-    /// <c>202 Accepted</c> + <c>AAuth-Requirement: requirement=interaction</c>).
+    /// <c>202 Accepted</c> + <c>AAuth-Requirement: requirement=interaction</c>),
+    /// call chaining, and capability/prompt declaration.
     /// </summary>
     /// <param name="personServer">PS issuer URL (used to fetch <c>aauth-person.json</c>).</param>
     /// <param name="resourceToken">Compact <c>aa-resource+jwt</c> from the resource's challenge.</param>
-    /// <param name="onInteractionRequired">
-    /// Invoked when the PS returns <c>202</c> with an interaction requirement,
-    /// before polling begins. Callers display the user-facing URL/code via
-    /// <see cref="AAuthInteraction.BuildUserUrl(string?)"/> and then return —
-    /// polling proceeds in parallel with the user's out-of-band action. If
-    /// <see langword="null"/> and the PS returns <c>202</c>, the call throws.
-    /// </param>
-    /// <param name="pollerOptions">Optional polling cadence/timeout override.</param>
-    /// <param name="upstreamToken">
-    /// Optional upstream auth token for call-chaining scenarios. When provided,
-    /// included as <c>upstream_token</c> in the POST body so the PS/AS can
-    /// construct nested <c>act</c> claims preserving the delegation chain.
+    /// <param name="options">
+    /// Optional exchange parameters (interaction callback, poller options,
+    /// upstream token, capabilities, prompt). Pass a default-constructed
+    /// instance for the plain exchange.
     /// </param>
     /// <param name="cancellationToken">Caller cancellation.</param>
     public async Task<string> ExchangeAsync(
         string personServer,
         string resourceToken,
-        Func<AAuthInteraction, CancellationToken, Task>? onInteractionRequired,
-        DeferredPollerOptions? pollerOptions = null,
-        string? upstreamToken = null,
+        TokenExchangeRequest options,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(personServer);
         ArgumentException.ThrowIfNullOrEmpty(resourceToken);
+        ArgumentNullException.ThrowIfNull(options);
+
+        var onInteractionRequired = options.OnInteractionRequired;
+        var pollerOptions = options.PollerOptions;
+        var upstreamToken = options.UpstreamToken;
+        var capabilities = options.Capabilities;
+        var prompt = options.Prompt;
 
         using var activity = AAuthDiagnostics.Source.StartActivity("AAuth.TokenExchange");
 
@@ -119,6 +116,26 @@ public sealed class TokenExchangeClient
         if (!string.IsNullOrEmpty(upstreamToken))
         {
             body["upstream_token"] = upstreamToken;
+        }
+        // Declare capabilities so the PS knows what the agent can do (e.g.
+        // handle a 202 + user-facing consent redirect). Spec §AAuth-Capabilities
+        // plus -02 token endpoint parameter. null = infer from flow; an explicit
+        // (possibly empty) list overrides.
+        var resolvedCapabilities = capabilities ?? InferCapabilities(onInteractionRequired);
+        if (resolvedCapabilities.Count > 0)
+        {
+            var caps = new JsonArray();
+            foreach (var capability in resolvedCapabilities)
+            {
+                caps.Add(capability);
+            }
+            body["capabilities"] = caps;
+        }
+        // Optional OIDC prompt hint (e.g. "consent" to force a fresh consent
+        // screen). Spec -02 §7.1.3. Omitted when null.
+        if (!string.IsNullOrEmpty(prompt))
+        {
+            body["prompt"] = prompt;
         }
         using var request = new HttpRequestMessage(HttpMethod.Post, tokenEndpointUri)
         {
@@ -190,6 +207,15 @@ public sealed class TokenExchangeClient
         }
     }
 
+    // Default capability inference: declare "interaction" when the caller
+    // can handle a 202 + user-facing consent redirect. An explicit
+    // capabilities list passed to ExchangeAsync overrides this.
+    private static IReadOnlyList<string> InferCapabilities(
+        Func<AAuthInteraction, CancellationToken, Task>? onInteractionRequired)
+        => onInteractionRequired is not null
+            ? new[] { "interaction" }
+            : Array.Empty<string>();
+
     private static async Task<bool> IsAccessDeniedAsync(
         HttpResponseMessage response, CancellationToken cancellationToken)
     {
@@ -259,6 +285,20 @@ public sealed class TokenExchangeClient
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
+            // The token endpoint signals failure with a JSON body carrying a
+            // required 'error' code and optional 'error_description'
+            // (§Token Endpoint Error Response Format). Surface those as a
+            // typed exception so callers can branch on the code. Bodies that
+            // are not parseable AAuth error objects fall back to a plain
+            // HttpRequestException.
+            var errorCode = TryReadErrorCode(responseBody, out var errorDescription);
+            if (errorCode is not null)
+            {
+                throw new Errors.AAuthTokenExchangeException(
+                    errorCode, errorDescription, (int)response.StatusCode,
+                    Errors.AAuthTokenExchangeException.IsTerminalCode(errorCode));
+            }
+
             throw new HttpRequestException(
                 $"Token exchange failed: {(int)response.StatusCode} {response.ReasonPhrase}\n{responseBody}");
         }
@@ -267,5 +307,32 @@ public sealed class TokenExchangeClient
             ?? throw new InvalidOperationException("Token exchange response was not a JSON object.");
         return (string?)json["auth_token"]
             ?? throw new InvalidOperationException("Token exchange response did not include 'auth_token'.");
+    }
+
+    // Parse a token-endpoint error body into its 'error' code (and optional
+    // 'error_description'). Returns null when the body is not a JSON object
+    // with a non-empty string 'error' member, signalling the caller to fall
+    // back to a generic transport exception.
+    private static string? TryReadErrorCode(string body, out string? errorDescription)
+    {
+        errorDescription = null;
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return null;
+        }
+        JsonObject? json;
+        try { json = JsonNode.Parse(body) as JsonObject; }
+        catch (System.Text.Json.JsonException) { return null; }
+        if (json is null)
+        {
+            return null;
+        }
+        var error = (string?)json["error"];
+        if (string.IsNullOrEmpty(error))
+        {
+            return null;
+        }
+        errorDescription = (string?)json["error_description"];
+        return error;
     }
 }

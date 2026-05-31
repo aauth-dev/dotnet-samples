@@ -122,6 +122,32 @@ public class SignatureErrorTests : IAsyncLifetime
         Assert.Contains("required_input=\"content-digest\"", header);
     }
 
+    [Fact(DisplayName = "§Signature-Error — ParseRequiredInput extracts space-separated components")]
+    public void ParseRequiredInput_ExtractsComponents()
+    {
+        var components = SignatureError.ParseRequiredInput(
+            "invalid_input; required_input=\"@method @authority content-digest\"");
+        Assert.Equal(new[] { "@method", "@authority", "content-digest" }, components);
+    }
+
+    [Fact(DisplayName = "§Signature-Error — ParseRequiredInput ignores look-alike parameter names")]
+    public void ParseRequiredInput_IgnoresLookAlikeParameter()
+    {
+        // A different parameter whose name merely ends in "required_input" must
+        // not be mistaken for the real required_input parameter.
+        var components = SignatureError.ParseRequiredInput(
+            "invalid_input; x-required_input=\"content-digest\"");
+        Assert.Empty(components);
+    }
+
+    [Fact(DisplayName = "§Signature-Error — ParseRequiredInput returns empty for missing parameter")]
+    public void ParseRequiredInput_ReturnsEmptyWhenAbsent()
+    {
+        Assert.Empty(SignatureError.ParseRequiredInput("invalid_input"));
+        Assert.Empty(SignatureError.ParseRequiredInput(null));
+        Assert.Empty(SignatureError.ParseRequiredInput(""));
+    }
+
     [Fact(DisplayName = "§Signature-Error — unsupported_algorithm includes supported_algorithms parameter")]
     public void UnsupportedAlgorithm_IncludesSupportedAlgorithms()
     {

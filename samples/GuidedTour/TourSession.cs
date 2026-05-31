@@ -1120,6 +1120,11 @@ public sealed class TourSession : IAsyncDisposable
         string? capturedBase = null;
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
+        // This HttpClient is constructed directly (not via AAuthClientBuilder), so it
+        // keeps the default 100s timeout. That is fine here because PreferWaitSeconds (30)
+        // is well under 100s. If you raise PreferWaitSeconds beyond the HttpClient.Timeout,
+        // set Timeout greater than PreferWaitSeconds (or Timeout.InfiniteTimeSpan) or the
+        // in-flight long-poll aborts with a TaskCanceledException.
         using var client = new HttpClient(signing);
         var pollerOptions = new DeferredPollerOptions
         {

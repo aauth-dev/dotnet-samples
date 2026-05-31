@@ -77,9 +77,12 @@ public sealed class CallChainingHandler
         return await _exchangeClient.ExchangeAsync(
             targetServer,
             resourceToken,
-            onInteractionRequired: onInteractionRequired,
-            pollerOptions: pollerOptions,
-            upstreamToken: upstreamAuthToken,
+            new TokenExchangeRequest
+            {
+                OnInteractionRequired = onInteractionRequired,
+                PollerOptions = pollerOptions,
+                UpstreamToken = upstreamAuthToken,
+            },
             cancellationToken).ConfigureAwait(false);
     }
 

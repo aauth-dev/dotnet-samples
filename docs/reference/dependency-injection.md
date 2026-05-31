@@ -195,8 +195,8 @@ Register shared `MetadataClient` and `JwksClient` singletons with custom cache s
 ```csharp
 builder.Services.AddAAuthDiscovery(options =>
 {
-    options.MetadataCacheDuration = TimeSpan.FromMinutes(10);
-    options.JwksCacheDuration = TimeSpan.FromHours(2);
+    options.MetadataCacheTtl = TimeSpan.FromMinutes(10);
+    options.JwksCacheTtl = TimeSpan.FromHours(2);
 });
 ```
 
@@ -320,8 +320,8 @@ app.Run();
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `MetadataCacheDuration` | `TimeSpan` | 5 min | How long to cache well-known metadata |
-| `JwksCacheDuration` | `TimeSpan` | 5 min | How long to cache JWKS documents |
+| `MetadataCacheTtl` | `TimeSpan` | 5 min | How long to cache well-known metadata |
+| `JwksCacheTtl` | `TimeSpan` | 1 hour | How long to cache JWKS documents |
 
 ## Call Chaining (AAuthClientBuilder)
 

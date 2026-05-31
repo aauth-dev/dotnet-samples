@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -38,6 +39,18 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     {
         "@method", "@authority", "@path", "signature-key",
     });
+
+    /// <summary>
+    /// Per-request option carrying additional HTTP message component
+    /// identifiers (e.g. <c>content-type</c>, <c>content-digest</c>) that
+    /// MUST be covered by the signature in addition to the base AAuth
+    /// components (§Covered Components). Set via
+    /// <c>request.Options.Set(AdditionalComponentsKey, ...)</c>; the signer
+    /// reads it on each <see cref="Sign(HttpRequestMessage)"/>. The values
+    /// are resolved from the request's header fields at signing time.
+    /// </summary>
+    public static readonly HttpRequestOptionsKey<IReadOnlyList<string>> AdditionalComponentsKey
+        = new("AAuth.AdditionalSignatureComponents");
 
     private readonly IAAuthKey _key;
     private readonly ISignatureKeyProvider _signatureKeyProvider;
@@ -99,11 +112,57 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     }
 
     /// <inheritdoc />
-    protected override Task<HttpResponseMessage> SendAsync(
+    protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        await EnsureRequiredContentDigestAsync(request, cancellationToken).ConfigureAwait(false);
         Sign(request);
-        return base.SendAsync(request, cancellationToken);
+        return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+    }
+
+    // When a resource requires `content-digest` as an additional covered
+    // component (RFC 9530) and the request carries a body without an explicit
+    // Content-Digest header, compute it here so the signer can cover it. Only
+    // SHA-256 is emitted. Requests without a body, or that already carry the
+    // header, are left untouched. This buffering only happens when a resource
+    // has actually demanded `content-digest`, so the common no-digest path is
+    // unaffected. Direct callers of the synchronous <see cref="Sign"/> must
+    // pre-populate Content-Digest themselves.
+    private static async Task EnsureRequiredContentDigestAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        if (request.Content is null)
+        {
+            return;
+        }
+        if (!request.Options.TryGetValue(AdditionalComponentsKey, out var requested)
+            || requested is not { Count: > 0 })
+        {
+            return;
+        }
+
+        var needsDigest = false;
+        foreach (var raw in requested)
+        {
+            if (!string.IsNullOrWhiteSpace(raw)
+                && string.Equals(raw.Trim(), "content-digest", StringComparison.OrdinalIgnoreCase))
+            {
+                needsDigest = true;
+                break;
+            }
+        }
+        if (!needsDigest || request.Content.Headers.Contains("Content-Digest"))
+        {
+            return;
+        }
+
+        var body = await request.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+        var hash = SHA256.HashData(body);
+        // RFC 9530 §3: Content-Digest is a Dictionary structured field whose
+        // member value is a Byte Sequence (`:...:`). RFC 9421 then signs over
+        // the serialized field value verbatim.
+        var value = $"sha-256=:{Convert.ToBase64String(hash)}:";
+        request.Content.Headers.TryAddWithoutValidation("Content-Digest", value);
     }
 
     /// <summary>Apply AAuth signature headers to <paramref name="request"/>.</summary>
@@ -129,7 +188,14 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         // the leading '/', so re-add it.
         var path = "/" + request.RequestUri.GetComponents(UriComponents.Path, UriFormat.UriEscaped);
 
-        var paramsLine = BuildSignatureParams(created, request);
+        // Additional covered components required by the resource (from its
+        // metadata or a prior invalid_input error). Resolve each to its
+        // current header value so it can be both listed in @signature-params
+        // and appended to the signature base. Unresolvable components are
+        // skipped here and validated below.
+        var additional = ResolveAdditionalComponents(request);
+
+        var paramsLine = BuildSignatureParams(created, request, additional);
 
         // RFC 9421 §2.5 signature base construction.
         //
@@ -151,6 +217,10 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         if (request.Headers.Authorization is not null)
         {
             AppendComponent(sb, "authorization", request.Headers.Authorization.ToString());
+        }
+        foreach (var (name, value) in additional)
+        {
+            AppendComponent(sb, name, value);
         }
         sb.Append("\"@signature-params\": ").Append(paramsLine);
 
@@ -182,7 +252,9 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         sb.Append('"').Append(name).Append("\": ").Append(value).Append('\n');
     }
 
-    private static string BuildSignatureParams(long created, HttpRequestMessage request)
+    private static string BuildSignatureParams(
+        long created, HttpRequestMessage request,
+        IReadOnlyList<(string Name, string Value)> additional)
     {
         var sb = new StringBuilder("(");
         for (int i = 0; i < CoveredComponents.Count; i++)
@@ -198,8 +270,86 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         {
             sb.Append(" \"authorization\"");
         }
+        foreach (var (name, _) in additional)
+        {
+            sb.Append(" \"").Append(name).Append('"');
+        }
         sb.Append(");created=").Append(created);
         return sb.ToString();
+    }
+
+    // Resolve the resource-required additional components (carried in
+    // request.Options) to (name, value) pairs in declared order. Each name
+    // is a lowercase HTTP field identifier; its value is taken from the
+    // request's content headers (e.g. content-type, content-digest) or
+    // request headers. Names are de-duplicated and the base AAuth components
+    // (already covered) are never re-added. A required component whose value
+    // is not present on the request is rejected, because signing over an
+    // absent field would not satisfy the resource.
+    private static IReadOnlyList<(string Name, string Value)> ResolveAdditionalComponents(
+        HttpRequestMessage request)
+    {
+        if (!request.Options.TryGetValue(AdditionalComponentsKey, out var requested)
+            || requested is not { Count: > 0 })
+        {
+            return Array.Empty<(string, string)>();
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var baseComponent in CoveredComponents)
+        {
+            seen.Add(baseComponent);
+        }
+        seen.Add("authorization");
+
+        var resolved = new List<(string, string)>();
+        foreach (var raw in requested)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                continue;
+            }
+            var name = raw.Trim().ToLowerInvariant();
+            if (!seen.Add(name))
+            {
+                continue;
+            }
+            if (!TryResolveFieldValue(request, name, out var value))
+            {
+                var origin = request.RequestUri is { } uri
+                    ? uri.GetComponents(
+                        UriComponents.Scheme | UriComponents.Host | UriComponents.Port,
+                        UriFormat.UriEscaped)
+                    : "(unknown origin)";
+                throw new InvalidOperationException(
+                    $"Resource at {origin} requires signature component '{name}', but the request "
+                    + "has no such header to sign over. Components AAuth can compute automatically "
+                    + "(e.g. 'content-digest' on a body-bearing request) are added before signing; "
+                    + "any other required component must be set on the request by the caller.");
+            }
+            resolved.Add((name, value));
+        }
+        return resolved;
+    }
+
+    private static bool TryResolveFieldValue(
+        HttpRequestMessage request, string name, out string value)
+    {
+        // Content headers (content-type, content-digest, content-length, ...)
+        // live on request.Content; everything else on request.Headers. RFC
+        // 9421 §2.1: multiple field values are combined with ", ".
+        if (request.Content?.Headers.TryGetValues(name, out var contentValues) == true)
+        {
+            value = string.Join(", ", contentValues);
+            return true;
+        }
+        if (request.Headers.TryGetValues(name, out var headerValues))
+        {
+            value = string.Join(", ", headerValues);
+            return true;
+        }
+        value = string.Empty;
+        return false;
     }
 
     /// <summary>

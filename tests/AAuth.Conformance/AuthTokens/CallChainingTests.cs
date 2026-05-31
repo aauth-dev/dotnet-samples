@@ -46,9 +46,10 @@ public class CallChainingTests
         await exchangeClient.ExchangeAsync(
             "http://localhost:5555",
             resourceToken,
-            onInteractionRequired: null,
-            pollerOptions: null,
-            upstreamToken: upstreamToken);
+            new TokenExchangeRequest
+            {
+                UpstreamToken = upstreamToken,
+            });
 
         Assert.NotNull(capturedBody);
         Assert.Equal(resourceToken, (string?)capturedBody!["resource_token"]);

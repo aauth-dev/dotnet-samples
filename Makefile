@@ -13,6 +13,7 @@ TOUR_PROJECT   := samples/GuidedTour/GuidedTour.csproj
 AGENT_PROJECT  := samples/AgentConsole/AgentConsole.csproj
 SAMPLE_PROJECT := samples/SampleApp/SampleApp.csproj
 ORCH_PROJECT   := samples/Orchestrator/Orchestrator.csproj
+LIVE_PROJECT   := samples/LiveWhoAmITest/LiveWhoAmITest.csproj
 
 WHOAMI_URL := http://localhost:5000
 PS_URL     := http://localhost:5100
@@ -25,7 +26,7 @@ SAMPLE_URL := http://localhost:5240
 
 .PHONY: help build restore test test-unit test-conformance \
         whoami ps ap tour agent demo \
-        clean format
+        live clean format
 
 help: ## List available targets
 	@awk 'BEGIN { FS = ":.*##"; printf "Targets:\n" } \
@@ -70,6 +71,9 @@ orchestrator: ## Run the Orchestrator service (port 5200)
 
 agent: ## Run AgentConsole against WhoAmI (override URL=… for a different target)
 	$(DOTNET) run --project $(AGENT_PROJECT) -- $(or $(URL),$(WHOAMI_URL))
+
+live: ## Run LiveWhoAmITest against whoami.aauth.dev (needs cloudflared + network)
+	$(DOTNET) run --project $(LIVE_PROJECT)
 
 demo: ## Start WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + GuidedTour in parallel
 	@echo "Starting five-party demo (all flows including call-chain)..."

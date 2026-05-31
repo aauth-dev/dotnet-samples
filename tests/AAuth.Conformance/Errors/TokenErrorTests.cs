@@ -15,6 +15,7 @@ public class TokenErrorTests
     [InlineData("invalid_resource_token", TokenErrorCode.InvalidResourceToken)]
     [InlineData("expired_resource_token", TokenErrorCode.ExpiredResourceToken)]
     [InlineData("interaction_required", TokenErrorCode.InteractionRequired)]
+    [InlineData("user_unreachable", TokenErrorCode.UserUnreachable)]
     [InlineData("server_error", TokenErrorCode.ServerError)]
     public void ParsesAllErrorCodes(string wireCode, TokenErrorCode expected)
     {
@@ -40,5 +41,15 @@ public class TokenErrorTests
     public void NullCode_ReturnsFalse()
     {
         Assert.False(TokenErrorResponse.TryParseCode(null, out _));
+    }
+
+    [Fact(DisplayName = "draft-02 §Token Endpoint Errors — user_unreachable is terminal")]
+    public void UserUnreachable_IsTerminal()
+    {
+        // Per upcoming-changes-02 item 2: user_unreachable (HTTP 400) is a
+        // distinct terminal error, not retryable.
+        Assert.Equal("user_unreachable",
+            new TokenErrorResponse(TokenErrorCode.UserUnreachable).ErrorCode);
+        Assert.True(AAuthTokenExchangeException.IsTerminalCode("user_unreachable"));
     }
 }

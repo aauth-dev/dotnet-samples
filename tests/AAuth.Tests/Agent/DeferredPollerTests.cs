@@ -121,6 +121,29 @@ public class DeferredPollerTests
         }, observed);
     }
 
+    [Fact]
+    public async Task PollAsync_ThrowsTimeout_BeforeSleepingPastBudget()
+    {
+        // MaxTotalWait is enforced before backing off — a large Retry-After must not
+        // cause the poller to sleep well past the budget before timing out.
+        var handler = new ScriptedHandler(
+            r => Respond(HttpStatusCode.Accepted, retryAfter: TimeSpan.FromSeconds(30)));
+        using var client = new HttpClient(handler);
+        var poller = new DeferredPoller(client, new DeferredPollerOptions
+        {
+            MaxTotalWait = TimeSpan.FromMilliseconds(50),
+            DefaultPollInterval = TimeSpan.FromMilliseconds(10),
+            MinPollInterval = TimeSpan.Zero,
+        });
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await Assert.ThrowsAsync<TimeoutException>(() => poller.PollAsync(PendingUrl));
+        sw.Stop();
+
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5),
+            $"Expected fast timeout (clamped to budget), but waited {sw.Elapsed.TotalSeconds:0.##}s.");
+    }
+
     private static HttpResponseMessage Respond(
         HttpStatusCode status,
         TimeSpan? retryAfter = null,

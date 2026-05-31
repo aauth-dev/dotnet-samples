@@ -275,11 +275,14 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
 
         await exchange.ExchangeAsync(
             "http://localhost:9997", "rt-xyz",
-            onInteractionRequired: (_, _) => Task.CompletedTask,
-            pollerOptions: new DeferredPollerOptions
+            new TokenExchangeRequest
             {
-                DefaultPollInterval = TimeSpan.FromMilliseconds(1),
-                MinPollInterval = TimeSpan.Zero,
+                OnInteractionRequired = (_, _) => Task.CompletedTask,
+                PollerOptions = new DeferredPollerOptions
+                {
+                    DefaultPollInterval = TimeSpan.FromMilliseconds(1),
+                    MinPollInterval = TimeSpan.Zero,
+                },
             });
 
         Assert.Contains(_activities, a => a.OperationName == "AAuth.TokenExchange");

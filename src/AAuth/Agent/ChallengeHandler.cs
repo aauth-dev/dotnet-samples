@@ -1,10 +1,14 @@
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using AAuth.Errors;
 using AAuth.Headers;
+using AAuth.HttpSig;
 using AAuth.Server;
 
 namespace AAuth.Agent;
@@ -34,6 +38,15 @@ public sealed class ChallengeHandler : DelegatingHandler
     private readonly Func<AAuthInteraction, CancellationToken, Task>? _onInteractionRequired;
     private readonly DeferredPollerOptions? _pollerOptions;
     private readonly Func<string?>? _upstreamTokenProvider;
+
+    // Per-origin cache of additional signature components a resource has been
+    // observed to require (learned from an `invalid_input` + `required_input`
+    // 401, or seeded from resource metadata via AdditionalSignatureComponents).
+    // Keyed by origin (scheme://host:port). Once learned, subsequent requests
+    // to that origin proactively include the components so they sign correctly
+    // on the first attempt. §Covered Components.
+    private readonly ConcurrentDictionary<string, IReadOnlyList<string>> _learnedComponents
+        = new(StringComparer.Ordinal);
 
     /// <summary>Create the challenge handler.</summary>
     /// <param name="exchange">Token exchange client (configured with the agent token).</param>
@@ -93,11 +106,38 @@ public sealed class ChallengeHandler : DelegatingHandler
         _upstreamTokenProvider = upstreamTokenProvider;
     }
 
+    /// <summary>
+    /// Capabilities to declare to the PS during the embedded exchange.
+    /// When <see langword="null"/> (default), capabilities are inferred from
+    /// the flow (<c>"interaction"</c> when an interaction callback is wired).
+    /// An explicit (possibly empty) list overrides inference.
+    /// </summary>
+    public IReadOnlyList<string>? Capabilities { get; init; }
+
+    /// <summary>
+    /// Optional OIDC <c>prompt</c> value sent to the PS during the embedded
+    /// exchange (e.g. <c>"consent"</c>). When <see langword="null"/> (default),
+    /// no <c>prompt</c> is sent.
+    /// </summary>
+    public string? Prompt { get; init; }
+
+    /// <summary>
+    /// Additional signature components a resource requires, keyed by origin
+    /// (<c>scheme://host:port</c>), typically discovered from the resource's
+    /// <c>additional_signature_components</c> metadata. When set, requests to
+    /// a matching origin proactively cover those components on the first
+    /// attempt. Components additionally learned at runtime from an
+    /// <c>invalid_input</c> error are merged on top of these. §Covered
+    /// Components.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<string>>? AdditionalSignatureComponents { get; init; }
+
     /// <inheritdoc />
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        var response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        var response = await SendWithAdaptiveSigningAsync(request, cancellationToken)
+            .ConfigureAwait(false);
 
         if (response.StatusCode != HttpStatusCode.Unauthorized)
         {
@@ -152,8 +192,15 @@ public sealed class ChallengeHandler : DelegatingHandler
 
         var authToken = await _exchange
             .ExchangeAsync(targetServer, requirement.ResourceToken!,
-                _onInteractionRequired, _pollerOptions,
-                upstreamToken: upstreamToken, cancellationToken)
+                new TokenExchangeRequest
+                {
+                    OnInteractionRequired = _onInteractionRequired,
+                    PollerOptions = _pollerOptions,
+                    UpstreamToken = upstreamToken,
+                    Capabilities = Capabilities,
+                    Prompt = Prompt,
+                },
+                cancellationToken)
             .ConfigureAwait(false);
         _holder.Update(authToken);
 
@@ -165,7 +212,7 @@ public sealed class ChallengeHandler : DelegatingHandler
         // here, which is a known limitation.
         response.Dispose();
         var retry = await CloneAsync(request, cancellationToken).ConfigureAwait(false);
-        var result = await base.SendAsync(retry, cancellationToken).ConfigureAwait(false);
+        var result = await SendWithAdaptiveSigningAsync(retry, cancellationToken).ConfigureAwait(false);
         // Reassign the response's RequestMessage to the caller-owned
         // original so diagnostics (EnsureSuccessStatusCode, loggers) keep
         // working, then dispose the short-lived clone. This avoids both
@@ -176,6 +223,133 @@ public sealed class ChallengeHandler : DelegatingHandler
         retry.Dispose();
         return result;
     }
+
+    // Send a request through the inner pipeline, transparently handling the
+    // adaptive-signing handshake: seed any known additional components into
+    // the request so the signer covers them, and on a `401` carrying
+    // `Signature-Error: invalid_input; required_input="..."`, learn the
+    // required components, re-sign, and retry exactly once. §Covered
+    // Components / §Verification step 2.
+    private async Task<HttpResponseMessage> SendWithAdaptiveSigningAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        SeedAdditionalComponents(request);
+
+        var response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+
+        if (response.StatusCode != HttpStatusCode.Unauthorized
+            || request.RequestUri is null
+            || !response.Headers.TryGetValues(SignatureError.HeaderName, out var errorValues))
+        {
+            return response;
+        }
+
+        string? rawError = null;
+        foreach (var value in errorValues)
+        {
+            if (!string.IsNullOrWhiteSpace(value)) { rawError = value; break; }
+        }
+
+        if (rawError is null
+            || !SignatureError.TryParse(rawError, out var code)
+            || code != SignatureErrorCode.InvalidInput)
+        {
+            return response;
+        }
+
+        var required = SignatureError.ParseRequiredInput(rawError);
+        if (required.Length == 0)
+        {
+            return response;
+        }
+
+        // Learn the components for this origin (additive: base components and
+        // anything previously learned are preserved), then re-sign and retry
+        // exactly once. AddOrUpdate keeps concurrent 401s for the same origin
+        // from clobbering each other (each produces a superset).
+        var origin = GetOrigin(request.RequestUri);
+        var merged = _learnedComponents.AddOrUpdate(
+            origin,
+            _ => MergeComponents(origin, required),
+            (_, _) => MergeComponents(origin, required));
+
+        response.Dispose();
+        var retry = await CloneAsync(request, cancellationToken).ConfigureAwait(false);
+        retry.Options.Set(AAuthSigningHandler.AdditionalComponentsKey, merged);
+        var result = await base.SendAsync(retry, cancellationToken).ConfigureAwait(false);
+        result.RequestMessage = request;
+        retry.Dispose();
+        return result;
+    }
+
+    // Seed the request with this origin's known additional components (learned
+    // at runtime or seeded from metadata) so the signer covers them.
+    private void SeedAdditionalComponents(HttpRequestMessage request)
+    {
+        if (request.RequestUri is null)
+        {
+            return;
+        }
+
+        var origin = GetOrigin(request.RequestUri);
+        var hasLearnedOrSeeded =
+            _learnedComponents.ContainsKey(origin)
+            || AdditionalSignatureComponents?.ContainsKey(origin) == true;
+        if (!hasLearnedOrSeeded)
+        {
+            // Nothing to seed for this origin; leave any caller-set
+            // components on the request untouched.
+            return;
+        }
+
+        // Merge metadata-seeded + learned components with any components the
+        // caller already set on the request (additive, order-preserving,
+        // de-duplicated) so a per-request AdditionalComponentsKey value is
+        // never clobbered.
+        request.Options.TryGetValue(AAuthSigningHandler.AdditionalComponentsKey, out var callerSet);
+        var merged = MergeComponents(origin, callerSet ?? Array.Empty<string>());
+        if (merged.Count > 0)
+        {
+            request.Options.Set(AAuthSigningHandler.AdditionalComponentsKey, merged);
+        }
+    }
+
+    // Combine metadata-seeded components, previously learned components, and
+    // the newly required ones into a de-duplicated, order-preserving list.
+    private IReadOnlyList<string> MergeComponents(string origin, IEnumerable<string> required)
+    {
+        var ordered = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        void Add(IEnumerable<string>? source)
+        {
+            if (source is null) { return; }
+            foreach (var item in source)
+            {
+                if (string.IsNullOrWhiteSpace(item)) { continue; }
+                var name = item.Trim();
+                if (seen.Add(name)) { ordered.Add(name); }
+            }
+        }
+
+        if (AdditionalSignatureComponents?.TryGetValue(origin, out var seeded) == true)
+        {
+            Add(seeded);
+        }
+        if (_learnedComponents.TryGetValue(origin, out var learned))
+        {
+            Add(learned);
+        }
+        Add(required);
+
+        return ordered;
+    }
+
+    private static string GetOrigin(Uri uri)
+        => uri.GetComponents(
+                UriComponents.Scheme | UriComponents.Host | UriComponents.Port,
+                UriFormat.UriEscaped)
+            .ToLowerInvariant();
 
     private static async Task<HttpRequestMessage> CloneAsync(
         HttpRequestMessage source, CancellationToken cancellationToken)
@@ -207,11 +381,16 @@ public sealed class ChallengeHandler : DelegatingHandler
             clone.Headers.TryAddWithoutValidation(header.Key, header.Value);
         }
 
-        // HttpRequestMessage.Options copying is intentionally omitted —
-        // AAuth headers and the retry semantics here do not depend on
-        // request options, and the HttpRequestOptions API on .NET 10 has
-        // no public bulk-copy helper. Revisit if a future phase plumbs
-        // request-scoped state through options.
+        // Carry request-scoped options onto the clone so caller state (a
+        // per-request AdditionalComponentsKey, telemetry/Polly context, etc.)
+        // survives the retry. AAuth-specific keys are re-applied downstream
+        // (SeedAdditionalComponents / the adaptive retry), but copying here
+        // preserves anything else the caller attached. HttpRequestOptions
+        // exposes IDictionary<string, object?> for writes.
+        foreach (var option in source.Options)
+        {
+            ((IDictionary<string, object?>)clone.Options)[option.Key] = option.Value;
+        }
 
         return clone;
     }

@@ -101,4 +101,48 @@ public static class SignatureError
             or "unsupported_algorithm" or "invalid_key" or "unknown_key"
             or "invalid_jwt" or "expired_jwt";
     }
+
+    /// <summary>
+    /// Extract the <c>required_input</c> covered components from a
+    /// <c>Signature-Error: invalid_input; required_input="..."</c> header
+    /// value. Returns the space-separated component identifiers, or an empty
+    /// array when the parameter is absent or malformed.
+    /// </summary>
+    public static string[] ParseRequiredInput(string? headerValue)
+    {
+        if (string.IsNullOrWhiteSpace(headerValue))
+            return System.Array.Empty<string>();
+
+        const string marker = "required_input";
+
+        // The header is a list of ';'-separated parameters
+        // (e.g. invalid_input; required_input="..."). Match the parameter whose
+        // name is exactly "required_input" so tokens like "x-required_input" do
+        // not falsely match.
+        foreach (var segment in headerValue.Split(';'))
+        {
+            var eq = segment.IndexOf('=');
+            if (eq < 0)
+                continue;
+
+            var name = segment[..eq].Trim();
+            if (!string.Equals(name, marker, System.StringComparison.Ordinal))
+                continue;
+
+            var value = segment[(eq + 1)..].Trim();
+            var firstQuote = value.IndexOf('"');
+            if (firstQuote < 0)
+                return System.Array.Empty<string>();
+
+            var secondQuote = value.IndexOf('"', firstQuote + 1);
+            if (secondQuote < 0)
+                return System.Array.Empty<string>();
+
+            var inner = value[(firstQuote + 1)..secondQuote];
+            return inner.Split(' ', System.StringSplitOptions.RemoveEmptyEntries
+                | System.StringSplitOptions.TrimEntries);
+        }
+
+        return System.Array.Empty<string>();
+    }
 }

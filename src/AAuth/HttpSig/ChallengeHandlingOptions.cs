@@ -48,4 +48,33 @@ public sealed class ChallengeHandlingOptions
     /// or progress UI during deferred exchanges.
     /// </summary>
     public Action<System.Net.Http.HttpResponseMessage>? OnPoll { get; set; }
+
+    /// <summary>
+    /// Capabilities to declare to the PS in the token request body. When
+    /// <see langword="null"/> (default), capabilities are inferred from the
+    /// flow: <c>"interaction"</c> is declared when <see cref="OnInteractionRequired"/>
+    /// is set. Supply an explicit (possibly empty) list to override inference —
+    /// an empty list suppresses the capability declaration entirely.
+    /// </summary>
+    public System.Collections.Generic.IList<string>? Capabilities { get; set; }
+
+    /// <summary>
+    /// Optional OIDC <c>prompt</c> value (e.g. <c>"consent"</c>, <c>"login"</c>,
+    /// <c>"none"</c>, <c>"select_account"</c>) sent to the PS during token
+    /// exchange to influence the consent/login experience. When
+    /// <see langword="null"/> (default), no <c>prompt</c> is sent.
+    /// </summary>
+    public string? Prompt { get; set; }
+
+    /// <summary>
+    /// Additional signature components a resource requires, keyed by origin
+    /// (<c>scheme://host:port</c>). Typically populated from a resource's
+    /// <c>additional_signature_components</c> metadata so requests cover those
+    /// components on the first attempt. Components a resource demands at
+    /// runtime via an <c>invalid_input</c> error are learned and merged on top
+    /// of these automatically, so this is an optional optimisation.
+    /// §Covered Components.
+    /// </summary>
+    public System.Collections.Generic.IReadOnlyDictionary<string,
+        System.Collections.Generic.IReadOnlyList<string>>? AdditionalSignatureComponents { get; set; }
 }

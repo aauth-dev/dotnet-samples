@@ -98,6 +98,8 @@ app.MapGet("/", async (HttpContext ctx) =>
 });
 ```
 
+> **Note:** With `PreferWaitSeconds` set on a directly constructed `TokenExchangeClient`/`DeferredPoller`, ensure the underlying `HttpClient.Timeout` is greater than `PreferWaitSeconds` (or `Timeout.InfiniteTimeSpan`). A default `HttpClient` (100s timeout) would abort the in-flight long-poll with a `TaskCanceledException`. Clients built via `AAuthClientBuilder` already use `Timeout.InfiniteTimeSpan`.
+
 ## Pending Request Management
 
 The intermediary must manage pending requests:

@@ -480,7 +480,14 @@ public sealed class AAuthClientBuilder
         {
             InnerHandler = new HttpClientHandler(),
         };
-        var exchangeHttpClient = new HttpClient(exchangeSigner);
+        var exchangeHttpClient = new HttpClient(exchangeSigner)
+        {
+            // Token exchange and deferred polling can legitimately take minutes
+            // (long-poll via Prefer: wait=N). The default 100s HttpClient.Timeout
+            // would abort mid-poll. The DeferredPoller enforces the real budget
+            // via DeferredPollerOptions.MaxTotalWait.
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
         var metadataHttp = new HttpClient();
         var metadata = new MetadataClient(metadataHttp);
         var exchangeClient = new TokenExchangeClient(exchangeHttpClient, metadata);
@@ -501,6 +508,11 @@ public sealed class AAuthClientBuilder
             _upstreamTokenProvider)
         {
             InnerHandler = outerSigner,
+            Capabilities = challengeOptions.Capabilities is { } caps
+                ? new System.Collections.Generic.List<string>(caps)
+                : null,
+            Prompt = challengeOptions.Prompt,
+            AdditionalSignatureComponents = challengeOptions.AdditionalSignatureComponents,
         };
 
         // If token refresh is configured, insert it above the challenge handler.
