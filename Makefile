@@ -21,11 +21,12 @@ AP_URL     := http://localhost:5301
 ORCH_URL   := http://localhost:5200
 TOUR_URL   := http://localhost:5400
 SAMPLE_URL := http://localhost:5240
-
+E2E_DIR := tests/e2e
 .DEFAULT_GOAL := help
 
 .PHONY: help build restore test test-unit test-conformance \
         whoami ps ap tour agent demo \
+        e2e-install e2e e2e-tour e2e-sample e2e-report \
         live clean format
 
 help: ## List available targets
@@ -106,6 +107,22 @@ demo-sample: ## Start WhoAmI + Orchestrator + MockPersonServer + MockAgentProvid
 	$(DOTNET) run --project $(AP_PROJECT) & \
 	$(DOTNET) run --project $(SAMPLE_PROJECT) & \
 	wait
+
+e2e-install: ## Install the Playwright toolchain + Chromium (run once)
+	cd $(E2E_DIR) && npm ci && npm run install-browsers
+
+e2e: ## Run all Playwright E2E specs (boots backends + apps via webServer)
+	cd $(E2E_DIR) && npm test
+
+e2e-tour: ## Run the GuidedTour Playwright specs only
+	cd $(E2E_DIR) && npm run test:tour
+
+e2e-sample: ## Run the SampleApp Playwright specs only
+	cd $(E2E_DIR) && npm run test:sample
+
+e2e-report: ## Serve the last Playwright HTML report (Ctrl-C to stop)
+	@echo "Serving report at http://localhost:9323 — open it in your browser, Ctrl-C to stop."
+	cd $(E2E_DIR) && npm run report
 
 clean: ## dotnet clean + remove bin/ obj/ trees
 	$(DOTNET) clean $(SOLUTION)
