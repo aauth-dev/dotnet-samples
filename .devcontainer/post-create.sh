@@ -60,6 +60,36 @@ else
     echo "==> cloudflared already installed: $(cloudflared --version | head -n1)"
 fi
 
+# --- Node.js (for Playwright E2E tests) ---------------------------------------
+# Installs Node.js 20 LTS from NodeSource. The browser end-to-end suite under
+# tests/e2e/ uses @playwright/test (TypeScript), which needs a Node toolchain.
+# Docs: https://github.com/nodesource/distributions
+if ! command -v node >/dev/null 2>&1; then
+    echo "==> Installing Node.js 20 LTS"
+
+    sudo_cmd=""
+    if [[ $EUID -ne 0 ]]; then
+        sudo_cmd="sudo"
+    fi
+
+    curl -fsSL https://deb.nodesource.com/setup_20.x | $sudo_cmd bash -
+    $sudo_cmd apt-get install -y nodejs
+else
+    echo "==> Node.js already installed: $(node --version)"
+fi
+
+# --- Playwright E2E dependencies + browsers ------------------------------------
+# Installs the npm toolchain and the Chromium browser used by the E2E suite.
+# Idempotent: npm ci is a no-op when node_modules is current; browser install
+# skips already-present binaries.
+E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tests/e2e"
+if [[ -f "${E2E_DIR}/package.json" ]]; then
+    echo "==> Installing Playwright E2E toolchain in ${E2E_DIR}"
+    (cd "${E2E_DIR}" && npm ci && npx --yes playwright install --with-deps chromium)
+else
+    echo "==> Skipping Playwright install (no ${E2E_DIR}/package.json yet)"
+fi
+
 # --- Bash: git completion + git status in prompt ------------------------------
 
 # Idempotent: only appended once, guarded by a marker line.

@@ -20,6 +20,9 @@ public sealed class ConsentStore
 
     public void Revoke(string agent, string resource, string scope)
         => _consented.TryRemove((agent, resource, scope), out _);
+
+    /// <summary>Wipe all consent records back to the empty baseline.</summary>
+    public void Clear() => _consented.Clear();
 }
 
 /// <summary>
@@ -77,4 +80,7 @@ public sealed class PendingStore
 
     public void Remove(string id)
         => _entries.TryRemove(id, out _);
+
+    /// <summary>Drop all pending interactions back to the empty baseline.</summary>
+    public void Clear() => _entries.Clear();
 }

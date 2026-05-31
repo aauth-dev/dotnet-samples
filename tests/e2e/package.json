@@ -1,0 +1,22 @@
+{
+  "name": "aauth-e2e",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Playwright end-to-end tests for the AAuth GuidedTour and SampleApp Blazor demos.",
+  "scripts": {
+    "test": "NODE_PATH=./node_modules playwright test",
+    "test:tour": "NODE_PATH=./node_modules playwright test --project guided-tour",
+    "test:sample": "NODE_PATH=./node_modules playwright test --project sample-app",
+    "report": "playwright show-report --host 0.0.0.0 --port 9323",
+    "install-browsers": "playwright install --with-deps chromium",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.49.1",
+    "@types/node": "22.10.5",
+    "typescript": "5.7.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
