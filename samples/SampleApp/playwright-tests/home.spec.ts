@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 
 /**
  * SampleApp landing page: six demo cards, each linking to a flow page with the

@@ -264,10 +264,11 @@ alternative in the plan.)
 5. **CI provisioning.** Whether CI installs Node + browsers (`npx playwright
    install --with-deps`) and how the dev container should pre-install them
    (devcontainer feature vs. Makefile target). Decide in Phase 0/4.
-   **RESOLVED (local):** Node 20 + npm are installed via NodeSource in
-   `.devcontainer/post-create.sh`; browsers via `make e2e-install`
-   (`npx playwright install --with-deps chromium`). CI workflow remains
-   optional/out of scope.
+   **RESOLVED:** Node 20 + npm are installed via NodeSource in
+   `.devcontainer/post-create.sh`, which also runs `npm ci` + Chromium install
+   for the suite. CI is implemented: `.github/workflows/ci.yml` has a gated
+   `e2e` job (`needs: build`) that sets up .NET 10 + Node 20, installs deps and
+   Chromium, runs `npm test`, and uploads the HTML report artifact.
 6. **Highlight.js / `highlightCode` JS.** Pages call `JS.InvokeVoidAsync(
    "highlightCode")` in `OnAfterRenderAsync`; ensure the wwwroot JS exists so
    the circuit doesn't error. Verify asset present.
@@ -320,3 +321,101 @@ alternative in the plan.)
 - `samples/SampleApp/Components/Pages/*.razor` — per-page controls/outputs.
 - `samples/MockPersonServer/Program.cs` — consent/interaction endpoints + HTML.
 - `Makefile` — `demo`, `demo-sample`, per-service ports.
+
+## PR #28 review findings (collated)
+
+Collated from the GitHub Copilot PR reviewer (5 inline comments) and a second
+pass by the local PR Review subagent. Each finding is tagged Valid / Partially
+valid / Invalid with the rationale used to scope Phase 6. "Valid" findings drive
+the Phase 6 Definition of Done; "won't-fix" items are recorded for traceability.
+
+### Boundary error handling
+
+- **[Valid · High] `grantConsent` ignores the admin-endpoint response** —
+  `tests/e2e/helpers/consent.ts`. `await request.post(.../admin/consent)` never
+  checks `.ok()`. The PS returns `400` on a malformed agent/resource, so a typo
+  fails silently and surfaces later as an opaque `202`/timeout. Flagged by both
+  reviewers. Fix: capture the response and throw on non-OK.
+- **[Valid · High] `revokeConsent` ignores the admin-endpoint response** —
+  same file/rationale. Note `revokeConsent` is currently unused (see dead-code
+  finding); fix it as part of wiring it into a consent reset, or remove it.
+
+### Selector determinism
+
+- **[Valid · Low] `readTokenJson` is unused and uses an ambiguous `first()`
+  selector** — `tests/e2e/helpers/tour.ts`. The inspector renders multiple
+  `details.token` panels (decoded header vs payload), so `.first()` is
+  non-deterministic. Because no spec calls it (call-chain inlines its own token
+  locator), the resolution is to **remove** the helper rather than harden it.
+- **[Partially valid · Medium] `runAll` waits on a multi-match locator** —
+  `tests/e2e/helpers/tour.ts`. `button.primary, a.primary.approve` can resolve
+  to multiple elements; `toHaveText` would then throw a strict-mode error rather
+  than wait. Works today (only one is present per flow), but brittle. Candidate:
+  wait on a single unambiguous condition or an `.or()` locator.
+- **[Partially valid · Medium] Status assertions match a bare substring** —
+  `expectResponse` (`tour.ts`) does `toContainText('200')` on the whole body and
+  `expectStatus` (`json.ts`) matches `div.alert` `hasText: '200'`. A `200` in a
+  timestamp/port/byte-count could false-pass. Candidate: scope the match to the
+  status-line element or use a `\b200\b` regex.
+
+### Dead / unused code
+
+- **[Valid · Low] Unused exports** (grep-confirmed, no spec references):
+  `successAlert` (`json.ts`), `readTokenJson` (`tour.ts`), `gotoInteractive`
+  (`blazor.ts`), `revokeConsent` (`consent.ts`), `Agents.sampleAppEnrolled`,
+  `Urls.guidedTour`, `Urls.sampleApp` (`agents.ts`). All removed; the consent
+  reset uses a new `/admin/reset` endpoint + `resetConsent` helper rather than
+  `revokeConsent`, so `revokeConsent` has no caller and is removed too.
+
+### Test isolation (now in scope — core PS fix)
+
+- **[Partially valid · Medium → ADOPTED] No consent-state reset between specs** —
+  `ConsentStore` is process-global and persists across the run (`workers: 1`,
+  reused servers). Specs that `grantConsent` never revoke, and deferred specs
+  rely on the app's in-page `PrepareConsentStateAsync` to seed the right state.
+  Green and order-independent in practice (the GuidedTour re-asserts its state
+  via `PrepareConsentStateAsync` on every flow change), but the SampleApp specs
+  rely on per-spec `grantConsent` with no cleanup, so it is not truly hermetic.
+  **Decision:** fix at the core, in the PS, rather than patching each spec. Add
+  `ConsentStore.Clear()` + `PendingStore.Clear()` and a demo-only
+  `POST /admin/reset` endpoint that wipes both back to baseline. A Playwright
+  `beforeEach` (shared `resetConsent` helper) calls it so every spec starts from
+  empty consent regardless of which app seeds what. This also gives
+  `revokeConsent` no remaining caller, confirming its removal.
+
+### CI correctness
+
+- **[Valid · Low] No `engines` field** — `tests/e2e/package.json` doesn't pin a
+  Node floor, so local/devcontainer may drift from CI's Node 20. Add
+  `"engines": { "node": ">=20" }` (and optionally an `.nvmrc`).
+- **[Valid · Low] Playwright browser binaries not cached in CI** —
+  `.github/workflows/ci.yml` re-downloads Chromium each run. Cache
+  `~/.cache/ms-playwright` keyed on the resolved Playwright version.
+- **[Valid · Low] `test-results/` not uploaded on failure** — only
+  `playwright-report/` is uploaded; the traces/video/screenshots that the
+  config captures on failure live in `test-results/`. Also upload that dir on
+  failure.
+
+### Documentation accuracy (fixed in this update)
+
+- **[Valid] Stale "CI out of scope" notes** — flagged on both
+  `research.md` (OQ #5) and `implementation-plan.md` (Phase 4 DoD). The PR
+  actually adds a gated `e2e` job. **Corrected** in this commit: OQ #5 and the
+  Phase 4 CI DoD now describe the implemented `e2e` job.
+
+### Security (won't-fix for this PR, noted)
+
+- **[Partially valid · Low] Unauthenticated PS admin endpoints** —
+  `samples/MockPersonServer/Program.cs` exposes `/admin/consent` + `/admin/revoke`
+  with no auth, used by the test helpers. Acceptable for a mock and out of scope
+  for a test PR, but worth gating behind `IsDevelopment()` / a config flag in a
+  follow-up. Not included in Phase 6.
+
+### Minor / informational (won't-fix)
+
+- `picker.spec.ts` selects flows by literal `'Identity'`/`'Autonomous'` rather
+  than the `TourMode` constants — cosmetic drift risk.
+- The tour deferred-deny path asserts only `toContainText(/denied/i)`, slightly
+  shallower than the SampleApp equivalent (`403`/`access_denied`). Acceptable.
+- `clickAndConfirm` fires one final unconfirmed click after N attempts — low
+  risk given Blazor idempotency; leave as-is.

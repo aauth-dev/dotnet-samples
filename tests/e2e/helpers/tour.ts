@@ -78,11 +78,11 @@ export async function selectSigningMode(page: Page, mode: SigningMode): Promise<
  */
 export async function runAll(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Run all' }).click();
-  // The primary button text settles to Done / Aborted, or a consent link
-  // ("Open consent page") replaces it. Wait for the busy state to clear.
-  await expect(page.locator('button.primary, a.primary.approve')).not.toHaveText(/Running…/, {
-    timeout: 30_000,
-  });
+  // The flow is busy while any control shows "Running…"; it settles to Done /
+  // Aborted, or a consent link replaces the primary button. Wait until no
+  // "Running…" indicator remains anywhere, which is a single deterministic
+  // signal regardless of which control hosted it.
+  await expect(page.getByText('Running…')).toHaveCount(0, { timeout: 30_000 });
 }
 
 /** The left step-list <li> elements (one per planned step). */
@@ -129,9 +129,17 @@ export async function expectResponse(
 ): Promise<void> {
   const panel = responsePanel(page);
   await expect(panel).toBeVisible();
-  await expect(panel.locator('pre code')).toContainText(String(status));
+  const code = panel.locator('pre code');
+  // The status lives on the first line of the panel ("200 OK" / "HTTP/1.1 200
+  // ..."). Assert it there so a bare "200" elsewhere in the JSON body can't
+  // satisfy the check.
+  await expect(async () => {
+    const text = await code.innerText();
+    const statusLine = text.split('\n').find((l) => l.trim().length > 0) ?? '';
+    expect(statusLine).toMatch(new RegExp(`\\b${status}\\b`));
+  }).toPass({ timeout: 15_000 });
   for (const needle of contains) {
-    await expect(panel.locator('pre code')).toContainText(needle);
+    await expect(code).toContainText(needle);
   }
 }
 
@@ -151,25 +159,6 @@ export async function readResponseJson(page: Page): Promise<unknown> {
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1 || end < start) {
     throw new Error(`No JSON object found in Response panel:\n${text}`);
-  }
-  return JSON.parse(text.slice(start, end + 1));
-}
-
-/**
- * Parse the JSON rendered in the selected step's decoded token panel
- * (`details.token` → `pre code`). Used by token-bearing steps (e.g. the
- * decoded auth-token payload) where the claim chain is the assertion target.
- */
-export async function readTokenJson(page: Page): Promise<unknown> {
-  const panel = page
-    .locator('section.payload article.inspector details.token pre code')
-    .first();
-  await expect(panel).toBeVisible();
-  const text = await panel.innerText();
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error(`No JSON object found in token panel:\n${text}`);
   }
   return JSON.parse(text.slice(start, end + 1));
 }

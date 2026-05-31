@@ -23,16 +23,6 @@ export async function waitForInteractive(
   await expect(page.locator(selector).first()).toBeEnabled({ timeout: 30_000 });
 }
 
-/** Navigate to `path` and wait for the circuit to become interactive. */
-export async function gotoInteractive(
-  page: Page,
-  path: string,
-  selector = 'button:not([disabled])',
-): Promise<void> {
-  await page.goto(path);
-  await waitForInteractive(page, selector);
-}
-
 /**
  * Click a button and confirm the Blazor circuit actually processed the event.
  *

@@ -307,6 +307,16 @@ app.MapPost("/admin/revoke", async (HttpContext ctx, ConsentStore consent) =>
     return Results.Ok(new { ok = true, agent, resource, scope });
 });
 
+// Demo-only: wipe all consent + pending state back to baseline so an automated
+// test harness can start each spec from a known-empty store (see the E2E suite's
+// resetConsent helper). A production PS would never expose this.
+app.MapPost("/admin/reset", (ConsentStore consent, PendingStore pending) =>
+{
+    consent.Clear();
+    pending.Clear();
+    return Results.Ok(new { ok = true });
+});
+
 // User-facing interaction page. The 202 from `POST /token` told the
 // agent's user to visit this URL with `?code={pending-id}`. In a real PS
 // this page would be behind the user's signed-in browser session

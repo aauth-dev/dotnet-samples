@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { waitForInteractive } from '../../../tests/e2e/helpers/blazor';
 import { readResponseJson, expectStatus } from '../../../tests/e2e/helpers/json';
 import { grantConsent } from '../../../tests/e2e/helpers/consent';

@@ -239,7 +239,10 @@ Scope: make the suite runnable via `make` and (optionally) CI.
 - [x] `make e2e-tour` / `make e2e-sample` run subsets.
 - [x] README documents the full workflow (`make e2e*`, NODE_PATH note,
       reuse-vs-fresh servers, deferred + call-chain notes, traces).
-- [ ] CI workflow — deferred (out of scope; "no CI yet" per Phase 0 decision).
+- [x] CI workflow — implemented as a gated `e2e` job in
+      `.github/workflows/ci.yml` (`needs: build`): sets up .NET 10 + Node 20,
+      installs deps + Chromium, runs `npm test`, uploads the HTML report
+      artifact.
 
 ---
 
@@ -298,6 +301,63 @@ orchestrator: { identity, action }, downstream: { mode: "three-party", scheme:
 - [x] GuidedTour result assertions parse the rendered inspector JSON and assert
   structure, mirroring the SampleApp depth.
 - [x] `tsc --noEmit` clean; `make e2e` green (both projects, 0 skipped).
+
+---
+
+## Phase 6 — Address PR #28 review feedback
+
+Scope: act on the valid findings collated in `research.md` ("PR #28 review
+findings"). Two reviewers (GitHub Copilot + local PR Review subagent) converged
+on boundary error handling, selector determinism, dead-code removal, and CI
+hardening. This phase covers only the findings tagged **Valid** (plus the two
+**Partially valid · Medium** robustness items) and the consent-reset isolation
+fix (adopted as a core PS change — see research "Test isolation"). The PS
+admin-endpoint gating is explicitly deferred (see research doc rationale).
+
+### Files
+
+- `samples/MockPersonServer/ConsentStore.cs` — add `Clear()` to `ConsentStore`
+  and `Clear()` to `PendingStore` (wipe all entries back to baseline).
+- `samples/MockPersonServer/Program.cs` — add a demo-only
+  `POST /admin/reset` endpoint that calls `ConsentStore.Clear()` +
+  `PendingStore.Clear()` and returns `{ ok = true }`.
+- `tests/e2e/helpers/consent.ts` — make `grantConsent` capture the response and
+  throw on non-OK (status + body); remove the unused `revokeConsent`; add a
+  `resetConsent(request)` helper that POSTs `/admin/reset` and throws on non-OK.
+- `tests/e2e/helpers/fixtures.ts` (new) — extend Playwright's `test` with a
+  `consentReset` auto-fixture that calls `resetConsent` before every test; all
+  spec files import `test`/`expect` from here instead of `@playwright/test` so
+  each spec starts hermetic.
+- `tests/e2e/helpers/tour.ts` — remove the unused `readTokenJson`; tighten the
+  `runAll` wait to a single unambiguous locator; scope `expectResponse`'s status
+  check to the status line (or `\b<status>\b`).
+- `tests/e2e/helpers/json.ts` — remove unused `successAlert`; scope
+  `expectStatus` to avoid bare-substring false matches.
+- `tests/e2e/helpers/blazor.ts` — remove unused `gotoInteractive`.
+- `tests/e2e/helpers/agents.ts` — remove unused `Agents.sampleAppEnrolled`,
+  `Urls.guidedTour`, `Urls.sampleApp`.
+- `tests/e2e/package.json` — add `"engines": { "node": ">=20" }`.
+- `.github/workflows/ci.yml` — cache `~/.cache/ms-playwright` keyed on the
+  resolved Playwright version; also upload `tests/e2e/test-results` on failure.
+
+### Definition of Done
+
+- [x] `grantConsent` throws on non-OK admin responses with status + body in the
+  message; `resetConsent` does likewise.
+- [x] PS exposes `POST /admin/reset`; `ConsentStore.Clear()` +
+  `PendingStore.Clear()` wipe state; a global `beforeEach` (the `consentReset`
+  auto-fixture in `tests/e2e/helpers/fixtures.ts`) resets before each spec so
+  the suite is hermetic regardless of spec order.
+- [x] No unused exports remain in `tests/e2e/helpers/` (`readTokenJson`,
+  `successAlert`, `gotoInteractive`, `revokeConsent` removed,
+  `Agents.sampleAppEnrolled`, `Urls.guidedTour`, `Urls.sampleApp`).
+- [x] `runAll` waits on a single deterministic locator; `expectResponse` /
+  `expectStatus` no longer match a bare `200` substring.
+- [x] `package.json` declares a Node engine floor; CI caches the Playwright
+  browser binaries and uploads `test-results/` on failure.
+- [x] `tsc --noEmit` clean; `make e2e` green (both projects, 0 skipped).
+- [ ] Deferred (NOT in this phase): gating the PS `/admin/*` endpoints behind
+  `IsDevelopment()`.
 
 ---
 

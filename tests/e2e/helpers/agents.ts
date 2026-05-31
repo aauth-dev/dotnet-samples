@@ -9,15 +9,11 @@ export const Urls = {
   personServer: 'http://localhost:5100',
   orchestrator: 'http://localhost:5200',
   agentProvider: 'http://localhost:5301',
-  guidedTour: 'http://localhost:5400',
-  sampleApp: 'http://localhost:5240',
 } as const;
 
 export const Agents = {
   /** SampleApp's self-issued agent id (SampleApp/appsettings.json). */
   sampleApp: 'aauth:sample-app@localhost:5240',
-  /** SampleApp's enrolled agent id (used by AP-backed flows). */
-  sampleAppEnrolled: 'aauth:sample-app@ap.example',
   /** GuidedTour agent id (GuidedTour/appsettings.json). */
   tour: 'aauth:tour-agent@localhost:5400',
 } as const;

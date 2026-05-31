@@ -1,4 +1,4 @@
-import { Locator, Page, expect } from '@playwright/test';
+import { Page, expect } from '@playwright/test';
 
 /**
  * Output-assertion helpers shared across SampleApp specs.
@@ -24,13 +24,14 @@ export async function expectStatus(
   code: number,
   timeout = 15_000,
 ): Promise<void> {
-  const alert = page.locator('div.alert', { hasText: String(code) }).first();
-  await expect(alert).toBeVisible({ timeout });
-}
-
-/** Assert a success (2xx) result alert is shown. */
-export function successAlert(page: Page): Locator {
-  return page.locator('div.alert.alert-success');
+  // The result alert renders the status in a <strong> ("200 OK"). Scope to that
+  // element with a word-boundary match so a bare "200" elsewhere on the page
+  // can't satisfy the assertion.
+  const status = page
+    .locator('div.alert.alert-success strong, div.alert.alert-warning strong')
+    .filter({ hasText: new RegExp(`\\b${code}\\b`) })
+    .first();
+  await expect(status).toBeVisible({ timeout });
 }
 
 /** Assert an error (alert-danger) is shown with optional substring. */

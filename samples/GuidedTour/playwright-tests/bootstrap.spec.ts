@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { openTour, selectFlow, runAll, doneSteps, TourMode } from '../../../tests/e2e/helpers/tour';
 import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
 

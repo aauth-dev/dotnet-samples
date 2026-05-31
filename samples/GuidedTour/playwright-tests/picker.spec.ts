@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { openTour } from '../../../tests/e2e/helpers/tour';
 
 /**

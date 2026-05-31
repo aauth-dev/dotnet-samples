@@ -7,7 +7,7 @@ import { Urls } from './agents';
  * The PS exposes demo-only unauthenticated admin endpoints to flip consent
  * deterministically (see samples/MockPersonServer/Program.cs):
  *   POST /admin/consent  { agent, resource, scope? }  → grant standing consent
- *   POST /admin/revoke   { agent, resource, scope? }  → revoke (forces deferred)
+ *   POST /admin/reset                                  → wipe all consent/pending
  *
  * The user-facing consent page lives at GET /interaction?code={id} and renders
  * two forms with button.approve / button.deny.
@@ -19,20 +19,28 @@ export async function grantConsent(
   agent: string,
   resource: string,
 ): Promise<void> {
-  await request.post(`${Urls.personServer}/admin/consent`, {
+  const res = await request.post(`${Urls.personServer}/admin/consent`, {
     data: { agent, resource: resource.replace(/\/$/, '') },
   });
+  if (!res.ok()) {
+    throw new Error(
+      `grantConsent failed: ${res.status()} ${res.statusText()} — ${await res.text()}`,
+    );
+  }
 }
 
-/** Revoke consent for (agent, resource) so /token returns 202 (deferred). */
-export async function revokeConsent(
-  request: APIRequestContext,
-  agent: string,
-  resource: string,
-): Promise<void> {
-  await request.post(`${Urls.personServer}/admin/revoke`, {
-    data: { agent, resource: resource.replace(/\/$/, '') },
-  });
+/**
+ * Reset the PS to an empty baseline (no standing consent, no pending
+ * interactions). Call from a global beforeEach so each spec is hermetic
+ * regardless of order or what a previous spec granted.
+ */
+export async function resetConsent(request: APIRequestContext): Promise<void> {
+  const res = await request.post(`${Urls.personServer}/admin/reset`);
+  if (!res.ok()) {
+    throw new Error(
+      `resetConsent failed: ${res.status()} ${res.statusText()} — ${await res.text()}`,
+    );
+  }
 }
 
 /** On the PS interaction popup, click Approve. */
