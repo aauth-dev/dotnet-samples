@@ -90,27 +90,21 @@ public class WhoAmIFlowTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task IdentityBasedFlow_ReturnsClaimsWithoutExchange()
+    public async Task FlowIndex_ReturnsAvailableFlows()
     {
-        // Agent token with no PS — WhoAmI returns 200 directly.
-        var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
-        {
-            Issuer = ApIssuer,
-            Subject = "aauth:demo@ap.test",
-            KeyId = ApKeyId,
-            Key = ApKey,
-            ConfirmationKey = agentKey,
-        }.Build();
+        // The root path is now an unauthenticated index listing the isolated
+        // access modes — no AAuth signature required.
+        using var client = _whoAmI!.CreateClient();
 
-        var holder = new AAuthTokenHolder(agentToken);
-        using var client = BuildAgentClient(agentKey, holder, personServer: null);
-
-        var response = await client.GetAsync($"{WhoAmIIssuer}/");
+        var response = await client.GetAsync("/");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("identity-based", (string?)body!["mode"]);
-        Assert.Equal("aauth:demo@ap.test", (string?)body["agent"]);
+        Assert.Equal("WhoAmI Demo", (string?)body!["resource"]);
+        var flows = body["flows"]!.AsArray();
+        var paths = flows.Select(f => (string?)f!["path"]).ToList();
+        Assert.Contains("/jwt", paths);
+        Assert.Contains("/jwt/admin", paths);
+        Assert.Contains("/jwt/roles", paths);
     }
 
     [Fact]
@@ -130,15 +124,66 @@ public class WhoAmIFlowTests : IAsyncLifetime
         var holder = new AAuthTokenHolder(agentToken);
         using var client = BuildAgentClient(agentKey, holder, personServer: PsIssuer);
 
-        var response = await client.GetAsync($"{WhoAmIIssuer}/");
+        var response = await client.GetAsync($"{WhoAmIIssuer}/jwt");
         var rawBody = await response.Content.ReadAsStringAsync();
         Assert.True(response.IsSuccessStatusCode, $"Status={(int)response.StatusCode}, Body={rawBody}");
         var body = JsonNode.Parse(rawBody) as JsonObject;
         Assert.Equal("aauth:demo@ap.test", (string?)body!["agent"]);
         Assert.Equal("pairwise-sub", (string?)body["sub"]);
+        Assert.Contains("whoami", body["scope"]!.AsArray().Select(s => (string?)s));
 
         // Holder should now carry the auth token, not the agent token.
         Assert.NotEqual(agentToken, holder.Current);
+    }
+
+    [Fact]
+    public async Task AdminScopeFlow_IssuesElevatedScope()
+    {
+        var agentKey = AAuthKey.Generate();
+        var agentToken = new AgentTokenBuilder
+        {
+            Issuer = ApIssuer,
+            Subject = "aauth:demo@ap.test",
+            KeyId = ApKeyId,
+            Key = ApKey,
+            ConfirmationKey = agentKey,
+            PersonServer = PsIssuer,
+        }.Build();
+
+        var holder = new AAuthTokenHolder(agentToken);
+        using var client = BuildAgentClient(agentKey, holder, personServer: PsIssuer);
+
+        var response = await client.GetAsync($"{WhoAmIIssuer}/jwt/admin");
+        var rawBody = await response.Content.ReadAsStringAsync();
+        Assert.True(response.IsSuccessStatusCode, $"Status={(int)response.StatusCode}, Body={rawBody}");
+        var body = JsonNode.Parse(rawBody) as JsonObject;
+        Assert.Equal("admin", (string?)body!["access"]);
+        Assert.Contains("whoami:admin", body["scope"]!.AsArray().Select(s => (string?)s));
+    }
+
+    [Fact]
+    public async Task RoleFlow_ReturnsAssertedRoles()
+    {
+        var agentKey = AAuthKey.Generate();
+        var agentToken = new AgentTokenBuilder
+        {
+            Issuer = ApIssuer,
+            Subject = "aauth:demo@ap.test",
+            KeyId = ApKeyId,
+            Key = ApKey,
+            ConfirmationKey = agentKey,
+            PersonServer = PsIssuer,
+        }.Build();
+
+        var holder = new AAuthTokenHolder(agentToken);
+        using var client = BuildAgentClient(agentKey, holder, personServer: PsIssuer);
+
+        var response = await client.GetAsync($"{WhoAmIIssuer}/jwt/roles");
+        var rawBody = await response.Content.ReadAsStringAsync();
+        Assert.True(response.IsSuccessStatusCode, $"Status={(int)response.StatusCode}, Body={rawBody}");
+        var body = JsonNode.Parse(rawBody) as JsonObject;
+        Assert.Equal("rbac", (string?)body!["access"]);
+        Assert.Contains("whoami-admin", body["roles"]!.AsArray().Select(s => (string?)s));
     }
 
     [Fact]
@@ -165,7 +210,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
         // pipeline without the auto-retry challenge handler.
         using var client = BuildAgentClient(agentKey, holder, personServer: null);
 
-        var response = await client.GetAsync($"{WhoAmIIssuer}/");
+        var response = await client.GetAsync($"{WhoAmIIssuer}/jwt");
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.True(response.Headers.TryGetValues(AAuthRequirementHeader.Name, out var values),
@@ -185,6 +230,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
         Assert.Equal("aauth:demo@ap.test", (string?)payload["agent"]);
         Assert.Equal(agentKey.ComputeJwkThumbprint(), (string?)payload["agent_jkt"]);
         Assert.Equal(ResourceTokenBuilder.ResourceDwk, (string?)payload["dwk"]);
+        Assert.Equal("whoami", (string?)payload["scope"]);
     }
 
     [Fact]
@@ -293,7 +339,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
         };
         using var client = new HttpClient(challenge);
 
-        var response = await client.GetAsync($"{WhoAmIIssuer}/");
+        var response = await client.GetAsync($"{WhoAmIIssuer}/jwt");
         var rawBody = await response.Content.ReadAsStringAsync();
         Assert.True(response.IsSuccessStatusCode,
             $"Status={(int)response.StatusCode}, Body={rawBody}");
@@ -401,7 +447,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
         using var client = new HttpClient(challenge);
 
         await Assert.ThrowsAsync<AAuthInteractionDeniedException>(
-            () => client.GetAsync($"{WhoAmIIssuer}/"));
+            () => client.GetAsync($"{WhoAmIIssuer}/jwt"));
 
         // Carrier did NOT swap — the agent never received an auth token.
         Assert.Equal(agentToken, holder.Current);

@@ -33,6 +33,12 @@ var builder = WebApplication.CreateBuilder(args);
 var psKey = AAuthKey.Generate();
 const string PsKid = "ps-1";
 const string PsScope = "whoami";
+const string PsAdminScope = "whoami:admin";
+// Demo identity claims the mock PS asserts about the user. A production PS
+// would resolve these from the signed-in user's directory entry. These let
+// the WhoAmI `/jwt/roles` (RBAC) endpoint succeed end-to-end.
+string[] demoRoles = ["whoami-admin"];
+string[] demoGroups = ["demo-users"];
 var psIssuer = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5100";
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
 var requireConsent = builder.Configuration.GetValue<bool>("MockPersonServer:RequireConsent");
@@ -72,6 +78,7 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
     ScopeDescriptions = new Dictionary<string, string>
     {
         [PsScope] = "Issue AAuth auth tokens for WhoAmI",
+        [PsAdminScope] = "Issue elevated (admin) AAuth auth tokens for WhoAmI",
     },
     SignatureWindow = signatureWindowSeconds,
 });
@@ -188,8 +195,11 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
     }
 
     // Decode the resource token's `iss` claim — that's the resource URL
-    // and becomes the auth token's `aud`.
+    // and becomes the auth token's `aud`. The `scope` claim (REQUIRED by the
+    // spec on a resource token) is echoed into the issued auth token so the
+    // resource's scope policy can enforce exactly what it requested.
     string audience;
+    string requestedScope = PsScope;
     try
     {
         var segments = resourceTokenJwt.Split('.');
@@ -202,6 +212,13 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
             ?? throw new FormatException("payload is not a JSON object");
         audience = (string?)payload["iss"]
             ?? throw new FormatException("resource_token missing iss");
+        // Echo the requested scope (space-separated set permitted). Fall back
+        // to the PS's base scope when the resource token omits it.
+        var scopeClaim = (string?)payload["scope"];
+        if (!string.IsNullOrWhiteSpace(scopeClaim))
+        {
+            requestedScope = scopeClaim;
+        }
         // The resource_token signature is NOT verified by this mock PS (see
         // file-level comment). Validate at least that `iss` is an absolute
         // http(s) URL so a forged token can't smuggle a `javascript:` or
@@ -222,9 +239,9 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
     // (agent, resource, scope) triple hasn't been approved yet, park the
     // request and tell the agent to direct its user to the interaction
     // endpoint while polling the pending URL.
-    if (requireConsent && !consent.IsConsented(agentId, audience, PsScope))
+    if (requireConsent && !consent.IsConsented(agentId, audience, requestedScope))
     {
-        var entry = pending.Add(agentId, audience, PsScope, resourceTokenJwt, parsed.ConfirmationKey!, upstreamAct);
+        var entry = pending.Add(agentId, audience, requestedScope, resourceTokenJwt, parsed.ConfirmationKey!, upstreamAct);
         var location = $"/pending/{entry.Id}";
         var interactionUrl = $"{psIssuer.TrimEnd('/')}/interaction";
         ctx.Response.Headers.Location = location;
@@ -235,7 +252,7 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
         return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
     }
 
-    var authToken = IssueAuthToken(agentId, audience, parsed.ConfirmationKey!, upstreamAct);
+    var authToken = IssueAuthToken(agentId, audience, requestedScope, parsed.ConfirmationKey!, upstreamAct);
     return Results.Ok(new { auth_token = authToken });
 });
 
@@ -279,7 +296,7 @@ app.MapGet("/pending/{id}", (HttpContext ctx, string id, ConsentStore consent, P
     // intentionally leave the entry in place so a slow poller still gets
     // a deterministic answer on its next request; a production PS would
     // expire pending entries on a timer.
-    var authToken = IssueAuthToken(entry.Agent, entry.Resource, entry.AgentConfirmationKey, entry.UpstreamAct);
+    var authToken = IssueAuthToken(entry.Agent, entry.Resource, entry.Scope, entry.AgentConfirmationKey, entry.UpstreamAct);
     return Results.Ok(new { auth_token = authToken });
 });
 
@@ -428,7 +445,7 @@ app.Run();
 // -----------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------
-string IssueAuthToken(string agentId, string audience, IAAuthKey confirmationKey, JsonObject? upstreamAct = null)
+string IssueAuthToken(string agentId, string audience, string scope, IAAuthKey confirmationKey, JsonObject? upstreamAct = null)
     => new AuthTokenBuilder
     {
         Issuer = psIssuer,
@@ -438,7 +455,9 @@ string IssueAuthToken(string agentId, string audience, IAAuthKey confirmationKey
         Key = psKey,
         KeyId = PsKid,
         Subject = "pairwise-sub",
-        Scope = PsScope,
+        Scope = scope,
+        Roles = demoRoles,
+        Groups = demoGroups,
         UpstreamAct = upstreamAct,
     }.Build();
 

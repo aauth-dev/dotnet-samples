@@ -26,7 +26,12 @@ public sealed class AAuthScopeHandler : AuthorizationHandler<AAuthScopeRequireme
         var httpContext = _httpContextAccessor.HttpContext;
         var result = httpContext?.Features.Get<AAuthVerificationResult>();
 
-        if (result is not null && result.Scopes.Contains(requirement.Scope))
+        // Scopes are only meaningful on auth tokens (Authorized level). A
+        // pseudonymous or identified token must never satisfy a scope policy
+        // even if it somehow carries a stray scope claim.
+        if (result is not null
+            && result.Level == AAuthLevel.Authorized
+            && result.Scopes.Contains(requirement.Scope))
         {
             context.Succeed(requirement);
         }

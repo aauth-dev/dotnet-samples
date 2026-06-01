@@ -142,7 +142,7 @@ app.MapGet("/", (HttpContext ctx) =&gt;
                 .WithChallengeHandling()
                 .Build();
 
-            var response = await client.GetAsync(resourceUrl);
+            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/jwt");
 
             _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
             _success = response.IsSuccessStatusCode;

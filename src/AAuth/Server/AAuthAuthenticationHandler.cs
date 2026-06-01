@@ -42,6 +42,9 @@ public sealed class AAuthAuthenticationHandler : AuthenticationHandler<Authentic
     /// <summary>Claim type for individual scopes.</summary>
     public const string ScopeClaimType = "aauth:scope";
 
+    /// <summary>Claim type for individual groups (one claim per group).</summary>
+    public const string GroupClaimType = "aauth:group";
+
     /// <summary>Claim type for the actor subject.</summary>
     public const string ActorSubjectClaimType = "aauth:act_sub";
 
@@ -97,6 +100,18 @@ public sealed class AAuthAuthenticationHandler : AuthenticationHandler<Authentic
         foreach (var scope in result.Scopes)
         {
             claims.Add(new Claim(ScopeClaimType, scope));
+        }
+
+        // Map enterprise roles to the standard ASP.NET role claim so
+        // [Authorize(Roles=...)] / RequireRole() work out of the box.
+        foreach (var role in result.Roles)
+        {
+            claims.Add(new Claim(ClaimTypes.Role, role));
+        }
+
+        foreach (var group in result.Groups)
+        {
+            claims.Add(new Claim(GroupClaimType, group));
         }
 
         var identity = new ClaimsIdentity(claims, SchemeName);

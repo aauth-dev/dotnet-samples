@@ -197,7 +197,7 @@ app.MapGet("/", (HttpContext ctx) =&gt;
                 }
             });
 
-            var response = await client.GetAsync(resourceUrl);
+            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/jwt");
 
             // Stop the poll counter
             pollTimer.Dispose();

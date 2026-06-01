@@ -234,6 +234,8 @@ public sealed class AAuthVerificationMiddleware
         var level = DetermineLevel(parsedInfo.Scheme, tokenType);
         var scopeString = (string?)parsedInfo.Payload?["scope"];
         var scopes = ParseScopes(scopeString);
+        var roles = ParseStringArray(parsedInfo.Payload?["roles"]);
+        var groups = ParseStringArray(parsedInfo.Payload?["groups"]);
         var actSub = parsedInfo.Payload?["act"]?["sub"]?.GetValue<string>();
 
         context.Features.Set(new AAuthVerificationResult
@@ -247,6 +249,8 @@ public sealed class AAuthVerificationMiddleware
                 : (string?)parsedInfo.Payload?["sub"],
             Subject = (string?)parsedInfo.Payload?["sub"],
             Scopes = scopes,
+            Roles = roles,
+            Groups = groups,
             ActorSubject = actSub,
             Jkt = parsedInfo.ConfirmationKey?.ComputeJwkThumbprint()
                 ?? parsedInfo.Jkt,
@@ -508,6 +512,22 @@ public sealed class AAuthVerificationMiddleware
         return new HashSet<string>(
             scopeString.Split(' ', StringSplitOptions.RemoveEmptyEntries),
             StringComparer.Ordinal);
+    }
+
+    private static HashSet<string> ParseStringArray(System.Text.Json.Nodes.JsonNode? node)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        if (node is System.Text.Json.Nodes.JsonArray array)
+        {
+            foreach (var item in array)
+            {
+                if (item is not null && item.GetValueKind() == System.Text.Json.JsonValueKind.String)
+                {
+                    set.Add(item.GetValue<string>());
+                }
+            }
+        }
+        return set;
     }
 }
 

@@ -114,7 +114,7 @@ app.MapGet("/", async (HttpContext ctx) =>
         .WithCallChaining(ctx)
         .Build();
 
-    var response = await downstream.GetAsync(downstreamUrl);
+    var response = await downstream.GetAsync($"{downstreamUrl.TrimEnd('/')}/jwt");
     var body = await response.Content.ReadAsStringAsync();
     JsonNode? downstreamJson = null;
     try { downstreamJson = JsonNode.Parse(body); } catch { }

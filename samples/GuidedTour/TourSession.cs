@@ -109,14 +109,14 @@ public sealed class TourSession : IAsyncDisposable
 
     /// <summary>
     /// The effective WhoAmI endpoint URL for the current signing mode.
-    /// Identity-based modes target dedicated paths; three-party targets root.
+    /// Identity-based modes target dedicated paths; three-party targets /jwt.
     /// </summary>
     private string EffectiveResourceUrl => EffectiveSigningMode switch
     {
         SigningMode.Hwk => $"{_options.WhoAmIUrl.TrimEnd('/')}/hwk",
         SigningMode.JktJwt => $"{_options.WhoAmIUrl.TrimEnd('/')}/jkt-jwt",
         SigningMode.JwksUri => $"{_options.WhoAmIUrl.TrimEnd('/')}/jwks-uri",
-        _ => _options.WhoAmIUrl,
+        _ => $"{_options.WhoAmIUrl.TrimEnd('/')}/jwt",
     };
 
     /// <summary>

@@ -260,7 +260,7 @@ if (url.AbsolutePath is "/" or "")
         "hwk" => new Uri(url, "/hwk"),
         "jkt-jwt" => new Uri(url, "/jkt-jwt"),
         "jwks_uri" => new Uri(url, "/jwks-uri"),
-        _ => url, // jwt uses the root path (three-party)
+        _ => new Uri(url, "/jwt"), // jwt → three-party baseline endpoint
     };
 }
 
