@@ -1,12 +1,19 @@
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
+using System.Threading;
+using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Crypto;
+using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Tokens;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Xunit;
 
 namespace AAuth.Tests.Integration;
@@ -32,6 +39,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         _factory = factory.WithWebHostBuilder(b =>
         {
             b.UseSetting("AAuth:Issuer", PsIssuer);
+            b.ConfigureServices(ResourceStub.WireDiscovery);
         });
     }
 
@@ -99,15 +107,15 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         // A resource_token with the resource as `iss`. The mock PS reads
         // `iss` and uses it as the auth-token's `aud`; it does NOT verify
         // the signature, so we can hand-craft a minimal one.
-        const string ResourceUrl = "https://whoami.test";
+        const string ResourceUrl = ResourceStub.Url;
         var resourceToken = new ResourceTokenBuilder
         {
             Issuer = ResourceUrl,
             Audience = PsIssuer,
             Agent = "aauth:demo@ap.example",
             AgentJkt = agentKey.ComputeJwkThumbprint(),
-            Key = AAuthKey.Generate(),
-            KeyId = "whoami-1",
+            Key = ResourceStub.Key,
+            KeyId = ResourceStub.Kid,
             Scope = "whoami",
         }.Build();
 
@@ -206,6 +214,99 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
         Assert.Equal("invalid_request", (string?)body!["error"]);
     }
+
+    [Fact]
+    public async Task Token_RejectsForgedResourceToken()
+    {
+        // A resource token signed by a key the resource's published JWKS
+        // does not hold must be rejected at /token (Phase 10, §G9): the PS
+        // now verifies the resource token's signature before minting.
+        var agentKey = AAuthKey.Generate();
+        var agentToken = new AgentTokenBuilder
+        {
+            Issuer = "https://ap.example",
+            Subject = "aauth:demo@ap.example",
+            KeyId = "demo",
+            Key = agentKey,
+            PersonServer = PsIssuer,
+        }.Build();
+
+        var signing = new AAuthSigningHandler(agentKey, () => agentToken)
+        {
+            InnerHandler = _factory.Server.CreateHandler(),
+        };
+        using var http = new HttpClient(signing) { BaseAddress = new Uri(PsIssuer) };
+
+        // Signed with a freshly generated key — NOT ResourceStub.Key — but
+        // carrying the published kid, so the PS resolves the genuine key and
+        // the signature check fails.
+        var forged = new ResourceTokenBuilder
+        {
+            Issuer = ResourceStub.Url,
+            Audience = PsIssuer,
+            Agent = "aauth:demo@ap.example",
+            AgentJkt = agentKey.ComputeJwkThumbprint(),
+            Key = AAuthKey.Generate(),
+            KeyId = ResourceStub.Kid,
+            Scope = "whoami",
+        }.Build();
+
+        var response = await http.PostAsJsonAsync("/token",
+            new JsonObject { ["resource_token"] = forged });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("invalid_resource_token", (string?)body!["error"]);
+    }
+
+    [Fact]
+    public async Task Token_RejectsTamperedResourceToken()
+    {
+        // Mutate the payload of a genuine resource token after signing; the
+        // signature no longer matches → rejected at /token.
+        var agentKey = AAuthKey.Generate();
+        var agentToken = new AgentTokenBuilder
+        {
+            Issuer = "https://ap.example",
+            Subject = "aauth:demo@ap.example",
+            KeyId = "demo",
+            Key = agentKey,
+            PersonServer = PsIssuer,
+        }.Build();
+
+        var signing = new AAuthSigningHandler(agentKey, () => agentToken)
+        {
+            InnerHandler = _factory.Server.CreateHandler(),
+        };
+        using var http = new HttpClient(signing) { BaseAddress = new Uri(PsIssuer) };
+
+        var genuine = new ResourceTokenBuilder
+        {
+            Issuer = ResourceStub.Url,
+            Audience = PsIssuer,
+            Agent = "aauth:demo@ap.example",
+            AgentJkt = agentKey.ComputeJwkThumbprint(),
+            Key = ResourceStub.Key,
+            KeyId = ResourceStub.Kid,
+            Scope = "whoami",
+        }.Build();
+
+        // Tamper: flip the scope to a privileged one without re-signing.
+        var segments = genuine.Split('.');
+        var payload = (JsonObject)JsonNode.Parse(
+            Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(segments[1]))!;
+        payload["scope"] = "whoami:admin";
+        segments[1] = Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Encode(
+            payload.ToJsonString());
+        var tampered = string.Join('.', segments);
+
+        var response = await http.PostAsJsonAsync("/token",
+            new JsonObject { ["resource_token"] = tampered });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("invalid_resource_token", (string?)body!["error"]);
+    }
 }
 
 /// <summary>
@@ -230,14 +331,16 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
         {
             builder.UseSetting("AAuth:Issuer", PsIssuer);
             builder.UseSetting("MockPersonServer:RequireConsent", "true");
+            builder.ConfigureServices(ResourceStub.WireDiscovery);
         }
     }
 
     [Fact]
     public async Task Token_Returns202WithInteractionRequirement_WhenConsentMissing()
     {
-        var (signedClient, _, _) = BuildSignedAgentClient();
-        var resourceToken = BuildResourceToken("aauth:demo@ap.example", AAuthKey.Generate());
+        var agentKey = AAuthKey.Generate();
+        var (signedClient, _, _) = BuildSignedAgentClient(agentKey, "aauth:demo@ap.example");
+        var resourceToken = BuildResourceToken("aauth:demo@ap.example", agentKey);
 
         using var response = await signedClient.PostAsJsonAsync("/token",
             new JsonObject { ["resource_token"] = resourceToken });
@@ -436,8 +539,75 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
             Audience = PsIssuer,
             Agent = agent,
             AgentJkt = agentKey.ComputeJwkThumbprint(),
-            Key = AAuthKey.Generate(),
-            KeyId = "whoami-1",
+            Key = ResourceStub.Key,
+            KeyId = ResourceStub.Kid,
             Scope = "whoami",
         }.Build();
+}
+
+/// <summary>
+/// Shared in-process stub for the resource (WhoAmI) whose well-known
+/// metadata + JWKS the MockPersonServer now fetches to verify the
+/// resource token before minting an auth token (Phase 10, §G9).
+/// </summary>
+internal static class ResourceStub
+{
+    public const string Url = "https://whoami.test";
+    public const string Host = "whoami.test";
+    public const string Kid = "whoami-1";
+    public static readonly AAuthKey Key = AAuthKey.Generate();
+
+    /// <summary>
+    /// Replace the PS's discovery clients so that resource-token
+    /// verification resolves <see cref="Url"/>'s JWKS in-process.
+    /// </summary>
+    public static void WireDiscovery(IServiceCollection services)
+    {
+        services.RemoveAll<MetadataClient>();
+        services.RemoveAll<JwksClient>();
+        services.AddSingleton(new MetadataClient(new HttpClient(new StubResourceHandler(Key, Kid, Url))));
+        services.AddSingleton(new JwksClient(new HttpClient(new StubResourceHandler(Key, Kid, Url))));
+    }
+
+    private sealed class StubResourceHandler : HttpMessageHandler
+    {
+        private readonly string _metadataJson;
+        private readonly string _jwksJson;
+
+        public StubResourceHandler(AAuthKey key, string kid, string issuer)
+        {
+            _metadataJson = new JsonObject
+            {
+                ["issuer"] = issuer,
+                ["jwks_uri"] = $"{issuer}/.well-known/jwks.json",
+            }.ToJsonString();
+
+            var jwk = key.ToPublicJwk();
+            jwk["kid"] = kid;
+            jwk["use"] = "sig";
+            jwk["alg"] = AAuthKey.Algorithm;
+            _jwksJson = new JsonObject
+            {
+                ["keys"] = new JsonArray(jwk),
+            }.ToJsonString();
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            string json;
+            if (path == "/.well-known/aauth-resource.json")
+                json = _metadataJson;
+            else if (path == "/.well-known/jwks.json")
+                json = _jwksJson;
+            else
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json"),
+            });
+        }
+    }
 }

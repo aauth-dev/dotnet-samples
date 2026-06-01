@@ -36,6 +36,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 
 - [Verification Middleware](server/verification-middleware.md) — HTTP signature + JWT issuer verification
 - [Challenge Middleware](server/challenge-middleware.md) — Auto-challenge for auth token upgrade
+- [Authentication and Authorization](server/authn-authz.md) — authN/authZ pipeline + minimal-API and MVC wiring
 - [Authorization Policies](server/authorization-policies.md) — Scope-based `[Authorize]` integration
 - [Resource Metadata](server/resource-metadata.md)
 - [Token Issuance](server/token-issuance.md)

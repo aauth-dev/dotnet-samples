@@ -26,6 +26,13 @@ const string RoleWhoamiAdmin = "whoami-admin";
 var resourceUrl = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5000";
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
 
+// Person Server(s) this resource trusts to assert user identity. Fail-closed:
+// an auth token from any other issuer is rejected at verification. The demo
+// trusts the local MockPersonServer; override via `AAuth:TrustedPersonServers`.
+var trustedPersonServers = new HashSet<string>(
+    builder.Configuration.GetSection("AAuth:TrustedPersonServers").Get<string[]>()
+        ?? new[] { "http://localhost:5100" });
+
 builder.Services.AddSingleton(resourceKey);
 builder.Services.AddSingleton(new AAuthVerifier
 {
@@ -85,6 +92,7 @@ AAuthVerificationOptions FullVerification() => new()
 {
     ResourceIdentifier = resourceUrl,
     RequireIssuerVerification = true,
+    TrustedAuthTokenIssuers = trustedPersonServers,
 };
 
 // Challenge options for a three-party endpoint requesting a specific scope.
@@ -257,6 +265,9 @@ app.MapGet("/jwt", (HttpContext ctx) =>
         sub = result.Subject,
         scope = result.Scopes,
         iss = result.Issuer,
+        // The canonical user identity is the (iss, sub) pair: the same `sub`
+        // asserted by a different Person Server is a different user.
+        userKey = result.Issuer is null ? null : $"{result.Issuer}|{result.Subject}",
         act = parsed.Payload?["act"],
     });
 }).RequireAuthorization("AAuth.Scope.whoami");

@@ -74,6 +74,7 @@ app.UseWhen(
         {
             ResourceIdentifier = orchestratorUrl,
             RequireIssuerVerification = true,
+            TrustedAuthTokenIssuers = new HashSet<string> { psUrl },
         },
         new ChallengeOptions
         {

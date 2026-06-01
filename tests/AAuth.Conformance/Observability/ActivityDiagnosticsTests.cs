@@ -338,6 +338,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
         {
             ResourceIdentifier = ResourceId,
             RequireIssuerVerification = true,
+            TrustedAuthTokenIssuers = new HashSet<string> { PsIssuer },
         });
         app.MapGet("/check-tags", (HttpContext ctx) =>
         {

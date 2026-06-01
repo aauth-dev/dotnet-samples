@@ -375,9 +375,15 @@ public sealed class AAuthVerificationMiddleware
         if (!AAuthUrl.IsHttpsOrLoopback(iss))
             throw new TokenVerificationException("Auth token 'iss' must be an absolute https:// URL (or http://localhost).");
 
-        // Check issuer allow-list.
-        if (_options.TrustedAuthTokenIssuers is { } trusted && !trusted.Contains(iss))
-            throw new TokenVerificationException($"Auth token issuer '{iss}' is not in the trusted issuers list.");
+        // Fail-closed issuer namespacing: a PS-asserted auth token is trusted
+        // only when its issuer is in the configured allow-list. An unset or
+        // empty allow-list rejects ALL auth tokens — the resource MUST declare
+        // which Person Servers it trusts before it will honor their claims.
+        var trusted = _options.TrustedAuthTokenIssuers;
+        if (trusted is null || trusted.Count == 0 || !trusted.Contains(iss))
+            throw new TokenVerificationException(
+                $"Auth token issuer '{iss}' is not in the trusted issuers list " +
+                "(set AAuthVerificationOptions.TrustedAuthTokenIssuers to the Person Servers this resource trusts).");
 
         var kid = (string?)header["kid"]
             ?? throw new TokenVerificationException("Auth token header is missing 'kid'.");

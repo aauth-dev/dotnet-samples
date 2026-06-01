@@ -127,9 +127,9 @@ app.UseWhen(
 //        - cnf.jwk = the agent's confirmation key (binds PoP)
 //   4. We return { "auth_token": "..." }.
 //
-// This mock does NOT verify the resource_token's signature — a production
-// PS would fetch the resource's JWKS and verify it. Sufficient for the
-// demo and for exercising the agent's three-party retry path.
+// This mock verifies the resource_token per §"Resource Token Verification"
+// using the SDK helper TokenVerifier.VerifyResourceTokenAsync (JWKS discovery
+// against the issuing resource). A forged or tampered token is rejected.
 // -----------------------------------------------------------------------
 app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore pending) =>
 {
@@ -202,45 +202,50 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
         upstreamAct = result.UpstreamAct;
     }
 
-    // Decode the resource token's `iss` claim — that's the resource URL
-    // and becomes the auth token's `aud`. The `scope` claim (REQUIRED by the
-    // spec on a resource token) is echoed into the issued auth token so the
-    // resource's scope policy can enforce exactly what it requested.
+    // Verify the resource token per §"Resource Token Verification" before we
+    // act on any of its claims. The SDK helper resolves the issuing resource's
+    // JWKS from `{iss}/.well-known/aauth-resource.json` and enforces typ/dwk/
+    // signature/exp/iat/aud (steps 1-4) plus agent + agent_jkt (steps 5-6).
+    // The verified `iss` is the resource URL and becomes the auth token's
+    // `aud`; the verified `scope` is echoed into the issued auth token.
+    var tokenVerifier = app.Services.GetRequiredService<TokenVerifier>();
+    var metadataClient = app.Services.GetRequiredService<MetadataClient>();
+    var jwksClient = app.Services.GetRequiredService<JwksClient>();
     string audience;
     string requestedScope = PsScope;
     try
     {
-        var segments = resourceTokenJwt.Split('.');
-        if (segments.Length != 3)
-        {
-            throw new FormatException("not a compact JWT");
-        }
-        var payload = (JsonObject?)JsonNode.Parse(
-            Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(segments[1]))
-            ?? throw new FormatException("payload is not a JSON object");
-        audience = (string?)payload["iss"]
-            ?? throw new FormatException("resource_token missing iss");
+        var verifiedResourceToken = await tokenVerifier.VerifyResourceTokenAsync(
+            resourceTokenJwt,
+            expectedAudience: psIssuer,
+            expectedAgentId: agentId,
+            expectedAgentJkt: parsed.ConfirmationKey!.ComputeJwkThumbprint(),
+            metadataClient,
+            jwksClient);
+
+        audience = (string?)verifiedResourceToken.Payload["iss"]
+            ?? throw new TokenVerificationException("resource_token missing iss");
         // Echo the requested scope (space-separated set permitted). Fall back
         // to the PS's base scope when the resource token omits it.
-        var scopeClaim = (string?)payload["scope"];
+        var scopeClaim = (string?)verifiedResourceToken.Payload["scope"];
         if (!string.IsNullOrWhiteSpace(scopeClaim))
         {
             requestedScope = scopeClaim;
         }
-        // The resource_token signature is NOT verified by this mock PS (see
-        // file-level comment). Validate at least that `iss` is an absolute
-        // http(s) URL so a forged token can't smuggle a `javascript:` or
-        // garbage `aud` into the minted auth_token.
-        if (!Uri.TryCreate(audience, UriKind.Absolute, out var audUri)
-            || (audUri.Scheme != Uri.UriSchemeHttps && audUri.Scheme != Uri.UriSchemeHttp))
-        {
-            throw new FormatException("resource_token iss must be an absolute http(s) URL");
-        }
     }
-    catch (Exception ex) when (ex is FormatException or System.Text.Json.JsonException)
+    catch (TokenVerificationException ex)
     {
-        return Results.Json(new { error = "invalid_request", detail = $"malformed resource_token: {ex.Message}" },
-            statusCode: StatusCodes.Status400BadRequest);
+        // §Error Response Format: a resource token that fails verification is
+        // rejected outright — the consent screen and issued auth token derive
+        // only from a verified token.
+        var expired = ex.Message.Contains("expired", StringComparison.OrdinalIgnoreCase);
+        return Results.Json(
+            new
+            {
+                error = expired ? "expired_resource_token" : "invalid_resource_token",
+                detail = ex.Message,
+            },
+            statusCode: StatusCodes.Status401Unauthorized);
     }
 
     // Consent gate. If the PS is configured to require consent and the

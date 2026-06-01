@@ -117,6 +117,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
         {
             ResourceIdentifier = ResourceId,
             RequireIssuerVerification = true,
+            TrustedAuthTokenIssuers = new HashSet<string> { PsIssuer },
         });
         app.UseAuthentication();
         app.UseAuthorization();
@@ -144,6 +145,8 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
                 jkt = user.FindFirst(AAuthAuthenticationHandler.JktClaimType)?.Value,
                 issuer = user.FindFirst(AAuthAuthenticationHandler.IssuerClaimType)?.Value,
                 subject = user.FindFirst(ClaimTypes.NameIdentifier)?.Value,
+                subjectIssuer = user.FindFirst(ClaimTypes.NameIdentifier)?.Issuer,
+                subIss = user.FindFirst(AAuthAuthenticationHandler.SubjectIssuerClaimType)?.Value,
                 actSub = user.FindFirst(AAuthAuthenticationHandler.ActorSubjectClaimType)?.Value,
                 scopes = user.FindAll(AAuthAuthenticationHandler.ScopeClaimType)
                     .Select(c => c.Value).ToArray(),
@@ -260,6 +263,10 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
         Assert.Equal(AgentId, (string?)json["agent"]);
         Assert.Equal(ApIssuer, (string?)json["issuer"]);  // auth token issuer = PS
         Assert.Equal("pairwise-sub-123", (string?)json["subject"]);
+        // §G8 — the subject claim is namespaced by the asserting PS, and the
+        // composite (iss, sub) user key is surfaced for record matching.
+        Assert.Equal(PsIssuer, (string?)json["subjectIssuer"]);
+        Assert.Equal($"{PsIssuer}|pairwise-sub-123", (string?)json["subIss"]);
         Assert.NotNull((string?)json["jkt"]);
     }
 

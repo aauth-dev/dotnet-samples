@@ -66,6 +66,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         {
             ResourceIdentifier = ResourceId,
             RequireIssuerVerification = true,
+            TrustedAuthTokenIssuers = new HashSet<string> { PsIssuer },
         });
         app.MapGet("/protected", () => Results.Ok("hello"));
         await app.StartAsync();
@@ -315,6 +316,35 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         _host = app;
 
         var token = BuildAuthToken(); // Issuer = PsIssuer, NOT in PS allow-list
+        var response = await SendSigned(token);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact(DisplayName = "§Verification — fail-closed: empty trusted-issuer set rejects all auth tokens")]
+    public async Task RejectsAuthTokenWhenNoTrustedIssuersConfigured()
+    {
+        // Fail-closed default: with issuer verification on but no
+        // TrustedAuthTokenIssuers declared, every PS-asserted token is rejected.
+        if (_host is not null) { await _host.StopAsync(); _host.Dispose(); }
+
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton(new AAuthVerifier { Clock = () => FixedClock });
+        builder.Services.AddSingleton<HttpClient>(_metadataHost!.GetTestClient());
+        builder.Services.AddSingleton(sp => new MetadataClient(sp.GetRequiredService<HttpClient>()));
+        builder.Services.AddSingleton(sp => new JwksClient(sp.GetRequiredService<HttpClient>()));
+        var app = builder.Build();
+        app.UseAAuthVerification(new AAuthVerificationOptions
+        {
+            ResourceIdentifier = ResourceId,
+            RequireIssuerVerification = true,
+            // TrustedAuthTokenIssuers intentionally unset.
+        });
+        app.MapGet("/protected", () => Results.Ok("hello"));
+        await app.StartAsync();
+        _host = app;
+
+        var token = BuildAuthToken();
         var response = await SendSigned(token);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }

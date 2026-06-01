@@ -152,6 +152,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         {
             ResourceIdentifier = ResourceId,
             RequireIssuerVerification = true,
+            TrustedAuthTokenIssuers = new HashSet<string> { PsIssuer },
         });
         app.UseAAuthChallenge(challengeOptions);
         app.MapGet("/protected", () => Results.Ok("hello"));

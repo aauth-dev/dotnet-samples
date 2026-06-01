@@ -19,7 +19,7 @@
 <div class="col-md-6">
 <h5>Client Code</h5>
 <pre><code class="language-csharp">// Enrollment (one-time provisioning)
-var keyStore = KeyStore.Default();
+var keyStore = FileKeyStore.Default();
 var apClient = new AgentProviderClient(
     new HttpClient(), keyStore);
 var result = await apClient.EnrolAsync(

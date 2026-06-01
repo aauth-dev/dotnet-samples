@@ -150,6 +150,7 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
             {
                 ResourceIdentifier = ResourceId,
                 RequireIssuerVerification = true,
+                TrustedAuthTokenIssuers = new HashSet<string> { PsIssuer },
             },
             new ChallengeOptions
             {

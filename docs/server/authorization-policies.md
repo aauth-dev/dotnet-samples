@@ -2,6 +2,10 @@
 
 The AAuth SDK integrates with ASP.NET Core's authorization system via `AAuthScopeRequirement`, `AAuthScopeHandler`, role claims, and a set of convenience policy registrations.
 
+> For the end-to-end authN/authZ pipeline and how to wire AAuth up in both
+> minimal-API and classic-MVC hosting styles, see
+> [Authentication and Authorization](authn-authz.md).
+
 ## Registration
 
 ```csharp
@@ -88,6 +92,17 @@ Groups asserted in the auth token's `groups` claim are emitted as one
 `aauth:group` claim each (`AAuthAuthenticationHandler.GroupClaimType`) and exposed
 as `AAuthVerificationResult.Groups`. They are available for custom policies or
 auditing but are not enforced by a built-in helper.
+
+> **Roles and groups are namespaced by the asserting PS.** Every PS-asserted
+> identity claim (`NameIdentifier`, `Role`, `aauth:group`) carries
+> `Claim.Issuer == iss`, and the canonical user key is the `(iss, sub)` pair
+> surfaced as the composite `aauth:sub_iss` claim
+> (`AAuthAuthenticationHandler.SubjectIssuerClaimType`). A role named `admin`
+> asserted by `https://ps-a.example` is therefore distinct from the same role
+> asserted by `https://ps-b.example`. Issuer trust is fail-closed: the
+> verification middleware only honors auth tokens whose `iss` is in
+> `AAuthVerificationOptions.TrustedAuthTokenIssuers` (see
+> [verification-middleware.md](verification-middleware.md)).
 
 ## AAuthAuthenticationHandler
 

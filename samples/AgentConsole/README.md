@@ -108,3 +108,10 @@ rm ~/.local/share/aauth-agent-console/aauth:demo@ap.example.json
 ```
 
 The `hwk` mode is unaffected — it performs no refresh.
+
+The same cache also pins the enrolled Person Server. If you first run a
+pseudonymous mode (no `--ps`) and then a three-party mode (`--ps`), the console
+reuses the cached PS-less enrollment and the resource cannot resolve a PS
+audience (`401`, `AAuth-Error: no Person Server audience could be resolved`).
+Delete the cache file before switching to a three-party run so the console
+re-enrols with the Person Server.

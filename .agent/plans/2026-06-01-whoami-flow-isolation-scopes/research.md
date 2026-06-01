@@ -68,6 +68,8 @@ Problems:
 | G5 | MockPersonServer hardcodes issued `scope=whoami`, ignoring the resource token's requested scope. | Resource token `scope` REQUIRED; PS confirms consent "for the requested scope". | **Fix** — echo requested scope from resource token. |
 | G6 | Multi-scope (AllOf/AnyOf) requirement semantics absent. | Scope is a space-separated set. | **Out of scope** — single scope per endpoint suffices for the demo. |
 | G7 | Step-up re-challenge on insufficient-scope auth token not implemented in scope handler. | Step-up is a MAY. | **Out of scope** — request-time scoping is compliant; note as future. |
+| G8 | PS-asserted identity claims (`sub`/`email`/`tenant`/`roles`/`groups`) are mapped to flat ASP.NET claims with no link to the asserting `iss`. `RequireRole`/`IsInRole` match value-only, so identical role/sub values from different PSes collide. | Resource MUST namespace asserted claims by the asserting PS; `(iss, sub)` identifies the user. | **Fix (new Phase 9)** — honor namespacing; design below. |
+| G9 | The PS does not verify the resource token: `MockPersonServer` base64-decodes the payload and trusts `iss`/`scope` from an unsigned blob; the SDK has no resource-token-side verifier (only auth-token `VerifyAuthTokenWithJwksAsync`). | Spec §Resource Token Verification: the recipient MUST verify `typ`/`dwk`/signature (via `{iss}/.well-known/aauth-resource.json` JWKS), `exp`/`iat`, `aud`, `agent`, `agent_jkt`, and `mission.approver`. | **Fix (new Phase 10)** — add SDK `VerifyResourceTokenAsync`; use it in the mock PS; design below. |
 
 ## Scope/role taxonomy for the demo
 
@@ -103,6 +105,148 @@ Each mode gets its own `MapGroup` with a dedicated verification branch:
 | `tests/AAuth.Tests/Integration/WhoAmIFlowTests.cs` | asserts JSON keys, `/`, 401 shape | Update to `/jwt`, new scope/role assertions. |
 | `tests/e2e/**` | port 5000, specs | Update specs as needed; validate. |
 | `Makefile`, `LiveWhoAmITest`, `whoami.aauth.dev` | orchestration + live instance | Makefile targets unchanged (port same); note live redeploy out of scope. |
+
+## Claim namespacing by the asserting PS (G8 investigation, 2026-06-01)
+
+### Spec model (normative)
+
+- `## What AAuth Provides` (line 162) and the PS-asserted overview (line 298):
+  > "Any agent's PS can assert identity claims to any resource without bilateral
+  > setup; **the resource namespaces those claims by the asserting PS** — the same
+  > `sub` value from a different PS is a different subject. … the resource …
+  > creates or matches a user record based on whether it has seen this `(iss, sub)`
+  > before."
+- Auth token claims (`### Auth Token`, line ~1568): `iss` is "the URL of the
+  server that issued the auth token — an AS (four-party) or a PS asserting identity
+  (three-party)." Identity claims subject to namespacing: `sub`, `email`,
+  `tenant`, `groups`, `roles` (the latter two from `## Scopes`, line 1783, via
+  RFC 9068 / SCIM).
+- **Namespacing key = the auth-token `iss`.** Two different PSes asserting the
+  same literal `roles:["admin"]` or `sub:"u1"` are asserting about **different**
+  principals; the resource must not conflate them.
+
+### Current SDK behaviour (un-namespaced)
+
+- `AAuthAuthenticationHandler` mints `sub`→`ClaimTypes.NameIdentifier`,
+  `roles`→`ClaimTypes.Role`, `groups`→`aauth:group`, and `iss`→`aauth:issuer`
+  as **separate, flat** claims, all with the default identity issuer
+  (`"LOCAL AUTHORITY"`). Nothing ties an identity claim to the `iss` that
+  asserted it.
+- `RequireRole` / `ClaimsPrincipal.IsInRole` match the **value only** and ignore
+  `Claim.Issuer`. So a `whoami-admin` role from PS-A and from PS-B satisfy the
+  same policy — a cross-PS collision the spec explicitly forbids.
+- `AAuthVerificationOptions` has no trusted-issuer allowlist for the **inbound**
+  auth token (only `UpstreamTokenValidator` has `trustedIssuers`, and only for
+  the call-chaining upstream token). Any auth token whose `iss` JWKS verifies is
+  accepted, regardless of which PS it is.
+
+### Design options to honor namespacing in the ASP.NET claims model
+
+1. **Provenance — set `Claim.Issuer = result.Issuer`** on each PS-asserted
+   identity claim (`sub`, `email`, `tenant`, `roles`, `groups`) when minting them.
+   Idiomatic .NET; records *which* PS asserted each claim. Cheap, non-breaking.
+   **Necessary but not sufficient** — `RequireRole`/`IsInRole` still ignore issuer.
+2. **User key — surface `(iss, sub)`** explicitly (e.g. a composite
+   `aauth:sub_iss` claim and/or set `NameIdentifier.Issuer = iss`) so resources
+   match user records on the tuple, exactly as the spec says. Demo response shows
+   the namespaced identity.
+3. **Enforcement isolation (the real decision):**
+   - **Option A — trusted-issuer allowlist on verification.** Add
+     `AllowedIssuers` (a.k.a. trusted PSes) to `AAuthVerificationOptions`; reject
+     (or strip identity claims from) auth tokens whose `iss` is not allowlisted.
+     With a single trusted PS, collisions are impossible because foreign-PS
+     claims never enter. Default empty = trust any verified issuer (preserves
+     current sample behaviour). Simplest, strongest, matches "the resource
+     decides which PS it trusts."
+   - **Option B — issuer-aware policies.** `AddAAuthRolePolicy(name, role, issuer)`
+     overload backed by a custom requirement that checks both the role value and
+     that it was asserted by a specific `iss` (via `Claim.Issuer`). More granular;
+     more code; needed only when one resource trusts multiple PSes with
+     overlapping role vocabularies.
+   - **Option C — value-namespacing** (`{iss}#role`). Rejected: breaks
+     `RequireRole("role")` ergonomics and the "works out of the box" property.
+
+### Recommendation
+
+> **Update 2026-06-01 (backward compatibility waived — fail-closed design):**
+> Backward compatibility is **not** a requirement for this plan (alpha; "Spec is
+> king"). That removes the soft edges and makes the spec's namespacing the **only**
+> behaviour:
+>
+> - **Layers 1 + 2 are mandatory, not additive.** The user identity *is*
+>   `(iss, sub)`. `Claim.Issuer = iss` is set on every PS-asserted identity claim
+>   unconditionally, and `aauth:sub_iss` is the canonical principal key the demo
+>   matches on. No flat un-namespaced `sub`/`role` kept "for compatibility."
+> - **Option A is always on and fail-closed.** `AllowedIssuers` is required; an
+>   auth token whose `iss` is not in the trusted set is **rejected at
+>   verification** (not merely stripped). Empty/unset = **reject all PS-asserted
+>   tokens** — the safe default and the spec's own framing ("the resource decides
+>   which PS it trusts"). This eliminates cross-PS collisions *by construction*
+>   rather than by documentation.
+> - **Keep `RequireRole` value-only ergonomics.** Because the fail-closed
+>   allowlist guarantees only trusted-PS claims ever reach the principal, value-only
+>   `RequireRole` is safe again. **Option B** (issuer-aware policy) remains an
+>   optional add-on for the niche case of one resource trusting multiple PSes with
+>   overlapping role vocabularies — not built now.
+> - **Cost (in scope):** every 3-party flow + `WhoAmIFlowTests` + any sample that
+>   verifies a PS-asserted token must now declare its trusted PS (a one-line
+>   `AllowedIssuers` config each). Acceptable under the waived-compat rule.
+>
+> Net: less code (no "trust any" branch), stronger isolation, fully spec-aligned.
+
+## PS-side resource-token verification (G9 investigation, 2026-06-01)
+
+### Spec model (normative)
+
+Spec §"Resource Token Verification"
+(`aauth-spec/draft-hardt-oauth-aauth-protocol.md`) lists the 7 checks the
+recipient (PS in three-party; AS in four-party) MUST run on the
+`resource_token` before acting on it:
+
+1. Decode header; `typ == aa-resource+jwt` (and reject `alg: none`).
+2. `dwk == aauth-resource.json`; discover JWKS at `{iss}/.well-known/aauth-resource.json`,
+   locate `kid`, verify the JWT signature.
+3. `exp` in the future; `iat` not in the future.
+4. `aud` matches the recipient's own identifier (the PS).
+5. `agent` matches the requesting agent's identifier (from the HTTP-sig context).
+6. `agent_jkt` matches the JWK Thumbprint of the key that signed the request to `/token`.
+7. If `mission` present, `mission.approver` matches this PS.
+
+### Current behaviour (un-verified)
+
+`samples/MockPersonServer/Program.cs` splits the compact JWT and
+`JsonNode.Parse`s the payload, then trusts `iss` (→ auth-token `aud`) and
+`scope` directly — no signature check, no `typ`/`dwk` check, no
+`agent`/`agent_jkt` binding. The file comment already flags this as a demo
+shortcut. A forged resource token can therefore smuggle any `aud`/`scope`
+(only the absolute-http(s) `iss` shape is validated today). The displayed
+consent scope (G5 work) is thus shown from an **unverified** token.
+
+### SDK building blocks that already exist
+
+- `TokenVerifier.Verify(jwt, issuerKey, expectedType, expectedDwk, expectedAudience)`
+  covers steps 1–4 (alg/none rejection, `typ`, `dwk`, signature, `exp`/`iat`,
+  `aud`, `iss` shape) once the issuer key is resolved.
+- `MetadataClient` + `JwksClient.ResolveKeyAsync(jwksUri, kid)` perform the
+  step-2 discovery (the same path `VerifyAuthTokenWithJwksAsync` uses for auth
+  tokens, and `UpstreamTokenValidator` uses for call chaining).
+- There is **no** resource-token counterpart to `VerifyAuthTokenWithJwksAsync`,
+  so every PS reimplements discovery + steps 5–7 by hand (the mock PS skips
+  them entirely).
+
+### Recommendation
+
+Add a symmetric SDK convenience `TokenVerifier.VerifyResourceTokenAsync(...)`
+that takes the compact `resource_token`, the recipient's own identifier
+(expected `aud`), the requesting `agent` id, the request signing-key thumbprint
+(`agent_jkt`), and a `JwksClient`/`MetadataClient`; it resolves the resource's
+JWKS from `{iss}/.well-known/aauth-resource.json`, calls the existing `Verify`
+for steps 1–4, then enforces steps 5–7 and returns the parsed scope/mission.
+Wire the mock PS `/token` handler to call it and reject with the spec error
+codes (`invalid_resource_token` / `expired_resource_token`) on failure, so the
+consent screen and issued auth token derive from a **verified** token. `mission`
+verification (step 7) is optional for the mock PS (no AAuth-Mission in the demo)
+but the SDK helper should support it for completeness.
 
 ## Open questions
 
