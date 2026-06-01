@@ -173,4 +173,5 @@ class BrowserPresenter : IInteractionPresenter
 ## Further Reading
 
 - [PS-Asserted Access](ps-asserted-access.md)
+- [Interaction Chaining](../advanced/interaction-chaining.md) — what an intermediary does when *its* downstream hop returns this same `202` and there is no user attached to the inbound request.
 - [Error Handling](../advanced/error-handling.md)

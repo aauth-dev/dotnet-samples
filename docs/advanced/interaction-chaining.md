@@ -21,48 +21,155 @@ Agent A → Orchestrator (polls Location)
          ← 200 (final result)
 ```
 
-## SDK Support: `onInteractionRequired` Callback
+## SDK Support: throw `AAuthInteractionChainedException`
 
-The `CallChainingHandler.ExchangeForDownstreamAsync` and `TokenExchangeClient.ExchangeAsync` both accept an `onInteractionRequired` callback. Use this to propagate the interaction back to your caller:
+When the downstream PS/AS requires consent, the intermediary's exchange surfaces an
+`onInteractionRequired` callback. The intermediary cannot block and poll on the caller's
+behalf — there is no user attached to the inbound request to relay the consent URL to.
+Instead, the callback **throws** `AAuthInteractionChainedException` to abort the exchange
+*before* the SDK starts its blocking poll. The endpoint catches that exception, parks the
+flow, and re-emits its **own** `202 Accepted` to the caller:
 
 ```csharp
-app.MapGet("/", async (HttpContext ctx) =>
+async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken)
 {
-    using var downstream = new AAuthClientBuilder(myKey)
-        .WithTokenRefresh(refreshFunc)
-        .WithCallChaining(ctx)
+    using var downstream = AAuthClientBuilder.SelfIssuing(orchestratorKey)
+        .As(orchestratorUrl, agentId)
+        .WithKid(orchestratorKid)
+        .WithPersonServer(psUrl)
+        .WithCallChaining(upstreamToken)
         .WithChallengeHandling(opts =>
         {
-            opts.OnInteractionRequired = async (interaction, ct) =>
-            {
-                // The downstream PS requires user consent.
-                // Store a pending request and return 202 to the caller.
-                var pendingId = PendingRequests.Create(ctx, interaction);
-
-                ctx.Response.StatusCode = 202;
-                ctx.Response.Headers["Location"] = $"/pending/{pendingId}";
-                ctx.Response.Headers["AAuth-Requirement"] =
-                    $"requirement=interaction; url=\"{BuildInteractionUrl(pendingId)}\"; " +
-                    $"code=\"{interaction.Code}\"";
-                await ctx.Response.WriteAsJsonAsync(new { status = "pending" }, ct);
-            };
+            // No user to relay to — abort the exchange and re-emit upward.
+            opts.OnInteractionRequired = (interaction, _) =>
+                throw new AAuthInteractionChainedException(interaction);
         })
         .Build();
 
-    var response = await downstream.GetAsync(downstreamUrl);
-    return Results.Ok(await response.Content.ReadFromJsonAsync<JsonNode>());
+    var response = await downstream.GetAsync($"{downstreamUrl}/jwt");
+    var body = await response.Content.ReadFromJsonAsync<JsonNode>();
+    return Results.Ok(new { chain = "ok", downstream = body });
+}
+
+app.MapGet("/", async (HttpContext ctx, PendingStore pending) =>
+{
+    var upstream = ctx.Features.Get<UpstreamAuthTokenFeature>()?.Token;
+    if (upstream is null) return Results.Unauthorized();
+
+    try
+    {
+        return await RunChainAsync(ctx, upstream);
+    }
+    catch (AAuthInteractionChainedException ex)
+    {
+        // Downstream needs consent. Park the upstream token + the downstream
+        // interaction details, then re-emit our OWN 202 to the caller.
+        var entry = pending.Add(upstream, ex.Interaction.Url, ex.Interaction.Code);
+        return ReEmitChainedInteraction(ctx, entry);
+    }
 });
 ```
 
-## Manual Pattern (Without Builder)
+Throwing from the callback is what makes this work: the exchange wraps the callback in
+`try { await onInteractionRequired(...) } finally { ... }` with **no** `catch`, so the
+exception unwinds before `DeferredPoller.PollAsync` runs. There is no blocked poll and no
+double-write to the response.
 
-For full control over the interaction-chaining flow using `CallChainingHandler` directly:
+### Re-emitting the chained 202
+
+`ReEmitChainedInteraction` writes the intermediary's own `202` carrying *its* poll URL and
+the downstream interaction's `url`/`code` (the user approves the downstream resource
+directly):
 
 ```csharp
-app.MapGet("/", async (HttpContext ctx) =>
+IResult ReEmitChainedInteraction(HttpContext ctx, PendingStore.Entry entry)
+{
+    ctx.Response.Headers.Location = $"/pending/{entry.Id}";
+    ctx.Response.Headers["Retry-After"] = "1";
+    ctx.Response.Headers.CacheControl = "no-store";
+    ctx.Response.Headers[AAuthRequirementHeader.Name] =
+        AAuthInteraction.Format(entry.InteractionUrl, entry.InteractionCode);
+    return Results.Json(new { status = "interaction_required" }, statusCode: 202);
+}
+```
+
+### Resuming at the poll endpoint
+
+When the agent polls `/pending/{id}`, the intermediary retries the chain. If consent has
+been granted the exchange now succeeds and the final result is returned; if it is still
+pending the same chained `202` is re-emitted; a denial maps to `403`:
+
+```csharp
+app.MapGet("/pending/{id}", async (HttpContext ctx, string id, PendingStore pending) =>
+{
+    var entry = pending.Get(id);
+    if (entry is null)
+        return Results.Json(new { error = "unknown_pending" }, statusCode: 404);
+
+    try
+    {
+        var result = await RunChainAsync(ctx, entry.UpstreamToken);
+        pending.Remove(id);
+        return result;
+    }
+    catch (AAuthInteractionChainedException)
+    {
+        // Still waiting — re-emit (same url/code; consent is keyed by triple).
+        return ReEmitChainedInteraction(ctx, entry);
+    }
+    catch (AAuthInteractionDeniedException)
+    {
+        pending.Remove(id);
+        return Results.Json(new { error = "access_denied" }, statusCode: 403);
+    }
+});
+```
+
+> **Why not write the `202` from inside the callback?** Returning normally from
+> `onInteractionRequired` tells the SDK to *block and poll* for the downstream token. An
+> intermediary has no user to wait on, so it would hang for the full polling budget and
+> then try to complete a response the endpoint may have already written. Throwing
+> `AAuthInteractionChainedException` is the correct, non-blocking abort.
+
+## Agent side: surfacing the chained 202
+
+The original agent must handle **two** interaction points: the hop-1 PS challenge (via
+`WithChallengeHandling`) and the hop-2 chained `202` the intermediary re-emits (a *resource*
+`202`, handled by the top-level interaction pipeline via `WithInteractionHandling`). Wire
+both so either hop can surface a consent URL:
+
+```csharp
+using var client = AAuthClientBuilder.SelfIssuing(agentKey)
+    .As(issuer, agentId)
+    .WithKid(kid)
+    .WithPersonServer(psUrl)
+    .WithChallengeHandling(opts =>          // hop 1: PS exchange 202
+    {
+        opts.OnInteractionRequired = (interaction, _) =>
+            SurfaceToUser(interaction.BuildUserUrl());
+    })
+    .WithInteractionHandling(opts =>        // hop 2: intermediary's chained 202
+    {
+        opts.OnInteractionRequired = (userUrl, code, _) =>
+            SurfaceToUser(userUrl);
+    })
+    .Build();
+
+var response = await client.GetAsync(intermediaryUrl);
+```
+
+`ChallengeHandler` only acts on `401` challenges, so the intermediary's `202` would pass
+straight through unless `WithInteractionHandling` is also configured.
+
+## Manual Pattern (Without Builder)
+
+For full control over the interaction-chaining flow using `CallChainingHandler` directly,
+apply the same throw-to-abort rule inside the `onInteractionRequired` callback:
+
+```csharp
+app.MapGet("/", async (HttpContext ctx, PendingStore pending) =>
 {
     var upstream = ctx.Features.Get<UpstreamAuthTokenFeature>()!;
-
     var chainHandler = new CallChainingHandler(exchangeClient, options);
 
     try
@@ -70,30 +177,25 @@ app.MapGet("/", async (HttpContext ctx) =>
         var chainedToken = await chainHandler.ExchangeForDownstreamAsync(
             upstream.Token,
             resourceToken,
-            onInteractionRequired: async (interaction, ct) =>
-            {
-                // Propagate: store pending state and inform caller
-                var pendingId = await StorePendingAsync(ctx.Request, interaction);
-                ctx.Response.StatusCode = 202;
-                ctx.Response.Headers["Location"] = $"/pending/{pendingId}";
-                ctx.Response.Headers["AAuth-Requirement"] =
-                    $"requirement=interaction; url=\"/interact/{pendingId}\"; code=\"{interaction.Code}\"";
-            },
+            onInteractionRequired: (interaction, _) =>
+                // Abort before the blocking poll; the endpoint re-emits its own 202.
+                throw new AAuthInteractionChainedException(interaction),
             pollerOptions: new DeferredPollerOptions
             {
                 MaxTotalWait = TimeSpan.FromMinutes(5),
                 PreferWaitSeconds = 45,
             });
 
-        // Exchange succeeded — call downstream with chained token
+        // Exchange succeeded — call downstream with the chained token.
         using var client = new AAuthClientBuilder(myKey)
             .UseJwt(chainedToken)
             .Build();
         return Results.Ok(await client.GetFromJsonAsync<JsonNode>(downstreamUrl));
     }
-    catch (AAuthInteractionTimeoutException)
+    catch (AAuthInteractionChainedException ex)
     {
-        return Results.StatusCode(504); // Gateway Timeout
+        var entry = pending.Add(upstream.Token, ex.Interaction.Url, ex.Interaction.Code);
+        return ReEmitChainedInteraction(ctx, entry);
     }
 });
 ```

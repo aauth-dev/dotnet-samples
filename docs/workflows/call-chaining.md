@@ -344,3 +344,8 @@ var nestedAct = ActChainBuilder.BuildNestedAct(
 // Validate chain before issuing
 bool valid = ActChainBuilder.ValidateChain(nestedAct, maxDepth: 10);
 ```
+
+## See Also
+
+- [Interaction Chaining](../advanced/interaction-chaining.md) — propagating a downstream consent requirement back up the chain when a hop needs human approval (the multi-actor, human-in-the-loop variant of this workflow).
+- [Deferred Consent](deferred-consent.md) — agent-side handling of a `202` interaction requirement.
