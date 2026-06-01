@@ -37,8 +37,16 @@ const string PsAdminScope = "whoami:admin";
 // Demo identity claims the mock PS asserts about the user. A production PS
 // would resolve these from the signed-in user's directory entry. These let
 // the WhoAmI `/jwt/roles` (RBAC) endpoint succeed end-to-end.
+//
+// Roles/groups are asserted ONLY for recognized "admin" demo agents (those
+// whose id is `aauth:demo@...`). Any other agent receives an auth token
+// without the role, so role-based DENIAL is exercised end-to-end (a guest
+// agent calling `/jwt/roles` gets a 403). A production PS would resolve the
+// principal's directory membership instead of a hard-coded prefix.
 string[] demoRoles = ["whoami-admin"];
 string[] demoGroups = ["demo-users"];
+static bool IsAdminAgent(string agentId) =>
+    agentId.StartsWith("aauth:demo@", StringComparison.Ordinal);
 var psIssuer = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5100";
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
 var requireConsent = builder.Configuration.GetValue<bool>("MockPersonServer:RequireConsent");
@@ -456,8 +464,8 @@ string IssueAuthToken(string agentId, string audience, string scope, IAAuthKey c
         KeyId = PsKid,
         Subject = "pairwise-sub",
         Scope = scope,
-        Roles = demoRoles,
-        Groups = demoGroups,
+        Roles = IsAdminAgent(agentId) ? demoRoles : null,
+        Groups = IsAdminAgent(agentId) ? demoGroups : null,
         UpstreamAct = upstreamAct,
     }.Build();
 

@@ -187,6 +187,36 @@ public class WhoAmIFlowTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RoleFlow_Returns403_WhenAgentLacksRole()
+    {
+        // A non-admin demo agent (the mock PS only asserts the whoami-admin
+        // role for `aauth:demo@...` agents) completes the three-party flow
+        // and receives a valid auth token WITHOUT the role. The role policy
+        // on /jwt/roles must therefore reject it with 403 — exercising
+        // role-based DENIAL, not just the success path.
+        var agentKey = AAuthKey.Generate();
+        var agentToken = new AgentTokenBuilder
+        {
+            Issuer = ApIssuer,
+            Subject = "aauth:guest@ap.test",
+            KeyId = ApKeyId,
+            Key = ApKey,
+            ConfirmationKey = agentKey,
+            PersonServer = PsIssuer,
+        }.Build();
+
+        var holder = new AAuthTokenHolder(agentToken);
+        using var client = BuildAgentClient(agentKey, holder, personServer: PsIssuer);
+
+        var response = await client.GetAsync($"{WhoAmIIssuer}/jwt/roles");
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+        // The agent DID complete the exchange (the 403 is an authorization
+        // decision on a valid auth token, not an authentication failure).
+        Assert.NotEqual(agentToken, holder.Current);
+    }
+
+    [Fact]
     public async Task ThreePartyChallenge_Returns401WithResourceToken()
     {
         // Send only through the signing pipeline (no ChallengeHandler) so we

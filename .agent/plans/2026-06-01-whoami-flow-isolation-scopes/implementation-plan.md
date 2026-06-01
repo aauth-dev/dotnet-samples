@@ -159,9 +159,9 @@ Use a **separate subagent for each sample** and **one subagent for all docs**.
 
 ### Definition of Done
 
-- [ ] Reviewer findings collected with severity grades
-- [ ] Findings presented to maintainer
-- [ ] Fixes applied only after maintainer direction
+- [x] Reviewer findings collected with severity grades
+- [x] Findings presented to maintainer
+- [x] Fixes applied only after maintainer direction
 
 ---
 

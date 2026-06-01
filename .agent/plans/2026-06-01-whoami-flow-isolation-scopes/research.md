@@ -124,3 +124,29 @@ Each mode gets its own `MapGroup` with a dedicated verification branch:
 > the quirk is independent of the flow-isolation refactor. Possible future hardening
 > (out of scope, needs maintainer sign-off): have `AgentConsole` auto-re-enroll on a
 > 400 `invalid_grant` from `/refresh`.
+
+> **Update 2026-06-01 (self-review + maintainer-directed fixes):** The Implementation
+> Validator returned **no CRITICAL/HIGH findings — sound to merge**. It confirmed the
+> scope bypass is closed (`Level == Authorized` gate), the role policy is correct,
+> pipeline isolation is sound, claim names are consistent end-to-end, and the
+> identity-fallback removal is a net security improvement. Three MEDIUM follow-ups were
+> raised and, per maintainer direction, **applied on the branch**:
+>
+> - **M1 — unconditional role assertion.** The mock PS asserted `whoami-admin`/`demo-users`
+>   on *every* auth token, so any agent satisfied `/jwt/roles` and role DENIAL was never
+>   exercised. Fixed: `MockPersonServer` now asserts roles/groups only for recognized
+>   admin demo agents (`IsAdminAgent` ⇒ id starts with `aauth:demo@`). A production PS
+>   would resolve directory membership instead.
+> - **M2 — missing negative tests.** Added `AAuthScopeHandlerTests` (Authorized+scope ⇒
+>   succeed; Authorized+wrong-scope ⇒ fail; Identified/Pseudonymous+stray-scope ⇒ fail;
+>   no result ⇒ fail) and `WhoAmIFlowTests.RoleFlow_Returns403_WhenAgentLacksRole`
+>   (guest agent `aauth:guest@ap.test` completes the exchange but gets a 403 at
+>   `/jwt/roles`).
+> - **M3 — role/challenge dependency.** Documented (in `samples/WhoAmI/Program.cs` and
+>   `docs/server/authorization-policies.md`) that `/jwt/roles` challenges only for the
+>   `whoami` scope; if a spec-compliant PS withholds the role the result is an
+>   unrecoverable 403, since insufficient-role step-up (G7) is out of scope.
+>
+> LOW findings (L1 role/scope decoupling — intentional; L2 brittle demo URL construction;
+> L3 `aauth:group` emitted but unconsumed) were accepted as informational and left as-is.
+> After the fixes: unit 333 + conformance 345 pass; e2e 20/20 pass.

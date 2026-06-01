@@ -133,6 +133,15 @@ app.UseWhen(
 
 // /jwt/roles — three-party RBAC: full verification + challenge for the base
 // `whoami` scope; the role is enforced from the auth token's `roles` claim.
+//
+// DEPENDENCY: the challenge only asks the PS for the `whoami` scope — roles
+// are asserted at the PS's discretion (the spec says a PS MAY assert roles).
+// If a spec-compliant PS issues a `whoami` auth token WITHOUT the
+// `whoami-admin` role, the role policy below returns an unrecoverable 403:
+// there is no automatic step-up re-challenge (insufficient-scope/role
+// step-up, spec G7, is out of scope for this sample). The mock PS asserts
+// the role only for `aauth:demo@...` agents, so a non-admin agent
+// deliberately hits that 403 path.
 app.UseWhen(
     ctx => ctx.Request.Path.StartsWithSegments("/jwt/roles"),
     branch =>

@@ -75,6 +75,15 @@ app.MapGet("/admin", () => Results.Ok("admin data"))
     .RequireAuthorization("AAuth.Role.admin");
 ```
 
+> **Role assertion is the PS's decision.** A role policy enforces a role that
+> the Person Server *may* assert in the auth token (the protocol leaves it
+> discretionary). The challenge a resource emits only names the requested
+> *scope*, not a role. If the PS issues a valid auth token for the requested
+> scope but withholds the role, the role policy returns a `403` with no
+> automatic step-up — insufficient-role re-challenge is out of scope. Design
+> role-gated endpoints so that the PS is expected to assert the role for the
+> agents that should reach them.
+
 Groups asserted in the auth token's `groups` claim are emitted as one
 `aauth:group` claim each (`AAuthAuthenticationHandler.GroupClaimType`) and exposed
 as `AAuthVerificationResult.Groups`. They are available for custom policies or
