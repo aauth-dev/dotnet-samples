@@ -108,3 +108,19 @@ Each mode gets its own `MapGroup` with a dedicated verification branch:
 
 - None blocking. Step-up re-challenge (G7) and multi-scope (G6) deferred; raise
   with maintainer only if a future phase needs them.
+
+> **Update 2026-06-01 (console validation):** All six AgentConsole permutations
+> pass on the branch — `hwk`, `jkt-jwt`, `jwks_uri` (200, signature-only/identity)
+> and the three-party `jwt`, `jwt/admin`, `jwt/roles` (200 with `scope:["whoami"]`,
+> `access:"admin"` + `scope:["whoami:admin"]`, and `access:"rbac"` + roles/groups).
+> Earlier 400/500 results were a **pre-existing demo quirk**, not a regression:
+> `MockAgentProvider` keeps enrollments in memory while `AgentConsole` caches its
+> enrollment on disk (`~/.local/share/aauth-agent-console/<sub>.json`). After the
+> AP restarts it forgets the enrollment, so the signed `/refresh` (jwt/jkt-jwt) and
+> the AP-hosted `/agents/<sub>/jwks.json` (jwks_uri) return 4xx for the stale agent.
+> `hwk` is unaffected because it performs no refresh. Clearing the cache so the
+> console re-enrolls against the running AP makes every mode succeed. `MockAgentProvider`
+> is unmodified by this branch (`git diff --name-only origin/main` excludes it), so
+> the quirk is independent of the flow-isolation refactor. Possible future hardening
+> (out of scope, needs maintainer sign-off): have `AgentConsole` auto-re-enroll on a
+> 400 `invalid_grant` from `/refresh`.

@@ -13,14 +13,24 @@ import { Urls } from './agents';
  * two forms with button.approve / button.deny.
  */
 
-/** Grant standing consent for (agent, resource) so /token issues immediately. */
+/**
+ * Grant standing consent for (agent, resource[, scope]) so /token issues
+ * immediately. The PS keys consent by (agent, resource, scope); pass `scope`
+ * when the resource requires something other than the default `whoami` (e.g.
+ * the Orchestrator's `orchestrate` scope on the first call-chain hop).
+ */
 export async function grantConsent(
   request: APIRequestContext,
   agent: string,
   resource: string,
+  scope?: string,
 ): Promise<void> {
+  const data: Record<string, string> = { agent, resource: resource.replace(/\/$/, '') };
+  if (scope) {
+    data.scope = scope;
+  }
   const res = await request.post(`${Urls.personServer}/admin/consent`, {
-    data: { agent, resource: resource.replace(/\/$/, '') },
+    data,
   });
   if (!res.ok()) {
     throw new Error(

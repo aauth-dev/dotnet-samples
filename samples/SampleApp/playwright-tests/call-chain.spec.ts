@@ -19,7 +19,9 @@ import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
 test.describe.configure({ timeout: 60_000 });
 
 test.beforeEach(async ({ request }) => {
-  await grantConsent(request, Agents.sampleApp, Urls.orchestrator);
+  // Hop 1 (agent → Orchestrator) needs the Orchestrator's `orchestrate` scope;
+  // hop 2 (Orchestrator → WhoAmI) needs the default `whoami` scope.
+  await grantConsent(request, Agents.sampleApp, Urls.orchestrator, 'orchestrate');
   await grantConsent(request, 'aauth:orchestrator@localhost:5200', Urls.whoami);
 });
 

@@ -519,12 +519,15 @@ public sealed class TourSession : IAsyncDisposable
 
             // Call-chain mode needs consent for the Orchestrator audience
             // (the agent's auth_token targets the Orchestrator, not WhoAmI).
+            // The Orchestrator requires its own `orchestrate` scope, so seed
+            // consent for that scope — the PS keys consent by (agent,
+            // resource, scope) and echoes the resource-requested scope.
             if (IsCallChainMode && !string.IsNullOrWhiteSpace(_options.PersonServerUrl))
             {
                 using var adminClient = new HttpClient();
                 await adminClient.PostAsJsonAsync(
                     $"{_options.PersonServerUrl.TrimEnd('/')}/admin/consent",
-                    new { agent = _options.AgentId, resource = _options.OrchestratorUrl!.TrimEnd('/') },
+                    new { agent = _options.AgentId, resource = _options.OrchestratorUrl!.TrimEnd('/'), scope = "orchestrate" },
                     ct);
             }
         }
