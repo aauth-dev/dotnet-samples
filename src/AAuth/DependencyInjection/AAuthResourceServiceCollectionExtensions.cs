@@ -164,4 +164,34 @@ public static class AAuthResourceServiceCollectionExtensions
 
         return services;
     }
+
+    /// <summary>
+    /// Add a named authorization policy that requires a specific AAuth role.
+    /// Roles are mapped from the auth token's <c>roles</c> claim ([@!RFC9068])
+    /// to <see cref="System.Security.Claims.ClaimTypes.Role"/> by
+    /// <see cref="AAuthAuthenticationHandler"/>, so this is backed by the
+    /// standard ASP.NET Core <c>RequireRole</c>.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="policyName">The policy name (e.g. <c>"AAuth.Role.whoami-admin"</c>).</param>
+    /// <param name="requiredRole">The required role value.</param>
+    public static IServiceCollection AddAAuthRolePolicy(
+        this IServiceCollection services,
+        string policyName,
+        string requiredRole)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentException.ThrowIfNullOrEmpty(policyName);
+        ArgumentException.ThrowIfNullOrEmpty(requiredRole);
+
+        services.AddAuthorizationBuilder()
+            .AddPolicy(policyName, policy =>
+                policy.RequireAuthenticatedUser()
+                    .AddAuthenticationSchemes(AAuthAuthenticationHandler.SchemeName)
+                    .RequireClaim(AAuthAuthenticationHandler.LevelClaimType,
+                        AAuthLevel.Authorized.ToString())
+                    .RequireRole(requiredRole));
+
+        return services;
+    }
 }

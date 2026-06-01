@@ -1,10 +1,13 @@
 using System.Text.Json.Nodes;
+using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.DependencyInjection;
 using AAuth.Discovery;
+using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
 using AAuth.Tokens;
+using Orchestrator;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,6 +26,7 @@ var agentId = builder.Configuration["AAuth:AgentId"] ?? "aauth:orchestrator@loca
 builder.Services.AddSingleton(orchestratorKey);
 builder.Services.AddSingleton(new AAuthVerifier());
 builder.Services.AddSingleton(new TokenVerifier());
+builder.Services.AddSingleton<PendingStore>();
 builder.Services.AddSingleton<MetadataClient>(sp =>
     new MetadataClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-metadata")));
 builder.Services.AddSingleton<JwksClient>(sp =>
@@ -74,6 +78,7 @@ app.UseWhen(
         {
             ResourceIdentifier = orchestratorUrl,
             RequireIssuerVerification = true,
+            TrustedAuthTokenIssuers = new HashSet<string> { psUrl },
         },
         new ChallengeOptions
         {
@@ -88,33 +93,44 @@ app.UseWhen(
 // GET / — Orchestrator endpoint (call chaining via WithCallChaining).
 //
 // The middleware handles verification + 401 challenge automatically.
-// Only auth-token callers reach this handler. WithCallChaining(ctx) reads
-// the upstream auth token from UpstreamAuthTokenFeature and routes the
-// downstream exchange to the correct PS/AS automatically.
+// Only auth-token callers reach this handler. The downstream client routes
+// the exchange to the correct PS/AS using the upstream auth token.
+//
+// Interaction Chaining (AAuth §Interaction Chaining): the Orchestrator has no
+// user of its own, so it CANNOT relay a downstream consent prompt. Its
+// OnInteractionRequired callback therefore throws
+// AAuthInteractionChainedException, which aborts the in-flight exchange before
+// it blocks-polls. The handler catches it, parks a pending entry, and re-emits
+// its OWN 202 + requirement=interaction to the caller (passing through the PS's
+// interaction url/code, swapping only Location for its own pending URL).
 // -----------------------------------------------------------------------
-app.MapGet("/", async (HttpContext ctx) =>
-{
-    // Grant consent at the PS (demo convenience — real deployments pre-grant).
-    using var adminHttp = new HttpClient();
-    try
-    {
-        await adminHttp.PostAsJsonAsync(
-            $"{psUrl.TrimEnd('/')}/admin/consent",
-            new { agent = agentId, resource = downstreamUrl.TrimEnd('/') });
-    }
-    catch { /* /admin/consent only exists on MockPersonServer */ }
 
-    // Build a call-chaining client: upstream token routing + auto-challenge.
+// Run the downstream chained call with the given upstream auth token. Returns
+// the combined chain result on success; throws AAuthInteractionChainedException
+// when the downstream PS defers for user consent, or
+// AAuthInteractionDeniedException when the user denied.
+async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken)
+{
     // Self-issued agent token (iss = orchestratorUrl) satisfies §Upstream Token
     // Verification step 3 — the PS can match upstream_token.aud against iss.
     using var downstream = AAuthClientBuilder.SelfIssuing(orchestratorKey)
         .As(orchestratorUrl, agentId)
         .WithKid(OrchestratorKid)
         .WithPersonServer(psUrl)
-        .WithCallChaining(ctx)
+        .WithCallChaining(upstreamToken)
+        .WithChallengeHandling(opts =>
+        {
+            // No user to relay to → chain instead of relay. The throw unwinds
+            // the exchange before DeferredPoller blocks; the endpoint catches it.
+            opts.OnInteractionRequired = (interaction, _)
+                => throw new AAuthInteractionChainedException(interaction);
+            // Do NOT declare the "interaction" capability: we cannot relay an
+            // interaction to a user, we chain it (§AAuth-Capabilities).
+            opts.Capabilities = Array.Empty<string>();
+        })
         .Build();
 
-    var response = await downstream.GetAsync(downstreamUrl);
+    var response = await downstream.GetAsync($"{downstreamUrl.TrimEnd('/')}/jwt");
     var body = await response.Content.ReadAsStringAsync();
     JsonNode? downstreamJson = null;
     try { downstreamJson = JsonNode.Parse(body); } catch { }
@@ -136,43 +152,83 @@ app.MapGet("/", async (HttpContext ctx) =>
         },
         downstream = downstreamJson,
     });
+}
+
+// Re-emit the Orchestrator's own 202 requirement=interaction for a parked
+// chained request: its own Location (the pending URL), the PS's pass-through
+// interaction url/code. Spec §Interaction Chaining + §Deferred Responses.
+IResult ReEmitChainedInteraction(HttpContext ctx, PendingStore.Entry entry)
+{
+    ctx.Response.Headers.Location = $"/pending/{entry.Id}";
+    ctx.Response.Headers["Retry-After"] = "1";
+    ctx.Response.Headers["Cache-Control"] = "no-store";
+    ctx.Response.Headers[AAuthRequirementHeader.Name] =
+        AAuthInteraction.Format(entry.InteractionUrl, entry.InteractionCode);
+    return Results.Json(new { status = "interaction_required" }, statusCode: StatusCodes.Status202Accepted);
+}
+
+app.MapGet("/", async (HttpContext ctx, PendingStore pending) =>
+{
+    var upstreamToken = ctx.Features.Get<UpstreamAuthTokenFeature>()?.Token;
+    if (string.IsNullOrEmpty(upstreamToken))
+    {
+        return Results.Json(
+            new { error = "invalid_request", detail = "missing upstream auth token" },
+            statusCode: StatusCodes.Status401Unauthorized);
+    }
+
+    try
+    {
+        return await RunChainAsync(ctx, upstreamToken);
+    }
+    catch (AAuthInteractionChainedException ex)
+    {
+        // Downstream needs the user's consent. Park it and chain the 202 up.
+        var entry = pending.Add(upstreamToken, ex.Interaction.Url, ex.Interaction.Code);
+        return ReEmitChainedInteraction(ctx, entry);
+    }
 });
 
 // -----------------------------------------------------------------------
-// Interaction Chaining Example (commented out)
-//
-// If the downstream PS requires user consent, use onInteractionRequired
-// to propagate the 202 back to the caller. See docs/advanced/interaction-chaining.md.
-//
-// app.MapGet("/with-interaction", async (HttpContext ctx) =>
-// {
-//     await EnsureEnrolledAsync();
-//
-//     using var downstream = new AAuthClientBuilder(enrolledKey!)
-//         .WithTokenRefresh(async (_, ct) =>
-//         {
-//             var apClient = new AgentProviderClient(new HttpClient(), keyStore!);
-//             return await apClient.RefreshAsync(refreshEndpoint!, localKeyHandle!, ct);
-//         })
-//         .WithCallChaining(ctx)
-//         .WithChallengeHandling(opts =>
-//         {
-//             opts.OnInteractionRequired = async (interaction, ct) =>
-//             {
-//                 // Propagate interaction requirement to caller
-//                 ctx.Response.StatusCode = 202;
-//                 ctx.Response.Headers["Location"] = "/pending/123";
-//                 ctx.Response.Headers["AAuth-Requirement"] =
-//                     $"requirement=interaction; url=\"{interaction.Url}\"; code=\"{interaction.Code}\"";
-//                 await ctx.Response.StartAsync(ct);
-//             };
-//         })
-//         .Build();
-//
-//     var response = await downstream.GetAsync(downstreamUrl);
-//     return Results.Ok(await response.Content.ReadAsStringAsync());
-// });
+// GET /pending/{id} — the caller polls here while its user approves the
+// downstream consent at the PS interaction page. Signed + auth-token gated by
+// the same middleware as "/". Each poll RE-DRIVES the chained call with the
+// stored upstream token (idempotent; consent is keyed by agent/resource/scope
+// at the PS). Returns:
+//   * 202 + same requirement=interaction while still unconsented downstream
+//   * 200 + combined chain result once the downstream auth token resolves
+//   * 403 access_denied if the user denied
+//   * 404 if the pending id is unknown
 // -----------------------------------------------------------------------
+app.MapGet("/pending/{id}", async (HttpContext ctx, string id, PendingStore pending) =>
+{
+    var entry = pending.Get(id);
+    if (entry is null)
+    {
+        return Results.NotFound(new { error = "unknown_pending", id });
+    }
+
+    try
+    {
+        var result = await RunChainAsync(ctx, entry.UpstreamToken);
+        pending.Remove(id); // resolved — drop the parked entry
+        return result;
+    }
+    catch (AAuthInteractionChainedException)
+    {
+        // Still unconsented downstream — re-emit our own 202 (same url/code:
+        // PS consent is keyed by the triple, so the original page still works).
+        return ReEmitChainedInteraction(ctx, entry);
+    }
+    catch (AAuthInteractionDeniedException)
+    {
+        pending.Remove(id);
+        ctx.Response.Headers["Cache-Control"] = "no-store";
+        return Results.Json(
+            new { error = "access_denied", detail = "the user denied this request" },
+            statusCode: StatusCodes.Status403Forbidden);
+    }
+});
 
 app.Run();
 

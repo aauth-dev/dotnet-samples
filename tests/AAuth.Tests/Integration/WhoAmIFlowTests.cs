@@ -54,6 +54,21 @@ public class WhoAmIFlowTests : IAsyncLifetime
         _ps = new WebApplicationFactory<MockPersonServer.Entry>().WithWebHostBuilder(b =>
         {
             b.UseSetting("AAuth:Issuer", PsIssuer);
+            b.ConfigureServices(services =>
+            {
+                // The PS verifies the resource token per §"Resource Token
+                // Verification", which discovers the issuing resource's JWKS.
+                // Route the PS's discovery to the in-process WhoAmI (resolved
+                // lazily — _whoAmI is built after this factory).
+                services.RemoveAll<MetadataClient>();
+                services.RemoveAll<JwksClient>();
+                var psDiscovery = new MultiHostHandler(new Dictionary<string, HttpMessageHandler>
+                {
+                    [WhoAmIHost] = new LazyHostHandler(() => _whoAmI!.Server.CreateHandler()),
+                });
+                services.AddSingleton(new MetadataClient(new HttpClient(psDiscovery)));
+                services.AddSingleton(new JwksClient(new HttpClient(psDiscovery)));
+            });
         });
         // Force the host to start so Server is available.
         _ps.CreateClient();
@@ -62,6 +77,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
         _whoAmI = new WebApplicationFactory<WhoAmI.Entry>().WithWebHostBuilder(b =>
         {
             b.UseSetting("AAuth:Issuer", WhoAmIIssuer);
+            b.UseSetting("AAuth:TrustedPersonServers:0", PsIssuer);
             b.ConfigureServices(services =>
             {
                 // Replace the metadata/JWKS clients with versions that can
@@ -90,27 +106,21 @@ public class WhoAmIFlowTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task IdentityBasedFlow_ReturnsClaimsWithoutExchange()
+    public async Task FlowIndex_ReturnsAvailableFlows()
     {
-        // Agent token with no PS — WhoAmI returns 200 directly.
-        var agentKey = AAuthKey.Generate();
-        var agentToken = new AgentTokenBuilder
-        {
-            Issuer = ApIssuer,
-            Subject = "aauth:demo@ap.test",
-            KeyId = ApKeyId,
-            Key = ApKey,
-            ConfirmationKey = agentKey,
-        }.Build();
+        // The root path is now an unauthenticated index listing the isolated
+        // access modes — no AAuth signature required.
+        using var client = _whoAmI!.CreateClient();
 
-        var holder = new AAuthTokenHolder(agentToken);
-        using var client = BuildAgentClient(agentKey, holder, personServer: null);
-
-        var response = await client.GetAsync($"{WhoAmIIssuer}/");
+        var response = await client.GetAsync("/");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("identity-based", (string?)body!["mode"]);
-        Assert.Equal("aauth:demo@ap.test", (string?)body["agent"]);
+        Assert.Equal("WhoAmI Demo", (string?)body!["resource"]);
+        var flows = body["flows"]!.AsArray();
+        var paths = flows.Select(f => (string?)f!["path"]).ToList();
+        Assert.Contains("/jwt", paths);
+        Assert.Contains("/jwt/admin", paths);
+        Assert.Contains("/jwt/roles", paths);
     }
 
     [Fact]
@@ -130,14 +140,186 @@ public class WhoAmIFlowTests : IAsyncLifetime
         var holder = new AAuthTokenHolder(agentToken);
         using var client = BuildAgentClient(agentKey, holder, personServer: PsIssuer);
 
-        var response = await client.GetAsync($"{WhoAmIIssuer}/");
+        var response = await client.GetAsync($"{WhoAmIIssuer}/jwt");
         var rawBody = await response.Content.ReadAsStringAsync();
         Assert.True(response.IsSuccessStatusCode, $"Status={(int)response.StatusCode}, Body={rawBody}");
         var body = JsonNode.Parse(rawBody) as JsonObject;
         Assert.Equal("aauth:demo@ap.test", (string?)body!["agent"]);
         Assert.Equal("pairwise-sub", (string?)body["sub"]);
+        Assert.Contains("whoami", body["scope"]!.AsArray().Select(s => (string?)s));
 
         // Holder should now carry the auth token, not the agent token.
+        Assert.NotEqual(agentToken, holder.Current);
+    }
+
+    [Fact]
+    public async Task ThreePartyFlow_RejectsAuthTokenFromNonAllowlistedIssuer()
+    {
+        // §G8 fail-closed: the resource only honors PS-asserted (auth) tokens
+        // whose issuer it explicitly trusts. Stand up a dedicated PS + WhoAmI
+        // pair where the WhoAmI's TrustedPersonServers points at a different
+        // PS, so the genuine auth token minted by our PS (iss = PsIssuer) is
+        // rejected at the final resource call even though the exchange
+        // (including resource-token verification) succeeds.
+        WebApplicationFactory<WhoAmI.Entry>? negWhoAmI = null;
+        using var negPs = new WebApplicationFactory<MockPersonServer.Entry>().WithWebHostBuilder(b =>
+        {
+            b.UseSetting("AAuth:Issuer", PsIssuer);
+            b.ConfigureServices(services =>
+            {
+                // PS verifies the resource token → reach the paired WhoAmI.
+                services.RemoveAll<MetadataClient>();
+                services.RemoveAll<JwksClient>();
+                var psDiscovery = new MultiHostHandler(new Dictionary<string, HttpMessageHandler>
+                {
+                    [WhoAmIHost] = new LazyHostHandler(() => negWhoAmI!.Server.CreateHandler()),
+                });
+                services.AddSingleton(new MetadataClient(new HttpClient(psDiscovery)));
+                services.AddSingleton(new JwksClient(new HttpClient(psDiscovery)));
+            });
+        });
+        negPs.CreateClient();
+
+        using var whoAmI = new WebApplicationFactory<WhoAmI.Entry>().WithWebHostBuilder(b =>
+        {
+            b.UseSetting("AAuth:Issuer", WhoAmIIssuer);
+            b.UseSetting("AAuth:TrustedPersonServers:0", "https://other-ps.test");
+            b.ConfigureServices(services =>
+            {
+                services.RemoveAll<MetadataClient>();
+                services.RemoveAll<JwksClient>();
+                var discoveryHandler = new MultiHostHandler(new Dictionary<string, HttpMessageHandler>
+                {
+                    [PsHost] = negPs.Server.CreateHandler(),
+                    [ApHost] = new StubApHandler(ApKey, ApKeyId, ApIssuer),
+                });
+                services.AddSingleton(new MetadataClient(new HttpClient(discoveryHandler)));
+                services.AddSingleton(new JwksClient(new HttpClient(discoveryHandler)));
+            });
+        });
+        whoAmI.CreateClient();
+        negWhoAmI = whoAmI;
+
+        var agentKey = AAuthKey.Generate();
+        var agentToken = new AgentTokenBuilder
+        {
+            Issuer = ApIssuer,
+            Subject = "aauth:demo@ap.test",
+            KeyId = ApKeyId,
+            Key = ApKey,
+            ConfirmationKey = agentKey,
+            PersonServer = PsIssuer,
+        }.Build();
+
+        var holder = new AAuthTokenHolder(agentToken);
+
+        HttpMessageHandler RoutingHandler() => new MultiHostHandler(new Dictionary<string, HttpMessageHandler>
+        {
+            [WhoAmIHost] = whoAmI.Server.CreateHandler(),
+            [PsHost] = negPs.Server.CreateHandler(),
+        });
+
+        var agentTokenAtConstruction = holder.Current;
+        var exchangeSigning = new AAuthSigningHandler(agentKey, () => agentTokenAtConstruction)
+        {
+            InnerHandler = RoutingHandler(),
+        };
+        var exchange = new TokenExchangeClient(
+            new HttpClient(exchangeSigning),
+            new MetadataClient(new HttpClient(RoutingHandler())));
+        var resourceSigning = new AAuthSigningHandler(agentKey, () => holder.Current)
+        {
+            InnerHandler = RoutingHandler(),
+        };
+        var challenge = new ChallengeHandler(exchange, holder, PsIssuer)
+        {
+            InnerHandler = resourceSigning,
+        };
+        using var client = new HttpClient(challenge);
+
+        // The exchange succeeds (PS mints a real auth token), but the resource
+        // rejects it because its issuer is not in TrustedPersonServers.
+        var response = await client.GetAsync($"{WhoAmIIssuer}/jwt");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task AdminScopeFlow_IssuesElevatedScope()
+    {
+        var agentKey = AAuthKey.Generate();
+        var agentToken = new AgentTokenBuilder
+        {
+            Issuer = ApIssuer,
+            Subject = "aauth:demo@ap.test",
+            KeyId = ApKeyId,
+            Key = ApKey,
+            ConfirmationKey = agentKey,
+            PersonServer = PsIssuer,
+        }.Build();
+
+        var holder = new AAuthTokenHolder(agentToken);
+        using var client = BuildAgentClient(agentKey, holder, personServer: PsIssuer);
+
+        var response = await client.GetAsync($"{WhoAmIIssuer}/jwt/admin");
+        var rawBody = await response.Content.ReadAsStringAsync();
+        Assert.True(response.IsSuccessStatusCode, $"Status={(int)response.StatusCode}, Body={rawBody}");
+        var body = JsonNode.Parse(rawBody) as JsonObject;
+        Assert.Equal("admin", (string?)body!["access"]);
+        Assert.Contains("whoami:admin", body["scope"]!.AsArray().Select(s => (string?)s));
+    }
+
+    [Fact]
+    public async Task RoleFlow_ReturnsAssertedRoles()
+    {
+        var agentKey = AAuthKey.Generate();
+        var agentToken = new AgentTokenBuilder
+        {
+            Issuer = ApIssuer,
+            Subject = "aauth:demo@ap.test",
+            KeyId = ApKeyId,
+            Key = ApKey,
+            ConfirmationKey = agentKey,
+            PersonServer = PsIssuer,
+        }.Build();
+
+        var holder = new AAuthTokenHolder(agentToken);
+        using var client = BuildAgentClient(agentKey, holder, personServer: PsIssuer);
+
+        var response = await client.GetAsync($"{WhoAmIIssuer}/jwt/roles");
+        var rawBody = await response.Content.ReadAsStringAsync();
+        Assert.True(response.IsSuccessStatusCode, $"Status={(int)response.StatusCode}, Body={rawBody}");
+        var body = JsonNode.Parse(rawBody) as JsonObject;
+        Assert.Equal("rbac", (string?)body!["access"]);
+        Assert.Contains("whoami-admin", body["roles"]!.AsArray().Select(s => (string?)s));
+    }
+
+    [Fact]
+    public async Task RoleFlow_Returns403_WhenAgentLacksRole()
+    {
+        // A non-admin demo agent (the mock PS only asserts the whoami-admin
+        // role for `aauth:demo@...` agents) completes the three-party flow
+        // and receives a valid auth token WITHOUT the role. The role policy
+        // on /jwt/roles must therefore reject it with 403 — exercising
+        // role-based DENIAL, not just the success path.
+        var agentKey = AAuthKey.Generate();
+        var agentToken = new AgentTokenBuilder
+        {
+            Issuer = ApIssuer,
+            Subject = "aauth:guest@ap.test",
+            KeyId = ApKeyId,
+            Key = ApKey,
+            ConfirmationKey = agentKey,
+            PersonServer = PsIssuer,
+        }.Build();
+
+        var holder = new AAuthTokenHolder(agentToken);
+        using var client = BuildAgentClient(agentKey, holder, personServer: PsIssuer);
+
+        var response = await client.GetAsync($"{WhoAmIIssuer}/jwt/roles");
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+        // The agent DID complete the exchange (the 403 is an authorization
+        // decision on a valid auth token, not an authentication failure).
         Assert.NotEqual(agentToken, holder.Current);
     }
 
@@ -165,7 +347,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
         // pipeline without the auto-retry challenge handler.
         using var client = BuildAgentClient(agentKey, holder, personServer: null);
 
-        var response = await client.GetAsync($"{WhoAmIIssuer}/");
+        var response = await client.GetAsync($"{WhoAmIIssuer}/jwt");
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.True(response.Headers.TryGetValues(AAuthRequirementHeader.Name, out var values),
@@ -185,6 +367,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
         Assert.Equal("aauth:demo@ap.test", (string?)payload["agent"]);
         Assert.Equal(agentKey.ComputeJwkThumbprint(), (string?)payload["agent_jkt"]);
         Assert.Equal(ResourceTokenBuilder.ResourceDwk, (string?)payload["dwk"]);
+        Assert.Equal("whoami", (string?)payload["scope"]);
     }
 
     [Fact]
@@ -194,10 +377,24 @@ public class WhoAmIFlowTests : IAsyncLifetime
         // so the autonomous-path tests in this class keep working in their
         // existing shared factory and only this test pays the consent-gate
         // setup cost.
+        WebApplicationFactory<WhoAmI.Entry>? consentWhoAmI = null;
         using var consentPs = new WebApplicationFactory<MockPersonServer.Entry>().WithWebHostBuilder(b =>
         {
             b.UseSetting("AAuth:Issuer", PsIssuer);
             b.UseSetting("MockPersonServer:RequireConsent", "true");
+            b.ConfigureServices(services =>
+            {
+                // The PS verifies the resource token, so its discovery must
+                // reach the consent-mode WhoAmI (resolved lazily).
+                services.RemoveAll<MetadataClient>();
+                services.RemoveAll<JwksClient>();
+                var psDiscovery = new MultiHostHandler(new Dictionary<string, HttpMessageHandler>
+                {
+                    [WhoAmIHost] = new LazyHostHandler(() => consentWhoAmI!.Server.CreateHandler()),
+                });
+                services.AddSingleton(new MetadataClient(new HttpClient(psDiscovery)));
+                services.AddSingleton(new JwksClient(new HttpClient(psDiscovery)));
+            });
         });
         consentPs.CreateClient();
         var consentPsHandler = consentPs.Server.CreateHandler();
@@ -207,6 +404,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
         using var whoAmI = new WebApplicationFactory<WhoAmI.Entry>().WithWebHostBuilder(b =>
         {
             b.UseSetting("AAuth:Issuer", WhoAmIIssuer);
+            b.UseSetting("AAuth:TrustedPersonServers:0", PsIssuer);
             b.ConfigureServices(services =>
             {
                 services.RemoveAll<MetadataClient>();
@@ -221,6 +419,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
             });
         });
         whoAmI.CreateClient();
+        consentWhoAmI = whoAmI;
 
         var agentKey = AAuthKey.Generate();
         const string AgentId = "aauth:consent@ap.test";
@@ -293,7 +492,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
         };
         using var client = new HttpClient(challenge);
 
-        var response = await client.GetAsync($"{WhoAmIIssuer}/");
+        var response = await client.GetAsync($"{WhoAmIIssuer}/jwt");
         var rawBody = await response.Content.ReadAsStringAsync();
         Assert.True(response.IsSuccessStatusCode,
             $"Status={(int)response.StatusCode}, Body={rawBody}");
@@ -315,10 +514,24 @@ public class WhoAmIFlowTests : IAsyncLifetime
         // next /pending/{id} poll receives 403 + access_denied. The
         // SDK must surface that as AAuthInteractionDeniedException
         // rather than a generic HttpRequestException.
+        WebApplicationFactory<WhoAmI.Entry>? consentWhoAmI = null;
         using var consentPs = new WebApplicationFactory<MockPersonServer.Entry>().WithWebHostBuilder(b =>
         {
             b.UseSetting("AAuth:Issuer", PsIssuer);
             b.UseSetting("MockPersonServer:RequireConsent", "true");
+            b.ConfigureServices(services =>
+            {
+                // The PS verifies the resource token, so its discovery must
+                // reach the consent-mode WhoAmI (resolved lazily).
+                services.RemoveAll<MetadataClient>();
+                services.RemoveAll<JwksClient>();
+                var psDiscovery = new MultiHostHandler(new Dictionary<string, HttpMessageHandler>
+                {
+                    [WhoAmIHost] = new LazyHostHandler(() => consentWhoAmI!.Server.CreateHandler()),
+                });
+                services.AddSingleton(new MetadataClient(new HttpClient(psDiscovery)));
+                services.AddSingleton(new JwksClient(new HttpClient(psDiscovery)));
+            });
         });
         consentPs.CreateClient();
         var consentPsHandler = consentPs.Server.CreateHandler();
@@ -340,6 +553,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
             });
         });
         whoAmI.CreateClient();
+        consentWhoAmI = whoAmI;
 
         var agentKey = AAuthKey.Generate();
         const string AgentId = "aauth:denier@ap.test";
@@ -401,7 +615,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
         using var client = new HttpClient(challenge);
 
         await Assert.ThrowsAsync<AAuthInteractionDeniedException>(
-            () => client.GetAsync($"{WhoAmIIssuer}/"));
+            () => client.GetAsync($"{WhoAmIIssuer}/jwt"));
 
         // Carrier did NOT swap — the agent never received an auth token.
         Assert.Equal(agentToken, holder.Current);
@@ -450,6 +664,23 @@ public class WhoAmIFlowTests : IAsyncLifetime
     // -------------------------------------------------------------------
     // Multi-host routing handler
     // -------------------------------------------------------------------
+
+    private sealed class LazyHostHandler : HttpMessageHandler
+    {
+        private readonly Func<HttpMessageHandler> _resolve;
+
+        public LazyHostHandler(Func<HttpMessageHandler> resolve)
+        {
+            _resolve = resolve;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            return new HttpMessageInvoker(_resolve(), disposeHandler: false)
+                .SendAsync(request, cancellationToken);
+        }
+    }
 
     private sealed class MultiHostHandler : HttpMessageHandler
     {

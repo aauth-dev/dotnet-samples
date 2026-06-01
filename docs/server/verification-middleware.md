@@ -2,6 +2,10 @@
 
 `AAuthVerificationMiddleware` performs HTTP signature verification (RFC 9421 PoP) and JWT issuer signature verification in a single pass.
 
+> For how verification fits into the full authN/authZ pipeline and the
+> minimal-API vs classic-MVC wiring, see
+> [Authentication and Authorization](authn-authz.md).
+
 ## Registration
 
 ```csharp
@@ -47,7 +51,9 @@ public sealed class AAuthVerificationOptions
     // Optional allow-list of trusted agent provider issuers
     public IReadOnlySet<string>? TrustedAgentProviderIssuers { get; init; }
 
-    // Optional allow-list of trusted auth token issuers (PS/AS)
+    // Fail-closed allow-list of trusted auth token issuers (Person Servers).
+    // When issuer verification is on, an auth token is accepted only if its
+    // `iss` is in this set. null/empty = reject ALL PS-asserted tokens.
     public IReadOnlySet<string>? TrustedAuthTokenIssuers { get; init; }
 
     // Maximum depth of nested act claims (default: 10)
@@ -72,9 +78,37 @@ public sealed class AAuthVerificationOptions
 | `true` | `null` | Verifies JWT issuer sig + PoP, but skips `aud` check |
 | `false` | any | HTTP signature only — no JWT issuer verification |
 
-## Per-Path Configuration
+> **Auth-token issuer trust is fail-closed.** When `RequireIssuerVerification`
+> is `true`, a PS-asserted (auth) token is accepted only when its `iss` appears
+> in `TrustedAuthTokenIssuers`. If that set is `null` or empty, **every** auth
+> token is rejected with `401`. Declare the Person Servers this resource trusts:
+>
+> ```csharp
+> app.UseAAuthVerification(new AAuthVerificationOptions
+> {
+>     ResourceIdentifier = "https://api.example.com",
+>     RequireIssuerVerification = true,
+>     TrustedAuthTokenIssuers = new HashSet<string> { "https://person.example.com" },
+> });
+> ```
+>
+> Signature-only flows (`hwk` / `jkt-jwt` / `jwks_uri`) carry no `iss`
+> assertion and are unaffected by this allow-list.
 
-Use `UseWhen` to apply different verification options per endpoint path. This is the pattern used in the WhoAmI sample where each signing mode has a dedicated endpoint:
+### Subject namespacing by asserting PS
+
+The canonical user identity is the **`(iss, sub)` pair**: the same `sub` value
+asserted by two different Person Servers denotes two different users. Every
+PS-asserted identity claim the handler emits (`NameIdentifier`, `Role`,
+`aauth:group`) carries `Claim.Issuer == iss` for provenance, and a composite
+`aauth:sub_iss` (`{iss}|{sub}`) claim is surfaced so resources can match a local
+user record on the full key rather than on `sub` alone.
+
+Use `UseWhen` to give each access mode its own **isolated verification pipeline**.
+This is the pattern used in the WhoAmI sample: every signing mode has a dedicated
+path-segment branch with its own verification (and, for three-party endpoints, its
+own challenge) options. Each branch is self-contained, so there is no single shared
+verification step with negative path matching:
 
 ```csharp
 // Pseudonymous (hwk) — signature only, no JWT verification
@@ -93,17 +127,32 @@ app.UseWhen(
         RequireIssuerVerification = false,
     }));
 
-// Three-party (jwt) — full issuer + audience verification
+// Three-party (jwt) — full issuer + audience verification, plus a per-endpoint
+// challenge requesting the scope this branch protects.
 app.UseWhen(
-    ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
-        && !ctx.Request.Path.StartsWithSegments("/hwk")
-        && !ctx.Request.Path.StartsWithSegments("/jwks-uri"),
-    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+    ctx => ctx.Request.Path.StartsWithSegments("/jwt"),
+    branch =>
     {
-        ResourceIdentifier = "https://resource.example",
-        RequireIssuerVerification = true,
-    }));
+        branch.UseAAuthVerification(new AAuthVerificationOptions
+        {
+            ResourceIdentifier = "https://resource.example",
+            RequireIssuerVerification = true,
+        });
+        branch.UseAAuthChallenge(new ChallengeOptions
+        {
+            AccessMode = AAuthAccessMode.RequireAuthToken,
+            ResourceSigningKey = resourceKey,
+            ResourceKeyId = "key-1",
+            ResourceIdentifier = "https://resource.example",
+            DefaultScopes = "whoami",
+        });
+    });
 ```
+
+Declare more specific segments (for example `/jwt/admin`) before the general
+`/jwt` branch so segment matching stays unambiguous. After the branches,
+`UseAuthentication`/`UseAuthorization` run globally and per-endpoint policies
+decide what each route requires.
 
 See `samples/WhoAmI` for the complete working example.
 
@@ -119,10 +168,17 @@ app.MapGet("/protected", (HttpContext ctx) =>
     // result.Scheme: "jwt" | "hwk" | "jkt-jwt" | "jwks_uri"
     // result.Agent: agent identifier
     // result.Scopes: granted scopes (auth tokens only)
+    // result.Roles: enterprise roles from the auth token (IReadOnlySet<string>)
+    // result.Groups: enterprise groups from the auth token (IReadOnlySet<string>)
     // result.IssuerVerified: whether JWKS verification passed
     // result.Jkt: key thumbprint
 });
 ```
+
+`Roles` and `Groups` are populated from the verified auth token's `roles` and
+`groups` claims and are empty for signature-only or agent-token requests. The
+authentication handler maps `Roles` to the standard `ClaimTypes.Role` claim and
+emits one `aauth:group` claim per group.
 
 ## Error Responses
 

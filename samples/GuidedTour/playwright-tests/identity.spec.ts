@@ -42,7 +42,7 @@ for (const { mode, resultMode, scheme, idClaim } of cases) {
 
     await runAll(page);
 
-    // Step 2 ("Signed GET / → 200") is the resource result. Inspect it and
+    // Step 2 ("Signed GET → 200") is the resource result. Inspect it and
     // assert the rendered status, then the exact claim structure.
     await selectStep(page, 1);
     await expectResponse(page, 200, [scheme]);

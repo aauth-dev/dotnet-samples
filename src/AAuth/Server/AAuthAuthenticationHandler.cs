@@ -39,8 +39,19 @@ public sealed class AAuthAuthenticationHandler : AuthenticationHandler<Authentic
     /// <summary>Claim type for the issuer.</summary>
     public const string IssuerClaimType = "aauth:issuer";
 
+    /// <summary>
+    /// Claim type for the namespaced principal key — the composite
+    /// <c>{iss}|{sub}</c> that uniquely identifies a person across Person
+    /// Servers. Per the spec, the same <c>sub</c> from a different PS is a
+    /// different subject, so identity is keyed on <c>(iss, sub)</c>.
+    /// </summary>
+    public const string SubjectIssuerClaimType = "aauth:sub_iss";
+
     /// <summary>Claim type for individual scopes.</summary>
     public const string ScopeClaimType = "aauth:scope";
+
+    /// <summary>Claim type for individual groups (one claim per group).</summary>
+    public const string GroupClaimType = "aauth:group";
 
     /// <summary>Claim type for the actor subject.</summary>
     public const string ActorSubjectClaimType = "aauth:act_sub";
@@ -63,6 +74,12 @@ public sealed class AAuthAuthenticationHandler : AuthenticationHandler<Authentic
             return Task.FromResult(AuthenticateResult.NoResult());
         }
 
+        // Namespacing: PS-asserted identity claims (sub, roles, groups) are
+        // attributed to the asserting issuer so the same value from different
+        // PSes never collides. When the result carries no issuer (signature-
+        // only schemes) the claims fall back to the default local authority.
+        var assertingIssuer = result.Issuer;
+
         var claims = new List<Claim>
         {
             new(LevelClaimType, result.Level.ToString()),
@@ -71,7 +88,14 @@ public sealed class AAuthAuthenticationHandler : AuthenticationHandler<Authentic
 
         if (result.Subject is not null)
         {
-            claims.Add(new Claim(ClaimTypes.NameIdentifier, result.Subject));
+            claims.Add(new Claim(ClaimTypes.NameIdentifier, result.Subject, ClaimValueTypes.String, assertingIssuer));
+
+            // Composite (iss, sub) principal key — only meaningful when an
+            // asserting issuer is present (PS-asserted auth tokens).
+            if (assertingIssuer is not null)
+            {
+                claims.Add(new Claim(SubjectIssuerClaimType, $"{assertingIssuer}|{result.Subject}", ClaimValueTypes.String, assertingIssuer));
+            }
         }
 
         if (result.Agent is not null)
@@ -97,6 +121,19 @@ public sealed class AAuthAuthenticationHandler : AuthenticationHandler<Authentic
         foreach (var scope in result.Scopes)
         {
             claims.Add(new Claim(ScopeClaimType, scope));
+        }
+
+        // Map enterprise roles to the standard ASP.NET role claim so
+        // [Authorize(Roles=...)] / RequireRole() work out of the box. Roles
+        // are namespaced by the asserting PS (Claim.Issuer = iss).
+        foreach (var role in result.Roles)
+        {
+            claims.Add(new Claim(ClaimTypes.Role, role, ClaimValueTypes.String, assertingIssuer));
+        }
+
+        foreach (var group in result.Groups)
+        {
+            claims.Add(new Claim(GroupClaimType, group, ClaimValueTypes.String, assertingIssuer));
         }
 
         var identity = new ClaimsIdentity(claims, SchemeName);

@@ -24,8 +24,12 @@ A minimal AAuth Person Server for end-to-end demos and integration tests.
 - `GET /interaction` renders a tiny built-in consent page used by the
   `GuidedTour` "Open consent page" button.
 
-It does **not** verify the posted `resource_token` against the resource's
-JWKS — sufficient for the demo flow, **not** a production PS.
+It **verifies** the posted `resource_token` using the SDK helper
+`TokenVerifier.VerifyResourceTokenAsync` (JWKS discovery against the issuing
+resource per §Resource Token Verification): `typ`/`dwk`/signature, `exp`/`iat`,
+`aud`, `agent`, and `agent_jkt`. Forged or expired tokens are rejected with
+`invalid_resource_token` / `expired_resource_token`. The consent screen and the
+issued auth token derive only from the verified token.
 
 ## Run
 

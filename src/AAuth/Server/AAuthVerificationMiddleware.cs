@@ -234,6 +234,8 @@ public sealed class AAuthVerificationMiddleware
         var level = DetermineLevel(parsedInfo.Scheme, tokenType);
         var scopeString = (string?)parsedInfo.Payload?["scope"];
         var scopes = ParseScopes(scopeString);
+        var roles = ParseStringArray(parsedInfo.Payload?["roles"]);
+        var groups = ParseStringArray(parsedInfo.Payload?["groups"]);
         var actSub = parsedInfo.Payload?["act"]?["sub"]?.GetValue<string>();
 
         context.Features.Set(new AAuthVerificationResult
@@ -247,6 +249,8 @@ public sealed class AAuthVerificationMiddleware
                 : (string?)parsedInfo.Payload?["sub"],
             Subject = (string?)parsedInfo.Payload?["sub"],
             Scopes = scopes,
+            Roles = roles,
+            Groups = groups,
             ActorSubject = actSub,
             Jkt = parsedInfo.ConfirmationKey?.ComputeJwkThumbprint()
                 ?? parsedInfo.Jkt,
@@ -371,9 +375,15 @@ public sealed class AAuthVerificationMiddleware
         if (!AAuthUrl.IsHttpsOrLoopback(iss))
             throw new TokenVerificationException("Auth token 'iss' must be an absolute https:// URL (or http://localhost).");
 
-        // Check issuer allow-list.
-        if (_options.TrustedAuthTokenIssuers is { } trusted && !trusted.Contains(iss))
-            throw new TokenVerificationException($"Auth token issuer '{iss}' is not in the trusted issuers list.");
+        // Fail-closed issuer namespacing: a PS-asserted auth token is trusted
+        // only when its issuer is in the configured allow-list. An unset or
+        // empty allow-list rejects ALL auth tokens — the resource MUST declare
+        // which Person Servers it trusts before it will honor their claims.
+        var trusted = _options.TrustedAuthTokenIssuers;
+        if (trusted is null || trusted.Count == 0 || !trusted.Contains(iss))
+            throw new TokenVerificationException(
+                $"Auth token issuer '{iss}' is not in the trusted issuers list " +
+                "(set AAuthVerificationOptions.TrustedAuthTokenIssuers to the Person Servers this resource trusts).");
 
         var kid = (string?)header["kid"]
             ?? throw new TokenVerificationException("Auth token header is missing 'kid'.");
@@ -508,6 +518,22 @@ public sealed class AAuthVerificationMiddleware
         return new HashSet<string>(
             scopeString.Split(' ', StringSplitOptions.RemoveEmptyEntries),
             StringComparer.Ordinal);
+    }
+
+    private static HashSet<string> ParseStringArray(System.Text.Json.Nodes.JsonNode? node)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        if (node is System.Text.Json.Nodes.JsonArray array)
+        {
+            foreach (var item in array)
+            {
+                if (item is not null && item.GetValueKind() == System.Text.Json.JsonValueKind.String)
+                {
+                    set.Add(item.GetValue<string>());
+                }
+            }
+        }
+        return set;
     }
 }
 

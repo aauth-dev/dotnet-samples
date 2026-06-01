@@ -81,7 +81,9 @@
                 <text>
                     The resource verifies the agent's signature and applies its own access
                     control — granting or denying based on who (or what key) signed the request.
-                    <code>GET /</code> returns <code>200</code> on the first call — no Person Server involved.
+                    The signed request hits the mode's dedicated endpoint
+                    (<code>/hwk</code>, <code>/jkt-jwt</code>, or <code>/jwks-uri</code>) and returns
+                    <code>200</code> on the first call — no Person Server involved.
                     @switch (Session.SigningMode)
                     {
                         case SigningMode.Hwk:

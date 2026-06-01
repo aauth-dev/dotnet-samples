@@ -13,6 +13,7 @@ sequenceDiagram
     Agent->>Resource: GET /data (signed)
     Resource-->>Agent: 401 + resource token
     Agent->>PS: POST /token (resource token)
+    Note over PS: Verifies resource token<br/>(typ/dwk/sig, exp/iat, aud, agent, agent_jkt)
     PS-->>Agent: 202 + {interaction_url, pending_url, code}
     Agent->>User: Present interaction URL + code
     User->>PS: Approve at interaction page
@@ -172,4 +173,5 @@ class BrowserPresenter : IInteractionPresenter
 ## Further Reading
 
 - [PS-Asserted Access](ps-asserted-access.md)
+- [Interaction Chaining](../advanced/interaction-chaining.md) — what an intermediary does when *its* downstream hop returns this same `202` and there is no user attached to the inbound request.
 - [Error Handling](../advanced/error-handling.md)

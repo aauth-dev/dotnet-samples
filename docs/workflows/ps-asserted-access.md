@@ -142,7 +142,7 @@ See [Dependency Injection](../reference/dependency-injection.md) for full option
 1. Agent sends signed request with agent token → resource returns 401 + resource token
 2. `ChallengeHandler` intercepts: extracts resource token from response
 3. `TokenExchangeClient.ExchangeAsync()` posts resource token to PS's `token_endpoint`
-4. PS verifies agent identity, checks consent, returns auth token
+4. PS **verifies the resource token** (`TokenVerifier.VerifyResourceTokenAsync`: `typ`/`dwk`/signature via the issuing resource's JWKS, `exp`/`iat`, `aud`, `agent`, `agent_jkt`), then verifies the agent identity, checks consent, and returns the auth token
 5. `AAuthTokenHolder` is updated with the auth token
 6. `ChallengeHandler` retries the original request (now with auth token in Signature-Key)
 

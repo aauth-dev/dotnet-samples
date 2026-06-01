@@ -31,6 +31,12 @@ public sealed class AAuthVerificationResult
     /// <summary>Verified scopes from the token's <c>scope</c> claim (space-separated → set).</summary>
     public IReadOnlySet<string> Scopes { get; init; } = new HashSet<string>();
 
+    /// <summary>Verified roles from the auth token's <c>roles</c> claim ([@!RFC9068]).</summary>
+    public IReadOnlySet<string> Roles { get; init; } = new HashSet<string>();
+
+    /// <summary>Verified groups from the auth token's <c>groups</c> claim ([@!RFC9068]).</summary>
+    public IReadOnlySet<string> Groups { get; init; } = new HashSet<string>();
+
     /// <summary>Actor subject from <c>act.sub</c> (identifies the agent in auth tokens).</summary>
     public string? ActorSubject { get; init; }
 

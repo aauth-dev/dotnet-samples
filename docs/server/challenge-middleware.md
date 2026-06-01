@@ -86,3 +86,46 @@ app.MapGet("/data", (HttpContext ctx) =>
     // result.Level == AAuthLevel.Authorized
 });
 ```
+
+## Per-Endpoint Scope Challenges
+
+`DefaultScopes` controls which scope the minted resource token requests. To protect
+different endpoints with different scopes, give each one its own challenge branch so
+the 401 asks for exactly the scope that endpoint enforces. This is the pattern the
+WhoAmI sample uses: `/jwt` challenges for `whoami`, while the step-up `/jwt/admin`
+endpoint challenges for `whoami:admin`.
+
+```csharp
+ChallengeOptions ChallengeForScope(string scope) => new()
+{
+    AccessMode = AAuthAccessMode.RequireAuthToken,
+    ResourceSigningKey = resourceKey,
+    ResourceKeyId = "whoami-1",
+    ResourceIdentifier = resourceUrl,
+    DefaultScopes = scope,
+};
+
+// /jwt/admin — declared first so the more specific segment wins. Challenges for
+// the elevated scope.
+app.UseWhen(
+    ctx => ctx.Request.Path.StartsWithSegments("/jwt/admin"),
+    branch =>
+    {
+        branch.UseAAuthVerification(fullVerification);
+        branch.UseAAuthChallenge(ChallengeForScope("whoami:admin"));
+    });
+
+// /jwt — three-party baseline. Challenges for the base scope.
+app.UseWhen(
+    ctx => ctx.Request.Path.StartsWithSegments("/jwt")
+        && !ctx.Request.Path.StartsWithSegments("/jwt/admin"),
+    branch =>
+    {
+        branch.UseAAuthVerification(fullVerification);
+        branch.UseAAuthChallenge(ChallengeForScope("whoami"));
+    });
+```
+
+Because each branch is an isolated pipeline, an agent that lacks the required scope
+receives a challenge for that endpoint's scope and re-exchanges at its PS for an
+auth token carrying it. See `samples/WhoAmI` for the full set of branches.

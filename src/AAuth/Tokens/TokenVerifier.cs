@@ -435,6 +435,92 @@ public sealed class TokenVerifier
         return Verify(jwt, issuerKey, expectedType, expectedDwk, expectedAudience);
     }
 
+    /// <summary>
+    /// Verify a resource token (<c>aa-resource+jwt</c>) presented by an agent,
+    /// per §"Resource Token Verification". Resolves the issuing resource's JWKS
+    /// from <c>{iss}/.well-known/aauth-resource.json</c> and enforces the recipient
+    /// checks: <c>typ</c>, <c>dwk</c>, signature, <c>exp</c>/<c>iat</c>, <c>aud</c>
+    /// (steps 1–4 via <see cref="VerifyWithJwksAsync"/>), then <c>agent</c>,
+    /// <c>agent_jkt</c>, and the optional <c>mission.approver</c> (steps 5–7).
+    /// </summary>
+    /// <param name="jwt">The compact resource token.</param>
+    /// <param name="expectedAudience">
+    /// The recipient's own identifier — the resource token's <c>aud</c> must match
+    /// (e.g. the Person Server's issuer).
+    /// </param>
+    /// <param name="expectedAgentId">
+    /// The agent identifier from the verified HTTP-signature context — must equal
+    /// the token's <c>agent</c>.
+    /// </param>
+    /// <param name="expectedAgentJkt">
+    /// The JWK thumbprint of the agent's signing key from the verified HTTP
+    /// signature — must equal the token's <c>agent_jkt</c>.
+    /// </param>
+    /// <param name="metadata">Metadata client for issuer discovery.</param>
+    /// <param name="jwks">JWKS client for key resolution.</param>
+    /// <param name="expectedApprover">
+    /// When set, the token's <c>mission.approver</c> must match (step 7). Optional —
+    /// resources/PSs without a mission constraint pass <c>null</c>.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public async Task<VerifiedToken> VerifyResourceTokenAsync(
+        string jwt,
+        string expectedAudience,
+        string expectedAgentId,
+        string expectedAgentJkt,
+        MetadataClient metadata,
+        JwksClient jwks,
+        string? expectedApprover = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(jwt);
+        ArgumentException.ThrowIfNullOrEmpty(expectedAudience);
+        ArgumentException.ThrowIfNullOrEmpty(expectedAgentId);
+        ArgumentException.ThrowIfNullOrEmpty(expectedAgentJkt);
+        ArgumentNullException.ThrowIfNull(metadata);
+        ArgumentNullException.ThrowIfNull(jwks);
+
+        // Steps 1–4: typ + dwk + signature (via resource JWKS) + exp/iat + aud.
+        var verified = await VerifyWithJwksAsync(
+            jwt,
+            metadata,
+            jwks,
+            ResourceTokenBuilder.TokenType,
+            ResourceTokenBuilder.ResourceDwk,
+            expectedAudience,
+            cancellationToken).ConfigureAwait(false);
+
+        // Step 5: agent matches the signing agent.
+        var agent = (string?)verified.Payload["agent"];
+        if (agent != expectedAgentId)
+        {
+            throw new TokenVerificationException(
+                $"Resource token 'agent' does not match the signing agent (expected '{expectedAgentId}', got '{agent}').");
+        }
+
+        // Step 6: agent_jkt matches the agent's signing key thumbprint.
+        var agentJkt = (string?)verified.Payload["agent_jkt"];
+        if (agentJkt != expectedAgentJkt)
+        {
+            throw new TokenVerificationException(
+                "Resource token 'agent_jkt' does not match the agent's HTTP signature key (PoP binding mismatch).");
+        }
+
+        // Step 7: optional mission.approver constraint.
+        if (expectedApprover is not null)
+        {
+            var mission = verified.Payload["mission"] as JsonObject;
+            var approver = (string?)mission?["approver"];
+            if (approver != expectedApprover)
+            {
+                throw new TokenVerificationException(
+                    $"Resource token 'mission.approver' does not match expected approver (expected '{expectedApprover}', got '{approver}').");
+            }
+        }
+
+        return verified;
+    }
+
     private void ValidateActDepth(JsonObject act, int depth)
     {
         if (depth > MaxActDepth)

@@ -109,14 +109,14 @@ public sealed class TourSession : IAsyncDisposable
 
     /// <summary>
     /// The effective WhoAmI endpoint URL for the current signing mode.
-    /// Identity-based modes target dedicated paths; three-party targets root.
+    /// Identity-based modes target dedicated paths; three-party targets /jwt.
     /// </summary>
     private string EffectiveResourceUrl => EffectiveSigningMode switch
     {
         SigningMode.Hwk => $"{_options.WhoAmIUrl.TrimEnd('/')}/hwk",
         SigningMode.JktJwt => $"{_options.WhoAmIUrl.TrimEnd('/')}/jkt-jwt",
         SigningMode.JwksUri => $"{_options.WhoAmIUrl.TrimEnd('/')}/jwks-uri",
-        _ => _options.WhoAmIUrl,
+        _ => $"{_options.WhoAmIUrl.TrimEnd('/')}/jwt",
     };
 
     /// <summary>
@@ -190,30 +190,30 @@ public sealed class TourSession : IAsyncDisposable
     private static readonly TourPlanStep[] IdentityPlan =
     {
         new(1, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
-        new(2, "Signed GET / → 200", "Resource trusts identity alone (no PS), returns 200 + claims directly.", Actor.Agent, Actor.Resource),
+        new(2, "Signed GET → 200", "Resource trusts identity alone (no PS) on the per-mode endpoint (/hwk, /jwks-uri, /jkt-jwt), returns 200 + claims directly.", Actor.Agent, Actor.Resource),
     };
 
     private static readonly TourPlanStep[] AutonomousPlan =
     {
         new(1, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
-        new(2, "Signed GET / → 401", "Resource returns 401 with a resource_token + AAuth-Requirement.", Actor.Agent, Actor.Resource),
+        new(2, "Signed GET /jwt → 401", "Resource returns 401 with a resource_token + AAuth-Requirement.", Actor.Agent, Actor.Resource),
         new(3, "Parse the 401 challenge", "Decode the AAuth-Requirement header and resource_token claims.", Actor.Agent, Actor.Agent),
         new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint + jwks_uri.", Actor.Agent, Actor.PersonServer),
         new(5, "Exchange at PS → 200 auth_token", "Signed POST /token with the resource_token; PS mints an aa-auth+jwt immediately.", Actor.Agent, Actor.PersonServer),
-        new(6, "Replay GET / with auth_token", "Signed retry carries the auth_token in Signature-Key → 200 + claims.", Actor.Agent, Actor.Resource),
+        new(6, "Replay GET /jwt with auth_token", "Signed retry carries the auth_token in Signature-Key → 200 + claims.", Actor.Agent, Actor.Resource),
     };
 
     private static readonly TourPlanStep[] DeferredPlan =
     {
         new(1, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
-        new(2, "Signed GET / → 401", "Resource returns 401 with a resource_token + AAuth-Requirement.", Actor.Agent, Actor.Resource),
+        new(2, "Signed GET /jwt → 401", "Resource returns 401 with a resource_token + AAuth-Requirement.", Actor.Agent, Actor.Resource),
         new(3, "Parse the 401 challenge", "Decode the AAuth-Requirement header and resource_token claims.", Actor.Agent, Actor.Agent),
         new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint + jwks_uri.", Actor.Agent, Actor.PersonServer),
         new(5, "Exchange → 202 Accepted", "PS lacks consent; returns 202 + Location + interaction URL + single-use code.", Actor.Agent, Actor.PersonServer),
         new(6, "Direct user to interaction URL", "Agent surfaces the {url}?code={code} link for the user to visit.", Actor.Agent, Actor.Agent),
         new(7, "User approves at the PS", "User opens the PS consent page in a new tab and clicks Approve; PS records consent.", Actor.PersonServer, Actor.PersonServer),
         new(8, "Poll pending URL → 200 auth_token", "Signed GETs to /pending/{id} until the PS mints the auth_token.", Actor.Agent, Actor.PersonServer),
-        new(9, "Replay GET / with auth_token", "Signed retry carries the auth_token in Signature-Key → 200 + claims.", Actor.Agent, Actor.Resource),
+        new(9, "Replay GET /jwt with auth_token", "Signed retry carries the auth_token in Signature-Key → 200 + claims.", Actor.Agent, Actor.Resource),
     };
 
     private static readonly TourPlanStep[] CallChainPlan =
@@ -519,12 +519,15 @@ public sealed class TourSession : IAsyncDisposable
 
             // Call-chain mode needs consent for the Orchestrator audience
             // (the agent's auth_token targets the Orchestrator, not WhoAmI).
+            // The Orchestrator requires its own `orchestrate` scope, so seed
+            // consent for that scope — the PS keys consent by (agent,
+            // resource, scope) and echoes the resource-requested scope.
             if (IsCallChainMode && !string.IsNullOrWhiteSpace(_options.PersonServerUrl))
             {
                 using var adminClient = new HttpClient();
                 await adminClient.PostAsJsonAsync(
                     $"{_options.PersonServerUrl.TrimEnd('/')}/admin/consent",
-                    new { agent = _options.AgentId, resource = _options.OrchestratorUrl!.TrimEnd('/') },
+                    new { agent = _options.AgentId, resource = _options.OrchestratorUrl!.TrimEnd('/'), scope = "orchestrate" },
                     ct);
             }
         }

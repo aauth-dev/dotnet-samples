@@ -188,6 +188,32 @@ builder.Services.AddAAuthResource(options =>
 });
 ```
 
+### Authentication & Authorization Policies
+
+To map verification results into a `ClaimsPrincipal` and enforce per-endpoint
+access, register the AAuth authentication scheme, the authorization handlers, and
+any named scope/role policies:
+
+```csharp
+builder.Services.AddAAuthAuthentication();   // maps result → ClaimsPrincipal
+builder.Services.AddAAuthAuthorization();    // scope handler + built-in policies
+
+// Named convenience policies (apply with RequireAuthorization(...)):
+builder.Services.AddAAuthScopePolicy("AAuth.Scope.data:read", "data:read");
+builder.Services.AddAAuthRolePolicy("AAuth.Role.admin", "admin");
+```
+
+- `AddAAuthAuthorization()` registers the built-in `AAuth.Authenticated`,
+  `AAuth.Identified`, and `AAuth.Authorized` policies plus `AAuthScopeHandler`.
+- `AddAAuthScopePolicy(policyName, requiredScope)` registers a policy that requires
+  an `AAuthLevel.Authorized` auth token carrying `requiredScope` — an agent-token-only
+  (PoP) request cannot satisfy it.
+- `AddAAuthRolePolicy(policyName, requiredRole)` registers a policy that requires an
+  `AAuthLevel.Authorized` auth token plus `requiredRole` (mapped from the token's
+  `roles` claim to the standard `ClaimTypes.Role`).
+
+See [Authorization Policies](../server/authorization-policies.md) for details.
+
 ## Shared Discovery Services
 
 Register shared `MetadataClient` and `JwksClient` singletons with custom cache settings:

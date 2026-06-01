@@ -19,7 +19,7 @@
 <div class="col-md-6">
 <h5>Client Code</h5>
 <pre><code class="language-csharp">// Enrollment (one-time provisioning)
-var keyStore = KeyStore.Default();
+var keyStore = FileKeyStore.Default();
 var apClient = new AgentProviderClient(
     new HttpClient(), keyStore);
 var result = await apClient.EnrolAsync(
@@ -61,7 +61,7 @@ app.UseAAuthChallenge(new ChallengeOptions
     AccessMode = AAuthAccessMode.RequireAuthToken,
 });
 
-app.MapGet("/", (HttpContext ctx) =&gt;
+app.MapGet("/jwt", (HttpContext ctx) =&gt;
 {
     // Middleware already verified the auth token.
     // Claims are available via Features:
@@ -70,9 +70,10 @@ app.MapGet("/", (HttpContext ctx) =&gt;
     return Results.Ok(new
     {
         mode = "three-party",
+        scheme = "jwt",
         agent = r.Agent,
         sub = r.Subject,
-        scope = r.Scopes,
+        scope = r.Scopes, // ["whoami"]
         iss = r.Issuer,
     });
 });</code></pre>
@@ -142,7 +143,7 @@ app.MapGet("/", (HttpContext ctx) =&gt;
                 .WithChallengeHandling()
                 .Build();
 
-            var response = await client.GetAsync(resourceUrl);
+            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/jwt");
 
             _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
             _success = response.IsSuccessStatusCode;

@@ -1,5 +1,7 @@
 @page "/call-chain"
+@using AAuth.Agent
 @using AAuth.Crypto
+@using AAuth.Headers
 @using AAuth.HttpSig
 @inject IJSRuntime JS
 @rendermode InteractiveServer
@@ -9,65 +11,89 @@
 <h2>Call Chain — Multi-Agent Delegation</h2>
 
 <p>
-    Demonstrates multi-hop call chaining: <strong>Agent&nbsp;A</strong> (this app) calls
-    the <strong>Orchestrator</strong> (an intermediate service), which then calls the
-    <strong>WhoAmI</strong> resource. Each hop carries its own AAuth identity. The final
-    response shows all three participants in the chain.
+    Demonstrates multi-hop call chaining with genuine <strong>interaction chaining</strong>:
+    <strong>Agent&nbsp;A</strong> (this app) calls the <strong>Orchestrator</strong> (an
+    intermediate service), which then calls the <strong>WhoAmI</strong> resource. Each hop
+    requires the user's consent at the Person Server:
 </p>
+<ul>
+    <li><strong>Hop&nbsp;1</strong> (Agent&nbsp;A → Orchestrator, scope <code>orchestrate</code>):
+        plain <em>Interaction Required</em> — Agent&nbsp;A relays you to the PS consent page.</li>
+    <li><strong>Hop&nbsp;2</strong> (Orchestrator → WhoAmI, scope <code>whoami</code>):
+        the Orchestrator has no user, so it re-emits its <em>own</em> <code>202</code>
+        (AAuth §Interaction Chaining). Agent&nbsp;A relays you to that consent page too,
+        then receives the final chained result.</li>
+</ul>
 
 <div class="row">
 <div class="col-md-6">
 <h5>Agent (Client) Code</h5>
-<pre><code class="language-csharp">// Agent A builds a signed client with challenge
-// handling — the SDK automatically:
-//   1. Sends agent token → gets 401 + resource_token
-//   2. Exchanges at PS → gets auth token
-//   3. Retries with auth token
-using var client = AAuthClientBuilder.Enrolled(key)
-    .RefreshingFrom(refreshEndpoint, localKeyHandle)
-    .WithKeyStore(keyStore)
-    .WithChallengeHandling(personServer)
+<pre><code class="language-csharp">// Agent A wires TWO callbacks. Hop 1 (the PS exchange
+// 202) flows through the challenge pipeline; hop 2 (the
+// Orchestrator's CHAINED resource 202) flows through the
+// interaction pipeline. Both surface a consent URL.
+using var client = AAuthClientBuilder.SelfIssuing(key)
+    .As(issuer, agentId)
+    .WithKid(keyId)
+    .WithPersonServer(personServer)
+    .WithChallengeHandling(opts =&gt;
+    {   // hop 1: PS exchange 202
+        opts.OnInteractionRequired =
+            (interaction, ct) =&gt;
+                Surface(interaction.BuildUserUrl());
+    })
+    .WithInteractionHandling(opts =&gt;
+    {   // hop 2: Orchestrator's chained 202
+        opts.OnInteractionRequired =
+            (userUrl, code, ct) =&gt; Surface(userUrl);
+    })
     .Build();
 
 // Calls the Orchestrator (not WhoAmI directly).
-// The challenge is handled transparently.
-var response = await client.GetAsync(
-    orchestratorUrl);</code></pre>
+var response = await client.GetAsync(orchestratorUrl);</code></pre>
 </div>
 <div class="col-md-6">
-<h5>Orchestrator (Server) Setup</h5>
-<pre><code class="language-csharp">// The Orchestrator is BOTH a resource AND an agent.
-// DI setup:
-builder.Services.AddSingleton(new TokenVerifier());
-builder.Services.AddSingleton&lt;MetadataClient&gt;(...);
-builder.Services.AddSingleton&lt;JwksClient&gt;(...);
-
-// Full issuer verification — validates JWT signatures
-// via JWKS discovery for both agent and auth tokens.
-app.UseAAuthVerification(new AAuthVerificationOptions
+<h5>Orchestrator Handler (interaction chaining)</h5>
+<pre><code class="language-csharp">// The Orchestrator is BOTH a resource AND an agent,
+// but has NO user — so its downstream client CHAINS
+// the interaction instead of relaying it: the callback
+// THROWS, unwinding the exchange before it blocks.
+async Task&lt;IResult&gt; RunChainAsync(HttpContext ctx, string upstream)
 {
-    ResourceIdentifier = orchestratorUrl,
-    RequireIssuerVerification = true,
-});</code></pre>
-<h5 class="mt-3">Orchestrator Handler</h5>
-<pre><code class="language-csharp">// Middleware: auto-challenges agent tokens with a resource token.
-// Only auth-token callers reach the handler.
-app.UseAAuthIntermediary(verificationOptions, challengeOptions);
-
-app.MapGet("/", async (HttpContext ctx) =&gt;
-{
-    // Auth token → call downstream with chaining.
-    // WithCallChaining reads the upstream token from
-    // the verified auth token automatically.
-    using var client = AAuthClientBuilder.SelfIssuing(key)
+    using var downstream = AAuthClientBuilder
+        .SelfIssuing(orchestratorKey)
         .As(orchestratorUrl, agentId)
+        .WithKid(kid)
         .WithPersonServer(psUrl)
-        .WithCallChaining(ctx) // upstream_token + mission
+        .WithCallChaining(upstream)   // relay upstream token
+        .WithChallengeHandling(opts =&gt;
+        {
+            opts.OnInteractionRequired = (i, _) =&gt;
+                throw new AAuthInteractionChainedException(i);
+            opts.Capabilities = Array.Empty&lt;string&gt;();
+        })
         .Build();
-    var result = await client.GetAsync(downstreamUrl);
-    return Results.Content(
-        await result.Content.ReadAsStringAsync(),
-        "application/json");
+
+    var r = await downstream.GetAsync($"{whoAmIUrl}/jwt");
+    return Results.Ok(/* combined chain result */);
+}
+
+app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
+{
+    var upstream = ctx.Features
+        .Get&lt;UpstreamAuthTokenFeature&gt;()!.Token;
+    try
+    {
+        return await RunChainAsync(ctx, upstream);
+    }
+    catch (AAuthInteractionChainedException ex)
+    {
+        // Downstream needs consent. Park it and
+        // re-emit our OWN 202 to the caller.
+        var e = pending.Add(upstream,
+            ex.Interaction.Url, ex.Interaction.Code);
+        return ReEmitChainedInteraction(ctx, e);
+    }
 });</code></pre>
 </div>
 </div>
@@ -76,9 +102,58 @@ app.MapGet("/", async (HttpContext ctx) =&gt;
     Self-issued agent identity. Key ID: <code>@_identity.KeyId</code>
 </div>
 
-<button class="btn btn-primary" @onclick="SendChainedRequest" disabled="@_loading">
-    @(_loading ? "Sending..." : "Send Chained Request (Agent → Orchestrator → WhoAmI)")
-</button>
+@if (!_waitingForApproval && _response is null)
+{
+    <button class="btn btn-primary" @onclick="SendChainedRequest" disabled="@_loading">
+        @(_loading ? "Sending..." : "Send Chained Request (Agent → Orchestrator → WhoAmI)")
+    </button>
+    <p class="text-muted mt-1">
+        <small>
+            <strong>Heads up:</strong> this chain needs <strong>two</strong> separate approvals —
+            you will be asked to click <strong>Approve</strong> <strong>twice</strong>, once per hop.
+        </small>
+    </p>
+}
+
+@if (_waitingForApproval)
+{
+    @* Hop 1 = blue (primary), Hop 2 = purple-ish (info) so the two distinct
+       approvals are visually obvious. *@
+    <div class="mt-3 alert @(_currentHopNumber == 1 ? "alert-primary" : "alert-info")">
+        <h5>
+            <span class="badge @(_currentHopNumber == 1 ? "bg-primary" : "bg-info") me-2">
+                Approval @_currentHopNumber of 2
+            </span>
+            @_currentHop
+        </h5>
+        <p>A <code>202 Accepted</code> was returned and is waiting for you to approve.</p>
+        <p>
+            <strong>Interaction URL:</strong><br />
+            <a href="@_interactionUrl" target="_blank" rel="noopener">@_interactionUrl</a>
+        </p>
+        <p class="text-muted">
+            Open the link above in a new tab and click <strong>Approve</strong>.
+            @if (_currentHopNumber == 1)
+            {
+                <text>Then come back — a <strong>second</strong> approval (hop 2) will appear here.</text>
+            }
+            else
+            {
+                <text>This is the <strong>second and final</strong> approval; the chain completes after it.</text>
+            }
+            The SDK is polling in the background&hellip;
+            <span class="spinner-border spinner-border-sm" role="status"></span>
+            (@_pollCount polls)
+        </p>
+    </div>
+}
+
+@if (_approvedHops.Count > 0)
+{
+    <div class="mt-2">
+        <small class="text-muted">Approved: @string.Join(", ", _approvedHops)</small>
+    </div>
+}
 
 @if (_response is not null)
 {
@@ -101,6 +176,12 @@ app.MapGet("/", async (HttpContext ctx) =&gt;
     [Inject] private IConfiguration Config { get; set; } = default!;
 
     private bool _loading;
+    private bool _waitingForApproval;
+    private string? _interactionUrl;
+    private string? _currentHop;
+    private int _currentHopNumber;
+    private readonly List<string> _approvedHops = new();
+    private int _pollCount;
     private string? _response;
     private string? _error;
     private string? _statusCode;
@@ -116,58 +197,107 @@ app.MapGet("/", async (HttpContext ctx) =&gt;
         _loading = true;
         _response = null;
         _error = null;
+        _waitingForApproval = false;
+        _interactionUrl = null;
+        _currentHop = null;
+        _currentHopNumber = 0;
+        _approvedHops.Clear();
+        _pollCount = 0;
 
         try
         {
             var personServer = Config["AAuth:PersonServer"]!;
             var orchestratorUrl = Config["AAuth:Orchestrator"]!;
 
-            // Pre-grant consent so the PS issues tokens immediately
-            await GrantConsentAsync(orchestratorUrl);
+            var hopIndex = 0;
 
-            // Self-issued token refresh — no AP round-trip needed
+            // Surfaces a consent URL to the UI. Hop 1 (PS exchange 202) arrives
+            // via the challenge pipeline; hop 2 (the Orchestrator's chained 202)
+            // arrives via the top-level interaction pipeline. Both funnel here.
+            async Task SurfaceInteraction(string userUrl)
+            {
+                if (_currentHop is not null)
+                {
+                    _approvedHops.Add(_currentHop);
+                }
+                hopIndex++;
+                _currentHopNumber = hopIndex;
+                _currentHop = hopIndex == 1
+                    ? "Hop 1: Agent → Orchestrator (orchestrate)"
+                    : "Hop 2: Orchestrator → WhoAmI (whoami, chained)";
+                _interactionUrl = userUrl;
+                _waitingForApproval = true;
+                await InvokeAsync(StateHasChanged);
+            }
+
+            // Self-issued token refresh + interaction relay. A 202 from the PS
+            // (hop 1) or the Orchestrator's chained 202 (hop 2) both surface a
+            // consent URL here; the SDK then polls and resumes.
             using var client = AAuthClientBuilder.SelfIssuing(_identity.Key)
                 .As(_identity.Issuer, _identity.AgentId)
                 .WithKid(_identity.KeyId)
                 .WithPersonServer(personServer)
-                .WithChallengeHandling()
+                .WithChallengeHandling(opts =>
+                {
+                    opts.OnInteractionRequired = (interaction, ct) =>
+                        SurfaceInteraction(interaction.BuildUserUrl());
+                    opts.PollingTimeout = TimeSpan.FromMinutes(2);
+                    opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
+                })
+                .WithInteractionHandling(opts =>
+                {
+                    opts.OnInteractionRequired = (userUrl, code, ct) =>
+                        SurfaceInteraction(userUrl);
+                    opts.PollingTimeout = TimeSpan.FromMinutes(2);
+                    opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
+                })
                 .Build();
+
+            // Background timer to update the poll count in the UI.
+            using var pollTimer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+            var pollTask = Task.Run(async () =>
+            {
+                while (await pollTimer.WaitForNextTickAsync())
+                {
+                    _pollCount++;
+                    await InvokeAsync(StateHasChanged);
+                }
+            });
 
             var response = await client.GetAsync(orchestratorUrl);
 
+            pollTimer.Dispose();
+
+            if (_currentHop is not null)
+            {
+                _approvedHops.Add(_currentHop);
+                _currentHop = null;
+            }
+            _waitingForApproval = false;
             _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
             _success = response.IsSuccessStatusCode;
             var raw = await response.Content.ReadAsStringAsync();
             try { _response = System.Text.Json.JsonSerializer.Serialize(System.Text.Json.JsonDocument.Parse(raw), new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }); }
             catch { _response = raw; }
         }
+        catch (AAuthInteractionDeniedException)
+        {
+            _waitingForApproval = false;
+            _error = "The user denied the consent request.";
+        }
+        catch (AAuthInteractionTimeoutException)
+        {
+            _waitingForApproval = false;
+            _error = "Timed out waiting for user approval (polling budget expired).";
+        }
         catch (Exception ex)
         {
+            _waitingForApproval = false;
             _error = ex.Message;
         }
         finally
         {
             _loading = false;
-        }
-    }
-
-    private async Task GrantConsentAsync(string resource)
-    {
-        var personServer = Config["AAuth:PersonServer"];
-        if (string.IsNullOrEmpty(personServer)) return;
-
-        var agentId = _identity.AgentId;
-
-        using var http = new HttpClient();
-        try
-        {
-            await http.PostAsJsonAsync(
-                $"{personServer.TrimEnd('/')}/admin/consent",
-                new { agent = agentId, resource = resource.TrimEnd('/') });
-        }
-        catch
-        {
-            // /admin/consent only exists on MockPersonServer — swallow
         }
     }
 }

@@ -33,6 +33,20 @@ var builder = WebApplication.CreateBuilder(args);
 var psKey = AAuthKey.Generate();
 const string PsKid = "ps-1";
 const string PsScope = "whoami";
+const string PsAdminScope = "whoami:admin";
+// Demo identity claims the mock PS asserts about the user. A production PS
+// would resolve these from the signed-in user's directory entry. These let
+// the WhoAmI `/jwt/roles` (RBAC) endpoint succeed end-to-end.
+//
+// Roles/groups are asserted ONLY for recognized "admin" demo agents (those
+// whose id is `aauth:demo@...`). Any other agent receives an auth token
+// without the role, so role-based DENIAL is exercised end-to-end (a guest
+// agent calling `/jwt/roles` gets a 403). A production PS would resolve the
+// principal's directory membership instead of a hard-coded prefix.
+string[] demoRoles = ["whoami-admin"];
+string[] demoGroups = ["demo-users"];
+static bool IsAdminAgent(string agentId) =>
+    agentId.StartsWith("aauth:demo@", StringComparison.Ordinal);
 var psIssuer = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5100";
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
 var requireConsent = builder.Configuration.GetValue<bool>("MockPersonServer:RequireConsent");
@@ -72,6 +86,7 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
     ScopeDescriptions = new Dictionary<string, string>
     {
         [PsScope] = "Issue AAuth auth tokens for WhoAmI",
+        [PsAdminScope] = "Issue elevated (admin) AAuth auth tokens for WhoAmI",
     },
     SignatureWindow = signatureWindowSeconds,
 });
@@ -112,9 +127,9 @@ app.UseWhen(
 //        - cnf.jwk = the agent's confirmation key (binds PoP)
 //   4. We return { "auth_token": "..." }.
 //
-// This mock does NOT verify the resource_token's signature — a production
-// PS would fetch the resource's JWKS and verify it. Sufficient for the
-// demo and for exercising the agent's three-party retry path.
+// This mock verifies the resource_token per §"Resource Token Verification"
+// using the SDK helper TokenVerifier.VerifyResourceTokenAsync (JWKS discovery
+// against the issuing resource). A forged or tampered token is rejected.
 // -----------------------------------------------------------------------
 app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore pending) =>
 {
@@ -187,44 +202,59 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
         upstreamAct = result.UpstreamAct;
     }
 
-    // Decode the resource token's `iss` claim — that's the resource URL
-    // and becomes the auth token's `aud`.
+    // Verify the resource token per §"Resource Token Verification" before we
+    // act on any of its claims. The SDK helper resolves the issuing resource's
+    // JWKS from `{iss}/.well-known/aauth-resource.json` and enforces typ/dwk/
+    // signature/exp/iat/aud (steps 1-4) plus agent + agent_jkt (steps 5-6).
+    // The verified `iss` is the resource URL and becomes the auth token's
+    // `aud`; the verified `scope` is echoed into the issued auth token.
+    var tokenVerifier = app.Services.GetRequiredService<TokenVerifier>();
+    var metadataClient = app.Services.GetRequiredService<MetadataClient>();
+    var jwksClient = app.Services.GetRequiredService<JwksClient>();
     string audience;
+    string requestedScope = PsScope;
     try
     {
-        var segments = resourceTokenJwt.Split('.');
-        if (segments.Length != 3)
+        var verifiedResourceToken = await tokenVerifier.VerifyResourceTokenAsync(
+            resourceTokenJwt,
+            expectedAudience: psIssuer,
+            expectedAgentId: agentId,
+            expectedAgentJkt: parsed.ConfirmationKey!.ComputeJwkThumbprint(),
+            metadataClient,
+            jwksClient);
+
+        audience = (string?)verifiedResourceToken.Payload["iss"]
+            ?? throw new TokenVerificationException("resource_token missing iss");
+        // Echo the requested scope (space-separated set permitted). Fall back
+        // to the PS's base scope when the resource token omits it.
+        var scopeClaim = (string?)verifiedResourceToken.Payload["scope"];
+        if (!string.IsNullOrWhiteSpace(scopeClaim))
         {
-            throw new FormatException("not a compact JWT");
-        }
-        var payload = (JsonObject?)JsonNode.Parse(
-            Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(segments[1]))
-            ?? throw new FormatException("payload is not a JSON object");
-        audience = (string?)payload["iss"]
-            ?? throw new FormatException("resource_token missing iss");
-        // The resource_token signature is NOT verified by this mock PS (see
-        // file-level comment). Validate at least that `iss` is an absolute
-        // http(s) URL so a forged token can't smuggle a `javascript:` or
-        // garbage `aud` into the minted auth_token.
-        if (!Uri.TryCreate(audience, UriKind.Absolute, out var audUri)
-            || (audUri.Scheme != Uri.UriSchemeHttps && audUri.Scheme != Uri.UriSchemeHttp))
-        {
-            throw new FormatException("resource_token iss must be an absolute http(s) URL");
+            requestedScope = scopeClaim;
         }
     }
-    catch (Exception ex) when (ex is FormatException or System.Text.Json.JsonException)
+    catch (TokenVerificationException ex)
     {
-        return Results.Json(new { error = "invalid_request", detail = $"malformed resource_token: {ex.Message}" },
-            statusCode: StatusCodes.Status400BadRequest);
+        // §Error Response Format: a resource token that fails verification is
+        // rejected outright — the consent screen and issued auth token derive
+        // only from a verified token.
+        var expired = ex.Message.Contains("expired", StringComparison.OrdinalIgnoreCase);
+        return Results.Json(
+            new
+            {
+                error = expired ? "expired_resource_token" : "invalid_resource_token",
+                detail = ex.Message,
+            },
+            statusCode: StatusCodes.Status401Unauthorized);
     }
 
     // Consent gate. If the PS is configured to require consent and the
     // (agent, resource, scope) triple hasn't been approved yet, park the
     // request and tell the agent to direct its user to the interaction
     // endpoint while polling the pending URL.
-    if (requireConsent && !consent.IsConsented(agentId, audience, PsScope))
+    if (requireConsent && !consent.IsConsented(agentId, audience, requestedScope))
     {
-        var entry = pending.Add(agentId, audience, PsScope, resourceTokenJwt, parsed.ConfirmationKey!, upstreamAct);
+        var entry = pending.Add(agentId, audience, requestedScope, resourceTokenJwt, parsed.ConfirmationKey!, upstreamAct);
         var location = $"/pending/{entry.Id}";
         var interactionUrl = $"{psIssuer.TrimEnd('/')}/interaction";
         ctx.Response.Headers.Location = location;
@@ -235,7 +265,7 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
         return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
     }
 
-    var authToken = IssueAuthToken(agentId, audience, parsed.ConfirmationKey!, upstreamAct);
+    var authToken = IssueAuthToken(agentId, audience, requestedScope, parsed.ConfirmationKey!, upstreamAct);
     return Results.Ok(new { auth_token = authToken });
 });
 
@@ -279,7 +309,7 @@ app.MapGet("/pending/{id}", (HttpContext ctx, string id, ConsentStore consent, P
     // intentionally leave the entry in place so a slow poller still gets
     // a deterministic answer on its next request; a production PS would
     // expire pending entries on a timer.
-    var authToken = IssueAuthToken(entry.Agent, entry.Resource, entry.AgentConfirmationKey, entry.UpstreamAct);
+    var authToken = IssueAuthToken(entry.Agent, entry.Resource, entry.Scope, entry.AgentConfirmationKey, entry.UpstreamAct);
     return Results.Ok(new { auth_token = authToken });
 });
 
@@ -428,7 +458,7 @@ app.Run();
 // -----------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------
-string IssueAuthToken(string agentId, string audience, IAAuthKey confirmationKey, JsonObject? upstreamAct = null)
+string IssueAuthToken(string agentId, string audience, string scope, IAAuthKey confirmationKey, JsonObject? upstreamAct = null)
     => new AuthTokenBuilder
     {
         Issuer = psIssuer,
@@ -438,7 +468,9 @@ string IssueAuthToken(string agentId, string audience, IAAuthKey confirmationKey
         Key = psKey,
         KeyId = PsKid,
         Subject = "pairwise-sub",
-        Scope = PsScope,
+        Scope = scope,
+        Roles = IsAdminAgent(agentId) ? demoRoles : null,
+        Groups = IsAdminAgent(agentId) ? demoGroups : null,
         UpstreamAct = upstreamAct,
     }.Build();
 

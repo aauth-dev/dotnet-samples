@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
 
@@ -47,6 +48,18 @@ public sealed class AuthTokenBuilder
 
     /// <summary>Granted scopes, space-separated.</summary>
     public string? Scope { get; init; }
+
+    /// <summary>
+    /// Enterprise <c>roles</c> claim ([@!RFC9068]) — the user's roles asserted
+    /// by the PS/AS. Emitted as a JSON string array when non-empty.
+    /// </summary>
+    public IReadOnlyList<string>? Roles { get; init; }
+
+    /// <summary>
+    /// Enterprise <c>groups</c> claim ([@!RFC9068]) — the user's groups asserted
+    /// by the PS/AS. Emitted as a JSON string array when non-empty.
+    /// </summary>
+    public IReadOnlyList<string>? Groups { get; init; }
 
     /// <summary>Pairwise pseudonymous user identifier.</summary>
     public string? Subject { get; init; }
@@ -150,6 +163,14 @@ public sealed class AuthTokenBuilder
         {
             payload["scope"] = Scope;
         }
+        if (Roles is { Count: > 0 })
+        {
+            payload["roles"] = ToJsonArray(Roles);
+        }
+        if (Groups is { Count: > 0 })
+        {
+            payload["groups"] = ToJsonArray(Groups);
+        }
 
         return JwtWriter.SignCompact(header, payload, Key);
     }
@@ -160,6 +181,16 @@ public sealed class AuthTokenBuilder
         {
             throw new InvalidOperationException($"{name} must be a non-empty string.");
         }
+    }
+
+    private static JsonArray ToJsonArray(IReadOnlyList<string> values)
+    {
+        var array = new JsonArray();
+        foreach (var value in values)
+        {
+            array.Add(value);
+        }
+        return array;
     }
 
 }

@@ -138,6 +138,42 @@ var auth = verifier.VerifyAuthToken(
     expectedAgentId: "aauth:myapp@ap.example");
 ```
 
+### Verifying a presented resource token (PS/AS side)
+
+When an agent exchanges a `resource_token` at the PS/AS `/token` endpoint, the
+recipient MUST verify it before minting an auth token (spec §"Resource Token
+Verification"). `VerifyResourceTokenAsync` performs JWKS discovery and all seven
+recipient checks in one call:
+
+```csharp
+var verified = await verifier.VerifyResourceTokenAsync(
+    jwt: resourceTokenString,
+    expectedAudience: psIssuer,                 // this PS/AS own identifier (aud)
+    expectedAgentId: agentId,                   // from the verified HTTP signature
+    expectedAgentJkt: confirmationKey.ComputeJwkThumbprint(),
+    metadata: metadataClient,                   // resolves {iss}/.well-known/aauth-resource.json
+    jwks: jwksClient,                           // resolves the resource's signing key
+    expectedApprover: null);                    // optional: mission.approver constraint
+```
+
+The seven checks (failure throws `TokenVerificationException`):
+
+| # | Check | Detail |
+|---|-------|--------|
+| 1 | `typ` | Must be `aa-resource+jwt` |
+| 2 | `dwk` + signature | `dwk=aauth-resource.json`; key resolved from `{iss}/.well-known/aauth-resource.json` → `jwks_uri` |
+| 3 | `exp` / `iat` | Within validity (honours `ClockSkew`) |
+| 4 | `aud` | Equals `expectedAudience` |
+| 5 | `agent` | Equals `expectedAgentId` from the verified HTTP signature |
+| 6 | `agent_jkt` | Equals the presenting agent's key thumbprint (PoP binding) |
+| 7 | `mission.approver` | When `expectedApprover` is set, must match |
+
+Map failures to the spec error response — `expired_resource_token` for an expired
+token, otherwise `invalid_resource_token` — and derive the consent screen and the
+issued auth token only from the verified payload. The shipped
+[`samples/MockPersonServer`](../../samples/MockPersonServer/) `/token` handler
+follows exactly this pattern.
+
 ## Further Reading
 
 - [Verification Middleware](verification-middleware.md) — signature verification before token logic

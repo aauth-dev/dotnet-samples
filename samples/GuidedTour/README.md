@@ -40,6 +40,13 @@ the default in `appsettings.json`:
 The Identity flow also exposes a **Signing Mode** picker (`hwk` or
 `jwks_uri`); three-party flows always use `jwt` per spec.
 
+WhoAmI now serves each flow from an isolated, per-mode endpoint rather
+than a single root path: `GET /hwk` and `GET /jkt-jwt` (pseudonymous),
+`GET /jwks-uri` (agent identity), and `GET /jwt` (three-party PS-asserted).
+WhoAmI also exposes `GET /jwt/admin` (elevated scope `whoami:admin`) and
+`GET /jwt/roles` (RBAC roles + groups); the tour exercises the base
+`GET /jwt` path. `GET /` is an unauthenticated index listing the flows.
+
 ### Bootstrap (2–3 steps)
 
 When no Agent Provider URL is configured (local bootstrap):
@@ -67,11 +74,11 @@ Assumes the agent is already bootstrapped (key + token exist).
 Assumes the agent is already bootstrapped.
 
 1. Discover resource metadata — unsigned `GET /.well-known/aauth-resource.json`.
-2. Signed `GET /` → **`401`** with a `resource_token` + `AAuth-Requirement`.
+2. Signed `GET /jwt` → **`401`** with a `resource_token` + `AAuth-Requirement`.
 3. Parse the 401 challenge (decode header + `resource_token` claims).
 4. Discover Person Server — unsigned `GET /.well-known/aauth-person.json`.
 5. Signed `POST /token` (exchange) → **`200`** + `auth_token`.
-6. Signed `GET /` carrying the `auth_token` → 200 + claims.
+6. Signed `GET /jwt` carrying the `auth_token` → 200 + claims.
 
 ### PS-Asserted / Deferred (9 steps)
 
@@ -96,7 +103,7 @@ Steps 1–4 are the same as **Direct Grant**. From step 5 onward:
       `AAuthInteractionDeniedException`; the loop box turns red.
     * **Polling budget expires** (5 minutes by default) → SDK throws
       `AAuthInteractionTimeoutException`; the loop box turns amber.
-9. Signed `GET /` carrying the `auth_token` → 200 + claims (only on the
+9. Signed `GET /jwt` carrying the `auth_token` → 200 + claims (only on the
    approve path).
 
 ### Call Chain / Multi-Agent (7 steps)
@@ -114,7 +121,8 @@ to produce a nested `act` claim.
    the Orchestrator.
 6. Signed `GET /` carrying the `auth_token` → **`200`**. Internally the
    Orchestrator performs its own challenge/exchange/retry cycle against
-   WhoAmI, shown as sub-step arrows in the sequence diagram.
+   WhoAmI's `GET /jwt` endpoint, shown as sub-step arrows in the sequence
+   diagram.
 7. Inspect multi-agent result — view the combined response with nested
    `act` claims proving the full Agent → Orchestrator → Resource chain.
 

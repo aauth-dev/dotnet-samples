@@ -1,11 +1,8 @@
-using System.Text.Json.Nodes;
-using AAuth;
 using AAuth.Crypto;
 using AAuth.DependencyInjection;
 using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Server;
-using AAuth.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -17,16 +14,30 @@ var builder = WebApplication.CreateBuilder(args);
 // load a stable key from secure storage.
 var resourceKey = AAuthKey.Generate();
 const string ResourceKid = "whoami-1";
-const string ResourceScope = "whoami";
+
+// Scope + role taxonomy this resource recognises.
+//   whoami        — basic profile read (three-party baseline)
+//   whoami:admin  — elevated profile access (step-up scope)
+//   whoami-admin  — RBAC role asserted by the PS
+const string ScopeWhoami = "whoami";
+const string ScopeWhoamiAdmin = "whoami:admin";
+const string RoleWhoamiAdmin = "whoami-admin";
+
 var resourceUrl = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5000";
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
+
+// Person Server(s) this resource trusts to assert user identity. Fail-closed:
+// an auth token from any other issuer is rejected at verification. The demo
+// trusts the local MockPersonServer; override via `AAuth:TrustedPersonServers`.
+var trustedPersonServers = new HashSet<string>(
+    builder.Configuration.GetSection("AAuth:TrustedPersonServers").Get<string[]>()
+        ?? new[] { "http://localhost:5100" });
 
 builder.Services.AddSingleton(resourceKey);
 builder.Services.AddSingleton(new AAuthVerifier
 {
     MaxAge = TimeSpan.FromSeconds(signatureWindowSeconds),
 });
-builder.Services.AddSingleton(new TokenVerifier());
 builder.Services.AddSingleton<IJtiStore, InMemoryJtiStore>();
 builder.Services.AddSingleton<MetadataClient>(sp =>
     new MetadataClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-metadata")));
@@ -36,6 +47,18 @@ builder.Services.AddSingleton<ISignatureKeyResolver>(sp =>
     new DefaultSignatureKeyResolver(sp.GetRequiredService<JwksClient>()));
 builder.Services.AddHttpClient("aauth-metadata");
 builder.Services.AddHttpClient("aauth-jwks");
+
+// -----------------------------------------------------------------------
+// Layer 2: authentication scheme + authorization policies.
+// The AAuth handler maps the verification result (written to Features by the
+// verification middleware) into a ClaimsPrincipal, then scope/role/level
+// policies enforce access per endpoint.
+// -----------------------------------------------------------------------
+builder.Services.AddAAuthAuthentication();
+builder.Services.AddAAuthAuthorization();
+builder.Services.AddAAuthScopePolicy("AAuth.Scope.whoami", ScopeWhoami);
+builder.Services.AddAAuthScopePolicy("AAuth.Scope.whoami:admin", ScopeWhoamiAdmin);
+builder.Services.AddAAuthRolePolicy("AAuth.Role.whoami-admin", RoleWhoamiAdmin);
 
 var app = builder.Build();
 
@@ -50,51 +73,122 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
     SigningKeys = new Dictionary<string, AAuthKey> { [ResourceKid] = resourceKey },
     ScopeDescriptions = new Dictionary<string, string>
     {
-        [ResourceScope] = "See basic profile information",
+        [ScopeWhoami] = "See basic profile information",
+        [ScopeWhoamiAdmin] = "See and manage administrative profile information",
     },
     SignatureWindow = signatureWindowSeconds,
 });
 
+// Verification options shared by the pseudonymous / identity flows (no issuer
+// check — these schemes carry no auth-token issuer to verify).
+static AAuthVerificationOptions SignatureOnly() => new()
+{
+    RequireIssuerVerification = false,
+};
+
+// Verification options for the three-party JWT flows (full issuer verification
+// via JWKS discovery, audience bound to this resource).
+AAuthVerificationOptions FullVerification() => new()
+{
+    ResourceIdentifier = resourceUrl,
+    RequireIssuerVerification = true,
+    TrustedAuthTokenIssuers = trustedPersonServers,
+};
+
+// Challenge options for a three-party endpoint requesting a specific scope.
+// When only an agent token is presented, the middleware returns a 401 with a
+// resource token (aud = agent token's `ps`) requesting `scope`.
+ChallengeOptions ChallengeForScope(string scope) => new()
+{
+    AccessMode = AAuthAccessMode.RequireAuthToken,
+    ResourceSigningKey = resourceKey,
+    ResourceKeyId = ResourceKid,
+    ResourceIdentifier = resourceUrl,
+    DefaultScopes = scope,
+};
+
 // -----------------------------------------------------------------------
-// Per-path middleware: each access mode gets the correct verification level.
+// Isolated verification pipelines — one branch per access mode. Each branch
+// is self-contained: the most specific paths (/jwt/admin, /jwt/roles) are
+// declared before the general /jwt branch so segment matching stays
+// unambiguous without negative path matching.
 // -----------------------------------------------------------------------
 
-// /hwk — pseudonymous: only HTTP signature verification, no JWT issuer check.
+// /hwk — pseudonymous: HTTP signature only, no JWT issuer check.
 app.UseWhen(
     ctx => ctx.Request.Path.StartsWithSegments("/hwk"),
-    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
-    {
-        RequireIssuerVerification = false,
-    }));
+    branch => branch.UseAAuthVerification(SignatureOnly()));
 
-// /jkt-jwt — pseudonymous with key delegation: HTTP signature verified against
-// the ephemeral key bound in the naming JWT. No issuer check needed.
+// /jkt-jwt — pseudonymous with key delegation via naming JWT.
 app.UseWhen(
     ctx => ctx.Request.Path.StartsWithSegments("/jkt-jwt"),
-    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
-    {
-        RequireIssuerVerification = false,
-    }));
+    branch => branch.UseAAuthVerification(SignatureOnly()));
 
-// /jwks-uri — agent identity: HTTP signature verified against published JWKS.
+// /jwks-uri — agent identity: signature verified against published JWKS.
 app.UseWhen(
     ctx => ctx.Request.Path.StartsWithSegments("/jwks-uri"),
-    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
-    {
-        RequireIssuerVerification = false,
-    }));
+    branch => branch.UseAAuthVerification(SignatureOnly()));
 
-// /jwt and / — three-party: FULL issuer verification via JWKS discovery.
+// /jwt/admin — three-party elevated: full verification + challenge for the
+// elevated `whoami:admin` scope.
 app.UseWhen(
-    ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
-        && !ctx.Request.Path.StartsWithSegments("/hwk")
-        && !ctx.Request.Path.StartsWithSegments("/jkt-jwt")
-        && !ctx.Request.Path.StartsWithSegments("/jwks-uri"),
-    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+    ctx => ctx.Request.Path.StartsWithSegments("/jwt/admin"),
+    branch =>
     {
-        ResourceIdentifier = resourceUrl,
-        RequireIssuerVerification = true,
-    }));
+        branch.UseAAuthVerification(FullVerification());
+        branch.UseAAuthChallenge(ChallengeForScope(ScopeWhoamiAdmin));
+    });
+
+// /jwt/roles — three-party RBAC: full verification + challenge for the base
+// `whoami` scope; the role is enforced from the auth token's `roles` claim.
+//
+// DEPENDENCY: the challenge only asks the PS for the `whoami` scope — roles
+// are asserted at the PS's discretion (the spec says a PS MAY assert roles).
+// If a spec-compliant PS issues a `whoami` auth token WITHOUT the
+// `whoami-admin` role, the role policy below returns an unrecoverable 403:
+// there is no automatic step-up re-challenge (insufficient-scope/role
+// step-up, spec G7, is out of scope for this sample). The mock PS asserts
+// the role only for `aauth:demo@...` agents, so a non-admin agent
+// deliberately hits that 403 path.
+app.UseWhen(
+    ctx => ctx.Request.Path.StartsWithSegments("/jwt/roles"),
+    branch =>
+    {
+        branch.UseAAuthVerification(FullVerification());
+        branch.UseAAuthChallenge(ChallengeForScope(ScopeWhoami));
+    });
+
+// /jwt — three-party baseline: full verification + challenge for `whoami`.
+app.UseWhen(
+    ctx => ctx.Request.Path.StartsWithSegments("/jwt")
+        && !ctx.Request.Path.StartsWithSegments("/jwt/admin")
+        && !ctx.Request.Path.StartsWithSegments("/jwt/roles"),
+    branch =>
+    {
+        branch.UseAAuthVerification(FullVerification());
+        branch.UseAAuthChallenge(ChallengeForScope(ScopeWhoami));
+    });
+
+// Layer 2 runs globally; per-endpoint policies decide what is required.
+app.UseAuthentication();
+app.UseAuthorization();
+
+// -----------------------------------------------------------------------
+// GET / — Flow index. No AAuth required; lists the isolated access modes.
+// -----------------------------------------------------------------------
+app.MapGet("/", () => Results.Ok(new
+{
+    resource = "WhoAmI Demo",
+    flows = new[]
+    {
+        new { path = "/hwk", mode = "pseudonymous", auth = "signature only" },
+        new { path = "/jkt-jwt", mode = "pseudonymous (key delegation)", auth = "signature only" },
+        new { path = "/jwks-uri", mode = "agent-identity", auth = "AAuth.Identified" },
+        new { path = "/jwt", mode = "three-party", auth = "AAuth.Scope.whoami" },
+        new { path = "/jwt/admin", mode = "three-party (step-up)", auth = "AAuth.Scope.whoami:admin" },
+        new { path = "/jwt/roles", mode = "three-party (RBAC)", auth = "AAuth.Role.whoami-admin" },
+    },
+}));
 
 // -----------------------------------------------------------------------
 // GET /hwk — Pseudonymous access (no agent identity known).
@@ -133,6 +227,7 @@ app.MapGet("/jkt-jwt", (HttpContext ctx) =>
 
 // -----------------------------------------------------------------------
 // GET /jwks-uri — Agent Identity access (agent's key verified via JWKS).
+// Requires the Identified level policy: a verified agent identity.
 // -----------------------------------------------------------------------
 app.MapGet("/jwks-uri", (HttpContext ctx) =>
 {
@@ -146,118 +241,80 @@ app.MapGet("/jwks-uri", (HttpContext ctx) =>
         kid = parsed.Kid,
         note = "Resource verified agent's key via JWKS URI — full cryptographic identity.",
     });
-});
+}).RequireAuthorization("AAuth.Identified");
 
 // -----------------------------------------------------------------------
-// GET / — Three-party JWT access (full issuer verification by middleware).
+// GET /jwt — Three-party baseline access.
 //
-// The middleware has already:
-//   - Verified the HTTP signature
-//   - Verified the JWT issuer signature via JWKS discovery
-//   - Verified cnf.jwk PoP binding
-//   - Verified act.sub matches the signing agent
-//   - Verified aud matches this resource's identifier
-//
-// Flow:
-//   - Agent token → 401 challenge with resource token
-//   - Auth token → return verified claims (including act chain)
+// The verification + challenge middleware have already:
+//   - Verified the HTTP signature and JWT issuer signature (JWKS discovery)
+//   - Verified cnf.jwk PoP binding, act.sub, and aud
+//   - Challenged any agent token with a resource token for scope `whoami`
+// The scope policy requires an Authorized auth token carrying `whoami`.
 // -----------------------------------------------------------------------
-app.MapGet("/", async (
-    HttpContext ctx,
-    AAuthKey resourceSigningKey,
-    TokenVerifier tokenVerifier,
-    MetadataClient metadata,
-    JwksClient jwks) =>
+app.MapGet("/jwt", (HttpContext ctx) =>
 {
+    var result = ctx.GetAAuthVerification()!;
     var parsed = ctx.GetAAuthParsedKey()!;
-    var tokenType = ctx.GetAAuthTokenType();
 
-    if (tokenType == AAuthTokenType.AgentToken)
+    return Results.Ok(new
     {
-        return await ChallengeWithResourceToken(ctx, parsed, tokenVerifier, resourceSigningKey, resourceUrl, metadata, jwks);
-    }
+        mode = "three-party",
+        scheme = "jwt",
+        agent = result.Agent,
+        sub = result.Subject,
+        scope = result.Scopes,
+        iss = result.Issuer,
+        // The canonical user identity is the (iss, sub) pair: the same `sub`
+        // asserted by a different Person Server is a different user.
+        userKey = result.Issuer is null ? null : $"{result.Issuer}|{result.Subject}",
+        act = parsed.Payload?["act"],
+    });
+}).RequireAuthorization("AAuth.Scope.whoami");
 
-    if (tokenType == AAuthTokenType.AuthToken)
+// -----------------------------------------------------------------------
+// GET /jwt/admin — Three-party elevated access (step-up scope).
+// Requires an auth token carrying the elevated `whoami:admin` scope.
+// -----------------------------------------------------------------------
+app.MapGet("/jwt/admin", (HttpContext ctx) =>
+{
+    var result = ctx.GetAAuthVerification()!;
+
+    return Results.Ok(new
     {
-        // Middleware already verified signature, aud, cnf.jwk, and act.sub.
-        // Just return the verified claims.
-        var result = ctx.GetAAuthVerification()!;
-        return Results.Ok(new
-        {
-            mode = "three-party",
-            scheme = "jwt",
-            agent = result.Agent,
-            sub = result.Subject,
-            scope = result.Scopes,
-            iss = result.Issuer,
-            act = parsed.Payload?["act"],
-        });
-    }
+        mode = "three-party",
+        scheme = "jwt",
+        access = "admin",
+        agent = result.Agent,
+        sub = result.Subject,
+        scope = result.Scopes,
+        iss = result.Issuer,
+    });
+}).RequireAuthorization("AAuth.Scope.whoami:admin");
 
-    return Results.Json(
-        new { error = "unsupported_token_type", tokenType = tokenType.ToString() },
-        statusCode: StatusCodes.Status401Unauthorized);
-});
+// -----------------------------------------------------------------------
+// GET /jwt/roles — Three-party RBAC access.
+// Requires the `whoami-admin` role asserted by the PS in the auth token's
+// `roles` claim (mapped to the standard ASP.NET role claim).
+// -----------------------------------------------------------------------
+app.MapGet("/jwt/roles", (HttpContext ctx) =>
+{
+    var result = ctx.GetAAuthVerification()!;
+
+    return Results.Ok(new
+    {
+        mode = "three-party",
+        scheme = "jwt",
+        access = "rbac",
+        agent = result.Agent,
+        sub = result.Subject,
+        roles = result.Roles,
+        groups = result.Groups,
+        iss = result.Issuer,
+    });
+}).RequireAuthorization("AAuth.Role.whoami-admin");
 
 app.Run();
-
-// -----------------------------------------------------------------------
-// Helper handlers
-// -----------------------------------------------------------------------
-static async Task<IResult> ChallengeWithResourceToken(
-    HttpContext ctx,
-    SignatureKeyParser.ParsedSignatureKeyInfo parsed,
-    TokenVerifier verifier,
-    AAuthKey resourceKey,
-    string resourceIssuer,
-    MetadataClient metadata,
-    JwksClient jwks)
-{
-    // §Agent Token Verification: verify JWT signature against the issuer's
-    // JWKS discovered via {iss}/.well-known/{dwk}. The middleware already
-    // verified that cnf.jwk matches the HTTP signing key (step 5).
-    AAuth.Tokens.TokenVerifier.VerifiedToken agentToken;
-    try
-    {
-        agentToken = await verifier.VerifyWithJwksAsync(
-            parsed.Jwt!, metadata, jwks,
-            AgentTokenBuilder.TokenType,
-            AgentTokenBuilder.AgentDwk,
-            expectedAudience: null);
-    }
-    catch (TokenVerificationException ex)
-    {
-        return Results.Json(new { error = "invalid_agent_token", detail = ex.Message },
-            statusCode: StatusCodes.Status401Unauthorized);
-    }
-
-    var agentId = (string?)agentToken.Payload["sub"] ?? "unknown";
-    var personServer = (string?)agentToken.Payload["ps"];
-    if (string.IsNullOrEmpty(personServer))
-    {
-        // Identity-based fallback when the agent did not advertise a PS:
-        // return 200 with whatever the agent token tells us about itself.
-        return Results.Ok(new
-        {
-            mode = "identity-based",
-            agent = agentId,
-            iss = agentToken.Issuer,
-        });
-    }
-
-    var resourceToken = new ResourceTokenBuilder
-    {
-        Issuer = resourceIssuer,
-        Audience = personServer,
-        Agent = agentId,
-        AgentJkt = parsed.ConfirmationKey!.ComputeJwkThumbprint(),
-        Key = resourceKey,
-        KeyId = ResourceKid,
-        Scope = ResourceScope,
-    }.Build();
-
-    return ctx.ChallengeAAuth(resourceToken);
-}
 
 // Marker type for `WebApplicationFactory<WhoAmI.Entry>` in the
 // integration tests. Avoids the ambiguity between the implicit `Program`

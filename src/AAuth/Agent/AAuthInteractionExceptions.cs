@@ -1,4 +1,5 @@
 using System;
+using AAuth.Headers;
 
 namespace AAuth.Agent;
 
@@ -41,4 +42,50 @@ public sealed class AAuthInteractionTimeoutException : Exception
 
     public AAuthInteractionTimeoutException(string message, Exception innerException)
         : base(message, innerException) { }
+}
+
+/// <summary>
+/// Thrown by an intermediary's <c>OnInteractionRequired</c> callback to abort an
+/// in-flight token exchange <em>before</em> it blocks polling the deferred
+/// <c>Location</c>, so the intermediary can re-emit its own
+/// <c>202 requirement=interaction</c> to its caller (AAuth protocol
+/// §Interaction Chaining).
+/// </summary>
+/// <remarks>
+/// <para>A resource acting as an agent (e.g. an orchestrator) has no user to
+/// relay an interaction to. When its downstream token exchange returns
+/// <c>202 requirement=interaction</c>, the SDK invokes the configured
+/// <c>OnInteractionRequired</c> callback and would then <em>blocking-poll</em>
+/// the deferred <c>Location</c> until the user acts. An intermediary instead
+/// throws this exception from the callback: because the exchange wraps the
+/// callback in <c>try/finally</c> with no <c>catch</c>, the throw unwinds the
+/// exchange cleanly (response disposed, no double-write, no blocking poll) and
+/// propagates out of the originating <c>GetAsync</c>.</para>
+/// <para>The intermediary's request handler catches it, persists pending state
+/// keyed by its own id, and re-emits its own <c>202</c> carrying the captured
+/// <see cref="Interaction"/> (the downstream PS <c>url</c> and <c>code</c>,
+/// passed through) plus the intermediary's own <c>Location</c>.</para>
+/// </remarks>
+public sealed class AAuthInteractionChainedException : Exception
+{
+    /// <summary>
+    /// The interaction requirement captured from the downstream <c>202</c> —
+    /// the user-facing <c>url</c> and single-use <c>code</c> the intermediary
+    /// passes through when re-emitting its own requirement.
+    /// </summary>
+    public AAuthInteraction Interaction { get; }
+
+    public AAuthInteractionChainedException(AAuthInteraction interaction)
+        : base("Downstream exchange requires user interaction; re-emitting as a chained interaction requirement.")
+    {
+        ArgumentNullException.ThrowIfNull(interaction);
+        Interaction = interaction;
+    }
+
+    public AAuthInteractionChainedException(AAuthInteraction interaction, string message)
+        : base(message)
+    {
+        ArgumentNullException.ThrowIfNull(interaction);
+        Interaction = interaction;
+    }
 }

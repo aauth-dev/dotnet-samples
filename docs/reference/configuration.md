@@ -19,7 +19,7 @@ All configurable options across the AAuth .NET SDK, grouped by component.
 | `ResourceIdentifier` | `string?` | `null` | Resource's own identifier for `aud` checks. When `null`, audience validation is skipped. |
 | `RequireIssuerVerification` | `bool` | `true` | When `true`, verifies JWT signatures against the issuer's published JWKS via metadata discovery. |
 | `TrustedAgentProviderIssuers` | `IReadOnlySet<string>?` | `null` | Optional allow-list of trusted AP issuers (null = any) |
-| `TrustedAuthTokenIssuers` | `IReadOnlySet<string>?` | `null` | Optional allow-list of trusted auth token issuers (null = any) |
+| `TrustedAuthTokenIssuers` | `IReadOnlySet<string>?` | `null` | Fail-closed allow-list of trusted auth token (PS/AS) issuers. When `null` or empty, **every** auth token is rejected — set the issuers you trust to honor PS-asserted tokens. |
 | `MaxActDepth` | `int` | `10` | Maximum delegation chain depth for nested `act` claims |
 | `ClockSkew` | `TimeSpan` | 30 seconds | Tolerance applied to `exp`/`iat` checks |
 | `MaxFutureSkew` | `TimeSpan` | 5 seconds | Maximum allowed skew into the future for HTTP signature timestamps |
@@ -233,6 +233,24 @@ Standard `DelegatingHandler` — no configurable options. Requires an `ISignatur
 | `OnInteractionRequired` | `Func<string, string, CancellationToken, Task>?` | null | Interaction URL + code callback |
 | `OnApprovalPending` | `Func<CancellationToken, Task>?` | null | Approval polling callback |
 | `PollingTimeout` | `TimeSpan` | 5 minutes | Max polling time |
+
+## JSON Configuration Keys (samples)
+
+The shipped samples bind a few `AAuth:*` keys from `appsettings.json` /
+environment variables / command line. These are conventions of the samples (not
+SDK-required), shown here as a reference for wiring your own hosts.
+
+| Key | Type | Used by | Description |
+|-----|------|---------|-------------|
+| `AAuth:Issuer` | `string` | WhoAmI, MockPersonServer, Orchestrator | The host's own canonical URL (resource/PS `iss`). |
+| `AAuth:SignatureWindow` | `int` (seconds) | WhoAmI, MockPersonServer | Max HTTP-signature age accepted; default `60`. |
+| `AAuth:TrustedPersonServers` | `string[]` | WhoAmI | Fail-closed allow-list mapped to `AAuthVerificationOptions.TrustedAuthTokenIssuers`. When unset, defaults to `http://localhost:5100`; an empty array rejects all auth tokens. |
+| `AAuth:LocalKeyHandle` | `string` | agent samples | Key handle in the `IKeyStore` for the agent's signing key. |
+| `AAuth:ApRefreshEndpoint` | `string` | agent samples | Agent Provider refresh endpoint for enrolled agents. |
+| `AAuth:PersonServer` | `string` | Orchestrator | Downstream Person Server URL. |
+| `AAuth:Downstream` | `string` | Orchestrator | Downstream resource URL. |
+| `AAuth:AgentId` | `string` | Orchestrator | The agent identifier this host signs as. |
+| `AAuth:SelfIssuer` / `AAuth:SelfAgentId` | `string` | SampleApp | Self-issued agent issuer / identifier. |
 
 ## Further Reading
 

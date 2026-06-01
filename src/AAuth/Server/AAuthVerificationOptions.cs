@@ -17,8 +17,15 @@ public sealed class AAuthVerificationOptions
     public IReadOnlySet<string>? TrustedAgentProviderIssuers { get; init; }
 
     /// <summary>
-    /// Optional allow-list of trusted Person Server / Access Server issuers (for <c>aa-auth+jwt</c>).
-    /// When null, any issuer whose JWKS is resolvable is accepted.
+    /// Allow-list of trusted Person Server / Access Server issuers (for <c>aa-auth+jwt</c>).
+    /// <para>
+    /// <b>Fail-closed:</b> a PS-asserted auth token is honored only when its
+    /// <c>iss</c> is in this set. When <c>null</c> or empty, every auth token is
+    /// rejected — a resource MUST declare which Person Servers it trusts before
+    /// it will accept their asserted identity claims. Signature-only flows
+    /// (<c>hwk</c>/<c>jkt-jwt</c>/<c>jwks_uri</c>) carry no issuer and are
+    /// unaffected.
+    /// </para>
     /// </summary>
     public IReadOnlySet<string>? TrustedAuthTokenIssuers { get; init; }
 
