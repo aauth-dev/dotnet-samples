@@ -25,7 +25,7 @@ test('autonomous flow exchanges and replays to a three-party 200', async ({ page
 
   await runAll(page);
 
-  // Step 6 ("Replay GET / with auth_token") is the resource result.
+  // Step 6 ("Replay GET /jwt with auth_token") is the resource result.
   await selectStep(page, 5);
   await expectResponse(page, 200, ['three-party']);
 

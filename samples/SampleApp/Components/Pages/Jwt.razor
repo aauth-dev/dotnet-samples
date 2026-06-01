@@ -61,7 +61,7 @@ app.UseAAuthChallenge(new ChallengeOptions
     AccessMode = AAuthAccessMode.RequireAuthToken,
 });
 
-app.MapGet("/", (HttpContext ctx) =&gt;
+app.MapGet("/jwt", (HttpContext ctx) =&gt;
 {
     // Middleware already verified the auth token.
     // Claims are available via Features:
@@ -70,9 +70,10 @@ app.MapGet("/", (HttpContext ctx) =&gt;
     return Results.Ok(new
     {
         mode = "three-party",
+        scheme = "jwt",
         agent = r.Agent,
         sub = r.Subject,
-        scope = r.Scopes,
+        scope = r.Scopes, // ["whoami"]
         iss = r.Issuer,
     });
 });</code></pre>

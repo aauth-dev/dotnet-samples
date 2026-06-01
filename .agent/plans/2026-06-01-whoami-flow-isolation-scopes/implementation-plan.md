@@ -123,7 +123,8 @@ affected), `tests/e2e/**`, `samples/*/playwright-tests/**`.
 
 ### Definition of Done
 
-- [ ] e2e suite passes (or failures triaged to consumer updates in Phase 7)
+- [x] e2e suite passes (or failures triaged to consumer updates in Phase 7)
+- [x] AgentConsole permutations validated (all 6 modes 200; see research Update)
 
 ---
 
@@ -144,9 +145,9 @@ Use a **separate subagent for each sample** and **one subagent for all docs**.
 
 ### Definition of Done
 
-- [ ] Each sample updated by its subagent; all samples build
-- [ ] Docs updated by docs subagent; code snippets compile/match SDK
-- [ ] No stale references to the old root `/` three-party path
+- [x] Each sample updated by its subagent; all samples build
+- [x] Docs updated by docs subagent; code snippets compile/match SDK
+- [x] No stale references to the old root `/` three-party path
 
 ---
 

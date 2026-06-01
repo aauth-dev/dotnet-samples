@@ -74,7 +74,11 @@ public sealed class AAuthVerificationOptions
 
 ## Per-Path Configuration
 
-Use `UseWhen` to apply different verification options per endpoint path. This is the pattern used in the WhoAmI sample where each signing mode has a dedicated endpoint:
+Use `UseWhen` to give each access mode its own **isolated verification pipeline**.
+This is the pattern used in the WhoAmI sample: every signing mode has a dedicated
+path-segment branch with its own verification (and, for three-party endpoints, its
+own challenge) options. Each branch is self-contained, so there is no single shared
+verification step with negative path matching:
 
 ```csharp
 // Pseudonymous (hwk) — signature only, no JWT verification
@@ -93,17 +97,32 @@ app.UseWhen(
         RequireIssuerVerification = false,
     }));
 
-// Three-party (jwt) — full issuer + audience verification
+// Three-party (jwt) — full issuer + audience verification, plus a per-endpoint
+// challenge requesting the scope this branch protects.
 app.UseWhen(
-    ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
-        && !ctx.Request.Path.StartsWithSegments("/hwk")
-        && !ctx.Request.Path.StartsWithSegments("/jwks-uri"),
-    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+    ctx => ctx.Request.Path.StartsWithSegments("/jwt"),
+    branch =>
     {
-        ResourceIdentifier = "https://resource.example",
-        RequireIssuerVerification = true,
-    }));
+        branch.UseAAuthVerification(new AAuthVerificationOptions
+        {
+            ResourceIdentifier = "https://resource.example",
+            RequireIssuerVerification = true,
+        });
+        branch.UseAAuthChallenge(new ChallengeOptions
+        {
+            AccessMode = AAuthAccessMode.RequireAuthToken,
+            ResourceSigningKey = resourceKey,
+            ResourceKeyId = "key-1",
+            ResourceIdentifier = "https://resource.example",
+            DefaultScopes = "whoami",
+        });
+    });
 ```
+
+Declare more specific segments (for example `/jwt/admin`) before the general
+`/jwt` branch so segment matching stays unambiguous. After the branches,
+`UseAuthentication`/`UseAuthorization` run globally and per-endpoint policies
+decide what each route requires.
 
 See `samples/WhoAmI` for the complete working example.
 
@@ -119,10 +138,17 @@ app.MapGet("/protected", (HttpContext ctx) =>
     // result.Scheme: "jwt" | "hwk" | "jkt-jwt" | "jwks_uri"
     // result.Agent: agent identifier
     // result.Scopes: granted scopes (auth tokens only)
+    // result.Roles: enterprise roles from the auth token (IReadOnlySet<string>)
+    // result.Groups: enterprise groups from the auth token (IReadOnlySet<string>)
     // result.IssuerVerified: whether JWKS verification passed
     // result.Jkt: key thumbprint
 });
 ```
+
+`Roles` and `Groups` are populated from the verified auth token's `roles` and
+`groups` claims and are empty for signature-only or agent-token requests. The
+authentication handler maps `Roles` to the standard `ClaimTypes.Role` claim and
+emits one `aauth:group` claim per group.
 
 ## Error Responses
 

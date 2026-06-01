@@ -4,7 +4,7 @@ Eight sample applications demonstrating AAuth flows end-to-end.
 
 | Sample | Port | Description |
 |--------|------|-------------|
-| [WhoAmI](WhoAmI/) | 5000 | ASP.NET Core resource server — per-endpoint verification (`/hwk`, `/jwks-uri`, `/`) |
+| [WhoAmI](WhoAmI/) | 5000 | ASP.NET Core resource server — isolated per-mode pipelines (`/` index, `/hwk`, `/jkt-jwt`, `/jwks-uri`, `/jwt`, `/jwt/admin`, `/jwt/roles`) |
 | [Orchestrator](Orchestrator/) | 5200 | Intermediate service — call chaining with nested `act` delegation |
 | [MockPersonServer](MockPersonServer/) | 5100 | Reference Person Server — verifies exchanges, mints auth tokens. **Sample only — not part of the AAuth SDK.** |
 | [MockAgentProvider](MockAgentProvider/) | 5301 | Reference Agent Provider — issues agent tokens, hosts JWKS. **Sample only — not part of the AAuth SDK.** |
@@ -31,13 +31,17 @@ This starts WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + Guide
 dotnet run --project samples/WhoAmI
 ```
 
-Exposes three endpoints, one per signing mode:
+Each access mode has its own isolated verification pipeline. `GET /` is an unauthenticated index that lists the available flows:
 
-| Path | Mode | Verification |
-|------|------|-------------|
-| `/hwk` | Pseudonymous | HTTP signature only |
-| `/jwks-uri` | Agent Identity | Signature verified via published JWKS |
-| `/` | Three-party JWT | Full issuer verification + aud + PoP + act.sub |
+| Path | Mode | Verification / Policy |
+|------|------|-----------------------|
+| `/` | _(index)_ | None — lists the available flows |
+| `/hwk` | Pseudonymous | HTTP signature only — resource sees key thumbprint (`jkt`) |
+| `/jkt-jwt` | Pseudonymous (key delegation) | Signature only — agent known by durable key thumbprint via naming JWT |
+| `/jwks-uri` | Agent Identity | Signature verified via published JWKS (`AAuth.Identified`) |
+| `/jwt` | Three-party JWT | Full issuer verification + `aud` + PoP, scope `whoami` |
+| `/jwt/admin` | Three-party (step-up) | Elevated scope `whoami:admin` |
+| `/jwt/roles` | Three-party (RBAC) | Role `whoami-admin` from the auth token's `roles` claim |
 
 All paths serve `/.well-known/aauth-resource.json` and `/.well-known/jwks.json` without requiring a signature.
 
@@ -52,24 +56,47 @@ curl http://localhost:5000/.well-known/jwks.json
 
 ### AgentConsole
 
+When the target URL has no path (or just `/`), AgentConsole appends the path for the chosen signing mode: `hwk → /hwk`, `jkt-jwt → /jkt-jwt`, `jwks_uri → /jwks-uri`, and the default `jwt → /jwt`. To reach `/jwt/admin` or `/jwt/roles`, pass the explicit path. See [AgentConsole/README.md](AgentConsole/README.md) for the full mapping and the enrollment-cache note.
+
 **Pseudonymous (HWK) access** — default when no `--ps` is provided:
 
 ```bash
 dotnet run --project samples/AgentConsole -- http://localhost:5000/hwk --ap http://localhost:5301
 ```
 
+**Pseudonymous with key delegation (JKT-JWT):**
+
+```bash
+dotnet run --project samples/AgentConsole -- http://localhost:5000 \
+  --ap http://localhost:5301 --signing-mode jkt-jwt
+```
+
 **Agent Identity (JWKS-URI) access:**
 
 ```bash
-dotnet run --project samples/AgentConsole -- http://localhost:5000/jwks-uri \
+dotnet run --project samples/AgentConsole -- http://localhost:5000 \
   --ap http://localhost:5301 --signing-mode jwks_uri
 ```
 
-**Three-party flow** (agent advertises a PS; resource challenges; agent exchanges):
+**Three-party flow** (agent advertises a PS; resource challenges; agent exchanges — grant consent first):
 
 ```bash
 dotnet run --project samples/AgentConsole -- http://localhost:5000 \
   --ap http://localhost:5301 --ps http://localhost:5100
+```
+
+**Three-party with elevated scope (`/jwt/admin`)** — grant consent for scope `whoami:admin`:
+
+```bash
+dotnet run --project samples/AgentConsole -- http://localhost:5000/jwt/admin \
+  --ap http://localhost:5301 --ps http://localhost:5100 --signing-mode jwt
+```
+
+**Three-party with RBAC (`/jwt/roles`)** — the PS asserts roles `whoami-admin` and groups `demo-users`:
+
+```bash
+dotnet run --project samples/AgentConsole -- http://localhost:5000/jwt/roles \
+  --ap http://localhost:5301 --ps http://localhost:5100 --signing-mode jwt
 ```
 
 > **Note:** `make demo` starts MockPersonServer with `RequireConsent=true`, so three-party flows (`jwt`, `jkt-jwt`) will print an interaction URL for user approval:

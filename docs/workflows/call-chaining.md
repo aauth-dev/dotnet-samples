@@ -23,7 +23,7 @@ make demo-sample   # starts WhoAmI, PS, AP, Orchestrator, SampleApp
 ```
 
 Then open <http://localhost:5240/call-chain> to see the flow in action.
-The Orchestrator runs on port 5200, acting as both resource (verifies callers) and agent (calls WhoAmI on port 5000).
+The Orchestrator runs on port 5200, acting as both resource (verifies callers) and agent (calls WhoAmI's three-party `/jwt` endpoint on port 5000).
 
 ## SDK Support
 
@@ -147,7 +147,7 @@ app.MapGet("/", async (HttpContext ctx) =>
     using var downstream = new AAuthClientBuilder(myKey)
         .UseJwt(chained)
         .Build();
-    var result = await downstream.GetAsync(whoamiUrl);
+    var result = await downstream.GetAsync(whoamiUrl); // e.g. http://localhost:5000/jwt
     // ...
 });
 ```
@@ -221,7 +221,7 @@ var token = new AuthTokenBuilder
 Pass `--upstream-token` to include an upstream auth token in the exchange:
 
 ```bash
-dotnet run --project samples/AgentConsole -- http://localhost:5000 \
+dotnet run --project samples/AgentConsole -- http://localhost:5000/jwt \
   --ap http://localhost:5301 --ps http://localhost:5100 \
   --upstream-token "eyJ..."
 ```

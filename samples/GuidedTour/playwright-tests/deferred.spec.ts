@@ -53,7 +53,7 @@ test.describe('Deferred (Guided Tour)', () => {
 
     await expect(doneSteps(page)).toHaveCount(9, { timeout: 30_000 });
 
-    // Step 9 ("Replay GET / with auth_token") is the resource result.
+    // Step 9 ("Replay GET /jwt with auth_token") is the resource result.
     await selectStep(page, 8);
     await expectResponse(page, 200, ['three-party']);
 
