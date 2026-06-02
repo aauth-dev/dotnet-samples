@@ -137,17 +137,19 @@ demo-federated: ## Four-party federated demo: Keycloak + WhoAmI + MockPersonServ
 	@echo "Waiting for Keycloak to become ready..."
 	@until curl -sf $(KEYCLOAK_URL)/realms/aauth/.well-known/openid-configuration >/dev/null 2>&1; do sleep 2; done
 	@echo "Keycloak ready."
+	@echo "Building services (once) before launch..."
+	$(DOTNET) build $(SOLUTION) -v q
 	@trap 'echo; echo "Stopping..."; kill 0; docker rm -f aauth-keycloak >/dev/null 2>&1' INT TERM EXIT; \
-	$(DOTNET) run --project $(WHOAMI_PROJECT) & \
-	$(DOTNET) run --project $(PS_PROJECT) & \
-	$(DOTNET) run --project $(AP_PROJECT) & \
+	$(DOTNET) run --no-build --project $(WHOAMI_PROJECT) & \
+	$(DOTNET) run --no-build --project $(PS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(AP_PROJECT) & \
 	AccessServer__PolicyProvider=keycloak \
 	AccessServer__Keycloak__Authority=$(KEYCLOAK_URL)/realms/aauth \
 	AccessServer__Keycloak__ClientId=aauth-access-server \
 	AccessServer__Keycloak__ClientSecret=aauth-access-server-secret \
 	AccessServer__Keycloak__ResourceServerAudience=aauth-access-server \
 	AccessServer__Keycloak__ResourceName=whoami \
-	$(DOTNET) run --project $(AS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(AS_PROJECT) & \
 	wait
 
 demo-sample: ## Start WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + SampleApp in parallel
