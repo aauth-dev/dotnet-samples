@@ -120,6 +120,15 @@ keycloak: ## Start Keycloak (port 8080) with the demo 'aauth' realm imported
 
 agent-federated: ## Drive AgentConsole through the four-party /federated flow (Keycloak login)
 	@$(MAKE) --no-print-directory agent-reset
+	@echo ""
+	@echo "=================================================================="
+	@echo " When the agent prints an interaction URL, open it in your browser"
+	@echo " and sign in to Keycloak with one of these demo users:"
+	@echo ""
+	@echo "   demo  / demo    (has the whoami-admin role -> full access)"
+	@echo "   guest / guest   (no admin role -> limited access)"
+	@echo "=================================================================="
+	@echo ""
 	$(DOTNET) run --project $(AGENT_PROJECT) -- $(WHOAMI_URL)/federated \
 	  --ap $(AP_URL) --ps $(PS_URL) --signing-mode jwt --sub aauth:demo@ap.example
 
@@ -134,7 +143,14 @@ demo-federated: ## Four-party federated demo: Keycloak + WhoAmI + MockPersonServ
 	@echo "  MockAgentProvider:  $(AP_URL)"
 	@echo "  MockAccessServer:   $(AS_URL)        (PolicyProvider=keycloak)"
 	@echo ""
-	@echo "Keycloak login users:  demo/demo (whoami-admin role) | guest/guest (no admin role)"
+	@echo "------------------------------------------------------------------"
+	@echo " Keycloak login users (use these when the browser prompts you):"
+	@echo ""
+	@echo "   demo  / demo    (has the whoami-admin role -> full access)"
+	@echo "   guest / guest   (no admin role -> limited access)"
+	@echo ""
+	@echo " Keycloak admin console:  $(KEYCLOAK_URL)  (admin / admin)"
+	@echo "------------------------------------------------------------------"
 	@echo "In another terminal, drive the agent with:  make agent-federated"
 	@echo ""
 	docker rm -f aauth-keycloak >/dev/null 2>&1 || true

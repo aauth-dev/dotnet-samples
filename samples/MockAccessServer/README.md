@@ -73,6 +73,14 @@ The realm import at `keycloak/realm-aauth.json` defines:
   realm role.
 - Two login users: `demo`/`demo` (has `whoami-admin`) and `guest`/`guest`.
 
+### Demo credentials
+
+| Where | Username | Password | Notes |
+| --- | --- | --- | --- |
+| Keycloak login (browser) | `demo` | `demo` | Has the `whoami-admin` role -> full access. |
+| Keycloak login (browser) | `guest` | `guest` | No admin role -> limited access. |
+| Keycloak admin console | `admin` | `admin` | `http://localhost:8080/admin` (realm management). |
+
 Run the whole four-party demo (Keycloak + WhoAmI + PS + AP + AS) with:
 
 ```bash
