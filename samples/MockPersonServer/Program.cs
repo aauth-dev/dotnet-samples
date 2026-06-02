@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using AAuth;
+using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.DependencyInjection;
 using AAuth.Discovery;
@@ -76,6 +77,7 @@ builder.Services.AddHttpClient("aauth-metadata");
 builder.Services.AddHttpClient("aauth-jwks");
 builder.Services.AddSingleton<ConsentStore>();
 builder.Services.AddSingleton<PendingStore>();
+builder.Services.AddSingleton<FederatedPendingStore>();
 builder.Services.AddSingleton(sp =>
     new UpstreamTokenValidator(
         sp.GetRequiredService<MetadataClient>(),
@@ -257,50 +259,111 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
         }
 
         var federation = app.Services.GetRequiredService<AccessServerClient>();
-        try
+        var fedPending = app.Services.GetRequiredService<FederatedPendingStore>();
+        var entry = fedPending.Add();
+
+        // Capture everything the background task needs BEFORE it runs — the
+        // HttpContext is gone once we return the response.
+        var agentTokenJwt = parsed.Jwt
+            ?? throw new InvalidOperationException("Agent token JWT unavailable on the verified request.");
+        var agentConfirmationKey = parsed.ConfirmationKey!;
+        var fedRequest = new AccessServerRequest
         {
-            var federatedAuthToken = await federation.FederateAsync(
-                resourceAudience,
-                new AccessServerRequest
-                {
-                    ResourceToken = resourceTokenJwt,
-                    AgentToken = parsed.Jwt
-                        ?? throw new InvalidOperationException("Agent token JWT unavailable on the verified request."),
-                    UpstreamToken = upstreamTokenJwt,
-                    ExpectedAudience = resourceUrl,
-                    ExpectedAgentId = agentId,
-                    AgentKey = parsed.ConfirmationKey!,
-                    RequestedScope = federatedScope,
-                });
-            return Results.Ok(new { auth_token = federatedAuthToken });
-        }
-        catch (AAuthTokenExchangeException ex)
-        {
-            // The AS rejected the request — relay its error code/status.
-            return Results.Json(
-                new { error = ex.ErrorCode, detail = ex.ErrorDescription },
-                statusCode: ex.StatusCode);
-        }
-        catch (AAuthPaymentRequiredException ex)
-        {
-            // Payment is out of scope for this demo PS; surface it as a terminal
-            // error the agent can read (settlement is the agent's concern).
-            if (!string.IsNullOrEmpty(ex.Location))
+            ResourceToken = resourceTokenJwt,
+            AgentToken = agentTokenJwt,
+            UpstreamToken = upstreamTokenJwt,
+            ExpectedAudience = resourceUrl,
+            ExpectedAgentId = agentId,
+            AgentKey = agentConfirmationKey,
+            RequestedScope = federatedScope,
+            // The AS needs an interactive user login/consent. Capture its
+            // user-facing interaction URL so the PS can relay it to the agent;
+            // FederateAsync keeps polling the AS to completion in the
+            // background while the agent polls the PS pending URL.
+            OnInteractionRequired = (interaction, _) =>
             {
-                ctx.Response.Headers.Location = ex.Location;
-            }
-            return Results.Json(
-                new { error = "payment_required", detail = ex.Message },
-                statusCode: StatusCodes.Status402PaymentRequired);
-        }
-        catch (TokenVerificationException ex)
+                entry.InteractionUrl = interaction.Url;
+                entry.InteractionCode = interaction.Code;
+                entry.FirstAnswer.TrySetResult();
+                return Task.CompletedTask;
+            },
+        };
+
+        // Drive the PS->AS federation in the background. The agent's first
+        // answer (relayed 202 interaction, or an immediate terminal result
+        // when the AS does not need interaction) is decided below.
+        _ = Task.Run(async () =>
         {
-            // The AS returned a token that failed Auth Token Delivery
-            // verification — treat as an upstream (bad gateway) failure.
-            return Results.Json(
-                new { error = "invalid_auth_token", detail = ex.Message },
-                statusCode: StatusCodes.Status502BadGateway);
+            try
+            {
+                var token = await federation.FederateAsync(resourceAudience, fedRequest);
+                entry.AuthToken = token;
+                entry.Status = FederatedPendingStatus.Allowed;
+            }
+            catch (AAuthInteractionDeniedException)
+            {
+                entry.Error = "access_denied";
+                entry.ErrorStatus = StatusCodes.Status403Forbidden;
+                entry.Status = FederatedPendingStatus.Denied;
+            }
+            catch (AAuthTokenExchangeException ex)
+            {
+                entry.Error = ex.ErrorCode;
+                entry.ErrorStatus = ex.StatusCode;
+                entry.Status = FederatedPendingStatus.Denied;
+            }
+            catch (AAuthPaymentRequiredException ex)
+            {
+                entry.Error = "payment_required";
+                entry.ErrorStatus = StatusCodes.Status402PaymentRequired;
+                entry.ErrorLocation = ex.Location;
+                entry.Status = FederatedPendingStatus.Denied;
+            }
+            catch (Exception ex)
+            {
+                // Includes TokenVerificationException (bad AS token) and
+                // unreachable-AS failures — surface as an upstream error.
+                entry.Error = "federation_failed";
+                entry.ErrorStatus = StatusCodes.Status502BadGateway;
+                app.Logger.LogWarning(ex, "Four-party federation to {AccessServer} failed.", resourceAudience);
+                entry.Status = FederatedPendingStatus.Denied;
+            }
+            finally
+            {
+                entry.FirstAnswer.TrySetResult();
+            }
+        });
+
+        // Wait for the first answer: either the AS asked for interaction
+        // (relay it) or federation finished before any interaction.
+        await entry.FirstAnswer.Task;
+
+        if (entry.InteractionUrl is not null)
+        {
+            // Relay the AS interaction. The user logs in at the AS's
+            // (Keycloak-backed) URL; the agent polls the PS pending URL while
+            // the PS's background task polls the AS to completion.
+            ctx.Response.Headers.Location = $"/federated-pending/{entry.Id}";
+            ctx.Response.Headers["Retry-After"] = "1";
+            ctx.Response.Headers["Cache-Control"] = "no-store";
+            ctx.Response.Headers[AAuthRequirementHeader.Name] =
+                AAuthInteraction.Format(entry.InteractionUrl, entry.InteractionCode!);
+            return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
         }
+
+        // The AS resolved without interaction (e.g. an auto-allow stub AS).
+        if (entry.Status == FederatedPendingStatus.Allowed)
+        {
+            return Results.Ok(new { auth_token = entry.AuthToken });
+        }
+
+        if (!string.IsNullOrEmpty(entry.ErrorLocation))
+        {
+            ctx.Response.Headers.Location = entry.ErrorLocation;
+        }
+        return Results.Json(
+            new { error = entry.Error, detail = entry.Error },
+            statusCode: entry.ErrorStatus);
     }
 
     // Call-chaining: validate upstream_token if present using UpstreamTokenValidator
@@ -447,6 +510,47 @@ app.MapGet("/pending/{id}", (HttpContext ctx, string id, ConsentStore consent, P
 });
 
 // -----------------------------------------------------------------------
+// GET /federated-pending/{id} — four-party deferred poll. Signed like
+// /token. While the PS's background FederateAsync drives the AS interaction
+// to completion, returns 202 + the relayed AS interaction requirement. Once
+// federation resolves it returns the AS-issued auth token (200) or the
+// relayed AS error (403 access_denied / 402 / 502).
+// -----------------------------------------------------------------------
+app.MapGet("/federated-pending/{id}", (HttpContext ctx, string id, FederatedPendingStore fedPending) =>
+{
+    var entry = fedPending.Get(id);
+    if (entry is null)
+    {
+        return Results.NotFound(new { error = "unknown_pending", id });
+    }
+
+    switch (entry.Status)
+    {
+        case FederatedPendingStatus.Allowed:
+            return Results.Ok(new { auth_token = entry.AuthToken });
+        case FederatedPendingStatus.Denied:
+            ctx.Response.Headers["Cache-Control"] = "no-store";
+            if (!string.IsNullOrEmpty(entry.ErrorLocation))
+            {
+                ctx.Response.Headers.Location = entry.ErrorLocation;
+            }
+            return Results.Json(
+                new { error = entry.Error, detail = entry.Error },
+                statusCode: entry.ErrorStatus);
+        case FederatedPendingStatus.Pending:
+        default:
+            ctx.Response.Headers["Retry-After"] = "1";
+            ctx.Response.Headers["Cache-Control"] = "no-store";
+            if (entry.InteractionUrl is not null)
+            {
+                ctx.Response.Headers[AAuthRequirementHeader.Name] =
+                    AAuthInteraction.Format(entry.InteractionUrl, entry.InteractionCode!);
+            }
+            return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
+    }
+});
+
+// -----------------------------------------------------------------------
 // DEMO-ONLY admin endpoints. A real PS would NEVER expose unauthenticated
 // consent flips. These exist so the GuidedTour's "User approves" button
 // and the §3.4 user-consent integration test can drive the consent
@@ -473,10 +577,11 @@ app.MapPost("/admin/revoke", async (HttpContext ctx, ConsentStore consent) =>
 // Demo-only: wipe all consent + pending state back to baseline so an automated
 // test harness can start each spec from a known-empty store (see the E2E suite's
 // resetConsent helper). A production PS would never expose this.
-app.MapPost("/admin/reset", (ConsentStore consent, PendingStore pending) =>
+app.MapPost("/admin/reset", (ConsentStore consent, PendingStore pending, FederatedPendingStore fedPending) =>
 {
     consent.Clear();
     pending.Clear();
+    fedPending.Clear();
     return Results.Ok(new { ok = true });
 });
 

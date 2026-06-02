@@ -108,11 +108,68 @@ public class MockPersonServerFederationTests
         Assert.Equal(AuthTokenBuilder.PersonDwk, (string?)payload["dwk"]);
     }
 
+    [Fact]
+    public async Task Token_RelaysAccessServerInteraction_ThenMintsAfterCompletion()
+    {
+        // When the AS returns 202 requirement=interaction (interactive login),
+        // the PS must relay that interaction to the agent (its own 202 carrying
+        // the AS's user-facing URL) and, once the AS resolves, surface the
+        // AS-issued auth token through the federated pending URL.
+        var agentKey = AAuthKey.Generate();
+        var stubState = new InteractiveAsState();
+        using var factory = BuildFactory(agentKey, AgentId, scope: "whoami", interactive: stubState);
+        using var http = BuildSignedAgentClient(factory, agentKey, AgentId);
+
+        var resourceToken = BuildResourceToken(AgentId, agentKey, audience: AsIssuer, scope: "whoami");
+
+        using var post = await http.PostAsJsonAsync("/token",
+            new JsonObject { ["resource_token"] = resourceToken });
+
+        // The PS relays the AS interaction as its own 202.
+        Assert.Equal(HttpStatusCode.Accepted, post.StatusCode);
+        Assert.NotNull(post.Headers.Location);
+        Assert.StartsWith("/federated-pending/", post.Headers.Location!.OriginalString);
+        Assert.True(post.Headers.TryGetValues("AAuth-Requirement", out var requirementValues));
+        var requirement = string.Join(string.Empty, requirementValues!);
+        Assert.Contains("requirement=interaction", requirement);
+        // The relayed URL is the AS's login endpoint, not the PS's.
+        Assert.Contains("https://as.test/interaction/login", requirement);
+
+        // Simulate the user completing the Keycloak login at the AS.
+        stubState.Complete();
+
+        // Poll the PS federated pending URL until the AS-issued token arrives.
+        var authTokenJwt = await PollFederatedPendingAsync(http, post.Headers.Location!.OriginalString);
+        var payload = DecodePayload(authTokenJwt);
+        Assert.Equal(AsIssuer, (string?)payload["iss"]);
+        Assert.Equal(AuthTokenBuilder.AccessDwk, (string?)payload["dwk"]);
+        Assert.Equal(ResourceUrl, (string?)payload["aud"]);
+    }
+
+    private static async Task<string> PollFederatedPendingAsync(HttpClient http, string pendingUrl)
+    {
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            using var poll = await http.GetAsync(pendingUrl);
+            if (poll.StatusCode == HttpStatusCode.OK)
+            {
+                var body = await poll.Content.ReadFromJsonAsync<JsonObject>();
+                return (string?)body!["auth_token"]
+                    ?? throw new InvalidOperationException("pending OK without auth_token");
+            }
+
+            Assert.Equal(HttpStatusCode.Accepted, poll.StatusCode);
+            await Task.Delay(50);
+        }
+
+        throw new TimeoutException("Federated pending did not resolve to an auth token.");
+    }
+
     // ----------------------------------------------------------------
     // Helpers
     // ----------------------------------------------------------------
     private static WebApplicationFactory<MockPersonServer.Entry> BuildFactory(
-        AAuthKey agentKey, string agentId, string scope)
+        AAuthKey agentKey, string agentId, string scope, InteractiveAsState? interactive = null)
     {
         return new WebApplicationFactory<MockPersonServer.Entry>().WithWebHostBuilder(b =>
         {
@@ -124,13 +181,13 @@ public class MockPersonServerFederationTests
                 services.RemoveAll<MetadataClient>();
                 services.RemoveAll<JwksClient>();
                 services.AddSingleton(new MetadataClient(
-                    new HttpClient(new FederatedStub(agentKey, agentId, scope))));
+                    new HttpClient(new FederatedStub(agentKey, agentId, scope, interactive))));
                 services.AddSingleton(new JwksClient(
-                    new HttpClient(new FederatedStub(agentKey, agentId, scope))));
+                    new HttpClient(new FederatedStub(agentKey, agentId, scope, interactive))));
 
                 // Route the PS→AS federation transport at the same in-process AS.
                 services.AddHttpClient("aauth-federation")
-                    .ConfigurePrimaryHttpMessageHandler(() => new FederatedStub(agentKey, agentId, scope));
+                    .ConfigurePrimaryHttpMessageHandler(() => new FederatedStub(agentKey, agentId, scope, interactive));
             });
         });
     }
@@ -173,21 +230,39 @@ public class MockPersonServerFederationTests
     }
 
     /// <summary>
+    /// Shared state for an interactive Access Server stub: the AS first returns
+    /// 202 requirement=interaction, then (after <see cref="Complete"/>) the
+    /// pending poll returns the auth token. Lets the test drive the user-login
+    /// completion deterministically.
+    /// </summary>
+    private sealed class InteractiveAsState
+    {
+        private volatile bool _completed;
+        public bool IsCompleted => _completed;
+        public void Complete() => _completed = true;
+    }
+
+    /// <summary>
     /// In-process stub for BOTH the resource (whoami.test) and the Access
     /// Server (as.test): serves their well-known metadata + JWKS for discovery,
     /// and mints a valid Access-Server auth token on <c>POST {as}/token</c>.
+    /// When constructed with an <see cref="InteractiveAsState"/>, the AS token
+    /// endpoint instead returns 202 requirement=interaction and the auth token
+    /// is served from <c>GET {as}/pending/&lt;id&gt;</c> once the state completes.
     /// </summary>
     private sealed class FederatedStub : HttpMessageHandler
     {
         private readonly AAuthKey _agentKey;
         private readonly string _agentId;
         private readonly string _scope;
+        private readonly InteractiveAsState? _interactive;
 
-        public FederatedStub(AAuthKey agentKey, string agentId, string scope)
+        public FederatedStub(AAuthKey agentKey, string agentId, string scope, InteractiveAsState? interactive = null)
         {
             _agentKey = agentKey;
             _agentId = agentId;
             _scope = scope;
+            _interactive = interactive;
         }
 
         protected override Task<HttpResponseMessage> SendAsync(
@@ -198,23 +273,49 @@ public class MockPersonServerFederationTests
 
             if (request.Method == HttpMethod.Post && key == "as.test/token")
             {
-                var authToken = new AuthTokenBuilder
+                // Interactive AS: defer with a 202 requirement=interaction.
+                if (_interactive is not null)
                 {
-                    Issuer = AsIssuer,
-                    Audience = ResourceUrl,
-                    Agent = _agentId,
-                    AgentConfirmationKey = _agentKey,
-                    Key = AsKey,
-                    KeyId = AsKid,
-                    Dwk = AuthTokenBuilder.AccessDwk,
-                    Scope = _scope,
-                    Subject = "pairwise-sub",
-                }.Build();
+                    var deferred = new HttpResponseMessage(HttpStatusCode.Accepted)
+                    {
+                        Content = new StringContent(
+                            new JsonObject { ["status"] = "pending" }.ToJsonString(),
+                            Encoding.UTF8, "application/json"),
+                    };
+                    deferred.Headers.Location = new Uri($"{AsIssuer}/pending/abc");
+                    deferred.Headers.TryAddWithoutValidation("Retry-After", "0");
+                    deferred.Headers.TryAddWithoutValidation(
+                        "AAuth-Requirement",
+                        AAuth.Headers.AAuthInteraction.Format($"{AsIssuer}/interaction/login", "abc"));
+                    return Task.FromResult(deferred);
+                }
+
                 return Task.FromResult(Json(new JsonObject
                 {
-                    ["auth_token"] = authToken,
+                    ["auth_token"] = MintAuthToken(),
                     ["expires_in"] = 3600,
                 }));
+            }
+
+            if (request.Method == HttpMethod.Get && key == "as.test/pending/abc")
+            {
+                if (_interactive!.IsCompleted)
+                {
+                    return Task.FromResult(Json(new JsonObject
+                    {
+                        ["auth_token"] = MintAuthToken(),
+                        ["expires_in"] = 3600,
+                    }));
+                }
+
+                var pending = new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = new StringContent(
+                        new JsonObject { ["status"] = "pending" }.ToJsonString(),
+                        Encoding.UTF8, "application/json"),
+                };
+                pending.Headers.TryAddWithoutValidation("Retry-After", "0");
+                return Task.FromResult(pending);
             }
 
             string? json = key switch
@@ -242,6 +343,19 @@ public class MockPersonServerFederationTests
                     Content = new StringContent(json, Encoding.UTF8, "application/json"),
                 });
         }
+
+        private string MintAuthToken() => new AuthTokenBuilder
+        {
+            Issuer = AsIssuer,
+            Audience = ResourceUrl,
+            Agent = _agentId,
+            AgentConfirmationKey = _agentKey,
+            Key = AsKey,
+            KeyId = AsKid,
+            Dwk = AuthTokenBuilder.AccessDwk,
+            Scope = _scope,
+            Subject = "pairwise-sub",
+        }.Build();
 
         private static HttpResponseMessage Json(JsonObject body) =>
             new(HttpStatusCode.OK)
