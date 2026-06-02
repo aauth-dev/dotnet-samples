@@ -3,6 +3,7 @@ using AAuth;
 using AAuth.Crypto;
 using AAuth.DependencyInjection;
 using AAuth.Discovery;
+using AAuth.Errors;
 using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
@@ -50,6 +51,16 @@ static bool IsAdminAgent(string agentId) =>
 var psIssuer = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5100";
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
 var requireConsent = builder.Configuration.GetValue<bool>("MockPersonServer:RequireConsent");
+// Four-party (federated) trust: the Access Servers this PS is willing to
+// federate to. When a resource token's `aud` is one of these (rather than the
+// PS itself), the PS forwards a signed PS->AS token request instead of issuing
+// the auth token directly. Pre-established trust — a production PS would manage
+// this set per the operator's federation agreements.
+var trustedAccessServers = builder.Configuration
+        .GetSection("MockPersonServer:TrustedAccessServers").Get<string[]>()
+    ?? ["http://localhost:5500"];
+var trustedAsSet = new HashSet<string>(
+    trustedAccessServers.Select(a => a.TrimEnd('/')), StringComparer.OrdinalIgnoreCase);
 
 builder.Services.AddSingleton(psKey);
 builder.Services.AddSingleton(new AAuthVerifier
@@ -69,6 +80,25 @@ builder.Services.AddSingleton(sp =>
     new UpstreamTokenValidator(
         sp.GetRequiredService<MetadataClient>(),
         sp.GetRequiredService<JwksClient>()));
+
+// Four-party federation client. The PS signs the PS->AS token request with its
+// own key via the `jwks_uri` scheme (the AS resolves the PS's public key from
+// `{psIssuer}/.well-known/jwks.json`). The transport handler is the named
+// "aauth-federation" client so tests can route it to an in-process AS.
+builder.Services.AddHttpClient("aauth-federation");
+builder.Services.AddSingleton(sp =>
+{
+    var metadata = sp.GetRequiredService<MetadataClient>();
+    var jwks = sp.GetRequiredService<JwksClient>();
+    var validator = new AuthTokenResponseValidator(metadata, jwks);
+    var transport = sp.GetRequiredService<IHttpMessageHandlerFactory>()
+        .CreateHandler("aauth-federation");
+    var signedClient = new AAuthClientBuilder(psKey)
+        .UseJwksUri($"{psIssuer.TrimEnd('/')}/.well-known/jwks.json", PsKid)
+        .WithInnerHandler(transport)
+        .Build();
+    return new AccessServerClient(signedClient, metadata, validator);
+});
 
 var app = builder.Build();
 
@@ -169,9 +199,112 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
             statusCode: StatusCodes.Status400BadRequest);
     }
 
+    var upstreamTokenJwt = (string?)body?["upstream_token"];
+
+    // Four-party (federated) branch. When the resource token's `aud` is NOT
+    // this PS, the resource delegated authorization to an Access Server. The PS
+    // does not mint the auth token itself — it forwards a signed PS->AS request
+    // and returns the AS-issued token. When `aud` IS this PS (the common case),
+    // fall through to the three-party path below where the PS acts as its own
+    // AS (the "collapsed" PS+AS variant).
+    var resourceAudience = PeekJwtAudience(resourceTokenJwt);
+    if (resourceAudience is not null
+        && !string.Equals(resourceAudience.TrimEnd('/'), psIssuer.TrimEnd('/'), StringComparison.OrdinalIgnoreCase))
+    {
+        // Pre-established trust: only federate to a configured Access Server.
+        if (!trustedAsSet.Contains(resourceAudience.TrimEnd('/')))
+        {
+            return Results.Json(
+                new { error = "untrusted_access_server", detail = $"'{resourceAudience}' is not a trusted Access Server." },
+                statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        var federationVerifier = app.Services.GetRequiredService<TokenVerifier>();
+        var federationMetadata = app.Services.GetRequiredService<MetadataClient>();
+        var federationJwks = app.Services.GetRequiredService<JwksClient>();
+
+        // Verify the resource token's agent binding before forwarding it — the
+        // PS confirms the presenting agent is the one bound to the token
+        // (`agent` + `agent_jkt`) and reads the resource URL (`iss`) and scope.
+        // The AS re-verifies independently; this guards the PS from relaying a
+        // token it has no business relaying.
+        string resourceUrl;
+        string federatedScope = PsScope;
+        try
+        {
+            var verified = await federationVerifier.VerifyResourceTokenAsync(
+                resourceTokenJwt,
+                expectedAudience: resourceAudience,
+                expectedAgentId: agentId,
+                expectedAgentJkt: parsed.ConfirmationKey!.ComputeJwkThumbprint(),
+                federationMetadata,
+                federationJwks);
+
+            resourceUrl = (string?)verified.Payload["iss"]
+                ?? throw new TokenVerificationException("resource_token missing iss");
+            var scopeClaim = (string?)verified.Payload["scope"];
+            if (!string.IsNullOrWhiteSpace(scopeClaim))
+            {
+                federatedScope = scopeClaim;
+            }
+        }
+        catch (TokenVerificationException ex)
+        {
+            var expired = ex.Message.Contains("expired", StringComparison.OrdinalIgnoreCase);
+            return Results.Json(
+                new { error = expired ? "expired_resource_token" : "invalid_resource_token", detail = ex.Message },
+                statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        var federation = app.Services.GetRequiredService<AccessServerClient>();
+        try
+        {
+            var federatedAuthToken = await federation.FederateAsync(
+                resourceAudience,
+                new AccessServerRequest
+                {
+                    ResourceToken = resourceTokenJwt,
+                    AgentToken = parsed.Jwt
+                        ?? throw new InvalidOperationException("Agent token JWT unavailable on the verified request."),
+                    UpstreamToken = upstreamTokenJwt,
+                    ExpectedAudience = resourceUrl,
+                    ExpectedAgentId = agentId,
+                    AgentKey = parsed.ConfirmationKey!,
+                    RequestedScope = federatedScope,
+                });
+            return Results.Ok(new { auth_token = federatedAuthToken });
+        }
+        catch (AAuthTokenExchangeException ex)
+        {
+            // The AS rejected the request — relay its error code/status.
+            return Results.Json(
+                new { error = ex.ErrorCode, detail = ex.ErrorDescription },
+                statusCode: ex.StatusCode);
+        }
+        catch (AAuthPaymentRequiredException ex)
+        {
+            // Payment is out of scope for this demo PS; surface it as a terminal
+            // error the agent can read (settlement is the agent's concern).
+            if (!string.IsNullOrEmpty(ex.Location))
+            {
+                ctx.Response.Headers.Location = ex.Location;
+            }
+            return Results.Json(
+                new { error = "payment_required", detail = ex.Message },
+                statusCode: StatusCodes.Status402PaymentRequired);
+        }
+        catch (TokenVerificationException ex)
+        {
+            // The AS returned a token that failed Auth Token Delivery
+            // verification — treat as an upstream (bad gateway) failure.
+            return Results.Json(
+                new { error = "invalid_auth_token", detail = ex.Message },
+                statusCode: StatusCodes.Status502BadGateway);
+        }
+    }
+
     // Call-chaining: validate upstream_token if present using UpstreamTokenValidator
     // (§Upstream Token Verification steps 1-4).
-    var upstreamTokenJwt = (string?)body?["upstream_token"];
     JsonObject? upstreamAct = null;
     if (!string.IsNullOrEmpty(upstreamTokenJwt))
     {
@@ -473,6 +606,41 @@ string IssueAuthToken(string agentId, string audience, string scope, IAAuthKey c
         Groups = IsAdminAgent(agentId) ? demoGroups : null,
         UpstreamAct = upstreamAct,
     }.Build();
+
+// Peek the `aud` claim of a (possibly unverified) compact JWT without checking
+// its signature — used only to ROUTE the request (three-party vs four-party).
+// Whichever branch is taken fully verifies the token afterwards, so an attacker
+// gains nothing by lying about `aud` here.
+static string? PeekJwtAudience(string jwt)
+{
+    var parts = jwt.Split('.');
+    if (parts.Length < 2)
+    {
+        return null;
+    }
+    JsonObject? payload;
+    try
+    {
+        payload = JsonNode.Parse(Base64UrlDecode(parts[1])) as JsonObject;
+    }
+    catch (System.Text.Json.JsonException)
+    {
+        return null;
+    }
+    return payload?["aud"] switch
+    {
+        JsonValue v => v.GetValue<string>(),
+        JsonArray { Count: > 0 } a => (string?)a[0],
+        _ => null,
+    };
+}
+
+static string Base64UrlDecode(string segment)
+{
+    var s = segment.Replace('-', '+').Replace('_', '/');
+    s += (s.Length % 4) switch { 2 => "==", 3 => "=", _ => string.Empty };
+    return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(s));
+}
 
 async Task<(string? Agent, string? Resource, string? Scope, IResult? Error)> ReadAdminBodyAsync(HttpContext ctx)
 {

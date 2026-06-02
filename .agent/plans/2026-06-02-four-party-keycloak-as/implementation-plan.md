@@ -1,6 +1,6 @@
 # Implementation Plan: Four-Party (Federated) AAuth Example with Keycloak
 
-Status: **in progress** — Phases 1–2 complete; Phase 3 next.
+Status: **in progress** — Phases 1–3 complete; Phase 4 next.
 
 Created: 2026-06-02
 
@@ -163,13 +163,54 @@ Closes gaps G1, G3, G7 (pre-established trust).
 
 Implementation Decisions:
 
-- _TBD._
+- **Routing key**: the PS peeks the (unverified) `resource_token.aud` to decide
+  three-party vs four-party — `aud == PsIssuer` → mint directly (collapsed
+  PS+AS, unchanged); `aud != PsIssuer` → federate. The token is fully verified
+  on whichever branch is taken, so the unverified peek is routing-only.
+- **Trust**: `MockPersonServer:TrustedAccessServers` (default
+  `["http://localhost:5500"]`) gates which `aud` values the PS will federate to;
+  any other `aud` → `403 untrusted_access_server`. Mirrors WhoAmI's
+  `TrustedPersonServers` pattern (pre-established trust, v1).
+- **Federation transport**: `AccessServerClient` registered as a singleton built
+  from the DI `MetadataClient`/`JwksClient` + `AuthTokenResponseValidator`; its
+  signed PS→AS client uses `AAuthClientBuilder(psKey).UseJwksUri(...)` over a
+  named `"aauth-federation"` `HttpClient` so tests can route the transport
+  in-process.
+- **Four-party path delegates policy to the AS**: the PS skips its own consent
+  gate and its `UpstreamTokenValidator` on the federated path (the AS owns
+  policy and validates the `act` chain). Consent bubble-up from the AS is
+  Phase 5; `requirement=claims` active push is Phase 11.
+- **Pre-forward check**: the PS still verifies the resource token's agent
+  binding (`agent`/`agent_jkt`, signature, `aud`=AS) before relaying it, and
+  reads `iss` (resource URL) + `scope` to drive the `AccessServerRequest`.
+- **No new public SDK API** — Phase 3 is sample-only; it consumes the Phase 2
+  `AccessServerClient`.
 
 Definition of Done:
 
-- [ ] PS detects four-party (`aud != self`) and federates to the AS.
-- [ ] PS still supports three-party (`aud == self`) unchanged.
-- [ ] PS-AS collapse variant documented/demonstrated.
+- [x] PS detects four-party (`aud != self`) and federates to the AS.
+- [x] PS still supports three-party (`aud == self`) unchanged.
+- [x] PS-AS collapse variant documented/demonstrated.
+
+Delivered:
+
+- `samples/MockPersonServer/Program.cs`: four-party branch in `POST /token` —
+  peeks `resource_token.aud` (`PeekJwtAudience`), gates on
+  `MockPersonServer:TrustedAccessServers` (`403 untrusted_access_server`),
+  verifies the resource token's agent binding (`aud`=AS), then federates via the
+  DI-registered `AccessServerClient` (signed `jwks_uri` client over the named
+  `"aauth-federation"` `HttpClient`) and returns the AS-issued token. Relays
+  `AAuthTokenExchangeException` (AS error code/status), `402` →
+  `payment_required`, and a failed delivery verification → `502
+  invalid_auth_token`. Three-party (`aud == PsIssuer`) path unchanged.
+- `samples/MockPersonServer/README.md`: new "Three-party vs four-party" section
+  + `TrustedAccessServers` config row.
+- `tests/AAuth.Tests/Integration/MockPersonServerFederationTests.cs`: 3 passing
+  tests (federates to AS and returns the AS-minted token; rejects untrusted AS
+  with `403`; three-party direct mint still works) using an in-process
+  `FederatedStub` that serves both the resource and AS discovery and mints the
+  AS auth token.
+- Full suite green: 359 passed (was 356).
 
 ## Phase 4 — Keycloak as the policy engine (adapter)
 

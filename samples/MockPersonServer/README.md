@@ -31,6 +31,26 @@ resource per §Resource Token Verification): `typ`/`dwk`/signature, `exp`/`iat`,
 `invalid_resource_token` / `expired_resource_token`. The consent screen and the
 issued auth token derive only from the verified token.
 
+## Three-party vs four-party
+
+The PS decides which role to play from the resource token's `aud` claim:
+
+- **Three-party (collapsed PS+AS)** — `aud` is this PS. The PS *is* the
+  authorization server: it applies its own policy (consent gate) and mints the
+  auth token itself (`iss` = PS, `dwk` = `aauth-person.json`). This is the
+  default flow exercised above.
+- **Four-party (federated)** — `aud` is an *Access Server* the resource
+  delegated authorization to. The PS does not mint the token; it verifies the
+  resource token's agent binding, then forwards a **signed PS→AS request** via
+  the SDK's `AccessServerClient` (`jwks_uri` scheme, the PS's key resolved from
+  `{issuer}/.well-known/jwks.json`) and returns the **AS-issued** token
+  (`iss` = AS, `dwk` = `aauth-access.json`). The AS owns policy, so the PS
+  consent gate is skipped on this path.
+
+The PS only federates to Access Servers listed in
+`MockPersonServer:TrustedAccessServers`; any other `aud` is rejected with
+`untrusted_access_server` (403).
+
 ## Run
 
 ```bash
@@ -62,3 +82,4 @@ dotnet run --project samples/AgentConsole -- \
 | `AAuth:Issuer` | `http://localhost:5100` | PS issuer URL — must match what agents put in their agent token's `ps` claim |
 | `AAuth:SignatureWindow` | `60` | RFC 9421 `created` freshness window, in seconds |
 | `MockPersonServer:RequireConsent` | `false` | When `true`, `POST /token` returns `202 + Location` and the user must approve or deny via `/interaction/{approve,deny}` before the poll resolves. `make demo` sets this to `true`. |
+| `MockPersonServer:TrustedAccessServers` | `["http://localhost:5500"]` | Access Servers this PS will federate to in the four-party flow (resource token `aud` ≠ PS). Any other `aud` is rejected with `untrusted_access_server`. |
