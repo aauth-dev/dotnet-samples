@@ -3,6 +3,7 @@ using AAuth;
 using AAuth.Crypto;
 using AAuth.DependencyInjection;
 using AAuth.Discovery;
+using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
 using AAuth.Tokens;
@@ -81,10 +82,23 @@ switch (policyProvider)
     case "stub":
         builder.Services.AddSingleton<IAccessPolicy, StubAccessPolicy>();
         break;
+    case "keycloak":
+        var keycloakOptions = new KeycloakOptions();
+        builder.Configuration.GetSection("AccessServer:Keycloak").Bind(keycloakOptions);
+        builder.Services.AddSingleton(keycloakOptions);
+        builder.Services.AddHttpClient("keycloak");
+        builder.Services.AddSingleton<IAccessPolicy>(sp => new KeycloakAccessPolicy(
+            sp.GetRequiredService<IHttpClientFactory>().CreateClient("keycloak"),
+            sp.GetRequiredService<KeycloakOptions>()));
+        break;
     default:
         throw new InvalidOperationException(
             $"Unknown AccessServer:PolicyProvider '{policyProvider}'. Expected 'stub' or 'keycloak'.");
 }
+
+// Parks in-flight federated decisions while the user completes an interactive
+// Keycloak login/consent round-trip (only used by the keycloak provider).
+builder.Services.AddSingleton<AccessPendingStore>();
 
 var app = builder.Build();
 
@@ -104,9 +118,11 @@ app.MapAAuthAccessServerWellKnown(new AAuthAccessServerMetadataOptions
 // All other endpoints require an AAuth signature. The PS signs with the
 // `jwks_uri` scheme (RequireIssuerVerification=false — that scheme carries
 // no issuer/token of its own; the request signature only proves the PS
-// possesses the key advertised at its jwks_uri).
+// possesses the key advertised at its jwks_uri). The browser-facing
+// interactive endpoints carry no AAuth signature, so they are excluded too.
 app.UseWhen(
-    ctx => !ctx.Request.Path.StartsWithSegments("/.well-known"),
+    ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
+        && !ctx.Request.Path.StartsWithSegments("/interaction"),
     branch => branch.UseAAuthVerification(new AAuthVerificationOptions
     {
         RequireIssuerVerification = false,
@@ -282,37 +298,181 @@ app.MapPost("/token", async (HttpContext ctx) =>
                 new { error = "access_denied", detail = decision.Reason },
                 statusCode: StatusCodes.Status403Forbidden);
         case AccessDecisionKind.NeedsInteraction:
-            // Interactive login/consent round-trip is wired in Phase 4 Step B.
-            return Results.Json(
-                new { error = "interaction_required", detail = decision.InteractionUrl },
-                statusCode: StatusCodes.Status202Accepted);
+        {
+            // Park the mint inputs and tell the PS (which relays to the agent)
+            // to send the user through the AS login endpoint while polling the
+            // pending URL. The real verdict is produced on the callback.
+            var pending = app.Services.GetRequiredService<AccessPendingStore>();
+            var entry = pending.Add(audience, requestedScope, agentId, agentConfirmationKey, policyClaims);
+            var loginUrl = $"{asIssuer.TrimEnd('/')}/interaction/login";
+            ctx.Response.Headers.Location = $"/pending/{entry.Id}";
+            ctx.Response.Headers["Retry-After"] = "1";
+            ctx.Response.Headers["Cache-Control"] = "no-store";
+            ctx.Response.Headers[AAuthRequirementHeader.Name] = AAuthInteraction.Format(loginUrl, entry.Id);
+            return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
+        }
         case AccessDecisionKind.Allow:
         default:
             break;
     }
 
     // Step 6 — mint the auth token (dwk = aauth-access.json).
-    var authToken = new AuthTokenBuilder
-    {
-        Issuer = asIssuer,
-        Audience = audience,
-        Agent = agentId,
-        AgentConfirmationKey = agentConfirmationKey,
-        Key = asKey,
-        KeyId = AsKid,
-        Subject = "pairwise-sub",
-        Scope = requestedScope,
-        Dwk = AuthTokenBuilder.AccessDwk,
-    }.Build();
-
-    return Results.Ok(new { auth_token = authToken, expires_in = 3600 });
+    return Results.Ok(new { auth_token = MintAuthToken(audience, agentId, requestedScope, agentConfirmationKey), expires_in = 3600 });
 });
+
+// -----------------------------------------------------------------------
+// GET /interaction/login?code={id} — browser entry point. Redirects the
+// user to the Keycloak authorization endpoint (OIDC code flow). Excluded
+// from AAuth verification (no signature; it is the user's browser).
+// -----------------------------------------------------------------------
+app.MapGet("/interaction/login", (HttpContext ctx, string code) =>
+{
+    var pending = app.Services.GetRequiredService<AccessPendingStore>();
+    var entry = pending.Get(code);
+    if (entry is null)
+    {
+        return Results.NotFound(new { error = "unknown_interaction" });
+    }
+
+    if (app.Services.GetRequiredService<IAccessPolicy>() is not IInteractiveAccessPolicy interactive)
+    {
+        return Results.Json(
+            new { error = "interaction_unsupported", detail = "configured policy is not interactive" },
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+
+    var redirectUri = $"{asIssuer.TrimEnd('/')}/interaction/callback";
+    return Results.Redirect(interactive.BuildAuthorizationUrl(entry.Id, redirectUri));
+});
+
+// -----------------------------------------------------------------------
+// GET /interaction/callback?code={kcCode}&state={id} — Keycloak redirects
+// the browser here after login/consent. We exchange the code for the user's
+// token, ask Keycloak for the decision, and record the verdict on the
+// pending entry. The PS's poll of /pending/{id} then mints or denies.
+// -----------------------------------------------------------------------
+app.MapGet("/interaction/callback", async (HttpContext ctx, string? code, string? state, string? error) =>
+{
+    var pending = app.Services.GetRequiredService<AccessPendingStore>();
+    var entry = state is null ? null : pending.Get(state);
+    if (entry is null)
+    {
+        return Results.NotFound(new { error = "unknown_interaction" });
+    }
+
+    if (!string.IsNullOrEmpty(error))
+    {
+        pending.MarkDenied(entry.Id, $"login failed: {error}");
+        return Results.Content(InteractionHtml("Access denied", "You can close this window."), "text/html");
+    }
+
+    if (string.IsNullOrEmpty(code))
+    {
+        return Results.Json(new { error = "invalid_request", detail = "missing code" },
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+
+    if (app.Services.GetRequiredService<IAccessPolicy>() is not IInteractiveAccessPolicy interactive)
+    {
+        return Results.Json(
+            new { error = "interaction_unsupported", detail = "configured policy is not interactive" },
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+
+    var redirectUri = $"{asIssuer.TrimEnd('/')}/interaction/callback";
+    var request = new AccessPolicyRequest
+    {
+        ResourceUrl = entry.ResourceUrl,
+        Scope = entry.Scope,
+        AgentId = entry.AgentId,
+        Claims = entry.Claims,
+        InteractionId = entry.Id,
+    };
+
+    AccessDecision decision;
+    try
+    {
+        decision = await interactive.CompleteAsync(code, redirectUri, request);
+    }
+    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+    {
+        pending.MarkDenied(entry.Id, "policy backend unavailable");
+        return Results.Content(InteractionHtml("Login error", "Please try again later."), "text/html");
+    }
+
+    if (decision.Kind == AccessDecisionKind.Allow)
+    {
+        pending.MarkAllowed(entry.Id);
+        return Results.Content(InteractionHtml("Access granted", "You can return to your agent."), "text/html");
+    }
+
+    pending.MarkDenied(entry.Id, decision.Reason ?? "access denied");
+    return Results.Content(InteractionHtml("Access denied", "You can close this window."), "text/html");
+});
+
+// -----------------------------------------------------------------------
+// GET /pending/{id} — the PS polls this (signed) for the deferred decision.
+// Mirrors the PS pending shape so the SDK's DeferredPoller drives it:
+//   202 + AAuth-Requirement while pending, 200 auth_token when allowed,
+//   403 access_denied when denied.
+// -----------------------------------------------------------------------
+app.MapGet("/pending/{id}", (HttpContext ctx, string id) =>
+{
+    var pending = app.Services.GetRequiredService<AccessPendingStore>();
+    var entry = pending.Get(id);
+    if (entry is null)
+    {
+        return Results.NotFound(new { error = "unknown_interaction" });
+    }
+
+    switch (entry.Status)
+    {
+        case AccessPendingStatus.Allowed:
+            return Results.Ok(new
+            {
+                auth_token = MintAuthToken(entry.ResourceUrl, entry.AgentId, entry.Scope, entry.AgentConfirmationKey),
+                expires_in = 3600,
+            });
+        case AccessPendingStatus.Denied:
+            return Results.Json(
+                new { error = "access_denied", detail = entry.DenyReason },
+                statusCode: StatusCodes.Status403Forbidden);
+        case AccessPendingStatus.Pending:
+        default:
+            var loginUrl = $"{asIssuer.TrimEnd('/')}/interaction/login";
+            ctx.Response.Headers.Location = $"/pending/{entry.Id}";
+            ctx.Response.Headers["Retry-After"] = "1";
+            ctx.Response.Headers["Cache-Control"] = "no-store";
+            ctx.Response.Headers[AAuthRequirementHeader.Name] = AAuthInteraction.Format(loginUrl, entry.Id);
+            return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
+    }
+});
+
+// Minimal completion page shown to the user after the Keycloak round-trip.
+static string InteractionHtml(string title, string body) =>
+    $"<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>{title}</title></head>"
+    + $"<body style=\"font-family:sans-serif;margin:3rem\"><h1>{title}</h1><p>{body}</p></body></html>";
 
 // Demo convention shared with MockPersonServer: an agent whose id starts with
 // `aauth:demo@` is treated as holding the admin role. A production AS would
 // receive the principal's directory membership via the PS's claim push.
 static bool IsAdminAgent(string agentId) =>
     agentId.StartsWith("aauth:demo@", StringComparison.Ordinal);
+
+// Mint the `aa-auth+jwt` (dwk = aauth-access.json) bound to the agent's key.
+string MintAuthToken(string resourceUrl, string agentId, string scope, AAuthKey confirmationKey) =>
+    new AuthTokenBuilder
+    {
+        Issuer = asIssuer,
+        Audience = resourceUrl,
+        Agent = agentId,
+        AgentConfirmationKey = confirmationKey,
+        Key = asKey,
+        KeyId = AsKid,
+        Subject = "pairwise-sub",
+        Scope = scope,
+        Dwk = AuthTokenBuilder.AccessDwk,
+    }.Build();
 
 app.Run();
 

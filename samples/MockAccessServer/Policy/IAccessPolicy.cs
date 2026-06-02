@@ -27,6 +27,33 @@ public interface IAccessPolicy
     Task<AccessDecision> EvaluateAsync(AccessPolicyRequest request, CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// Optional capability for policies that resolve the decision through an
+/// interactive user round-trip (browser login + consent). The AS hosts the
+/// <c>/interaction/login</c> redirect and <c>/interaction/callback</c>
+/// endpoints and drives them through this contract; non-interactive policies
+/// (e.g. <c>StubAccessPolicy</c>) do not implement it.
+/// </summary>
+public interface IInteractiveAccessPolicy
+{
+    /// <summary>
+    /// Build the identity-provider authorization URL the user's browser is
+    /// redirected to. <paramref name="state"/> is the AS pending-interaction id
+    /// (echoed back on the callback); <paramref name="redirectUri"/> is the
+    /// AS callback endpoint.
+    /// </summary>
+    string BuildAuthorizationUrl(string state, string redirectUri);
+
+    /// <summary>
+    /// Complete the round-trip: exchange the authorization <paramref name="code"/>
+    /// for the user's token and evaluate the policy decision for
+    /// <paramref name="request"/>. Returns <see cref="AccessDecisionKind.Allow"/>
+    /// or <see cref="AccessDecisionKind.Deny"/> (never NeedsInteraction).
+    /// </summary>
+    Task<AccessDecision> CompleteAsync(
+        string code, string redirectUri, AccessPolicyRequest request, CancellationToken cancellationToken = default);
+}
+
 /// <summary>Inputs to a policy decision, derived from the verified tokens.</summary>
 public sealed class AccessPolicyRequest
 {
