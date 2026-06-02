@@ -147,7 +147,7 @@ demo-federated: ## Four-party federated demo: Keycloak + WhoAmI + MockPersonServ
 	@echo "Keycloak ready."
 	@echo "Building services (once) before launch..."
 	$(DOTNET) build $(SOLUTION) -v q
-	@trap 'echo; echo "Stopping..."; kill 0; docker rm -f aauth-keycloak >/dev/null 2>&1' INT TERM EXIT; \
+	@trap 'trap - INT TERM EXIT; echo; echo "Stopping..."; docker rm -f aauth-keycloak >/dev/null 2>&1; kill 0' INT TERM EXIT; \
 	$(DOTNET) run --no-build --project $(WHOAMI_PROJECT) & \
 	$(DOTNET) run --no-build --project $(PS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(AP_PROJECT) & \
