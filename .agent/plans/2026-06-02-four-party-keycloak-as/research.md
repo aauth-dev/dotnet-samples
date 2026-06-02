@@ -147,9 +147,9 @@ without user sign-off. Keep this table current as work proceeds.
 | S3 | `IAccessPolicy` / `AccessDecision` pluggable decision seam (allow / deny / needs-interaction); keeps Keycloak out of core. | AS | G4, Keycloak | Phase 4 | proposed |
 | S4 | Auth Token Delivery verifier — reusable PS-side 7-check helper (consolidate `TokenVerifier` pieces). | PS | G6 | Phase 2 | proposed |
 | S5 | PS auto-federation toggle on `WithChallengeHandling` (federate when `resource_token.aud != self`). | PS | G1 | Phase 3 | proposed |
-| S6 | Deferred-interaction ergonomics review — unify or canonicalize the two-callback (`WithChallengeHandling` + `WithInteractionHandling`) consent shape for four-party. | Client | G10 | Phase 5 | investigate |
+| S6 | Deferred-interaction ergonomics review — unify or canonicalize the two-callback (`WithChallengeHandling` + `WithInteractionHandling`) consent shape for four-party. | Client | G10 | Phase 5 | finding: non-chained four-party needs only **one** callback (`WithChallengeHandling`); the AS `202` is relayed on the PS-exchange path. Two callbacks remain a call-chaining concern. Revisit naming in Phase 12. |
 | S7 | Resource "delegate to AS" audience ergonomics — confirm/name `ChallengeOptions` explicit audience for `aud`=AS. | Resource | G5 | Phase 1 | investigate |
-| S8 | `Actor.AccessServer` (sample type, not core SDK) in GuidedTour `StepRecord`. | Demo | G9 | Phase 6 | proposed |
+| S8 | `Actor.AccessServer` (sample type, not core SDK) in GuidedTour `StepRecord`. | Demo | G9 | Phase 6 | done (Phase 6): `Actor.AccessServer` + `SubStep`/`SubStepsLabel` added; sample-only, no core SDK change. |
 | S9 | Config-selected AS policy backend: `IAccessPolicy` resolved from `AccessServer__PolicyProvider=stub\|keycloak` (default `stub`), optional graceful fallback to stub when Keycloak is unreachable. Mirrors the `MockPersonServer__RequireConsent` env pattern. | AS | G4, CI | Phase 4 | proposed |
 
 Backward-compat note: S1–S5 are intended as **additive** (new types/overloads).
@@ -185,6 +185,41 @@ Keycloak, instead of the Orchestrator). The agent wires two callbacks and polls:
 The AS adapter therefore must emit a spec-valid `202` (`AAuth-Requirement` +
 `Location` pending URL + `Retry-After`) and expose a pending/poll endpoint, and
 the PS must relay it — no new agent-side concepts are introduced.
+
+### Findings from the GuidedTour four-party build (Phase 6)
+
+Recorded for reuse by the SampleApp four-party page (Phase 7) and the demo
+targets (Phase 8):
+
+- **Federation is transparent to the agent.** The four-party agent code is
+  byte-for-byte the three-party deferred agent: `WithChallengeHandling` +
+  `OnInteractionRequired`. Only the PS behaves differently (it federates to the
+  AS when `resource_token.aud != self`). The SampleApp page should therefore be
+  modeled on `Deferred.razor` (single consent surface), **not** the two-hop
+  `CallChain.razor` — the four-party consent arrives on the PS-exchange challenge
+  pipeline, not the chained interaction pipeline.
+- **The AS consent (`202 requirement=interaction`) is relayed by the PS** back to
+  the agent's PS exchange, so the agent surfaces exactly one consent URL. A second
+  `WithInteractionHandling` callback is only needed when an intermediary chains
+  its *own* `202` (call-chaining), which the non-chained four-party flow does not.
+- **Demo target parity is a real failure mode.** `make demo-federated` originally
+  omitted the Orchestrator and ran the PS without
+  `MockPersonServer__RequireConsent=true`; this silently broke the call-chain and
+  deferred-consent flows **only under the federated target** (the PS minted a
+  `200` directly, so no interaction URL existed and the consent button was dead).
+  Any `*-federated*` demo target MUST boot the same backend set as its non-federated
+  sibling plus the AS/Keycloak — adding the AS alone is insufficient.
+- **Sequence-diagram rendering rules** (now codified in `SequenceDiagram.razor`):
+  a step's response renders *after* its component's internal sub-steps box; inner
+  sub-step responses (AS→PS) are on different lanes than the outer reply (PS→Agent)
+  and are not duplicates; pure client-side work (parse challenge) is an
+  `Agent→Agent` self-step to avoid two consecutive right-to-left arrows. These are
+  GuidedTour-only concerns but document the canonical four-party message ordering
+  the SampleApp explainer text should match.
+- **Per-party color/labeling**: the Access Server gets its own swimlane color
+  (red, `--danger`) and the federation sub-steps box is labeled "inside person
+  server" (vs "inside orchestrator" for call-chaining) — the box label now names
+  the component the inner steps run inside.
 
 ## Prior art evaluated (and not reused)
 

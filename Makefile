@@ -86,12 +86,13 @@ agent: ## Run AgentConsole against WhoAmI (override URL=… for a different targ
 live: ## Run LiveWhoAmITest against whoami.aauth.dev (needs cloudflared + network)
 	$(DOTNET) run --project $(LIVE_PROJECT)
 
-demo: ## Start WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + GuidedTour in parallel
-	@echo "Starting five-party demo (all flows including call-chain)..."
+demo: ## Start WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + MockAccessServer + GuidedTour in parallel
+	@echo "Starting five-party demo (all flows including call-chain + federated)..."
 	@echo "  WhoAmI:             $(WHOAMI_URL)"
 	@echo "  Orchestrator:       $(ORCH_URL)"
 	@echo "  MockPersonServer:   $(PS_URL)  (RequireConsent=true)"
 	@echo "  MockAgentProvider:  $(AP_URL)"
+	@echo "  MockAccessServer:   $(AS_URL)  (PolicyProvider=stub)"
 	@echo "  GuidedTour:         $(TOUR_URL)"
 	@echo ""
 	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \
@@ -99,6 +100,7 @@ demo: ## Start WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + Gu
 	$(DOTNET) run --project $(WHOAMI_PROJECT) & \
 	$(DOTNET) run --project $(ORCH_PROJECT) & \
 	$(DOTNET) run --project $(AP_PROJECT) & \
+	$(DOTNET) run --project $(AS_PROJECT) & \
 	$(DOTNET) run --project $(TOUR_PROJECT) & \
 	wait
 
@@ -139,9 +141,11 @@ demo-federated: ## Four-party federated demo: Keycloak + WhoAmI + MockPersonServ
 	@echo "Starting four-party federated demo (Keycloak as the policy engine)..."
 	@echo "  Keycloak:           $(KEYCLOAK_URL)        (admin/admin, realm 'aauth')"
 	@echo "  WhoAmI:             $(WHOAMI_URL)/federated"
-	@echo "  MockPersonServer:   $(PS_URL)"
+	@echo "  Orchestrator:       $(ORCH_URL)"
+	@echo "  MockPersonServer:   $(PS_URL)        (RequireConsent=true)"
 	@echo "  MockAgentProvider:  $(AP_URL)"
 	@echo "  MockAccessServer:   $(AS_URL)        (PolicyProvider=keycloak)"
+	@echo "  GuidedTour:         $(TOUR_URL)        (Federated mode → live Keycloak consent)"
 	@echo ""
 	@echo "------------------------------------------------------------------"
 	@echo " Keycloak login users (use these when the browser prompts you):"
@@ -151,7 +155,8 @@ demo-federated: ## Four-party federated demo: Keycloak + WhoAmI + MockPersonServ
 	@echo ""
 	@echo " Keycloak admin console:  $(KEYCLOAK_URL)  (admin / admin)"
 	@echo "------------------------------------------------------------------"
-	@echo "In another terminal, drive the agent with:  make agent-federated"
+	@echo "Drive it from the GuidedTour UI ($(TOUR_URL), 'Federated' mode),"
+	@echo "or from the CLI in another terminal with:  make agent-federated"
 	@echo ""
 	docker rm -f aauth-keycloak >/dev/null 2>&1 || true
 	docker run -d --name aauth-keycloak -p 8080:8080 \
@@ -165,7 +170,8 @@ demo-federated: ## Four-party federated demo: Keycloak + WhoAmI + MockPersonServ
 	$(DOTNET) build $(SOLUTION) -v q
 	@trap 'trap - INT TERM EXIT; echo; echo "Stopping..."; docker rm -f aauth-keycloak >/dev/null 2>&1; kill 0' INT TERM EXIT; \
 	$(DOTNET) run --no-build --project $(WHOAMI_PROJECT) & \
-	$(DOTNET) run --no-build --project $(PS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(ORCH_PROJECT) & \
+	MockPersonServer__RequireConsent=true $(DOTNET) run --no-build --project $(PS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(AP_PROJECT) & \
 	AccessServer__PolicyProvider=keycloak \
 	AccessServer__Keycloak__Authority=$(KEYCLOAK_URL)/realms/aauth \
@@ -174,6 +180,7 @@ demo-federated: ## Four-party federated demo: Keycloak + WhoAmI + MockPersonServ
 	AccessServer__Keycloak__ResourceServerAudience=aauth-access-server \
 	AccessServer__Keycloak__ResourceName=whoami \
 	$(DOTNET) run --no-build --project $(AS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(TOUR_PROJECT) & \
 	wait
 
 demo-sample: ## Start WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + SampleApp in parallel

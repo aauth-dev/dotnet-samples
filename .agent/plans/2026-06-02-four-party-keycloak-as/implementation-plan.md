@@ -1,6 +1,8 @@
 # Implementation Plan: Four-Party (Federated) AAuth Example with Keycloak
 
-Status: **in progress** — Phases 1–4 complete (Phase 4 absorbs Phase 5).
+Status: **in progress** — Phases 1–4 complete (Phase 4 absorbs Phase 5);
+Phase 6 complete (GuidedTour four-party swimlanes + arrow rendering + demo
+parity). Phase 7 (SampleApp) next.
 
 Created: 2026-06-02
 
@@ -310,15 +312,83 @@ Goal: a Guided Tour run that visualizes all four parties, one swimlane each.
   the final agent→resource call; include the optional `202` consent detour._
 - _To populate: wire a four-party tour option in `TourSession`/`TourOptions`._
 
-Implementation Decisions:
+Implementation Decisions (2026-06-02):
 
-- _TBD._
+- The federated tour runs against the **stub** AS policy provider (no Keycloak)
+  so the four-swimlane walkthrough is fully non-interactive and reproducible.
+  The interactive Keycloak login/consent path is exercised separately by the
+  SampleApp (Phase 7) and `make demo-federated` (Phase 8). The DoD (four
+  swimlanes; decoded AS-minted auth token showing `dwk=aauth-access.json` +
+  `cnf.jwk`) is satisfied without a live Keycloak.
+- New `TourMode.Federated` + `Actor.AccessServer` (the S8 sample type). The mode
+  is selectable only when `GuidedTour:AccessServerUrl` is configured
+  (`HasAccessServer`), mirroring how `HasOrchestrator` gates `CallChain`.
+- The tour targets `{WhoAmIUrl}/federated`; it is modeled on the **Autonomous**
+  (6-step direct-grant) path plus an Access Server hop rendered as **sub-steps**
+  inside the PS exchange (exactly how `CallChain` renders the Orchestrator's
+  internal hops). 7 steps total.
+- Reuses `StepFetchPersonMetadataAsync`; dedicated `StepFederated*` methods cover
+  the rest. 4-lane diagram: Agent / Resource / Person Server / Access Server.
+- No new public SDK API — sample-only, consuming Phases 1–4.
 
 Definition of Done:
 
-- [ ] Tour renders four distinct swimlanes (Agent, Resource, PS, Access Server).
-- [ ] Each step shows request/response, signature base, and decoded tokens.
-- [ ] The AS-issued auth token shows `dwk=aauth-access.json` and `cnf.jwk`.
+- [x] Tour renders four distinct swimlanes (Agent, Resource, PS, Access Server).
+- [x] Each step shows request/response, signature base, and decoded tokens.
+- [x] The AS-issued auth token shows `dwk=aauth-access.json` and `cnf.jwk`.
+
+Delivered:
+
+- `samples/GuidedTour/StepRecord.cs`: `Actor.AccessServer` (S8); `SubStep`
+  visual-only arrow record (`Label, From, To, IsResponse`); `StepRecord` gained
+  `SubSteps` and `SubStepsLabel` (names the component the inner steps run inside,
+  e.g. "inside person server" for federation vs the default "inside orchestrator"
+  for call-chaining).
+- `samples/GuidedTour/TourSession.cs`: `TourMode.Federated`, `IsFederatedMode`/
+  `HasAccessServer`, and the `StepFederated*` methods (resource token `aud`=AS,
+  PS exchange with the AS hop rendered as sub-steps labeled "inside person
+  server", AS-minted `aa-auth+jwt`, replay, inspect). Parse-challenge steps
+  modeled as `Agent→Agent` self-steps so the 401 response is not immediately
+  followed by a second right-to-left arrow.
+- `samples/GuidedTour/Components/SequenceDiagram.razor`: arrow rendering rewritten
+  into three ordered rows per step — **request** (solid arrow) → **sub-steps box**
+  (component-internal hops) → **response** (dotted arrow, rendered *after* the box
+  so a parent reply follows its component's internal work). Response direction is
+  the reverse of the request; the box label is driven by `SubStepsLabel` via a
+  `--substeps-label` CSS variable.
+- `samples/GuidedTour/Components/Pages/Tour.razor`: `FederatedLanes` (Agent /
+  Resource / Person Server / Access Server) with the Access Server on its own
+  `as` lane class; banner shows the Access Server URL via `hl-as`.
+- `samples/GuidedTour/wwwroot/app.css`: dotted response arrows + labels (main and
+  sub-step), arrowhead vertical centering, full-height swimlanes
+  (`.seq { min-height: 100% }`), the dynamic `--substeps-label` box title, a new
+  `--danger` red, and `.lanes .as` / `.hl-as` so the **Access Server lane renders
+  red** (distinct from Resource green and Person Server orange).
+- `Makefile`: `demo-federated` now boots the Orchestrator and runs MockPersonServer
+  with `MockPersonServer__RequireConsent=true` so the deferred-consent button has a
+  live interaction URL under the four-party demo (previously dead — the PS minted a
+  `200` directly without an interaction URL). Brings `demo-federated` to parity with
+  `demo`.
+
+Findings (UI / demo correctness, recorded for Phase 7 reuse):
+
+- A remote step's response must render **after** any component sub-steps box, not
+  before — the parent reply logically follows the component's internal work.
+- Inner sub-step responses (e.g. AS→PS) are on different lanes than the outer reply
+  (PS→Agent), so they are **not** duplicates and must not suppress the outer
+  response row. An earlier "suppress outer response when sub-steps end in a
+  response" heuristic was wrong and was removed.
+- "Two consecutive right-to-left arrows with no request between" is the duplicate
+  smell to avoid; modeling pure client-side work (parse challenge) as an
+  `Agent→Agent` self-step prevents it.
+- Responses are dotted, requests solid; status text is the response row's centered
+  label. Dotted arrowheads need a small upward nudge (`top:-6px`) to center on the
+  border-drawn line.
+- `make demo-federated` must launch the **same backends** as `make demo` plus the
+  AS/Keycloak — a missing backend (Orchestrator) or a missing env flag
+  (`RequireConsent=true`) silently breaks a flow (call-chain / deferred consent)
+  only under the federated target. Phase 7/8 targets must mirror the full backend
+  set, not just add the AS.
 
 ## Phase 7 — SampleApp: four-party flow entry with consent bubble-up
 
@@ -330,9 +400,50 @@ bubble-up, modeled on the call-chain page.
 - _To populate: Playwright specs for the pre-granted (direct `200`) and deferred
   (`202` → approve popup → `200`) paths, mirroring `call-chain-deferred.spec.ts`._
 
-Implementation Decisions:
+Implementation Decisions (2026-06-02):
 
-- _TBD._
+- **Page shape**: new `samples/SampleApp/Components/Pages/Federated.razor`
+  (`@page "/federated"`, `@rendermode InteractiveServer`), modeled on
+  [Deferred.razor](../../samples/SampleApp/Components/Pages/Deferred.razor) for
+  the single-surface consent UX rather than the two-hop `CallChain.razor` — the
+  four-party flow surfaces **one** consent (the AS/Keycloak login+consent),
+  relayed by the PS, not two chained hops. The agent code panel and a server-side
+  panel explain the four parties (Agent / Resource / PS / AS) and the
+  `aud=Access Server` tell.
+- **Target endpoint**: the agent calls `{Resource}/federated` (WhoAmI's isolated
+  federated branch from Phase 1), whose `401` resource token carries
+  `aud = Access Server`. The agent is **identical** to the three-party deferred
+  agent — federation is transparent to it; only the PS behaves differently. This
+  is the key teaching point of the page.
+- **Consent surface**: a single `WithChallengeHandling(opts =>
+  opts.OnInteractionRequired = i => Surface(i.BuildUserUrl()))` callback. When the
+  AS (Keycloak) needs an interactive user session it returns `202
+  requirement=interaction`; the PS relays it back through the agent's PS exchange,
+  so it arrives on the **challenge** pipeline (the same path as three-party
+  deferred), not the chained `WithInteractionHandling` path. No second callback is
+  required for the non-chained four-party case. (Mirrors the GuidedTour federated
+  flow, which renders this as the AS hop inside the PS exchange box.)
+- **Config**: add `AAuth:AccessServer` (`http://localhost:5500`) to
+  [SampleApp/appsettings.json](../../samples/SampleApp/appsettings.json) for the
+  banner/explainer only; the agent never calls the AS directly. The page is shown
+  in the nav unconditionally (like the other pages) but its run depends on the AS
+  being up (the demo target wires it).
+- **Pre-granted vs deferred**: with the **stub** AS policy the call returns a
+  direct `200` (no consent surface). With **Keycloak** policy (or
+  `MockPersonServer__RequireConsent`-style gating) the first run surfaces the
+  consent URL, then completes after approval. The page handles both by simply not
+  showing the approval panel when no `202` arrives — same control flow as
+  Deferred.razor.
+- **Nav**: add a "Federated (Four-Party)" `NavLink` to
+  [SampleApp/Components/Layout/NavMenu.razor](../../samples/SampleApp/Components/Layout)
+  next to the Call Chain entry.
+- **Findings carried from Phase 6**: the demo target that runs this page must boot
+  the **full** backend set (Resource + PS-with-consent + AP + AS + Keycloak), not
+  just add the AS — a missing backend or env flag silently breaks the flow under
+  the federated target only (Phase 8 owns the `make demo-federated-sample` target).
+- **No new public SDK API** — sample-only; consumes Phases 1–4. Any agent-side
+  ergonomic gap discovered here is logged in research "SDK API findings" for the
+  Phase 12 gate.
 
 Definition of Done:
 

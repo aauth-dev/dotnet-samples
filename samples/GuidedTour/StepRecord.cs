@@ -66,6 +66,13 @@ public sealed class StepRecord
     /// </summary>
     public IReadOnlyList<SubStep>? SubSteps { get; init; }
 
+    /// <summary>
+    /// Label shown on the sub-steps box, naming the component these inner
+    /// steps run inside (e.g. "inside orchestrator", "inside person server").
+    /// Defaults to "inside orchestrator" when not set.
+    /// </summary>
+    public string? SubStepsLabel { get; init; }
+
     /// <summary>Time the step was recorded (used for timeline display).</summary>
     public DateTimeOffset Timestamp { get; } = DateTimeOffset.UtcNow;
 }
@@ -73,8 +80,10 @@ public sealed class StepRecord
 /// <summary>
 /// A lightweight visual-only arrow in the sequence diagram, rendered as
 /// part of a parent step. Does not appear in the step list or inspector.
+/// Set <paramref name="IsResponse"/> to draw the arrow as a dashed return
+/// (response) line rather than a solid outgoing request.
 /// </summary>
-public sealed record SubStep(string Label, Actor From, Actor To);
+public sealed record SubStep(string Label, Actor From, Actor To, bool IsResponse = false);
 
 /// <summary>Actors in the AAuth protocol flow as visualized by the tour.</summary>
 public enum Actor
@@ -84,6 +93,7 @@ public enum Actor
     PersonServer,
     AgentProvider,
     Orchestrator,
+    AccessServer,
 }
 
 /// <summary>

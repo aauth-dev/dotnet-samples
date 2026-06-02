@@ -36,6 +36,10 @@ public sealed class TourSession : IAsyncDisposable
     private string? _interactionUrl;
     private string? _interactionCode;
     private bool _userApproved;
+    // True once the federated exchange (step 5) came back 202 — the AS (Keycloak)
+    // needs an interactive login/consent, so the flow grows the consent + poll
+    // steps (mirroring deferred mode). Stays false against an auto-allow stub AS.
+    private bool _federatedPending;
     private bool _aborted;
     private TourMode _mode;
 
@@ -136,11 +140,17 @@ public sealed class TourSession : IAsyncDisposable
     /// <summary>True when the configured flow is autonomous (standing consent, no user interaction).</summary>
     public bool IsAutonomousMode => HasPersonServer && _mode == TourMode.Autonomous;
 
-    /// <summary>True when the configured flow is the call-chain (multi-agent) path.</summary>
+    /// <summary>True when the current flow is the call-chain (multi-agent) path.</summary>
     public bool IsCallChainMode => HasPersonServer && _mode == TourMode.CallChain && HasOrchestrator;
+
+    /// <summary>True when the current flow is the four-party federated path.</summary>
+    public bool IsFederatedMode => HasPersonServer && _mode == TourMode.Federated && HasAccessServer;
 
     /// <summary>True when an Orchestrator URL is configured.</summary>
     public bool HasOrchestrator => !string.IsNullOrWhiteSpace(_options.OrchestratorUrl);
+
+    /// <summary>True when an Access Server URL is configured for the federated flow.</summary>
+    public bool HasAccessServer => !string.IsNullOrWhiteSpace(_options.AccessServerUrl);
 
     /// <summary>True when an Agent Provider URL is configured for real AP enrolment.</summary>
     public bool HasAgentProvider => !string.IsNullOrWhiteSpace(_options.AgentProviderUrl);
@@ -153,6 +163,7 @@ public sealed class TourSession : IAsyncDisposable
             if (IsBootstrapMode) return HasAgentProvider ? 3 : 2;
             if (IsIdentityMode) return 2;
             if (IsCallChainMode) return 7;
+            if (IsFederatedMode) return _federatedPending ? 10 : 7;
             return IsDeferredMode ? 9 : 6;
         }
     }
@@ -170,6 +181,7 @@ public sealed class TourSession : IAsyncDisposable
             if (IsBootstrapMode) return HasAgentProvider ? ApBootstrapPlan : LocalBootstrapPlan;
             if (IsIdentityMode) return IdentityPlan;
             if (IsCallChainMode) return CallChainPlan;
+            if (IsFederatedMode) return _federatedPending ? FederatedConsentPlan : FederatedPlan;
             return IsDeferredMode ? DeferredPlan : AutonomousPlan;
         }
     }
@@ -227,6 +239,36 @@ public sealed class TourSession : IAsyncDisposable
         new(7, "Inspect multi-agent result", "Review the combined response showing the full Agent → Orchestrator → WhoAmI chain.", Actor.Agent, Actor.Agent),
     };
 
+    private static readonly TourPlanStep[] FederatedPlan =
+    {
+        new(1, "Discover resource metadata", "Unsigned GET /federated/.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
+        new(2, "Signed GET /federated → 401", "Resource returns 401 with a resource_token whose aud is the Access Server (not the PS).", Actor.Agent, Actor.Resource),
+        new(3, "Parse the 401 challenge", "Decode the resource_token — its aud=Access Server URL is the four-party tell.", Actor.Agent, Actor.Agent),
+        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint.", Actor.Agent, Actor.PersonServer),
+        new(5, "Exchange at PS → AS federation → auth_token", "Signed POST /token; the PS sees aud≠self, federates to the AS, and the AS mints the aa-auth+jwt.", Actor.Agent, Actor.PersonServer),
+        new(6, "Replay GET /federated with auth_token", "Signed retry carries the AS-issued auth_token → 200 + claims.", Actor.Agent, Actor.Resource),
+        new(7, "Inspect federated result", "Review the AS-minted auth token: dwk=aauth-access.json, cnf.jwk bound to the agent key.", Actor.Agent, Actor.Agent),
+    };
+
+    // The federated flow when the Access Server (Keycloak) requires an
+    // interactive login/consent. The PS relays the AS's 202 interaction back to
+    // the agent, which surfaces the login link and polls the pending URL —
+    // structurally identical to deferred mode but the consent screen is the
+    // AS's (Keycloak) rather than the Person Server's.
+    private static readonly TourPlanStep[] FederatedConsentPlan =
+    {
+        new(1, "Discover resource metadata", "Unsigned GET /federated/.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
+        new(2, "Signed GET /federated → 401", "Resource returns 401 with a resource_token whose aud is the Access Server (not the PS).", Actor.Agent, Actor.Resource),
+        new(3, "Parse the 401 challenge", "Decode the resource_token — its aud=Access Server URL is the four-party tell.", Actor.Agent, Actor.Agent),
+        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint.", Actor.Agent, Actor.PersonServer),
+        new(5, "Exchange → 202 (AS needs consent)", "PS federates to the AS; the AS (Keycloak) needs a login/consent, so the PS relays a 202 + interaction URL.", Actor.Agent, Actor.PersonServer),
+        new(6, "Direct user to AS login", "Agent surfaces the AS interaction link ({url}?code={code}) for the user to sign in at Keycloak.", Actor.Agent, Actor.Agent),
+        new(7, "User logs in / consents at the AS", "User opens the AS login page (redirects to Keycloak), authenticates, and approves; the AS records the verdict.", Actor.AccessServer, Actor.AccessServer),
+        new(8, "Poll pending URL → 200 auth_token", "Signed GETs to the PS pending URL until the AS verdict resolves and the PS relays the aa-auth+jwt.", Actor.Agent, Actor.PersonServer),
+        new(9, "Replay GET /federated with auth_token", "Signed retry carries the AS-issued auth_token → 200 + claims.", Actor.Agent, Actor.Resource),
+        new(10, "Inspect federated result", "Review the AS-minted auth token: dwk=aauth-access.json, cnf.jwk bound to the agent key.", Actor.Agent, Actor.Agent),
+    };
+
     /// <summary>True when no more steps remain in the current flow.</summary>
     public bool IsComplete => _aborted || Steps.Count >= TotalSteps;
 
@@ -248,7 +290,7 @@ public sealed class TourSession : IAsyncDisposable
     /// and the UI should expose the "Approve as user" action button.
     /// </summary>
     public bool AwaitingUserApproval =>
-        IsDeferredMode
+        (IsDeferredMode || (IsFederatedMode && _federatedPending))
         && Steps.Count + 1 == UserApprovalStepNumber && !_userApproved;
 
     /// <summary>The user-facing interaction URL captured during step 7 (deferred only).</summary>
@@ -322,7 +364,9 @@ public sealed class TourSession : IAsyncDisposable
         _interactionCode = null;
         _apEnrolEndpoint = null;
         _callChainResponseBody = null;
+        _federatedResponseBody = null;
         _userApproved = false;
+        _federatedPending = false;
         _aborted = false;
     }
 
@@ -461,6 +505,36 @@ public sealed class TourSession : IAsyncDisposable
                 case 7: StepCallChainInspectResult(); break;
             }
         }
+        else if (IsFederatedMode)
+        {
+            switch (nextStep)
+            {
+                case 1: await StepFederatedDiscoverResourceAsync(ct); break;
+                case 2: await StepFederatedSignedGetAsync(ct); break;
+                case 3: StepFederatedParseChallenge(); break;
+                case 4: await StepFetchPersonMetadataAsync(ct); break;
+                case 5: await StepFederatedExchangeAsync(ct); break;
+                // Steps 6+ branch on whether the AS asked for an interactive
+                // login (202, _federatedPending) or auto-allowed (200, stub).
+                case 6 when _federatedPending: StepFederatedDirectUserToInteraction(); break;
+                case 7 when _federatedPending: StepUserApprovesPlaceholder(); break;
+                case 8 when _federatedPending:
+                    if (_pollingTask is { } fedPoll && !fedPoll.IsCompleted)
+                    {
+                        await fedPoll.ConfigureAwait(false);
+                    }
+                    else if (Steps.Count + 1 == PollStepNumber)
+                    {
+                        await StepPollPendingAsync(ct);
+                    }
+                    break;
+                case 9 when _federatedPending: await StepFederatedRetryAsync(ct); break;
+                case 10 when _federatedPending: StepFederatedInspectResult(); break;
+                // Direct-grant (stub AS) path: no consent, 7 steps total.
+                case 6: await StepFederatedRetryAsync(ct); break;
+                case 7: StepFederatedInspectResult(); break;
+            }
+        }
         else
         {
             switch (nextStep)
@@ -542,7 +616,7 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public Task RecordUserApprovalOpenedAsync(CancellationToken ct = default)
     {
-        if (!IsDeferredMode) { return Task.CompletedTask; }
+        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending))) { return Task.CompletedTask; }
         if (Steps.Count + 1 != UserApprovalStepNumber)
         {
             throw new InvalidOperationException(
@@ -551,6 +625,34 @@ public sealed class TourSession : IAsyncDisposable
 
         var userUrl = UserInteractionUrl ?? "(no interaction URL captured)";
         _userApproved = true;
+
+        if (IsFederatedMode)
+        {
+            Steps.Add(new StepRecord
+            {
+                Number = Steps.Count + 1,
+                Title = "User logs in / consents at the Access Server",
+                From = Actor.AccessServer,
+                To = Actor.AccessServer,
+                Narrative =
+                    "The tour opened the Access Server's interaction URL in a new browser " +
+                    "tab. The AS redirected the browser to **Keycloak**, which rendered its " +
+                    "login (and consent) screen. The user authenticated and approved; " +
+                    "Keycloak redirected back to the AS callback, the AS evaluated the " +
+                    "`uma-ticket` decision and recorded the verdict on its pending entry. " +
+                    "All of that happens in the user's browser \u2192 AS \u2192 Keycloak channel \u2014 " +
+                    "neither the agent nor the Person Server is on this path. The agent " +
+                    "discovers the result on its next poll of the PS pending URL.",
+                ResponseBody = userUrl,
+                TokenDecoded =
+                    $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
+                    "User performed (browser \u2192 AS \u2192 Keycloak):\n" +
+                    $"  GET  {{as}}/interaction/login?code={_interactionCode}\n" +
+                    "  \u2192 redirect to Keycloak login \u2192 authenticate \u2192 consent\n" +
+                    "  \u2192 redirect to {as}/interaction/callback (AS records verdict)",
+            });
+            return Task.CompletedTask;
+        }
 
         Steps.Add(new StepRecord
         {
@@ -871,7 +973,7 @@ public sealed class TourSession : IAsyncDisposable
         {
             Number = Steps.Count + 1,
             Title = "Parse 401 challenge",
-            From = Actor.Resource,
+            From = Actor.Agent,
             To = Actor.Agent,
             Narrative =
                 "The resource's 401 response contains an `aa-resource+jwt` token. " +
@@ -1238,7 +1340,7 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public Task StartPendingPollAsync()
     {
-        if (!IsDeferredMode || _pendingUrl is null)
+        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending)) || _pendingUrl is null)
         {
             return Task.CompletedTask;
         }
@@ -1471,7 +1573,7 @@ public sealed class TourSession : IAsyncDisposable
         {
             Number = Steps.Count + 1,
             Title = "Parse Orchestrator's 401 challenge",
-            From = Actor.Orchestrator,
+            From = Actor.Agent,
             To = Actor.Agent,
             Narrative =
                 "The Orchestrator's 401 contains an `aa-resource+jwt` whose `aud` " +
@@ -1566,11 +1668,11 @@ public sealed class TourSession : IAsyncDisposable
             SubSteps = new SubStep[]
             {
                 new("GET / (agent token)", Actor.Orchestrator, Actor.Resource),
-                new("401 + resource_token", Actor.Resource, Actor.Orchestrator),
+                new("401 + resource_token", Actor.Resource, Actor.Orchestrator, IsResponse: true),
                 new("POST /token + upstream_token", Actor.Orchestrator, Actor.PersonServer),
-                new("200 + chained auth_token (nested act)", Actor.PersonServer, Actor.Orchestrator),
+                new("200 + chained auth_token (nested act)", Actor.PersonServer, Actor.Orchestrator, IsResponse: true),
                 new("GET / (chained auth_token)", Actor.Orchestrator, Actor.Resource),
-                new("200 + claims", Actor.Resource, Actor.Orchestrator),
+                new("200 + claims", Actor.Resource, Actor.Orchestrator, IsResponse: true),
             },
         });
     }
@@ -1659,6 +1761,346 @@ public sealed class TourSession : IAsyncDisposable
         }
 
         return lines.ToString();
+    }
+
+    // -----------------------------------------------------------------
+    // Federated-flow (four-party) step implementations
+    // -----------------------------------------------------------------
+
+    private string? _federatedResponseBody;
+
+    /// <summary>The resource's federated branch the agent targets (aud = AS).</summary>
+    private string FederatedTargetUrl => $"{_options.WhoAmIUrl.TrimEnd('/')}/federated";
+
+    private async Task StepFederatedDiscoverResourceAsync(CancellationToken ct)
+    {
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        using var client = new HttpClient(capture);
+        var url = $"{_options.WhoAmIUrl.TrimEnd('/')}/.well-known/aauth-resource.json";
+        await client.GetAsync(url, ct);
+        var ex = capture.Last!;
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Discover resource metadata",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "The agent fetches the resource's well-known metadata, exactly as in " +
+                "the three-party flow. Nothing here reveals that this resource will " +
+                "delegate to an Access Server — that only shows up on the `aud` of " +
+                "the resource_token in the 401 challenge.",
+            RequestLine = $"{ex.RequestLine}  →  {url}",
+            RequestHeaders = ex.RequestHeaders,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            CodeSnippet = CodeSnippets.DiscoverResource,
+        });
+    }
+
+    private async Task StepFederatedSignedGetAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        var resp = await client.GetAsync(FederatedTargetUrl, ct);
+        var ex = capture.Last!;
+
+        if (resp.StatusCode == System.Net.HttpStatusCode.Unauthorized &&
+            resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqHeaders))
+        {
+            var parsed = AAuthRequirementHeader.Parse(reqHeaders.First());
+            _resourceToken = parsed.ResourceToken;
+        }
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Signed GET /federated → 401",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "The agent signs a GET to the resource's `/federated` branch with its " +
+                "agent token (`sig=jwt`). The resource returns `401` with a " +
+                "resource_token — but unlike three-party, this token's `aud` is the " +
+                "**Access Server** URL, not the Person Server. That single claim is " +
+                "what makes this a four-party (federated) flow.",
+            RequestLine = $"{ex.RequestLine}  →  {FederatedTargetUrl}",
+            RequestHeaders = ex.RequestHeaders,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            SignatureBase = capturedBase,
+            CodeSnippet = CodeSnippets.SignedGetJwt,
+        });
+    }
+
+    private void StepFederatedParseChallenge()
+    {
+        var payload = DecodeJwt(_resourceToken)?.Payload;
+        var aud = payload is not null && JsonNode.Parse(payload) is { } node
+            ? (string?)node["aud"]
+            : null;
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Parse 401 challenge (aud = Access Server)",
+            From = Actor.Agent,
+            To = Actor.Agent,
+            Narrative =
+                "The agent decodes the resource_token. Its `aud` points at the " +
+                $"**Access Server** (`{aud ?? "the AS URL"}`), not the Person Server. " +
+                "The agent does not act on this difference — it simply forwards the " +
+                "resource_token to its Person Server. The PS is the party that " +
+                "notices `aud ≠ self` and federates to the AS on the agent's behalf.",
+            TokenJwt = _resourceToken,
+            TokenHeader = DecodeJwt(_resourceToken)?.Header,
+            TokenPayload = payload,
+            CodeSnippet = CodeSnippets.ParseChallenge,
+        });
+    }
+
+    private async Task StepFederatedExchangeAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        // The exchange is signed with the AGENT token; the PS authenticates the
+        // agent, then federates to the AS (aud ≠ self) and relays the result.
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
+        {
+            resource_token = _resourceToken,
+        }, ct);
+
+        var ex = capture.Last!;
+
+        // When the AS (Keycloak) requires an interactive login/consent, the PS
+        // relays a 202 + Location (pending URL) + AAuth-Requirement carrying the
+        // AS's user-facing interaction URL. Capture it and grow the flow into
+        // the consent + poll steps (mirroring deferred mode). An auto-allow stub
+        // AS resolves federation server-side and returns 200 directly.
+        if (resp.StatusCode == HttpStatusCode.Accepted)
+        {
+            _federatedPending = true;
+
+            var location = resp.Headers.Location?.ToString();
+            if (location is not null)
+            {
+                _pendingUrl = location.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                    ? location
+                    : $"{_options.PersonServerUrl!.TrimEnd('/')}{location}";
+            }
+
+            if (resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqVals))
+            {
+                foreach (var raw in reqVals)
+                {
+                    if (string.IsNullOrWhiteSpace(raw)) { continue; }
+                    try
+                    {
+                        var parsed = AAuthRequirementHeader.Parse(raw);
+                        var interaction = AAuth.Headers.AAuthInteraction.FromRequirement(parsed);
+                        if (interaction is not null)
+                        {
+                            _interactionUrl = interaction.Url;
+                            _interactionCode = interaction.Code;
+                            break;
+                        }
+                    }
+                    catch (FormatException) { /* try the next header value */ }
+                }
+            }
+
+            Steps.Add(new StepRecord
+            {
+                Number = Steps.Count + 1,
+                Title = "Exchange at PS → AS federation → 202 (consent needed)",
+                From = Actor.Agent,
+                To = Actor.PersonServer,
+                Narrative =
+                    "The agent POSTs the resource_token to its Person Server. The PS " +
+                    "sees the resource_token's `aud` is an **Access Server** (not " +
+                    "itself) and federates: signed `POST {as}/token`. This AS is " +
+                    "backed by **Keycloak** and its policy needs the user to log in " +
+                    "and consent, so the AS replies `202` with an interaction URL. " +
+                    "The PS relays that back to the agent as its own `202 Accepted` " +
+                    "with a `Location` (the PS pending URL the agent will poll) and an " +
+                    "`AAuth-Requirement: requirement=interaction` header carrying the " +
+                    "AS's user-facing login URL + single-use code.",
+                RequestLine = $"{ex.RequestLine}  →  {_tokenEndpoint}",
+                RequestHeaders = ex.RequestHeaders,
+                RequestBody = PrettyJson(ex.RequestBody),
+                StatusLine = ex.StatusLine,
+                ResponseHeaders = ex.ResponseHeaders,
+                ResponseBody = PrettyJson(ex.ResponseBody),
+                SignatureBase = capturedBase,
+                CodeSnippet = CodeSnippets.TokenExchangeDeferred,
+                SubSteps = new SubStep[]
+                {
+                    new("discover aauth-access.json", Actor.PersonServer, Actor.AccessServer),
+                    new("signed POST /token (resource+agent)", Actor.PersonServer, Actor.AccessServer),
+                    new("202 + interaction URL (Keycloak login)", Actor.AccessServer, Actor.PersonServer, IsResponse: true),
+                },
+                SubStepsLabel = "inside person server",
+            });
+            return;
+        }
+
+        var body = JsonNode.Parse(ex.ResponseBody);
+        _authToken = (string?)body?["auth_token"];
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Exchange at PS → AS federation → auth_token",
+            From = Actor.Agent,
+            To = Actor.PersonServer,
+            Narrative =
+                "The agent POSTs the resource_token to its Person Server, exactly as " +
+                "in three-party. The PS peeks the resource_token's `aud`, sees it is " +
+                "an **Access Server** (not itself), and federates: it discovers the " +
+                "AS metadata, makes a signed `POST {as}/token` (`scheme=jwks_uri`) " +
+                "carrying the resource_token + agent_token, the AS evaluates policy " +
+                "and mints the `aa-auth+jwt` (`dwk=aauth-access.json`, `cnf.jwk` " +
+                "bound to the agent key), and the PS relays it back. All of the " +
+                "AS hop happens server-side — the agent just sees a `200`.",
+            RequestLine = $"{ex.RequestLine}  →  {_tokenEndpoint}",
+            RequestHeaders = ex.RequestHeaders,
+            RequestBody = PrettyJson(ex.RequestBody),
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            SignatureBase = capturedBase,
+            TokenJwt = _authToken,
+            TokenHeader = DecodeJwt(_authToken)?.Header,
+            TokenPayload = DecodeJwt(_authToken)?.Payload,
+            CodeSnippet = CodeSnippets.TokenExchangeDirect,
+            SubSteps = new SubStep[]
+            {
+                new("discover aauth-access.json", Actor.PersonServer, Actor.AccessServer),
+                new("signed POST /token (resource+agent)", Actor.PersonServer, Actor.AccessServer),
+                new("200 + aa-auth+jwt (dwk=aauth-access.json)", Actor.AccessServer, Actor.PersonServer, IsResponse: true),
+            },
+            SubStepsLabel = "inside person server",
+        });
+    }
+
+    private void StepFederatedDirectUserToInteraction()
+    {
+        var userUrl = UserInteractionUrl
+            ?? "(no interaction URL captured — is the Access Server running with PolicyProvider=keycloak?)";
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Direct user to Access Server login",
+            From = Actor.Agent,
+            To = Actor.Agent,
+            Narrative =
+                "The agent received the relayed interaction requirement. It constructs " +
+                "the user-facing URL as `{url}?code={code}` — where `{url}` is the " +
+                "**Access Server's** login endpoint (which redirects to Keycloak) and " +
+                "`{code}` ties the upcoming browser session back to this specific " +
+                "federated request. The agent surfaces this link to its user (browser " +
+                "redirect, QR code, etc.). Note the user authenticates at the AS/Keycloak " +
+                "here — not at the Person Server — because the AS owns the policy decision.",
+            ResponseBody = userUrl,
+            TokenDecoded = $"Interaction URL:  {_interactionUrl}\nCode:             {_interactionCode}",
+            CodeSnippet = CodeSnippets.DirectUserToInteraction,
+        });
+    }
+
+    private async Task StepFederatedRetryAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _authToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        await client.GetAsync(FederatedTargetUrl, ct);
+        var ex = capture.Last!;
+        _federatedResponseBody = ex.ResponseBody;
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Replay GET /federated with auth_token → 200",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "The agent retries `/federated`, now presenting the AS-issued " +
+                "auth_token via `sig=jwt`. The resource verifies the JWT against the " +
+                "**Access Server's** JWKS (`{iss}/.well-known/aauth-access.json`), " +
+                "confirms `cnf.jwk` matches the request signer, and returns the " +
+                "protected claims. The resource trusts the AS's policy verdict — it " +
+                "never had to talk to the PS.",
+            RequestLine = $"{ex.RequestLine}  →  {FederatedTargetUrl}",
+            RequestHeaders = ex.RequestHeaders,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            SignatureBase = capturedBase,
+            CodeSnippet = CodeSnippets.ReplayWithAuthToken,
+        });
+    }
+
+    private void StepFederatedInspectResult()
+    {
+        var payload = DecodeJwt(_authToken)?.Payload;
+        var summary = new System.Text.StringBuilder();
+        summary.AppendLine("═══ Federated (four-party) Summary ═══");
+        summary.AppendLine();
+        if (payload is not null && JsonNode.Parse(payload) is { } node)
+        {
+            summary.AppendLine("  AS-minted auth token:");
+            summary.AppendLine($"    iss:      {node["iss"]}   (Access Server)");
+            summary.AppendLine($"    aud:      {node["aud"]}   (resource)");
+            summary.AppendLine($"    agent:    {node["agent"]}");
+            var cnf = node["cnf"]?["jwk"];
+            if (cnf is not null)
+            {
+                summary.AppendLine($"    cnf.jwk:  {cnf["kty"]}/{cnf["crv"]}  (bound to the agent key)");
+            }
+            var act = node["act"];
+            if (act is not null)
+            {
+                summary.AppendLine($"    act.sub:  {act["sub"]}");
+            }
+        }
+        var header = DecodeJwt(_authToken)?.Header;
+        var dwk = header is not null && JsonNode.Parse(header) is { } h ? (string?)h["dwk"] : null;
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Inspect federated result",
+            From = Actor.Agent,
+            To = Actor.Agent,
+            Narrative =
+                "The auth token that authorized this request was minted by the " +
+                "**Access Server**, not the Person Server. Two header/claim values " +
+                $"prove the four-party shape:\n\n" +
+                $"- `dwk = {dwk ?? "aauth-access.json"}` — the resource verifies it " +
+                "against the AS's `/.well-known/aauth-access.json` JWKS (three-party " +
+                "uses `aauth-person.json`).\n" +
+                "- `cnf.jwk` — binds the token to the agent's signing key, so only " +
+                "the agent that requested it can present it.\n\n" +
+                "The Person Server delegated the policy decision to the AS; the " +
+                "resource trusts the AS's verdict.",
+            ResponseBody = PrettyJson(_federatedResponseBody),
+            TokenJwt = _authToken,
+            TokenHeader = header,
+            TokenPayload = payload,
+            TokenDecoded = summary.ToString(),
+        });
     }
 
     // -----------------------------------------------------------------
