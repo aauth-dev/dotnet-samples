@@ -1,6 +1,6 @@
 # Implementation Plan: Four-Party (Federated) AAuth Example with Keycloak
 
-Status: **in progress** — Phases 1–3 complete; Phase 4 in progress (absorbs Phase 5).
+Status: **in progress** — Phases 1–4 complete (Phase 4 absorbs Phase 5).
 
 Created: 2026-06-02
 
@@ -277,16 +277,16 @@ Implementation Decisions:
 
 Definition of Done:
 
-- [ ] Keycloak realm import provisions resources, scopes, and policies (+ a demo
+- [x] Keycloak realm import provisions resources, scopes, and policies (+ a demo
       user for the interactive login).
-- [ ] `IAccessPolicy` seam selects `stub` (default) or `keycloak` via config;
+- [x] `IAccessPolicy` seam selects `stub` (default) or `keycloak` via config;
       `keycloak` unreachable → fail closed (no silent stub fallback).
-- [ ] Adapter obtains a decision from Keycloak (after interactive login) and
+- [x] Adapter obtains a decision from Keycloak (after interactive login) and
       gates auth-token issuance.
-- [ ] AS returns a spec-valid `202 requirement=interaction` with a pending URL
+- [x] AS returns a spec-valid `202 requirement=interaction` with a pending URL
       when a user decision is required; the PS relays it; the agent surfaces the
       consent URL and polls.
-- [ ] Granted → `200 aa-auth+jwt`; denied → spec-compliant `403`.
+- [x] Granted → `200 aa-auth+jwt`; denied → spec-compliant `403`.
 
 ## Phase 5 — (absorbed into Phase 4)
 
