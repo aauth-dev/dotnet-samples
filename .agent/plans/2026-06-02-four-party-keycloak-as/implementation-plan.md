@@ -1,6 +1,6 @@
 # Implementation Plan: Four-Party (Federated) AAuth Example with Keycloak
 
-Status: **in progress** — Phase 1 complete; Phase 2 next.
+Status: **in progress** — Phases 1–2 complete; Phase 3 next.
 
 Created: 2026-06-02
 
@@ -89,19 +89,69 @@ Goal: SDK support for the signed PS-to-AS token request and the deferred loop.
 Closes gaps G2, G6.
 
 - _To populate: new `AccessServerClient` (build `{resource_token, agent_token,
-  upstream_token?}`, sign via `jwks_uri`, handle `200/202/402`)._
+  upstream_token?}`, sign via `jwks_uri`, handle `200/202`)._
 - _To populate: PS-side Auth Token Delivery verification (7 checks)._
 
-Implementation Decisions:
+Implementation Decisions (confirmed 2026-06-02):
 
-- _TBD._
+- **Namespace**: `AccessServerClient` lives in `AAuth.Tokens`, co-located with
+  its PS-side collaborators `AuthTokenResponseValidator` and
+  `UpstreamTokenValidator` (this is PS-side federation code, not agent-side like
+  `TokenExchangeClient`, nor inbound ASP.NET middleware like `AAuth.Server`).
+- **Surface**: `AccessServerClient(HttpClient signedClient, MetadataClient,
+  AuthTokenResponseValidator)` + `AccessServerRequest` (ResourceToken,
+  AgentToken, UpstreamToken?, expected iss/aud/agent/jkt, OnInteractionRequired?,
+  PollerOptions?). Mirrors `TokenExchangeClient` (SSRF same-origin pinning,
+  https-or-loopback enforcement, `AAuthDiagnostics` activities).
+- **Delivery verification**: reuse the existing
+  `AuthTokenResponseValidator.ValidateAsync` (already implements all 7 delivery
+  steps: sig/iss/aud/agent/cnf/act/scope-narrowing). No new verifier API.
+- **`202` deferred loop**: reuse the existing `DeferredPoller` /
+  `OnInteractionRequired` callback (same as `TokenExchangeClient`).
+- **`402` Payment Required**: surface a typed `AAuthPaymentRequiredException`
+  carrying `Location` + `WWW-Authenticate`; settlement is **out of scope**
+  (spec excludes it). Minimum spec-aligned recognition, no x402/MPP import.
+- **`requirement=claims`**: **deferred to Phase 11** (see that phase). It is a
+  conditionally-MUST, distinct active-push mechanism (not a poll) that can only
+  be exercised once an AS actually requests claims (Keycloak ABAC, Phase 4). For
+  now the client treats an unhandled `requirement=claims` as a clear terminal
+  error ("claims required but no handler configured"); adding the handler later
+  is purely additive.
 
 Definition of Done:
 
-- [ ] `AccessServerClient` performs a signed PS→AS token request.
-- [ ] Handles `200` (auth token) and `202 requirement=claims`.
-- [ ] PS verifies the AS auth token (iss/aud/agent/cnf/act/scope) before return.
-- [ ] Unit tests in `tests/AAuth.Tests` cover the client.
+- [x] `AccessServerClient` performs a signed PS→AS token request.
+- [x] Handles `200` (auth token) and the `202` deferred poll loop.
+- [x] Recognizes `402` and surfaces `AAuthPaymentRequiredException`.
+- [x] PS verifies the AS auth token (iss/aud/agent/cnf/act/scope) before return
+      via `AuthTokenResponseValidator`.
+- [x] An unhandled `requirement=claims` surfaces a clear terminal error.
+- [x] Unit tests in `tests/AAuth.Tests` cover the client.
+
+Delivered:
+
+- `src/AAuth/Tokens/AccessServerClient.cs` (namespace `AAuth.Tokens`): signed
+  PS→AS federation client. Discovers `aauth-access.json` `token_endpoint`
+  (https-or-loopback + same-origin SSRF guard), POSTs signed
+  `{resource_token, agent_token, upstream_token?}` (`Prefer: wait` honored),
+  handles `200`, the `202` deferred poll loop (reuses `DeferredPoller` +
+  `OnInteractionRequired`), `402` → `AAuthPaymentRequiredException`, and
+  `202 requirement=claims` → `NotSupportedException` (deferred to Phase 11).
+  Runs the 7-step §Auth Token Delivery via `AuthTokenResponseValidator` and
+  throws `TokenVerificationException` on failure.
+- `src/AAuth/Tokens/AccessServerRequest.cs`: `required` request payload +
+  delivery-verification context + deferred-consent options.
+- `src/AAuth/Errors/AAuthPaymentRequiredException.cs`: typed `402` carrying
+  `Location` + `WWW-Authenticate`; settlement out of scope.
+- `tests/AAuth.Tests/AccessServerClientTests.cs`: 6 unit tests (stub AS) —
+  success path, upstream-token passthrough, `402`, `requirement=claims`,
+  audience-mismatch delivery failure, structured token-endpoint error.
+- Full suite green: 356 passed (was 350).
+
+SDK note: new public surface (`AccessServerClient`, `AccessServerRequest`,
+`AAuthPaymentRequiredException`) — additive only. Reuses existing
+`AuthTokenResponseValidator` (7-step delivery) and `DeferredPoller`. Overall
+surface still ratified under the Phase 12 consultation gate.
 
 ## Phase 3 — MockPersonServer federation branch
 
@@ -317,7 +367,42 @@ Definition of Done:
 - [ ] Sample READMEs and the docs index reference the four-party demos.
 - [ ] Mermaid diagrams render and in-repo links resolve.
 
-## Phase 11 — SDK API investigation & design (consultation required)
+## Phase 11 — Identity claims push (requirement=claims, full spec)
+
+Goal: implement the spec's `requirement=claims` flow properly, now that the
+other pieces are in place — the PS federation client (Phase 2), the
+`MockPersonServer` federation branch (Phase 3) that holds the user's identity
+claims, and a Keycloak-backed AS (Phase 4) whose ABAC policy can actually
+*request* directed identity claims. Deferred from Phase 2 to keep that phase
+bare-minimum and because this path is untestable end-to-end until an AS issues
+a claims requirement.
+
+Spec basis: a server **MUST** use `requirement=claims` (returned as `202` with
+`AAuth-Requirement: requirement=claims` + a `Location` URL) when it needs
+identity claims; the recipient **MUST** provide the requested claims by POSTing
+a directed `sub` + claims to the `Location` URL. This is an active push, **not**
+the deferred poll loop used for `interaction`.
+
+- _To populate: extend `AccessServerClient` with an `OnClaimsRequired` callback
+  (additive) that resolves the requested claims and POSTs the directed `sub` +
+  claims to the `Location`, then continues the loop._
+- _To populate: `MockPersonServer` supplies directed claims for its bound user._
+- _To populate: Keycloak AS adapter emits `202 requirement=claims` when policy
+  evaluation needs attributes the AS does not yet hold._
+
+Implementation Decisions:
+
+- _TBD (revisit once Phases 2–4 land; keep the callback additive/non-breaking)._
+
+Definition of Done:
+
+- [ ] AS returns a spec-valid `202 requirement=claims` with a `Location` URL.
+- [ ] `AccessServerClient` resolves and POSTs directed `sub` + claims, then
+      continues to a `200 aa-auth+jwt`.
+- [ ] `MockPersonServer` provides the requested claims for its bound user.
+- [ ] Unit/e2e tests cover the claims-push round trip.
+
+## Phase 12 — SDK API investigation & design (consultation required)
 
 Goal: after the demos prove the flow end-to-end, step back and harden the
 **SDK public surface** so four-party is a first-class scenario for Client /
@@ -330,7 +415,7 @@ sign-off from the user** (gate below).
 > This phase is where the **overall** public surface is revisited, reconciled,
 > and ratified as a coherent whole.
 
-Inputs: the friction discovered while building Phases 1–10, plus the current
+Inputs: the friction discovered while building Phases 1–11, plus the current
 surface ([AAuthClientBuilder.cs](../../src/AAuth/HttpSig/AAuthClientBuilder.cs),
 [TokenExchangeClient.cs](../../src/AAuth/Agent/TokenExchangeClient.cs),
 [AAuthApplicationBuilderExtensions.cs](../../src/AAuth/DependencyInjection/AAuthApplicationBuilderExtensions.cs),
