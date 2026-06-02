@@ -14,6 +14,7 @@ AGENT_PROJECT  := samples/AgentConsole/AgentConsole.csproj
 SAMPLE_PROJECT := samples/SampleApp/SampleApp.csproj
 ORCH_PROJECT   := samples/Orchestrator/Orchestrator.csproj
 LIVE_PROJECT   := samples/LiveWhoAmITest/LiveWhoAmITest.csproj
+AS_PROJECT     := samples/MockAccessServer/MockAccessServer.csproj
 
 WHOAMI_URL := http://localhost:5000
 PS_URL     := http://localhost:5100
@@ -21,11 +22,16 @@ AP_URL     := http://localhost:5301
 ORCH_URL   := http://localhost:5200
 TOUR_URL   := http://localhost:5400
 SAMPLE_URL := http://localhost:5240
+AS_URL     := http://localhost:5500
+KEYCLOAK_URL   := http://localhost:8080
+KEYCLOAK_IMAGE := quay.io/keycloak/keycloak:26.0
+KEYCLOAK_REALM := samples/MockAccessServer/keycloak
 E2E_DIR := tests/e2e
 .DEFAULT_GOAL := help
 
 .PHONY: help build restore test test-unit test-conformance \
         whoami ps ap tour agent demo \
+        access-server keycloak demo-federated agent-federated \
         e2e-install e2e e2e-tour e2e-sample e2e-report \
         live clean format
 
@@ -90,6 +96,58 @@ demo: ## Start WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + Gu
 	$(DOTNET) run --project $(ORCH_PROJECT) & \
 	$(DOTNET) run --project $(AP_PROJECT) & \
 	$(DOTNET) run --project $(TOUR_PROJECT) & \
+	wait
+
+access-server: ## Run the MockAccessServer with the Keycloak policy engine (port 5500)
+	AccessServer__PolicyProvider=keycloak \
+	AccessServer__Keycloak__Authority=$(KEYCLOAK_URL)/realms/aauth \
+	AccessServer__Keycloak__ClientId=aauth-access-server \
+	AccessServer__Keycloak__ClientSecret=aauth-access-server-secret \
+	AccessServer__Keycloak__ResourceServerAudience=aauth-access-server \
+	AccessServer__Keycloak__ResourceName=whoami \
+	$(DOTNET) run --project $(AS_PROJECT)
+
+keycloak: ## Start Keycloak (port 8080) with the demo 'aauth' realm imported
+	docker rm -f aauth-keycloak >/dev/null 2>&1 || true
+	docker run --rm --name aauth-keycloak -p 8080:8080 \
+	  -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
+	  -v "$(PWD)/$(KEYCLOAK_REALM):/opt/keycloak/data/import:ro" \
+	  $(KEYCLOAK_IMAGE) start-dev --import-realm
+
+agent-federated: ## Drive AgentConsole through the four-party /federated flow (Keycloak login)
+	$(DOTNET) run --project $(AGENT_PROJECT) -- $(WHOAMI_URL)/federated \
+	  --ap $(AP_URL) --ps $(PS_URL) --signing-mode jwt --sub aauth:demo@ap.example
+
+demo-federated: ## Four-party federated demo: Keycloak + WhoAmI + MockPersonServer + MockAgentProvider + MockAccessServer
+	@echo "Starting four-party federated demo (Keycloak as the policy engine)..."
+	@echo "  Keycloak:           $(KEYCLOAK_URL)        (admin/admin, realm 'aauth')"
+	@echo "  WhoAmI:             $(WHOAMI_URL)/federated"
+	@echo "  MockPersonServer:   $(PS_URL)"
+	@echo "  MockAgentProvider:  $(AP_URL)"
+	@echo "  MockAccessServer:   $(AS_URL)        (PolicyProvider=keycloak)"
+	@echo ""
+	@echo "Keycloak login users:  demo/demo (whoami-admin role) | guest/guest (no admin role)"
+	@echo "In another terminal, drive the agent with:  make agent-federated"
+	@echo ""
+	docker rm -f aauth-keycloak >/dev/null 2>&1 || true
+	docker run -d --name aauth-keycloak -p 8080:8080 \
+	  -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
+	  -v "$(PWD)/$(KEYCLOAK_REALM):/opt/keycloak/data/import:ro" \
+	  $(KEYCLOAK_IMAGE) start-dev --import-realm >/dev/null
+	@echo "Waiting for Keycloak to become ready..."
+	@until curl -sf $(KEYCLOAK_URL)/realms/aauth/.well-known/openid-configuration >/dev/null 2>&1; do sleep 2; done
+	@echo "Keycloak ready."
+	@trap 'echo; echo "Stopping..."; kill 0; docker rm -f aauth-keycloak >/dev/null 2>&1' INT TERM EXIT; \
+	$(DOTNET) run --project $(WHOAMI_PROJECT) & \
+	$(DOTNET) run --project $(PS_PROJECT) & \
+	$(DOTNET) run --project $(AP_PROJECT) & \
+	AccessServer__PolicyProvider=keycloak \
+	AccessServer__Keycloak__Authority=$(KEYCLOAK_URL)/realms/aauth \
+	AccessServer__Keycloak__ClientId=aauth-access-server \
+	AccessServer__Keycloak__ClientSecret=aauth-access-server-secret \
+	AccessServer__Keycloak__ResourceServerAudience=aauth-access-server \
+	AccessServer__Keycloak__ResourceName=whoami \
+	$(DOTNET) run --project $(AS_PROJECT) & \
 	wait
 
 demo-sample: ## Start WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + SampleApp in parallel
