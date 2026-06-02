@@ -88,6 +88,10 @@ make agent-federated
 The agent prints a Keycloak login URL; open it, log in as `demo` (or `guest`),
 and the four-party flow completes.
 
+`make agent-federated` first clears the AgentConsole enrollment cache (the
+MockAgentProvider keeps its agent registry in memory, so the cache goes stale
+when the AP restarts). Run `make agent-reset` to clear it manually.
+
 ## Scope
 
 This sample ships the on-the-wire AS baseline plus a pluggable policy seam

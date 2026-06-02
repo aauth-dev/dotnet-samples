@@ -26,12 +26,16 @@ AS_URL     := http://localhost:5500
 KEYCLOAK_URL   := http://localhost:8080
 KEYCLOAK_IMAGE := quay.io/keycloak/keycloak:26.0
 KEYCLOAK_REALM := samples/MockAccessServer/keycloak
+
+# AgentConsole persists its enrollment under $LocalApplicationData; the MockAgentProvider
+# keeps its agent registry in memory, so the cache goes stale whenever the AP restarts.
+AGENT_CACHE_DIR := $(or $(XDG_DATA_HOME),$(HOME)/.local/share)/aauth-agent-console
 E2E_DIR := tests/e2e
 .DEFAULT_GOAL := help
 
 .PHONY: help build restore test test-unit test-conformance \
         whoami ps ap tour agent demo \
-        access-server keycloak demo-federated agent-federated \
+        access-server keycloak demo-federated agent-federated agent-reset \
         e2e-install e2e e2e-tour e2e-sample e2e-report \
         live clean format
 
@@ -115,8 +119,12 @@ keycloak: ## Start Keycloak (port 8080) with the demo 'aauth' realm imported
 	  $(KEYCLOAK_IMAGE) start-dev --import-realm
 
 agent-federated: ## Drive AgentConsole through the four-party /federated flow (Keycloak login)
+	@$(MAKE) --no-print-directory agent-reset
 	$(DOTNET) run --project $(AGENT_PROJECT) -- $(WHOAMI_URL)/federated \
 	  --ap $(AP_URL) --ps $(PS_URL) --signing-mode jwt --sub aauth:demo@ap.example
+
+agent-reset: ## Clear the AgentConsole enrollment cache (stale after an AP restart)
+	@rm -rf "$(AGENT_CACHE_DIR)" && echo "Cleared AgentConsole enrollment cache ($(AGENT_CACHE_DIR))."
 
 demo-federated: ## Four-party federated demo: Keycloak + WhoAmI + MockPersonServer + MockAgentProvider + MockAccessServer
 	@echo "Starting four-party federated demo (Keycloak as the policy engine)..."
