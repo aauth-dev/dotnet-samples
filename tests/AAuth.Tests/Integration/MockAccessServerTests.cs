@@ -155,6 +155,53 @@ public class MockAccessServerTests : IClassFixture<WebApplicationFactory<MockAcc
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Token_GrantsElevatedScope_ForAdminAgent()
+    {
+        // The default stub policy grants whoami:admin to an admin agent
+        // (the demo convention: agent id starts with "aauth:demo@").
+        var agentKey = AAuthKey.Generate();
+        var agentToken = BuildAgentToken(agentKey, AgentId);
+        var resourceToken = BuildResourceToken(agentKey, audience: AsIssuer, agent: AgentId, scope: "whoami:admin");
+
+        using var http = BuildPsSignedClient();
+        var response = await http.PostAsJsonAsync("/token", new JsonObject
+        {
+            ["agent_token"] = agentToken,
+            ["resource_token"] = resourceToken,
+        });
+
+        Assert.True(response.IsSuccessStatusCode,
+            $"Status={(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        var payload = (JsonObject)JsonNode.Parse(
+            Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(
+                ((string?)body!["auth_token"])!.Split('.')[1]))!;
+        Assert.Equal("whoami:admin", (string?)payload["scope"]);
+    }
+
+    [Fact]
+    public async Task Token_DeniesElevatedScope_ForNonAdminAgent()
+    {
+        // A non-admin agent requesting whoami:admin is denied by the stub
+        // policy (no whoami-admin role) → 403 access_denied.
+        const string GuestId = "aauth:guest@ap.test";
+        var agentKey = AAuthKey.Generate();
+        var agentToken = BuildAgentToken(agentKey, GuestId);
+        var resourceToken = BuildResourceToken(agentKey, audience: AsIssuer, agent: GuestId, scope: "whoami:admin");
+
+        using var http = BuildPsSignedClient();
+        var response = await http.PostAsJsonAsync("/token", new JsonObject
+        {
+            ["agent_token"] = agentToken,
+            ["resource_token"] = resourceToken,
+        });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("access_denied", (string?)body!["error"]);
+    }
+
     // -- helpers ---------------------------------------------------------
 
     private HttpClient BuildPsSignedClient()
@@ -176,6 +223,29 @@ public class MockAccessServerTests : IClassFixture<WebApplicationFactory<MockAcc
             Key = ApKey,                  // AP signs the token.
             ConfirmationKey = agentKey,   // bound to the agent's key (cnf.jwk).
             PersonServer = PsIssuer,
+        }.Build();
+
+    private static string BuildAgentToken(AAuthKey agentKey, string agent) =>
+        new AgentTokenBuilder
+        {
+            Issuer = ApIssuer,
+            Subject = agent,
+            KeyId = ApKid,
+            Key = ApKey,
+            ConfirmationKey = agentKey,
+            PersonServer = PsIssuer,
+        }.Build();
+
+    private static string BuildResourceToken(AAuthKey agentKey, string audience, string agent, string scope) =>
+        new ResourceTokenBuilder
+        {
+            Issuer = ResourceUrl,
+            Audience = audience,
+            Agent = agent,
+            AgentJkt = agentKey.ComputeJwkThumbprint(),
+            Key = ResourceKey,
+            KeyId = ResourceKid,
+            Scope = scope,
         }.Build();
 
     private static string BuildResourceToken(AAuthKey agentKey, string audience) =>

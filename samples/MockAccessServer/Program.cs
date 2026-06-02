@@ -7,6 +7,7 @@ using AAuth.HttpSig;
 using AAuth.Server;
 using AAuth.Tokens;
 using MockAccessServer;
+using MockAccessServer.Policy;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -63,6 +64,27 @@ builder.Services.AddSingleton<JwksClient>(sp =>
     new JwksClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-jwks")));
 builder.Services.AddHttpClient("aauth-metadata");
 builder.Services.AddHttpClient("aauth-jwks");
+
+// -----------------------------------------------------------------------
+// Policy Decision Point (S3). The AAuth crypto stays in this adapter; only
+// the allow/deny/needs-interaction decision is delegated to an IAccessPolicy.
+// The provider is config-selected (mirrors MockPersonServer:RequireConsent):
+//   AccessServer:PolicyProvider = stub | keycloak   (default: stub)
+// `stub` keeps `make e2e`/CI pure-.NET; `keycloak` delegates to Keycloak's
+// Authorization Services. Selecting `keycloak` while Keycloak is unreachable
+// fails closed (the policy denies / surfaces a 5xx) — never a silent fallback.
+// -----------------------------------------------------------------------
+var policyProvider = (builder.Configuration["AccessServer:PolicyProvider"] ?? "stub")
+    .Trim().ToLowerInvariant();
+switch (policyProvider)
+{
+    case "stub":
+        builder.Services.AddSingleton<IAccessPolicy, StubAccessPolicy>();
+        break;
+    default:
+        throw new InvalidOperationException(
+            $"Unknown AccessServer:PolicyProvider '{policyProvider}'. Expected 'stub' or 'keycloak'.");
+}
 
 var app = builder.Build();
 
@@ -225,10 +247,49 @@ app.MapPost("/token", async (HttpContext ctx) =>
             statusCode: StatusCodes.Status401Unauthorized);
     }
 
-    // Step 5 — access policy. Phase 1 ships a hard-coded allow stub; the
-    // pluggable IAccessPolicy seam (and Keycloak-backed decisions, including
-    // consent bubble-up via 202) arrive in later phases.
-    // (allow)
+    // Step 5 — access policy. Delegated to the configured IAccessPolicy
+    // (stub by default; Keycloak when opted in). The PS-asserted admin signal
+    // is derived from the agent id convention for the demo (a production AS
+    // would receive PS claims via the spec's claim-push mechanism); it is
+    // surfaced to the policy as a `roles` claim for ABAC evaluation.
+    var policy = app.Services.GetRequiredService<IAccessPolicy>();
+    var policyClaims = IsAdminAgent(agentId)
+        ? new JsonObject { ["roles"] = new JsonArray(StubAccessPolicy.AdminRole) }
+        : null;
+    AccessDecision decision;
+    try
+    {
+        decision = await policy.EvaluateAsync(new AccessPolicyRequest
+        {
+            ResourceUrl = audience,
+            Scope = requestedScope,
+            AgentId = agentId,
+            Claims = policyClaims,
+        });
+    }
+    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+    {
+        // Fail closed: a policy backend that cannot be reached must not grant.
+        return Results.Json(
+            new { error = "policy_unavailable", detail = ex.Message },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+
+    switch (decision.Kind)
+    {
+        case AccessDecisionKind.Deny:
+            return Results.Json(
+                new { error = "access_denied", detail = decision.Reason },
+                statusCode: StatusCodes.Status403Forbidden);
+        case AccessDecisionKind.NeedsInteraction:
+            // Interactive login/consent round-trip is wired in Phase 4 Step B.
+            return Results.Json(
+                new { error = "interaction_required", detail = decision.InteractionUrl },
+                statusCode: StatusCodes.Status202Accepted);
+        case AccessDecisionKind.Allow:
+        default:
+            break;
+    }
 
     // Step 6 — mint the auth token (dwk = aauth-access.json).
     var authToken = new AuthTokenBuilder
@@ -246,6 +307,12 @@ app.MapPost("/token", async (HttpContext ctx) =>
 
     return Results.Ok(new { auth_token = authToken, expires_in = 3600 });
 });
+
+// Demo convention shared with MockPersonServer: an agent whose id starts with
+// `aauth:demo@` is treated as holding the admin role. A production AS would
+// receive the principal's directory membership via the PS's claim push.
+static bool IsAdminAgent(string agentId) =>
+    agentId.StartsWith("aauth:demo@", StringComparison.Ordinal);
 
 app.Run();
 

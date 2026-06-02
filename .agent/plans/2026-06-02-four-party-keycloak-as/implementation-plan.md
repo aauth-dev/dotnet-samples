@@ -1,6 +1,6 @@
 # Implementation Plan: Four-Party (Federated) AAuth Example with Keycloak
 
-Status: **in progress** — Phases 1–3 complete; Phase 4 next.
+Status: **in progress** — Phases 1–3 complete; Phase 4 in progress (absorbs Phase 5).
 
 Created: 2026-06-02
 
@@ -233,42 +233,70 @@ Implementation Decisions:
   keeps `make e2e` / CI pure-.NET (no Docker); `make demo-federated` sets
   `keycloak` and boots Keycloak via docker-outside-of-docker.
 
+### Confirmed decisions (2026-06-02, user answered)
+
+- **Scope**: full Phase 4 — `IAccessPolicy` seam + `StubAccessPolicy` +
+  `KeycloakAccessPolicy` + Keycloak realm import. Docker only for the demo
+  target, not CI.
+- **Phase 5 is ABSORBED into Phase 4**: the user chose the full interactive
+  Keycloak login + consent now. The AS emits `202 requirement=interaction`, the
+  PS relays it, and the agent surfaces the consent URL and polls. (Phase 5's
+  former DoD is folded in below; the standalone Phase 5 section is retired.)
+- **Decision mechanism**: interactive Keycloak user session (OIDC
+  authorization-code login + consent), then the `uma-ticket` grant with the
+  user's subject token and `response_mode=decision`. PS-asserted claims are
+  still pushed via `claim_token` for ABAC augmentation.
+- **Demo policy**: `whoami` granted to any verified agent once a Keycloak user
+  has authenticated; `whoami:admin` granted only when the PS asserts an admin
+  role/group claim (mirrors WhoAmI `/jwt` vs `/jwt/admin`).
+- **Testing**: unit-test `KeycloakAccessPolicy` and the AS interactive flow
+  against a **stub Keycloak `HttpMessageHandler`** (fake uma-ticket + token +
+  authorization endpoints; the OIDC callback is driven directly with a fake
+  code). Default `stub` keeps `make e2e`/CI pure-.NET (no Docker).
+- **Unreachable fallback**: **fail closed** — if `PolicyProvider=keycloak` and
+  Keycloak is unreachable, return a `5xx`/deny. No silent fallback to the allow
+  stub.
+
+### Delivery sub-steps (each independently committable)
+
+- **A** (docker-free): `IAccessPolicy`/`AccessDecision` seam in
+  `MockAccessServer`; refactor the allow-stub into `StubAccessPolicy`;
+  `AccessServer:PolicyProvider=stub|keycloak` selection (default `stub`);
+  fail-closed wiring. Unit tests against the stub.
+- **B**: `KeycloakAccessPolicy` — OIDC login/consent + `uma-ticket`
+  `response_mode=decision`; returns `AccessDecision.NeedsInteraction(url)` when
+  no user session yet. AS interactive endpoints (login-start redirect, OIDC
+  callback, pending/poll) + `202 requirement=interaction` emission. Unit tests
+  against a stub Keycloak handler.
+- **C**: `MockPersonServer` four-party branch relays the AS `202` to the agent
+  (passes `OnInteractionRequired`/pending-poll through `AccessServerClient`).
+- **D**: Keycloak realm import JSON (realm, confidential client w/ Authorization
+  Services + `whoami` resource + scopes + policies + a demo admin user),
+  `make demo-federated` boots Keycloak, `appsettings` for the keycloak provider,
+  docs.
+
 Definition of Done:
 
-- [ ] Keycloak realm import provisions resources, scopes, and policies.
-- [ ] Adapter obtains a decision from Keycloak and gates auth-token issuance.
-- [ ] Denied policy → spec-compliant `403`; granted → `200 aa-auth+jwt`.
+- [ ] Keycloak realm import provisions resources, scopes, and policies (+ a demo
+      user for the interactive login).
+- [ ] `IAccessPolicy` seam selects `stub` (default) or `keycloak` via config;
+      `keycloak` unreachable → fail closed (no silent stub fallback).
+- [ ] Adapter obtains a decision from Keycloak (after interactive login) and
+      gates auth-token issuance.
+- [ ] AS returns a spec-valid `202 requirement=interaction` with a pending URL
+      when a user decision is required; the PS relays it; the agent surfaces the
+      consent URL and polls.
+- [ ] Granted → `200 aa-auth+jwt`; denied → spec-compliant `403`.
 
-## Phase 5 — Consent bubble-up from the AS (deferred interaction)
+## Phase 5 — (absorbed into Phase 4)
 
-Goal: when a Keycloak policy needs a human, the AS returns `202
-requirement=interaction`, the PS relays it, and the agent surfaces the consent
-URL — reusing the existing call-chain interaction pattern. Closes gap G3/G7
-(dynamic trust).
-
-Reference implementation to mirror:
+Consent bubble-up from the AS (the former Phase 5) was **merged into Phase 4**
+per the 2026-06-02 decision to do the full interactive Keycloak login/consent in
+one phase. See Phase 4's "Delivery sub-steps" (B and C) and DoD. The reference
+pattern still applies:
 [samples/SampleApp/Components/Pages/CallChain.razor](../../samples/SampleApp/Components/Pages/CallChain.razor)
-(two callbacks: `WithChallengeHandling.OnInteractionRequired` for the PS-exchange
-`202`, `WithInteractionHandling.OnInteractionRequired` for the re-emitted/chained
-`202`; both funnel to a shared `SurfaceInteraction`, then poll the pending URL).
-
-- _To populate: AS adapter emits `202 + AAuth-Requirement: requirement=
-  interaction; url=…; code=…` + `Location` pending URL when Keycloak signals a
-  user decision is required; AS exposes a pending/poll endpoint._
-- _To populate: PS relays/re-emits the AS `202` to the agent (same shape as the
-  Orchestrator's chained `202`)._
-- _To populate: map Keycloak "needs user" verdict → AAuth interaction (login/
-  consent in Keycloak, or a stub approval endpoint for the demo)._
-
-Implementation Decisions:
-
-- _TBD._
-
-Definition of Done:
-
-- [ ] AS returns a spec-valid `202 requirement=interaction` with pending URL.
-- [ ] PS relays the interaction; agent surfaces the consent URL and polls.
-- [ ] Approve → `200 aa-auth+jwt`; deny → spec-compliant terminal error.
+(two `OnInteractionRequired` callbacks funnelling to a shared
+`SurfaceInteraction`, then poll the pending URL).
 
 ## Phase 6 — GuidedTour: four-party swimlanes
 
