@@ -4,6 +4,21 @@
 
 - [.NET 10+](https://dotnet.microsoft.com/download) SDK
 
+## Try the Flows Interactively
+
+Before writing code, watch the protocol run. From the repo root:
+
+```bash
+make demo   # starts every service + the stub Access Server + both UIs
+```
+
+Then open the two interactive Blazor apps and click through each flow:
+
+- **Guided Tour** — <http://localhost:5400> — step-by-step view of every HTTP exchange, header, and token claim.
+- **Sample App** — <http://localhost:5240> — one page per flow (HWK, JWKS URI, JWT direct grant, deferred consent, call-chain, four-party federated).
+
+For the live-Keycloak federated experience, run `make demo-keycloak` instead.
+
 ## Install
 
 ```bash
@@ -115,12 +130,12 @@ The spec requires EdDSA (Ed25519) and prohibits the `none` algorithm. Every requ
 
 AAuth supports four resource access modes. Each adds parties and capabilities:
 
-| Flow | Parties | When to Use | Signing Mode |
-|------|---------|-------------|--------------|
-| **Identity-Based** | Agent + Resource | API-key replacement, simple access control by identity | `hwk` or `jwks_uri` |
-| **Resource-Managed** (two-party) | Agent + Resource | Resource handles its own auth (interaction, existing OAuth) | Any (`hwk`, `jwks_uri`, or `jwt`) |
-| **PS-Asserted** (three-party) | Agent + Resource + PS | User consent required, resource delegates auth to PS | `jwt` |
-| **Federated** (four-party) | Agent + Resource + PS + AS | Cross-domain policy, resource has its own Access Server | `jwt` |
+| Flow | Parties | When to Use | Signing Mode | See it run |
+|------|---------|-------------|--------------|------------|
+| **[Identity-Based](workflows/identity-based-access.md)** | Agent + Resource | API-key replacement, simple access control by identity | `hwk` or `jwks_uri` | GuidedTour flow **2**; SampleApp `/hwk`, `/jwks-uri` |
+| **[Resource-Managed](workflows/resource-managed-access.md)** (two-party) | Agent + Resource | Resource handles its own auth (interaction, existing OAuth) | Any (`hwk`, `jwks_uri`, or `jwt`) | Workflow guide |
+| **[PS-Asserted](workflows/ps-asserted-access.md)** (three-party) | Agent + Resource + PS | User consent required, resource delegates auth to PS | `jwt` | GuidedTour flows **3** & **4**; SampleApp `/jwt`, `/deferred` |
+| **[Federated](workflows/federated-access.md)** (four-party) | Agent + Resource + PS + AS | Cross-domain policy, resource has its own Access Server | `jwt` | GuidedTour flow **6**; SampleApp `/federated` (live Keycloak: `make demo-keycloak`) |
 
 Adoption is incremental — each party can add support independently, and modes build on each other. See [Signing Modes](signing-modes/overview.md) for details on each scheme.
 
@@ -340,6 +355,10 @@ Console.WriteLine(await response.Content.ReadAsStringAsync());
 
 The `ChallengeHandler` intercepts the `401`, extracts the resource token, exchanges it at the PS, caches the resulting auth token, and retries — all transparently.
 
+### Going Four-Party (Federated)
+
+When the resource has its own **Access Server (AS)**, the resource token's `aud` points at the AS instead of the PS. The PS recognizes this and federates to the AS, which mints the auth token. **The agent code is unchanged** — `WithChallengeHandling` handles it transparently, including any AS-side interactive consent. See [Federated Access](workflows/federated-access.md) for the PS- and AS-side code.
+
 ## Enrollment: Hosted vs CLI/Desktop Agents
 
 | Aspect | Self-Hosted (Web App/API) | Enrolled (CLI/Desktop) |
@@ -353,32 +372,7 @@ The `ChallengeHandler` intercepts the `401`, extracts the resource token, exchan
 
 ## Self-Issued Agent Tokens (Hosted Services)
 
-Hosted services (web apps, APIs, orchestrators) that have a stable URL act as their own Agent Provider per spec §Self-Hosted Agents. They generate a key at startup, publish agent metadata at `/.well-known/aauth-agent.json`, and self-sign agent tokens. No external AP enrollment is needed.
-
-```csharp
-using AAuth.Crypto;
-using AAuth.HttpSig;
-using AAuth.Server;
-
-var key = AAuthKey.Generate();
-const string Kid = "my-service-1";
-var issuer = "https://my-service.example";
-
-// Publish agent metadata so verifiers can discover the JWKS
-app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
-{
-    Issuer = issuer,
-    SigningKeys = new Dictionary<string, AAuthKey> { [Kid] = key },
-});
-
-// Self-issue agent tokens for outbound requests
-using var client = AAuthClientBuilder.SelfIssuing(key)
-    .As(issuer, "aauth:my-service@my-service.example")
-    .WithKid(Kid)
-    .WithPersonServer("https://ps.example")
-    .WithChallengeHandling()
-    .Build();
-```
+Hosted services (web apps, APIs, orchestrators) that have a stable URL act as their own Agent Provider per spec §Self-Hosted Agents. They generate a key at startup, publish agent metadata at `/.well-known/aauth-agent.json`, and self-sign agent tokens. No external AP enrollment is needed — see the [Self-Hosted Agent Example](#self-hosted-agent-example) above for the `MapAAuthAgentWellKnown` + `AAuthClientBuilder.SelfIssuing` setup.
 
 ## Bootstrap with an Agent Provider (CLI / Desktop Agents)
 
@@ -539,7 +533,10 @@ using var client = new HttpClient(pipeline);
 
 - [Signing Modes Overview](signing-modes/overview.md) — choose the right mode for your use case
 - [Identity-Based Access](workflows/identity-based-access.md) — simplest workflow (no PS needed)
+- [Resource-Managed Access](workflows/resource-managed-access.md) — resource runs its own authorization
 - [PS-Asserted Access](workflows/ps-asserted-access.md) — full three-party authorization flow
+- [Federated Access](workflows/federated-access.md) — four-party flow with an Access Server
+- [Call Chaining](workflows/call-chaining.md) — multi-agent delegation with nested `act`
 - [Bootstrap & Enrollment](workflows/bootstrap-enrollment.md) — detailed AP enrollment for CLI/desktop agents
 - [Server Guide](server/verification-middleware.md) — verification middleware and token issuance
 - [Protocol Concepts](concepts.md) — understand the full picture
