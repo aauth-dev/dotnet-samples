@@ -2,10 +2,11 @@ using System;
 using System.Net.Http;
 using AAuth.Agent;
 using AAuth.Crypto;
+using AAuth.HttpSig;
 using AAuth.Server;
 using Microsoft.AspNetCore.Http;
 
-namespace AAuth.HttpSig;
+namespace AAuth;
 
 /// <summary>
 /// Fluent sub-builder for configuring an AP-enrolled agent client.

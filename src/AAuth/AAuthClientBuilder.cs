@@ -6,10 +6,11 @@ using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.HttpSig;
 using AAuth.Server;
 using Microsoft.AspNetCore.Http;
 
-namespace AAuth.HttpSig;
+namespace AAuth;
 
 /// <summary>
 /// Fluent builder for creating an <see cref="HttpClient"/> that signs every

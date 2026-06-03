@@ -21,6 +21,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using AAuth;
 using AAuth.Crypto;
 using AAuth.Errors;
 using AAuth.HttpSig;

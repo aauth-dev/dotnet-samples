@@ -1,8 +1,9 @@
 using System;
 using AAuth.Agent;
 using AAuth.Crypto;
+using AAuth.HttpSig;
 
-namespace AAuth.HttpSig;
+namespace AAuth;
 
 /// <summary>
 /// Fluent builder for the bootstrap enrollment flow. Created via

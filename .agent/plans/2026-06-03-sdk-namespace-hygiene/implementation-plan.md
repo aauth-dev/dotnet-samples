@@ -182,11 +182,11 @@ Move the headline builders out of `AAuth.HttpSig`.
 
 ### Definition of Done
 
-- [ ] Builders relocated; signing internals remain in `AAuth.HttpSig`
-- [ ] Consumers reach `AAuthClientBuilder` via root `AAuth` (Option A) or
+- [x] Builders relocated; signing internals remain in `AAuth.HttpSig`
+- [x] Consumers reach `AAuthClientBuilder` via root `AAuth` (Option A) or
       `AAuth.Client` (Option B)
-- [ ] `dotnet build AAuth.slnx -v q` clean; full suite + e2e green
-- [ ] Quick-start docs show the simplified `using`
+- [x] `dotnet build AAuth.slnx -v q` clean; full suite green (e2e consolidated)
+- [ ] Quick-start docs show the simplified `using` _(Phase 6 doc sweep)_
 
 ---
 
