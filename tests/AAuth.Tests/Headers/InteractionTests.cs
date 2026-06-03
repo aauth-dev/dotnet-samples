@@ -4,7 +4,7 @@ using Xunit;
 
 namespace AAuth.Tests.Headers;
 
-public class AAuthInteractionTests
+public class InteractionTests
 {
     [Fact]
     public void Format_RoundTrips_Through_ParsedRequirement()
