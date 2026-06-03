@@ -9,10 +9,10 @@
 ## Registration
 
 ```csharp
-using AAuth.DependencyInjection;
+using AAuth;
 using AAuth.Discovery;
 using AAuth.HttpSig;
-using AAuth.Server;
+using AAuth.Server.Verification;
 
 // Required services
 builder.Services.AddSingleton(new AAuthVerifier());

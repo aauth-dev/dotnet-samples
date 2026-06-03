@@ -4,7 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Crypto;
-using AAuth.DependencyInjection;
+using AAuth;
 using AAuth.Tokens;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;

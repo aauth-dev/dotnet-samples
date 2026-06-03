@@ -1,11 +1,16 @@
 using System.Text.Json.Nodes;
 using AAuth.Agent;
 using AAuth.Crypto;
-using AAuth.DependencyInjection;
+using AAuth;
 using AAuth.Discovery;
 using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
+using AAuth.Server.Authorization;
+using AAuth.Server.CallChaining;
+using AAuth.Server.Challenge;
+using AAuth.Server.Metadata;
+using AAuth.Server.Verification;
 using AAuth.Tokens;
 using Orchestrator;
 
@@ -163,7 +168,7 @@ IResult ReEmitChainedInteraction(HttpContext ctx, PendingStore.Entry entry)
     ctx.Response.Headers["Retry-After"] = "1";
     ctx.Response.Headers["Cache-Control"] = "no-store";
     ctx.Response.Headers[AAuthRequirementHeader.Name] =
-        AAuthInteraction.Format(entry.InteractionUrl, entry.InteractionCode);
+        Interaction.Format(entry.InteractionUrl, entry.InteractionCode);
     return Results.Json(new { status = "interaction_required" }, statusCode: StatusCodes.Status202Accepted);
 }
 

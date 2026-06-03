@@ -3,7 +3,13 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json.Nodes;
+using AAuth.Access;
 using AAuth.Server;
+using AAuth.Server.Authorization;
+using AAuth.Server.CallChaining;
+using AAuth.Server.Challenge;
+using AAuth.Server.Metadata;
+using AAuth.Server.Verification;
 
 namespace MockAccessServer.Policy;
 

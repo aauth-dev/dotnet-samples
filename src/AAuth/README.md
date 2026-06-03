@@ -16,7 +16,7 @@ The simplest mode is **pseudonymous (HWK)** — the agent signs every request wi
 
 ```csharp
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 var key = AAuthKey.Generate(); // Ed25519 keypair
 
@@ -46,7 +46,7 @@ The PS-Asserted flow is the primary authorization model. The resource delegates 
 
 ```csharp
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 var key = AAuthKey.Generate();
 

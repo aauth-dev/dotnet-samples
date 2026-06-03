@@ -56,7 +56,7 @@ Run this in a separate tool, CLI, or setup script — not in your application:
 ```csharp
 using AAuth.Agent;
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 // Key is generated INSIDE the store — private material never leaves.
 // FileKeyStore.Default() returns the in-process IKeyStore shipped with the SDK
@@ -84,7 +84,7 @@ Console.WriteLine($"Add to appsettings: AAuth:LocalKeyHandle = {enrol.LocalKeyHa
 ```csharp
 using AAuth.Agent;
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 // Key stays in the store — loaded by reference, never extracted
 var keyStore = FileKeyStore.Default();

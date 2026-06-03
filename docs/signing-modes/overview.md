@@ -24,7 +24,7 @@ All AAuth signing modes use HTTP Message Signatures (RFC 9421). The difference i
 
 ```csharp
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 var key = AAuthKey.Generate();
 

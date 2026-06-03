@@ -73,7 +73,7 @@ catch (AAuthInteractionTimeoutException)
 ```csharp
 using AAuth.Agent;
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 var keyStore = FileKeyStore.Default();
 var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!)
@@ -148,7 +148,7 @@ var presenter = new ConsoleInteractionPresenter();
 // Custom: open browser, send push notification, etc.
 class BrowserPresenter : IInteractionPresenter
 {
-    public Task PresentAsync(AAuthInteraction interaction, CancellationToken ct)
+    public Task PresentAsync(Interaction interaction, CancellationToken ct)
     {
         Process.Start(new ProcessStartInfo(interaction.Url) { UseShellExecute = true });
         return Task.CompletedTask;

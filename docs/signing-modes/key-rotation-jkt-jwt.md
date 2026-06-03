@@ -14,7 +14,7 @@ Two-key delegation where a durable (hardware-backed) key issues a naming JWT tha
 
 ```csharp
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 var durableKey = AAuthKey.Generate();    // long-lived, possibly hardware-backed
 var ephemeralKey = AAuthKey.Generate();  // short-lived signing key

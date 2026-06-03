@@ -10,6 +10,7 @@ using AAuth.Errors;
 using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
+using AAuth.Server.CallChaining;
 
 namespace AAuth.Agent;
 
@@ -35,7 +36,7 @@ public sealed class ChallengeHandler : DelegatingHandler
     private readonly TokenExchangeClient _exchange;
     private readonly AAuthTokenHolder _holder;
     private readonly string? _personServer;
-    private readonly Func<AAuthInteraction, CancellationToken, Task>? _onInteractionRequired;
+    private readonly Func<Interaction, CancellationToken, Task>? _onInteractionRequired;
     private readonly DeferredPollerOptions? _pollerOptions;
     private readonly Func<string?>? _upstreamTokenProvider;
 
@@ -62,7 +63,7 @@ public sealed class ChallengeHandler : DelegatingHandler
         TokenExchangeClient exchange,
         AAuthTokenHolder holder,
         string personServer,
-        Func<AAuthInteraction, CancellationToken, Task>? onInteractionRequired = null,
+        Func<Interaction, CancellationToken, Task>? onInteractionRequired = null,
         DeferredPollerOptions? pollerOptions = null)
         : this(exchange, holder, personServer, onInteractionRequired, pollerOptions,
                upstreamTokenProvider: null)
@@ -87,7 +88,7 @@ public sealed class ChallengeHandler : DelegatingHandler
         TokenExchangeClient exchange,
         AAuthTokenHolder holder,
         string? personServer,
-        Func<AAuthInteraction, CancellationToken, Task>? onInteractionRequired,
+        Func<Interaction, CancellationToken, Task>? onInteractionRequired,
         DeferredPollerOptions? pollerOptions,
         Func<string?>? upstreamTokenProvider)
     {

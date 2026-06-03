@@ -4,8 +4,9 @@ using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Headers;
+using Microsoft.Extensions.DependencyInjection;
 
-namespace AAuth.DependencyInjection;
+namespace AAuth;
 
 /// <summary>
 /// Options for configuring an AAuth agent via <see cref="AAuthAgentServiceCollectionExtensions.AddAAuthAgent"/>.
@@ -24,7 +25,7 @@ public sealed class AAuthAgentOptions
     /// <summary>
     /// Callback invoked when the PS requires user interaction during token exchange.
     /// </summary>
-    public Func<AAuthInteraction, CancellationToken, Task>? OnInteractionRequired { get; set; }
+    public Func<Interaction, CancellationToken, Task>? OnInteractionRequired { get; set; }
 
     /// <summary>
     /// Callback invoked when a resource returns 202 + requirement=interaction.

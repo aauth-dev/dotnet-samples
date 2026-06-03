@@ -6,12 +6,12 @@
 
 A mission is a structured, multi-step authorization negotiation between agent and resource. Unlike a single challenge/response, missions allow the resource to declare requirements progressively and the agent to fulfill them over multiple round-trips.
 
-## AAuthMission
+## Mission
 
 ```csharp
 namespace AAuth.Agent;
 
-public sealed class AAuthMission
+public sealed class Mission
 {
     public required string Id { get; init; }
     public required string Status { get; init; }        // "pending", "approved", "denied", "completed"
@@ -20,7 +20,7 @@ public sealed class AAuthMission
     public string? StatusUrl { get; init; }             // poll for status changes
     public string? InteractionUrl { get; init; }        // user-facing approval page
 
-    public static AAuthMission FromJson(JsonObject json);
+    public static Mission FromJson(JsonObject json);
 }
 ```
 
@@ -60,7 +60,7 @@ if (response.StatusCode == HttpStatusCode.Unauthorized)
     if (missionHeader is not null)
     {
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
-        var mission = AAuthMission.FromJson(body!);
+        var mission = Mission.FromJson(body!);
 
         Console.WriteLine($"Mission: {mission.Id}");
         Console.WriteLine($"Status: {mission.Status}");

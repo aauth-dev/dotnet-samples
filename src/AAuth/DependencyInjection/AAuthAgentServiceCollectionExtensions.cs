@@ -1,10 +1,10 @@
 using System;
 using System.Threading;
+using AAuth;
 using AAuth.Agent;
 using AAuth.HttpSig;
-using Microsoft.Extensions.DependencyInjection;
 
-namespace AAuth.DependencyInjection;
+namespace Microsoft.Extensions.DependencyInjection;
 
 /// <summary>
 /// Extension methods for registering named AAuth agent HTTP clients via DI.

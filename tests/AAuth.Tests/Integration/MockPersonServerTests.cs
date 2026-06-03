@@ -349,7 +349,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
         Assert.NotNull(response.Headers.Location);
         Assert.True(response.Headers.TryGetValues("AAuth-Requirement", out var values));
         var parsed = AAuth.Headers.AAuthRequirementHeader.Parse(string.Join(", ", values!));
-        var interaction = AAuth.Headers.AAuthInteraction.FromRequirement(parsed);
+        var interaction = AAuth.Headers.Interaction.FromRequirement(parsed);
         Assert.NotNull(interaction);
         Assert.StartsWith($"{PsIssuer}/interaction", interaction!.Url);
         Assert.False(string.IsNullOrEmpty(interaction.Code));
@@ -426,7 +426,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         Assert.True(initial.Headers.TryGetValues("AAuth-Requirement", out var reqValues));
         var parsed = AAuth.Headers.AAuthRequirementHeader.Parse(string.Join(", ", reqValues!));
-        var interaction = AAuth.Headers.AAuthInteraction.FromRequirement(parsed);
+        var interaction = AAuth.Headers.Interaction.FromRequirement(parsed);
         Assert.NotNull(interaction);
 
         // User's browser → GET /interaction?code=…  renders a consent form.
@@ -485,7 +485,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
         Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
         var parsed = AAuth.Headers.AAuthRequirementHeader.Parse(
             string.Join(", ", initial.Headers.GetValues("AAuth-Requirement")));
-        var interaction = AAuth.Headers.AAuthInteraction.FromRequirement(parsed);
+        var interaction = AAuth.Headers.Interaction.FromRequirement(parsed);
         Assert.NotNull(interaction);
 
         // User's browser → POST /interaction/deny.

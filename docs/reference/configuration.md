@@ -92,7 +92,7 @@ Server `Retry-After` headers override `DefaultPollInterval` (clamped to `MinPoll
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `OnInteractionRequired` | `Func<AAuthInteraction, CancellationToken, Task>?` | `null` | Callback for 202+interaction |
+| `OnInteractionRequired` | `Func<Interaction, CancellationToken, Task>?` | `null` | Callback for 202+interaction |
 | `PollingTimeout` | `TimeSpan` | 5 minutes | Maximum polling time |
 | `DefaultPollInterval` | `TimeSpan` | 5 seconds | Interval between polls |
 | `PreferWaitSeconds` | `int?` | `null` | `Prefer: wait=N` header value |
@@ -216,7 +216,7 @@ Standard `DelegatingHandler` — no configurable options. Requires an `ISignatur
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `OnInteractionRequired` | `Func<AAuthInteraction, CancellationToken, Task>?` | null | Deferred consent callback |
+| `OnInteractionRequired` | `Func<Interaction, CancellationToken, Task>?` | null | Deferred consent callback |
 | `PollingTimeout` | `TimeSpan` | 5 minutes | Max deferred polling time |
 | `DefaultPollInterval` | `TimeSpan` | 5 seconds | Poll interval (overridden by Retry-After) |
 | `PreferWaitSeconds` | `int?` | null | Sends `Prefer: wait=N` to long-poll |

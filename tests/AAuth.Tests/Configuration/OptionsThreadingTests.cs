@@ -1,8 +1,13 @@
 using System;
 using System.Net.Http;
-using AAuth.DependencyInjection;
+using AAuth;
 using AAuth.HttpSig;
 using AAuth.Server;
+using AAuth.Server.Authorization;
+using AAuth.Server.CallChaining;
+using AAuth.Server.Challenge;
+using AAuth.Server.Metadata;
+using AAuth.Server.Verification;
 using AAuth.Tokens;
 using Xunit;
 

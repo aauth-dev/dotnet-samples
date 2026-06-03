@@ -18,7 +18,7 @@ The agent presents its full agent token inline. The resource (or Person Server) 
 
 ```csharp
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 var key = AAuthKey.Generate();
 
@@ -63,7 +63,7 @@ using var client = new AAuthClientBuilder(key)
 ```csharp
 using AAuth.Agent;
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 var keyStore = FileKeyStore.Default();
 var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!);

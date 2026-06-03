@@ -204,7 +204,7 @@ public class InteractionHandlerTests
 
     private static HttpResponseMessage Make202Interaction(string interactUrl, string code, string pendingUrl)
     {
-        var headerValue = AAuthInteraction.Format(interactUrl, code);
+        var headerValue = Interaction.Format(interactUrl, code);
         var response = new HttpResponseMessage(HttpStatusCode.Accepted)
         {
             Headers =

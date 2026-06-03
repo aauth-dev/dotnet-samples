@@ -30,7 +30,7 @@ public sealed class SignatureKeyResolution
 Handles all four schemes out of the box:
 
 ```csharp
-using AAuth.DependencyInjection;
+using AAuth;
 
 // DI extension (recommended) — registers resolver automatically
 builder.Services.AddAAuthResource(options =>
@@ -47,6 +47,7 @@ app.UseAAuthVerification();
 ```csharp
 using AAuth.HttpSig;
 using AAuth.Discovery;
+using AAuth.Server.Verification;
 
 // Register required services
 builder.Services.AddSingleton(new AAuthVerifier());

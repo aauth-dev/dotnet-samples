@@ -47,7 +47,7 @@ The simplest mode is pseudonymous (HWK) — no Agent Provider needed:
 
 ```csharp
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 var key = AAuthKey.Generate();
 
@@ -255,8 +255,8 @@ A hosted service (web app, API, orchestrator) acts as its own Agent Provider:
 
 ```csharp
 using AAuth.Crypto;
-using AAuth.HttpSig;
-using AAuth.Server;
+using AAuth;
+using AAuth.Server.Metadata;
 
 var builder = WebApplication.CreateBuilder(args);
 var key = AAuthKey.Generate();
@@ -290,8 +290,10 @@ A resource that verifies signatures and issues resource token challenges:
 
 ```csharp
 using AAuth.Crypto;
-using AAuth.DependencyInjection;
-using AAuth.Server;
+using AAuth;
+using AAuth.Server.Verification;
+using AAuth.Server.Challenge;
+using AAuth.Server.Metadata;
 
 var builder = WebApplication.CreateBuilder(args);
 var resourceKey = AAuthKey.Generate();
@@ -383,7 +385,7 @@ For agents that do NOT have a stable URL (CLI tools, desktop apps, mobile apps),
 ```csharp
 using AAuth.Agent;
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 // Key is generated INSIDE the store — private material never leaves
 var keyStore = FileKeyStore.Default(); // ~/.aauth/keys/ (or plug in HSM/Key Vault)
@@ -408,7 +410,7 @@ Load the key by handle from the store and let the SDK manage agent tokens:
 ```csharp
 using AAuth.Agent;
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 var keyStore = FileKeyStore.Default();
 var localKeyHandle = configuration["AAuth:LocalKeyHandle"]!;
@@ -452,7 +454,6 @@ Console.WriteLine(await response.Content.ReadAsStringAsync());
 using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
-using AAuth.HttpSig;
 
 var apClient = new AgentProviderClient(new HttpClient(), new InMemoryKeyStore());
 var enrol = await apClient.EnrolAsync(

@@ -101,7 +101,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `TokenExchangeClient` | Sends signed `POST /token` to the Person Server |
 | `DeferredPoller` | Polls the pending URL until auth_token or timeout |
 | `AgentProviderClient` | Enrols with an Agent Provider (CLI/desktop agents; hosted services self-issue) |
-| `AAuthMission` / `AAuthMissionHeader` | Mission state + the `AAuth-Mission` header helpers |
+| `Mission` / `AAuthMissionHeader` | Mission state + the `AAuth-Mission` header helpers |
 | `MissionForwardingHandler` | `DelegatingHandler` that forwards mission context downstream |
 | `AAuthCapabilitiesHeader` | Helpers for the `AAuth-Capabilities` request header |
 | `IInteractionPresenter` | Surface interaction URLs to the user |
@@ -132,23 +132,48 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | Type | Purpose |
 |------|---------|
 | `AAuthRequirementHeader` | Format/parse the `AAuth-Requirement` challenge header |
-| `AAuthInteraction` | Interaction URL + code from 202 responses |
+| `Interaction` | Interaction URL + code from 202 responses |
 
-> The `AAuthCapabilitiesHeader` and `AAuthMissionHeader` types live in the `AAuth.Agent` namespace (alongside `AAuthMission` and `MissionForwardingHandler`), not in `AAuth.Headers`.
+> The `AAuthCapabilitiesHeader` and `AAuthMissionHeader` types live in the `AAuth.Agent` namespace (alongside `Mission` and `MissionForwardingHandler`), not in `AAuth.Headers`.
+
+### `AAuth.Server.Verification` — Verification middleware
+
+| Type | Purpose |
+|------|---------|
+| `AAuthVerificationMiddleware` | HTTP sig PoP + JWT issuer verification middleware |
+| `AAuthAuthenticationHandler` | Maps `AAuthVerificationResult` to `ClaimsPrincipal` |
+| `AAuthVerificationResult` | Typed verification result in `HttpContext.Features` |
+| `AAuthLevel` | Pseudonymous / Identified / Authorized |
+
+### `AAuth.Server.Challenge` — Auto-challenge middleware
+
+| Type | Purpose |
+|------|---------|
+| `AAuthChallengeMiddleware` | Auto-challenge: issues 401 with resource token |
+
+### `AAuth.Server.Authorization` — Scope authorization
+
+| Type | Purpose |
+|------|---------|
+| `AAuthScopeRequirement` | ASP.NET Core authorization requirement for scopes |
+| `AAuthScopeHandler` | Evaluates scope requirements against verified scopes |
+
+### `AAuth.Server.Metadata` — Well-known endpoints
+
+| Type | Purpose |
+|------|---------|
+| `WellKnownEndpoints` | `MapAAuthResourceWellKnown()` for ASP.NET minimal APIs |
+
+### `AAuth.Server.CallChaining` — Delegation routing
+
+| Type | Purpose |
+|------|---------|
+| `CallChainingHandler` | Multi-hop delegation routing for resource-as-agent |
 
 ### `AAuth.Server` — Resource server utilities
 
 | Type | Purpose |
 |------|---------|
-| `AAuthVerificationMiddleware` | HTTP sig PoP + JWT issuer verification middleware |
-| `AAuthChallengeMiddleware` | Auto-challenge: issues 401 with resource token |
-| `AAuthAuthenticationHandler` | Maps `AAuthVerificationResult` to `ClaimsPrincipal` |
-| `AAuthVerificationResult` | Typed verification result in `HttpContext.Features` |
-| `AAuthLevel` | Pseudonymous / Identified / Authorized |
-| `AAuthScopeRequirement` | ASP.NET Core authorization requirement for scopes |
-| `AAuthScopeHandler` | Evaluates scope requirements against verified scopes |
-| `CallChainingHandler` | Multi-hop delegation routing for resource-as-agent |
-| `WellKnownEndpoints` | `MapAAuthResourceWellKnown()` for ASP.NET minimal APIs |
 | `RevocationEndpoint` | Token revocation endpoint |
 | `IJtiStore` / `InMemoryJtiStore` | Replay detection (JTI tracking) |
 | `IOpaqueTokenStore` | Opaque token storage abstraction |
@@ -159,7 +184,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 |------|---------|
 | `AAuthDiagnostics` | Shared `ActivitySource` + tag key constants for OTel tracing |
 
-### `AAuth.DependencyInjection` — ASP.NET Core integration
+### `Microsoft.Extensions.DependencyInjection` / `Microsoft.AspNetCore.Builder` — ASP.NET Core integration
 
 | Type | Purpose |
 |------|---------|
@@ -167,6 +192,8 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `AAuthResourceServiceCollectionExtensions` | `services.AddAAuthResource(...)` |
 | `AAuthDiscoveryServiceCollectionExtensions` | `services.AddAAuthDiscovery(...)` |
 | `AAuthApplicationBuilderExtensions` | `app.UseAAuthVerification()` |
+
+> These extension methods live in the conventional `Microsoft.Extensions.DependencyInjection` and `Microsoft.AspNetCore.Builder` namespaces so they surface automatically in ASP.NET Core projects. The associated options records (`AAuthAgentOptions`, `AAuthResourceOptions`, `AAuthDiscoveryOptions`, etc.) live in the root `AAuth` namespace.
 
 ### `AAuth.Errors` — Error types
 
@@ -181,8 +208,8 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 
 | Type | Purpose |
 |------|---------|
-| `AAuthAgentId` | Parse/validate `aauth:` agent identifiers |
-| `AAuthServerId` | Parse/validate server identifiers |
+| `AgentId` | Parse/validate `aauth:` agent identifiers |
+| `ServerId` | Parse/validate server identifiers |
 
 ## Samples
 

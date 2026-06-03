@@ -25,7 +25,7 @@ Valid Signing Modes: `hwk` (pseudonymous) or `jwks_uri` (agent identity). NOT `j
 
 ```csharp
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 var key = AAuthKey.Generate();
 

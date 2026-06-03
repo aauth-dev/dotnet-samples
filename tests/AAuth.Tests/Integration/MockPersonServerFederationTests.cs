@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using AAuth.Access;
 using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
@@ -286,7 +287,7 @@ public class MockPersonServerFederationTests
                     deferred.Headers.TryAddWithoutValidation("Retry-After", "0");
                     deferred.Headers.TryAddWithoutValidation(
                         "AAuth-Requirement",
-                        AAuth.Headers.AAuthInteraction.Format($"{AsIssuer}/interaction/login", "abc"));
+                        AAuth.Headers.Interaction.Format($"{AsIssuer}/interaction/login", "abc"));
                     return Task.FromResult(deferred);
                 }
 

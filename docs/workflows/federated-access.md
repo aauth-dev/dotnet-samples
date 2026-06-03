@@ -27,7 +27,7 @@ Identical to PS-asserted — `WithChallengeHandling()` handles it transparently.
 ```csharp
 using AAuth.Agent;
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 var keyStore = FileKeyStore.Default();
 var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!)
@@ -121,6 +121,8 @@ verifies the agent and resource tokens, evaluates policy through a pluggable
 `IAccessPolicy`, and mints the auth token.
 
 ```csharp
+using AAuth.Access;
+
 // Register the policy decision point (stub | keycloak) and the store that
 // parks deferred decisions (§Claims Required / interactive consent).
 builder.Services.AddSingleton<IAccessPolicy>(new StubAccessPolicy(requiredClaims));
@@ -267,7 +269,7 @@ var fedRequest = new AccessServerRequest
                 claims[name] = value;
             }
         }
-        return Task.FromResult(new AAuthClaimsResponse
+        return Task.FromResult(new ClaimsResponse
         {
             Subject = directedSubject,
             Claims = claims,
@@ -277,7 +279,7 @@ var fedRequest = new AccessServerRequest
 ```
 
 `AccessServerClient.FederateAsync` reads `required_claims`, invokes the
-callback, POSTs the returned `AAuthClaimsResponse` (signed, origin-pinned to
+callback, POSTs the returned `ClaimsResponse` (signed, origin-pinned to
 the AS) to the `Location`, and continues the poll loop to the `200` auth token.
 The `Subject` (directed `sub`) is mandatory — leaving it blank surfaces an
 `InvalidOperationException`. The issued auth token asserts the pushed claims

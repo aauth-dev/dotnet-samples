@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using AAuth;
 using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
@@ -357,7 +358,7 @@ public sealed class TourSession : IAsyncDisposable
     /// <summary>The user-facing interaction URL captured during step 7 (deferred only).</summary>
     public string? UserInteractionUrl => _interactionUrl is null || _interactionCode is null
         ? null
-        : new AAuth.Headers.AAuthInteraction(_interactionUrl, _interactionCode).BuildUserUrl();
+        : new AAuth.Headers.Interaction(_interactionUrl, _interactionCode).BuildUserUrl();
 
     /// <summary>Path portion of the pending URL (for compact UI display).</summary>
     public string? PendingUrlPath
@@ -1226,7 +1227,7 @@ public sealed class TourSession : IAsyncDisposable
                     try
                     {
                         var parsed = AAuthRequirementHeader.Parse(raw);
-                        var interaction = AAuth.Headers.AAuthInteraction.FromRequirement(parsed);
+                        var interaction = AAuth.Headers.Interaction.FromRequirement(parsed);
                         if (interaction is not null)
                         {
                             _interactionUrl = interaction.Url;
@@ -1738,7 +1739,7 @@ public sealed class TourSession : IAsyncDisposable
                     try
                     {
                         var parsed = AAuthRequirementHeader.Parse(raw);
-                        var interaction = AAuth.Headers.AAuthInteraction.FromRequirement(parsed);
+                        var interaction = AAuth.Headers.Interaction.FromRequirement(parsed);
                         if (interaction is not null)
                         {
                             _interactionUrl = interaction.Url;
@@ -1846,7 +1847,7 @@ public sealed class TourSession : IAsyncDisposable
                     try
                     {
                         var parsed = AAuthRequirementHeader.Parse(raw);
-                        var interaction = AAuth.Headers.AAuthInteraction.FromRequirement(parsed);
+                        var interaction = AAuth.Headers.Interaction.FromRequirement(parsed);
                         if (interaction is not null)
                         {
                             _interactionUrl = interaction.Url;
@@ -2212,7 +2213,7 @@ public sealed class TourSession : IAsyncDisposable
                     try
                     {
                         var parsed = AAuthRequirementHeader.Parse(raw);
-                        var interaction = AAuth.Headers.AAuthInteraction.FromRequirement(parsed);
+                        var interaction = AAuth.Headers.Interaction.FromRequirement(parsed);
                         if (interaction is not null)
                         {
                             _interactionUrl = interaction.Url;

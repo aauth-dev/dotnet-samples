@@ -16,11 +16,11 @@ public sealed class TokenExchangeRequest
     /// <summary>
     /// Invoked when the PS returns <c>202</c> with an interaction requirement,
     /// before polling begins. Callers display the user-facing URL/code via
-    /// <see cref="AAuthInteraction.BuildUserUrl(string?)"/> and then return —
+    /// <see cref="Interaction.BuildUserUrl(string?)"/> and then return —
     /// polling proceeds in parallel with the user's out-of-band action. If
     /// <see langword="null"/> and the PS returns <c>202</c>, the call throws.
     /// </summary>
-    public Func<AAuthInteraction, CancellationToken, Task>? OnInteractionRequired { get; init; }
+    public Func<Interaction, CancellationToken, Task>? OnInteractionRequired { get; init; }
 
     /// <summary>Optional polling cadence/timeout override for the deferred path.</summary>
     public DeferredPollerOptions? PollerOptions { get; init; }

@@ -15,7 +15,7 @@ public sealed class ChallengeHandlingOptions
     /// during token exchange. The caller should display the interaction URL to the user.
     /// When <see langword="null"/>, a deferred PS response surfaces as an exception.
     /// </summary>
-    public Func<AAuthInteraction, CancellationToken, Task>? OnInteractionRequired { get; set; }
+    public Func<Interaction, CancellationToken, Task>? OnInteractionRequired { get; set; }
 
     /// <summary>
     /// Maximum time to poll a deferred PS response before timing out.

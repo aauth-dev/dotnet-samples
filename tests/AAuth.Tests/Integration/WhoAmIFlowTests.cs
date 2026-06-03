@@ -13,6 +13,11 @@ using AAuth.Discovery;
 using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
+using AAuth.Server.Authorization;
+using AAuth.Server.CallChaining;
+using AAuth.Server.Challenge;
+using AAuth.Server.Metadata;
+using AAuth.Server.Verification;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -448,7 +453,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
         // to /interaction/approve as a form, exactly as the HTML form in
         // the user's browser would. Once consent lands, the next poll on
         // /pending/{id} returns 200 + auth_token.
-        Func<AAuthInteraction, CancellationToken, Task> approveAsUser =
+        Func<Interaction, CancellationToken, Task> approveAsUser =
             async (interaction, ct) =>
             {
                 Assert.NotNull(interaction.Code);
@@ -575,7 +580,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
 
         var holder = new AAuthTokenHolder(agentToken);
 
-        Func<AAuthInteraction, CancellationToken, Task> denyAsUser =
+        Func<Interaction, CancellationToken, Task> denyAsUser =
             async (interaction, ct) =>
             {
                 using var browser = new HttpClient(consentPsHandler, disposeHandler: false);

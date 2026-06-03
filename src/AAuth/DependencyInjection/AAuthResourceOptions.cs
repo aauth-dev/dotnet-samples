@@ -2,8 +2,9 @@ using System;
 using System.Collections.Generic;
 using AAuth.Crypto;
 using AAuth.HttpSig;
+using Microsoft.Extensions.DependencyInjection;
 
-namespace AAuth.DependencyInjection;
+namespace AAuth;
 
 /// <summary>
 /// Options for configuring an AAuth resource server via

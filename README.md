@@ -89,7 +89,7 @@ The simplest mode is **pseudonymous (HWK)** — the agent signs every request wi
 
 ```csharp
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 var key = AAuthKey.Generate(); // Ed25519 keypair
 
@@ -127,7 +127,7 @@ On the agent side, building the client with `WithChallengeHandling` makes the en
 
 ```csharp
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 var key = AAuthKey.Generate();
 
@@ -170,8 +170,10 @@ The resource verifies signatures, publishes metadata, and issues resource token 
 
 ```csharp
 using AAuth.Crypto;
-using AAuth.DependencyInjection;
-using AAuth.Server;
+using AAuth;
+using AAuth.Server.Challenge;
+using AAuth.Server.Verification;
+using AAuth.Server.Metadata;
 
 var builder = WebApplication.CreateBuilder(args);
 var resourceKey = AAuthKey.Generate();
@@ -214,8 +216,8 @@ Hosted services act as their own Agent Provider — generate a key, publish meta
 
 ```csharp
 using AAuth.Crypto;
-using AAuth.HttpSig;
-using AAuth.Server;
+using AAuth;
+using AAuth.Server.Metadata;
 
 var builder = WebApplication.CreateBuilder(args);
 var key = AAuthKey.Generate();

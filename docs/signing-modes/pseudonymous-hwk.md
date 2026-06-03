@@ -14,7 +14,7 @@ The agent proves it holds a specific key without disclosing its identity. The fu
 
 ```csharp
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 var key = AAuthKey.Generate();
 

@@ -15,7 +15,7 @@ public interface IInteractionPresenter
     /// Present the interaction URL + code to the user.
     /// Returns when the user has been notified (not when they've completed it).
     /// </summary>
-    Task PresentAsync(AAuthInteraction interaction, CancellationToken ct = default);
+    Task PresentAsync(Interaction interaction, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -24,7 +24,7 @@ public interface IInteractionPresenter
 public sealed class ConsoleInteractionPresenter : IInteractionPresenter
 {
     /// <inheritdoc/>
-    public Task PresentAsync(AAuthInteraction interaction, CancellationToken ct = default)
+    public Task PresentAsync(Interaction interaction, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(interaction);
         Console.WriteLine($"Please visit: {interaction.Url}");

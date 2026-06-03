@@ -363,7 +363,7 @@ public class ChallengeHandlerTests
     }
 
     private static async Task<JsonObject?> CaptureExchangeBodyAsync(
-        Func<AAuthInteraction, CancellationToken, Task>? onInteractionRequired,
+        Func<Interaction, CancellationToken, Task>? onInteractionRequired,
         IReadOnlyList<string>? capabilities = null,
         string? prompt = null)
     {
