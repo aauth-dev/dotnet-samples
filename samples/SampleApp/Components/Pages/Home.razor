@@ -122,11 +122,31 @@
             </div>
         </div>
     </div>
+
+    <div class="col">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">🛡️ Federated — Four-Party</h5>
+                <p class="card-text">
+                    Four-party flow with an <strong>Access Server</strong>. The Person
+                    Server delegates the access decision to a separate AS, which can
+                    require interactive consent (e.g. a Keycloak login) before minting
+                    the auth token.
+                </p>
+                <span class="badge bg-dark">4-party</span>
+                <span class="badge bg-secondary">sig=jwt</span>
+                <span class="badge bg-info text-dark">federated</span>
+            </div>
+            <div class="card-footer">
+                <a href="federated" class="btn btn-outline-primary btn-sm">Open demo →</a>
+            </div>
+        </div>
+    </div>
 </div>
 
 <h4 class="mt-4">Prerequisites</h4>
 <p>Start all mock servers with a single command:</p>
-<pre><code>make demo-sample</code></pre>
+<pre><code>make demo-sampleapp</code></pre>
 <p>
     This starts the Agent Provider (<code>:5301</code>), Person Server
     (<code>:5100</code> with consent required), WhoAmI resource (<code>:5000</code>),

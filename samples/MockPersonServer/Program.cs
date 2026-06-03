@@ -47,6 +47,15 @@ const string PsAdminScope = "whoami:admin";
 // principal's directory membership instead of a hard-coded prefix.
 string[] demoRoles = ["whoami-admin"];
 string[] demoGroups = ["demo-users"];
+// Identity claims the PS can release for the bound principal when an Access
+// Server asks for them via the §Claims Required push. A production PS would
+// resolve these from its identity store keyed by the authenticated principal.
+var demoUserClaims = new Dictionary<string, string>(StringComparer.Ordinal)
+{
+    ["email"] = "demo@person.example",
+    ["tenant"] = "demo-tenant",
+    ["name"] = "Demo User",
+};
 static bool IsAdminAgent(string agentId) =>
     agentId.StartsWith("aauth:demo@", StringComparison.Ordinal);
 var psIssuer = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5100";
@@ -286,6 +295,26 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
                 entry.InteractionCode = interaction.Code;
                 entry.FirstAnswer.TrySetResult();
                 return Task.CompletedTask;
+            },
+            // The AS needs identity claims (§Claims Required) for its policy
+            // decision. The PS is the identity authority, so it answers with a
+            // directed pseudonymous `sub` plus whatever requested claims it
+            // holds for the principal. Unknown claims are simply omitted.
+            OnClaimsRequired = (claimsRequirement, _) =>
+            {
+                var claims = new Dictionary<string, JsonNode?>(StringComparer.Ordinal);
+                foreach (var name in claimsRequirement.RequiredClaims)
+                {
+                    if (demoUserClaims.TryGetValue(name, out var value))
+                    {
+                        claims[name] = value;
+                    }
+                }
+                return Task.FromResult(new AAuthClaimsResponse
+                {
+                    Subject = "pairwise-sub",
+                    Claims = claims,
+                });
             },
         };
 

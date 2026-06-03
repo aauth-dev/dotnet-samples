@@ -64,3 +64,30 @@ export async function denyInPopup(popup: Page): Promise<void> {
   await popup.locator('button.deny').click();
   await popup.getByText('Denied', { exact: false }).first().waitFor();
 }
+
+/**
+ * Complete a Keycloak login on the four-party (federated) interaction popup.
+ *
+ * In federated mode the surfaced interaction URL is the Access Server's
+ * login-start endpoint, which 302-redirects to the Keycloak OIDC login form.
+ * The realm ships two demo users (samples/MockAccessServer/keycloak):
+ *   demo / demo   → has the `whoami-admin` role (full access)
+ *   guest / guest → no admin role (limited access)
+ * After login Keycloak may render a consent/grant screen; approve it if shown.
+ */
+export async function keycloakLogin(
+  popup: Page,
+  username = 'demo',
+  password = 'demo',
+): Promise<void> {
+  await popup.locator('#username').waitFor({ timeout: 30_000 });
+  await popup.locator('#username').fill(username);
+  await popup.locator('#password').fill(password);
+  await popup.locator('#kc-login, input[type="submit"]').first().click();
+
+  // Optional OAuth consent/grant screen.
+  const grant = popup.locator('#kc-login, input[name="accept"]');
+  if (await grant.first().isVisible().catch(() => false)) {
+    await grant.first().click();
+  }
+}

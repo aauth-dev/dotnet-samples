@@ -21,6 +21,7 @@ export const TourMode = {
   Autonomous: 'Autonomous',
   Deferred: 'Deferred',
   CallChain: 'CallChain',
+  Federated: 'Federated',
 } as const;
 export type TourMode = (typeof TourMode)[keyof typeof TourMode];
 
@@ -45,6 +46,9 @@ const PLAN_STEPS: Record<TourMode, number> = {
   Autonomous: 6,
   Deferred: 9,
   CallChain: 7,
+  // Four-party federated: 7 steps on the stub (direct grant) path; the
+  // interactive Keycloak path expands to 10 once the AS returns 202.
+  Federated: 7,
 };
 
 /** Select a flow in the `#flow-select` picker and wait for the timeline to reset. */

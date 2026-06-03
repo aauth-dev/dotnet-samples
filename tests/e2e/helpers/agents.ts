@@ -9,6 +9,7 @@ export const Urls = {
   personServer: 'http://localhost:5100',
   orchestrator: 'http://localhost:5200',
   agentProvider: 'http://localhost:5301',
+  accessServer: 'http://localhost:5500',
 } as const;
 
 export const Agents = {

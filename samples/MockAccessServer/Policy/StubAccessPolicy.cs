@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using AAuth.Server;
 
 namespace MockAccessServer.Policy;
 
@@ -23,9 +24,30 @@ public sealed class StubAccessPolicy : IAccessPolicy
     /// <summary>The role a principal must hold to be granted an elevated scope.</summary>
     public const string AdminRole = "whoami-admin";
 
+    private readonly IReadOnlyList<string> _requiredClaims;
+
+    /// <summary>
+    /// Create the stub policy. <paramref name="requiredClaims"/> (from
+    /// <c>AccessServer:RequireClaims</c>) lets the demo exercise the
+    /// §Claims Required push: when set, the policy returns
+    /// <see cref="AccessDecisionKind.NeedsClaims"/> until the Person Server has
+    /// pushed every named claim. Empty (the default) preserves the
+    /// non-interactive allow/deny behaviour.
+    /// </summary>
+    public StubAccessPolicy(IReadOnlyList<string>? requiredClaims = null)
+        => _requiredClaims = requiredClaims ?? [];
+
     public Task<AccessDecision> EvaluateAsync(
         AccessPolicyRequest request, CancellationToken cancellationToken = default)
     {
+        // §Claims Required: if the AS is configured to need identity claims it
+        // does not yet hold, ask the PS to push them before deciding.
+        var missing = MissingClaims(request.Claims);
+        if (missing.Count > 0)
+        {
+            return Task.FromResult(AccessDecision.NeedsClaims(missing));
+        }
+
         // An elevated (admin) scope requires the admin role; the base scope is
         // open to any verified agent.
         if (IsElevatedScope(request.Scope) && !HasRole(request.Claims, AdminRole))
@@ -35,6 +57,19 @@ public sealed class StubAccessPolicy : IAccessPolicy
         }
 
         return Task.FromResult(AccessDecision.Allow());
+    }
+
+    private List<string> MissingClaims(JsonObject? claims)
+    {
+        var missing = new List<string>();
+        foreach (var name in _requiredClaims)
+        {
+            if (claims?[name] is null)
+            {
+                missing.Add(name);
+            }
+        }
+        return missing;
     }
 
     private static bool IsElevatedScope(string scope) =>
