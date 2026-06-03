@@ -97,7 +97,7 @@ The realm import at `keycloak/realm-aauth.json` defines:
 Run the whole four-party demo (Keycloak + WhoAmI + PS + AP + AS) with:
 
 ```bash
-make demo-tour-keycloak
+make demo-keycloak
 ```
 
 Then, in a second terminal, drive the agent:

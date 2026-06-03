@@ -58,8 +58,8 @@ endef
 
 .PHONY: help build restore test test-unit test-conformance format clean \
         whoami ps ps-consent ap orchestrator tour sampleapp agent live \
-        demo-tour demo-sampleapp \
-        keycloak access-server demo-tour-keycloak demo-sampleapp-keycloak \
+        demo \
+        keycloak access-server demo-keycloak \
         agent-federated agent-reset \
         e2e-install e2e e2e-tour e2e-sample e2e-report
 
@@ -129,39 +129,29 @@ live: ## Run LiveWhoAmITest against whoami.aauth.dev (needs cloudflared + networ
 # Demos — stub Access Server (all flows incl. four-party federated, no Docker)
 # ----------------------------------------------------------------------------
 
-demo-tour: ## Start the full stack + stub Access Server + GuidedTour (all flows incl. four-party federated, stub AS — no Docker)
-	@echo "Starting five-party demo (all flows including call-chain + four-party federated, stub AS)..."
-	@echo "  WhoAmI:             $(WHOAMI_URL)"
-	@echo "  Orchestrator:       $(ORCH_URL)"
-	@echo "  MockPersonServer:   $(PS_URL)  (RequireConsent=true)"
-	@echo "  MockAgentProvider:  $(AP_URL)"
-	@echo "  MockAccessServer:   $(AS_URL)  (PolicyProvider=stub)"
-	@echo "  GuidedTour:         $(TOUR_URL)"
+demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. four-party federated, stub AS — no Docker)
+	@echo "Starting demo (all flows including call-chain + four-party federated, stub AS)..."
+	@echo ""
+	@echo "------------------------------------------------------------------"
+	@echo " Backend services:"
+	@echo "   WhoAmI:             $(WHOAMI_URL)         (resource server)"
+	@echo "   Orchestrator:       $(ORCH_URL)         (mission orchestrator)"
+	@echo "   MockPersonServer:   $(PS_URL)         (RequireConsent=true)"
+	@echo "   MockAgentProvider:  $(AP_URL)         (agent registry)"
+	@echo "   MockAccessServer:   $(AS_URL)         (stub, RequireConsent=true)"
+	@echo ""
+	@echo " Open in your browser:"
+	@echo "   GuidedTour:         $(TOUR_URL)         (step-by-step walkthrough of every flow)"
+	@echo "   SampleApp:          $(SAMPLE_URL)         (minimal app: /federated, /deferred, /callchain)"
+	@echo "------------------------------------------------------------------"
 	@echo ""
 	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \
 	MockPersonServer__RequireConsent=true $(DOTNET) run --project $(PS_PROJECT) & \
 	$(DOTNET) run --project $(WHOAMI_PROJECT) & \
 	$(DOTNET) run --project $(ORCH_PROJECT) & \
 	$(DOTNET) run --project $(AP_PROJECT) & \
-	AccessServer__PolicyProvider=stub $(DOTNET) run --project $(AS_PROJECT) & \
+	AccessServer__PolicyProvider=stub AccessServer__RequireConsent=true $(DOTNET) run --project $(AS_PROJECT) & \
 	$(DOTNET) run --project $(TOUR_PROJECT) & \
-	wait
-
-demo-sampleapp: ## Start the full stack + stub Access Server + SampleApp (all flows incl. four-party federated, stub AS — no Docker)
-	@echo "Starting demo with SampleApp + Orchestrator + stub Access Server..."
-	@echo "  WhoAmI:             $(WHOAMI_URL)"
-	@echo "  Orchestrator:       $(ORCH_URL)"
-	@echo "  MockPersonServer:   $(PS_URL)  (RequireConsent=true)"
-	@echo "  MockAgentProvider:  $(AP_URL)"
-	@echo "  MockAccessServer:   $(AS_URL)  (PolicyProvider=stub)"
-	@echo "  SampleApp:          $(SAMPLE_URL)"
-	@echo ""
-	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \
-	MockPersonServer__RequireConsent=true $(DOTNET) run --project $(PS_PROJECT) & \
-	$(DOTNET) run --project $(WHOAMI_PROJECT) & \
-	$(DOTNET) run --project $(ORCH_PROJECT) & \
-	$(DOTNET) run --project $(AP_PROJECT) & \
-	AccessServer__PolicyProvider=stub $(DOTNET) run --project $(AS_PROJECT) & \
 	$(DOTNET) run --project $(SAMPLE_PROJECT) & \
 	wait
 
@@ -180,28 +170,32 @@ access-server: ## Run the MockAccessServer with the Keycloak policy engine (port
 	$(KEYCLOAK_AS_ENV) \
 	$(DOTNET) run --project $(AS_PROJECT)
 
-demo-tour-keycloak: ## Four-party federated demo (GuidedTour) with the live Keycloak policy engine (Docker)
+demo-keycloak: ## Four-party federated demo (both UIs) with the live Keycloak policy engine (Docker)
 	@echo "Starting four-party federated demo (Keycloak as the policy engine)..."
-	@echo "  Keycloak:           $(KEYCLOAK_URL)        (admin/admin, realm 'aauth')"
-	@echo "  WhoAmI:             $(WHOAMI_URL)/federated"
-	@echo "  Orchestrator:       $(ORCH_URL)"
-	@echo "  MockPersonServer:   $(PS_URL)        (RequireConsent=true)"
-	@echo "  MockAgentProvider:  $(AP_URL)"
-	@echo "  MockAccessServer:   $(AS_URL)        (PolicyProvider=keycloak)"
-	@echo "  GuidedTour:         $(TOUR_URL)        (Federated mode → live Keycloak consent)"
+	$(KEYCLOAK_BOOT)
 	@echo ""
 	@echo "------------------------------------------------------------------"
-	@echo " Keycloak login users (use these when the browser prompts you):"
+	@echo " Backend services:"
+	@echo "   Keycloak:           $(KEYCLOAK_URL)         (admin/admin, realm 'aauth')"
+	@echo "   WhoAmI:             $(WHOAMI_URL)         (resource server, /federated)"
+	@echo "   Orchestrator:       $(ORCH_URL)         (mission orchestrator)"
+	@echo "   MockPersonServer:   $(PS_URL)         (RequireConsent=true)"
+	@echo "   MockAgentProvider:  $(AP_URL)         (agent registry)"
+	@echo "   MockAccessServer:   $(AS_URL)         (PolicyProvider=keycloak)"
 	@echo ""
+	@echo " Open in your browser:"
+	@echo "   GuidedTour:         $(TOUR_URL)         (Federated mode → live Keycloak consent)"
+	@echo "   SampleApp:          $(SAMPLE_URL)         (minimal app: /federated, /deferred, /callchain)"
+	@echo ""
+	@echo " Keycloak login users (use these when the browser prompts you):"
 	@echo "   demo  / demo    (has the whoami-admin role -> full access)"
 	@echo "   guest / guest   (no admin role -> limited access)"
 	@echo ""
 	@echo " Keycloak admin console:  $(KEYCLOAK_URL)  (admin / admin)"
 	@echo "------------------------------------------------------------------"
-	@echo "Drive it from the GuidedTour UI ($(TOUR_URL), 'Federated' mode),"
-	@echo "or from the CLI in another terminal with:  make agent-federated"
+	@echo " Or drive it from the CLI in another terminal with:  make agent-federated"
+	@echo "------------------------------------------------------------------"
 	@echo ""
-	$(KEYCLOAK_BOOT)
 	@trap 'trap - INT TERM EXIT; echo; echo "Stopping..."; docker rm -f aauth-keycloak >/dev/null 2>&1; kill 0' INT TERM EXIT; \
 	$(DOTNET) run --no-build --project $(WHOAMI_PROJECT) & \
 	$(DOTNET) run --no-build --project $(ORCH_PROJECT) & \
@@ -210,36 +204,6 @@ demo-tour-keycloak: ## Four-party federated demo (GuidedTour) with the live Keyc
 	$(KEYCLOAK_AS_ENV) \
 	$(DOTNET) run --no-build --project $(AS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(TOUR_PROJECT) & \
-	wait
-
-demo-sampleapp-keycloak: ## Four-party federated demo (SampleApp) with the live Keycloak policy engine (Docker)
-	@echo "Starting four-party federated demo with SampleApp (Keycloak as the policy engine)..."
-	@echo "  Keycloak:           $(KEYCLOAK_URL)        (admin/admin, realm 'aauth')"
-	@echo "  WhoAmI:             $(WHOAMI_URL)/federated"
-	@echo "  Orchestrator:       $(ORCH_URL)"
-	@echo "  MockPersonServer:   $(PS_URL)        (RequireConsent=true)"
-	@echo "  MockAgentProvider:  $(AP_URL)"
-	@echo "  MockAccessServer:   $(AS_URL)        (PolicyProvider=keycloak)"
-	@echo "  SampleApp:          $(SAMPLE_URL)/federated   (live Keycloak consent)"
-	@echo ""
-	@echo "------------------------------------------------------------------"
-	@echo " Keycloak login users (use these when the browser prompts you):"
-	@echo ""
-	@echo "   demo  / demo    (has the whoami-admin role -> full access)"
-	@echo "   guest / guest   (no admin role -> limited access)"
-	@echo ""
-	@echo " Keycloak admin console:  $(KEYCLOAK_URL)  (admin / admin)"
-	@echo "------------------------------------------------------------------"
-	@echo "Open $(SAMPLE_URL)/federated and click 'Send Signed Request'."
-	@echo ""
-	$(KEYCLOAK_BOOT)
-	@trap 'trap - INT TERM EXIT; echo; echo "Stopping..."; docker rm -f aauth-keycloak >/dev/null 2>&1; kill 0' INT TERM EXIT; \
-	$(DOTNET) run --no-build --project $(WHOAMI_PROJECT) & \
-	$(DOTNET) run --no-build --project $(ORCH_PROJECT) & \
-	MockPersonServer__RequireConsent=true $(DOTNET) run --no-build --project $(PS_PROJECT) & \
-	$(DOTNET) run --no-build --project $(AP_PROJECT) & \
-	$(KEYCLOAK_AS_ENV) \
-	$(DOTNET) run --no-build --project $(AS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(SAMPLE_PROJECT) & \
 	wait
 

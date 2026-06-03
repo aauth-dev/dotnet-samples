@@ -205,10 +205,8 @@ deferred consent — federation (and any AS interaction) is transparent.
 
 | Demo | Command | AS policy |
 | --- | --- | --- |
-| GuidedTour, no Docker | `make demo-tour` | `stub` (auto-approve) |
-| SampleApp, no Docker | `make demo-sampleapp` | `stub` (auto-approve) |
-| GuidedTour, real Keycloak | `make demo-tour-keycloak` | `keycloak` (interactive) |
-| SampleApp, real Keycloak | `make demo-sampleapp-keycloak` | `keycloak` (interactive) |
+| Both UIs, no Docker | `make demo` | `stub` (interactive consent) |
+| Both UIs, real Keycloak | `make demo-keycloak` | `keycloak` (interactive) |
 
 In the GuidedTour pick **Federated** mode; in the SampleApp open the
 **Federated (Four-Party)** page. With the Keycloak policy, log in as `demo`/`demo`

@@ -191,7 +191,7 @@ run locally with the .NET 10 SDK.
 Self-contained Blazor app with one page per AAuth flow (HWK, JWKS URI, JWT direct grant, Deferred user consent, Call Chain multi-agent delegation).
 
 ```bash
-make demo-sampleapp   # starts all servers + stub Access Server + SampleApp on http://localhost:5240
+make demo   # starts all servers + stub Access Server + both UIs (SampleApp on http://localhost:5240)
 ```
 
 ![Sample App](samples/SampleApp/sample-app.png)
@@ -201,7 +201,7 @@ make demo-sampleapp   # starts all servers + stub Access Server + SampleApp on h
 Step-by-step walk-through showing every HTTP exchange, header, and token claim across all protocol flows.
 
 ```bash
-make demo-tour          # starts all servers + stub Access Server + GuidedTour on http://localhost:5400
+make demo   # starts all servers + stub Access Server + both UIs (GuidedTour on http://localhost:5400)
 ```
 
 ![Guided Tour](samples/GuidedTour/tour-screenshot.png)
