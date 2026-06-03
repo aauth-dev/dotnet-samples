@@ -8,8 +8,8 @@ import { defineConfig, devices } from '@playwright/test';
  * Node toolchain live once under `tests/e2e/`.
  *
  * The `webServer` array boots every backend the demos need, plus both apps.
- * `reuseExistingServer` lets a developer who already ran `make demo` /
- * `make demo-sample` reuse those processes; CI / a clean run boots fresh.
+ * `reuseExistingServer` lets a developer who already ran `make demo-tour` /
+ * `make demo-sampleapp` reuse those processes; CI / a clean run boots fresh.
  *
  * MockPersonServer MUST run with RequireConsent=true so the deferred /
  * user-consent paths fire.
@@ -74,6 +74,16 @@ export default defineConfig({
         MockPersonServer__RequireConsent: 'true',
       }),
       url: 'http://localhost:5100/.well-known/aauth-person.json',
+    },
+    {
+      // Access Server for the four-party (federated) specs. Defaults to the
+      // pure-.NET stub policy (auto-approve, no Docker / Keycloak) so the suite
+      // runs in CI. Set AccessServer__PolicyProvider=keycloak (and the
+      // Keycloak__* vars) plus KEYCLOAK_E2E=1 to exercise the interactive path.
+      ...dotnetRun('samples/MockAccessServer/MockAccessServer.csproj', {
+        AccessServer__PolicyProvider: process.env.AccessServer__PolicyProvider ?? 'stub',
+      }),
+      url: 'http://localhost:5500/.well-known/aauth-access.json',
     },
     {
       ...dotnetRun('samples/GuidedTour/GuidedTour.csproj'),

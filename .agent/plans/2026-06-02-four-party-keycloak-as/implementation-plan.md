@@ -113,12 +113,13 @@ Implementation Decisions (confirmed 2026-06-02):
 - **`402` Payment Required**: surface a typed `AAuthPaymentRequiredException`
   carrying `Location` + `WWW-Authenticate`; settlement is **out of scope**
   (spec excludes it). Minimum spec-aligned recognition, no x402/MPP import.
-- **`requirement=claims`**: **deferred to Phase 11** (see that phase). It is a
-  conditionally-MUST, distinct active-push mechanism (not a poll) that can only
-  be exercised once an AS actually requests claims (Keycloak ABAC, Phase 4). For
-  now the client treats an unhandled `requirement=claims` as a clear terminal
-  error ("claims required but no handler configured"); adding the handler later
-  is purely additive.
+- **`requirement=claims`**: handled in **Phase 11** (now implemented). It is a
+  conditionally-MUST, distinct active-push mechanism (not a poll). When an
+  `OnClaimsRequired` callback is configured the client resolves + POSTs the
+  directed `sub` + claims to the `Location` and resumes the loop; when no handler
+  is configured it still surfaces a clear terminal error (`NotSupportedException`,
+  "claims required but no handler configured"). The Phase 11 addition was purely
+  additive.
 
 Definition of Done:
 
@@ -138,7 +139,8 @@ Delivered:
   `{resource_token, agent_token, upstream_token?}` (`Prefer: wait` honored),
   handles `200`, the `202` deferred poll loop (reuses `DeferredPoller` +
   `OnInteractionRequired`), `402` → `AAuthPaymentRequiredException`, and
-  `202 requirement=claims` → `NotSupportedException` (deferred to Phase 11).
+  `202 requirement=claims` → claims push when `OnClaimsRequired` is set, else
+  `NotSupportedException` (handler implemented in Phase 11).
   Runs the 7-step §Auth Token Delivery via `AuthTokenResponseValidator` and
   throws `TokenVerificationException` on failure.
 - `src/AAuth/Tokens/AccessServerRequest.cs`: `required` request payload +
@@ -161,7 +163,9 @@ Goal: `MockPersonServer` branches to federation when `resource_token.aud != self
 Closes gaps G1, G3, G7 (pre-established trust).
 
 - _To populate: discover AS, call `AccessServerClient`, return auth token._
-- _To populate: respond to `requirement=claims` with directed `sub` + claims._
+- `requirement=claims` response (directed `sub` + claims): implemented in
+  **Phase 11** via the `OnClaimsRequired` callback + `demoUserClaims` (see that
+  phase's Delivered section).
 
 Implementation Decisions:
 
@@ -423,6 +427,17 @@ Implementation Decisions (2026-06-02):
   deferred), not the chained `WithInteractionHandling` path. No second callback is
   required for the non-chained four-party case. (Mirrors the GuidedTour federated
   flow, which renders this as the AS hop inside the PS exchange box.)
+- **Keycloak interactive path (the "same sitch" as `make demo-federated`)**: when
+  the AS runs with `AccessServer__PolicyProvider=keycloak`, the surfaced
+  `interaction` URL is the AS's login-start endpoint, which **302-redirects the
+  user's browser to Keycloak** for OIDC login + consent (demo users `demo/demo`
+  with the admin role, `guest/guest` without). After the user authenticates, the
+  AS records the decision and the agent's background poll resolves to `200 +
+  aa-auth+jwt`. The SampleApp page therefore behaves identically whether the AS is
+  stub (auto-`200`, no consent panel) or Keycloak (consent panel → open URL →
+  Keycloak login → completes) — exactly like the GuidedTour federated mode under
+  `make demo-federated`. The page itself is policy-agnostic; only the demo target
+  selects the backend (Phase 8 `demo-federated-sample`).
 - **Config**: add `AAuth:AccessServer` (`http://localhost:5500`) to
   [SampleApp/appsettings.json](../../samples/SampleApp/appsettings.json) for the
   banner/explainer only; the agent never calls the AS directly. The page is shown
@@ -471,12 +486,37 @@ Goal: a single command runs the full four-party demo. Closes gap G8.
 
 Implementation Decisions:
 
-- _TBD._
+- **`demo-federated-sample` mirrors `demo-federated` exactly, swapping GuidedTour
+  for SampleApp.** It boots the identical backend set and env wiring that already
+  works for the GuidedTour federated demo: Keycloak (Docker import-realm, waited on
+  `openid-configuration`) + WhoAmI + Orchestrator + MockPersonServer
+  (`MockPersonServer__RequireConsent=true`) + MockAgentProvider + MockAccessServer
+  (`AccessServer__PolicyProvider=keycloak` + the five `AccessServer__Keycloak__*`
+  vars) + **SampleApp** (instead of GuidedTour). Same `trap`/`docker rm -f
+  aauth-keycloak`/`kill 0` cleanup, same build-once-then-`--no-build` launch. The
+  SampleApp's `/federated` page surfaces the AS→Keycloak interaction URL just as
+  the GuidedTour federated mode does — this is the "same sitch" the SampleApp
+  needs to work with Keycloak.
+- **`demo-federated-sample-stub` mirrors a (new) `demo-federated-stub`** but with
+  SampleApp: no Docker, no Keycloak; runs the AS with
+  `AccessServer__PolicyProvider=stub` (auto-`200`, no consent panel) so the
+  four-party flow is reproducible without a daemon. Backend set is otherwise the
+  same (WhoAmI + Orchestrator + PS-with-consent + AP + AS-stub + app).
+- **Shared make variables**: reuse the existing `KEYCLOAK_URL/IMAGE/REALM`,
+  `AS_URL`, `SAMPLE_PROJECT`, and the `AccessServer__Keycloak__*` block already
+  defined for `access-server`/`demo-federated`. Factor the Keycloak boot/wait and
+  the AS env block so `demo-federated` and `demo-federated-sample` do not drift
+  (a single missing var silently breaks consent — see Phase 6 findings).
+- **Banners**: each target prints its app URL, the Keycloak login users
+  (`demo/demo` admin, `guest/guest` non-admin), and the AS policy provider in
+  effect, matching the existing `demo-federated` banner.
+- The non-federated `demo`/`demo-sample` targets are unchanged.
 
 Definition of Done:
 
 - [ ] `make demo-federated` (GuidedTour) and `make demo-federated-sample`
-      (SampleApp) each start Keycloak + AS adapter + resource + PS + agent.
+      (SampleApp) each start Keycloak + AS adapter + resource + PS + agent, and
+      the SampleApp `/federated` page completes the interactive Keycloak consent.
 - [ ] Matching `*-stub` targets run the same two flavors with no Docker.
 - [ ] Agent completes a federated call end-to-end (Keycloak grant path).
 
@@ -570,17 +610,105 @@ the deferred poll loop used for `interaction`.
 - _To populate: Keycloak AS adapter emits `202 requirement=claims` when policy
   evaluation needs attributes the AS does not yet hold._
 
+Delivered:
+
+- SDK (additive, non-breaking — see Phase 11 finding below):
+  - `src/AAuth/Headers/AAuthClaimsRequirement.cs` (new) — typed projection of a
+    `requirement=claims` response; `FromResponse` reads `required_claims` from
+    the body (preferred) or a `claims` header parameter (fallback).
+  - `AccessServerRequest.OnClaimsRequired`
+    (`Func<AAuthClaimsRequirement, CancellationToken, Task<JsonObject>>?`). When
+    `null` and the AS asks for claims, the call still throws
+    `NotSupportedException` (prior behaviour preserved).
+  - `AccessServerClient.FederateAsync` — new `requirement=claims` branch: reads
+    the claim names, invokes the callback, POSTs the returned directed `sub` +
+    claims (signed via the PS HTTP-Sig client) to the `Location` (origin-pinned
+    via `ResolveSameOriginLocation` to stop a tampered Location exfiltrating the
+    directed `sub`), then resumes the poll loop to the `200` auth token. A
+    `403 access_denied` after the push surfaces `AAuthInteractionDeniedException`;
+    a null result or a missing `sub` surfaces `InvalidOperationException`. The
+    202 handling is a **bounded composition loop** (added by the SPEC-review D1
+    fix) so `interaction`/`payment` → `claims` chained on one `Location` are all
+    handled, via the new `DeferredPollerOptions.StopWhenAccepted` predicate.
+  - `AuthTokenBuilder.AdditionalClaims` (additive, mirrors
+    `AgentTokenBuilder`) so an AS can assert the pushed identity claims.
+- `MockAccessServer`: `AccessDecisionKind.NeedsClaims` +
+  `AccessDecision.NeedsClaims(requiredClaims)`; `StubAccessPolicy` takes
+  configured `AccessServer:RequireClaims` (default empty = no behaviour change)
+  and returns `NeedsClaims` until every named claim is present;
+  `AccessPendingStore` carries `RequiredClaims`/`SuppliedSubject`/`SuppliedClaims`;
+  `POST /pending/{id}` claims-push endpoint merges + re-evaluates + mints with the
+  directed `sub` and echoed claims; `GET /pending/{id}` mints likewise.
+- `MockPersonServer`: `demoUserClaims` (`email`/`tenant`/`name`) + an
+  `OnClaimsRequired` callback returning `sub` + the held claims for the principal.
+- Tests: `AccessServerClientTests` +2 (claims push round trip; missing-`sub`
+  guard); the no-handler case renamed to
+  `..._WhenNoHandler`. `StubAccessServer` handles the `POST /pending/` push.
+  368 unit tests pass (was 366); full solution builds clean.
+
 Implementation Decisions:
 
-- _TBD (revisit once Phases 2–4 land; keep the callback additive/non-breaking)._
+- The callback is **additive and non-breaking**: a new optional property whose
+  absence preserves the previous `NotSupportedException`. Treated as authorized
+  by Phase 11 (distinct from the Phase 12 public-API gate), but flagged for
+  review (nothing committed).
+- The directed `sub` is enforced SDK-side (spec MUST) to fail fast on a PS bug.
+- The claims `Location` is origin-pinned to the AS — the push carries a directed
+  identifier and must not be divertible to another host.
+- The demo claims requirement is driven by `AccessServer:RequireClaims` on the
+  **stub** policy so the round trip is testable without Docker; default-off so
+  the existing federated e2e stays green.
+
+Findings (for review):
+
+- **Public SDK surface changed** (additive): `AAuthClaimsRequirement` (new
+  type), `AccessServerRequest.OnClaimsRequired`, `AuthTokenBuilder.AdditionalClaims`,
+  and `DeferredPollerOptions.StopWhenAccepted` (new optional predicate, added by
+  the SPEC-review fix below). All optional/non-breaking, but new public API —
+  confirm on return.
+- **Keycloak AS does not yet emit `requirement=claims`.** Only the stub policy
+  drives the push (via `AccessServer:RequireClaims`). Wiring Keycloak's
+  Authorization Services to request directed attributes it lacks is non-trivial
+  and was left out to keep the change scoped and testable; the SDK + PS + stub
+  AS exercise the full spec round trip. Recommend a follow-up for the Keycloak
+  adapter. (Reviewer confirmed this is NOT a spec violation — the spec mandates
+  the protocol shape *if* an AS asks for claims, not that every AS must.)
+- Not yet live-e2e'd through the browser flow; covered by unit tests. The
+  existing federated Playwright specs remain green (default `RequireClaims` off).
+
+SPEC reviewer pass (against `aauth-spec/draft-hardt-oauth-aauth-protocol.md`,
+pinned commit c090879):
+
+- All MUST/SHOULD clauses of §Claims Required verified PASS for the standalone
+  claims-first flow, with strong security hardening confirmed (HTTP-signed push,
+  origin-pinned directed-`sub` Location, AS-side PS-signature verification,
+  `sub` enforced on both ends).
+- **D1 (MAJOR) — FIXED.** The reviewer found the SDK only dispatched the claims
+  push when `requirement=claims` was the *immediate* `/token` reply, not when it
+  arose **mid-poll** after an `interaction`/`payment` step — violating the spec's
+  composition guarantee (§Trust Establishment: "these mechanisms may compose …
+  Each step uses the same `Location` URL for polling"). Fixed by: (a) adding
+  `DeferredPollerOptions.StopWhenAccepted` so a poll can return early when the
+  `AAuth-Requirement` escalates; (b) restructuring `AccessServerClient`'s 202
+  handling into a bounded composition loop that re-dispatches each requirement
+  on the same `Location`; (c) new test
+  `FederateAsync_ComposesInteractionThenClaims_OnSameLocation`. 369 tests pass.
+- **D2 / D3 (MINOR, demo-scoped — NOT spec violations, left as-is):** the mock
+  AS does not bind a pending entry to the originating PS (any validly-signed
+  caller that learns a pending id could push — `AccessPendingStore` already flags
+  this as a production gap), and a hypothetical *multi-round* AS claims request
+  would leave `GET /pending` falling through to the interaction branch. Neither
+  is reachable from the stub policy; both are noted production-hardening items.
 
 Definition of Done:
 
-- [ ] AS returns a spec-valid `202 requirement=claims` with a `Location` URL.
-- [ ] `AccessServerClient` resolves and POSTs directed `sub` + claims, then
+- [x] AS returns a spec-valid `202 requirement=claims` with a `Location` URL
+      (stub policy via `AccessServer:RequireClaims`; Keycloak adapter is a noted
+      follow-up).
+- [x] `AccessServerClient` resolves and POSTs directed `sub` + claims, then
       continues to a `200 aa-auth+jwt`.
-- [ ] `MockPersonServer` provides the requested claims for its bound user.
-- [ ] Unit/e2e tests cover the claims-push round trip.
+- [x] `MockPersonServer` provides the requested claims for its bound user.
+- [x] Unit/e2e tests cover the claims-push round trip (unit; e2e is a follow-up).
 
 ## Phase 12 — SDK API investigation & design (consultation required)
 
@@ -628,7 +756,14 @@ Candidate improvements to evaluate (not commitments):
 
 Implementation Decisions:
 
-- _To be filled during the consultation gate below._
+- Design note written: [phase-12-api-design.md](phase-12-api-design.md).
+  **DESIGN ONLY — no public SDK API added/changed under this phase; awaiting
+  user sign-off.** It reconciles S1–S10: what already shipped additively in
+  Phases 1–11 (`AccessServerClient`, `AuthTokenResponseValidator`,
+  `AAuthClaimsRequirement`, `OnClaimsRequired`, `AuthTokenBuilder.AdditionalClaims`),
+  what is still sample-only and recommended for promotion (`IAccessPolicy`/
+  `AccessDecision` → S3, `MapAAuthAccessServer` → S2), and what to defer/close
+  (S5 defer, S7 close — no change).
 
 ### Consultation gate (required before any code)
 
@@ -639,11 +774,64 @@ Implementation Decisions:
 
 Definition of Done:
 
-- [ ] Design note enumerating proposed API additions/changes is written.
-- [ ] User has reviewed and signed off on the design (recorded here).
-- [ ] Approved APIs implemented with unit tests in `tests/AAuth.Tests`.
-- [ ] Samples refactored to consume the new public surface (no bespoke glue).
-- [ ] Public API surface / docs updated to match.
+- [x] Design note enumerating proposed API additions/changes is written
+      ([phase-12-api-design.md](phase-12-api-design.md)).
+- [x] User has reviewed and signed off on the design (recorded here). Approved
+      full scope **R1–R3 + S2 + S3 + Keycloak Option B** with backward-compat
+      **waived**.
+- [x] Approved APIs implemented with unit tests in `tests/AAuth.Tests`
+      (`AAuthClaimsResponse`, typed `OnClaimsRequired`, `AuthTokenBuilder.Tenant`,
+      core `IAccessPolicy`/`AccessDecision`, `IAccessPendingStore` +
+      `InMemoryAccessPendingStore`, `MapAAuthAccessServer`). 369/369 pass.
+- [x] Samples refactored to consume the new public surface (MockAccessServer
+      now wires `MapAAuthAccessServer`; deleted its sample `IAccessPolicy.cs` +
+      `AccessPendingStore.cs`; keeps only `StubAccessPolicy` +
+      `KeycloakAccessPolicy` + `/interaction` endpoints).
+- [x] Public API surface / docs updated to match
+      ([federated-access.md](../../docs/workflows/federated-access.md),
+      [MockAccessServer README](../../samples/MockAccessServer/README.md),
+      design note Section 0).
+
+### Delivered findings
+
+- The §Claims Required push surface was reshaped clean (no back-compat): claim
+  names live **only** in the body `required_claims` (header `claims` fallback
+  removed); `OnClaimsRequired` returns a typed `AAuthClaimsResponse` whose
+  `Subject` (directed `sub`) is a compile-time `required`; `tenant` is promoted
+  to a named §Auth Token claim via `AuthTokenBuilder.Tenant` (the host helper
+  separates it from the open claim remainder when minting).
+- `MapAAuthAccessServer` owns the whole token-endpoint pipeline including the
+  composition loop (interaction→claims on the same `Location`) and `GET|POST
+  /pending/{id}`; the verdict is the only thing delegated to `IAccessPolicy`.
+- Keycloak Option B (UMA `need_info` → `NeedsClaims`, re-decide on PS push) is
+  implemented in the sample adapter but is **not CI-testable** without a
+  claim-gathering realm; Option A (`AccessServer:RequireClaims` via the stub)
+  is the dependency-free, CI-covered path.
+
+### SPEC review (Phase 12) — findings + fixes
+
+A read-only conformance reviewer checked the changes against §Claims Required,
+§Auth Token, §Trust Establishment, §AS Token Endpoint, and §Access Server
+Metadata. Verdict: **conformant — no CRITICAL/MUST violations.** All six targets
+PASS (header-vs-body claim placement, mandatory directed `sub`, first-class
+`tenant`, `dwk`/`exp`/`sub` minting, same-Location composition, 200/202/402,
+required metadata, origin-pinned signed pushes). Findings actioned:
+
+- **F2 (MAJOR, security)** — *fixed.* The pending poll/push endpoints did not
+  re-enforce the trusted-PS pin (only `/token` did) and entries were not bound
+  to the originating PS. Added `AccessPendingEntry.OriginPersonServerHost`
+  (captured at park time) and an `AuthorizePsCaller` guard on `GET|POST
+  /pending/{id}` that re-checks the `jwks_uri` scheme + trusted set and binds to
+  the originating PS host (403 otherwise). Regression tests:
+  `ClaimsPush_FromTrustedPersonServer_MintsAuthToken` (happy path) +
+  `ClaimsPush_FromUntrustedPersonServer_IsRejected` (371 tests total).
+- **F4 (MINOR)** — *fixed.* `NeedsPayment` now fails fast (500) rather than
+  emitting an empty `402` `Location` if `PaymentUrl` is blank.
+- **F1 (MINOR, doc)** — *fixed.* `ExtractClaimsRequirementAsync` XML summary no
+  longer mentions the removed header `claims` fallback.
+- **F3 (MINOR/WARN)** — *left as documented.* A `claims→interaction` escalation
+  is polled silently rather than surfaced to `OnInteractionRequired`. The spec's
+  canonical order ends in claims, so this is a low-risk edge; not fixed.
 
 ## Out of scope (for now)
 

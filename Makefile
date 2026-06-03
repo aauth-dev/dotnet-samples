@@ -31,18 +31,46 @@ KEYCLOAK_REALM := samples/MockAccessServer/keycloak
 # keeps its agent registry in memory, so the cache goes stale whenever the AP restarts.
 AGENT_CACHE_DIR := $(or $(XDG_DATA_HOME),$(HOME)/.local/share)/aauth-agent-console
 E2E_DIR := tests/e2e
+
+# Environment that points the MockAccessServer at the live Keycloak policy engine.
+KEYCLOAK_AS_ENV := AccessServer__PolicyProvider=keycloak \
+	AccessServer__Keycloak__Authority=$(KEYCLOAK_URL)/realms/aauth \
+	AccessServer__Keycloak__ClientId=aauth-access-server \
+	AccessServer__Keycloak__ClientSecret=aauth-access-server-secret \
+	AccessServer__Keycloak__ResourceServerAudience=aauth-access-server \
+	AccessServer__Keycloak__ResourceName=whoami
+
+# (Re)start the Keycloak container, wait for the realm to be ready, then build once.
+define KEYCLOAK_BOOT
+	docker rm -f aauth-keycloak >/dev/null 2>&1 || true
+	docker run -d --name aauth-keycloak -p 8080:8080 \
+	  -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
+	  -v "$(PWD)/$(KEYCLOAK_REALM):/opt/keycloak/data/import:ro" \
+	  $(KEYCLOAK_IMAGE) start-dev --import-realm >/dev/null
+	@echo "Waiting for Keycloak to become ready..."
+	@until curl -sf $(KEYCLOAK_URL)/realms/aauth/.well-known/openid-configuration >/dev/null 2>&1; do sleep 2; done
+	@echo "Keycloak ready."
+	@echo "Building services (once) before launch..."
+	$(DOTNET) build $(SOLUTION) -v q
+endef
+
 .DEFAULT_GOAL := help
 
-.PHONY: help build restore test test-unit test-conformance \
-        whoami ps ap tour agent demo \
-        access-server keycloak demo-federated agent-federated agent-reset \
-        e2e-install e2e e2e-tour e2e-sample e2e-report \
-        live clean format
+.PHONY: help build restore test test-unit test-conformance format clean \
+        whoami ps ps-consent ap orchestrator tour sampleapp agent live \
+        demo-tour demo-sampleapp \
+        keycloak access-server demo-tour-keycloak demo-sampleapp-keycloak \
+        agent-federated agent-reset \
+        e2e-install e2e e2e-tour e2e-sample e2e-report
 
 help: ## List available targets
 	@awk 'BEGIN { FS = ":.*##"; printf "Targets:\n" } \
 	     /^[a-zA-Z0-9_-]+:.*##/ { printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2 }' \
 	     $(MAKEFILE_LIST)
+
+# ----------------------------------------------------------------------------
+# Build, test & housekeeping
+# ----------------------------------------------------------------------------
 
 restore: ## Restore NuGet packages
 	$(DOTNET) restore $(SOLUTION)
@@ -59,6 +87,17 @@ test-unit: ## Run SDK unit + integration tests only
 test-conformance: ## Run spec conformance tests only
 	$(DOTNET) test tests/AAuth.Conformance/AAuth.Conformance.csproj
 
+format: ## Apply dotnet format to the solution
+	$(DOTNET) format $(SOLUTION)
+
+clean: ## dotnet clean + remove bin/ obj/ trees
+	$(DOTNET) clean $(SOLUTION)
+	find . -type d \( -name bin -o -name obj \) -prune -exec rm -rf {} +
+
+# ----------------------------------------------------------------------------
+# Individual services & apps
+# ----------------------------------------------------------------------------
+
 whoami: ## Run the WhoAmI resource server (port 5000)
 	$(DOTNET) run --project $(WHOAMI_PROJECT)
 
@@ -71,14 +110,14 @@ ps-consent: ## Run MockPersonServer with RequireConsent=true (deferred-flow demo
 ap: ## Run the MockAgentProvider (port 5301)
 	$(DOTNET) run --project $(AP_PROJECT)
 
+orchestrator: ## Run the Orchestrator service (port 5200)
+	$(DOTNET) run --project $(ORCH_PROJECT)
+
 tour: ## Run the GuidedTour Blazor app (port 5400)
 	$(DOTNET) run --project $(TOUR_PROJECT)
 
 sampleapp: ## Run the SampleApp Blazor app (port 5240)
 	$(DOTNET) run --project $(SAMPLE_PROJECT)
-
-orchestrator: ## Run the Orchestrator service (port 5200)
-	$(DOTNET) run --project $(ORCH_PROJECT)
 
 agent: ## Run AgentConsole against WhoAmI (override URL=… for a different target)
 	$(DOTNET) run --project $(AGENT_PROJECT) -- $(or $(URL),$(WHOAMI_URL))
@@ -86,8 +125,12 @@ agent: ## Run AgentConsole against WhoAmI (override URL=… for a different targ
 live: ## Run LiveWhoAmITest against whoami.aauth.dev (needs cloudflared + network)
 	$(DOTNET) run --project $(LIVE_PROJECT)
 
-demo: ## Start WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + MockAccessServer + GuidedTour in parallel
-	@echo "Starting five-party demo (all flows including call-chain + federated)..."
+# ----------------------------------------------------------------------------
+# Demos — stub Access Server (all flows incl. four-party federated, no Docker)
+# ----------------------------------------------------------------------------
+
+demo-tour: ## Start the full stack + stub Access Server + GuidedTour (all flows incl. four-party federated, stub AS — no Docker)
+	@echo "Starting five-party demo (all flows including call-chain + four-party federated, stub AS)..."
 	@echo "  WhoAmI:             $(WHOAMI_URL)"
 	@echo "  Orchestrator:       $(ORCH_URL)"
 	@echo "  MockPersonServer:   $(PS_URL)  (RequireConsent=true)"
@@ -100,18 +143,31 @@ demo: ## Start WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + Mo
 	$(DOTNET) run --project $(WHOAMI_PROJECT) & \
 	$(DOTNET) run --project $(ORCH_PROJECT) & \
 	$(DOTNET) run --project $(AP_PROJECT) & \
-	$(DOTNET) run --project $(AS_PROJECT) & \
+	AccessServer__PolicyProvider=stub $(DOTNET) run --project $(AS_PROJECT) & \
 	$(DOTNET) run --project $(TOUR_PROJECT) & \
 	wait
 
-access-server: ## Run the MockAccessServer with the Keycloak policy engine (port 5500)
-	AccessServer__PolicyProvider=keycloak \
-	AccessServer__Keycloak__Authority=$(KEYCLOAK_URL)/realms/aauth \
-	AccessServer__Keycloak__ClientId=aauth-access-server \
-	AccessServer__Keycloak__ClientSecret=aauth-access-server-secret \
-	AccessServer__Keycloak__ResourceServerAudience=aauth-access-server \
-	AccessServer__Keycloak__ResourceName=whoami \
-	$(DOTNET) run --project $(AS_PROJECT)
+demo-sampleapp: ## Start the full stack + stub Access Server + SampleApp (all flows incl. four-party federated, stub AS — no Docker)
+	@echo "Starting demo with SampleApp + Orchestrator + stub Access Server..."
+	@echo "  WhoAmI:             $(WHOAMI_URL)"
+	@echo "  Orchestrator:       $(ORCH_URL)"
+	@echo "  MockPersonServer:   $(PS_URL)  (RequireConsent=true)"
+	@echo "  MockAgentProvider:  $(AP_URL)"
+	@echo "  MockAccessServer:   $(AS_URL)  (PolicyProvider=stub)"
+	@echo "  SampleApp:          $(SAMPLE_URL)"
+	@echo ""
+	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \
+	MockPersonServer__RequireConsent=true $(DOTNET) run --project $(PS_PROJECT) & \
+	$(DOTNET) run --project $(WHOAMI_PROJECT) & \
+	$(DOTNET) run --project $(ORCH_PROJECT) & \
+	$(DOTNET) run --project $(AP_PROJECT) & \
+	AccessServer__PolicyProvider=stub $(DOTNET) run --project $(AS_PROJECT) & \
+	$(DOTNET) run --project $(SAMPLE_PROJECT) & \
+	wait
+
+# ----------------------------------------------------------------------------
+# Federated demos & helpers — live Keycloak policy engine (Docker)
+# ----------------------------------------------------------------------------
 
 keycloak: ## Start Keycloak (port 8080) with the demo 'aauth' realm imported
 	docker rm -f aauth-keycloak >/dev/null 2>&1 || true
@@ -120,24 +176,11 @@ keycloak: ## Start Keycloak (port 8080) with the demo 'aauth' realm imported
 	  -v "$(PWD)/$(KEYCLOAK_REALM):/opt/keycloak/data/import:ro" \
 	  $(KEYCLOAK_IMAGE) start-dev --import-realm
 
-agent-federated: ## Drive AgentConsole through the four-party /federated flow (Keycloak login)
-	@$(MAKE) --no-print-directory agent-reset
-	@echo ""
-	@echo "=================================================================="
-	@echo " When the agent prints an interaction URL, open it in your browser"
-	@echo " and sign in to Keycloak with one of these demo users:"
-	@echo ""
-	@echo "   demo  / demo    (has the whoami-admin role -> full access)"
-	@echo "   guest / guest   (no admin role -> limited access)"
-	@echo "=================================================================="
-	@echo ""
-	$(DOTNET) run --project $(AGENT_PROJECT) -- $(WHOAMI_URL)/federated \
-	  --ap $(AP_URL) --ps $(PS_URL) --signing-mode jwt --sub aauth:demo@ap.example
+access-server: ## Run the MockAccessServer with the Keycloak policy engine (port 5500)
+	$(KEYCLOAK_AS_ENV) \
+	$(DOTNET) run --project $(AS_PROJECT)
 
-agent-reset: ## Clear the AgentConsole enrollment cache (stale after an AP restart)
-	@rm -rf "$(AGENT_CACHE_DIR)" && echo "Cleared AgentConsole enrollment cache ($(AGENT_CACHE_DIR))."
-
-demo-federated: ## Four-party federated demo: Keycloak + WhoAmI + MockPersonServer + MockAgentProvider + MockAccessServer
+demo-tour-keycloak: ## Four-party federated demo (GuidedTour) with the live Keycloak policy engine (Docker)
 	@echo "Starting four-party federated demo (Keycloak as the policy engine)..."
 	@echo "  Keycloak:           $(KEYCLOAK_URL)        (admin/admin, realm 'aauth')"
 	@echo "  WhoAmI:             $(WHOAMI_URL)/federated"
@@ -158,46 +201,68 @@ demo-federated: ## Four-party federated demo: Keycloak + WhoAmI + MockPersonServ
 	@echo "Drive it from the GuidedTour UI ($(TOUR_URL), 'Federated' mode),"
 	@echo "or from the CLI in another terminal with:  make agent-federated"
 	@echo ""
-	docker rm -f aauth-keycloak >/dev/null 2>&1 || true
-	docker run -d --name aauth-keycloak -p 8080:8080 \
-	  -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
-	  -v "$(PWD)/$(KEYCLOAK_REALM):/opt/keycloak/data/import:ro" \
-	  $(KEYCLOAK_IMAGE) start-dev --import-realm >/dev/null
-	@echo "Waiting for Keycloak to become ready..."
-	@until curl -sf $(KEYCLOAK_URL)/realms/aauth/.well-known/openid-configuration >/dev/null 2>&1; do sleep 2; done
-	@echo "Keycloak ready."
-	@echo "Building services (once) before launch..."
-	$(DOTNET) build $(SOLUTION) -v q
+	$(KEYCLOAK_BOOT)
 	@trap 'trap - INT TERM EXIT; echo; echo "Stopping..."; docker rm -f aauth-keycloak >/dev/null 2>&1; kill 0' INT TERM EXIT; \
 	$(DOTNET) run --no-build --project $(WHOAMI_PROJECT) & \
 	$(DOTNET) run --no-build --project $(ORCH_PROJECT) & \
 	MockPersonServer__RequireConsent=true $(DOTNET) run --no-build --project $(PS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(AP_PROJECT) & \
-	AccessServer__PolicyProvider=keycloak \
-	AccessServer__Keycloak__Authority=$(KEYCLOAK_URL)/realms/aauth \
-	AccessServer__Keycloak__ClientId=aauth-access-server \
-	AccessServer__Keycloak__ClientSecret=aauth-access-server-secret \
-	AccessServer__Keycloak__ResourceServerAudience=aauth-access-server \
-	AccessServer__Keycloak__ResourceName=whoami \
+	$(KEYCLOAK_AS_ENV) \
 	$(DOTNET) run --no-build --project $(AS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(TOUR_PROJECT) & \
 	wait
 
-demo-sample: ## Start WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + SampleApp in parallel
-	@echo "Starting demo with SampleApp + Orchestrator..."
-	@echo "  WhoAmI:             $(WHOAMI_URL)"
+demo-sampleapp-keycloak: ## Four-party federated demo (SampleApp) with the live Keycloak policy engine (Docker)
+	@echo "Starting four-party federated demo with SampleApp (Keycloak as the policy engine)..."
+	@echo "  Keycloak:           $(KEYCLOAK_URL)        (admin/admin, realm 'aauth')"
+	@echo "  WhoAmI:             $(WHOAMI_URL)/federated"
 	@echo "  Orchestrator:       $(ORCH_URL)"
-	@echo "  MockPersonServer:   $(PS_URL)"
+	@echo "  MockPersonServer:   $(PS_URL)        (RequireConsent=true)"
 	@echo "  MockAgentProvider:  $(AP_URL)"
-	@echo "  SampleApp:          $(SAMPLE_URL)"
+	@echo "  MockAccessServer:   $(AS_URL)        (PolicyProvider=keycloak)"
+	@echo "  SampleApp:          $(SAMPLE_URL)/federated   (live Keycloak consent)"
 	@echo ""
-	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \
-	MockPersonServer__RequireConsent=true $(DOTNET) run --project $(PS_PROJECT) & \
-	$(DOTNET) run --project $(WHOAMI_PROJECT) & \
-	$(DOTNET) run --project $(ORCH_PROJECT) & \
-	$(DOTNET) run --project $(AP_PROJECT) & \
-	$(DOTNET) run --project $(SAMPLE_PROJECT) & \
+	@echo "------------------------------------------------------------------"
+	@echo " Keycloak login users (use these when the browser prompts you):"
+	@echo ""
+	@echo "   demo  / demo    (has the whoami-admin role -> full access)"
+	@echo "   guest / guest   (no admin role -> limited access)"
+	@echo ""
+	@echo " Keycloak admin console:  $(KEYCLOAK_URL)  (admin / admin)"
+	@echo "------------------------------------------------------------------"
+	@echo "Open $(SAMPLE_URL)/federated and click 'Send Signed Request'."
+	@echo ""
+	$(KEYCLOAK_BOOT)
+	@trap 'trap - INT TERM EXIT; echo; echo "Stopping..."; docker rm -f aauth-keycloak >/dev/null 2>&1; kill 0' INT TERM EXIT; \
+	$(DOTNET) run --no-build --project $(WHOAMI_PROJECT) & \
+	$(DOTNET) run --no-build --project $(ORCH_PROJECT) & \
+	MockPersonServer__RequireConsent=true $(DOTNET) run --no-build --project $(PS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(AP_PROJECT) & \
+	$(KEYCLOAK_AS_ENV) \
+	$(DOTNET) run --no-build --project $(AS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(SAMPLE_PROJECT) & \
 	wait
+
+agent-federated: ## Drive AgentConsole through the four-party /federated flow (Keycloak login)
+	@$(MAKE) --no-print-directory agent-reset
+	@echo ""
+	@echo "=================================================================="
+	@echo " When the agent prints an interaction URL, open it in your browser"
+	@echo " and sign in to Keycloak with one of these demo users:"
+	@echo ""
+	@echo "   demo  / demo    (has the whoami-admin role -> full access)"
+	@echo "   guest / guest   (no admin role -> limited access)"
+	@echo "=================================================================="
+	@echo ""
+	$(DOTNET) run --project $(AGENT_PROJECT) -- $(WHOAMI_URL)/federated \
+	  --ap $(AP_URL) --ps $(PS_URL) --signing-mode jwt --sub aauth:demo@ap.example
+
+agent-reset: ## Clear the AgentConsole enrollment cache (stale after an AP restart)
+	@rm -rf "$(AGENT_CACHE_DIR)" && echo "Cleared AgentConsole enrollment cache ($(AGENT_CACHE_DIR))."
+
+# ----------------------------------------------------------------------------
+# End-to-end (Playwright)
+# ----------------------------------------------------------------------------
 
 e2e-install: ## Install the Playwright toolchain + Chromium (run once)
 	cd $(E2E_DIR) && npm ci && npm run install-browsers
@@ -214,10 +279,3 @@ e2e-sample: ## Run the SampleApp Playwright specs only
 e2e-report: ## Serve the last Playwright HTML report (Ctrl-C to stop)
 	@echo "Serving report at http://localhost:9323 — open it in your browser, Ctrl-C to stop."
 	cd $(E2E_DIR) && npm run report
-
-clean: ## dotnet clean + remove bin/ obj/ trees
-	$(DOTNET) clean $(SOLUTION)
-	find . -type d \( -name bin -o -name obj \) -prune -exec rm -rf {} +
-
-format: ## Apply dotnet format to the solution
-	$(DOTNET) format $(SOLUTION)

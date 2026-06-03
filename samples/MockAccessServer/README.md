@@ -26,13 +26,25 @@ evaluates policy and mints the auth token.
      three-party.
   5. Evaluates access policy through a pluggable `IAccessPolicy`:
      - `stub` (default) — a hard-coded allow policy that denies elevated
-       (`:`-qualified) scopes to non-admin agents.
+       (`:`-qualified) scopes to non-admin agents, and can require identity
+       claims (§Claims Required) via `AccessServer:RequireClaims`.
      - `keycloak` — delegates the decision to Keycloak. The AS redirects the
        user through an interactive Keycloak login, then asks Keycloak for an
        authorization decision (UMA `uma-ticket` grant). Until the user logs in,
        `POST /token` returns `202` with `requirement=interaction`.
-  6. Mints an `aa-auth+jwt` with `dwk = aauth-access.json`, `iss` = this AS,
+  6. For a deferred decision, returns `202` and parks it in an
+     `IAccessPendingStore` — `requirement=interaction` (Keycloak login) or
+     `requirement=claims` with the claim names in the body's `required_claims`
+     (§Claims Required); the PS then pushes a directed `sub` + claims to the
+     `Location` and resumes polling.
+  7. Mints an `aa-auth+jwt` with `dwk = aauth-access.json`, `iss` = this AS,
      `aud` = the resource, bound to the agent's key.
+
+The whole `POST /token` + `GET|POST /pending/{id}` pipeline (signature/token
+verification, the §Claims Required composition, deferred polling, minting)
+ships as the SDK host helper `MapAAuthAccessServer`; this sample only supplies
+configuration, the `IAccessPolicy`, and (for Keycloak) the browser-facing
+`/interaction` endpoints.
 
 The auth token's `dwk = aauth-access.json` is what tells a resource the token
 came from an AS rather than a PS (`aauth-person.json`).
@@ -52,6 +64,7 @@ dotnet run --project samples/MockAccessServer
 | `AAuth:SignatureWindow` | `60` | Max age (seconds) for the RFC 9421 signature. |
 | `MockAccessServer:TrustedPersonServers` | `[http://localhost:5100]` | Person Servers allowed to federate (matched by `jwks_uri` host). |
 | `AccessServer:PolicyProvider` | `stub` | Policy engine: `stub` or `keycloak`. |
+| `AccessServer:RequireClaims` | `[]` | (`stub` only) identity claims to demand via §Claims Required, e.g. `AccessServer__RequireClaims__0=email`. |
 | `AccessServer:Keycloak:Authority` | `http://localhost:8080/realms/aauth` | Keycloak realm (OIDC issuer). |
 | `AccessServer:Keycloak:ClientId` | `aauth-access-server` | Confidential client the AS authenticates as. |
 | `AccessServer:Keycloak:ClientSecret` | — | Client secret for the AS client. |
@@ -84,7 +97,7 @@ The realm import at `keycloak/realm-aauth.json` defines:
 Run the whole four-party demo (Keycloak + WhoAmI + PS + AP + AS) with:
 
 ```bash
-make demo-federated
+make demo-tour-keycloak
 ```
 
 Then, in a second terminal, drive the agent:
@@ -102,5 +115,7 @@ when the AP restarts). Run `make agent-reset` to clear it manually.
 
 ## Scope
 
-This sample ships the on-the-wire AS baseline plus a pluggable policy seam
-(`IAccessPolicy`) with a `stub` and a Keycloak-backed interactive provider.
+This sample wires the SDK host helper `MapAAuthAccessServer` to a pluggable
+policy seam (`IAccessPolicy`, an SDK type in `AAuth.Server`) with a `stub` and a
+Keycloak-backed interactive provider, plus the shared `IAccessPendingStore` that
+parks deferred (interaction / §Claims Required) decisions.

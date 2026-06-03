@@ -151,9 +151,10 @@ without user sign-off. Keep this table current as work proceeds.
 | S7 | Resource "delegate to AS" audience ergonomics — confirm/name `ChallengeOptions` explicit audience for `aud`=AS. | Resource | G5 | Phase 1 | investigate |
 | S8 | `Actor.AccessServer` (sample type, not core SDK) in GuidedTour `StepRecord`. | Demo | G9 | Phase 6 | done (Phase 6): `Actor.AccessServer` + `SubStep`/`SubStepsLabel` added; sample-only, no core SDK change. |
 | S9 | Config-selected AS policy backend: `IAccessPolicy` resolved from `AccessServer__PolicyProvider=stub\|keycloak` (default `stub`), optional graceful fallback to stub when Keycloak is unreachable. Mirrors the `MockPersonServer__RequireConsent` env pattern. | AS | G4, CI | Phase 4 | proposed |
+| S10 | `requirement=claims` push surface: `AAuthClaimsRequirement` (typed projection), `AccessServerRequest.OnClaimsRequired` callback, `AuthTokenBuilder.AdditionalClaims`. | PS / AS | spec §Claims Required | Phase 11 | **shipped (additive, Phase 11)** — see [phase-12-api-design.md](phase-12-api-design.md). |
 
-Backward-compat note: S1–S5 are intended as **additive** (new types/overloads).
-Any breaking change to existing signatures must be flagged in the Phase 11
+Backward-compat note: S1–S5, S10 are **additive** (new types/overloads).
+Any breaking change to existing signatures must be flagged in the Phase 12
 design note and approved before implementation.
 
 
