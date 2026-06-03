@@ -361,7 +361,7 @@ public static class AAuthAccessServerEndpoints
                     ctx.Response.Headers["Retry-After"] = "1";
                     ctx.Response.Headers["Cache-Control"] = "no-store";
                     ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                        AAuthInteraction.Format($"{issuer}{loginPath}", entry.Id);
+                        Interaction.Format($"{issuer}{loginPath}", entry.Id);
                     return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
                 }
                 case AccessDecisionKind.NeedsClaims:
@@ -373,7 +373,7 @@ public static class AAuthAccessServerEndpoints
                     ctx.Response.Headers["Retry-After"] = "0";
                     ctx.Response.Headers["Cache-Control"] = "no-store";
                     ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                        $"requirement={AAuthClaimsRequirement.RequirementType}";
+                        $"requirement={ClaimsRequirement.RequirementType}";
                     return Results.Json(
                         new { status = "pending", required_claims = decision.RequiredClaims },
                         statusCode: StatusCodes.Status202Accepted);
@@ -432,13 +432,13 @@ public static class AAuthAccessServerEndpoints
                     if (entry.RequiredClaims is { Count: > 0 } && entry.SuppliedClaims is null)
                     {
                         ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                            $"requirement={AAuthClaimsRequirement.RequirementType}";
+                            $"requirement={ClaimsRequirement.RequirementType}";
                         return Results.Json(
                             new { status = "pending", required_claims = entry.RequiredClaims },
                             statusCode: StatusCodes.Status202Accepted);
                     }
                     ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                        AAuthInteraction.Format($"{issuer}{loginPath}", entry.Id);
+                        Interaction.Format($"{issuer}{loginPath}", entry.Id);
                     return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
             }
         });
@@ -530,7 +530,7 @@ public static class AAuthAccessServerEndpoints
                     ctx.Response.Headers["Retry-After"] = "0";
                     ctx.Response.Headers["Cache-Control"] = "no-store";
                     ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                        $"requirement={AAuthClaimsRequirement.RequirementType}";
+                        $"requirement={ClaimsRequirement.RequirementType}";
                     return Results.Json(
                         new { status = "pending", required_claims = decision.RequiredClaims ?? entry.RequiredClaims },
                         statusCode: StatusCodes.Status202Accepted);

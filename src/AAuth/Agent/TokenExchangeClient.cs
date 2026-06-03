@@ -211,7 +211,7 @@ public sealed class TokenExchangeClient
     // can handle a 202 + user-facing consent redirect. An explicit
     // capabilities list passed to ExchangeAsync overrides this.
     private static IReadOnlyList<string> InferCapabilities(
-        Func<AAuthInteraction, CancellationToken, Task>? onInteractionRequired)
+        Func<Interaction, CancellationToken, Task>? onInteractionRequired)
         => onInteractionRequired is not null
             ? new[] { "interaction" }
             : Array.Empty<string>();
@@ -253,7 +253,7 @@ public sealed class TokenExchangeClient
         }
     }
 
-    private static AAuthInteraction? ExtractInteraction(HttpResponseMessage response)
+    private static Interaction? ExtractInteraction(HttpResponseMessage response)
     {
         if (!response.Headers.TryGetValues(AAuthRequirementHeader.Name, out var values))
         {
@@ -265,7 +265,7 @@ public sealed class TokenExchangeClient
             AAuthRequirementHeader.ParsedRequirement parsed;
             try { parsed = AAuthRequirementHeader.Parse(raw); }
             catch (FormatException) { continue; }
-            var interaction = AAuthInteraction.FromRequirement(parsed);
+            var interaction = Interaction.FromRequirement(parsed);
             if (interaction is not null) { return interaction; }
         }
         return null;

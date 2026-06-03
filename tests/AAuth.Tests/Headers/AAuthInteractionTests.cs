@@ -9,9 +9,9 @@ public class AAuthInteractionTests
     [Fact]
     public void Format_RoundTrips_Through_ParsedRequirement()
     {
-        var header = AAuthInteraction.Format("https://ps.example/interaction", "ABCD1234");
+        var header = Interaction.Format("https://ps.example/interaction", "ABCD1234");
         var parsed = AAuthRequirementHeader.Parse(header);
-        var interaction = AAuthInteraction.FromRequirement(parsed);
+        var interaction = Interaction.FromRequirement(parsed);
 
         Assert.NotNull(interaction);
         Assert.Equal("https://ps.example/interaction", interaction!.Url);
@@ -23,20 +23,20 @@ public class AAuthInteractionTests
     {
         var parsed = AAuthRequirementHeader.Parse(
             AAuthRequirementHeader.FormatAuthToken("eyJ.aGVsbG8.signature"));
-        Assert.Null(AAuthInteraction.FromRequirement(parsed));
+        Assert.Null(Interaction.FromRequirement(parsed));
     }
 
     [Fact]
     public void FromRequirement_Throws_WhenInteractionParametersMissing()
     {
         var parsed = AAuthRequirementHeader.Parse("requirement=interaction; url=\"https://ps/i\"");
-        Assert.Throws<FormatException>(() => AAuthInteraction.FromRequirement(parsed));
+        Assert.Throws<FormatException>(() => Interaction.FromRequirement(parsed));
     }
 
     [Fact]
     public void BuildUserUrl_AppendsCodeAsQueryParameter()
     {
-        var i = new AAuthInteraction("https://ps.example/interaction", "ABCD/1234");
+        var i = new Interaction("https://ps.example/interaction", "ABCD/1234");
         Assert.Equal(
             "https://ps.example/interaction?code=ABCD%2F1234",
             i.BuildUserUrl());
@@ -45,7 +45,7 @@ public class AAuthInteractionTests
     [Fact]
     public void BuildUserUrl_PreservesExistingQuery_AndAppendsCallback()
     {
-        var i = new AAuthInteraction("https://ps.example/interaction?ref=foo", "XYZ");
+        var i = new Interaction("https://ps.example/interaction?ref=foo", "XYZ");
         Assert.Equal(
             "https://ps.example/interaction?ref=foo&code=XYZ&callback=https%3A%2F%2Fagent.example%2Fcb",
             i.BuildUserUrl("https://agent.example/cb"));
@@ -58,7 +58,7 @@ public class AAuthInteractionTests
     [InlineData("\"", "code")]
     public void Format_RejectsControlCharactersAndQuotes(string url, string code)
     {
-        Assert.Throws<ArgumentException>(() => AAuthInteraction.Format(url, code));
+        Assert.Throws<ArgumentException>(() => Interaction.Format(url, code));
     }
 
     [Theory]
@@ -69,7 +69,7 @@ public class AAuthInteractionTests
     [InlineData("relative/path")]
     public void Format_RejectsNonHttpsSchemes(string url)
     {
-        Assert.Throws<ArgumentException>(() => AAuthInteraction.Format(url, "ABCD"));
+        Assert.Throws<ArgumentException>(() => Interaction.Format(url, "ABCD"));
     }
 
     [Theory]
@@ -83,7 +83,7 @@ public class AAuthInteractionTests
         // a malicious PS could emit the header bytes directly).
         var raw = $"requirement=interaction; url=\"{url}\"; code=\"ABCD\"";
         var parsed = AAuthRequirementHeader.Parse(raw);
-        Assert.Throws<FormatException>(() => AAuthInteraction.FromRequirement(parsed));
+        Assert.Throws<FormatException>(() => Interaction.FromRequirement(parsed));
     }
 
     [Fact]
@@ -91,7 +91,7 @@ public class AAuthInteractionTests
     {
         var raw = "requirement=interaction; url=\"http://localhost:5100/interaction\"; code=\"ABCD\"";
         var parsed = AAuthRequirementHeader.Parse(raw);
-        var i = AAuthInteraction.FromRequirement(parsed);
+        var i = Interaction.FromRequirement(parsed);
         Assert.NotNull(i);
         Assert.Equal("http://localhost:5100/interaction", i!.Url);
     }

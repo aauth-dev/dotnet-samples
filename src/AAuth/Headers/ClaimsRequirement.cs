@@ -19,7 +19,7 @@ namespace AAuth.Headers;
 /// body's <c>required_claims</c> field. The <c>AAuth-Requirement</c> header
 /// carries no claim names.</para>
 /// </remarks>
-public sealed record AAuthClaimsRequirement(IReadOnlyList<string> RequiredClaims)
+public sealed record ClaimsRequirement(IReadOnlyList<string> RequiredClaims)
 {
     /// <summary>Requirement type: <c>claims</c>.</summary>
     public const string RequirementType = "claims";
@@ -36,7 +36,7 @@ public sealed record AAuthClaimsRequirement(IReadOnlyList<string> RequiredClaims
     /// <see cref="FormatException"/> when the requirement is <c>claims</c> but
     /// the body does not carry a non-empty <c>required_claims</c> array.
     /// </summary>
-    public static AAuthClaimsRequirement? FromResponse(
+    public static ClaimsRequirement? FromResponse(
         AAuthRequirementHeader.ParsedRequirement requirement,
         JsonObject? body)
     {
@@ -67,6 +67,6 @@ public sealed record AAuthClaimsRequirement(IReadOnlyList<string> RequiredClaims
                 + $"(expected a '{RequiredClaimsField}' array in the response body).");
         }
 
-        return new AAuthClaimsRequirement(names.Distinct(StringComparer.Ordinal).ToArray());
+        return new ClaimsRequirement(names.Distinct(StringComparer.Ordinal).ToArray());
     }
 }

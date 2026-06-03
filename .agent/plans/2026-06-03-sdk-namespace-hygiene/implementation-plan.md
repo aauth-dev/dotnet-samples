@@ -76,7 +76,7 @@ collision/brand identity matters (see research buckets).
 | `AAuthAgentId` | `AgentId` | `AAuth.Identifiers` |
 | `AAuthServerId` | `ServerId` | `AAuth.Identifiers` |
 | `AAuthInteraction` | `Interaction` | `AAuth.Headers` |
-| `AAuthVerificationResult` | `VerificationResult` | `AAuth.Server` |
+| `AAuthVerificationResult` | _kept (see decision)_ | `AAuth.Server` |
 | `AAuthClaimsRequirement` | `ClaimsRequirement` | `AAuth.Headers` |
 | `AAuthClaimsResponse` | `ClaimsResponse` | `AAuth.Headers` |
 
@@ -96,13 +96,20 @@ collision/brand identity matters (see research buckets).
 - Compat-shim policy: **clean break, no shims** (alpha) — resolved 2026-06-03.
 - Final rename list: the candidate table above is adopted as-is (resolved
   2026-06-03).
+- **Deviation (2026-06-03):** `AAuthVerificationResult` is **kept** (not renamed
+  to `VerificationResult`). A distinct public `VerificationResult` already exists
+  in `AAuth.Server` (the middleware's raw `HttpContext.Items` result), so the
+  `AAuth` prefix provides real disambiguation here. Consolidating the two result
+  types is a behavior change and out of scope for a names-only phase.
 
 ### Definition of Done
 
-- [ ] Agreed renames applied via language-server rename
-- [ ] No remaining references to old names in `src/`, `samples/`, `tests/`, `docs/`
-- [ ] `dotnet build AAuth.slnx -v q` clean; full test suite green
-- [ ] E2E (`tests/e2e`, sample `playwright-tests`) green
+- [x] Agreed renames applied via language-server rename
+- [x] No remaining references to old names in `src/`, `samples/`, `tests/` _(docs
+      swept in Phase 6)_
+- [x] `dotnet build AAuth.slnx -v q` clean; full test suite green
+- [ ] E2E (`tests/e2e`, sample `playwright-tests`) green _(run once at the
+      consolidated validation before Phase 7)_
 
 ---
 

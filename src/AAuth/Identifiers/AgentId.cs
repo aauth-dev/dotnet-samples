@@ -7,11 +7,11 @@ namespace AAuth.Identifiers;
 /// Format: <c>aauth:local@domain</c> where local is [a-z0-9\-_+.]{1,255}
 /// and domain is a valid server identifier domain.
 /// </summary>
-public readonly struct AAuthAgentId : IEquatable<AAuthAgentId>
+public readonly struct AgentId : IEquatable<AgentId>
 {
     private readonly string _value;
 
-    private AAuthAgentId(string value) => _value = value;
+    private AgentId(string value) => _value = value;
 
     /// <summary>The validated identifier value.</summary>
     public string Value => _value;
@@ -23,7 +23,7 @@ public readonly struct AAuthAgentId : IEquatable<AAuthAgentId>
     public string Domain => _value[(_value.IndexOf('@') + 1)..];
 
     /// <summary>Parse and validate an agent identifier. Throws on invalid input.</summary>
-    public static AAuthAgentId Parse(string input)
+    public static AgentId Parse(string input)
     {
         if (!TryParse(input, out var id, out var error))
             throw new FormatException(error);
@@ -31,7 +31,7 @@ public readonly struct AAuthAgentId : IEquatable<AAuthAgentId>
     }
 
     /// <summary>Try to parse and validate an agent identifier.</summary>
-    public static bool TryParse(string? input, out AAuthAgentId result, out string? error)
+    public static bool TryParse(string? input, out AgentId result, out string? error)
     {
         result = default;
         error = null;
@@ -98,7 +98,7 @@ public readonly struct AAuthAgentId : IEquatable<AAuthAgentId>
             }
         }
 
-        result = new AAuthAgentId(input);
+        result = new AgentId(input);
         return true;
     }
 
@@ -106,10 +106,10 @@ public readonly struct AAuthAgentId : IEquatable<AAuthAgentId>
         c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '_' or '+' or '.';
 
     /// <inheritdoc/>
-    public bool Equals(AAuthAgentId other) => string.Equals(_value, other._value, StringComparison.Ordinal);
+    public bool Equals(AgentId other) => string.Equals(_value, other._value, StringComparison.Ordinal);
 
     /// <inheritdoc/>
-    public override bool Equals(object? obj) => obj is AAuthAgentId other && Equals(other);
+    public override bool Equals(object? obj) => obj is AgentId other && Equals(other);
 
     /// <inheritdoc/>
     public override int GetHashCode() => _value?.GetHashCode(StringComparison.Ordinal) ?? 0;
@@ -118,8 +118,8 @@ public readonly struct AAuthAgentId : IEquatable<AAuthAgentId>
     public override string ToString() => _value ?? string.Empty;
 
     /// <summary>Equality operator.</summary>
-    public static bool operator ==(AAuthAgentId left, AAuthAgentId right) => left.Equals(right);
+    public static bool operator ==(AgentId left, AgentId right) => left.Equals(right);
 
     /// <summary>Inequality operator.</summary>
-    public static bool operator !=(AAuthAgentId left, AAuthAgentId right) => !left.Equals(right);
+    public static bool operator !=(AgentId left, AgentId right) => !left.Equals(right);
 }

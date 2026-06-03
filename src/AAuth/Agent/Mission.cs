@@ -8,7 +8,7 @@ namespace AAuth.Agent;
 /// multi-step approval, clarification, or audited access.
 /// Agent-side model parsed from PS responses.
 /// </summary>
-public sealed class AAuthMission
+public sealed class Mission
 {
     /// <summary>Mission identifier.</summary>
     public required string Id { get; init; }
@@ -29,10 +29,10 @@ public sealed class AAuthMission
     public string? InteractionUrl { get; init; }
 
     /// <summary>Parse from a JSON response body.</summary>
-    public static AAuthMission FromJson(JsonObject json)
+    public static Mission FromJson(JsonObject json)
     {
         ArgumentNullException.ThrowIfNull(json);
-        return new AAuthMission
+        return new Mission
         {
             Id = (string?)json["mission_id"] ?? throw new InvalidOperationException("Missing 'mission_id'."),
             Status = (string?)json["status"] ?? "pending",

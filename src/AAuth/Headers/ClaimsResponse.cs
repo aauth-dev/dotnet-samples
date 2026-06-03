@@ -5,13 +5,13 @@ namespace AAuth.Headers;
 
 /// <summary>
 /// Typed reply a Person Server returns from an
-/// <see cref="AAuthClaimsRequirement"/> callback (AAuth protocol §Claims
+/// <see cref="ClaimsRequirement"/> callback (AAuth protocol §Claims
 /// Required). Carries the directed user identifier (<see cref="Subject"/>) the
 /// recipient MUST supply as <c>sub</c>, plus any of the requested identity
 /// claims the PS holds for the bound principal. The SDK serializes this into
 /// the signed POST to the Access Server's <c>Location</c> URL.
 /// </summary>
-public sealed record AAuthClaimsResponse
+public sealed record ClaimsResponse
 {
     /// <summary>
     /// The directed (pairwise) user identifier for the requesting resource —

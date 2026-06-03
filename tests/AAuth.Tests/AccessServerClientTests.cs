@@ -143,7 +143,7 @@ public class AccessServerClientTests
             claimsResponse: _ => Ok(authToken));
         var client = BuildClient(stub);
 
-        AAuthClaimsRequirement? seen = null;
+        ClaimsRequirement? seen = null;
         var result = await client.FederateAsync(AsIssuer, new AccessServerRequest
         {
             ResourceToken = "the-resource-token",
@@ -155,7 +155,7 @@ public class AccessServerClientTests
             OnClaimsRequired = (requirement, _) =>
             {
                 seen = requirement;
-                return Task.FromResult(new AAuthClaimsResponse
+                return Task.FromResult(new ClaimsResponse
                 {
                     Subject = "directed-123",
                     Claims = new Dictionary<string, JsonNode?>
@@ -208,7 +208,7 @@ public class AccessServerClientTests
                 AgentKey = agentKey,
                 RequestedScope = "whoami",
                 OnClaimsRequired = (_, _) => Task.FromResult(
-                    new AAuthClaimsResponse { Subject = string.Empty }),
+                    new ClaimsResponse { Subject = string.Empty }),
             }));
 
         Assert.Contains("sub", ex.Message);
@@ -252,7 +252,7 @@ public class AccessServerClientTests
         var client = BuildClient(stub);
 
         var interactionSeen = false;
-        AAuthClaimsRequirement? claimsSeen = null;
+        ClaimsRequirement? claimsSeen = null;
         var result = await client.FederateAsync(AsIssuer, new AccessServerRequest
         {
             ResourceToken = "the-resource-token",
@@ -265,7 +265,7 @@ public class AccessServerClientTests
             OnClaimsRequired = (requirement, _) =>
             {
                 claimsSeen = requirement;
-                return Task.FromResult(new AAuthClaimsResponse
+                return Task.FromResult(new ClaimsResponse
                 {
                     Subject = "directed-xyz",
                     Claims = new Dictionary<string, JsonNode?>

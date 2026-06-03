@@ -64,7 +64,7 @@ public sealed class InteractionHandler : DelegatingHandler
             return response;
 
         string? requirementType = null;
-        AAuthInteraction? interaction = null;
+        Interaction? interaction = null;
 
         foreach (var raw in values)
         {
@@ -72,10 +72,10 @@ public sealed class InteractionHandler : DelegatingHandler
             try
             {
                 var parsed = AAuthRequirementHeader.Parse(raw);
-                if (parsed.Requirement == AAuthInteraction.RequirementType)
+                if (parsed.Requirement == Interaction.RequirementType)
                 {
-                    interaction = AAuthInteraction.FromRequirement(parsed);
-                    requirementType = AAuthInteraction.RequirementType;
+                    interaction = Interaction.FromRequirement(parsed);
+                    requirementType = Interaction.RequirementType;
                     break;
                 }
                 if (parsed.Requirement == ApprovalRequirement)
@@ -102,7 +102,7 @@ public sealed class InteractionHandler : DelegatingHandler
             locationUri = new Uri(request.RequestUri, locationUri);
 
         // Invoke the appropriate callback
-        if (requirementType == AAuthInteraction.RequirementType && interaction is not null)
+        if (requirementType == Interaction.RequirementType && interaction is not null)
         {
             if (_onInteractionRequired is not null)
             {

@@ -17,7 +17,7 @@ namespace AAuth.Headers;
 /// projects the <c>interaction</c>-specific shape so callers don't have
 /// to fish the parameters out by string key.</para>
 /// </remarks>
-public sealed record AAuthInteraction(string Url, string Code)
+public sealed record Interaction(string Url, string Code)
 {
     /// <summary>Requirement type: <c>interaction</c>.</summary>
     public const string RequirementType = "interaction";
@@ -52,7 +52,7 @@ public sealed record AAuthInteraction(string Url, string Code)
     /// <c>interaction</c> but is missing the mandatory <c>url</c> or
     /// <c>code</c> parameters.
     /// </summary>
-    public static AAuthInteraction? FromRequirement(AAuthRequirementHeader.ParsedRequirement requirement)
+    public static Interaction? FromRequirement(AAuthRequirementHeader.ParsedRequirement requirement)
     {
         ArgumentNullException.ThrowIfNull(requirement);
         if (requirement.Requirement != RequirementType)
@@ -81,7 +81,7 @@ public sealed record AAuthInteraction(string Url, string Code)
                 $"AAuth-Requirement requirement=interaction is missing the '{CodeParameter}' parameter.");
         }
 
-        return new AAuthInteraction(url, code);
+        return new Interaction(url, code);
     }
 
     /// <summary>

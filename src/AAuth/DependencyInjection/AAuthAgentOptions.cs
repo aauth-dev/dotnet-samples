@@ -25,7 +25,7 @@ public sealed class AAuthAgentOptions
     /// <summary>
     /// Callback invoked when the PS requires user interaction during token exchange.
     /// </summary>
-    public Func<AAuthInteraction, CancellationToken, Task>? OnInteractionRequired { get; set; }
+    public Func<Interaction, CancellationToken, Task>? OnInteractionRequired { get; set; }
 
     /// <summary>
     /// Callback invoked when a resource returns 202 + requirement=interaction.

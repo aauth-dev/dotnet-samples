@@ -164,7 +164,7 @@ public sealed class AccessServerClient
                 // active identity-claims PUSH: read the requested claim names,
                 // ask the caller to supply them (incl. a directed `sub`), POST
                 // them signed to the Location, then resume polling the same URL.
-                if (string.Equals(requirement, AAuthClaimsRequirement.RequirementType, StringComparison.Ordinal))
+                if (string.Equals(requirement, ClaimsRequirement.RequirementType, StringComparison.Ordinal))
                 {
                     if (request.OnClaimsRequired is null)
                     {
@@ -180,7 +180,7 @@ public sealed class AccessServerClient
 
                     var claimsResponse = await request.OnClaimsRequired(claimsRequirement, cancellationToken).ConfigureAwait(false)
                         ?? throw new InvalidOperationException(
-                            "AccessServerRequest.OnClaimsRequired returned null; expected an AAuthClaimsResponse.");
+                            "AccessServerRequest.OnClaimsRequired returned null; expected a ClaimsResponse.");
                     if (string.IsNullOrWhiteSpace(claimsResponse.Subject))
                     {
                         // §Claims Required: the recipient MUST provide a directed
@@ -287,7 +287,7 @@ public sealed class AccessServerClient
         return null;
     }
 
-    private static AAuthInteraction? ExtractInteraction(HttpResponseMessage response)
+    private static Interaction? ExtractInteraction(HttpResponseMessage response)
     {
         if (!response.Headers.TryGetValues(AAuthRequirementHeader.Name, out var values))
         {
@@ -299,7 +299,7 @@ public sealed class AccessServerClient
             AAuthRequirementHeader.ParsedRequirement parsed;
             try { parsed = AAuthRequirementHeader.Parse(raw); }
             catch (FormatException) { continue; }
-            var interaction = AAuthInteraction.FromRequirement(parsed);
+            var interaction = Interaction.FromRequirement(parsed);
             if (interaction is not null) { return interaction; }
         }
         return null;
@@ -310,7 +310,7 @@ public sealed class AccessServerClient
     /// from the body's <c>required_claims</c> array (§Claims Required puts the
     /// claim names only in the body, never the <c>AAuth-Requirement</c> header).
     /// </summary>
-    private static async Task<AAuthClaimsRequirement> ExtractClaimsRequirementAsync(
+    private static async Task<ClaimsRequirement> ExtractClaimsRequirementAsync(
         HttpResponseMessage response, CancellationToken cancellationToken)
     {
         JsonObject? body = null;
@@ -332,8 +332,8 @@ public sealed class AccessServerClient
                 AAuthRequirementHeader.ParsedRequirement parsed;
                 try { parsed = AAuthRequirementHeader.Parse(raw); }
                 catch (FormatException) { continue; }
-                AAuthClaimsRequirement? requirement;
-                try { requirement = AAuthClaimsRequirement.FromResponse(parsed, body); }
+                ClaimsRequirement? requirement;
+                try { requirement = ClaimsRequirement.FromResponse(parsed, body); }
                 catch (FormatException ex)
                 {
                     throw new HttpRequestException(
@@ -392,7 +392,7 @@ public sealed class AccessServerClient
     private static bool IsClaimsRequirementResponse(HttpResponseMessage response)
         => string.Equals(
             ExtractRequirementType(response),
-            AAuthClaimsRequirement.RequirementType,
+            ClaimsRequirement.RequirementType,
             StringComparison.Ordinal);
 
     private static Uri ResolveLocation(HttpResponseMessage response, Uri @base)

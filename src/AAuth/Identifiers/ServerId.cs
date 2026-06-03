@@ -9,17 +9,17 @@ namespace AAuth.Identifiers;
 /// no trailing slash, lowercase, IDN → ACE form. Loopback (localhost,
 /// 127.0.0.1, ::1) may include port for dev use.
 /// </summary>
-public readonly struct AAuthServerId : IEquatable<AAuthServerId>
+public readonly struct ServerId : IEquatable<ServerId>
 {
     private readonly string _value;
 
-    private AAuthServerId(string value) => _value = value;
+    private ServerId(string value) => _value = value;
 
     /// <summary>The normalised identifier value.</summary>
     public string Value => _value;
 
     /// <summary>Parse and validate a server identifier string. Throws on invalid input.</summary>
-    public static AAuthServerId Parse(string input)
+    public static ServerId Parse(string input)
     {
         if (!TryParse(input, out var id, out var error))
             throw new FormatException(error);
@@ -27,7 +27,7 @@ public readonly struct AAuthServerId : IEquatable<AAuthServerId>
     }
 
     /// <summary>Try to parse and validate a server identifier string.</summary>
-    public static bool TryParse(string? input, out AAuthServerId result, out string? error)
+    public static bool TryParse(string? input, out ServerId result, out string? error)
     {
         result = default;
         error = null;
@@ -110,15 +110,15 @@ public readonly struct AAuthServerId : IEquatable<AAuthServerId>
             return false;
         }
 
-        result = new AAuthServerId(canonical);
+        result = new ServerId(canonical);
         return true;
     }
 
     /// <inheritdoc/>
-    public bool Equals(AAuthServerId other) => string.Equals(_value, other._value, StringComparison.Ordinal);
+    public bool Equals(ServerId other) => string.Equals(_value, other._value, StringComparison.Ordinal);
 
     /// <inheritdoc/>
-    public override bool Equals(object? obj) => obj is AAuthServerId other && Equals(other);
+    public override bool Equals(object? obj) => obj is ServerId other && Equals(other);
 
     /// <inheritdoc/>
     public override int GetHashCode() => _value?.GetHashCode(StringComparison.Ordinal) ?? 0;
@@ -127,8 +127,8 @@ public readonly struct AAuthServerId : IEquatable<AAuthServerId>
     public override string ToString() => _value ?? string.Empty;
 
     /// <summary>Equality operator.</summary>
-    public static bool operator ==(AAuthServerId left, AAuthServerId right) => left.Equals(right);
+    public static bool operator ==(ServerId left, ServerId right) => left.Equals(right);
 
     /// <summary>Inequality operator.</summary>
-    public static bool operator !=(AAuthServerId left, AAuthServerId right) => !left.Equals(right);
+    public static bool operator !=(ServerId left, ServerId right) => !left.Equals(right);
 }

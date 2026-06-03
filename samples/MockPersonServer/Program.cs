@@ -309,7 +309,7 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
                         claims[name] = value;
                     }
                 }
-                return Task.FromResult(new AAuthClaimsResponse
+                return Task.FromResult(new ClaimsResponse
                 {
                     Subject = "pairwise-sub",
                     Claims = claims,
@@ -375,7 +375,7 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
             ctx.Response.Headers["Retry-After"] = "1";
             ctx.Response.Headers["Cache-Control"] = "no-store";
             ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                AAuthInteraction.Format(entry.InteractionUrl, entry.InteractionCode!);
+                Interaction.Format(entry.InteractionUrl, entry.InteractionCode!);
             return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
         }
 
@@ -485,7 +485,7 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
         ctx.Response.Headers["Retry-After"] = "0";
         ctx.Response.Headers["Cache-Control"] = "no-store";
         ctx.Response.Headers[AAuthRequirementHeader.Name] =
-            AAuthInteraction.Format(interactionUrl, entry.Id);
+            Interaction.Format(interactionUrl, entry.Id);
         return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
     }
 
@@ -524,7 +524,7 @@ app.MapGet("/pending/{id}", (HttpContext ctx, string id, ConsentStore consent, P
         ctx.Response.Headers["Retry-After"] = "1";
         ctx.Response.Headers["Cache-Control"] = "no-store";
         ctx.Response.Headers[AAuthRequirementHeader.Name] =
-            AAuthInteraction.Format($"{psIssuer.TrimEnd('/')}/interaction", id);
+            Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", id);
         return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
     }
 
@@ -572,7 +572,7 @@ app.MapGet("/federated-pending/{id}", (HttpContext ctx, string id, FederatedPend
             if (entry.InteractionUrl is not null)
             {
                 ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                    AAuthInteraction.Format(entry.InteractionUrl, entry.InteractionCode!);
+                    Interaction.Format(entry.InteractionUrl, entry.InteractionCode!);
             }
             return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
     }

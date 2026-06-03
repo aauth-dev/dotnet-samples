@@ -286,7 +286,7 @@ public class MockPersonServerFederationTests
                     deferred.Headers.TryAddWithoutValidation("Retry-After", "0");
                     deferred.Headers.TryAddWithoutValidation(
                         "AAuth-Requirement",
-                        AAuth.Headers.AAuthInteraction.Format($"{AsIssuer}/interaction/login", "abc"));
+                        AAuth.Headers.Interaction.Format($"{AsIssuer}/interaction/login", "abc"));
                     return Task.FromResult(deferred);
                 }
 

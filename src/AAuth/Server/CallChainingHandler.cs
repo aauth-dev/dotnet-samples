@@ -64,7 +64,7 @@ public sealed class CallChainingHandler
     public async Task<string> ExchangeForDownstreamAsync(
         string upstreamAuthToken,
         string resourceToken,
-        Func<AAuthInteraction, CancellationToken, Task>? onInteractionRequired = null,
+        Func<Interaction, CancellationToken, Task>? onInteractionRequired = null,
         DeferredPollerOptions? pollerOptions = null,
         CancellationToken cancellationToken = default)
     {

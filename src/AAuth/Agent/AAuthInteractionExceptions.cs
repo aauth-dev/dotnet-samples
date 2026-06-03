@@ -73,16 +73,16 @@ public sealed class AAuthInteractionChainedException : Exception
     /// the user-facing <c>url</c> and single-use <c>code</c> the intermediary
     /// passes through when re-emitting its own requirement.
     /// </summary>
-    public AAuthInteraction Interaction { get; }
+    public Interaction Interaction { get; }
 
-    public AAuthInteractionChainedException(AAuthInteraction interaction)
+    public AAuthInteractionChainedException(Interaction interaction)
         : base("Downstream exchange requires user interaction; re-emitting as a chained interaction requirement.")
     {
         ArgumentNullException.ThrowIfNull(interaction);
         Interaction = interaction;
     }
 
-    public AAuthInteractionChainedException(AAuthInteraction interaction, string message)
+    public AAuthInteractionChainedException(Interaction interaction, string message)
         : base(message)
     {
         ArgumentNullException.ThrowIfNull(interaction);

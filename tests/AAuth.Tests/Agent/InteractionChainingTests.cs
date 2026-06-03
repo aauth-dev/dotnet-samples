@@ -33,7 +33,7 @@ public class InteractionChainingTests
         var metaClient = new MetadataClient(new HttpClient(handler));
         var exchangeClient = new TokenExchangeClient(new HttpClient(handler), metaClient);
 
-        AAuthInteraction? captured = null;
+        Interaction? captured = null;
 
         var ex = await Assert.ThrowsAsync<AAuthInteractionChainedException>(
             () => exchangeClient.ExchangeAsync(
@@ -143,7 +143,7 @@ public class InteractionChainingTests
             response.Headers.TryAddWithoutValidation("Cache-Control", "no-store");
             response.Headers.TryAddWithoutValidation(
                 AAuthRequirementHeader.Name,
-                AAuthInteraction.Format(InteractionUrl, InteractionCode));
+                Interaction.Format(InteractionUrl, InteractionCode));
             return Task.FromResult(response);
         }
     }
