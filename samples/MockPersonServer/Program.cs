@@ -1,8 +1,10 @@
 using System.Text.Json.Nodes;
 using AAuth;
+using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.DependencyInjection;
 using AAuth.Discovery;
+using AAuth.Errors;
 using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
@@ -45,11 +47,30 @@ const string PsAdminScope = "whoami:admin";
 // principal's directory membership instead of a hard-coded prefix.
 string[] demoRoles = ["whoami-admin"];
 string[] demoGroups = ["demo-users"];
+// Identity claims the PS can release for the bound principal when an Access
+// Server asks for them via the §Claims Required push. A production PS would
+// resolve these from its identity store keyed by the authenticated principal.
+var demoUserClaims = new Dictionary<string, string>(StringComparer.Ordinal)
+{
+    ["email"] = "demo@person.example",
+    ["tenant"] = "demo-tenant",
+    ["name"] = "Demo User",
+};
 static bool IsAdminAgent(string agentId) =>
     agentId.StartsWith("aauth:demo@", StringComparison.Ordinal);
 var psIssuer = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5100";
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
 var requireConsent = builder.Configuration.GetValue<bool>("MockPersonServer:RequireConsent");
+// Four-party (federated) trust: the Access Servers this PS is willing to
+// federate to. When a resource token's `aud` is one of these (rather than the
+// PS itself), the PS forwards a signed PS->AS token request instead of issuing
+// the auth token directly. Pre-established trust — a production PS would manage
+// this set per the operator's federation agreements.
+var trustedAccessServers = builder.Configuration
+        .GetSection("MockPersonServer:TrustedAccessServers").Get<string[]>()
+    ?? ["http://localhost:5500"];
+var trustedAsSet = new HashSet<string>(
+    trustedAccessServers.Select(a => a.TrimEnd('/')), StringComparer.OrdinalIgnoreCase);
 
 builder.Services.AddSingleton(psKey);
 builder.Services.AddSingleton(new AAuthVerifier
@@ -65,10 +86,30 @@ builder.Services.AddHttpClient("aauth-metadata");
 builder.Services.AddHttpClient("aauth-jwks");
 builder.Services.AddSingleton<ConsentStore>();
 builder.Services.AddSingleton<PendingStore>();
+builder.Services.AddSingleton<FederatedPendingStore>();
 builder.Services.AddSingleton(sp =>
     new UpstreamTokenValidator(
         sp.GetRequiredService<MetadataClient>(),
         sp.GetRequiredService<JwksClient>()));
+
+// Four-party federation client. The PS signs the PS->AS token request with its
+// own key via the `jwks_uri` scheme (the AS resolves the PS's public key from
+// `{psIssuer}/.well-known/jwks.json`). The transport handler is the named
+// "aauth-federation" client so tests can route it to an in-process AS.
+builder.Services.AddHttpClient("aauth-federation");
+builder.Services.AddSingleton(sp =>
+{
+    var metadata = sp.GetRequiredService<MetadataClient>();
+    var jwks = sp.GetRequiredService<JwksClient>();
+    var validator = new AuthTokenResponseValidator(metadata, jwks);
+    var transport = sp.GetRequiredService<IHttpMessageHandlerFactory>()
+        .CreateHandler("aauth-federation");
+    var signedClient = new AAuthClientBuilder(psKey)
+        .UseJwksUri($"{psIssuer.TrimEnd('/')}/.well-known/jwks.json", PsKid)
+        .WithInnerHandler(transport)
+        .Build();
+    return new AccessServerClient(signedClient, metadata, validator);
+});
 
 var app = builder.Build();
 
@@ -169,9 +210,193 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
             statusCode: StatusCodes.Status400BadRequest);
     }
 
+    var upstreamTokenJwt = (string?)body?["upstream_token"];
+
+    // Four-party (federated) branch. When the resource token's `aud` is NOT
+    // this PS, the resource delegated authorization to an Access Server. The PS
+    // does not mint the auth token itself — it forwards a signed PS->AS request
+    // and returns the AS-issued token. When `aud` IS this PS (the common case),
+    // fall through to the three-party path below where the PS acts as its own
+    // AS (the "collapsed" PS+AS variant).
+    var resourceAudience = PeekJwtAudience(resourceTokenJwt);
+    if (resourceAudience is not null
+        && !string.Equals(resourceAudience.TrimEnd('/'), psIssuer.TrimEnd('/'), StringComparison.OrdinalIgnoreCase))
+    {
+        // Pre-established trust: only federate to a configured Access Server.
+        if (!trustedAsSet.Contains(resourceAudience.TrimEnd('/')))
+        {
+            return Results.Json(
+                new { error = "untrusted_access_server", detail = $"'{resourceAudience}' is not a trusted Access Server." },
+                statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        var federationVerifier = app.Services.GetRequiredService<TokenVerifier>();
+        var federationMetadata = app.Services.GetRequiredService<MetadataClient>();
+        var federationJwks = app.Services.GetRequiredService<JwksClient>();
+
+        // Verify the resource token's agent binding before forwarding it — the
+        // PS confirms the presenting agent is the one bound to the token
+        // (`agent` + `agent_jkt`) and reads the resource URL (`iss`) and scope.
+        // The AS re-verifies independently; this guards the PS from relaying a
+        // token it has no business relaying.
+        string resourceUrl;
+        string federatedScope = PsScope;
+        try
+        {
+            var verified = await federationVerifier.VerifyResourceTokenAsync(
+                resourceTokenJwt,
+                expectedAudience: resourceAudience,
+                expectedAgentId: agentId,
+                expectedAgentJkt: parsed.ConfirmationKey!.ComputeJwkThumbprint(),
+                federationMetadata,
+                federationJwks);
+
+            resourceUrl = (string?)verified.Payload["iss"]
+                ?? throw new TokenVerificationException("resource_token missing iss");
+            var scopeClaim = (string?)verified.Payload["scope"];
+            if (!string.IsNullOrWhiteSpace(scopeClaim))
+            {
+                federatedScope = scopeClaim;
+            }
+        }
+        catch (TokenVerificationException ex)
+        {
+            var expired = ex.Message.Contains("expired", StringComparison.OrdinalIgnoreCase);
+            return Results.Json(
+                new { error = expired ? "expired_resource_token" : "invalid_resource_token", detail = ex.Message },
+                statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        var federation = app.Services.GetRequiredService<AccessServerClient>();
+        var fedPending = app.Services.GetRequiredService<FederatedPendingStore>();
+        var entry = fedPending.Add();
+
+        // Capture everything the background task needs BEFORE it runs — the
+        // HttpContext is gone once we return the response.
+        var agentTokenJwt = parsed.Jwt
+            ?? throw new InvalidOperationException("Agent token JWT unavailable on the verified request.");
+        var agentConfirmationKey = parsed.ConfirmationKey!;
+        var fedRequest = new AccessServerRequest
+        {
+            ResourceToken = resourceTokenJwt,
+            AgentToken = agentTokenJwt,
+            UpstreamToken = upstreamTokenJwt,
+            ExpectedAudience = resourceUrl,
+            ExpectedAgentId = agentId,
+            AgentKey = agentConfirmationKey,
+            RequestedScope = federatedScope,
+            // The AS needs an interactive user login/consent. Capture its
+            // user-facing interaction URL so the PS can relay it to the agent;
+            // FederateAsync keeps polling the AS to completion in the
+            // background while the agent polls the PS pending URL.
+            OnInteractionRequired = (interaction, _) =>
+            {
+                entry.InteractionUrl = interaction.Url;
+                entry.InteractionCode = interaction.Code;
+                entry.FirstAnswer.TrySetResult();
+                return Task.CompletedTask;
+            },
+            // The AS needs identity claims (§Claims Required) for its policy
+            // decision. The PS is the identity authority, so it answers with a
+            // directed pseudonymous `sub` plus whatever requested claims it
+            // holds for the principal. Unknown claims are simply omitted.
+            OnClaimsRequired = (claimsRequirement, _) =>
+            {
+                var claims = new Dictionary<string, JsonNode?>(StringComparer.Ordinal);
+                foreach (var name in claimsRequirement.RequiredClaims)
+                {
+                    if (demoUserClaims.TryGetValue(name, out var value))
+                    {
+                        claims[name] = value;
+                    }
+                }
+                return Task.FromResult(new AAuthClaimsResponse
+                {
+                    Subject = "pairwise-sub",
+                    Claims = claims,
+                });
+            },
+        };
+
+        // Drive the PS->AS federation in the background. The agent's first
+        // answer (relayed 202 interaction, or an immediate terminal result
+        // when the AS does not need interaction) is decided below.
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var token = await federation.FederateAsync(resourceAudience, fedRequest);
+                entry.AuthToken = token;
+                entry.Status = FederatedPendingStatus.Allowed;
+            }
+            catch (AAuthInteractionDeniedException)
+            {
+                entry.Error = "access_denied";
+                entry.ErrorStatus = StatusCodes.Status403Forbidden;
+                entry.Status = FederatedPendingStatus.Denied;
+            }
+            catch (AAuthTokenExchangeException ex)
+            {
+                entry.Error = ex.ErrorCode;
+                entry.ErrorStatus = ex.StatusCode;
+                entry.Status = FederatedPendingStatus.Denied;
+            }
+            catch (AAuthPaymentRequiredException ex)
+            {
+                entry.Error = "payment_required";
+                entry.ErrorStatus = StatusCodes.Status402PaymentRequired;
+                entry.ErrorLocation = ex.Location;
+                entry.Status = FederatedPendingStatus.Denied;
+            }
+            catch (Exception ex)
+            {
+                // Includes TokenVerificationException (bad AS token) and
+                // unreachable-AS failures — surface as an upstream error.
+                entry.Error = "federation_failed";
+                entry.ErrorStatus = StatusCodes.Status502BadGateway;
+                app.Logger.LogWarning(ex, "Four-party federation to {AccessServer} failed.", resourceAudience);
+                entry.Status = FederatedPendingStatus.Denied;
+            }
+            finally
+            {
+                entry.FirstAnswer.TrySetResult();
+            }
+        });
+
+        // Wait for the first answer: either the AS asked for interaction
+        // (relay it) or federation finished before any interaction.
+        await entry.FirstAnswer.Task;
+
+        if (entry.InteractionUrl is not null)
+        {
+            // Relay the AS interaction. The user logs in at the AS's
+            // (Keycloak-backed) URL; the agent polls the PS pending URL while
+            // the PS's background task polls the AS to completion.
+            ctx.Response.Headers.Location = $"/federated-pending/{entry.Id}";
+            ctx.Response.Headers["Retry-After"] = "1";
+            ctx.Response.Headers["Cache-Control"] = "no-store";
+            ctx.Response.Headers[AAuthRequirementHeader.Name] =
+                AAuthInteraction.Format(entry.InteractionUrl, entry.InteractionCode!);
+            return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
+        }
+
+        // The AS resolved without interaction (e.g. an auto-allow stub AS).
+        if (entry.Status == FederatedPendingStatus.Allowed)
+        {
+            return Results.Ok(new { auth_token = entry.AuthToken });
+        }
+
+        if (!string.IsNullOrEmpty(entry.ErrorLocation))
+        {
+            ctx.Response.Headers.Location = entry.ErrorLocation;
+        }
+        return Results.Json(
+            new { error = entry.Error, detail = entry.Error },
+            statusCode: entry.ErrorStatus);
+    }
+
     // Call-chaining: validate upstream_token if present using UpstreamTokenValidator
     // (§Upstream Token Verification steps 1-4).
-    var upstreamTokenJwt = (string?)body?["upstream_token"];
     JsonObject? upstreamAct = null;
     if (!string.IsNullOrEmpty(upstreamTokenJwt))
     {
@@ -314,6 +539,47 @@ app.MapGet("/pending/{id}", (HttpContext ctx, string id, ConsentStore consent, P
 });
 
 // -----------------------------------------------------------------------
+// GET /federated-pending/{id} — four-party deferred poll. Signed like
+// /token. While the PS's background FederateAsync drives the AS interaction
+// to completion, returns 202 + the relayed AS interaction requirement. Once
+// federation resolves it returns the AS-issued auth token (200) or the
+// relayed AS error (403 access_denied / 402 / 502).
+// -----------------------------------------------------------------------
+app.MapGet("/federated-pending/{id}", (HttpContext ctx, string id, FederatedPendingStore fedPending) =>
+{
+    var entry = fedPending.Get(id);
+    if (entry is null)
+    {
+        return Results.NotFound(new { error = "unknown_pending", id });
+    }
+
+    switch (entry.Status)
+    {
+        case FederatedPendingStatus.Allowed:
+            return Results.Ok(new { auth_token = entry.AuthToken });
+        case FederatedPendingStatus.Denied:
+            ctx.Response.Headers["Cache-Control"] = "no-store";
+            if (!string.IsNullOrEmpty(entry.ErrorLocation))
+            {
+                ctx.Response.Headers.Location = entry.ErrorLocation;
+            }
+            return Results.Json(
+                new { error = entry.Error, detail = entry.Error },
+                statusCode: entry.ErrorStatus);
+        case FederatedPendingStatus.Pending:
+        default:
+            ctx.Response.Headers["Retry-After"] = "1";
+            ctx.Response.Headers["Cache-Control"] = "no-store";
+            if (entry.InteractionUrl is not null)
+            {
+                ctx.Response.Headers[AAuthRequirementHeader.Name] =
+                    AAuthInteraction.Format(entry.InteractionUrl, entry.InteractionCode!);
+            }
+            return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
+    }
+});
+
+// -----------------------------------------------------------------------
 // DEMO-ONLY admin endpoints. A real PS would NEVER expose unauthenticated
 // consent flips. These exist so the GuidedTour's "User approves" button
 // and the §3.4 user-consent integration test can drive the consent
@@ -340,10 +606,11 @@ app.MapPost("/admin/revoke", async (HttpContext ctx, ConsentStore consent) =>
 // Demo-only: wipe all consent + pending state back to baseline so an automated
 // test harness can start each spec from a known-empty store (see the E2E suite's
 // resetConsent helper). A production PS would never expose this.
-app.MapPost("/admin/reset", (ConsentStore consent, PendingStore pending) =>
+app.MapPost("/admin/reset", (ConsentStore consent, PendingStore pending, FederatedPendingStore fedPending) =>
 {
     consent.Clear();
     pending.Clear();
+    fedPending.Clear();
     return Results.Ok(new { ok = true });
 });
 
@@ -377,15 +644,21 @@ app.MapGet("/interaction", (string? code, PendingStore pending) =>
     }
 
     var html =
-        "<!doctype html><meta charset=utf-8><title>Approve agent at Mock PS</title>"
-        + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:3rem auto;padding:0 1rem;line-height:1.5}"
+        "<!doctype html><meta charset=utf-8><title>Approve agent at the Person Server</title>"
+        + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
+        + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#1d4ed8;color:#fff;"
+        + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
+        + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}"
+        + ".sub{color:#777;font-size:.85rem;margin:.35rem 0 1.25rem}"
         + "h1{font-size:1.25rem}.row{display:flex;gap:.5rem;margin:.25rem 0}.row b{min-width:6rem;color:#555}"
-        + "form{margin-top:1.5rem;display:flex;gap:.75rem}"
+        + "form{margin-top:1.5rem;display:inline-flex;gap:.75rem}"
         + "button{padding:.5rem 1rem;font-size:1rem;cursor:pointer;border-radius:.25rem;border:1px solid #999}"
         + "button.approve{background:#6ee7b7;border-color:#34d399}"
         + "button.deny{background:#fecaca;border-color:#f87171}</style>"
+        + "<div class=badge><span class=dot></span>Person Server</div>"
+        + "<div class=sub>localhost:5100 — the server that holds your resources and standing consent</div>"
         + "<h1>An agent is requesting access on your behalf</h1>"
-        + "<p>This is the Mock Person Server's consent screen. In a real PS you would be signed in via cookie / passkey / SSO before reaching here.</p>"
+        + "<p>This is the <b>Person Server's</b> consent screen. In a real PS you would be signed in via cookie / passkey / SSO before reaching here.</p>"
         + $"<div class=row><b>Agent:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.Agent)}</code></div>"
         + $"<div class=row><b>Resource:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.Resource)}</code></div>"
         + $"<div class=row><b>Scope:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.Scope)}</code></div>"
@@ -418,12 +691,16 @@ app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent
     }
     consent.Grant(entry.Agent, entry.Resource, entry.Scope);
     return Results.Content(
-        "<!doctype html><meta charset=utf-8><title>Approved</title>"
-        + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:3rem auto;padding:0 1rem;line-height:1.5}</style>"
+        "<!doctype html><meta charset=utf-8><title>Approved — Person Server</title>"
+        + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
+        + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#1d4ed8;color:#fff;"
+        + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
+        + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}</style>"
+        + "<div class=badge><span class=dot></span>Person Server</div>"
         + "<h1>Approved</h1>"
         + $"<p>You granted <code>{System.Net.WebUtility.HtmlEncode(entry.Agent)}</code> access to "
         + $"<code>{System.Net.WebUtility.HtmlEncode(entry.Resource)}</code> with scope "
-        + $"<code>{System.Net.WebUtility.HtmlEncode(entry.Scope)}</code>.</p>"
+        + $"<code>{System.Net.WebUtility.HtmlEncode(entry.Scope)}</code> at the <b>Person Server</b>.</p>"
         + "<p>You can close this tab — the agent will receive its auth token on its next poll.</p>",
         contentType: "text/html");
 }).DisableAntiforgery();
@@ -445,10 +722,14 @@ app.MapPost("/interaction/deny", async (HttpContext ctx, PendingStore pending) =
     }
     pending.Deny(code);
     return Results.Content(
-        "<!doctype html><meta charset=utf-8><title>Denied</title>"
-        + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:3rem auto;padding:0 1rem;line-height:1.5}</style>"
+        "<!doctype html><meta charset=utf-8><title>Denied — Person Server</title>"
+        + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
+        + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#1d4ed8;color:#fff;"
+        + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
+        + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}</style>"
+        + "<div class=badge><span class=dot></span>Person Server</div>"
         + "<h1>Denied</h1>"
-        + $"<p>You denied <code>{System.Net.WebUtility.HtmlEncode(entry.Agent)}</code>'s request. The agent's next poll will receive <code>403 access_denied</code>.</p>"
+        + $"<p>You denied <code>{System.Net.WebUtility.HtmlEncode(entry.Agent)}</code>'s request at the <b>Person Server</b>. The agent's next poll will receive <code>403 access_denied</code>.</p>"
         + "<p>You can close this tab.</p>",
         contentType: "text/html");
 }).DisableAntiforgery();
@@ -473,6 +754,41 @@ string IssueAuthToken(string agentId, string audience, string scope, IAAuthKey c
         Groups = IsAdminAgent(agentId) ? demoGroups : null,
         UpstreamAct = upstreamAct,
     }.Build();
+
+// Peek the `aud` claim of a (possibly unverified) compact JWT without checking
+// its signature — used only to ROUTE the request (three-party vs four-party).
+// Whichever branch is taken fully verifies the token afterwards, so an attacker
+// gains nothing by lying about `aud` here.
+static string? PeekJwtAudience(string jwt)
+{
+    var parts = jwt.Split('.');
+    if (parts.Length < 2)
+    {
+        return null;
+    }
+    JsonObject? payload;
+    try
+    {
+        payload = JsonNode.Parse(Base64UrlDecode(parts[1])) as JsonObject;
+    }
+    catch (System.Text.Json.JsonException)
+    {
+        return null;
+    }
+    return payload?["aud"] switch
+    {
+        JsonValue v => v.GetValue<string>(),
+        JsonArray { Count: > 0 } a => (string?)a[0],
+        _ => null,
+    };
+}
+
+static string Base64UrlDecode(string segment)
+{
+    var s = segment.Replace('-', '+').Replace('_', '/');
+    s += (s.Length % 4) switch { 2 => "==", 3 => "=", _ => string.Empty };
+    return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(s));
+}
 
 async Task<(string? Agent, string? Resource, string? Scope, IResult? Error)> ReadAdminBodyAsync(HttpContext ctx)
 {

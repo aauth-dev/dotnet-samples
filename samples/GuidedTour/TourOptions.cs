@@ -18,6 +18,7 @@ public enum TourMode
     Autonomous,
     Deferred,
     CallChain,
+    Federated,
 }
 
 /// <summary>
@@ -90,6 +91,15 @@ public sealed class TourOptions
     /// call-chain tour targets this URL instead of WhoAmI.
     /// </summary>
     public string? OrchestratorUrl { get; set; }
+
+    /// <summary>
+    /// Optional Access Server URL for the four-party federated flow. When set,
+    /// the Federated tour mode becomes selectable: the agent calls the
+    /// resource's <c>/federated</c> branch (whose resource token has
+    /// <c>aud</c> = this AS), the Person Server federates to the AS, and the
+    /// AS mints the <c>aa-auth+jwt</c> (<c>dwk=aauth-access.json</c>).
+    /// </summary>
+    public string? AccessServerUrl { get; set; }
 
     /// <summary>
     /// Which flow to walk by default when the page loads. Defaults to

@@ -13,7 +13,7 @@ hop.
 A swim-lane sequence diagram across up to four actors — **Agent**,
 **Orchestrator**, **Resource**, **Person Server** — with a payload
 inspector on the right that decodes each JWT and shows the canonical
-RFC 9421 signature base for every signed request. Five flows are
+RFC 9421 signature base for every signed request. Six flows are
 available, switchable at runtime from the topbar **Mode** picker:
 
 * **Bootstrap** (2–3 steps) — generate the agent's signing key and build
@@ -28,6 +28,15 @@ available, switchable at runtime from the topbar **Mode** picker:
 * **Call Chain / Multi-Agent** (7 steps) — the agent calls an Orchestrator
   (intermediate service) which chains downstream to a Resource, producing
   nested `act` claims that record the full delegation path.
+* **Federated (Four-Party)** (7 steps; 10 on the interactive path) — the
+  resource has its own **Access Server**. The resource token's `aud` is the
+  AS, so the PS federates to the AS, which evaluates policy and mints the
+  `aa-auth+jwt` (`dwk=aauth-access.json`). A dedicated red **Access Server**
+  swimlane is shown. With a Keycloak AS policy the AS returns `202
+  requirement=interaction`; the PS relays it and the agent surfaces the
+  Keycloak login URL. Requires an Access Server URL (`AccessServerUrl`);
+  run it with `make demo-tour-keycloak` (Keycloak) or `make demo-tour`
+  (stub AS, no Docker).
 
 When `PersonServerUrl` is empty in `appsettings.json`, the picker locks
 to Identity-based (the three-party options are disabled). You can also set

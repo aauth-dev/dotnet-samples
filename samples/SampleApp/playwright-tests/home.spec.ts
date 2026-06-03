@@ -29,6 +29,6 @@ test.describe('Home', () => {
   });
 
   test('shows the prerequisites block', async ({ page }) => {
-    await expect(page.getByText('make demo-sample')).toBeVisible();
+    await expect(page.getByText('make demo')).toBeVisible();
   });
 });

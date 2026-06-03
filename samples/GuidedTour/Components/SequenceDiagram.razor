@@ -118,6 +118,17 @@
 
     private static string Fmt(double pct) => pct.ToString("0.##", CultureInfo.InvariantCulture);
 
+    /// <summary>Extract the compact status (e.g. "200 OK") from a status line
+    /// like "HTTP/1.1 200 OK" for the dashed response arrow badge.</summary>
+    private static string? StatusBadge(string? statusLine)
+    {
+        if (string.IsNullOrWhiteSpace(statusLine)) { return null; }
+        var sp = statusLine.IndexOf(' ');
+        return sp >= 0 && sp + 1 < statusLine.Length
+            ? statusLine[(sp + 1)..].Trim()
+            : statusLine;
+    }
+
     private RenderFragment RenderMessage(StepRecord s, int i) => __builder =>
     {
         var laneCenters = ComputeLaneCenters();
@@ -129,9 +140,19 @@
         var labelCenter = (leftCenter + rightCenter) / 2.0;
         var rightward = toCol >= fromCol;
         var isSelf = fromCol == toCol;
-        var rowClass = i == Highlight ? "msg highlight" : "msg";
+        var highlight = i == Highlight;
+        // A remote step that received an HTTP response draws a dashed return
+        // arrow (response) on its own timeline row, rendered AFTER any
+        // inside-component box so the reply lands once the internal work is
+        // done. The internal sub-steps may have their own (internal) responses
+        // on other lanes — those are distinct from this outer reply to the
+        // caller, not duplicates. Local/self steps and steps with no captured
+        // response (e.g. local "parse" steps) draw only the request arrow.
+        var hasResponse = !isSelf && !string.IsNullOrEmpty(s.StatusLine);
+        var statusBadge = hasResponse ? StatusBadge(s.StatusLine) : null;
 
-        <div class="@rowClass">
+        @* 1) Request: solid arrow From -> To. *@
+        <div class="msg@(highlight ? " highlight" : "")">
             @if (isSelf)
             {
                 <div class="arrow self" style="left:@(Fmt(leftCenter - 1.5))%; width:3%;"></div>
@@ -143,9 +164,12 @@
             }
             <div class="label" style="left:@(Fmt(labelCenter))%;">@s.Number. @s.Title</div>
         </div>
+
+        @* 2) Inner work performed inside the target component (e.g. orchestrator). *@
         @if (s.SubSteps is { Count: > 0 } subs)
         {
-            <div class="substeps">
+            var subsLabel = string.IsNullOrWhiteSpace(s.SubStepsLabel) ? "inside orchestrator" : s.SubStepsLabel;
+            <div class="substeps" style="--substeps-label:'@subsLabel';">
                 @foreach (var sub in subs)
                 {
                     var subFromCol = ColumnFor(sub.From);
@@ -156,20 +180,34 @@
                     var subLabelCenter = (subLeft + subRight) / 2.0;
                     var subRightward = subToCol >= subFromCol;
                     var subSelf = subFromCol == subToCol;
+                    var subArrowClass = (sub.IsResponse ? "response " : "") + (subRightward ? "rightward" : "leftward");
 
-                    <div class="msg substep">
+                    <div class="msg substep@(sub.IsResponse ? " is-response" : "")">
                         @if (subSelf)
                         {
                             <div class="arrow self" style="left:@(Fmt(subLeft - 1.5))%; width:3%;"></div>
                         }
                         else
                         {
-                            <div class="arrow @(subRightward ? "rightward" : "leftward")"
+                            <div class="arrow @subArrowClass"
                                  style="left:@(Fmt(subLeft))%; width:@(Fmt(subWidth))%;"></div>
                         }
                         <div class="label" style="left:@(Fmt(subLabelCenter))%;">@sub.Label</div>
                     </div>
                 }
+            </div>
+        }
+
+        @* 3) Response: dashed arrow To -> From, rendered AFTER any sub-step
+              component box so the return lands once the work is done. *@
+        @if (hasResponse)
+        {
+            // Response travels back: from = original To, to = original From.
+            var respRightward = fromCol >= toCol;
+            <div class="msg response-row@(highlight ? " highlight" : "")">
+                <div class="arrow response @(respRightward ? "rightward" : "leftward")"
+                     style="left:@(Fmt(leftCenter))%; width:@(Fmt(widthPct))%;"></div>
+                <div class="label response-label" style="left:@(Fmt(labelCenter))%;">@statusBadge</div>
             </div>
         }
     };

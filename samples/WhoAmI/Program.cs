@@ -33,6 +33,14 @@ var trustedPersonServers = new HashSet<string>(
     builder.Configuration.GetSection("AAuth:TrustedPersonServers").Get<string[]>()
         ?? new[] { "http://localhost:5100" });
 
+// Access Server for the four-party (federated) flow. The resource issues a
+// resource token whose `aud` is this AS (not the PS); the PS federates to the
+// AS, which mints the auth token (iss = AS, dwk = aauth-access.json). The
+// resource trusts the AS as the auth-token issuer for the /federated branch.
+// Override via `AAuth:AccessServer`.
+var accessServerUrl = builder.Configuration["AAuth:AccessServer"] ?? "http://localhost:5500";
+var trustedAccessServers = new HashSet<string> { accessServerUrl };
+
 builder.Services.AddSingleton(resourceKey);
 builder.Services.AddSingleton(new AAuthVerifier
 {
@@ -107,6 +115,29 @@ ChallengeOptions ChallengeForScope(string scope) => new()
     DefaultScopes = scope,
 };
 
+// Verification options for the four-party (federated) flow. The auth token is
+// issued by the AS (iss = AS, dwk = aauth-access.json), so the AS is the
+// trusted auth-token issuer here — not the PS.
+AAuthVerificationOptions FederatedVerification() => new()
+{
+    ResourceIdentifier = resourceUrl,
+    RequireIssuerVerification = true,
+    TrustedAuthTokenIssuers = trustedAccessServers,
+};
+
+// Challenge options for a four-party endpoint: the resource token's `aud` is
+// the AS (via PersonServerAudience), which routes the PS to federate to the AS
+// rather than asserting access itself.
+ChallengeOptions ChallengeForFederated(string scope) => new()
+{
+    AccessMode = AAuthAccessMode.RequireAuthToken,
+    ResourceSigningKey = resourceKey,
+    ResourceKeyId = ResourceKid,
+    ResourceIdentifier = resourceUrl,
+    PersonServerAudience = accessServerUrl,
+    DefaultScopes = scope,
+};
+
 // -----------------------------------------------------------------------
 // Isolated verification pipelines — one branch per access mode. Each branch
 // is self-contained: the most specific paths (/jwt/admin, /jwt/roles) are
@@ -169,6 +200,17 @@ app.UseWhen(
         branch.UseAAuthChallenge(ChallengeForScope(ScopeWhoami));
     });
 
+// /federated — four-party baseline: the challenge issues a resource token with
+// `aud` = the AS, the PS federates to the AS, and the AS-issued auth token
+// (dwk = aauth-access.json) is verified against the AS's JWKS.
+app.UseWhen(
+    ctx => ctx.Request.Path.StartsWithSegments("/federated"),
+    branch =>
+    {
+        branch.UseAAuthVerification(FederatedVerification());
+        branch.UseAAuthChallenge(ChallengeForFederated(ScopeWhoami));
+    });
+
 // Layer 2 runs globally; per-endpoint policies decide what is required.
 app.UseAuthentication();
 app.UseAuthorization();
@@ -187,6 +229,7 @@ app.MapGet("/", () => Results.Ok(new
         new { path = "/jwt", mode = "three-party", auth = "AAuth.Scope.whoami" },
         new { path = "/jwt/admin", mode = "three-party (step-up)", auth = "AAuth.Scope.whoami:admin" },
         new { path = "/jwt/roles", mode = "three-party (RBAC)", auth = "AAuth.Role.whoami-admin" },
+        new { path = "/federated", mode = "four-party", auth = "AAuth.Scope.whoami" },
     },
 }));
 
@@ -313,6 +356,34 @@ app.MapGet("/jwt/roles", (HttpContext ctx) =>
         iss = result.Issuer,
     });
 }).RequireAuthorization("AAuth.Role.whoami-admin");
+
+// -----------------------------------------------------------------------
+// GET /federated — Four-party (federated) access.
+//
+// The verification + challenge middleware have already:
+//   - Challenged any agent token with a resource token whose `aud` is the AS
+//   - Verified the AS-issued auth token (iss = AS, dwk = aauth-access.json)
+//     against the AS's JWKS, plus cnf.jwk PoP, act.sub, and aud
+// The scope policy requires an Authorized auth token carrying `whoami`.
+// -----------------------------------------------------------------------
+app.MapGet("/federated", (HttpContext ctx) =>
+{
+    var result = ctx.GetAAuthVerification()!;
+    var parsed = ctx.GetAAuthParsedKey()!;
+
+    return Results.Ok(new
+    {
+        mode = "four-party",
+        scheme = "jwt",
+        agent = result.Agent,
+        sub = result.Subject,
+        scope = result.Scopes,
+        // In four-party the auth-token issuer is the Access Server, not the PS.
+        iss = result.Issuer,
+        userKey = result.Issuer is null ? null : $"{result.Issuer}|{result.Subject}",
+        act = parsed.Payload?["act"],
+    });
+}).RequireAuthorization("AAuth.Scope.whoami");
 
 app.Run();
 

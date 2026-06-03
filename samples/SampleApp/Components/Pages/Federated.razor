@@ -1,0 +1,279 @@
+@page "/federated"
+@using AAuth.Agent
+@using AAuth.Crypto
+@using AAuth.Headers
+@using AAuth.HttpSig
+@inject IJSRuntime JS
+@rendermode InteractiveServer
+
+<PageTitle>Federated — Four-Party (Access Server)</PageTitle>
+
+<h2>Federated — Four-Party (Access Server)</h2>
+
+<p>
+    The full <strong>four-party (federated)</strong> flow. The resource's
+    <code>/federated</code> branch challenges with a resource token whose
+    <code>aud</code> is an <strong>Access Server (AS)</strong> — not the Person
+    Server. The agent forwards it to its PS unchanged; the PS notices
+    <code>aud&nbsp;&ne;&nbsp;self</code>, federates to the AS, and the
+    <strong>Access Server</strong> evaluates policy and mints the
+    <code>aa-auth+jwt</code> (<code>dwk=aauth-access.json</code>). The resource
+    verifies it against the AS's JWKS.
+</p>
+
+<p class="text-muted">
+    <strong>Federation is transparent to the agent.</strong> This page's agent
+    code is identical to the three-party
+    <a href="deferred">Deferred</a> page — only the PS behaves differently. When
+    the AS requires consent it returns <code>202 requirement=interaction</code>;
+    the PS relays it, and the agent surfaces the AS consent URL on the
+    <em>same</em> challenge callback, then polls until the AS mints the auth
+    token. <strong>From the agent's perspective the stub AS and Keycloak are
+    identical</strong> — same 202 → interaction URL → poll → mint; only the
+    interaction URL's destination differs (the stub's own <em>Access Server</em>
+    consent screen vs a Keycloak login).
+</p>
+
+<div class="row">
+<div class="col-md-6">
+<h5>Agent (Client) Code</h5>
+<pre><code class="language-csharp">// Identical to three-party deferred — the agent never
+// talks to the Access Server. Federation happens at the
+// PS when resource_token.aud != PS. A 202 from the AS is
+// relayed by the PS and arrives on THIS callback.
+using var client = AAuthClientBuilder.SelfIssuing(key)
+    .As(issuer, agentId)
+    .WithKid(keyId)
+    .WithPersonServer(personServer)
+    .WithChallengeHandling(opts =&gt;
+    {
+        opts.OnInteractionRequired =
+            async (interaction, ct) =&gt;
+        {
+            var url = interaction.BuildUserUrl();
+            // Surface URL to user (AS consent screen / Keycloak)
+        };
+        opts.PollingTimeout =
+            TimeSpan.FromMinutes(2);
+        opts.DefaultPollInterval =
+            TimeSpan.FromSeconds(1);
+    })
+    .Build();
+
+// Calls the resource's /federated branch (aud = AS).
+var response = await client.GetAsync($"{resource}/federated");</code></pre>
+</div>
+<div class="col-md-6">
+<h5>Person Server (federation) Code</h5>
+<pre><code class="language-csharp">// The PS peeks resource_token.aud. If it is the PS
+// itself → mint directly (three-party). If it is a
+// trusted Access Server → federate: discover the AS,
+// make a SIGNED POST {as}/token with the resource_token
+// + agent_token, and return the AS-minted auth token.
+var aud = PeekJwtAudience(resourceToken);
+if (aud == psIssuer)
+    return MintLocally(...);            // three-party
+
+if (!trustedAccessServers.Contains(aud))
+    return Results.Json(new { error =
+        "untrusted_access_server" }, statusCode: 403);
+
+var auth = await accessServerClient.ExchangeAsync(
+    new AccessServerRequest
+    {
+        ResourceToken = resourceToken,
+        AgentToken    = agentToken,
+        // 202 interaction (Keycloak login) is relayed
+        // back to the agent via OnInteractionRequired.
+    }, ct);
+
+return Results.Json(new { auth_token = auth.Token });</code></pre>
+</div>
+</div>
+
+<div class="alert alert-info">
+    Self-issued agent identity. Key ID: <code>@_identity.KeyId</code>
+    @if (!string.IsNullOrEmpty(_accessServer))
+    {
+        <text> &mdash; Access Server: <code>@_accessServer</code></text>
+    }
+</div>
+
+@if (!_waitingForApproval && _response is null)
+{
+    <button class="btn btn-primary" @onclick="SendRequest" disabled="@_loading">
+        @(_loading ? "Sending..." : "Send Signed Request to /federated")
+    </button>
+    <p class="text-muted mt-1">
+        <small>
+            The <strong>Access Server</strong> will ask you to approve on its own
+            consent screen (badged <em>Access Server</em>). With a
+            <strong>Keycloak</strong> AS policy the same link is a Keycloak login
+            instead (<code>demo/demo</code> or <code>guest/guest</code>).
+        </small>
+    </p>
+}
+
+@if (_waitingForApproval)
+{
+    <div class="mt-3 alert alert-warning">
+        <h5>Access Server Interaction Required</h5>
+        <p>
+            The Access Server returned <code>202 Accepted</code> and is waiting for the
+            user to authenticate / consent (relayed by the Person Server).
+        </p>
+        <p>
+            <strong>Interaction URL:</strong><br />
+            <a href="@_interactionUrl" target="_blank" rel="noopener">@_interactionUrl</a>
+        </p>
+        <p class="text-muted">
+            Open the link above in a new tab and complete the login / consent.
+            The SDK is polling the pending endpoint in the background&hellip;
+            <span class="spinner-border spinner-border-sm" role="status"></span>
+            (@_pollCount polls)
+        </p>
+    </div>
+}
+
+@if (_response is not null)
+{
+    <div class="mt-3">
+        <h5>Response (auth token minted by the Access Server)</h5>
+        <div class="alert @(_success ? "alert-success" : "alert-warning")">
+            <strong>@_statusCode</strong>
+        </div>
+        <pre><code class="language-json">@_response</code></pre>
+    </div>
+}
+
+@if (_error is not null)
+{
+    <div class="mt-3 alert alert-danger">@_error</div>
+}
+
+@code {
+    [Inject] private SelfIssuedIdentity _identity { get; set; } = default!;
+    [Inject] private IConfiguration Config { get; set; } = default!;
+
+    private bool _loading;
+    private bool _waitingForApproval;
+    private string? _interactionUrl;
+    private int _pollCount;
+    private string? _response;
+    private string? _error;
+    private string? _statusCode;
+    private bool _success;
+    private string? _accessServer;
+
+    protected override void OnInitialized()
+    {
+        _accessServer = Config["AAuth:AccessServer"];
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await JS.InvokeVoidAsync("highlightCode");
+    }
+
+    private async Task SendRequest()
+    {
+        _loading = true;
+        _response = null;
+        _error = null;
+        _waitingForApproval = false;
+        _interactionUrl = null;
+        _pollCount = 0;
+
+        try
+        {
+            // Revoke any standing consent so the federated path triggers fresh.
+            await RevokeConsentAsync();
+
+            var personServer = Config["AAuth:PersonServer"]!;
+
+            // Self-issued token refresh + interaction relay. A 202 from the AS
+            // (via the PS) surfaces a consent URL here; the SDK then polls and
+            // resumes. This is byte-for-byte the three-party deferred agent.
+            using var client = AAuthClientBuilder.SelfIssuing(_identity.Key)
+                .As(_identity.Issuer, _identity.AgentId)
+                .WithKid(_identity.KeyId)
+                .WithPersonServer(personServer)
+                .WithChallengeHandling(opts =>
+                {
+                    opts.OnInteractionRequired = async (interaction, ct) =>
+                    {
+                        _interactionUrl = interaction.BuildUserUrl();
+                        _waitingForApproval = true;
+                        await InvokeAsync(StateHasChanged);
+                    };
+                    opts.PollingTimeout = TimeSpan.FromMinutes(2);
+                    opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
+                })
+                .Build();
+
+            var resourceUrl = Config["AAuth:Resource"]!;
+
+            // Background timer to update the poll count in the UI.
+            using var pollTimer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+            var pollTask = Task.Run(async () =>
+            {
+                while (await pollTimer.WaitForNextTickAsync())
+                {
+                    _pollCount++;
+                    await InvokeAsync(StateHasChanged);
+                }
+            });
+
+            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/federated");
+
+            pollTimer.Dispose();
+
+            _waitingForApproval = false;
+            _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
+            _success = response.IsSuccessStatusCode;
+            var raw = await response.Content.ReadAsStringAsync();
+            try { _response = System.Text.Json.JsonSerializer.Serialize(System.Text.Json.JsonDocument.Parse(raw), new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }); }
+            catch { _response = raw; }
+        }
+        catch (AAuthInteractionDeniedException)
+        {
+            _waitingForApproval = false;
+            _error = "The Access Server denied the request.";
+        }
+        catch (AAuthInteractionTimeoutException)
+        {
+            _waitingForApproval = false;
+            _error = "Timed out waiting for the Access Server decision (polling budget expired).";
+        }
+        catch (Exception ex)
+        {
+            _waitingForApproval = false;
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task RevokeConsentAsync()
+    {
+        var personServer = Config["AAuth:PersonServer"];
+        if (string.IsNullOrEmpty(personServer)) return;
+
+        var agentId = _identity.AgentId;
+        var resource = Config["AAuth:Resource"]!;
+
+        using var http = new HttpClient();
+        try
+        {
+            await http.PostAsJsonAsync(
+                $"{personServer.TrimEnd('/')}/admin/revoke",
+                new { agent = agentId, resource = $"{resource.TrimEnd('/')}/federated" });
+        }
+        catch
+        {
+            // /admin/revoke only exists on MockPersonServer — swallow errors
+        }
+    }
+}

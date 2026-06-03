@@ -1,15 +1,16 @@
 # Samples
 
-Eight sample applications demonstrating AAuth flows end-to-end.
+Nine sample applications demonstrating AAuth flows end-to-end.
 
 | Sample | Port | Description |
 |--------|------|-------------|
-| [WhoAmI](WhoAmI/) | 5000 | ASP.NET Core resource server — isolated per-mode pipelines (`/` index, `/hwk`, `/jkt-jwt`, `/jwks-uri`, `/jwt`, `/jwt/admin`, `/jwt/roles`) |
+| [WhoAmI](WhoAmI/) | 5000 | ASP.NET Core resource server — isolated per-mode pipelines (`/` index, `/hwk`, `/jkt-jwt`, `/jwks-uri`, `/jwt`, `/jwt/admin`, `/jwt/roles`, `/federated`) |
 | [Orchestrator](Orchestrator/) | 5200 | Intermediate service — call chaining with nested `act` delegation |
-| [MockPersonServer](MockPersonServer/) | 5100 | Reference Person Server — verifies exchanges, mints auth tokens. **Sample only — not part of the AAuth SDK.** |
+| [MockPersonServer](MockPersonServer/) | 5100 | Reference Person Server — verifies exchanges, mints auth tokens, federates to an Access Server. **Sample only — not part of the AAuth SDK.** |
 | [MockAgentProvider](MockAgentProvider/) | 5301 | Reference Agent Provider — issues agent tokens, hosts JWKS. **Sample only — not part of the AAuth SDK.** |
-| [GuidedTour](GuidedTour/) | 5400 | Blazor walk-through — visualises all four AAuth flows step by step |
-| [SampleApp](SampleApp/) | 5240 | Golden example — one page per signing mode (hwk, jwt, jwks_uri, call chain) |
+| [MockAccessServer](MockAccessServer/) | 5500 | Reference Access Server — the fourth party in federated access; evaluates policy (stub or Keycloak) and mints `aa-auth+jwt` (`dwk=aauth-access.json`). **Sample only — not part of the AAuth SDK.** |
+| [GuidedTour](GuidedTour/) | 5400 | Blazor walk-through — visualises every AAuth flow step by step, including the four-party federated flow |
+| [SampleApp](SampleApp/) | 5240 | Golden example — one page per signing mode (hwk, jwt, jwks_uri, call chain, federated four-party) |
 | [AgentConsole](AgentConsole/) | — | CLI agent — signs requests, handles challenges, exchanges with a PS |
 | [LiveWhoAmITest](LiveWhoAmITest/) | 5199 | Live interop test against `whoami.aauth.dev` + `person.hello.coop` — exercises all 3 protocol modes over a public tunnel |
 
@@ -21,7 +22,20 @@ The fastest way to run all samples together:
 make demo
 ```
 
-This starts WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + GuidedTour in parallel, prints their URLs, and tears them down on `Ctrl+C`. Then open <http://localhost:5400> and click **Run all**.
+This starts WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + MockAccessServer (stub) + GuidedTour + SampleApp in parallel, prints their URLs, and tears them down on `Ctrl+C`. Then open the **GuidedTour** at <http://localhost:5400> and click **Run all**, or the **SampleApp** at <http://localhost:5240>.
+
+For the **four-party (federated)** flow with an Access Server, `make demo` already
+includes a stub Access Server (no Docker). For the live Keycloak policy engine,
+use the Keycloak variant:
+
+```bash
+make demo-keycloak   # both UIs + real Keycloak policy engine (Docker)
+```
+
+The Keycloak target boots the Access Server with the Keycloak policy engine; log
+in as `demo`/`demo` (admin) or `guest`/`guest` (limited). See
+[Federated Access](../docs/workflows/federated-access.md) and the
+[Mock Access Server README](MockAccessServer/README.md).
 
 ## Running Individually
 

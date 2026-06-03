@@ -8,6 +8,7 @@
     --accent-2: #f0883e;
     --ok: #2ea043;
     --warn: #d29922;
+    --danger: #f85149;
     --border: #30363d;
     --code-bg: #0d1117;
 }
@@ -246,7 +247,7 @@ button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef44
 }
 
 /* sequence diagram */
-.seq { display: flex; flex-direction: column; height: 100%; }
+.seq { display: flex; flex-direction: column; min-height: 100%; }
 .lanes {
     display: grid;
     grid-auto-flow: column;
@@ -261,6 +262,7 @@ button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef44
 .lanes .resource2 { color: var(--ok); }
 .lanes .ps { color: var(--accent-2); }
 .lanes .ap { color: var(--warn); }
+.lanes .as { color: var(--danger); }
 .messages {
     position: relative;
     flex: 1;
@@ -331,6 +333,41 @@ button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef44
 .msg .arrow.leftward::before { left: -1px; border-right: 8px solid var(--muted); }
 .msg.highlight .arrow.rightward::after { border-left-color: var(--accent); }
 .msg.highlight .arrow.leftward::before { border-right-color: var(--accent); }
+
+/* Response arrows are always dotted (requests stay solid). The line back
+   travels on its own response row; the arrowhead (via .rightward/.leftward
+   ::after/::before) points at the caller. Labels carry the status + any
+   replayed detail and are always preserved. */
+.arrow.response {
+    background: transparent;
+    border-top: 2px dotted var(--muted);
+    height: 0;
+}
+/* The dotted line's visual centre is its border-top (≈1px above the box),
+   so nudge its arrowheads up to stay vertically centred on the line. */
+.arrow.response.rightward::after,
+.arrow.response.leftward::before { top: -6px; }
+.msg.highlight .arrow.response { border-top-color: var(--accent); }
+/* The response travels back on its own, shorter row directly under the
+   request (or under the component box). Its label is the compact status. */
+.msg.response-row {
+    height: 1.9rem;
+    margin: -0.2rem 0 0.5rem;
+}
+.msg.response-row .arrow { top: 50%; }
+.label.response-label {
+    top: calc(50% - 0.8rem);
+    background: var(--panel);
+    color: var(--muted);
+    border-style: dotted;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.72rem;
+    padding: 0.1rem 0.4rem;
+}
+.msg.response-row.highlight .label.response-label {
+    color: var(--accent);
+    border-color: var(--accent);
+}
 .msg .arrow.self {
     background: transparent;
     border: 2px solid var(--muted);
@@ -350,7 +387,7 @@ button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef44
     border-radius: 6px;
 }
 .substeps::before {
-    content: "inside orchestrator";
+    content: var(--substeps-label, "inside orchestrator");
     position: absolute;
     top: -0.55rem;
     left: 0.6rem;
@@ -382,6 +419,13 @@ button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef44
 }
 .msg.substep .arrow.rightward::after { border-left-color: var(--muted); opacity: 0.5; }
 .msg.substep .arrow.leftward::before { border-right-color: var(--muted); opacity: 0.5; }
+/* Dotted return arrow within the internal sub-step box. */
+.msg.substep .arrow.response {
+    background: transparent;
+    border-top: 2px dotted var(--muted);
+    height: 0;
+    opacity: 0.7;
+}
 
 /* Sequence-diagram `loop […]` box, mirrors mermaid's loop syntax. */
 .seq-loop {
@@ -500,6 +544,7 @@ pre.code-snippet { color: #c9d1d9; white-space: pre-wrap; }
 /* Entity highlights — URLs/IDs colored by party */
 .hl-agent    { color: var(--accent); font-weight: 600; text-decoration: underline dotted; cursor: help; }
 .hl-resource { color: var(--ok); font-weight: 600; text-decoration: underline dotted; cursor: help; }
+.hl-as       { color: var(--danger); font-weight: 600; text-decoration: underline dotted; cursor: help; }
 .hl-ps       { color: var(--accent-2); font-weight: 600; text-decoration: underline dotted; cursor: help; }
 
 /* Clickable external-link icon next to highlighted URLs */

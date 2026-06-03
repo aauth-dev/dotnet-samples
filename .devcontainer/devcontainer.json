@@ -3,6 +3,22 @@
   "build": {
     "dockerfile": "Dockerfile"
   },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "runArgs": [
+    "--privileged"
+  ],
+  "forwardPorts": [
+    8080,
+    5000,
+    5100,
+    5301,
+    5500
+  ],
+  "containerEnv": {
+    "LOCAL_WORKSPACE_FOLDER": "${localWorkspaceFolder}"
+  },
   "customizations": {
     "vscode": {
       "extensions": [

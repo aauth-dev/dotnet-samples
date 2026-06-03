@@ -24,6 +24,60 @@ The four parties are:
 
 The SDK supports all four signing modes (`hwk`, `jwks_uri`, `jwt`, `jkt-jwt`), the full three-party challenge/exchange flow (autonomous and deferred user-consent), signature verification middleware, resource & auth token builders, JWKS / metadata discovery, and a Blazor `GuidedTour` walk-through. See the [SDK documentation](docs/) for complete usage guides.
 
+## Access Modes
+
+AAuth supports four resource access modes. Each adds parties and capabilities, and they build on one another — adoption is incremental. Run `make demo` (no Docker) to start every service plus both UIs, then follow the demo column below. For the live-Keycloak federated experience, use `make demo-keycloak`.
+
+| Mode | Parties | When to Use | Signing | See it in the demos |
+|------|---------|-------------|---------|---------------------|
+| **Identity-Based** | Agent + Resource | Replacing API keys with cryptographic identity | `hwk` / `jwks_uri` | GuidedTour → flow **2 · Identity-based**; SampleApp → [`/hwk`](http://localhost:5240/hwk) and [`/jwks-uri`](http://localhost:5240/jwks-uri) |
+| **Resource-Managed** (two-party) | Agent + Resource | Resource manages authorization itself (interaction, OAuth/OIDC, internal policy) without an external PS or AS | Any | [Workflow guide](docs/workflows/resource-managed-access.md) — the resource owns the consent step |
+| **PS-Asserted** (three-party) | Agent + Resource + PS | Resource accepts identity claims (`sub`, `email`, `tenant`, `groups`, `roles`) from any Person Server | `jwt` | GuidedTour → flow **3 · PS-Asserted (Direct Grant)** and **4 · PS-Asserted (Deferred)**; SampleApp → [`/jwt`](http://localhost:5240/jwt) and [`/deferred`](http://localhost:5240/deferred) |
+| **Federated** (four-party) | Agent + Resource + PS + AS | Cross-domain access with the resource's own Access Server enforcing policy | `jwt` | GuidedTour → flow **6 · Federated (Four-Party)**; SampleApp → [`/federated`](http://localhost:5240/federated). Live Keycloak consent: `make demo-keycloak` |
+
+GuidedTour runs on [http://localhost:5400](http://localhost:5400) and SampleApp on [http://localhost:5240](http://localhost:5240). See [Getting Started](docs/getting-started.md#supported-flows) for the full breakdown of each mode.
+
+
+## See It Run
+
+Before writing any code, watch the protocol in action. The repo ships sample
+services and two interactive Blazor apps. The dev container has everything
+pre-configured; you can also run locally with the .NET 10 SDK.
+
+```bash
+make demo   # starts every service + the stub Access Server + both UIs
+```
+
+Then open the two UIs and click through the modes from the table above:
+
+### Guided Tour — http://localhost:5400
+
+Step-by-step walk-through showing every HTTP exchange, header, and token claim across all protocol flows.
+
+![Guided Tour](samples/GuidedTour/tour-screenshot.png)
+
+### Sample App — http://localhost:5240
+
+Self-contained Blazor app with one page per AAuth flow (HWK, JWKS URI, JWT direct grant, deferred user consent, call-chain multi-agent delegation, four-party federated).
+
+![Sample App](samples/SampleApp/sample-app.png)
+
+For the live-Keycloak federated experience, run `make demo-keycloak` instead. See
+[samples/README.md](samples/README.md) for the full list of sample projects and
+configuration options.
+
+### Dev container (recommended)
+
+Open this repo in VS Code → **Reopen in Container**. The container
+provides .NET 10, the `gh` CLI, and the C# Dev Kit extensions.
+
+### Local setup
+
+Install the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0), then:
+
+```bash
+dotnet build AAuth.slnx
+```
 
 ## Quick Start
 
@@ -69,39 +123,48 @@ sequenceDiagram
     Resource-->>Agent: 200 OK
 ```
 
-#### Self-Hosted Agent (Server-Side)
-
-Hosted services act as their own Agent Provider — generate a key, publish metadata, and self-issue tokens:
+On the agent side, building the client with `WithChallengeHandling` makes the entire 401 → exchange → retry cycle automatic — your code just makes the request:
 
 ```csharp
 using AAuth.Crypto;
 using AAuth.HttpSig;
-using AAuth.Server;
 
-var builder = WebApplication.CreateBuilder(args);
 var key = AAuthKey.Generate();
-const string Kid = "svc-key-1";
-var issuer = "https://my-service.example";
 
-var app = builder.Build();
-
-// Publish agent metadata so resources can discover the JWKS
-app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
-{
-    Issuer = issuer,
-    SigningKeys = new Dictionary<string, AAuthKey> { [Kid] = key },
-});
-
-// Build signed client with automatic token refresh and challenge handling
+// A hosted service acts as its own Agent Provider (self-issuing).
 using var client = AAuthClientBuilder.SelfIssuing(key)
-    .As(issuer, "aauth:my-service@my-service.example")
-    .WithKid(Kid)
+    .As("https://my-service.example", "aauth:my-service@my-service.example")
+    .WithKid("svc-key-1")
     .WithPersonServer("https://ps.example")
-    .WithChallengeHandling()
+    .WithChallengeHandling() // automatic 401 → PS exchange → retry
     .Build();
+
+var response = await client.GetAsync("https://resource.example/data");
+// 1. Agent signs GET with agent token → Resource verifies, returns 401 + resource_token
+// 2. ChallengeHandler POSTs resource_token to PS token endpoint
+// 3. PS validates agent, prompts user for consent, issues auth_token
+// 4. Agent retries GET signed with auth_token → Resource verifies → 200 OK
 ```
 
-#### Resource (Server-Side)
+**What happens step by step:**
+
+1. Agent signs the request with its agent token (`Signature-Key: sig=jwt;jwt="..."`)
+2. Resource verifies the signature, reads the `ps` claim, returns `401` with a `resource_token` (audience = PS URL)
+3. Agent POSTs the `resource_token` to the PS's token endpoint (signed request)
+4. PS validates the agent token, prompts the user for consent on the requested scope
+5. User grants consent; PS issues an `auth_token` (`aa-auth+jwt`) containing identity claims (`sub`, `email`, etc.)
+6. Agent retries the original request signed with the `auth_token`
+7. Resource verifies the auth token signature and claims → `200 OK`
+
+See [Getting Started](docs/getting-started.md#three-party-flow-deep-dive) for a detailed walk-through, including deferred consent.
+
+## Building Servers
+
+The snippets above are agent-side (the client). Hosting a party — a resource, or
+a self-issuing agent service — uses the SDK's server helpers. Start with the
+resource, since it's the party that issues the challenge.
+
+### Resource (Server-Side)
 
 The resource verifies signatures, publishes metadata, and issues resource token challenges:
 
@@ -145,29 +208,39 @@ app.UseAAuthChallenge(new ChallengeOptions
 
 The `UseAAuthChallenge` middleware (registered after verification) automatically returns `401` with an `AAuth-Requirement` header containing a resource token when the agent lacks an auth token. The `TrustedAuthTokenIssuers` allow-list restricts which Person Servers the resource will accept auth tokens from.
 
-#### Agent Calls the Resource
+### Self-Hosted Agent (Server-Side)
 
-With `WithChallengeHandling`, the entire 401 → exchange → retry cycle is automatic:
+Hosted services act as their own Agent Provider — generate a key, publish metadata, and self-issue tokens:
 
 ```csharp
-var response = await client.GetAsync("https://resource.example/data");
-// 1. Agent signs GET with agent token → Resource verifies, returns 401 + resource_token
-// 2. ChallengeHandler POSTs resource_token to PS token endpoint
-// 3. PS validates agent, prompts user for consent, issues auth_token
-// 4. Agent retries GET signed with auth_token → Resource verifies → 200 OK
+using AAuth.Crypto;
+using AAuth.HttpSig;
+using AAuth.Server;
+
+var builder = WebApplication.CreateBuilder(args);
+var key = AAuthKey.Generate();
+const string Kid = "svc-key-1";
+var issuer = "https://my-service.example";
+
+var app = builder.Build();
+
+// Publish agent metadata so resources can discover the JWKS
+app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
+{
+    Issuer = issuer,
+    SigningKeys = new Dictionary<string, AAuthKey> { [Kid] = key },
+});
+
+// Build signed client with automatic token refresh and challenge handling
+using var client = AAuthClientBuilder.SelfIssuing(key)
+    .As(issuer, "aauth:my-service@my-service.example")
+    .WithKid(Kid)
+    .WithPersonServer("https://ps.example")
+    .WithChallengeHandling()
+    .Build();
 ```
 
-**What happens step by step:**
-
-1. Agent signs the request with its agent token (`Signature-Key: sig=jwt;jwt="..."`)
-2. Resource verifies the signature, reads the `ps` claim, returns `401` with a `resource_token` (audience = PS URL)
-3. Agent POSTs the `resource_token` to the PS's token endpoint (signed request)
-4. PS validates the agent token, prompts the user for consent on the requested scope
-5. User grants consent; PS issues an `auth_token` (`aa-auth+jwt`) containing identity claims (`sub`, `email`, etc.)
-6. Agent retries the original request signed with the `auth_token`
-7. Resource verifies the auth token signature and claims → `200 OK`
-
-See [Getting Started](docs/getting-started.md#three-party-flow-deep-dive) for a detailed walk-through, including deferred consent and the resource-side token issuance code.
+See the [Server Guide](docs/server/verification-middleware.md) for the full resource-side token issuance, Person Server, and Access Server code.
 
 ## Documentation
 
@@ -180,48 +253,7 @@ Full SDK documentation lives in [`docs/`](docs/):
 - [Server Guide](docs/server/verification-middleware.md) — verification middleware, token issuance
 - [Configuration Reference](docs/reference/configuration.md)
 
-## Running the Samples & Guided Tour
-
-This repo includes sample services and an interactive Blazor walk-through.
-The dev container gives you everything pre-configured, but you can also
-run locally with the .NET 10 SDK.
-
-### Sample App
-
-Self-contained Blazor app with one page per AAuth flow (HWK, JWKS URI, JWT direct grant, Deferred user consent, Call Chain multi-agent delegation).
-
-```bash
-make demo-sample   # starts all servers + SampleApp on http://localhost:5240
-```
-
-![Sample App](samples/SampleApp/sample-app.png)
-
-### Guided Tour
-
-Step-by-step walk-through showing every HTTP exchange, header, and token claim across all protocol flows.
-
-```bash
-make demo          # starts all servers + GuidedTour on http://localhost:5400
-```
-
-![Guided Tour](samples/GuidedTour/tour-screenshot.png)
-
-See [samples/README.md](samples/README.md) for the full list of sample projects and configuration options.
-
-### Dev container (recommended)
-
-Open this repo in VS Code → **Reopen in Container**. The container
-provides .NET 10, the `gh` CLI, and the C# Dev Kit extensions.
-
-### Local setup
-
-Install the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0), then:
-
-```bash
-dotnet build AAuth.slnx
-```
-
-### Testing
+## Testing
 
 ```bash
 dotnet test AAuth.slnx                # full suite (unit + conformance)

@@ -14,6 +14,10 @@
         {
             <span class="hl-resource"><strong>Orchestrator:</strong> @Options.Value.OrchestratorUrl</span>
         }
+        @if (Session.IsFederatedMode)
+        {
+            <span class="hl-as"><strong>Access Server:</strong> @Options.Value.AccessServerUrl</span>
+        }
         @if (!Session.IsIdentityMode)
         {
             <span class="hl-ps"><strong>Person Server:</strong> @(string.IsNullOrWhiteSpace(Options.Value.PersonServerUrl) ? "(none)" : Options.Value.PersonServerUrl)</span>
@@ -34,7 +38,8 @@
             <option value="@TourMode.Identity">2 · Identity-based — no PS, 2 steps</option>
             <option value="@TourMode.Autonomous" disabled="@(!Session.HasPersonServer)">3 · PS-Asserted (Direct Grant) — no user, 6 steps</option>
             <option value="@TourMode.Deferred" disabled="@(!Session.HasPersonServer)">4 · PS-Asserted (Deferred) — user approves, 9 steps</option>
-            <option value="@TourMode.CallChain" disabled="@(!Session.HasPersonServer || !Session.HasOrchestrator)">5 · Call Chain (Multi-Agent) — 7 steps</option>
+            <option value="@TourMode.CallChain" disabled="@(!Session.HasPersonServer || !Session.HasOrchestrator)">5 · Call Chain (Multi-Agent) — user approves, 7 or 13 steps</option>
+            <option value="@TourMode.Federated" disabled="@(!Session.HasPersonServer || !Session.HasAccessServer)">6 · Federated (Four-Party) — Access Server, 7–10 steps</option>
         </select>
     </label>
     @if (Session.Mode == TourMode.Identity)
@@ -53,7 +58,7 @@
         {
             <a class="primary approve" href="@Session.UserInteractionUrl" target="_blank" rel="noopener"
                @onclick="MarkInteractionOpenedAsync" @onclick:preventDefault="false">
-                Open consent page ↗
+                @(Session.IsFederatedMode ? "Open Access Server consent ↗" : "Open consent page ↗")
             </a>
         }
         else
@@ -127,8 +132,24 @@
                     a downstream resource (WhoAmI). The Orchestrator passes the agent's auth_token as
                     <code>upstream_token</code> during its own PS exchange, producing a <strong>nested <code>act</code>
                     claim</strong> that records the full delegation chain. The final resource sees exactly who
-                    acted on whose behalf. <strong>No human in the loop — standing consent for
-                    both hops.</strong>
+                    acted on whose behalf. <strong>Human approval required — two consents:</strong> first
+                    for <em>Agent → Orchestrator</em>, then for the Orchestrator's chained
+                    <em>Orchestrator → WhoAmI</em> hop. Each surfaces its own interaction URL and pending poll.
+                </text>
+                break;
+            case TourMode.Federated:
+                <text>
+                    <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — four-party
+                    federation.
+                    The resource's <code>/federated</code> branch challenges with a resource_token
+                    whose <code>aud</code> is an <strong>Access Server</strong> (not the Person Server).
+                    The agent forwards it to its PS unchanged; the PS notices <code>aud ≠ self</code>,
+                    federates to the AS, and the <strong>Access Server</strong> evaluates policy and
+                    mints the <code>aa-auth+jwt</code> (<code>dwk=aauth-access.json</code>). The resource
+                    verifies it against the AS's JWKS. <strong>Interactive consent at the Access
+                    Server</strong> — with the default <code>RequireConsent=true</code> the stub
+                    policy parks the decision and prompts for Approve/Deny (Keycloak shows its own
+                    login/consent).
                 </text>
                 break;
         }
@@ -147,8 +168,8 @@
                 elapsed <strong>@ElapsedPolling()</strong>
             </div>
             <div class="polling__hint">
-                Waiting for you to click <strong>Approve</strong> or <strong>Deny</strong> on the
-                PS consent tab. You can come back here anytime — the poll loop is live.
+                Waiting for you to complete the @(Session.IsFederatedMode ? "Access Server consent" : "Approve or Deny on the PS consent")
+                tab. You can come back here anytime — the poll loop is live.
             </div>
         </div>
     </section>
@@ -165,8 +186,8 @@
                          Lanes="@ActiveLanes"
                          IsPolling="@Session.IsPolling"
                          PollCount="@Session.PollCount"
-                         LoopGhostStep="@(Session.IsDeferredMode ? new SequenceDiagram.GhostStep(Session.PollStepNumber, $"polling /pending/{{id}}…", Actor.Agent, Actor.PersonServer) : null)"
-                         LoopAroundStepNumber="@(Session.IsDeferredMode ? Session.PollStepNumber : 0)"
+                         LoopGhostStep="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending) ? new SequenceDiagram.GhostStep(Session.PollStepNumber, $"polling /pending/{{id}}…", Actor.Agent, Session.PollLoopTarget) : null)"
+                         LoopAroundStepNumber="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending) ? Session.PollStepNumber : 0)"
                          CompletedLoopLabel="@CompletedLoopLabel()"
                          LoopCompletedKind="@CompletedLoopKind()" />
     </section>
@@ -209,10 +230,19 @@
         new("Person Server", "ps", Actor.PersonServer),
     };
 
+    private static readonly SequenceDiagram.LaneDefinition[] FederatedLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Resource", "resource", Actor.Resource),
+        new("Person Server", "ps", Actor.PersonServer),
+        new("Access Server", "as", Actor.AccessServer),
+    };
+
     private SequenceDiagram.LaneDefinition[]? ActiveLanes =>
         Session.IsBootstrapMode ? BootstrapLanes :
         Session.IsIdentityMode ? IdentityLanes :
-        Session.IsCallChainMode ? CallChainLanes : null;
+        Session.IsCallChainMode ? CallChainLanes :
+        Session.IsFederatedMode ? FederatedLanes : null;
 
     protected override async Task OnInitializedAsync()
     {
@@ -249,7 +279,7 @@
     }
 
     private StepRecord? PollStepRecord =>
-        Session.IsDeferredMode
+        (Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending)
             ? Session.Steps.FirstOrDefault(s => s.Number == Session.PollStepNumber)
             : null;
 
@@ -335,7 +365,9 @@
                     // "Run all" cannot do user interaction on the user's
                     // behalf — surface the URL and stop so the user can
                     // click the consent link themselves.
-                    _error = "Stopped: the next step requires you to open the PS consent page and click Approve. Click the green link above.";
+                    _error = Session.IsFederatedMode
+                        ? "Stopped: the next step requires you to open the Access Server login (Keycloak) and sign in. Click the green link above."
+                        : "Stopped: the next step requires you to open the PS consent page and click Approve. Click the green link above.";
                     break;
                 }
                 await Session.RunNextAsync();

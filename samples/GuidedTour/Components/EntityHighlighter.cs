@@ -4,8 +4,8 @@ using System.Text.RegularExpressions;
 namespace GuidedTour.Components;
 
 /// <summary>
-/// Highlights known agent, resource, and person-server URLs/IDs in
-/// already-HTML-escaped text by wrapping matches in colored spans with
+/// Highlights known agent, resource, person-server, and access-server URLs/IDs
+/// in already-HTML-escaped text by wrapping matches in colored spans with
 /// a tooltip indicating what entity the value represents.
 /// </summary>
 public sealed class EntityHighlighter
@@ -32,6 +32,10 @@ public sealed class EntityHighlighter
         // Person Server
         if (!string.IsNullOrWhiteSpace(options.PersonServerUrl))
             entries.Add((BaseOrigin(options.PersonServerUrl), "hl-ps", "Person Server"));
+
+        // Access Server
+        if (!string.IsNullOrWhiteSpace(options.AccessServerUrl))
+            entries.Add((BaseOrigin(options.AccessServerUrl), "hl-as", "Access Server"));
 
         _rules = entries
             .OrderByDescending(e => e.Value.Length)

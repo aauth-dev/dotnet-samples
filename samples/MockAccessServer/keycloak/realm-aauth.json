@@ -1,0 +1,154 @@
+{
+  "realm": "aauth",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "roles": {
+    "realm": [
+      {
+        "name": "whoami-admin",
+        "description": "Grants the elevated whoami:admin scope at the Access Server."
+      }
+    ]
+  },
+  "groups": [
+    {
+      "name": "demo-users",
+      "realmRoles": []
+    }
+  ],
+  "users": [
+    {
+      "username": "demo",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Demo",
+      "lastName": "Admin",
+      "email": "demo@aauth.example",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "whoami-admin"
+      ],
+      "groups": [
+        "/demo-users"
+      ]
+    },
+    {
+      "username": "guest",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Guest",
+      "lastName": "User",
+      "email": "guest@aauth.example",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "guest",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [],
+      "groups": [
+        "/demo-users"
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "aauth-access-server",
+      "name": "AAuth Access Server",
+      "description": "Confidential client the .NET AS adapter authenticates as; hosts the WhoAmI authorization resource and policies.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "aauth-access-server-secret",
+      "clientAuthenticatorType": "client-secret",
+      "consentRequired": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": true,
+      "redirectUris": [
+        "http://localhost:5500/interaction/callback",
+        "http://localhost:5500/*"
+      ],
+      "webOrigins": [
+        "http://localhost:5500"
+      ],
+      "fullScopeAllowed": true,
+      "authorizationSettings": {
+        "allowRemoteResourceManagement": true,
+        "policyEnforcementMode": "ENFORCING",
+        "decisionStrategy": "AFFIRMATIVE",
+        "resources": [
+          {
+            "name": "whoami",
+            "displayName": "WhoAmI resource",
+            "ownerManagedAccess": false,
+            "scopes": [
+              { "name": "whoami" },
+              { "name": "whoami:admin" }
+            ]
+          }
+        ],
+        "scopes": [
+          { "name": "whoami" },
+          { "name": "whoami:admin" }
+        ],
+        "policies": [
+          {
+            "name": "any-authenticated-client",
+            "description": "Always satisfied for requests made by the Access Server adapter client (i.e. any authenticated user).",
+            "type": "client",
+            "logic": "POSITIVE",
+            "decisionStrategy": "AFFIRMATIVE",
+            "config": {
+              "clients": "[\"aauth-access-server\"]"
+            }
+          },
+          {
+            "name": "whoami-admin-role",
+            "description": "Requires the realm role whoami-admin.",
+            "type": "role",
+            "logic": "POSITIVE",
+            "decisionStrategy": "UNANIMOUS",
+            "config": {
+              "roles": "[{\"id\":\"whoami-admin\",\"required\":true}]"
+            }
+          },
+          {
+            "name": "whoami-permission",
+            "description": "Base whoami scope: any authenticated user.",
+            "type": "scope",
+            "logic": "POSITIVE",
+            "decisionStrategy": "AFFIRMATIVE",
+            "config": {
+              "resources": "[\"whoami\"]",
+              "scopes": "[\"whoami\"]",
+              "applyPolicies": "[\"any-authenticated-client\"]"
+            }
+          },
+          {
+            "name": "whoami-admin-permission",
+            "description": "Elevated whoami:admin scope: requires the whoami-admin role.",
+            "type": "scope",
+            "logic": "POSITIVE",
+            "decisionStrategy": "UNANIMOUS",
+            "config": {
+              "resources": "[\"whoami\"]",
+              "scopes": "[\"whoami:admin\"]",
+              "applyPolicies": "[\"whoami-admin-role\"]"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -19,7 +19,7 @@ Agent A → Orchestrator (Resource B) → WhoAmI (Resource C)
 ## Running the Sample
 
 ```bash
-make demo-sample   # starts WhoAmI, PS, AP, Orchestrator, SampleApp
+make demo   # starts WhoAmI, PS, AP, Orchestrator, stub Access Server, both UIs
 ```
 
 Then open <http://localhost:5240/call-chain> to see the flow in action.

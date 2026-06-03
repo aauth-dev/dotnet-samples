@@ -21,6 +21,7 @@ export const TourMode = {
   Autonomous: 'Autonomous',
   Deferred: 'Deferred',
   CallChain: 'CallChain',
+  Federated: 'Federated',
 } as const;
 export type TourMode = (typeof TourMode)[keyof typeof TourMode];
 
@@ -45,6 +46,10 @@ const PLAN_STEPS: Record<TourMode, number> = {
   Autonomous: 6,
   Deferred: 9,
   CallChain: 7,
+  // Four-party federated: the plan shows 7 steps at selection time; once the
+  // exchange returns 202 (the AS requires consent — its own stub screen or
+  // Keycloak) the plan expands to 10 (consent + poll), mirroring deferred.
+  Federated: 7,
 };
 
 /** Select a flow in the `#flow-select` picker and wait for the timeline to reset. */
