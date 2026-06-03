@@ -4,7 +4,7 @@ using System.Net.Http;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using AAuth.Crypto;
-using AAuth.DependencyInjection;
+using AAuth;
 using AAuth.HttpSig;
 using AAuth.Server;
 using AAuth.Tokens;

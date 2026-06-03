@@ -4,8 +4,9 @@ using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Headers;
+using Microsoft.Extensions.DependencyInjection;
 
-namespace AAuth.DependencyInjection;
+namespace AAuth;
 
 /// <summary>
 /// Options for configuring an AAuth agent via <see cref="AAuthAgentServiceCollectionExtensions.AddAAuthAgent"/>.

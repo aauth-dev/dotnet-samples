@@ -2,7 +2,6 @@ using System.Text.Json.Nodes;
 using AAuth;
 using AAuth.Agent;
 using AAuth.Crypto;
-using AAuth.DependencyInjection;
 using AAuth.Discovery;
 using AAuth.Errors;
 using AAuth.Headers;

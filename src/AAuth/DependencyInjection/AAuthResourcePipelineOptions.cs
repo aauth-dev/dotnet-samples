@@ -1,7 +1,8 @@
 using System.Collections.Generic;
 using AAuth.Server;
+using Microsoft.AspNetCore.Builder;
 
-namespace AAuth.DependencyInjection;
+namespace AAuth;
 
 /// <summary>
 /// Options for the unified <see cref="AAuthApplicationBuilderExtensions.MapAAuthResource"/>

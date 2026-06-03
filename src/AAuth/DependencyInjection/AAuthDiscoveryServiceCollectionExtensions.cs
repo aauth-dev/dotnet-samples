@@ -1,10 +1,10 @@
 using System;
 using System.Net.Http;
+using AAuth;
 using AAuth.Discovery;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
-namespace AAuth.DependencyInjection;
+namespace Microsoft.Extensions.DependencyInjection;
 
 /// <summary>
 /// Extension methods for registering shared AAuth discovery clients in DI.

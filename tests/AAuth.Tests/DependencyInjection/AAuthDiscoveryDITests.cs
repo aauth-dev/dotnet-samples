@@ -1,5 +1,5 @@
 using System;
-using AAuth.DependencyInjection;
+using AAuth;
 using AAuth.Discovery;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;

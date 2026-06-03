@@ -1,6 +1,6 @@
 using System;
 using System.Net.Http;
-using AAuth.DependencyInjection;
+using AAuth;
 using AAuth.HttpSig;
 using AAuth.Server;
 using AAuth.Tokens;

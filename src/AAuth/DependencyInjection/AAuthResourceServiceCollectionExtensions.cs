@@ -1,15 +1,15 @@
 using System;
 using System.Net.Http;
+using AAuth;
 using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Server;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
-namespace AAuth.DependencyInjection;
+namespace Microsoft.Extensions.DependencyInjection;
 
 /// <summary>
 /// Extension methods for registering AAuth resource server services via DI.

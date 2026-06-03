@@ -1,6 +1,6 @@
 using System;
 
-namespace AAuth.DependencyInjection;
+namespace AAuth;
 
 /// <summary>
 /// Options for configuring shared discovery clients in DI.

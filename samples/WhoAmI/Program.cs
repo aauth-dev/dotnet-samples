@@ -1,5 +1,5 @@
 using AAuth.Crypto;
-using AAuth.DependencyInjection;
+using AAuth;
 using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Server;

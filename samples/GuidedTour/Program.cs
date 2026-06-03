@@ -1,5 +1,5 @@
 using AAuth.Crypto;
-using AAuth.DependencyInjection;
+using AAuth;
 using AAuth.Server;
 using GuidedTour;
 using GuidedTour.Components;
