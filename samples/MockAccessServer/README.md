@@ -26,17 +26,20 @@ evaluates policy and mints the auth token.
      three-party.
   5. Evaluates access policy through a pluggable `IAccessPolicy`:
      - `stub` (default) — a hard-coded allow policy that denies elevated
-       (`:`-qualified) scopes to non-admin agents, and can require identity
-       claims (§Claims Required) via `AccessServer:RequireClaims`.
+       (`:`-qualified) scopes to non-admin agents, can require identity
+       claims (§Claims Required) via `AccessServer:RequireClaims`, and can
+       render its own interactive Approve/Deny consent screen via
+       `AccessServer:RequireConsent` (returns `202`
+       `requirement=interaction` until the user decides) — no Docker needed.
      - `keycloak` — delegates the decision to Keycloak. The AS redirects the
        user through an interactive Keycloak login, then asks Keycloak for an
        authorization decision (UMA `uma-ticket` grant). Until the user logs in,
        `POST /token` returns `202` with `requirement=interaction`.
   6. For a deferred decision, returns `202` and parks it in an
-     `IAccessPendingStore` — `requirement=interaction` (Keycloak login) or
-     `requirement=claims` with the claim names in the body's `required_claims`
-     (§Claims Required); the PS then pushes a directed `sub` + claims to the
-     `Location` and resumes polling.
+     `IAccessPendingStore` — `requirement=interaction` (stub consent screen or
+     Keycloak login) or `requirement=claims` with the claim names in the body's
+     `required_claims` (§Claims Required); the PS then pushes a directed `sub` +
+     claims to the `Location` and resumes polling.
   7. Mints an `aa-auth+jwt` with `dwk = aauth-access.json`, `iss` = this AS,
      `aud` = the resource, bound to the agent's key.
 

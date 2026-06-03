@@ -96,13 +96,19 @@ if (!trustedAccessServers.Contains(aud))
 
 // Four-party: federate to the AS. The PS signs the call with the `jwks_uri`
 // scheme so the AS can pin the caller to a trusted Person Server.
-var auth = await accessServerClient.ExchangeAsync(new AccessServerRequest
+// `FederateAsync` drives the whole AS exchange — including polling any
+// `202` deferred/interaction/claims requirement to completion — and returns
+// the verified `aa-auth+jwt` directly.
+var authToken = await accessServerClient.FederateAsync(aud, new AccessServerRequest
 {
-    ResourceToken = resourceToken,
-    AgentToken    = agentToken,
+    ResourceToken    = resourceToken,
+    AgentToken       = agentToken,
+    ExpectedAudience = resourceUrl,   // resource token `iss`
+    ExpectedAgentId  = agentId,
+    AgentKey         = agentConfirmationKey,
 }, ct);
 
-return Results.Json(new { auth_token = auth.Token });
+return Results.Json(new { auth_token = authToken });
 ```
 
 ## Access-Server-Side Code
@@ -165,13 +171,16 @@ for the realm/client/resource/scope/policy setup and the claim mapping.
 
 ## Consent Bubble-Up (interactive AS)
 
-When the AS policy engine needs an interactive user login/consent (Keycloak), the
+When the AS policy engine needs an interactive user login/consent, the
 AS cannot decide synchronously. It returns `202` with
 `AAuth-Requirement: requirement=interaction` and a `Location` URL. The PS
 **relays** that `202` back to the agent on the same challenge pipeline, and the
-agent surfaces the AS login URL and polls until the verdict resolves — structurally
-identical to PS-asserted deferred consent, but the consent screen is the AS's
-(Keycloak), not the Person Server's.
+agent surfaces the AS interaction URL and polls until the verdict resolves —
+structurally identical to PS-asserted deferred consent, but the consent screen is
+the AS's, not the Person Server's. Both AS policies exercise this path: the
+`stub` policy renders its own Approve/Deny consent page
+(`AccessServer:RequireConsent`), and the `keycloak` policy hands off to
+Keycloak's login/consent screen.
 
 ```mermaid
 sequenceDiagram

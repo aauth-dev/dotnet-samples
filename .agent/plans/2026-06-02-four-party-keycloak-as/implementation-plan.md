@@ -462,10 +462,10 @@ Implementation Decisions (2026-06-02):
 
 Definition of Done:
 
-- [ ] SampleApp has a four-party page reachable from the nav.
-- [ ] Pre-granted path completes with a direct `200` + `aa-auth+jwt`.
-- [ ] Deferred path surfaces the AS consent URL and completes after approval.
-- [ ] Playwright specs cover both paths.
+- [x] SampleApp has a four-party page reachable from the nav.
+- [x] Pre-granted path completes with a direct `200` + `aa-auth+jwt` (exercised by the `MockAccessServerTests` direct-allow integration tests; the SampleApp page itself runs the stub with `RequireConsent=true`, so the interactive path is the default UX).
+- [x] Deferred path surfaces the AS consent URL and completes after approval.
+- [x] Playwright specs cover both paths (`federated.spec.ts` approve + `federated-deferred.spec.ts` Keycloak).
 
 ## Phase 8 — End-to-end wiring & orchestration
 
@@ -514,11 +514,13 @@ Implementation Decisions:
 
 Definition of Done:
 
-- [ ] `make demo-federated` (GuidedTour) and `make demo-federated-sample`
-      (SampleApp) each start Keycloak + AS adapter + resource + PS + agent, and
-      the SampleApp `/federated` page completes the interactive Keycloak consent.
-- [ ] Matching `*-stub` targets run the same two flavors with no Docker.
-- [ ] Agent completes a federated call end-to-end (Keycloak grant path).
+- [x] `make demo-keycloak` starts Keycloak + AS adapter + resource + PS + agent
+      + **both** UIs, and the SampleApp `/federated` page completes the
+      interactive Keycloak consent. (The per-app `demo-federated`/`-sample`
+      split was consolidated into a single `demo` / `demo-keycloak` pair.)
+- [x] `make demo` runs the same flavor with the pure-.NET stub AS, no Docker.
+- [x] Agent completes a federated call end-to-end via `make agent-federated`
+      (Keycloak grant path).
 
 ## Phase 9 — End-to-end test through the full four-party flow
 
@@ -551,13 +553,20 @@ Implementation Decisions:
 
 Definition of Done:
 
-- [ ] Playwright `webServer` boots Keycloak + AS adapter + federated resource.
-- [ ] New GuidedTour spec (`samples/GuidedTour/playwright-tests/federated.spec.ts`)
-      asserts the four swimlanes and the AS-issued auth token.
-- [ ] New SampleApp spec(s) (`samples/SampleApp/playwright-tests/federated.spec.ts`,
-      and `federated-deferred.spec.ts` for the consent path) cover grant,
-      deferred-consent, and deny paths.
-- [ ] Suite is green locally and in CI (`reuseExistingServer` honored).
+- [x] Playwright `webServer` boots the AS adapter + federated resource. Per the
+      Phase 9 decision the default backend is the **stub** AS (no Docker in CI);
+      the real Keycloak path is opt-in via `KEYCLOAK_E2E=1` +
+      `AccessServer__PolicyProvider=keycloak` (the `federated-deferred.spec.ts`
+      project), skipped otherwise.
+- [x] New GuidedTour spec (`samples/GuidedTour/playwright-tests/federated.spec.ts`)
+      asserts the four swimlanes and the AS-issued auth token (approve + deny).
+- [x] New SampleApp spec(s) (`samples/SampleApp/playwright-tests/federated.spec.ts`,
+      and `federated-deferred.spec.ts` for the Keycloak consent path) cover the
+      grant/deferred-consent path. The **deny** path is covered by the GuidedTour
+      `federated.spec.ts` deny test (the SampleApp federated spec asserts approve
+      only).
+- [x] Suite is green locally and in CI (`reuseExistingServer` honored): 25
+      passed, 1 skipped (Keycloak-gated).
 
 ## Phase 10 — Documentation
 
@@ -582,10 +591,11 @@ Implementation Decisions:
 
 Definition of Done:
 
-- [ ] `federated-access.md` covers AS server code, Keycloak, and consent bubble-up.
-- [ ] Keycloak AS adapter setup is documented (realm/policy + claim mapping).
-- [ ] Sample READMEs and the docs index reference the four-party demos.
-- [ ] Mermaid diagrams render and in-repo links resolve.
+- [x] `federated-access.md` covers AS server code, Keycloak, and consent bubble-up.
+- [x] Keycloak AS adapter setup is documented in the Mock Access Server README
+      (realm/client/resource/scope/policy + claim mapping).
+- [x] Sample READMEs and the docs index reference the four-party demos.
+- [x] Mermaid diagrams render and in-repo links resolve.
 
 ## Phase 11 — Identity claims push (requirement=claims, full spec)
 
