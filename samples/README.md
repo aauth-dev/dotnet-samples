@@ -22,18 +22,17 @@ The fastest way to run all samples together:
 make demo
 ```
 
-This starts WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + GuidedTour in parallel, prints their URLs, and tears them down on `Ctrl+C`. Then open <http://localhost:5400> and click **Run all**.
+This starts WhoAmI + Orchestrator + MockPersonServer + MockAgentProvider + MockAccessServer (stub) + GuidedTour + SampleApp in parallel, prints their URLs, and tears them down on `Ctrl+C`. Then open the **GuidedTour** at <http://localhost:5400> and click **Run all**, or the **SampleApp** at <http://localhost:5240>.
 
-For the **four-party (federated)** flow with an Access Server, the default `demo-tour`
-and `demo-sampleapp` targets already include a stub Access Server (no Docker). For the
-live Keycloak policy engine, use the `-keycloak` variants:
+For the **four-party (federated)** flow with an Access Server, `make demo` already
+includes a stub Access Server (no Docker). For the live Keycloak policy engine,
+use the Keycloak variant:
 
 ```bash
-make demo-tour-keycloak       # GuidedTour + real Keycloak policy engine
-make demo-sampleapp-keycloak  # SampleApp  + real Keycloak policy engine
+make demo-keycloak   # both UIs + real Keycloak policy engine (Docker)
 ```
 
-The Keycloak targets boot the Access Server with the Keycloak policy engine; log
+The Keycloak target boots the Access Server with the Keycloak policy engine; log
 in as `demo`/`demo` (admin) or `guest`/`guest` (limited). See
 [Federated Access](../docs/workflows/federated-access.md) and the
 [Mock Access Server README](MockAccessServer/README.md).

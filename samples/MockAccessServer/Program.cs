@@ -34,6 +34,9 @@ var asKey = AAuthKey.Generate();
 const string AsKid = "as-1";
 const string AsScope = "whoami";
 var asIssuer = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5500";
+ConsentHtml.Authority = Uri.TryCreate(asIssuer, UriKind.Absolute, out var asIssuerUri)
+    ? asIssuerUri.Authority
+    : asIssuer;
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
 
 // Person Servers this AS will broker for. The PS authenticates to the AS
@@ -322,9 +325,13 @@ static class ConsentHtml
         + "button.deny{background:#fecaca;border-color:#f87171}</style>";
 
     // Identity banner: makes it unmistakable the user is at the Access Server.
-    private const string Banner =
+    // <see cref="Authority"/> is set once at startup from the configured issuer.
+    private static string Banner =>
         "<div class=badge><span class=dot></span>Access Server</div>"
-        + "<div class=sub>localhost:5500 — the federated authority that issues the four-party auth token</div>";
+        + $"<div class=sub>{Enc(Authority)} — the federated authority that issues the four-party auth token</div>";
+
+    /// <summary>The issuer host authority shown in the banner (e.g. <c>localhost:5500</c>).</summary>
+    public static string Authority { get; set; } = "localhost:5500";
 
     public static string Page(string title, string bodyHtml) =>
         "<!doctype html><meta charset=utf-8><title>" + Enc(title) + " — Access Server</title>"

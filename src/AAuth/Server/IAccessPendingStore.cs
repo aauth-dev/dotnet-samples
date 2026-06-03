@@ -95,15 +95,28 @@ public sealed class AccessPendingEntry
 
     /// <summary>The denial reason when <see cref="Status"/> is Denied.</summary>
     public string? DenyReason { get; set; }
+
+    /// <summary>When the entry was parked. Drives in-memory TTL eviction.</summary>
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
 }
 
 /// <summary>
 /// Process-wide in-memory <see cref="IAccessPendingStore"/>. Suitable for a
 /// single-instance demo/sample; a production AS would persist entries with a
 /// TTL and bind them to the calling Person Server.
+/// <para>
+/// Entries are evicted once they exceed <see cref="Ttl"/> (lazily, on each
+/// <see cref="Add"/>/<see cref="Get"/>) so the dictionary does not grow without
+/// bound. The TTL is generous enough to outlive the interactive round-trip and
+/// any poll retries, so a successfully-minted entry is not yanked out from
+/// under a re-polling Person Server.
+/// </para>
 /// </summary>
 public sealed class InMemoryAccessPendingStore : IAccessPendingStore
 {
+    /// <summary>How long a parked entry is retained before it is evicted.</summary>
+    public static readonly TimeSpan Ttl = TimeSpan.FromMinutes(10);
+
     private readonly ConcurrentDictionary<string, AccessPendingEntry> _entries = new();
 
     /// <inheritdoc />
@@ -115,6 +128,7 @@ public sealed class InMemoryAccessPendingStore : IAccessPendingStore
         JsonObject? claims,
         IReadOnlyList<string>? requiredClaims = null)
     {
+        Sweep();
         var entry = new AccessPendingEntry
         {
             Id = Guid.NewGuid().ToString("N"),
@@ -131,8 +145,11 @@ public sealed class InMemoryAccessPendingStore : IAccessPendingStore
     }
 
     /// <inheritdoc />
-    public AccessPendingEntry? Get(string id) =>
-        _entries.TryGetValue(id, out var entry) ? entry : null;
+    public AccessPendingEntry? Get(string id)
+    {
+        Sweep();
+        return _entries.TryGetValue(id, out var entry) ? entry : null;
+    }
 
     /// <inheritdoc />
     public void MarkAllowed(string id)
@@ -155,4 +172,17 @@ public sealed class InMemoryAccessPendingStore : IAccessPendingStore
 
     /// <summary>Remove all entries (test helper).</summary>
     public void Clear() => _entries.Clear();
+
+    /// <summary>Evict entries older than <see cref="Ttl"/>.</summary>
+    private void Sweep()
+    {
+        var cutoff = DateTimeOffset.UtcNow - Ttl;
+        foreach (var kv in _entries)
+        {
+            if (kv.Value.CreatedAt < cutoff)
+            {
+                _entries.TryRemove(kv.Key, out _);
+            }
+        }
+    }
 }

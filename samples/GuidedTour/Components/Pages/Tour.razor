@@ -146,7 +146,10 @@
                     The agent forwards it to its PS unchanged; the PS notices <code>aud ≠ self</code>,
                     federates to the AS, and the <strong>Access Server</strong> evaluates policy and
                     mints the <code>aa-auth+jwt</code> (<code>dwk=aauth-access.json</code>). The resource
-                    verifies it against the AS's JWKS. <strong>No human in the loop (stub policy).</strong>
+                    verifies it against the AS's JWKS. <strong>Interactive consent at the Access
+                    Server</strong> — with the default <code>RequireConsent=true</code> the stub
+                    policy parks the decision and prompts for Approve/Deny (Keycloak shows its own
+                    login/consent).
                 </text>
                 break;
         }
