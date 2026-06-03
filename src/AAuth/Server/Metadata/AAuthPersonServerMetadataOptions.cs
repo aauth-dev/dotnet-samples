@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using AAuth.Crypto;
 
-namespace AAuth.Server;
+namespace AAuth.Server.Metadata;
 
 /// <summary>
 /// Configuration for the <c>/.well-known/aauth-person.json</c> endpoint.

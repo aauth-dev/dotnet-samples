@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 
-namespace AAuth.Server;
+namespace AAuth.Server.Metadata;
 
 /// <summary>
 /// Extension methods that map AAuth well-known endpoints onto an ASP.NET Core

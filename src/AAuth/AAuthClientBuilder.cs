@@ -8,6 +8,7 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Server;
+using AAuth.Server.CallChaining;
 using Microsoft.AspNetCore.Http;
 
 namespace AAuth;

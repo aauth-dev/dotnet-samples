@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 
-namespace AAuth.Server;
+namespace AAuth.Server.Authorization;
 
 /// <summary>
 /// Authorization requirement that demands a specific AAuth scope be present

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using AAuth.Server;
+using AAuth.Server.Verification;
 using Microsoft.AspNetCore.Builder;
 
 namespace AAuth;

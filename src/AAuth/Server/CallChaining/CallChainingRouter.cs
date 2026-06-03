@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.IdentityModel.Tokens;
 
-namespace AAuth.Server;
+namespace AAuth.Server.CallChaining;
 
 /// <summary>
 /// Pure-function routing logic for call chaining per §Call Chaining.

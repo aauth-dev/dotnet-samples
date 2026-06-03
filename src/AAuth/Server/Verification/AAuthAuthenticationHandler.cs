@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-namespace AAuth.Server;
+namespace AAuth.Server.Verification;
 
 /// <summary>
 /// ASP.NET Core authentication handler that maps <see cref="AAuthVerificationResult"/>

@@ -5,7 +5,7 @@ using AAuth.Agent;
 using AAuth.Discovery;
 using AAuth.Headers;
 
-namespace AAuth.Server;
+namespace AAuth.Server.CallChaining;
 
 /// <summary>
 /// <see cref="DelegatingHandler"/> that enables a resource to act as an

@@ -1,6 +1,11 @@
 using AAuth.Crypto;
 using AAuth;
 using AAuth.Server;
+using AAuth.Server.Authorization;
+using AAuth.Server.CallChaining;
+using AAuth.Server.Challenge;
+using AAuth.Server.Metadata;
+using AAuth.Server.Verification;
 using GuidedTour;
 using GuidedTour.Components;
 

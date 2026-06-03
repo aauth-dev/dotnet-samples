@@ -7,10 +7,11 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.Errors;
 using AAuth.HttpSig;
+using AAuth.Server.CallChaining;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Http;
 
-namespace AAuth.Server;
+namespace AAuth.Server.Verification;
 
 /// <summary>
 /// ASP.NET Core middleware that verifies AAuth HTTP signatures (RFC 9421 PoP)

@@ -3,10 +3,11 @@ using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.Headers;
 using AAuth.HttpSig;
+using AAuth.Server.Verification;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Http;
 
-namespace AAuth.Server;
+namespace AAuth.Server.Challenge;
 
 /// <summary>
 /// ASP.NET Core middleware that automatically issues 401 challenges with

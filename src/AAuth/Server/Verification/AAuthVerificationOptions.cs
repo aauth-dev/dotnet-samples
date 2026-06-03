@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace AAuth.Server;
+namespace AAuth.Server.Verification;
 
 /// <summary>
 /// Configuration for <see cref="AAuthVerificationMiddleware"/> which

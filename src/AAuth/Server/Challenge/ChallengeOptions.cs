@@ -1,7 +1,8 @@
 using System.Collections.Generic;
 using AAuth.Crypto;
+using AAuth.Server.Verification;
 
-namespace AAuth.Server;
+namespace AAuth.Server.Challenge;
 
 /// <summary>
 /// Configuration for <see cref="AAuthChallengeMiddleware"/> which automatically

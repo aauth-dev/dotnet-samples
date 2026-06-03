@@ -8,6 +8,8 @@ using AAuth.Discovery;
 using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
+using AAuth.Server.Metadata;
+using AAuth.Server.Verification;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;

@@ -2,7 +2,7 @@ using AAuth.Headers;
 using AAuth.HttpSig;
 using Microsoft.AspNetCore.Http;
 
-namespace AAuth.Server;
+namespace AAuth.Server.Verification;
 
 /// <summary>
 /// Extension methods on <see cref="HttpContext"/> for convenient access to

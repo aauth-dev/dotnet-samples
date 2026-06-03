@@ -10,6 +10,7 @@ using AAuth.Errors;
 using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
+using AAuth.Server.CallChaining;
 
 namespace AAuth.Agent;
 

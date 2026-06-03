@@ -8,6 +8,11 @@ using AAuth.Errors;
 using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
+using AAuth.Server.Authorization;
+using AAuth.Server.CallChaining;
+using AAuth.Server.Challenge;
+using AAuth.Server.Metadata;
+using AAuth.Server.Verification;
 using AAuth.Tokens;
 using MockPersonServer;
 

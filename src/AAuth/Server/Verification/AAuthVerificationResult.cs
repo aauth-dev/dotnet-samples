@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace AAuth.Server;
+namespace AAuth.Server.Verification;
 
 /// <summary>
 /// Typed verification result exposed via <c>HttpContext.Features</c> after

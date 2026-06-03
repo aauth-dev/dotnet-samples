@@ -3,7 +3,7 @@ using System.Net.Http;
 using AAuth.Crypto;
 using AAuth.HttpSig;
 
-namespace AAuth.Server;
+namespace AAuth.Server.CallChaining;
 
 /// <summary>
 /// Configuration for a resource acting as an agent to access downstream

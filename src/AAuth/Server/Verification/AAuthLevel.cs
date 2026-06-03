@@ -1,4 +1,4 @@
-namespace AAuth.Server;
+namespace AAuth.Server.Verification;
 
 /// <summary>
 /// Authorization level determined by the type of AAuth credential presented.

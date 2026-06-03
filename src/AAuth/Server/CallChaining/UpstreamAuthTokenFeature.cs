@@ -1,4 +1,4 @@
-namespace AAuth.Server;
+namespace AAuth.Server.CallChaining;
 
 /// <summary>
 /// Feature set on <see cref="Microsoft.AspNetCore.Http.HttpContext.Features"/>

@@ -2,7 +2,9 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 
-namespace AAuth.Server;
+using AAuth.Server.Verification;
+
+namespace AAuth.Server.Authorization;
 
 /// <summary>
 /// Authorization handler that evaluates <see cref="AAuthScopeRequirement"/>

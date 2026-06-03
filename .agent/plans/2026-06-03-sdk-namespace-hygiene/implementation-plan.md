@@ -227,14 +227,19 @@ Microsoft namespaces — most apps never import `AAuth.Server.*` directly.
 - Keep the stores group (`IJtiStore`, `InMemoryJtiStore`, `IOpaqueTokenStore`,
   `RevocationEndpoint`) at the `AAuth.Server` root — no dedicated
   `AAuth.Server.Stores` (resolved 2026-06-03).
+- `AAuthResourceMetadataOptions` is declared inside `WellKnownEndpoints.cs`, so
+  it moves to `AAuth.Server.Metadata` with that file (no separate file).
+- `AAuthAccessServerMetadataOptions` was also folded into
+  `AAuth.Server.Metadata` (it is a `.well-known` metadata type); the grouping
+  table above omitted it but it belongs with the other metadata options.
 
 ### Definition of Done
 
-- [ ] `Server/` types relocated to the agreed sub-namespaces and matching folders
-- [ ] DI extensions and in-repo callers updated with the new imports
-- [ ] No half-split namespace (every moved type and its references consistent)
-- [ ] `dotnet build AAuth.slnx -v q` clean; full unit + conformance suites green
-- [ ] `make demo` / `make demo-keycloak` start; e2e green
+- [x] `Server/` types relocated to the agreed sub-namespaces and matching folders
+- [x] DI extensions and in-repo callers updated with the new imports
+- [x] No half-split namespace (every moved type and its references consistent)
+- [x] `dotnet build AAuth.slnx -v q` clean; full unit + conformance suites green
+- [ ] `make demo` / `make demo-keycloak` start; e2e green _(consolidated run before Phase 7)_
 
 ---
 

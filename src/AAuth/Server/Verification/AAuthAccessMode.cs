@@ -1,4 +1,4 @@
-namespace AAuth.Server;
+namespace AAuth.Server.Verification;
 
 /// <summary>
 /// Specifies how a resource handles access decisions after identity verification.

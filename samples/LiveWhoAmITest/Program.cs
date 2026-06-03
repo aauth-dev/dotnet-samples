@@ -26,6 +26,11 @@ using AAuth.Crypto;
 using AAuth.Errors;
 using AAuth.HttpSig;
 using AAuth.Server;
+using AAuth.Server.Authorization;
+using AAuth.Server.CallChaining;
+using AAuth.Server.Challenge;
+using AAuth.Server.Metadata;
+using AAuth.Server.Verification;
 
 const string WhoAmIUrl = "https://whoami.aauth.dev/";
 const string PersonServer = "https://person.hello.coop";
