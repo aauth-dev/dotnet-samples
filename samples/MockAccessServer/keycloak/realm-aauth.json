@@ -63,13 +63,14 @@
   "clients": [
     {
       "clientId": "aauth-access-server",
-      "name": "AAuth Access Server adapter",
+      "name": "AAuth Access Server",
       "description": "Confidential client the .NET AS adapter authenticates as; hosts the WhoAmI authorization resource and policies.",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
       "secret": "aauth-access-server-secret",
       "clientAuthenticatorType": "client-secret",
+      "consentRequired": true,
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": true,

@@ -15,9 +15,12 @@ namespace MockAccessServer.Policy;
 ///   PS-asserted claims carry the <c>whoami-admin</c> role.</item>
 /// </list>
 ///
-/// The stub is non-interactive — it never returns <c>NeedsInteraction</c>;
-/// the interactive login/consent round-trip is exercised by
-/// <c>KeycloakAccessPolicy</c>.
+/// When <c>requireConsent</c> is set (from <c>AccessServer:RequireConsent</c>)
+/// the stub returns <see cref="AccessDecisionKind.NeedsInteraction"/> for every
+/// request it would otherwise allow — mirroring Keycloak's interactive
+/// login/consent round-trip so that, from the agent's perspective, the stub and
+/// Keycloak behave identically (same 202 → interaction URL → poll → mint); only
+/// the interaction URL differs (the stub's own consent screen vs Keycloak).
 /// </summary>
 public sealed class StubAccessPolicy : IAccessPolicy
 {
@@ -25,6 +28,7 @@ public sealed class StubAccessPolicy : IAccessPolicy
     public const string AdminRole = "whoami-admin";
 
     private readonly IReadOnlyList<string> _requiredClaims;
+    private readonly bool _requireConsent;
 
     /// <summary>
     /// Create the stub policy. <paramref name="requiredClaims"/> (from
@@ -32,10 +36,17 @@ public sealed class StubAccessPolicy : IAccessPolicy
     /// §Claims Required push: when set, the policy returns
     /// <see cref="AccessDecisionKind.NeedsClaims"/> until the Person Server has
     /// pushed every named claim. Empty (the default) preserves the
-    /// non-interactive allow/deny behaviour.
+    /// allow/deny behaviour. When <paramref name="requireConsent"/> (from
+    /// <c>AccessServer:RequireConsent</c>) is set, an otherwise-allowed request
+    /// returns <see cref="AccessDecisionKind.NeedsInteraction"/> so the user
+    /// approves at the AS consent screen, just like the Keycloak path.
     /// </summary>
-    public StubAccessPolicy(IReadOnlyList<string>? requiredClaims = null)
-        => _requiredClaims = requiredClaims ?? [];
+    public StubAccessPolicy(
+        IReadOnlyList<string>? requiredClaims = null, bool requireConsent = false)
+    {
+        _requiredClaims = requiredClaims ?? [];
+        _requireConsent = requireConsent;
+    }
 
     public Task<AccessDecision> EvaluateAsync(
         AccessPolicyRequest request, CancellationToken cancellationToken = default)
@@ -54,6 +65,15 @@ public sealed class StubAccessPolicy : IAccessPolicy
         {
             return Task.FromResult(AccessDecision.Deny(
                 $"scope '{request.Scope}' requires the '{AdminRole}' role"));
+        }
+
+        // Interactive consent: park the (otherwise-allowed) decision so the
+        // user approves at the AS consent screen. Once approved the pending
+        // entry flips to Allowed and the poll mints — the policy is not
+        // re-evaluated, so this never loops.
+        if (_requireConsent)
+        {
+            return Task.FromResult(AccessDecision.NeedsInteraction());
         }
 
         return Task.FromResult(AccessDecision.Allow());

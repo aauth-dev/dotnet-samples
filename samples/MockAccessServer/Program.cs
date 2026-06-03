@@ -74,7 +74,10 @@ switch (policyProvider)
     case "stub":
         var stubRequiredClaims = builder.Configuration
             .GetSection("AccessServer:RequireClaims").Get<string[]>() ?? [];
-        builder.Services.AddSingleton<IAccessPolicy>(new StubAccessPolicy(stubRequiredClaims));
+        var stubRequireConsent = builder.Configuration
+            .GetValue("AccessServer:RequireConsent", false);
+        builder.Services.AddSingleton<IAccessPolicy>(
+            new StubAccessPolicy(stubRequiredClaims, stubRequireConsent));
         break;
     case "keycloak":
         var keycloakOptions = new KeycloakOptions();
@@ -121,8 +124,15 @@ app.MapAAuthAccessServer(new AAuthAccessServerOptions
 });
 
 // -----------------------------------------------------------------------
-// GET /interaction/login?code={id} — browser entry point. Redirects the
-// user to the configured identity provider (Keycloak OIDC code flow).
+// GET /interaction/login?code={id} — browser entry point.
+//
+// * Keycloak policy  → 302-redirect to the Keycloak OIDC code flow.
+// * stub policy      → render the AS's own consent screen (Approve / Deny),
+//                      so that from the agent's perspective the stub and
+//                      Keycloak are identical (same 202 → interaction URL →
+//                      poll → mint); only the interaction URL's destination
+//                      differs.
+//
 // Excluded from AAuth verification (no signature; it is the user's browser).
 // -----------------------------------------------------------------------
 app.MapGet("/interaction/login", (HttpContext ctx, string code) =>
@@ -131,19 +141,75 @@ app.MapGet("/interaction/login", (HttpContext ctx, string code) =>
     var entry = pending.Get(code);
     if (entry is null)
     {
-        return Results.NotFound(new { error = "unknown_interaction" });
+        return Results.Content(
+            ConsentHtml.NotFound(),
+            contentType: "text/html",
+            statusCode: StatusCodes.Status404NotFound);
     }
 
-    if (app.Services.GetRequiredService<IAccessPolicy>() is not IInteractiveAccessPolicy interactive)
+    // Interactive (Keycloak) policy: hand off to the OIDC provider.
+    if (app.Services.GetRequiredService<IAccessPolicy>() is IInteractiveAccessPolicy interactive)
     {
-        return Results.Json(
-            new { error = "interaction_unsupported", detail = "configured policy is not interactive" },
-            statusCode: StatusCodes.Status400BadRequest);
+        var redirectUri = $"{asIssuer.TrimEnd('/')}/interaction/callback";
+        return Results.Redirect(interactive.BuildAuthorizationUrl(entry.Id, redirectUri));
     }
 
-    var redirectUri = $"{asIssuer.TrimEnd('/')}/interaction/callback";
-    return Results.Redirect(interactive.BuildAuthorizationUrl(entry.Id, redirectUri));
+    // Stub policy: render the Access Server's own consent screen.
+    return Results.Content(
+        ConsentHtml.Prompt(code, entry.AgentId, entry.ResourceUrl, entry.Scope),
+        contentType: "text/html");
 });
+
+// -----------------------------------------------------------------------
+// POST /interaction/approve — the stub AS consent screen's Approve button.
+// Flips the pending entry to Allowed so the agent's next poll mints the
+// four-party auth token. Excluded from AAuth verification (browser form).
+// -----------------------------------------------------------------------
+app.MapPost("/interaction/approve", async (HttpContext ctx) =>
+{
+    var pending = app.Services.GetRequiredService<IAccessPendingStore>();
+    var code = (await ctx.Request.ReadFormAsync())["code"].ToString();
+    if (string.IsNullOrEmpty(code))
+    {
+        return Results.BadRequest(new { error = "invalid_request", detail = "missing 'code'" });
+    }
+    var entry = pending.Get(code);
+    if (entry is null)
+    {
+        return Results.Content(
+            ConsentHtml.NotFound(), contentType: "text/html",
+            statusCode: StatusCodes.Status404NotFound);
+    }
+    pending.MarkAllowed(entry.Id);
+    return Results.Content(
+        ConsentHtml.Approved(entry.AgentId, entry.ResourceUrl, entry.Scope),
+        contentType: "text/html");
+}).DisableAntiforgery();
+
+// -----------------------------------------------------------------------
+// POST /interaction/deny — the stub AS consent screen's Deny button. Marks
+// the pending entry Denied so the agent's next poll receives 403 access_denied.
+// -----------------------------------------------------------------------
+app.MapPost("/interaction/deny", async (HttpContext ctx) =>
+{
+    var pending = app.Services.GetRequiredService<IAccessPendingStore>();
+    var code = (await ctx.Request.ReadFormAsync())["code"].ToString();
+    if (string.IsNullOrEmpty(code))
+    {
+        return Results.BadRequest(new { error = "invalid_request", detail = "missing 'code'" });
+    }
+    var entry = pending.Get(code);
+    if (entry is null)
+    {
+        return Results.Content(
+            ConsentHtml.NotFound(), contentType: "text/html",
+            statusCode: StatusCodes.Status404NotFound);
+    }
+    pending.MarkDenied(entry.Id, "user denied at the Access Server");
+    return Results.Content(
+        ConsentHtml.Denied(entry.AgentId, entry.ResourceUrl, entry.Scope),
+        contentType: "text/html");
+}).DisableAntiforgery();
 
 // -----------------------------------------------------------------------
 // GET /interaction/callback?code={kcCode}&state={id} — Keycloak redirects
@@ -226,14 +292,87 @@ app.Run();
 
 // Minimal completion page shown to the user after the Keycloak round-trip.
 static string InteractionHtml(string title, string body) =>
-    $"<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>{title}</title></head>"
-    + $"<body style=\"font-family:sans-serif;margin:3rem\"><h1>{title}</h1><p>{body}</p></body></html>";
+    ConsentHtml.Page(title, $"<p>{body}</p>");
 
 // Demo convention shared with MockPersonServer: an agent whose id starts with
 // `aauth:demo@` is treated as holding the admin role. A production AS would
 // receive the principal's directory membership via the PS's claim push.
 static bool IsAdminAgent(string agentId) =>
     agentId.StartsWith("aauth:demo@", StringComparison.Ordinal);
+
+// -----------------------------------------------------------------------
+// Access Server consent-screen HTML. Mirrors the MockPersonServer consent
+// screen's shape, but with an unmistakable **Access Server** identity banner
+// (red, matching the four-party swimlane) so the user always knows which
+// server they are approving at — the resource-owning Person Server, or the
+// federated Access Server.
+// -----------------------------------------------------------------------
+static class ConsentHtml
+{
+    private const string Style =
+        "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
+        + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#b91c1c;color:#fff;"
+        + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
+        + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#fecaca}"
+        + ".sub{color:#777;font-size:.85rem;margin:.35rem 0 1.25rem}"
+        + "h1{font-size:1.25rem}.row{display:flex;gap:.5rem;margin:.25rem 0}.row b{min-width:6rem;color:#555}"
+        + "form{margin-top:1.5rem;display:inline-flex;gap:.75rem}"
+        + "button{padding:.5rem 1rem;font-size:1rem;cursor:pointer;border-radius:.25rem;border:1px solid #999}"
+        + "button.approve{background:#6ee7b7;border-color:#34d399}"
+        + "button.deny{background:#fecaca;border-color:#f87171}</style>";
+
+    // Identity banner: makes it unmistakable the user is at the Access Server.
+    private const string Banner =
+        "<div class=badge><span class=dot></span>Access Server</div>"
+        + "<div class=sub>localhost:5500 — the federated authority that issues the four-party auth token</div>";
+
+    public static string Page(string title, string bodyHtml) =>
+        "<!doctype html><meta charset=utf-8><title>" + Enc(title) + " — Access Server</title>"
+        + Style + Banner + bodyHtml;
+
+    public static string Prompt(string code, string agent, string resource, string scope) =>
+        Page(
+            "Approve agent at the Access Server",
+            "<h1>An agent is requesting federated access on your behalf</h1>"
+            + "<p>This is the <b>Access Server's</b> consent screen. In a real AS you would be "
+            + "signed in via your identity provider (e.g. Keycloak) before reaching here.</p>"
+            + $"<div class=row><b>Agent:</b> <code>{Enc(agent)}</code></div>"
+            + $"<div class=row><b>Resource:</b> <code>{Enc(resource)}</code></div>"
+            + $"<div class=row><b>Scope:</b> <code>{Enc(scope)}</code></div>"
+            + "<form method=post action=\"/interaction/approve\">"
+            + $"<input type=hidden name=code value=\"{Enc(code)}\">"
+            + "<button class=approve type=submit>Approve</button></form>"
+            + "<form method=post action=\"/interaction/deny\">"
+            + $"<input type=hidden name=code value=\"{Enc(code)}\">"
+            + "<button class=deny type=submit>Deny</button></form>");
+
+    public static string Approved(string agent, string resource, string scope) =>
+        Page(
+            "Approved",
+            "<h1>Approved</h1>"
+            + $"<p>You granted <code>{Enc(agent)}</code> federated access to "
+            + $"<code>{Enc(resource)}</code> with scope <code>{Enc(scope)}</code> "
+            + "at the <b>Access Server</b>.</p>"
+            + "<p>You can close this tab — the agent will receive its auth token on its next poll.</p>");
+
+    public static string Denied(string agent, string resource, string scope) =>
+        Page(
+            "Denied",
+            "<h1>Denied</h1>"
+            + $"<p>You denied <code>{Enc(agent)}</code>'s federated request for "
+            + $"<code>{Enc(resource)}</code> at the <b>Access Server</b>. "
+            + "The agent's next poll will receive <code>403 access_denied</code>.</p>"
+            + "<p>You can close this tab.</p>");
+
+    public static string NotFound() =>
+        Page(
+            "Unknown or expired code",
+            "<h1>Unknown or expired code</h1>"
+            + "<p>This consent request is no longer pending at the Access Server. The agent may "
+            + "have already received an auth token, or the code was never issued.</p>");
+
+    private static string Enc(string value) => System.Net.WebUtility.HtmlEncode(value);
+}
 
 // Marker type for `WebApplicationFactory<MockAccessServer.Entry>` in the
 // integration tests, matching the MockPersonServer pattern.

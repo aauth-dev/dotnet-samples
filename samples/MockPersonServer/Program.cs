@@ -644,15 +644,21 @@ app.MapGet("/interaction", (string? code, PendingStore pending) =>
     }
 
     var html =
-        "<!doctype html><meta charset=utf-8><title>Approve agent at Mock PS</title>"
-        + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:3rem auto;padding:0 1rem;line-height:1.5}"
+        "<!doctype html><meta charset=utf-8><title>Approve agent at the Person Server</title>"
+        + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
+        + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#1d4ed8;color:#fff;"
+        + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
+        + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}"
+        + ".sub{color:#777;font-size:.85rem;margin:.35rem 0 1.25rem}"
         + "h1{font-size:1.25rem}.row{display:flex;gap:.5rem;margin:.25rem 0}.row b{min-width:6rem;color:#555}"
-        + "form{margin-top:1.5rem;display:flex;gap:.75rem}"
+        + "form{margin-top:1.5rem;display:inline-flex;gap:.75rem}"
         + "button{padding:.5rem 1rem;font-size:1rem;cursor:pointer;border-radius:.25rem;border:1px solid #999}"
         + "button.approve{background:#6ee7b7;border-color:#34d399}"
         + "button.deny{background:#fecaca;border-color:#f87171}</style>"
+        + "<div class=badge><span class=dot></span>Person Server</div>"
+        + "<div class=sub>localhost:5100 — the server that holds your resources and standing consent</div>"
         + "<h1>An agent is requesting access on your behalf</h1>"
-        + "<p>This is the Mock Person Server's consent screen. In a real PS you would be signed in via cookie / passkey / SSO before reaching here.</p>"
+        + "<p>This is the <b>Person Server's</b> consent screen. In a real PS you would be signed in via cookie / passkey / SSO before reaching here.</p>"
         + $"<div class=row><b>Agent:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.Agent)}</code></div>"
         + $"<div class=row><b>Resource:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.Resource)}</code></div>"
         + $"<div class=row><b>Scope:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.Scope)}</code></div>"
@@ -685,12 +691,16 @@ app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent
     }
     consent.Grant(entry.Agent, entry.Resource, entry.Scope);
     return Results.Content(
-        "<!doctype html><meta charset=utf-8><title>Approved</title>"
-        + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:3rem auto;padding:0 1rem;line-height:1.5}</style>"
+        "<!doctype html><meta charset=utf-8><title>Approved — Person Server</title>"
+        + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
+        + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#1d4ed8;color:#fff;"
+        + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
+        + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}</style>"
+        + "<div class=badge><span class=dot></span>Person Server</div>"
         + "<h1>Approved</h1>"
         + $"<p>You granted <code>{System.Net.WebUtility.HtmlEncode(entry.Agent)}</code> access to "
         + $"<code>{System.Net.WebUtility.HtmlEncode(entry.Resource)}</code> with scope "
-        + $"<code>{System.Net.WebUtility.HtmlEncode(entry.Scope)}</code>.</p>"
+        + $"<code>{System.Net.WebUtility.HtmlEncode(entry.Scope)}</code> at the <b>Person Server</b>.</p>"
         + "<p>You can close this tab — the agent will receive its auth token on its next poll.</p>",
         contentType: "text/html");
 }).DisableAntiforgery();
@@ -712,10 +722,14 @@ app.MapPost("/interaction/deny", async (HttpContext ctx, PendingStore pending) =
     }
     pending.Deny(code);
     return Results.Content(
-        "<!doctype html><meta charset=utf-8><title>Denied</title>"
-        + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:3rem auto;padding:0 1rem;line-height:1.5}</style>"
+        "<!doctype html><meta charset=utf-8><title>Denied — Person Server</title>"
+        + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
+        + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#1d4ed8;color:#fff;"
+        + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
+        + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}</style>"
+        + "<div class=badge><span class=dot></span>Person Server</div>"
         + "<h1>Denied</h1>"
-        + $"<p>You denied <code>{System.Net.WebUtility.HtmlEncode(entry.Agent)}</code>'s request. The agent's next poll will receive <code>403 access_denied</code>.</p>"
+        + $"<p>You denied <code>{System.Net.WebUtility.HtmlEncode(entry.Agent)}</code>'s request at the <b>Person Server</b>. The agent's next poll will receive <code>403 access_denied</code>.</p>"
         + "<p>You can close this tab.</p>",
         contentType: "text/html");
 }).DisableAntiforgery();

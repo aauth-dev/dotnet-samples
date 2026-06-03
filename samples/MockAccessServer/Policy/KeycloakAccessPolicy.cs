@@ -81,6 +81,11 @@ public sealed class KeycloakAccessPolicy : IAccessPolicy, IInteractiveAccessPoli
             ["scope"] = "openid",
             ["redirect_uri"] = redirectUri,
             ["state"] = state,
+            // Force Keycloak to render its consent screen on every login so the
+            // user explicitly approves the AS — matching the stub AS UX. Without
+            // this (and with the realm client's "Consent Required" off) Keycloak
+            // would authenticate silently and redirect straight back.
+            ["prompt"] = "consent",
         };
         var qs = string.Join('&', query.Select(kv =>
             $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value ?? string.Empty)}"));
