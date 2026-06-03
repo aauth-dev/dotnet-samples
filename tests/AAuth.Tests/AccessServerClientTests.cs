@@ -94,7 +94,7 @@ public class AccessServerClientTests
     }
 
     [Fact]
-    public async Task FederateAsync_ThrowsNotSupported_OnClaimsRequirement()
+    public async Task FederateAsync_ThrowsNotSupported_OnClaimsRequirement_WhenNoHandler()
     {
         var agentKey = AAuthKey.Generate();
         var stub = new StubAccessServer(() =>
@@ -107,12 +107,181 @@ public class AccessServerClientTests
         });
         var client = BuildClient(stub);
 
+        // No OnClaimsRequired handler configured -> NotSupportedException.
         var ex = await Assert.ThrowsAsync<NotSupportedException>(
             () => client.FederateAsync(AsIssuer, NewRequest(agentKey)));
 
         Assert.Contains("requirement=claims", ex.Message);
     }
 
+    [Fact]
+    public async Task FederateAsync_PushesClaimsAndReturnsAuthToken_OnClaimsRequirement()
+    {
+        var agentKey = AAuthKey.Generate();
+        var authToken = BuildAuthToken(agentKey, audience: ResourceUrl, scope: "whoami");
+
+        // First /token call -> 202 requirement=claims (required_claims in body);
+        // the signed claims push -> 200 auth_token.
+        var stub = new StubAccessServer(
+            tokenResponse: () =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = new StringContent(
+                        new JsonObject
+                        {
+                            ["status"] = "pending",
+                            ["required_claims"] = new JsonArray("email", "tenant"),
+                        }.ToJsonString(),
+                        Encoding.UTF8,
+                        "application/json"),
+                };
+                response.Headers.TryAddWithoutValidation(AAuthRequirementHeader.Name, "requirement=claims");
+                response.Headers.Location = new Uri($"{AsIssuer}/pending/abc");
+                return response;
+            },
+            claimsResponse: _ => Ok(authToken));
+        var client = BuildClient(stub);
+
+        AAuthClaimsRequirement? seen = null;
+        var result = await client.FederateAsync(AsIssuer, new AccessServerRequest
+        {
+            ResourceToken = "the-resource-token",
+            AgentToken = "the-agent-token",
+            ExpectedAudience = ResourceUrl,
+            ExpectedAgentId = AgentId,
+            AgentKey = agentKey,
+            RequestedScope = "whoami",
+            OnClaimsRequired = (requirement, _) =>
+            {
+                seen = requirement;
+                return Task.FromResult(new AAuthClaimsResponse
+                {
+                    Subject = "directed-123",
+                    Claims = new Dictionary<string, JsonNode?>
+                    {
+                        ["email"] = "demo@person.example",
+                        ["tenant"] = "demo-tenant",
+                    },
+                });
+            },
+        });
+
+        Assert.Equal(authToken, result);
+        Assert.NotNull(seen);
+        Assert.Contains("email", seen!.RequiredClaims);
+        Assert.Contains("tenant", seen.RequiredClaims);
+        // The directed sub + claims were POSTed (signed) to the pending URL.
+        Assert.NotNull(stub.LastClaimsPushBody);
+        Assert.Equal("directed-123", (string?)stub.LastClaimsPushBody!["sub"]);
+        Assert.Equal("demo@person.example", (string?)stub.LastClaimsPushBody["email"]);
+    }
+
+    [Fact]
+    public async Task FederateAsync_ThrowsInvalidOperation_WhenClaimsHandlerOmitsSub()
+    {
+        var agentKey = AAuthKey.Generate();
+        var stub = new StubAccessServer(
+            tokenResponse: () =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = new StringContent(
+                        new JsonObject { ["required_claims"] = new JsonArray("email") }.ToJsonString(),
+                        Encoding.UTF8,
+                        "application/json"),
+                };
+                response.Headers.TryAddWithoutValidation(AAuthRequirementHeader.Name, "requirement=claims");
+                response.Headers.Location = new Uri($"{AsIssuer}/pending/abc");
+                return response;
+            });
+        var client = BuildClient(stub);
+
+        // The handler returns claims WITHOUT the mandatory directed sub.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.FederateAsync(AsIssuer, new AccessServerRequest
+            {
+                ResourceToken = "the-resource-token",
+                AgentToken = "the-agent-token",
+                ExpectedAudience = ResourceUrl,
+                ExpectedAgentId = AgentId,
+                AgentKey = agentKey,
+                RequestedScope = "whoami",
+                OnClaimsRequired = (_, _) => Task.FromResult(
+                    new AAuthClaimsResponse { Subject = string.Empty }),
+            }));
+
+        Assert.Contains("sub", ex.Message);
+    }
+
+    [Fact]
+    public async Task FederateAsync_ComposesInteractionThenClaims_OnSameLocation()
+    {
+        // Spec §Trust Establishment: mechanisms compose onto one Location.
+        // POST /token -> 202 requirement=interaction; the deferred poll then
+        // escalates to 202 requirement=claims on the SAME Location; the signed
+        // claims push -> 200 auth_token. Verifies the client handles a
+        // requirement=claims that arrives MID-POLL, not just as the first reply.
+        var agentKey = AAuthKey.Generate();
+        var authToken = BuildAuthToken(agentKey, audience: ResourceUrl, scope: "whoami");
+
+        var stub = new StubAccessServer(
+            tokenResponse: () =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.Accepted);
+                response.Headers.TryAddWithoutValidation(
+                    AAuthRequirementHeader.Name, "requirement=interaction; code=\"abc123\"; url=\"https://as.test/login\"");
+                response.Headers.Location = new Uri($"{AsIssuer}/pending/xyz");
+                return response;
+            },
+            claimsResponse: _ => Ok(authToken),
+            pendingGetResponse: () =>
+            {
+                // The interaction completed; the AS now needs identity claims.
+                var response = new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = new StringContent(
+                        new JsonObject { ["required_claims"] = new JsonArray("email") }.ToJsonString(),
+                        Encoding.UTF8,
+                        "application/json"),
+                };
+                response.Headers.TryAddWithoutValidation(AAuthRequirementHeader.Name, "requirement=claims");
+                response.Headers.Location = new Uri($"{AsIssuer}/pending/xyz");
+                return response;
+            });
+        var client = BuildClient(stub);
+
+        var interactionSeen = false;
+        AAuthClaimsRequirement? claimsSeen = null;
+        var result = await client.FederateAsync(AsIssuer, new AccessServerRequest
+        {
+            ResourceToken = "the-resource-token",
+            AgentToken = "the-agent-token",
+            ExpectedAudience = ResourceUrl,
+            ExpectedAgentId = AgentId,
+            AgentKey = agentKey,
+            RequestedScope = "whoami",
+            OnInteractionRequired = (_, _) => { interactionSeen = true; return Task.CompletedTask; },
+            OnClaimsRequired = (requirement, _) =>
+            {
+                claimsSeen = requirement;
+                return Task.FromResult(new AAuthClaimsResponse
+                {
+                    Subject = "directed-xyz",
+                    Claims = new Dictionary<string, JsonNode?>
+                    {
+                        ["email"] = "demo@person.example",
+                    },
+                });
+            },
+        });
+
+        Assert.Equal(authToken, result);
+        Assert.True(interactionSeen, "interaction callback should have fired first");
+        Assert.NotNull(claimsSeen);
+        Assert.Contains("email", claimsSeen!.RequiredClaims);
+        Assert.Equal("directed-xyz", (string?)stub.LastClaimsPushBody!["sub"]);
+    }
     [Fact]
     public async Task FederateAsync_ThrowsVerification_WhenAudienceMismatch()
     {
@@ -203,17 +372,52 @@ public class AccessServerClientTests
     private sealed class StubAccessServer : HttpMessageHandler
     {
         private readonly Func<HttpResponseMessage> _tokenResponse;
+        private readonly Func<JsonObject?, HttpResponseMessage>? _claimsResponse;
+        private readonly Func<HttpResponseMessage>? _pendingGetResponse;
 
         public JsonObject? LastTokenRequestBody { get; private set; }
 
-        public StubAccessServer(Func<HttpResponseMessage> tokenResponse)
-            => _tokenResponse = tokenResponse;
+        public JsonObject? LastClaimsPushBody { get; private set; }
+
+        public StubAccessServer(
+            Func<HttpResponseMessage> tokenResponse,
+            Func<JsonObject?, HttpResponseMessage>? claimsResponse = null,
+            Func<HttpResponseMessage>? pendingGetResponse = null)
+        {
+            _tokenResponse = tokenResponse;
+            _claimsResponse = claimsResponse;
+            _pendingGetResponse = pendingGetResponse;
+        }
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var uri = request.RequestUri!;
             var key = $"{uri.Host}{uri.AbsolutePath}";
+
+            // Deferred poll — GET the pending Location (interaction or escalated
+            // requirement=claims).
+            if (request.Method == HttpMethod.Get
+                && uri.AbsolutePath.StartsWith("/pending/", StringComparison.Ordinal))
+            {
+                return _pendingGetResponse is not null
+                    ? _pendingGetResponse()
+                    : new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
+            // §Claims Required push — the PS POSTs directed sub + claims to the
+            // pending Location.
+            if (request.Method == HttpMethod.Post
+                && uri.AbsolutePath.StartsWith("/pending/", StringComparison.Ordinal))
+            {
+                var rawPush = request.Content is null
+                    ? null
+                    : await request.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                LastClaimsPushBody = rawPush is null ? null : JsonNode.Parse(rawPush) as JsonObject;
+                return _claimsResponse is not null
+                    ? _claimsResponse(LastClaimsPushBody)
+                    : new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
 
             if (request.Method == HttpMethod.Post && key == "as.test/token")
             {

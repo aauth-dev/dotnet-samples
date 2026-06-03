@@ -64,6 +64,14 @@ public sealed class AuthTokenBuilder
     /// <summary>Pairwise pseudonymous user identifier.</summary>
     public string? Subject { get; init; }
 
+    /// <summary>
+    /// Enterprise <c>tenant</c> claim (§Auth Token, OpenID Connect for
+    /// Enterprise) — identifies the principal's tenant/organization within the
+    /// issuer. Combined with <c>iss</c> and <c>sub</c> it forms the globally
+    /// unique <c>(iss, tenant, sub)</c> identity. Emitted when non-empty.
+    /// </summary>
+    public string? Tenant { get; init; }
+
     /// <summary>Lifetime; spec caps at 1 hour. Default 1 hour.</summary>
     public TimeSpan Lifetime { get; init; } = TimeSpan.FromHours(1);
 
@@ -79,6 +87,14 @@ public sealed class AuthTokenBuilder
     /// the full delegation chain (caller → resource → downstream).
     /// </summary>
     public JsonObject? UpstreamAct { get; init; }
+
+    /// <summary>
+    /// Additional identity claims to merge into the payload — used by an
+    /// Access Server to assert claims it received from a Person Server via the
+    /// §Claims Required push (e.g. <c>email</c>, <c>tenant</c>). May not
+    /// collide with a required/reserved claim (case-sensitive per RFC 7519 §4).
+    /// </summary>
+    public IReadOnlyDictionary<string, JsonNode?>? AdditionalClaims { get; init; }
 
     /// <summary>Build and sign the auth token.</summary>
     public string Build()
@@ -159,6 +175,10 @@ public sealed class AuthTokenBuilder
         {
             payload["sub"] = Subject;
         }
+        if (!string.IsNullOrEmpty(Tenant))
+        {
+            payload["tenant"] = Tenant;
+        }
         if (!string.IsNullOrEmpty(Scope))
         {
             payload["scope"] = Scope;
@@ -170,6 +190,17 @@ public sealed class AuthTokenBuilder
         if (Groups is { Count: > 0 })
         {
             payload["groups"] = ToJsonArray(Groups);
+        }
+        if (AdditionalClaims is not null)
+        {
+            foreach (var (k, v) in AdditionalClaims)
+            {
+                if (payload.ContainsKey(k))
+                {
+                    throw new InvalidOperationException($"Additional claim '{k}' collides with a required claim.");
+                }
+                payload[k] = v?.DeepClone();
+            }
         }
 
         return JwtWriter.SignCompact(header, payload, Key);

@@ -202,6 +202,79 @@ public class MockAccessServerTests : IClassFixture<WebApplicationFactory<MockAcc
         Assert.Equal("access_denied", (string?)body!["error"]);
     }
 
+    [Fact]
+    public async Task ClaimsPush_FromTrustedPersonServer_MintsAuthToken()
+    {
+        // §Claims Required: with a configured claim requirement the stub policy
+        // parks a requirement=claims, the PS pushes a directed sub + the claim,
+        // and the AS mints the auth token asserting it.
+        using var factory = _factory.WithWebHostBuilder(b =>
+            b.UseSetting("AccessServer:RequireClaims:0", "email"));
+
+        var agentKey = AAuthKey.Generate();
+        using var http = BuildPsSignedClient(factory);
+        var token = await http.PostAsJsonAsync("/token", new JsonObject
+        {
+            ["agent_token"] = BuildAgentToken(agentKey),
+            ["resource_token"] = BuildResourceToken(agentKey, audience: AsIssuer),
+        });
+
+        Assert.Equal(HttpStatusCode.Accepted, token.StatusCode);
+        var pendingPath = token.Headers.Location!.OriginalString;
+        var requirement = await token.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("email", (string?)requirement!["required_claims"]?[0]);
+
+        var push = await http.PostAsJsonAsync(pendingPath, new JsonObject
+        {
+            ["sub"] = "directed-abc",
+            ["email"] = "demo@person.example",
+        });
+
+        Assert.True(push.IsSuccessStatusCode,
+            $"Status={(int)push.StatusCode} {await push.Content.ReadAsStringAsync()}");
+        var body = await push.Content.ReadFromJsonAsync<JsonObject>();
+        var payload = (JsonObject)JsonNode.Parse(
+            Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(
+                ((string?)body!["auth_token"])!.Split('.')[1]))!;
+        Assert.Equal("directed-abc", (string?)payload["sub"]);
+        Assert.Equal("demo@person.example", (string?)payload["email"]);
+    }
+
+    [Fact]
+    public async Task ClaimsPush_FromUntrustedPersonServer_IsRejected()
+    {
+        // F2: the pending push re-pins the caller. A different (untrusted)
+        // Person Server cannot push a sub/claims into another PS's entry.
+        using var factory = _factory.WithWebHostBuilder(b =>
+            b.UseSetting("AccessServer:RequireClaims:0", "email"));
+
+        var agentKey = AAuthKey.Generate();
+        using var trusted = BuildPsSignedClient(factory);
+        var token = await trusted.PostAsJsonAsync("/token", new JsonObject
+        {
+            ["agent_token"] = BuildAgentToken(agentKey),
+            ["resource_token"] = BuildResourceToken(agentKey, audience: AsIssuer),
+        });
+        Assert.Equal(HttpStatusCode.Accepted, token.StatusCode);
+        var pendingPath = token.Headers.Location!.OriginalString;
+
+        using var attacker = new AAuthClientBuilder(PsKey)
+            .UseJwksUri("https://other-ps.test/.well-known/jwks.json", PsKid)
+            .WithInnerHandler(factory.Server.CreateHandler())
+            .Build();
+        attacker.BaseAddress = new Uri(AsIssuer);
+
+        var push = await attacker.PostAsJsonAsync(pendingPath, new JsonObject
+        {
+            ["sub"] = "attacker-sub",
+            ["email"] = "evil@attacker.example",
+        });
+
+        Assert.Equal(HttpStatusCode.Forbidden, push.StatusCode);
+        var body = await push.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("untrusted_person_server", (string?)body!["error"]);
+    }
+
     // -- helpers ---------------------------------------------------------
 
     private HttpClient BuildPsSignedClient()
@@ -209,6 +282,16 @@ public class MockAccessServerTests : IClassFixture<WebApplicationFactory<MockAcc
         var http = new AAuthClientBuilder(PsKey)
             .UseJwksUri($"{PsIssuer}/.well-known/jwks.json", PsKid)
             .WithInnerHandler(_factory.Server.CreateHandler())
+            .Build();
+        http.BaseAddress = new Uri(AsIssuer);
+        return http;
+    }
+
+    private static HttpClient BuildPsSignedClient(WebApplicationFactory<MockAccessServer.Entry> factory)
+    {
+        var http = new AAuthClientBuilder(PsKey)
+            .UseJwksUri($"{PsIssuer}/.well-known/jwks.json", PsKid)
+            .WithInnerHandler(factory.Server.CreateHandler())
             .Build();
         http.BaseAddress = new Uri(AsIssuer);
         return http;

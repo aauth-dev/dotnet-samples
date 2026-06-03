@@ -74,6 +74,19 @@ public sealed class AccessServerRequest
     /// </summary>
     public Func<AAuthInteraction, CancellationToken, Task>? OnInteractionRequired { get; init; }
 
+    /// <summary>
+    /// Invoked when the AS returns <c>202 requirement=claims</c> (§Claims
+    /// Required) to request identity claims it needs for a policy decision.
+    /// The callback receives the requested claim names and MUST return an
+    /// <see cref="AAuthClaimsResponse"/> carrying a directed user identifier
+    /// (<see cref="AAuthClaimsResponse.Subject"/>) plus the released claims;
+    /// <see cref="AccessServerClient.FederateAsync"/> POSTs them (signed) to
+    /// the AS's pending <c>Location</c> URL and then resumes polling. If
+    /// <see langword="null"/> and the AS returns <c>202 requirement=claims</c>,
+    /// the call throws <see cref="NotSupportedException"/>.
+    /// </summary>
+    public Func<AAuthClaimsRequirement, CancellationToken, Task<AAuthClaimsResponse>>? OnClaimsRequired { get; init; }
+
     /// <summary>Optional polling cadence/timeout override for the deferred path.</summary>
     public DeferredPollerOptions? PollerOptions { get; init; }
 }

@@ -46,6 +46,20 @@ public sealed record DeferredPollerOptions
     /// or progress UI during deferred exchanges.
     /// </summary>
     public Action<HttpResponseMessage>? OnPoll { get; init; }
+
+    /// <summary>
+    /// Optional predicate evaluated on each <c>202 Accepted</c> poll response.
+    /// When it returns <see langword="true"/>, <see cref="DeferredPoller.PollAsync"/>
+    /// returns that <c>202</c> response to the caller instead of continuing to
+    /// poll. This lets a caller intercept a deferred response whose
+    /// <c>AAuth-Requirement</c> changed mid-poll (e.g. an <c>interaction</c>
+    /// step that is followed by a <c>requirement=claims</c> push on the same
+    /// <c>Location</c>) so the new requirement can be handled. Per spec
+    /// §Trust Establishment these mechanisms compose onto one <c>Location</c>.
+    /// When <see langword="null"/> (default) every <c>202</c> is treated as
+    /// "keep polling".
+    /// </summary>
+    public Func<HttpResponseMessage, bool>? StopWhenAccepted { get; init; }
 }
 
 /// <summary>
@@ -180,6 +194,20 @@ public sealed class DeferredPoller
                 }
 
                 return response;
+            }
+
+            // The response is 202 (still pending). A caller may want to
+            // intercept it — e.g. the AAuth-Requirement changed to one that
+            // needs an active push (requirement=claims) on the same Location.
+            if (_options.StopWhenAccepted is { } stop)
+            {
+                bool intercept;
+                try { intercept = stop(response); }
+                catch { response.Dispose(); throw; }
+                if (intercept)
+                {
+                    return response;
+                }
             }
 
             var delay = ComputeDelay(response.Headers.RetryAfter);
