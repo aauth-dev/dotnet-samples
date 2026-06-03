@@ -14,7 +14,7 @@ import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
  * (demo/demo), the AS mints the auth token, and the SDK poll resolves to 200.
  *
  * Requires the Keycloak-backed AS to be running (see
- * `make demo-federated-sample`). Skipped unless KEYCLOAK_E2E=1 so the default
+ * `make demo-keycloak`). Skipped unless KEYCLOAK_E2E=1 so the default
  * (stub, no-Docker) CI run stays green.
  */
 const keycloakEnabled = process.env.KEYCLOAK_E2E === '1';

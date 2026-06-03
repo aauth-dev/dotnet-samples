@@ -46,8 +46,9 @@ const PLAN_STEPS: Record<TourMode, number> = {
   Autonomous: 6,
   Deferred: 9,
   CallChain: 7,
-  // Four-party federated: 7 steps on the stub (direct grant) path; the
-  // interactive Keycloak path expands to 10 once the AS returns 202.
+  // Four-party federated: the plan shows 7 steps at selection time; once the
+  // exchange returns 202 (the AS requires consent — its own stub screen or
+  // Keycloak) the plan expands to 10 (consent + poll), mirroring deferred.
   Federated: 7,
 };
 

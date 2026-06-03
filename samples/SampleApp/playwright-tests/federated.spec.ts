@@ -1,37 +1,44 @@
 import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/blazor';
 import { readResponseJson, expectStatus } from '../../../tests/e2e/helpers/json';
+import { approveInPopup } from '../../../tests/e2e/helpers/consent';
 import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
 
 /**
- * Federated (four-party) — direct grant path.
+ * Federated (four-party) — interactive consent path (stub Access Server).
  *
- * With a **stub** Access Server policy the AS auto-approves, so the
- * resource's /federated branch resolves to a direct 200 with an AS-minted
- * `aa-auth+jwt`. No interaction URL / consent popup appears. This is the path
- * exercised by `make demo-federated-sample-stub` (no Docker / Keycloak).
+ * With a **stub** Access Server policy and `RequireConsent=true` the AS returns
+ * `202 requirement=interaction`. The PS relays it, and the SampleApp surfaces
+ * the AS interaction URL. The user opens the Access Server's own consent screen
+ * (badged *Access Server*), clicks **Approve**, and the SDK poll resolves to a
+ * 200 with an AS-minted `aa-auth+jwt`.
+ *
+ * From the agent's perspective this is identical to the Keycloak path (covered
+ * by `federated-deferred.spec.ts`, gated on KEYCLOAK_E2E=1); only the
+ * interaction URL's destination differs.
  */
-test.describe('Federated (direct grant)', () => {
-  test.describe.configure({ timeout: 90_000 });
+test.describe('Federated (interactive consent)', () => {
+  test.describe.configure({ timeout: 120_000 });
 
-  test('resolves to a four-party identity', async ({ page }) => {
+  test('approve at the AS consent screen resolves to a four-party identity', async ({ page, context }) => {
     await page.goto('/federated');
     await expect(page.locator('h2')).toContainText('Federated');
     await waitForInteractive(page, 'button.btn-primary');
 
-    // The first click on a cold Blazor circuit can be dropped; confirm it
-    // landed by waiting for the button to enter its "Sending..." state or for
-    // a result/error to render.
-    const result = page.locator('div.alert.alert-success, div.alert.alert-warning, div.alert.alert-danger');
-    await clickAndConfirm(
-      page,
-      'button.btn-primary',
-      async () =>
-        (await page.getByRole('button', { name: 'Sending...' }).isVisible()) ||
-        (await result.first().isVisible()),
-    );
+    // Send the request; the AS returns 202 and the interaction URL is surfaced.
+    const link = page.locator('a[target="_blank"]', { hasText: /interaction/ });
+    await clickAndConfirm(page, 'button.btn-primary', () => link.isVisible());
+    await expect(link).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('.spinner-border')).toBeVisible();
 
-    // Stub AS path: no interaction URL, direct 200.
+    // The interaction URL is the Access Server's own consent screen.
+    const [popup] = await Promise.all([
+      context.waitForEvent('page'),
+      link.click(),
+    ]);
+    await expect(popup.locator('.badge')).toContainText('Access Server');
+    await approveInPopup(popup);
+
     await expectStatus(page, 200, 60_000);
     const json = (await readResponseJson(page)) as Record<string, unknown>;
     expect(json.mode).toBe('four-party');
