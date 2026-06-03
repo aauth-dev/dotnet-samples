@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using AAuth.Access;
 using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;

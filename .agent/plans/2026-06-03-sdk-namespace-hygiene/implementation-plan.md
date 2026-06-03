@@ -145,10 +145,10 @@ Co-locate the four-party federated types so the feature lives in one namespace.
 
 ### Definition of Done
 
-- [ ] All four-party types share one namespace
-- [ ] Sample servers + federation tests updated and building
-- [ ] `make demo` and `make demo-keycloak` start cleanly
-- [ ] Federated e2e (`npx playwright test --grep "Federated"`) green
+- [x] All four-party types share one namespace
+- [x] Sample servers + federation tests updated and building
+- [ ] `make demo` and `make demo-keycloak` start cleanly _(consolidated validation)_
+- [ ] Federated e2e (`npx playwright test --grep "Federated"`) green _(consolidated validation)_
 
 ---
 

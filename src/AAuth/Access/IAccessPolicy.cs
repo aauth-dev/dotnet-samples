@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace AAuth.Server;
+namespace AAuth.Access;
 
 /// <summary>
 /// Pluggable Access Server authorization-policy seam. An implementation is the

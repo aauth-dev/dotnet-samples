@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
 
-namespace AAuth.Server;
+namespace AAuth.Access;
 
 /// <summary>
 /// Stores in-flight federated access decisions awaiting either an interactive

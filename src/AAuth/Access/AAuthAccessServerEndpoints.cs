@@ -7,12 +7,13 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.Headers;
 using AAuth.HttpSig;
+using AAuth.Server;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace AAuth.Server;
+namespace AAuth.Access;
 
 /// <summary>
 /// Configuration for <see cref="AAuthAccessServerEndpoints.MapAAuthAccessServer"/>.

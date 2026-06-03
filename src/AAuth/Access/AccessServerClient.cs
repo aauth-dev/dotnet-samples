@@ -9,8 +9,9 @@ using AAuth.Agent;
 using AAuth.Discovery;
 using AAuth.Errors;
 using AAuth.Headers;
+using AAuth.Tokens;
 
-namespace AAuth.Tokens;
+namespace AAuth.Access;
 
 /// <summary>
 /// Performs the signed Person Server → Access Server token request and the

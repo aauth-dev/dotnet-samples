@@ -5,8 +5,9 @@ using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Headers;
+using AAuth.Tokens;
 
-namespace AAuth.Tokens;
+namespace AAuth.Access;
 
 /// <summary>
 /// Parameters for <see cref="AccessServerClient.FederateAsync"/>. Groups the
