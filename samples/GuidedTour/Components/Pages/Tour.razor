@@ -38,7 +38,7 @@
             <option value="@TourMode.Identity">2 · Identity-based — no PS, 2 steps</option>
             <option value="@TourMode.Autonomous" disabled="@(!Session.HasPersonServer)">3 · PS-Asserted (Direct Grant) — no user, 6 steps</option>
             <option value="@TourMode.Deferred" disabled="@(!Session.HasPersonServer)">4 · PS-Asserted (Deferred) — user approves, 9 steps</option>
-            <option value="@TourMode.CallChain" disabled="@(!Session.HasPersonServer || !Session.HasOrchestrator)">5 · Call Chain (Multi-Agent) — 7 steps</option>
+            <option value="@TourMode.CallChain" disabled="@(!Session.HasPersonServer || !Session.HasOrchestrator)">5 · Call Chain (Multi-Agent) — user approves, 7 or 13 steps</option>
             <option value="@TourMode.Federated" disabled="@(!Session.HasPersonServer || !Session.HasAccessServer)">6 · Federated (Four-Party) — Access Server, 7–10 steps</option>
         </select>
     </label>
@@ -58,7 +58,7 @@
         {
             <a class="primary approve" href="@Session.UserInteractionUrl" target="_blank" rel="noopener"
                @onclick="MarkInteractionOpenedAsync" @onclick:preventDefault="false">
-                @(Session.IsFederatedMode ? "Open Keycloak login ↗" : "Open consent page ↗")
+                @(Session.IsFederatedMode ? "Open Access Server consent ↗" : "Open consent page ↗")
             </a>
         }
         else
@@ -132,8 +132,9 @@
                     a downstream resource (WhoAmI). The Orchestrator passes the agent's auth_token as
                     <code>upstream_token</code> during its own PS exchange, producing a <strong>nested <code>act</code>
                     claim</strong> that records the full delegation chain. The final resource sees exactly who
-                    acted on whose behalf. <strong>No human in the loop — standing consent for
-                    both hops.</strong>
+                    acted on whose behalf. <strong>Human approval required — two consents:</strong> first
+                    for <em>Agent → Orchestrator</em>, then for the Orchestrator's chained
+                    <em>Orchestrator → WhoAmI</em> hop. Each surfaces its own interaction URL and pending poll.
                 </text>
                 break;
             case TourMode.Federated:
@@ -164,7 +165,7 @@
                 elapsed <strong>@ElapsedPolling()</strong>
             </div>
             <div class="polling__hint">
-                Waiting for you to complete the @(Session.IsFederatedMode ? "Access Server / Keycloak login" : "Approve or Deny on the PS consent")
+                Waiting for you to complete the @(Session.IsFederatedMode ? "Access Server consent" : "Approve or Deny on the PS consent")
                 tab. You can come back here anytime — the poll loop is live.
             </div>
         </div>
@@ -182,8 +183,8 @@
                          Lanes="@ActiveLanes"
                          IsPolling="@Session.IsPolling"
                          PollCount="@Session.PollCount"
-                         LoopGhostStep="@((Session.IsDeferredMode || Session.IsFederatedMode) ? new SequenceDiagram.GhostStep(Session.PollStepNumber, $"polling /pending/{{id}}…", Actor.Agent, Actor.PersonServer) : null)"
-                         LoopAroundStepNumber="@((Session.IsDeferredMode || Session.IsFederatedMode) ? Session.PollStepNumber : 0)"
+                         LoopGhostStep="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending) ? new SequenceDiagram.GhostStep(Session.PollStepNumber, $"polling /pending/{{id}}…", Actor.Agent, Session.PollLoopTarget) : null)"
+                         LoopAroundStepNumber="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending) ? Session.PollStepNumber : 0)"
                          CompletedLoopLabel="@CompletedLoopLabel()"
                          LoopCompletedKind="@CompletedLoopKind()" />
     </section>
@@ -275,7 +276,7 @@
     }
 
     private StepRecord? PollStepRecord =>
-        (Session.IsDeferredMode || Session.IsFederatedMode)
+        (Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending)
             ? Session.Steps.FirstOrDefault(s => s.Number == Session.PollStepNumber)
             : null;
 

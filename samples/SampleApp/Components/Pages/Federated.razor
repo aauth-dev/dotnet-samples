@@ -25,11 +25,13 @@
     <strong>Federation is transparent to the agent.</strong> This page's agent
     code is identical to the three-party
     <a href="deferred">Deferred</a> page — only the PS behaves differently. When
-    the AS uses an interactive policy engine (Keycloak), the AS returns
-    <code>202 requirement=interaction</code>; the PS relays it, and the agent
-    surfaces the AS login/consent URL on the <em>same</em> challenge callback,
-    then polls until the AS mints the auth token. With a stub AS policy the call
-    returns a direct <code>200</code> and no consent panel appears.
+    the AS requires consent it returns <code>202 requirement=interaction</code>;
+    the PS relays it, and the agent surfaces the AS consent URL on the
+    <em>same</em> challenge callback, then polls until the AS mints the auth
+    token. <strong>From the agent's perspective the stub AS and Keycloak are
+    identical</strong> — same 202 → interaction URL → poll → mint; only the
+    interaction URL's destination differs (the stub's own <em>Access Server</em>
+    consent screen vs a Keycloak login).
 </p>
 
 <div class="row">
@@ -49,7 +51,7 @@ using var client = AAuthClientBuilder.SelfIssuing(key)
             async (interaction, ct) =&gt;
         {
             var url = interaction.BuildUserUrl();
-            // Surface URL to user (AS → Keycloak login)
+            // Surface URL to user (AS consent screen / Keycloak)
         };
         opts.PollingTimeout =
             TimeSpan.FromMinutes(2);
@@ -104,9 +106,10 @@ return Results.Json(new { auth_token = auth.Token });</code></pre>
     </button>
     <p class="text-muted mt-1">
         <small>
-            With a <strong>Keycloak</strong> AS policy an interaction URL will appear
-            (log in as <code>demo/demo</code> or <code>guest/guest</code>). With a
-            <strong>stub</strong> AS policy the call returns <code>200</code> directly.
+            The <strong>Access Server</strong> will ask you to approve on its own
+            consent screen (badged <em>Access Server</em>). With a
+            <strong>Keycloak</strong> AS policy the same link is a Keycloak login
+            instead (<code>demo/demo</code> or <code>guest/guest</code>).
         </small>
     </p>
 }

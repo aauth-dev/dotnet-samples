@@ -40,6 +40,11 @@ public sealed class TourSession : IAsyncDisposable
     // needs an interactive login/consent, so the flow grows the consent + poll
     // steps (mirroring deferred mode). Stays false against an auto-allow stub AS.
     private bool _federatedPending;
+    // True once the call-chain exchange (step 5) came back 202 — neither hop has
+    // standing consent, so the flow grows TWO consent + poll cycles (hop 1:
+    // Agent → Orchestrator at the PS; hop 2: the Orchestrator's CHAINED 202 for
+    // Orchestrator → WhoAmI). Stays false when both hops have standing consent.
+    private bool _callChainPending;
     private bool _aborted;
     private TourMode _mode;
 
@@ -146,6 +151,14 @@ public sealed class TourSession : IAsyncDisposable
     /// <summary>True when the current flow is the four-party federated path.</summary>
     public bool IsFederatedMode => HasPersonServer && _mode == TourMode.Federated && HasAccessServer;
 
+    /// <summary>
+    /// True when the call-chain flow has entered its multi-hop consent path:
+    /// the agent's exchange 202'd (no standing consent), so the flow surfaces
+    /// two user approvals — hop 1 (Agent → Orchestrator) and hop 2 (the
+    /// Orchestrator's chained 202 for Orchestrator → WhoAmI).
+    /// </summary>
+    public bool IsCallChainPending => IsCallChainMode && _callChainPending;
+
     /// <summary>True when an Orchestrator URL is configured.</summary>
     public bool HasOrchestrator => !string.IsNullOrWhiteSpace(_options.OrchestratorUrl);
 
@@ -162,7 +175,7 @@ public sealed class TourSession : IAsyncDisposable
         {
             if (IsBootstrapMode) return HasAgentProvider ? 3 : 2;
             if (IsIdentityMode) return 2;
-            if (IsCallChainMode) return 7;
+            if (IsCallChainMode) return _callChainPending ? 13 : 7;
             if (IsFederatedMode) return _federatedPending ? 10 : 7;
             return IsDeferredMode ? 9 : 6;
         }
@@ -180,7 +193,7 @@ public sealed class TourSession : IAsyncDisposable
         {
             if (IsBootstrapMode) return HasAgentProvider ? ApBootstrapPlan : LocalBootstrapPlan;
             if (IsIdentityMode) return IdentityPlan;
-            if (IsCallChainMode) return CallChainPlan;
+            if (IsCallChainMode) return _callChainPending ? CallChainConsentPlan : CallChainPlan;
             if (IsFederatedMode) return _federatedPending ? FederatedConsentPlan : FederatedPlan;
             return IsDeferredMode ? DeferredPlan : AutonomousPlan;
         }
@@ -239,6 +252,29 @@ public sealed class TourSession : IAsyncDisposable
         new(7, "Inspect multi-agent result", "Review the combined response showing the full Agent → Orchestrator → WhoAmI chain.", Actor.Agent, Actor.Agent),
     };
 
+    // The call-chain flow when NEITHER hop has standing consent. Each hop the
+    // agent can see surfaces its own user approval: hop 1 is the agent's own PS
+    // exchange (202 → consent for Agent → Orchestrator); hop 2 is the
+    // Orchestrator's CHAINED 202 (it has no user, so it re-emits its own 202 for
+    // Orchestrator → WhoAmI, which the agent relays). The Orchestrator's internal
+    // hops are shown as grouped sub-steps, not separate visible steps.
+    private static readonly TourPlanStep[] CallChainConsentPlan =
+    {
+        new(1, "Discover Orchestrator metadata", "Unsigned GET /.well-known/aauth-resource.json on the Orchestrator.", Actor.Agent, Actor.Orchestrator),
+        new(2, "Signed GET → 401 (agent token challenge)", "Orchestrator returns 401 with a resource_token — it requires an auth token.", Actor.Agent, Actor.Orchestrator),
+        new(3, "Parse the 401 challenge", "Decode the AAuth-Requirement header and Orchestrator's resource_token.", Actor.Agent, Actor.Agent),
+        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint.", Actor.Agent, Actor.PersonServer),
+        new(5, "Exchange → 202 (hop 1 consent)", "No standing consent for the Orchestrator; PS returns 202 + interaction URL + single-use code.", Actor.Agent, Actor.PersonServer),
+        new(6, "Direct user to interaction URL (hop 1)", "Agent surfaces the {url}?code={code} link to approve the Agent → Orchestrator hop.", Actor.Agent, Actor.Agent),
+        new(7, "User approves hop 1 at the PS", "User opens the PS consent page and approves Agent → Orchestrator; PS records consent.", Actor.PersonServer, Actor.PersonServer),
+        new(8, "Poll pending URL → auth_token", "Signed GETs to /pending/{id} until the PS mints the Orchestrator-audience auth_token.", Actor.Agent, Actor.PersonServer),
+        new(9, "Retry Orchestrator → 202 (hop 2 chained)", "Orchestrator calls WhoAmI; that hop needs consent too, so it re-emits its OWN 202 (interaction chaining).", Actor.Agent, Actor.Orchestrator),
+        new(10, "Direct user to interaction URL (hop 2)", "Agent relays the Orchestrator's chained interaction URL to approve Orchestrator → WhoAmI.", Actor.Agent, Actor.Agent),
+        new(11, "User approves hop 2 at the PS", "User approves Orchestrator → WhoAmI at the PS; PS records consent for the chained hop.", Actor.PersonServer, Actor.PersonServer),
+        new(12, "Poll Orchestrator pending → 200", "Signed GETs to the Orchestrator's pending URL until it re-drives the chain and returns 200.", Actor.Agent, Actor.Orchestrator),
+        new(13, "Inspect multi-agent result", "Review the combined response showing the full Agent → Orchestrator → WhoAmI chain.", Actor.Agent, Actor.Agent),
+    };
+
     private static readonly TourPlanStep[] FederatedPlan =
     {
         new(1, "Discover resource metadata", "Unsigned GET /federated/.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
@@ -250,20 +286,22 @@ public sealed class TourSession : IAsyncDisposable
         new(7, "Inspect federated result", "Review the AS-minted auth token: dwk=aauth-access.json, cnf.jwk bound to the agent key.", Actor.Agent, Actor.Agent),
     };
 
-    // The federated flow when the Access Server (Keycloak) requires an
-    // interactive login/consent. The PS relays the AS's 202 interaction back to
-    // the agent, which surfaces the login link and polls the pending URL —
-    // structurally identical to deferred mode but the consent screen is the
-    // AS's (Keycloak) rather than the Person Server's.
+    // The federated flow when the Access Server requires an interactive
+    // login/consent. The PS relays the AS's 202 interaction back to the agent,
+    // which surfaces the consent link and polls the pending URL — structurally
+    // identical to deferred mode, but the consent screen is the Access
+    // Server's (its own stub screen, or Keycloak) rather than the PS's. From
+    // the agent's perspective the two are identical; only the interaction URL's
+    // destination differs.
     private static readonly TourPlanStep[] FederatedConsentPlan =
     {
         new(1, "Discover resource metadata", "Unsigned GET /federated/.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
         new(2, "Signed GET /federated → 401", "Resource returns 401 with a resource_token whose aud is the Access Server (not the PS).", Actor.Agent, Actor.Resource),
         new(3, "Parse the 401 challenge", "Decode the resource_token — its aud=Access Server URL is the four-party tell.", Actor.Agent, Actor.Agent),
         new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint.", Actor.Agent, Actor.PersonServer),
-        new(5, "Exchange → 202 (AS needs consent)", "PS federates to the AS; the AS (Keycloak) needs a login/consent, so the PS relays a 202 + interaction URL.", Actor.Agent, Actor.PersonServer),
-        new(6, "Direct user to AS login", "Agent surfaces the AS interaction link ({url}?code={code}) for the user to sign in at Keycloak.", Actor.Agent, Actor.Agent),
-        new(7, "User logs in / consents at the AS", "User opens the AS login page (redirects to Keycloak), authenticates, and approves; the AS records the verdict.", Actor.AccessServer, Actor.AccessServer),
+        new(5, "Exchange → 202 (AS needs consent)", "PS federates to the AS; the AS needs the user to consent, so the PS relays a 202 + interaction URL.", Actor.Agent, Actor.PersonServer),
+        new(6, "Direct user to AS consent", "Agent surfaces the AS interaction link ({url}?code={code}) for the user to approve at the Access Server.", Actor.Agent, Actor.Agent),
+        new(7, "User consents at the AS", "User opens the Access Server consent screen (its own stub screen, or a Keycloak login), authenticates, and approves; the AS records the verdict.", Actor.AccessServer, Actor.AccessServer),
         new(8, "Poll pending URL → 200 auth_token", "Signed GETs to the PS pending URL until the AS verdict resolves and the PS relays the aa-auth+jwt.", Actor.Agent, Actor.PersonServer),
         new(9, "Replay GET /federated with auth_token", "Signed retry carries the AS-issued auth_token → 200 + claims.", Actor.Agent, Actor.Resource),
         new(10, "Inspect federated result", "Review the AS-minted auth token: dwk=aauth-access.json, cnf.jwk bound to the agent key.", Actor.Agent, Actor.Agent),
@@ -280,17 +318,40 @@ public sealed class TourSession : IAsyncDisposable
     public bool IsAborted => _aborted;
 
     /// <summary>The step number at which user approval occurs in deferred mode.</summary>
-    public int UserApprovalStepNumber => 7;
+    public int UserApprovalStepNumber =>
+        IsCallChainPending
+            ? (Steps.Count <= CallChainHop1PollStep ? CallChainHop1ApprovalStep : CallChainHop2ApprovalStep)
+            : 7;
 
     /// <summary>The step number at which polling occurs in deferred mode.</summary>
-    public int PollStepNumber => 8;
+    public int PollStepNumber =>
+        IsCallChainPending
+            ? (Steps.Count <= CallChainHop1PollStep ? CallChainHop1PollStep : CallChainHop2PollStep)
+            : 8;
+
+    // Call-chain consent path step numbers: hop 1 (Agent → Orchestrator) and
+    // hop 2 (the Orchestrator's chained 202 for Orchestrator → WhoAmI).
+    private const int CallChainHop1ApprovalStep = 7;
+    private const int CallChainHop1PollStep = 8;
+    private const int CallChainHop2ApprovalStep = 11;
+    private const int CallChainHop2PollStep = 12;
+
+    /// <summary>
+    /// The actor the current poll loop targets: the Person Server for the
+    /// three-party / federated / call-chain hop-1 polls, or the Orchestrator
+    /// for the call-chain hop-2 (chained) poll.
+    /// </summary>
+    public Actor PollLoopTarget =>
+        (IsCallChainPending && PollStepNumber == CallChainHop2PollStep)
+            ? Actor.Orchestrator
+            : Actor.PersonServer;
 
     /// <summary>
     /// True when the tour is parked on the "User approves" step in deferred mode
     /// and the UI should expose the "Approve as user" action button.
     /// </summary>
     public bool AwaitingUserApproval =>
-        (IsDeferredMode || (IsFederatedMode && _federatedPending))
+        (IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending)
         && Steps.Count + 1 == UserApprovalStepNumber && !_userApproved;
 
     /// <summary>The user-facing interaction URL captured during step 7 (deferred only).</summary>
@@ -367,6 +428,7 @@ public sealed class TourSession : IAsyncDisposable
         _federatedResponseBody = null;
         _userApproved = false;
         _federatedPending = false;
+        _callChainPending = false;
         _aborted = false;
     }
 
@@ -501,6 +563,35 @@ public sealed class TourSession : IAsyncDisposable
                 case 3: StepCallChainParseChallenge(); break;
                 case 4: await StepFetchPersonMetadataAsync(ct); break;
                 case 5: await StepCallChainExchangeAsync(ct); break;
+                // Consent (deferred) path: hop 1 (Agent → Orchestrator), then
+                // hop 2 (the Orchestrator's chained 202 for Orchestrator → WhoAmI).
+                case 6 when _callChainPending: StepDirectUserToInteraction(); break;
+                case 7 when _callChainPending: StepUserApprovesPlaceholder(); break;
+                case 8 when _callChainPending:
+                    if (_pollingTask is { } ccHop1 && !ccHop1.IsCompleted)
+                    {
+                        await ccHop1.ConfigureAwait(false);
+                    }
+                    else if (Steps.Count + 1 == PollStepNumber)
+                    {
+                        await StepPollPendingAsync(ct);
+                    }
+                    break;
+                case 9 when _callChainPending: await StepCallChainRetryHop2Async(ct); break;
+                case 10 when _callChainPending: StepDirectUserToInteraction(); break;
+                case 11 when _callChainPending: StepUserApprovesPlaceholder(); break;
+                case 12 when _callChainPending:
+                    if (_pollingTask is { } ccHop2 && !ccHop2.IsCompleted)
+                    {
+                        await ccHop2.ConfigureAwait(false);
+                    }
+                    else if (Steps.Count + 1 == PollStepNumber)
+                    {
+                        await StepCallChainPollHop2Async(ct);
+                    }
+                    break;
+                case 13 when _callChainPending: StepCallChainInspectResult(); break;
+                // Standing-consent path (exchange returned 200): original 7 steps.
                 case 6: await StepCallChainRetryAsync(ct); break;
                 case 7: StepCallChainInspectResult(); break;
             }
@@ -590,20 +681,6 @@ public sealed class TourSession : IAsyncDisposable
                     new { agent = _options.AgentId, resource = _options.WhoAmIUrl.TrimEnd('/') },
                     ct);
             }
-
-            // Call-chain mode needs consent for the Orchestrator audience
-            // (the agent's auth_token targets the Orchestrator, not WhoAmI).
-            // The Orchestrator requires its own `orchestrate` scope, so seed
-            // consent for that scope — the PS keys consent by (agent,
-            // resource, scope) and echoes the resource-requested scope.
-            if (IsCallChainMode && !string.IsNullOrWhiteSpace(_options.PersonServerUrl))
-            {
-                using var adminClient = new HttpClient();
-                await adminClient.PostAsJsonAsync(
-                    $"{_options.PersonServerUrl.TrimEnd('/')}/admin/consent",
-                    new { agent = _options.AgentId, resource = _options.OrchestratorUrl!.TrimEnd('/'), scope = "orchestrate" },
-                    ct);
-            }
         }
     }
 
@@ -616,7 +693,7 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public Task RecordUserApprovalOpenedAsync(CancellationToken ct = default)
     {
-        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending))) { return Task.CompletedTask; }
+        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending)) { return Task.CompletedTask; }
         if (Steps.Count + 1 != UserApprovalStepNumber)
         {
             throw new InvalidOperationException(
@@ -631,25 +708,27 @@ public sealed class TourSession : IAsyncDisposable
             Steps.Add(new StepRecord
             {
                 Number = Steps.Count + 1,
-                Title = "User logs in / consents at the Access Server",
+                Title = "User consents at the Access Server",
                 From = Actor.AccessServer,
                 To = Actor.AccessServer,
                 Narrative =
                     "The tour opened the Access Server's interaction URL in a new browser " +
-                    "tab. The AS redirected the browser to **Keycloak**, which rendered its " +
-                    "login (and consent) screen. The user authenticated and approved; " +
-                    "Keycloak redirected back to the AS callback, the AS evaluated the " +
-                    "`uma-ticket` decision and recorded the verdict on its pending entry. " +
-                    "All of that happens in the user's browser \u2192 AS \u2192 Keycloak channel \u2014 " +
-                    "neither the agent nor the Person Server is on this path. The agent " +
-                    "discovers the result on its next poll of the PS pending URL.",
+                    "tab. The AS rendered its **own consent screen** — clearly badged " +
+                    "*Access Server* so the user knows they are approving at the federated " +
+                    "authority, not the Person Server. The user clicked **Approve**, and the " +
+                    "AS recorded the verdict on its pending entry. (With a Keycloak-backed " +
+                    "AS this same URL redirects to Keycloak's login instead — from the " +
+                    "agent's perspective the two are identical; only the interaction URL's " +
+                    "destination differs.) All of this happens in the user's browser → AS " +
+                    "channel — neither the agent nor the Person Server is on this path. The " +
+                    "agent discovers the result on its next poll of the PS pending URL.",
                 ResponseBody = userUrl,
                 TokenDecoded =
                     $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
-                    "User performed (browser \u2192 AS \u2192 Keycloak):\n" +
+                    "User performed (browser \u2192 AS):\n" +
                     $"  GET  {{as}}/interaction/login?code={_interactionCode}\n" +
-                    "  \u2192 redirect to Keycloak login \u2192 authenticate \u2192 consent\n" +
-                    "  \u2192 redirect to {as}/interaction/callback (AS records verdict)",
+                    "  \u2192 AS consent screen \u2192 click Approve\n" +
+                    $"  POST {{as}}/interaction/approve (AS records verdict)",
             });
             return Task.CompletedTask;
         }
@@ -657,7 +736,11 @@ public sealed class TourSession : IAsyncDisposable
         Steps.Add(new StepRecord
         {
             Number = Steps.Count + 1,
-            Title = "User completes interaction at Person Server",
+            Title = IsCallChainPending
+                ? (Steps.Count + 1 == CallChainHop2ApprovalStep
+                    ? "User approves hop 2 (Orchestrator → WhoAmI) at the PS"
+                    : "User approves hop 1 (Agent → Orchestrator) at the PS")
+                : "User completes interaction at Person Server",
             From = Actor.PersonServer,
             To = Actor.PersonServer,
             Narrative =
@@ -667,7 +750,13 @@ public sealed class TourSession : IAsyncDisposable
                 "recorded consent in its store via `POST /interaction/approve`. " +
                 "All of that happens in the user's browser → PS channel — the agent " +
                 "is not on this path. The agent will discover the result on its next " +
-                "poll of the pending URL.",
+                "poll of the pending URL." +
+                (IsCallChainPending && Steps.Count + 1 == CallChainHop2ApprovalStep
+                    ? "\n\nThis is the **second** of two approvals: it consents to the " +
+                      "Orchestrator (acting on your behalf) calling WhoAmI. The consent " +
+                      "is keyed to the Orchestrator's identity, not yours — the agent " +
+                      "never sees the chained credential."
+                    : ""),
             ResponseBody = userUrl,
             TokenDecoded =
                 $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
@@ -687,9 +776,22 @@ public sealed class TourSession : IAsyncDisposable
     public async Task PrepareConsentStateAsync(CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(_options.PersonServerUrl)) { return; }
+        using var client = new HttpClient();
+
+        // Call-chain mode is a genuine multi-hop deferred demo: BOTH hops
+        // (Agent → Orchestrator, and the Orchestrator's chained Orchestrator →
+        // WhoAmI) must lack consent so each surfaces its own user approval.
+        // Wipe the PS consent store so a replay can't skip an approval that a
+        // previous run recorded (including the Orchestrator-keyed hop-2 consent).
+        if (IsCallChainMode)
+        {
+            try { await client.PostAsync($"{_options.PersonServerUrl!.TrimEnd('/')}/admin/reset", null, ct); }
+            catch { /* /admin/* only exists on MockPersonServer — swallow. */ }
+            return;
+        }
+
         var endpoint = IsDeferredMode ? "/admin/revoke" : "/admin/consent";
         var url = $"{_options.PersonServerUrl!.TrimEnd('/')}{endpoint}";
-        using var client = new HttpClient();
         try
         {
             await client.PostAsJsonAsync(url, new
@@ -705,22 +807,6 @@ public sealed class TourSession : IAsyncDisposable
             // a real PS this call will 404 / fail. That's fine — autonomous
             // mode against a real PS doesn't need it, and deferred mode
             // against a real PS won't be exercised in the demo. Swallow.
-        }
-
-        // Call-chain mode also needs consent for the Orchestrator audience.
-        if (IsCallChainMode && !string.IsNullOrWhiteSpace(_options.OrchestratorUrl))
-        {
-            try
-            {
-                await client.PostAsJsonAsync(
-                    $"{_options.PersonServerUrl!.TrimEnd('/')}/admin/consent",
-                    new
-                    {
-                        agent = _options.AgentId,
-                        resource = _options.OrchestratorUrl!.TrimEnd('/'),
-                    }, ct);
-            }
-            catch { /* swallow — same as above */ }
         }
     }
 
@@ -1213,18 +1299,67 @@ public sealed class TourSession : IAsyncDisposable
         }
     }
 
-    private async Task StepPollPendingAsync(CancellationToken ct)
+    private Task StepPollPendingAsync(CancellationToken ct) =>
+        RunPendingPollAsync(ct, () => _agentToken!, Actor.Agent, Actor.PersonServer, (last, capturedBase) =>
+        {
+            // CapturingMessageHandler already buffered the final response
+            // body — reuse it rather than reading via `terminal.Content`
+            // again, which would force another round-trip through the
+            // disposed-content guard.
+            var body = JsonNode.Parse(last.ResponseBody);
+            _authToken = (string?)body?["auth_token"];
+
+            Steps.Add(new StepRecord
+            {
+                Number = Steps.Count + 1,
+                Title = "Poll pending URL → auth_token",
+                From = Actor.Agent,
+                To = Actor.PersonServer,
+                Narrative =
+                    "While the user clicks through the PS's interaction page, the agent " +
+                    "polls the pending URL with a signed `GET` (agent token via `sig=jwt`). " +
+                    "Each request honors the PS's `Retry-After` cadence. Once consent is " +
+                    "recorded the PS responds with `200 OK` and the long-awaited " +
+                    "`aa-auth+jwt`, bound (via `cnf.jwk`) to the agent's signing key. " +
+                    "If the user clicks **Deny** instead, this step records a " +
+                    "`403 access_denied` and the flow aborts.",
+                RequestLine = $"{last.RequestLine}  →  {_pendingUrl}",
+                RequestHeaders = last.RequestHeaders,
+                SignatureBase = capturedBase,
+                StatusLine = last.StatusLine,
+                ResponseHeaders = last.ResponseHeaders,
+                ResponseBody = PrettyJson(last.ResponseBody),
+                TokenJwt = _authToken,
+                TokenHeader = DecodeJwt(_authToken)?.Header,
+                TokenPayload = DecodeJwt(_authToken)?.Payload,
+                CodeSnippet = CodeSnippets.PollPending,
+            });
+        });
+
+    /// <summary>
+    /// Shared pending-URL poll loop. Signs with <paramref name="tokenFactory"/>,
+    /// long-polls <see cref="_pendingUrl"/>, and on terminal success invokes
+    /// <paramref name="recordSuccess"/> to add the flow-specific step record.
+    /// Denial (403 access_denied) and timeout are recorded uniformly and abort
+    /// the flow. <paramref name="from"/>/<paramref name="to"/> drive the actors
+    /// on the denied/timeout step records.
+    /// </summary>
+    private async Task RunPendingPollAsync(
+        CancellationToken ct,
+        Func<string> tokenFactory,
+        Actor from,
+        Actor to,
+        Action<CapturedExchange, string?> recordSuccess)
     {
         if (string.IsNullOrEmpty(_pendingUrl))
         {
             throw new InvalidOperationException(
-                "No pending URL captured — Step 7 did not record a 202 response.");
+                "No pending URL captured — the prior step did not record a 202 response.");
         }
 
         var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
         string? capturedBase = null;
-        var signing = BuildSigningHandler(
-            () => _agentToken!, capture, (_, b) => capturedBase = b);
+        var signing = BuildSigningHandler(tokenFactory, capture, (_, b) => capturedBase = b);
         // This HttpClient is constructed directly (not via AAuthClientBuilder), so it
         // keeps the default 100s timeout. That is fine here because PreferWaitSeconds (30)
         // is well under 100s. If you raise PreferWaitSeconds beyond the HttpClient.Timeout,
@@ -1274,51 +1409,19 @@ public sealed class TourSession : IAsyncDisposable
                 var deniedJson = JsonNode.Parse(deniedBody) as JsonObject;
                 if ((string?)deniedJson?["error"] == "access_denied")
                 {
-                    RecordDeniedStep(capture.Last!, capturedBase, deniedBody);
+                    RecordDeniedStep(capture.Last!, capturedBase, deniedBody, from, to);
                     _aborted = true;
                     return;
                 }
             }
 
-            var ex = capture.Last!;
-            // CapturingMessageHandler already buffered the final response
-            // body — reuse it rather than reading via `terminal.Content`
-            // again, which would force another round-trip through the
-            // disposed-content guard.
-            var body = JsonNode.Parse(ex.ResponseBody);
-            _authToken = (string?)body?["auth_token"];
-
-            Steps.Add(new StepRecord
-            {
-                Number = Steps.Count + 1,
-                Title = "Poll pending URL → auth_token",
-                From = Actor.Agent,
-                To = Actor.PersonServer,
-                Narrative =
-                    "While the user clicks through the PS's interaction page, the agent " +
-                    "polls the pending URL with a signed `GET` (agent token via `sig=jwt`). " +
-                    "Each request honors the PS's `Retry-After` cadence. Once consent is " +
-                    "recorded the PS responds with `200 OK` and the long-awaited " +
-                    "`aa-auth+jwt`, bound (via `cnf.jwk`) to the agent's signing key. " +
-                    "If the user clicks **Deny** instead, this step records a " +
-                    "`403 access_denied` and the flow aborts.",
-                RequestLine = $"{ex.RequestLine}  →  {_pendingUrl}",
-                RequestHeaders = ex.RequestHeaders,
-                SignatureBase = capturedBase,
-                StatusLine = ex.StatusLine,
-                ResponseHeaders = ex.ResponseHeaders,
-                ResponseBody = PrettyJson(ex.ResponseBody),
-                TokenJwt = _authToken,
-                TokenHeader = DecodeJwt(_authToken)?.Header,
-                TokenPayload = DecodeJwt(_authToken)?.Payload,
-                CodeSnippet = CodeSnippets.PollPending,
-            });
+            recordSuccess(capture.Last!, capturedBase);
         }
         catch (TimeoutException tex)
         {
             // The user neither approved nor denied within the polling
             // budget — record a terminal timeout step and abort.
-            RecordTimeoutStep(capture.Last, capturedBase, tex.Message);
+            RecordTimeoutStep(capture.Last, capturedBase, tex.Message, from, to);
             _aborted = true;
         }
         finally
@@ -1340,7 +1443,7 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public Task StartPendingPollAsync()
     {
-        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending)) || _pendingUrl is null)
+        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending) || _pendingUrl is null)
         {
             return Task.CompletedTask;
         }
@@ -1350,6 +1453,11 @@ public sealed class TourSession : IAsyncDisposable
         {
             return Task.CompletedTask;
         }
+
+        // Call-chain hop 2 polls the Orchestrator's pending URL (signed with the
+        // Orchestrator-audience auth_token); every other poll hits the PS pending
+        // URL with the agent token.
+        var hop2 = IsCallChainPending && Steps.Count + 1 == CallChainHop2PollStep;
 
         // Serialize the check-then-assign so two near-simultaneous UI
         // events (e.g. "Open consent" + "Simulate deny") can't both kick
@@ -1369,7 +1477,7 @@ public sealed class TourSession : IAsyncDisposable
             {
                 try
                 {
-                    await StepPollPendingAsync(ct).ConfigureAwait(false);
+                    await (hop2 ? StepCallChainPollHop2Async(ct) : StepPollPendingAsync(ct)).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -1391,14 +1499,16 @@ public sealed class TourSession : IAsyncDisposable
     private void RecordDeniedStep(
         CapturedExchange last,
         string? capturedBase,
-        string deniedBody)
+        string deniedBody,
+        Actor from = Actor.Agent,
+        Actor to = Actor.PersonServer)
     {
         Steps.Add(new StepRecord
         {
             Number = Steps.Count + 1,
             Title = "Poll pending URL → 403 access_denied (user denied)",
-            From = Actor.Agent,
-            To = Actor.PersonServer,
+            From = from,
+            To = to,
             Narrative =
                 "The user clicked **Deny** on the PS's interaction page. The PS marked " +
                 "the pending entry as denied and the next poll receives " +
@@ -1418,14 +1528,16 @@ public sealed class TourSession : IAsyncDisposable
     private void RecordTimeoutStep(
         CapturedExchange? last,
         string? capturedBase,
-        string detail)
+        string detail,
+        Actor from = Actor.Agent,
+        Actor to = Actor.PersonServer)
     {
         Steps.Add(new StepRecord
         {
             Number = Steps.Count + 1,
             Title = "Poll pending URL → timeout (user did not respond)",
-            From = Actor.Agent,
-            To = Actor.PersonServer,
+            From = from,
+            To = to,
             Narrative =
                 "The polling budget expired before the user took any action at the " +
                 "PS's interaction page (no Approve, no Deny). The SDK surfaces this as " +
@@ -1601,6 +1713,69 @@ public sealed class TourSession : IAsyncDisposable
         }, ct);
 
         var ex = capture.Last!;
+
+        // Hop 1 of the chain requires the user to consent to the agent
+        // calling the Orchestrator on their behalf. With no standing
+        // consent the PS returns 202 + a pending URL + an interaction
+        // requirement, exactly like the single-hop deferred flow.
+        if (resp.StatusCode == HttpStatusCode.Accepted)
+        {
+            _callChainPending = true;
+
+            var location = resp.Headers.Location?.ToString();
+            if (location is not null)
+            {
+                _pendingUrl = location.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                    ? location
+                    : $"{_options.PersonServerUrl!.TrimEnd('/')}{location}";
+            }
+
+            if (resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqVals))
+            {
+                foreach (var raw in reqVals)
+                {
+                    if (string.IsNullOrWhiteSpace(raw)) { continue; }
+                    try
+                    {
+                        var parsed = AAuthRequirementHeader.Parse(raw);
+                        var interaction = AAuth.Headers.AAuthInteraction.FromRequirement(parsed);
+                        if (interaction is not null)
+                        {
+                            _interactionUrl = interaction.Url;
+                            _interactionCode = interaction.Code;
+                            break;
+                        }
+                    }
+                    catch (FormatException) { /* try the next header value */ }
+                }
+            }
+
+            Steps.Add(new StepRecord
+            {
+                Number = Steps.Count + 1,
+                Title = "Exchange → 202 (hop 1 consent required)",
+                From = Actor.Agent,
+                To = Actor.PersonServer,
+                Narrative =
+                    "The agent exchanges the Orchestrator's resource_token at the PS, " +
+                    "but no standing consent exists for **Agent → Orchestrator**. The PS " +
+                    "returns `202 Accepted` with a `Location` (pending URL) and an " +
+                    "`AAuth-Requirement: requirement=interaction` header. This is the " +
+                    "**first of two** approvals: the user must consent to this agent " +
+                    "calling the Orchestrator on their behalf before any chaining can " +
+                    "happen.",
+                RequestLine = $"{ex.RequestLine}  →  {_tokenEndpoint}",
+                RequestHeaders = ex.RequestHeaders,
+                RequestBody = PrettyJson(ex.RequestBody),
+                StatusLine = ex.StatusLine,
+                ResponseHeaders = ex.ResponseHeaders,
+                ResponseBody = PrettyJson(ex.ResponseBody),
+                SignatureBase = capturedBase,
+                CodeSnippet = CodeSnippets.TokenExchangeDeferred,
+            });
+            return;
+        }
+
         var body = JsonNode.Parse(ex.ResponseBody);
         _authToken = (string?)body?["auth_token"];
 
@@ -1628,6 +1803,137 @@ public sealed class TourSession : IAsyncDisposable
             CodeSnippet = CodeSnippets.TokenExchangeDirect,
         });
     }
+
+    /// <summary>
+    /// Hop-2 retry: now that the agent holds an Orchestrator-audience
+    /// auth_token (after hop-1 approval), it retries the Orchestrator.
+    /// The Orchestrator drives its own downstream WhoAmI exchange which —
+    /// lacking consent — surfaces a chained interaction. The Orchestrator
+    /// re-emits that as its own 202 + pending URL, which the agent must
+    /// poll after the user approves the second (Orchestrator → WhoAmI) hop.
+    /// </summary>
+    private async Task StepCallChainRetryHop2Async(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _authToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        using var resp = await client.GetAsync(CallChainTargetUrl, ct);
+        var ex = capture.Last!;
+
+        // The Orchestrator re-emits its downstream interaction as a 202
+        // pointing at its OWN pending endpoint. Capture that pending URL +
+        // the (PS-issued) interaction the user must approve for hop 2.
+        if (resp.StatusCode == HttpStatusCode.Accepted)
+        {
+            _userApproved = false; // hop-2 approval still required
+
+            var location = resp.Headers.Location?.ToString();
+            if (location is not null)
+            {
+                _pendingUrl = location.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                    ? location
+                    : $"{CallChainTargetUrl}{location}";
+            }
+
+            if (resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqVals))
+            {
+                foreach (var raw in reqVals)
+                {
+                    if (string.IsNullOrWhiteSpace(raw)) { continue; }
+                    try
+                    {
+                        var parsed = AAuthRequirementHeader.Parse(raw);
+                        var interaction = AAuth.Headers.AAuthInteraction.FromRequirement(parsed);
+                        if (interaction is not null)
+                        {
+                            _interactionUrl = interaction.Url;
+                            _interactionCode = interaction.Code;
+                            break;
+                        }
+                    }
+                    catch (FormatException) { /* try the next header value */ }
+                }
+            }
+        }
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Retry Orchestrator with auth_token → 202 (hop 2 consent required)",
+            From = Actor.Agent,
+            To = Actor.Orchestrator,
+            Narrative =
+                "The agent retries the Orchestrator with its hop-1 auth_token. The " +
+                "Orchestrator validates it, extracts it as `upstream_token`, and calls " +
+                "WhoAmI on the user's behalf — but **there is no consent for the " +
+                "Orchestrator → WhoAmI hop either**. The PS returns a chained " +
+                "interaction, which the Orchestrator re-emits to us as its own " +
+                "`202 Accepted` + pending URL. This is the **second** approval: the " +
+                "user must consent to the Orchestrator calling WhoAmI on their behalf. " +
+                "The internal Orchestrator → PS exchange is shown as grouped sub-steps.",
+            RequestLine = $"{ex.RequestLine}  →  {CallChainTargetUrl}",
+            RequestHeaders = ex.RequestHeaders,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            SignatureBase = capturedBase,
+            CodeSnippet = CodeSnippets.CallChainRetry,
+            SubSteps = new SubStep[]
+            {
+                new("GET / (agent token)", Actor.Orchestrator, Actor.Resource),
+                new("401 + resource_token", Actor.Resource, Actor.Orchestrator, IsResponse: true),
+                new("POST /token + upstream_token", Actor.Orchestrator, Actor.PersonServer),
+                new("202 + interaction (consent needed)", Actor.PersonServer, Actor.Orchestrator, IsResponse: true),
+            },
+        });
+    }
+
+    /// <summary>
+    /// Hop-2 poll: after the user approves the Orchestrator → WhoAmI hop,
+    /// the agent polls the Orchestrator's pending URL (signed with the
+    /// Orchestrator-audience auth_token). Once consent lands, the
+    /// Orchestrator completes its chained WhoAmI call and returns the
+    /// combined multi-agent result as `200 OK`.
+    /// </summary>
+    private Task StepCallChainPollHop2Async(CancellationToken ct) =>
+        RunPendingPollAsync(ct, () => _authToken!, Actor.Agent, Actor.Orchestrator, (last, capturedBase) =>
+        {
+            _callChainResponseBody = last.ResponseBody;
+
+            Steps.Add(new StepRecord
+            {
+                Number = Steps.Count + 1,
+                Title = "Poll Orchestrator pending → 200 (chain resolved)",
+                From = Actor.Agent,
+                To = Actor.Orchestrator,
+                Narrative =
+                    "With the second approval recorded, the agent polls the " +
+                    "Orchestrator's pending URL (signed with the Orchestrator-audience " +
+                    "auth_token). The Orchestrator re-drives its downstream exchange: the " +
+                    "PS now mints a **chained auth_token with a nested `act` claim** " +
+                    "recording the full delegation path (you → Orchestrator → WhoAmI). " +
+                    "The Orchestrator calls WhoAmI with it and returns the combined " +
+                    "result as `200 OK`. The internal Orchestrator → PS → WhoAmI hops are " +
+                    "shown as grouped sub-steps.",
+                RequestLine = $"{last.RequestLine}  →  {_pendingUrl}",
+                RequestHeaders = last.RequestHeaders,
+                SignatureBase = capturedBase,
+                StatusLine = last.StatusLine,
+                ResponseHeaders = last.ResponseHeaders,
+                ResponseBody = PrettyJson(last.ResponseBody),
+                CodeSnippet = CodeSnippets.CallChainRetry,
+                SubSteps = new SubStep[]
+                {
+                    new("POST /token + upstream_token (retry)", Actor.Orchestrator, Actor.PersonServer),
+                    new("200 + chained auth_token (nested act)", Actor.PersonServer, Actor.Orchestrator, IsResponse: true),
+                    new("GET / (chained auth_token)", Actor.Orchestrator, Actor.Resource),
+                    new("200 + claims", Actor.Resource, Actor.Orchestrator, IsResponse: true),
+                },
+            });
+        });
 
     private async Task StepCallChainRetryAsync(CancellationToken ct)
     {
@@ -1927,13 +2233,12 @@ public sealed class TourSession : IAsyncDisposable
                 Narrative =
                     "The agent POSTs the resource_token to its Person Server. The PS " +
                     "sees the resource_token's `aud` is an **Access Server** (not " +
-                    "itself) and federates: signed `POST {as}/token`. This AS is " +
-                    "backed by **Keycloak** and its policy needs the user to log in " +
-                    "and consent, so the AS replies `202` with an interaction URL. " +
-                    "The PS relays that back to the agent as its own `202 Accepted` " +
-                    "with a `Location` (the PS pending URL the agent will poll) and an " +
-                    "`AAuth-Requirement: requirement=interaction` header carrying the " +
-                    "AS's user-facing login URL + single-use code.",
+                    "itself) and federates: signed `POST {as}/token`. This AS's policy " +
+                    "needs the user to consent, so the AS replies `202` with an " +
+                    "interaction URL. The PS relays that back to the agent as its own " +
+                    "`202 Accepted` with a `Location` (the PS pending URL the agent will " +
+                    "poll) and an `AAuth-Requirement: requirement=interaction` header " +
+                    "carrying the AS's user-facing consent URL + single-use code.",
                 RequestLine = $"{ex.RequestLine}  →  {_tokenEndpoint}",
                 RequestHeaders = ex.RequestHeaders,
                 RequestBody = PrettyJson(ex.RequestBody),
@@ -1946,7 +2251,7 @@ public sealed class TourSession : IAsyncDisposable
                 {
                     new("discover aauth-access.json", Actor.PersonServer, Actor.AccessServer),
                     new("signed POST /token (resource+agent)", Actor.PersonServer, Actor.AccessServer),
-                    new("202 + interaction URL (Keycloak login)", Actor.AccessServer, Actor.PersonServer, IsResponse: true),
+                    new("202 + interaction URL (AS consent)", Actor.AccessServer, Actor.PersonServer, IsResponse: true),
                 },
                 SubStepsLabel = "inside person server",
             });
@@ -1995,22 +2300,23 @@ public sealed class TourSession : IAsyncDisposable
     private void StepFederatedDirectUserToInteraction()
     {
         var userUrl = UserInteractionUrl
-            ?? "(no interaction URL captured — is the Access Server running with PolicyProvider=keycloak?)";
+            ?? "(no interaction URL captured — is the Access Server running with RequireConsent=true or PolicyProvider=keycloak?)";
 
         Steps.Add(new StepRecord
         {
             Number = Steps.Count + 1,
-            Title = "Direct user to Access Server login",
+            Title = "Direct user to Access Server consent",
             From = Actor.Agent,
             To = Actor.Agent,
             Narrative =
                 "The agent received the relayed interaction requirement. It constructs " +
                 "the user-facing URL as `{url}?code={code}` — where `{url}` is the " +
-                "**Access Server's** login endpoint (which redirects to Keycloak) and " +
-                "`{code}` ties the upcoming browser session back to this specific " +
-                "federated request. The agent surfaces this link to its user (browser " +
-                "redirect, QR code, etc.). Note the user authenticates at the AS/Keycloak " +
-                "here — not at the Person Server — because the AS owns the policy decision.",
+                "**Access Server's** interaction endpoint (its own consent screen, or a " +
+                "redirect to Keycloak) and `{code}` ties the upcoming browser session " +
+                "back to this specific federated request. The agent surfaces this link to " +
+                "its user (browser redirect, QR code, etc.). Note the user approves at the " +
+                "**Access Server** here — not at the Person Server — because the AS owns the " +
+                "policy decision.",
             ResponseBody = userUrl,
             TokenDecoded = $"Interaction URL:  {_interactionUrl}\nCode:             {_interactionCode}",
             CodeSnippet = CodeSnippets.DirectUserToInteraction,
