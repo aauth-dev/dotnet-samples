@@ -5,8 +5,9 @@
 ## Registration
 
 ```csharp
-using AAuth.DependencyInjection;
-using AAuth.Server;
+using AAuth;
+using AAuth.Server.Challenge;
+using AAuth.Server.Verification;
 
 // Must be registered AFTER UseAAuthVerification
 app.UseAAuthChallenge(new ChallengeOptions

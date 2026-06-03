@@ -9,7 +9,7 @@ Resources publish a `.well-known/aauth-resource.json` document so agents can dis
 ## Setup
 
 ```csharp
-using AAuth.DependencyInjection;
+using AAuth;
 
 builder.Services.AddAAuthResource(options =>
 {
@@ -31,7 +31,7 @@ app.MapAAuthWellKnown(); // serves /.well-known/aauth-resource.json
 <summary>Manual Setup</summary>
 
 ```csharp
-using AAuth.Server;
+using AAuth.Server.Metadata;
 using AAuth.Crypto;
 
 var signingKey = AAuthKey.Generate();

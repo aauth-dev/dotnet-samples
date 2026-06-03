@@ -34,7 +34,7 @@ The calling agent uses standard challenge handling. The SDK automatically handle
 ```csharp
 using AAuth.Agent;
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 var keyStore = FileKeyStore.Default();
 var localKeyHandle = configuration["AAuth:LocalKeyHandle"]!;

@@ -88,7 +88,7 @@ IResult ReEmitChainedInteraction(HttpContext ctx, PendingStore.Entry entry)
     ctx.Response.Headers["Retry-After"] = "1";
     ctx.Response.Headers.CacheControl = "no-store";
     ctx.Response.Headers[AAuthRequirementHeader.Name] =
-        AAuthInteraction.Format(entry.InteractionUrl, entry.InteractionCode);
+        Interaction.Format(entry.InteractionUrl, entry.InteractionCode);
     return Results.Json(new { status = "interaction_required" }, statusCode: 202);
 }
 ```

@@ -16,7 +16,7 @@ The agent references its JWKS endpoint and key ID. The resource fetches the publ
 
 ```csharp
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 var key = AAuthKey.Generate();
 
@@ -34,7 +34,7 @@ var response = await client.GetAsync("https://resource.example/data");
 ```csharp
 using AAuth.Agent;
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 var key = AAuthKey.Generate();
 

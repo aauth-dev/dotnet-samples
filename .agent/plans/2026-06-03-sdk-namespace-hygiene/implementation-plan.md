@@ -278,16 +278,16 @@ These must be swept by hand so the visible API matches the shipped API.
 
 ### Definition of Done
 
-- [ ] No occurrence of any old namespace/type name remains in `samples/`,
+- [x] No occurrence of any old namespace/type name remains in `samples/`,
       `docs/`, `README.md`, `src/AAuth/README.md` (grep clean for each renamed symbol)
-- [ ] `samples/GuidedTour/CodeSnippets.cs` and any `StepRecord.CodeSnippet`
+- [x] `samples/GuidedTour/CodeSnippets.cs` and any `StepRecord.CodeSnippet`
       strings show the new namespaces/types
-- [ ] GuidedTour highlighter regex updated for renamed types
-- [ ] `Tour.razor` / `Home.razor` inline `<code>` references updated
-- [ ] `dotnet build AAuth.slnx -v q` clean (samples included)
-- [ ] `make demo` and `make demo-keycloak` start; GuidedTour (:5400) and
+- [x] GuidedTour highlighter regex updated for renamed types
+- [x] `Tour.razor` / `Home.razor` inline `<code>` references updated
+- [x] `dotnet build AAuth.slnx -v q` clean (samples included)
+- [x] `make demo` and `make demo-keycloak` start; GuidedTour (:5400) and
       SampleApp (:5240) render the updated snippets
-- [ ] Sample `playwright-tests` and `tests/e2e` green
+- [x] Sample `playwright-tests` and `tests/e2e` green
 
 ---
 

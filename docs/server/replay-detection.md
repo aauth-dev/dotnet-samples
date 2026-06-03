@@ -29,7 +29,7 @@ public interface IJtiStore
 Thread-safe, in-process implementation. Suitable for single-instance deployments and testing.
 
 ```csharp
-using AAuth.DependencyInjection;
+using AAuth;
 
 // DI extension (recommended) — registers IJtiStore automatically
 builder.Services.AddAAuthResource(options =>
@@ -44,7 +44,8 @@ builder.Services.AddAAuthResource(options =>
 
 ```csharp
 using AAuth.Server;
-using AAuth.DependencyInjection;
+using AAuth;
+using AAuth.Server.Verification;
 
 builder.Services.AddSingleton(new AAuthVerifier());
 builder.Services.AddSingleton<IJtiStore>(new InMemoryJtiStore());

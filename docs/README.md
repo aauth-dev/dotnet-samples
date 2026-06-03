@@ -101,7 +101,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `TokenExchangeClient` | Sends signed `POST /token` to the Person Server |
 | `DeferredPoller` | Polls the pending URL until auth_token or timeout |
 | `AgentProviderClient` | Enrols with an Agent Provider (CLI/desktop agents; hosted services self-issue) |
-| `AAuthMission` / `AAuthMissionHeader` | Mission state + the `AAuth-Mission` header helpers |
+| `Mission` / `AAuthMissionHeader` | Mission state + the `AAuth-Mission` header helpers |
 | `MissionForwardingHandler` | `DelegatingHandler` that forwards mission context downstream |
 | `AAuthCapabilitiesHeader` | Helpers for the `AAuth-Capabilities` request header |
 | `IInteractionPresenter` | Surface interaction URLs to the user |
@@ -132,9 +132,9 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | Type | Purpose |
 |------|---------|
 | `AAuthRequirementHeader` | Format/parse the `AAuth-Requirement` challenge header |
-| `AAuthInteraction` | Interaction URL + code from 202 responses |
+| `Interaction` | Interaction URL + code from 202 responses |
 
-> The `AAuthCapabilitiesHeader` and `AAuthMissionHeader` types live in the `AAuth.Agent` namespace (alongside `AAuthMission` and `MissionForwardingHandler`), not in `AAuth.Headers`.
+> The `AAuthCapabilitiesHeader` and `AAuthMissionHeader` types live in the `AAuth.Agent` namespace (alongside `Mission` and `MissionForwardingHandler`), not in `AAuth.Headers`.
 
 ### `AAuth.Server` — Resource server utilities
 
@@ -181,8 +181,8 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 
 | Type | Purpose |
 |------|---------|
-| `AAuthAgentId` | Parse/validate `aauth:` agent identifiers |
-| `AAuthServerId` | Parse/validate server identifiers |
+| `AgentId` | Parse/validate `aauth:` agent identifiers |
+| `ServerId` | Parse/validate server identifiers |
 
 ## Samples
 

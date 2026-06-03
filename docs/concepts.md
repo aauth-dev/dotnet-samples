@@ -42,7 +42,7 @@ Four modes:
 ### 3. Governance (Missions)
 
 Optional layer. Agent proposes missions; PS approves and scopes permissions.
-SDK: `AAuthMission`, `AAuthMissionHeader`
+SDK: `Mission`, `AAuthMissionHeader`
 
 See [Missions](https://explorer.aauth.dev/missions/compare).
 

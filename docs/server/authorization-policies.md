@@ -9,7 +9,7 @@ The AAuth SDK integrates with ASP.NET Core's authorization system via `AAuthScop
 ## Registration
 
 ```csharp
-using AAuth.DependencyInjection;
+using AAuth;
 
 builder.Services.AddAAuthAuthentication();
 builder.Services.AddAAuthAuthorization();

@@ -28,7 +28,7 @@ Automatic handling with `AAuthClientBuilder`:
 ```csharp
 using AAuth.Agent;
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 // Hosted service: self-issue (no AP needed)
 var key = AAuthKey.Generate();
@@ -53,7 +53,7 @@ For agents without a stable URL, enrol with an Agent Provider:
 ```csharp
 using AAuth.Agent;
 using AAuth.Crypto;
-using AAuth.HttpSig;
+using AAuth;
 
 var keyStore = FileKeyStore.Default();
 var localKeyHandle = configuration["AAuth:LocalKeyHandle"]!;
