@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Crypto;
@@ -34,6 +35,34 @@ public class CapabilitiesHeaderTests
     {
         var caps = AAuthCapabilitiesHeader.Parse("");
         Assert.Empty(caps);
+    }
+
+    [Fact(DisplayName = "§Mission Approval — Union merges mission and agent capabilities, mission first")]
+    public void Union_MergesMissionFirst()
+    {
+        var union = AAuthCapabilitiesHeader.Union(
+            missionCapabilities: new[] { "interaction", "payment" },
+            agentCapabilities: new[] { "clarification" });
+
+        Assert.Equal(new[] { "interaction", "payment", "clarification" }, union.ToArray());
+    }
+
+    [Fact(DisplayName = "§Mission Approval — Union deduplicates overlapping capabilities")]
+    public void Union_Deduplicates()
+    {
+        var union = AAuthCapabilitiesHeader.Union(
+            missionCapabilities: new[] { "interaction", "payment" },
+            agentCapabilities: new[] { "payment", "mission" });
+
+        Assert.Equal(new[] { "interaction", "payment", "mission" }, union.ToArray());
+    }
+
+    [Fact(DisplayName = "§Mission Approval — Union tolerates null sources")]
+    public void Union_ToleratesNulls()
+    {
+        Assert.Equal(new[] { "interaction" }, AAuthCapabilitiesHeader.Union(new[] { "interaction" }, null).ToArray());
+        Assert.Equal(new[] { "mission" }, AAuthCapabilitiesHeader.Union(null, new[] { "mission" }).ToArray());
+        Assert.Empty(AAuthCapabilitiesHeader.Union(null, null));
     }
 
     [Fact(DisplayName = "§14.1 — AAuthSigningHandler emits Capabilities header when configured")]

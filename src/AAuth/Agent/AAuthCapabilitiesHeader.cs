@@ -46,4 +46,37 @@ public static class AAuthCapabilitiesHeader
             return Array.Empty<string>();
         return headerValue.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
     }
+
+    /// <summary>
+    /// Union the mission-provided capabilities with the agent's own capabilities,
+    /// preserving order (mission first, then agent) and removing duplicates
+    /// case-sensitively. Per §Mission Approval, the agent unions the capabilities
+    /// the PS can provide for the session with its own when constructing the
+    /// <c>AAuth-Capabilities</c> request header.
+    /// </summary>
+    public static IReadOnlyList<string> Union(
+        IEnumerable<string>? missionCapabilities,
+        IEnumerable<string>? agentCapabilities)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var result = new List<string>();
+
+        void Add(IEnumerable<string>? source)
+        {
+            if (source is null)
+                return;
+            foreach (var capability in source)
+            {
+                if (string.IsNullOrWhiteSpace(capability))
+                    continue;
+                var trimmed = capability.Trim();
+                if (seen.Add(trimmed))
+                    result.Add(trimmed);
+            }
+        }
+
+        Add(missionCapabilities);
+        Add(agentCapabilities);
+        return result;
+    }
 }
