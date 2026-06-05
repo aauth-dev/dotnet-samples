@@ -171,6 +171,30 @@ Then run the agent:
 dotnet run --project samples/MissionAgent
 ```
 
+### Using the Makefile
+
+The repo ships two convenience targets. Start the backend stack (AP + PS +
+WhoAmI) in one terminal:
+
+```bash
+make demo-mission
+```
+
+Then drive the agent from another terminal:
+
+```bash
+make agent-mission                       # interactive (decide in your browser)
+make agent-mission PRE_APPROVE=whoami     # interactive, but seed an in-scope grant — one fewer browser screen
+make agent-mission AUTO=1                 # unattended (scripted PS defaults — no browser screens)
+```
+
+`PRE_APPROVE=<scope>` maps to `--pre-approve <scope>` and `AUTO=1` maps to
+`--auto` (both described below). `PRE_APPROVE` is most useful in **interactive**
+runs, where it removes a browser consent screen. Under `AUTO=1` there are no
+screens to remove, so it only changes the PS's decision reason (silent `InScope`
+at gate 2a instead of a scripted out-of-scope approval) — handy for tests, not
+for a human watching.
+
 By default each out-of-scope prompt is **interactive**: the agent prints the
 Person Server's consent URL (and tries to open it) and waits while you click
 **Approve** or **Deny** in your browser. The PS holds the request at `202` until
@@ -195,6 +219,9 @@ screen appears:
 # interactive: only TWO browser screens (mission creation + the delete_inbox
 # permission) instead of three — the WhoAmI token gate is now silent
 dotnet run --project samples/MissionAgent -- --pre-approve whoami
+
+# or, via the Makefile:
+make agent-mission PRE_APPROVE=whoami
 ```
 
 The scope is seeded against the resource's **origin** (`http://localhost:5000`),

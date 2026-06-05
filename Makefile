@@ -241,7 +241,8 @@ demo-mission: ## Start the mission stack (AP + PS + WhoAmI) for the MissionAgent
 	@echo ""
 	@echo " Drive it from another terminal with:  make agent-mission"
 	@echo "   (out-of-scope prompts open the PS consent page in your browser;"
-	@echo "    add AUTO=1 to resolve prompts via the PS's scripted defaults)"
+	@echo "    add AUTO=1 to resolve prompts via the PS's scripted defaults;"
+	@echo "    add PRE_APPROVE=whoami to seed an in-scope grant — one fewer prompt)"
 	@echo "------------------------------------------------------------------"
 	@echo ""
 	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \
@@ -250,8 +251,8 @@ demo-mission: ## Start the mission stack (AP + PS + WhoAmI) for the MissionAgent
 	$(DOTNET) run --project $(AP_PROJECT) & \
 	wait
 
-agent-mission: ## Drive the MissionAgent CLI through the full mission lifecycle (AUTO=1 for scripted prompts)
-	$(DOTNET) run --project $(MISSION_PROJECT) -- $(if $(AUTO),--auto,)
+agent-mission: ## Drive the MissionAgent CLI through the full mission lifecycle (AUTO=1 for scripted prompts; PRE_APPROVE=<scope> to seed an in-scope grant)
+	$(DOTNET) run --project $(MISSION_PROJECT) -- $(if $(AUTO),--auto,) $(if $(PRE_APPROVE),--pre-approve $(PRE_APPROVE),)
 
 # ----------------------------------------------------------------------------
 # End-to-end (Playwright)
