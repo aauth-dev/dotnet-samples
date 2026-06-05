@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
-using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
@@ -26,19 +25,13 @@ namespace AAuth.Agent;
 /// </remarks>
 public sealed class TokenExchangeClient
 {
-    private readonly HttpClient _signedClient;
-    private readonly MetadataClient _metadata;
+    private readonly DeferredExchange _exchange;
 
     /// <summary>Create the exchange client.</summary>
     /// <param name="signedClient">HttpClient already wired with an <see cref="HttpSig.AAuthSigningHandler"/>.</param>
     /// <param name="metadata">Metadata client for resolving the PS <c>token_endpoint</c>.</param>
     public TokenExchangeClient(HttpClient signedClient, MetadataClient metadata)
-    {
-        ArgumentNullException.ThrowIfNull(signedClient);
-        ArgumentNullException.ThrowIfNull(metadata);
-        _signedClient = signedClient;
-        _metadata = metadata;
-    }
+        => _exchange = new DeferredExchange(signedClient, metadata);
 
     /// <summary>
     /// Submit <paramref name="resourceToken"/> to the PS at
@@ -84,33 +77,8 @@ public sealed class TokenExchangeClient
 
         using var activity = AAuthDiagnostics.Source.StartActivity("AAuth.TokenExchange");
 
-        var metadataUrl = MetadataClient.BuildUrl(personServer, "aauth-person.json");
-        var doc = await _metadata.FetchAsync(metadataUrl, cancellationToken).ConfigureAwait(false);
-        var tokenEndpoint = (string?)doc["token_endpoint"]
-            ?? throw new InvalidOperationException(
-                $"Person Server metadata at {metadataUrl} is missing 'token_endpoint'.");
-
-        // A malicious or compromised PS metadata document could otherwise
-        // redirect the signed exchange request to an arbitrary URL (SSRF
-        // pivot for the agent) or downgrade it to plain http. Require the
-        // same https-or-loopback policy used elsewhere, and pin the
-        // endpoint to the same origin as the configured PS so a metadata
-        // compromise can't divert the signed exchange off-host.
-        if (!AAuthUrl.IsHttpsOrLoopback(tokenEndpoint)
-            || !Uri.TryCreate(tokenEndpoint, UriKind.Absolute, out var tokenEndpointUri))
-        {
-            throw new InvalidOperationException(
-                $"Person Server 'token_endpoint' must be an absolute https:// URL (or http://localhost): {tokenEndpoint}");
-        }
-        if (!Uri.TryCreate(personServer, UriKind.Absolute, out var psUri)
-            || !string.Equals(
-                tokenEndpointUri.GetLeftPart(UriPartial.Authority),
-                psUri.GetLeftPart(UriPartial.Authority),
-                StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException(
-                $"Person Server 'token_endpoint' must share an origin with {personServer}: {tokenEndpoint}");
-        }
+        var tokenEndpointUri = await _exchange.ResolveEndpointAsync(
+            personServer, "token_endpoint", cancellationToken).ConfigureAwait(false);
 
         var body = new JsonObject { ["resource_token"] = resourceToken };
         if (!string.IsNullOrEmpty(upstreamToken))
@@ -139,153 +107,45 @@ public sealed class TokenExchangeClient
         }
         // Optional consent/display parameters (§Agent Token Request). Each is
         // emitted only when set.
-        AddIfPresent(body, "justification", options.Justification);
-        AddIfPresent(body, "login_hint", options.LoginHint);
-        AddIfPresent(body, "tenant", options.Tenant);
-        AddIfPresent(body, "domain_hint", options.DomainHint);
-        AddIfPresent(body, "platform", options.Platform);
-        AddIfPresent(body, "device", options.Device);
-        using var request = new HttpRequestMessage(HttpMethod.Post, tokenEndpointUri)
-        {
-            Content = JsonContent.Create(body),
-        };
+        DeferredExchange.AddIfPresent(body, "justification", options.Justification);
+        DeferredExchange.AddIfPresent(body, "login_hint", options.LoginHint);
+        DeferredExchange.AddIfPresent(body, "tenant", options.Tenant);
+        DeferredExchange.AddIfPresent(body, "domain_hint", options.DomainHint);
+        DeferredExchange.AddIfPresent(body, "platform", options.Platform);
+        DeferredExchange.AddIfPresent(body, "device", options.Device);
 
-        // Signal willingness to long-poll on the initial exchange request
-        // per spec: "agent signals its willingness to wait using the Prefer header".
-        if (pollerOptions?.PreferWaitSeconds is { } preferWait)
+        var exchangeOptions = new DeferredExchangeOptions
         {
-            request.Headers.TryAddWithoutValidation("Prefer", $"wait={preferWait}");
-        }
-
-        var response = await _signedClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        ClarificationExchange? clarificationExchange = null;
-
-        try
-        {
-            // Resolve any deferred (202) requirements — user interaction and/or
-            // clarification chat — looping until the PS returns a terminal
-            // response (§User Interaction, §Clarification Chat).
-            while (response.StatusCode == HttpStatusCode.Accepted)
+            OnInteractionRequired = onInteractionRequired,
+            OnClarificationRequired = options.OnClarificationRequired,
+            MaxClarificationRounds = options.MaxClarificationRounds,
+            PollerOptions = pollerOptions,
+            // Token exchange cannot complete consent without an interaction
+            // callback, so any deferred 202 with no callback fails fast.
+            RequireInteractionCallback = true,
+            // §User Interaction: a user denial surfaces as 403 access_denied on
+            // the poll. Classify it only after an interaction poll (matching the
+            // original placement) so a direct/clarification 403 stays a token error.
+            OnPolledResponse = async (resp, ct) =>
             {
-                var pendingUrl = ResolveLocation(response, tokenEndpointUri);
-                var requirement = ExtractRequirement(response);
-
-                // §Clarification Chat: the PS is asking the agent a question
-                // during consent. Surface it via the callback, apply the agent's
-                // chosen action against the pending URL, then resume polling.
-                if (requirement?.Requirement == Headers.ClarificationRequirement.RequirementType)
+                if (resp.StatusCode == HttpStatusCode.Forbidden
+                    && await IsAccessDeniedAsync(resp, ct).ConfigureAwait(false))
                 {
-                    var clarificationBody = await ReadJsonBodyAsync(response, cancellationToken).ConfigureAwait(false);
-                    var clarification = Headers.ClarificationRequirement.FromResponse(requirement, clarificationBody);
-                    response.Dispose();
-
-                    if (options.OnClarificationRequired is null)
-                    {
-                        throw new HttpRequestException(
-                            "PS returned requirement=clarification but no OnClarificationRequired callback was provided.");
-                    }
-
-                    clarificationExchange ??= new ClarificationExchange(
-                        _signedClient, pendingUrl, options.MaxClarificationRounds);
-                    var decision = await options.OnClarificationRequired(clarification!, cancellationToken)
-                        .ConfigureAwait(false);
-                    await clarificationExchange.ApplyAsync(decision, cancellationToken).ConfigureAwait(false);
-
-                    response = await PollPendingAsync(pendingUrl, pollerOptions, cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
-
-                // §User Interaction: out-of-band consent. The agent relays the
-                // URL+code to the user and then polls for completion.
-                if (onInteractionRequired is null)
-                {
-                    throw new HttpRequestException(
-                        $"PS returned {(int)response.StatusCode} (deferred response) but no onInteractionRequired callback was provided.");
-                }
-
-                var interaction = requirement is null ? null : Interaction.FromRequirement(requirement);
-                response.Dispose();
-                if (interaction is not null)
-                {
-                    await onInteractionRequired(interaction, cancellationToken).ConfigureAwait(false);
-                }
-
-                response = await PollPendingAsync(pendingUrl, pollerOptions, cancellationToken).ConfigureAwait(false);
-
-                // 403 access_denied → user explicitly denied. Surface a distinct
-                // typed exception so UIs / retry policies can treat denial
-                // differently from "unknown id" (404) or transport failure.
-                if (response.StatusCode == HttpStatusCode.Forbidden
-                    && await IsAccessDeniedAsync(response, cancellationToken).ConfigureAwait(false))
-                {
-                    response.Dispose();
                     throw new AAuthInteractionDeniedException(
                         "The user denied the AAuth interaction request.");
                 }
-            }
+            },
+        };
 
-            // §Mission Status Errors: a 403 mission_terminated means the request
-            // referenced a mission that is no longer active. Terminal — the
-            // agent must stop acting on the mission.
-            if (response.StatusCode == HttpStatusCode.Forbidden
-                && await TryReadMissionTerminatedAsync(response, cancellationToken).ConfigureAwait(false)
-                    is var (terminated, missionStatus) && terminated)
-            {
-                response.Dispose();
-                throw new Errors.AAuthMissionTerminatedException(missionStatus);
-            }
-
+        var response = await _exchange.PostAsync(
+            tokenEndpointUri, body, exchangeOptions, cancellationToken).ConfigureAwait(false);
+        try
+        {
             return await ReadAuthTokenAsync(response, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             response.Dispose();
-        }
-    }
-
-    // Poll the pending URL, translating a poll-budget timeout into the typed
-    // interaction-timeout exception and stopping early on a clarification 202 so
-    // the exchange loop can handle it (composing with any caller predicate).
-    private async Task<HttpResponseMessage> PollPendingAsync(
-        Uri pendingUrl, DeferredPollerOptions? pollerOptions, CancellationToken cancellationToken)
-    {
-        var composed = ComposePollerOptions(pollerOptions);
-        try
-        {
-            using var pollActivity = AAuthDiagnostics.Source.StartActivity("AAuth.DeferredPoll");
-            return await new DeferredPoller(_signedClient, composed)
-                .PollAsync(pendingUrl, cancellationToken).ConfigureAwait(false);
-        }
-        catch (TimeoutException ex)
-        {
-            throw new AAuthInteractionTimeoutException(
-                $"PS deferred interaction did not complete within the polling budget: {ex.Message}",
-                ex);
-        }
-    }
-
-    // Compose poller options so polling stops on a clarification 202 (returning
-    // it to the exchange loop), preserving any caller-supplied StopWhenAccepted.
-    private static DeferredPollerOptions ComposePollerOptions(DeferredPollerOptions? baseOptions)
-    {
-        var userStop = baseOptions?.StopWhenAccepted;
-        bool Stop(HttpResponseMessage resp)
-        {
-            if (userStop is not null && userStop(resp)) { return true; }
-            var requirement = ExtractRequirement(resp);
-            return requirement?.Requirement == Headers.ClarificationRequirement.RequirementType;
-        }
-
-        return baseOptions is null
-            ? new DeferredPollerOptions { StopWhenAccepted = Stop }
-            : baseOptions with { StopWhenAccepted = Stop };
-    }
-
-    private static void AddIfPresent(JsonObject body, string name, string? value)
-    {
-        if (!string.IsNullOrEmpty(value))
-        {
-            body[name] = value;
         }
     }
 
@@ -314,7 +174,7 @@ public sealed class TokenExchangeClient
     {
         // Buffer the body so the subsequent ReadAuthTokenAsync (if we
         // decide it isn't access_denied) still sees it.
-        var body = await BufferBodyAsync(response, cancellationToken).ConfigureAwait(false);
+        var body = await DeferredExchange.BufferBodyAsync(response, cancellationToken).ConfigureAwait(false);
         try
         {
             var json = JsonNode.Parse(body) as JsonObject;
@@ -324,91 +184,6 @@ public sealed class TokenExchangeClient
         {
             return false;
         }
-    }
-
-    // §Mission Status Errors: detect a 403 mission_terminated body. Buffers the
-    // body so a non-matching response still flows to ReadAuthTokenAsync.
-    // Returns (terminated, mission_status).
-    private static async Task<(bool Terminated, string? MissionStatus)> TryReadMissionTerminatedAsync(
-        HttpResponseMessage response, CancellationToken cancellationToken)
-    {
-        var body = await BufferBodyAsync(response, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var json = JsonNode.Parse(body) as JsonObject;
-            if ((string?)json?["error"] == Errors.AAuthMissionTerminatedException.ErrorCode)
-            {
-                return (true, (string?)json?["mission_status"]);
-            }
-            return (false, null);
-        }
-        catch (System.Text.Json.JsonException)
-        {
-            return (false, null);
-        }
-    }
-
-    // Read a response body to a string and replace the Content with a buffered
-    // copy (preserving media type / charset) so it can be read again — e.g. by
-    // a subsequent error classifier or ReadAuthTokenAsync.
-    private static async Task<string> BufferBodyAsync(
-        HttpResponseMessage response, CancellationToken cancellationToken)
-    {
-        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        var originalMediaType = response.Content.Headers.ContentType?.MediaType ?? "application/json";
-        var originalCharset = response.Content.Headers.ContentType?.CharSet;
-        // Fall back to UTF-8 for unknown / malformed charset values rather
-        // than surfacing an ArgumentException from Encoding.GetEncoding,
-        // which would mask the real exchange failure the caller is trying
-        // to diagnose.
-        System.Text.Encoding encoding;
-        if (string.IsNullOrEmpty(originalCharset))
-        {
-            encoding = System.Text.Encoding.UTF8;
-        }
-        else
-        {
-            try { encoding = System.Text.Encoding.GetEncoding(originalCharset); }
-            catch (ArgumentException) { encoding = System.Text.Encoding.UTF8; }
-        }
-        response.Content.Dispose();
-        response.Content = new StringContent(body, encoding, originalMediaType);
-        return body;
-    }
-
-    private static async Task<JsonObject?> ReadJsonBodyAsync(
-        HttpResponseMessage response, CancellationToken cancellationToken)
-    {
-        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(body))
-        {
-            return null;
-        }
-        try { return JsonNode.Parse(body) as JsonObject; }
-        catch (System.Text.Json.JsonException) { return null; }
-    }
-
-    private static AAuthRequirementHeader.ParsedRequirement? ExtractRequirement(HttpResponseMessage response)
-    {
-        if (!response.Headers.TryGetValues(AAuthRequirementHeader.Name, out var values))
-        {
-            return null;
-        }
-        foreach (var raw in values)
-        {
-            if (string.IsNullOrWhiteSpace(raw)) { continue; }
-            try { return AAuthRequirementHeader.Parse(raw); }
-            catch (FormatException) { continue; }
-        }
-        return null;
-    }
-
-    private static Uri ResolveLocation(HttpResponseMessage response, Uri @base)
-    {
-        var location = response.Headers.Location
-            ?? throw new HttpRequestException(
-                "Deferred PS response is missing the Location header — cannot poll.");
-        return location.IsAbsoluteUri ? location : new Uri(@base, location);
     }
 
     private static async Task<string> ReadAuthTokenAsync(

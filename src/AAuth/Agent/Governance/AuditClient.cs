@@ -18,11 +18,11 @@ namespace AAuth.Agent.Governance;
 /// </remarks>
 public sealed class AuditClient
 {
-    private readonly GovernanceExchange _exchange;
+    private readonly DeferredExchange _exchange;
 
     /// <summary>Create the audit client.</summary>
     public AuditClient(HttpClient signedClient, MetadataClient metadata)
-        => _exchange = new GovernanceExchange(signedClient, metadata);
+        => _exchange = new DeferredExchange(signedClient, metadata);
 
     /// <summary>
     /// Record <paramref name="record"/> at the PS at <paramref name="personServer"/>.
@@ -42,7 +42,7 @@ public sealed class AuditClient
 
         // Audit is fire-and-forget; no deferral handling is expected.
         var response = await _exchange.PostAsync(
-            endpoint, record.ToJsonObject(), options: null, cancellationToken).ConfigureAwait(false);
+            endpoint, record.ToJsonObject(), new DeferredExchangeOptions(), cancellationToken).ConfigureAwait(false);
         try
         {
             if (response.StatusCode == HttpStatusCode.Created
@@ -52,7 +52,7 @@ public sealed class AuditClient
                 return;
             }
 
-            var error = await GovernanceExchange.BufferBodyAsync(response, cancellationToken).ConfigureAwait(false);
+            var error = await DeferredExchange.BufferBodyAsync(response, cancellationToken).ConfigureAwait(false);
             throw new HttpRequestException(
                 $"Audit record failed with {(int)response.StatusCode}: {error}");
         }

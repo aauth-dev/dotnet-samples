@@ -20,13 +20,13 @@ namespace AAuth.Agent.Governance;
 /// </remarks>
 public sealed class MissionClient
 {
-    private readonly GovernanceExchange _exchange;
+    private readonly DeferredExchange _exchange;
 
     /// <summary>Create the mission client.</summary>
     /// <param name="signedClient">HttpClient wired with an <see cref="HttpSig.AAuthSigningHandler"/>.</param>
     /// <param name="metadata">Metadata client for resolving the PS <c>mission_endpoint</c>.</param>
     public MissionClient(HttpClient signedClient, MetadataClient metadata)
-        => _exchange = new GovernanceExchange(signedClient, metadata);
+        => _exchange = new DeferredExchange(signedClient, metadata);
 
     /// <summary>
     /// Propose a mission to the PS at <paramref name="personServer"/> and return
@@ -50,12 +50,13 @@ public sealed class MissionClient
             personServer, "mission_endpoint", cancellationToken).ConfigureAwait(false);
 
         var response = await _exchange.PostAsync(
-            endpoint, proposal.ToJsonObject(), options, cancellationToken).ConfigureAwait(false);
+            endpoint, proposal.ToJsonObject(),
+            options?.ToExchangeOptions() ?? new DeferredExchangeOptions(), cancellationToken).ConfigureAwait(false);
         try
         {
             if (!response.IsSuccessStatusCode)
             {
-                var error = await GovernanceExchange.BufferBodyAsync(response, cancellationToken).ConfigureAwait(false);
+                var error = await DeferredExchange.BufferBodyAsync(response, cancellationToken).ConfigureAwait(false);
                 throw new HttpRequestException(
                     $"Mission proposal failed with {(int)response.StatusCode}: {error}");
             }

@@ -19,11 +19,11 @@ namespace AAuth.Agent.Governance;
 /// </remarks>
 public sealed class PermissionClient
 {
-    private readonly GovernanceExchange _exchange;
+    private readonly DeferredExchange _exchange;
 
     /// <summary>Create the permission client.</summary>
     public PermissionClient(HttpClient signedClient, MetadataClient metadata)
-        => _exchange = new GovernanceExchange(signedClient, metadata);
+        => _exchange = new DeferredExchange(signedClient, metadata);
 
     /// <summary>
     /// Request permission for <paramref name="request"/> from the PS at
@@ -42,12 +42,13 @@ public sealed class PermissionClient
             personServer, "permission_endpoint", cancellationToken).ConfigureAwait(false);
 
         var response = await _exchange.PostAsync(
-            endpoint, request.ToJsonObject(), options, cancellationToken).ConfigureAwait(false);
+            endpoint, request.ToJsonObject(),
+            options?.ToExchangeOptions() ?? new DeferredExchangeOptions(), cancellationToken).ConfigureAwait(false);
         try
         {
             if (!response.IsSuccessStatusCode)
             {
-                var error = await GovernanceExchange.BufferBodyAsync(response, cancellationToken).ConfigureAwait(false);
+                var error = await DeferredExchange.BufferBodyAsync(response, cancellationToken).ConfigureAwait(false);
                 throw new HttpRequestException(
                     $"Permission request failed with {(int)response.StatusCode}: {error}");
             }

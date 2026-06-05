@@ -495,3 +495,64 @@ under `docs/server/` + refresh `docs/advanced/missions.md` + add a
   `Missions/GovernanceServerTests.cs` (17).
 - **Validation:** 417 conformance (+18 across Phases 4+5) + 371 unit green; SDK +
   full solution build 0/0.
+
+### Phase 5.5 — Shared deferred transport + governance facade (2026-06-05, complete)
+
+- **Why (duplication).** `GovernanceExchange` (Phase 4) and
+  `TokenExchangeClient` (Phase 3) shared ~120 lines: endpoint origin-pin, the
+  `202` deferred loop (interaction + clarification), `ComposePollerOptions`,
+  `BufferBodyAsync` / `ReadJsonBodyAsync` / `ExtractRequirement` /
+  `ResolveLocation`, the `mission_terminated` reader, and `AddIfPresent`. Pure
+  refactor — same spec citations (§User Interaction, §Clarification Chat,
+  §Mission Status Errors, §PS Governance Endpoints, §Person Server Metadata).
+- **Single transport (D8).** `internal sealed class DeferredExchange`
+  (`AAuth.Agent`) now owns the transport: `ResolveEndpointAsync(personServer,
+  field, ct)` (metadata fetch + https-or-loopback + same-origin pin, generic
+  `'{field}'` errors byte-identical to the old `'token_endpoint'` ones) and
+  `PostAsync(endpoint, body, DeferredExchangeOptions, ct)` (the `202` deferred
+  loop, returning the terminal `HttpResponseMessage` for the caller to parse +
+  dispose, throwing `AAuthMissionTerminatedException` on terminal `403
+  mission_terminated`). It owns the `AAuth.DeferredPoll` activity and every
+  shared helper. `GovernanceExchange.cs` is **deleted**; `GovernanceOptions`
+  moved to its own file with `internal DeferredExchangeOptions ToExchangeOptions()`
+  (`RequireInteractionCallback = false`, no `OnPolledResponse`). The four
+  governance clients now hold a `DeferredExchange`.
+- **Preserving token-only behaviour through two option seams.** Rather than
+  leaving token-specific branches inside `TokenExchangeClient`, two
+  `DeferredExchangeOptions` knobs reproduce them exactly: (1)
+  `RequireInteractionCallback` (token = `true`) throws the token-exact
+  "no onInteractionRequired callback" message on **any** non-clarification `202`
+  with no callback, whereas governance (`false`) only throws when an interaction
+  requirement is actually present; (2) `OnPolledResponse` (token only) runs the
+  `403 access_denied` → `AAuthInteractionDeniedException` classifier **after** an
+  interaction-branch poll (not after a clarification poll, not on the
+  initial/direct response), matching the original call-site placement. The
+  initial/direct/clarification `403`s still flow to `ReadAuthTokenAsync` as token
+  errors. `TokenExchangeRequest` and the public `TokenExchangeClient` API are
+  unchanged.
+- **Facade + factory (D9).** Public `AAuthGovernanceClient` bundles
+  `Mission` / `Permission` / `Audit` / `Interaction` over one signed `HttpClient`
+  + `MetadataClient` (ctor `(HttpClient signedClient, MetadataClient metadata)`,
+  `ArgumentNullException` guards; sub-clients stay public).
+  `AAuthClientBuilder.BuildGovernance()` builds it from a shared private
+  `BuildSignedChannel(provider, innerHandler)` helper that also backs
+  `BuildHandler`'s exchange channel. `BuildHandler` passes `new
+  HttpClientHandler()` (preserving the prior exchange signer's inner handler);
+  `BuildGovernance` passes `_innerHandler ?? new HttpClientHandler()` for
+  testability. `BuildGovernance` **requires an explicit signing mode**
+  (`UseHwk`/`UseJwt`/`UseJwksUri`/`UseJktJwt`/`UseProvider`) and throws
+  `InvalidOperationException` otherwise — it does not reconstruct the lazy-refresh
+  token-holder pipeline (that stays exclusive to `BuildHandler`).
+- **Observability note.** `AAuth.DeferredPoll` now also fires for governance
+  polls (additive, via the shared transport) — not a wire change; the token
+  diagnostics tests still observe `AAuth.TokenExchange` + `AAuth.DeferredPoll`.
+- **DI deferred.** `AddAAuthAgentGovernance` is still out of scope; it will land
+  in Phase 6 only if a sample needs DI-resolved governance.
+- **Files:** new `Agent/DeferredExchange.cs`,
+  `Agent/Governance/{GovernanceOptions,AAuthGovernanceClient}.cs`; deleted
+  `Agent/Governance/GovernanceExchange.cs`; modified `Agent/TokenExchangeClient.cs`,
+  the four governance clients, and `AAuthClientBuilder.cs`. **Tests:**
+  `Missions/GovernanceFacadeTests.cs` (5).
+- **Validation:** 422 conformance (417 + 5 facade) + 371 unit green, both
+  unchanged from before the refactor; SDK + full solution build 0/0 — the
+  existing suites were the regression gate and caught nothing.

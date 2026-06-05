@@ -11,30 +11,20 @@ using AAuth.Discovery;
 using AAuth.Errors;
 using AAuth.Headers;
 
-namespace AAuth.Agent.Governance;
+namespace AAuth.Agent;
 
 /// <summary>
-/// Optional deferred-handling callbacks shared by the PS governance clients
-/// (mission, permission, interaction). A governance request may trigger a
-/// <c>202 Accepted</c> while the PS reaches the user; these callbacks let the
-/// agent participate in the clarification chat (#clarification-chat) or relay an
-/// interaction it cannot satisfy directly (#user-interaction).
+/// Transport-level options for <see cref="DeferredExchange"/>: the deferred
+/// (<c>202</c>) callbacks shared by token exchange and the PS governance clients,
+/// plus two seams that let the token-exchange path preserve its specific
+/// behaviour.
 /// </summary>
-public sealed class GovernanceOptions
+internal sealed class DeferredExchangeOptions
 {
-    /// <summary>
-    /// Invoked when the PS returns <c>requirement=interaction</c> — the agent
-    /// must relay the URL/code to the user. When <see langword="null"/> and the
-    /// PS defers with an interaction requirement, the request fails.
-    /// </summary>
+    /// <summary>Relay an interaction (URL/code) to the user (§User Interaction).</summary>
     public Func<Interaction, CancellationToken, Task>? OnInteractionRequired { get; init; }
 
-    /// <summary>
-    /// Invoked when the PS returns <c>requirement=clarification</c> during review
-    /// (§Clarification Chat). Returns the agent's decision (respond / update /
-    /// cancel). When <see langword="null"/> and the PS asks for clarification,
-    /// the request fails.
-    /// </summary>
+    /// <summary>Answer a clarification question during review (§Clarification Chat).</summary>
     public Func<ClarificationRequirement, CancellationToken, Task<ClarificationResponse>>? OnClarificationRequired { get; init; }
 
     /// <summary>Maximum clarification rounds before the exchange aborts (default 5).</summary>
@@ -42,21 +32,38 @@ public sealed class GovernanceOptions
 
     /// <summary>Optional polling tuning for deferred responses.</summary>
     public DeferredPollerOptions? PollerOptions { get; init; }
+
+    /// <summary>
+    /// When <see langword="true"/>, any non-clarification <c>202</c> requires an
+    /// interaction callback (token exchange cannot complete consent without one).
+    /// When <see langword="false"/>, the callback is only required if the PS
+    /// returns an explicit interaction requirement (governance default).
+    /// </summary>
+    public bool RequireInteractionCallback { get; init; }
+
+    /// <summary>
+    /// Invoked after each poll in the interaction branch, before the loop
+    /// re-checks for a <c>202</c>. Token exchange uses this to classify a polled
+    /// <c>403 access_denied</c>; the callback may throw. <see langword="null"/> =
+    /// no-op.
+    /// </summary>
+    public Func<HttpResponseMessage, CancellationToken, Task>? OnPolledResponse { get; init; }
 }
 
 /// <summary>
-/// Shared transport for the PS governance endpoints (#ps-governance-endpoints):
-/// resolves an endpoint from PS metadata (origin-pinned), POSTs a signed JSON
-/// body, drives the deferred <c>202</c> loop (interaction + clarification), and
-/// surfaces <c>403 mission_terminated</c> (#mission-status-errors) as a typed
-/// exception.
+/// Shared transport for signed AAuth POSTs that may defer (token exchange and the
+/// PS governance endpoints): resolves an endpoint from PS metadata (origin-pinned),
+/// POSTs a signed JSON body, drives the deferred <c>202</c> loop (interaction +
+/// clarification), and surfaces <c>403 mission_terminated</c>
+/// (#mission-status-errors) as a typed exception. The caller owns parsing the
+/// terminal response and MUST dispose it.
 /// </summary>
-internal sealed class GovernanceExchange
+internal sealed class DeferredExchange
 {
     private readonly HttpClient _signedClient;
     private readonly MetadataClient _metadata;
 
-    internal GovernanceExchange(HttpClient signedClient, MetadataClient metadata)
+    internal DeferredExchange(HttpClient signedClient, MetadataClient metadata)
     {
         ArgumentNullException.ThrowIfNull(signedClient);
         ArgumentNullException.ThrowIfNull(metadata);
@@ -65,9 +72,9 @@ internal sealed class GovernanceExchange
     }
 
     /// <summary>
-    /// Fetch PS metadata and resolve the governance endpoint named
-    /// <paramref name="field"/>, pinned to the same origin as
-    /// <paramref name="personServer"/> and required to be https-or-loopback.
+    /// Fetch PS metadata and resolve the endpoint named <paramref name="field"/>,
+    /// pinned to the same origin as <paramref name="personServer"/> and required
+    /// to be https-or-loopback.
     /// </summary>
     internal async Task<Uri> ResolveEndpointAsync(
         string personServer, string field, CancellationToken cancellationToken)
@@ -80,7 +87,7 @@ internal sealed class GovernanceExchange
 
         // Pin the endpoint to the configured PS origin and require https (or
         // loopback) so a compromised metadata document can't divert the signed
-        // governance request off-host (SSRF) or downgrade it to plain http.
+        // request off-host (SSRF) or downgrade it to plain http.
         if (!AAuthUrl.IsHttpsOrLoopback(endpoint)
             || !Uri.TryCreate(endpoint, UriKind.Absolute, out var endpointUri))
         {
@@ -106,13 +113,15 @@ internal sealed class GovernanceExchange
     /// parsing the terminal response and MUST dispose it.
     /// </summary>
     internal async Task<HttpResponseMessage> PostAsync(
-        Uri endpoint, JsonObject body, GovernanceOptions? options, CancellationToken cancellationToken)
+        Uri endpoint, JsonObject body, DeferredExchangeOptions options, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(options);
+
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = JsonContent.Create(body),
         };
-        if (options?.PollerOptions?.PreferWaitSeconds is { } preferWait)
+        if (options.PollerOptions?.PreferWaitSeconds is { } preferWait)
         {
             request.Headers.TryAddWithoutValidation("Prefer", $"wait={preferWait}");
         }
@@ -135,7 +144,7 @@ internal sealed class GovernanceExchange
                     var clarification = ClarificationRequirement.FromResponse(requirement, clarificationBody);
                     response.Dispose();
 
-                    if (options?.OnClarificationRequired is null)
+                    if (options.OnClarificationRequired is null)
                     {
                         throw new HttpRequestException(
                             "PS returned requirement=clarification but no OnClarificationRequired callback was provided.");
@@ -147,17 +156,26 @@ internal sealed class GovernanceExchange
                         .ConfigureAwait(false);
                     await clarificationExchange.ApplyAsync(decision, cancellationToken).ConfigureAwait(false);
 
-                    response = await PollAsync(pendingUrl, options?.PollerOptions, cancellationToken).ConfigureAwait(false);
+                    response = await PollAsync(pendingUrl, options.PollerOptions, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
-                // §User Interaction: the PS could not reach the user and handed
-                // the interaction back. Relay it (if the agent can) then poll.
+                // §User Interaction: token exchange requires an interaction
+                // callback for any deferred response; governance only when an
+                // interaction requirement is present.
+                if (options.RequireInteractionCallback && options.OnInteractionRequired is null)
+                {
+                    var status = (int)response.StatusCode;
+                    response.Dispose();
+                    throw new HttpRequestException(
+                        $"PS returned {status} (deferred response) but no onInteractionRequired callback was provided.");
+                }
+
                 var interaction = requirement is null ? null : Interaction.FromRequirement(requirement);
                 response.Dispose();
                 if (interaction is not null)
                 {
-                    if (options?.OnInteractionRequired is null)
+                    if (options.OnInteractionRequired is null)
                     {
                         throw new HttpRequestException(
                             "PS returned requirement=interaction but no OnInteractionRequired callback was provided.");
@@ -165,7 +183,14 @@ internal sealed class GovernanceExchange
                     await options.OnInteractionRequired(interaction, cancellationToken).ConfigureAwait(false);
                 }
 
-                response = await PollAsync(pendingUrl, options?.PollerOptions, cancellationToken).ConfigureAwait(false);
+                response = await PollAsync(pendingUrl, options.PollerOptions, cancellationToken).ConfigureAwait(false);
+
+                // Token exchange classifies a polled 403 access_denied here (only
+                // after an interaction poll, matching the original placement).
+                if (options.OnPolledResponse is not null)
+                {
+                    await options.OnPolledResponse(response, cancellationToken).ConfigureAwait(false);
+                }
             }
 
             // §Mission Status Errors: a 403 mission_terminated is terminal — the
@@ -196,13 +221,14 @@ internal sealed class GovernanceExchange
         var composed = ComposePollerOptions(pollerOptions);
         try
         {
+            using var pollActivity = AAuthDiagnostics.Source.StartActivity("AAuth.DeferredPoll");
             return await new DeferredPoller(_signedClient, composed)
                 .PollAsync(pendingUrl, cancellationToken).ConfigureAwait(false);
         }
         catch (TimeoutException ex)
         {
             throw new AAuthInteractionTimeoutException(
-                $"PS deferred governance request did not complete within the polling budget: {ex.Message}",
+                $"PS deferred request did not complete within the polling budget: {ex.Message}",
                 ex);
         }
     }

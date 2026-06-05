@@ -355,17 +355,41 @@ token client's `(signedClient, metadata)` pair.
 
 ### Definition of Done
 
-- [ ] Single `DeferredExchange` transport; `GovernanceExchange.cs` deleted; no
+- [x] Single `DeferredExchange` transport; `GovernanceExchange.cs` deleted; no
       duplicated deferred-loop / buffer / requirement helpers remain.
-- [ ] `TokenExchangeClient` delegates transport to `DeferredExchange`; its public
+- [x] `TokenExchangeClient` delegates transport to `DeferredExchange`; its public
       API and wire behaviour are unchanged (`access_denied`, `mission_terminated`,
       token-error codes, diagnostics activities all preserved).
-- [ ] `AAuthGovernanceClient` facade exposes mission/permission/audit/interaction
+- [x] `AAuthGovernanceClient` facade exposes mission/permission/audit/interaction
       over one signed client; sub-clients remain public.
-- [ ] `AAuthClientBuilder.BuildGovernance()` returns a facade wired from the same
+- [x] `AAuthClientBuilder.BuildGovernance()` returns a facade wired from the same
       signed exchange pipeline as `BuildHandler()` (shared private helper).
-- [ ] Full conformance (417) + unit (371) suites pass unchanged; new facade tests
-      pass; SDK + full solution build 0/0.
+- [x] Full conformance (417 → **422** with new facade tests) + unit (371) suites
+      pass unchanged; new facade tests pass; SDK + full solution build 0/0.
+
+**Deviations (as built):**
+
+- The token-only `access_denied` classification and the token-only
+  fail-fast-without-callback behaviour are preserved through two
+  `DeferredExchangeOptions` seams rather than living in `TokenExchangeClient`:
+  `RequireInteractionCallback` (token = `true`, governance = `false`) reproduces
+  the token-exact "no onInteractionRequired callback" message, and
+  `OnPolledResponse` (token only) runs the `403 access_denied` classifier *after*
+  an interaction-branch poll (not after a clarification poll or the
+  initial/direct response), matching the original placement.
+- `ResolveEndpointAsync(personServer, field, ct)` emits generic `'{field}'`
+  error text that is byte-identical to the original `'token_endpoint'` messages
+  when `field == "token_endpoint"`.
+- The shared signed-channel helper is `BuildSignedChannel(provider, innerHandler)`.
+  `BuildHandler` passes `new HttpClientHandler()` (preserving the prior exchange
+  signer's exact inner handler); `BuildGovernance` passes
+  `_innerHandler ?? new HttpClientHandler()` so tests can inject a stub.
+- `BuildGovernance()` requires an explicit signing mode (`_provider`); it does
+  **not** reconstruct the lazy-refresh token-holder pipeline (that path stays
+  exclusive to `BuildHandler`). Throws `InvalidOperationException` otherwise.
+- `AAuth.DeferredPoll` now also fires for governance polls (additive
+  observability via the shared `DeferredExchange`, not a wire change).
+- DI (`AddAAuthAgentGovernance`) remains out of scope — deferred to Phase 6.
 
 ---
 

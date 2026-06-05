@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Agent;
+using AAuth.Agent.Governance;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
@@ -389,6 +390,43 @@ public sealed class AAuthClientBuilder
     public HttpClient Build() => new HttpClient(BuildHandler());
 
     /// <summary>
+    /// Build a governance client (mission / permission / audit / interaction) that
+    /// signs every request with the configured agent identity. Requires an explicit
+    /// signing mode (<see cref="UseHwk"/>, <see cref="UseJwt(string)"/>,
+    /// <see cref="UseJwksUri"/>, <see cref="UseJktJwt"/>, or <see cref="UseProvider"/>).
+    /// The client is wired from the same signed exchange channel as the token-exchange
+    /// pipeline in <see cref="BuildHandler"/>.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">No signing mode was configured.</exception>
+    public AAuthGovernanceClient BuildGovernance()
+    {
+        var provider = _provider
+            ?? throw new InvalidOperationException(
+                "BuildGovernance requires an explicit signing mode (UseHwk, UseJwt, UseJwksUri, UseJktJwt, or UseProvider).");
+        var (signed, metadata) = BuildSignedChannel(provider, _innerHandler ?? new HttpClientHandler());
+        return new AAuthGovernanceClient(signed, metadata);
+    }
+
+    // Build a signed HttpClient (pinned to the agent identity) plus a metadata
+    // client — the channel used for token exchange and governance calls. The long
+    // (infinite) timeout lets deferred long-polling (Prefer: wait=N) run past the
+    // default 100s; DeferredPollerOptions.MaxTotalWait enforces the real budget.
+    private (HttpClient Signed, MetadataClient Metadata) BuildSignedChannel(
+        ISignatureKeyProvider provider, HttpMessageHandler innerHandler)
+    {
+        var signer = new AAuthSigningHandler(_key, provider)
+        {
+            InnerHandler = innerHandler,
+        };
+        var signed = new HttpClient(signer)
+        {
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
+        var metadata = new MetadataClient(new HttpClient());
+        return (signed, metadata);
+    }
+
+    /// <summary>
     /// Build the configured handler pipeline without wrapping it in an <see cref="HttpClient"/>.
     /// Useful for DI registration via <c>ConfigurePrimaryHttpMessageHandler</c>.
     /// </summary>
@@ -478,20 +516,7 @@ public sealed class AAuthClientBuilder
 
         // Exchange pipeline: separate signing handler pinned to the agent token.
         var exchangeProvider = _provider ?? holderProvider;
-        var exchangeSigner = new AAuthSigningHandler(_key, exchangeProvider)
-        {
-            InnerHandler = new HttpClientHandler(),
-        };
-        var exchangeHttpClient = new HttpClient(exchangeSigner)
-        {
-            // Token exchange and deferred polling can legitimately take minutes
-            // (long-poll via Prefer: wait=N). The default 100s HttpClient.Timeout
-            // would abort mid-poll. The DeferredPoller enforces the real budget
-            // via DeferredPollerOptions.MaxTotalWait.
-            Timeout = Timeout.InfiniteTimeSpan,
-        };
-        var metadataHttp = new HttpClient();
-        var metadata = new MetadataClient(metadataHttp);
+        var (exchangeHttpClient, metadata) = BuildSignedChannel(exchangeProvider, new HttpClientHandler());
         var exchangeClient = new TokenExchangeClient(exchangeHttpClient, metadata);
 
         var pollerOptions = new DeferredPollerOptions
