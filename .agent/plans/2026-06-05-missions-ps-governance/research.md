@@ -387,3 +387,111 @@ under `docs/server/` + refresh `docs/advanced/missions.md` + add a
   list) `Missions/TokenRequestParamsTests.cs` (2) covering the six params.
 - **Validation:** 388 conformance (+13) + 371 unit tests green; full solution
   builds 0/0.
+
+### Phase 4 — PS governance clients + metadata discovery (2026-06-05, complete)
+
+- **Metadata (§Person Server Metadata, ~L2199).** `ServerMetadata.FromJson`
+  already parsed `mission_endpoint` + `interaction_endpoint`; added
+  `permission_endpoint` and `audit_endpoint`, so all four governance endpoints
+  (all OPTIONAL in spec) are now surfaced. The clients resolve an endpoint by
+  fetching the PS `aauth-person.json`, validating https-or-loopback, and
+  origin-pinning the returned URL to the PS authority.
+- **Shared exchange (DEVIATION — added beyond plan file list).** A new
+  `Agent/Governance/GovernanceExchange.cs` holds the common signed-POST +
+  deferred-`202` loop + `mission_terminated` classification + endpoint
+  origin-pinning, plus a public `GovernanceOptions`
+  (`OnInteractionRequired`, `OnClarificationRequired`, `MaxClarificationRounds`,
+  `PollerOptions`). This mirrors `TokenExchangeClient`'s deferred/clarification
+  loop. **Design note for user:** `GovernanceExchange` duplicates some
+  `TokenExchangeClient` logic; `TokenExchangeClient` was deliberately left
+  untouched (zero regression risk). A future shared-helper refactor is possible
+  if desired.
+- **MissionClient (§Mission Creation ~L399/L1228, §Mission Approval ~L1265).**
+  `ProposeAsync(personServer, MissionProposal, options?, ct)` posts
+  `{description, tools?}` to `mission_endpoint`, handles the `202` review/
+  clarification loop, then reads the approval body **verbatim** and calls
+  `Mission.FromApprovalBytes`. It parses the `AAuth-Mission` header's `s256` and
+  verifies it against the recomputed blob hash (throws on mismatch/missing).
+- **PermissionClient (§Permission Endpoint ~L1013).** `RequestAsync` posts
+  `{action, description?, parameters?, mission?}` → `200 {permission, reason?}`.
+  An overload taking a `Mission` short-circuits to `Granted`
+  ("Pre-approved tool on the active mission.") when the action matches
+  `mission.ApprovedTools`, **without** calling the PS (spec `approved_tools`).
+- **AuditClient (§Audit Endpoint ~L1077).** `RecordAsync` posts
+  `{mission, action, description?, parameters?, result?}` (mission REQUIRED),
+  returns on `201`/`200`/`204` (fire-and-forget); `mission_terminated` surfaces
+  via `GovernanceExchange`.
+- **InteractionClient (§Interaction Endpoint ~L1131).** `SendAsync` posts
+  `{type, ...}` for all four `type` values; `question` → `Answer` from
+  `body["answer"]`, `completion` → `Terminated` when `mission_status != "active"`.
+  Convenience helpers: `RelayInteractionAsync`, `RelayPaymentAsync`,
+  `AskQuestionAsync`, `ProposeCompletionAsync`. (DEVIATION — added
+  `InteractionResult.cs` DTO not explicitly in plan list.)
+- **DTOs.** `MissionProposal`, `PermissionRequest`/`PermissionResult`
+  (`PermissionGrant` enum), `AuditRecord`, `InteractionRequest`
+  (`InteractionType` enum)/`InteractionResult`. Each request DTO has an
+  `internal ToJsonObject()`; `PermissionResult.FromJson` maps granted/denied.
+- **Layering decision.** Agent DTOs own serialization (`ToJsonObject`); the
+  server side owns parsing (Phase 5 `GovernanceEndpoints.Parse*`). Agent
+  governance clients are constructed directly (like `TokenExchangeClient`) and
+  are **not** DI-registered.
+- **Files:** modified `Discovery/ServerMetadata.cs`; new
+  `Agent/Governance/{GovernanceExchange,MissionProposal,MissionClient,
+  PermissionRequest,PermissionResult,PermissionClient,AuditRecord,AuditClient,
+  InteractionRequest,InteractionResult,InteractionClient}.cs`. **Tests:**
+  `Missions/GovernanceClientTests.cs` (12) against a stub PS.
+- **Validation:** 399 conformance (+11) + 371 unit green; SDK + full solution
+  build 0/0.
+
+### Phase 5 — PS server-side governance seams + mission log (2026-06-05, complete)
+
+- **Decision boundary (D3).** The SDK ships thin server-side seams — request
+  parsers, a `mission_terminated` helper, storage interfaces + in-memory
+  defaults, and the policy/relay interfaces — so a PS can serve the governance
+  endpoints without hand-rolling parsing. Policy and UI live in the PS
+  (MockPersonServer, Phase 6).
+- **Request parsers (§PS Governance Endpoints ~L463).**
+  `GovernanceEndpoints.Parse{Permission,Audit,Interaction,MissionProposal}`
+  map a `JsonObject` to the Phase 4 DTOs, throwing `FormatException` on missing
+  required fields (`action`; `mission`+`action`; `type`; `description`) and on
+  unknown interaction `type`. Mission objects are read via
+  `MissionClaim.FromPayload`. This keeps parsing **server-side** rather than
+  adding `FromJson` to the agent DTOs (clean agent-serializes / server-parses
+  split).
+- **Mission-terminated helper (§Mission Status Errors ~L1331).**
+  `MissionTerminatedStatus = 403`; `MissionTerminatedBody(missionStatus =
+  "terminated")` emits `{error:"mission_terminated", mission_status}` (error code
+  from `AAuthMissionTerminatedException.ErrorCode`); `MissionTerminated(...)`
+  returns an `IResult` via `Results.Json(..., statusCode: 403)`.
+- **Mission store (§Mission Approval — verbatim bytes).** `IMissionStore` +
+  `StoredMission(S256, Approver, Agent, Blob)` with `MissionState State`
+  (default `Active`). `InMemoryMissionStore` (DEVIATION — added in-memory default,
+  mirrors `InMemoryJtiStore`) stores the blob bytes verbatim and transitions
+  state via `existing with { State = state }`.
+- **Mission log (§Mission Log ~L1310, §Agent Token Request ~L784).** `IMissionLog`
+  + `MissionLogEntry(S256, Kind, Timestamp)` with `MissionLogEntryKind`
+  {Token, Permission, Audit, Interaction, Clarification} and optional
+  Resource/Scope/Action/Granted/Detail. `InMemoryMissionLog` (DEVIATION — added)
+  appends in order, `ReadAsync` preserves order, and `HasPriorConsentAsync(s256,
+  resource, scope)` returns true only for `Token` entries with `Granted == true`
+  matching `(s256, resource, scope)` — the prior-consent context a PS uses to
+  skip re-prompting.
+- **Decider seam (§Person Server ~L385, §Permission ~L1017).**
+  `IPermissionDecider.DecideAsync(PermissionDecisionContext, ct)` is invoked with
+  the request + resolved `StoredMission` + ordered log, and returns a
+  `PermissionDecision(Outcome, Reason, Message?)` where `PermissionOutcome`
+  {Granted, Denied, Prompt} and `PermissionDecisionReason` {InScope, PriorConsent,
+  ApprovedTool, OutOfScope}. The SDK supplies the inputs + reason taxonomy; the
+  PS owns the policy. `IAuditSink` and `IInteractionRelay` are the audit/relay
+  seams.
+- **DI.** `AddAAuthGovernance` (`Microsoft.Extensions.DependencyInjection`
+  namespace) `TryAddSingleton`s `IMissionStore`→`InMemoryMissionStore` and
+  `IMissionLog`→`InMemoryMissionLog`; the policy seams (decider/sink/relay) are
+  left for the PS to register.
+- **Files:** new `Server/Governance/{IMissionStore,InMemoryMissionStore,
+  IMissionLog,InMemoryMissionLog,IPermissionDecider,IAuditSink,IInteractionRelay,
+  GovernanceEndpoints}.cs` and
+  `DependencyInjection/AAuthGovernanceServiceCollectionExtensions.cs`. **Tests:**
+  `Missions/GovernanceServerTests.cs` (17).
+- **Validation:** 417 conformance (+18 across Phases 4+5) + 371 unit green; SDK +
+  full solution build 0/0.

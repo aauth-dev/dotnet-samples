@@ -24,10 +24,22 @@ public sealed class ServerMetadata
     /// <summary>Revocation endpoint (optional).</summary>
     public string? RevocationEndpoint { get; init; }
 
-    /// <summary>Mission endpoint (optional, PS only).</summary>
+    /// <summary>Mission endpoint (optional, PS only) — §Person Server Metadata.</summary>
     public string? MissionEndpoint { get; init; }
 
-    /// <summary>Interaction endpoint (optional, PS only).</summary>
+    /// <summary>
+    /// Permission endpoint (optional, PS only). Where agents request permission
+    /// for actions not governed by a remote resource (§Permission Endpoint).
+    /// </summary>
+    public string? PermissionEndpoint { get; init; }
+
+    /// <summary>
+    /// Audit endpoint (optional, PS only). Where agents log actions performed
+    /// within a mission context (§Audit Endpoint).
+    /// </summary>
+    public string? AuditEndpoint { get; init; }
+
+    /// <summary>Interaction endpoint (optional, PS only) — §Interaction Endpoint.</summary>
     public string? InteractionEndpoint { get; init; }
 
     /// <summary>Parse a metadata JSON document into a <see cref="ServerMetadata"/>.</summary>
@@ -41,6 +53,8 @@ public sealed class ServerMetadata
             TokenEndpoint = (string?)doc["token_endpoint"],
             RevocationEndpoint = (string?)doc["revocation_endpoint"],
             MissionEndpoint = (string?)doc["mission_endpoint"],
+            PermissionEndpoint = (string?)doc["permission_endpoint"],
+            AuditEndpoint = (string?)doc["audit_endpoint"],
             InteractionEndpoint = (string?)doc["interaction_endpoint"],
         };
     }

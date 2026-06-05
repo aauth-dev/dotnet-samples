@@ -1,0 +1,313 @@
+using System;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Threading;
+using System.Threading.Tasks;
+using AAuth.Discovery;
+using AAuth.Errors;
+using AAuth.Headers;
+
+namespace AAuth.Agent.Governance;
+
+/// <summary>
+/// Optional deferred-handling callbacks shared by the PS governance clients
+/// (mission, permission, interaction). A governance request may trigger a
+/// <c>202 Accepted</c> while the PS reaches the user; these callbacks let the
+/// agent participate in the clarification chat (#clarification-chat) or relay an
+/// interaction it cannot satisfy directly (#user-interaction).
+/// </summary>
+public sealed class GovernanceOptions
+{
+    /// <summary>
+    /// Invoked when the PS returns <c>requirement=interaction</c> — the agent
+    /// must relay the URL/code to the user. When <see langword="null"/> and the
+    /// PS defers with an interaction requirement, the request fails.
+    /// </summary>
+    public Func<Interaction, CancellationToken, Task>? OnInteractionRequired { get; init; }
+
+    /// <summary>
+    /// Invoked when the PS returns <c>requirement=clarification</c> during review
+    /// (§Clarification Chat). Returns the agent's decision (respond / update /
+    /// cancel). When <see langword="null"/> and the PS asks for clarification,
+    /// the request fails.
+    /// </summary>
+    public Func<ClarificationRequirement, CancellationToken, Task<ClarificationResponse>>? OnClarificationRequired { get; init; }
+
+    /// <summary>Maximum clarification rounds before the exchange aborts (default 5).</summary>
+    public int MaxClarificationRounds { get; init; } = ClarificationExchange.DefaultMaxRounds;
+
+    /// <summary>Optional polling tuning for deferred responses.</summary>
+    public DeferredPollerOptions? PollerOptions { get; init; }
+}
+
+/// <summary>
+/// Shared transport for the PS governance endpoints (#ps-governance-endpoints):
+/// resolves an endpoint from PS metadata (origin-pinned), POSTs a signed JSON
+/// body, drives the deferred <c>202</c> loop (interaction + clarification), and
+/// surfaces <c>403 mission_terminated</c> (#mission-status-errors) as a typed
+/// exception.
+/// </summary>
+internal sealed class GovernanceExchange
+{
+    private readonly HttpClient _signedClient;
+    private readonly MetadataClient _metadata;
+
+    internal GovernanceExchange(HttpClient signedClient, MetadataClient metadata)
+    {
+        ArgumentNullException.ThrowIfNull(signedClient);
+        ArgumentNullException.ThrowIfNull(metadata);
+        _signedClient = signedClient;
+        _metadata = metadata;
+    }
+
+    /// <summary>
+    /// Fetch PS metadata and resolve the governance endpoint named
+    /// <paramref name="field"/>, pinned to the same origin as
+    /// <paramref name="personServer"/> and required to be https-or-loopback.
+    /// </summary>
+    internal async Task<Uri> ResolveEndpointAsync(
+        string personServer, string field, CancellationToken cancellationToken)
+    {
+        var metadataUrl = MetadataClient.BuildUrl(personServer, AAuthConstants.DwkFiles.Person);
+        var doc = await _metadata.FetchAsync(metadataUrl, cancellationToken).ConfigureAwait(false);
+        var endpoint = (string?)doc[field]
+            ?? throw new InvalidOperationException(
+                $"Person Server metadata at {metadataUrl} is missing '{field}'.");
+
+        // Pin the endpoint to the configured PS origin and require https (or
+        // loopback) so a compromised metadata document can't divert the signed
+        // governance request off-host (SSRF) or downgrade it to plain http.
+        if (!AAuthUrl.IsHttpsOrLoopback(endpoint)
+            || !Uri.TryCreate(endpoint, UriKind.Absolute, out var endpointUri))
+        {
+            throw new InvalidOperationException(
+                $"Person Server '{field}' must be an absolute https:// URL (or http://localhost): {endpoint}");
+        }
+        if (!Uri.TryCreate(personServer, UriKind.Absolute, out var psUri)
+            || !string.Equals(
+                endpointUri.GetLeftPart(UriPartial.Authority),
+                psUri.GetLeftPart(UriPartial.Authority),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Person Server '{field}' must share an origin with {personServer}: {endpoint}");
+        }
+
+        return endpointUri;
+    }
+
+    /// <summary>
+    /// POST <paramref name="body"/> to <paramref name="endpoint"/> and resolve any
+    /// deferred (<c>202</c>) responses to a terminal response. The caller owns
+    /// parsing the terminal response and MUST dispose it.
+    /// </summary>
+    internal async Task<HttpResponseMessage> PostAsync(
+        Uri endpoint, JsonObject body, GovernanceOptions? options, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+        {
+            Content = JsonContent.Create(body),
+        };
+        if (options?.PollerOptions?.PreferWaitSeconds is { } preferWait)
+        {
+            request.Headers.TryAddWithoutValidation("Prefer", $"wait={preferWait}");
+        }
+
+        var response = await _signedClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        ClarificationExchange? clarificationExchange = null;
+        var ownsResponse = true;
+        try
+        {
+            while (response.StatusCode == HttpStatusCode.Accepted)
+            {
+                var pendingUrl = ResolveLocation(response, endpoint);
+                var requirement = ExtractRequirement(response);
+
+                // §Clarification Chat: the PS is asking the agent a question
+                // during review. Surface it, apply the decision, resume polling.
+                if (requirement?.Requirement == ClarificationRequirement.RequirementType)
+                {
+                    var clarificationBody = await ReadJsonBodyAsync(response, cancellationToken).ConfigureAwait(false);
+                    var clarification = ClarificationRequirement.FromResponse(requirement, clarificationBody);
+                    response.Dispose();
+
+                    if (options?.OnClarificationRequired is null)
+                    {
+                        throw new HttpRequestException(
+                            "PS returned requirement=clarification but no OnClarificationRequired callback was provided.");
+                    }
+
+                    clarificationExchange ??= new ClarificationExchange(
+                        _signedClient, pendingUrl, options.MaxClarificationRounds);
+                    var decision = await options.OnClarificationRequired(clarification!, cancellationToken)
+                        .ConfigureAwait(false);
+                    await clarificationExchange.ApplyAsync(decision, cancellationToken).ConfigureAwait(false);
+
+                    response = await PollAsync(pendingUrl, options?.PollerOptions, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                // §User Interaction: the PS could not reach the user and handed
+                // the interaction back. Relay it (if the agent can) then poll.
+                var interaction = requirement is null ? null : Interaction.FromRequirement(requirement);
+                response.Dispose();
+                if (interaction is not null)
+                {
+                    if (options?.OnInteractionRequired is null)
+                    {
+                        throw new HttpRequestException(
+                            "PS returned requirement=interaction but no OnInteractionRequired callback was provided.");
+                    }
+                    await options.OnInteractionRequired(interaction, cancellationToken).ConfigureAwait(false);
+                }
+
+                response = await PollAsync(pendingUrl, options?.PollerOptions, cancellationToken).ConfigureAwait(false);
+            }
+
+            // §Mission Status Errors: a 403 mission_terminated is terminal — the
+            // mission referenced by the request is no longer active.
+            if (response.StatusCode == HttpStatusCode.Forbidden
+                && await TryReadMissionTerminatedAsync(response, cancellationToken).ConfigureAwait(false)
+                    is var (terminated, missionStatus) && terminated)
+            {
+                response.Dispose();
+                throw new AAuthMissionTerminatedException(missionStatus);
+            }
+
+            ownsResponse = false;
+            return response;
+        }
+        finally
+        {
+            if (ownsResponse)
+            {
+                response.Dispose();
+            }
+        }
+    }
+
+    private async Task<HttpResponseMessage> PollAsync(
+        Uri pendingUrl, DeferredPollerOptions? pollerOptions, CancellationToken cancellationToken)
+    {
+        var composed = ComposePollerOptions(pollerOptions);
+        try
+        {
+            return await new DeferredPoller(_signedClient, composed)
+                .PollAsync(pendingUrl, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException ex)
+        {
+            throw new AAuthInteractionTimeoutException(
+                $"PS deferred governance request did not complete within the polling budget: {ex.Message}",
+                ex);
+        }
+    }
+
+    // Stop polling on a clarification 202 so the exchange loop can handle it,
+    // preserving any caller-supplied StopWhenAccepted predicate.
+    private static DeferredPollerOptions ComposePollerOptions(DeferredPollerOptions? baseOptions)
+    {
+        var userStop = baseOptions?.StopWhenAccepted;
+        bool Stop(HttpResponseMessage resp)
+        {
+            if (userStop is not null && userStop(resp)) { return true; }
+            var requirement = ExtractRequirement(resp);
+            return requirement?.Requirement == ClarificationRequirement.RequirementType;
+        }
+
+        return baseOptions is null
+            ? new DeferredPollerOptions { StopWhenAccepted = Stop }
+            : baseOptions with { StopWhenAccepted = Stop };
+    }
+
+    private static (bool Terminated, string? MissionStatus) ReadMissionTerminated(string body)
+    {
+        try
+        {
+            var json = JsonNode.Parse(body) as JsonObject;
+            if ((string?)json?["error"] == AAuthMissionTerminatedException.ErrorCode)
+            {
+                return (true, (string?)json?["mission_status"]);
+            }
+        }
+        catch (JsonException)
+        {
+            // Not a mission-terminated body.
+        }
+        return (false, null);
+    }
+
+    private static async Task<(bool Terminated, string? MissionStatus)> TryReadMissionTerminatedAsync(
+        HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        var body = await BufferBodyAsync(response, cancellationToken).ConfigureAwait(false);
+        return ReadMissionTerminated(body);
+    }
+
+    // Read the body to a string and replace Content with a buffered copy so a
+    // non-matching response still flows to the caller's parser.
+    internal static async Task<string> BufferBodyAsync(
+        HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        var mediaType = response.Content.Headers.ContentType?.MediaType ?? "application/json";
+        var charset = response.Content.Headers.ContentType?.CharSet;
+        Encoding encoding;
+        if (string.IsNullOrEmpty(charset))
+        {
+            encoding = Encoding.UTF8;
+        }
+        else
+        {
+            try { encoding = Encoding.GetEncoding(charset); }
+            catch (ArgumentException) { encoding = Encoding.UTF8; }
+        }
+        response.Content.Dispose();
+        response.Content = new StringContent(body, encoding, mediaType);
+        return body;
+    }
+
+    private static async Task<JsonObject?> ReadJsonBodyAsync(
+        HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(body)) { return null; }
+        try { return JsonNode.Parse(body) as JsonObject; }
+        catch (JsonException) { return null; }
+    }
+
+    private static AAuthRequirementHeader.ParsedRequirement? ExtractRequirement(HttpResponseMessage response)
+    {
+        if (!response.Headers.TryGetValues(AAuthRequirementHeader.Name, out var values))
+        {
+            return null;
+        }
+        foreach (var raw in values)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) { continue; }
+            try { return AAuthRequirementHeader.Parse(raw); }
+            catch (FormatException) { continue; }
+        }
+        return null;
+    }
+
+    private static Uri ResolveLocation(HttpResponseMessage response, Uri @base)
+    {
+        var location = response.Headers.Location
+            ?? throw new HttpRequestException(
+                "Deferred PS response is missing the Location header — cannot poll.");
+        return location.IsAbsoluteUri ? location : new Uri(@base, location);
+    }
+
+    internal static void AddIfPresent(JsonObject body, string name, string? value)
+    {
+        if (!string.IsNullOrEmpty(value))
+        {
+            body[name] = value;
+        }
+    }
+}

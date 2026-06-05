@@ -220,22 +220,23 @@ permission/interaction optional. Reuse the deferred/`202` loop from Phase 3.
 | `src/AAuth/Agent/Governance/PermissionClient.cs` | **New** — `{action,description?,parameters?,mission?}` → granted/denied |
 | `src/AAuth/Agent/Governance/AuditClient.cs` | **New** — fire-and-forget `201` (requires mission) |
 | `src/AAuth/Agent/Governance/InteractionClient.cs` | **New** — interaction/payment/question/completion |
-| `src/AAuth/Agent/Governance/*Request.cs` / `*Response.cs` | **New** — DTOs |
-| `tests/AAuth.Conformance/Missions/GovernanceClientTests.cs` | **New** |
+| `src/AAuth/Agent/Governance/*Request.cs` / `*Response.cs` | **New** — DTOs (MissionProposal, PermissionRequest/Result, AuditRecord, InteractionRequest/Result) |
+| `src/AAuth/Agent/Governance/GovernanceExchange.cs` | **New (deviation)** — shared signed-POST + deferred-`202` loop + endpoint origin-pinning; `GovernanceOptions` |
+| `tests/AAuth.Conformance/Missions/GovernanceClientTests.cs` | **New** (12 tests) |
 
 ### Definition of Done
 
-- [ ] `ServerMetadata` parses all four governance endpoints (§Person Server Metadata).
-- [ ] `MissionClient.ProposeAsync` returns an approved `Mission` (verifies `s256`,
+- [x] `ServerMetadata` parses all four governance endpoints (§Person Server Metadata).
+- [x] `MissionClient.ProposeAsync` returns an approved `Mission` (verifies `s256`,
       handles `202` review/clarification) (§Mission Creation).
-- [ ] `PermissionClient.RequestAsync` returns granted/denied, honoring
+- [x] `PermissionClient.RequestAsync` returns granted/denied, honoring
       `approved_tools` short-circuit and deferred responses (§Permission Endpoint).
-- [ ] `AuditClient.RecordAsync` is fire-and-forget, requires a mission, expects
+- [x] `AuditClient.RecordAsync` is fire-and-forget, requires a mission, expects
       `201` (§Audit Endpoint).
-- [ ] `InteractionClient` supports all four `type` values incl. `completion`
+- [x] `InteractionClient` supports all four `type` values incl. `completion`
       terminate/continue (§Interaction Endpoint).
-- [ ] `mission_terminated` surfaces from each client (Phase 3 exception).
-- [ ] Client tests pass against a stub PS.
+- [x] `mission_terminated` surfaces from each client (Phase 3 exception).
+- [x] Client tests pass against a stub PS.
 
 ---
 
@@ -253,14 +254,16 @@ response helpers, store/relay interfaces, and a mission-log seam. Fixes G18, G20
 
 | File | Action |
 |------|--------|
-| `src/AAuth/Server/Governance/IMissionStore.cs` | **New** — persist blob bytes + state |
-| `src/AAuth/Server/Governance/IPermissionDecider.cs` | **New** |
+| `src/AAuth/Server/Governance/IMissionStore.cs` | **New** — persist blob bytes + state; `StoredMission` record |
+| `src/AAuth/Server/Governance/InMemoryMissionStore.cs` | **New (deviation)** — default in-memory store (mirrors `InMemoryJtiStore`) |
+| `src/AAuth/Server/Governance/IPermissionDecider.cs` | **New** — `PermissionDecision` + reason enum + context |
 | `src/AAuth/Server/Governance/IAuditSink.cs` | **New** |
 | `src/AAuth/Server/Governance/IInteractionRelay.cs` | **New** |
-| `src/AAuth/Server/Governance/IMissionLog.cs` | **New** — ordered append; read |
-| `src/AAuth/Server/Governance/GovernanceEndpoints.cs` | **New** — minimal request parse + `mission_terminated` helper (optional minimal-API mappers) |
-| `src/AAuth/DependencyInjection/*` | **Modify** — register governance seams |
-| `tests/AAuth.Conformance/Missions/GovernanceServerTests.cs` | **New** |
+| `src/AAuth/Server/Governance/IMissionLog.cs` | **New** — ordered append; read; prior-consent lookup |
+| `src/AAuth/Server/Governance/InMemoryMissionLog.cs` | **New (deviation)** — default in-memory log |
+| `src/AAuth/Server/Governance/GovernanceEndpoints.cs` | **New** — request parsers + `mission_terminated` helper |
+| `src/AAuth/DependencyInjection/AAuthGovernanceServiceCollectionExtensions.cs` | **New** — `AddAAuthGovernance` registers storage seams |
+| `tests/AAuth.Conformance/Missions/GovernanceServerTests.cs` | **New** (17 tests) |
 
 ### Implementation Decisions
 
@@ -272,16 +275,97 @@ response helpers, store/relay interfaces, and a mission-log seam. Fixes G18, G20
 
 ### Definition of Done
 
-- [ ] Request parsers for permission/audit/interaction/mission-create map to DTOs.
-- [ ] `mission_terminated` helper emits spec `403` body (§Mission Status Errors).
-- [ ] `IMissionStore` stores verbatim blob bytes + `active`/`terminated` state.
-- [ ] `IMissionLog` appends token/permission/audit/interaction/clarification
+- [x] Request parsers for permission/audit/interaction/mission-create map to DTOs.
+- [x] `mission_terminated` helper emits spec `403` body (§Mission Status Errors).
+- [x] `IMissionStore` stores verbatim blob bytes + `active`/`terminated` state.
+- [x] `IMissionLog` appends token/permission/audit/interaction/clarification
       entries in order, and supports a prior-consent read keyed by
       `(s256, resource, scope)` (§Mission Log, §Agent Token Request L784).
-- [ ] `IPermissionDecider` is invoked with mission + log context for the consent
+- [x] `IPermissionDecider` is invoked with mission + log context for the consent
       decision (§Person Server L385).
-- [ ] DI registration wires the seams.
-- [ ] Server-seam tests pass.
+- [x] DI registration wires the seams.
+- [x] Server-seam tests pass.
+
+---
+
+## Phase 5.5 — Shared deferred transport + governance facade
+
+**Goal:** Remove the duplication between `TokenExchangeClient` and the Phase 4
+`GovernanceExchange` by extracting a single internal deferred-HTTP transport
+(T1 + T2), and hide governance-client construction behind a public facade and a
+builder factory so callers don't hand-wire the signed `HttpClient` + four
+clients (A + B). No behavioural change — the existing 417 conformance + 371 unit
+tests are the regression gate.
+
+**Spec:** §User Interaction; §Clarification Chat; §Mission Status Errors;
+§PS Governance Endpoints; §Person Server Metadata. (Pure refactor — same wire
+behaviour, same spec citations as Phases 3–5.)
+
+**Rationale (from feasibility review):** `GovernanceExchange` and
+`TokenExchangeClient` share ~120 lines of identical logic — endpoint origin-pin,
+the `202` deferred loop (interaction + clarification), `ComposePollerOptions`,
+`BufferBodyAsync` / `ReadJsonBodyAsync` / `ExtractRequirement` / `ResolveLocation`,
+the `mission_terminated` reader, and `AddIfPresent`. `TokenExchangeClient` is
+never exposed — `AAuthClientBuilder` constructs it internally and runs it behind
+a `ChallengeHandler` (`AAuthClientBuilder.cs` ~L495). Governance operations are
+*deliberate* (not challenge-driven) so they can't hide behind a handler, but
+their construction can be hidden the same way the builder already hides the
+token client's `(signedClient, metadata)` pair.
+
+### Implementation Decisions
+
+- **D8 (T1+T2 — single transport):** Introduce `internal sealed class
+  DeferredExchange` (in `AAuth.Agent`) as the one transport: `ResolveEndpointAsync`
+  + `PostAsync(endpoint, body, DeferredExchangeOptions, ct)` returning the
+  terminal `HttpResponseMessage` (caller parses + disposes), throwing
+  `AAuthMissionTerminatedException` on a terminal `403 mission_terminated`. It owns
+  all the shared helpers and the `AAuth.DeferredPoll` activity. `GovernanceExchange`
+  is **deleted**; governance clients use `DeferredExchange` directly, adapting
+  `GovernanceOptions` → `DeferredExchangeOptions`. `TokenExchangeClient.ExchangeAsync`
+  keeps its token-specific concerns (body builder + capability inference + the
+  `AAuth.TokenExchange` activity + `access_denied` classification + `auth_token` /
+  token-error reading) and delegates the transport to `DeferredExchange.PostAsync`.
+  `access_denied` moves from inside the poll loop to a post-`PostAsync` 403
+  classifier (a `403 access_denied` body is not `mission_terminated`, so
+  `PostAsync` returns it unthrown — order preserved). `TokenExchangeRequest` and
+  the public `TokenExchangeClient` API are **unchanged**.
+- **D9 (A+B — facade + factory):** Add public `AAuthGovernanceClient` bundling
+  `Mission` / `Permission` / `Audit` / `Interaction` over one signed `HttpClient`
+  + `MetadataClient` (ctor `(HttpClient signedClient, MetadataClient metadata)`;
+  the four sub-clients stay public for advanced use). Add
+  `AAuthClientBuilder.BuildGovernance()` returning an `AAuthGovernanceClient`
+  built from the **same** exchange pipeline the builder already constructs
+  (`AAuthClientBuilder.cs` ~L480–L495); factor that `(HttpClient signed,
+  MetadataClient metadata)` construction into a private helper shared by
+  `BuildHandler` and `BuildGovernance`. DI (`AddAAuthAgentGovernance`) is
+  **out of scope** here — deferred until a sample needs it (Phase 6).
+
+### Files
+
+| File | Action |
+|------|--------|
+| `src/AAuth/Agent/DeferredExchange.cs` | **New** — shared transport + `DeferredExchangeOptions` + all shared helpers (absorbs `GovernanceExchange`) |
+| `src/AAuth/Agent/Governance/GovernanceExchange.cs` | **Delete** — replaced by `DeferredExchange`; `GovernanceOptions` moves to its own file |
+| `src/AAuth/Agent/Governance/GovernanceOptions.cs` | **New** — public `GovernanceOptions` (moved out of the deleted file) |
+| `src/AAuth/Agent/TokenExchangeClient.cs` | **Modify** — delegate transport to `DeferredExchange`; keep token-specific body/error/diagnostics |
+| `src/AAuth/Agent/Governance/{Mission,Permission,Audit,Interaction}Client.cs` | **Modify** — use `DeferredExchange`; adapt `GovernanceOptions` → `DeferredExchangeOptions` |
+| `src/AAuth/Agent/Governance/AAuthGovernanceClient.cs` | **New** — public facade bundling the four clients |
+| `src/AAuth/AAuthClientBuilder.cs` | **Modify** — extract shared `(signed HttpClient, MetadataClient)` build helper; add `BuildGovernance()` |
+| `tests/AAuth.Conformance/Missions/GovernanceFacadeTests.cs` | **New** — facade construction + `BuildGovernance()` wiring |
+
+### Definition of Done
+
+- [ ] Single `DeferredExchange` transport; `GovernanceExchange.cs` deleted; no
+      duplicated deferred-loop / buffer / requirement helpers remain.
+- [ ] `TokenExchangeClient` delegates transport to `DeferredExchange`; its public
+      API and wire behaviour are unchanged (`access_denied`, `mission_terminated`,
+      token-error codes, diagnostics activities all preserved).
+- [ ] `AAuthGovernanceClient` facade exposes mission/permission/audit/interaction
+      over one signed client; sub-clients remain public.
+- [ ] `AAuthClientBuilder.BuildGovernance()` returns a facade wired from the same
+      signed exchange pipeline as `BuildHandler()` (shared private helper).
+- [ ] Full conformance (417) + unit (371) suites pass unchanged; new facade tests
+      pass; SDK + full solution build 0/0.
 
 ---
 
