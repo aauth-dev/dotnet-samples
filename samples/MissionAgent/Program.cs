@@ -43,13 +43,22 @@ using AAuth.Tokens;
 // =============================================================================
 
 const string Usage =
-    "Usage: MissionAgent [--ap <url>] [--ps <url>] [--resource <url>] [--sub <agent-id>] [--auto]";
+    "Usage: MissionAgent [--ap <url>] [--ps <url>] [--resource <url>] [--sub <agent-id>]\n"
+    + "                   [--pre-approve <scope>]... [--auto]";
+
+// The scope WhoAmI's /jwt/mission resource demands (and therefore the scope the
+// PS gates the token request on). Pre-approving this scope makes step 3 silent.
+const string ResourceScope = "whoami";
 
 string apUrl = "http://localhost:5301";
 string personServer = "http://localhost:5100";
 string resourceUrl = "http://localhost:5000/jwt/mission";
 string subject = "aauth:mission-demo@ap.example";
 bool interactive = true;
+// Scopes the user pre-approves as within the mission's intent (§Agent Token
+// Request, gate 2a). Seeding one lets the first resource access resolve
+// *silently* (reason = InScope) instead of prompting — one fewer consent screen.
+var preApprovedScopes = new List<string>();
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -61,7 +70,7 @@ for (int i = 0; i < args.Length; i++)
         case "--auto":
             interactive = false;
             break;
-        case "--ap" or "--ps" or "--resource" or "--sub":
+        case "--ap" or "--ps" or "--resource" or "--sub" or "--pre-approve":
             if (i + 1 >= args.Length)
             {
                 Console.Error.WriteLine($"Missing value for {args[i]}.");
@@ -74,6 +83,7 @@ for (int i = 0; i < args.Length; i++)
                 case "--ps": personServer = value; break;
                 case "--resource": resourceUrl = value; break;
                 case "--sub": subject = value; break;
+                case "--pre-approve": preApprovedScopes.Add(value); break;
             }
             break;
         default:
@@ -85,6 +95,12 @@ for (int i = 0; i < args.Length; i++)
 
 apUrl = apUrl.TrimEnd('/');
 personServer = personServer.TrimEnd('/');
+
+// The PS gates the token request on the resource token's (iss, scope). The
+// resource's iss is the WhoAmI *origin* (not the /jwt/mission path), so seed
+// the in-scope set against the origin to match what the PS will compare.
+var resourceOrigin = new Uri(resourceUrl).GetLeftPart(UriPartial.Authority);
+bool resourceScopePreApproved = preApprovedScopes.Contains(ResourceScope, StringComparer.Ordinal);
 
 Section("1. Enrol with the Agent Provider");
 // The agent's signing key is long-lived (it spans the agent install). The
@@ -116,6 +132,13 @@ var exchange = new TokenExchangeClient(signedClient, metadata);
 
 // Tell the mock PS how to resolve prompts. Interactive mode holds each prompt
 // open until you decide in the browser; --auto resolves via scripted defaults.
+// Any --pre-approve scopes are seeded as in-scope (resource origin, scope) pairs
+// so the matching token request resolves silently at gate 2a (§Agent Token Request).
+var inScopeSeed = new JsonArray();
+foreach (var scope in preApprovedScopes)
+{
+    inScopeSeed.Add(new JsonObject { ["resource"] = resourceOrigin, ["scope"] = scope });
+}
 await ScriptAsync(new JsonObject
 {
     ["reset"] = true,
@@ -123,8 +146,13 @@ await ScriptAsync(new JsonObject
     ["approveMission"] = true,
     ["approveToken"] = true,
     ["approvePermission"] = true,
+    ["inScope"] = inScopeSeed,
 });
 Console.WriteLine($"   prompt mode     : {(interactive ? "interactive (decide in your browser)" : "auto (scripted approvals)")}");
+if (preApprovedScopes.Count > 0)
+{
+    Console.WriteLine($"   pre-approved    : {string.Join(", ", preApprovedScopes.Select(s => $"{resourceOrigin} / {s}"))} (in scope — no prompt)");
+}
 
 // Generous polling budget so a human has time to click Approve.
 var poller = new DeferredPollerOptions { MaxTotalWait = TimeSpan.FromMinutes(5) };
@@ -154,11 +182,18 @@ Console.WriteLine($"   approved tools  : {string.Join(", ", mission.ApprovedTool
 // approver, so a leaked token never exposes the mission's prose.
 Console.WriteLine($"   mission s256    : {mission.S256}  (thumbprint reference to the description above)");
 
-Section("3. Access a mission-aware resource — first call is OUT OF SCOPE");
+Section(resourceScopePreApproved
+    ? "3. Access a mission-aware resource — IN SCOPE (silent, no prompt)"
+    : "3. Access a mission-aware resource — first call is OUT OF SCOPE");
 // WhoAmI's /jwt/mission endpoint is mission-aware: it copies the mission claim
 // from the AAuth-Mission header into the resource token it issues (§Terminology).
-// The PS reads that claim and governs the token request. This (resource, scope)
-// is not in the mission's pre-approved scope, so the PS prompts the user.
+// The PS reads that claim and governs the token request. When this (resource,
+// scope) was pre-approved as in-scope it resolves silently at gate 2a; otherwise
+// it falls outside the mission's pre-approved scope and the PS prompts the user.
+if (resourceScopePreApproved)
+{
+    Console.WriteLine($"   pre-approved    : {resourceOrigin} / {ResourceScope} was seeded in-scope, so this is granted silently (gate 2a — InScope)");
+}
 var first = await AccessMissionResourceAsync();
 Console.WriteLine($"   resource said   : access={first?["access"]}, scope={first?["scope"]}");
 // The resource echoes only the {approver, s256} reference from the token — the
@@ -166,9 +201,12 @@ Console.WriteLine($"   resource said   : access={first?["access"]}, scope={first
 Console.WriteLine($"   echoed mission  : {first?["mission"]?.ToJsonString()}");
 Console.WriteLine($"                     (s256 references: \"{mission.Description}\")");
 
-Section("4. Access it again — now silent via PRIOR CONSENT");
-// The same (resource, scope) was just approved under this mission, so the PS
-// grants the token silently this time (gate 2b) — no prompt.
+Section(resourceScopePreApproved
+    ? "4. Access it again — still silent (IN SCOPE)"
+    : "4. Access it again — now silent via PRIOR CONSENT");
+// Either the (resource, scope) is in the mission's in-scope set (gate 2a) or it
+// was just approved under this mission (gate 2b prior consent); either way the
+// PS grants the token silently this time — no prompt.
 var second = await AccessMissionResourceAsync();
 Console.WriteLine($"   resource said   : access={second?["access"]}, scope={second?["scope"]} (granted silently)");
 

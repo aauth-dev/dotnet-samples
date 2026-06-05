@@ -183,6 +183,24 @@ via the PS's scripted defaults:
 dotnet run --project samples/MissionAgent -- --auto
 ```
 
+### Pre-approving a scope (one fewer consent screen)
+
+The first resource access prompts because the `(resource, scope)` it needs isn't
+yet on the mission's silent-allow list (gate 3). You can declare a scope as
+**in scope** up front with `--pre-approve <scope>`; the PS then grants that
+token request **silently** at gate 2a (reason `InScope`) and no token consent
+screen appears:
+
+```bash
+# interactive: only TWO browser screens (mission creation + the delete_inbox
+# permission) instead of three — the WhoAmI token gate is now silent
+dotnet run --project samples/MissionAgent -- --pre-approve whoami
+```
+
+The scope is seeded against the resource's **origin** (`http://localhost:5000`),
+which is what the PS compares against the resource token's `iss`. Pass
+`--pre-approve` more than once to seed several scopes.
+
 ## Options
 
 | Flag | Default | Description |
@@ -191,4 +209,5 @@ dotnet run --project samples/MissionAgent -- --auto
 | `--ps <url>` | `http://localhost:5100` | Person Server base URL |
 | `--resource <url>` | `http://localhost:5000/jwt/mission` | Mission-aware resource endpoint |
 | `--sub <agent-id>` | `aauth:mission-demo@ap.example` | Agent identifier to enrol as |
+| `--pre-approve <scope>` | _(none)_ | Seed `(resource origin, scope)` as in-scope so its token request is granted silently (gate 2a); repeatable |
 | `--auto` | _(off)_ | Resolve prompts via scripted PS defaults instead of waiting for a browser decision |
