@@ -53,4 +53,15 @@ public sealed class ChallengeOptions
     /// When null, all schemes are accepted.
     /// </summary>
     public IReadOnlySet<string>? AllowedSignatureKeySchemes { get; init; }
+
+    /// <summary>
+    /// When <see langword="true"/>, the resource is mission-aware (§Terminology:
+    /// "a mission-aware resource includes the mission object from the
+    /// <c>AAuth-Mission</c> header in the resource tokens it issues"). If the
+    /// challenged request carries a valid <c>AAuth-Mission</c> header, the issued
+    /// resource token includes the mission object (<c>approver</c> + <c>s256</c>)
+    /// so the mission context flows to the PS. When <see langword="false"/>
+    /// (default) the header is ignored.
+    /// </summary>
+    public bool MissionAware { get; init; }
 }

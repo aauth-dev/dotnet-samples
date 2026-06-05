@@ -3,6 +3,7 @@
     <Project Path="samples/AgentConsole/AgentConsole.csproj" />
     <Project Path="samples/GuidedTour/GuidedTour.csproj" />
     <Project Path="samples/LiveWhoAmITest/LiveWhoAmITest.csproj" />
+    <Project Path="samples/MissionAgent/MissionAgent.csproj" />
     <Project Path="samples/MockAccessServer/MockAccessServer.csproj" />
     <Project Path="samples/MockAgentProvider/MockAgentProvider.csproj" />
     <Project Path="samples/MockPersonServer/MockPersonServer.csproj" />

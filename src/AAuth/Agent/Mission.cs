@@ -180,4 +180,35 @@ public static class AAuthMissionHeader
         ArgumentException.ThrowIfNullOrEmpty(s256);
         return $"approver=\"{approver}\"; s256=\"{s256}\"";
     }
+
+    /// <summary>
+    /// Parse a structured <c>AAuth-Mission</c> header value into its
+    /// <c>approver</c> and <c>s256</c> components (§Call Chaining). Returns
+    /// <see langword="false"/> when the value is absent or either field is missing.
+    /// </summary>
+    public static bool TryParseStructured(string? value, out string? approver, out string? s256)
+    {
+        approver = null;
+        s256 = null;
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        foreach (var part in value.Split(';'))
+        {
+            var trimmed = part.Trim();
+            var eq = trimmed.IndexOf('=');
+            if (eq <= 0)
+                continue;
+            var name = trimmed[..eq].Trim();
+            var raw = trimmed[(eq + 1)..].Trim().Trim('"');
+            if (raw.Length == 0)
+                continue;
+            if (name.Equals("approver", StringComparison.OrdinalIgnoreCase))
+                approver = raw;
+            else if (name.Equals("s256", StringComparison.OrdinalIgnoreCase))
+                s256 = raw;
+        }
+
+        return !string.IsNullOrEmpty(approver) && !string.IsNullOrEmpty(s256);
+    }
 }

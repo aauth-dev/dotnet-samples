@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth;
+using AAuth.Agent;
 using AAuth.Discovery;
 using AAuth.Headers;
 using AAuth.HttpSig;
@@ -388,5 +389,114 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
             case 3: padded += "="; break;
         }
         return Convert.FromBase64String(padded);
+    }
+
+    // ── Mission-aware resource (§Terminology, §Missions) ─────────────────
+
+    private const string MissionApprover = PsIssuer;
+    private const string MissionS256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+
+    private async Task<HttpResponseMessage> SendSignedWithMission(
+        IHost host, string token, string? missionHeader)
+    {
+        var capture = new CaptureHandler();
+        var provider = new JwtSignatureKeyProvider(() => token);
+        var handler = new AAuthSigningHandler(_agentKey, provider, () => FixedClock)
+        {
+            InnerHandler = capture,
+        };
+        using var client = new HttpClient(handler);
+        var outbound = new HttpRequestMessage(HttpMethod.Get, "http://localhost:5000/protected");
+        if (missionHeader is not null)
+            outbound.Headers.TryAddWithoutValidation(AAuthMissionHeader.Name, missionHeader);
+        await client.SendAsync(outbound);
+        var signed = capture.Captured!;
+
+        var relay = new HttpRequestMessage(HttpMethod.Get, "/protected");
+        foreach (var h in signed.Headers)
+            relay.Headers.TryAddWithoutValidation(h.Key, h.Value);
+        relay.Headers.Host = "localhost:5000";
+        return await host.GetTestClient().SendAsync(relay);
+    }
+
+    private static JsonObject DecodeResourceTokenPayload(HttpResponseMessage response)
+    {
+        var headerValue = string.Join(",", response.Headers.GetValues(AAuthRequirementHeader.Name));
+        var parsed = AAuthRequirementHeader.Parse(headerValue);
+        var parts = parsed.ResourceToken!.Split('.');
+        return JsonNode.Parse(Base64UrlDecode(parts[1]))!.AsObject();
+    }
+
+    [Fact(DisplayName = "§Missions — mission-aware resource copies AAuth-Mission into the resource token")]
+    public async Task MissionAwareResourceCopiesMissionClaim()
+    {
+        var host = await StartResourceServer(new ChallengeOptions
+        {
+            AccessMode = AAuthAccessMode.RequireAuthToken,
+            ResourceSigningKey = _resourceKey,
+            ResourceKeyId = ResourceKid,
+            ResourceIdentifier = ResourceId,
+            DefaultScopes = ResourceScope,
+            MissionAware = true,
+        });
+        try
+        {
+            var token = BuildAgentToken();
+            var missionHeader = AAuthMissionHeader.FormatStructured(MissionApprover, MissionS256);
+            var response = await SendSignedWithMission(host, token, missionHeader);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            var payload = DecodeResourceTokenPayload(response);
+            var mission = Assert.IsType<JsonObject>(payload["mission"]);
+            Assert.Equal(MissionApprover, (string?)mission["approver"]);
+            Assert.Equal(MissionS256, (string?)mission["s256"]);
+        }
+        finally
+        {
+            await host.StopAsync();
+            host.Dispose();
+        }
+    }
+
+    [Fact(DisplayName = "§Missions — mission-aware resource omits the mission claim when no header is present")]
+    public async Task MissionAwareResourceOmitsMissionWhenHeaderAbsent()
+    {
+        var host = await StartResourceServer(new ChallengeOptions
+        {
+            AccessMode = AAuthAccessMode.RequireAuthToken,
+            ResourceSigningKey = _resourceKey,
+            ResourceKeyId = ResourceKid,
+            ResourceIdentifier = ResourceId,
+            DefaultScopes = ResourceScope,
+            MissionAware = true,
+        });
+        try
+        {
+            var token = BuildAgentToken();
+            var response = await SendSignedWithMission(host, token, missionHeader: null);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            var payload = DecodeResourceTokenPayload(response);
+            Assert.False(payload.ContainsKey("mission"));
+        }
+        finally
+        {
+            await host.StopAsync();
+            host.Dispose();
+        }
+    }
+
+    [Fact(DisplayName = "§Missions — non-mission-aware resource ignores the AAuth-Mission header")]
+    public async Task NonMissionAwareResourceIgnoresMissionHeader()
+    {
+        // _challengeHost is configured WITHOUT MissionAware — the mission header
+        // must be ignored (opt-in only), so no mission claim is emitted.
+        var token = BuildAgentToken();
+        var missionHeader = AAuthMissionHeader.FormatStructured(MissionApprover, MissionS256);
+        var response = await SendSignedWithMission(_challengeHost!, token, missionHeader);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var payload = DecodeResourceTokenPayload(response);
+        Assert.False(payload.ContainsKey("mission"));
     }
 }

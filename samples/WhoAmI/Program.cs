@@ -120,6 +120,21 @@ ChallengeOptions ChallengeForScope(string scope) => new()
     DefaultScopes = scope,
 };
 
+// Challenge options for a mission-aware endpoint (§Terminology: "a mission-aware
+// resource includes the mission object from the AAuth-Mission header in the
+// resource tokens it issues"). When the agent sends a signed AAuth-Mission
+// header, the issued resource token carries the mission object (approver +
+// s256), so the agent's PS can govern the exchange against that mission.
+ChallengeOptions ChallengeForMission(string scope) => new()
+{
+    AccessMode = AAuthAccessMode.RequireAuthToken,
+    ResourceSigningKey = resourceKey,
+    ResourceKeyId = ResourceKid,
+    ResourceIdentifier = resourceUrl,
+    DefaultScopes = scope,
+    MissionAware = true,
+};
+
 // Verification options for the four-party (federated) flow. The auth token is
 // issued by the AS (iss = AS, dwk = aauth-access.json), so the AS is the
 // trusted auth-token issuer here — not the PS.
@@ -165,6 +180,18 @@ app.UseWhen(
     ctx => ctx.Request.Path.StartsWithSegments("/jwks-uri"),
     branch => branch.UseAAuthVerification(SignatureOnly()));
 
+// /jwt/mission — three-party mission-aware: full verification + a mission-aware
+// challenge. When the agent presents a signed AAuth-Mission header, the issued
+// resource token carries the mission object (approver + s256), so the agent's
+// PS governs the token exchange against that mission (§Terminology, §Missions).
+app.UseWhen(
+    ctx => ctx.Request.Path.StartsWithSegments("/jwt/mission"),
+    branch =>
+    {
+        branch.UseAAuthVerification(FullVerification());
+        branch.UseAAuthChallenge(ChallengeForMission(ScopeWhoami));
+    });
+
 // /jwt/admin — three-party elevated: full verification + challenge for the
 // elevated `whoami:admin` scope.
 app.UseWhen(
@@ -198,7 +225,8 @@ app.UseWhen(
 app.UseWhen(
     ctx => ctx.Request.Path.StartsWithSegments("/jwt")
         && !ctx.Request.Path.StartsWithSegments("/jwt/admin")
-        && !ctx.Request.Path.StartsWithSegments("/jwt/roles"),
+        && !ctx.Request.Path.StartsWithSegments("/jwt/roles")
+        && !ctx.Request.Path.StartsWithSegments("/jwt/mission"),
     branch =>
     {
         branch.UseAAuthVerification(FullVerification());
@@ -232,6 +260,7 @@ app.MapGet("/", () => Results.Ok(new
         new { path = "/jkt-jwt", mode = "pseudonymous (key delegation)", auth = "signature only" },
         new { path = "/jwks-uri", mode = "agent-identity", auth = "AAuth.Identified" },
         new { path = "/jwt", mode = "three-party", auth = "AAuth.Scope.whoami" },
+        new { path = "/jwt/mission", mode = "three-party (mission-aware)", auth = "AAuth.Scope.whoami" },
         new { path = "/jwt/admin", mode = "three-party (step-up)", auth = "AAuth.Scope.whoami:admin" },
         new { path = "/jwt/roles", mode = "three-party (RBAC)", auth = "AAuth.Role.whoami-admin" },
         new { path = "/federated", mode = "four-party", auth = "AAuth.Scope.whoami" },
@@ -317,6 +346,39 @@ app.MapGet("/jwt", (HttpContext ctx) =>
         // asserted by a different Person Server is a different user.
         userKey = result.Issuer is null ? null : $"{result.Issuer}|{result.Subject}",
         act = parsed.Payload?["act"],
+    });
+}).RequireAuthorization("AAuth.Scope.whoami");
+
+// -----------------------------------------------------------------------
+// GET /jwt/mission — Three-party mission-aware access.
+//
+// This endpoint is mission-aware: when the agent sends a signed AAuth-Mission
+// header, the challenge issues a resource token carrying the mission object
+// (approver + s256). The agent's PS then governs the token exchange against
+// that mission, and the resulting auth token echoes the mission claim back —
+// surfaced here so the demo can show the mission round-tripping end to end
+// (§Terminology, §Missions, §Auth Token Structure). An agent without a
+// mission still gets the baseline `whoami` access (mission = null).
+// -----------------------------------------------------------------------
+app.MapGet("/jwt/mission", (HttpContext ctx) =>
+{
+    var result = ctx.GetAAuthVerification()!;
+    var parsed = ctx.GetAAuthParsedKey()!;
+    var mission = parsed.Payload?["mission"];
+
+    return Results.Ok(new
+    {
+        mode = "three-party",
+        scheme = "jwt",
+        access = "mission",
+        agent = result.Agent,
+        sub = result.Subject,
+        scope = result.Scopes,
+        iss = result.Issuer,
+        // The mission object (approver + s256) the PS embedded in the auth
+        // token, or null when the agent operated without a mission.
+        mission,
+        missionAware = true,
     });
 }).RequireAuthorization("AAuth.Scope.whoami");
 

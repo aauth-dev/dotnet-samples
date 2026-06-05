@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Headers;
 using AAuth.HttpSig;
@@ -156,6 +157,19 @@ public sealed class AAuthChallengeMiddleware
                 "ChallengeOptions.ResourceIdentifier must be set for RequireAuthToken mode.");
         }
 
+        // §Terminology / §Mission Request Header: a mission-aware resource copies
+        // the mission object from a valid AAuth-Mission header (verified as a
+        // signed component upstream) into the resource token it issues, so the
+        // mission context (approver + s256) reaches the PS.
+        MissionClaim? mission = null;
+        if (_options.MissionAware
+            && AAuthMissionHeader.TryParseStructured(
+                context.Request.Headers[AAuthMissionHeader.Name],
+                out var missionApprover, out var missionS256))
+        {
+            mission = new MissionClaim(missionApprover!, missionS256!);
+        }
+
         var resourceToken = new ResourceTokenBuilder
         {
             Issuer = _options.ResourceIdentifier,
@@ -165,6 +179,7 @@ public sealed class AAuthChallengeMiddleware
             Key = _options.ResourceSigningKey,
             KeyId = _options.ResourceKeyId,
             Scope = _options.DefaultScopes,
+            Mission = mission,
         }.Build();
 
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;

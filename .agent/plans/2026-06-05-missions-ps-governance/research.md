@@ -556,3 +556,98 @@ under `docs/server/` + refresh `docs/advanced/missions.md` + add a
 - **Validation:** 422 conformance (417 + 5 facade) + 371 unit green, both
   unchanged from before the refactor; SDK + full solution build 0/0 — the
   existing suites were the regression gate and caught nothing.
+
+### Phase 6a — Samples backend foundation (2026-06-05, complete)
+
+- **MockPersonServer governance.** `MissionGovernance.cs` adds the scriptable
+  decision model (`MissionConsentScript`), per-mission policy snapshot
+  (`MissionPolicyStore`), approval blob builder, and the
+  decider/sink/relay sample implementations; `Program.cs` wires
+  `AddAAuthGovernance` + the four governance endpoints, the three-gate `/token`
+  mission gate, and `/admin/mission-script` + `/admin/mission-terminate` (option
+  A deterministic scripting). The `/token` gate reads
+  `MissionClaim.FromPayload(verified resource token)` and decides terminated →
+  `403`, in-scope/prior-consent → silent issue, else prompt (live `202`
+  deferred), logging the decision reason each time.
+- **12-row Consent Matrix.** `tests/AAuth.Tests/Integration/
+  MissionAgentFlowTests.cs` covers every gate × approve/deny × prompt/silent
+  (incl. clarification respond/cancel and `mission_terminated`) in-process via
+  `WebApplicationFactory` + the SDK governance/exchange clients, asserting the
+  recorded mission-log reason per row. +12 unit tests (371 → 383).
+- **SPEC-DRIVEN ADDITION — mission-aware resource (§Terminology ~L177:** "a
+  mission-aware resource includes the mission object from the AAuth-Mission
+  header in the resource tokens it issues"; §Mission flow ~L423/L429; signed
+  `aauth-mission` component §HTTP signing ~L619). Promoted this from a sample
+  hack to a **first-class SDK feature** so the chain — agent `AAuth-Mission`
+  header → mission-aware resource copies `{approver, s256}` into the resource
+  token → PS reads it from the verified resource token → embeds it in the auth
+  token — works for *any* resource, not just the mock. SDK: `AAuthMissionHeader.
+  TryParseStructured`; `ChallengeOptions.MissionAware` (opt-in, default false);
+  `AAuthChallengeMiddleware` sets `ResourceTokenBuilder.Mission` when enabled and
+  the header parses. WhoAmI gains a dedicated `GET /jwt/mission` endpoint
+  (`ChallengeForMission(ScopeWhoami){MissionAware=true}`) so the mission-aware
+  path is demoed independently of the plain three-party `/jwt`. +3 conformance
+  tests (422 → 425).
+- **MissionAgent CLI (`samples/MissionAgent/`).** New standalone console driving
+  the full lifecycle against the **live** mock servers (AP:5301 → PS:5100 →
+  WhoAmI:5000 `/jwt/mission`): enrol → propose mission → access the mission-aware
+  resource (out-of-scope **prompt**, then prior-consent **silent**) → pre-approved
+  permission (silent short-circuit) → non-pre-approved permission (prompt) →
+  audit → question → completion/terminate. Each resource access **refreshes the
+  agent token** (`AgentProviderClient.RefreshAsync` → fresh `jti`) — required
+  because the live resource's default JTI replay detection rejects a re-presented
+  agent token; this also mirrors real agent token rotation.
+- **DEVIATION — genuine browser interactivity (user chose "interactive").**
+  Rather than only printing the consent URL while the PS auto-resolves, the mock
+  PS now supports a real browser decision, gated by
+  `MissionConsentScript.InteractiveBrowser` (default false, so the 12-row test's
+  scripted auto-resolve is unaffected). When set: the mission-pending /
+  permission-pending GETs hold at `202` (re-emitting the interaction header)
+  until a `MissionPendingEntry.Decision` is recorded, and the browser
+  `/interaction` GET + `/interaction/approve` + `/interaction/deny` handlers now
+  recognise mission-pending codes and set that decision. `/permission` emits the
+  interaction header when interactive; `/admin/mission-script` accepts
+  `{interactive}`. The CLI defaults to interactive (`--auto` opts back into
+  scripted). Verified live end-to-end both ways (auto full run; interactive via
+  out-of-band `POST /interaction/approve` for the step-3 token and step-6
+  permission prompts).
+- **Files:** new `samples/MissionAgent/{MissionAgent.csproj, Program.cs,
+  README.md}` (already in `AAuth.slnx`); modified `samples/MockPersonServer/
+  {MissionGovernance.cs, Program.cs}`, `samples/WhoAmI/Program.cs`,
+  `src/AAuth/Agent/Mission.cs`, `src/AAuth/Server/Challenge/{ChallengeOptions,
+  AAuthChallengeMiddleware}.cs`; new test `tests/AAuth.Tests/Integration/
+  MissionAgentFlowTests.cs`; modified `tests/AAuth.Conformance/HttpSignatures/
+  ChallengeMiddlewareTests.cs`.
+- **Validation:** Conformance 425 (+3), AAuth.Tests 383 (+12); `AAuth.slnx`
+  builds 0 warnings / 0 errors; MissionAgent live smoke (auto + interactive) green.
+
+#### Phase 6a legibility follow-ups (2026-06-05, complete)
+
+- **Interactive mission-creation screen.** Mission approval is the most important
+  consent in the model, so `/mission` now defers (`202` + interaction) to a real
+  browser consent screen when `InteractiveBrowser` is set — the same deferred
+  path the token/permission gates use. SDK `MissionClient.ProposeAsync` already
+  routes through `DeferredExchange`, so no SDK change was needed; only the mock
+  PS gained `MissionPendingKind.Mission` + `MissionPendingEntry.Proposal`, a new
+  `GET /mission-create-pending/{id}` that builds+saves the approval blob on
+  approve (or `403` on decline), and the consent page now branches on creation
+  (heading "start a new mission"; shows description + `Tools`; no `s256`/resource
+  yet). `MissionAgent.ProposeAsync` passes `GovernanceFor(...)` so the browser
+  opens. Scripted mode (the 12-row test) keeps `InteractiveBrowser = false` and
+  the synchronous auto-approve path → unchanged, 12/12.
+- **Consent-screen tool context.** `MissionPolicyStore.ApprovedTools(s256)` added;
+  the token and permission consent screens now show the mission's approved tools
+  as context, so the human sees the full mission a request sits under. On the
+  permission screen this makes the gate self-explanatory: `Approved tools:
+  send_email, summarize` next to `Action: delete_inbox`.
+- **Spec wording confirmed (§Permission Endpoint L1015–1017, L1303).** Per-call
+  permission requests carry an **`action`**; the mission pre-approves
+  **`approved_tools`** (tool objects). The agent calls the permission endpoint
+  only for actions not covered by a pre-approved tool. Consent-screen labels and
+  the README sequence diagram use this distinction.
+- **README sequence diagram** now draws all three browser consent screens
+  (mission creation, out-of-scope token gate, out-of-tool permission) plus the
+  silent pre-approved-tool path, with the `action` vs `approved_tools` wording.
+- **Files (this follow-up):** modified `samples/MockPersonServer/
+  {MissionGovernance.cs, Program.cs}`, `samples/MissionAgent/{Program.cs,
+  README.md}`. No SDK/test changes; suites unchanged (425 / 383).

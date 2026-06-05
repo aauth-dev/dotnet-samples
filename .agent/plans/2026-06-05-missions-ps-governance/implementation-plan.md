@@ -455,6 +455,22 @@ rewrite of existing flows.
   Prior-consent memory keyed by `(mission s256, resource, scope)`. The decision
   is mock PS policy implemented over the Phase 5 `IPermissionDecider` /
   `IMissionStore` / mission-log seams — not SDK behavior.
+- **Sub-phasing (agreed 2026-06-05):** Phase 6 executes in three committable
+  sub-phases, each independently buildable + tested:
+  - **6a — Backend foundation:** MockPersonServer governance endpoints + `s256`
+    / mission claim emission + three-gate consent + terminate hook; new
+    `samples/MissionAgent/` CLI; the 12-row Consent-Matrix .NET integration test.
+  - **6b — Blazor + e2e:** SampleApp `Mission.razor` (+ Home link); GuidedTour
+    `TourMode.Mission` (+ snippets, sequence diagram); the two Playwright specs.
+  - **6c — Glue:** Orchestrator mission hop; `make demo-mission` / `e2e-mission`;
+    READMEs + `tests/e2e/package.json` script.
+- **Deterministic consent scripting (agreed 2026-06-05 — option A):** the
+  integration test drives mission-approval / token / permission outcomes by
+  extending the existing unsigned `/admin/*` demo pattern (e.g.
+  `/admin/mission-decision`, `/admin/permission-decision`, plus pre-seeding
+  `approved_tools` / prior-consent), mirroring today's `/admin/consent`. No
+  config/convention-encoded policy.
+
 
 #### Consent Test Matrix (CLI integration test)
 
@@ -483,36 +499,57 @@ mission-log **decision reason**.
 
 ### Definition of Done
 
-- [ ] MockPersonServer serves all four governance endpoints (§PS Governance).
-- [ ] MockPersonServer embeds `{approver, s256}` in issued auth tokens (§Auth Token).
-- [ ] MockPersonServer implements the three-gate consent decision: mission approved
+- [x] MockPersonServer serves all four governance endpoints (§PS Governance). _(6a)_
+- [x] MockPersonServer embeds `{approver, s256}` in issued auth tokens (§Auth Token). _(6a)_
+- [x] MockPersonServer implements the three-gate consent decision: mission approved
       once, then resource/tool access proceeds without re-prompting unless outside
-      approved scope / `approved_tools` (§Agent Token Request, §Permission Endpoint).
-- [ ] MockPersonServer exposes a minimal "terminate mission" hook so the
-      `mission_terminated` path is exercised end-to-end (§Mission Status Errors).
-- [ ] `samples/MissionAgent/` proposes a mission, accesses ≥1 resource under it,
+      approved scope / `approved_tools` (§Agent Token Request, §Permission Endpoint). _(6a)_
+- [x] MockPersonServer exposes a minimal "terminate mission" hook so the
+      `mission_terminated` path is exercised end-to-end (§Mission Status Errors). _(6a)_
+- [x] `samples/MissionAgent/` proposes a mission, accesses ≥1 resource under it,
       requests a permission, records an audit entry, relays an interaction, and
-      completes it.
+      completes it. _(6a)_
 - [ ] SampleApp `Mission.razor` page renders the flow and labels each consent gate
       as **prompt** or **silent (in scope)**; Home links to it; existing pages
-      unchanged.
+      unchanged. _(6b)_
 - [ ] GuidedTour `TourMode.Mission` drives every gate through **both** outcomes
       (mission approval prompt; in-scope token silent vs out-of-scope token prompt;
       `approved_tools` permission silent vs non-pre-approved permission prompt) and
-      surfaces the PS decision reason for each; existing modes unchanged.
+      surfaces the PS decision reason for each; existing modes unchanged. _(6b)_
 - [ ] The PS decision reason (in-scope / prior consent / `approved_tools` /
       out-of-scope) is visible in both samples so the contrast between prompted
-      and silent gates is observable.
-- [ ] Orchestrator demonstrates a mission-governed downstream hop (§Call Chaining).
-- [ ] `make demo-mission` boots the mission demo; existing `make demo` unchanged.
+      and silent gates is observable. _(6b)_
+- [ ] Orchestrator demonstrates a mission-governed downstream hop (§Call Chaining). _(6c)_
+- [x] `make demo-mission` boots the mission demo; existing `make demo` unchanged.
+      _(pulled forward from 6c; also added `agent-mission` runner)_
 - [ ] New GuidedTour + SampleApp mission Playwright **e2e** specs pass under the
-      existing `guided-tour`/`sample-app` projects; existing specs still pass.
-- [ ] **.NET integration test** for the `MissionAgent` CLI covers **all 12 rows**
+      existing `guided-tour`/`sample-app` projects; existing specs still pass. _(6b)_
+- [x] **.NET integration test** for the `MissionAgent` CLI covers **all 12 rows**
       of the Consent Test Matrix (every gate × approve/deny × prompt/silent),
       including clarification and `mission_terminated`, each asserting the
-      recorded decision reason.
+      recorded decision reason. _(6a — `MissionAgentFlowTests`, 12/12)_
 - [ ] `make e2e` (Blazor) and `dotnet test` (CLI integration) green locally and in CI.
-- [ ] Sample READMEs updated.
+      _(CLI integration green; Blazor e2e in 6b)_
+- [ ] Sample READMEs updated. _(MissionAgent + MockPersonServer done in 6a; others in 6c)_
+
+#### Phase 6a additions (spec-driven, beyond the original file list)
+
+- **Mission-aware resource (SDK):** `AAuthMissionHeader.TryParseStructured`,
+  `ChallengeOptions.MissionAware`, and `AAuthChallengeMiddleware` copying the
+  parsed `{approver, s256}` into `ResourceTokenBuilder.Mission` so a resource can
+  surface the mission claim in the resource token it issues (§Terminology,
+  §Auth Token). Demonstrated by WhoAmI `/jwt/mission`. Covered by +3 conformance
+  tests (`ChallengeMiddlewareTests`, total 425).
+- **Interactive mission-creation consent screen:** `/mission` defers (202 +
+  interaction) to a real browser consent screen when running interactively
+  (`MissionConsentScript.InteractiveBrowser`), via the same deferred path the
+  token/permission gates use (SDK `MissionClient.ProposeAsync` already routes
+  through `DeferredExchange`). The PS `/interaction` page now renders all three
+  consent screens — mission creation (description + tools), out-of-scope token
+  (mission + tools + resource/scope), and out-of-tool permission (mission +
+  tools + action) — keeping the demo faithful to §Mission Creation /
+  §Permission Endpoint (`action` per-call vs mission `approved_tools`).
+  Scripted mode (the 12-row test) is unaffected (`InteractiveBrowser = false`).
 
 ---
 
