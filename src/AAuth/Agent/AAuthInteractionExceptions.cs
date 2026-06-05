@@ -89,3 +89,32 @@ public sealed class AAuthInteractionChainedException : Exception
         Interaction = interaction;
     }
 }
+
+/// <summary>
+/// Thrown when the agent cancels an in-flight token exchange in response to a
+/// clarification by DELETE-ing the pending URL (AAuth protocol §Cancel
+/// Request). The PS terminates the consent session; subsequent requests to the
+/// pending URL return <c>410 Gone</c>.
+/// </summary>
+public sealed class AAuthClarificationCancelledException : Exception
+{
+    public AAuthClarificationCancelledException(string message)
+        : base(message) { }
+}
+
+/// <summary>
+/// Thrown when a clarification chat exceeds the configured maximum number of
+/// rounds (AAuth protocol §Clarification Limits, recommended 5). Guards the
+/// agent against an unbounded back-and-forth with the PS.
+/// </summary>
+public sealed class AAuthClarificationLimitException : Exception
+{
+    /// <summary>The round limit that was exceeded.</summary>
+    public int MaxRounds { get; }
+
+    public AAuthClarificationLimitException(int maxRounds)
+        : base($"Clarification chat exceeded the maximum of {maxRounds} round(s).")
+    {
+        MaxRounds = maxRounds;
+    }
+}

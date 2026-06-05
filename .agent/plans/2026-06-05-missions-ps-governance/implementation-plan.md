@@ -172,26 +172,32 @@ clarification`; agent responses: `clarification_response` POST / updated
 
 | File | Action |
 |------|--------|
-| `src/AAuth/Agent/TokenExchangeRequest.cs` | **Modify** — add `Justification`, `LoginHint`, `Tenant`, `DomainHint`, `Platform`, `Device` |
-| `src/AAuth/Agent/TokenExchangeClient.cs` | **Modify** — emit new params; detect `requirement=clarification` |
-| `src/AAuth/Agent/DeferredPoller.cs` | **Modify** — allow POST/DELETE to pending URL |
-| `src/AAuth/Agent/ClarificationExchange.cs` | **New** — respond / update / cancel actions + round tracking |
+| `src/AAuth/Agent/TokenExchangeRequest.cs` | **Modify** — add `Justification`, `LoginHint`, `Tenant`, `DomainHint`, `Platform`, `Device`, `OnClarificationRequired`, `MaxClarificationRounds` |
+| `src/AAuth/Agent/TokenExchangeClient.cs` | **Modify** — emit new params; clarification loop; `mission_terminated` classification |
+| `src/AAuth/Agent/ClarificationExchange.cs` | **New** — `ClarificationResponse` decision object + respond / update / cancel actions + round tracking |
+| `src/AAuth/Agent/AAuthInteractionExceptions.cs` | **Modify** — add `AAuthClarificationCancelledException`, `AAuthClarificationLimitException` |
 | `src/AAuth/Headers/ClarificationRequirement.cs` | **New** — parse `{clarification, timeout?, options?}` |
 | `src/AAuth/Errors/TokenError.cs` | **Modify** — add `mission_terminated` |
 | `src/AAuth/Errors/AAuthMissionTerminatedException.cs` | **New** |
 | `tests/AAuth.Conformance/Missions/ClarificationChatTests.cs` | **New** |
 | `tests/AAuth.Conformance/Missions/MissionTerminatedTests.cs` | **New** |
+| `tests/AAuth.Conformance/Missions/TokenRequestParamsTests.cs` | **New** — covers the six token-request params |
+
+> **Deviation:** `DeferredPoller.cs` was **not** modified. POST/DELETE to the
+> pending URL live in `ClarificationExchange` (its own `HttpClient`), and the
+> clarification stop reuses the existing `DeferredPollerOptions.StopWhenAccepted`
+> predicate (composed via `ComposePollerOptions`) — see research Part 5, Phase 3.
 
 ### Definition of Done
 
-- [ ] All six token-request params serialized into the POST body (§Agent Token Request).
-- [ ] `requirement=clarification` parsed into a typed model (question/timeout/options).
-- [ ] Agent can `clarification_response` POST, updated-`resource_token` POST, and
+- [x] All six token-request params serialized into the POST body (§Agent Token Request).
+- [x] `requirement=clarification` parsed into a typed model (question/timeout/options).
+- [x] Agent can `clarification_response` POST, updated-`resource_token` POST, and
       `DELETE`-cancel against the pending URL (§Agent Response to Clarification).
-- [ ] Clarification round limit enforced (default 5) (§Clarification Limits).
-- [ ] `403 mission_terminated` → `AAuthMissionTerminatedException` across PS calls
+- [x] Clarification round limit enforced (default 5) (§Clarification Limits).
+- [x] `403 mission_terminated` → `AAuthMissionTerminatedException` across PS calls
       (§Mission Status Errors).
-- [ ] New tests pass; existing deferred/interaction tests unaffected.
+- [x] New tests pass; existing deferred/interaction tests unaffected.
 
 ---
 

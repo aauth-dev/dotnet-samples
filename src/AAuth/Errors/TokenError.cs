@@ -31,6 +31,13 @@ public enum TokenErrorCode
     /// </summary>
     UserUnreachable,
 
+    /// <summary>
+    /// The request carried a <c>mission</c> parameter referencing a mission
+    /// that is no longer active. Terminal (HTTP 403) per §Mission Status
+    /// Errors; the agent MUST stop acting on the mission.
+    /// </summary>
+    MissionTerminated,
+
     /// <summary>Internal error.</summary>
     ServerError,
 }
@@ -52,6 +59,7 @@ public sealed record TokenErrorResponse(TokenErrorCode Error, string? ErrorDescr
         TokenErrorCode.ExpiredResourceToken => "expired_resource_token",
         TokenErrorCode.InteractionRequired => "interaction_required",
         TokenErrorCode.UserUnreachable => "user_unreachable",
+        TokenErrorCode.MissionTerminated => "mission_terminated",
         TokenErrorCode.ServerError => "server_error",
         _ => "server_error",
     };
@@ -68,11 +76,13 @@ public sealed record TokenErrorResponse(TokenErrorCode Error, string? ErrorDescr
             "expired_resource_token" => TokenErrorCode.ExpiredResourceToken,
             "interaction_required" => TokenErrorCode.InteractionRequired,
             "user_unreachable" => TokenErrorCode.UserUnreachable,
+            "mission_terminated" => TokenErrorCode.MissionTerminated,
             "server_error" => TokenErrorCode.ServerError,
             _ => default,
         };
         return code is "invalid_request" or "invalid_agent_token" or "expired_agent_token"
             or "invalid_resource_token" or "expired_resource_token"
-            or "interaction_required" or "user_unreachable" or "server_error";
+            or "interaction_required" or "user_unreachable" or "mission_terminated"
+            or "server_error";
     }
 }

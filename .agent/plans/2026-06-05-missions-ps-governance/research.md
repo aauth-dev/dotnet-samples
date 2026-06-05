@@ -334,3 +334,56 @@ under `docs/server/` + refresh `docs/advanced/missions.md` + add a
   exists in the conformance project).
 - **Validation:** 375 conformance (+11) + 371 unit tests green; full solution
   builds 0/0.
+
+### Phase 3 — PS token-request params, clarification chat, mission errors (2026-06-05, complete)
+
+- **Token-request params (§Agent Token Request).** Added six optional `string?`
+  properties to `TokenExchangeRequest` — `Justification`, `LoginHint`, `Tenant`,
+  `DomainHint`, `Platform`, `Device` — serialized into the POST body as
+  `justification`, `login_hint`, `tenant`, `domain_hint`, `platform`, `device`
+  via a new `AddIfPresent` helper that omits unset/empty values.
+- **Clarification model (§Clarification Chat).** `ClarificationRequirement`
+  (`src/AAuth/Headers/ClarificationRequirement.cs`) parses the `202` body
+  `{clarification, timeout?, options?}` for `requirement=clarification`,
+  modeled on the existing `ClaimsRequirement`. Throws `FormatException` when the
+  `clarification` string is missing.
+- **Clarification API design (D7, user-approved).** The agent supplies a
+  callback `OnClarificationRequired` on `TokenExchangeRequest` (mirrors
+  `OnInteractionRequired`) that returns a `ClarificationResponse` *decision*
+  object. `ExchangeAsync`'s response handling was rewritten into a
+  `while (StatusCode == 202)` loop that resolves the requirement, dispatches
+  interaction vs. clarification, applies the decision, and re-polls.
+- **ClarificationResponse + ClarificationExchange.** `ClarificationResponse`
+  (nested `Kind { Respond, Update, Cancel }`) carries the agent's choice; the
+  factories are `Respond(markdown)`, `Update(resourceToken, justification?)`,
+  `Cancel()`. `ClarificationExchange` performs the wire calls against the pending
+  URL: `clarification_response` POST, updated `resource_token` POST, and `DELETE`
+  cancel (which surfaces `AAuthClarificationCancelledException`).
+- **Round limit (§Clarification Limits).** Default `MaxRounds = 5` (configurable
+  via `TokenExchangeRequest.MaxClarificationRounds`); `Respond`/`Update` consume a
+  round, `Cancel` does not. Exceeding the limit throws
+  `AAuthClarificationLimitException`.
+- **DEVIATION FROM PLAN FILE LIST.** The plan listed `DeferredPoller.cs` as
+  **Modify — allow POST/DELETE to pending URL**. In implementation the POST/DELETE
+  calls live entirely in `ClarificationExchange` (using its own `HttpClient`),
+  and the clarification-stop during polling reuses the **existing**
+  `DeferredPollerOptions.StopWhenAccepted` predicate (composed via
+  `ComposePollerOptions`). `DeferredPoller.cs` was therefore **not** modified.
+- **Mission-terminated (§Mission Status Errors).** Added `TokenErrorCode.
+  MissionTerminated` (`mission_terminated`, round-trips through `TokenErrorResponse`)
+  and `AAuthMissionTerminatedException` (with `MissionStatus`). `ExchangeAsync`
+  classifies a terminal `403` body `{error:"mission_terminated", mission_status}`
+  via `TryReadMissionTerminatedAsync` — both on the direct token response and on a
+  `403` surfaced during polling (the poller returns the unrecognized `403` rather
+  than throwing, so the client classifies it). A shared `BufferBodyAsync` lets the
+  `access_denied`, `mission_terminated`, and auth-token readers all re-read the body.
+- **Files:** new `Headers/ClarificationRequirement.cs`, `Agent/ClarificationExchange.cs`
+  (holds `ClarificationResponse` + `ClarificationExchange`),
+  `Errors/AAuthMissionTerminatedException.cs`; modified `Agent/TokenExchangeRequest.cs`,
+  `Agent/TokenExchangeClient.cs`, `Agent/AAuthInteractionExceptions.cs` (added
+  `AAuthClarificationCancelledException`, `AAuthClarificationLimitException`),
+  `Errors/TokenError.cs`. **Tests:** `Missions/ClarificationChatTests.cs` (8),
+  `Missions/MissionTerminatedTests.cs` (3), and an **added** (not in original plan
+  list) `Missions/TokenRequestParamsTests.cs` (2) covering the six params.
+- **Validation:** 388 conformance (+13) + 371 unit tests green; full solution
+  builds 0/0.
