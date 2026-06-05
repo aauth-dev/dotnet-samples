@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
+using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.Errors;
@@ -120,7 +121,8 @@ public sealed class AAuthVerificationMiddleware
                 signatureInput: signatureInput,
                 signatureHeader: signature,
                 publicKey: publicKey,
-                authorization: req.Headers.Authorization.FirstOrDefault());
+                authorization: req.Headers.Authorization.FirstOrDefault(),
+                mission: req.Headers[AAuthMissionHeader.Name].FirstOrDefault());
         }
         catch (AAuthVerificationException ex)
         {

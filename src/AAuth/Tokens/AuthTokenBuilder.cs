@@ -65,6 +65,13 @@ public sealed class AuthTokenBuilder
     public string? Subject { get; init; }
 
     /// <summary>
+    /// Mission claim (<c>mission</c>) — present when the auth token was issued in
+    /// the context of a mission (§Auth Token Structure). Carries only <c>approver</c>
+    /// and <c>s256</c>; the mission content stays at the PS.
+    /// </summary>
+    public MissionClaim? Mission { get; init; }
+
+    /// <summary>
     /// Enterprise <c>tenant</c> claim (§Auth Token, OpenID Connect for
     /// Enterprise) — identifies the principal's tenant/organization within the
     /// issuer. Combined with <c>iss</c> and <c>sub</c> it forms the globally
@@ -190,6 +197,10 @@ public sealed class AuthTokenBuilder
         if (Groups is { Count: > 0 })
         {
             payload["groups"] = ToJsonArray(Groups);
+        }
+        if (Mission is not null)
+        {
+            payload["mission"] = Mission.ToJsonObject();
         }
         if (AdditionalClaims is not null)
         {

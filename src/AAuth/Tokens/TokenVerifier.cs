@@ -33,7 +33,14 @@ public sealed class TokenVerifier
         JsonObject Header,
         JsonObject Payload,
         string Issuer,
-        string TokenType);
+        string TokenType)
+    {
+        /// <summary>
+        /// The <c>mission</c> claim ({approver, s256}) when present, otherwise
+        /// <see langword="null"/> (§Resource Token, §Auth Token).
+        /// </summary>
+        public MissionClaim? Mission => MissionClaim.FromPayload(Payload);
+    }
 
     /// <summary>
     /// Verify a token whose issuer's public key has already been resolved.

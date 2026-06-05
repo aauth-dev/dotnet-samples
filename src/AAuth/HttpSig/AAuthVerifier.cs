@@ -52,6 +52,7 @@ public sealed class AAuthVerifier
     /// <param name="signatureHeader">Verbatim <c>Signature</c> header value.</param>
     /// <param name="publicKey">Public key for HTTP-signature verification (resolved from scheme).</param>
     /// <param name="authorization">Verbatim <c>Authorization</c> header value, or null if absent.</param>
+    /// <param name="mission">Verbatim <c>AAuth-Mission</c> header value, or null if absent.</param>
     /// <exception cref="AAuthVerificationException">If any check fails.</exception>
     public void Verify(
         string method,
@@ -61,7 +62,8 @@ public sealed class AAuthVerifier
         string signatureInput,
         string signatureHeader,
         IAAuthKey publicKey,
-        string? authorization = null)
+        string? authorization = null,
+        string? mission = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(method);
         ArgumentException.ThrowIfNullOrEmpty(authority);
@@ -78,20 +80,34 @@ public sealed class AAuthVerifier
         var (paramsLine, components, created) = ParseSignatureInput(signatureInput);
 
         // Validate the covered-component list matches AAuth's expected shape.
-        // Base: @method, @authority, @path, signature-key
-        // When authorization is covered, it MUST appear after the base set.
-        var hasAuthzComponent = components.Count == 5
-            && components[4] == "authorization";
+        // Base (in order): @method, @authority, @path, signature-key.
         var baseMatch = components.Count >= 4
             && components.Take(4).SequenceEqual(AAuthSigningHandler.CoveredComponents, StringComparer.Ordinal);
-
-        if (!baseMatch || (components.Count == 5 && !hasAuthzComponent) || components.Count > 5)
+        if (!baseMatch)
         {
             throw new AAuthVerificationException(
                 "Signature-Input covered components do not match AAuth's required set " +
                 $"({string.Join(' ', AAuthSigningHandler.CoveredComponents)}).");
         }
-        if (components.Count < 4)
+
+        // After the base set, the only permitted optional components are
+        // `authorization` (§AAuth-Access) then `aauth-mission` (§Authorization
+        // Endpoint Request, mission context), in that order. Any other trailing
+        // component or ordering is rejected.
+        var hasAuthzComponent = false;
+        var hasMissionComponent = false;
+        var index = 4;
+        if (index < components.Count && components[index] == "authorization")
+        {
+            hasAuthzComponent = true;
+            index++;
+        }
+        if (index < components.Count && components[index] == "aauth-mission")
+        {
+            hasMissionComponent = true;
+            index++;
+        }
+        if (index != components.Count)
         {
             throw new AAuthVerificationException(
                 "Signature-Input covered components do not match AAuth's required set " +
@@ -104,6 +120,14 @@ public sealed class AAuthVerifier
         {
             throw new AAuthVerificationException(
                 "Authorization header is present but 'authorization' is not in the covered components.");
+        }
+
+        // §Authorization Endpoint Request: if the AAuth-Mission header is
+        // present, the signature MUST cover `aauth-mission`.
+        if (mission is not null && !hasMissionComponent)
+        {
+            throw new AAuthVerificationException(
+                "AAuth-Mission header is present but 'aauth-mission' is not in the covered components.");
         }
 
         // Freshness check on `created` (RFC 9421 §3.2.1). Asymmetric: allow
@@ -132,6 +156,10 @@ public sealed class AAuthVerifier
         if (hasAuthzComponent)
         {
             AppendComponent(sb, "authorization", authorization!);
+        }
+        if (hasMissionComponent)
+        {
+            AppendComponent(sb, "aauth-mission", mission!);
         }
         sb.Append("\"@signature-params\": ").Append(paramsLine);
 

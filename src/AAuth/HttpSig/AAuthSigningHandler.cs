@@ -218,6 +218,13 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         {
             AppendComponent(sb, "authorization", request.Headers.Authorization.ToString());
         }
+        // §Mission context: when the agent operates in a mission context it
+        // includes the AAuth-Mission header and adds aauth-mission to the
+        // signed components. Auto-cover it so callers need not opt in.
+        if (TryGetMissionComponent(request, out var missionValue))
+        {
+            AppendComponent(sb, "aauth-mission", missionValue);
+        }
         foreach (var (name, value) in additional)
         {
             AppendComponent(sb, name, value);
@@ -252,6 +259,20 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         sb.Append('"').Append(name).Append("\": ").Append(value).Append('\n');
     }
 
+    // Resolve the AAuth-Mission header to its on-the-wire field value so it can
+    // be covered as the `aauth-mission` component (§Mission context). Returns
+    // false when the header is absent or empty.
+    private static bool TryGetMissionComponent(HttpRequestMessage request, out string value)
+    {
+        value = string.Empty;
+        if (!request.Headers.TryGetValues(AAuthMissionHeader.Name, out var values))
+        {
+            return false;
+        }
+        value = string.Join(", ", values);
+        return !string.IsNullOrWhiteSpace(value);
+    }
+
     private static string BuildSignatureParams(
         long created, HttpRequestMessage request,
         IReadOnlyList<(string Name, string Value)> additional)
@@ -269,6 +290,11 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         if (request.Headers.Authorization is not null)
         {
             sb.Append(" \"authorization\"");
+        }
+        // §Mission context: aauth-mission is covered when the header is present.
+        if (TryGetMissionComponent(request, out _))
+        {
+            sb.Append(" \"aauth-mission\"");
         }
         foreach (var (name, _) in additional)
         {
@@ -301,6 +327,8 @@ public sealed class AAuthSigningHandler : DelegatingHandler
             seen.Add(baseComponent);
         }
         seen.Add("authorization");
+        // aauth-mission is auto-covered from the header; never add it twice.
+        seen.Add("aauth-mission");
 
         var resolved = new List<(string, string)>();
         foreach (var raw in requested)

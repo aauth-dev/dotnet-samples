@@ -47,6 +47,13 @@ public sealed class ResourceTokenBuilder
     /// <summary>Requested scopes, space-separated (<c>scope</c>).</summary>
     public string? Scope { get; init; }
 
+    /// <summary>
+    /// Mission claim (<c>mission</c>) — present when the resource is mission-aware
+    /// and the agent sent an <c>AAuth-Mission</c> header (§Resource Token Structure).
+    /// Carries only <c>approver</c> and <c>s256</c>; the mission content stays at the PS.
+    /// </summary>
+    public MissionClaim? Mission { get; init; }
+
     /// <summary>Lifetime; spec says SHOULD NOT exceed 5 minutes. Default 5 minutes.</summary>
     public TimeSpan Lifetime { get; init; } = TimeSpan.FromMinutes(5);
 
@@ -118,6 +125,11 @@ public sealed class ResourceTokenBuilder
         if (!string.IsNullOrEmpty(Scope))
         {
             payload["scope"] = Scope;
+        }
+
+        if (Mission is not null)
+        {
+            payload["mission"] = Mission.ToJsonObject();
         }
 
         return JwtWriter.SignCompact(header, payload, Key);

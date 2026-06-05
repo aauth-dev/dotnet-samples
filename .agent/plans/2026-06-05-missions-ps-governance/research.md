@@ -291,3 +291,46 @@ under `docs/server/` + refresh `docs/advanced/missions.md` + add a
 - **No new open questions or design choices for Phase 1.** `VerifyS256` uses a
   fixed-time comparison (defensive; the value is not secret but the helper is
   cheap and avoids early-exit surprises).
+
+### Phase 2 — Mission binding through the token chain (2026-06-05, complete)
+
+- **Mission claim shape.** Introduced `MissionClaim(string Approver, string
+  S256)` (`src/AAuth/Tokens/MissionClaim.cs`) as the `{approver, s256}` value
+  carried in tokens. `ResourceTokenBuilder` and `AuthTokenBuilder` gained an
+  optional `Mission` property; the `mission` claim is emitted **only when set**
+  (§Resource Token Structure, §Auth Token Structure).
+- **Verification surface.** `TokenVerifier.VerifiedToken` exposes a computed
+  `Mission` property (parses `payload.mission`; `null` when absent/malformed).
+  The existing `expectedApprover` constraint in `VerifyResourceTokenAsync`
+  (step 7) is unchanged.
+- **DISCOVERY (mid-phase, surfaced to user).** Adding `aauth-mission` on the
+  signing side alone would **break** every mission-context request: the
+  production verifier `AAuthVerifier.Verify` rigidly rejected any covered
+  component beyond the base 4 + optional `authorization` (threw when
+  `components.Count > 5`). This required extending the verifier +
+  `AAuthVerificationMiddleware`, two files **not** in the original Phase 2 file
+  list. **User approved** adding them (design decision D5).
+- **Covered-component ordering (D6, resolved per spec).** Spec
+  §Authorization Endpoint Request shows mission context as
+  `("@method" "@authority" "@path" "signature-key" "aauth-mission")` — i.e.
+  `aauth-mission` is the **last** component, after `signature-key`. The signer
+  appends it after the (pre-existing) `authorization` block, so the verifier
+  accepts the optional trailing pair `authorization` then `aauth-mission`.
+  **Pre-existing deviation noted:** the spec's §AAuth-Access example places
+  `authorization` *before* `signature-key`, but the SDK appends it *after*;
+  re-aligning that is out of Phase 2 scope (would churn existing tests).
+- **No double-cover.** `aauth-mission` is added to the signer's `seen` set so an
+  explicit `AdditionalComponentsKey` request for it is ignored (covered once via
+  header auto-detection). Test asserts a single occurrence.
+- **Header value consistency.** Signer covers the verbatim `AAuth-Mission` header
+  value (`approver="..."; s256="..."` via `AAuthMissionHeader.FormatStructured`).
+  Middleware passes `req.Headers["AAuth-Mission"].FirstOrDefault()`; single-valued
+  in practice so producer and verifier see identical bytes.
+- **Files:** `MissionClaim.cs` (new); modified `ResourceTokenBuilder.cs`,
+  `AuthTokenBuilder.cs`, `TokenVerifier.cs`, `AAuthSigningHandler.cs`,
+  `AAuthVerifier.cs`, `AAuthVerificationMiddleware.cs`. **Tests:**
+  `Missions/MissionClaimTests.cs` (6), `HttpSignatures/MissionSignedComponentTests.cs`
+  (5) — note `MissionClaimTests` placed under `Missions/` (no `Tokens/` folder
+  exists in the conformance project).
+- **Validation:** 375 conformance (+11) + 371 unit tests green; full solution
+  builds 0/0.

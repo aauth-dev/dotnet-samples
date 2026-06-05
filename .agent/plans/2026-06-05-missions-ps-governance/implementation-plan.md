@@ -123,22 +123,36 @@ Request (~L619, add `aauth-mission` to signed components).
 | `src/AAuth/Tokens/TokenVerifier.cs` | **Modify** — surface `mission` on auth-token verify result |
 | `src/AAuth/Tokens/VerifiedToken*.cs` | **Modify** — expose parsed `mission` |
 | `src/AAuth/HttpSig/AAuthSigningHandler.cs` | **Modify** — auto-cover `aauth-mission` when header present (D2) |
-| `tests/AAuth.Conformance/Tokens/MissionClaimTests.cs` | **New** |
+| `src/AAuth/HttpSig/AAuthVerifier.cs` | **Modify** (added) — accept `mission` param + validate `aauth-mission` covered component |
+| `src/AAuth/Server/Verification/AAuthVerificationMiddleware.cs` | **Modify** (added) — pass `AAuth-Mission` header into the verifier |
+| `src/AAuth/Tokens/MissionClaim.cs` | **New** (added) — `{approver, s256}` value carried in tokens |
+| `tests/AAuth.Conformance/Missions/MissionClaimTests.cs` | **New** (placed under `Missions/`) |
 | `tests/AAuth.Conformance/HttpSignatures/MissionSignedComponentTests.cs` | **New** |
 
 ### Implementation Decisions
 
 - D2 (resolved): auto-cover `aauth-mission` in `AAuthSigningHandler` when the
   header is present; signing method signatures may change as needed.
+- D5 (resolved, user-approved): the verifier side (`AAuthVerifier` +
+  `AAuthVerificationMiddleware`) is extended in Phase 2 so signed mission
+  requests round-trip; without it every mission-context request would fail
+  HTTP-signature verification.
+- D6 — covered-component ordering (resolved per spec): `aauth-mission` is the
+  **last** covered component, after `signature-key` (spec §Authorization
+  Endpoint Request example, mission context). The pre-existing `authorization`
+  handling (appended after `signature-key`) is left unchanged — re-aligning it
+  to the spec's `authorization`-before-`signature-key` example is out of Phase 2
+  scope. Verifier accepts the optional trailing pair `authorization` then
+  `aauth-mission`, in that order.
 
 ### Definition of Done
 
-- [ ] `ResourceTokenBuilder` emits `mission` claim when a mission is present (§Resource Token).
-- [ ] `AuthTokenBuilder` emits `mission` claim when a mission is present (§Auth Token).
-- [ ] `TokenVerifier` exposes the verified `mission` claim on auth tokens.
-- [ ] When `AAuth-Mission` header present, `aauth-mission` appears in
+- [x] `ResourceTokenBuilder` emits `mission` claim when a mission is present (§Resource Token).
+- [x] `AuthTokenBuilder` emits `mission` claim when a mission is present (§Auth Token).
+- [x] `TokenVerifier` exposes the verified `mission` claim on auth tokens.
+- [x] When `AAuth-Mission` header present, `aauth-mission` appears in
       `Signature-Input` covered components (§Authorization Endpoint Request).
-- [ ] Covered-components contract updated; token/signature tests adjusted to match.
+- [x] Covered-components contract updated; token/signature tests adjusted to match.
 
 ---
 
