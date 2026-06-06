@@ -651,3 +651,123 @@ under `docs/server/` + refresh `docs/advanced/missions.md` + add a
 - **Files (this follow-up):** modified `samples/MockPersonServer/
   {MissionGovernance.cs, Program.cs}`, `samples/MissionAgent/{Program.cs,
   README.md}`. No SDK/test changes; suites unchanged (425 / 383).
+
+### Phase 6b — Blazor apps + consent-UX refinements + out-of-mission scope gate (2026-06-06, in progress)
+
+- **GuidedTour + SampleApp mission flows (built, live-verified).** GuidedTour
+  `TourMode.Mission` (14-step raw-HTTP walkthrough) and SampleApp `Mission.razor`
+  (one-page 4-gate run) both drive: mission approval **prompt** → in-scope
+  `whoami` token **silent** → pre-approved `send_email` tool **silent** →
+  non-pre-approved `delete_inbox` tool **prompt**. Live-verified end-to-end.
+- **BUG FOUND + FIXED — `whoami` proposed as a tool.** GuidedTour's proposal
+  listed `whoami` in `tools`, which is wrong: `whoami` is a **resource scope**
+  (remote, §Scopes), not a local tool (§Permission Endpoint). After the
+  separate scope/tool lists were added it showed `whoami` in BOTH the consent
+  screen's scope list and tool list. Fixed the proposal to `summarize` +
+  `send_email`. Confirms the **tool-vs-scope** distinction matters in the demo
+  data, not just the docs.
+- **Consent-UX refinements (MockPersonServer `/interaction`, all live-verified):**
+  - **Separate scope + tool lists** (§Scopes vs §Permission Endpoint) so the
+    user sees both halves of the mission's authority distinctly.
+  - **Definition box** grounding the two words: *resource scope* = remote access
+    via auth token; *tool* = local action via the permission endpoint.
+  - **Creation screen lists NO scopes.** Per §Mission Creation (L1233) a proposal
+    carries only `description` + optional `tools` — never scopes. The creation
+    screen now shows the description + tools and a note that **the PS will
+    determine the resource scopes the mission needs from its description,
+    per-request, as the agent works** (§Scopes L1793 "The PS evaluates requested
+    scopes against mission context"; §Concurrent Token Requests L828). This
+    corrected an earlier draft that wrongly implied scopes were pre-determined
+    at creation.
+  - **CLARIFIED SPEC SEMANTICS — scopes are determined dynamically over the
+    mission's whole life, never fixed at creation.** A mission is a standing
+    natural-language context; the PS is a per-request judge (§Overview L141
+    "every resource access is evaluated in context"; §Token endpoint L784 — the
+    PS *remembers* prior consent within a mission so decisions accrue rather than
+    being declared up front). Out-of-mission scope ⇒ **gate 3 prompt**, not
+    auto-deny; only an explicit user deny (or `mission_terminated`) yields
+    `access_denied`.
+  - **Post-creation gates relabel the scope list "Granted so far"** (accrual
+    framing) with empty state "nothing yet — this is the first request"; the
+    token-gate request note now reads "Not yet covered by this mission — approve
+    to grant this scope (the agent may reuse it for the rest of the mission)",
+    teaching that the grant is remembered.
+  - Removed the now-unused `MissionConsentScript script` DI param from the
+    `/interaction` GET handler.
+- **docs/concepts.md** Governance section rewritten to convey the asymmetry:
+  **tools are declared, scopes are evaluated** (per-request, lifetime-long).
+  MissionAgent README gained the same distinction.
+
+- **NEW WORK (designed 2026-06-06, decisions D6–D9 in plan) — out-of-mission
+  scope gate.** The original Phase 6 plan intended a prompted **token/scope**
+  gate ("out-of-scope token request that prompts") but 6b shipped only the
+  prompted **tool** gate. Gap confirmed by reading `MissionPlan` (GuidedTour) and
+  `Mission.razor` — neither exercises an out-of-mission *scope*. To close it:
+  - **WhoAmI** gains a **new resource scope** (`whoami:history`, proposed) on a
+    **new mission-aware endpoint** (`/jwt/history`) via
+    `ChallengeForMission(...)`. Decision **D6**: new endpoint + new scope (not
+    reuse the existing non-mission `/jwt/admin` step-up) so the out-of-mission
+    scenario is unambiguous. WhoAmI already has the levers: `ChallengeForMission`
+    helper, `AddAAuthScopePolicy`, and `ScopeDescriptions` metadata — the new
+    path just needs excluding from the baseline `/jwt` branch.
+  - **Gate model becomes 5 gates** (decision **D7**): mission approval prompt →
+    `whoami` token silent → `whoami:history` token **PROMPT (out-of-mission
+    scope)** → `send_email` tool silent → `delete_inbox` tool prompt. Under the
+    seeded inbox mission (in-scope = `whoami` only), `whoami:history` naturally
+    falls outside → the existing `/token` gate-3 prompt path fires (no PS logic
+    change needed — the seed already excludes it).
+  - **Apps to update:** SampleApp `Mission.razor` (insert gate 3), GuidedTour
+    `TourSession.cs` MissionPlan + step methods + approval/poll constants +
+    `CodeSnippets.cs` + `Tour.razor`, and **`samples/MissionAgent/`** (decision
+    **D8**: the "agent console app" = MissionAgent, which has a mermaid sequence
+    diagram to extend with the out-of-mission scope consent block) + its README.
+  - **Playwright specs** assert the new prompted-scope gate.
+- **AgentConsole is NOT in scope** (subagent-confirmed): it has no mission
+  support and its README has **no mermaid diagrams** (only tables + example
+  invocations). The user's "agent console app" referred to MissionAgent.
+- **Status:** consent-UX refinements + bug fix + concept doc DONE and
+  live-verified; out-of-mission scope gate DESIGNED (this entry) and pending
+  implementation. SampleApp consent-URL reorder (amendment 3) built, not yet
+  live-verified. Playwright specs pending. Builds: MockPersonServer / SampleApp /
+  GuidedTour all 0/0.
+
+### Phase 6b — e2e validation + jti-replay fix (2026-06-06, complete)
+
+- **e2e specs written.** `samples/GuidedTour/playwright-tests/mission.spec.ts`
+  (20-step, three-cycle lifecycle + elevated-deny) and
+  `samples/SampleApp/playwright-tests/mission.spec.ts` (five-gate run + elevated-deny).
+  Both projects boot fresh via Playwright's `webServer` array.
+- **BUG FOUND via e2e + FIXED — GuidedTour mission flow hung at the elevated
+  cycle.** Root cause was a **jti replay**: `TourSession` reused a single
+  `_agentToken` (fixed `jti`) for BOTH the `/jwt/mission` (cycle 1) and
+  `/jwt/mission/elevated` (cycle 2) signed requests. WhoAmI's `InMemoryJtiStore`
+  recorded the `jti` on the first access and rejected its reuse on the second →
+  a **bare 401** (no `AAuth-Requirement`) → `_resourceToken` stayed stale
+  (`scope=whoami`) → the elevated `/token` exchange evaluated as in-scope and
+  returned **200 silent** instead of the spec-required **202 prompt** (§Agent
+  Token Request gate 3) → `_userApproved` was never reset to `false` →
+  `StepUserApprovesPlaceholder()` no-oped (it only throws when `!_userApproved`)
+  → the run-all dispatch loop never advanced past step 12 → infinite redispatch.
+  Both observed symptoms (silent-grant + infinite loop) had this single cause.
+- **FIX (spec §Agent Token, replay protection):** added
+  `TourSession.RefreshAgentToken()` (re-mints `_agentToken` with a fresh `jti`
+  via `AgentTokenBuilder.Build()`) and call it at the top of
+  `StepMissionResourceChallengeAsync` AND `StepMissionElevatedChallengeAsync`,
+  so each signed resource access presents a distinct agent token — exactly as
+  `MissionAgent` (and SampleApp's `AccessMissionResourceAsync`) already did via a
+  per-access refresh. SampleApp was already correct; GuidedTour was the only
+  app missing the refresh.
+- **TEST-HARNESS LESSON (not a product bug).** WhoAmI mints an ephemeral
+  resource signing key (`AAuthKey.Generate()`) at every startup, so restarting
+  WhoAmI alone while a long-running PS keeps its cached JWKS yields
+  `401 invalid_resource_token: JWT signature verification failed`. Always boot
+  the whole AAuth backend set together (let Playwright's `webServer` boot all,
+  or `pkill -f "dotnet run --project samples"` first). `jti` replay state also
+  accumulates across e2e runs against a long-lived WhoAmI — prefer fresh
+  full-stack boots. Recorded in repo memory.
+- **DIAG removed.** All temporary `[DIAG-CHAL]` (SDK
+  `AAuthChallengeMiddleware.cs`) and `[DIAG]` (`TourSession.cs`) tracing removed.
+- **Validation:** `AAuth.slnx` builds 0/0. `AAuth.Tests` 383/383,
+  `AAuth.Conformance` 425/425. GuidedTour mission specs (lifecycle + deny) green;
+  SampleApp mission specs (five-gate + deny) green.
+

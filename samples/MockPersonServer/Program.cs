@@ -1304,13 +1304,27 @@ app.MapGet("/interaction", (string? code, PendingStore pending, MissionPendingSt
         var approvedTools = isCreation
             ? (IReadOnlyCollection<string>)mission.Proposal!.Tools.Select(t => t.Name).ToArray()
             : missionPolicy.ApprovedTools(mission.S256);
+        // Resource scopes (§Scopes) authorize access to a remote *resource* and
+        // are carried in auth tokens; tools (§Permission Endpoint) are *local*
+        // actions the agent runs itself. A mission proposal contains NO scopes —
+        // the agent proposes only a description + tools, and the PS evaluates
+        // each scope request lazily, per token request, over the mission's life
+        // (§Mission Creation, §Scopes). So the creation screen lists no scopes;
+        // the token/permission gates show the scopes consented so far.
+        var inScopePairs = isCreation
+            ? (IReadOnlyCollection<string>)Array.Empty<string>()
+            : missionPolicy.InScopePairs(mission.S256);
         var what = mission.Kind switch
         {
             MissionPendingKind.Token =>
-                $"<div class=row><b>Resource:</b> <code>{System.Net.WebUtility.HtmlEncode(mission.Resource)}</code></div>"
-                + $"<div class=row><b>Scope:</b> <code>{System.Net.WebUtility.HtmlEncode(mission.Scope)}</code></div>",
+                "<div class=req><div class=req-h>This request</div>"
+                + $"<div class=row><b>Resource:</b> <code>{System.Net.WebUtility.HtmlEncode(mission.Resource)}</code></div>"
+                + $"<div class=row><b>Scope:</b> <code>{System.Net.WebUtility.HtmlEncode(mission.Scope)}</code></div>"
+                + "<div class=req-n>Not yet covered by this mission — approve to grant this scope (the agent may reuse it for the rest of the mission).</div></div>",
             MissionPendingKind.Permission =>
-                $"<div class=row><b>Action:</b> <code>{System.Net.WebUtility.HtmlEncode(mission.Action)}</code></div>",
+                "<div class=req><div class=req-h>This request</div>"
+                + $"<div class=row><b>Tool:</b> <code>{System.Net.WebUtility.HtmlEncode(mission.Action)}</code></div>"
+                + "<div class=req-n>A tool that is not pre-approved on the mission — approve to allow this call.</div></div>",
             _ => string.Empty,
         };
         // The mission claim binds requests to a thumbprint (s256); surface the
@@ -1323,19 +1337,47 @@ app.MapGet("/interaction", (string? code, PendingStore pending, MissionPendingSt
                 ? $"<div class=row><b>Mission:</b> <span>{System.Net.WebUtility.HtmlEncode(description)}</span></div>"
                   + $"<div class=row><b></b> <code style='font-size:.8rem;color:#888'>{System.Net.WebUtility.HtmlEncode(mission.S256)}</code></div>"
                 : $"<div class=row><b>Mission:</b> <code>{System.Net.WebUtility.HtmlEncode(mission.S256)}</code></div>";
-        // Show the mission's pre-approved tools so the user can see the full
-        // mission this request sits under (§Mission Approval). For a permission
-        // prompt this also makes plain WHY it needs a decision: the requested
-        // action is not among these approved tools.
+        // Show the mission's resource scopes and pre-approved tools (§Scopes vs
+        // §Permission Endpoint) so the user sees the authority this request sits
+        // under. A mission proposal lists NO scopes, so at creation we show no
+        // scope list — only a note that the PS will judge each scope request
+        // against the mission as it arrives. On the token/permission gates the
+        // user is here precisely BECAUSE this scope/tool is not yet covered
+        // (gate 3, §Agent Token Request), so we show what has already been
+        // granted this mission as context for the new decision — not as the
+        // thing being requested now.
+        var scopesLine = isCreation
+            ? string.Empty
+            : inScopePairs.Count > 0
+                ? $"<div class=row><b>Granted&nbsp;so&nbsp;far:</b> <code>{System.Net.WebUtility.HtmlEncode(string.Join(", ", inScopePairs))}</code></div>"
+                : "<div class=row><b>Granted&nbsp;so&nbsp;far:</b> <span style='color:#888'>nothing yet — this is the first request</span></div>";
+        // At creation the agent proposed only a description + tools (§Mission
+        // Creation) — it did NOT request scopes, and the PS does not enumerate
+        // them up front. Tell the user the PS will determine the scopes the
+        // mission needs from its description, request by request, as the agent
+        // works (§Scopes — "The PS evaluates requested scopes against mission
+        // context").
+        var scopesNote = isCreation
+            ? "<div class=req-n style='margin:.2rem 0 .4rem 0'>This mission grants no scopes up front. The Person Server will determine the resource scopes it needs from the mission description, judging each request as the agent makes it — granting silently if it fits the intent, or asking you otherwise.</div>"
+            : string.Empty;
         var toolsLabel = isCreation ? "Tools" : "Approved&nbsp;tools";
         var toolsLine = approvedTools.Count > 0
             ? $"<div class=row><b>{toolsLabel}:</b> <code>{System.Net.WebUtility.HtmlEncode(string.Join(", ", approvedTools))}</code></div>"
             : $"<div class=row><b>{toolsLabel}:</b> <span style='color:#888'>(none)</span></div>";
+        // A short, spec-grounded note defining the two kinds of authority so the
+        // user understands what they are approving (§Scopes, §Permission Endpoint).
+        var defn =
+            "<div class=defn>"
+            + "<div><b>Resource scope</b> — access to a remote <i>resource</i> (e.g. an API), granted via an auth token. "
+            + "The resource defines its scopes; the Person Server determines which a mission needs from its intent.</div>"
+            + "<div><b>Tool</b> — a <i>local</i> action the agent runs itself (a tool call, file write, message). "
+            + "No resource is involved; the Person Server governs it through this permission step.</div>"
+            + "</div>";
         var heading = isCreation
             ? "An agent wants to start a new mission"
             : $"An agent is requesting {(mission.Kind == MissionPendingKind.Token ? "access" : "permission")} under its mission";
         var intro = isCreation
-            ? "The agent is asking you to approve a durable <b>mission</b> and the tools it may use. This is the authority that every later request will be checked against."
+            ? "The agent proposed a durable <b>mission</b> and the <b>tools</b> it wants to run. As the agent works, the Person Server will determine the resource <b>scopes</b> it needs from the mission description, judging each request in context. Approve to start the mission; every later request is checked against it."
             : "This request falls <b>outside</b> the agent's pre-approved mission scope, so the Person Server is asking you to decide.";
         var missionHtml =
             "<!doctype html><meta charset=utf-8><title>Approve a mission request — Person Server</title>"
@@ -1344,7 +1386,12 @@ app.MapGet("/interaction", (string? code, PendingStore pending, MissionPendingSt
             + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
             + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#ddd6fe}"
             + ".sub{color:#777;font-size:.85rem;margin:.35rem 0 1.25rem}"
-            + "h1{font-size:1.25rem}.row{display:flex;gap:.5rem;margin:.25rem 0}.row b{min-width:6rem;color:#555}"
+            + "h1{font-size:1.25rem}.row{display:flex;gap:.5rem;margin:.25rem 0}.row b{min-width:7rem;color:#555}"
+            + ".req{margin:1rem 0;padding:.6rem .85rem;background:#faf5ff;border:1px solid #e9d5ff;border-radius:.4rem}"
+            + ".req-h{font-weight:600;color:#6b21a8;font-size:.8rem;text-transform:uppercase;letter-spacing:.03em;margin-bottom:.35rem}"
+            + ".req-n{color:#777;font-size:.82rem;margin-top:.35rem}"
+            + ".defn{margin:1.25rem 0 .5rem;padding:.6rem .85rem;background:#f8fafc;border:1px solid #e2e8f0;"
+            + "border-radius:.4rem;font-size:.82rem;color:#555;display:flex;flex-direction:column;gap:.4rem}"
             + "form{margin-top:1.5rem;display:inline-flex;gap:.75rem}"
             + "button{padding:.5rem 1rem;font-size:1rem;cursor:pointer;border-radius:.25rem;border:1px solid #999}"
             + "button.approve{background:#6ee7b7;border-color:#34d399}"
@@ -1355,8 +1402,11 @@ app.MapGet("/interaction", (string? code, PendingStore pending, MissionPendingSt
             + $"<p>{intro}</p>"
             + $"<div class=row><b>Agent:</b> <code>{System.Net.WebUtility.HtmlEncode(mission.AgentId)}</code></div>"
             + missionLine
+            + scopesLine
+            + scopesNote
             + toolsLine
             + what
+            + defn
             + "<form method=post action=\"/interaction/approve\">"
             + $"<input type=hidden name=code value=\"{System.Net.WebUtility.HtmlEncode(code)}\">"
             + "<button class=approve type=submit>Approve</button>"

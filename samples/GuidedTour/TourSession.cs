@@ -49,6 +49,17 @@ public sealed class TourSession : IAsyncDisposable
     private bool _aborted;
     private TourMode _mode;
 
+    // Mission-governed flow state (§Missions). Captured from the mission
+    // approval blob returned by the mission-create poll (step 5) so later
+    // steps can bind the AAuth-Mission header + show the mission identity.
+    private string? _missionApprover;
+    private string? _missionS256;
+    private string? _missionDescription;
+    private int _missionApprovedToolCount;
+    private string? _missionResponseBody;
+    private string? _missionEndpoint;
+    private string? _permissionEndpoint;
+
     // Background polling state (deferred mode, poll step). Mutated from
     // the polling task; the UI listens to StateChanged and re-renders.
     private CancellationTokenSource? _pollingCts;
@@ -130,6 +141,21 @@ public sealed class TourSession : IAsyncDisposable
     };
 
     /// <summary>
+    /// The mission-aware resource endpoint (§Missions). Distinct from
+    /// <see cref="EffectiveResourceUrl"/>: the mission flow targets the
+    /// resource's mission-aware path so the 401 challenge copies the
+    /// AAuth-Mission claim into the resource_token.
+    /// </summary>
+    private string MissionResourceUrl => $"{_options.WhoAmIUrl.TrimEnd('/')}/jwt/mission";
+
+    /// <summary>
+    /// The ELEVATED mission-aware resource endpoint (§Scopes). Requires
+    /// `whoami:elevated_scope`, which falls outside the seeded mission scope,
+    /// so its token exchange surfaces an out-of-mission consent prompt (gate 3).
+    /// </summary>
+    private string MissionElevatedResourceUrl => $"{_options.WhoAmIUrl.TrimEnd('/')}/jwt/mission/elevated";
+
+    /// <summary>
     /// True when the current flow is the identity-based path. Forced on
     /// when no PS URL is configured, regardless of <see cref="Mode"/>.
     /// </summary>
@@ -151,6 +177,9 @@ public sealed class TourSession : IAsyncDisposable
 
     /// <summary>True when the current flow is the four-party federated path.</summary>
     public bool IsFederatedMode => HasPersonServer && _mode == TourMode.Federated && HasAccessServer;
+
+    /// <summary>True when the current flow is the mission-governed (PS-as-policy) path.</summary>
+    public bool IsMissionMode => HasPersonServer && _mode == TourMode.Mission;
 
     /// <summary>
     /// True when the call-chain flow has entered its multi-hop consent path:
@@ -176,6 +205,7 @@ public sealed class TourSession : IAsyncDisposable
         {
             if (IsBootstrapMode) return HasAgentProvider ? 3 : 2;
             if (IsIdentityMode) return 2;
+            if (IsMissionMode) return 20;
             if (IsCallChainMode) return _callChainPending ? 13 : 7;
             if (IsFederatedMode) return _federatedPending ? 10 : 7;
             return IsDeferredMode ? 9 : 6;
@@ -194,6 +224,7 @@ public sealed class TourSession : IAsyncDisposable
         {
             if (IsBootstrapMode) return HasAgentProvider ? ApBootstrapPlan : LocalBootstrapPlan;
             if (IsIdentityMode) return IdentityPlan;
+            if (IsMissionMode) return MissionPlan;
             if (IsCallChainMode) return _callChainPending ? CallChainConsentPlan : CallChainPlan;
             if (IsFederatedMode) return _federatedPending ? FederatedConsentPlan : FederatedPlan;
             return IsDeferredMode ? DeferredPlan : AutonomousPlan;
@@ -276,6 +307,37 @@ public sealed class TourSession : IAsyncDisposable
         new(13, "Inspect multi-agent result", "Review the combined response showing the full Agent → Orchestrator → WhoAmI chain.", Actor.Agent, Actor.Agent),
     };
 
+    // The mission-governed flow (§Missions, §PS Governance Endpoints). The PS
+    // is the policy-enforcement point: the agent proposes a durable mission
+    // (PROMPT), then every later request is checked against it — an in-scope
+    // resource token is minted SILENTLY (gate 2), a pre-approved tool is
+    // resolved locally with no PS call (gate 3), and an out-of-scope action
+    // (delete_inbox) is PROMPTED again (gate 4). Mirrors the SampleApp Mission
+    // page's four-gate use case as a step-by-step raw-HTTP walkthrough.
+    private static readonly TourPlanStep[] MissionPlan =
+    {
+        new(1, "Discover Person Server metadata", "Unsigned GET /.well-known/aauth-person.json for mission_endpoint, token_endpoint + permission_endpoint.", Actor.Agent, Actor.PersonServer),
+        new(2, "Propose mission → 202 (PROMPT)", "Signed POST /mission {description, tools}; the PS parks the proposal and returns 202 + interaction URL + single-use code.", Actor.Agent, Actor.PersonServer),
+        new(3, "Direct user to mission approval", "Agent surfaces the {url}?code={code} link for the user to approve the durable mission + its tools.", Actor.Agent, Actor.Agent),
+        new(4, "User approves the mission at the PS", "User opens the PS consent page and approves the mission; the PS records the approved mission + tools.", Actor.PersonServer, Actor.PersonServer),
+        new(5, "Poll → 200 mission approval blob", "Signed GETs to /mission-create-pending/{id} until the PS returns the verbatim approval blob + AAuth-Mission header (s256).", Actor.Agent, Actor.PersonServer),
+        new(6, "Signed GET /jwt/mission → 401", "Signed request carries AAuth-Mission; the resource copies the mission into a resource_token and challenges with 401.", Actor.Agent, Actor.Resource),
+        new(7, "Exchange → 200 auth_token (SILENT)", "Signed POST /token; the (resource, whoami) pair is in the mission scope, so the PS mints the auth_token with no prompt (gate 2).", Actor.Agent, Actor.PersonServer),
+        new(8, "Replay GET /jwt/mission → 200", "Signed retry with the auth_token returns the protected claims with the mission binding round-tripped.", Actor.Agent, Actor.Resource),
+        new(9, "Signed GET /jwt/mission/elevated → 401", "Signed request for the ELEVATED whoami:elevated_scope; the resource copies the mission into a resource_token and challenges with 401.", Actor.Agent, Actor.Resource),
+        new(10, "Exchange → 202 (PROMPT, out of mission)", "Signed POST /token; whoami:elevated_scope is OUTSIDE the mission's intent, so the PS cannot grant silently — it parks the request and returns 202 + interaction URL (gate 3).", Actor.Agent, Actor.PersonServer),
+        new(11, "Direct user to scope approval", "Agent relays the interaction URL for the user to approve the out-of-mission elevated scope.", Actor.Agent, Actor.Agent),
+        new(12, "User approves the elevated scope at the PS", "User approves whoami:elevated_scope at the PS; the consent accrues to the mission for later requests.", Actor.PersonServer, Actor.PersonServer),
+        new(13, "Poll → 200 auth_token (elevated)", "Signed GETs to the token-pending URL until the PS returns the elevated auth_token.", Actor.Agent, Actor.PersonServer),
+        new(14, "Replay GET /jwt/mission/elevated → 200", "Signed retry with the elevated auth_token returns the protected claims.", Actor.Agent, Actor.Resource),
+        new(15, "Permission: send_email (SILENT, local)", "send_email is a pre-approved mission tool, so the agent resolves it locally — no PS round-trip (gate 4).", Actor.Agent, Actor.Agent),
+        new(16, "Permission: delete_inbox → 202 (PROMPT)", "delete_inbox is NOT a pre-approved tool; signed POST /permission parks the request and returns 202 + interaction URL (gate 5).", Actor.Agent, Actor.PersonServer),
+        new(17, "Direct user to action approval", "Agent relays the permission interaction URL for the user to approve the out-of-scope delete_inbox action.", Actor.Agent, Actor.Agent),
+        new(18, "User approves the action at the PS", "User approves delete_inbox at the PS; the PS records the decision against the mission log.", Actor.PersonServer, Actor.PersonServer),
+        new(19, "Poll → 200 permission granted", "Signed GETs to /permission-pending/{id} until the PS returns {permission: granted}.", Actor.Agent, Actor.PersonServer),
+        new(20, "Inspect mission result", "Review the full governed flow: one mission, one silent token, one prompted scope, one local tool, one prompted action.", Actor.Agent, Actor.Agent),
+    };
+
     private static readonly TourPlanStep[] FederatedPlan =
     {
         new(1, "Discover resource metadata", "Unsigned GET /federated/.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
@@ -320,13 +382,21 @@ public sealed class TourSession : IAsyncDisposable
 
     /// <summary>The step number at which user approval occurs in deferred mode.</summary>
     public int UserApprovalStepNumber =>
-        IsCallChainPending
+        IsMissionMode
+            ? (Steps.Count <= MissionHop1PollStep ? MissionHop1ApprovalStep
+                : Steps.Count <= MissionHop2PollStep ? MissionHop2ApprovalStep
+                : MissionHop3ApprovalStep)
+        : IsCallChainPending
             ? (Steps.Count <= CallChainHop1PollStep ? CallChainHop1ApprovalStep : CallChainHop2ApprovalStep)
             : 7;
 
     /// <summary>The step number at which polling occurs in deferred mode.</summary>
     public int PollStepNumber =>
-        IsCallChainPending
+        IsMissionMode
+            ? (Steps.Count <= MissionHop1PollStep ? MissionHop1PollStep
+                : Steps.Count <= MissionHop2PollStep ? MissionHop2PollStep
+                : MissionHop3PollStep)
+        : IsCallChainPending
             ? (Steps.Count <= CallChainHop1PollStep ? CallChainHop1PollStep : CallChainHop2PollStep)
             : 8;
 
@@ -336,6 +406,16 @@ public sealed class TourSession : IAsyncDisposable
     private const int CallChainHop1PollStep = 8;
     private const int CallChainHop2ApprovalStep = 11;
     private const int CallChainHop2PollStep = 12;
+
+    // Mission consent path step numbers: cycle 1 (mission creation, steps 4/5),
+    // cycle 2 (out-of-mission elevated scope token, steps 12/13), and cycle 3
+    // (out-of-scope delete_inbox permission, steps 18/19).
+    private const int MissionHop1ApprovalStep = 4;
+    private const int MissionHop1PollStep = 5;
+    private const int MissionHop2ApprovalStep = 12;
+    private const int MissionHop2PollStep = 13;
+    private const int MissionHop3ApprovalStep = 18;
+    private const int MissionHop3PollStep = 19;
 
     /// <summary>
     /// The actor the current poll loop targets: the Person Server for the
@@ -352,7 +432,7 @@ public sealed class TourSession : IAsyncDisposable
     /// and the UI should expose the "Approve as user" action button.
     /// </summary>
     public bool AwaitingUserApproval =>
-        (IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending)
+        (IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode)
         && Steps.Count + 1 == UserApprovalStepNumber && !_userApproved;
 
     /// <summary>The user-facing interaction URL captured during step 7 (deferred only).</summary>
@@ -431,6 +511,13 @@ public sealed class TourSession : IAsyncDisposable
         _federatedPending = false;
         _callChainPending = false;
         _aborted = false;
+        _missionApprover = null;
+        _missionS256 = null;
+        _missionDescription = null;
+        _missionApprovedToolCount = 0;
+        _missionResponseBody = null;
+        _missionEndpoint = null;
+        _permissionEndpoint = null;
     }
 
     /// <summary>
@@ -627,6 +714,62 @@ public sealed class TourSession : IAsyncDisposable
                 case 7: StepFederatedInspectResult(); break;
             }
         }
+        else if (IsMissionMode)
+        {
+            switch (nextStep)
+            {
+                // Cycle 1 — mission creation (gate 1 PROMPT) → silent token (gate 2).
+                case 1: await StepMissionDiscoverPersonAsync(ct); break;
+                case 2: await StepMissionProposeAsync(ct); break;
+                case 3: StepDirectUserToInteraction(); break;
+                case 4: StepUserApprovesPlaceholder(); break;
+                case 5:
+                    if (_pollingTask is { } mCreate && !mCreate.IsCompleted)
+                    {
+                        await mCreate.ConfigureAwait(false);
+                    }
+                    else if (Steps.Count + 1 == PollStepNumber)
+                    {
+                        await StepMissionPollCreateAsync(ct);
+                    }
+                    break;
+                case 6: await StepMissionResourceChallengeAsync(ct); break;
+                case 7: await StepMissionExchangeAsync(ct); break;
+                case 8: await StepMissionReplayAsync(ct); break;
+                // Cycle 2 — out-of-mission elevated scope (gate 3 PROMPT).
+                case 9: await StepMissionElevatedChallengeAsync(ct); break;
+                case 10: await StepMissionElevatedExchangeAsync(ct); break;
+                case 11: StepDirectUserToInteraction(); break;
+                case 12: StepUserApprovesPlaceholder(); break;
+                case 13:
+                    if (_pollingTask is { } mElev && !mElev.IsCompleted)
+                    {
+                        await mElev.ConfigureAwait(false);
+                    }
+                    else if (Steps.Count + 1 == PollStepNumber)
+                    {
+                        await StepMissionElevatedPollAsync(ct);
+                    }
+                    break;
+                case 14: await StepMissionElevatedReplayAsync(ct); break;
+                // Cycle 3 — pre-approved tool (gate 4) → out-of-scope tool (gate 5 PROMPT).
+                case 15: StepMissionPreApprovedTool(); break;
+                case 16: await StepMissionPermissionPromptAsync(ct); break;
+                case 17: StepDirectUserToInteraction(); break;
+                case 18: StepUserApprovesPlaceholder(); break;
+                case 19:
+                    if (_pollingTask is { } mPerm && !mPerm.IsCompleted)
+                    {
+                        await mPerm.ConfigureAwait(false);
+                    }
+                    else if (Steps.Count + 1 == PollStepNumber)
+                    {
+                        await StepMissionPollPermissionAsync(ct);
+                    }
+                    break;
+                case 20: StepMissionInspectResult(); break;
+            }
+        }
         else
         {
             switch (nextStep)
@@ -686,6 +829,32 @@ public sealed class TourSession : IAsyncDisposable
     }
 
     /// <summary>
+    /// Re-mints <see cref="_agentToken"/> with a fresh `jti` (the
+    /// <see cref="AgentTokenBuilder"/> generates a new token id on each
+    /// <c>Build()</c>). The resource server enforces replay detection per
+    /// signed request, so a single long-lived agent token cannot be reused
+    /// across two separate signed requests to the same resource. The mission
+    /// flow hits the resource twice (the `/jwt/mission` and
+    /// `/jwt/mission/elevated` challenges), so each challenge must present a
+    /// distinct agent token — exactly as a real agent would refresh its token
+    /// per access (spec §Agent Token, replay protection).
+    /// </summary>
+    private void RefreshAgentToken()
+    {
+        var personServer = IsIdentityMode || string.IsNullOrWhiteSpace(_options.PersonServerUrl)
+            ? null
+            : _options.PersonServerUrl;
+        _agentToken = new AgentTokenBuilder
+        {
+            Issuer = _selfIdentity.Issuer,
+            Subject = _options.AgentId,
+            KeyId = _selfIdentity.KeyId,
+            Key = _selfIdentity.Key,
+            PersonServer = personServer,
+        }.Build();
+    }
+
+    /// <summary>
     /// Records the user-approval step: the user opened the PS's interaction page in a
     /// separate browser tab and (hopefully) clicked Approve. The Guided
     /// Tour itself does not make the HTTP call here — that happens
@@ -694,7 +863,7 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public Task RecordUserApprovalOpenedAsync(CancellationToken ct = default)
     {
-        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending)) { return Task.CompletedTask; }
+        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode)) { return Task.CompletedTask; }
         if (Steps.Count + 1 != UserApprovalStepNumber)
         {
             throw new InvalidOperationException(
@@ -730,6 +899,58 @@ public sealed class TourSession : IAsyncDisposable
                     $"  GET  {{as}}/interaction/login?code={_interactionCode}\n" +
                     "  \u2192 AS consent screen \u2192 click Approve\n" +
                     $"  POST {{as}}/interaction/approve (AS records verdict)",
+            });
+            return Task.CompletedTask;
+        }
+
+        if (IsMissionMode)
+        {
+            var hopStep = Steps.Count + 1;
+            var isCreation = hopStep == MissionHop1ApprovalStep;
+            var isElevated = hopStep == MissionHop2ApprovalStep;
+            var title = isCreation
+                ? "User approves the mission at the PS"
+                : isElevated
+                    ? "User approves the elevated scope at the PS"
+                    : "User approves delete_inbox at the PS";
+            var narrative = isCreation
+                ? "The tour opened the PS's mission-approval page in a new browser tab. " +
+                  "The Person Server rendered its consent screen showing the proposed " +
+                  "**mission** description and the tools it may use. The user clicked " +
+                  "**Approve**, and the PS recorded the durable mission via " +
+                  "`POST /interaction/approve`. This is the single most important " +
+                  "consent in the model: every later request is checked against this " +
+                  "mission. The agent discovers the signed approval blob on its next poll."
+                : isElevated
+                    ? "The tour opened the PS's consent page in a new browser tab. The " +
+                      "Person Server showed that the agent is requesting the elevated " +
+                      "**whoami:elevated_scope** \u2014 a scope that falls **outside** the " +
+                      "mission's natural-language intent, so it could not be granted " +
+                      "silently. The user clicked **Approve**, and the PS recorded the " +
+                      "consent against the mission via `POST /interaction/approve`; the " +
+                      "decision now accrues to the mission, so the agent may reuse this " +
+                      "scope for the rest of the session. The agent learns the verdict on " +
+                      "its next poll. (A **Deny** here yields `access_denied`.)"
+                    : "The tour opened the PS's permission page in a new browser tab. The " +
+                      "Person Server showed that the agent wants to run **delete_inbox** \u2014 " +
+                      "an action that is **not** among the mission's pre-approved tools \u2014 " +
+                      "under the existing mission. The user clicked **Approve**, and the PS " +
+                      "recorded the decision against the mission log via " +
+                      "`POST /interaction/approve`. The agent learns the verdict on its next poll. " +
+                      "Note: this returns a *decision*, not a token \u2014 the gate-2 auth token is unaffected.";
+            Steps.Add(new StepRecord
+            {
+                Number = Steps.Count + 1,
+                Title = title,
+                From = Actor.PersonServer,
+                To = Actor.PersonServer,
+                Narrative = narrative,
+                ResponseBody = userUrl,
+                TokenDecoded =
+                    $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
+                    "User performed (browser → PS):\n" +
+                    $"  GET  /interaction?code={_interactionCode}\n" +
+                    $"  POST /interaction/approve  (form: code={_interactionCode})",
             });
             return Task.CompletedTask;
         }
@@ -787,6 +1008,34 @@ public sealed class TourSession : IAsyncDisposable
         if (IsCallChainMode)
         {
             try { await client.PostAsync($"{_options.PersonServerUrl!.TrimEnd('/')}/admin/reset", null, ct); }
+            catch { /* /admin/* only exists on MockPersonServer — swallow. */ }
+            return;
+        }
+
+        // Mission mode: reset all PS state, then script the consent screen to
+        // be interactive (browser-driven) and seed the in-scope (resource,
+        // whoami) pair so gate 2 is silent. Mission creation + the out-of-scope
+        // delete_inbox both surface a real user approval (§Missions). Matches
+        // the SampleApp Mission page's ConfigurePersonServerAsync script.
+        if (IsMissionMode)
+        {
+            var ps = _options.PersonServerUrl!.TrimEnd('/');
+            try
+            {
+                await client.PostAsync($"{ps}/admin/reset", null, ct);
+                await client.PostAsJsonAsync($"{ps}/admin/mission-script", new
+                {
+                    reset = true,
+                    interactive = true,
+                    approveMission = true,
+                    approveToken = true,
+                    approvePermission = true,
+                    inScope = new[]
+                    {
+                        new { resource = _options.WhoAmIUrl.TrimEnd('/'), scope = "whoami" },
+                    },
+                }, ct);
+            }
             catch { /* /admin/* only exists on MockPersonServer — swallow. */ }
             return;
         }
@@ -1444,7 +1693,7 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public Task StartPendingPollAsync()
     {
-        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending) || _pendingUrl is null)
+        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode) || _pendingUrl is null)
         {
             return Task.CompletedTask;
         }
@@ -1459,6 +1708,13 @@ public sealed class TourSession : IAsyncDisposable
         // Orchestrator-audience auth_token); every other poll hits the PS pending
         // URL with the agent token.
         var hop2 = IsCallChainPending && Steps.Count + 1 == CallChainHop2PollStep;
+
+        // Mission mode has three distinct poll cycles: cycle 1 returns the mission
+        // approval blob (step 5), cycle 2 returns the elevated auth_token (step 13),
+        // cycle 3 returns the permission decision (step 19).
+        var missionCreatePoll = IsMissionMode && Steps.Count + 1 == MissionHop1PollStep;
+        var missionElevatedPoll = IsMissionMode && Steps.Count + 1 == MissionHop2PollStep;
+        var missionPermissionPoll = IsMissionMode && Steps.Count + 1 == MissionHop3PollStep;
 
         // Serialize the check-then-assign so two near-simultaneous UI
         // events (e.g. "Open consent" + "Simulate deny") can't both kick
@@ -1478,7 +1734,13 @@ public sealed class TourSession : IAsyncDisposable
             {
                 try
                 {
-                    await (hop2 ? StepCallChainPollHop2Async(ct) : StepPollPendingAsync(ct)).ConfigureAwait(false);
+                    var poll =
+                        missionCreatePoll ? StepMissionPollCreateAsync(ct)
+                        : missionElevatedPoll ? StepMissionElevatedPollAsync(ct)
+                        : missionPermissionPoll ? StepMissionPollPermissionAsync(ct)
+                        : hop2 ? StepCallChainPollHop2Async(ct)
+                        : StepPollPendingAsync(ct);
+                    await poll.ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -2408,6 +2670,631 @@ public sealed class TourSession : IAsyncDisposable
             TokenPayload = payload,
             TokenDecoded = summary.ToString(),
         });
+    }
+
+    // -----------------------------------------------------------------
+    // Mission-governed (PS-as-policy) step implementations
+    // -----------------------------------------------------------------
+
+    private async Task StepMissionDiscoverPersonAsync(CancellationToken ct)
+    {
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        using var client = new HttpClient(capture);
+        var url = $"{_options.PersonServerUrl!.TrimEnd('/')}/.well-known/aauth-person.json";
+        await client.GetAsync(url, ct);
+        var ex = capture.Last!;
+
+        var meta = JsonNode.Parse(ex.ResponseBody);
+        _tokenEndpoint = (string?)meta?["token_endpoint"];
+        _missionEndpoint = (string?)meta?["mission_endpoint"]
+            ?? $"{_options.PersonServerUrl!.TrimEnd('/')}/mission";
+        _permissionEndpoint = (string?)meta?["permission_endpoint"]
+            ?? $"{_options.PersonServerUrl!.TrimEnd('/')}/permission";
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Discover Person Server metadata",
+            From = Actor.Agent,
+            To = Actor.PersonServer,
+            Narrative =
+                "Unsigned discovery to the Person Server announces its governance " +
+                "endpoints: the `mission_endpoint` the agent proposes the mission to, " +
+                "the `token_endpoint` for the in-scope token exchange, and the " +
+                "`permission_endpoint` for per-action checks. In the mission model the " +
+                "PS is the **policy-enforcement point** — every one of these endpoints " +
+                "is governed by the mission the user approves next.",
+            RequestLine = $"{ex.RequestLine}  →  {url}",
+            RequestHeaders = ex.RequestHeaders,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            CodeSnippet = CodeSnippets.MissionDiscoverPs,
+        });
+    }
+
+    private async Task StepMissionProposeAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        // The proposal: a durable mission description + the tools the agent
+        // wants pre-approved. send_email is in the proposal (so gate 3 is
+        // silent later); delete_inbox is NOT (so gate 4 prompts). These are
+        // local tools — whoami is a resource scope and is handled separately
+        // by the in-scope token exchange at gate 2, not as a tool.
+        using var resp = await client.PostAsJsonAsync(_missionEndpoint!, new
+        {
+            description = "Triage the user's inbox: summarize unread mail and send routine replies.",
+            tools = new[]
+            {
+                new { name = "summarize", description = "Summarize an email thread." },
+                new { name = "send_email", description = "Send a routine reply on the user's behalf." },
+            },
+        }, ct);
+
+        var ex = capture.Last!;
+        CaptureInteractionFrom(resp, _missionEndpoint!);
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Propose mission → 202 (user approval required)",
+            From = Actor.Agent,
+            To = Actor.PersonServer,
+            Narrative =
+                "The agent signs a `POST /mission` with its agent token (`sig=jwt`, MUST " +
+                "per spec) carrying the proposed mission description and the local tools it " +
+                "wants pre-approved (`summarize`, `send_email`). Mission approval is the " +
+                "**most important consent in the model**, so this PS parks the proposal " +
+                "and returns `202 Accepted` + a `Location` (the mission-pending URL) and " +
+                "an `AAuth-Requirement: requirement=interaction` header pointing the user " +
+                "at the consent screen. `delete_inbox` is deliberately **not** proposed — " +
+                "you will see it prompt separately at gate 4.",
+            RequestLine = $"{ex.RequestLine}  →  {_missionEndpoint}",
+            RequestHeaders = ex.RequestHeaders,
+            RequestBody = PrettyJson(ex.RequestBody),
+            SignatureBase = capturedBase,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            CodeSnippet = CodeSnippets.MissionPropose,
+        });
+    }
+
+    private Task StepMissionPollCreateAsync(CancellationToken ct) =>
+        RunPendingPollAsync(ct, () => _agentToken!, Actor.Agent, Actor.PersonServer, (last, capturedBase) =>
+        {
+            // The mission-create poll returns the verbatim approval blob bytes
+            // (not an auth_token). Parse it to surface the mission identity.
+            _missionResponseBody = last.ResponseBody;
+            try
+            {
+                var mission = Mission.FromApprovalBytes(
+                    System.Text.Encoding.UTF8.GetBytes(last.ResponseBody));
+                _missionApprover = mission.Approver;
+                _missionS256 = mission.S256;
+                _missionDescription = mission.Description;
+                _missionApprovedToolCount = mission.ApprovedTools.Count;
+            }
+            catch { /* malformed blob — leave fields null, step still shows raw body */ }
+
+            Steps.Add(new StepRecord
+            {
+                Number = Steps.Count + 1,
+                Title = "Poll → 200 mission approval blob",
+                From = Actor.Agent,
+                To = Actor.PersonServer,
+                Narrative =
+                    "While the user approves on the PS screen, the agent polls the " +
+                    "mission-pending URL with a signed `GET`. Once the mission is " +
+                    "approved the PS returns `200 OK` with the **verbatim approval blob** " +
+                    "(stored byte-for-byte) plus an `AAuth-Mission` header carrying the " +
+                    "`s256` thumbprint. The agent verifies `s256 == base64url(SHA-256(" +
+                    "blob))` and now holds a durable mission it can bind to later requests. " +
+                    "If the user clicks **Deny**, this step records `403 access_denied`.",
+                RequestLine = $"{last.RequestLine}  →  {_pendingUrl}",
+                RequestHeaders = last.RequestHeaders,
+                SignatureBase = capturedBase,
+                StatusLine = last.StatusLine,
+                ResponseHeaders = last.ResponseHeaders,
+                ResponseBody = PrettyJson(last.ResponseBody),
+                TokenDecoded = _missionS256 is null
+                    ? null
+                    : $"Mission identity:\n  approver: {_missionApprover}\n  s256:     {_missionS256}\n" +
+                      $"  tools:    {_missionApprovedToolCount} pre-approved",
+                CodeSnippet = CodeSnippets.MissionPollCreate,
+            });
+        });
+
+    private async Task StepMissionResourceChallengeAsync(CancellationToken ct)
+    {
+        // Fresh agent token (new jti) so the resource's replay detection does
+        // not reject this signed request if the agent token was used earlier.
+        RefreshAgentToken();
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, MissionResourceUrl);
+        // The agent advertises the mission it is acting under so the resource
+        // copies the {approver, s256} claim into the resource_token it mints.
+        if (_missionApprover is not null && _missionS256 is not null)
+        {
+            req.Headers.TryAddWithoutValidation(
+                AAuthMissionHeader.Name,
+                AAuthMissionHeader.FormatStructured(_missionApprover, _missionS256));
+        }
+        using var resp = await client.SendAsync(req, ct);
+        var ex = capture.Last!;
+
+        if (resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqVals))
+        {
+            foreach (var raw in reqVals)
+            {
+                if (string.IsNullOrWhiteSpace(raw)) { continue; }
+                try
+                {
+                    _resourceToken = AAuthRequirementHeader.Parse(raw).ResourceToken;
+                    if (_resourceToken is not null) { break; }
+                }
+                catch (FormatException) { /* try the next header value */ }
+            }
+        }
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Signed GET /jwt/mission → 401",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "The agent makes its first signed request to the resource's " +
+                "mission-aware endpoint, advertising the mission it acts under via the " +
+                "`AAuth-Mission` header (`approver` + `s256`). The resource verifies the " +
+                "signature, then mints a `resource_token` that **copies the mission " +
+                "claim into it**, and challenges with `401` + `AAuth-Requirement`. The " +
+                "mission now travels with the token to the PS — the resource itself " +
+                "stays oblivious to the user's policy.",
+            RequestLine = $"{ex.RequestLine}  →  {MissionResourceUrl}",
+            RequestHeaders = ex.RequestHeaders,
+            SignatureBase = capturedBase,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            TokenJwt = _resourceToken,
+            TokenHeader = DecodeJwt(_resourceToken)?.Header,
+            TokenPayload = DecodeJwt(_resourceToken)?.Payload,
+            CodeSnippet = CodeSnippets.MissionChallenge,
+        });
+    }
+
+    private async Task StepMissionExchangeAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
+        {
+            resource_token = _resourceToken,
+        }, ct);
+
+        var ex = capture.Last!;
+        var body = JsonNode.Parse(ex.ResponseBody);
+        _authToken = (string?)body?["auth_token"];
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Exchange → 200 auth_token (SILENT, in-scope)",
+            From = Actor.Agent,
+            To = Actor.PersonServer,
+            Narrative =
+                "The agent POSTs the `resource_token` to the `token_endpoint`. Because " +
+                "the token carries the mission claim, the PS evaluates it as " +
+                "**gate 2**: the requested `(resource, whoami)` pair is within the " +
+                "mission's approved scope, so the PS mints the `auth_token` **silently** " +
+                "— no user prompt. This is the heart of the mission model: the up-front " +
+                "mission approval lets in-scope work proceed without interrupting the " +
+                "user. The token records `mission.{approver, s256}` for audit, but " +
+                "never the tool list.",
+            RequestLine = $"{ex.RequestLine}  →  {_tokenEndpoint}",
+            RequestHeaders = ex.RequestHeaders,
+            RequestBody = PrettyJson(ex.RequestBody),
+            SignatureBase = capturedBase,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            TokenJwt = _authToken,
+            TokenHeader = DecodeJwt(_authToken)?.Header,
+            TokenPayload = DecodeJwt(_authToken)?.Payload,
+            CodeSnippet = CodeSnippets.MissionExchange,
+        });
+    }
+
+    private async Task StepMissionReplayAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _authToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        await client.GetAsync(MissionResourceUrl, ct);
+        var ex = capture.Last!;
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Replay GET /jwt/mission → 200",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "The agent replays the request, now carrying the `auth_token` in the " +
+                "`Signature-Key` header. The resource verifies it, confirms `cnf.jwk` " +
+                "matches the signer, and returns `200` with the protected claims — and " +
+                "the `mission` binding round-tripped, proving the access was governed.",
+            RequestLine = $"{ex.RequestLine}  →  {MissionResourceUrl}",
+            RequestHeaders = ex.RequestHeaders,
+            SignatureBase = capturedBase,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            CodeSnippet = CodeSnippets.MissionReplay,
+        });
+    }
+
+    private async Task StepMissionElevatedChallengeAsync(CancellationToken ct)
+    {
+        // Fresh agent token (new jti): the resource already recorded the agent
+        // token used for the /jwt/mission challenge, so reusing it here would
+        // trip replay detection and return a bare 401 (no resource_token).
+        RefreshAgentToken();
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, MissionElevatedResourceUrl);
+        if (_missionApprover is not null && _missionS256 is not null)
+        {
+            req.Headers.TryAddWithoutValidation(
+                AAuthMissionHeader.Name,
+                AAuthMissionHeader.FormatStructured(_missionApprover, _missionS256));
+        }
+        using var resp = await client.SendAsync(req, ct);
+        var ex = capture.Last!;
+
+        if (resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqVals))
+        {
+            foreach (var raw in reqVals)
+            {
+                if (string.IsNullOrWhiteSpace(raw)) { continue; }
+                try
+                {
+                    _resourceToken = AAuthRequirementHeader.Parse(raw).ResourceToken;
+                    if (_resourceToken is not null) { break; }
+                }
+                catch (FormatException) { /* try the next header value */ }
+            }
+        }
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Signed GET /jwt/mission/elevated → 401",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "The agent now needs more than basic profile data — it requests the " +
+                "resource's **elevated** endpoint, which is protected by " +
+                "`whoami:elevated_scope`. As before it advertises the mission via the " +
+                "`AAuth-Mission` header; the resource copies the mission claim into a " +
+                "fresh `resource_token` and challenges with `401`. The resource does not " +
+                "judge the scope against the mission — that is the PS's job at the next step.",
+            RequestLine = $"{ex.RequestLine}  →  {MissionElevatedResourceUrl}",
+            RequestHeaders = ex.RequestHeaders,
+            SignatureBase = capturedBase,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            TokenJwt = _resourceToken,
+            TokenHeader = DecodeJwt(_resourceToken)?.Header,
+            TokenPayload = DecodeJwt(_resourceToken)?.Payload,
+            CodeSnippet = CodeSnippets.MissionElevatedChallenge,
+        });
+    }
+
+    private async Task StepMissionElevatedExchangeAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
+        {
+            resource_token = _resourceToken,
+        }, ct);
+
+        var ex = capture.Last!;
+        if (resp.StatusCode == HttpStatusCode.Accepted)
+        {
+            _userApproved = false; // a fresh user approval is required for this gate
+            CaptureInteractionFrom(resp, _tokenEndpoint!);
+        }
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Exchange → 202 (PROMPT, out of mission scope)",
+            From = Actor.Agent,
+            To = Actor.PersonServer,
+            Narrative =
+                "The agent POSTs the elevated `resource_token` to the `token_endpoint`. " +
+                "The PS evaluates the requested `whoami:elevated_scope` against the " +
+                "mission's natural-language intent (\"triage the inbox\") — it does **not** " +
+                "fit. Unlike gate 2, the PS cannot mint silently: out-of-mission scopes " +
+                "are **not** auto-denied, so it parks the request and returns `202` + an " +
+                "interaction URL for the user to decide (gate 3). Only an explicit user " +
+                "**Deny** would yield `access_denied`.",
+            RequestLine = $"{ex.RequestLine}  →  {_tokenEndpoint}",
+            RequestHeaders = ex.RequestHeaders,
+            RequestBody = PrettyJson(ex.RequestBody),
+            SignatureBase = capturedBase,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            CodeSnippet = CodeSnippets.MissionElevatedExchange,
+        });
+    }
+
+    private Task StepMissionElevatedPollAsync(CancellationToken ct) =>
+        RunPendingPollAsync(ct, () => _agentToken!, Actor.Agent, Actor.PersonServer, (last, capturedBase) =>
+        {
+            var body = JsonNode.Parse(last.ResponseBody);
+            _authToken = (string?)body?["auth_token"];
+
+            Steps.Add(new StepRecord
+            {
+                Number = Steps.Count + 1,
+                Title = "Poll → 200 auth_token (elevated)",
+                From = Actor.Agent,
+                To = Actor.PersonServer,
+                Narrative =
+                    "The agent polls the token-pending URL with a signed `GET`. Once the " +
+                    "user approves the elevated scope, the PS returns `200` with the " +
+                    "`auth_token` carrying `whoami:elevated_scope`, bound to the agent's " +
+                    "signing key. The consent now accrues to the mission, so a later " +
+                    "elevated request would be silent. A **Deny** here records " +
+                    "`403 access_denied`.",
+                RequestLine = $"{last.RequestLine}  →  {_pendingUrl}",
+                RequestHeaders = last.RequestHeaders,
+                SignatureBase = capturedBase,
+                StatusLine = last.StatusLine,
+                ResponseHeaders = last.ResponseHeaders,
+                ResponseBody = PrettyJson(last.ResponseBody),
+                TokenJwt = _authToken,
+                TokenHeader = DecodeJwt(_authToken)?.Header,
+                TokenPayload = DecodeJwt(_authToken)?.Payload,
+                CodeSnippet = CodeSnippets.MissionElevatedPoll,
+            });
+        });
+
+    private async Task StepMissionElevatedReplayAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _authToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        await client.GetAsync(MissionElevatedResourceUrl, ct);
+        var ex = capture.Last!;
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Replay GET /jwt/mission/elevated → 200",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "The agent replays the elevated request, now carrying the elevated " +
+                "`auth_token`. The resource verifies it, confirms `whoami:elevated_scope`, " +
+                "and returns `200` with the protected claims — the out-of-mission scope " +
+                "is now governed by the consent the user just gave.",
+            RequestLine = $"{ex.RequestLine}  →  {MissionElevatedResourceUrl}",
+            RequestHeaders = ex.RequestHeaders,
+            SignatureBase = capturedBase,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            CodeSnippet = CodeSnippets.MissionElevatedReplay,
+        });
+    }
+
+    private void StepMissionPreApprovedTool()
+    {
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Permission: send_email (SILENT — resolved locally)",
+            From = Actor.Agent,
+            To = Actor.Agent,
+            Narrative =
+                "Before running a tool the agent checks it against the mission. " +
+                "`send_email` **is** one of the mission's pre-approved tools, so the " +
+                "agent's `PermissionClient` short-circuits to *granted* **without any " +
+                "PS round-trip** (gate 4). Pre-approving routine tools at mission " +
+                "creation is exactly what keeps the agent fast: only out-of-scope " +
+                "actions reach the PS. (The agent still SHOULD report the action to the " +
+                "`audit_endpoint` afterwards, but that is fire-and-forget, not a gate.)",
+            TokenDecoded =
+                "PermissionClient.RequestAsync(ps, \"send_email\", mission)\n" +
+                "  → mission.ApprovedTools contains \"send_email\"\n" +
+                "  → PermissionResult { Grant = Granted }  (no HTTP)",
+            CodeSnippet = CodeSnippets.MissionPreApproved,
+        });
+    }
+
+    private async Task StepMissionPermissionPromptAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        using var resp = await client.PostAsJsonAsync(_permissionEndpoint!, new
+        {
+            action = "delete_inbox",
+            mission = new { approver = _missionApprover, s256 = _missionS256 },
+        }, ct);
+
+        var ex = capture.Last!;
+        if (resp.StatusCode == HttpStatusCode.Accepted)
+        {
+            _userApproved = false; // a fresh user approval is required for this gate
+            CaptureInteractionFrom(resp, _permissionEndpoint!);
+        }
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Permission: delete_inbox → 202 (user approval required)",
+            From = Actor.Agent,
+            To = Actor.PersonServer,
+            Narrative =
+                "The agent now wants to run `delete_inbox` — a destructive action that " +
+                "was **not** pre-approved at mission creation. It signs a " +
+                "`POST /permission` with `{ action, mission }`. The PS evaluates " +
+                "**gate 5**: the action is out of scope, so it parks the request and " +
+                "returns `202` + an interaction URL for the user to decide. Crucially " +
+                "this endpoint returns a **decision**, not a token — whatever the user " +
+                "chooses, the gate-2 `auth_token` is unaffected.",
+            RequestLine = $"{ex.RequestLine}  →  {_permissionEndpoint}",
+            RequestHeaders = ex.RequestHeaders,
+            RequestBody = PrettyJson(ex.RequestBody),
+            SignatureBase = capturedBase,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            CodeSnippet = CodeSnippets.MissionPermissionPrompt,
+        });
+    }
+
+    private Task StepMissionPollPermissionAsync(CancellationToken ct) =>
+        RunPendingPollAsync(ct, () => _agentToken!, Actor.Agent, Actor.PersonServer, (last, capturedBase) =>
+        {
+            var body = JsonNode.Parse(last.ResponseBody) as JsonObject;
+            var permission = (string?)body?["permission"];
+
+            Steps.Add(new StepRecord
+            {
+                Number = Steps.Count + 1,
+                Title = $"Poll → 200 permission {permission ?? "decided"}",
+                From = Actor.Agent,
+                To = Actor.PersonServer,
+                Narrative =
+                    "The agent polls the permission-pending URL with a signed `GET`. " +
+                    "Once the user decides, the PS returns `200` with " +
+                    "`{ permission: \"granted\" | \"denied\" }` and records the outcome " +
+                    "in the mission log for audit. A **decision**, not a credential: the " +
+                    "agent already holds its in-scope token; this only governs whether it " +
+                    "may take the out-of-scope action. A **Deny** here surfaces as " +
+                    "`{ permission: \"denied\" }` (the SDK raises " +
+                    "`AAuthInteractionDeniedException`), and the gate-2 token still works " +
+                    "for in-scope reads.",
+                RequestLine = $"{last.RequestLine}  →  {_pendingUrl}",
+                RequestHeaders = last.RequestHeaders,
+                SignatureBase = capturedBase,
+                StatusLine = last.StatusLine,
+                ResponseHeaders = last.ResponseHeaders,
+                ResponseBody = PrettyJson(last.ResponseBody),
+                CodeSnippet = CodeSnippets.MissionPollPermission,
+            });
+        });
+
+    private void StepMissionInspectResult()
+    {
+        var summary = new System.Text.StringBuilder();
+        summary.AppendLine("═══ Mission-governed Summary ═══");
+        summary.AppendLine();
+        summary.AppendLine($"  Mission:   {_missionDescription}");
+        summary.AppendLine($"  approver:  {_missionApprover}");
+        summary.AppendLine($"  s256:      {_missionS256}");
+        summary.AppendLine($"  tools:     {_missionApprovedToolCount} pre-approved (summarize, send_email)");
+        summary.AppendLine();
+        summary.AppendLine("  Gate 1 — mission creation .... PROMPT  (durable consent)");
+        summary.AppendLine("  Gate 2 — whoami token ........ SILENT  (in mission scope)");
+        summary.AppendLine("  Gate 3 — elevated scope ...... PROMPT  (out of mission scope)");
+        summary.AppendLine("  Gate 4 — send_email tool ..... SILENT  (pre-approved, local)");
+        summary.AppendLine("  Gate 5 — delete_inbox action . PROMPT  (out of scope)");
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Inspect mission result",
+            From = Actor.Agent,
+            To = Actor.Agent,
+            Narrative =
+                "One durable mission approval governed the whole session. The PS acted " +
+                "as the **policy-enforcement point**: it prompted only when a request " +
+                "fell outside the mission (creating the mission, the elevated scope, and " +
+                "the out-of-scope `delete_inbox`), and stayed silent for the in-scope " +
+                "token and the pre-approved tool. This is the mission " +
+                "model's promise — front-load the user's consent into a single " +
+                "reviewable mission, then let in-scope work flow without friction while " +
+                "still gating anything outside it (§Missions, §Scopes, §Permission Endpoint).",
+            TokenDecoded = summary.ToString(),
+            CodeSnippet = CodeSnippets.MissionInspect,
+        });
+    }
+
+    /// <summary>
+    /// Capture the pending URL + interaction (URL + single-use code) from a
+    /// mission/permission `202 Accepted` response so the user-approval and
+    /// poll steps can drive the deferred cycle. Shared by the mission-create
+    /// (step 2) and permission-prompt (step 10) gates.
+    /// </summary>
+    private void CaptureInteractionFrom(HttpResponseMessage resp, string baseUrl)
+    {
+        var location = resp.Headers.Location?.ToString();
+        if (location is not null)
+        {
+            _pendingUrl = location.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                ? location
+                : $"{_options.PersonServerUrl!.TrimEnd('/')}{location}";
+        }
+
+        if (resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqVals))
+        {
+            foreach (var raw in reqVals)
+            {
+                if (string.IsNullOrWhiteSpace(raw)) { continue; }
+                try
+                {
+                    var parsed = AAuthRequirementHeader.Parse(raw);
+                    var interaction = AAuth.Headers.Interaction.FromRequirement(parsed);
+                    if (interaction is not null)
+                    {
+                        _interactionUrl = interaction.Url;
+                        _interactionCode = interaction.Code;
+                        break;
+                    }
+                }
+                catch (FormatException) { /* try the next header value */ }
+            }
+        }
     }
 
     // -----------------------------------------------------------------

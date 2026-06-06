@@ -240,9 +240,12 @@ demo-mission: ## Start the mission stack (AP + PS + WhoAmI) for the MissionAgent
 	@echo "   MockAgentProvider:  $(AP_URL)         (agent registry)"
 	@echo ""
 	@echo " Drive it from another terminal with:  make agent-mission"
-	@echo "   (out-of-scope prompts open the PS consent page in your browser;"
+	@echo "   (the whoami token gate is mission-approved by default, so it is silent;"
+	@echo "    the elevated whoami:elevated_scope step is out of the mission and"
+	@echo "    prompts on its own;"
 	@echo "    add AUTO=1 to resolve prompts via the PS's scripted defaults;"
-	@echo "    add PRE_APPROVE=whoami to seed an in-scope grant — one fewer prompt)"
+	@echo "    set MISSION_APPROVED to replace the default in-scope set, e.g."
+	@echo "    MISSION_APPROVED='whoami whoami:elevated_scope' to silence the elevated step too)"
 	@echo "------------------------------------------------------------------"
 	@echo ""
 	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \
@@ -251,8 +254,8 @@ demo-mission: ## Start the mission stack (AP + PS + WhoAmI) for the MissionAgent
 	$(DOTNET) run --project $(AP_PROJECT) & \
 	wait
 
-agent-mission: ## Drive the MissionAgent CLI through the full mission lifecycle (AUTO=1 for scripted prompts; PRE_APPROVE=<scope> to seed an in-scope grant)
-	$(DOTNET) run --project $(MISSION_PROJECT) -- $(if $(AUTO),--auto,) $(if $(PRE_APPROVE),--pre-approve $(PRE_APPROVE),)
+agent-mission: ## Drive the MissionAgent CLI through the full mission lifecycle (AUTO=1 for scripted prompts; MISSION_APPROVED="<scope>..." to replace the default in-scope set)
+	$(DOTNET) run --project $(MISSION_PROJECT) -- $(if $(AUTO),--auto,) $(foreach scope,$(MISSION_APPROVED),--mission-approved $(scope))
 
 # ----------------------------------------------------------------------------
 # End-to-end (Playwright)

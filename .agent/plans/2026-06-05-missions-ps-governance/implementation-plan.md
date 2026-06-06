@@ -457,12 +457,12 @@ rewrite of existing flows.
   `IMissionStore` / mission-log seams — not SDK behavior.
 - **Sub-phasing (agreed 2026-06-05):** Phase 6 executes in three committable
   sub-phases, each independently buildable + tested:
-  - **6a — Backend foundation:** MockPersonServer governance endpoints + `s256`
+  - **6a — Backend foundation (DONE):** MockPersonServer governance endpoints + `s256`
     / mission claim emission + three-gate consent + terminate hook; new
     `samples/MissionAgent/` CLI; the 12-row Consent-Matrix .NET integration test.
-  - **6b — Blazor + e2e:** SampleApp `Mission.razor` (+ Home link); GuidedTour
+  - **6b — Blazor + e2e (DONE):** SampleApp `Mission.razor` (+ Home link); GuidedTour
     `TourMode.Mission` (+ snippets, sequence diagram); the two Playwright specs.
-  - **6c — Glue:** Orchestrator mission hop; `make demo-mission` / `e2e-mission`;
+  - **6c — Glue (PENDING):** Orchestrator mission hop; `make demo-mission` / `e2e-mission`;
     READMEs + `tests/e2e/package.json` script.
 - **Deterministic consent scripting (agreed 2026-06-05 — option A):** the
   integration test drives mission-approval / token / permission outcomes by
@@ -509,27 +509,28 @@ mission-log **decision reason**.
 - [x] `samples/MissionAgent/` proposes a mission, accesses ≥1 resource under it,
       requests a permission, records an audit entry, relays an interaction, and
       completes it. _(6a)_
-- [ ] SampleApp `Mission.razor` page renders the flow and labels each consent gate
+- [x] SampleApp `Mission.razor` page renders the flow and labels each consent gate
       as **prompt** or **silent (in scope)**; Home links to it; existing pages
       unchanged. _(6b)_
-- [ ] GuidedTour `TourMode.Mission` drives every gate through **both** outcomes
+- [x] GuidedTour `TourMode.Mission` drives every gate through **both** outcomes
       (mission approval prompt; in-scope token silent vs out-of-scope token prompt;
       `approved_tools` permission silent vs non-pre-approved permission prompt) and
       surfaces the PS decision reason for each; existing modes unchanged. _(6b)_
-- [ ] The PS decision reason (in-scope / prior consent / `approved_tools` /
+- [x] The PS decision reason (in-scope / prior consent / `approved_tools` /
       out-of-scope) is visible in both samples so the contrast between prompted
       and silent gates is observable. _(6b)_
 - [ ] Orchestrator demonstrates a mission-governed downstream hop (§Call Chaining). _(6c)_
 - [x] `make demo-mission` boots the mission demo; existing `make demo` unchanged.
       _(pulled forward from 6c; also added `agent-mission` runner)_
-- [ ] New GuidedTour + SampleApp mission Playwright **e2e** specs pass under the
-      existing `guided-tour`/`sample-app` projects; existing specs still pass. _(6b)_
+- [x] New GuidedTour + SampleApp mission Playwright **e2e** specs pass under the
+      existing `guided-tour`/`sample-app` projects; existing specs still pass.
+      _(6b — full suite 29 passed / 1 skipped locally)_
 - [x] **.NET integration test** for the `MissionAgent` CLI covers **all 12 rows**
       of the Consent Test Matrix (every gate × approve/deny × prompt/silent),
       including clarification and `mission_terminated`, each asserting the
       recorded decision reason. _(6a — `MissionAgentFlowTests`, 12/12)_
-- [ ] `make e2e` (Blazor) and `dotnet test` (CLI integration) green locally and in CI.
-      _(CLI integration green; Blazor e2e in 6b)_
+- [x] `make e2e` (Blazor) and `dotnet test` (CLI integration) green locally.
+      _(CLI integration 12/12; Blazor e2e full suite 29 passed / 1 skipped locally; CI not separately run)_
 - [ ] Sample READMEs updated. _(MissionAgent + MockPersonServer done in 6a; others in 6c)_
 
 #### Phase 6a additions (spec-driven, beyond the original file list)
@@ -551,9 +552,94 @@ mission-log **decision reason**.
   §Permission Endpoint (`action` per-call vs mission `approved_tools`).
   Scripted mode (the 12-row test) is unaffected (`InteractiveBrowser = false`).
 
----
+#### Phase 6b amendments (2026-06-06, spec-driven, added mid-phase)
 
-## Phase 7 — Docs
+These refine the consent UX and **add the missing out-of-mission scope gate**.
+The original Phase 6 plan (file list, line "out-of-scope token request that
+**prompts**") always intended a prompted **token/scope** gate, but 6b shipped
+only the prompted **tool** gate (`delete_inbox`). These steps close that gap so
+both halves of the spec's gate model — a prompted *scope* (§Agent Token Request
+gate 3) **and** a prompted *tool* (§Permission Endpoint) — are demonstrated.
+
+**Spec grounding:**
+
+- **Tools are declared; scopes are evaluated** (§Mission Creation L1233 — proposal
+  is `description` + optional `tools` only, no scopes; §Mission Approval L1299–1303
+  — blob carries `approved_tools`, never scopes). The mission proposal lists no
+  scopes; the PS determines required scopes **per request, over the mission's
+  whole life** (§Scopes L1793 "The PS evaluates requested scopes against mission
+  context"; §Concurrent Token Requests L828 "some requests may be resolved
+  without user interaction … while others may require consent").
+- **Out-of-mission scope ⇒ prompt, not auto-deny** (§Agent Token Request gate 3;
+  §Scopes L1793). Only an explicit user deny (or `mission_terminated`, gate 1)
+  yields `access_denied`.
+
+**Decisions (agreed 2026-06-06 via interview):**
+
+- **D6 — New mission-aware endpoint + new scope (not reuse `whoami:admin`).**
+  WhoAmI gains a second mission-aware endpoint guarded by a **new** resource
+  scope so the out-of-mission scenario is clearly distinct from the existing
+  non-mission `/jwt/admin` step-up demo. Proposed: scope `whoami:history`
+  ("See your full account/profile history") at endpoint `/jwt/history`, wired
+  with `ChallengeForMission(ScopeWhoamiHistory)`. Under the seeded inbox mission
+  (in-scope = `whoami` only), requesting `whoami:history` falls outside the
+  mission → PS prompts (gate 3). _(final names confirmed at implementation.)_
+- **D7 — Add as a NEW gate (5 gates total), existing gates unchanged.** Final
+  order: (1) mission approval **PROMPT** → (2) `whoami` token **SILENT** (in
+  scope) → (3) `whoami:history` token **PROMPT** (out-of-mission scope) → (4)
+  `send_email` tool **SILENT** (pre-approved) → (5) `delete_inbox` tool
+  **PROMPT** (not pre-approved).
+- **D8 — "Agent console app" = `samples/MissionAgent/`** (the CLI), not
+  `samples/AgentConsole/` (which has no mission support and no mermaid). Its
+  README sequence diagram gains the new out-of-mission scope consent block.
+- **D9 — Consent-screen UX refinements (already applied in 6b):** PS
+  `/interaction` shows **scopes and tools as separate lists**; a spec-grounded
+  **tool (local) vs scope (remote)** definition box; the **creation screen lists
+  no scopes** (only a note that the PS determines them per-request from the
+  mission description); post-creation gates relabel the scope list **"Granted so
+  far"** (accrual), with empty state "nothing yet — this is the first request".
+
+### Amendment files
+
+| File | Action |
+|------|--------|
+| `samples/WhoAmI/Program.cs` | **Modify** — add scope `whoami:history` (+ `scope_descriptions` entry, scope policy) and a mission-aware endpoint `/jwt/history` via `ChallengeForMission`; exclude `/jwt/history` from the baseline `/jwt` branch; list it in the index payload |
+| `samples/WhoAmI/README.md` | **Modify** — document the new scope + endpoint |
+| `samples/SampleApp/Components/Pages/Mission.razor` | **Modify** — insert the out-of-mission **scope** gate (gate 3) between the silent `whoami` token and the tool gates; client + resource panels show `/protected_endpoint` requesting the elevated scope; 5-gate narrative |
+| `samples/GuidedTour/TourSession.cs` | **Modify** — extend `MissionPlan` with an out-of-mission scope token cycle (challenge → 202 PROMPT → approve → poll → exchange); renumber steps + approval/poll constants |
+| `samples/GuidedTour/CodeSnippets.cs` | **Modify** — add the out-of-mission scope snippet |
+| `samples/GuidedTour/Components/Pages/Tour.razor` | **Modify** — mission lane/flow text reflects the new scope gate |
+| `samples/MockPersonServer/Program.cs` | **Modify (done in 6b amendments)** — separate scope/tool lists, definition box, creation screen drops scopes + adds determined-per-request note, "Granted so far" relabel |
+| `samples/MissionAgent/Program.cs` | **Modify** — add a step that requests the out-of-mission scope under the mission (prompted token gate) |
+| `samples/MissionAgent/README.md` | **Modify** — add the out-of-mission scope consent block to the mermaid sequence diagram + the gate table / "Scope (remote) vs tool (local)" prose |
+| `docs/concepts.md` | **Modify (done)** — tools declared vs scopes evaluated; per-request, lifetime-long scope determination |
+| `samples/SampleApp/playwright-tests/mission.spec.ts` | **New/Modify** — assert the 5th gate (out-of-mission scope **prompt**) |
+| `samples/GuidedTour/playwright-tests/mission.spec.ts` | **New/Modify** — assert the out-of-mission scope **prompt** step |
+
+### Amendment Definition of Done
+
+- [x] WhoAmI exposes a new resource scope (`whoami:elevated_scope`) on a
+      mission-aware endpoint (`/jwt/mission/elevated`); `scope_descriptions` +
+      scope policy updated; baseline `/jwt/mission` branch excludes it
+      (§Resource Metadata, §Scopes). _(6b — final names landed as
+      `whoami:elevated_scope` / `/jwt/mission/elevated`, not the proposed
+      `whoami:history` / `/jwt/history`; D6 deferred names to implementation)_
+- [x] Under the seeded inbox mission, requesting the new scope is **out of
+      mission** → PS **prompts** (gate 3), and on approval issues the auth token;
+      the granted scope then shows under "Granted so far" on later screens
+      (§Agent Token Request, §Scopes L1793). _(6b)_
+- [x] SampleApp `Mission.razor` shows **5 gates** incl. the out-of-mission scope
+      prompt, distinct from the out-of-tool permission prompt. _(6b)_
+- [x] GuidedTour `TourMode.Mission` drives the out-of-mission scope cycle
+      (challenge → prompt → approve → exchange) with the decision reason visible.
+      _(6b)_
+- [x] `samples/MissionAgent/` requests the out-of-mission scope under the mission;
+      its README mermaid diagram + gate prose include the new consent block. _(6b)_
+- [x] Consent-screen UX refinements (D9) reflected and live-verified. _(6b)_
+- [x] Playwright specs assert the new prompted-scope gate; existing specs pass.
+      _(6b)_
+
+---
 
 **Goal:** Rewrite the stale missions doc and add PS-governance docs reflecting the
 implemented surface. Separate phase from samples per the agreed workflow.

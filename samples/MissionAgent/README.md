@@ -15,6 +15,26 @@ and permission request **under** that mission with a three-gate model
 | 2b | Already consented earlier in this mission | Granted silently |
 | 3 | Out of scope | The user is prompted to decide |
 
+### Scope (remote) vs tool (local)
+
+A mission grants two distinct kinds of authority, and they travel through
+different PS endpoints:
+
+- **Scope — remote.** A scope authorizes access to a remote **resource** (an
+  API). The resource defines its scopes and protects its endpoints with them;
+  the granted scope is carried in an **auth token** the PS mints during the
+  challenge → exchange → retry flow (§Scopes). The gate table above governs
+  scope requests at the PS **token endpoint**.
+- **Tool — local.** A tool is an action the agent runs **itself** (a tool call,
+  file write, sending a message) — no resource is involved. Tools are governed
+  at the PS **permission endpoint**: a mission's `approved_tools` are
+  pre-approved and resolve without a PS round-trip, while any other action is
+  referred to the user (§Permission Endpoint).
+
+So `whoami` and `whoami:elevated_scope` are **scopes** (steps 3–5, via the
+token endpoint) and `send_email` / `delete_inbox` are **tools** (steps 6–7, via
+the permission endpoint).
+
 This sample drives the whole lifecycle against the live mock servers:
 
 ```text
@@ -30,16 +50,21 @@ MockAgentProvider (:5301)  ->  MockPersonServer (:5100)  ->  WhoAmI (:5000)
    approval blob and its `s256` thumbprint.
 3. **Access a mission-aware resource** (`WhoAmI /jwt/mission`). The resource
    copies the mission claim from the signed `AAuth-Mission` header into the
-   resource token it issues (§Terminology), so the PS governs the exchange. The
-   first call is **out of scope** → the user is prompted.
-4. **Access it again** — now granted **silently** via prior consent (gate 2b).
-5. **Request a pre-approved tool** permission (`send_email`) — granted silently,
+   resource token it issues (§Terminology), so the PS governs the exchange.
+   `whoami` is **mission-approved** by default, so this call is granted
+   **silently** (gate 2a — in scope), matching the SampleApp mission demo.
+4. **Access it again** — still granted **silently** (gate 2a, in scope).
+5. **Access an elevated scope** (`WhoAmI /jwt/mission/elevated`, requiring
+   `whoami:elevated_scope`). This scope falls **outside** the mission's intent,
+   so the PS prompts (gate 3) — out-of-mission scopes are never
+   auto-denied (§Scopes).
+6. **Request a pre-approved tool** permission (`send_email`) — granted silently,
    without ever calling the PS (§Permission Endpoint).
-6. **Request a non-pre-approved tool** permission (`delete_inbox`) — the PS is
+7. **Request a non-pre-approved tool** permission (`delete_inbox`) — the PS is
    consulted and the user is prompted.
-7. **Report an action** to the audit endpoint (§Audit Endpoint).
-8. **Ask the user a question** via the interaction endpoint.
-9. **Propose mission completion**, which terminates the mission.
+8. **Report an action** to the audit endpoint (§Audit Endpoint).
+9. **Ask the user a question** via the interaction endpoint.
+10. **Propose mission completion**, which terminates the mission.
 
 ## How the flow works
 
@@ -69,19 +94,28 @@ sequenceDiagram
     end
     PS-->>Agent: signed approval blob + s256 thumbprint
 
-    Note over Agent,R: Access a mission-aware resource
+    Note over Agent,R: Access a mission-aware resource — whoami is mission-approved
     Agent->>R: GET /jwt/mission + AAuth-Mission: {approver, s256}
     R-->>Agent: 401 + resource token (mission claim copied in)
     Agent->>PS: exchange resource token for an auth token
-    Note right of PS: Token gate (see below)
-    rect rgb(124, 58, 237)
-        Note over User,PS: 🖥️ BROWSER CONSENT SCREEN — out-of-scope access<br/>shows the mission + tools, then "falls outside<br/>pre-approved scope" → approve access?
-        PS->>User: out of scope — approve access?
-        User-->>PS: ✅ approve
-    end
-    PS-->>Agent: auth token (binds {approver, s256})
+    Note right of PS: Token gate: whoami is in scope (gate 2a)
+    PS-->>Agent: auth token granted silently — no prompt
     Agent->>R: GET /jwt/mission + Authorization: auth token
     R-->>Agent: 200 — echoes the mission reference
+
+    Note over Agent,R: Access an ELEVATED scope — out of the mission's intent
+    Agent->>R: GET /jwt/mission/elevated + AAuth-Mission: {approver, s256}
+    R-->>Agent: 401 + resource token (whoami:elevated_scope)
+    Agent->>PS: exchange resource token for an auth token
+    Note right of PS: whoami:elevated_scope is out of the mission scope
+    rect rgb(124, 58, 237)
+        Note over User,PS: 🖥️ BROWSER CONSENT SCREEN — out-of-mission scope<br/>shows the mission, then "whoami:elevated_scope falls<br/>outside the mission intent" → approve access?
+        PS->>User: out of mission — approve elevated access?
+        User-->>PS: ✅ approve
+    end
+    PS-->>Agent: elevated auth token (consent accrues to the mission)
+    Agent->>R: GET /jwt/mission/elevated + Authorization: auth token
+    R-->>Agent: 200 — elevated claims
 
     Note over Agent,PS: Permission for a local action (no resource involved)
     Agent->>PS: POST /permission {action: send_email}
@@ -100,13 +134,14 @@ sequenceDiagram
 > 🖥️ The **purple** blocks are the three browser-based **consent screens** (the
 > PS's `/interaction` page). **(1) Mission creation** — the human approves the
 > mission's intent and the tools it may use; this is the authority every later
-> request is checked against. **(2) Out-of-scope token gate** — shows the
-> mission + tools as context before approving the resource access. **(3)
-> Out-of-tool permission** — a local `action` (`delete_inbox`) that isn't one of
-> the mission's `approved_tools`, so the PS asks. A pre-approved tool
-> (`send_email`, step 5) is granted **silently** and never reaches a screen. In
-> `--auto` mode each screen is resolved by the PS's scripted default instead of
-> a human click, but they are the same decision points.
+> request is checked against. **(2) Out-of-mission scope** — the elevated
+> `whoami:elevated_scope` falls outside the mission's intent, so the PS asks
+> before issuing the elevated token. **(3) Out-of-tool permission** — a local
+> `action` (`delete_inbox`) that isn't one of the mission's `approved_tools`, so
+> the PS asks. The `whoami` token gate (steps 3–4) and the pre-approved
+> `send_email` tool (step 6) are granted **silently** and never reach a screen.
+> In `--auto` mode each screen is resolved by the PS's scripted default instead
+> of a human click, but they are the same decision points.
 >
 > The spec distinguishes the two words: a mission pre-approves **`approved_tools`**
 > (tools), while each per-call permission request carries an **`action`**. The
@@ -114,7 +149,7 @@ sequenceDiagram
 > pre-approved tool (§Permission Endpoint).
 
 
-### The token gate — why the first call says "out of scope"
+### The token gate — why the whoami calls are silent
 
 When the PS is asked to mint an auth token under a mission, it runs a
 **three-gate** decision (§Agent Token Request). Crucially, this gate is about
@@ -136,23 +171,21 @@ flowchart TD
 A mission carries **two independent** notions of "approved":
 
 - **Approved tools** (`send_email`, `summarize`) gate the **permission**
-  endpoint (step 5/6), *not* token issuance.
+  endpoint (step 6/7), *not* token issuance.
 - **In-scope `(resource, scope)` pairs** gate **silent token issuance**
-  (gate 2a). This sample seeds **no** in-scope pairs, so the very first call to
-  `WhoAmI /jwt/mission` (`resource=:5000`, `scope=whoami`) matches neither gate
-  2a nor 2b and therefore falls through to **gate 3 → prompt**. That is what the
-  "falls outside the agent's pre-approved mission scope" message means — the
-  resource/scope wasn't on the mission's silent-allow list, **not** that any
-  tool was unapproved.
+  (gate 2a). By default this sample declares `whoami` as mission-approved
+  (mirroring the SampleApp mission demo), so the calls to
+  `WhoAmI /jwt/mission` (`resource=:5000`, `scope=whoami`) match **gate 2a** and
+  are granted **silently** — no prompt. The elevated `whoami:elevated_scope` is
+  **not** in scope, so it falls through to **gate 3 → prompt** (step 5).
 
-Once you approve that first prompt, the PS records the consent. The **second**
-call (step 4) hits **gate 2b (prior consent)** and is granted **silently** — no
-prompt. That contrast (prompt → then silent) is the core thing this sample
-demonstrates.
-
-> To see **gate 2a** instead (silent from the very first call), a PS could
-> pre-seed an in-scope `(resource, scope)` pair at mission approval. This sample
-> deliberately leaves it empty so the out-of-scope prompt is visible.
+> To see the **out-of-scope prompt** for `whoami` instead, replace the default
+> in-scope set so it no longer contains `whoami` (for example
+> `--mission-approved whoami:elevated_scope`). The first `whoami` call then hits
+> **gate 3 → prompt**; once you approve, the PS records the consent and the
+> **second** call hits **gate 2b (prior consent)** and is silent. That
+> prompt → prior-consent contrast is exactly what the default `whoami` grant
+> skips.
 
 ## Running it
 
@@ -183,17 +216,18 @@ make demo-mission
 Then drive the agent from another terminal:
 
 ```bash
-make agent-mission                       # interactive (decide in your browser)
-make agent-mission PRE_APPROVE=whoami     # interactive, but seed an in-scope grant — one fewer browser screen
-make agent-mission AUTO=1                 # unattended (scripted PS defaults — no browser screens)
+make agent-mission                                       # interactive (decide in your browser)
+make agent-mission MISSION_APPROVED=whoami:elevated_scope # silence the elevated scope instead of whoami
+make agent-mission AUTO=1                                 # unattended (scripted PS defaults — no browser screens)
 ```
 
-`PRE_APPROVE=<scope>` maps to `--pre-approve <scope>` and `AUTO=1` maps to
-`--auto` (both described below). `PRE_APPROVE` is most useful in **interactive**
-runs, where it removes a browser consent screen. Under `AUTO=1` there are no
-screens to remove, so it only changes the PS's decision reason (silent `InScope`
-at gate 2a instead of a scripted out-of-scope approval) — handy for tests, not
-for a human watching.
+`MISSION_APPROVED="<scope>..."` maps to `--mission-approved <scope>` and `AUTO=1`
+maps to `--auto` (both described below). By default `whoami` is mission-approved,
+so the WhoAmI token gate is silent; pass a different `MISSION_APPROVED` set to
+change which scopes are in-scope. Under `AUTO=1` there are no browser screens, so
+the in-scope set only changes the PS's decision reason (silent `InScope` at gate
+2a vs a scripted out-of-scope approval) — handy for tests, not for a human
+watching.
 
 By default each out-of-scope prompt is **interactive**: the agent prints the
 Person Server's consent URL (and tries to open it) and waits while you click
@@ -207,26 +241,30 @@ via the PS's scripted defaults:
 dotnet run --project samples/MissionAgent -- --auto
 ```
 
-### Pre-approving a scope (one fewer consent screen)
+### Mission-approved scopes (controlling the silent set)
 
-The first resource access prompts because the `(resource, scope)` it needs isn't
-yet on the mission's silent-allow list (gate 3). You can declare a scope as
-**in scope** up front with `--pre-approve <scope>`; the PS then grants that
-token request **silently** at gate 2a (reason `InScope`) and no token consent
-screen appears:
+By default the mission declares `whoami` as **in scope**, so the WhoAmI token
+gate (steps 3–4) is granted **silently** at gate 2a (reason `InScope`) and no
+token consent screen appears — matching the SampleApp mission demo. The
+`--mission-approved <scope>` flag **replaces** this default set so you can choose
+which scopes are silent:
 
 ```bash
-# interactive: only TWO browser screens (mission creation + the delete_inbox
-# permission) instead of three — the WhoAmI token gate is now silent
-dotnet run --project samples/MissionAgent -- --pre-approve whoami
+# default: whoami is in scope, so the WhoAmI token gate is silent
+dotnet run --project samples/MissionAgent
+
+# silence the elevated scope instead — now the FIRST whoami call is out of
+# scope and prompts (gate 3), then the second is silent via prior consent (2b)
+dotnet run --project samples/MissionAgent -- --mission-approved whoami:elevated_scope
 
 # or, via the Makefile:
-make agent-mission PRE_APPROVE=whoami
+make agent-mission MISSION_APPROVED=whoami:elevated_scope
 ```
 
-The scope is seeded against the resource's **origin** (`http://localhost:5000`),
+Each scope is seeded against the resource's **origin** (`http://localhost:5000`),
 which is what the PS compares against the resource token's `iss`. Pass
-`--pre-approve` more than once to seed several scopes.
+`--mission-approved` more than once to declare several scopes in scope; the first
+use clears the default `whoami` grant.
 
 ## Options
 
@@ -236,5 +274,5 @@ which is what the PS compares against the resource token's `iss`. Pass
 | `--ps <url>` | `http://localhost:5100` | Person Server base URL |
 | `--resource <url>` | `http://localhost:5000/jwt/mission` | Mission-aware resource endpoint |
 | `--sub <agent-id>` | `aauth:mission-demo@ap.example` | Agent identifier to enrol as |
-| `--pre-approve <scope>` | _(none)_ | Seed `(resource origin, scope)` as in-scope so its token request is granted silently (gate 2a); repeatable |
+| `--mission-approved <scope>` | `whoami` | Replace the default in-scope set; each `(resource origin, scope)` is granted silently (gate 2a). Repeatable; the first use clears the default |
 | `--auto` | _(off)_ | Resolve prompts via scripted PS defaults instead of waiting for a browser decision |

@@ -79,6 +79,13 @@ public sealed class MissionConsentScript
     /// <summary>Canonical (resource, scope) key used for in-scope and prior-consent lookups.</summary>
     public static string ScopeKey(string resource, string scope) => $"{resource.TrimEnd('/')}|{scope}";
 
+    /// <summary>Render a (resource, scope) key as a human-readable "resource → scope" pair for consent screens.</summary>
+    public static string FormatScopePair(string key)
+    {
+        var i = key.IndexOf('|');
+        return i < 0 ? key : $"{key[..i]} → {key[(i + 1)..]}";
+    }
+
     /// <summary>Reset every decision to its permissive default and clear the in-scope set.</summary>
     public void Reset()
     {
@@ -117,6 +124,12 @@ public sealed class MissionPolicyStore
     /// <summary>The approved tool names captured at approval (empty if the mission is unknown).</summary>
     public IReadOnlyCollection<string> ApprovedTools(string s256)
         => _byS256.TryGetValue(s256, out var policy) ? policy.Tools : Array.Empty<string>();
+
+    /// <summary>The in-scope (resource, scope) pairs captured at approval, as "resource → scope" strings.</summary>
+    public IReadOnlyCollection<string> InScopePairs(string s256)
+        => _byS256.TryGetValue(s256, out var policy)
+            ? policy.InScope.Select(MissionConsentScript.FormatScopePair).ToArray()
+            : Array.Empty<string>();
 
     /// <summary>Whether <paramref name="action"/> is a pre-approved tool on the mission.</summary>
     public bool IsApprovedTool(string s256, string action)

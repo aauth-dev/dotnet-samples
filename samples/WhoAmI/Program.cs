@@ -21,11 +21,13 @@ var resourceKey = AAuthKey.Generate();
 const string ResourceKid = "whoami-1";
 
 // Scope + role taxonomy this resource recognises.
-//   whoami        — basic profile read (three-party baseline)
-//   whoami:admin  — elevated profile access (step-up scope)
-//   whoami-admin  — RBAC role asserted by the PS
+//   whoami                 — basic profile read (three-party baseline)
+//   whoami:admin           — elevated profile access (step-up scope)
+//   whoami:elevated_scope  — elevated, mission-aware access (out-of-mission scope demo)
+//   whoami-admin           — RBAC role asserted by the PS
 const string ScopeWhoami = "whoami";
 const string ScopeWhoamiAdmin = "whoami:admin";
+const string ScopeWhoamiElevated = "whoami:elevated_scope";
 const string RoleWhoamiAdmin = "whoami-admin";
 
 var resourceUrl = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5000";
@@ -71,6 +73,7 @@ builder.Services.AddAAuthAuthentication();
 builder.Services.AddAAuthAuthorization();
 builder.Services.AddAAuthScopePolicy("AAuth.Scope.whoami", ScopeWhoami);
 builder.Services.AddAAuthScopePolicy("AAuth.Scope.whoami:admin", ScopeWhoamiAdmin);
+builder.Services.AddAAuthScopePolicy("AAuth.Scope.whoami:elevated_scope", ScopeWhoamiElevated);
 builder.Services.AddAAuthRolePolicy("AAuth.Role.whoami-admin", RoleWhoamiAdmin);
 
 var app = builder.Build();
@@ -88,6 +91,7 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
     {
         [ScopeWhoami] = "See basic profile information",
         [ScopeWhoamiAdmin] = "See and manage administrative profile information",
+        [ScopeWhoamiElevated] = "See your full account and profile history",
     },
     SignatureWindow = signatureWindowSeconds,
 });
@@ -180,12 +184,28 @@ app.UseWhen(
     ctx => ctx.Request.Path.StartsWithSegments("/jwks-uri"),
     branch => branch.UseAAuthVerification(SignatureOnly()));
 
+// /jwt/mission/elevated — three-party mission-aware, ELEVATED scope. Same
+// mission-aware challenge as /jwt/mission, but it requests the elevated
+// `whoami:elevated_scope`. Under a mission whose intent does not cover this
+// scope, the agent's PS cannot silently approve the exchange — it must prompt
+// the user (§Agent Token Request gate 3; §Scopes — "the PS evaluates requested
+// scopes against mission context"). Registered BEFORE the /jwt/mission branch
+// because its path is the more specific prefix.
+app.UseWhen(
+    ctx => ctx.Request.Path.StartsWithSegments("/jwt/mission/elevated"),
+    branch =>
+    {
+        branch.UseAAuthVerification(FullVerification());
+        branch.UseAAuthChallenge(ChallengeForMission(ScopeWhoamiElevated));
+    });
+
 // /jwt/mission — three-party mission-aware: full verification + a mission-aware
 // challenge. When the agent presents a signed AAuth-Mission header, the issued
 // resource token carries the mission object (approver + s256), so the agent's
 // PS governs the token exchange against that mission (§Terminology, §Missions).
 app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/jwt/mission"),
+    ctx => ctx.Request.Path.StartsWithSegments("/jwt/mission")
+        && !ctx.Request.Path.StartsWithSegments("/jwt/mission/elevated"),
     branch =>
     {
         branch.UseAAuthVerification(FullVerification());
@@ -261,6 +281,7 @@ app.MapGet("/", () => Results.Ok(new
         new { path = "/jwks-uri", mode = "agent-identity", auth = "AAuth.Identified" },
         new { path = "/jwt", mode = "three-party", auth = "AAuth.Scope.whoami" },
         new { path = "/jwt/mission", mode = "three-party (mission-aware)", auth = "AAuth.Scope.whoami" },
+        new { path = "/jwt/mission/elevated", mode = "three-party (mission-aware, elevated)", auth = "AAuth.Scope.whoami:elevated_scope" },
         new { path = "/jwt/admin", mode = "three-party (step-up)", auth = "AAuth.Scope.whoami:admin" },
         new { path = "/jwt/roles", mode = "three-party (RBAC)", auth = "AAuth.Role.whoami-admin" },
         new { path = "/federated", mode = "four-party", auth = "AAuth.Scope.whoami" },
@@ -381,6 +402,36 @@ app.MapGet("/jwt/mission", (HttpContext ctx) =>
         missionAware = true,
     });
 }).RequireAuthorization("AAuth.Scope.whoami");
+
+// -----------------------------------------------------------------------
+// GET /jwt/mission/elevated — Three-party mission-aware ELEVATED access.
+//
+// Identical mission-aware mechanics to /jwt/mission, but it requires the
+// elevated `whoami:elevated_scope`. When the agent operates under a mission
+// whose intent does not cover this scope, its PS cannot silently approve the
+// exchange and must prompt the user before issuing the auth token (§Agent
+// Token Request gate 3; §Scopes). Used by the samples to demonstrate the
+// out-of-mission scope consent gate alongside the in-scope `whoami` gate.
+// -----------------------------------------------------------------------
+app.MapGet("/jwt/mission/elevated", (HttpContext ctx) =>
+{
+    var result = ctx.GetAAuthVerification()!;
+    var parsed = ctx.GetAAuthParsedKey()!;
+    var mission = parsed.Payload?["mission"];
+
+    return Results.Ok(new
+    {
+        mode = "three-party",
+        scheme = "jwt",
+        access = "mission-elevated",
+        agent = result.Agent,
+        sub = result.Subject,
+        scope = result.Scopes,
+        iss = result.Issuer,
+        mission,
+        missionAware = true,
+    });
+}).RequireAuthorization("AAuth.Scope.whoami:elevated_scope");
 
 // -----------------------------------------------------------------------
 // GET /jwt/admin — Three-party elevated access (step-up scope).

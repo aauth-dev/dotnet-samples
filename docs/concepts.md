@@ -41,8 +41,15 @@ Four modes:
 
 ### 3. Governance (Missions)
 
-Optional layer. Agent proposes missions; PS approves and scopes permissions.
+Optional layer. The agent proposes a mission — a Markdown **description** of intent plus an optional list of **tools** — and the PS approves it (§Mission Creation, §Mission Approval).
 SDK: `Mission`, `AAuthMissionHeader`
+
+The two kinds of authority a mission governs are handled **asymmetrically**, and this is the key idea:
+
+- **Tools are *declared*.** A tool is an action the agent runs **itself** (a tool call, file write, sending a message) — no resource is involved. Because the PS can't observe a local action, the mission must name the tools up front: the approved `approved_tools` are pre-approved and resolve at the **permission endpoint** without a PS round-trip; any other action is referred to the user (§Permission Endpoint). SDK: `Mission.ApprovedTools`, `PermissionClient`.
+- **Scopes are *evaluated*, never declared.** A scope authorizes access to a remote **resource** (an API), carried in an **auth token** via the challenge → exchange → retry pattern (§Scopes). A mission proposal contains **no scopes**. Instead, when the agent later exchanges a resource token, the PS judges that requested scope *against the mission's natural-language description*: if it fits the stated intent it is granted silently (gate 2a), and prior decisions are remembered for the rest of the mission; otherwise the user is prompted (§Scopes — *"The PS evaluates requested scopes against mission context"*; §Agent Token Request). SDK: `AAuthScopeRequirement`, `AAuthVerificationResult.Scopes`.
+
+In short: **a mission lists the tools the agent may run locally, but it does not list scopes — the PS decides, per request, whether a requested resource scope fits the mission's intent.** Scopes and AS policy stay enforced by the resource and its Access Server; the mission is "a further restriction applied by the PS" (§Rationale).
 
 See [Missions](https://explorer.aauth.dev/missions/compare).
 
