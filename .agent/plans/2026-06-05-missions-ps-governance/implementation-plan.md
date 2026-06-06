@@ -462,8 +462,14 @@ rewrite of existing flows.
     `samples/MissionAgent/` CLI; the 12-row Consent-Matrix .NET integration test.
   - **6b — Blazor + e2e (DONE):** SampleApp `Mission.razor` (+ Home link); GuidedTour
     `TourMode.Mission` (+ snippets, sequence diagram); the two Playwright specs.
-  - **6c — Glue (PENDING):** Orchestrator mission hop; `make demo-mission` / `e2e-mission`;
-    READMEs + `tests/e2e/package.json` script.
+  - **6c — Glue (DONE, except deferred hop):** `make demo-mission` / `agent-mission`
+    (pulled into 6a); READMEs updated (samples index + MockPersonServer governance
+    section + GuidedTour Mission mode); call-chain samples annotated that mission
+    governance is optional/orthogonal and omitted (§Call Chaining no-mission path).
+    **Deferred (2026-06-06, user decision):** the Orchestrator mission-governed
+    downstream hop is NOT implemented; instead the call-chain samples carry comments
+    explaining missions are optional and left out of the demo. The existing
+    Orchestrator already follows the spec's valid "no mission, `iss` is a PS" path.
 - **Deterministic consent scripting (agreed 2026-06-05 — option A):** the
   integration test drives mission-approval / token / permission outcomes by
   extending the existing unsigned `/admin/*` demo pattern (e.g.
@@ -519,7 +525,10 @@ mission-log **decision reason**.
 - [x] The PS decision reason (in-scope / prior consent / `approved_tools` /
       out-of-scope) is visible in both samples so the contrast between prompted
       and silent gates is observable. _(6b)_
-- [ ] Orchestrator demonstrates a mission-governed downstream hop (§Call Chaining). _(6c)_
+- [ ] Orchestrator demonstrates a mission-governed downstream hop (§Call Chaining).
+      _(6c — DEFERRED by user decision 2026-06-06; call-chain samples instead carry
+      comments noting mission governance is optional/orthogonal and omitted. The
+      Orchestrator follows the spec's valid "no mission, `iss` is a PS" path.)_
 - [x] `make demo-mission` boots the mission demo; existing `make demo` unchanged.
       _(pulled forward from 6c; also added `agent-mission` runner)_
 - [x] New GuidedTour + SampleApp mission Playwright **e2e** specs pass under the
@@ -531,7 +540,13 @@ mission-log **decision reason**.
       recorded decision reason. _(6a — `MissionAgentFlowTests`, 12/12)_
 - [x] `make e2e` (Blazor) and `dotnet test` (CLI integration) green locally.
       _(CLI integration 12/12; Blazor e2e full suite 29 passed / 1 skipped locally; CI not separately run)_
-- [ ] Sample READMEs updated. _(MissionAgent + MockPersonServer done in 6a; others in 6c)_
+- [x] Sample READMEs updated. _(MissionAgent README shipped in 6a; in 6c:
+      samples/README.md index adds MissionAgent + mission Quick Start,
+      MockPersonServer README adds the governance-endpoints section,
+      GuidedTour README adds Mission mode; call-chain samples (Orchestrator
+      Program.cs, SampleApp CallChain.razor) annotated that mission governance
+      is optional/orthogonal and intentionally omitted, per §Call Chaining
+      no-mission path)_
 
 #### Phase 6a additions (spec-driven, beyond the original file list)
 

@@ -13,7 +13,7 @@ hop.
 A swim-lane sequence diagram across up to four actors — **Agent**,
 **Orchestrator**, **Resource**, **Person Server** — with a payload
 inspector on the right that decodes each JWT and shows the canonical
-RFC 9421 signature base for every signed request. Six flows are
+RFC 9421 signature base for every signed request. Seven flows are
 available, switchable at runtime from the topbar **Mode** picker:
 
 * **Bootstrap** (2–3 steps) — generate the agent's signing key and build
@@ -37,6 +37,13 @@ available, switchable at runtime from the topbar **Mode** picker:
   Keycloak login URL. Requires an Access Server URL (`AccessServerUrl`);
   run it with `make demo-tour-keycloak` (Keycloak) or `make demo-tour`
   (stub AS, no Docker).
+* **Mission (PS-Governed)** (20 steps; three prompts) — the optional,
+  orthogonal **agent governance** layer (§Agent Governance). The agent
+  proposes a human-approved mission, then asks the PS for permission on
+  each action, records audit, and relays interactions — the PS is the
+  contextual policy point. A mission-aware Resource copies the
+  `AAuth-Mission` claim into its resource token. Requires a Person Server
+  URL; drive the same flow from the CLI with `make demo-mission`.
 
 When `PersonServerUrl` is empty in `appsettings.json`, the picker locks
 to Identity-based (the three-party options are disabled). You can also set
@@ -188,5 +195,5 @@ with **Run step**).
 | `GuidedTour:PersonServerUrl` | `http://localhost:5100` | PS base URL. Set empty to lock the picker to identity-based mode. |
 | `GuidedTour:AgentProviderUrl` | `http://localhost:5301` | AP base URL. When set, bootstrap enrols with the real AP instead of self-signing. |
 | `GuidedTour:AgentId` | `aauth:tour-agent@ap.example` | Value placed in the agent token's `sub`. |
-| `GuidedTour:Mode` | `Bootstrap` | Default flow on startup. `Bootstrap`, `Identity`, `Autonomous` (Direct Grant), `Deferred`, or `CallChain`. The topbar picker overrides this at runtime. |
+| `GuidedTour:Mode` | `Bootstrap` | Default flow on startup. `Bootstrap`, `Identity`, `Autonomous` (Direct Grant), `Deferred`, `CallChain`, `Federated`, or `Mission`. The topbar picker overrides this at runtime. |
 

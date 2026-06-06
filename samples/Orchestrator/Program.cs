@@ -118,6 +118,15 @@ async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken)
 {
     // Self-issued agent token (iss = orchestratorUrl) satisfies §Upstream Token
     // Verification step 3 — the PS can match upstream_token.aud against iss.
+    //
+    // Mission governance is OPTIONAL and orthogonal to call chaining
+    // (AAuth §Agent Governance). This demo intentionally leaves it out: the
+    // upstream auth token carries no `mission.approver`, so the downstream
+    // exchange follows §Call Chaining's "No mission, iss is a PS" path — the
+    // PS evaluates the hop without mission context. If a mission WERE present,
+    // WithCallChaining would auto-forward the `AAuth-Mission` header (via
+    // MissionForwardingHandler) and route to mission.approver instead; no
+    // change to this handler would be needed.
     using var downstream = AAuthClientBuilder.SelfIssuing(orchestratorKey)
         .As(orchestratorUrl, agentId)
         .WithKid(OrchestratorKid)

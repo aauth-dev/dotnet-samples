@@ -51,6 +51,34 @@ The PS only federates to Access Servers listed in
 `MockPersonServer:TrustedAccessServers`; any other `aud` is rejected with
 `untrusted_access_server` (403).
 
+## Agent governance (missions)
+
+Beyond minting tokens, this PS doubles as the **contextual policy point** for
+the optional, orthogonal agent-governance layer (§Agent Governance). Governance
+is wired with a single call \u2014 `builder.Services.AddAAuthGovernance()` \u2014 which
+registers an in-memory mission store and log; the sample then supplies the
+policy and user-channel seams (`IPermissionDecider`, `IAuditSink`,
+`IInteractionRelay`) plus a deterministic consent script that stands in for a
+real user-consent screen.
+
+It serves the four governance endpoints from the protocol exchange diagram:
+
+| Endpoint | Spec | Purpose |
+|---|---|---|
+| `POST /mission` | §Mission Creation | The agent proposes a mission in natural language; the PS stores the approval bytes verbatim, computes `s256`, and returns the `AAuth-Mission` header (`approver`, `s256`). |
+| `POST /permission` | §Permission Endpoint | The agent asks whether an action is allowed. Pre-approved tools on the active mission short-circuit to *granted*; everything else runs the three-gate decision (in-scope / prior consent / prompt the user). |
+| `POST /audit` | §Audit Endpoint | The agent reports an action it took; the PS appends it to the mission log (fire-and-forget). |
+| `POST /mission-interaction` | §Interaction Endpoint | The agent relays a question, payment, or completion proposal to the user through the PS. |
+
+Pending governance interactions resolve via `POST /mission-pending/{id}`,
+mirroring the deferred-consent `/pending/{id}` poll used by `POST /token`.
+
+A **mission-aware resource** copies the mission object (`approver`, `s256`) from
+the `AAuth-Mission` header into the resource token it issues (§Resource Token
+Verification, Terminology: *mission-aware resource*); the PS then has full
+mission context when it evaluates each downstream hop. Try it end-to-end with
+the [MissionAgent](../MissionAgent/README.md) CLI (`make demo-mission`).
+
 ## Run
 
 ```bash
