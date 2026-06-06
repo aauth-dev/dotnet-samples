@@ -643,33 +643,96 @@ gate 3) **and** a prompted *tool* (§Permission Endpoint) — are demonstrated.
 
 ## Phase 7 — Docs
 
-**Goal:** Rewrite the stale missions doc and add PS-governance docs reflecting the
-implemented surface. Separate phase from samples per the agreed workflow.
+**Goal:** Rewrite the stale missions doc and add mission/PS-governance docs
+reflecting the implemented surface. Separate phase from samples per the agreed
+workflow.
 
 **Spec:** §Missions; §Mission Approval; §Mission Log; §Policy Evaluation Points;
 §Why Missions Are Not a Policy Language; §Permission/Audit/Interaction Endpoints;
-§Clarification Chat.
+§Clarification Chat; §Mission Status Errors.
+
+> **Scope revised (2026-06-06).** A read-only audit of the shipped API against
+> the existing docs (research.md "Phase 7 — doc audit") showed the original
+> six-file list under-covered what Phases 1–6 actually built. `docs/advanced/
+> missions.md` describes a **non-existent** model (`Mission.Id`/`Status`/
+> `Requirements`/`FromJson`, `AAuthMissionHeader.Format(missionId)`), and the
+> entire **agent-side governance client** surface, **clarification chat**,
+> **server governance seams**, **`mission_terminated`**, **`ChallengeOptions.
+> MissionAware`**, and **`AddAAuthGovernance`** have **zero** doc coverage. The
+> file list and DoD below are expanded accordingly. `docs/concepts.md` (the
+> tools-declared-vs-scopes-evaluated split) and `docs/workflows/call-chaining.md`
+> (mission forwarding via `WithCallChaining`) were already corrected in Phase 6
+> and need only cross-link/index touch-ups.
+
+### Implemented surface the docs must match (audited 2026-06-06)
+
+- **Mission model** (`AAuth.Agent`): `Mission { Approver, Agent, ApprovedAt,
+  Description, ApprovedTools, Capabilities, S256, RawBytes, State }`,
+  `FromApprovalBytes`, `VerifyS256`, `ComputeS256`; `MissionState
+  { Active, Terminated }`; `MissionTool(Name, Description?)`.
+- **Header / claim**: `AAuthMissionHeader.FormatStructured(approver, s256)` +
+  `TryParseStructured(...)`; `MissionClaim(Approver, S256)` in tokens.
+- **Agent governance clients** (`AAuth.Agent.Governance`): facade
+  `AAuthGovernanceClient { Mission, Permission, Audit, Interaction }`;
+  `MissionClient.ProposeAsync`; `PermissionClient.RequestAsync` (missionless +
+  mission-scoped pre-approved-tool short-circuit); `AuditClient.RecordAsync`;
+  `InteractionClient.SendAsync` / `RelayInteractionAsync`; DTOs `MissionProposal`,
+  `PermissionRequest`/`PermissionResult`/`PermissionGrant`, `AuditRecord`,
+  `InteractionRequest`/`InteractionResult`/`InteractionType`, `GovernanceOptions`.
+- **Builder**: `AAuthClientBuilder.BuildGovernance()`;
+  `MissionForwardingHandler`; `WithCallChaining(...)`.
+- **Clarification chat**: `ClarificationExchange` (rounds, `DefaultMaxRounds=5`),
+  `ClarificationResponse` (`Respond`/`Update`/`Cancel`), `ClarificationRequirement`.
+- **Token-exchange mission params** (`TokenExchangeRequest`): `Justification`,
+  `LoginHint`, `Tenant`, `DomainHint`, `Platform`, `Device`,
+  `OnClarificationRequired`, `MaxClarificationRounds`.
+- **Errors**: `AAuthMissionTerminatedException` (`mission_terminated`).
+- **Mission-aware resource**: `ChallengeOptions.MissionAware`.
+- **Server seams** (`AAuth.Server.Governance`): `IMissionStore`/`StoredMission`/
+  `InMemoryMissionStore`; `IPermissionDecider`/`PermissionDecisionContext`/
+  `PermissionDecision`/`PermissionOutcome`/`PermissionDecisionReason`;
+  `IAuditSink`; `IInteractionRelay`/`InteractionRelayResult`; `IMissionLog`/
+  `MissionLogEntry`/`MissionLogEntryKind`/`InMemoryMissionLog`;
+  `GovernanceEndpoints` parsers. DI: `AddAAuthGovernance`.
 
 ### Files
 
 | File | Action |
 |------|--------|
-| `docs/advanced/missions.md` | **Rewrite** — spec blob, `s256`, two states, lifecycle, binding chain |
-| `docs/server/mission-governance.md` | **New** — PS as contextual policy point; permission/audit/interaction; mission log |
-| `docs/workflows/mission-governed-access.md` | **New** — end-to-end walkthrough (the three research flows) |
-| `docs/server/token-issuance.md` | **Modify** — add `s256` verify + mission claim emission |
-| `docs/workflows/call-chaining.md` | **Modify** — mission forwarding + governance |
-| `docs/concepts.md` / `docs/README.md` | **Modify** — index + concept of PS policy enforcement |
+| `docs/advanced/missions.md` | **Rewrite** — replace the stale model with the spec blob (`Approver`/`Agent`/`ApprovedAt`/`Description`/`ApprovedTools`/`Capabilities`/`S256`/`RawBytes`/`State`), `s256` identity, two states, `FromApprovalBytes`/`VerifyS256`, `AAuthMissionHeader.FormatStructured`/`TryParseStructured`, the `MissionClaim` binding chain through resource→auth tokens, and `ChallengeOptions.MissionAware`; fix the lifecycle mermaid (agent-proposes-to-PS, not resource-proposes) |
+| `docs/advanced/mission-governance-clients.md` | **New** — agent-side `AAuthGovernanceClient` facade + `Mission`/`Permission`/`Audit`/`Interaction` clients, their DTOs, `BuildGovernance()`, and the tool-declared (permission endpoint, `approved_tools` short-circuit) vs scope-evaluated split |
+| `docs/advanced/clarification-chat.md` | **New** — `ClarificationRequirement`, `ClarificationExchange` rounds + `DefaultMaxRounds`, `ClarificationResponse` (`Respond`/`Update`/`Cancel`), the token-exchange `OnClarificationRequired`/`MaxClarificationRounds` hooks (§Clarification Chat) |
+| `docs/server/mission-governance.md` | **New** — PS as contextual policy point; server seams `IMissionStore`/`IMissionLog`/`IPermissionDecider`/`IAuditSink`/`IInteractionRelay`, `GovernanceEndpoints` parsers, the three-gate decision + reasons, prior-consent lookup, `mission_terminated` (§PS Governance, §Mission Log, §Why Missions Are Not a Policy Language) |
+| `docs/workflows/mission-governed-access.md` | **New** — end-to-end walkthrough: propose → operate (silent in-scope + prompted out-of-mission scope) → permission (silent tool + prompted action) → audit → interaction → completion, with the binding chain |
+| `docs/server/token-issuance.md` | **Modify** — add `s256` verify + `mission` claim emission/echo on resource + auth tokens |
+| `docs/server/challenge-middleware.md` | **Modify** — document `ChallengeOptions.MissionAware` (mission-aware resource copies the `AAuth-Mission` claim into the resource token) |
+| `docs/advanced/error-handling.md` | **Modify** — add `AAuthMissionTerminatedException` (`mission_terminated`) |
+| `docs/reference/dependency-injection.md` | **Modify** — add `AddAAuthGovernance` (server seams) + governance-client wiring |
+| `docs/workflows/call-chaining.md` | **Modify (light)** — cross-link mission forwarding to the new mission docs (forwarding itself already accurate) |
+| `docs/concepts.md` | **Modify (light)** — cross-link the new mission docs (tools-vs-scopes split already corrected in Phase 6) |
+| `docs/README.md` | **Modify** — index the new docs; add API-Map rows for `AAuthGovernanceClient`, the four governance clients, clarification types, and the server seams |
 
 ### Definition of Done
 
-- [ ] `docs/advanced/missions.md` matches the implemented model (no stale fields/states).
-- [ ] New governance doc explains the deterministic-vs-contextual split
-      (§Why Missions Are Not a Policy Language).
-- [ ] Walkthrough doc covers create → operate → permission → audit → interaction →
-      completion, with the binding chain.
-- [ ] All doc code samples compile against the Phase 1–5 API.
-- [ ] docs index/README updated; cross-links valid.
+- [x] `docs/advanced/missions.md` matches the implemented model (no stale
+      `Id`/`Status`/`Requirements`/`FromJson`/`Format(missionId)`; correct blob
+      fields, two states, `s256`, structured header, binding chain).
+- [x] Agent-side governance clients doc covers the facade + four clients + DTOs +
+      `BuildGovernance()`, with a runnable propose→permission→audit→interaction
+      example.
+- [x] Clarification-chat doc covers requirement parsing, the round loop +
+      `DefaultMaxRounds`, and `Respond`/`Update`/`Cancel` (§Clarification Chat).
+- [x] Server governance doc explains the deterministic-vs-contextual split
+      (§Why Missions Are Not a Policy Language) and documents every seam +
+      `mission_terminated`.
+- [x] Walkthrough doc covers create → operate (silent + prompted) → permission
+      (silent + prompted) → audit → interaction → completion, with the binding chain.
+- [x] Touch-ups landed: `token-issuance.md` (`s256`/mission claim),
+      `challenge-middleware.md` (`MissionAware`), `error-handling.md`
+      (`mission_terminated`), `dependency-injection.md` (`AddAAuthGovernance`).
+- [x] All doc code samples compile against the shipped Phase 1–6 API
+      (exact type/member names).
+- [x] docs index/README updated; API-Map rows added; cross-links valid.
 
 ---
 

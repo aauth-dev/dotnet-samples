@@ -63,8 +63,34 @@ public sealed class ChallengeOptions
 
     // Allowed Signature-Key schemes (null = allow all)
     public IReadOnlySet<string>? AllowedSignatureKeySchemes { get; init; }
+
+    // When true, copy the AAuth-Mission header's mission object into the
+    // issued resource token so the mission context flows to the PS (default false)
+    public bool MissionAware { get; init; }
 }
 ```
+
+## Mission-Aware Resources
+
+Set `MissionAware = true` to make the resource carry mission context forward. When
+a challenged request includes a valid `AAuth-Mission` header, the issued resource
+token includes the mission object (`approver` + `s256`), so the mission reaches the
+PS even when the resource is not the approver (§Terminology). When `false` (the
+default) the header is ignored.
+
+```csharp
+app.UseAAuthChallenge(new ChallengeOptions
+{
+    AccessMode = AAuthAccessMode.RequireAuthToken,
+    ResourceSigningKey = resourceKey,
+    ResourceIdentifier = resourceUrl,
+    MissionAware = true, // copy AAuth-Mission into the resource token
+});
+```
+
+See [Missions](../advanced/missions.md#the-binding-chain) for how the mission
+claim threads through the tokens, and
+[Token Issuance](token-issuance.md#mission-claims) for the claim itself.
 
 ## Typical Pipeline
 

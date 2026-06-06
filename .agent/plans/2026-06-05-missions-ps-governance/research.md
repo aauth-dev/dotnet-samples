@@ -771,3 +771,58 @@ under `docs/server/` + refresh `docs/advanced/missions.md` + add a
   `AAuth.Conformance` 425/425. GuidedTour mission specs (lifecycle + deny) green;
   SampleApp mission specs (five-gate + deny) green.
 
+### Phase 7 — doc audit (2026-06-06)
+
+Read-only audit of every `docs/**` file that mentions missions/governance
+against the shipped Phase 1–6 public API, to re-scope Phase 7 before writing
+(user: "Phase 7 may need updates as we touched new things during
+implementation"). Findings drive the revised Phase 7 file list + DoD in the
+implementation plan.
+
+- **`docs/advanced/missions.md` is fundamentally stale.** It documents a
+  **non-existent** model: `Mission.Id`, `Mission.Status` (pending/approved/
+  denied/completed), `Mission.Requirements` (JsonArray), `Mission.StatusUrl`/
+  `InteractionUrl`, `Mission.FromJson(JsonObject)`, and
+  `AAuthMissionHeader.Format(string missionId)` — plus a resource-proposes-mission
+  lifecycle mermaid. The shipped model is the spec **approval blob**:
+  `Mission { Approver, Agent, ApprovedAt, Description, ApprovedTools,
+  Capabilities, S256, RawBytes, State(Active|Terminated) }`,
+  `FromApprovalBytes`/`VerifyS256`/`ComputeS256`, and
+  `AAuthMissionHeader.FormatStructured(approver, s256)`/`TryParseStructured`.
+  Requires a full rewrite, not a patch.
+- **Agent-side governance clients have ZERO doc coverage.** `AAuthGovernanceClient`
+  facade + `MissionClient.ProposeAsync`, `PermissionClient.RequestAsync` (both
+  overloads), `AuditClient.RecordAsync`, `InteractionClient.SendAsync`/
+  `RelayInteractionAsync`, all DTOs (`MissionProposal`, `PermissionRequest`/
+  `PermissionResult`/`PermissionGrant`, `AuditRecord`, `InteractionRequest`/
+  `InteractionResult`/`InteractionType`, `GovernanceOptions`), and
+  `AAuthClientBuilder.BuildGovernance()` — none documented.
+- **Clarification chat has ZERO doc coverage.** `ClarificationExchange`
+  (`DefaultMaxRounds = 5`), `ClarificationResponse` (`Respond`/`Update`/`Cancel`),
+  `ClarificationRequirement`, and the `TokenExchangeRequest`/`GovernanceOptions`
+  `OnClarificationRequired` + `MaxClarificationRounds` hooks.
+- **Server governance seams have ZERO doc coverage.** `IMissionStore`/
+  `StoredMission`/`InMemoryMissionStore`, `IPermissionDecider`/
+  `PermissionDecisionContext`/`PermissionDecision`/`PermissionOutcome`/
+  `PermissionDecisionReason`, `IAuditSink`, `IInteractionRelay`/
+  `InteractionRelayResult`, `IMissionLog`/`MissionLogEntry`/`MissionLogEntryKind`/
+  `InMemoryMissionLog`, `GovernanceEndpoints`, and `AddAAuthGovernance` DI.
+- **Smaller gaps.** `AAuthMissionTerminatedException` (`mission_terminated`) is
+  absent from `error-handling.md`; `ChallengeOptions.MissionAware` (the
+  mission-aware resource that copies the `AAuth-Mission` claim into the resource
+  token) is absent from `challenge-middleware.md`; `README.md`'s API Map lacks
+  rows for every governance client + server seam; the six mission token-exchange
+  params (`Justification`/`LoginHint`/`Tenant`/`DomainHint`/`Platform`/`Device`)
+  are undocumented.
+- **Already correct (Phase 6 / earlier work) — no rewrite needed.**
+  `docs/concepts.md` (tools-declared-vs-scopes-evaluated split, corrected in
+  6b), `docs/workflows/call-chaining.md` (mission forwarding via
+  `WithCallChaining`/`MissionForwardingHandler`), and `docs/server/
+  token-issuance.md` (the `mission.approver` constraint) only need cross-link /
+  index touch-ups.
+- **Design choices recorded (D10–D11, user-approved 2026-06-06).** D10: the
+  agent-side governance clients get a dedicated `docs/advanced/
+  mission-governance-clients.md` (keeps `docs/server/mission-governance.md`
+  focused on PS/server seams). D11: clarification chat gets its own
+  `docs/advanced/clarification-chat.md`; all smaller touch-ups land in Phase 7.
+

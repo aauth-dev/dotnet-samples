@@ -51,7 +51,7 @@ The two kinds of authority a mission governs are handled **asymmetrically**, and
 
 In short: **a mission lists the tools the agent may run locally, but it does not list scopes — the PS decides, per request, whether a requested resource scope fits the mission's intent.** Scopes and AS policy stay enforced by the resource and its Access Server; the mission is "a further restriction applied by the PS" (§Rationale).
 
-See [Missions](https://explorer.aauth.dev/missions/compare).
+See [Missions](https://explorer.aauth.dev/missions/compare). For the SDK surface, see [Missions](advanced/missions.md), [Mission Governance Clients](advanced/mission-governance-clients.md), and [Mission Governance (Server)](server/mission-governance.md).
 
 ## Token Types
 

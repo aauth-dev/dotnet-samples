@@ -381,3 +381,41 @@ var client = new AAuthClientBuilder(key)
 - Passes `upstream_token` in exchange POST body
 - Inserts `MissionForwardingHandler` to propagate `AAuth-Mission` headers
 - Handles the full 401 → exchange → retry cycle
+
+## Governance
+
+### Agent side: the governance client
+
+The mission governance clients (mission, permission, audit, interaction) are built
+from `AAuthClientBuilder`, which wires the signed channel for you. There is no
+dedicated DI extension — register the facade as a singleton or build it where you
+need it.
+
+```csharp
+builder.Services.AddSingleton(sp =>
+    new AAuthClientBuilder(agentKey)
+        .UseJwt(agentToken)
+        .BuildGovernance()); // AAuthGovernanceClient
+```
+
+`BuildGovernance()` requires an explicit signing mode and throws
+`InvalidOperationException` otherwise. See
+[Mission Governance Clients](../advanced/mission-governance-clients.md).
+
+### Person Server side: the governance seams
+
+`AddAAuthGovernance()` registers the in-memory mission storage seams as
+singletons. It uses `TryAdd`, so register durable implementations first to
+override them. The policy and user-channel seams (`IPermissionDecider`,
+`IAuditSink`, `IInteractionRelay`) are always supplied by the PS.
+
+```csharp
+builder.Services.AddAAuthGovernance(); // InMemoryMissionStore + InMemoryMissionLog
+
+builder.Services.AddSingleton<IPermissionDecider, MyPermissionDecider>();
+builder.Services.AddSingleton<IAuditSink, MyAuditSink>();
+builder.Services.AddSingleton<IInteractionRelay, MyInteractionRelay>();
+```
+
+See [Mission Governance (Server)](../server/mission-governance.md) for the seams
+and the decision model.

@@ -229,6 +229,56 @@ catch (TokenVerificationException ex)
 }
 ```
 
+## Mission Termination
+
+Once a mission is terminated (the user completed it, or the PS revoked it), the PS
+refuses governed requests with `403 mission_terminated` (§Mission Status Errors).
+The governance clients surface this as a typed exception.
+
+```csharp
+namespace AAuth.Errors;
+
+public sealed class AAuthMissionTerminatedException : Exception
+{
+    public const string ErrorCode = "mission_terminated";
+    public string? MissionStatus { get; }   // e.g. "terminated"
+}
+```
+
+```csharp
+try
+{
+    await governance.Audit.RecordAsync(ps, record);
+}
+catch (AAuthMissionTerminatedException ex)
+{
+    // The mission is over — stop acting under it and start a new one if needed.
+    Console.WriteLine($"Mission terminated ({ex.MissionStatus}).");
+}
+```
+
+On the PS side, emit the canonical body with
+`GovernanceEndpoints.MissionTerminated()` — see
+[Mission Governance (Server)](../server/mission-governance.md#terminating-a-mission).
+
+## Clarification Exceptions
+
+A [clarification chat](clarification-chat.md) can end in two terminal ways: the
+agent withdraws, or the round limit is reached.
+
+```csharp
+namespace AAuth.Agent;
+
+// The agent called ClarificationResponse.Cancel() / ClarificationExchange.CancelAsync()
+public sealed class AAuthClarificationCancelledException : Exception { }
+
+// The exchange exceeded MaxRounds (default ClarificationExchange.DefaultMaxRounds = 5)
+public sealed class AAuthClarificationLimitException : Exception
+{
+    public int MaxRounds { get; }
+}
+```
+
 ## Exception Hierarchy
 
 | Exception | Thrown By | Meaning |
@@ -239,6 +289,9 @@ catch (TokenVerificationException ex)
 | `AAuthInteractionDeniedException` | `DeferredPoller` / `ChallengeHandler` | User denied |
 | `AAuthInteractionTimeoutException` | `DeferredPoller` / `ChallengeHandler` | Polling timed out |
 | `PollingErrorException` | `DeferredPoller` | PS returned terminal error during polling |
+| `AAuthMissionTerminatedException` | `AuditClient` / `InteractionClient` | Mission terminated (`403 mission_terminated`) |
+| `AAuthClarificationCancelledException` | `ClarificationExchange` | Agent withdrew during clarification |
+| `AAuthClarificationLimitException` | `ClarificationExchange` | Clarification round limit reached |
 
 ## Server-Side Error Emission
 
@@ -259,3 +312,5 @@ return Results.Json(
 - [Verification Middleware](../server/verification-middleware.md) — automatic Signature-Error emission
 - [Deferred Consent](../workflows/deferred-consent.md) — polling lifecycle
 - [Configuration Reference](../reference/configuration.md) — timeout and retry settings
+- [Mission Governance Clients](mission-governance-clients.md) — where mission/clarification errors arise
+- [Clarification Chat](clarification-chat.md) — the clarification exchange

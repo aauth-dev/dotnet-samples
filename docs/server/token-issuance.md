@@ -174,7 +174,37 @@ issued auth token only from the verified payload. The shipped
 [`samples/MockPersonServer`](../../samples/MockPersonServer/) `/token` handler
 follows exactly this pattern.
 
+## Mission Claims
+
+When a request is governed by a mission, the mission travels through the tokens as
+a `mission` claim — `{ approver, s256 }` — never the mission content itself
+(§Resource Token Structure, §Auth Token Structure). The SDK models it with
+`MissionClaim`:
+
+```csharp
+namespace AAuth.Tokens;
+
+public sealed record MissionClaim(string Approver, string S256)
+{
+    public JsonObject ToJsonObject();
+    public static MissionClaim? FromPayload(JsonObject? payload);
+}
+```
+
+A mission-aware resource copies the mission object from the `AAuth-Mission`
+request header into the resource token it issues, so the mission context reaches
+the PS even when the resource is not the approver. Enable it with
+`ChallengeOptions.MissionAware` — see
+[Challenge Middleware](challenge-middleware.md#mission-aware-resources). The PS
+echoes the same claim into the auth token it mints. When verifying a presented
+resource token the recipient MAY constrain `mission.approver` via
+`expectedApprover` (check 7 above).
+
+For the full PS-side evaluation of mission context, see
+[Mission Governance (Server)](mission-governance.md).
+
 ## Further Reading
 
 - [Verification Middleware](verification-middleware.md) — signature verification before token logic
 - [Replay Detection](replay-detection.md) — using `jti` to prevent reuse
+- [Mission Governance (Server)](mission-governance.md) — evaluating mission context at the PS
