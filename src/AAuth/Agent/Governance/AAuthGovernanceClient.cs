@@ -18,15 +18,16 @@ namespace AAuth.Agent.Governance;
 /// <see cref="HttpSig.AAuthSigningHandler"/> configured with the agent token, so
 /// every governance request is signed.
 /// <para>
-/// When a Person Server is bound (via <see cref="AAuthClientBuilder.WithPersonServer"/>
-/// or the <see cref="Create"/> factory), <see cref="ProposeMissionAsync"/> returns a
-/// <see cref="MissionSession"/> that auto-threads the mission claim and PS into every
-/// subsequent call.
+/// The client is always bound to a Person Server (via
+/// <see cref="AAuthClientBuilder.WithPersonServer"/>, the <see cref="Create"/>
+/// factory, or the constructor), so individual calls never re-supply it.
+/// <see cref="ProposeMissionAsync"/> returns a <see cref="MissionSession"/> that
+/// auto-threads the mission claim and PS into every subsequent call.
 /// </para>
 /// </remarks>
 public sealed class AAuthGovernanceClient
 {
-    private readonly string? _personServer;
+    private readonly string _personServer;
     private readonly GovernanceOptions? _defaultOptions;
 
     /// <summary>Propose and approve missions at the PS <c>mission_endpoint</c>.</summary>
@@ -42,56 +43,48 @@ public sealed class AAuthGovernanceClient
     public InteractionClient Interaction { get; }
 
     /// <summary>
-    /// The Person Server this client is bound to, or <see langword="null"/> when
-    /// unbound. When bound, <see cref="ProposeMissionAsync"/> is available and the
-    /// per-call <c>personServer</c> argument can be omitted via a
-    /// <see cref="MissionSession"/>.
+    /// The Person Server this client is bound to. Every governed call targets it,
+    /// and <see cref="ProposeMissionAsync"/> returns a <see cref="MissionSession"/>
+    /// that auto-threads the mission claim and PS into subsequent calls.
     /// </summary>
-    public string? PersonServer => _personServer;
-
-    /// <summary>Create the facade over a signed client and metadata client.</summary>
-    /// <param name="signedClient">HttpClient wired with an <see cref="HttpSig.AAuthSigningHandler"/>.</param>
-    /// <param name="metadata">Metadata client for resolving the PS governance endpoints.</param>
-    public AAuthGovernanceClient(HttpClient signedClient, MetadataClient metadata)
-        : this(signedClient, metadata, personServer: null, defaultOptions: null)
-    {
-    }
+    public string PersonServer => _personServer;
 
     /// <summary>
     /// Create the facade bound to a Person Server with default governance options.
     /// </summary>
     /// <param name="signedClient">HttpClient wired with an <see cref="HttpSig.AAuthSigningHandler"/>.</param>
     /// <param name="metadata">Metadata client for resolving the PS governance endpoints.</param>
-    /// <param name="personServer">The PS URL to bind, or <see langword="null"/> to stay unbound.</param>
+    /// <param name="personServer">The PS URL this client targets. REQUIRED.</param>
     /// <param name="defaultOptions">Default deferred-handling options applied when a call omits its own.</param>
     public AAuthGovernanceClient(
         HttpClient signedClient,
         MetadataClient metadata,
-        string? personServer,
-        GovernanceOptions? defaultOptions)
+        string personServer,
+        GovernanceOptions? defaultOptions = null)
     {
         ArgumentNullException.ThrowIfNull(signedClient);
         ArgumentNullException.ThrowIfNull(metadata);
+        ArgumentException.ThrowIfNullOrEmpty(personServer);
         _personServer = personServer;
         _defaultOptions = defaultOptions;
-        Mission = new MissionClient(signedClient, metadata);
-        Permission = new PermissionClient(signedClient, metadata);
-        Audit = new AuditClient(signedClient, metadata);
-        Interaction = new InteractionClient(signedClient, metadata);
+        Mission = new MissionClient(signedClient, metadata, personServer);
+        Permission = new PermissionClient(signedClient, metadata, personServer);
+        Audit = new AuditClient(signedClient, metadata, personServer);
+        Interaction = new InteractionClient(signedClient, metadata, personServer);
     }
 
     /// <summary>
     /// Static factory mirroring the SDK's other <c>Create</c>/<c>Build</c> entry
-    /// points. Equivalent to the bound constructor.
+    /// points. Equivalent to the constructor.
     /// </summary>
     /// <param name="signedClient">HttpClient wired with an <see cref="HttpSig.AAuthSigningHandler"/>.</param>
     /// <param name="metadata">Metadata client for resolving the PS governance endpoints.</param>
-    /// <param name="personServer">The PS URL to bind, or <see langword="null"/> to stay unbound.</param>
+    /// <param name="personServer">The PS URL this client targets. REQUIRED.</param>
     /// <param name="defaultOptions">Default deferred-handling options applied when a call omits its own.</param>
     public static AAuthGovernanceClient Create(
         HttpClient signedClient,
         MetadataClient metadata,
-        string? personServer = null,
+        string personServer,
         GovernanceOptions? defaultOptions = null)
         => new(signedClient, metadata, personServer, defaultOptions);
 
@@ -100,23 +93,14 @@ public sealed class AAuthGovernanceClient
     /// §Mission Approval) and return a <see cref="MissionSession"/> that
     /// auto-threads the mission claim and PS into subsequent governed calls.
     /// </summary>
-    /// <exception cref="InvalidOperationException">No Person Server is bound.</exception>
     public async Task<MissionSession> ProposeMissionAsync(
         MissionProposal proposal,
         GovernanceOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(proposal);
-        if (string.IsNullOrEmpty(_personServer))
-        {
-            throw new InvalidOperationException(
-                "ProposeMissionAsync requires a bound Person Server. Bind one via " +
-                "AAuthClientBuilder.WithPersonServer(...).BuildGovernance() or " +
-                "AAuthGovernanceClient.Create(signedClient, metadata, personServer).");
-        }
-
         var mission = await Mission.ProposeAsync(
-            _personServer, proposal, options ?? _defaultOptions, cancellationToken).ConfigureAwait(false);
+            proposal, options ?? _defaultOptions, cancellationToken).ConfigureAwait(false);
         return new MissionSession(this, _personServer, mission, _defaultOptions);
     }
 }

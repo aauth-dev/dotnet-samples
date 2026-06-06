@@ -34,7 +34,8 @@ public class GovernanceFacadeTests
     private static AAuthGovernanceClient BuildFacade(HttpMessageHandler handler)
         => new(
             new HttpClient(handler) { BaseAddress = new Uri(Ps) },
-            new MetadataClient(new HttpClient(handler)));
+            new MetadataClient(new HttpClient(handler)),
+            Ps);
 
     [Fact(DisplayName = "§PS Governance Endpoints — facade exposes all four governance clients")]
     public void Facade_Ctor_ExposesFourClients()
@@ -51,7 +52,7 @@ public class GovernanceFacadeTests
     public void Facade_Ctor_NullSignedClient_Throws()
     {
         Assert.Throws<ArgumentNullException>(() =>
-            new AAuthGovernanceClient(null!, new MetadataClient(new HttpClient())));
+            new AAuthGovernanceClient(null!, new MetadataClient(new HttpClient()), Ps));
     }
 
     [Fact(DisplayName = "§PS Governance Endpoints — facade clients share one signed channel and work end-to-end")]
@@ -60,20 +61,20 @@ public class GovernanceFacadeTests
         var handler = new FacadeHandler();
         var facade = BuildFacade(handler);
 
-        var mission = await facade.Mission.ProposeAsync(Ps, new MissionProposal("# Plan a trip")
+        var mission = await facade.Mission.ProposeAsync(new MissionProposal("# Plan a trip")
         {
             Tools = new[] { new MissionTool("WebSearch", "Search the web") },
         });
         Assert.Equal("aauth:assistant@agent.example", mission.Agent);
 
         var permission = await facade.Permission.RequestAsync(
-            Ps, new PermissionRequest("SendEmail") { Mission = TestMission });
+            new PermissionRequest("SendEmail") { Mission = TestMission });
         Assert.True(permission.IsGranted);
 
-        await facade.Audit.RecordAsync(Ps, new AuditRecord(TestMission, "WebSearch"));
+        await facade.Audit.RecordAsync(new AuditRecord(TestMission, "WebSearch"));
         Assert.True(handler.AuditCalled);
 
-        var answer = await facade.Interaction.AskQuestionAsync(Ps, "Refundable option?");
+        var answer = await facade.Interaction.AskQuestionAsync("Refundable option?");
         Assert.Equal("Yes, go ahead.", answer);
     }
 
@@ -82,6 +83,7 @@ public class GovernanceFacadeTests
     {
         var facade = new AAuthClientBuilder(AAuthKey.Generate())
             .UseHwk()
+            .WithPersonServer(Ps)
             .WithInnerHandler(new FacadeHandler())
             .BuildGovernance();
 

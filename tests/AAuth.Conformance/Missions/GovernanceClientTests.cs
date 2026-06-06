@@ -65,9 +65,9 @@ public class GovernanceClientTests
     {
         var handler = new GovernanceHandler();
         var (signed, metadata) = Build(handler);
-        var client = new MissionClient(signed, metadata);
+        var client = new MissionClient(signed, metadata, Ps);
 
-        var mission = await client.ProposeAsync(Ps, new MissionProposal("# Plan a trip")
+        var mission = await client.ProposeAsync(new MissionProposal("# Plan a trip")
         {
             Tools = new[] { new MissionTool("WebSearch", "Search the web") },
         });
@@ -83,10 +83,10 @@ public class GovernanceClientTests
     {
         var handler = new GovernanceHandler { TamperMissionHeaderS256 = true };
         var (signed, metadata) = Build(handler);
-        var client = new MissionClient(signed, metadata);
+        var client = new MissionClient(signed, metadata, Ps);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            client.ProposeAsync(Ps, new MissionProposal("# Plan a trip")));
+            client.ProposeAsync(new MissionProposal("# Plan a trip")));
     }
 
     [Fact(DisplayName = "§Mission Creation — 202 clarification review resolves to an approved mission")]
@@ -94,10 +94,10 @@ public class GovernanceClientTests
     {
         var handler = new GovernanceHandler { MissionNeedsClarification = true };
         var (signed, metadata) = Build(handler);
-        var client = new MissionClient(signed, metadata);
+        var client = new MissionClient(signed, metadata, Ps);
 
         ClarificationRequirement? seen = null;
-        var mission = await client.ProposeAsync(Ps, new MissionProposal("# Plan a trip"),
+        var mission = await client.ProposeAsync(new MissionProposal("# Plan a trip"),
             new GovernanceOptions
             {
                 OnClarificationRequired = (clarification, _) =>
@@ -119,9 +119,9 @@ public class GovernanceClientTests
     {
         var handler = new GovernanceHandler();
         var (signed, metadata) = Build(handler);
-        var client = new PermissionClient(signed, metadata);
+        var client = new PermissionClient(signed, metadata, Ps);
 
-        var result = await client.RequestAsync(Ps, new PermissionRequest("SendEmail")
+        var result = await client.RequestAsync(new PermissionRequest("SendEmail")
         {
             Description = "Send the itinerary",
             Mission = TestMission,
@@ -135,9 +135,9 @@ public class GovernanceClientTests
     {
         var handler = new GovernanceHandler { PermissionDenied = true };
         var (signed, metadata) = Build(handler);
-        var client = new PermissionClient(signed, metadata);
+        var client = new PermissionClient(signed, metadata, Ps);
 
-        var result = await client.RequestAsync(Ps, new PermissionRequest("DeleteAll"));
+        var result = await client.RequestAsync(new PermissionRequest("DeleteAll"));
 
         Assert.Equal(PermissionGrant.Denied, result.Grant);
         Assert.Equal("Out of scope.", result.Reason);
@@ -148,7 +148,7 @@ public class GovernanceClientTests
     {
         var handler = new GovernanceHandler();
         var (signed, metadata) = Build(handler);
-        var client = new PermissionClient(signed, metadata);
+        var client = new PermissionClient(signed, metadata, Ps);
 
         var mission = new Mission
         {
@@ -160,7 +160,7 @@ public class GovernanceClientTests
             ApprovedTools = new[] { new MissionTool("WebSearch") },
         };
 
-        var result = await client.RequestAsync(Ps, "WebSearch", mission);
+        var result = await client.RequestAsync("WebSearch", mission);
 
         Assert.True(result.IsGranted);
         Assert.False(handler.PermissionCalled);
@@ -171,10 +171,10 @@ public class GovernanceClientTests
     {
         var handler = new GovernanceHandler { MissionTerminated = true };
         var (signed, metadata) = Build(handler);
-        var client = new PermissionClient(signed, metadata);
+        var client = new PermissionClient(signed, metadata, Ps);
 
         var ex = await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() =>
-            client.RequestAsync(Ps, new PermissionRequest("SendEmail") { Mission = TestMission }));
+            client.RequestAsync(new PermissionRequest("SendEmail") { Mission = TestMission }));
 
         Assert.Equal("terminated", ex.MissionStatus);
     }
@@ -186,9 +186,9 @@ public class GovernanceClientTests
     {
         var handler = new GovernanceHandler();
         var (signed, metadata) = Build(handler);
-        var client = new AuditClient(signed, metadata);
+        var client = new AuditClient(signed, metadata, Ps);
 
-        await client.RecordAsync(Ps, new AuditRecord(TestMission, "WebSearch")
+        await client.RecordAsync(new AuditRecord(TestMission, "WebSearch")
         {
             Description = "Searched for flights",
         });
@@ -201,10 +201,10 @@ public class GovernanceClientTests
     {
         var handler = new GovernanceHandler { MissionTerminated = true };
         var (signed, metadata) = Build(handler);
-        var client = new AuditClient(signed, metadata);
+        var client = new AuditClient(signed, metadata, Ps);
 
         await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() =>
-            client.RecordAsync(Ps, new AuditRecord(TestMission, "WebSearch")));
+            client.RecordAsync(new AuditRecord(TestMission, "WebSearch")));
     }
 
     // ---- §Interaction Endpoint ----
@@ -214,9 +214,9 @@ public class GovernanceClientTests
     {
         var handler = new GovernanceHandler();
         var (signed, metadata) = Build(handler);
-        var client = new InteractionClient(signed, metadata);
+        var client = new InteractionClient(signed, metadata, Ps);
 
-        var answer = await client.AskQuestionAsync(Ps, "Refundable option?");
+        var answer = await client.AskQuestionAsync("Refundable option?");
 
         Assert.Equal("Yes, go ahead.", answer);
     }
@@ -226,9 +226,9 @@ public class GovernanceClientTests
     {
         var handler = new GovernanceHandler();
         var (signed, metadata) = Build(handler);
-        var client = new InteractionClient(signed, metadata);
+        var client = new InteractionClient(signed, metadata, Ps);
 
-        var terminated = await client.ProposeCompletionAsync(Ps, "# Done", TestMission);
+        var terminated = await client.ProposeCompletionAsync("# Done", TestMission);
 
         Assert.True(terminated);
         Assert.Equal("completion", handler.LastInteractionType);

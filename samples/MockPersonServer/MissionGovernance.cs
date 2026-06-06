@@ -150,46 +150,6 @@ public sealed class MissionPolicyStore
 }
 
 /// <summary>
-/// Builds the verbatim mission approval blob (§Mission Approval). The bytes are
-/// returned exactly as they will be sent so the <c>s256</c> the PS advertises in
-/// the <c>AAuth-Mission</c> header matches what the agent computes.
-/// </summary>
-public static class MissionApproval
-{
-    /// <summary>Build the approval blob bytes and their <c>s256</c> identity.</summary>
-    public static (byte[] Blob, string S256) Build(
-        string approver,
-        string agent,
-        MissionProposal proposal,
-        IReadOnlyList<MissionTool> approvedTools,
-        DateTimeOffset approvedAt)
-    {
-        var tools = new JsonArray();
-        foreach (var tool in approvedTools)
-        {
-            var obj = new JsonObject { ["name"] = tool.Name };
-            if (!string.IsNullOrEmpty(tool.Description))
-            {
-                obj["description"] = tool.Description;
-            }
-            tools.Add(obj);
-        }
-
-        var blob = new JsonObject
-        {
-            ["approver"] = approver,
-            ["agent"] = agent,
-            ["approved_at"] = approvedAt.ToString("o"),
-            ["description"] = proposal.Description,
-            ["approved_tools"] = tools,
-        };
-
-        var bytes = Encoding.UTF8.GetBytes(blob.ToJsonString());
-        return (bytes, Mission.ComputeS256(bytes));
-    }
-}
-
-/// <summary>
 /// The PS's permission policy (§Permission Endpoint): a pre-approved tool is
 /// granted silently; any other action falls to the user, whose scripted decision
 /// is reflected here. The reason is recorded so samples can show why each request
@@ -206,7 +166,7 @@ public sealed class SamplePermissionDecider : IPermissionDecider
 
     public Task<PermissionDecision> DecideAsync(PermissionDecisionContext context, CancellationToken ct = default)
     {
-        var action = context.Request.Action;
+        var action = context.Request.Action.Name;
 
         // §Permission Endpoint: a pre-approved tool resolves without prompting.
         if (context.Mission is not null && _policy.IsApprovedTool(context.Mission.S256, action))
@@ -236,7 +196,7 @@ public sealed class SampleAuditSink : IAuditSink
         => _log.AppendAsync(
             new MissionLogEntry(record.Mission.S256, MissionLogEntryKind.Audit, DateTimeOffset.UtcNow)
             {
-                Action = record.Action,
+                Action = record.Action.Name,
                 Detail = record.Description,
             },
             ct);

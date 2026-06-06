@@ -21,26 +21,29 @@ namespace AAuth.Agent.Governance;
 public sealed class InteractionClient
 {
     private readonly DeferredExchange _exchange;
+    private readonly string _personServer;
 
-    /// <summary>Create the interaction client.</summary>
-    public InteractionClient(HttpClient signedClient, MetadataClient metadata)
-        => _exchange = new DeferredExchange(signedClient, metadata);
+    /// <summary>Create the interaction client bound to a Person Server.</summary>
+    public InteractionClient(HttpClient signedClient, MetadataClient metadata, string personServer)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(personServer);
+        _exchange = new DeferredExchange(signedClient, metadata);
+        _personServer = personServer;
+    }
 
     /// <summary>
-    /// Send <paramref name="request"/> to the PS at <paramref name="personServer"/>
-    /// and return the terminal result, polling through any deferred response.
+    /// Send <paramref name="request"/> to the bound PS and return the terminal
+    /// result, polling through any deferred response.
     /// </summary>
     public async Task<InteractionResult> SendAsync(
-        string personServer,
         InteractionRequest request,
         GovernanceOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrEmpty(personServer);
         ArgumentNullException.ThrowIfNull(request);
 
         var endpoint = await _exchange.ResolveEndpointAsync(
-            personServer, "interaction_endpoint", cancellationToken).ConfigureAwait(false);
+            _personServer, "interaction_endpoint", cancellationToken).ConfigureAwait(false);
 
         var response = await _exchange.PostAsync(
             endpoint, request.ToJsonObject(),
@@ -87,10 +90,10 @@ public sealed class InteractionClient
 
     /// <summary>Relay a resource interaction (URL + code) to the user.</summary>
     public Task<InteractionResult> RelayInteractionAsync(
-        string personServer, string url, string code,
+        string url, string code,
         string? description = null, MissionClaim? mission = null,
         GovernanceOptions? options = null, CancellationToken cancellationToken = default)
-        => SendAsync(personServer, new InteractionRequest(InteractionType.Interaction)
+        => SendAsync(new InteractionRequest(InteractionType.Interaction)
         {
             Url = url,
             Code = code,
@@ -100,10 +103,10 @@ public sealed class InteractionClient
 
     /// <summary>Forward a payment approval (URL + code) to the user.</summary>
     public Task<InteractionResult> RelayPaymentAsync(
-        string personServer, string url, string code,
+        string url, string code,
         string? description = null, MissionClaim? mission = null,
         GovernanceOptions? options = null, CancellationToken cancellationToken = default)
-        => SendAsync(personServer, new InteractionRequest(InteractionType.Payment)
+        => SendAsync(new InteractionRequest(InteractionType.Payment)
         {
             Url = url,
             Code = code,
@@ -113,11 +116,11 @@ public sealed class InteractionClient
 
     /// <summary>Ask the user a question and return the answer.</summary>
     public async Task<string?> AskQuestionAsync(
-        string personServer, string question,
+        string question,
         string? description = null, MissionClaim? mission = null,
         GovernanceOptions? options = null, CancellationToken cancellationToken = default)
     {
-        var result = await SendAsync(personServer, new InteractionRequest(InteractionType.Question)
+        var result = await SendAsync(new InteractionRequest(InteractionType.Question)
         {
             Question = question,
             Description = description,
@@ -131,11 +134,11 @@ public sealed class InteractionClient
     /// when the user accepted and the PS terminated the mission.
     /// </summary>
     public async Task<bool> ProposeCompletionAsync(
-        string personServer, string summary, MissionClaim mission,
+        string summary, MissionClaim mission,
         GovernanceOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(mission);
-        var result = await SendAsync(personServer, new InteractionRequest(InteractionType.Completion)
+        var result = await SendAsync(new InteractionRequest(InteractionType.Completion)
         {
             Summary = summary,
             Mission = mission,

@@ -75,7 +75,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
 
         var proposal = new MissionProposal("row02 rejected mission");
         await Assert.ThrowsAsync<HttpRequestException>(
-            () => MissionClientFor(agent).ProposeAsync(PsIssuer, proposal));
+            () => MissionClientFor(agent).ProposeAsync(proposal));
     }
 
     // ---- Token gate (rows 3-8) -----------------------------------------
@@ -212,7 +212,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
         var mission = await ProposeMissionAsync(agent, "row09 approved-tool mission", "send_email");
 
         var result = await PermissionClientFor(agent)
-            .RequestAsync(PsIssuer, "send_email", mission);
+            .RequestAsync("send_email", mission);
 
         Assert.True(result.IsGranted);
         Assert.Equal(PermissionGrant.Granted, result.Grant);
@@ -229,7 +229,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
         {
             Mission = new MissionClaim(mission.Approver, mission.S256),
         };
-        var result = await PermissionClientFor(agent).RequestAsync(PsIssuer, request);
+        var result = await PermissionClientFor(agent).RequestAsync(request);
 
         Assert.True(result.IsGranted);
         await AssertPermissionReasonAsync(mission, "delete_file", granted: true);
@@ -246,7 +246,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
         {
             Mission = new MissionClaim(mission.Approver, mission.S256),
         };
-        var result = await PermissionClientFor(agent).RequestAsync(PsIssuer, request);
+        var result = await PermissionClientFor(agent).RequestAsync(request);
 
         Assert.False(result.IsGranted);
         Assert.Equal(PermissionGrant.Denied, result.Grant);
@@ -304,9 +304,9 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
         return new Agent(agentId, agentKey, signed, plain, metadata);
     }
 
-    private MissionClient MissionClientFor(Agent agent) => new(agent.Signed, agent.Metadata);
+    private MissionClient MissionClientFor(Agent agent) => new(agent.Signed, agent.Metadata, PsIssuer);
 
-    private PermissionClient PermissionClientFor(Agent agent) => new(agent.Signed, agent.Metadata);
+    private PermissionClient PermissionClientFor(Agent agent) => new(agent.Signed, agent.Metadata, PsIssuer);
 
     private async Task ScriptAsync(Agent agent, JsonObject body)
     {
@@ -321,7 +321,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
         {
             Tools = tools.Select(t => new MissionTool(t)).ToArray(),
         };
-        return await MissionClientFor(agent).ProposeAsync(PsIssuer, proposal);
+        return await MissionClientFor(agent).ProposeAsync(proposal);
     }
 
     private async Task<string> ExchangeAsync(Agent agent, Mission mission, string scope, TokenExchangeRequest options)

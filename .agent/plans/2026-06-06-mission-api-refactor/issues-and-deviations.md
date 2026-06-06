@@ -41,8 +41,8 @@ These judgment calls were made during Phase 1. **All confirmed by the user on
 
 | ID | Phase | Area | Summary | Spec § | Status |
 |----|-------|------|---------|--------|--------|
-| DEV-1 | 1 | Resource mapper | `MapAAuthGovernance` resolves `PermissionOutcome.Prompt` as a denial — no built-in deferred (202) user-consent channel. The MockPersonServer keeps its custom interactive/pending endpoints until a deferred-flow design lands. | §Permission Endpoint (deferred consent) | scheduled (Phase 2, D3) |
-| DEV-2 | 1 | Resource mapper | Mission-creation endpoint not mapped by `MapAAuthGovernance`; approval-blob building + proposal approval stay PS-side (`MissionApproval` is sample-local). Promote a reusable approval-blob builder + an `IMissionApprover` seam into the SDK. | §Mission Creation, §Mission Approval | scheduled (Phase 2, D3) |
+| DEV-1 | 1 | Resource mapper | `MapAAuthGovernance` resolved `PermissionOutcome.Prompt` as a denial — no built-in deferred (202) user-consent channel. | §Permission Endpoint (deferred consent) | resolved (Phase 2, D3 — `IDeferredConsentStore` seam + `AddAAuthDeferredConsent()`; mapper parks `Prompt` and answers 202 + poll route. Store is opt-in so the existing `Prompt`→denied default is preserved. Interactive browser page stays a sample concern.) |
+| DEV-2 | 1 | Resource mapper | Mission-creation endpoint not mapped by `MapAAuthGovernance`; approval-blob building + proposal approval stayed PS-side (`MissionApproval` was sample-local). | §Mission Creation, §Mission Approval | resolved (Phase 2, D3 — `MissionApprovalBuilder` + `IMissionApprover`/`DefaultMissionApprover` promoted into the SDK; `MapAAuthGovernance` maps the mission endpoint, persists the `StoredMission`, and emits the `AAuth-Mission` header. MockPersonServer now uses `MissionApprovalBuilder`.) |
 | DEV-3 | 1 | Default seams | `DefaultInteractionRelay` has no user channel: questions get an empty answer and completion is treated as not-accepted. A real PS must override it. Documented behavior, not a spec violation. | §Interaction Endpoint | intentional |
 
 ## Notes

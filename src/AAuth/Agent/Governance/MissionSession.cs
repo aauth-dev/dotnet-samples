@@ -50,13 +50,13 @@ public sealed class MissionSession
     /// other action is evaluated by the PS. The mission claim and PS are injected.
     /// </summary>
     public Task<PermissionResult> RequestPermissionAsync(
-        string action,
+        MissionAction action,
         string? description = null,
         JsonObject? parameters = null,
         GovernanceOptions? options = null,
         CancellationToken cancellationToken = default)
         => _governance.Permission.RequestAsync(
-            _personServer, action, Mission, description, parameters,
+            action, Mission, description, parameters,
             options ?? _defaultOptions, cancellationToken);
 
     /// <summary>
@@ -64,13 +64,12 @@ public sealed class MissionSession
     /// The mission claim and PS are injected.
     /// </summary>
     public Task RecordAuditAsync(
-        string action,
+        MissionAction action,
         string? description = null,
         JsonObject? parameters = null,
         JsonObject? result = null,
         CancellationToken cancellationToken = default)
         => _governance.Audit.RecordAsync(
-            _personServer,
             new AuditRecord(Claim, action)
             {
                 Description = description,
@@ -89,7 +88,7 @@ public sealed class MissionSession
         GovernanceOptions? options = null,
         CancellationToken cancellationToken = default)
         => _governance.Interaction.AskQuestionAsync(
-            _personServer, question, description, Claim,
+            question, description, Claim,
             options ?? _defaultOptions, cancellationToken);
 
     /// <summary>
@@ -103,7 +102,7 @@ public sealed class MissionSession
         GovernanceOptions? options = null,
         CancellationToken cancellationToken = default)
         => _governance.Interaction.RelayInteractionAsync(
-            _personServer, url, code, description, Claim,
+            url, code, description, Claim,
             options ?? _defaultOptions, cancellationToken);
 
     /// <summary>
@@ -117,7 +116,7 @@ public sealed class MissionSession
         GovernanceOptions? options = null,
         CancellationToken cancellationToken = default)
         => _governance.Interaction.RelayPaymentAsync(
-            _personServer, url, code, description, Claim,
+            url, code, description, Claim,
             options ?? _defaultOptions, cancellationToken);
 
     /// <summary>
@@ -130,6 +129,6 @@ public sealed class MissionSession
         GovernanceOptions? options = null,
         CancellationToken cancellationToken = default)
         => _governance.Interaction.ProposeCompletionAsync(
-            _personServer, summary, Claim,
+            summary, Claim,
             options ?? _defaultOptions, cancellationToken);
 }

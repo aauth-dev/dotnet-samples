@@ -20,26 +20,29 @@ namespace AAuth.Agent.Governance;
 public sealed class PermissionClient
 {
     private readonly DeferredExchange _exchange;
+    private readonly string _personServer;
 
-    /// <summary>Create the permission client.</summary>
-    public PermissionClient(HttpClient signedClient, MetadataClient metadata)
-        => _exchange = new DeferredExchange(signedClient, metadata);
+    /// <summary>Create the permission client bound to a Person Server.</summary>
+    public PermissionClient(HttpClient signedClient, MetadataClient metadata, string personServer)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(personServer);
+        _exchange = new DeferredExchange(signedClient, metadata);
+        _personServer = personServer;
+    }
 
     /// <summary>
-    /// Request permission for <paramref name="request"/> from the PS at
-    /// <paramref name="personServer"/>. Handles deferred (user-input) responses.
+    /// Request permission for <paramref name="request"/> from the bound PS.
+    /// Handles deferred (user-input) responses.
     /// </summary>
     public async Task<PermissionResult> RequestAsync(
-        string personServer,
         PermissionRequest request,
         GovernanceOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrEmpty(personServer);
         ArgumentNullException.ThrowIfNull(request);
 
         var endpoint = await _exchange.ResolveEndpointAsync(
-            personServer, "permission_endpoint", cancellationToken).ConfigureAwait(false);
+            _personServer, "permission_endpoint", cancellationToken).ConfigureAwait(false);
 
         var response = await _exchange.PostAsync(
             endpoint, request.ToJsonObject(),
@@ -80,20 +83,20 @@ public sealed class PermissionClient
     /// pre-approved tools"). Otherwise calls the PS.
     /// </summary>
     public Task<PermissionResult> RequestAsync(
-        string personServer,
-        string action,
+        MissionAction action,
         Mission mission,
         string? description = null,
         JsonObject? parameters = null,
         GovernanceOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrEmpty(action);
+        ArgumentNullException.ThrowIfNull(action);
+        ArgumentException.ThrowIfNullOrEmpty(action.Name);
         ArgumentNullException.ThrowIfNull(mission);
 
         foreach (var tool in mission.ApprovedTools)
         {
-            if (string.Equals(tool.Name, action, StringComparison.Ordinal))
+            if (string.Equals(tool.Name, action.Name, StringComparison.Ordinal))
             {
                 return Task.FromResult(new PermissionResult(
                     PermissionGrant.Granted, "Pre-approved tool on the active mission."));
@@ -106,6 +109,6 @@ public sealed class PermissionClient
             Parameters = parameters,
             Mission = new Tokens.MissionClaim(mission.Approver, mission.S256),
         };
-        return RequestAsync(personServer, request, options, cancellationToken);
+        return RequestAsync(request, options, cancellationToken);
     }
 }

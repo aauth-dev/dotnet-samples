@@ -30,9 +30,27 @@ public static class AAuthGovernanceServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         services.TryAddSingleton<IMissionStore, InMemoryMissionStore>();
         services.TryAddSingleton<IMissionLog, InMemoryMissionLog>();
+        services.TryAddSingleton<IMissionApprover, DefaultMissionApprover>();
         services.TryAddSingleton<IPermissionDecider, DefaultPermissionDecider>();
         services.TryAddSingleton<IAuditSink, DefaultAuditSink>();
         services.TryAddSingleton<IInteractionRelay, DefaultInteractionRelay>();
+        return services;
+    }
+
+    /// <summary>
+    /// Opt the governance mapper into the deferred-consent (<c>202</c> poll) flow
+    /// for <see cref="AAuth.Server.Governance.PermissionOutcome.Prompt"/> /
+    /// <see cref="AAuth.Server.Governance.MissionApprovalOutcome.Prompt"/> outcomes
+    /// (§Deferred Consent). Registers the default in-memory
+    /// <see cref="AAuth.Server.Governance.IDeferredConsentStore"/> via <c>TryAdd</c>.
+    /// Without this call a <c>Prompt</c> outcome is resolved synchronously (a
+    /// permission denial / a mission decline), since the mapper has no user channel.
+    /// The PS still owns the browser consent page that resolves parked entries.
+    /// </summary>
+    public static IServiceCollection AddAAuthDeferredConsent(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        services.TryAddSingleton<IDeferredConsentStore, InMemoryDeferredConsentStore>();
         return services;
     }
 }

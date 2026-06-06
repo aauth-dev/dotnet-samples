@@ -21,33 +21,37 @@ namespace AAuth.Agent.Governance;
 public sealed class MissionClient
 {
     private readonly DeferredExchange _exchange;
+    private readonly string _personServer;
 
-    /// <summary>Create the mission client.</summary>
+    /// <summary>Create the mission client bound to a Person Server.</summary>
     /// <param name="signedClient">HttpClient wired with an <see cref="HttpSig.AAuthSigningHandler"/>.</param>
     /// <param name="metadata">Metadata client for resolving the PS <c>mission_endpoint</c>.</param>
-    public MissionClient(HttpClient signedClient, MetadataClient metadata)
-        => _exchange = new DeferredExchange(signedClient, metadata);
+    /// <param name="personServer">The PS this client targets.</param>
+    public MissionClient(HttpClient signedClient, MetadataClient metadata, string personServer)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(personServer);
+        _exchange = new DeferredExchange(signedClient, metadata);
+        _personServer = personServer;
+    }
 
     /// <summary>
-    /// Propose a mission to the PS at <paramref name="personServer"/> and return
-    /// the approved <see cref="Mission"/>. Handles the <c>202</c> review /
-    /// clarification path via <paramref name="options"/>.
+    /// Propose a mission to the bound PS and return the approved
+    /// <see cref="Mission"/>. Handles the <c>202</c> review / clarification path
+    /// via <paramref name="options"/>.
     /// </summary>
     /// <exception cref="InvalidOperationException">
     /// The PS did not return an <c>AAuth-Mission</c> header, or the returned
     /// <c>s256</c> does not match the hash of the approval body.
     /// </exception>
     public async Task<Mission> ProposeAsync(
-        string personServer,
         MissionProposal proposal,
         GovernanceOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrEmpty(personServer);
         ArgumentNullException.ThrowIfNull(proposal);
 
         var endpoint = await _exchange.ResolveEndpointAsync(
-            personServer, "mission_endpoint", cancellationToken).ConfigureAwait(false);
+            _personServer, "mission_endpoint", cancellationToken).ConfigureAwait(false);
 
         var response = await _exchange.PostAsync(
             endpoint, proposal.ToJsonObject(),

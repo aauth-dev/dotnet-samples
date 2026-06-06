@@ -147,7 +147,7 @@ Console.WriteLine($"   person server   : {personServer}");
 var agentHandler = new AAuthSigningHandler(key, () => agentToken) { InnerHandler = new HttpClientHandler() };
 var signedClient = new HttpClient(agentHandler) { Timeout = Timeout.InfiniteTimeSpan };
 var metadata = new MetadataClient(new HttpClient());
-var governance = new AAuthGovernanceClient(signedClient, metadata);
+var governance = new AAuthGovernanceClient(signedClient, metadata, personServer);
 var exchange = new TokenExchangeClient(signedClient, metadata);
 
 // Tell the mock PS how to resolve prompts. Interactive mode holds each prompt
@@ -184,7 +184,7 @@ Section("2. Propose a mission");
 // the agent quotes on every later request to bind it to this mission. In
 // interactive mode the PS shows a browser consent screen here; in --auto mode it
 // resolves the approval itself.
-var mission = await governance.Mission.ProposeAsync(personServer, new MissionProposal(
+var session = await governance.ProposeMissionAsync(new MissionProposal(
     "Help the user keep their inbox under control for the next hour.")
 {
     Tools = new[]
@@ -193,7 +193,9 @@ var mission = await governance.Mission.ProposeAsync(personServer, new MissionPro
         new MissionTool("summarize", "Summarize a thread"),
     },
 }, GovernanceFor("Approve this mission and its tools"));
-var missionClaim = new MissionClaim(mission.Approver, mission.S256);
+// The session wraps the approved mission and auto-threads its claim
+// (approver + s256) and the bound PS into every later governed call.
+var mission = session.Mission;
 Console.WriteLine($"   description     : {mission.Description}");
 Console.WriteLine($"   approved by     : {mission.Approver}");
 Console.WriteLine($"   approved tools  : {string.Join(", ", mission.ApprovedTools.Select(t => t.Name))}");
@@ -259,41 +261,34 @@ catch (AAuthInteractionDeniedException)
 Section("6. Request a permission for a pre-approved tool — silent");
 // `send_email` is an approved tool, so the SDK short-circuits to granted
 // without ever calling the PS (§Permission Endpoint).
-var preApproved = await governance.Permission.RequestAsync(personServer, "send_email", mission);
+var preApproved = await session.RequestPermissionAsync("send_email");
 Console.WriteLine($"   send_email      : {(preApproved.IsGranted ? "granted" : "denied")} ({preApproved.Reason})");
 
 Section("7. Request a permission for a NON-pre-approved tool");
 // `delete_inbox` is not an approved tool, so the PS is consulted and the user
-// is prompted to decide.
-var adHoc = await governance.Permission.RequestAsync(
-    personServer,
-    new PermissionRequest("delete_inbox") { Mission = missionClaim },
-    GovernanceFor("Permission to permanently delete the inbox"));
+// is prompted to decide. The session threads the mission claim automatically.
+var adHoc = await session.RequestPermissionAsync(
+    "delete_inbox",
+    options: GovernanceFor("Permission to permanently delete the inbox"));
 Console.WriteLine($"   delete_inbox    : {(adHoc.IsGranted ? "granted" : "denied")} ({adHoc.Reason})");
 
 Section("8. Report an action to the audit endpoint");
 // After acting, the agent records what it did under the mission (§Audit Endpoint).
-await governance.Audit.RecordAsync(personServer, new AuditRecord(missionClaim, "send_email")
-{
-    Description = "Sent a reply to the design-review thread.",
-    Result = new JsonObject { ["status"] = "success" },
-});
+await session.RecordAuditAsync("send_email",
+    description: "Sent a reply to the design-review thread.",
+    result: new JsonObject { ["status"] = "success" });
 Console.WriteLine("   recorded send_email = success");
 
 Section("9. Ask the user a question");
-var answer = await governance.Interaction.AskQuestionAsync(
-    personServer,
+var answer = await session.AskQuestionAsync(
     "Want me to keep going for another hour?",
     description: "The mission's hour is nearly up.",
-    mission: missionClaim,
     options: GovernanceFor("A question from your agent"));
 Console.WriteLine($"   user answered   : {answer ?? "(no answer)"}");
 
 Section("10. Propose mission completion (terminates the mission)");
-var terminated = await governance.Interaction.ProposeCompletionAsync(
-    personServer,
+var terminated = await session.ProposeCompletionAsync(
     "Inbox triaged: 12 read, 3 replied, 1 deleted.",
-    missionClaim,
     GovernanceFor("Your agent says the mission is done"));
 Console.WriteLine($"   mission ended   : {terminated}");
 

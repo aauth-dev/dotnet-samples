@@ -25,7 +25,7 @@ public sealed class DefaultPermissionDecider : IPermissionDecider
             var mission = Mission.FromApprovalBytes(context.Mission.Blob.Span);
             foreach (var tool in mission.ApprovedTools)
             {
-                if (string.Equals(tool.Name, context.Request.Action, System.StringComparison.Ordinal))
+                if (string.Equals(tool.Name, context.Request.Action.Name, System.StringComparison.Ordinal))
                 {
                     return Task.FromResult(new PermissionDecision(
                         PermissionOutcome.Granted, PermissionDecisionReason.ApprovedTool));

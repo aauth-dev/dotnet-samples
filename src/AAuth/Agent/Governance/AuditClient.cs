@@ -19,26 +19,29 @@ namespace AAuth.Agent.Governance;
 public sealed class AuditClient
 {
     private readonly DeferredExchange _exchange;
+    private readonly string _personServer;
 
-    /// <summary>Create the audit client.</summary>
-    public AuditClient(HttpClient signedClient, MetadataClient metadata)
-        => _exchange = new DeferredExchange(signedClient, metadata);
+    /// <summary>Create the audit client bound to a Person Server.</summary>
+    public AuditClient(HttpClient signedClient, MetadataClient metadata, string personServer)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(personServer);
+        _exchange = new DeferredExchange(signedClient, metadata);
+        _personServer = personServer;
+    }
 
     /// <summary>
-    /// Record <paramref name="record"/> at the PS at <paramref name="personServer"/>.
-    /// Returns once the PS acknowledges with <c>201 Created</c>. Surfaces
-    /// <c>mission_terminated</c> as <see cref="Errors.AAuthMissionTerminatedException"/>.
+    /// Record <paramref name="record"/> at the bound PS. Returns once the PS
+    /// acknowledges with <c>201 Created</c>. Surfaces <c>mission_terminated</c> as
+    /// <see cref="Errors.AAuthMissionTerminatedException"/>.
     /// </summary>
     public async Task RecordAsync(
-        string personServer,
         AuditRecord record,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrEmpty(personServer);
         ArgumentNullException.ThrowIfNull(record);
 
         var endpoint = await _exchange.ResolveEndpointAsync(
-            personServer, "audit_endpoint", cancellationToken).ConfigureAwait(false);
+            _personServer, "audit_endpoint", cancellationToken).ConfigureAwait(false);
 
         // Audit is fire-and-forget; no deferral handling is expected.
         var response = await _exchange.PostAsync(

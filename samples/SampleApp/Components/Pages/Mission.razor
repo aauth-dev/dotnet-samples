@@ -50,14 +50,13 @@ var handler = new AAuthSigningHandler(
     identity.Key, () =&gt; agentToken)
     { InnerHandler = new HttpClientHandler() };
 var signed = new HttpClient(handler);
-var governance = new AAuthGovernanceClient(signed, metadata);
+var governance = new AAuthGovernanceClient(signed, metadata, personServer);
 
 // 1. Propose a mission (PROMPT — the human approves intent + tools).
 //    A proposal carries a Markdown description + an optional `tools`
 //    list ONLY. It declares NO scopes — scopes are never pre-listed
 //    on a mission (§Mission Creation).
 var mission = await governance.Mission.ProposeAsync(
-    personServer,
     new MissionProposal("Keep the inbox under control for an hour.")
     {
         Tools = new[]
@@ -108,11 +107,10 @@ var elevated = await ExchangeForScopeAsync(
 
 // 4. Permission for a pre-approved tool (SILENT — no PS call).
 var sendEmail = await governance.Permission.RequestAsync(
-    personServer, "send_email", mission);
+    "send_email", mission);
 
 // 5. Permission for a non-approved tool (PROMPT — the PS asks).
 var deleteInbox = await governance.Permission.RequestAsync(
-    personServer,
     new PermissionRequest("delete_inbox")
         { Mission = new MissionClaim(mission.Approver, mission.S256) },
     governanceOptions);</code></pre>
@@ -188,7 +186,7 @@ app.MapGet("/protected_endpoint/elevated", (HttpContext ctx) =&gt;
 if (deleteInbox.IsGranted)
 {
     await DeleteInboxAsync(); // your own code / MCP tool call
-    await governance.Audit.RecordAsync(personServer,
+    await governance.Audit.RecordAsync(
         new AuditRecord(
             new MissionClaim(mission.Approver, mission.S256),
             "delete_inbox")
@@ -373,7 +371,7 @@ if (deleteInbox.IsGranted)
                 { InnerHandler = new HttpClientHandler() };
             using var signed = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
             var metadata = new MetadataClient(new HttpClient());
-            var governance = new AAuthGovernanceClient(signed, metadata);
+            var governance = new AAuthGovernanceClient(signed, metadata, personServer);
             var exchange = new TokenExchangeClient(signed, metadata);
             var poller = new DeferredPollerOptions { MaxTotalWait = TimeSpan.FromMinutes(2) };
 
@@ -385,7 +383,7 @@ if (deleteInbox.IsGranted)
 
             // ---- Gate 1: propose the mission (PROMPT) ----------------------
             _currentGate = "Mission creation";
-            var mission = await governance.Mission.ProposeAsync(personServer, new MissionProposal(
+            var mission = await governance.Mission.ProposeAsync(new MissionProposal(
                 "Help the user keep their inbox under control for the next hour.")
             {
                 Tools = new[]
@@ -459,7 +457,7 @@ if (deleteInbox.IsGranted)
 
             // ---- Gate 4: permission for a pre-approved tool (SILENT) --------
             var sendEmail = await governance.Permission.RequestAsync(
-                personServer, "send_email", mission);
+                "send_email", mission);
             _steps.Add(new GateStep(4, "Permission send_email", Prompted: false,
                 Outcome: sendEmail.IsGranted ? "granted" : "denied",
                 Summary: "Pre-approved tool — resolved locally without a PS round-trip.",
@@ -474,7 +472,6 @@ if (deleteInbox.IsGranted)
             try
             {
                 var deleteInbox = await governance.Permission.RequestAsync(
-                    personServer,
                     new PermissionRequest("delete_inbox")
                         { Mission = new MissionClaim(mission.Approver, mission.S256) },
                     GovernanceFor());

@@ -54,10 +54,15 @@ It contains **no** implementation steps or task lists — those live in
 >   via `TryAdd`; new `MapAAuthGovernance(...)` maps permission/audit/interaction
 >   from the seams; `AAuthGovernancePipelineOptions` controls routes.
 > - **Construction triad (DC5)** satisfied: static factory + fluent builder + DI.
+> - **Phase 2 D3 (closes DEV-1/DEV-2):** `MissionApprovalBuilder` + an
+>   `IMissionApprover`/`DefaultMissionApprover` seam promoted into the SDK so
+>   `MapAAuthGovernance` maps mission creation (persists the `StoredMission` and
+>   emits the `AAuth-Mission` header). An opt-in `IDeferredConsentStore` seam
+>   (`AddAAuthDeferredConsent()`) lets the mapper park a `Prompt` outcome and
+>   answer 202 + poll route; the interactive browser page stays a sample concern.
 > - **Open items** logged in [issues-and-deviations.md](issues-and-deviations.md):
->   DEV-1 (mapper `Prompt`→denied, no deferred channel), DEV-2 (mission-creation
->   not mapped — `MissionApproval` still sample-local), DEV-3 (no-op relay), and
->   transitional decisions D1–D3 for user confirmation.
+>   DEV-3 (no-op relay) remains intentional; DEV-1 and DEV-2 are resolved in
+>   Phase 2 D3.
 
 ## Source Documents
 
@@ -172,6 +177,25 @@ The refactor must mirror existing SDK conventions, not invent new ones.
 well-known + verification + challenge in one call — the natural template for a new
 `MapAAuthGovernance(...)` PS mapper (PT-R1). `AddAAuthDiscovery(configure?)` is the
 template for an optional-callback DI registration (PT-A4).
+
+### B.5 — Phase 2 convention diff (verified 2026-06)
+
+> **Update (2026-06) — Phase 1 surface vs. SDK conventions.** Comparing the
+> committed Phase 1 surface against B.1–B.4:
+>
+> | Divergence | Phase 1 state | Convention | Phase 2 action |
+> |---|---|---|---|
+> | Per-call `personServer` | Every governed method takes `string personServer` as its first arg | Builder binds context once (`.WithPersonServer`); other clients don't re-take it per call | **D1** — bind the PS into `AAuthGovernanceClient` + sub-clients at construction; drop the param. Bound client becomes the only path. |
+> | Bare `string action` | `PermissionRequest`/`AuditRecord`/`MissionSession`/`PermissionClient` pass `action` as `string` | DTOs are records/POCOs (`MissionTool`, `MissionClaim`) | **D4** — new `MissionAction` record + implicit `string` conversion. |
+> | Unbound construction allowed | `AAuthGovernanceClient` has an unbound ctor + nullable `PersonServer` | `BuildGovernance()`/`Create()` are the blessed entry points | Make PS required on the bound path; keep `Create(...)` factory + `BuildGovernance(...)` + `AddAAuthGovernanceClient(...)` as the triad. |
+> | Mapper coverage | Maps permission/audit/interaction only | `MapAAuthResource` bundles the whole pipeline | **D3** — add mission-creation (`IMissionApprover`) + deferred-consent (Prompt→202) so `MapAAuthGovernance` is a complete PS pipeline. |
+>
+> **Sequencing note:** D1 removes a surface consumed by `MissionAgent/Program.cs`,
+> `GuidedTour/CodeSnippets.cs`, and the conformance tests. To honor DC6 (build 0/0
+> after every phase), those governance call sites are migrated to the bound
+> `MissionSession` surface **within Phase 2** (the structural sample work remains
+> Phase 4/5). Names already match conventions (`With*`/`Create`/`Add*`/`Map*`); no
+> renames of the Phase 1 public entry points are required.
 
 ---
 

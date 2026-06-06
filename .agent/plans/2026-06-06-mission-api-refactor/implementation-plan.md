@@ -184,9 +184,9 @@ app.MapAAuthGovernance();   // maps the 4 endpoints + pending polls
 
 - [x] `BuildGovernance()` binds the PS URL and default `GovernanceOptions`.
 - [x] `MissionSession` injects `{approver, s256}` into permission/audit/interaction.
-- [ ] Per-call `personServer` parameters removed from the governance clients. _(deferred to Phase 2/4 — first pass is additive, see D1)_
+- [x] Per-call `personServer` parameters removed from the governance clients. _(done in Phase 2, D1 — bound client is the only path)_
 - [x] Client reachable via static factory, fluent builder, and `AddAAuthGovernanceClient(...)`.
-- [~] `MapAAuthGovernance()` maps mission/permission/audit/interaction + poll routes. _(permission/audit/interaction mapped; mission-creation + poll deferred, see DEV-2)_
+- [x] `MapAAuthGovernance()` maps mission/permission/audit/interaction + poll routes. _(mission-creation via `IMissionApprover`; deferred 202 + poll via `IDeferredConsentStore`, Phase 2 D3)_
 - [x] `AddAAuthGovernance(configure?)` registers default no-op seams via `TryAdd`.
 - [~] `mission_terminated` 403 + carrier-token checks centralized in the mapper. _(403 termination centralized; carrier-token checks pending Phase 2)_
 - [x] New unit + conformance tests pass; full suite green (build 0/0).
@@ -222,19 +222,20 @@ capability — naming, shape, and ergonomics only. Confirms the construction tri
 - **D2 — keep `MissionSession` flat.** Confirm flat methods
   (`RequestPermissionAsync`, `RecordAuditAsync`, `AskQuestionAsync`,
   `ProposeCompletionAsync`); no nested facades.
-- **D4 — typed tool/action POCO (replace bare strings).** Introduce a small POCO
-  for the invoked tool/action so callers pass a value object instead of a `string`.
-  Today `action` is a bare `string` on `PermissionRequest`, `AuditRecord`,
-  `MissionSession.RequestPermissionAsync/RecordAuditAsync`, and `PermissionClient`.
-  **Decision (2026-06-06): reuse the existing `MissionTool`** — the spec defines
-  `action` as a tool name and `approved_tools` as `{name, description}` objects,
-  which is exactly `MissionTool(Name, Description?)`; one type spans propose →
-  approve → invoke. Serialize the `action` JSON field from `MissionTool.Name`. Add
-  an implicit `string → MissionTool` conversion so terse call sites (`"WebSearch"`)
-  still compile. Note the two distinct descriptions: `MissionTool.Description`
-  (static, mirrors `approved_tools[].description`) vs `PermissionRequest.Description`
-  (per-call markdown). Update the `DefaultPermissionDecider` match (action vs
-  `ApprovedTools`) to compare by `Name`.
+- **D4 — typed action POCO (replace bare strings).** Introduce a small
+  `MissionAction` POCO for the invoked action so callers pass a value object
+  instead of a `string`. Today `action` is a bare `string` on `PermissionRequest`,
+  `AuditRecord`, `MissionSession.RequestPermissionAsync/RecordAuditAsync`, and
+  `PermissionClient`. **Decision (2026-06-06):** model the *invocation* as a
+  distinct `MissionAction` rather than reusing `MissionTool` — the spec's `action`
+  is broader than a tool (covers file writes, message sends), and a dedicated type
+  avoids the redundant `MissionTool.Description` on the invocation path. Named
+  `MissionAction` (not bare `Action`) to avoid the `System.Action` clash. Keep
+  `MissionTool` as the *catalog* entry (proposal / `approved_tools`); `MissionAction`
+  is the *specific invocation*. Serialize the wire `action` field from
+  `MissionAction.Name`; add an implicit `string → MissionAction` conversion so terse
+  call sites (`"WebSearch"`) still compile. Update the `DefaultPermissionDecider`
+  match to compare `MissionAction.Name` against `ApprovedTools[].Name`.
 - **D3 — promote PS mission machinery into the SDK (closes DEV-1/DEV-2).** Move the
   approval-blob builder out of the sample into the SDK and add an
   `IMissionApprover` seam so `MapAAuthGovernance` can map mission creation; add a
@@ -248,7 +249,7 @@ capability — naming, shape, and ergonomics only. Confirms the construction tri
 |------|--------|
 | Phase 1 source files | **Modify** — rename/reshape per the convention diff |
 | `src/AAuth/Agent/Governance/*Client.cs` | **Modify** — remove per-call `personServer` params (D1) |
-| `src/AAuth/Agent/MissionTool.cs` + `PermissionRequest`/`AuditRecord`/`MissionSession` | **Modify** — accept the tool/action POCO; implicit `string` conversion (D4) |
+| `src/AAuth/Agent/MissionAction.cs` (new) + `PermissionRequest`/`AuditRecord`/`MissionSession`/`PermissionClient` | **Add/Modify** — accept `MissionAction`; implicit `string` conversion (D4) |
 | `src/AAuth/Server/Governance/*` (approval builder, `IMissionApprover`, pending/deferred seam) | **Add/Modify** — promote from sample (D3) |
 | `src/AAuth/.../MapAAuthGovernance` | **Modify** — map mission creation + deferred 202 (D3) |
 | `samples/MockPersonServer/*` | **Modify** — consume promoted SDK pieces where it reduces sample-local code |
@@ -270,11 +271,11 @@ capability — naming, shape, and ergonomics only. Confirms the construction tri
 - [ ] Convention diff recorded in research (Part B / Open Design Choices).
 - [ ] Factory, builder, and DI paths share names/options/defaults across both sides.
 - [ ] Public names align with `AAuthClientBuilder` / `AddAAuth*` / `MapAAuth*`.
-- [ ] Per-call `personServer` params removed; bound client is the only path (D1).
-- [ ] Tool/action passed as a POCO (implicit `string` for terse call sites) (D4).
-- [ ] Mission creation mapped by `MapAAuthGovernance` via `IMissionApprover` (D3, DEV-2).
-- [ ] `Prompt` outcome returns a deferred 202 via the pending-consent seam (D3, DEV-1).
-- [ ] All Phase 1 tests updated and green; full suite green (build 0/0).
+- [x] Per-call `personServer` params removed; bound client is the only path (D1).
+- [x] Action passed as a `MissionAction` POCO (implicit `string` for terse call sites) (D4).
+- [x] Mission creation mapped by `MapAAuthGovernance` via `IMissionApprover` (D3, DEV-2).
+- [x] `Prompt` outcome returns a deferred 202 via the pending-consent seam (D3, DEV-1).
+- [x] All Phase 1 tests updated and green; full suite green (build 0/0).
 
 
 ---

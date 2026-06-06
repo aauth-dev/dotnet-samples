@@ -767,7 +767,7 @@ app.MapPost("/mission", async (
 
     // The demo approves every proposed tool; a real PS would let the user prune them.
     var approvedTools = proposal.Tools;
-    var (blob, s256) = MissionApproval.Build(psIssuer, agentId, proposal, approvedTools, DateTimeOffset.UtcNow);
+    var (blob, s256) = MissionApprovalBuilder.Build(psIssuer, agentId, proposal, approvedTools, DateTimeOffset.UtcNow);
 
     await missions.SaveAsync(new StoredMission(s256, psIssuer, agentId, blob));
     policy.Record(s256, proposal.Description, approvedTools, script.InScopeSnapshot());
@@ -813,7 +813,7 @@ app.MapGet("/mission-create-pending/{id}", async (
     var proposal = entry.Proposal!;
     // The demo approves every proposed tool; a real PS would let the user prune them.
     var approvedTools = proposal.Tools;
-    var (blob, s256) = MissionApproval.Build(psIssuer, entry.AgentId, proposal, approvedTools, DateTimeOffset.UtcNow);
+    var (blob, s256) = MissionApprovalBuilder.Build(psIssuer, entry.AgentId, proposal, approvedTools, DateTimeOffset.UtcNow);
     await missions.SaveAsync(new StoredMission(s256, psIssuer, entry.AgentId, blob));
     policy.Record(s256, proposal.Description, approvedTools, script.InScopeSnapshot());
     ctx.Response.Headers[AAuthMissionHeader.Name] =
@@ -874,7 +874,7 @@ app.MapPost("/permission", async (
             AgentId = agentId,
             S256 = request.Mission.S256,
             Approver = request.Mission.Approver,
-            Action = request.Action,
+            Action = request.Action.Name,
         });
         ctx.Response.Headers.Location = $"/permission-pending/{entry.Id}";
         ctx.Response.Headers["Retry-After"] = "0";
@@ -894,7 +894,7 @@ app.MapPost("/permission", async (
         await log.AppendAsync(new MissionLogEntry(
             request.Mission.S256, MissionLogEntryKind.Permission, DateTimeOffset.UtcNow)
         {
-            Action = request.Action,
+            Action = request.Action.Name,
             Granted = granted,
             Detail = decision.Reason.ToString(),
         });

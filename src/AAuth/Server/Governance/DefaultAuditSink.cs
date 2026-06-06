@@ -26,7 +26,7 @@ public sealed class DefaultAuditSink : IAuditSink
         return _log.AppendAsync(
             new MissionLogEntry(record.Mission.S256, MissionLogEntryKind.Audit, DateTimeOffset.UtcNow)
             {
-                Action = record.Action,
+                Action = record.Action.Name,
                 Detail = record.Description,
             },
             ct);

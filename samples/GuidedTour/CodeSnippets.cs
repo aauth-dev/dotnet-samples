@@ -245,9 +245,9 @@ internal static class CodeSnippets
         """;
 
     public const string MissionPropose = """
-        var governance = new AAuthGovernanceClient(signedClient, metadata);
-        var mission = await governance.Mission.ProposeAsync(
-            "https://ps.example",
+        var governance = new AAuthGovernanceClient(
+            signedClient, metadata, "https://ps.example");
+        var session = await governance.ProposeMissionAsync(
             new MissionProposal("Triage the user's inbox…")
             {
                 Tools =
@@ -257,6 +257,7 @@ internal static class CodeSnippets
                 },
             },
             new GovernanceOptions { OnInteractionRequired = SurfaceToUser });
+        var mission = session.Mission; // session auto-threads the claim + PS
         // SDK POSTs /mission → 202; SurfaceToUser shows the consent link,
         // then the client polls until the user approves.
         """;
@@ -328,17 +329,15 @@ internal static class CodeSnippets
 
     public const string MissionPreApproved = """
         // Pre-approved tools never hit the network — the SDK short-circuits.
-        var result = await governance.Permission.RequestAsync(
-            "https://ps.example", "send_email", mission);
+        var result = await session.RequestPermissionAsync("send_email");
         // result.IsGranted == true   (no PS call: send_email ∈ mission.ApprovedTools)
         """;
 
     public const string MissionPermissionPrompt = """
         // delete_inbox is NOT pre-approved → the PS prompts the user.
-        var result = await governance.Permission.RequestAsync(
-            "https://ps.example",
-            new PermissionRequest("delete_inbox") { Mission = missionClaim },
-            new GovernanceOptions { OnInteractionRequired = SurfaceToUser });
+        var result = await session.RequestPermissionAsync(
+            "delete_inbox",
+            options: new GovernanceOptions { OnInteractionRequired = SurfaceToUser });
         // SDK POSTs /permission → 202; surfaces the link; polls for the decision.
         """;
 
@@ -348,8 +347,7 @@ internal static class CodeSnippets
         if (!result.IsGranted)
             throw new InvalidOperationException(result.Reason); // user denied
         // On grant: run delete_inbox, then report it to the audit_endpoint.
-        await governance.Audit.RecordAsync("https://ps.example",
-            new AuditRecord(missionClaim, "delete_inbox"));
+        await session.RecordAuditAsync("delete_inbox");
         """;
 
     public const string MissionInspect = """

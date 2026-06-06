@@ -53,16 +53,13 @@ public class GovernanceClientBuilderTests
         Assert.Equal(Ps, client.PersonServer);
     }
 
-    [Fact(DisplayName = "§Mission Creation — ProposeMissionAsync requires a bound PS")]
-    public async Task ProposeMissionAsync_Unbound_Throws()
+    [Fact(DisplayName = "§Mission Creation — the client cannot be constructed without a Person Server")]
+    public void Ctor_MissingPersonServer_Throws()
     {
-        var unbound = new AAuthGovernanceClient(
+        Assert.Throws<ArgumentException>(() => new AAuthGovernanceClient(
             new HttpClient(new SessionHandler()) { BaseAddress = new Uri(Ps) },
-            new MetadataClient(new HttpClient(new SessionHandler())));
-
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => unbound.ProposeMissionAsync(new MissionProposal("# Plan")));
-        Assert.Contains("bound Person Server", ex.Message);
+            new MetadataClient(new HttpClient(new SessionHandler())),
+            personServer: ""));
     }
 
     [Fact(DisplayName = "§Mission Approval — ProposeMissionAsync returns a session over the approved mission")]

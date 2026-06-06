@@ -9,8 +9,8 @@ namespace AAuth.Agent.Governance;
 /// (§Permission Request) for an action not governed by a remote resource — a
 /// tool call, file write, or message send.
 /// </summary>
-/// <param name="Action">String identifying the action (e.g. a tool name). REQUIRED.</param>
-public sealed record PermissionRequest(string Action)
+/// <param name="Action">The action the agent wants to perform (e.g. a tool name). REQUIRED.</param>
+public sealed record PermissionRequest(MissionAction Action)
 {
     /// <summary>Markdown description of what the action will do and why. Optional.</summary>
     public string? Description { get; init; }
@@ -27,8 +27,9 @@ public sealed record PermissionRequest(string Action)
     /// <summary>Render the request as the JSON request body.</summary>
     internal JsonObject ToJsonObject()
     {
-        ArgumentException.ThrowIfNullOrEmpty(Action);
-        var body = new JsonObject { ["action"] = Action };
+        ArgumentNullException.ThrowIfNull(Action);
+        ArgumentException.ThrowIfNullOrEmpty(Action.Name);
+        var body = new JsonObject { ["action"] = Action.Name };
         if (!string.IsNullOrEmpty(Description))
         {
             body["description"] = Description;
