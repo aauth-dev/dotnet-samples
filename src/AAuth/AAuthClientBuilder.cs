@@ -399,12 +399,24 @@ public sealed class AAuthClientBuilder
     /// </summary>
     /// <exception cref="InvalidOperationException">No signing mode was configured.</exception>
     public AAuthGovernanceClient BuildGovernance()
+        => BuildGovernance(defaultOptions: null);
+
+    /// <summary>
+    /// Build a governance client bound to the Person Server configured via
+    /// <see cref="WithPersonServer"/> (when present), with default deferred-handling
+    /// options. A bound client exposes <see cref="AAuthGovernanceClient.ProposeMissionAsync"/>
+    /// which returns a <see cref="Agent.Governance.MissionSession"/> that auto-threads
+    /// the mission claim and PS into subsequent calls. Requires an explicit signing mode.
+    /// </summary>
+    /// <param name="defaultOptions">Default governance options applied when a call omits its own.</param>
+    /// <exception cref="InvalidOperationException">No signing mode was configured.</exception>
+    public AAuthGovernanceClient BuildGovernance(Agent.Governance.GovernanceOptions? defaultOptions)
     {
         var provider = _provider
             ?? throw new InvalidOperationException(
                 "BuildGovernance requires an explicit signing mode (UseHwk, UseJwt, UseJwksUri, UseJktJwt, or UseProvider).");
         var (signed, metadata) = BuildSignedChannel(provider, _innerHandler ?? new HttpClientHandler());
-        return new AAuthGovernanceClient(signed, metadata);
+        return new AAuthGovernanceClient(signed, metadata, _personServer, defaultOptions);
     }
 
     // Build a signed HttpClient (pinned to the agent identity) plus a metadata
