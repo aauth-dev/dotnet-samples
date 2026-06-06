@@ -641,6 +641,8 @@ gate 3) **and** a prompted *tool* (§Permission Endpoint) — are demonstrated.
 
 ---
 
+## Phase 7 — Docs
+
 **Goal:** Rewrite the stale missions doc and add PS-governance docs reflecting the
 implemented surface. Separate phase from samples per the agreed workflow.
 
