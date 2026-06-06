@@ -6,7 +6,8 @@ namespace AAuth.Agent;
 
 /// <summary>
 /// Models the <c>AAuth-Capabilities</c> header that agents send on outbound
-/// requests to declare what flows they support (§14.1).
+/// requests to declare what flows they support (§AAuth-Capabilities Request
+/// Header). The spec defines exactly three capability values.
 /// </summary>
 public static class AAuthCapabilitiesHeader
 {
@@ -24,9 +25,6 @@ public static class AAuthCapabilitiesHeader
 
         /// <summary>Agent can handle payment-required flows (402).</summary>
         public const string Payment = "payment";
-
-        /// <summary>Agent can handle mission flows.</summary>
-        public const string Mission = "mission";
     }
 
     /// <summary>Format the header value from a set of capabilities.</summary>

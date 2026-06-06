@@ -826,3 +826,51 @@ implementation plan.
   focused on PS/server seams). D11: clarification chat gets its own
   `docs/advanced/clarification-chat.md`; all smaller touch-ups land in Phase 7.
 
+### Phase 8 — multi-subagent review (2026-06-06, complete)
+
+Seven review subagents (R1–R7), one per change set, produced severity-graded
+findings with spec citations. Baseline before remediation: build 0/0, unit 383,
+conformance 425, mission e2e 4/4. Verdicts: R7 PASS; R1–R6 PASS-WITH-NITS.
+
+**Spec corrections / remediations applied:**
+
+- **R1 (mission model) — non-spec capability value removed.** `AAuthCapabilities
+  Header.Capabilities.Mission = "mission"` was an out-of-spec fourth capability
+  value. §AAuth-Capabilities Request Header (~L1766) defines exactly three:
+  `interaction`, `clarification`, `payment`. The constant had **zero production
+  usages** (only an arbitrary-token `Union` dedup test). Removed the constant;
+  updated the test to use a real value; fixed stale `§14.1` citations to
+  `§AAuth-Capabilities` across `AAuthCapabilitiesHeader.cs`,
+  `AAuthSigningHandler.cs`, and `CapabilitiesHeaderTests.cs`.
+- **R1 / R3 / R7 — untrusted-Markdown hardening.** Added an XML-doc remark to
+  `Mission.Description` stating it is server-supplied untrusted content that
+  consumers MUST sanitize before rendering (§Markdown ~L192). The SDK already
+  never renders it; this is defense-in-depth guidance for consumers. (Blazor
+  samples already never render the description — confirmed by R6.)
+
+**Findings explicitly deferred (with rationale), NOT auto-remediated:**
+
+- **R3 — `capabilities` array in the PS token-request body.** §AAuth-Capabilities
+  (~L1776) says the *header* "is not used on requests to PS endpoints — the PS
+  learns the agent's capabilities through the mission approval flow." The SDK
+  sends a `capabilities` **body** parameter (not the header) on the token
+  request. This is **pre-existing** behavior (commits `d8cf70a` / `1f235a4`,
+  "live interop fixes"), validated against `person.hello.coop`, and fills a real
+  gap: for the non-mission deferred-consent flow the PS otherwise has no way to
+  know the agent can handle a `202` interaction redirect. It is a draft-02
+  token-endpoint extension, outside the mission change sets. Decision: flag to
+  the user as a spec-alignment question; do not change unilaterally (removing it
+  risks breaking deferred consent + live interop).
+- **R4 — `AuditClient` accepts `200`/`204` as well as `201`.** §Audit Endpoint
+  specifies `201 Created`. Accepting other 2xx is lenient for a fire-and-forget
+  audit call; low risk, kept as-is.
+- **R2 / R4 — minor test-coverage gaps** (aauth-mission anti-double-coverage
+  edge case; Interaction/Payment relay deferred-poll path). Implementations are
+  correct; gaps noted for a future test pass, not blocking.
+- **R5 — unbounded growth of the in-memory store/log.** By design: the SDK
+  defaults are documented dev-grade; production PSes register durable stores via
+  the `TryAdd` seams.
+
+**Post-remediation gate:** build 0/0, unit 383, conformance 425, mission e2e 4/4
+— all green.
+

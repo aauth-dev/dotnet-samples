@@ -67,7 +67,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
 
     /// <summary>
     /// Optional capabilities to declare on outbound requests via the
-    /// <c>AAuth-Capabilities</c> header (§14.1). When set, the header is
+    /// <c>AAuth-Capabilities</c> header (§AAuth-Capabilities). When set, the header is
     /// emitted on every signed request.
     /// </summary>
     public IReadOnlyList<string>? Capabilities { get; init; }

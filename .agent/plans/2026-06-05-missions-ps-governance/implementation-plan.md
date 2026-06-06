@@ -770,11 +770,19 @@ dedicated subagent per set, then remediate findings.
 
 ### Definition of Done
 
-- [ ] Each review subagent produces severity-graded findings with spec citations.
-- [ ] All critical/high findings remediated or explicitly deferred (with rationale).
-- [ ] Full solution builds; `AAuth.Tests` + `AAuth.Conformance` green.
-- [ ] e2e mission flow green.
-- [ ] research.md updated with any spec/behavior corrections discovered.
+- [x] Each review subagent produces severity-graded findings with spec citations.
+      _(R1–R7 run 2026-06-06; R7 PASS, R1–R6 PASS-WITH-NITS — see research Phase 8.)_
+- [x] All critical/high findings remediated or explicitly deferred (with rationale).
+      _(Remediated: removed non-spec `Capabilities.Mission`, fixed `§14.1`
+      citations, added untrusted-Markdown remark to `Mission.Description`.
+      Deferred with rationale: R3 pre-existing `capabilities` body param —
+      flagged to user; R4 lenient audit status codes; R2/R4 test-coverage gaps;
+      R5 dev-grade in-memory store growth.)_
+- [x] Full solution builds; `AAuth.Tests` + `AAuth.Conformance` green.
+      _(Post-remediation: build 0/0, unit 383, conformance 425.)_
+- [x] e2e mission flow green. _(guided-tour + sample-app mission specs: 4 passed.)_
+- [x] research.md updated with any spec/behavior corrections discovered.
+      _(Phase 8 section added.)_
 
 ---
 

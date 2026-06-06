@@ -31,7 +31,11 @@ public sealed class Mission
     /// <summary>When the mission was approved (ensures the <see cref="S256"/> is globally unique).</summary>
     public required DateTimeOffset ApprovedAt { get; init; }
 
-    /// <summary>Markdown string describing the approved mission scope.</summary>
+    /// <summary>
+    /// Markdown string describing the approved mission scope. This is
+    /// server-supplied, untrusted content: consumers MUST sanitize it before
+    /// rendering it to a user (§Markdown).
+    /// </summary>
     public required string Description { get; init; }
 
     /// <summary>
