@@ -1,0 +1,586 @@
+@page "/mission-call-chain"
+@using System.Net
+@using System.Net.Http.Json
+@using System.Text.Json.Nodes
+@using AAuth
+@using AAuth.Agent
+@using AAuth.Agent.Governance
+@using AAuth.Crypto
+@using AAuth.Discovery
+@using AAuth.Headers
+@using AAuth.HttpSig
+@using AAuth.Tokens
+@inject IJSRuntime JS
+@rendermode InteractiveServer
+
+<PageTitle>Mission Call Chain — clarification + governed delegation</PageTitle>
+
+<h2>Mission Call Chain — one mission governs a clarification chat <em>and</em> a delegated chain</h2>
+
+<p>
+    This page joins the <strong>gates</strong> of the Mission demo with the <strong>hops</strong> of
+    the Call Chain demo, combining three AAuth capabilities under a
+    <strong>single human-approved mission</strong>:
+</p>
+<ol>
+    <li>
+        <strong>Clarification chat</strong> (§Clarification Chat) — accessing an out-of-mission
+        elevated scope, the Person Server first asks the agent a question; the SDK surfaces it
+        through <code>ChallengeHandlingOptions.OnClarificationRequired</code> (and the lower-level
+        <code>TokenExchangeRequest.OnClarificationRequired</code>), the agent answers, then the
+        user approves.
+    </li>
+    <li>
+        <strong>Mission-forwarded call chain</strong> (§Mission Context at Resources, §Call Chaining) —
+        the same mission is carried (<code>WithMission(...)</code>) to the Orchestrator, which forwards
+        the <code>AAuth-Mission</code> header to the downstream WhoAmI hop so the mission governs every hop.
+    </li>
+    <li>
+        <strong>Mission log</strong> (§Mission Log) — the PS-held, ordered trail of every governed
+        step the mission accrued is fetched and shown at the end.
+    </li>
+</ol>
+
+<div class="alert alert-secondary">
+    The elevated scope is <em>not</em> seeded in the mission's intent, so the PS runs a clarification
+    round before prompting. The orchestrate + whoami scopes <em>are</em> seeded in-scope, so the chain
+    hops resolve silently — keeping the chain focused on mission <strong>forwarding</strong>, not consent.
+    Each step is labelled <span class="badge bg-warning text-dark">prompt</span> (the user must decide)
+    or <span class="badge bg-success">silent</span> (resolved without a screen).
+</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <h5>Client Code — the clarification callback</h5>
+        <pre><code class="language-csharp">// One mission, threaded through every step by the bound session.
+var governance = new AAuthGovernanceClient(signed, metadata, personServer, options);
+var session = await governance.ProposeMissionAsync(
+    new MissionProposal("Keep the inbox under control for an hour."));
+var mission = session.Mission;
+
+// Out-of-mission elevated scope: the PS asks a question first. The SDK
+// surfaces it via OnClarificationRequired; the agent answers (or updates /
+// cancels), then the normal interaction approval runs (§Clarification Chat).
+var authToken = await exchange.ExchangeAsync(personServer, resourceToken,
+    new TokenExchangeRequest
+    {
+        OnInteractionRequired = SurfaceInteractionAsync,
+        OnClarificationRequired = (question, ct) =&gt;
+        {
+            // question.Clarification is UNTRUSTED Markdown — render it
+            // sanitized (Blazor HTML-encodes it) before showing the user.
+            SurfaceClarification(question.Clarification);
+            return Task.FromResult(ClarificationResponse.Respond(
+                "This mission needs the full account history to triage the inbox."));
+        },
+    });</code></pre>
+    </div>
+    <div class="col-md-6">
+        <h5>Client Code — the mission-forwarded chain</h5>
+        <pre><code class="language-csharp">// Carry the SAME mission to the Orchestrator. WithMission attaches the
+// signed AAuth-Mission header; the mission-aware Orchestrator copies it
+// into its resource token, so the agent->orchestrator exchange is governed
+// by the mission. The Orchestrator then forwards the mission to its own
+// downstream hop (§Mission Context at Resources, §Call Chaining).
+using var chain = AAuthClientBuilder.SelfIssuing(identity.Key)
+    .As(identity.Issuer, identity.AgentId)
+    .WithKid(identity.KeyId)
+    .WithPersonServer(personServer)
+    .WithMission(mission)
+    .WithChallengeHandling(o =&gt; o.OnInteractionRequired =
+        (i, ct) =&gt; SurfaceInteractionAsync(i, ct))
+    .WithInteractionHandling(o =&gt; o.OnInteractionRequired =
+        (url, code, ct) =&gt; SurfaceInteraction(url))
+    .Build();
+
+// "/mission" is the Orchestrator's mission-aware twin of "/": it chains to
+// WhoAmI's "/jwt/mission" so the forwarded mission re-binds at the next hop.
+var response = await chain.GetAsync($"{orchestrator}/mission");</code></pre>
+    </div>
+</div>
+
+<div class="alert alert-info">
+    Self-issued agent identity. Key ID: <code>@_identity.KeyId</code>,
+    agent: <code>@_identity.AgentId</code>.
+</div>
+
+@if (!_running && _steps.Count == 0)
+{
+    <button class="btn btn-primary" @onclick="RunFlow">Run the combined flow</button>
+    <p class="text-muted mt-1">
+        <small>
+            Two prompts in a new tab (mission creation, then the elevated scope after a
+            clarification round); the call chain then resolves silently.
+        </small>
+    </p>
+}
+
+@if (_running)
+{
+    <button class="btn btn-secondary" disabled>
+        <span class="spinner-border spinner-border-sm" role="status"></span>
+        Running&hellip;
+    </button>
+}
+
+@if (_clarification is not null)
+{
+    @* The clarification text is UNTRUSTED PS input. Razor HTML-encodes it here,
+       so no markup from the PS can reach the DOM (§Markdown — sanitize before
+       rendering). *@
+    <div class="mt-3 alert alert-primary" data-test="clarification">
+        <h5>Clarification chat (§Clarification Chat)</h5>
+        <p class="mb-1"><strong>PS asked:</strong> @_clarification</p>
+        <p class="mb-0"><strong>Agent answered:</strong> @_clarificationAnswer</p>
+    </div>
+}
+
+@if (_steps.Count > 0)
+{
+    <div class="mt-3">
+        <h5>Steps</h5>
+        @foreach (var s in _steps)
+        {
+            <div class="card mb-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span><strong>Step @s.Number</strong> — @s.Title</span>
+                    <span>
+                        @if (s.Prompted)
+                        {
+                            <span class="badge bg-warning text-dark me-1">prompt</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-success me-1">silent</span>
+                        }
+                        <span class="badge @OutcomeClass(s.Outcome)">@s.Outcome</span>
+                    </span>
+                </div>
+                <div class="card-body">
+                    <p class="mb-2">@s.Summary</p>
+                    @if (s.Payload is not null)
+                    {
+                        <div class="text-muted small mb-1">@s.PayloadLabel</div>
+                        <pre class="mb-0"><code class="language-@s.PayloadLang">@s.Payload</code></pre>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@if (_waitingForApproval)
+{
+    <div class="mt-3 alert alert-warning">
+        <h5>User Approval Required — @_currentGate</h5>
+        <p>
+            This step fell <strong>outside</strong> the mission, so the Person Server returned
+            <code>202 Accepted</code> and is waiting for the user to approve before the flow continues.
+        </p>
+        <p>
+            <strong>Interaction URL:</strong><br />
+            <a href="@_interactionUrl" target="_blank" rel="noopener">@_interactionUrl</a>
+        </p>
+        <p class="text-muted">
+            Open the link in a new tab and click <strong>Approve</strong>. The SDK is polling&hellip;
+            <span class="spinner-border spinner-border-sm" role="status"></span>
+        </p>
+    </div>
+}
+
+@if (_missionLog is not null)
+{
+    <div class="mt-3">
+        <h5>Mission log (§Mission Log) — held at the Person Server</h5>
+        <p class="text-muted small">
+            The PS keeps the authoritative, ordered trail of every governed step under the mission.
+        </p>
+        <table class="table table-sm" data-test="mission-log">
+            <thead>
+                <tr><th>#</th><th>Kind</th><th>Resource / Action</th><th>Scope</th><th>Granted</th><th>Detail</th></tr>
+            </thead>
+            <tbody>
+                @{ var i = 1; }
+                @foreach (var e in _missionLog)
+                {
+                    <tr>
+                        <td>@i</td>
+                        <td><code>@e.Kind</code></td>
+                        <td>@(e.Resource ?? e.Action ?? "—")</td>
+                        <td>@(e.Scope ?? "—")</td>
+                        <td>@(e.Granted?.ToString() ?? "—")</td>
+                        <td class="small">@(e.Detail ?? "—")</td>
+                    </tr>
+                    i++;
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@if (_error is not null)
+{
+    <div class="mt-3 alert alert-danger">@_error</div>
+}
+
+@code {
+    [Inject] private SelfIssuedIdentity _identity { get; set; } = default!;
+    [Inject] private IConfiguration Config { get; set; } = default!;
+
+    private readonly List<Step> _steps = new();
+    private bool _running;
+    private bool _waitingForApproval;
+    private string? _currentGate;
+    private string? _interactionUrl;
+    private string? _clarification;
+    private string? _clarificationAnswer;
+    private IReadOnlyList<LogEntry>? _missionLog;
+    private string? _error;
+
+    private string _agentToken = string.Empty;
+
+    private sealed record Step(
+        int Number,
+        string Title,
+        bool Prompted,
+        string Outcome,
+        string Summary,
+        string? Payload = null,
+        string PayloadLabel = "",
+        string PayloadLang = "json");
+
+    private sealed record LogEntry(
+        string Kind, string? Resource, string? Scope, string? Action, bool? Granted, string? Detail);
+
+    private static string OutcomeClass(string outcome) => outcome switch
+    {
+        "denied" => "bg-danger",
+        _ => "bg-success",
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await JS.InvokeVoidAsync("highlightCode");
+    }
+
+    private async Task RunFlow()
+    {
+        _running = true;
+        _steps.Clear();
+        _error = null;
+        _clarification = null;
+        _clarificationAnswer = null;
+        _missionLog = null;
+        ClearWaiting();
+
+        var personServer = Config["AAuth:PersonServer"]!.TrimEnd('/');
+        var resourceOrigin = Config["AAuth:Resource"]!.TrimEnd('/');
+        var orchestratorUrl = Config["AAuth:Orchestrator"]!.TrimEnd('/');
+        var elevatedUrl = $"{resourceOrigin}/jwt/mission/elevated";
+
+        try
+        {
+            // Script the PS: interactive browser decisions, a clarification round
+            // on out-of-scope tokens, and BOTH chain scopes seeded in-scope so the
+            // chain hops resolve silently. The in-scope set is captured per mission
+            // at approval, so it must be seeded BEFORE proposing.
+            await ConfigurePersonServerAsync(personServer, resourceOrigin, orchestratorUrl);
+
+            _agentToken = MintAgentToken(personServer);
+            var handler = new AAuthSigningHandler(_identity.Key, () => _agentToken)
+                { InnerHandler = new HttpClientHandler() };
+            using var signed = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+            var metadata = new MetadataClient(new HttpClient());
+            var poller = new DeferredPollerOptions { MaxTotalWait = TimeSpan.FromMinutes(2) };
+
+            GovernanceOptions GovernanceFor() => new()
+            {
+                OnInteractionRequired = SurfaceInteractionAsync,
+                PollerOptions = poller,
+            };
+
+            var governance = new AAuthGovernanceClient(signed, metadata, personServer, GovernanceFor());
+            var exchange = new TokenExchangeClient(signed, metadata);
+
+            // ---- Step 1: propose the mission (PROMPT) ----------------------
+            _currentGate = "Mission creation";
+            var session = await governance.ProposeMissionAsync(new MissionProposal(
+                "Help the user keep their inbox under control for the next hour.")
+            {
+                Tools = new[] { new MissionTool("summarize", "Summarize a thread") },
+            });
+            var mission = session.Mission;
+            ClearWaiting();
+            _steps.Add(new Step(1, "Mission creation", Prompted: true, Outcome: "approved",
+                Summary: $"The user approved the mission's intent and {mission.ApprovedTools.Count} tool(s). " +
+                         "The mission lists NO scopes — scopes are evaluated later against its intent.",
+                Payload: MissionPayload(mission),
+                PayloadLabel: "Mission approval (held at the PS)"));
+            await InvokeAsync(StateHasChanged);
+
+            // ---- Step 2: elevated scope via a clarification round (PROMPT) -
+            _currentGate = "Elevated scope (with clarification)";
+            var elevated = await AccessElevatedWithClarificationAsync(
+                signed, exchange, personServer, elevatedUrl, mission, poller);
+            ClearWaiting();
+            _steps.Add(new Step(2, "Elevated scope + clarification", Prompted: true, Outcome: "granted",
+                Summary: "The elevated scope falls outside the mission's intent, so the PS asked a " +
+                         "clarification question first; the agent answered, the user approved, and the " +
+                         $"auth_token was minted. scope={elevated?["scope"]?.ToJsonString()}",
+                Payload: Pretty(elevated),
+                PayloadLabel: "Elevated mission-aware resource response (auth_token claims)"));
+            await InvokeAsync(StateHasChanged);
+
+            // ---- Step 3: mission-forwarded call chain (SILENT) -------------
+            _currentGate = "Mission call chain";
+            var chainJson = await RunMissionChainAsync(personServer, orchestratorUrl, mission);
+            _steps.Add(new Step(3, "Mission call chain", Prompted: false, Outcome: "granted",
+                Summary: "The same mission was carried to the Orchestrator (WithMission), which forwarded " +
+                         "the AAuth-Mission header to its downstream WhoAmI hop. Both hops were in-scope, " +
+                         "so the chain resolved without a prompt — the mission governed every hop.",
+                Payload: chainJson,
+                PayloadLabel: "Chain result (Agent → Orchestrator → WhoAmI /jwt/mission)"));
+            await InvokeAsync(StateHasChanged);
+
+            // ---- Mission log: the PS-held trail the mission accrued --------
+            _missionLog = await FetchMissionLogAsync(personServer, mission.S256);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (AAuthInteractionDeniedException)
+        {
+            _error = "The user denied a consent request.";
+        }
+        catch (AAuthInteractionTimeoutException)
+        {
+            _error = "Timed out waiting for user approval (polling budget expired).";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            ClearWaiting();
+            _running = false;
+        }
+    }
+
+    private string MintAgentToken(string personServer) => new AgentTokenBuilder
+    {
+        Issuer = _identity.Issuer,
+        Subject = _identity.AgentId,
+        KeyId = _identity.KeyId,
+        Key = _identity.Key,
+        PersonServer = personServer,
+        Lifetime = TimeSpan.FromHours(1),
+    }.Build();
+
+    // Challenge -> token exchange (with a clarification round) -> retry. The
+    // clarification callback surfaces the (sanitized) question and answers it;
+    // the PS then prompts the user for the out-of-mission scope.
+    private async Task<JsonObject?> AccessElevatedWithClarificationAsync(
+        HttpClient signed,
+        TokenExchangeClient exchange,
+        string personServer,
+        string resourceUrl,
+        AAuth.Agent.Mission mission,
+        DeferredPollerOptions poller)
+    {
+        _agentToken = MintAgentToken(personServer);
+
+        var challengeReq = new HttpRequestMessage(HttpMethod.Get, resourceUrl);
+        challengeReq.Headers.TryAddWithoutValidation(
+            AAuthMissionHeader.Name, AAuthMissionHeader.FormatStructured(mission.Approver, mission.S256));
+        using var challenge = await signed.SendAsync(challengeReq);
+        if (challenge.StatusCode != HttpStatusCode.Unauthorized)
+        {
+            throw new InvalidOperationException(
+                $"Expected 401 challenge from the resource, got {(int)challenge.StatusCode}.");
+        }
+
+        var requirement = string.Join(", ", challenge.Headers.GetValues(AAuthRequirementHeader.Name));
+        var resourceToken = AAuthRequirementHeader.Parse(requirement).ResourceToken
+            ?? throw new InvalidOperationException("Challenge did not carry a resource token.");
+
+        var authToken = await exchange.ExchangeAsync(personServer, resourceToken, new TokenExchangeRequest
+        {
+            OnInteractionRequired = SurfaceInteractionAsync,
+            // The clarification callback: the PS asks a question during review.
+            OnClarificationRequired = (question, ct) =>
+            {
+                // question.Clarification is UNTRUSTED Markdown from the PS. We
+                // store it for HTML-encoded (sanitized) rendering only — never as
+                // raw markup (§Markdown — sanitize before rendering).
+                _clarificationAnswer =
+                    "This mission needs the full account history to triage the inbox.";
+                SurfaceClarification(question.Clarification);
+                return Task.FromResult(ClarificationResponse.Respond(_clarificationAnswer));
+            },
+            PollerOptions = poller,
+        });
+
+        var authHandler = new AAuthSigningHandler(_identity.Key, () => authToken)
+            { InnerHandler = new HttpClientHandler() };
+        using var authClient = new HttpClient(authHandler);
+        using var ok = await authClient.GetAsync(resourceUrl);
+        ok.EnsureSuccessStatusCode();
+        return await ok.Content.ReadFromJsonAsync<JsonObject>();
+    }
+
+    // Carry the mission to the Orchestrator's mission-aware "/mission" endpoint.
+    // WithMission attaches the signed AAuth-Mission header; the mission-aware
+    // Orchestrator copies it into its resource token (so the exchange is governed
+    // by the mission) and forwards it to the downstream WhoAmI hop.
+    private async Task<string> RunMissionChainAsync(
+        string personServer, string orchestratorUrl, AAuth.Agent.Mission mission)
+    {
+        using var chain = AAuthClientBuilder.SelfIssuing(_identity.Key)
+            .As(_identity.Issuer, _identity.AgentId)
+            .WithKid(_identity.KeyId)
+            .WithPersonServer(personServer)
+            .WithMission(mission)
+            .WithChallengeHandling(opts =>
+            {
+                opts.OnInteractionRequired = (interaction, ct) =>
+                    SurfaceInteractionAsync(interaction, ct);
+                opts.PollingTimeout = TimeSpan.FromMinutes(2);
+                opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
+            })
+            .WithInteractionHandling(opts =>
+            {
+                opts.OnInteractionRequired = (userUrl, code, ct) => SurfaceInteraction(userUrl, ct);
+                opts.PollingTimeout = TimeSpan.FromMinutes(2);
+                opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
+            })
+            .Build();
+
+        using var response = await chain.GetAsync($"{orchestratorUrl}/mission");
+        var raw = await response.Content.ReadAsStringAsync();
+        try
+        {
+            return System.Text.Json.JsonSerializer.Serialize(
+                System.Text.Json.JsonDocument.Parse(raw),
+                new System.Text.Json.JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+                });
+        }
+        catch { return raw; }
+    }
+
+    private async Task<IReadOnlyList<LogEntry>> FetchMissionLogAsync(string personServer, string s256)
+    {
+        using var http = new HttpClient();
+        try
+        {
+            var doc = await http.GetFromJsonAsync<JsonObject>(
+                $"{personServer}/admin/mission-log/{Uri.EscapeDataString(s256)}");
+            var entries = doc?["entries"] as JsonArray ?? new JsonArray();
+            var list = new List<LogEntry>();
+            foreach (var e in entries.OfType<JsonObject>())
+            {
+                list.Add(new LogEntry(
+                    (string?)e["kind"] ?? "?",
+                    (string?)e["resource"],
+                    (string?)e["scope"],
+                    (string?)e["action"],
+                    (bool?)e["granted"],
+                    (string?)e["detail"]));
+            }
+            return list;
+        }
+        catch
+        {
+            return Array.Empty<LogEntry>();
+        }
+    }
+
+    private async Task SurfaceClarificationAsync(string question)
+    {
+        _clarification = question;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    // Synchronous wrapper used inside the clarification callback (which is not
+    // awaited for the UI update — the SDK continues immediately).
+    private void SurfaceClarification(string question)
+        => _ = SurfaceClarificationAsync(question);
+
+    private async Task SurfaceInteractionAsync(Interaction interaction, CancellationToken ct)
+        => await SurfaceInteraction(interaction.BuildUserUrl(), ct);
+
+    private async Task SurfaceInteraction(string userUrl, CancellationToken ct)
+    {
+        _interactionUrl = userUrl;
+        _waitingForApproval = true;
+        // Surface the approval banner with a single render. We deliberately do
+        // NOT spin up a per-second "poll count" timer here: while the user is in
+        // the approval popup the main tab is backgrounded, and a background timer
+        // calling StateHasChanged every second floods Blazor Server's
+        // unacknowledged render-batch buffer (the throttled background tab stops
+        // ACKing), which pauses ALL rendering — including the result card the
+        // flow renders once approval completes. A static spinner conveys the same
+        // "polling" state without the render-batch flood.
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void ClearWaiting()
+    {
+        _waitingForApproval = false;
+        _interactionUrl = null;
+    }
+
+    private async Task ConfigurePersonServerAsync(
+        string personServer, string resourceOrigin, string orchestratorUrl)
+    {
+        using var http = new HttpClient();
+        try
+        {
+            await http.PostAsJsonAsync($"{personServer}/admin/reset", new { });
+            await http.PostAsJsonAsync($"{personServer}/admin/mission-script", new
+            {
+                reset = true,
+                interactive = true,
+                approveMission = true,
+                approveToken = true,
+                approvePermission = true,
+                requireClarification = true,
+                clarificationQuestion =
+                    "Why does this mission need elevated access to your full account history?",
+                inScope = new[]
+                {
+                    new { resource = orchestratorUrl, scope = "orchestrate" },
+                    new { resource = resourceOrigin, scope = "whoami" },
+                },
+            });
+        }
+        catch
+        {
+            // Admin endpoints only exist on MockPersonServer — swallow errors.
+        }
+    }
+
+    private static string MissionPayload(AAuth.Agent.Mission m)
+    {
+        var tools = new JsonArray();
+        foreach (var t in m.ApprovedTools)
+        {
+            tools.Add(new JsonObject { ["name"] = t.Name, ["description"] = t.Description });
+        }
+        return Pretty(new JsonObject
+        {
+            ["approver"] = m.Approver,
+            ["s256"] = m.S256,
+            ["approved_tools"] = tools,
+        });
+    }
+
+    private static string Pretty(JsonObject? json) => json is null
+        ? "(no body)"
+        : System.Text.Json.JsonSerializer.Serialize(json, new System.Text.Json.JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        });
+}

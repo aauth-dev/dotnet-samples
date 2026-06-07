@@ -122,6 +122,41 @@ request.Headers.TryAddWithoutValidation(
 var response = await signedClient.SendAsync(request);
 ```
 
+### Carrying your own mission with `WithMission`
+
+When the **originating** agent holds its own approved `Mission`, you don't have to
+set the header by hand on every request. `AAuthClientBuilder.WithMission(mission)`
+attaches the `AAuth-Mission` header (`{approver, s256}`) to every outbound request,
+and the signing pipeline covers it as the `aauth-mission` component automatically
+(§Mission Context at Resources, §HTTP Message Signatures). Compose it with
+`WithChallengeHandling()` / `WithInteractionHandling()` so the entire
+resource-access leg — mission header, the `401` challenge, the token exchange, and
+the retry — collapses to a single signed `SendAsync`:
+
+```csharp
+using var client = AAuthClientBuilder.SelfIssuing(identity.Key)
+    .As(identity.Issuer, identity.AgentId)
+    .WithKid(identity.KeyId)
+    .WithPersonServer(personServer)
+    .WithMission(mission)                 // emits AAuth-Mission on every request
+    .WithChallengeHandling(o => o.OnInteractionRequired = SurfaceInteractionAsync)
+    .WithInteractionHandling()
+    .Build();
+
+// The mission header is present and signed before the request leaves; if the
+// resource challenges, the mission travels through the exchange so the PS can
+// evaluate the requested scope against the mission's intent.
+var response = await client.GetAsync("https://resource.example/data");
+```
+
+`WithMission(...)` is for the agent that holds its **own** approved mission. A
+call-chaining intermediary that re-emits a mission extracted from an *upstream*
+auth token uses `WithCallChaining(...)` instead (see
+[Forwarding a mission in a call chain](#forwarding-a-mission-in-a-call-chain)
+below); the two are mutually exclusive on a given client, and the header is never
+emitted twice. The combined [Mission Call Chain sample](../../samples/SampleApp/Components/Pages/MissionCallChain.razor)
+uses `WithMission(...)` to carry one approved mission across a forwarded call chain.
+
 ## The binding chain
 
 The mission travels end to end as a `MissionClaim` — `{ approver, s256 }` —

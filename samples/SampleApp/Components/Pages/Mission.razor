@@ -50,22 +50,25 @@ var handler = new AAuthSigningHandler(
     identity.Key, () =&gt; agentToken)
     { InnerHandler = new HttpClientHandler() };
 var signed = new HttpClient(handler);
-var governance = new AAuthGovernanceClient(signed, metadata, personServer);
+// Bind the PS once; the bound client returns a MissionSession that
+// auto-threads the mission claim {approver, s256} into every later call.
+var governance = new AAuthGovernanceClient(signed, metadata, personServer, governanceOptions);
 
 // 1. Propose a mission (PROMPT — the human approves intent + tools).
 //    A proposal carries a Markdown description + an optional `tools`
 //    list ONLY. It declares NO scopes — scopes are never pre-listed
 //    on a mission (§Mission Creation).
-var mission = await governance.Mission.ProposeAsync(
+var sendEmailTool = new MissionTool("send_email", "Send email");
+var session = await governance.ProposeMissionAsync(
     new MissionProposal("Keep the inbox under control for an hour.")
     {
         Tools = new[]
         {
-            new MissionTool("send_email", "Send email"),
+            sendEmailTool,
             new MissionTool("summarize", "Summarize a thread"),
         },
-    },
-    governanceOptions);
+    });
+var mission = session.Mission; // session threads the claim + PS for you
 
 // 2. Access a mission-aware resource (SILENT — the PS judges the scope
 //    fits the mission intent). The client calls the resource directly;
@@ -106,14 +109,13 @@ var elevated = await ExchangeForScopeAsync(
     $"{resourceOrigin}/protected_endpoint/elevated", mission, governanceOptions);
 
 // 4. Permission for a pre-approved tool (SILENT — no PS call).
-var sendEmail = await governance.Permission.RequestAsync(
-    "send_email", mission);
+//    We still hold the sendEmailTool reference from the proposal above.
+var sendEmail = await session.RequestPermissionAsync(sendEmailTool.ToAction());
 
-// 5. Permission for a non-approved tool (PROMPT — the PS asks).
-var deleteInbox = await governance.Permission.RequestAsync(
-    new PermissionRequest("delete_inbox")
-        { Mission = new MissionClaim(mission.Approver, mission.S256) },
-    governanceOptions);</code></pre>
+// 5. Permission for a non-approved tool (PROMPT — the PS asks). The
+//    session injects the mission claim and the bound options.
+var deleteInbox = await session.RequestPermissionAsync(
+    new MissionAction("delete_inbox"));</code></pre>
     </div>
     <div class="col-md-6">
         <h5>Resource — protecting the action with a scope</h5>
@@ -186,13 +188,9 @@ app.MapGet("/protected_endpoint/elevated", (HttpContext ctx) =&gt;
 if (deleteInbox.IsGranted)
 {
     await DeleteInboxAsync(); // your own code / MCP tool call
-    await governance.Audit.RecordAsync(
-        new AuditRecord(
-            new MissionClaim(mission.Approver, mission.S256),
-            "delete_inbox")
-        {
-            Result = new JsonObject { ["deleted"] = true },
-        });
+    await session.RecordAuditAsync(
+        new MissionAction("delete_inbox"),
+        result: new JsonObject { ["deleted"] = true });
 }</code></pre>
     </div>
 </div>
@@ -371,8 +369,6 @@ if (deleteInbox.IsGranted)
                 { InnerHandler = new HttpClientHandler() };
             using var signed = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
             var metadata = new MetadataClient(new HttpClient());
-            var governance = new AAuthGovernanceClient(signed, metadata, personServer);
-            var exchange = new TokenExchangeClient(signed, metadata);
             var poller = new DeferredPollerOptions { MaxTotalWait = TimeSpan.FromMinutes(2) };
 
             GovernanceOptions GovernanceFor() => new()
@@ -381,17 +377,27 @@ if (deleteInbox.IsGranted)
                 PollerOptions = poller,
             };
 
+            // Bind the PS and the default deferred-handling options once. The
+            // bound client hands back a MissionSession that auto-threads the
+            // mission claim {approver, s256} into every later governed call.
+            var governance = new AAuthGovernanceClient(signed, metadata, personServer, GovernanceFor());
+            var exchange = new TokenExchangeClient(signed, metadata);
+
             // ---- Gate 1: propose the mission (PROMPT) ----------------------
             _currentGate = "Mission creation";
-            var mission = await governance.Mission.ProposeAsync(new MissionProposal(
+            var sendEmailTool = new MissionTool("send_email", "Send an email on the user's behalf");
+            var session = await governance.ProposeMissionAsync(new MissionProposal(
                 "Help the user keep their inbox under control for the next hour.")
             {
                 Tools = new[]
                 {
-                    new MissionTool("send_email", "Send an email on the user's behalf"),
+                    sendEmailTool,
                     new MissionTool("summarize", "Summarize a thread"),
                 },
-            }, GovernanceFor());
+            });
+            // The session wraps the approved mission and threads its claim + PS
+            // into every subsequent permission / audit / interaction call.
+            var mission = session.Mission;
             ClearWaiting();
             _steps.Add(new GateStep(1, "Mission creation", Prompted: true,
                 Outcome: "approved",
@@ -456,8 +462,10 @@ if (deleteInbox.IsGranted)
             await InvokeAsync(StateHasChanged);
 
             // ---- Gate 4: permission for a pre-approved tool (SILENT) --------
-            var sendEmail = await governance.Permission.RequestAsync(
-                "send_email", mission);
+            // We still hold the sendEmailTool reference from Gate 1, so we ask
+            // via tool.ToAction() rather than re-typing the action name. The
+            // session injects the mission claim automatically.
+            var sendEmail = await session.RequestPermissionAsync(sendEmailTool.ToAction());
             _steps.Add(new GateStep(4, "Permission send_email", Prompted: false,
                 Outcome: sendEmail.IsGranted ? "granted" : "denied",
                 Summary: "Pre-approved tool — resolved locally without a PS round-trip.",
@@ -471,10 +479,11 @@ if (deleteInbox.IsGranted)
             _currentGate = "Permission delete_inbox";
             try
             {
-                var deleteInbox = await governance.Permission.RequestAsync(
-                    new PermissionRequest("delete_inbox")
-                        { Mission = new MissionClaim(mission.Approver, mission.S256) },
-                    GovernanceFor());
+                // Not a pre-approved tool: the session threads the mission claim
+                // and the bound deferred-handling options, so the PS prompt is
+                // surfaced automatically.
+                var deleteInbox = await session.RequestPermissionAsync(
+                    new MissionAction("delete_inbox"));
                 ClearWaiting();
                 _steps.Add(new GateStep(5, "Permission delete_inbox", Prompted: true,
                     Outcome: deleteInbox.IsGranted ? "granted" : "denied",

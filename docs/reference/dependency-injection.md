@@ -386,20 +386,31 @@ var client = new AAuthClientBuilder(key)
 
 ### Agent side: the governance client
 
-The mission governance clients (mission, permission, audit, interaction) are built
-from `AAuthClientBuilder`, which wires the signed channel for you. There is no
-dedicated DI extension — register the facade as a singleton or build it where you
-need it.
+The mission governance client is built from `AAuthClientBuilder`, which wires the
+signed channel for you. The client is **bound to one Person Server**, so the builder
+must set both a signing mode and a Person Server before `BuildGovernance()`. Use the
+`AddAAuthGovernanceClient(...)` DI extension to register it as a singleton:
 
 ```csharp
-builder.Services.AddSingleton(sp =>
+builder.Services.AddAAuthGovernanceClient(sp =>
     new AAuthClientBuilder(agentKey)
         .UseJwt(agentToken)
-        .BuildGovernance()); // AAuthGovernanceClient
+        .WithPersonServer("https://ps.example")); // bound governance client
 ```
 
-`BuildGovernance()` requires an explicit signing mode and throws
-`InvalidOperationException` otherwise. See
+There is also a factory overload — `AddAAuthGovernanceClient(sp => /* AAuthGovernanceClient */)`
+— when you need full control over construction. To build one inline instead of via
+DI, call `BuildGovernance()` on a configured builder:
+
+```csharp
+var governance = new AAuthClientBuilder(agentKey)
+    .UseJwt(agentToken)
+    .WithPersonServer("https://ps.example")
+    .BuildGovernance(); // AAuthGovernanceClient
+```
+
+`BuildGovernance()` requires an explicit signing mode **and** a configured Person
+Server (`WithPersonServer`), and throws `InvalidOperationException` otherwise. See
 [Mission Governance Clients](../advanced/mission-governance-clients.md).
 
 ### Person Server side: the governance seams

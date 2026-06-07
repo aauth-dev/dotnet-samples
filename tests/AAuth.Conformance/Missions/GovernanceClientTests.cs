@@ -121,7 +121,7 @@ public class GovernanceClientTests
         var (signed, metadata) = Build(handler);
         var client = new PermissionClient(signed, metadata, Ps);
 
-        var result = await client.RequestAsync(new PermissionRequest("SendEmail")
+        var result = await client.RequestAsync(new PermissionRequest(new MissionAction("SendEmail"))
         {
             Description = "Send the itinerary",
             Mission = TestMission,
@@ -137,7 +137,7 @@ public class GovernanceClientTests
         var (signed, metadata) = Build(handler);
         var client = new PermissionClient(signed, metadata, Ps);
 
-        var result = await client.RequestAsync(new PermissionRequest("DeleteAll"));
+        var result = await client.RequestAsync(new PermissionRequest(new MissionAction("DeleteAll")));
 
         Assert.Equal(PermissionGrant.Denied, result.Grant);
         Assert.Equal("Out of scope.", result.Reason);
@@ -160,7 +160,7 @@ public class GovernanceClientTests
             ApprovedTools = new[] { new MissionTool("WebSearch") },
         };
 
-        var result = await client.RequestAsync("WebSearch", mission);
+        var result = await client.RequestAsync(new MissionAction("WebSearch"), mission);
 
         Assert.True(result.IsGranted);
         Assert.False(handler.PermissionCalled);
@@ -174,7 +174,7 @@ public class GovernanceClientTests
         var client = new PermissionClient(signed, metadata, Ps);
 
         var ex = await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() =>
-            client.RequestAsync(new PermissionRequest("SendEmail") { Mission = TestMission }));
+            client.RequestAsync(new PermissionRequest(new MissionAction("SendEmail")) { Mission = TestMission }));
 
         Assert.Equal("terminated", ex.MissionStatus);
     }
@@ -188,7 +188,7 @@ public class GovernanceClientTests
         var (signed, metadata) = Build(handler);
         var client = new AuditClient(signed, metadata, Ps);
 
-        await client.RecordAsync(new AuditRecord(TestMission, "WebSearch")
+        await client.RecordAsync(new AuditRecord(TestMission, new MissionAction("WebSearch"))
         {
             Description = "Searched for flights",
         });
@@ -204,7 +204,20 @@ public class GovernanceClientTests
         var client = new AuditClient(signed, metadata, Ps);
 
         await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() =>
-            client.RecordAsync(new AuditRecord(TestMission, "WebSearch")));
+            client.RecordAsync(new AuditRecord(TestMission, new MissionAction("WebSearch"))));
+    }
+
+    [Fact(DisplayName = "§Audit Response — a non-201 acknowledgment is rejected (F3)")]
+    public async Task AuditClient_Non201_Throws()
+    {
+        // The spec requires the PS to acknowledge with 201 Created; a 200 OK
+        // (or any other 2xx) must not be treated as success.
+        var handler = new GovernanceHandler { AuditStatus = HttpStatusCode.OK };
+        var (signed, metadata) = Build(handler);
+        var client = new AuditClient(signed, metadata, Ps);
+
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.RecordAsync(new AuditRecord(TestMission, new MissionAction("WebSearch"))));
     }
 
     // ---- §Interaction Endpoint ----
@@ -241,6 +254,7 @@ public class GovernanceClientTests
         public bool MissionTerminated { get; init; }
         public bool TamperMissionHeaderS256 { get; init; }
         public bool MissionNeedsClarification { get; init; }
+        public HttpStatusCode AuditStatus { get; init; } = HttpStatusCode.Created;
 
         public bool PermissionCalled { get; private set; }
         public bool AuditCalled { get; private set; }
@@ -348,7 +362,7 @@ public class GovernanceClientTests
 
                 case "/audit":
                     AuditCalled = true;
-                    return new HttpResponseMessage(HttpStatusCode.Created);
+                    return new HttpResponseMessage(AuditStatus);
 
                 case "/interaction":
                 {

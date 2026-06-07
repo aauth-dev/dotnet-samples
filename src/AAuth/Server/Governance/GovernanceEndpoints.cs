@@ -31,7 +31,7 @@ public static class GovernanceEndpoints
         ArgumentNullException.ThrowIfNull(body);
         var action = (string?)body["action"]
             ?? throw new FormatException("Permission request is missing the required 'action'.");
-        return new PermissionRequest(action)
+        return new PermissionRequest(new MissionAction(action))
         {
             Description = (string?)body["description"],
             Parameters = body["parameters"] as JsonObject,
@@ -50,7 +50,7 @@ public static class GovernanceEndpoints
             ?? throw new FormatException("Audit request is missing the required 'mission'.");
         var action = (string?)body["action"]
             ?? throw new FormatException("Audit request is missing the required 'action'.");
-        return new AuditRecord(mission, action)
+        return new AuditRecord(mission, new MissionAction(action))
         {
             Description = (string?)body["description"],
             Parameters = body["parameters"] as JsonObject,

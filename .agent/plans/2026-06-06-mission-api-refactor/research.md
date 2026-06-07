@@ -106,6 +106,42 @@ It contains **no** implementation steps or task lists — those live in
 - **PT-A6 — Callbacks lack mission context.** `GovernanceOptions.OnInteractionRequired`
   / `OnClarificationRequired` receive only the requirement, not the mission; the
   caller must close over it.
+- **PT-A7 — Resource access still hand-rolls the mission header + challenge cycle.**
+  Even after the governance gates collapsed to one-liners (`ProposeMissionAsync`,
+  `RequestPermissionAsync`, `RecordAuditAsync`), the *resource-access* leg an agent
+  runs **between** gates is still fully manual: it sets the `AAuth-Mission` header on
+  every outbound request by hand (`AAuthMissionHeader.FormatStructured(...)`), then
+  drives the 401→`AAuth-Requirement` parse→token-exchange→retry-with-auth-token
+  cycle itself (~30 lines in [samples/MissionAgent/Program.cs](../../../samples/MissionAgent/Program.cs)
+  `AccessMissionResourceAsync`). The challenge cycle already has a convenience layer
+  (`WithChallengeHandling()` + `WithInteractionHandling()` →
+  [ChallengeHandler](../../../src/AAuth/Agent/ChallengeHandler.cs)), but **nothing**
+  emits the agent's *own* mission header from a directly-held `Mission`. The existing
+  [MissionForwardingHandler](../../../src/AAuth/Agent/MissionForwardingHandler.cs)
+  only re-emits a mission **extracted from an upstream auth token** (call-chaining,
+  §Call Chaining) — it cannot help an agent that proposed the mission itself.
+
+> **Update (2026-06-06) — PT-A7 seam confirmed spec-backed.** The agent operating in
+> a mission context is **required** to attach the mission to outbound resource
+> requests: §Mission Context at Resources — "The agent includes the `AAuth-Mission`
+> header when sending requests to resources, unless the mission is already conveyed
+> in an auth token" — and the HTTP Message Signatures section — "When the agent is
+> operating in a mission context, it includes the `AAuth-Mission` header and adds
+> `aauth-mission` to the signed components." The SDK already auto-covers the
+> `aauth-mission` component whenever the header is present
+> ([AAuthSigningHandler](../../../src/AAuth/HttpSig/AAuthSigningHandler.cs) lines
+> ~221–226, 294–331), so a builder seam that emits the header from a held `Mission`
+> is sufficient and spec-correct: the signing handler beneath it covers the
+> component automatically. **Decision (2026-06-06):** add an
+> `AAuthClientBuilder.WithMission(Mission)` seam (a small `DelegatingHandler` that
+> sets `AAuth-Mission` from `{approver, s256}`, mirroring `MissionForwardingHandler`
+> but sourcing the mission directly) so a mission-holding agent composes
+> `WithMission(...) + WithChallengeHandling() + WithInteractionHandling()` and the
+> whole resource-access leg collapses to a single signed `SendAsync`. The "unless
+> already conveyed in an auth token" carve-out stays the agent's call: call-chaining
+> intermediaries keep using `MissionForwardingHandler`; `WithMission(...)` is for the
+> originating agent that holds its own approved `Mission`. Tracked as **Phase 6** in
+> [implementation-plan.md](implementation-plan.md).
 
 ### A.3 Resource/PS-side surface (verified)
 
@@ -196,6 +232,17 @@ template for an optional-callback DI registration (PT-A4).
 > `MissionSession` surface **within Phase 2** (the structural sample work remains
 > Phase 4/5). Names already match conventions (`With*`/`Create`/`Add*`/`Map*`); no
 > renames of the Phase 1 public entry points are required.
+>
+> **Closure (2026-06-06) — all four divergences resolved.** D1, D3, and D4 landed;
+> the unbound `AAuthGovernanceClient` ctor was removed so `BuildGovernance(...)`,
+> `Create(..., personServer)`, and `AddAAuthGovernanceClient(...)` are the only
+> construction paths and they share parameter names, the bound `GovernanceOptions`
+> default shape, and the `Action<TOptions>` configure pattern across both the agent
+> (`AddAAuthGovernanceClient`) and resource (`AddAAuthGovernance` + `MapAAuthGovernance`)
+> sides. No public entry-point renames were needed — the Phase 1 names already
+> matched the `With*`/`Create`/`Add*`/`Map*` vocabulary used by `AAuthClientBuilder`,
+> `AddAAuthAgent`/`AddAAuthDiscovery`, and `MapAAuthResource`. The triad and naming
+> DoD items are therefore satisfied by verification rather than further change.
 
 ---
 
@@ -268,6 +315,37 @@ A new SampleApp page (e.g. `MissionCallChain.razor`) demonstrating:
 
 > Open: whether this is one combined page or two (clarification-only +
 > mission-call-chain). See [Open Design Choices](#open-design-choices).
+
+> **Update (2026-06-06) — Phase 5 landed (single combined page).** Shipped as one
+> `MissionCallChain.razor` page (DC4) with `mission-call-chain.spec.ts`. The flow is:
+> **(1)** propose mission (PROMPT) → **(2)** access an out-of-mission elevated scope
+> that triggers a **clarification round** (the SDK surfaces the untrusted question
+> via `OnClarificationRequired`; Blazor `@`-encodes it before display; the agent
+> answers and the user approves the PROMPT) → **(3)** carry the same mission with
+> `WithMission(...)` to the Orchestrator `/mission` endpoint, which forwards
+> `AAuth-Mission` to the WhoAmI `/jwt/mission` hop (SILENT, both hops seeded
+> in-scope) → fetch + render the PS-held mission log. Three things surfaced while
+> getting the spec green (all logged in
+> [issues-and-deviations.md](issues-and-deviations.md)):
+>
+> - **SDK clarification→interaction escalation bugs (DEV-6, fixed in `DeferredExchange.cs`).**
+>   The poller did not stop on a post-clarification interaction `202`
+>   (`stopOnInteraction` not threaded through `PollAsync`/`ComposePollerOptions`),
+>   and `ResolveLocation` dropped the interaction URL when a polled `202` omitted the
+>   `Location` header. Covered by `ChallengeClarificationSeamTests` (4/4).
+> - **Blazor render-batch stall (DEV-7, sample-only).** A per-second poll-counter
+>   `Task.Run`/`PeriodicTimer` calling `StateHasChanged` while the approval popup
+>   backgrounded the main tab filled the circuit's unacked-render-batch buffer and
+>   froze rendering ~120 s. Removed the cosmetic timer; a single `StateHasChanged`
+>   plus a static spinner conveys the polling state.
+> - **Racy exact-transient-count assertion (DEV-8, e2e-only).** Step 3 is silent and
+>   final, so the step-2/step-3 `StateHasChanged` calls coalesce into one render
+>   batch (DOM 1→3, never 2). The helper now waits for the just-approved step's card
+>   (`expect(stepCard(page, expectedCards)).toBeVisible()`, i.e. ≥ N) instead of an
+>   exact `toHaveCount(N)`; the strict final `toHaveCount(3)` is unchanged.
+>
+> Result: `sample-app` suite green — 15 passed + 1 pre-existing skip across two
+> consecutive clean CI runs; `mission.spec.ts` and `call-chain.spec.ts` unaffected.
 
 ---
 
@@ -374,3 +452,34 @@ edit time.
   polling display (177–190); mission lanes (~274).
 - **WhoAmI/Program.cs**: `ChallengeForMission` (132–140); mission endpoints with
   `UseWhen` (195–213); scope descriptions (48–61).
+
+---
+
+> **Update (2026-06-06) — Phase 10 independent spec-compliance review.** An
+> independent reviewer walked the whole mission/governance surface against
+> `draft-hardt-oauth-aauth-protocol.md` (no assumption that earlier phases were
+> correct). Verdict: spec-compliant across all six areas — `AAuth-Mission` header
+> structure + signed-component coverage (§Authorization Endpoint Request L632), the
+> mission claim shape and verbatim-bytes SHA-256 (§Mission Approval), the four
+> endpoint request/response shapes incl. the audit `201`-only rule (§Audit
+> Endpoint), the deferred-consent `202`/poll flow incl. the DEV-6 fixes (§Deferred
+> Responses), the clarification round-trip + 5-round limit (§Clarification), the
+> `mission_terminated` `403` surfacing (§Mission Status Errors), and the
+> originator-vs-intermediary header rules (§Call Chaining). DEV-5 (resource seam via
+> `ChallengeOptions.MissionAware`, no resource governance builder) reconfirmed
+> intentional.
+>
+> One genuine non-compliance was found and fixed — **NC-1 / DEV-9**: the governance
+> mapper's `interaction`/`payment` branch returned `200 {status:"ok"}`
+> unconditionally and never read `InteractionRelayResult.Pending`, so a relay that
+> signalled `Pending = true` could not drive the spec-mandated `202` + poll loop
+> (§Interaction Response L1199: *"the PS … returns a deferred response. The agent
+> polls until the user completes the interaction."*). The handler now parks the
+> interaction on the deferred-consent store (new `DeferredConsentKind.Interaction`)
+> and answers `202` + poll `Location` when a store is registered, degrading to a
+> synchronous `200` otherwise — mirroring the permission `Prompt` path. The agent
+> side already polled `202`s correctly via `DeferredExchange`, so no client change
+> was needed. Covered by 4 new `GovernanceDeferredConsentMapperTests` (12/12).
+> A secondary observation — completion review resolves synchronously rather than
+> deferring (§Interaction Response L1212) — is logged as **DEV-10** (intentional:
+> the completion relay contract is synchronous, no dropped `Pending` signal).

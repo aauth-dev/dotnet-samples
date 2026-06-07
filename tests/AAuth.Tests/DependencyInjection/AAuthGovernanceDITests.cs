@@ -1,5 +1,6 @@
 using System.Linq;
 using System.Threading.Tasks;
+using AAuth.Agent;
 using AAuth.Agent.Governance;
 using AAuth.Server.Governance;
 using Microsoft.Extensions.DependencyInjection;
@@ -44,7 +45,7 @@ public class AAuthGovernanceDITests
     {
         var decider = new DefaultPermissionDecider();
         var context = new PermissionDecisionContext(
-            new PermissionRequest("SendEmail"), Mission: null, Log: System.Array.Empty<MissionLogEntry>());
+            new PermissionRequest(new MissionAction("SendEmail")), Mission: null, Log: System.Array.Empty<MissionLogEntry>());
 
         var decision = await decider.DecideAsync(context);
 

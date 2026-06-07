@@ -69,6 +69,41 @@ public class TokenRequestParamsTests
         Assert.False(captured.ContainsKey("device"));
     }
 
+    [Fact(DisplayName = "§Agent Token Request — device is accepted at the 64-char boundary")]
+    public void Device_AtMaxLength_Accepted()
+    {
+        var device = new string('a', 64);
+        var request = new TokenExchangeRequest { Device = device };
+        Assert.Equal(device, request.Device);
+    }
+
+    [Fact(DisplayName = "§Agent Token Request — device longer than 64 chars is rejected")]
+    public void Device_TooLong_Throws()
+    {
+        var ex = Assert.Throws<ArgumentException>(() =>
+            new TokenExchangeRequest { Device = new string('a', 65) });
+        Assert.Equal("Device", ex.ParamName);
+    }
+
+    [Theory(DisplayName = "§Agent Token Request — device with control characters is rejected")]
+    [InlineData("Chrome on\tmacOS")]
+    [InlineData("line\nbreak")]
+    [InlineData("null\0byte")]
+    [InlineData("bell\u0007")]
+    public void Device_ControlCharacters_Throws(string device)
+    {
+        var ex = Assert.Throws<ArgumentException>(() =>
+            new TokenExchangeRequest { Device = device });
+        Assert.Equal("Device", ex.ParamName);
+    }
+
+    [Fact(DisplayName = "§Agent Token Request — printable device string is accepted")]
+    public void Device_Printable_Accepted()
+    {
+        var request = new TokenExchangeRequest { Device = "Chrome on macOS (M3)" };
+        Assert.Equal("Chrome on macOS (M3)", request.Device);
+    }
+
     private sealed class CaptureHandler : HttpMessageHandler
     {
         private readonly Action<JsonObject> _onBody;

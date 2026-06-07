@@ -84,7 +84,42 @@ public sealed class TokenExchangeRequest
     /// (e.g. <c>"Chrome on macOS"</c>). MUST be printable UTF-8, ≤ 64 characters,
     /// no control characters or PII (§Agent Token Request).
     /// </summary>
-    public string? Device { get; init; }
+    public string? Device
+    {
+        get => _device;
+        init => _device = ValidateDevice(value);
+    }
+
+    private readonly string? _device;
+
+    // §Agent Token Request: `device` MUST be printable (no control characters) and
+    // ≤ 64 characters. Reject anything outside printable ASCII (32–126) so display
+    // surfaces never receive control characters; allow null/empty (the field is optional).
+    private static string? ValidateDevice(string? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        if (value.Length > 64)
+        {
+            throw new ArgumentException(
+                $"device must be at most 64 characters (was {value.Length}).", nameof(Device));
+        }
+
+        foreach (var ch in value)
+        {
+            if (ch < ' ' || ch > '~')
+            {
+                throw new ArgumentException(
+                    "device must contain only printable ASCII characters (no control characters).",
+                    nameof(Device));
+            }
+        }
+
+        return value;
+    }
 
     /// <summary>
     /// Invoked when the PS returns <c>202</c> with

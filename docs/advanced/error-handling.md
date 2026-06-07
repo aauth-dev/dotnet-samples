@@ -248,7 +248,7 @@ public sealed class AAuthMissionTerminatedException : Exception
 ```csharp
 try
 {
-    await governance.Audit.RecordAsync(ps, record);
+    await session.RecordAuditAsync("email.send");
 }
 catch (AAuthMissionTerminatedException ex)
 {

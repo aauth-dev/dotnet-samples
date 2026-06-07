@@ -52,16 +52,18 @@ The agent states its intent and the tools it wants pre-approved. The PS may run 
 [clarification chat](../advanced/clarification-chat.md) before approving.
 
 ```csharp
-var governance = new AAuthClientBuilder(key).UseJwt(agentToken).BuildGovernance();
-const string ps = "https://ps.example";
+var governance = new AAuthClientBuilder(key)
+    .UseJwt(agentToken)
+    .WithPersonServer("https://ps.example")
+    .BuildGovernance();
 
-Mission mission = await governance.Mission.ProposeAsync(ps,
+MissionSession session = await governance.ProposeMissionAsync(
     new MissionProposal("Reconcile this month's expense receipts and email a summary.")
     {
         Tools = new[] { new MissionTool("email.send", "Email the reconciliation summary.") },
     });
 
-var missionClaim = new MissionClaim(mission.Approver, mission.S256);
+Mission mission = session.Mission;
 ```
 
 ## 2–3. Access a resource (scope evaluated in context)
@@ -73,19 +75,18 @@ mission's intent, the PS grants the auth token silently and remembers the decisi
 for the rest of the mission.
 
 ```csharp
+// WithMission emits the AAuth-Mission header on every request and composes with
+// the challenge handler, so the whole 401 → exchange → retry leg is automatic.
 using var client = new AAuthClientBuilder(key)
     .UseJwt(agentToken)
-    .WithChallengeHandling(ps)
+    .WithPersonServer("https://ps.example")
+    .WithMission(mission)
+    .WithChallengeHandling()
     .Build();
-
-var request = new HttpRequestMessage(HttpMethod.Get, "https://expenses.example/receipts");
-request.Headers.TryAddWithoutValidation(
-    AAuthMissionHeader.Name,
-    AAuthMissionHeader.FormatStructured(mission.Approver, mission.S256));
 
 // Challenge → exchange → retry happens transparently; the PS judged the scope
 // against the mission intent during the exchange.
-var response = await client.SendAsync(request);
+var response = await client.GetAsync("https://expenses.example/receipts");
 ```
 
 A later request for a scope the PS has not seen and that does not fit the intent
@@ -100,10 +101,11 @@ other action goes to the PS, which prompts the user when it is out of mission.
 
 ```csharp
 // Pre-approved tool → granted silently.
-var send = await governance.Permission.RequestAsync(ps, "email.send", mission);
+var send = await session.RequestPermissionAsync("email.send");
 
 // Out-of-mission tool → the PS prompts the user (gate 3).
-var delete = await governance.Permission.RequestAsync(ps, "files.delete", mission,
+var delete = await session.RequestPermissionAsync(
+    "files.delete",
     description: "Remove the duplicate receipt the user flagged.");
 
 if (!delete.IsGranted)
@@ -118,12 +120,10 @@ After acting, the agent reports it. Auditing always carries the mission and is
 fire-and-forget.
 
 ```csharp
-await governance.Audit.RecordAsync(ps,
-    new AuditRecord(missionClaim, "email.send")
-    {
-        Description = "Emailed the reconciliation summary to the user.",
-        Result = new JsonObject { ["recipients"] = 1 },
-    });
+await session.RecordAuditAsync(
+    "email.send",
+    description: "Emailed the reconciliation summary to the user.",
+    result: new JsonObject { ["recipients"] = 1 });
 ```
 
 ## 6. Close the mission out
@@ -132,10 +132,8 @@ When the work is done the agent proposes completion. The user accepts the summar
 and the PS terminates the mission.
 
 ```csharp
-bool terminated = await governance.Interaction.ProposeCompletionAsync(
-    ps,
-    summary: "Reconciled 24 receipts (2 duplicates removed) and emailed the summary.",
-    mission: missionClaim);
+bool terminated = await session.ProposeCompletionAsync(
+    "Reconciled 24 receipts (2 duplicates removed) and emailed the summary.");
 ```
 
 After termination, any further governed request returns `403 mission_terminated`,

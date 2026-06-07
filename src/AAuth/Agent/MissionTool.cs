@@ -7,4 +7,8 @@ namespace AAuth.Agent;
 /// </summary>
 /// <param name="Name">The tool name.</param>
 /// <param name="Description">A human-readable description of the tool.</param>
-public sealed record MissionTool(string Name, string? Description = null);
+public sealed record MissionTool(string Name, string? Description = null)
+{
+    /// <summary>Invoke this catalog tool as a <see cref="MissionAction"/> by its name.</summary>
+    public MissionAction ToAction() => new(Name);
+}

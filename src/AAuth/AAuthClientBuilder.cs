@@ -81,6 +81,9 @@ public sealed class AAuthClientBuilder
     // Call-chaining state
     private Func<string?>? _upstreamTokenProvider;
 
+    // Mission state (originating agent's own approved mission)
+    private Agent.Mission? _mission;
+
     // Token refresh state
     private ITokenRefresher? _tokenRefresher;
     private TimeSpan? _refreshThreshold;
@@ -313,6 +316,29 @@ public sealed class AAuthClientBuilder
     }
 
     /// <summary>
+    /// Operate the client in the context of the agent's own approved
+    /// <see cref="Agent.Mission"/>. Every outbound request carries the
+    /// <c>AAuth-Mission</c> header (<c>{approver, s256}</c>), which the signing
+    /// pipeline covers as the <c>aauth-mission</c> component.
+    /// </summary>
+    /// <remarks>
+    /// Per §Mission Context at Resources, an agent operating in a mission context
+    /// includes the <c>AAuth-Mission</c> header on requests to resources. Combine
+    /// with <see cref="WithChallengeHandling()"/> / <see cref="WithInteractionHandling()"/>
+    /// so the whole resource-access leg (mission header + 401 challenge + token
+    /// exchange + retry) is handled automatically. This is for the <em>originating</em>
+    /// agent that holds its own approved mission; call-chaining intermediaries that
+    /// re-emit a mission from an upstream token use <see cref="WithCallChaining(string)"/>.
+    /// </remarks>
+    /// <param name="mission">The agent's own approved mission.</param>
+    public AAuthClientBuilder WithMission(Agent.Mission mission)
+    {
+        ArgumentNullException.ThrowIfNull(mission);
+        _mission = mission;
+        return this;
+    }
+
+    /// <summary>
     /// Configure a self-issued agent token identity. The builder's key is used
     /// for both HTTP signing and token signing. A <see cref="SelfIssuedTokenRefresher"/>
     /// is created internally — no separate <see cref="WithTokenRefresh"/> call is needed.
@@ -474,7 +500,7 @@ public sealed class AAuthClientBuilder
             // When WithTokenRefresh is configured but no explicit provider,
             // create a JWT signing pipeline with lazy token acquisition.
             if (_provider is null && _tokenRefresher is not null)
-                return BuildRefreshOnlyHandler();
+                return WithMissionHeader(BuildRefreshOnlyHandler());
 
             // Simple signing-only pipeline (possibly with interaction handling).
             var handler = new AAuthSigningHandler(_key, _provider!)
@@ -485,7 +511,7 @@ public sealed class AAuthClientBuilder
             };
 
             if (!_interactionHandling)
-                return handler;
+                return WithMissionHeader(handler);
 
             // Wrap with interaction handler
             var interactionOpts = new InteractionHandlingOptions();
@@ -501,7 +527,7 @@ public sealed class AAuthClientBuilder
             {
                 InnerHandler = handler,
             };
-            return interactionHandler;
+            return WithMissionHeader(interactionHandler);
         }
 
         // --- Challenge-handling pipeline ---
@@ -558,6 +584,8 @@ public sealed class AAuthClientBuilder
                 : null,
             Prompt = challengeOptions.Prompt,
             AdditionalSignatureComponents = challengeOptions.AdditionalSignatureComponents,
+            OnClarificationRequired = challengeOptions.OnClarificationRequired,
+            MaxClarificationRounds = challengeOptions.MaxClarificationRounds,
         };
 
         // If token refresh is configured, insert it above the challenge handler.
@@ -603,7 +631,20 @@ public sealed class AAuthClientBuilder
             topHandler = missionHandler;
         }
 
-        return topHandler;
+        return WithMissionHeader(topHandler);
+    }
+
+    // Wrap a pipeline with the originating-agent mission header handler when a
+    // mission was configured via WithMission(...). Sits at the very top so the
+    // AAuth-Mission header is present before the request is signed; the signing
+    // handler beneath then covers it as the `aauth-mission` component (§Mission
+    // Context at Resources). Skipped under call-chaining, where
+    // MissionForwardingHandler already emits the header from the upstream token.
+    private HttpMessageHandler WithMissionHeader(HttpMessageHandler inner)
+    {
+        if (_mission is null || _upstreamTokenProvider is not null)
+            return inner;
+        return new MissionHeaderHandler(_mission) { InnerHandler = inner };
     }
 
     private HttpMessageHandler BuildRefreshOnlyHandler()

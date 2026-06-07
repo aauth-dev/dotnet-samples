@@ -20,32 +20,74 @@ calls the PS answers.
 
 ## Registering the seams
 
-`AddAAuthGovernance` registers the in-memory storage defaults. It uses `TryAdd`,
-so a PS can register durable implementations first and keep the rest.
+`AddAAuthGovernance` registers the storage defaults **and** conservative no-op
+policy/user-channel defaults. Every seam is registered with `TryAdd`, so a PS can
+register its own implementations (before or after the call) and keep the rest.
 
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
 
-builder.Services.AddAAuthGovernance(); // InMemoryMissionStore + InMemoryMissionLog
+builder.Services.AddAAuthGovernance(); // stores + no-op approver/decider/sink/relay
 
-// The policy and user-channel seams are supplied by the PS:
+// Override the policy and user-channel seams with the PS's own:
+builder.Services.AddSingleton<IMissionApprover, MyMissionApprover>();
 builder.Services.AddSingleton<IPermissionDecider, MyPermissionDecider>();
 builder.Services.AddSingleton<IAuditSink, MyAuditSink>();
 builder.Services.AddSingleton<IInteractionRelay, MyInteractionRelay>();
 ```
 
-| Seam | Default | Who owns it |
-|------|---------|-------------|
+| Seam | Default (`AddAAuthGovernance`) | Who owns it |
+|------|--------------------------------|-------------|
 | `IMissionStore` | `InMemoryMissionStore` | SDK default; swap for durable storage |
 | `IMissionLog` | `InMemoryMissionLog` | SDK default; swap for durable storage |
-| `IPermissionDecider` | none | PS supplies policy |
-| `IAuditSink` | none | PS supplies storage/alerting |
-| `IInteractionRelay` | none | PS supplies the user channel |
+| `IMissionApprover` | `DefaultMissionApprover` | SDK default; PS supplies approval policy |
+| `IPermissionDecider` | `DefaultPermissionDecider` (no-op) | PS supplies policy |
+| `IAuditSink` | `DefaultAuditSink` (logs to the mission log) | PS supplies storage/alerting |
+| `IInteractionRelay` | `DefaultInteractionRelay` (no user channel) | PS supplies the user channel |
 
-## Parsing requests
+By default a `Prompt` outcome is resolved synchronously (a permission denial / a
+mission decline), since the mapper has no user channel. To opt into the deferred
+`202`-poll consent flow (§Deferred Consent), also call `AddAAuthDeferredConsent()`,
+which registers an in-memory `IDeferredConsentStore`; the mapper then parks the
+request, answers `202 Accepted` with a poll `Location`, and resolves it once the
+PS's browser consent page records the user's decision.
 
-`GovernanceEndpoints` maps request bodies to the shared DTOs and emits the
-canonical `mission_terminated` response, so endpoints avoid hand-rolled parsing.
+```csharp
+builder.Services.AddAAuthGovernance();
+builder.Services.AddAAuthDeferredConsent(); // Prompt → 202 + poll route
+```
+
+## Mapping the endpoints: `MapAAuthGovernance()`
+
+`MapAAuthGovernance()` maps the mission, permission, audit, and interaction
+endpoints (plus the deferred-consent poll route) onto the registered seams in one
+call, mirroring `MapAAuthResource`. It parses each request with
+`GovernanceEndpoints`, enforces the `mission_terminated` rule, and delegates the
+decision to the seams:
+
+```csharp
+var app = builder.Build();
+
+app.MapAAuthGovernance(); // /mission, /permission, /audit, /interaction + poll route
+
+// Optional: override the default paths.
+app.MapAAuthGovernance(o =>
+{
+    o.MissionPath = "/aauth/mission";
+    o.PermissionPath = "/aauth/permission";
+});
+```
+
+A mission-creation request requires a verified **agent token**; the mapper hands
+the proposal to `IMissionApprover`, persists the resulting `StoredMission`, and
+emits the `AAuth-Mission` response header. Reach for the manual mapping below only
+when an endpoint needs behavior the seams do not express.
+
+## Parsing requests by hand
+
+When a PS maps its own endpoints, `GovernanceEndpoints` maps request bodies to the
+shared DTOs and emits the canonical `mission_terminated` response, so endpoints
+avoid hand-rolled parsing.
 
 ```csharp
 using AAuth.Server.Governance;

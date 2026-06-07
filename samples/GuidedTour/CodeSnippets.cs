@@ -329,14 +329,16 @@ internal static class CodeSnippets
 
     public const string MissionPreApproved = """
         // Pre-approved tools never hit the network — the SDK short-circuits.
-        var result = await session.RequestPermissionAsync("send_email");
+        // We kept the MissionTool reference from the proposal, so we ask via
+        // tool.ToAction() rather than re-typing the action name.
+        var result = await session.RequestPermissionAsync(sendEmailTool.ToAction());
         // result.IsGranted == true   (no PS call: send_email ∈ mission.ApprovedTools)
         """;
 
     public const string MissionPermissionPrompt = """
         // delete_inbox is NOT pre-approved → the PS prompts the user.
         var result = await session.RequestPermissionAsync(
-            "delete_inbox",
+            new MissionAction("delete_inbox"),
             options: new GovernanceOptions { OnInteractionRequired = SurfaceToUser });
         // SDK POSTs /permission → 202; surfaces the link; polls for the decision.
         """;
@@ -347,7 +349,7 @@ internal static class CodeSnippets
         if (!result.IsGranted)
             throw new InvalidOperationException(result.Reason); // user denied
         // On grant: run delete_inbox, then report it to the audit_endpoint.
-        await session.RecordAuditAsync("delete_inbox");
+        await session.RecordAuditAsync(new MissionAction("delete_inbox"));
         """;
 
     public const string MissionInspect = """

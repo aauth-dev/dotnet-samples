@@ -68,10 +68,10 @@ public class GovernanceFacadeTests
         Assert.Equal("aauth:assistant@agent.example", mission.Agent);
 
         var permission = await facade.Permission.RequestAsync(
-            new PermissionRequest("SendEmail") { Mission = TestMission });
+            new PermissionRequest(new MissionAction("SendEmail")) { Mission = TestMission });
         Assert.True(permission.IsGranted);
 
-        await facade.Audit.RecordAsync(new AuditRecord(TestMission, "WebSearch"));
+        await facade.Audit.RecordAsync(new AuditRecord(TestMission, new MissionAction("WebSearch")));
         Assert.True(handler.AuditCalled);
 
         var answer = await facade.Interaction.AskQuestionAsync("Refundable option?");

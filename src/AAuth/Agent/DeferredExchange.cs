@@ -129,11 +129,16 @@ internal sealed class DeferredExchange
         var response = await _signedClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         ClarificationExchange? clarificationExchange = null;
         var ownsResponse = true;
+        Uri? lastPendingUrl = null;
         try
         {
             while (response.StatusCode == HttpStatusCode.Accepted)
             {
-                var pendingUrl = ResolveLocation(response, endpoint);
+                // A polled 202 (e.g. an interaction gate that follows a
+                // clarification round) may omit the Location header; the pending
+                // URL is unchanged, so fall back to the last one we resolved.
+                var pendingUrl = ResolveLocation(response, endpoint, lastPendingUrl);
+                lastPendingUrl = pendingUrl;
                 var requirement = ExtractRequirement(response);
 
                 // §Clarification Chat: the PS is asking the agent a question
@@ -156,7 +161,14 @@ internal sealed class DeferredExchange
                         .ConfigureAwait(false);
                     await clarificationExchange.ApplyAsync(decision, cancellationToken).ConfigureAwait(false);
 
-                    response = await PollAsync(pendingUrl, options.PollerOptions, cancellationToken).ConfigureAwait(false);
+                    // After answering, the PS may escalate to a user-interaction
+                    // gate (§Clarification Chat then §User Interaction). Stop the
+                    // poll on that interaction so the loop below surfaces it via
+                    // OnInteractionRequired; otherwise a bare poll would wait it
+                    // out silently and never prompt the user.
+                    response = await PollAsync(
+                        pendingUrl, options.PollerOptions, cancellationToken, stopOnInteraction: true)
+                        .ConfigureAwait(false);
                     continue;
                 }
 
@@ -216,9 +228,10 @@ internal sealed class DeferredExchange
     }
 
     private async Task<HttpResponseMessage> PollAsync(
-        Uri pendingUrl, DeferredPollerOptions? pollerOptions, CancellationToken cancellationToken)
+        Uri pendingUrl, DeferredPollerOptions? pollerOptions, CancellationToken cancellationToken,
+        bool stopOnInteraction = false)
     {
-        var composed = ComposePollerOptions(pollerOptions);
+        var composed = ComposePollerOptions(pollerOptions, stopOnInteraction);
         try
         {
             using var pollActivity = AAuthDiagnostics.Source.StartActivity("AAuth.DeferredPoll");
@@ -234,15 +247,21 @@ internal sealed class DeferredExchange
     }
 
     // Stop polling on a clarification 202 so the exchange loop can handle it,
-    // preserving any caller-supplied StopWhenAccepted predicate.
-    private static DeferredPollerOptions ComposePollerOptions(DeferredPollerOptions? baseOptions)
+    // preserving any caller-supplied StopWhenAccepted predicate. When
+    // <paramref name="stopOnInteraction"/> is set (immediately after a
+    // clarification round) the poll also stops on an interaction 202 so the loop
+    // can surface it via OnInteractionRequired.
+    private static DeferredPollerOptions ComposePollerOptions(
+        DeferredPollerOptions? baseOptions, bool stopOnInteraction = false)
     {
         var userStop = baseOptions?.StopWhenAccepted;
         bool Stop(HttpResponseMessage resp)
         {
             if (userStop is not null && userStop(resp)) { return true; }
             var requirement = ExtractRequirement(resp);
-            return requirement?.Requirement == ClarificationRequirement.RequirementType;
+            if (requirement?.Requirement == ClarificationRequirement.RequirementType) { return true; }
+            return stopOnInteraction
+                && requirement?.Requirement == Interaction.RequirementType;
         }
 
         return baseOptions is null
@@ -321,11 +340,15 @@ internal sealed class DeferredExchange
         return null;
     }
 
-    private static Uri ResolveLocation(HttpResponseMessage response, Uri @base)
+    private static Uri ResolveLocation(HttpResponseMessage response, Uri @base, Uri? fallback = null)
     {
-        var location = response.Headers.Location
-            ?? throw new HttpRequestException(
-                "Deferred PS response is missing the Location header — cannot poll.");
+        var location = response.Headers.Location;
+        if (location is null)
+        {
+            return fallback
+                ?? throw new HttpRequestException(
+                    "Deferred PS response is missing the Location header — cannot poll.");
+        }
         return location.IsAbsoluteUri ? location : new Uri(@base, location);
     }
 

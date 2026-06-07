@@ -400,6 +400,10 @@ app.MapGet("/jwt/mission", (HttpContext ctx) =>
         // token, or null when the agent operated without a mission.
         mission,
         missionAware = true,
+        // The nested act chain (§Upstream Token Verification step 4): present
+        // when this token was issued for a call chain — each intermediary's
+        // identity wraps the upstream act, surfaced here exactly as on /jwt.
+        act = parsed.Payload?["act"],
     });
 }).RequireAuthorization("AAuth.Scope.whoami");
 
@@ -430,6 +434,9 @@ app.MapGet("/jwt/mission/elevated", (HttpContext ctx) =>
         iss = result.Issuer,
         mission,
         missionAware = true,
+        // The nested act chain (§Upstream Token Verification step 4), surfaced
+        // for parity with /jwt and /jwt/mission.
+        act = parsed.Payload?["act"],
     });
 }).RequireAuthorization("AAuth.Scope.whoami:elevated_scope");
 

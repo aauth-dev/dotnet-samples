@@ -3139,7 +3139,8 @@ public sealed class TourSession : IAsyncDisposable
                 "actions reach the PS. (The agent still SHOULD report the action to the " +
                 "`audit_endpoint` afterwards, but that is fire-and-forget, not a gate.)",
             TokenDecoded =
-                "PermissionClient.RequestAsync(ps, \"send_email\", mission)\n" +
+                "// sendEmailTool kept from the mission proposal above\n" +
+                "session.RequestPermissionAsync(sendEmailTool.ToAction())\n" +
                 "  → mission.ApprovedTools contains \"send_email\"\n" +
                 "  → PermissionResult { Grant = Granted }  (no HTTP)",
             CodeSnippet = CodeSnippets.MissionPreApproved,

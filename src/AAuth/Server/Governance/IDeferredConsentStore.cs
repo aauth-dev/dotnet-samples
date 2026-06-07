@@ -15,6 +15,13 @@ public enum DeferredConsentKind
 
     /// <summary>A permission request awaiting the user's decision (§Permission Endpoint).</summary>
     Permission,
+
+    /// <summary>
+    /// An <c>interaction</c> / <c>payment</c> relay awaiting the user's completion
+    /// (§Interaction Response). The PS relays it to the user and the agent polls
+    /// until the user completes the interaction.
+    /// </summary>
+    Interaction,
 }
 
 /// <summary>
@@ -43,6 +50,9 @@ public sealed class DeferredConsent
 
     /// <summary>The permission request (set when <see cref="Kind"/> is <see cref="DeferredConsentKind.Permission"/>).</summary>
     public PermissionRequest? Permission { get; init; }
+
+    /// <summary>The interaction request (set when <see cref="Kind"/> is <see cref="DeferredConsentKind.Interaction"/>).</summary>
+    public InteractionRequest? Interaction { get; init; }
 
     /// <summary>
     /// The user's decision: <see langword="null"/> while pending,

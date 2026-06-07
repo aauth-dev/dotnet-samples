@@ -84,7 +84,7 @@ public class GovernanceClientBuilderTests
         var client = BuildBound(handler);
         var session = await client.ProposeMissionAsync(new MissionProposal("# Plan a trip"));
 
-        var result = await session.RequestPermissionAsync("SendEmail");
+        var result = await session.RequestPermissionAsync(new MissionAction("SendEmail"));
 
         Assert.True(result.IsGranted);
         Assert.Equal(session.Mission.S256, (string?)handler.LastPermissionBody?["mission"]?["s256"]);
@@ -101,7 +101,7 @@ public class GovernanceClientBuilderTests
             Tools = new[] { new MissionTool("WebSearch", "Search the web") },
         });
 
-        var result = await session.RequestPermissionAsync("WebSearch");
+        var result = await session.RequestPermissionAsync(new MissionAction("WebSearch"));
 
         Assert.True(result.IsGranted);
         // Pre-approved tools never reach the PS permission endpoint.
@@ -115,7 +115,7 @@ public class GovernanceClientBuilderTests
         var client = BuildBound(handler);
         var session = await client.ProposeMissionAsync(new MissionProposal("# Plan a trip"));
 
-        await session.RecordAuditAsync("WebSearch", description: "Looked up flights");
+        await session.RecordAuditAsync(new MissionAction("WebSearch"), description: "Looked up flights");
 
         Assert.Equal(session.Mission.S256, (string?)handler.LastAuditBody?["mission"]?["s256"]);
         Assert.Equal("WebSearch", (string?)handler.LastAuditBody?["action"]);

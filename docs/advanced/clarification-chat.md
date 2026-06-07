@@ -134,11 +134,12 @@ var authToken = await exchangeClient.ExchangeAsync(personServer, resourceToken, 
 
 The same pattern applies to the governance clients. Supply
 `OnClarificationRequired` (and optionally `MaxClarificationRounds`) on
-`GovernanceOptions` when proposing a mission or requesting permission:
+`GovernanceOptions` when proposing a mission or requesting permission. The
+governance client is **bound** to its Person Server, so no per-call PS URL is
+needed:
 
 ```csharp
-var mission = await governance.Mission.ProposeAsync(
-    "https://ps.example",
+var session = await governance.ProposeMissionAsync(
     new MissionProposal("Reconcile last month's invoices."),
     new GovernanceOptions
     {
@@ -154,6 +155,7 @@ fails rather than blocking.
 ## Further reading
 
 - [Mission Governance Clients](mission-governance-clients.md) — where governance clarification fits
+- [Mission Call Chain sample](../../samples/SampleApp/Components/Pages/MissionCallChain.razor) — a clarification round during an out-of-mission elevated-scope exchange, followed by a mission-forwarded call chain
 - [Deferred Consent](../workflows/deferred-consent.md) — the broader deferred-response lifecycle
 - [Error Handling](error-handling.md) — `AAuthClarificationCancelledException`, `AAuthClarificationLimitException`
 - [Missions](missions.md) — the mission model

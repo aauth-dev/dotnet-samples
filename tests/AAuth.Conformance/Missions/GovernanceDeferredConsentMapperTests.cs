@@ -276,6 +276,118 @@ public class GovernanceDeferredConsentMapperTests
         await host.StopAsync();
     }
 
+    [Fact(DisplayName = "§Interaction Response — a pending interaction relay parks and answers 202 with a poll Location, then completes")]
+    public async Task Interaction_PendingRelay_Parks202_ThenCompletes()
+    {
+        using var host = await BuildHostAsync(s =>
+        {
+            s.AddAAuthDeferredConsent();
+            s.AddSingleton<IInteractionRelay>(new StubRelay(new InteractionRelayResult { Pending = true }));
+        });
+        using var client = host.GetTestServer().CreateClient();
+
+        var body = new JsonObject
+        {
+            ["type"] = "interaction",
+            ["url"] = "https://booking.example/confirm",
+            ["code"] = "X7K2-M9P4",
+        };
+        var response = await client.PostAsync("https://localhost/mission-interaction", JsonContent(body));
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var location = response.Headers.Location!.ToString();
+        Assert.Contains("/governance-pending/", location);
+
+        // The user has not completed the interaction yet — the poll holds at 202.
+        using var pendingPoll = await client.GetAsync("https://localhost" + location);
+        Assert.Equal(HttpStatusCode.Accepted, pendingPoll.StatusCode);
+
+        // The user completes the interaction at the resource's interaction URL.
+        var id = location[(location.LastIndexOf('/') + 1)..];
+        var consent = host.Services.GetRequiredService<IDeferredConsentStore>();
+        await consent.ResolveAsync(id, approved: true);
+
+        using var done = await client.GetAsync("https://localhost" + location);
+        Assert.Equal(HttpStatusCode.OK, done.StatusCode);
+        var json = await ReadJson(done);
+        Assert.Equal("ok", (string?)json?["status"]);
+
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Interaction Response — a pending payment relay also parks and answers 202")]
+    public async Task Interaction_PendingPayment_Parks202()
+    {
+        using var host = await BuildHostAsync(s =>
+        {
+            s.AddAAuthDeferredConsent();
+            s.AddSingleton<IInteractionRelay>(new StubRelay(new InteractionRelayResult { Pending = true }));
+        });
+        using var client = host.GetTestServer().CreateClient();
+
+        var body = new JsonObject
+        {
+            ["type"] = "payment",
+            ["url"] = "https://pay.example/checkout",
+            ["code"] = "PAY-9931",
+        };
+        var response = await client.PostAsync("https://localhost/mission-interaction", JsonContent(body));
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Contains("/governance-pending/", response.Headers.Location!.ToString());
+
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Interaction Response — a non-pending interaction relay resolves synchronously (200, no poll)")]
+    public async Task Interaction_NotPending_Returns200()
+    {
+        using var host = await BuildHostAsync(s =>
+        {
+            s.AddAAuthDeferredConsent();
+            s.AddSingleton<IInteractionRelay>(new StubRelay(new InteractionRelayResult { Pending = false }));
+        });
+        using var client = host.GetTestServer().CreateClient();
+
+        var body = new JsonObject
+        {
+            ["type"] = "interaction",
+            ["url"] = "https://booking.example/confirm",
+            ["code"] = "X7K2-M9P4",
+        };
+        var response = await client.PostAsync("https://localhost/mission-interaction", JsonContent(body));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Null(response.Headers.Location);
+        var json = await ReadJson(response);
+        Assert.Equal("ok", (string?)json?["status"]);
+
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Interaction Response — without the deferred store a pending relay falls back to a synchronous 200")]
+    public async Task Interaction_PendingRelay_NoStore_Returns200()
+    {
+        using var host = await BuildHostAsync(s =>
+            s.AddSingleton<IInteractionRelay>(new StubRelay(new InteractionRelayResult { Pending = true })));
+        using var client = host.GetTestServer().CreateClient();
+
+        var body = new JsonObject
+        {
+            ["type"] = "interaction",
+            ["url"] = "https://booking.example/confirm",
+            ["code"] = "X7K2-M9P4",
+        };
+        var response = await client.PostAsync("https://localhost/mission-interaction", JsonContent(body));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Null(response.Headers.Location);
+        var json = await ReadJson(response);
+        Assert.Equal("ok", (string?)json?["status"]);
+
+        await host.StopAsync();
+    }
+
     private sealed class StubApprover(MissionApprovalDecision decision) : IMissionApprover
     {
         public Task<MissionApprovalDecision> ApproveAsync(MissionApprovalContext context, CancellationToken ct = default)
@@ -286,5 +398,11 @@ public class GovernanceDeferredConsentMapperTests
     {
         public Task<PermissionDecision> DecideAsync(PermissionDecisionContext context, CancellationToken ct = default)
             => Task.FromResult(decision);
+    }
+
+    private sealed class StubRelay(InteractionRelayResult result) : IInteractionRelay
+    {
+        public Task<InteractionRelayResult> RelayAsync(InteractionRequest request, CancellationToken ct = default)
+            => Task.FromResult(result);
     }
 }

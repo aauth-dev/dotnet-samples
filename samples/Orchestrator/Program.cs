@@ -92,6 +92,12 @@ app.UseWhen(
             ResourceKeyId = OrchestratorKid,
             ResourceIdentifier = orchestratorUrl,
             DefaultScopes = OrchestratorScope,
+            // Mission-aware: when an AAuth-Mission header is present, copy the
+            // {approver, s256} into the resource token so the PS governs the
+            // agent→orchestrator exchange under the mission (§Mission Context at
+            // Resources). A no-op when no mission header is present, so the plain
+            // call chain ("/" → "/jwt") is unaffected.
+            MissionAware = true,
         }));
 
 // -----------------------------------------------------------------------
@@ -114,19 +120,27 @@ app.UseWhen(
 // the combined chain result on success; throws AAuthInteractionChainedException
 // when the downstream PS defers for user consent, or
 // AAuthInteractionDeniedException when the user denied.
-async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken)
+// Run the downstream chained call with the given upstream auth token. Returns
+// the combined chain result on success; throws AAuthInteractionChainedException
+// when the downstream PS defers for user consent, or
+// AAuthInteractionDeniedException when the user denied. <paramref name="downstreamPath"/>
+// selects the downstream resource path — "/jwt" for the plain chain or the
+// mission-aware "/jwt/mission" for a mission-governed chain (§Mission Context at
+// Resources). When the upstream auth token carries a mission, WithCallChaining
+// auto-forwards the AAuth-Mission header (via MissionForwardingHandler) and routes
+// the exchange to mission.approver, so the mission governs every hop (§Call Chaining).
+async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken, string downstreamPath)
 {
     // Self-issued agent token (iss = orchestratorUrl) satisfies §Upstream Token
     // Verification step 3 — the PS can match upstream_token.aud against iss.
     //
-    // Mission governance is OPTIONAL and orthogonal to call chaining
-    // (AAuth §Agent Governance). This demo intentionally leaves it out: the
-    // upstream auth token carries no `mission.approver`, so the downstream
-    // exchange follows §Call Chaining's "No mission, iss is a PS" path — the
-    // PS evaluates the hop without mission context. If a mission WERE present,
-    // WithCallChaining would auto-forward the `AAuth-Mission` header (via
-    // MissionForwardingHandler) and route to mission.approver instead; no
-    // change to this handler would be needed.
+    // Mission governance composes with call chaining (AAuth §Agent Governance,
+    // §Call Chaining): if the upstream auth token carries `mission.approver`,
+    // WithCallChaining auto-forwards the `AAuth-Mission` header (via
+    // MissionForwardingHandler) and routes to mission.approver. The mission-aware
+    // downstream path then re-binds the mission into the next resource_token, so a
+    // single mission governs the whole chain. With no mission present this same
+    // handler follows §Call Chaining's "No mission, iss is a PS" path unchanged.
     using var downstream = AAuthClientBuilder.SelfIssuing(orchestratorKey)
         .As(orchestratorUrl, agentId)
         .WithKid(OrchestratorKid)
@@ -144,7 +158,7 @@ async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken)
         })
         .Build();
 
-    var response = await downstream.GetAsync($"{downstreamUrl.TrimEnd('/')}/jwt");
+    var response = await downstream.GetAsync($"{downstreamUrl.TrimEnd('/')}{downstreamPath}");
     var body = await response.Content.ReadAsStringAsync();
     JsonNode? downstreamJson = null;
     try { downstreamJson = JsonNode.Parse(body); } catch { }
@@ -169,11 +183,12 @@ async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken)
 }
 
 // Re-emit the Orchestrator's own 202 requirement=interaction for a parked
-// chained request: its own Location (the pending URL), the PS's pass-through
-// interaction url/code. Spec §Interaction Chaining + §Deferred Responses.
+// chained request: its own Location (the pending URL, keyed by the entry's
+// poll-route prefix), the PS's pass-through interaction url/code. Spec
+// §Interaction Chaining + §Deferred Responses.
 IResult ReEmitChainedInteraction(HttpContext ctx, PendingStore.Entry entry)
 {
-    ctx.Response.Headers.Location = $"/pending/{entry.Id}";
+    ctx.Response.Headers.Location = $"{entry.PendingPrefix}/{entry.Id}";
     ctx.Response.Headers["Retry-After"] = "1";
     ctx.Response.Headers["Cache-Control"] = "no-store";
     ctx.Response.Headers[AAuthRequirementHeader.Name] =
@@ -193,12 +208,39 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =>
 
     try
     {
-        return await RunChainAsync(ctx, upstreamToken);
+        return await RunChainAsync(ctx, upstreamToken, "/jwt");
     }
     catch (AAuthInteractionChainedException ex)
     {
         // Downstream needs the user's consent. Park it and chain the 202 up.
         var entry = pending.Add(upstreamToken, ex.Interaction.Url, ex.Interaction.Code);
+        return ReEmitChainedInteraction(ctx, entry);
+    }
+});
+
+// GET /mission — the mission-governed twin of "/". Identical chaining, but the
+// downstream hop targets WhoAmI's mission-aware "/jwt/mission" so a mission
+// present in the upstream auth token is forwarded and re-bound at each hop
+// (§Mission Context at Resources, §Call Chaining).
+app.MapGet("/mission", async (HttpContext ctx, PendingStore pending) =>
+{
+    var upstreamToken = ctx.Features.Get<UpstreamAuthTokenFeature>()?.Token;
+    if (string.IsNullOrEmpty(upstreamToken))
+    {
+        return Results.Json(
+            new { error = "invalid_request", detail = "missing upstream auth token" },
+            statusCode: StatusCodes.Status401Unauthorized);
+    }
+
+    try
+    {
+        return await RunChainAsync(ctx, upstreamToken, "/jwt/mission");
+    }
+    catch (AAuthInteractionChainedException ex)
+    {
+        var entry = pending.Add(
+            upstreamToken, ex.Interaction.Url, ex.Interaction.Code,
+            downstreamPath: "/jwt/mission", pendingPrefix: "/mission-pending");
         return ReEmitChainedInteraction(ctx, entry);
     }
 });
@@ -224,7 +266,7 @@ app.MapGet("/pending/{id}", async (HttpContext ctx, string id, PendingStore pend
 
     try
     {
-        var result = await RunChainAsync(ctx, entry.UpstreamToken);
+        var result = await RunChainAsync(ctx, entry.UpstreamToken, entry.DownstreamPath);
         pending.Remove(id); // resolved — drop the parked entry
         return result;
     }
@@ -232,6 +274,37 @@ app.MapGet("/pending/{id}", async (HttpContext ctx, string id, PendingStore pend
     {
         // Still unconsented downstream — re-emit our own 202 (same url/code:
         // PS consent is keyed by the triple, so the original page still works).
+        return ReEmitChainedInteraction(ctx, entry);
+    }
+    catch (AAuthInteractionDeniedException)
+    {
+        pending.Remove(id);
+        ctx.Response.Headers["Cache-Control"] = "no-store";
+        return Results.Json(
+            new { error = "access_denied", detail = "the user denied this request" },
+            statusCode: StatusCodes.Status403Forbidden);
+    }
+});
+
+// GET /mission-pending/{id} — the mission chain's poll route. Identical to
+// "/pending/{id}" but for entries whose downstream hop is the mission-aware
+// "/jwt/mission" (each poll re-drives RunChainAsync with the stored path).
+app.MapGet("/mission-pending/{id}", async (HttpContext ctx, string id, PendingStore pending) =>
+{
+    var entry = pending.Get(id);
+    if (entry is null)
+    {
+        return Results.NotFound(new { error = "unknown_pending", id });
+    }
+
+    try
+    {
+        var result = await RunChainAsync(ctx, entry.UpstreamToken, entry.DownstreamPath);
+        pending.Remove(id);
+        return result;
+    }
+    catch (AAuthInteractionChainedException)
+    {
         return ReEmitChainedInteraction(ctx, entry);
     }
     catch (AAuthInteractionDeniedException)

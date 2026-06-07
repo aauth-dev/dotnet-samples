@@ -1274,6 +1274,29 @@ app.MapPost("/admin/mission-terminate", async (HttpContext ctx, IMissionStore mi
     return Results.Ok(new { ok = true, s256, mission_status = "terminated" });
 });
 
+// DEMO-ONLY: read a mission's ordered log/trail by its s256 (§Mission Log). The
+// PS holds the authoritative record of every governed step under the mission —
+// tokens, permissions, clarifications, audits, interactions. Samples surface
+// this to show the auditable trail a mission accrues. Returns { s256, entries:[…] }.
+app.MapGet("/admin/mission-log/{s256}", async (string s256, IMissionLog log) =>
+{
+    var entries = await log.ReadAsync(s256);
+    return Results.Ok(new
+    {
+        s256,
+        entries = entries.Select(e => new
+        {
+            kind = e.Kind.ToString().ToLowerInvariant(),
+            timestamp = e.Timestamp,
+            resource = e.Resource,
+            scope = e.Scope,
+            action = e.Action,
+            granted = e.Granted,
+            detail = e.Detail,
+        }).ToArray(),
+    });
+});
+
 // User-facing interaction page. The 202 from `POST /token` told the
 // agent's user to visit this URL with `?code={pending-id}`. In a real PS
 // this page would be behind the user's signed-in browser session

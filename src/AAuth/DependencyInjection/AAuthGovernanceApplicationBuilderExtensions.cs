@@ -61,7 +61,9 @@ public static class AAuthGovernanceApplicationBuilderExtensions
             (HttpContext ctx, IMissionStore missions, IMissionLog log, IPermissionDecider decider) =>
                 HandlePermissionAsync(ctx, options, missions, log, decider));
         endpoints.MapPost(options.Resolve(options.AuditPath), HandleAuditAsync);
-        endpoints.MapPost(options.Resolve(options.InteractionPath), HandleInteractionAsync);
+        endpoints.MapPost(options.Resolve(options.InteractionPath),
+            (HttpContext ctx, IMissionStore missions, IMissionLog log, IInteractionRelay relay) =>
+                HandleInteractionAsync(ctx, options, missions, log, relay));
         endpoints.MapGet(options.Resolve(options.PendingPath).TrimEnd('/') + "/{id}",
             (HttpContext ctx, string id, IMissionStore missions, IMissionLog log) =>
                 HandlePendingAsync(ctx, id, options, missions, log));
@@ -242,6 +244,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
 
     private static async Task<IResult> HandleInteractionAsync(
         HttpContext ctx,
+        AAuthGovernancePipelineOptions options,
         IMissionStore missions,
         IMissionLog log,
         IInteractionRelay relay)
@@ -296,6 +299,25 @@ public static class AAuthGovernanceApplicationBuilderExtensions
                 return Results.Json(new { mission_status = "active" });
 
             default:
+                // interaction / payment: when the relay is still pending the PS
+                // MUST return a deferred response and let the agent poll until the
+                // user completes (§Interaction Response). Park it on the deferred
+                // store and answer 202; without a store there is no user channel,
+                // so treat the relay as having resolved synchronously (200).
+                if (result.Pending)
+                {
+                    var store = ctx.RequestServices.GetService<IDeferredConsentStore>();
+                    if (store is not null)
+                    {
+                        var parked = await store.ParkAsync(new DeferredConsent
+                        {
+                            Kind = DeferredConsentKind.Interaction,
+                            Approver = request.Mission?.Approver ?? string.Empty,
+                            Interaction = request,
+                        }, ctx.RequestAborted).ConfigureAwait(false);
+                        return DeferredAccepted(ctx, options, parked.Id);
+                    }
+                }
                 return Results.Json(new { status = "ok" });
         }
     }
@@ -342,6 +364,15 @@ public static class AAuthGovernanceApplicationBuilderExtensions
             var proposal = entry.Proposal!;
             return await CompleteMissionAsync(
                 ctx, missions, entry.Approver, entry.Agent, proposal, proposal.Tools).ConfigureAwait(false);
+        }
+
+        if (entry.Kind == DeferredConsentKind.Interaction)
+        {
+            // The user completed the relayed interaction / payment; the poll loop
+            // terminates with the relay's final response (§Interaction Response).
+            // The interaction was already recorded in the mission log when it was
+            // relayed, so no further bookkeeping is needed here.
+            return Results.Json(new { status = "ok" });
         }
 
         // Permission: the endpoint always returns a decision (200), never access_denied.

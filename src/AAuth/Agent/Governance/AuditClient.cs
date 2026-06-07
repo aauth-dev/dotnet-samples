@@ -48,9 +48,7 @@ public sealed class AuditClient
             endpoint, record.ToJsonObject(), new DeferredExchangeOptions(), cancellationToken).ConfigureAwait(false);
         try
         {
-            if (response.StatusCode == HttpStatusCode.Created
-                || response.StatusCode == HttpStatusCode.OK
-                || response.StatusCode == HttpStatusCode.NoContent)
+            if (response.StatusCode == HttpStatusCode.Created)
             {
                 return;
             }

@@ -2,13 +2,13 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using AAuth;
 using AAuth.Agent;
 using AAuth.Agent.Governance;
 using AAuth.Crypto;
@@ -148,7 +148,6 @@ var agentHandler = new AAuthSigningHandler(key, () => agentToken) { InnerHandler
 var signedClient = new HttpClient(agentHandler) { Timeout = Timeout.InfiniteTimeSpan };
 var metadata = new MetadataClient(new HttpClient());
 var governance = new AAuthGovernanceClient(signedClient, metadata, personServer);
-var exchange = new TokenExchangeClient(signedClient, metadata);
 
 // Tell the mock PS how to resolve prompts. Interactive mode holds each prompt
 // open until you decide in the browser; --auto resolves via scripted defaults.
@@ -184,12 +183,13 @@ Section("2. Propose a mission");
 // the agent quotes on every later request to bind it to this mission. In
 // interactive mode the PS shows a browser consent screen here; in --auto mode it
 // resolves the approval itself.
+var sendEmailTool = new MissionTool("send_email", "Send an email on the user's behalf");
 var session = await governance.ProposeMissionAsync(new MissionProposal(
     "Help the user keep their inbox under control for the next hour.")
 {
     Tools = new[]
     {
-        new MissionTool("send_email", "Send an email on the user's behalf"),
+        sendEmailTool,
         new MissionTool("summarize", "Summarize a thread"),
     },
 }, GovernanceFor("Approve this mission and its tools"));
@@ -260,21 +260,23 @@ catch (AAuthInteractionDeniedException)
 
 Section("6. Request a permission for a pre-approved tool — silent");
 // `send_email` is an approved tool, so the SDK short-circuits to granted
-// without ever calling the PS (§Permission Endpoint).
-var preApproved = await session.RequestPermissionAsync("send_email");
+// without ever calling the PS (§Permission Endpoint). We still hold the
+// sendEmailTool reference from the proposal, so we ask via tool.ToAction()
+// rather than re-typing the action name.
+var preApproved = await session.RequestPermissionAsync(sendEmailTool.ToAction());
 Console.WriteLine($"   send_email      : {(preApproved.IsGranted ? "granted" : "denied")} ({preApproved.Reason})");
 
 Section("7. Request a permission for a NON-pre-approved tool");
 // `delete_inbox` is not an approved tool, so the PS is consulted and the user
 // is prompted to decide. The session threads the mission claim automatically.
 var adHoc = await session.RequestPermissionAsync(
-    "delete_inbox",
+    new MissionAction("delete_inbox"),
     options: GovernanceFor("Permission to permanently delete the inbox"));
 Console.WriteLine($"   delete_inbox    : {(adHoc.IsGranted ? "granted" : "denied")} ({adHoc.Reason})");
 
 Section("8. Report an action to the audit endpoint");
 // After acting, the agent records what it did under the mission (§Audit Endpoint).
-await session.RecordAuditAsync("send_email",
+await session.RecordAuditAsync(sendEmailTool.ToAction(),
     description: "Sent a reply to the design-review thread.",
     result: new JsonObject { ["status"] = "success" });
 Console.WriteLine("   recorded send_email = success");
@@ -297,7 +299,7 @@ Console.WriteLine("Done. The Person Server governed every step under the mission
 return 0;
 
 // ---------------------------------------------------------------------------
-// Resource access: challenge -> token exchange (governed by the PS) -> retry.
+// Resource access: one mission-aware client handles the whole leg.
 // ---------------------------------------------------------------------------
 async Task<JsonObject?> AccessMissionResourceAsync(string url)
 {
@@ -306,37 +308,25 @@ async Task<JsonObject?> AccessMissionResourceAsync(string url)
     // detection (§HTTP Message Signatures — replay).
     agentToken = await apClient.RefreshAsync(refreshEndpoint, localKeyHandle);
 
-    // 1. Signed request carrying the mission. The signing handler covers the
-    //    aauth-mission header automatically, so the resource can trust it.
-    var challengeReq = new HttpRequestMessage(HttpMethod.Get, url);
-    challengeReq.Headers.TryAddWithoutValidation(
-        AAuthMissionHeader.Name, AAuthMissionHeader.FormatStructured(mission.Approver, mission.S256));
-    using var challenge = await signedClient.SendAsync(challengeReq);
-    if (challenge.StatusCode != HttpStatusCode.Unauthorized)
-    {
-        throw new InvalidOperationException(
-            $"Expected 401 challenge from the resource, got {(int)challenge.StatusCode}.");
-    }
+    // One mission-aware client does the whole resource-access leg:
+    //   • WithMission emits the AAuth-Mission header, which the signing handler
+    //     covers as the aauth-mission component (§Mission Context at Resources);
+    //   • WithChallengeHandling drives the 401 -> token-exchange -> retry cycle
+    //     and surfaces any out-of-scope consent prompt via OnInteractionRequired.
+    // An out-of-scope exchange the user denies throws
+    // AAuthInteractionDeniedException, exactly as the manual flow did.
+    using var client = new AAuthClientBuilder(key)
+        .UseJwt(() => agentToken)
+        .WithPersonServer(personServer)
+        .WithMission(mission)
+        .WithChallengeHandling(o =>
+        {
+            o.OnInteractionRequired = PromptUserAsync;
+            o.PollingTimeout = poller.MaxTotalWait;
+        })
+        .Build();
 
-    // 2. Parse the AAuth-Requirement header to recover the resource token.
-    var requirement = string.Join(", ", challenge.Headers.GetValues(AAuthRequirementHeader.Name));
-    var parsed = AAuthRequirementHeader.Parse(requirement);
-    var resourceToken = parsed.ResourceToken
-        ?? throw new InvalidOperationException("Challenge did not carry a resource token.");
-
-    // 3. Exchange the resource token at the PS. The PS reads the mission claim
-    //    embedded in the (verified) resource token and applies the token gate;
-    //    an out-of-scope request returns 202 and we print the consent URL.
-    var authToken = await exchange.ExchangeAsync(personServer, resourceToken, new TokenExchangeRequest
-    {
-        OnInteractionRequired = PromptUserAsync,
-        PollerOptions = poller,
-    });
-
-    // 4. Replay the request with the auth token to obtain the protected resource.
-    var authHandler = new AAuthSigningHandler(key, () => authToken) { InnerHandler = new HttpClientHandler() };
-    using var authClient = new HttpClient(authHandler);
-    using var ok = await authClient.GetAsync(url);
+    using var ok = await client.GetAsync(url);
     ok.EnsureSuccessStatusCode();
     return await ok.Content.ReadFromJsonAsync<JsonObject>();
 }

@@ -34,7 +34,7 @@ public class GovernanceServerTests
 
         var request = GovernanceEndpoints.ParsePermission(body);
 
-        Assert.Equal("SendEmail", request.Action);
+        Assert.Equal("SendEmail", request.Action.Name);
         Assert.Equal("Send the itinerary", request.Description);
         Assert.Equal("user@example.com", (string?)request.Parameters!["to"]);
         Assert.Equal(S256, request.Mission!.S256);
@@ -58,7 +58,7 @@ public class GovernanceServerTests
         var record = GovernanceEndpoints.ParseAudit(body);
 
         Assert.Equal(S256, record.Mission.S256);
-        Assert.Equal("WebSearch", record.Action);
+        Assert.Equal("WebSearch", record.Action.Name);
         Assert.Equal("completed", (string?)record.Result!["status"]);
     }
 
@@ -199,7 +199,7 @@ public class GovernanceServerTests
         });
 
         var decider = new StubDecider();
-        var request = new PermissionRequest("SendEmail")
+        var request = new PermissionRequest(new MissionAction("SendEmail"))
         {
             Mission = new AAuth.Tokens.MissionClaim("https://ps.example", S256),
         };

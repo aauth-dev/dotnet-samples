@@ -58,8 +58,9 @@ Directives captured from the user for this initiative:
 - **Branch:** `feat/missions-ps-governance` (continue).
 - **Sequencing:** Phase 1 API first pass (agent + resource) → Phase 2 API
   consistency pass → Phase 3 spec hardening → Phase 4 sample migration → Phase 5 new
-  combined sample + e2e → Phase 6 docs → Phase 7 samples audit (subagent) → Phase 8
-  docs audit (subagent) → Phase 9 independent spec-compliance review (subagent).
+  combined sample + e2e → Phase 6 mission convenience seam (`WithMission`) → Phase 7
+  docs → Phase 8 samples audit (subagent) → Phase 9 docs audit (subagent) → Phase 10
+  independent spec-compliance review (subagent).
 
 ## Cross-Cutting Decisions
 
@@ -268,9 +269,9 @@ capability — naming, shape, and ergonomics only. Confirms the construction tri
 
 ### Definition of Done
 
-- [ ] Convention diff recorded in research (Part B / Open Design Choices).
-- [ ] Factory, builder, and DI paths share names/options/defaults across both sides.
-- [ ] Public names align with `AAuthClientBuilder` / `AddAAuth*` / `MapAAuth*`.
+- [x] Convention diff recorded in research (Part B / Open Design Choices).
+- [x] Factory, builder, and DI paths share names/options/defaults across both sides.
+- [x] Public names align with `AAuthClientBuilder` / `AddAAuth*` / `MapAAuth*`.
 - [x] Per-call `personServer` params removed; bound client is the only path (D1).
 - [x] Action passed as a `MissionAction` POCO (implicit `string` for terse call sites) (D4).
 - [x] Mission creation mapped by `MapAAuthGovernance` via `IMissionApprover` (D3, DEV-2).
@@ -298,9 +299,9 @@ capability — naming, shape, and ergonomics only. Confirms the construction tri
 
 ### Definition of Done
 
-- [ ] `AuditClient` rejects non-201 acknowledgments.
-- [ ] `device` rejects control chars and lengths > 64 with a clear exception.
-- [ ] Tests cover boundary cases; full suite green.
+- [x] `AuditClient` rejects non-201 acknowledgments.
+- [x] `device` rejects control chars and lengths > 64 with a clear exception.
+- [x] Tests cover boundary cases; full suite green.
 
 ---
 
@@ -315,18 +316,18 @@ surface. No behavior change; API shape only.
 
 | File | Action |
 |------|--------|
-| `samples/MissionAgent/Program.cs` | **Modify** — `MissionSession`, bound PS, no manual `MissionClaim` |
-| `samples/MockPersonServer/Program.cs` | **Modify** — `AddAAuthGovernance(...)` + `MapAAuthGovernance()`; remove hand-wired endpoints |
-| `samples/MockPersonServer/MissionGovernance.cs` | **Modify** — seams unchanged or trimmed to new defaults |
-| `samples/SampleApp/Components/Pages/Mission.razor` | **Modify** — new client surface |
-| `samples/GuidedTour/TourSession.cs` | **Modify** — new client surface; step plan preserved |
-| `samples/WhoAmI/Program.cs` | **Modify** — resource governance builder for mission-aware challenge |
+| `samples/MissionAgent/Program.cs` | **Done** — bound PS via `WithMission`; `MissionSession`; no manual `MissionClaim` (folded into Phase 6) |
+| `samples/MockPersonServer/Program.cs` | **Kept hand-wired** — see DEV-4; agent-facing parsing already on SDK (`GovernanceEndpoints` + `MissionApprovalBuilder`) |
+| `samples/MockPersonServer/MissionGovernance.cs` | **No change** — see DEV-4 |
+| `samples/SampleApp/Components/Pages/Mission.razor` | **Done** — `MissionSession` (`ProposeMissionAsync` → `session.RequestPermissionAsync`/`RecordAuditAsync`); gates preserved |
+| `samples/GuidedTour/TourSession.cs` + `CodeSnippets.cs` | **Done** — teaching snippets on the session API; raw-wire steps preserved (pedagogy) |
+| `samples/WhoAmI/Program.cs` | **No change** — `ChallengeOptions { MissionAware = true }` is the canonical resource seam (DEV-5) |
 
 ### Definition of Done
 
-- [ ] All mission samples build and run against the new API.
-- [ ] Mission e2e specs (4) pass unchanged in behavior.
-- [ ] No leftover manual `MissionClaim`/PS-URL threading in samples.
+- [x] All mission samples build and run against the new API. _(SampleApp builds 0/0; agent-side call-sites on the session API.)_
+- [x] Mission e2e specs (4) pass unchanged in behavior. _(SampleApp + GuidedTour mission specs: 4/4 green after migration.)_
+- [x] No leftover manual `MissionClaim`/PS-URL threading in samples. _(Agent-side clean; server-side parses incoming claims, which is correct. DEV-4/DEV-5 record the two server-side line-items intentionally not rewritten.)_
 
 ---
 
@@ -357,14 +358,86 @@ rounds; untrusted text → sanitize); §Call Chaining (mission present → forwa
 
 ### Definition of Done
 
-- [ ] Page shows a clarification round (respond/update/cancel) during mission approval.
-- [ ] Mission is forwarded through the orchestrator; downstream hop is governed.
-- [ ] Mission log/trail surfaced in the UI.
-- [ ] New Playwright spec passes; full backend stack boots via webServer array.
+- [x] Page shows a clarification round (respond/update/cancel) during mission approval. _(`MissionCallChain.razor` step 2: `OnClarificationRequired` surfaces the sanitized question, agent answers, then the user approves the out-of-mission elevated scope.)_
+- [x] Mission is forwarded through the orchestrator; downstream hop is governed. _(step 3: `WithMission(...)` carries the mission to the Orchestrator `/mission` endpoint, which forwards `AAuth-Mission` to the WhoAmI `/jwt/mission` hop — chain result asserts `downstream.mode == "three-party"`, `agent == aauth:orchestrator@localhost:5200`, `mission` truthy.)_
+- [x] Mission log/trail surfaced in the UI. _(PS-held `/admin/mission-log` rendered in the `[data-test="mission-log"]` table, including the clarification entry.)_
+- [x] New Playwright spec passes; full backend stack boots via webServer array. _(`samples/SampleApp/playwright-tests/mission-call-chain.spec.ts` green; full `sample-app` suite 15 passed + 1 pre-existing skip, two consecutive clean CI runs.)_
 
 ---
 
-## Phase 6 — Docs update
+## Phase 6 — Mission convenience seam (`WithMission`)
+
+**Goal:** Close PT-A7 (research Part A.2). Add an
+`AAuthClientBuilder.WithMission(Mission)` seam that auto-emits the `AAuth-Mission`
+header from an agent's own approved mission, so a mission-holding agent composes
+`WithMission(...) + WithChallengeHandling() + WithInteractionHandling()` and the
+entire resource-access leg (header + 401→exchange→retry) collapses to one signed
+`SendAsync`. Retrofit the non-pedagogical sample (`MissionAgent`) to the seam;
+leave the step-by-step teaching surfaces (`SampleApp/Mission.razor`, GuidedTour,
+and the Phase 5 combined page) deliberately explicit so each gate stays visible.
+
+**Spec:** §Mission Context at Resources — "The agent includes the `AAuth-Mission`
+header when sending requests to resources, unless the mission is already conveyed in
+an auth token"; §HTTP Message Signatures — "When the agent is operating in a mission
+context, it includes the `AAuth-Mission` header and adds `aauth-mission` to the
+signed components." The SDK already auto-covers `aauth-mission` whenever the header
+is present ([AAuthSigningHandler](../../../src/AAuth/HttpSig/AAuthSigningHandler.cs)),
+so the seam only needs to set the header.
+
+### Approach
+
+- **`MissionHeaderHandler` (new).** A small `DelegatingHandler` that sets
+  `AAuth-Mission` from a directly-held `Mission` (`{approver, s256}`) on each
+  outbound request, mirroring `MissionForwardingHandler` but sourcing the mission
+  directly instead of extracting it from an upstream token. The signing handler
+  beneath it covers the `aauth-mission` component automatically.
+- **`AAuthClientBuilder.WithMission(Mission)`.** Stores the mission and inserts the
+  handler at the top of the pipeline (above interaction/refresh/challenge), so the
+  header is present before the request is signed. Composes with
+  `WithChallengeHandling()` / `WithInteractionHandling()`. Idempotent with the
+  existing header — never emit `AAuth-Mission` twice (skip if the caller already set
+  it, matching the call-chaining carve-out).
+- **Carve-out honored.** `WithMission(...)` is for the **originating** agent that
+  holds its own approved mission; call-chaining intermediaries keep using
+  `MissionForwardingHandler` (mission extracted from the upstream token). The two are
+  mutually exclusive on a given client.
+- **Retrofit `MissionAgent`.** Replace the manual header + challenge cycle in
+  `AccessMissionResourceAsync` with a `WithMission(...)`-composed client; preserve
+  the per-request agent-token refresh (replay `jti`) behavior.
+
+### Files
+
+| File | Action |
+|------|--------|
+| `src/AAuth/Agent/MissionHeaderHandler.cs` | **New** — emits `AAuth-Mission` from a held `Mission` |
+| `src/AAuth/AAuthClientBuilder.cs` | **Modify** — add `WithMission(Mission)`; insert handler in `BuildHandler()` |
+| `samples/MissionAgent/Program.cs` | **Modify** — collapse `AccessMissionResourceAsync` onto the seam |
+| `tests/AAuth.Conformance/Missions/MissionHeaderSeamTests.cs` | **New** — header emitted + signed; not duplicated; carve-out |
+
+### Implementation Decisions
+
+- **D5 — originating-agent seam (2026-06-06).** `WithMission(...)` sources the
+  mission directly; `MissionForwardingHandler` stays the call-chaining path. The
+  "unless conveyed in an auth token" carve-out remains the agent's decision —
+  `WithMission(...)` is only wired when the agent holds an approved `Mission` and is
+  the originator. Spec-backed by research Part A.2 PT-A7 update.
+- Teaching surfaces stay explicit by design (DC4 pedagogy): only `MissionAgent` is
+  collapsed this phase; `Mission.razor`, the combined page, and GuidedTour keep the
+  visible gate-by-gate flow.
+
+### Definition of Done
+
+- [x] `WithMission(Mission)` emits a spec-correct `AAuth-Mission` header that the
+      signing handler covers as `aauth-mission`.
+- [x] Header is not emitted twice when already present (call-chaining carve-out).
+- [x] `MissionAgent.AccessMissionResourceAsync` collapsed onto the seam; behavior
+      unchanged (per-request refresh + replay `jti` preserved).
+- [x] New conformance test covers emit + signature coverage + de-dup; full suite
+      green (build 0/0).
+
+---
+
+## Phase 7 — Docs update
 
 **Goal:** Bring mission docs to the new API.
 
@@ -383,11 +456,12 @@ rounds; untrusted text → sanitize); §Call Chaining (mission present → forwa
 
 ### Definition of Done
 
-- [ ] All mission docs reflect the new API; code blocks compile against the surface.
+- [x] All mission docs reflect the new API; code blocks compile against the surface. _(Rewrote the stale faceted/per-call-PS examples in `mission-governance-clients.md`, `mission-governed-access.md`, `clarification-chat.md`, and `error-handling.md` to the bound `AAuthGovernanceClient` + `MissionSession` surface; added `MapAAuthGovernance()` + the no-op default seams and `AddAAuthDeferredConsent()` to `server/mission-governance.md`; `challenge-middleware.md`'s `ChallengeOptions { MissionAware = true }` is already the canonical resource seam per DEV-5.)_
+- [x] `WithMission(...)` convenience seam documented alongside `WithChallengeHandling`. _(New "Carrying your own mission with `WithMission`" section in `missions.md`, and the resource-access step of `mission-governed-access.md` now composes `WithMission(...)` + `WithChallengeHandling()`; the combined sample is linked from both `missions.md` and `clarification-chat.md`.)_
 
 ---
 
-## Phase 7 — Samples consistency audit (subagent)
+## Phase 8 — Samples consistency audit (subagent)
 
 **Goal:** With fresh eyes, validate that **every** sample uses the new API surface
 and reads cleanly. A dedicated subagent surfaces inconsistencies, leftover old-API
@@ -408,14 +482,14 @@ and remediated.
 
 ### Definition of Done
 
-- [ ] Subagent report captured; each finding marked fixed / deferred / not-an-issue.
-- [ ] No sample retains old-API mission usage or manual claim/PS threading.
-- [ ] Significant issues logged in `issues-and-deviations.md`; research updated.
-- [ ] All samples build/run; mission + combined e2e specs green.
+- [x] Subagent report captured; each finding marked fixed / deferred / not-an-issue. _(Audit found zero stale faceted calls and zero manual `MissionClaim` constructions across `samples/**`; every remaining manual `AAuthMissionHeader.FormatStructured` is either a deliberately-explicit teaching surface — `Mission.razor`, `MissionCallChain.razor` snippet, GuidedTour `TourSession.cs`/`CodeSnippets.cs` — or the MockPersonServer acting as the legitimate header producer. All marked not-an-issue.)_
+- [x] No sample retains old-API mission usage or manual claim/PS threading. _(Confirmed: all governance call sites use the PS-bound `AAuthGovernanceClient` ctor → `ProposeMissionAsync` → flat `MissionSession` methods; call-chaining intermediaries `AgentConsole`/`Orchestrator` correctly use `WithCallChaining`, never `WithMission`.)_
+- [x] Significant issues logged in `issues-and-deviations.md`; research updated. _(No new issues — audit was clean; nothing to log beyond DEV-6/7/8 already recorded.)_
+- [x] All samples build/run; mission + combined e2e specs green. _(MissionAgent Phase-6 seam collapse verified clean; combined sample-app suite 15 passed + 1 pre-existing skip, two consecutive CI runs.)_
 
 ---
 
-## Phase 8 — Docs & code-snippet consistency audit (subagent)
+## Phase 9 — Docs & code-snippet consistency audit (subagent)
 
 **Goal:** Validate that all docs and embedded code snippets — especially GuidedTour
 snippets and SampleApp walkthroughs — use the new API and read cleanly. A dedicated
@@ -434,14 +508,14 @@ subagent surfaces inconsistencies; findings are adjudicated and remediated.
 
 ### Definition of Done
 
-- [ ] Subagent report captured; each finding marked fixed / deferred / not-an-issue.
-- [ ] All mission docs + GuidedTour/SampleApp snippets reflect the new API.
-- [ ] Code blocks compile against the surface; cross-links resolve.
-- [ ] Significant issues logged in `issues-and-deviations.md`; research updated.
+- [x] Subagent report captured; each finding marked fixed / deferred / not-an-issue. _(One file flagged — `docs/reference/dependency-injection.md`: stale "no dedicated DI extension" prose, a `BuildGovernance()` snippet missing `.WithPersonServer(...)` (would throw at runtime), and prose omitting the PS requirement. All three FIXED. All other mission/governance/clarification/call-chain docs verified clean against the GuidedTour `CodeSnippets.cs` ground truth.)_
+- [x] All mission docs + GuidedTour/SampleApp snippets reflect the new API. _(GuidedTour `CodeSnippets.cs` already compiles against the surface and was used as ground truth; docs now match it.)_
+- [x] Code blocks compile against the surface; cross-links resolve. _(`dependency-injection.md` now documents `AddAAuthGovernanceClient(...)` + PS-bound `BuildGovernance()`; cross-links/anchors `token-issuance.md#mission-claims`, `error-handling.md#mission-termination`, `challenge-middleware.md#mission-aware-resources` and the `MissionCallChain.razor` sample path all resolve.)_
+- [x] Significant issues logged in `issues-and-deviations.md`; research updated. _(Doc-only fix, no SDK gap — nothing new to log beyond DEV-6/7/8.)_
 
 ---
 
-## Phase 9 — Independent spec-compliance review (subagent)
+## Phase 10 — Independent spec-compliance review (subagent)
 
 **Goal:** A separate reviewer subagent independently validates **each change** in
 this initiative against the AAuth spec to confirm 100% compliance. Where the SDK is
@@ -464,10 +538,10 @@ found non-compliant, fix it (DC6 still holds — fixes must not break existing f
 
 ### Definition of Done
 
-- [ ] Reviewer subagent report captured; every finding adjudicated against spec text.
-- [ ] SDK non-compliance fixed without breaking existing flows (DC6).
-- [ ] `dotnet build AAuth.slnx` 0/0; unit + conformance + mission/combined e2e green.
-- [ ] `issues-and-deviations.md` finalized; research updated; plan DoD ticked.
+- [x] Reviewer subagent report captured; every finding adjudicated against spec text. _(Reviewer walked all six areas — `AAuth-Mission` header + signed-component coverage, mission claim shape + verbatim-bytes hash, the four endpoint request/response shapes, the deferred-consent 202 flow incl. the DEV-6 bug fixes, clarification round-trip + limits, `mission_terminated` surfacing, and originator-vs-intermediary header rules — each cited to a spec section. One genuine non-compliance (NC-1) found; everything else COMPLIANT; DEV-5 reconfirmed intentional.)_
+- [x] SDK non-compliance fixed without breaking existing flows (DC6). _(NC-1 → DEV-9: `interaction`/`payment` now honor `InteractionRelayResult.Pending` by parking on the deferred-consent store and answering `202` + poll `Location`, degrading to a synchronous `200` when no store is registered. Agent side already polled correctly; no client change. DEV-10 (completion synchronous review) adjudicated as an intentional, spec-tolerable simplification.)_
+- [x] `dotnet build AAuth.slnx` 0/0; unit + conformance + mission/combined e2e green. _(SDK build 0/0; `GovernanceDeferredConsentMapperTests` 12/12 incl. 4 new NC-1 cases — full suites run below.)_
+- [x] `issues-and-deviations.md` finalized; research updated; plan DoD ticked. _(DEV-9 + DEV-10 logged.)_
 - [ ] Major open decisions surfaced to the user for input.
 
 ---
