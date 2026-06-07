@@ -68,7 +68,7 @@ decision to the seams:
 ```csharp
 var app = builder.Build();
 
-app.MapAAuthGovernance(); // /mission, /permission, /audit, /interaction + poll route
+app.MapAAuthGovernance(); // /mission, /permission, /audit, /mission-interaction + poll route
 
 // Optional: override the default paths.
 app.MapAAuthGovernance(o =>
@@ -217,7 +217,7 @@ public sealed class MyPermissionDecider : IPermissionDecider
 
         // Pre-approved tool → granted silently.
         var blob = Mission.FromApprovalBytes(mission.Blob.Span);
-        if (blob.ApprovedTools.Any(t => t.Name == context.Request.Action))
+        if (blob.ApprovedTools.Any(t => t.Name == context.Request.Action.Name))
         {
             return new PermissionDecision(PermissionOutcome.Granted, PermissionDecisionReason.ApprovedTool);
         }

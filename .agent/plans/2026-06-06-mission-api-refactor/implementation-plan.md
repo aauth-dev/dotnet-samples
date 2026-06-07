@@ -546,6 +546,47 @@ found non-compliant, fix it (DC6 still holds — fixes must not break existing f
 
 ---
 
+## Phase 11 — Post-commit review remediation (two subagents)
+
+**Goal:** After the initiative was committed, run two independent review subagents —
+one grounding **every SDK change against the spec**, the other grounding **all docs
+and sample snippets against the SDK/repo** — then remediate the findings. Each fix is
+spec- or source-grounded; major cross-cutting decisions are surfaced, not rushed.
+
+**Spec:** `aauth-spec/draft-hardt-oauth-aauth-protocol.md` (§Polling Error Codes,
+§Error Responses, §Token Endpoint Error Codes, §Interaction Response); SDK source of
+truth `src/AAuth/`.
+
+### Approach
+
+- **SDK-vs-spec reviewer.** Walked the `origin/main..HEAD` diff under `src/AAuth/`,
+  grounding each mission/governance/clarification/interaction/call-chaining behavior
+  in a cited spec section. Verdict: **COMPLIANT-WITH-FINDINGS** — no CRITICAL/HIGH;
+  four findings (S-1 `access_denied`→`denied`, S-2 carrier-token 401 shape, S-3
+  `user_unreachable` forward-looking, S-4 = the already-adjudicated DEV-10).
+- **Docs/samples-vs-SDK reviewer.** Read all 12 changed docs + sample snippets and
+  verified every referenced symbol against `src/AAuth/`. Verdict:
+  **GROUNDED-WITH-FINDINGS** — seven drift items (D-1..D-7), the samples themselves
+  build 0/0 (grounded by construction; the docs had diverged from the SDK).
+- **Remediate.** Doc drift fixed against the SDK (the source of truth). SDK findings
+  adjudicated against spec text: S-1 surfaced as a decision (cross-cutting, spans the
+  out-of-scope AccessServer path), S-2/S-3/S-4 documented as intentional.
+
+### Definition of Done
+
+- [x] Two reviewer subagents run; both reports captured and every finding adjudicated.
+- [x] Doc/snippet drift fixed and grounded against `src/AAuth/` (DEV-11): `MissionAction`
+  bare-string snippets, `MyPermissionDecider` comparison, `AAuthAgentOptions`
+  examples + tables (dependency-injection + configuration), `TokenErrorCode` listing,
+  the `/mission-interaction` path comment, and the no-op-seam prose.
+- [x] SDK findings adjudicated against spec: DEV-12 (S-1) surfaced as needs-decision;
+  DEV-13 (S-2) and DEV-14 (S-3) logged intentional; S-4 already DEV-10.
+- [x] `issues-and-deviations.md` updated (DEV-11..DEV-14); `dotnet build AAuth.slnx`
+  0/0 (only `.md` files changed — no code touched).
+- [ ] DEV-12 (`access_denied`→`denied`) decision returned by the user.
+
+---
+
 ## Out of Scope
 
 | Item | Reason |

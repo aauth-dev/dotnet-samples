@@ -101,11 +101,11 @@ other action goes to the PS, which prompts the user when it is out of mission.
 
 ```csharp
 // Pre-approved tool → granted silently.
-var send = await session.RequestPermissionAsync("email.send");
+var send = await session.RequestPermissionAsync(new MissionAction("email.send"));
 
 // Out-of-mission tool → the PS prompts the user (gate 3).
 var delete = await session.RequestPermissionAsync(
-    "files.delete",
+    new MissionAction("files.delete"),
     description: "Remove the duplicate receipt the user flagged.");
 
 if (!delete.IsGranted)
@@ -121,7 +121,7 @@ fire-and-forget.
 
 ```csharp
 await session.RecordAuditAsync(
-    "email.send",
+    new MissionAction("email.send"),
     description: "Emailed the reconciliation summary to the user.",
     result: new JsonObject { ["recipients"] = 1 });
 ```

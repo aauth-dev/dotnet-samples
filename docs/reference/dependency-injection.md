@@ -38,7 +38,7 @@ var key = AAuthKey.Generate(); // or load from persistent storage
 builder.Services.AddAAuthAgent("signing-only", options =>
 {
     options.Key = key;
-    options.UseHwk();
+    // No TokenRefresher set → the agent signs with HWK (pseudonymous) by default.
 });
 ```
 
@@ -115,16 +115,13 @@ builder.Services.AddAAuthAgent("interactive", options =>
     options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
         .WithKeyStore(keyStore)
         .Build();
-    options.InteractionHandling = true;
-    options.InteractionHandlingOptions = io =>
+    // A resource returning 202 + requirement=interaction surfaces here.
+    options.OnResourceInteraction = async (url, code, ct) =>
     {
-        io.OnInteractionRequired = async (url, code, ct) =>
-        {
-            // Present URL and code to user
-            logger.LogInformation("Approve at {Url} with code {Code}", url, code);
-        };
-        io.PollingTimeout = TimeSpan.FromMinutes(3);
+        // Present URL and code to user
+        logger.LogInformation("Approve at {Url} with code {Code}", url, code);
     };
+    options.PollingTimeout = TimeSpan.FromMinutes(3);
 });
 ```
 
@@ -317,18 +314,12 @@ app.Run();
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `Key` | `IAAuthKey` | required | Agent signing key (must have private component) |
-| `BaseAddress` | `Uri?` | `null` | Target resource URL |
-| `SignatureKeyProvider` | `ISignatureKeyProvider?` | `null` | Custom signature key provider |
-| `PersonServer` | `string?` | `null` | PS URL; with ChallengeHandling, enables challenge flow |
-| `ChallengeHandling` | `bool` | `false` | Enable challenge handling |
-| `ChallengeHandlingOptions` | `Action<ChallengeHandlingOptions>?` | `null` | Configure challenge handling behavior |
-| `InteractionHandling` | `bool` | `false` | Enable interaction handling |
-| `InteractionHandlingOptions` | `Action<InteractionHandlingOptions>?` | `null` | Configure interaction handling behavior |
-| `TokenRefresher` | `ITokenRefresher?` | `null` | Auto-refresh before token expiry |
-| `RefreshThreshold` | `TimeSpan?` | `null` | Time before expiry to trigger refresh |
-| `Capabilities` | `string[]?` | `null` | Agent capabilities to advertise |
-| `InnerHandler` | `HttpMessageHandler?` | `null` | Custom inner HTTP handler |
-| `CallChainProvider` | `Func<string?>?` | `null` | Provider for upstream auth token (call chaining) |
+| `PersonServer` | `string?` | `null` | PS URL; with `TokenRefresher`, enables 401 challenge handling |
+| `OnInteractionRequired` | `Func<Interaction, CancellationToken, Task>?` | `null` | PS interaction during token exchange (deferred consent) |
+| `OnResourceInteraction` | `Func<string, string, CancellationToken, Task>?` | `null` | Resource `202` + `requirement=interaction` (URL + code) |
+| `OnApprovalPending` | `Func<CancellationToken, Task>?` | `null` | Resource `202` + `requirement=approval` |
+| `TokenRefresher` | `ITokenRefresher?` | `null` | Auto-refresh before token expiry (JWT identity); omit for HWK signing |
+| `PollingTimeout` | `TimeSpan` | 5 minutes | Max deferred polling time |
 
 ### AAuthResourceOptions
 
@@ -418,7 +409,8 @@ Server (`WithPersonServer`), and throws `InvalidOperationException` otherwise. S
 `AddAAuthGovernance()` registers the in-memory mission storage seams as
 singletons. It uses `TryAdd`, so register durable implementations first to
 override them. The policy and user-channel seams (`IPermissionDecider`,
-`IAuditSink`, `IInteractionRelay`) are always supplied by the PS.
+`IAuditSink`, `IInteractionRelay`) default to conservative no-op implementations;
+a real PS overrides them.
 
 ```csharp
 builder.Services.AddAAuthGovernance(); // InMemoryMissionStore + InMemoryMissionLog

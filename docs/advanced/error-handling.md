@@ -86,6 +86,7 @@ public enum TokenErrorCode
     ExpiredResourceToken,   // Resource token exp has passed
     InteractionRequired,    // User must approve (deferred consent, non-terminal 202)
     UserUnreachable,        // No channel to the user; agent declared no interaction capability (terminal 400)
+    MissionTerminated,      // Mission already terminated (terminal 403 mission_terminated)
     ServerError,            // Internal server error (transient, retryable)
 }
 ```

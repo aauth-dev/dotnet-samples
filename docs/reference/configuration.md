@@ -178,19 +178,13 @@ Standard `DelegatingHandler` — no configurable options. Requires an `ISignatur
 
 | Property | Type | Required | Description |
 |----------|------|:--------:|-------------|
-| `Key` | `IAAuthKey` | Yes | Agent signing key |
-| `BaseAddress` | `Uri?` | No | Target resource URL |
-| `SignatureKeyProvider` | `ISignatureKeyProvider?` | No | Custom signature key provider |
-| `PersonServer` | `string?` | No | Person Server URL (for challenge handling) |
-| `ChallengeHandling` | `bool` | No | Enable challenge handling |
-| `ChallengeHandlingOptions` | `Action<ChallengeHandlingOptions>?` | No | Configure challenge handling behavior |
-| `InteractionHandling` | `bool` | No | Enable interaction handling |
-| `InteractionHandlingOptions` | `Action<InteractionHandlingOptions>?` | No | Configure interaction handling behavior |
-| `TokenRefresher` | `ITokenRefresher?` | No | Custom token refresh logic |
-| `RefreshThreshold` | `TimeSpan?` | No | Time before expiry to trigger refresh |
-| `Capabilities` | `string[]?` | No | Agent capabilities to advertise |
-| `InnerHandler` | `HttpMessageHandler?` | No | Custom inner HTTP handler |
-| `CallChainProvider` | `Func<string?>?` | No | Provider for upstream auth token (call chaining) |
+| `Key` | `IAAuthKey` | Yes | Agent signing key (must have private component) |
+| `PersonServer` | `string?` | No | Person Server URL; with `TokenRefresher`, enables 401 challenge handling |
+| `OnInteractionRequired` | `Func<Interaction, CancellationToken, Task>?` | No | PS interaction during token exchange (deferred consent) |
+| `OnResourceInteraction` | `Func<string, string, CancellationToken, Task>?` | No | Resource `202` + `requirement=interaction` (URL + code) |
+| `OnApprovalPending` | `Func<CancellationToken, Task>?` | No | Resource `202` + `requirement=approval` |
+| `TokenRefresher` | `ITokenRefresher?` | No | Auto-refresh before token expiry (JWT identity); omit for HWK |
+| `PollingTimeout` | `TimeSpan` | No | Max deferred polling time (default 5 minutes) |
 
 ### AAuthResourceOptions (AddAAuthResource)
 

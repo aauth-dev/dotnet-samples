@@ -108,14 +108,14 @@ else
 }
 ```
 
-The action is a `MissionAction` POCO; a bare `string` converts implicitly, so
-`"email.send"` works directly. For an action not on the mission, the PS evaluates
+The action is a `MissionAction` POCO — construct it with `new MissionAction("email.send")`
+(or `tool.ToAction()` from a `MissionTool`). For an action not on the mission, the PS evaluates
 it against the mission log and may prompt the user. Supply `OnInteractionRequired`
 / `OnClarificationRequired` via `GovernanceOptions` to participate in any deferral.
 
 ```csharp
 PermissionResult outcome = await session.RequestPermissionAsync(
-    "files.delete",
+    new MissionAction("files.delete"),
     description: "Remove the stale draft the user mentioned.",
     parameters: new JsonObject { ["path"] = "/drafts/old.md" });
 ```
@@ -129,7 +129,7 @@ surfaces as `AAuthMissionTerminatedException` (see
 
 ```csharp
 await session.RecordAuditAsync(
-    "email.send",
+    new MissionAction("email.send"),
     description: "Sent booking confirmation to 4 recipients.",
     result: new JsonObject { ["messageId"] = "msg-8842" });
 ```
@@ -176,11 +176,11 @@ var session = await governance.ProposeMissionAsync(
     });
 
 // 2. Permission for a pre-approved tool → granted silently
-var perm = await session.RequestPermissionAsync("bookmarks.archive");
+var perm = await session.RequestPermissionAsync(new MissionAction("bookmarks.archive"));
 
 // 3. Do the work, then audit it
 await session.RecordAuditAsync(
-    "bookmarks.archive",
+    new MissionAction("bookmarks.archive"),
     result: new JsonObject { ["archived"] = 12 });
 
 // 4. Close the mission out
