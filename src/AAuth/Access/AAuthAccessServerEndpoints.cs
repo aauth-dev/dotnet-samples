@@ -311,9 +311,13 @@ public static class AAuthAccessServerEndpoints
             catch (TokenVerificationException ex)
             {
                 var expired = ex.Message.Contains("expired", StringComparison.OrdinalIgnoreCase);
+                // §Token Endpoint Error Codes: invalid_resource_token / expired_resource_token
+                // are 400 (a bad token parameter in the body), not 401 — 401 is reserved for
+                // request-signature failures carrying a Signature-Error header (§Authentication
+                // Errors). The request itself was correctly signed; the resource_token is invalid.
                 return Results.Json(
                     new { error = expired ? "expired_resource_token" : "invalid_resource_token", detail = ex.Message },
-                    statusCode: StatusCodes.Status401Unauthorized);
+                    statusCode: StatusCodes.Status400BadRequest);
             }
 
             var policyClaims = options.DeriveAgentClaims?.Invoke(agentId);

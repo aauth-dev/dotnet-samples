@@ -68,7 +68,6 @@ public sealed class TourSession : IAsyncDisposable
     // the combined Orchestrator → WhoAmI mission-governed result.
     private string? _missionPendingId;
     private string? _clarificationQuestion;
-    private string? _clarificationAnswer;
     private string? _missionChainResponseBody;
 
     // Background polling state (deferred mode, poll step). Mutated from
@@ -592,7 +591,6 @@ public sealed class TourSession : IAsyncDisposable
         _permissionEndpoint = null;
         _missionPendingId = null;
         _clarificationQuestion = null;
-        _clarificationAnswer = null;
         _missionChainResponseBody = null;
     }
 
@@ -3539,7 +3537,6 @@ public sealed class TourSession : IAsyncDisposable
     {
         const string answer =
             "This mission needs the full account history to triage the inbox.";
-        _clarificationAnswer = answer;
 
         string? capturedBase = null;
         var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };

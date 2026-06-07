@@ -287,9 +287,12 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
         catch (TokenVerificationException ex)
         {
             var expired = ex.Message.Contains("expired", StringComparison.OrdinalIgnoreCase);
+            // §Token Endpoint Error Codes: invalid_resource_token / expired_resource_token
+            // are 400 (a bad token in the body), not 401 (401 is reserved for request-signature
+            // failures carrying a Signature-Error header, §Authentication Errors).
             return Results.Json(
                 new { error = expired ? "expired_resource_token" : "invalid_resource_token", detail = ex.Message },
-                statusCode: StatusCodes.Status401Unauthorized);
+                statusCode: StatusCodes.Status400BadRequest);
         }
 
         var federation = app.Services.GetRequiredService<AccessServerClient>();
@@ -489,9 +492,11 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
     }
     catch (TokenVerificationException ex)
     {
-        // §Error Response Format: a resource token that fails verification is
-        // rejected outright — the consent screen and issued auth token derive
-        // only from a verified token.
+        // §Token Endpoint Error Codes: a resource token that fails verification is
+        // rejected as a 400 (invalid_resource_token / expired_resource_token are bad
+        // token parameters in the body, not request-signature failures). 401 is
+        // reserved for signature failures carrying a Signature-Error header. The
+        // consent screen and issued auth token derive only from a verified token.
         var expired = ex.Message.Contains("expired", StringComparison.OrdinalIgnoreCase);
         return Results.Json(
             new
@@ -499,7 +504,7 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
                 error = expired ? "expired_resource_token" : "invalid_resource_token",
                 detail = ex.Message,
             },
-            statusCode: StatusCodes.Status401Unauthorized);
+            statusCode: StatusCodes.Status400BadRequest);
     }
 
     // Mission gate (§Agent Token Request, three-gate model). When the resource

@@ -128,7 +128,10 @@ public class MockAccessServerTests : IClassFixture<WebApplicationFactory<MockAcc
             ["resource_token"] = resourceToken,
         });
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        // §Token Endpoint Error Codes: a resource_token that fails verification
+        // (here, aud mismatch) is a 400 invalid_resource_token, not a 401 — 401 is
+        // reserved for request-signature failures carrying a Signature-Error header.
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]

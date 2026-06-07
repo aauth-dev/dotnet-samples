@@ -180,6 +180,40 @@ public class PersonServerMapperTests
         await host.StopAsync();
     }
 
+    [Fact(DisplayName = "§Token Endpoint Error Codes — an unverifiable resource_token is a 400 invalid_resource_token (not a 401)")]
+    public async Task ThreeParty_RejectsInvalidResourceToken_With400()
+    {
+        var agentKey = AAuthKey.Generate();
+        using var host = await BuildHostAsync();
+        using var http = SignedAgentClient(host, agentKey, AgentId);
+
+        // A resource token carrying the published kid but signed with a different
+        // key — the PS resolves the genuine JWKS key and the signature check fails.
+        var forged = new ResourceTokenBuilder
+        {
+            Issuer = ResourceUrl,
+            Audience = PsIssuer,
+            Agent = AgentId,
+            AgentJkt = agentKey.ComputeJwkThumbprint(),
+            Key = AAuthKey.Generate(),
+            KeyId = ResKid,
+            Scope = "whoami",
+        }.Build();
+
+        using var response = await http.PostAsJsonAsync("/token",
+            new JsonObject { ["resource_token"] = forged });
+
+        // §Token Endpoint Error Codes lists invalid_resource_token / expired_resource_token
+        // as 400 (a bad token parameter in the body). §Authentication Errors reserves 401
+        // for request-signature failures carrying a Signature-Error header — the agent's
+        // request signature is valid here, so a 401 would mismatch the spec.
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("invalid_resource_token", (string?)body!["error"]);
+        Assert.False(response.Headers.Contains("Signature-Error"));
+        await host.StopAsync();
+    }
+
     [Fact(DisplayName = "§PS-asserted access — a denying asserter yields 403 denied")]
     public async Task ThreeParty_DenyingAsserter_Forbidden()
     {

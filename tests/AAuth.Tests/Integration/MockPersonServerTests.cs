@@ -254,7 +254,10 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         var response = await http.PostAsJsonAsync("/token",
             new JsonObject { ["resource_token"] = forged });
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        // §Token Endpoint Error Codes: invalid_resource_token is a 400 (a bad token
+        // in the body), not a 401 — 401 is reserved for request-signature failures
+        // carrying a Signature-Error header (§Authentication Errors).
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
         Assert.Equal("invalid_resource_token", (string?)body!["error"]);
     }
@@ -303,7 +306,10 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         var response = await http.PostAsJsonAsync("/token",
             new JsonObject { ["resource_token"] = tampered });
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        // §Token Endpoint Error Codes: invalid_resource_token is a 400 (a bad token
+        // in the body), not a 401 — 401 is reserved for request-signature failures
+        // carrying a Signature-Error header (§Authentication Errors).
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
         Assert.Equal("invalid_resource_token", (string?)body!["error"]);
     }
