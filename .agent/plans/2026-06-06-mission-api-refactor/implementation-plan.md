@@ -832,6 +832,89 @@ PS-asserted (three-party) and federated (four-party) issuer the spec defines.
 
 ---
 
+## Phase 13 — GuidedTour combined "Mission Call Chain" flow
+
+**Goal:** Add a new `TourMode.MissionCallChain` flow to the GuidedTour sample so the
+step-by-step raw-HTTP walkthrough demonstrates the same combined use case the
+SampleApp `MissionCallChain.razor` page already shows: **one human-approved mission
+governs (a) a clarification round on an out-of-mission elevated scope and (b) a
+mission-forwarded delegated call chain**, then surfaces the PS-held mission log. The
+GuidedTour today has *separate* Mission (`TourMode.Mission`) and Call-Chain
+(`TourMode.CallChain`) flows but no combined one; this closes that gap and gives the
+tour parity with the SampleApp's `/mission-call-chain` page. Ships with a guided-tour
+Playwright spec mirroring `samples/SampleApp/playwright-tests/mission-call-chain.spec.ts`.
+
+**Spec:** `aauth-spec/draft-hardt-oauth-aauth-protocol.md` §Clarification Chat
+(out-of-mission scope triggers a PS question before the prompt), §Mission Context at
+Resources + §Call Chaining (the `AAuth-Mission` header is forwarded hop-to-hop so the
+mission governs every hop), §Mission Log (the PS holds the ordered governed trail).
+No SDK or spec change — this is an additive **sample** flow over the existing engine.
+
+### Implementation Decisions
+
+- **D1 — Additive over the existing engine.** Reuse the modular `TourSession` mode
+  machinery (one enum value + `IsXxxMode` property + `TotalSteps`/`Plan` cases + a
+  step switch + `PrepareConsentStateAsync` branch + a Tour.razor picker option + a
+  sequence-diagram lane set). No existing flow is changed (DC6, no regressions).
+- **D2 — Mirror the SampleApp three-pillar shape.** The combined flow demonstrates
+  three pillars under one mission: (1) mission creation (PROMPT), (2) an elevated
+  out-of-mission scope that triggers a **clarification round** (§Clarification Chat)
+  before the user prompt, and (3) a **mission-forwarded call chain** (the
+  `AAuth-Mission` header carried to the Orchestrator and forwarded to its WhoAmI hop)
+  that resolves **silently** because both chain scopes are seeded in-scope — then the
+  mission log. Rendered as raw-HTTP micro-steps (the tour's idiom), not three macro
+  cards (the SampleApp's idiom).
+- **D3 — Clarification is new to the tour engine.** The existing `TourMode.Mission`
+  flow has no clarification round; the combined flow adds the raw-HTTP clarification
+  exchange (the PS answers the out-of-mission token request with a clarification
+  challenge, the agent posts an answer, then the normal 202 + interaction prompt
+  runs). Scripted via the existing MockPersonServer `requireClarification` /
+  `clarificationQuestion` mission-script fields (already used by the SampleApp page;
+  `MissionGovernance.cs` already models `ClarificationQuestion` + `SeedInScope`).
+- **D4 — Reuse the MockPersonServer admin scripting verbatim.** `PrepareConsentStateAsync`
+  for the new mode posts `/admin/reset` + `/admin/mission-script` with
+  `requireClarification=true`, a `clarificationQuestion`, and **both** chain scopes
+  seeded in-scope (`{WhoAmIUrl, whoami}` and `{OrchestratorUrl, orchestrate}`), so the
+  chain hops resolve silently. The mission log is read from `/admin/mission-log/{s256}`.
+  No new MockPersonServer endpoints — the SampleApp page already exercises all of them.
+- **D5 — e2e parity.** Add `samples/GuidedTour/playwright-tests/mission-call-chain.spec.ts`
+  driving the new flow end-to-end (propose → approve, elevated clarification + approve,
+  silent forwarded chain, mission-log assertions), reusing the shared e2e helpers
+  (`fixtures`, `blazor`, `consent`). The Playwright `webServer` array already boots PS +
+  AP + Orchestrator + WhoAmI for the existing guided-tour mission/call-chain specs.
+
+### Work items
+
+- **W1 — Engine: `TourMode.MissionCallChain`.** Add the enum value; `IsMissionCallChainMode`;
+  `TotalSteps` + `Plan` cases; the `MissionCallChainPlan` step array; the step-dispatch
+  switch in `RunNextAsync`; the clarification-round raw-HTTP helper; the mission-forwarded
+  chain step(s); the mission-log fetch/render step; `PrepareConsentStateAsync` branch.
+- **W2 — UI: Tour.razor.** Add the picker `<option>` (disabled unless PS + Orchestrator),
+  the description `case`, and a `MissionCallChainLanes` lane set (Agent / Resource /
+  Orchestrator / Person Server); wire `ActiveLanes`.
+- **W3 — Snippets: CodeSnippets.cs.** Add the per-step SDK code snippets for the new
+  flow (mission propose, clarification callback, mission-forwarded `WithMission(...)`
+  chain, mission-log fetch), mirroring the SampleApp page's client-code blocks.
+- **W4 — e2e:** `mission-call-chain.spec.ts` (guided-tour project) green; the full
+  guided-tour + sample-app suites stay green.
+- **W5 — Docs/READMEs:** update `samples/GuidedTour/README.md` flow list to include the
+  new combined flow; cross-link from the mission/call-chain workflow docs if warranted.
+
+### Definition of Done
+
+- [x] New `TourMode.MissionCallChain` flow runs to completion in the tour UI: mission
+  PROMPT → elevated clarification round + PROMPT → silent mission-forwarded chain →
+  mission log rendered.
+- [x] The forwarded chain's downstream WhoAmI hop shows the Orchestrator as the
+  immediate actor and the mission round-tripped (mirrors the SampleApp spec's
+  `chain.downstream.*` assertions).
+- [x] `dotnet build AAuth.slnx` 0/0; unit (387) + conformance (480) unaffected and green.
+- [x] `samples/GuidedTour/playwright-tests/mission-call-chain.spec.ts` green; full
+  guided-tour suite green (17 passed, incl. the updated picker spec → 8 flows).
+- [x] No regression to the existing Mission / Call-Chain tour flows or their specs.
+
+---
+
 ## Out of Scope
 
 | Item | Reason |
