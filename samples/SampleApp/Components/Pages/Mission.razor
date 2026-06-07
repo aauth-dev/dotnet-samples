@@ -1,0 +1,673 @@
+@page "/mission"
+@using System.Net
+@using System.Net.Http.Json
+@using System.Text.Json.Nodes
+@using AAuth.Agent
+@using AAuth.Agent.Governance
+@using AAuth.Crypto
+@using AAuth.Discovery
+@using AAuth.Headers
+@using AAuth.HttpSig
+@using AAuth.Tokens
+@inject IJSRuntime JS
+@rendermode InteractiveServer
+
+<PageTitle>Mission — PS-Governed Agent</PageTitle>
+
+<h2>Mission — the Person Server governs every step</h2>
+
+<p>
+    A <strong>mission</strong> is a durable, human-approved statement of intent plus the
+    tools the agent may use (§Missions). Once approved, the Person Server governs every
+    downstream token and permission request <strong>under</strong> that mission. This page
+    drives all five governance gates in one run and labels each as
+    <span class="badge bg-warning text-dark">prompt</span> (the user must decide) or
+    <span class="badge bg-success">silent</span> (resolved without a screen).
+</p>
+
+<div class="alert alert-secondary">
+    <strong>Tools are declared; scopes are evaluated.</strong> The mission proposal lists the
+    <em>tools</em> the agent may run locally, but it lists <em>no scopes</em>. When the agent
+    later requests a resource scope, the PS judges that request against the mission's
+    natural-language description — granting it silently if it fits the intent, otherwise
+    prompting the user (§Mission Creation, §Scopes).
+</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <h5>Client Code</h5>
+        <pre><code class="language-csharp">// Self-issued agent token signs every governance call.
+var agentToken = new AgentTokenBuilder
+{
+    Issuer = identity.Issuer,
+    Subject = identity.AgentId,
+    KeyId = identity.KeyId,
+    Key = identity.Key,
+    PersonServer = personServer,
+}.Build();
+
+var handler = new AAuthSigningHandler(
+    identity.Key, () =&gt; agentToken)
+    { InnerHandler = new HttpClientHandler() };
+var signed = new HttpClient(handler);
+// Bind the PS once; the bound client returns a MissionSession that
+// auto-threads the mission claim {approver, s256} into every later call.
+var governance = new AAuthGovernanceClient(signed, metadata, personServer, governanceOptions);
+
+// 1. Propose a mission (PROMPT — the human approves intent + tools).
+//    A proposal carries a Markdown description + an optional `tools`
+//    list ONLY. It declares NO scopes — scopes are never pre-listed
+//    on a mission (§Mission Creation).
+var sendEmailTool = new MissionTool("send_email", "Send email");
+var session = await governance.ProposeMissionAsync(
+    new MissionProposal("Keep the inbox under control for an hour.")
+    {
+        Tools = new[]
+        {
+            sendEmailTool,
+            new MissionTool("summarize", "Summarize a thread"),
+        },
+    });
+var mission = session.Mission; // session threads the claim + PS for you
+
+// 2. Access a mission-aware resource (SILENT — the PS judges the scope
+//    fits the mission intent). The client calls the resource directly;
+//    the SDK only mints the auth token. Standard challenge -> exchange
+//    -> retry:
+//
+//    a) GET the resource with the agent token + AAuth-Mission header.
+//       Having no auth token yet, the resource answers 401 and hands
+//       back a resource token (aud = the agent's PS) in AAuth-Requirement.
+var get = new HttpRequestMessage(HttpMethod.Get, $"{resourceOrigin}/protected_endpoint");
+get.Headers.TryAddWithoutValidation(AAuthMissionHeader.Name,
+    AAuthMissionHeader.FormatStructured(mission.Approver, mission.S256));
+using var challenge = await signed.SendAsync(get);            // 401 Unauthorized
+var resourceToken = AAuthRequirementHeader
+    .Parse(challenge.Headers.GetValues(AAuthRequirementHeader.Name).First())
+    .ResourceToken!;
+
+//    b) Exchange the resource token at the PS for an auth token. The
+//       mission named no scopes, so the PS evaluates the requested
+//       `whoami` scope against the mission's description; it fits the
+//       intent, so the PS grants it silently — no user prompt
+//       (§Scopes, §Agent Token Request, gate 2a).
+var authToken = await exchange.ExchangeAsync(personServer, resourceToken);
+
+//    c) Retry the SAME request, now signing with the auth token. 200 OK.
+var authed = new HttpClient(new AAuthSigningHandler(identity.Key, () =&gt; authToken)
+    { InnerHandler = new HttpClientHandler() });
+using var ok = await authed.GetAsync($"{resourceOrigin}/protected_endpoint");
+var who = await ok.Content.ReadFromJsonAsync&lt;JsonObject&gt;();   // the profile
+
+// 3. Access an ELEVATED scope (PROMPT — out of mission). The same
+//    challenge -> exchange -> retry, but against an endpoint requiring
+//    `whoami:elevated_scope`. The mission's intent does not cover this
+//    scope, so the PS cannot grant it silently: it prompts the user.
+//    A user deny throws AAuthInteractionDeniedException (denied);
+//    otherwise the consent accrues to the mission (§Scopes, gate 3).
+var elevated = await ExchangeForScopeAsync(
+    $"{resourceOrigin}/protected_endpoint/elevated", mission, governanceOptions);
+
+// 4. Permission for a pre-approved tool (SILENT — no PS call).
+//    We still hold the sendEmailTool reference from the proposal above.
+var sendEmail = await session.RequestPermissionAsync(sendEmailTool.ToAction());
+
+// 5. Permission for a non-approved tool (PROMPT — the PS asks). The
+//    session injects the mission claim and the bound options.
+var deleteInbox = await session.RequestPermissionAsync(
+    new MissionAction("delete_inbox"));</code></pre>
+    </div>
+    <div class="col-md-6">
+        <h5>Resource — protecting the action with a scope</h5>
+        <pre><code class="language-csharp">// Publish the scopes this resource offers so agents (and their
+// Person Servers) can discover them (§Resource Metadata).
+app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
+{
+    Issuer = resourceUrl,
+    SigningKeys = new() { [kid] = resourceKey },
+    ScopeDescriptions = new()
+    {
+        ["whoami"] = "See basic profile information",
+        ["whoami:elevated_scope"] = "See your full account and profile history",
+    },
+});
+
+// Bind the `whoami` scope to a policy.
+builder.Services.AddAAuthScopePolicy("AAuth.Scope.whoami", "whoami");
+// ...and the elevated scope used by gate 3.
+builder.Services.AddAAuthScopePolicy(
+    "AAuth.Scope.whoami:elevated_scope", "whoami:elevated_scope");
+
+// /protected_endpoint is the `whoami`-protected ACTION the agent calls
+// in gate 2. The mission-aware challenge copies the {approver, s256}
+// from the signed AAuth-Mission header into the resource token, so
+// the PS governs the exchange under the mission. Presenting only an
+// agent token yields a 401 + resource token (aud = the agent's PS)
+// requesting `whoami`.
+app.UseWhen(
+    ctx =&gt; ctx.Request.Path.StartsWithSegments("/protected_endpoint"),
+    branch =&gt;
+    {
+        branch.UseAAuthVerification(FullVerification());
+        branch.UseAAuthChallenge(ChallengeForMission("whoami"));
+    });
+
+// The endpoint itself just requires the verified `whoami` scope.
+app.MapGet("/protected_endpoint", (HttpContext ctx) =&gt;
+{
+    var v = ctx.GetAAuthVerification()!;  // auth token already verified
+    // v.Scopes contains "whoami" — safe to return the profile.
+    return Results.Ok(Profile(v));
+}).RequireAuthorization("AAuth.Scope.whoami");
+
+// /protected_endpoint/elevated is the ELEVATED action gate 3 calls. Same
+// mission-aware challenge, but it requests `whoami:elevated_scope`. Because
+// the mission's intent does not cover this scope, the PS prompts the user
+// at the exchange step before issuing the auth token (§Scopes, gate 3).
+app.UseWhen(
+    ctx =&gt; ctx.Request.Path.StartsWithSegments("/protected_endpoint/elevated"),
+    branch =&gt;
+    {
+        branch.UseAAuthVerification(FullVerification());
+        branch.UseAAuthChallenge(ChallengeForMission("whoami:elevated_scope"));
+    });
+
+app.MapGet("/protected_endpoint/elevated", (HttpContext ctx) =&gt;
+    Results.Ok(Profile(ctx.GetAAuthVerification()!)))
+   .RequireAuthorization("AAuth.Scope.whoami:elevated_scope");</code></pre>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-6">
+        <h5>Client — running the approved tool</h5>
+        <pre><code class="language-csharp">// Gate 5 returned `granted` for delete_inbox. It is a LOCAL tool —
+// the agent runs it itself; no resource is involved (§Permission
+// Endpoint). Run it, then record it on the mission log so the PS
+// keeps a complete audit trail (§Audit Endpoint).
+if (deleteInbox.IsGranted)
+{
+    await DeleteInboxAsync(); // your own code / MCP tool call
+    await session.RecordAuditAsync(
+        new MissionAction("delete_inbox"),
+        result: new JsonObject { ["deleted"] = true });
+}</code></pre>
+    </div>
+</div>
+
+<p class="text-muted small mt-2">
+    Two governance paths, one mission: the <strong>permission endpoint</strong> gates
+    <em>local</em> actions (the agent runs the tool itself, then audits it), while a
+    <strong>scope-protected resource</strong> gates <em>remote</em> endpoints via the
+    challenge → exchange → retry pattern. The mission binding
+    <code>{approver, s256}</code> threads through both so the PS governs every step in
+    context (§Permission&nbsp;Endpoint, §Missions).
+</p>
+
+<div class="alert alert-info">
+    Self-issued agent identity. Key ID: <code>@_identity.KeyId</code>,
+    agent: <code>@_identity.AgentId</code>.
+</div>
+
+@if (!_running && _steps.Count == 0)
+{
+    <button class="btn btn-primary" @onclick="RunFlow">Run the mission flow</button>
+    <p class="text-muted mt-1">
+        <small>
+            Two gates resolve silently (in-scope token, pre-approved tool); three prompt
+            you in a new tab (mission creation, the elevated <code>whoami:elevated_scope</code>,
+            the <code>delete_inbox</code> action).
+        </small>
+    </p>
+}
+
+@if (_running)
+{
+    <button class="btn btn-secondary" disabled>
+        <span class="spinner-border spinner-border-sm" role="status"></span>
+        Running&hellip;
+    </button>
+}
+
+@if (_steps.Count > 0)
+{
+    <div class="mt-3">
+        <h5>Gate outcomes</h5>
+        <p class="text-muted small">
+            Each gate is independent. A resource <strong>token</strong> carries scope plus the
+            mission binding <code>{approver, s256}</code> — never the mission's tools. The
+            permission endpoint returns a <strong>decision</strong>, not a token, so denying
+            an action does not change any token issued by an earlier gate (§Missions,
+            §Permission&nbsp;Endpoint).
+        </p>
+        @foreach (var s in _steps)
+        {
+            <div class="card mb-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span><strong>Gate @s.Number</strong> — @s.Title</span>
+                    <span>
+                        @if (s.Prompted)
+                        {
+                            <span class="badge bg-warning text-dark me-1">prompt</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-success me-1">silent</span>
+                        }
+                        <span class="badge @OutcomeClass(s.Outcome)">@s.Outcome</span>
+                    </span>
+                </div>
+                <div class="card-body">
+                    <p class="mb-2">@s.Summary</p>
+                    @if (s.Note is not null)
+                    {
+                        <p class="text-muted small mb-2">@s.Note</p>
+                    }
+                    @if (s.Payload is not null)
+                    {
+                        <div class="text-muted small mb-1">@s.PayloadLabel</div>
+                        <pre class="mb-0"><code class="language-@s.PayloadLang">@s.Payload</code></pre>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@if (_waitingForApproval)
+{
+    <div class="mt-3 alert alert-warning">
+        <h5>User Approval Required — @_currentGate</h5>
+        <p>
+            The gates above have run in order. This one fell <strong>outside</strong> the
+            mission, so the Person Server returned <code>202 Accepted</code> and is waiting
+            for the user to approve before the flow continues.
+        </p>
+        <p>
+            <strong>Interaction URL:</strong><br />
+            <a href="@_interactionUrl" target="_blank" rel="noopener">@_interactionUrl</a>
+        </p>
+        <p class="text-muted">
+            Open the link in a new tab and click <strong>Approve</strong>. The SDK is polling
+            the pending endpoint&hellip;
+            <span class="spinner-border spinner-border-sm" role="status"></span>
+            (@_pollCount polls)
+        </p>
+    </div>
+}
+
+@if (_error is not null)
+{
+    <div class="mt-3 alert alert-danger">@_error</div>
+}
+
+@code {
+    [Inject] private SelfIssuedIdentity _identity { get; set; } = default!;
+    [Inject] private IConfiguration Config { get; set; } = default!;
+
+    private readonly List<GateStep> _steps = new();
+    private bool _running;
+    private bool _waitingForApproval;
+    private string? _currentGate;
+    private string? _interactionUrl;
+    private int _pollCount;
+    private string? _resourceJson;
+    private string? _error;
+
+    // Reused across the flow so each gate signs with the same agent identity.
+    private string _agentToken = string.Empty;
+
+    private sealed record GateStep(
+        int Number,
+        string Title,
+        bool Prompted,
+        string Outcome,
+        string Summary,
+        string? Note,
+        string? Payload,
+        string PayloadLabel = "",
+        string PayloadLang = "json");
+
+    private static string OutcomeClass(string outcome) => outcome switch
+    {
+        "denied" => "bg-danger",
+        _ => "bg-success",
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await JS.InvokeVoidAsync("highlightCode");
+    }
+
+    private async Task RunFlow()
+    {
+        _running = true;
+        _steps.Clear();
+        _resourceJson = null;
+        _error = null;
+        _interactionUrl = null;
+        _waitingForApproval = false;
+        _pollCount = 0;
+
+        var personServer = Config["AAuth:PersonServer"]!.TrimEnd('/');
+        var resourceOrigin = Config["AAuth:Resource"]!.TrimEnd('/');
+        var resourceUrl = $"{resourceOrigin}/jwt/mission";
+        var elevatedUrl = $"{resourceOrigin}/jwt/mission/elevated";
+
+        try
+        {
+            // Reset prior runs and script the PS for an interactive demo: the
+            // browser decides the prompts, while `whoami` is seeded in scope so
+            // the token gate resolves silently (gate 2a). The approve* flags are
+            // only the scripted fallback used outside interactive mode.
+            await ConfigurePersonServerAsync(personServer, resourceOrigin);
+
+            // Self-issued signing channel: SampleApp is its own AP (§Self-Hosted
+            // Agents), so it mints its own short-lived agent token.
+            _agentToken = MintAgentToken(personServer);
+            var handler = new AAuthSigningHandler(_identity.Key, () => _agentToken)
+                { InnerHandler = new HttpClientHandler() };
+            using var signed = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+            var metadata = new MetadataClient(new HttpClient());
+            var poller = new DeferredPollerOptions { MaxTotalWait = TimeSpan.FromMinutes(2) };
+
+            GovernanceOptions GovernanceFor() => new()
+            {
+                OnInteractionRequired = SurfaceInteractionAsync,
+                PollerOptions = poller,
+            };
+
+            // Bind the PS and the default deferred-handling options once. The
+            // bound client hands back a MissionSession that auto-threads the
+            // mission claim {approver, s256} into every later governed call.
+            var governance = new AAuthGovernanceClient(signed, metadata, personServer, GovernanceFor());
+            var exchange = new TokenExchangeClient(signed, metadata);
+
+            // ---- Gate 1: propose the mission (PROMPT) ----------------------
+            _currentGate = "Mission creation";
+            var sendEmailTool = new MissionTool("send_email", "Send an email on the user's behalf");
+            var session = await governance.ProposeMissionAsync(new MissionProposal(
+                "Help the user keep their inbox under control for the next hour.")
+            {
+                Tools = new[]
+                {
+                    sendEmailTool,
+                    new MissionTool("summarize", "Summarize a thread"),
+                },
+            });
+            // The session wraps the approved mission and threads its claim + PS
+            // into every subsequent permission / audit / interaction call.
+            var mission = session.Mission;
+            ClearWaiting();
+            _steps.Add(new GateStep(1, "Mission creation", Prompted: true,
+                Outcome: "approved",
+                Summary: $"The user approved the mission's intent and {mission.ApprovedTools.Count} pre-approved tool(s).",
+                Note: "The mission approval is a durable restriction held at the PS — it is not a token. " +
+                      "It names the agent's pre-approved TOOLS but lists NO scopes; resources never see " +
+                      "mission content (§Mission Creation, §Missions).",
+                Payload: MissionPayload(mission),
+                PayloadLabel: "Mission approval (held at the PS)"));
+            await InvokeAsync(StateHasChanged);
+
+            // ---- Gate 2: access a mission-aware resource (SILENT, in scope) -
+            _currentGate = "Resource token";
+            var who = await AccessMissionResourceAsync(
+                signed, exchange, personServer, resourceUrl, mission, poller);
+            _resourceJson = Pretty(who);
+            ClearWaiting();
+            _steps.Add(new GateStep(2, "Resource token (whoami)", Prompted: false,
+                Outcome: "granted",
+                Summary: $"The mission named no scopes, so the PS evaluated the requested scope against " +
+                         $"the mission's intent; it fit, so an auth_token was minted silently. " +
+                         $"scope={who?["scope"]?.ToJsonString()}",
+                Note: "This token carries the resource's scope and the mission binding {approver, s256} — " +
+                      "NOT the mission's tools. It is unaffected by any later permission decision (§Scopes, §Missions).",
+                Payload: _resourceJson,
+                PayloadLabel: "Mission-aware resource response (auth_token claims)"));
+            await InvokeAsync(StateHasChanged);
+
+            // ---- Gate 3: access an ELEVATED scope (PROMPT, out of mission) --
+            // The mission named no scopes and its intent ("keep the inbox under
+            // control") does not cover `whoami:elevated_scope`. The PS cannot
+            // silently approve this exchange, so it prompts the user before
+            // minting the auth_token (§Agent Token Request gate 3, §Scopes).
+            _currentGate = "Resource token (elevated)";
+            try
+            {
+                var elevated = await AccessMissionResourceAsync(
+                    signed, exchange, personServer, elevatedUrl, mission, poller);
+                ClearWaiting();
+                _steps.Add(new GateStep(3, "Resource token (elevated)", Prompted: true,
+                    Outcome: "granted",
+                    Summary: "This scope falls outside the mission's intent, so the PS could not grant " +
+                             "it silently — it prompted the user, who approved. The PS may reuse this " +
+                             $"consent for the rest of the mission. scope={elevated?["scope"]?.ToJsonString()}",
+                    Note: "Out-of-mission scopes are not auto-denied: the PS asks the user, and the " +
+                          "decision accrues to the mission for later requests (§Scopes, §Token Endpoint).",
+                    Payload: Pretty(elevated),
+                    PayloadLabel: "Elevated mission-aware resource response (auth_token claims)"));
+            }
+            catch (AAuthInteractionDeniedException)
+            {
+                ClearWaiting();
+                _steps.Add(new GateStep(3, "Resource token (elevated)", Prompted: true,
+                    Outcome: "denied",
+                    Summary: "This scope falls outside the mission's intent; the PS prompted the user, " +
+                             "who clicked Deny — so no auth_token was issued (denied).",
+                    Note: "Only an explicit user deny (or a terminated mission) yields denied; " +
+                          "an out-of-mission scope on its own just prompts (§Scopes).",
+                    Payload: "{\n  \"error\": \"denied\"\n}",
+                    PayloadLabel: "Token exchange outcome"));
+            }
+            await InvokeAsync(StateHasChanged);
+
+            // ---- Gate 4: permission for a pre-approved tool (SILENT) --------
+            // We still hold the sendEmailTool reference from Gate 1, so we ask
+            // via tool.ToAction() rather than re-typing the action name. The
+            // session injects the mission claim automatically.
+            var sendEmail = await session.RequestPermissionAsync(sendEmailTool.ToAction());
+            _steps.Add(new GateStep(4, "Permission send_email", Prompted: false,
+                Outcome: sendEmail.IsGranted ? "granted" : "denied",
+                Summary: "Pre-approved tool — resolved locally without a PS round-trip.",
+                Note: "Tools listed in the mission's approved_tools are granted without calling the " +
+                      "permission endpoint (§Permission Endpoint).",
+                Payload: PermissionPayload(sendEmail),
+                PayloadLabel: "Permission decision"));
+            await InvokeAsync(StateHasChanged);
+
+            // ---- Gate 5: permission for a non-approved tool (PROMPT) --------
+            _currentGate = "Permission delete_inbox";
+            try
+            {
+                // Not a pre-approved tool: the session threads the mission claim
+                // and the bound deferred-handling options, so the PS prompt is
+                // surfaced automatically.
+                var deleteInbox = await session.RequestPermissionAsync(
+                    new MissionAction("delete_inbox"));
+                ClearWaiting();
+                _steps.Add(new GateStep(5, "Permission delete_inbox", Prompted: true,
+                    Outcome: deleteInbox.IsGranted ? "granted" : "denied",
+                    Summary: deleteInbox.IsGranted
+                        ? "Not a pre-approved tool — the PS prompted the user, who approved this action."
+                        : "Not a pre-approved tool — the PS prompted the user, who denied this action.",
+                    Note: "The permission endpoint returns a decision, not a token. This decision governs " +
+                          "the action only; the Gate 2 token above is unchanged (§Permission Endpoint).",
+                    Payload: PermissionPayload(deleteInbox),
+                    PayloadLabel: "Permission decision"));
+            }
+            catch (AAuthInteractionDeniedException)
+            {
+                ClearWaiting();
+                _steps.Add(new GateStep(5, "Permission delete_inbox", Prompted: true,
+                    Outcome: "denied",
+                    Summary: "Not a pre-approved tool — the user clicked Deny at the PS consent page.",
+                    Note: "The permission endpoint returns a decision, not a token. Denying blocks this " +
+                          "action only; the Gate 2 token above is unchanged (§Permission Endpoint).",
+                    Payload: "{\n  \"permission\": \"denied\"\n}",
+                    PayloadLabel: "Permission decision"));
+            }
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (AAuthInteractionDeniedException)
+        {
+            _error = "The user denied a consent request.";
+        }
+        catch (AAuthInteractionTimeoutException)
+        {
+            _error = "Timed out waiting for user approval (polling budget expired).";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            ClearWaiting();
+            _running = false;
+        }
+    }
+
+    // Build a fresh self-issued agent token (a new jti each call satisfies the
+    // resource's replay detection on repeated access).
+    private string MintAgentToken(string personServer) => new AgentTokenBuilder
+    {
+        Issuer = _identity.Issuer,
+        Subject = _identity.AgentId,
+        KeyId = _identity.KeyId,
+        Key = _identity.Key,
+        PersonServer = personServer,
+        Lifetime = TimeSpan.FromHours(1),
+    }.Build();
+
+    // Challenge -> token exchange (governed by the PS) -> retry, carrying the
+    // mission claim so the resource copies it into the resource token.
+    private async Task<JsonObject?> AccessMissionResourceAsync(
+        HttpClient signed,
+        TokenExchangeClient exchange,
+        string personServer,
+        string resourceUrl,
+        AAuth.Agent.Mission mission,
+        DeferredPollerOptions poller)
+    {
+        // Refresh the agent token for a fresh jti before each resource access.
+        _agentToken = MintAgentToken(personServer);
+
+        var challengeReq = new HttpRequestMessage(HttpMethod.Get, resourceUrl);
+        challengeReq.Headers.TryAddWithoutValidation(
+            AAuthMissionHeader.Name, AAuthMissionHeader.FormatStructured(mission.Approver, mission.S256));
+        using var challenge = await signed.SendAsync(challengeReq);
+        if (challenge.StatusCode != HttpStatusCode.Unauthorized)
+        {
+            throw new InvalidOperationException(
+                $"Expected 401 challenge from the resource, got {(int)challenge.StatusCode}.");
+        }
+
+        if (!challenge.Headers.TryGetValues(AAuthRequirementHeader.Name, out var requirementValues))
+        {
+            var sigError = challenge.Headers.TryGetValues("Signature-Error", out var se)
+                ? string.Join(", ", se)
+                : "(none)";
+            throw new InvalidOperationException(
+                $"The resource returned 401 without an {AAuthRequirementHeader.Name} header " +
+                $"(Signature-Error: {sigError}). The signed request was likely rejected — " +
+                "check that the resource can fetch the agent's current JWKS.");
+        }
+
+        var requirement = string.Join(", ", requirementValues);
+        var parsed = AAuthRequirementHeader.Parse(requirement);
+        var resourceToken = parsed.ResourceToken
+            ?? throw new InvalidOperationException("Challenge did not carry a resource token.");
+
+        var authToken = await exchange.ExchangeAsync(personServer, resourceToken, new TokenExchangeRequest
+        {
+            OnInteractionRequired = SurfaceInteractionAsync,
+            PollerOptions = poller,
+        });
+
+        var authHandler = new AAuthSigningHandler(_identity.Key, () => authToken)
+            { InnerHandler = new HttpClientHandler() };
+        using var authClient = new HttpClient(authHandler);
+        using var ok = await authClient.GetAsync(resourceUrl);
+        ok.EnsureSuccessStatusCode();
+        return await ok.Content.ReadFromJsonAsync<JsonObject>();
+    }
+
+    // Surface the PS interaction URL in the UI and start a poll counter.
+    private async Task SurfaceInteractionAsync(Interaction interaction, CancellationToken ct)
+    {
+        _interactionUrl = interaction.BuildUserUrl();
+        _waitingForApproval = true;
+        _pollCount = 0;
+        _ = Task.Run(async () =>
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+            while (_waitingForApproval && await timer.WaitForNextTickAsync(ct))
+            {
+                _pollCount++;
+                await InvokeAsync(StateHasChanged);
+            }
+        }, ct);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void ClearWaiting()
+    {
+        _waitingForApproval = false;
+        _interactionUrl = null;
+    }
+
+    private async Task ConfigurePersonServerAsync(string personServer, string resourceOrigin)
+    {
+        using var http = new HttpClient();
+        try
+        {
+            await http.PostAsJsonAsync($"{personServer}/admin/reset", new { });
+            await http.PostAsJsonAsync($"{personServer}/admin/mission-script", new
+            {
+                reset = true,
+                interactive = true,
+                approveMission = true,
+                approveToken = true,
+                approvePermission = true,
+                inScope = new[] { new { resource = resourceOrigin, scope = "whoami" } },
+            });
+        }
+        catch
+        {
+            // Admin endpoints only exist on MockPersonServer — swallow errors.
+        }
+    }
+
+    private static string MissionPayload(AAuth.Agent.Mission m)
+    {
+        var tools = new JsonArray();
+        foreach (var t in m.ApprovedTools)
+        {
+            tools.Add(new JsonObject { ["name"] = t.Name, ["description"] = t.Description });
+        }
+        return Pretty(new JsonObject
+        {
+            ["approver"] = m.Approver,
+            ["s256"] = m.S256,
+            ["approved_tools"] = tools,
+        });
+    }
+
+    private static string PermissionPayload(PermissionResult r)
+    {
+        var obj = new JsonObject { ["permission"] = r.IsGranted ? "granted" : "denied" };
+        if (!string.IsNullOrEmpty(r.Reason))
+        {
+            obj["reason"] = r.Reason;
+        }
+        return Pretty(obj);
+    }
+
+    private static string Pretty(JsonObject? json) => json is null
+        ? "(no body)"
+        : System.Text.Json.JsonSerializer.Serialize(json, new System.Text.Json.JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        });
+}

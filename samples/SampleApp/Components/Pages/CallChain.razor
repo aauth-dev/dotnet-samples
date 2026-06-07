@@ -25,6 +25,18 @@
         then receives the final chained result.</li>
 </ul>
 
+<p class="text-muted">
+    <small>
+        <strong>Note:</strong> mission-based <strong>agent governance</strong> is
+        optional and orthogonal to call chaining (AAuth §Agent Governance) and is
+        intentionally left out of this demo. With no <code>mission.approver</code>
+        in the upstream token, each hop follows §Call Chaining's
+        “no&nbsp;mission, <code>iss</code> is a PS” path. If a mission were present,
+        <code>WithCallChaining</code> would auto-forward the <code>AAuth-Mission</code>
+        header and route to the mission's PS — no code change here.
+    </small>
+</p>
+
 <div class="row">
 <div class="col-md-6">
 <h5>Agent (Client) Code</h5>
@@ -65,7 +77,9 @@ async Task&lt;IResult&gt; RunChainAsync(HttpContext ctx, string upstream)
         .As(orchestratorUrl, agentId)
         .WithKid(kid)
         .WithPersonServer(psUrl)
-        .WithCallChaining(upstream)   // relay upstream token
+        .WithCallChaining(upstream)   // forwards upstream token
+                                      // (+ AAuth-Mission if a mission
+                                      //  were present — omitted here)
         .WithChallengeHandling(opts =&gt;
         {
             opts.OnInteractionRequired = (i, _) =&gt;

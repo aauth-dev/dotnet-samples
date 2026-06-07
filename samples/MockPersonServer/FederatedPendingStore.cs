@@ -46,7 +46,7 @@ public sealed class FederatedPendingEntry
     /// <summary>The AS-issued auth token, set once federation succeeds.</summary>
     public string? AuthToken { get; set; }
 
-    /// <summary>Relayed error code (e.g. <c>access_denied</c>) on failure.</summary>
+    /// <summary>Relayed error code (e.g. <c>denied</c>) on failure.</summary>
     public string? Error { get; set; }
 
     /// <summary>HTTP status to relay to the agent for <see cref="Error"/>.</summary>

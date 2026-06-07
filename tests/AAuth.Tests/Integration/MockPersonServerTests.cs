@@ -181,7 +181,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         var response = await http.PostAsJsonAsync("/token",
             new JsonObject { ["resource_token"] = "irrelevant" });
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
         Assert.Equal("invalid_carrier_token", (string?)body!["error"]);
     }
@@ -254,7 +254,10 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         var response = await http.PostAsJsonAsync("/token",
             new JsonObject { ["resource_token"] = forged });
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        // §Token Endpoint Error Codes: invalid_resource_token is a 400 (a bad token
+        // in the body), not a 401 — 401 is reserved for request-signature failures
+        // carrying a Signature-Error header (§Authentication Errors).
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
         Assert.Equal("invalid_resource_token", (string?)body!["error"]);
     }
@@ -303,7 +306,10 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         var response = await http.PostAsJsonAsync("/token",
             new JsonObject { ["resource_token"] = tampered });
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        // §Token Endpoint Error Codes: invalid_resource_token is a 400 (a bad token
+        // in the body), not a 401 — 401 is reserved for request-signature failures
+        // carrying a Signature-Error header (§Authentication Errors).
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
         Assert.Equal("invalid_resource_token", (string?)body!["error"]);
     }
@@ -468,12 +474,12 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
     }
 
     [Fact]
-    public async Task Pending_Returns403AccessDenied_AfterDeny()
+    public async Task Pending_Returns403Denied_AfterDeny()
     {
         // Verifies the deny path: POST /interaction/deny marks the
         // pending entry as denied (rather than removing it), and the
         // subsequent /pending/{id} poll surfaces a deterministic 403
-        // with body { error: "access_denied" }. This is what
+        // with body { error: "denied" }. This is what
         // AAuthInteractionDeniedException is keyed off in the SDK.
         var agentKey = AAuthKey.Generate();
         var agentId = "aauth:denier@ap.example";
@@ -497,12 +503,12 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
             }));
         Assert.True(deny.IsSuccessStatusCode);
 
-        // Agent's next poll → 403 access_denied (not 404 / not 202).
+        // Agent's next poll → 403 denied (not 404 / not 202).
         var pendingPath = initial.Headers.Location!.OriginalString;
         using var pending = await signedClient.GetAsync(pendingPath);
         Assert.Equal(HttpStatusCode.Forbidden, pending.StatusCode);
         var body = await pending.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("access_denied", (string?)body!["error"]);
+        Assert.Equal("denied", (string?)body!["error"]);
     }
 
     // ----------------------------------------------------------------

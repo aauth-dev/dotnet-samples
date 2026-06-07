@@ -1,0 +1,876 @@
+# Missions & PS Governance — Research
+
+## Problem Statement
+
+The AAuth protocol defines **missions** (scoped authorization contexts for agent
+governance) and positions the **Person Server (PS)** as the *contextual* policy
+evaluation point — distinct from the deterministic policy enforced by resources
+and access servers. The .NET SDK (`src/AAuth/`), samples (`samples/`), and docs
+(`docs/`) implement only fragments of this surface, and the central `Mission`
+model is materially divergent from the specification.
+
+This document captures the spec model, the current SDK/sample/doc state, and the
+gap inventory. It contains **no** implementation steps — those live in
+[implementation-plan.md](implementation-plan.md).
+
+## Source Documents
+
+| Document | Location | Relevant Sections |
+|----------|----------|-------------------|
+| AAuth Protocol | `aauth-spec/draft-hardt-oauth-aauth-protocol.md` | §Policy Evaluation Points; §Agent Governance; §Missions (overview + normative); §PS Governance Endpoints; §Person Server; §PS Token Endpoint; §Clarification Chat; §Permission Endpoint; §Audit Endpoint; §Interaction Endpoint; §Resource Token; §Auth Token; §Upstream Token Verification; §Call Chaining; §Person Server Metadata; rationale (Why Missions Are Not a Policy Language / Two States) |
+| AAuth Bootstrap | `aauth-spec/draft-hardt-aauth-bootstrap.md` | PS lazy user-binding on first interaction; `ps` claim |
+| Upcoming changes | `aauth-spec/upcoming-changes-02.md` | `capabilities` in PS token body; `prompt`/`provider_hint` params |
+
+> Spec section anchors are cited by `{#anchor}` name and approximate line where a
+> stable anchor is absent. Line numbers reference the current revision of
+> `draft-hardt-oauth-aauth-protocol.md` and may drift on spec updates.
+
+---
+
+## Part 1 — Spec Model
+
+### 1.1 Policy Evaluation Points (§Policy Evaluation Points, ~L380)
+
+Policy is **distributed**; no single party is the decision point. Each of the
+four server roles re-evaluates the agent's activity from its own vantage point,
+and token lifetimes provide a natural re-evaluation cadence:
+
+- **Agent Provider** — issues/refuses agent tokens (device posture, attestation).
+- **Person Server** — decides whether to issue an auth token for a resource/scope
+  based on **user consent** and, under a mission, the **mission intent + log**
+  against the PS governance policy.
+- **Access Server** — decides issuance on behalf of the resource (resource policy,
+  PS-provided claims, deferred requirements).
+- **Resource** — *decides what is required* when issuing a resource token, and
+  *enforces* the auth token at access time.
+
+### 1.2 The Mission as Contextual Governance (§Why Missions Are Not a Policy Language, ~L2789)
+
+The spec deliberately separates two authorization kinds:
+
+- **Deterministic policy** — scopes, resource tokens, AS policy. Machine-evaluable.
+- **Contextual governance** — missions, justifications, clarification at the PS.
+  *Not* machine-evaluable; concentrated at the PS, the only party with the mission
+  content, the user relationship, and the full action history.
+
+Consequence: mission **content never leaves the PS**. Only the mission **hash**
+(`s256`) travels in tokens/headers. Distributing mission content would be "a
+privacy leak and a false promise of enforcement."
+
+### 1.3 Mission Object & Identity (§Mission Approval, ~L1259)
+
+The approved **mission blob** is JSON:
+
+| Field | Req? | Meaning |
+|-------|------|---------|
+| `approver` | MUST | HTTPS URL of approving entity (currently always the PS) |
+| `agent` | MUST | Agent identifier `aauth:local@domain` |
+| `approved_at` | MUST | ISO 8601 approval timestamp (makes `s256` globally unique) |
+| `description` | MUST | Markdown describing approved scope |
+| `approved_tools` | MAY | `[{name, description}]` usable without per-call permission |
+| `capabilities` | MAY | e.g. `["interaction","payment"]` the PS can provide; agent unions into `AAuth-Capabilities` |
+
+**Identity** — `s256` = base64url(SHA-256(**exact approved response body bytes**)).
+The agent MUST store the body bytes verbatim — *no re-serialization* — and
+verifies by recomputing over those bytes (§Mission Approval, ~L1275).
+
+### 1.4 Mission Lifecycle
+
+- **Creation** (§Mission Creation, ~L1228): agent POSTs `{description, tools}` to
+  the PS `mission_endpoint` (signed, agent token via `Signature-Key: sig=jwt`).
+  PS MAY return `202` for human review + clarification; approved blob MAY differ
+  from the proposal.
+- **States** (§Mission Management, ~L1322): exactly **two** — `active`,
+  `terminated`. No suspended state (§Why Missions Have Only Two States, ~L2805).
+- **Errors** (§Mission Status Errors, ~L1331): a request referencing a
+  non-active mission → `403` `{error:"mission_terminated", mission_status:"terminated"}`.
+- **Completion** (§Mission Completion, ~L1318): agent sends `type=completion`
+  to the interaction endpoint with a summary; user accepts (terminate) or
+  follows up (continues).
+- **Mission Log** (§Mission Log, ~L1310): ordered record of *all* agent↔PS
+  interactions (token requests + justifications, permission req/resp, audit
+  records, interaction requests, clarification chats). PS-maintained.
+
+### 1.5 Cryptographic Binding Chain
+
+Mission binding is **by hash reference**, layered on top of **key-bound
+proof-of-possession** and the **`act` delegation chain**:
+
+1. Agent in mission context adds `aauth-mission` to the **signed** HTTPSig
+   covered components (§Authorization Endpoint Request, ~L619). The `s256`
+   reference is thus covered by the agent's signature.
+2. Mission-aware **resource** embeds `{approver, s256}` as the `mission` claim in
+   the **resource token** it signs (§Resource Token Structure, ~L780). Resource
+   token also binds `agent_jkt` (RFC 7638 thumbprint).
+3. PS/AS embeds `{approver, s256}` as the `mission` claim in the **auth token**
+   it signs (§Auth Token Structure, ~L1560). Auth token binds `cnf.jwk` (PoP)
+   and `act` (RFC 8693 actor chain).
+4. **Delegation**: in call chaining the PS nests the upstream `act` inside a new
+   `act` identifying the intermediary (§Upstream Token Verification, ~L1621),
+   preserving the full chain for downstream authorization decisions.
+
+**Integrity & provenance are cryptographic; appropriateness is a PS policy
+decision** — the resource embeds the mission reference it received but does not
+re-evaluate mission fitness. Only the PS resolves `s256` → content against the
+mission log.
+
+### 1.6 PS Endpoints (§Person Server, ~L810)
+
+| Endpoint | Spec | Purpose | Mission? |
+|----------|------|---------|----------|
+| `token_endpoint` | §PS Token Endpoint ~L814 | Exchange resource token → auth token; consent; three/four-party | optional |
+| `mission_endpoint` | §Mission Creation ~L1228 | Propose/approve missions | — |
+| `permission_endpoint` | §Permission Endpoint ~L1013 | Pre-action governance for non-resource actions (tool calls) | optional |
+| `audit_endpoint` | §Audit Endpoint ~L1077 | Fire-and-forget action logging (`201`) | **required** |
+| `interaction_endpoint` | §Interaction Endpoint ~L1131 | Relay interaction/payment/question/completion to user | optional |
+
+**Token request params** (§Agent Token Request, ~L830): `resource_token` (req),
+`upstream_token`, `justification`, `login_hint`, `tenant`, `domain_hint`,
+`platform`, `device`. `capabilities`/`prompt` per upcoming-changes-02.
+
+**Clarification chat** (§Clarification Chat, ~L906): PS returns `202`
+`requirement=clarification` with `{clarification, timeout?, options?}`. Agent
+responds with one of: `clarification_response` POST, updated `resource_token`
+POST, or `DELETE` to cancel. Round limit recommended ≤5; agent responses are
+untrusted and MUST be sanitized by the PS before display.
+
+**Permission** (§Permission Endpoint): POST `{action, description?, parameters?,
+mission?}` → `{permission: granted|denied, reason?}` or deferred. `approved_tools`
+short-circuit the call. **Audit** (§Audit Endpoint): POST `{mission(req),
+action, description?, parameters?, result?}` → `201`. **Interaction**
+(§Interaction Endpoint): POST `{type, description?, url?, code?, question?,
+summary?, mission?}`; `question` → `{answer}`, `completion` → terminate/continue.
+
+**PS Metadata** (§Person Server Metadata, ~L2199): publishes the optional
+`mission_endpoint`, `permission_endpoint`, `audit_endpoint`,
+`interaction_endpoint`.
+
+---
+
+## Part 2 — Current SDK State
+
+### 2.1 What works (keep)
+
+| Capability | Evidence | Spec |
+|------------|----------|------|
+| `AAuth-Mission` structured header format | `AAuthMissionHeader.FormatStructured` ([Agent/Mission.cs](../../../src/AAuth/Agent/Mission.cs)) | §AAuth-Mission Header |
+| Mission forwarding on downstream calls | [Agent/MissionForwardingHandler.cs](../../../src/AAuth/Agent/MissionForwardingHandler.cs); wired in [AAuthClientBuilder.cs](../../../src/AAuth/AAuthClientBuilder.cs) L556 | §Call Chaining |
+| `act` chain build/read/validate | `AuthTokenBuilder.UpstreamAct`, [Tokens/ActChainBuilder.cs](../../../src/AAuth/Tokens/ActChainBuilder.cs), [Tokens/ActChainReader.cs](../../../src/AAuth/Tokens/ActChainReader.cs), [Tokens/UpstreamTokenValidator.cs](../../../src/AAuth/Tokens/UpstreamTokenValidator.cs); depth limit in [Tokens/TokenVerifier.cs](../../../src/AAuth/Tokens/TokenVerifier.cs) | §Upstream Token Verification |
+| Deferred `202` loop, interaction, Retry-After/Prefer, `402`, polling errors | [Agent/DeferredPoller.cs](../../../src/AAuth/Agent/DeferredPoller.cs), [Agent/TokenExchangeClient.cs](../../../src/AAuth/Agent/TokenExchangeClient.cs) | §User Interaction; §Deferred Responses |
+| `mission.approver` constraint on resource token | `TokenVerifier.VerifyResourceToken` (~L512) when `expectedApprover` supplied | §Resource Token Verification step 7 |
+| Call-chaining router (mission.approver → PS) | [Server/CallChaining/CallChainingRouter.cs](../../../src/AAuth/Server/CallChaining/CallChainingRouter.cs) | §Call Chaining |
+| PS metadata **emission** of all 4 governance endpoints | [Server/Metadata/AAuthPersonServerMetadataOptions.cs](../../../src/AAuth/Server/Metadata/AAuthPersonServerMetadataOptions.cs), [Server/Metadata/WellKnownEndpoints.cs](../../../src/AAuth/Server/Metadata/WellKnownEndpoints.cs) L178-184 | §Person Server Metadata |
+
+### 2.2 Gap Inventory
+
+Severity: **C** critical (incorrect/non-compliant behavior), **H** high (missing
+core capability), **M** medium (missing convenience / ecosystem coverage).
+
+| # | Sev | Gap | Spec | Current state |
+|---|-----|-----|------|---------------|
+| G1 | C | `Mission` model uses 4 states `pending/approved/denied/completed` | §Mission Management (2 states) | [Agent/Mission.cs](../../../src/AAuth/Agent/Mission.cs) L17 |
+| G2 | C | `Mission` missing required blob fields `approver`,`agent`,`approved_at`; carries non-spec `Id`,`Requirements`,`StatusUrl`,`InteractionUrl` | §Mission Approval | Agent/Mission.cs L12-44 |
+| G3 | C | `Mission.FromJson` parses `mission_id` (throws if absent), wrong keys | §Mission Approval | Agent/Mission.cs L32-43 |
+| G4 | C | No `s256` compute over exact body bytes; no verbatim byte storage; no verify | §Mission Approval ~L1275 | absent |
+| G5 | H | No `mission_endpoint` client (propose/approve, 202 review) | §Mission Creation | absent |
+| G6 | H | No `permission_endpoint` client | §Permission Endpoint | absent |
+| G7 | H | No `audit_endpoint` client (fire-and-forget) | §Audit Endpoint | absent |
+| G8 | H | No `interaction_endpoint` client (relay/question/completion) | §Interaction Endpoint | absent |
+| G9 | H | `ResourceTokenBuilder` cannot emit `mission` claim | §Resource Token Structure ~L780 | [Tokens/ResourceTokenBuilder.cs](../../../src/AAuth/Tokens/ResourceTokenBuilder.cs) |
+| G10 | H | `AuthTokenBuilder` cannot emit `mission` claim (only `AdditionalClaims`) | §Auth Token Structure ~L1560 | [Tokens/AuthTokenBuilder.cs](../../../src/AAuth/Tokens/AuthTokenBuilder.cs) |
+| G11 | H | `TokenVerifier.VerifyAuthToken` does not surface `mission` claim | §Auth Token | TokenVerifier.cs L161-268 |
+| G12 | H | HTTPSig does not auto-cover `aauth-mission` when header present | §Authorization Endpoint Request ~L619 | [HttpSig/AAuthSigningHandler.cs](../../../src/AAuth/HttpSig/AAuthSigningHandler.cs) L40 (fixed base components) |
+| G13 | H | Clarification chat fully absent (parse, response POST, updated-request POST, DELETE cancel, round limit) | §Clarification Chat | DeferredPoller is GET-only |
+| G14 | H | Token request missing params `justification`,`login_hint`,`tenant`,`domain_hint`,`platform`,`device` | §Agent Token Request ~L830 | [Agent/TokenExchangeRequest.cs](../../../src/AAuth/Agent/TokenExchangeRequest.cs) |
+| G15 | H | `ServerMetadata` does not parse `permission_endpoint`/`audit_endpoint` | §Person Server Metadata | [Discovery/ServerMetadata.cs](../../../src/AAuth/Discovery/ServerMetadata.cs) L43-44 |
+| G16 | H | No `mission_terminated` error code / typed exception / handling | §Mission Status Errors | not in [Errors/TokenError.cs](../../../src/AAuth/Errors/TokenError.cs) |
+| G17 | M | No `capabilities` union (mission blob ∪ agent) into `AAuth-Capabilities` | §Mission Approval; §AAuth-Capabilities | [Agent/AAuthCapabilitiesHeader.cs](../../../src/AAuth/Agent/AAuthCapabilitiesHeader.cs) format/parse only |
+| G18 | M | No PS-side governance handlers (mission/permission/audit/interaction) or DI seams | §PS Governance Endpoints | absent; MockPersonServer hand-rolls partial flows |
+| G19 | M | No governance DTOs (Permission/Audit/Interaction/MissionCreate req+resp) | §PS Governance Endpoints | absent |
+| G20 | M | No mission-log abstraction (store seam) | §Mission Log | absent |
+
+### 2.3 SDK role scope (context for plan)
+
+The SDK is **client/agent + resource-verification** focused; it ships token
+**builders** but not full PS/AS servers. [samples/MockPersonServer/Program.cs](../../../samples/MockPersonServer/Program.cs)
+hand-rolls token issuance and consent UI (`GET /interaction`, `POST
+/interaction/{approve,deny}`) but no spec governance endpoints, no mission
+extraction, no `s256`, no mission claim in issued tokens. Server-side governance
+helpers (G18/G19/G20) should follow the existing pattern: thin SDK primitives
+(DTOs + parse/format + optional minimal endpoint mappers / DI seams) that the
+mock servers consume, rather than a full PS implementation.
+
+---
+
+## Part 3 — Samples & Docs State
+
+### 3.1 Samples
+
+0 of 9 samples demonstrate mission creation, permission, audit, interaction
+relay, or completion. Orchestrator forwards the `AAuth-Mission` header only.
+
+| Sample | Mission-aware | Governance demo |
+|--------|---------------|-----------------|
+| WhoAmI (resource) | no | no |
+| Orchestrator (call chain) | header forward only | no |
+| MockPersonServer | no mission claim/s256 | consent UI only |
+| MockAgentProvider / MockAccessServer | n/a | no |
+| GuidedTour / SampleApp / AgentConsole / LiveWhoAmITest | no | no |
+
+### 3.2 Docs
+
+| File | Status |
+|------|--------|
+| [docs/advanced/missions.md](../../../docs/advanced/missions.md) | **STALE** — mirrors broken model (4 states, `mission_id`/`status_url`/`interaction_url`); no `s256`, no blob fields, no governance endpoints |
+| [docs/workflows/call-chaining.md](../../../docs/workflows/call-chaining.md) | partial — mentions forwarding, no mission blob/governance |
+| [docs/workflows/ps-asserted-access.md](../../../docs/workflows/ps-asserted-access.md) | aligned for consent; no mission context |
+| [docs/workflows/deferred-consent.md](../../../docs/workflows/deferred-consent.md) | aligned; no mission/permission context |
+| [docs/workflows/federated-access.md](../../../docs/workflows/federated-access.md) | partial; no mission governance |
+| [docs/server/token-issuance.md](../../../docs/server/token-issuance.md) | mentions `mission.approver`; no `s256`/lifecycle |
+| docs/server/{permission,audit,interaction} | **absent** |
+
+Docs index: [docs/README.md](../../../docs/README.md) (slot new governance docs
+under `docs/server/` + refresh `docs/advanced/missions.md` + add a
+`docs/workflows/` mission-governance walkthrough).
+
+---
+
+## Part 4 — Gaps & Open Questions
+
+1. **`s256` over which bytes?** Spec: exact response body bytes of the mission
+   approval. SDK must retain the raw `byte[]`/`string` from the `mission_endpoint`
+   response (and any persisted blob) — model must expose a verbatim-bytes
+   accessor, not a re-serialized `JsonObject`. (§Mission Approval ~L1275)
+2. **Auto-signing `aauth-mission`.** Should `AAuthSigningHandler` auto-detect the
+   `AAuth-Mission` request header and add `aauth-mission` to covered components,
+   or should the mission-aware client layer set `AdditionalComponentsKey`?
+   Leaning auto-detect for correctness (G12), but must confirm it does not
+   double-add when callers also set it. (§Authorization Endpoint Request ~L619)
+3. **Backward compatibility of `Mission`.** Replacing the model is a breaking
+   change. Confirm whether to rename (e.g. `ApprovedMission`) + keep a
+   `[Obsolete]` shim, or replace outright. (Affects docs + any sample usage.)
+4. **Server governance depth.** How much PS-side to put in the SDK vs. the mock?
+   Proposed: DTOs + serialization + minimal endpoint mappers + store/relay
+   interfaces (`IMissionStore`, `IPermissionDecider`, `IAuditSink`,
+   `IInteractionRelay`); full policy lives in MockPersonServer. (§PS Governance)
+5. **Clarification scope.** Implement the full agent-side three-action loop
+   (respond / update / cancel) plus a server-side helper, or agent-side only in
+   round one? (§Clarification Chat)
+6. **`mission_terminated` propagation.** Where to surface — `TokenExchangeClient`,
+   governance clients, or a shared error mapper consumed by all PS calls?
+   (§Mission Status Errors)
+
+> **Update (2026-06):** Initial research complete. Open questions above to be
+> resolved as Implementation Decisions per phase before coding.
+
+## Part 5 — Phase Findings
+
+### Phase 1 — Mission model & `s256` (2026-06-05, complete)
+
+- **Decisions resolved.** Q1 (verbatim bytes): `Mission.RawBytes`
+  (`ReadOnlyMemory<byte>`) stores the exact approval body; `FromApprovalBytes`
+  hashes those bytes directly (no `JsonNode` re-serialization). Q3 (compat):
+  given draft status + no back-compat constraint, the old `Mission` model was
+  **replaced in place** — no rename, no `[Obsolete]` shim.
+- **Old model had zero external references.** `Mission` (with `Id`/`Status`/
+  `Requirements`/`StatusUrl`/`InteractionUrl`) and `Mission.FromJson` were not
+  referenced anywhere in `src/`, `tests/`, or `samples/`. The rewrite therefore
+  broke no callers — confirmed by a full-solution build (0 warnings/errors).
+- **`AAuthMissionHeader` kept as-is.** `FormatStructured(approver, s256)` already
+  matched spec; only the dead `Format(string missionId)` overload was removed.
+  `MissionForwardingHandler` (the sole consumer) is unaffected.
+- **`s256` is byte-sensitive.** A test confirms pretty-printed vs compact JSON of
+  the same logical content produce **different** `s256` — reinforcing the
+  "store verbatim, never re-serialize" requirement (§Mission Approval).
+- **Capabilities union** added as `AAuthCapabilitiesHeader.Union(mission, agent)`
+  (mission-first, order-preserving, case-sensitive dedupe).
+- **New files:** `Mission.cs` (rewritten), `MissionState.cs`, `MissionTool.cs`.
+  **Tests:** `Missions/MissionModelTests.cs`, `Missions/MissionS256Tests.cs`,
+  plus `Union` cases in `CapabilitiesHeaderTests.cs`.
+- **Validation:** 364 conformance + 371 unit tests green; full solution builds.
+- **No new open questions or design choices for Phase 1.** `VerifyS256` uses a
+  fixed-time comparison (defensive; the value is not secret but the helper is
+  cheap and avoids early-exit surprises).
+
+### Phase 2 — Mission binding through the token chain (2026-06-05, complete)
+
+- **Mission claim shape.** Introduced `MissionClaim(string Approver, string
+  S256)` (`src/AAuth/Tokens/MissionClaim.cs`) as the `{approver, s256}` value
+  carried in tokens. `ResourceTokenBuilder` and `AuthTokenBuilder` gained an
+  optional `Mission` property; the `mission` claim is emitted **only when set**
+  (§Resource Token Structure, §Auth Token Structure).
+- **Verification surface.** `TokenVerifier.VerifiedToken` exposes a computed
+  `Mission` property (parses `payload.mission`; `null` when absent/malformed).
+  The existing `expectedApprover` constraint in `VerifyResourceTokenAsync`
+  (step 7) is unchanged.
+- **DISCOVERY (mid-phase, surfaced to user).** Adding `aauth-mission` on the
+  signing side alone would **break** every mission-context request: the
+  production verifier `AAuthVerifier.Verify` rigidly rejected any covered
+  component beyond the base 4 + optional `authorization` (threw when
+  `components.Count > 5`). This required extending the verifier +
+  `AAuthVerificationMiddleware`, two files **not** in the original Phase 2 file
+  list. **User approved** adding them (design decision D5).
+- **Covered-component ordering (D6, resolved per spec).** Spec
+  §Authorization Endpoint Request shows mission context as
+  `("@method" "@authority" "@path" "signature-key" "aauth-mission")` — i.e.
+  `aauth-mission` is the **last** component, after `signature-key`. The signer
+  appends it after the (pre-existing) `authorization` block, so the verifier
+  accepts the optional trailing pair `authorization` then `aauth-mission`.
+  **Pre-existing deviation noted:** the spec's §AAuth-Access example places
+  `authorization` *before* `signature-key`, but the SDK appends it *after*;
+  re-aligning that is out of Phase 2 scope (would churn existing tests).
+- **No double-cover.** `aauth-mission` is added to the signer's `seen` set so an
+  explicit `AdditionalComponentsKey` request for it is ignored (covered once via
+  header auto-detection). Test asserts a single occurrence.
+- **Header value consistency.** Signer covers the verbatim `AAuth-Mission` header
+  value (`approver="..."; s256="..."` via `AAuthMissionHeader.FormatStructured`).
+  Middleware passes `req.Headers["AAuth-Mission"].FirstOrDefault()`; single-valued
+  in practice so producer and verifier see identical bytes.
+- **Files:** `MissionClaim.cs` (new); modified `ResourceTokenBuilder.cs`,
+  `AuthTokenBuilder.cs`, `TokenVerifier.cs`, `AAuthSigningHandler.cs`,
+  `AAuthVerifier.cs`, `AAuthVerificationMiddleware.cs`. **Tests:**
+  `Missions/MissionClaimTests.cs` (6), `HttpSignatures/MissionSignedComponentTests.cs`
+  (5) — note `MissionClaimTests` placed under `Missions/` (no `Tokens/` folder
+  exists in the conformance project).
+- **Validation:** 375 conformance (+11) + 371 unit tests green; full solution
+  builds 0/0.
+
+### Phase 3 — PS token-request params, clarification chat, mission errors (2026-06-05, complete)
+
+- **Token-request params (§Agent Token Request).** Added six optional `string?`
+  properties to `TokenExchangeRequest` — `Justification`, `LoginHint`, `Tenant`,
+  `DomainHint`, `Platform`, `Device` — serialized into the POST body as
+  `justification`, `login_hint`, `tenant`, `domain_hint`, `platform`, `device`
+  via a new `AddIfPresent` helper that omits unset/empty values.
+- **Clarification model (§Clarification Chat).** `ClarificationRequirement`
+  (`src/AAuth/Headers/ClarificationRequirement.cs`) parses the `202` body
+  `{clarification, timeout?, options?}` for `requirement=clarification`,
+  modeled on the existing `ClaimsRequirement`. Throws `FormatException` when the
+  `clarification` string is missing.
+- **Clarification API design (D7, user-approved).** The agent supplies a
+  callback `OnClarificationRequired` on `TokenExchangeRequest` (mirrors
+  `OnInteractionRequired`) that returns a `ClarificationResponse` *decision*
+  object. `ExchangeAsync`'s response handling was rewritten into a
+  `while (StatusCode == 202)` loop that resolves the requirement, dispatches
+  interaction vs. clarification, applies the decision, and re-polls.
+- **ClarificationResponse + ClarificationExchange.** `ClarificationResponse`
+  (nested `Kind { Respond, Update, Cancel }`) carries the agent's choice; the
+  factories are `Respond(markdown)`, `Update(resourceToken, justification?)`,
+  `Cancel()`. `ClarificationExchange` performs the wire calls against the pending
+  URL: `clarification_response` POST, updated `resource_token` POST, and `DELETE`
+  cancel (which surfaces `AAuthClarificationCancelledException`).
+- **Round limit (§Clarification Limits).** Default `MaxRounds = 5` (configurable
+  via `TokenExchangeRequest.MaxClarificationRounds`); `Respond`/`Update` consume a
+  round, `Cancel` does not. Exceeding the limit throws
+  `AAuthClarificationLimitException`.
+- **DEVIATION FROM PLAN FILE LIST.** The plan listed `DeferredPoller.cs` as
+  **Modify — allow POST/DELETE to pending URL**. In implementation the POST/DELETE
+  calls live entirely in `ClarificationExchange` (using its own `HttpClient`),
+  and the clarification-stop during polling reuses the **existing**
+  `DeferredPollerOptions.StopWhenAccepted` predicate (composed via
+  `ComposePollerOptions`). `DeferredPoller.cs` was therefore **not** modified.
+- **Mission-terminated (§Mission Status Errors).** Added `TokenErrorCode.
+  MissionTerminated` (`mission_terminated`, round-trips through `TokenErrorResponse`)
+  and `AAuthMissionTerminatedException` (with `MissionStatus`). `ExchangeAsync`
+  classifies a terminal `403` body `{error:"mission_terminated", mission_status}`
+  via `TryReadMissionTerminatedAsync` — both on the direct token response and on a
+  `403` surfaced during polling (the poller returns the unrecognized `403` rather
+  than throwing, so the client classifies it). A shared `BufferBodyAsync` lets the
+  `access_denied`, `mission_terminated`, and auth-token readers all re-read the body.
+- **Files:** new `Headers/ClarificationRequirement.cs`, `Agent/ClarificationExchange.cs`
+  (holds `ClarificationResponse` + `ClarificationExchange`),
+  `Errors/AAuthMissionTerminatedException.cs`; modified `Agent/TokenExchangeRequest.cs`,
+  `Agent/TokenExchangeClient.cs`, `Agent/AAuthInteractionExceptions.cs` (added
+  `AAuthClarificationCancelledException`, `AAuthClarificationLimitException`),
+  `Errors/TokenError.cs`. **Tests:** `Missions/ClarificationChatTests.cs` (8),
+  `Missions/MissionTerminatedTests.cs` (3), and an **added** (not in original plan
+  list) `Missions/TokenRequestParamsTests.cs` (2) covering the six params.
+- **Validation:** 388 conformance (+13) + 371 unit tests green; full solution
+  builds 0/0.
+
+### Phase 4 — PS governance clients + metadata discovery (2026-06-05, complete)
+
+- **Metadata (§Person Server Metadata, ~L2199).** `ServerMetadata.FromJson`
+  already parsed `mission_endpoint` + `interaction_endpoint`; added
+  `permission_endpoint` and `audit_endpoint`, so all four governance endpoints
+  (all OPTIONAL in spec) are now surfaced. The clients resolve an endpoint by
+  fetching the PS `aauth-person.json`, validating https-or-loopback, and
+  origin-pinning the returned URL to the PS authority.
+- **Shared exchange (DEVIATION — added beyond plan file list).** A new
+  `Agent/Governance/GovernanceExchange.cs` holds the common signed-POST +
+  deferred-`202` loop + `mission_terminated` classification + endpoint
+  origin-pinning, plus a public `GovernanceOptions`
+  (`OnInteractionRequired`, `OnClarificationRequired`, `MaxClarificationRounds`,
+  `PollerOptions`). This mirrors `TokenExchangeClient`'s deferred/clarification
+  loop. **Design note for user:** `GovernanceExchange` duplicates some
+  `TokenExchangeClient` logic; `TokenExchangeClient` was deliberately left
+  untouched (zero regression risk). A future shared-helper refactor is possible
+  if desired.
+- **MissionClient (§Mission Creation ~L399/L1228, §Mission Approval ~L1265).**
+  `ProposeAsync(personServer, MissionProposal, options?, ct)` posts
+  `{description, tools?}` to `mission_endpoint`, handles the `202` review/
+  clarification loop, then reads the approval body **verbatim** and calls
+  `Mission.FromApprovalBytes`. It parses the `AAuth-Mission` header's `s256` and
+  verifies it against the recomputed blob hash (throws on mismatch/missing).
+- **PermissionClient (§Permission Endpoint ~L1013).** `RequestAsync` posts
+  `{action, description?, parameters?, mission?}` → `200 {permission, reason?}`.
+  An overload taking a `Mission` short-circuits to `Granted`
+  ("Pre-approved tool on the active mission.") when the action matches
+  `mission.ApprovedTools`, **without** calling the PS (spec `approved_tools`).
+- **AuditClient (§Audit Endpoint ~L1077).** `RecordAsync` posts
+  `{mission, action, description?, parameters?, result?}` (mission REQUIRED),
+  returns on `201`/`200`/`204` (fire-and-forget); `mission_terminated` surfaces
+  via `GovernanceExchange`.
+- **InteractionClient (§Interaction Endpoint ~L1131).** `SendAsync` posts
+  `{type, ...}` for all four `type` values; `question` → `Answer` from
+  `body["answer"]`, `completion` → `Terminated` when `mission_status != "active"`.
+  Convenience helpers: `RelayInteractionAsync`, `RelayPaymentAsync`,
+  `AskQuestionAsync`, `ProposeCompletionAsync`. (DEVIATION — added
+  `InteractionResult.cs` DTO not explicitly in plan list.)
+- **DTOs.** `MissionProposal`, `PermissionRequest`/`PermissionResult`
+  (`PermissionGrant` enum), `AuditRecord`, `InteractionRequest`
+  (`InteractionType` enum)/`InteractionResult`. Each request DTO has an
+  `internal ToJsonObject()`; `PermissionResult.FromJson` maps granted/denied.
+- **Layering decision.** Agent DTOs own serialization (`ToJsonObject`); the
+  server side owns parsing (Phase 5 `GovernanceEndpoints.Parse*`). Agent
+  governance clients are constructed directly (like `TokenExchangeClient`) and
+  are **not** DI-registered.
+- **Files:** modified `Discovery/ServerMetadata.cs`; new
+  `Agent/Governance/{GovernanceExchange,MissionProposal,MissionClient,
+  PermissionRequest,PermissionResult,PermissionClient,AuditRecord,AuditClient,
+  InteractionRequest,InteractionResult,InteractionClient}.cs`. **Tests:**
+  `Missions/GovernanceClientTests.cs` (12) against a stub PS.
+- **Validation:** 399 conformance (+11) + 371 unit green; SDK + full solution
+  build 0/0.
+
+### Phase 5 — PS server-side governance seams + mission log (2026-06-05, complete)
+
+- **Decision boundary (D3).** The SDK ships thin server-side seams — request
+  parsers, a `mission_terminated` helper, storage interfaces + in-memory
+  defaults, and the policy/relay interfaces — so a PS can serve the governance
+  endpoints without hand-rolling parsing. Policy and UI live in the PS
+  (MockPersonServer, Phase 6).
+- **Request parsers (§PS Governance Endpoints ~L463).**
+  `GovernanceEndpoints.Parse{Permission,Audit,Interaction,MissionProposal}`
+  map a `JsonObject` to the Phase 4 DTOs, throwing `FormatException` on missing
+  required fields (`action`; `mission`+`action`; `type`; `description`) and on
+  unknown interaction `type`. Mission objects are read via
+  `MissionClaim.FromPayload`. This keeps parsing **server-side** rather than
+  adding `FromJson` to the agent DTOs (clean agent-serializes / server-parses
+  split).
+- **Mission-terminated helper (§Mission Status Errors ~L1331).**
+  `MissionTerminatedStatus = 403`; `MissionTerminatedBody(missionStatus =
+  "terminated")` emits `{error:"mission_terminated", mission_status}` (error code
+  from `AAuthMissionTerminatedException.ErrorCode`); `MissionTerminated(...)`
+  returns an `IResult` via `Results.Json(..., statusCode: 403)`.
+- **Mission store (§Mission Approval — verbatim bytes).** `IMissionStore` +
+  `StoredMission(S256, Approver, Agent, Blob)` with `MissionState State`
+  (default `Active`). `InMemoryMissionStore` (DEVIATION — added in-memory default,
+  mirrors `InMemoryJtiStore`) stores the blob bytes verbatim and transitions
+  state via `existing with { State = state }`.
+- **Mission log (§Mission Log ~L1310, §Agent Token Request ~L784).** `IMissionLog`
+  + `MissionLogEntry(S256, Kind, Timestamp)` with `MissionLogEntryKind`
+  {Token, Permission, Audit, Interaction, Clarification} and optional
+  Resource/Scope/Action/Granted/Detail. `InMemoryMissionLog` (DEVIATION — added)
+  appends in order, `ReadAsync` preserves order, and `HasPriorConsentAsync(s256,
+  resource, scope)` returns true only for `Token` entries with `Granted == true`
+  matching `(s256, resource, scope)` — the prior-consent context a PS uses to
+  skip re-prompting.
+- **Decider seam (§Person Server ~L385, §Permission ~L1017).**
+  `IPermissionDecider.DecideAsync(PermissionDecisionContext, ct)` is invoked with
+  the request + resolved `StoredMission` + ordered log, and returns a
+  `PermissionDecision(Outcome, Reason, Message?)` where `PermissionOutcome`
+  {Granted, Denied, Prompt} and `PermissionDecisionReason` {InScope, PriorConsent,
+  ApprovedTool, OutOfScope}. The SDK supplies the inputs + reason taxonomy; the
+  PS owns the policy. `IAuditSink` and `IInteractionRelay` are the audit/relay
+  seams.
+- **DI.** `AddAAuthGovernance` (`Microsoft.Extensions.DependencyInjection`
+  namespace) `TryAddSingleton`s `IMissionStore`→`InMemoryMissionStore` and
+  `IMissionLog`→`InMemoryMissionLog`; the policy seams (decider/sink/relay) are
+  left for the PS to register.
+- **Files:** new `Server/Governance/{IMissionStore,InMemoryMissionStore,
+  IMissionLog,InMemoryMissionLog,IPermissionDecider,IAuditSink,IInteractionRelay,
+  GovernanceEndpoints}.cs` and
+  `DependencyInjection/AAuthGovernanceServiceCollectionExtensions.cs`. **Tests:**
+  `Missions/GovernanceServerTests.cs` (17).
+- **Validation:** 417 conformance (+18 across Phases 4+5) + 371 unit green; SDK +
+  full solution build 0/0.
+
+### Phase 5.5 — Shared deferred transport + governance facade (2026-06-05, complete)
+
+- **Why (duplication).** `GovernanceExchange` (Phase 4) and
+  `TokenExchangeClient` (Phase 3) shared ~120 lines: endpoint origin-pin, the
+  `202` deferred loop (interaction + clarification), `ComposePollerOptions`,
+  `BufferBodyAsync` / `ReadJsonBodyAsync` / `ExtractRequirement` /
+  `ResolveLocation`, the `mission_terminated` reader, and `AddIfPresent`. Pure
+  refactor — same spec citations (§User Interaction, §Clarification Chat,
+  §Mission Status Errors, §PS Governance Endpoints, §Person Server Metadata).
+- **Single transport (D8).** `internal sealed class DeferredExchange`
+  (`AAuth.Agent`) now owns the transport: `ResolveEndpointAsync(personServer,
+  field, ct)` (metadata fetch + https-or-loopback + same-origin pin, generic
+  `'{field}'` errors byte-identical to the old `'token_endpoint'` ones) and
+  `PostAsync(endpoint, body, DeferredExchangeOptions, ct)` (the `202` deferred
+  loop, returning the terminal `HttpResponseMessage` for the caller to parse +
+  dispose, throwing `AAuthMissionTerminatedException` on terminal `403
+  mission_terminated`). It owns the `AAuth.DeferredPoll` activity and every
+  shared helper. `GovernanceExchange.cs` is **deleted**; `GovernanceOptions`
+  moved to its own file with `internal DeferredExchangeOptions ToExchangeOptions()`
+  (`RequireInteractionCallback = false`, no `OnPolledResponse`). The four
+  governance clients now hold a `DeferredExchange`.
+- **Preserving token-only behaviour through two option seams.** Rather than
+  leaving token-specific branches inside `TokenExchangeClient`, two
+  `DeferredExchangeOptions` knobs reproduce them exactly: (1)
+  `RequireInteractionCallback` (token = `true`) throws the token-exact
+  "no onInteractionRequired callback" message on **any** non-clarification `202`
+  with no callback, whereas governance (`false`) only throws when an interaction
+  requirement is actually present; (2) `OnPolledResponse` (token only) runs the
+  `403 access_denied` → `AAuthInteractionDeniedException` classifier **after** an
+  interaction-branch poll (not after a clarification poll, not on the
+  initial/direct response), matching the original call-site placement. The
+  initial/direct/clarification `403`s still flow to `ReadAuthTokenAsync` as token
+  errors. `TokenExchangeRequest` and the public `TokenExchangeClient` API are
+  unchanged.
+- **Facade + factory (D9).** Public `AAuthGovernanceClient` bundles
+  `Mission` / `Permission` / `Audit` / `Interaction` over one signed `HttpClient`
+  + `MetadataClient` (ctor `(HttpClient signedClient, MetadataClient metadata)`,
+  `ArgumentNullException` guards; sub-clients stay public).
+  `AAuthClientBuilder.BuildGovernance()` builds it from a shared private
+  `BuildSignedChannel(provider, innerHandler)` helper that also backs
+  `BuildHandler`'s exchange channel. `BuildHandler` passes `new
+  HttpClientHandler()` (preserving the prior exchange signer's inner handler);
+  `BuildGovernance` passes `_innerHandler ?? new HttpClientHandler()` for
+  testability. `BuildGovernance` **requires an explicit signing mode**
+  (`UseHwk`/`UseJwt`/`UseJwksUri`/`UseJktJwt`/`UseProvider`) and throws
+  `InvalidOperationException` otherwise — it does not reconstruct the lazy-refresh
+  token-holder pipeline (that stays exclusive to `BuildHandler`).
+- **Observability note.** `AAuth.DeferredPoll` now also fires for governance
+  polls (additive, via the shared transport) — not a wire change; the token
+  diagnostics tests still observe `AAuth.TokenExchange` + `AAuth.DeferredPoll`.
+- **DI deferred.** `AddAAuthAgentGovernance` is still out of scope; it will land
+  in Phase 6 only if a sample needs DI-resolved governance.
+- **Files:** new `Agent/DeferredExchange.cs`,
+  `Agent/Governance/{GovernanceOptions,AAuthGovernanceClient}.cs`; deleted
+  `Agent/Governance/GovernanceExchange.cs`; modified `Agent/TokenExchangeClient.cs`,
+  the four governance clients, and `AAuthClientBuilder.cs`. **Tests:**
+  `Missions/GovernanceFacadeTests.cs` (5).
+- **Validation:** 422 conformance (417 + 5 facade) + 371 unit green, both
+  unchanged from before the refactor; SDK + full solution build 0/0 — the
+  existing suites were the regression gate and caught nothing.
+
+### Phase 6a — Samples backend foundation (2026-06-05, complete)
+
+- **MockPersonServer governance.** `MissionGovernance.cs` adds the scriptable
+  decision model (`MissionConsentScript`), per-mission policy snapshot
+  (`MissionPolicyStore`), approval blob builder, and the
+  decider/sink/relay sample implementations; `Program.cs` wires
+  `AddAAuthGovernance` + the four governance endpoints, the three-gate `/token`
+  mission gate, and `/admin/mission-script` + `/admin/mission-terminate` (option
+  A deterministic scripting). The `/token` gate reads
+  `MissionClaim.FromPayload(verified resource token)` and decides terminated →
+  `403`, in-scope/prior-consent → silent issue, else prompt (live `202`
+  deferred), logging the decision reason each time.
+- **12-row Consent Matrix.** `tests/AAuth.Tests/Integration/
+  MissionAgentFlowTests.cs` covers every gate × approve/deny × prompt/silent
+  (incl. clarification respond/cancel and `mission_terminated`) in-process via
+  `WebApplicationFactory` + the SDK governance/exchange clients, asserting the
+  recorded mission-log reason per row. +12 unit tests (371 → 383).
+- **SPEC-DRIVEN ADDITION — mission-aware resource (§Terminology ~L177:** "a
+  mission-aware resource includes the mission object from the AAuth-Mission
+  header in the resource tokens it issues"; §Mission flow ~L423/L429; signed
+  `aauth-mission` component §HTTP signing ~L619). Promoted this from a sample
+  hack to a **first-class SDK feature** so the chain — agent `AAuth-Mission`
+  header → mission-aware resource copies `{approver, s256}` into the resource
+  token → PS reads it from the verified resource token → embeds it in the auth
+  token — works for *any* resource, not just the mock. SDK: `AAuthMissionHeader.
+  TryParseStructured`; `ChallengeOptions.MissionAware` (opt-in, default false);
+  `AAuthChallengeMiddleware` sets `ResourceTokenBuilder.Mission` when enabled and
+  the header parses. WhoAmI gains a dedicated `GET /jwt/mission` endpoint
+  (`ChallengeForMission(ScopeWhoami){MissionAware=true}`) so the mission-aware
+  path is demoed independently of the plain three-party `/jwt`. +3 conformance
+  tests (422 → 425).
+- **MissionAgent CLI (`samples/MissionAgent/`).** New standalone console driving
+  the full lifecycle against the **live** mock servers (AP:5301 → PS:5100 →
+  WhoAmI:5000 `/jwt/mission`): enrol → propose mission → access the mission-aware
+  resource (out-of-scope **prompt**, then prior-consent **silent**) → pre-approved
+  permission (silent short-circuit) → non-pre-approved permission (prompt) →
+  audit → question → completion/terminate. Each resource access **refreshes the
+  agent token** (`AgentProviderClient.RefreshAsync` → fresh `jti`) — required
+  because the live resource's default JTI replay detection rejects a re-presented
+  agent token; this also mirrors real agent token rotation.
+- **DEVIATION — genuine browser interactivity (user chose "interactive").**
+  Rather than only printing the consent URL while the PS auto-resolves, the mock
+  PS now supports a real browser decision, gated by
+  `MissionConsentScript.InteractiveBrowser` (default false, so the 12-row test's
+  scripted auto-resolve is unaffected). When set: the mission-pending /
+  permission-pending GETs hold at `202` (re-emitting the interaction header)
+  until a `MissionPendingEntry.Decision` is recorded, and the browser
+  `/interaction` GET + `/interaction/approve` + `/interaction/deny` handlers now
+  recognise mission-pending codes and set that decision. `/permission` emits the
+  interaction header when interactive; `/admin/mission-script` accepts
+  `{interactive}`. The CLI defaults to interactive (`--auto` opts back into
+  scripted). Verified live end-to-end both ways (auto full run; interactive via
+  out-of-band `POST /interaction/approve` for the step-3 token and step-6
+  permission prompts).
+- **Files:** new `samples/MissionAgent/{MissionAgent.csproj, Program.cs,
+  README.md}` (already in `AAuth.slnx`); modified `samples/MockPersonServer/
+  {MissionGovernance.cs, Program.cs}`, `samples/WhoAmI/Program.cs`,
+  `src/AAuth/Agent/Mission.cs`, `src/AAuth/Server/Challenge/{ChallengeOptions,
+  AAuthChallengeMiddleware}.cs`; new test `tests/AAuth.Tests/Integration/
+  MissionAgentFlowTests.cs`; modified `tests/AAuth.Conformance/HttpSignatures/
+  ChallengeMiddlewareTests.cs`.
+- **Validation:** Conformance 425 (+3), AAuth.Tests 383 (+12); `AAuth.slnx`
+  builds 0 warnings / 0 errors; MissionAgent live smoke (auto + interactive) green.
+
+#### Phase 6a legibility follow-ups (2026-06-05, complete)
+
+- **Interactive mission-creation screen.** Mission approval is the most important
+  consent in the model, so `/mission` now defers (`202` + interaction) to a real
+  browser consent screen when `InteractiveBrowser` is set — the same deferred
+  path the token/permission gates use. SDK `MissionClient.ProposeAsync` already
+  routes through `DeferredExchange`, so no SDK change was needed; only the mock
+  PS gained `MissionPendingKind.Mission` + `MissionPendingEntry.Proposal`, a new
+  `GET /mission-create-pending/{id}` that builds+saves the approval blob on
+  approve (or `403` on decline), and the consent page now branches on creation
+  (heading "start a new mission"; shows description + `Tools`; no `s256`/resource
+  yet). `MissionAgent.ProposeAsync` passes `GovernanceFor(...)` so the browser
+  opens. Scripted mode (the 12-row test) keeps `InteractiveBrowser = false` and
+  the synchronous auto-approve path → unchanged, 12/12.
+- **Consent-screen tool context.** `MissionPolicyStore.ApprovedTools(s256)` added;
+  the token and permission consent screens now show the mission's approved tools
+  as context, so the human sees the full mission a request sits under. On the
+  permission screen this makes the gate self-explanatory: `Approved tools:
+  send_email, summarize` next to `Action: delete_inbox`.
+- **Spec wording confirmed (§Permission Endpoint L1015–1017, L1303).** Per-call
+  permission requests carry an **`action`**; the mission pre-approves
+  **`approved_tools`** (tool objects). The agent calls the permission endpoint
+  only for actions not covered by a pre-approved tool. Consent-screen labels and
+  the README sequence diagram use this distinction.
+- **README sequence diagram** now draws all three browser consent screens
+  (mission creation, out-of-scope token gate, out-of-tool permission) plus the
+  silent pre-approved-tool path, with the `action` vs `approved_tools` wording.
+- **Files (this follow-up):** modified `samples/MockPersonServer/
+  {MissionGovernance.cs, Program.cs}`, `samples/MissionAgent/{Program.cs,
+  README.md}`. No SDK/test changes; suites unchanged (425 / 383).
+
+### Phase 6b — Blazor apps + consent-UX refinements + out-of-mission scope gate (2026-06-06, in progress)
+
+- **GuidedTour + SampleApp mission flows (built, live-verified).** GuidedTour
+  `TourMode.Mission` (14-step raw-HTTP walkthrough) and SampleApp `Mission.razor`
+  (one-page 4-gate run) both drive: mission approval **prompt** → in-scope
+  `whoami` token **silent** → pre-approved `send_email` tool **silent** →
+  non-pre-approved `delete_inbox` tool **prompt**. Live-verified end-to-end.
+- **BUG FOUND + FIXED — `whoami` proposed as a tool.** GuidedTour's proposal
+  listed `whoami` in `tools`, which is wrong: `whoami` is a **resource scope**
+  (remote, §Scopes), not a local tool (§Permission Endpoint). After the
+  separate scope/tool lists were added it showed `whoami` in BOTH the consent
+  screen's scope list and tool list. Fixed the proposal to `summarize` +
+  `send_email`. Confirms the **tool-vs-scope** distinction matters in the demo
+  data, not just the docs.
+- **Consent-UX refinements (MockPersonServer `/interaction`, all live-verified):**
+  - **Separate scope + tool lists** (§Scopes vs §Permission Endpoint) so the
+    user sees both halves of the mission's authority distinctly.
+  - **Definition box** grounding the two words: *resource scope* = remote access
+    via auth token; *tool* = local action via the permission endpoint.
+  - **Creation screen lists NO scopes.** Per §Mission Creation (L1233) a proposal
+    carries only `description` + optional `tools` — never scopes. The creation
+    screen now shows the description + tools and a note that **the PS will
+    determine the resource scopes the mission needs from its description,
+    per-request, as the agent works** (§Scopes L1793 "The PS evaluates requested
+    scopes against mission context"; §Concurrent Token Requests L828). This
+    corrected an earlier draft that wrongly implied scopes were pre-determined
+    at creation.
+  - **CLARIFIED SPEC SEMANTICS — scopes are determined dynamically over the
+    mission's whole life, never fixed at creation.** A mission is a standing
+    natural-language context; the PS is a per-request judge (§Overview L141
+    "every resource access is evaluated in context"; §Token endpoint L784 — the
+    PS *remembers* prior consent within a mission so decisions accrue rather than
+    being declared up front). Out-of-mission scope ⇒ **gate 3 prompt**, not
+    auto-deny; only an explicit user deny (or `mission_terminated`) yields
+    `access_denied`.
+  - **Post-creation gates relabel the scope list "Granted so far"** (accrual
+    framing) with empty state "nothing yet — this is the first request"; the
+    token-gate request note now reads "Not yet covered by this mission — approve
+    to grant this scope (the agent may reuse it for the rest of the mission)",
+    teaching that the grant is remembered.
+  - Removed the now-unused `MissionConsentScript script` DI param from the
+    `/interaction` GET handler.
+- **docs/concepts.md** Governance section rewritten to convey the asymmetry:
+  **tools are declared, scopes are evaluated** (per-request, lifetime-long).
+  MissionAgent README gained the same distinction.
+
+- **NEW WORK (designed 2026-06-06, decisions D6–D9 in plan) — out-of-mission
+  scope gate.** The original Phase 6 plan intended a prompted **token/scope**
+  gate ("out-of-scope token request that prompts") but 6b shipped only the
+  prompted **tool** gate. Gap confirmed by reading `MissionPlan` (GuidedTour) and
+  `Mission.razor` — neither exercises an out-of-mission *scope*. To close it:
+  - **WhoAmI** gains a **new resource scope** (`whoami:history`, proposed) on a
+    **new mission-aware endpoint** (`/jwt/history`) via
+    `ChallengeForMission(...)`. Decision **D6**: new endpoint + new scope (not
+    reuse the existing non-mission `/jwt/admin` step-up) so the out-of-mission
+    scenario is unambiguous. WhoAmI already has the levers: `ChallengeForMission`
+    helper, `AddAAuthScopePolicy`, and `ScopeDescriptions` metadata — the new
+    path just needs excluding from the baseline `/jwt` branch.
+  - **Gate model becomes 5 gates** (decision **D7**): mission approval prompt →
+    `whoami` token silent → `whoami:history` token **PROMPT (out-of-mission
+    scope)** → `send_email` tool silent → `delete_inbox` tool prompt. Under the
+    seeded inbox mission (in-scope = `whoami` only), `whoami:history` naturally
+    falls outside → the existing `/token` gate-3 prompt path fires (no PS logic
+    change needed — the seed already excludes it).
+  - **Apps to update:** SampleApp `Mission.razor` (insert gate 3), GuidedTour
+    `TourSession.cs` MissionPlan + step methods + approval/poll constants +
+    `CodeSnippets.cs` + `Tour.razor`, and **`samples/MissionAgent/`** (decision
+    **D8**: the "agent console app" = MissionAgent, which has a mermaid sequence
+    diagram to extend with the out-of-mission scope consent block) + its README.
+  - **Playwright specs** assert the new prompted-scope gate.
+- **AgentConsole is NOT in scope** (subagent-confirmed): it has no mission
+  support and its README has **no mermaid diagrams** (only tables + example
+  invocations). The user's "agent console app" referred to MissionAgent.
+- **Status:** consent-UX refinements + bug fix + concept doc DONE and
+  live-verified; out-of-mission scope gate DESIGNED (this entry) and pending
+  implementation. SampleApp consent-URL reorder (amendment 3) built, not yet
+  live-verified. Playwright specs pending. Builds: MockPersonServer / SampleApp /
+  GuidedTour all 0/0.
+
+### Phase 6b — e2e validation + jti-replay fix (2026-06-06, complete)
+
+- **e2e specs written.** `samples/GuidedTour/playwright-tests/mission.spec.ts`
+  (20-step, three-cycle lifecycle + elevated-deny) and
+  `samples/SampleApp/playwright-tests/mission.spec.ts` (five-gate run + elevated-deny).
+  Both projects boot fresh via Playwright's `webServer` array.
+- **BUG FOUND via e2e + FIXED — GuidedTour mission flow hung at the elevated
+  cycle.** Root cause was a **jti replay**: `TourSession` reused a single
+  `_agentToken` (fixed `jti`) for BOTH the `/jwt/mission` (cycle 1) and
+  `/jwt/mission/elevated` (cycle 2) signed requests. WhoAmI's `InMemoryJtiStore`
+  recorded the `jti` on the first access and rejected its reuse on the second →
+  a **bare 401** (no `AAuth-Requirement`) → `_resourceToken` stayed stale
+  (`scope=whoami`) → the elevated `/token` exchange evaluated as in-scope and
+  returned **200 silent** instead of the spec-required **202 prompt** (§Agent
+  Token Request gate 3) → `_userApproved` was never reset to `false` →
+  `StepUserApprovesPlaceholder()` no-oped (it only throws when `!_userApproved`)
+  → the run-all dispatch loop never advanced past step 12 → infinite redispatch.
+  Both observed symptoms (silent-grant + infinite loop) had this single cause.
+- **FIX (spec §Agent Token, replay protection):** added
+  `TourSession.RefreshAgentToken()` (re-mints `_agentToken` with a fresh `jti`
+  via `AgentTokenBuilder.Build()`) and call it at the top of
+  `StepMissionResourceChallengeAsync` AND `StepMissionElevatedChallengeAsync`,
+  so each signed resource access presents a distinct agent token — exactly as
+  `MissionAgent` (and SampleApp's `AccessMissionResourceAsync`) already did via a
+  per-access refresh. SampleApp was already correct; GuidedTour was the only
+  app missing the refresh.
+- **TEST-HARNESS LESSON (not a product bug).** WhoAmI mints an ephemeral
+  resource signing key (`AAuthKey.Generate()`) at every startup, so restarting
+  WhoAmI alone while a long-running PS keeps its cached JWKS yields
+  `401 invalid_resource_token: JWT signature verification failed`. Always boot
+  the whole AAuth backend set together (let Playwright's `webServer` boot all,
+  or `pkill -f "dotnet run --project samples"` first). `jti` replay state also
+  accumulates across e2e runs against a long-lived WhoAmI — prefer fresh
+  full-stack boots. Recorded in repo memory.
+- **DIAG removed.** All temporary `[DIAG-CHAL]` (SDK
+  `AAuthChallengeMiddleware.cs`) and `[DIAG]` (`TourSession.cs`) tracing removed.
+- **Validation:** `AAuth.slnx` builds 0/0. `AAuth.Tests` 383/383,
+  `AAuth.Conformance` 425/425. GuidedTour mission specs (lifecycle + deny) green;
+  SampleApp mission specs (five-gate + deny) green.
+
+### Phase 7 — doc audit (2026-06-06)
+
+Read-only audit of every `docs/**` file that mentions missions/governance
+against the shipped Phase 1–6 public API, to re-scope Phase 7 before writing
+(user: "Phase 7 may need updates as we touched new things during
+implementation"). Findings drive the revised Phase 7 file list + DoD in the
+implementation plan.
+
+- **`docs/advanced/missions.md` is fundamentally stale.** It documents a
+  **non-existent** model: `Mission.Id`, `Mission.Status` (pending/approved/
+  denied/completed), `Mission.Requirements` (JsonArray), `Mission.StatusUrl`/
+  `InteractionUrl`, `Mission.FromJson(JsonObject)`, and
+  `AAuthMissionHeader.Format(string missionId)` — plus a resource-proposes-mission
+  lifecycle mermaid. The shipped model is the spec **approval blob**:
+  `Mission { Approver, Agent, ApprovedAt, Description, ApprovedTools,
+  Capabilities, S256, RawBytes, State(Active|Terminated) }`,
+  `FromApprovalBytes`/`VerifyS256`/`ComputeS256`, and
+  `AAuthMissionHeader.FormatStructured(approver, s256)`/`TryParseStructured`.
+  Requires a full rewrite, not a patch.
+- **Agent-side governance clients have ZERO doc coverage.** `AAuthGovernanceClient`
+  facade + `MissionClient.ProposeAsync`, `PermissionClient.RequestAsync` (both
+  overloads), `AuditClient.RecordAsync`, `InteractionClient.SendAsync`/
+  `RelayInteractionAsync`, all DTOs (`MissionProposal`, `PermissionRequest`/
+  `PermissionResult`/`PermissionGrant`, `AuditRecord`, `InteractionRequest`/
+  `InteractionResult`/`InteractionType`, `GovernanceOptions`), and
+  `AAuthClientBuilder.BuildGovernance()` — none documented.
+- **Clarification chat has ZERO doc coverage.** `ClarificationExchange`
+  (`DefaultMaxRounds = 5`), `ClarificationResponse` (`Respond`/`Update`/`Cancel`),
+  `ClarificationRequirement`, and the `TokenExchangeRequest`/`GovernanceOptions`
+  `OnClarificationRequired` + `MaxClarificationRounds` hooks.
+- **Server governance seams have ZERO doc coverage.** `IMissionStore`/
+  `StoredMission`/`InMemoryMissionStore`, `IPermissionDecider`/
+  `PermissionDecisionContext`/`PermissionDecision`/`PermissionOutcome`/
+  `PermissionDecisionReason`, `IAuditSink`, `IInteractionRelay`/
+  `InteractionRelayResult`, `IMissionLog`/`MissionLogEntry`/`MissionLogEntryKind`/
+  `InMemoryMissionLog`, `GovernanceEndpoints`, and `AddAAuthGovernance` DI.
+- **Smaller gaps.** `AAuthMissionTerminatedException` (`mission_terminated`) is
+  absent from `error-handling.md`; `ChallengeOptions.MissionAware` (the
+  mission-aware resource that copies the `AAuth-Mission` claim into the resource
+  token) is absent from `challenge-middleware.md`; `README.md`'s API Map lacks
+  rows for every governance client + server seam; the six mission token-exchange
+  params (`Justification`/`LoginHint`/`Tenant`/`DomainHint`/`Platform`/`Device`)
+  are undocumented.
+- **Already correct (Phase 6 / earlier work) — no rewrite needed.**
+  `docs/concepts.md` (tools-declared-vs-scopes-evaluated split, corrected in
+  6b), `docs/workflows/call-chaining.md` (mission forwarding via
+  `WithCallChaining`/`MissionForwardingHandler`), and `docs/server/
+  token-issuance.md` (the `mission.approver` constraint) only need cross-link /
+  index touch-ups.
+- **Design choices recorded (D10–D11, user-approved 2026-06-06).** D10: the
+  agent-side governance clients get a dedicated `docs/advanced/
+  mission-governance-clients.md` (keeps `docs/server/mission-governance.md`
+  focused on PS/server seams). D11: clarification chat gets its own
+  `docs/advanced/clarification-chat.md`; all smaller touch-ups land in Phase 7.
+
+### Phase 8 — multi-subagent review (2026-06-06, complete)
+
+Seven review subagents (R1–R7), one per change set, produced severity-graded
+findings with spec citations. Baseline before remediation: build 0/0, unit 383,
+conformance 425, mission e2e 4/4. Verdicts: R7 PASS; R1–R6 PASS-WITH-NITS.
+
+**Spec corrections / remediations applied:**
+
+- **R1 (mission model) — non-spec capability value removed.** `AAuthCapabilities
+  Header.Capabilities.Mission = "mission"` was an out-of-spec fourth capability
+  value. §AAuth-Capabilities Request Header (~L1766) defines exactly three:
+  `interaction`, `clarification`, `payment`. The constant had **zero production
+  usages** (only an arbitrary-token `Union` dedup test). Removed the constant;
+  updated the test to use a real value; fixed stale `§14.1` citations to
+  `§AAuth-Capabilities` across `AAuthCapabilitiesHeader.cs`,
+  `AAuthSigningHandler.cs`, and `CapabilitiesHeaderTests.cs`.
+- **R1 / R3 / R7 — untrusted-Markdown hardening.** Added an XML-doc remark to
+  `Mission.Description` stating it is server-supplied untrusted content that
+  consumers MUST sanitize before rendering (§Markdown ~L192). The SDK already
+  never renders it; this is defense-in-depth guidance for consumers. (Blazor
+  samples already never render the description — confirmed by R6.)
+
+**Findings explicitly deferred (with rationale), NOT auto-remediated:**
+
+- **R3 — `capabilities` array in the PS token-request body.** §AAuth-Capabilities
+  (~L1776) says the *header* "is not used on requests to PS endpoints — the PS
+  learns the agent's capabilities through the mission approval flow." The SDK
+  sends a `capabilities` **body** parameter (not the header) on the token
+  request. This is **pre-existing** behavior (commits `d8cf70a` / `1f235a4`,
+  "live interop fixes"), validated against `person.hello.coop`, and fills a real
+  gap: for the non-mission deferred-consent flow the PS otherwise has no way to
+  know the agent can handle a `202` interaction redirect. It is a draft-02
+  token-endpoint extension, outside the mission change sets. Decision: flag to
+  the user as a spec-alignment question; do not change unilaterally (removing it
+  risks breaking deferred consent + live interop).
+- **R4 — `AuditClient` accepts `200`/`204` as well as `201`.** §Audit Endpoint
+  specifies `201 Created`. Accepting other 2xx is lenient for a fire-and-forget
+  audit call; low risk, kept as-is.
+- **R2 / R4 — minor test-coverage gaps** (aauth-mission anti-double-coverage
+  edge case; Interaction/Payment relay deferred-poll path). Implementations are
+  correct; gaps noted for a future test pass, not blocking.
+- **R5 — unbounded growth of the in-memory store/log.** By design: the SDK
+  defaults are documented dev-grade; production PSes register durable stores via
+  the `TryAdd` seams.
+
+**Post-remediation gate:** build 0/0, unit 383, conformance 425, mission e2e 4/4
+— all green.
+

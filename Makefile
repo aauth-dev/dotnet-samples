@@ -14,6 +14,7 @@ AGENT_PROJECT  := samples/AgentConsole/AgentConsole.csproj
 SAMPLE_PROJECT := samples/SampleApp/SampleApp.csproj
 ORCH_PROJECT   := samples/Orchestrator/Orchestrator.csproj
 LIVE_PROJECT   := samples/LiveWhoAmITest/LiveWhoAmITest.csproj
+MISSION_PROJECT := samples/MissionAgent/MissionAgent.csproj
 AS_PROJECT     := samples/MockAccessServer/MockAccessServer.csproj
 
 WHOAMI_URL := http://localhost:5000
@@ -58,7 +59,7 @@ endef
 
 .PHONY: help build restore test test-unit test-conformance format clean \
         whoami ps ps-consent ap orchestrator tour sampleapp agent live \
-        demo \
+        demo demo-mission agent-mission \
         keycloak access-server demo-keycloak \
         agent-federated agent-reset \
         e2e-install e2e e2e-tour e2e-sample e2e-report
@@ -223,6 +224,38 @@ agent-federated: ## Drive AgentConsole through the four-party /federated flow (K
 
 agent-reset: ## Clear the AgentConsole enrollment cache (stale after an AP restart)
 	@rm -rf "$(AGENT_CACHE_DIR)" && echo "Cleared AgentConsole enrollment cache ($(AGENT_CACHE_DIR))."
+
+# ----------------------------------------------------------------------------
+# Mission demo — agent operating under a human-approved mission, PS as the
+# policy-enforcement point (three mock servers, no Docker)
+# ----------------------------------------------------------------------------
+
+demo-mission: ## Start the mission stack (AP + PS + WhoAmI) for the MissionAgent CLI
+	@echo "Starting mission demo (agent operating under a human-approved mission)..."
+	@echo ""
+	@echo "------------------------------------------------------------------"
+	@echo " Backend services:"
+	@echo "   WhoAmI:             $(WHOAMI_URL)/jwt/mission   (mission-aware resource)"
+	@echo "   MockPersonServer:   $(PS_URL)         (governs every step under the mission)"
+	@echo "   MockAgentProvider:  $(AP_URL)         (agent registry)"
+	@echo ""
+	@echo " Drive it from another terminal with:  make agent-mission"
+	@echo "   (the whoami token gate is mission-approved by default, so it is silent;"
+	@echo "    the elevated whoami:elevated_scope step is out of the mission and"
+	@echo "    prompts on its own;"
+	@echo "    add AUTO=1 to resolve prompts via the PS's scripted defaults;"
+	@echo "    set MISSION_APPROVED to replace the default in-scope set, e.g."
+	@echo "    MISSION_APPROVED='whoami whoami:elevated_scope' to silence the elevated step too)"
+	@echo "------------------------------------------------------------------"
+	@echo ""
+	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \
+	$(DOTNET) run --project $(PS_PROJECT) & \
+	$(DOTNET) run --project $(WHOAMI_PROJECT) & \
+	$(DOTNET) run --project $(AP_PROJECT) & \
+	wait
+
+agent-mission: ## Drive the MissionAgent CLI through the full mission lifecycle (AUTO=1 for scripted prompts; MISSION_APPROVED="<scope>..." to replace the default in-scope set)
+	$(DOTNET) run --project $(MISSION_PROJECT) -- $(if $(AUTO),--auto,) $(foreach scope,$(MISSION_APPROVED),--mission-approved $(scope))
 
 # ----------------------------------------------------------------------------
 # End-to-end (Playwright)

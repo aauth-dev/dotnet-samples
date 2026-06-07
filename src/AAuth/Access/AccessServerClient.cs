@@ -203,12 +203,12 @@ public sealed class AccessServerClient
                     else
                     {
                         // The push response itself carries the verdict (200
-                        // auth_token, 403 access_denied, or a structured error).
+                        // auth_token, 403 `denied`, or a structured error).
                         response = pushResponse;
                     }
 
                     if (response.StatusCode == HttpStatusCode.Forbidden
-                        && await IsAccessDeniedAsync(response, cancellationToken).ConfigureAwait(false))
+                        && await IsDeniedAsync(response, cancellationToken).ConfigureAwait(false))
                     {
                         response.Dispose();
                         throw new AAuthInteractionDeniedException(
@@ -236,7 +236,7 @@ public sealed class AccessServerClient
                     response = await PollDeferredAsync(pendingUrl, request.PollerOptions, cancellationToken).ConfigureAwait(false);
 
                     if (response.StatusCode == HttpStatusCode.Forbidden
-                        && await IsAccessDeniedAsync(response, cancellationToken).ConfigureAwait(false))
+                        && await IsDeniedAsync(response, cancellationToken).ConfigureAwait(false))
                     {
                         response.Dispose();
                         throw new AAuthInteractionDeniedException(
@@ -382,6 +382,14 @@ public sealed class AccessServerClient
             return await new DeferredPoller(_signedClient, options)
                 .PollAsync(pendingUrl, cancellationToken).ConfigureAwait(false);
         }
+        catch (PollingErrorException ex) when (ex.ErrorCode == PollingErrorCode.Denied)
+        {
+            // §Polling Error Codes: `denied` (403) is an explicit denial. Surface
+            // the semantic interaction-denied exception so callers can distinguish
+            // it from a transport-level polling failure.
+            throw new AAuthInteractionDeniedException(
+                "The Access Server denied the request.", ex);
+        }
         catch (TimeoutException ex)
         {
             throw new AAuthInteractionTimeoutException(
@@ -424,7 +432,7 @@ public sealed class AccessServerClient
         return pendingUrl;
     }
 
-    private static async Task<bool> IsAccessDeniedAsync(
+    private static async Task<bool> IsDeniedAsync(
         HttpResponseMessage response, CancellationToken cancellationToken)
     {
         // Buffer the body so a subsequent ReadAuthTokenAsync still sees it,
@@ -448,7 +456,7 @@ public sealed class AccessServerClient
         try
         {
             var json = JsonNode.Parse(body) as JsonObject;
-            return (string?)json?["error"] == "access_denied";
+            return (string?)json?["error"] == "denied";
         }
         catch (System.Text.Json.JsonException)
         {

@@ -197,7 +197,7 @@ app.MapPost("/interaction/approve", async (HttpContext ctx) =>
 
 // -----------------------------------------------------------------------
 // POST /interaction/deny — the stub AS consent screen's Deny button. Marks
-// the pending entry Denied so the agent's next poll receives 403 access_denied.
+// the pending entry Denied so the agent's next poll receives 403 denied.
 // -----------------------------------------------------------------------
 app.MapPost("/interaction/deny", async (HttpContext ctx) =>
 {
@@ -374,7 +374,7 @@ static class ConsentHtml
             "<h1>Denied</h1>"
             + $"<p>You denied <code>{Enc(agent)}</code>'s federated request for "
             + $"<code>{Enc(resource)}</code> at the <b>Access Server</b>. "
-            + "The agent's next poll will receive <code>403 access_denied</code>.</p>"
+            + "The agent's next poll will receive <code>403 denied</code>.</p>"
             + "<p>You can close this tab.</p>");
 
     public static string NotFound() =>

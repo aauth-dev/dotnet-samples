@@ -19,7 +19,7 @@ A minimal AAuth Person Server for end-to-end demos and integration tests.
   - **Approve** (`POST /interaction/approve`, or `POST /admin/consent`
     from a script) → next poll returns `200` with the `auth_token`.
   - **Deny** (`POST /interaction/deny`) → next poll returns `403` with
-    `{"error":"access_denied"}`.
+    `{"error":"denied"}`.
   - No action → the agent's polling budget eventually expires.
 - `GET /interaction` renders a tiny built-in consent page used by the
   `GuidedTour` "Open consent page" button.
@@ -50,6 +50,42 @@ The PS decides which role to play from the resource token's `aud` claim:
 The PS only federates to Access Servers listed in
 `MockPersonServer:TrustedAccessServers`; any other `aud` is rejected with
 `untrusted_access_server` (403).
+
+> **SDK one-call alternative.** Both branches above — the three-party collapsed
+> mint and the four-party federation routing — are packaged by the SDK host helper
+> [`MapAAuthPersonServer`](../../docs/server/token-issuance.md#one-call-person-server-mapaauthpersonserver),
+> with the identity/consent decision delegated to an `IIdentityClaimsAsserter`.
+> This sample keeps the endpoints hand-wired so it can render its own interactive
+> consent / mission screens; a non-interactive PS can adopt the one-call helper
+> directly.
+
+## Agent governance (missions)
+
+Beyond minting tokens, this PS doubles as the **contextual policy point** for
+the optional, orthogonal agent-governance layer (§Agent Governance). Governance
+is wired with a single call \u2014 `builder.Services.AddAAuthGovernance()` \u2014 which
+registers an in-memory mission store and log; the sample then supplies the
+policy and user-channel seams (`IPermissionDecider`, `IAuditSink`,
+`IInteractionRelay`) plus a deterministic consent script that stands in for a
+real user-consent screen.
+
+It serves the four governance endpoints from the protocol exchange diagram:
+
+| Endpoint | Spec | Purpose |
+|---|---|---|
+| `POST /mission` | §Mission Creation | The agent proposes a mission in natural language; the PS stores the approval bytes verbatim, computes `s256`, and returns the `AAuth-Mission` header (`approver`, `s256`). |
+| `POST /permission` | §Permission Endpoint | The agent asks whether an action is allowed. Pre-approved tools on the active mission short-circuit to *granted*; everything else runs the three-gate decision (in-scope / prior consent / prompt the user). |
+| `POST /audit` | §Audit Endpoint | The agent reports an action it took; the PS appends it to the mission log (fire-and-forget). |
+| `POST /mission-interaction` | §Interaction Endpoint | The agent relays a question, payment, or completion proposal to the user through the PS. |
+
+Pending governance interactions resolve via `POST /mission-pending/{id}`,
+mirroring the deferred-consent `/pending/{id}` poll used by `POST /token`.
+
+A **mission-aware resource** copies the mission object (`approver`, `s256`) from
+the `AAuth-Mission` header into the resource token it issues (§Resource Token
+Verification, Terminology: *mission-aware resource*); the PS then has full
+mission context when it evaluates each downstream hop. Try it end-to-end with
+the [MissionAgent](../MissionAgent/README.md) CLI (`make demo-mission`).
 
 ## Run
 

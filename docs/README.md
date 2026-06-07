@@ -31,6 +31,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 - [Bootstrap & Enrollment](workflows/bootstrap-enrollment.md)
 - [Deferred Consent](workflows/deferred-consent.md)
 - [Call Chaining](workflows/call-chaining.md)
+- [Mission-Governed Access](workflows/mission-governed-access.md)
 
 ## Server Implementation
 
@@ -42,10 +43,13 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 - [Token Issuance](server/token-issuance.md)
 - [Replay Detection](server/replay-detection.md)
 - [Multi-Scheme Verification](server/multi-scheme-verification.md)
+- [Mission Governance](server/mission-governance.md) — PS-side mission policy seams
 
 ## Advanced Topics
 
 - [Missions](advanced/missions.md)
+- [Mission Governance Clients](advanced/mission-governance-clients.md) — propose, permission, audit, interaction
+- [Clarification Chat](advanced/clarification-chat.md) — answering a server's follow-up questions
 - [Interaction Chaining](advanced/interaction-chaining.md)
 - [Platform Attestation](advanced/platform-attestation.md)
 - [Key Management](advanced/key-management.md)
@@ -103,6 +107,17 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `AgentProviderClient` | Enrols with an Agent Provider (CLI/desktop agents; hosted services self-issue) |
 | `Mission` / `AAuthMissionHeader` | Mission state + the `AAuth-Mission` header helpers |
 | `MissionForwardingHandler` | `DelegatingHandler` that forwards mission context downstream |
+| `AAuthGovernanceClient` | Facade bundling the four PS governance clients |
+| `MissionClient` | Propose missions at the PS `mission_endpoint` |
+| `PermissionClient` | Request permission at the PS `permission_endpoint` |
+| `AuditClient` | Record actions at the PS `audit_endpoint` |
+| `InteractionClient` | Reach the user via the PS `interaction_endpoint` |
+| `MissionProposal` / `MissionTool` | Mission proposal body + a declared tool |
+| `PermissionRequest` / `PermissionResult` | Permission request + grant/deny result |
+| `AuditRecord` | Audit entry (requires a mission) |
+| `InteractionRequest` / `InteractionResult` | Interaction request + typed terminal result |
+| `GovernanceOptions` | Deferral callbacks shared by the governance clients |
+| `ClarificationExchange` / `ClarificationResponse` | Drive a clarification chat; respond / update / cancel |
 | `AAuthCapabilitiesHeader` | Helpers for the `AAuth-Capabilities` request header |
 | `IInteractionPresenter` | Surface interaction URLs to the user |
 | `IPlatformAttestor` / `NoopAttestor` | Platform attestation hook + built-in no-op implementation |
@@ -118,6 +133,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `ResourceTokenBuilder` | Builds `aa-resource+jwt` (401 challenge payload) |
 | `AuthTokenBuilder` | Builds `aa-auth+jwt` (person delegation proof) |
 | `TokenVerifier` | EdDSA JWT verification with claim checks and JWKS resolution |
+| `MissionClaim` | The `mission` claim (`approver` + `s256`) carried in tokens |
 
 ### `AAuth.Discovery` — Metadata and JWKS
 
@@ -133,6 +149,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 |------|---------|
 | `AAuthRequirementHeader` | Format/parse the `AAuth-Requirement` challenge header |
 | `Interaction` | Interaction URL + code from 202 responses |
+| `ClarificationRequirement` | Typed `requirement=clarification` projection (untrusted question) |
 
 > The `AAuthCapabilitiesHeader` and `AAuthMissionHeader` types live in the `AAuth.Agent` namespace (alongside `Mission` and `MissionForwardingHandler`), not in `AAuth.Headers`.
 
@@ -150,6 +167,19 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | Type | Purpose |
 |------|---------|
 | `AAuthChallengeMiddleware` | Auto-challenge: issues 401 with resource token |
+
+### `AAuth.Server.Governance` — PS-side mission governance
+
+| Type | Purpose |
+|------|---------|
+| `GovernanceEndpoints` | Parse governance request bodies + emit `mission_terminated` |
+| `IMissionStore` / `InMemoryMissionStore` | Persist missions (verbatim blob + state) |
+| `IMissionLog` / `InMemoryMissionLog` | Ordered mission log + prior-consent lookup |
+| `IPermissionDecider` | PS policy seam for the permission endpoint |
+| `IAuditSink` | PS sink for audit records |
+| `IInteractionRelay` | PS user-channel seam for interactions |
+| `StoredMission` / `MissionLogEntry` | Persisted mission + log entry records |
+| `PermissionDecision` / `PermissionOutcome` / `PermissionDecisionReason` | Typed permission decision vocabulary |
 
 ### `AAuth.Server.Authorization` — Scope authorization
 
@@ -191,6 +221,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `AAuthAgentServiceCollectionExtensions` | `services.AddAAuthAgent(...)` |
 | `AAuthResourceServiceCollectionExtensions` | `services.AddAAuthResource(...)` |
 | `AAuthDiscoveryServiceCollectionExtensions` | `services.AddAAuthDiscovery(...)` |
+| `AAuthGovernanceServiceCollectionExtensions` | `services.AddAAuthGovernance()` |
 | `AAuthApplicationBuilderExtensions` | `app.UseAAuthVerification()` |
 
 > These extension methods live in the conventional `Microsoft.Extensions.DependencyInjection` and `Microsoft.AspNetCore.Builder` namespaces so they surface automatically in ASP.NET Core projects. The associated options records (`AAuthAgentOptions`, `AAuthResourceOptions`, `AAuthDiscoveryOptions`, etc.) live in the root `AAuth` namespace.

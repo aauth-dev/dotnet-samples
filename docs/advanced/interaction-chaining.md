@@ -120,7 +120,7 @@ app.MapGet("/pending/{id}", async (HttpContext ctx, string id, PendingStore pend
     catch (AAuthInteractionDeniedException)
     {
         pending.Remove(id);
-        return Results.Json(new { error = "access_denied" }, statusCode: 403);
+        return Results.Json(new { error = "denied" }, statusCode: 403);
     }
 });
 ```

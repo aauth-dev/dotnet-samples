@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Agent;
+using AAuth.Agent.Governance;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
@@ -79,6 +80,9 @@ public sealed class AAuthClientBuilder
 
     // Call-chaining state
     private Func<string?>? _upstreamTokenProvider;
+
+    // Mission state (originating agent's own approved mission)
+    private Agent.Mission? _mission;
 
     // Token refresh state
     private ITokenRefresher? _tokenRefresher;
@@ -312,6 +316,29 @@ public sealed class AAuthClientBuilder
     }
 
     /// <summary>
+    /// Operate the client in the context of the agent's own approved
+    /// <see cref="Agent.Mission"/>. Every outbound request carries the
+    /// <c>AAuth-Mission</c> header (<c>{approver, s256}</c>), which the signing
+    /// pipeline covers as the <c>aauth-mission</c> component.
+    /// </summary>
+    /// <remarks>
+    /// Per §Mission Context at Resources, an agent operating in a mission context
+    /// includes the <c>AAuth-Mission</c> header on requests to resources. Combine
+    /// with <see cref="WithChallengeHandling()"/> / <see cref="WithInteractionHandling()"/>
+    /// so the whole resource-access leg (mission header + 401 challenge + token
+    /// exchange + retry) is handled automatically. This is for the <em>originating</em>
+    /// agent that holds its own approved mission; call-chaining intermediaries that
+    /// re-emit a mission from an upstream token use <see cref="WithCallChaining(string)"/>.
+    /// </remarks>
+    /// <param name="mission">The agent's own approved mission.</param>
+    public AAuthClientBuilder WithMission(Agent.Mission mission)
+    {
+        ArgumentNullException.ThrowIfNull(mission);
+        _mission = mission;
+        return this;
+    }
+
+    /// <summary>
     /// Configure a self-issued agent token identity. The builder's key is used
     /// for both HTTP signing and token signing. A <see cref="SelfIssuedTokenRefresher"/>
     /// is created internally — no separate <see cref="WithTokenRefresh"/> call is needed.
@@ -389,6 +416,61 @@ public sealed class AAuthClientBuilder
     public HttpClient Build() => new HttpClient(BuildHandler());
 
     /// <summary>
+    /// Build a governance client (mission / permission / audit / interaction) that
+    /// signs every request with the configured agent identity. Requires an explicit
+    /// signing mode (<see cref="UseHwk"/>, <see cref="UseJwt(string)"/>,
+    /// <see cref="UseJwksUri"/>, <see cref="UseJktJwt"/>, or <see cref="UseProvider"/>).
+    /// The client is wired from the same signed exchange channel as the token-exchange
+    /// pipeline in <see cref="BuildHandler"/>.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">No signing mode was configured.</exception>
+    public AAuthGovernanceClient BuildGovernance()
+        => BuildGovernance(defaultOptions: null);
+
+    /// <summary>
+    /// Build a governance client bound to the Person Server configured via
+    /// <see cref="WithPersonServer"/>, with default deferred-handling options. The
+    /// bound client exposes <see cref="AAuthGovernanceClient.ProposeMissionAsync"/>
+    /// which returns a <see cref="Agent.Governance.MissionSession"/> that auto-threads
+    /// the mission claim and PS into subsequent calls. Requires an explicit signing
+    /// mode and a configured Person Server.
+    /// </summary>
+    /// <param name="defaultOptions">Default governance options applied when a call omits its own.</param>
+    /// <exception cref="InvalidOperationException">No signing mode or no Person Server was configured.</exception>
+    public AAuthGovernanceClient BuildGovernance(Agent.Governance.GovernanceOptions? defaultOptions)
+    {
+        var provider = _provider
+            ?? throw new InvalidOperationException(
+                "BuildGovernance requires an explicit signing mode (UseHwk, UseJwt, UseJwksUri, UseJktJwt, or UseProvider).");
+        if (string.IsNullOrEmpty(_personServer))
+        {
+            throw new InvalidOperationException(
+                "BuildGovernance requires a Person Server. Configure one via WithPersonServer(...).");
+        }
+        var (signed, metadata) = BuildSignedChannel(provider, _innerHandler ?? new HttpClientHandler());
+        return new AAuthGovernanceClient(signed, metadata, _personServer, defaultOptions);
+    }
+
+    // Build a signed HttpClient (pinned to the agent identity) plus a metadata
+    // client — the channel used for token exchange and governance calls. The long
+    // (infinite) timeout lets deferred long-polling (Prefer: wait=N) run past the
+    // default 100s; DeferredPollerOptions.MaxTotalWait enforces the real budget.
+    private (HttpClient Signed, MetadataClient Metadata) BuildSignedChannel(
+        ISignatureKeyProvider provider, HttpMessageHandler innerHandler)
+    {
+        var signer = new AAuthSigningHandler(_key, provider)
+        {
+            InnerHandler = innerHandler,
+        };
+        var signed = new HttpClient(signer)
+        {
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
+        var metadata = new MetadataClient(new HttpClient());
+        return (signed, metadata);
+    }
+
+    /// <summary>
     /// Build the configured handler pipeline without wrapping it in an <see cref="HttpClient"/>.
     /// Useful for DI registration via <c>ConfigurePrimaryHttpMessageHandler</c>.
     /// </summary>
@@ -418,7 +500,7 @@ public sealed class AAuthClientBuilder
             // When WithTokenRefresh is configured but no explicit provider,
             // create a JWT signing pipeline with lazy token acquisition.
             if (_provider is null && _tokenRefresher is not null)
-                return BuildRefreshOnlyHandler();
+                return WithMissionHeader(BuildRefreshOnlyHandler());
 
             // Simple signing-only pipeline (possibly with interaction handling).
             var handler = new AAuthSigningHandler(_key, _provider!)
@@ -429,7 +511,7 @@ public sealed class AAuthClientBuilder
             };
 
             if (!_interactionHandling)
-                return handler;
+                return WithMissionHeader(handler);
 
             // Wrap with interaction handler
             var interactionOpts = new InteractionHandlingOptions();
@@ -445,7 +527,7 @@ public sealed class AAuthClientBuilder
             {
                 InnerHandler = handler,
             };
-            return interactionHandler;
+            return WithMissionHeader(interactionHandler);
         }
 
         // --- Challenge-handling pipeline ---
@@ -478,20 +560,7 @@ public sealed class AAuthClientBuilder
 
         // Exchange pipeline: separate signing handler pinned to the agent token.
         var exchangeProvider = _provider ?? holderProvider;
-        var exchangeSigner = new AAuthSigningHandler(_key, exchangeProvider)
-        {
-            InnerHandler = new HttpClientHandler(),
-        };
-        var exchangeHttpClient = new HttpClient(exchangeSigner)
-        {
-            // Token exchange and deferred polling can legitimately take minutes
-            // (long-poll via Prefer: wait=N). The default 100s HttpClient.Timeout
-            // would abort mid-poll. The DeferredPoller enforces the real budget
-            // via DeferredPollerOptions.MaxTotalWait.
-            Timeout = Timeout.InfiniteTimeSpan,
-        };
-        var metadataHttp = new HttpClient();
-        var metadata = new MetadataClient(metadataHttp);
+        var (exchangeHttpClient, metadata) = BuildSignedChannel(exchangeProvider, new HttpClientHandler());
         var exchangeClient = new TokenExchangeClient(exchangeHttpClient, metadata);
 
         var pollerOptions = new DeferredPollerOptions
@@ -515,6 +584,8 @@ public sealed class AAuthClientBuilder
                 : null,
             Prompt = challengeOptions.Prompt,
             AdditionalSignatureComponents = challengeOptions.AdditionalSignatureComponents,
+            OnClarificationRequired = challengeOptions.OnClarificationRequired,
+            MaxClarificationRounds = challengeOptions.MaxClarificationRounds,
         };
 
         // If token refresh is configured, insert it above the challenge handler.
@@ -560,7 +631,20 @@ public sealed class AAuthClientBuilder
             topHandler = missionHandler;
         }
 
-        return topHandler;
+        return WithMissionHeader(topHandler);
+    }
+
+    // Wrap a pipeline with the originating-agent mission header handler when a
+    // mission was configured via WithMission(...). Sits at the very top so the
+    // AAuth-Mission header is present before the request is signed; the signing
+    // handler beneath then covers it as the `aauth-mission` component (§Mission
+    // Context at Resources). Skipped under call-chaining, where
+    // MissionForwardingHandler already emits the header from the upstream token.
+    private HttpMessageHandler WithMissionHeader(HttpMessageHandler inner)
+    {
+        if (_mission is null || _upstreamTokenProvider is not null)
+            return inner;
+        return new MissionHeaderHandler(_mission) { InnerHandler = inner };
     }
 
     private HttpMessageHandler BuildRefreshOnlyHandler()

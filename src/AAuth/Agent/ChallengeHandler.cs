@@ -123,6 +123,21 @@ public sealed class ChallengeHandler : DelegatingHandler
     public string? Prompt { get; init; }
 
     /// <summary>
+    /// Optional callback invoked when the PS returns <c>202 + requirement=clarification</c>
+    /// during the embedded exchange (§Clarification Chat). The callback answers the
+    /// question (respond / update / cancel); when set, the agent declares the
+    /// <c>clarification</c> capability. When <see langword="null"/> and the PS asks for
+    /// clarification, the exchange throws.
+    /// </summary>
+    public Func<ClarificationRequirement, CancellationToken, Task<ClarificationResponse>>? OnClarificationRequired { get; init; }
+
+    /// <summary>
+    /// Maximum number of clarification rounds before the embedded exchange aborts
+    /// (§Clarification Chat). Default: 5.
+    /// </summary>
+    public int MaxClarificationRounds { get; init; } = ClarificationExchange.DefaultMaxRounds;
+
+    /// <summary>
     /// Additional signature components a resource requires, keyed by origin
     /// (<c>scheme://host:port</c>), typically discovered from the resource's
     /// <c>additional_signature_components</c> metadata. When set, requests to
@@ -200,6 +215,8 @@ public sealed class ChallengeHandler : DelegatingHandler
                     UpstreamToken = upstreamToken,
                     Capabilities = Capabilities,
                     Prompt = Prompt,
+                    OnClarificationRequired = OnClarificationRequired,
+                    MaxClarificationRounds = MaxClarificationRounds,
                 },
                 cancellationToken)
             .ConfigureAwait(false);

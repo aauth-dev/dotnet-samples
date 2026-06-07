@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using AAuth.Agent;
 using AAuth.Headers;
 
 namespace AAuth.HttpSig;
@@ -16,6 +17,22 @@ public sealed class ChallengeHandlingOptions
     /// When <see langword="null"/>, a deferred PS response surfaces as an exception.
     /// </summary>
     public Func<Interaction, CancellationToken, Task>? OnInteractionRequired { get; set; }
+
+    /// <summary>
+    /// Optional callback invoked when the PS returns <c>202 + requirement=clarification</c>
+    /// during token exchange (§Clarification Chat). The callback receives the parsed
+    /// question and returns the agent's chosen <see cref="ClarificationResponse"/>
+    /// (respond / update / cancel), which the exchange applies before resuming polling.
+    /// When set, the agent declares the <c>clarification</c> capability to the PS; when
+    /// <see langword="null"/> and the PS asks for clarification, the exchange throws.
+    /// </summary>
+    public Func<ClarificationRequirement, CancellationToken, Task<ClarificationResponse>>? OnClarificationRequired { get; set; }
+
+    /// <summary>
+    /// Maximum number of clarification rounds the agent will engage in before
+    /// giving up (§Clarification Chat). Default: 5.
+    /// </summary>
+    public int MaxClarificationRounds { get; set; } = ClarificationExchange.DefaultMaxRounds;
 
     /// <summary>
     /// Maximum time to poll a deferred PS response before timing out.

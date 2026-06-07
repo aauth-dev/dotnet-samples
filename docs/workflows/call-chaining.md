@@ -349,3 +349,4 @@ bool valid = ActChainBuilder.ValidateChain(nestedAct, maxDepth: 10);
 
 - [Interaction Chaining](../advanced/interaction-chaining.md) — propagating a downstream consent requirement back up the chain when a hop needs human approval (the multi-actor, human-in-the-loop variant of this workflow).
 - [Deferred Consent](deferred-consent.md) — agent-side handling of a `202` interaction requirement.
+- [Missions](../advanced/missions.md#forwarding-a-mission-in-a-call-chain) — how `MissionForwardingHandler` carries the `AAuth-Mission` header across hops.

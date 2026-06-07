@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Discovery;
+using AAuth.Errors;
 using AAuth.Headers;
 using Xunit;
 
@@ -78,16 +79,18 @@ public class InteractionChainingTests
         Assert.True(handler.PendingPolled);
     }
 
-    [Fact(DisplayName = "Chaining — no callback on a 202 still throws the existing HttpRequestException")]
-    public async Task NoCallback_StillThrowsExisting()
+    [Fact(DisplayName = "Chaining — no callback on a 202 throws a terminal user_unreachable token-exchange error")]
+    public async Task NoCallback_ThrowsUserUnreachable()
     {
         var handler = new DeferredExchangeHandler();
         var metaClient = new MetadataClient(new HttpClient(handler));
         var exchangeClient = new TokenExchangeClient(new HttpClient(handler), metaClient);
 
-        await Assert.ThrowsAsync<HttpRequestException>(
+        var ex = await Assert.ThrowsAsync<AAuthTokenExchangeException>(
             () => exchangeClient.ExchangeAsync(PsUrl, "fake-resource-token"));
 
+        Assert.Equal("user_unreachable", ex.ErrorCode);
+        Assert.True(ex.IsTerminal);
         Assert.False(handler.PendingPolled);
     }
 

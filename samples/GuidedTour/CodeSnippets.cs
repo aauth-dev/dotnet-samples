@@ -232,4 +232,189 @@ internal static class CodeSnippets
         var response = await client.GetAsync("https://resource.example/data");
         // 401 → exchange → poll → retry all handled transparently
         """;
+
+    // ── Mission-governed flow (§Missions, §PS Governance Endpoints) ──────────
+
+    public const string MissionDiscoverPs = """
+        // GET /.well-known/aauth-person.json
+        var meta = await metadata.FetchAsync(
+            "https://ps.example/.well-known/aauth-person.json");
+        var mission     = (string)meta["mission_endpoint"];
+        var tokenEp     = (string)meta["token_endpoint"];
+        var permission  = (string)meta["permission_endpoint"];
+        """;
+
+    public const string MissionPropose = """
+        var governance = new AAuthGovernanceClient(
+            signedClient, metadata, "https://ps.example");
+        var session = await governance.ProposeMissionAsync(
+            new MissionProposal("Triage the user's inbox…")
+            {
+                Tools =
+                {
+                    new MissionTool("summarize"),
+                    new MissionTool("send_email"),
+                },
+            },
+            new GovernanceOptions { OnInteractionRequired = SurfaceToUser });
+        var mission = session.Mission; // session auto-threads the claim + PS
+        // SDK POSTs /mission → 202; SurfaceToUser shows the consent link,
+        // then the client polls until the user approves.
+        """;
+
+    public const string MissionPollCreate = """
+        // The MissionClient polls the mission-pending URL internally and
+        // returns the parsed, verified Mission once the user approves.
+        // mission.Approver / mission.S256 / mission.ApprovedTools
+        var verified = mission.VerifyS256(missionHeaderS256); // s256 integrity
+        """;
+
+    public const string MissionChallenge = """
+        // Advertise the mission so the resource binds it into the resource_token.
+        using var req = new HttpRequestMessage(HttpMethod.Get, resourceUrl);
+        req.Headers.Add(
+            AAuthMissionHeader.Name,
+            AAuthMissionHeader.FormatStructured(mission.Approver, mission.S256));
+        var resp = await signedClient.SendAsync(req); // → 401 + AAuth-Requirement
+        var resourceToken = AAuthRequirementHeader.Parse(
+            resp.Headers.GetValues(AAuthRequirementHeader.Name).First()).ResourceToken;
+        """;
+
+    public const string MissionExchange = """
+        // The resource_token carries the mission claim; because (resource, whoami)
+        // is in the mission scope, the PS mints the auth_token SILENTLY.
+        var authToken = await exchange.ExchangeAsync("https://ps.example", resourceToken);
+        // Or, end-to-end: AAuthClientBuilder handles 401 → exchange → retry for you.
+        """;
+
+    public const string MissionReplay = """
+        using var client = new AAuthClientBuilder(key)
+            .WithTokenRefresh(() => authToken)
+            .Build();
+        var data = await client.GetAsync(resourceUrl); // 200 + mission round-tripped
+        """;
+
+    public const string MissionElevatedChallenge = """
+        // Same mission header, but the ELEVATED endpoint requires
+        // whoami:elevated_scope — a scope the mission never declared.
+        using var req = new HttpRequestMessage(HttpMethod.Get, elevatedUrl);
+        req.Headers.Add(AAuthMissionHeader.Name,
+            AAuthMissionHeader.FormatStructured(mission.Approver, mission.S256));
+        var resp = await signedClient.SendAsync(req); // → 401 + AAuth-Requirement
+        var resourceToken = AAuthRequirementHeader.Parse(
+            resp.Headers.GetValues(AAuthRequirementHeader.Name).First()).ResourceToken;
+        """;
+
+    public const string MissionElevatedExchange = """
+        // whoami:elevated_scope is OUTSIDE the mission's intent, so the PS
+        // cannot mint silently — it returns 202 and asks the user to decide.
+        // (Out-of-mission scopes prompt; they are never auto-denied.)
+        var authToken = await exchange.ExchangeAsync("https://ps.example", resourceToken,
+            new TokenExchangeRequest { OnInteractionRequired = SurfaceToUser });
+        """;
+
+    public const string MissionElevatedPoll = """
+        // Once the user approves, the poll returns the elevated auth_token.
+        // The consent accrues to the mission, so a later elevated request
+        // would resolve silently.
+        var data = await elevatedClient.GetAsync(elevatedUrl); // 200
+        """;
+
+    public const string MissionElevatedReplay = """
+        using var client = new AAuthClientBuilder(key)
+            .WithTokenRefresh(() => elevatedAuthToken)
+            .Build();
+        var data = await client.GetAsync(elevatedUrl); // 200 + elevated claims
+        """;
+
+    public const string MissionPreApproved = """
+        // Pre-approved tools never hit the network — the SDK short-circuits.
+        // We kept the MissionTool reference from the proposal, so we ask via
+        // tool.ToAction() rather than re-typing the action name.
+        var result = await session.RequestPermissionAsync(sendEmailTool.ToAction());
+        // result.IsGranted == true   (no PS call: send_email ∈ mission.ApprovedTools)
+        """;
+
+    public const string MissionPermissionPrompt = """
+        // delete_inbox is NOT pre-approved → the PS prompts the user.
+        var result = await session.RequestPermissionAsync(
+            new MissionAction("delete_inbox"),
+            options: new GovernanceOptions { OnInteractionRequired = SurfaceToUser });
+        // SDK POSTs /permission → 202; surfaces the link; polls for the decision.
+        """;
+
+    public const string MissionPollPermission = """
+        // The poll returns a DECISION, not a token. The gate-2 auth_token is
+        // unaffected by whatever the user chooses here.
+        if (!result.IsGranted)
+            throw new InvalidOperationException(result.Reason); // user denied
+        // On grant: run delete_inbox, then report it to the audit_endpoint.
+        await session.RecordAuditAsync(new MissionAction("delete_inbox"));
+        """;
+
+    public const string MissionInspect = """
+        // One mission approval governed the whole session:
+        //   gate 1  mission creation .... PROMPT
+        //   gate 2  whoami token ........ SILENT (in scope)
+        //   gate 3  elevated scope ...... PROMPT (out of mission scope)
+        //   gate 4  send_email tool ..... SILENT (pre-approved, local)
+        //   gate 5  delete_inbox action . PROMPT (out of scope)
+        // The PS is the policy-enforcement point; the resource stays oblivious.
+        """;
+
+    // ── Combined mission + call chain (§Clarification Chat, §Call Chaining) ──
+
+    public const string MissionChainClarify = """
+        // Requesting whoami:elevated_scope is OUT of the mission's intent, so the
+        // PS opens a clarification chat BEFORE asking the user to decide.
+        var session = governance.MissionSessionFor(mission);
+        var authToken = await session.ExchangeAsync("https://ps.example", resourceToken,
+            new TokenExchangeRequest
+            {
+                // The SDK surfaces the PS's question and lets the agent answer.
+                OnClarificationRequired = (q, _) =>
+                    Task.FromResult(ClarificationResponse.Respond(
+                        "This mission needs the full account history to triage the inbox.")),
+                OnInteractionRequired = SurfaceToUser,
+            });
+        // Raw HTTP: POST /token → 202 + AAuth-Requirement: requirement=clarification
+        //           + { clarification: "Why does this mission need…?" }
+        """;
+
+    public const string MissionChainAnswer = """
+        // Answer the PS's question on the mission-pending URL. The PS records the
+        // exchange in the mission log and readies the user's decision.
+        using var req = new HttpRequestMessage(HttpMethod.Post, missionPendingUrl);
+        req.Content = JsonContent.Create(new
+        {
+            clarification_response =
+                "This mission needs the full account history to triage the inbox.",
+        });
+        var resp = await signedClient.SendAsync(req); // → 204 No Content
+        // Now the agent surfaces {ps}/interaction?code={pendingId} for the user.
+        """;
+
+    public const string MissionChainForward = """
+        // The SAME mission now governs a multi-agent CALL CHAIN. WithMission binds
+        // the AAuth-Mission header; WithChallengeHandling threads the silent
+        // in-scope exchange; the Orchestrator forwards the mission downstream.
+        using var client = new AAuthClientBuilder(key)
+            .As("https://ps.example", agentId).WithKid(kid)
+            .WithPersonServer("https://ps.example")
+            .WithMission(mission)
+            .WithChallengeHandling()      // (Orchestrator, orchestrate) is in scope
+            .Build();
+        var resp = await client.GetAsync("https://orchestrator.example/mission");
+        // 200: { chain, upstream, orchestrator, downstream } — downstream is
+        // WhoAmI's mission-bound /jwt/mission result. NO prompt: every hop in scope.
+        """;
+
+    public const string MissionChainLog = """
+        // DEMO-ONLY: read the mission's auditable trail by its s256 (§Mission Log).
+        var resp = await client.GetAsync($"https://ps.example/admin/mission-log/{s256}");
+        var log = await resp.Content.ReadFromJsonAsync<MissionLog>();
+        foreach (var e in log.Entries)
+            Console.WriteLine($"{e.Kind} {e.Resource} {e.Scope} granted={e.Granted}");
+        // The 'clarification' entry records the question + the agent's answer.
+        """;
 }

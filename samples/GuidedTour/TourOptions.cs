@@ -19,6 +19,8 @@ public enum TourMode
     Deferred,
     CallChain,
     Federated,
+    Mission,
+    MissionCallChain,
 }
 
 /// <summary>

@@ -10,7 +10,7 @@ namespace AAuth.Access;
 /// Policy Decision Point for the AS token endpoint: given the verified request
 /// context it returns an <see cref="AccessDecision"/> the
 /// <c>MapAAuthAccessServer</c> host helper turns into the spec-mandated wire
-/// response (mint, <c>403 access_denied</c>, <c>202 requirement=claims</c>,
+/// response (mint, <c>403 denied</c>, <c>202 requirement=claims</c>,
 /// <c>202 requirement=interaction</c>, or <c>402 Payment Required</c>). AAuth
 /// crypto stays in the host; the policy only decides.
 /// </summary>
@@ -69,7 +69,7 @@ public enum AccessDecisionKind
     /// <summary>Grant access — mint the auth token.</summary>
     Allow,
 
-    /// <summary>Deny access — <c>403 access_denied</c>.</summary>
+    /// <summary>Deny access — <c>403 denied</c>.</summary>
     Deny,
 
     /// <summary>An interactive user login/consent is required (§Trust Establishment).</summary>

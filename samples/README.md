@@ -1,11 +1,12 @@
 # Samples
 
-Nine sample applications demonstrating AAuth flows end-to-end.
+Ten sample applications demonstrating AAuth flows end-to-end.
 
 | Sample | Port | Description |
 |--------|------|-------------|
 | [WhoAmI](WhoAmI/) | 5000 | ASP.NET Core resource server — isolated per-mode pipelines (`/` index, `/hwk`, `/jkt-jwt`, `/jwks-uri`, `/jwt`, `/jwt/admin`, `/jwt/roles`, `/federated`) |
 | [Orchestrator](Orchestrator/) | 5200 | Intermediate service — call chaining with nested `act` delegation |
+| [MissionAgent](MissionAgent/) | — | CLI agent — drives the optional, orthogonal **agent governance** layer: proposes a mission, asks per-action permission, records audit, and relays interactions through a PS (§Agent Governance) |
 | [MockPersonServer](MockPersonServer/) | 5100 | Reference Person Server — verifies exchanges, mints auth tokens, federates to an Access Server. **Sample only — not part of the AAuth SDK.** |
 | [MockAgentProvider](MockAgentProvider/) | 5301 | Reference Agent Provider — issues agent tokens, hosts JWKS. **Sample only — not part of the AAuth SDK.** |
 | [MockAccessServer](MockAccessServer/) | 5500 | Reference Access Server — the fourth party in federated access; evaluates policy (stub or Keycloak) and mints `aa-auth+jwt` (`dwk=aauth-access.json`). **Sample only — not part of the AAuth SDK.** |
@@ -36,6 +37,17 @@ The Keycloak target boots the Access Server with the Keycloak policy engine; log
 in as `demo`/`demo` (admin) or `guest`/`guest` (limited). See
 [Federated Access](../docs/workflows/federated-access.md) and the
 [Mock Access Server README](MockAccessServer/README.md).
+
+For the optional **agent governance** layer — an agent operating under a
+human-approved mission, with the PS as the contextual policy point — use the
+mission stack (§Agent Governance is orthogonal to the access modes above):
+
+```bash
+make demo-mission     # AP + PS + WhoAmI for the MissionAgent CLI
+make agent-mission    # drive it from another terminal
+```
+
+See the [MissionAgent README](MissionAgent/README.md).
 
 ## Running Individually
 

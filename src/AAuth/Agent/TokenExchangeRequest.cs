@@ -47,4 +47,93 @@ public sealed class TokenExchangeRequest
     /// <c>prompt</c> is sent.
     /// </summary>
     public string? Prompt { get; init; }
+
+    /// <summary>
+    /// Optional Markdown <c>justification</c> declaring why access is requested;
+    /// the PS SHOULD present it to the user during consent (§Agent Token Request).
+    /// </summary>
+    public string? Justification { get; init; }
+
+    /// <summary>
+    /// Optional OIDC <c>login_hint</c> about who to authorize
+    /// ([@!OpenID.Core] §3.1.2.1, §Agent Token Request).
+    /// </summary>
+    public string? LoginHint { get; init; }
+
+    /// <summary>
+    /// Optional <c>tenant</c> identifier (OpenID Connect Enterprise Extensions,
+    /// §Agent Token Request).
+    /// </summary>
+    public string? Tenant { get; init; }
+
+    /// <summary>
+    /// Optional <c>domain_hint</c> (OpenID Connect Enterprise Extensions,
+    /// §Agent Token Request).
+    /// </summary>
+    public string? DomainHint { get; init; }
+
+    /// <summary>
+    /// Optional <c>platform</c> identifier for the agent's runtime platform.
+    /// MUST be a value from the AAuth Platform Value Registry; used for display
+    /// at the PS consent screen / connected-agents dashboard (§Agent Token Request).
+    /// </summary>
+    public string? Platform { get; init; }
+
+    /// <summary>
+    /// Optional <c>device</c> string identifying the device/browser for display
+    /// (e.g. <c>"Chrome on macOS"</c>). MUST be printable UTF-8, ≤ 64 characters,
+    /// no control characters or PII (§Agent Token Request).
+    /// </summary>
+    public string? Device
+    {
+        get => _device;
+        init => _device = ValidateDevice(value);
+    }
+
+    private readonly string? _device;
+
+    // §Agent Token Request: `device` MUST be printable (no control characters) and
+    // ≤ 64 characters. Reject anything outside printable ASCII (32–126) so display
+    // surfaces never receive control characters; allow null/empty (the field is optional).
+    private static string? ValidateDevice(string? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        if (value.Length > 64)
+        {
+            throw new ArgumentException(
+                $"device must be at most 64 characters (was {value.Length}).", nameof(Device));
+        }
+
+        foreach (var ch in value)
+        {
+            if (ch < ' ' || ch > '~')
+            {
+                throw new ArgumentException(
+                    "device must contain only printable ASCII characters (no control characters).",
+                    nameof(Device));
+            }
+        }
+
+        return value;
+    }
+
+    /// <summary>
+    /// Invoked when the PS returns <c>202</c> with
+    /// <c>requirement=clarification</c> during consent. The callback receives
+    /// the parsed question and returns the agent's chosen
+    /// <see cref="ClarificationResponse"/> (respond / update / cancel), which
+    /// the exchange applies before resuming polling (§Clarification Chat). If
+    /// <see langword="null"/> and the PS asks for clarification, the call throws.
+    /// </summary>
+    public Func<Headers.ClarificationRequirement, CancellationToken, Task<ClarificationResponse>>? OnClarificationRequired { get; init; }
+
+    /// <summary>
+    /// Maximum number of clarification rounds the agent will engage in before
+    /// giving up (§Clarification Limits, default 5).
+    /// </summary>
+    public int MaxClarificationRounds { get; init; } = ClarificationExchange.DefaultMaxRounds;
 }

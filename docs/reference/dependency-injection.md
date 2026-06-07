@@ -38,7 +38,7 @@ var key = AAuthKey.Generate(); // or load from persistent storage
 builder.Services.AddAAuthAgent("signing-only", options =>
 {
     options.Key = key;
-    options.UseHwk();
+    // No TokenRefresher set → the agent signs with HWK (pseudonymous) by default.
 });
 ```
 
@@ -115,16 +115,13 @@ builder.Services.AddAAuthAgent("interactive", options =>
     options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
         .WithKeyStore(keyStore)
         .Build();
-    options.InteractionHandling = true;
-    options.InteractionHandlingOptions = io =>
+    // A resource returning 202 + requirement=interaction surfaces here.
+    options.OnResourceInteraction = async (url, code, ct) =>
     {
-        io.OnInteractionRequired = async (url, code, ct) =>
-        {
-            // Present URL and code to user
-            logger.LogInformation("Approve at {Url} with code {Code}", url, code);
-        };
-        io.PollingTimeout = TimeSpan.FromMinutes(3);
+        // Present URL and code to user
+        logger.LogInformation("Approve at {Url} with code {Code}", url, code);
     };
+    options.PollingTimeout = TimeSpan.FromMinutes(3);
 });
 ```
 
@@ -317,18 +314,12 @@ app.Run();
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `Key` | `IAAuthKey` | required | Agent signing key (must have private component) |
-| `BaseAddress` | `Uri?` | `null` | Target resource URL |
-| `SignatureKeyProvider` | `ISignatureKeyProvider?` | `null` | Custom signature key provider |
-| `PersonServer` | `string?` | `null` | PS URL; with ChallengeHandling, enables challenge flow |
-| `ChallengeHandling` | `bool` | `false` | Enable challenge handling |
-| `ChallengeHandlingOptions` | `Action<ChallengeHandlingOptions>?` | `null` | Configure challenge handling behavior |
-| `InteractionHandling` | `bool` | `false` | Enable interaction handling |
-| `InteractionHandlingOptions` | `Action<InteractionHandlingOptions>?` | `null` | Configure interaction handling behavior |
-| `TokenRefresher` | `ITokenRefresher?` | `null` | Auto-refresh before token expiry |
-| `RefreshThreshold` | `TimeSpan?` | `null` | Time before expiry to trigger refresh |
-| `Capabilities` | `string[]?` | `null` | Agent capabilities to advertise |
-| `InnerHandler` | `HttpMessageHandler?` | `null` | Custom inner HTTP handler |
-| `CallChainProvider` | `Func<string?>?` | `null` | Provider for upstream auth token (call chaining) |
+| `PersonServer` | `string?` | `null` | PS URL; with `TokenRefresher`, enables 401 challenge handling |
+| `OnInteractionRequired` | `Func<Interaction, CancellationToken, Task>?` | `null` | PS interaction during token exchange (deferred consent) |
+| `OnResourceInteraction` | `Func<string, string, CancellationToken, Task>?` | `null` | Resource `202` + `requirement=interaction` (URL + code) |
+| `OnApprovalPending` | `Func<CancellationToken, Task>?` | `null` | Resource `202` + `requirement=approval` |
+| `TokenRefresher` | `ITokenRefresher?` | `null` | Auto-refresh before token expiry (JWT identity); omit for HWK signing |
+| `PollingTimeout` | `TimeSpan` | 5 minutes | Max deferred polling time |
 
 ### AAuthResourceOptions
 
@@ -381,3 +372,88 @@ var client = new AAuthClientBuilder(key)
 - Passes `upstream_token` in exchange POST body
 - Inserts `MissionForwardingHandler` to propagate `AAuth-Mission` headers
 - Handles the full 401 → exchange → retry cycle
+
+## Governance
+
+### Agent side: the governance client
+
+The mission governance client is built from `AAuthClientBuilder`, which wires the
+signed channel for you. The client is **bound to one Person Server**, so the builder
+must set both a signing mode and a Person Server before `BuildGovernance()`. Use the
+`AddAAuthGovernanceClient(...)` DI extension to register it as a singleton:
+
+```csharp
+builder.Services.AddAAuthGovernanceClient(sp =>
+    new AAuthClientBuilder(agentKey)
+        .UseJwt(agentToken)
+        .WithPersonServer("https://ps.example")); // bound governance client
+```
+
+There is also a factory overload — `AddAAuthGovernanceClient(sp => /* AAuthGovernanceClient */)`
+— when you need full control over construction. To build one inline instead of via
+DI, call `BuildGovernance()` on a configured builder:
+
+```csharp
+var governance = new AAuthClientBuilder(agentKey)
+    .UseJwt(agentToken)
+    .WithPersonServer("https://ps.example")
+    .BuildGovernance(); // AAuthGovernanceClient
+```
+
+`BuildGovernance()` requires an explicit signing mode **and** a configured Person
+Server (`WithPersonServer`), and throws `InvalidOperationException` otherwise. See
+[Mission Governance Clients](../advanced/mission-governance-clients.md).
+
+### Person Server side: the governance seams
+
+`AddAAuthGovernance()` registers the in-memory mission storage seams as
+singletons. It uses `TryAdd`, so register durable implementations first to
+override them. The policy and user-channel seams (`IPermissionDecider`,
+`IAuditSink`, `IInteractionRelay`) default to conservative no-op implementations;
+a real PS overrides them.
+
+```csharp
+builder.Services.AddAAuthGovernance(); // InMemoryMissionStore + InMemoryMissionLog
+
+builder.Services.AddSingleton<IPermissionDecider, MyPermissionDecider>();
+builder.Services.AddSingleton<IAuditSink, MyAuditSink>();
+builder.Services.AddSingleton<IInteractionRelay, MyInteractionRelay>();
+```
+
+The user channel can also be supplied as a lambda instead of a full class, via
+`AddAAuthInteractionRelay(...)` (backed by `DelegateInteractionRelay`). It removes
+any previously registered relay (including the no-op default) and registers the
+delegate-backed one:
+
+```csharp
+builder.Services.AddAAuthInteractionRelay((request, ct) =>
+    Task.FromResult(new InteractionRelayResult { Accepted = true }));
+```
+
+See [Mission Governance (Server)](../server/mission-governance.md) for the seams
+and the decision model.
+
+### Person Server side: the token-issuance seams
+
+The one-call PS issuer `MapAAuthPersonServer` resolves two seams from DI — the
+identity/consent decision (`IIdentityClaimsAsserter`) and the deferred-consent
+park store (`IPersonPendingStore`):
+
+```csharp
+builder.Services.AddSingleton<IIdentityClaimsAsserter>(
+    new DefaultIdentityClaimsAsserter("user-42"));     // swap in a real asserter
+builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>();
+
+var app = builder.Build();
+app.MapAAuthPersonServer(new AAuthPersonServerOptions
+{
+    Issuer               = psIssuer,
+    SigningKeys          = new Dictionary<string, AAuthKey> { [PsKid] = psKey },
+    TrustedAccessServers = trustedAccessServers,        // omit ⇒ three-party only
+});
+```
+
+When the resource token carries a `mission` claim, the helper also resolves the
+`IMissionStore` / `IMissionLog` primitives registered by `AddAAuthGovernance()`.
+See [Token Issuance → One-Call Person Server](../server/token-issuance.md#one-call-person-server-mapaauthpersonserver).
+

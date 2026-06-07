@@ -128,7 +128,10 @@ public class MockAccessServerTests : IClassFixture<WebApplicationFactory<MockAcc
             ["resource_token"] = resourceToken,
         });
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        // §Token Endpoint Error Codes: a resource_token that fails verification
+        // (here, aud mismatch) is a 400 invalid_resource_token, not a 401 — 401 is
+        // reserved for request-signature failures carrying a Signature-Error header.
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]
@@ -184,7 +187,7 @@ public class MockAccessServerTests : IClassFixture<WebApplicationFactory<MockAcc
     public async Task Token_DeniesElevatedScope_ForNonAdminAgent()
     {
         // A non-admin agent requesting whoami:admin is denied by the stub
-        // policy (no whoami-admin role) → 403 access_denied.
+        // policy (no whoami-admin role) → 403 denied.
         const string GuestId = "aauth:guest@ap.test";
         var agentKey = AAuthKey.Generate();
         var agentToken = BuildAgentToken(agentKey, GuestId);
@@ -199,7 +202,7 @@ public class MockAccessServerTests : IClassFixture<WebApplicationFactory<MockAcc
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("access_denied", (string?)body!["error"]);
+        Assert.Equal("denied", (string?)body!["error"]);
     }
 
     [Fact]

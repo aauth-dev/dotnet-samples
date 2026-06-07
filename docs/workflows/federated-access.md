@@ -111,6 +111,11 @@ var authToken = await accessServerClient.FederateAsync(aud, new AccessServerRequ
 return Results.Json(new { auth_token = authToken });
 ```
 
+> Both branches above — the three-party mint and the four-party federation — are
+> packaged in the one-call host helper `MapAAuthPersonServer` (set
+> `TrustedAccessServers` to enable the federation branch). See
+> [Token Issuance → One-Call Person Server](../server/token-issuance.md#one-call-person-server-mapaauthpersonserver).
+
 ## Access-Server-Side Code
 
 The Access Server is the fourth party. The whole token-endpoint pipeline ships
@@ -145,8 +150,6 @@ The helper resolves `IAccessPolicy` and `IAccessPendingStore` from DI. The
 policy returns one of `Allow` / `Deny` / `NeedsInteraction` / `NeedsClaims` /
 `NeedsPayment`; the helper maps those to a minted auth token, `403`, or a `202`
 that parks the decision and advertises the requirement to the PS.
-
-
 ### The `dwk=aauth-access.json` tell
 
 The auth token's `dwk` (discovery well-known) claim points at

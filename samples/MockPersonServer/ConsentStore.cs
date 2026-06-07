@@ -45,7 +45,7 @@ public sealed class PendingStore
     {
         /// <summary>
         /// True once the user has explicitly denied this request. The
-        /// pending endpoint returns <c>403 access_denied</c> in that case
+        /// pending endpoint returns <c>403 denied</c> in that case
         /// so the agent can distinguish denial from "unknown / expired".
         /// </summary>
         public bool Denied { get; internal set; }
@@ -68,7 +68,7 @@ public sealed class PendingStore
     /// <summary>
     /// Mark an entry as denied. Unlike <see cref="Remove(string)"/>, the
     /// entry stays in the store so the agent's poller gets a
-    /// deterministic <c>403 access_denied</c> rather than an ambiguous
+    /// deterministic <c>403 denied</c> rather than an ambiguous
     /// <c>404</c>.
     /// </summary>
     public bool Deny(string id)
