@@ -136,6 +136,12 @@ bool terminated = await session.ProposeCompletionAsync(
     "Reconciled 24 receipts (2 duplicates removed) and emailed the summary.");
 ```
 
+If the PS's interaction relay cannot reach the user synchronously, it returns
+`InteractionRelayResult { Pending = true }`; the governance mapper then answers the
+completion proposal with a deferred `202` + poll `Location` (§Deferred Consent), and
+the agent's `InteractionClient` polls until the user accepts or declines — the same
+park-and-poll mechanics used for deferred permission consent.
+
 After termination, any further governed request returns `403 mission_terminated`,
 surfaced to the agent as `AAuthMissionTerminatedException` (see
 [Error Handling](../advanced/error-handling.md#mission-termination)).

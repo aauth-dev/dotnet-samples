@@ -51,6 +51,14 @@ The PS only federates to Access Servers listed in
 `MockPersonServer:TrustedAccessServers`; any other `aud` is rejected with
 `untrusted_access_server` (403).
 
+> **SDK one-call alternative.** Both branches above — the three-party collapsed
+> mint and the four-party federation routing — are packaged by the SDK host helper
+> [`MapAAuthPersonServer`](../../docs/server/token-issuance.md#one-call-person-server-mapaauthpersonserver),
+> with the identity/consent decision delegated to an `IIdentityClaimsAsserter`.
+> This sample keeps the endpoints hand-wired so it can render its own interactive
+> consent / mission screens; a non-interactive PS can adopt the one-call helper
+> directly.
+
 ## Agent governance (missions)
 
 Beyond minting tokens, this PS doubles as the **contextual policy point** for

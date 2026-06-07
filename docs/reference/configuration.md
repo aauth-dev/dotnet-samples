@@ -37,6 +37,23 @@ All configurable options across the AAuth .NET SDK, grouped by component.
 | `AuthorizationEndpoint` | `string?` | `null` | AS authorization URL |
 | `RevocationEndpoint` | `string?` | `null` | Revocation endpoint URL |
 
+### AAuthPersonServerOptions (via MapAAuthPersonServer)
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `Issuer` | `string` | — (required) | HTTPS URL of this PS (`iss` of minted auth tokens) |
+| `SigningKeys` | `IReadOnlyDictionary<string, AAuthKey>` | — (required) | Key-id → signing key map (published at the PS JWKS) |
+| `TokenPath` | `string` | `/token` | Token endpoint path |
+| `PendingPathPrefix` | `string` | `/pending` | Deferred-consent poll path prefix |
+| `DefaultScope` | `string` | `whoami` | Scope assumed when the resource token omits one |
+| `InteractionPath` | `string` | `/interaction` | Path the host maps for the consent page |
+| `TrustedAccessServers` | `IReadOnlyCollection<string>?` | `null` | AS URLs the PS will federate to; `null`/empty ⇒ three-party only |
+
+The helper resolves `IIdentityClaimsAsserter` and `IPersonPendingStore` from DI
+(and the `IMissionStore` / `IMissionLog` mission primitives when a request carries
+a `mission` claim). See
+[Token Issuance → One-Call Person Server](../server/token-issuance.md#one-call-person-server-mapaauthpersonserver).
+
 ## Token Builders
 
 ### ResourceTokenBuilder

@@ -151,6 +151,15 @@ See [Dependency Injection](../reference/dependency-injection.md) for full option
 - **Autonomous**: PS has standing consent → returns auth token immediately (step 3→4)
 - **Deferred**: PS requires user approval → returns 202 + pending URL → agent polls (see [Deferred Consent](deferred-consent.md))
 
+## Person-Server-Side
+
+The PS half of this flow (steps 3–4) ships as the one-call host helper
+`MapAAuthPersonServer`: it publishes the PS metadata + JWKS, verifies the request
+signature and the presented `resource_token`, delegates the identity + consent
+decision to a pluggable `IIdentityClaimsAsserter`, and mints the auth token (or
+parks a `202` deferred consent). See
+[Token Issuance → One-Call Person Server](../server/token-issuance.md#one-call-person-server-mapaauthpersonserver).
+
 ## Error Scenarios
 
 | Status | Header/Token | Cause |

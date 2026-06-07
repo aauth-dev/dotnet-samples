@@ -590,12 +590,254 @@ truth `src/AAuth/`.
 
 ---
 
+## Phase 12 — Post-rename SDK hardening: PS role + four spec-shape fixes
+
+**Goal:** Land the five-item improvement backlog from the 2026-06-07 deep review
+([research.md](research.md) Part H): promote the **Person Server** into a first-class
+one-call SDK role and tighten four spec-shape gaps in the governance/interaction
+surface. Every item is grounded in a cited spec section and the current SDK state.
+All five are in scope; one sub-task (the F5 PS emit) is intentionally gated on
+draft-02 and split from its unblocked agent-side half.
+
+**Spec:** `aauth-spec/draft-hardt-oauth-aauth-protocol.md` (§PS-asserted access /
+§Incremental adoption L162, §Auth Token Delivery, §Interaction Response L1212,
+§Error Responses L1998 + L2108, §Interaction Endpoint); `aauth-spec/upcoming-changes-02.md`
+§2 (F5).
+
+> **Correction folded in.** The Access Server is **already** a first-class SDK role
+> (`MapAAuthAccessServer` in `src/AAuth/Access/AAuthAccessServerEndpoints.cs`); there
+> is **no "Mission Manager" party** in the spec or code. The genuine additive gap is
+> the **Person Server**, which is the only server role without a one-call mapper.
+
+### Implementation Decisions
+
+- **W1 seam shape.** Add `IIdentityClaimsAsserter` mirroring `IAccessPolicy`
+  (directed `sub` + asserted claims + silent/consent/deny), plus a PS-side
+  pending/consent store mirroring `IAccessPendingStore`. The SDK keeps all crypto
+  (resource-token verification, AS federation via `AccessServerClient`, the §Auth
+  Token Delivery 7-step check, and the auth-token mint via `AuthTokenBuilder`).
+- **W1 scope guard (extends DEV-4; revised 2026-06-07 per user direction).**
+  `MapAAuthPersonServer` packages **both** the three-party collapsed mint and the
+  four-party federation branch (keyed off the resource-token `aud`), **and** the
+  mission three-gate *token-issuance mechanics*: gate-1 terminated rejection
+  (`IMissionStore`), gate-2a/2b silent grant (in-approved-intent / prior-consent via
+  the asserter + `IMissionLog`), and gate-3 park-and-prompt (`202 requirement=interaction`
+  + a PS pending entry). The mission scope/consent *policy* decision is the
+  `IIdentityClaimsAsserter`'s job; the SDK keeps the `IMissionStore`/`IMissionLog`
+  mechanics and the mission-bound mint. **Still host-mapped (not in the SDK):** the
+  interactive consent / clarification UI page itself (the `MissionConsentScript`
+  scripted chat is test scaffolding) and the pending-verdict resolution — exactly how
+  `MapAAuthAccessServer` delegates its `InteractionLoginPath` page to the host.
+  `MockPersonServer`'s existing hand-wired interactive path stays as-is (DC6, no
+  regressions); the mapper is the additive one-call alternative.
+- **W2 split.** Ship the **agent-side** typed-exception classification now (replace
+  the generic `HttpRequestException` in `DeferredExchange` with a terminal typed
+  exception). The **PS emit** of `400 user_unreachable` stays gated on draft-02
+  (emitting today diverges from the authoritative L1213 `interaction_required`
+  wording) — DEV-14.
+- **W3.** Reuse the DEV-9 park-and-poll machinery for the `completion` arm; keep the
+  synchronous 200 fallback when no `IDeferredConsentStore` is registered.
+- **W4 decision = Option B.** Return **403** `{error:"invalid_carrier_token"}` for
+  the mission carrier-type mismatch (authz refusal, not a 401 signature failure), per
+  the H.4 analysis. Update the two pinning tests (`GovernanceDeferredConsentMapperTests`,
+  `MockPersonServerTests`) to match — DEV-13.
+- **W5.** Add a `DelegateInteractionRelay` (lambda relay) alongside the no-op
+  `DefaultInteractionRelay`; pure ergonomics, no spec change — DEV-3.
+
+### Work items
+
+- **W1 — `MapAAuthPersonServer(...)` (additive, largest).** New mapper + options +
+  `IIdentityClaimsAsserter` seam + PS pending store, wrapping the existing
+  `AuthTokenBuilder` / `AuthTokenResponseValidator` / `AccessServerClient` /
+  `TokenVerifier`. Mirrors `MapAAuthAccessServer`. Closes the PS role-symmetry gap;
+  unblocks external adopters running a real PS in one call.
+- **W2 — `user_unreachable` agent classification (DEV-14, partial).** Throw a typed
+  terminal exception (not `HttpRequestException`) from the no-callback deferred path
+  in `src/AAuth/Agent/DeferredExchange.cs`. PS emit deferred to draft-02.
+- **W3 — deferred `completion` review (DEV-10).** Honor `InteractionRelayResult.Pending`
+  in the `Completion` arm of `HandleInteractionAsync`; park + 202 + poll when a store
+  exists, synchronous 200 otherwise.
+- **W4 — mission carrier-type 401→403 (DEV-13).** Change `HandleMissionAsync`'s
+  carrier guard to 403; update the two pinning tests.
+- **W5 — `DelegateInteractionRelay` (DEV-3).** Lambda-friendly relay so a PS supplies
+  a user channel without a full class.
+
+- **W6 — docs / samples / snippets sync (grounded against the SDK).** Every W1–W5
+  change that is observable to an adopter is reflected in the docs, sample READMEs,
+  and GuidedTour/SampleApp narration, then a docs-vs-SDK grounding pass (mirroring
+  Phase 11 / DEV-11) confirms no snippet drift. Impacted surfaces (from a workspace
+  scan — confirm and extend during the phase):
+  - **W1 (new public API):** add a PS token-issuance page covering `MapAAuthPersonServer`
+    + `AAuthPersonServerOptions` + `IIdentityClaimsAsserter` — [docs/server/token-issuance.md](../../../docs/server/token-issuance.md),
+    cross-linked from [docs/workflows/ps-asserted-access.md](../../../docs/workflows/ps-asserted-access.md)
+    and [docs/workflows/federated-access.md](../../../docs/workflows/federated-access.md)
+    (it sits beside `MapAAuthAccessServer` at L117/L135); register the new seam in
+    [docs/reference/dependency-injection.md](../../../docs/reference/dependency-injection.md)
+    and [docs/reference/configuration.md](../../../docs/reference/configuration.md).
+    Optionally migrate `MockPersonServer`'s non-interactive path + README to the mapper
+    (interactive consent page stays hand-wired per DEV-4).
+  - **W2:** `TokenErrorCode.UserUnreachable` / terminal-vs-non-terminal classification —
+    [docs/advanced/error-handling.md](../../../docs/advanced/error-handling.md) (still
+    flagged forward-looking until draft-02, DEV-14).
+  - **W3:** completion now returns a deferred `202`/poll when the relay is pending —
+    [docs/server/mission-governance.md](../../../docs/server/mission-governance.md)
+    (`InteractionRelayResult` table L247) and [docs/workflows/mission-governed-access.md](../../../docs/workflows/mission-governed-access.md)
+    (the propose-completion step L131/L135).
+  - **W4:** mission carrier-type mismatch now `403` (not `401`) — any error-shape table
+    in [docs/server/mission-governance.md](../../../docs/server/mission-governance.md)
+    / [docs/server/authn-authz.md](../../../docs/server/authn-authz.md).
+  - **W5:** `DelegateInteractionRelay` as the lambda alternative to a full
+    `IInteractionRelay` class — [docs/server/mission-governance.md](../../../docs/server/mission-governance.md)
+    (L36/L46/L251) and [docs/reference/dependency-injection.md](../../../docs/reference/dependency-injection.md)
+    (L412/L420).
+
+### Spec validation (verbatim quotes)
+
+Each work item is validated against the authoritative spec text below
+(`aauth-spec/draft-hardt-oauth-aauth-protocol.md` unless noted). Quotes are verbatim;
+line numbers are current as of 2026-06-07.
+
+**W1 — `MapAAuthPersonServer`.** The PS role this mapper packages is exactly the
+PS-asserted (three-party) and federated (four-party) issuer the spec defines.
+
+- §Overview L162: *"Issuing resource tokens to the agent's person server enables
+  PS-asserted access (three-party): the PS asserts identity claims about the user
+  (`sub`, optionally `email`, `tenant`, `groups`, `roles`) and confirms user consent
+  for the scope the resource requested; the resource applies its own policy on the
+  resulting claims."* → drives the `IIdentityClaimsAsserter` seam (directed `sub` +
+  optional claims + consent decision).
+- §PS-AS Federation L1466: *"The PS is the only entity that calls AS token endpoints…
+  If `aud` matches the PS's own identifier, the PS issues an auth token asserting
+  identity and consent for the requested scope (three-party). If `aud` identifies a
+  different server (an AS)… the PS… calls the AS's `token_endpoint` (four-party)."*
+  → the mapper's two branches (collapsed mint via `AuthTokenBuilder` vs. federation
+  via `AccessServerClient`) are spec-mandated, keyed off the resource token `aud`.
+- §Auth Token Delivery L1439 (the 7-step check the SDK keeps, not the PS): *"When the
+  AS issues an auth token (`200` response), the PS MUST verify the auth token before
+  returning it to the agent: 1. Verify the auth token JWT signature… 2. Verify `iss`…
+  3. Verify `aud`… 4. Verify `agent`… 5. Verify `cnf.jwk`… 6. Verify `act`… 7. Verify
+  `scope` is consistent with what was requested — not broader than the scope in the
+  resource token."* → `AuthTokenResponseValidator.ValidateAsync` already implements
+  all seven; the mapper wires it into the federation branch.
+- §Claims Required L1450: *"A server MUST use `requirement=claims` with a `202 Accepted`
+  response when it needs identity claims… The recipient MUST provide the requested
+  claims (including a directed user identifier as `sub`)…"* → the AS-side `OnClaimsRequired`
+  callback the PS mapper surfaces. **Verdict: COMPLIANT — the mapper packages existing
+  spec-conformant primitives; no new wire behavior.**
+- §Agent Token Request L812 (mission gating, folded into the mapper per the revised
+  scope guard): *"the PS evaluates the request against mission scope, handles user
+  consent if needed, and uses the same requirement response patterns."* and §Resource
+  Tokens L784: *"The PS SHOULD remember prior consent decisions within a mission so the
+  user is not re-prompted when the agent resubmits a request for the same resource and
+  scope."* → the mapper's gate-2a (in-approved-intent) and gate-2b (prior consent via
+  `IMissionLog`) silent grants, gate-1 terminated rejection, and gate-3 park-and-prompt
+  (`202 requirement=interaction`) are spec-mandated; the interactive consent page that
+  resolves gate-3 stays host-mapped. **Verdict: COMPLIANT — the mapper packages the
+  three-gate model over existing `IMissionStore`/`IMissionLog` primitives.**
+
+**W2 — `user_unreachable` (agent classification now; PS emit gated).** This code is
+**not yet** in the authoritative draft.
+
+- Authoritative §Interaction Response L1213 (today): *"If the PS cannot reach the user
+  and the agent does not have the `interaction` capability, the PS returns
+  `interaction_required`."* — so emitting `user_unreachable` now would **contradict**
+  the authoritative text.
+- `aauth-spec/upcoming-changes-02.md` §2: *"Add `user_unreachable` as a distinct
+  terminal error… `user_unreachable` | 400 | Terminal | PS has no channel to the user
+  AND the agent didn't declare `interaction` capability."* and *"Error classification
+  (Gap E) should treat `user_unreachable` as a terminal, non-retryable error distinct
+  from `interaction_required`."* **Verdict: agent-side terminal classification is
+  COMPLIANT with the agreed draft-02 direction and changes no wire output; the PS
+  emit stays DEFERRED until draft-02 lands (DEV-14) to avoid contradicting L1213.**
+
+**W3 — deferred `completion` review.**
+
+- §Interaction Response L1212: *"For `completion` type, the PS presents the summary to
+  the user. The user either accepts — the PS terminates the mission and returns
+  `200 OK` — or responds with follow-up questions via clarification, keeping the
+  mission active. **The PS returns a deferred response while the user reviews.**"*
+- §Interaction Response L1199 (the parallel the interaction arm already follows): *"For
+  `interaction` and `payment` types, the PS relays the interaction to the user and
+  returns a deferred response. The agent polls until the user completes the interaction."*
+  **Verdict: today's synchronous `Completion` arm is spec-tolerable but not spec-shaped;
+  honoring `Pending` (park + 202 + poll) makes it match the highlighted sentence. The
+  202/poll mechanics reuse §Deferred Responses, already implemented for DEV-9.**
+
+**W4 — mission carrier-type guard (401→403).**
+
+- §Error Responses / Authentication Errors L1998: *"A `401` response from any AAuth
+  endpoint uses the `Signature-Error` header."*
+- §Verification (Server) L2108: *"When a server receives a signed request, it MUST
+  perform the following steps. Any failure MUST result in a `401` response with the
+  appropriate `Signature-Error` header."* — the carrier-type check is **not** one of
+  these signature-verification steps (the signature already verified), so a bare
+  `401 {error:"invalid_carrier_token"}` JSON response sits outside the spec's 401
+  contract. **Verdict: returning `403` (an authorization refusal, not a signature
+  failure) is the spec-correct shape — Option B — keeping every actual `401` bound to
+  the `Signature-Error` header per L1998/L2108.**
+
+**W5 — `DelegateInteractionRelay`.**
+
+- §Interaction Endpoint L1131: *"The interaction endpoint enables the agent to reach
+  the user through the PS… The agent uses this endpoint to forward interaction
+  requirements from resources that it cannot handle directly, to ask the user
+  questions, to relay payment approvals, or to propose mission completion."* — the
+  spec defines the endpoint behavior; **how** the PS reaches the user is an
+  implementation concern. **Verdict: COMPLIANT — adding a lambda-based relay alongside
+  the no-op default is a pure ergonomic SDK seam with no protocol effect.**
+
+### Definition of Done
+
+- [x] **W1:** `MapAAuthPersonServer` + `AAuthPersonServerOptions` + `IIdentityClaimsAsserter`
+  + PS pending store land; covered by conformance/integration tests; the three-party
+  collapsed mint and four-party federation branches both exercised. _(New SDK files
+  `src/AAuth/Person/{IIdentityClaimsAsserter,IPersonPendingStore,AAuthPersonServerEndpoints}.cs`;
+  8 conformance tests in `tests/AAuth.Conformance/Person/PersonServerMapperTests.cs` —
+  three-party silent mint + agent-key binding, carrier-type 403, missing-resource-token 400,
+  deny→403, NeedsConsent→202→poll→mint, mission terminated→403, mission in-scope mint+grant-logged,
+  and the four-party untrusted-AS routing guard. Mapper packages both branches + the mission
+  three-gate token-issuance mechanics per the 2026-06-07 user-directed scope revision.)_
+- [x] **W1:** `MockPersonServer` interactive flows remain hand-wired and e2e-green
+  (no DEV-4 regression). _(MockPersonServer endpoints untouched by W1; the README now points
+  to the SDK one-call helper as the non-interactive alternative while the sample keeps its
+  interactive consent/mission screens hand-wired. MockPersonServer integration tests green in
+  the 387 unit baseline.)_
+- [x] **W2:** agent no-callback deferred path throws a typed terminal exception; PS
+  emit remains gated on draft-02 (DEV-14 note updated, not closed). _(DeferredExchange throws
+  `AAuthTokenExchangeException(UserUnreachable, statusCode:400, isTerminal:true)`; documented in
+  `docs/advanced/error-handling.md` with the forward-looking draft-02 PS-emit note.)_
+- [x] **W3:** `Completion` arm defers via the store (202 + poll) and degrades to
+  synchronous 200; new mapper test covers both; DEV-10 status flipped to fixed. _(GovernanceDeferredConsentMapperTests
+  16/16; documented in `docs/workflows/mission-governed-access.md` propose-completion step.)_
+- [x] **W4:** mission carrier-type mismatch returns 403; the two pinning tests
+  updated; DEV-13 status flipped to fixed. _(Documented in `docs/server/mission-governance.md`
+  carrier-type guard note; MockPersonServer 4× 401→403; MockPersonServerTests 7/7.)_
+- [x] **W5:** `DelegateInteractionRelay` added with a test; DEV-3 status flipped to fixed.
+  _(`AddAAuthInteractionRelay(...)` documented in `docs/server/mission-governance.md` +
+  `docs/reference/dependency-injection.md`.)_
+- [x] **W6:** docs, sample READMEs, and GuidedTour/SampleApp narration updated for every
+  observable W1–W5 change; a docs-vs-SDK grounding pass (Phase 11 / DEV-11 style)
+  confirms every snippet compiles against `src/AAuth/` with no drift. _(token-issuance.md
+  one-call PS section + AAuthPersonServerOptions/IIdentityClaimsAsserter tables; configuration.md +
+  dependency-injection.md seam registration; ps-asserted-access.md + federated-access.md cross-links;
+  MockPersonServer README note. Every new snippet hand-verified against the SDK surface read this
+  phase — no automated snippet harness exists; GuidedTour `CodeSnippets.cs` unaffected.)_
+- [x] `dotnet build AAuth.slnx` 0/0; unit + conformance + relevant e2e green. _(Solution 0/0;
+  unit 387, conformance 480 — both green. e2e not re-run: no e2e-observable behavior changed
+  (W4 status codes have integration coverage; W1 is additive SDK surface).)_
+- [x] `issues-and-deviations.md` updated (DEV-3/10/13/14 dispositions; any new W1 DEVs);
+  research Part H cross-checked. _(DEV-3→fixed (W5), DEV-10→fixed (W3), DEV-13→fixed (W4),
+  DEV-14 stays forward-looking with the W2 agent-side note; new DEV-15 records the
+  user-directed W1 scope expansion.)_
+
+---
+
 ## Out of Scope
 
 | Item | Reason |
 |------|--------|
-| R3 (Rich Resource Requests) — models, RFC 8785 hasher, `r3_*` token claims, AS/MM fetch, resource enforcement | Split into its own initiative — `.agent/plans/2026-06-06-r3-rich-resource-requests/` |
-| Implementing AS or MM as production SDK roles | Out of scope per mission research; mock servers only |
+| R3 (Rich Resource Requests) — models, RFC 8785 hasher, `r3_*` token claims, AS fetch, resource enforcement | Split into its own initiative — `.agent/plans/2026-06-06-r3-rich-resource-requests/` |
+| Mission Manager (MM) as a production SDK role | No MM party exists in the AAuth spec (parties are Agent / PS / Resource / AS). The AS already ships as a first-class role (`MapAAuthAccessServer`); the **PS** first-class mapper (`MapAAuthPersonServer`) moved **into scope** — Phase 12 W1. |
 | Mission lifecycle beyond active/terminated (suspend/resume/revoke) | Deferred to companion spec (§Mission Management) |
-| `user_unreachable` (F5) and `prompt` finalization (F6) | Pending draft-02 publication |
+| `user_unreachable` PS **emit** (F5) and `prompt` finalization (F6) | Pending draft-02 publication. Phase 12 W2 lands the unblocked **agent-side** typed-exception classification now; the PS emit stays gated on draft-02 (DEV-14). |
 | Payment settlement protocols (x402/MPP) | External; SDK only surfaces 402 + details |

@@ -36,6 +36,20 @@ builder.Services.AddSingleton<IAuditSink, MyAuditSink>();
 builder.Services.AddSingleton<IInteractionRelay, MyInteractionRelay>();
 ```
 
+For a lightweight user channel you can supply the relay as a lambda instead of a
+full `IInteractionRelay` class, via `AddAAuthInteractionRelay(...)` (backed by
+`DelegateInteractionRelay`). It replaces any relay registered earlier, including
+the no-op default:
+
+```csharp
+builder.Services.AddAAuthInteractionRelay(async (request, ct) =>
+{
+    // request.Type is question | completion | interaction | payment
+    var accepted = await myUserChannel.AskAsync(request, ct);
+    return new InteractionRelayResult { Accepted = accepted };
+});
+```
+
 | Seam | Default (`AddAAuthGovernance`) | Who owns it |
 |------|--------------------------------|-------------|
 | `IMissionStore` | `InMemoryMissionStore` | SDK default; swap for durable storage |
@@ -82,6 +96,12 @@ A mission-creation request requires a verified **agent token**; the mapper hands
 the proposal to `IMissionApprover`, persists the resulting `StoredMission`, and
 emits the `AAuth-Mission` response header. Reach for the manual mapping below only
 when an endpoint needs behavior the seams do not express.
+
+> **Carrier-type guard.** The governed endpoints require the request to carry the
+> expected token type. When the wrong carrier is presented (e.g. an auth token
+> where the mission flow expects an agent token), the mapper refuses with `403`
+> `invalid_carrier_token` — an authorization failure on a valid signature, not a
+> `401` authentication failure.
 
 ## Parsing requests by hand
 

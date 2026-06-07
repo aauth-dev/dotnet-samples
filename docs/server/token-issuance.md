@@ -203,6 +203,108 @@ resource token the recipient MAY constrain `mission.approver` via
 For the full PS-side evaluation of mission context, see
 [Mission Governance (Server)](mission-governance.md).
 
+## One-Call Person Server (`MapAAuthPersonServer`)
+
+The builders above are the primitives. The whole Person Server token-endpoint
+pipeline also ships as a single host helper, `MapAAuthPersonServer` — the PS
+counterpart to [`MapAAuthAccessServer`](../workflows/federated-access.md#access-server-side-code).
+One call publishes the `/.well-known/aauth-person.json` metadata + JWKS, verifies
+the RFC 9421 request signature, verifies the presented `resource_token`, and then
+routes on the resource token's `aud` (§PS-AS Federation):
+
+- **`aud` = this PS** → three-party (PS-asserted): mint the auth token directly
+  (`dwk=aauth-person.json`, `iss`=PS).
+- **`aud` = a trusted Access Server** → four-party (federated): forward a signed
+  PS→AS request via `AccessServerClient` and return the AS-issued auth token after
+  the §Auth Token Delivery check.
+
+The host owns all AAuth crypto; the identity and consent decision is delegated to
+a pluggable `IIdentityClaimsAsserter`.
+
+```csharp
+using AAuth.Person;
+
+// The identity/consent seam (the PS counterpart to IAccessPolicy) and the store
+// that parks deferred consent decisions.
+builder.Services.AddSingleton<IIdentityClaimsAsserter>(new DefaultIdentityClaimsAsserter("user-42"));
+builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>();
+
+var app = builder.Build();
+
+// One call maps /.well-known + JWKS, request-signature verification,
+// POST /token, and GET /pending/{id}.
+app.MapAAuthPersonServer(new AAuthPersonServerOptions
+{
+    Issuer               = psIssuer,
+    SigningKeys          = new Dictionary<string, AAuthKey> { [PsKid] = psKey },
+    DefaultScope         = "whoami",
+    TrustedAccessServers = trustedAccessServers,   // omit ⇒ three-party only
+});
+```
+
+### AAuthPersonServerOptions Properties
+
+| Property | Required | Default | Description |
+|----------|:--------:|---------|-------------|
+| `Issuer` | Yes | — | HTTPS URL of this PS (`iss` of minted auth tokens) |
+| `SigningKeys` | Yes | — | `kid → AAuthKey` map published at the PS JWKS |
+| `TokenPath` | No | `/token` | The token endpoint path |
+| `PendingPathPrefix` | No | `/pending` | The deferred-consent poll path prefix |
+| `DefaultScope` | No | `whoami` | Scope assumed when the resource token omits one |
+| `InteractionPath` | No | `/interaction` | Path the host maps for the consent page |
+| `TrustedAccessServers` | No | `null` | Access Server URLs the PS will federate to; `null`/empty ⇒ three-party only |
+
+### The `IIdentityClaimsAsserter` seam
+
+The asserter is the only PS-specific decision the helper cannot make for you —
+it returns the directed `sub` (plus optional `tenant` / `roles` / `groups` /
+additional claims) and the consent verdict. It mirrors `IAccessPolicy` on the AS
+side:
+
+```csharp
+public interface IIdentityClaimsAsserter
+{
+    Task<IdentityAssertion> AssertAsync(
+        IdentityAssertionRequest request, CancellationToken cancellationToken = default);
+}
+```
+
+The host maps the returned `IdentityAssertion` to the spec wire response:
+
+| `IdentityAssertion` | Wire response |
+| --- | --- |
+| `IdentityAssertion.Assert(sub, …)` | mint the auth token (three-party) / push the claims (four-party) |
+| `IdentityAssertion.Deny(reason)` | `403 denied` |
+| `IdentityAssertion.NeedsConsent()` | `202` + `AAuth-Requirement: requirement=interaction` + `Location` (poll `GET /pending/{id}`) |
+
+When the asserter returns `NeedsConsent()`, the helper parks the request and
+returns the `202`; the host's own interaction page (mapped at `InteractionPath`)
+collects the user's decision and resolves the parked entry via
+`IPersonPendingStore.MarkAllowed(...)` / `MarkDenied(...)`, after which the
+polling agent receives the minted token (or `403`). The consent UI stays a host
+concern — the SDK only owns the protocol mechanics.
+
+The shipped [`DefaultIdentityClaimsAsserter`](../../samples/MockPersonServer/)
+asserts a fixed directed `sub` with no prompt (a non-interactive demo PS); a
+production PS swaps in an implementation that derives the principal's directed
+identity and consent decision.
+
+### Mission three-gate packaging
+
+When the resource token carries a `mission` claim, `MapAAuthPersonServer` packages
+the mission three-gate token-issuance mechanics around the asserter, using the
+`IMissionStore` / `IMissionLog` primitives registered by
+[`AddAAuthGovernance()`](mission-governance.md):
+
+1. **Terminated mission** → `403 mission_terminated` (the asserter is never consulted).
+2. **Prior consent on record** for the `(resource, scope)` → silent mint, no prompt.
+3. **Otherwise** → the asserter decides (`Assert` mints + records the grant;
+   `NeedsConsent` parks the `202`).
+
+The interactive consent/clarification screen remains host-mapped; the helper only
+owns the terminated-rejection and prior-consent-silent-grant mechanics. See
+[Mission Governance (Server)](mission-governance.md) for the full model.
+
 ## Further Reading
 
 - [Verification Middleware](verification-middleware.md) — signature verification before token logic

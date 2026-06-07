@@ -150,6 +150,22 @@ if (!response.IsSuccessStatusCode)
 }
 ```
 
+### No interaction capability (`user_unreachable`)
+
+Deferred consent assumes the agent can reach the user. When the exchange resolves
+to a `202` deferred requirement but the agent declared **no** interaction
+capability (no `OnInteractionRequired` callback was supplied), there is no channel
+to drive the consent to a verdict, so the SDK does not hang or poll forever — it
+raises a **terminal** `AAuthTokenExchangeException` with
+`ErrorCode = "user_unreachable"`, `StatusCode = 400`, and `IsTerminal = true`.
+Treat it as a configuration signal: supply an interaction callback (interactive
+agent) or accept that the request cannot complete unattended.
+
+> **Forward-looking (draft-02).** The PS *emitting* `user_unreachable` on the wire
+> is a draft-02 addition; today the SDK classifies the unreachable-user case
+> agent-side. The `TokenErrorCode.UserUnreachable` code is already modelled so
+> adopters can pattern-match on it now.
+
 ## Polling Errors (Deferred Consent)
 
 When polling a pending URL during deferred consent.

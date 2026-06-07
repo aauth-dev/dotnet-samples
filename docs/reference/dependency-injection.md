@@ -420,5 +420,40 @@ builder.Services.AddSingleton<IAuditSink, MyAuditSink>();
 builder.Services.AddSingleton<IInteractionRelay, MyInteractionRelay>();
 ```
 
+The user channel can also be supplied as a lambda instead of a full class, via
+`AddAAuthInteractionRelay(...)` (backed by `DelegateInteractionRelay`). It removes
+any previously registered relay (including the no-op default) and registers the
+delegate-backed one:
+
+```csharp
+builder.Services.AddAAuthInteractionRelay((request, ct) =>
+    Task.FromResult(new InteractionRelayResult { Accepted = true }));
+```
+
 See [Mission Governance (Server)](../server/mission-governance.md) for the seams
 and the decision model.
+
+### Person Server side: the token-issuance seams
+
+The one-call PS issuer `MapAAuthPersonServer` resolves two seams from DI — the
+identity/consent decision (`IIdentityClaimsAsserter`) and the deferred-consent
+park store (`IPersonPendingStore`):
+
+```csharp
+builder.Services.AddSingleton<IIdentityClaimsAsserter>(
+    new DefaultIdentityClaimsAsserter("user-42"));     // swap in a real asserter
+builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>();
+
+var app = builder.Build();
+app.MapAAuthPersonServer(new AAuthPersonServerOptions
+{
+    Issuer               = psIssuer,
+    SigningKeys          = new Dictionary<string, AAuthKey> { [PsKid] = psKey },
+    TrustedAccessServers = trustedAccessServers,        // omit ⇒ three-party only
+});
+```
+
+When the resource token carries a `mission` claim, the helper also resolves the
+`IMissionStore` / `IMissionLog` primitives registered by `AddAAuthGovernance()`.
+See [Token Issuance → One-Call Person Server](../server/token-issuance.md#one-call-person-server-mapaauthpersonserver).
+

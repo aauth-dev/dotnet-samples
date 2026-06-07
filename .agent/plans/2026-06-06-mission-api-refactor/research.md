@@ -483,3 +483,149 @@ edit time.
 > A secondary observation — completion review resolves synchronously rather than
 > deferring (§Interaction Response L1212) — is logged as **DEV-10** (intentional:
 > the completion relay contract is synchronous, no dropped `Pending` signal).
+
+---
+
+## Part H — Post-rename improvement backlog (deep review, 2026-06-07)
+
+After the DEV-12 `access_denied`→`denied` rename landed, the user asked for a deep
+review of the remaining SDK-improvement / spec-shape items, each grounded against
+the AAuth spec and the SDK source. Five items were confirmed for delivery (see
+Phase 12 in [implementation-plan.md](implementation-plan.md)). This section is the
+research backing — current state and the spec gap per item; no task lists.
+
+> **Correction to an earlier confabulation.** An interim chat note claimed the SDK
+> had "no production AS / Mission-Manager roles." That is wrong on both counts and
+> is corrected here:
+> - The **Access Server is already a first-class SDK role** — `MapAAuthAccessServer`
+>   ([../../../src/AAuth/Access/AAuthAccessServerEndpoints.cs](../../../src/AAuth/Access/AAuthAccessServerEndpoints.cs))
+>   with `AAuthAccessServerOptions`, an `IAccessPolicy` decision seam, and an
+>   `IAccessPendingStore` deferral seam.
+> - There is **no "Mission Manager" party** anywhere in the spec or code. The four
+>   AAuth parties are Agent, Person Server (PS), Resource Server, and Access Server
+>   (§Terminology L105 / §Roles L142). "Missions" are an orthogonal governance
+>   feature, not a party.
+> The real additive gap is the **Person Server**, which has no one-call mapper.
+
+### H.1 — `MapAAuthPersonServer` (additive; largest item)
+
+**Spec.** §Incremental adoption (L162) makes the PS the issuer of the three-party
+PS-asserted auth token and the PS half of four-party federation. §Auth Token
+Delivery defines the 7-step verification a PS runs on an AS-issued token before
+returning it.
+
+**Current SDK.** Every primitive exists; there is **no mapper**:
+
+- `AuthTokenBuilder` ([../../../src/AAuth/Tokens/AuthTokenBuilder.cs](../../../src/AAuth/Tokens/AuthTokenBuilder.cs)) — mints the auth token (collapsed PS+AS case).
+- `AuthTokenResponseValidator.ValidateAsync` ([../../../src/AAuth/Tokens/AuthTokenResponseValidator.cs](../../../src/AAuth/Tokens/AuthTokenResponseValidator.cs)) — the §Auth Token Delivery 7-step check.
+- `AccessServerClient` ([../../../src/AAuth/Access/AccessServerClient.cs](../../../src/AAuth/Access/AccessServerClient.cs)) — the PS→AS federation leg (push / poll / claims).
+- `TokenVerifier.VerifyResourceTokenAsync` — resource-token verification.
+
+**Gap.** `MockPersonServer`'s `/token` ([../../../samples/MockPersonServer/Program.cs](../../../samples/MockPersonServer/Program.cs))
+hand-assembles ~350 lines of orchestration: resource-token verification → the
+four-party federation branch (`aud` ≠ PS → forward to a trusted AS via
+`AccessServerClient` with `OnInteractionRequired` / `OnClaimsRequired`) → the
+three-party collapsed mint → mission gate → consent gate. The AS has a one-call
+`MapAAuthAccessServer` with an `IAccessPolicy` seam; the PS is the **only** server
+role without the equivalent. Proposed seam: `IIdentityClaimsAsserter` (mirrors
+`IAccessPolicy`) returning the directed `sub` + asserted claims and a
+silent/consent/deny decision, plus a PS-side pending/consent store mirroring
+`IAccessPendingStore`. The SDK keeps all crypto (verification, federation, mint,
+§Auth Token Delivery); the PS only decides identity + consent. **Effort: large.**
+The interactive `MockPersonServer` consent page + `MissionConsentScript` stay
+hand-wired (same rationale as DEV-4 / DEV-1: interactive browser flows are a sample
+concern); the mapper targets the non-interactive default PS.
+
+### H.2 — `user_unreachable` emit path (F5 / DEV-14)
+
+**Spec.** The authoritative draft (L1213) still says the PS returns
+`interaction_required` when it cannot reach the user and the agent lacks the
+`interaction` capability. `upcoming-changes-02.md` §2 (L32–47) splits this into two
+codes: `interaction_required` (202, non-terminal, carries a URL) vs
+`user_unreachable` (400, terminal hard-stop).
+
+**Current SDK — agent side is already forward-compatible.**
+
+- `TokenErrorCode.UserUnreachable` exists with both-direction wire mapping
+  ([../../../src/AAuth/Errors/TokenError.cs](../../../src/AAuth/Errors/TokenError.cs)).
+- `AAuthTokenExchangeException.IsTerminalCode` ([../../../src/AAuth/Errors/AAuthTokenExchangeException.cs](../../../src/AAuth/Errors/AAuthTokenExchangeException.cs))
+  already treats everything except `server_error` as terminal, so `user_unreachable`
+  surfaces as a terminal typed exception when a PS emits it.
+
+**Gap.** No PS emits `user_unreachable`, and the agent's no-callback path throws a
+**generic** `HttpRequestException` instead of a typed terminal exception —
+`DeferredExchange.PollAsync` ([../../../src/AAuth/Agent/DeferredExchange.cs](../../../src/AAuth/Agent/DeferredExchange.cs),
+the `RequireInteractionCallback && OnInteractionRequired is null` branch). The
+agent-side typed-exception classification is **unblocked** and can land now; the PS
+**emit** (return `400 user_unreachable` when no channel and no `interaction`
+capability) stays gated on draft-02, since emitting it today would diverge from the
+authoritative L1213 wording.
+
+### H.3 — deferred `completion` review (DEV-10)
+
+**Spec.** §Interaction Response (L1212): *"For `completion` type, the PS presents
+the summary to the user. The user either accepts … or responds with follow-up
+questions via clarification … The PS returns a deferred response while the user
+reviews."*
+
+**Current SDK.** `HandleInteractionAsync` ([../../../src/AAuth/DependencyInjection/AAuthGovernanceApplicationBuilderExtensions.cs](../../../src/AAuth/DependencyInjection/AAuthGovernanceApplicationBuilderExtensions.cs),
+the `Completion` arm) resolves synchronously off `result.Accepted` and returns
+`mission_status: terminated|active` immediately. The `interaction`/`payment` arm
+right below it already honors `result.Pending` → parks on `IDeferredConsentStore` →
+202 + poll (the DEV-9 fix); completion simply never consults `Pending`.
+
+**Gap.** `InteractionRelayResult` ([../../../src/AAuth/Server/Governance/IInteractionRelay.cs](../../../src/AAuth/Server/Governance/IInteractionRelay.cs))
+already carries `Pending`, and `DeferredConsentKind` already exists. The completion
+arm can reuse the exact park-and-poll machinery the interaction arm uses; only the
+`switch` arm is synchronous. Add a `Pending` check (new
+`DeferredConsentKind.Completion` or reuse `Interaction`), park + 202 + poll when a
+store is registered, and degrade to today's synchronous 200/`active` when no store
+(consistent with the permission/interaction fallback). **Effort: small-medium;**
+relay contract unchanged (sync relays keep using `Accepted`).
+
+### H.4 — `Signature-Error` on the mission 401 (DEV-13)
+
+**Spec.** §Error Responses (L1998): *"A `401` response from any AAuth endpoint uses
+the `Signature-Error` header."* L2108 scopes the 401 to a **signature-verification**
+failure.
+
+**Current SDK.** `HandleMissionAsync`'s carrier-type guard returns
+`401 {error:"invalid_carrier_token"}` as JSON with **no** `Signature-Error` header
+when a non-agent token is presented — the signature already verified; this is a
+semantic token-type rejection. The `SignatureError` helper + `SignatureErrorCode`
+enum exist ([../../../src/AAuth/Errors/SignatureError.cs](../../../src/AAuth/Errors/SignatureError.cs))
+but `invalid_carrier_token` is not a signature-error code.
+
+**Gap / options.** Either (A) keep 401 and add `Signature-Error: invalid_jwt`
+(satisfies L1998 literally, but the JWT was valid — just the wrong type), or
+(B) return **403** with the JSON `invalid_carrier_token` body (a 403 authorization
+refusal is not bound by the 401/`Signature-Error` rule, and a token-type mismatch is
+genuinely an authz decision). **Lean: Option B** — the more defensible reading,
+avoids overloading `invalid_jwt`. Trivial code; pinned by two existing tests
+(`GovernanceDeferredConsentMapperTests`, `MockPersonServerTests`). Lowest protocol
+value of the five.
+
+### H.5 — ergonomic `IInteractionRelay` default (DEV-3)
+
+**Spec.** §Interaction Endpoint expects the PS to relay to a user channel; a no-op
+default is spec-legal (it just cannot reach anyone).
+
+**Current SDK.** `DefaultInteractionRelay` ([../../../src/AAuth/Server/Governance/DefaultInteractionRelay.cs](../../../src/AAuth/Server/Governance/DefaultInteractionRelay.cs))
+returns empty answer / `Accepted=false` / `Pending=false`. Correct and documented;
+a real PS overrides it.
+
+**Gap (ergonomics, not compliance).** Overriding requires a whole `IInteractionRelay`
+class — there is no lightweight delegate option, unlike the agent side which uses
+`Func<>` callbacks throughout. Add a `DelegateInteractionRelay` (or an
+`AddAAuthGovernance(relay: async req => …)` overload) so a PS can supply a lambda.
+No spec change. **Effort: tiny; pure polish.**
+
+### Disposition summary
+
+| Item | Type | Spec anchor | Blocked? | Effort |
+|------|------|-------------|----------|--------|
+| H.1 `MapAAuthPersonServer` | additive role | §PS-asserted access, §Auth Token Delivery | no | large |
+| H.2 `user_unreachable` emit | correctness | upcoming-changes-02 §2 | emit gated on draft-02; agent classify unblocked | small |
+| H.3 deferred completion | correctness | §Interaction Response L1212 | no | small-medium |
+| H.4 `Signature-Error` 401 | correctness (cosmetic) | §Error Responses L1998 | no | trivial |
+| H.5 relay delegate default | ergonomics | §Interaction Endpoint | no | tiny |
