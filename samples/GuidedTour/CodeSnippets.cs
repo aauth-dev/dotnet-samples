@@ -361,4 +361,60 @@ internal static class CodeSnippets
         //   gate 5  delete_inbox action . PROMPT (out of scope)
         // The PS is the policy-enforcement point; the resource stays oblivious.
         """;
+
+    // ── Combined mission + call chain (§Clarification Chat, §Call Chaining) ──
+
+    public const string MissionChainClarify = """
+        // Requesting whoami:elevated_scope is OUT of the mission's intent, so the
+        // PS opens a clarification chat BEFORE asking the user to decide.
+        var session = governance.MissionSessionFor(mission);
+        var authToken = await session.ExchangeAsync("https://ps.example", resourceToken,
+            new TokenExchangeRequest
+            {
+                // The SDK surfaces the PS's question and lets the agent answer.
+                OnClarificationRequired = (q, _) =>
+                    Task.FromResult(ClarificationResponse.Respond(
+                        "This mission needs the full account history to triage the inbox.")),
+                OnInteractionRequired = SurfaceToUser,
+            });
+        // Raw HTTP: POST /token → 202 + AAuth-Requirement: requirement=clarification
+        //           + { clarification: "Why does this mission need…?" }
+        """;
+
+    public const string MissionChainAnswer = """
+        // Answer the PS's question on the mission-pending URL. The PS records the
+        // exchange in the mission log and readies the user's decision.
+        using var req = new HttpRequestMessage(HttpMethod.Post, missionPendingUrl);
+        req.Content = JsonContent.Create(new
+        {
+            clarification_response =
+                "This mission needs the full account history to triage the inbox.",
+        });
+        var resp = await signedClient.SendAsync(req); // → 204 No Content
+        // Now the agent surfaces {ps}/interaction?code={pendingId} for the user.
+        """;
+
+    public const string MissionChainForward = """
+        // The SAME mission now governs a multi-agent CALL CHAIN. WithMission binds
+        // the AAuth-Mission header; WithChallengeHandling threads the silent
+        // in-scope exchange; the Orchestrator forwards the mission downstream.
+        using var client = new AAuthClientBuilder(key)
+            .As("https://ps.example", agentId).WithKid(kid)
+            .WithPersonServer("https://ps.example")
+            .WithMission(mission)
+            .WithChallengeHandling()      // (Orchestrator, orchestrate) is in scope
+            .Build();
+        var resp = await client.GetAsync("https://orchestrator.example/mission");
+        // 200: { chain, upstream, orchestrator, downstream } — downstream is
+        // WhoAmI's mission-bound /jwt/mission result. NO prompt: every hop in scope.
+        """;
+
+    public const string MissionChainLog = """
+        // DEMO-ONLY: read the mission's auditable trail by its s256 (§Mission Log).
+        var resp = await client.GetAsync($"https://ps.example/admin/mission-log/{s256}");
+        var log = await resp.Content.ReadFromJsonAsync<MissionLog>();
+        foreach (var e in log.Entries)
+            Console.WriteLine($"{e.Kind} {e.Resource} {e.Scope} granted={e.Granted}");
+        // The 'clarification' entry records the question + the agent's answer.
+        """;
 }

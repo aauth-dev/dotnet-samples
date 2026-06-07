@@ -13,7 +13,7 @@ hop.
 A swim-lane sequence diagram across up to four actors — **Agent**,
 **Orchestrator**, **Resource**, **Person Server** — with a payload
 inspector on the right that decodes each JWT and shows the canonical
-RFC 9421 signature base for every signed request. Seven flows are
+RFC 9421 signature base for every signed request. Eight flows are
 available, switchable at runtime from the topbar **Mode** picker:
 
 * **Bootstrap** (2–3 steps) — generate the agent's signing key and build
@@ -44,6 +44,13 @@ available, switchable at runtime from the topbar **Mode** picker:
   contextual policy point. A mission-aware Resource copies the
   `AAuth-Mission` claim into its resource token. Requires a Person Server
   URL; drive the same flow from the CLI with `make demo-mission`.
+* **Mission + Call Chain** (14 steps; two prompts) — one durable mission
+  governs two very different kinds of access. An out-of-mission elevated
+  scope first triggers a **clarification chat** (the PS asks *why*, the
+  agent answers) before the user approves it; then a **mission-forwarded
+  call chain** (Agent → Orchestrator → WhoAmI) flows **silently** because
+  both hops are in the mission's scope. The PS's mission log records the
+  whole trail. Requires a Person Server and an Orchestrator URL.
 
 When `PersonServerUrl` is empty in `appsettings.json`, the picker locks
 to Identity-based (the three-party options are disabled). You can also set

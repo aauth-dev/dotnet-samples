@@ -20,6 +20,7 @@ public enum TourMode
     CallChain,
     Federated,
     Mission,
+    MissionCallChain,
 }
 
 /// <summary>

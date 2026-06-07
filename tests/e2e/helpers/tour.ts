@@ -23,6 +23,7 @@ export const TourMode = {
   CallChain: 'CallChain',
   Federated: 'Federated',
   Mission: 'Mission',
+  MissionCallChain: 'MissionCallChain',
 } as const;
 export type TourMode = (typeof TourMode)[keyof typeof TourMode];
 
@@ -55,6 +56,10 @@ const PLAN_STEPS: Record<TourMode, number> = {
   // creation (4/5), the out-of-mission elevated scope token (12/13), and the
   // out-of-scope delete_inbox permission (18/19).
   Mission: 20,
+  // Mission + Call Chain: one mission governs a clarified elevated-scope
+  // grant (creation 4/5, elevated 10/11 with a clarification chat at 7/8) and
+  // a silent mission-forwarded call chain (Agent → Orchestrator → WhoAmI).
+  MissionCallChain: 14,
 };
 
 /** Select a flow in the `#flow-select` picker and wait for the timeline to reset. */

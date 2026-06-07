@@ -41,6 +41,7 @@
             <option value="@TourMode.CallChain" disabled="@(!Session.HasPersonServer || !Session.HasOrchestrator)">5 · Call Chain (Multi-Agent) — user approves, 7 or 13 steps</option>
             <option value="@TourMode.Federated" disabled="@(!Session.HasPersonServer || !Session.HasAccessServer)">6 · Federated (Four-Party) — Access Server, 7–10 steps</option>
             <option value="@TourMode.Mission" disabled="@(!Session.HasPersonServer)">7 · Mission (PS-Governed) — three prompts, 20 steps</option>
+            <option value="@TourMode.MissionCallChain" disabled="@(!Session.HasPersonServer || !Session.HasOrchestrator)">8 · Mission + Call Chain — dual governance, 14 steps</option>
         </select>
     </label>
     @if (Session.Mode == TourMode.Identity)
@@ -166,6 +167,20 @@
                     creating the mission, the out-of-mission scope, and the out-of-scope action — everything in between flows without friction.
                 </text>
                 break;
+            case TourMode.MissionCallChain:
+                <text>
+                    <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — one durable
+                    <strong>mission</strong> governs two very different kinds of access. An
+                    <em>out-of-mission</em> elevated scope (<code>whoami:elevated_scope</code>) first triggers a
+                    <strong>clarification chat</strong> — the PS asks <em>why</em>, the agent answers — and only
+                    then prompts the user to approve. After that, a <strong>mission-forwarded call chain</strong>
+                    (Agent → Orchestrator → WhoAmI) flows <strong>silently</strong>: because both hops
+                    (<code>orchestrate</code>, <code>whoami</code>) are in the mission's scope, the Orchestrator
+                    forwards the <code>AAuth-Mission</code> header downstream and no prompt is needed.
+                    <strong>Two human approvals</strong> (mission creation, the clarified elevated scope) frame an
+                    otherwise-silent multi-agent chain, and the PS's <strong>mission log</strong> records it all.
+                </text>
+                break;
         }
     </p>
 </section>
@@ -200,8 +215,8 @@
                          Lanes="@ActiveLanes"
                          IsPolling="@Session.IsPolling"
                          PollCount="@Session.PollCount"
-                         LoopGhostStep="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending || Session.IsMissionMode) ? new SequenceDiagram.GhostStep(Session.PollStepNumber, $"polling /pending/{{id}}…", Actor.Agent, Session.PollLoopTarget) : null)"
-                         LoopAroundStepNumber="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending || Session.IsMissionMode) ? Session.PollStepNumber : 0)"
+                         LoopGhostStep="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending || Session.IsMissionMode || Session.IsMissionCallChainMode) ? new SequenceDiagram.GhostStep(Session.PollStepNumber, $"polling /pending/{{id}}…", Actor.Agent, Session.PollLoopTarget) : null)"
+                         LoopAroundStepNumber="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending || Session.IsMissionMode || Session.IsMissionCallChainMode) ? Session.PollStepNumber : 0)"
                          CompletedLoopLabel="@CompletedLoopLabel()"
                          LoopCompletedKind="@CompletedLoopKind()" />
     </section>
@@ -259,9 +274,18 @@
         new("Person Server", "ps", Actor.PersonServer),
     };
 
+    private static readonly SequenceDiagram.LaneDefinition[] MissionCallChainLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Resource", "resource", Actor.Resource),
+        new("Orchestrator", "resource2", Actor.Orchestrator),
+        new("Person Server", "ps", Actor.PersonServer),
+    };
+
     private SequenceDiagram.LaneDefinition[]? ActiveLanes =>
         Session.IsBootstrapMode ? BootstrapLanes :
         Session.IsIdentityMode ? IdentityLanes :
+        Session.IsMissionCallChainMode ? MissionCallChainLanes :
         Session.IsCallChainMode ? CallChainLanes :
         Session.IsFederatedMode ? FederatedLanes :
         Session.IsMissionMode ? MissionLanes : null;
