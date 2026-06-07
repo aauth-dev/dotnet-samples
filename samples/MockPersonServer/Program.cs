@@ -356,7 +356,7 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
             }
             catch (AAuthInteractionDeniedException)
             {
-                entry.Error = "access_denied";
+                entry.Error = "denied";
                 entry.ErrorStatus = StatusCodes.Status403Forbidden;
                 entry.Status = FederatedPendingStatus.Denied;
             }
@@ -615,13 +615,13 @@ app.MapGet("/pending/{id}", (HttpContext ctx, string id, ConsentStore consent, P
         return Results.NotFound(new { error = "unknown_pending", id });
     }
 
-    // Explicit denial — return 403 access_denied so the agent can
+    // Explicit denial — return 403 denied so the agent can
     // distinguish "user said no" from "timed out / unknown id".
     if (entry.Denied)
     {
         ctx.Response.Headers["Cache-Control"] = "no-store";
         return Results.Json(
-            new { error = "access_denied", detail = "the user denied this request" },
+            new { error = "denied", detail = "the user denied this request" },
             statusCode: StatusCodes.Status403Forbidden);
     }
 
@@ -648,7 +648,7 @@ app.MapGet("/pending/{id}", (HttpContext ctx, string id, ConsentStore consent, P
 // /token. While the PS's background FederateAsync drives the AS interaction
 // to completion, returns 202 + the relayed AS interaction requirement. Once
 // federation resolves it returns the AS-issued auth token (200) or the
-// relayed AS error (403 access_denied / 402 / 502).
+// relayed AS error (403 denied / 402 / 502).
 // -----------------------------------------------------------------------
 app.MapGet("/federated-pending/{id}", (HttpContext ctx, string id, FederatedPendingStore fedPending) =>
 {
@@ -739,7 +739,7 @@ app.MapPost("/mission", async (
 
     if (!script.ApproveMissionProposal)
     {
-        return Results.Json(new { error = "access_denied" }, statusCode: StatusCodes.Status403Forbidden);
+        return Results.Json(new { error = "denied" }, statusCode: StatusCodes.Status403Forbidden);
     }
 
     // Interactive mode (§Mission Creation): mission approval is the most
@@ -806,7 +806,7 @@ app.MapGet("/mission-create-pending/{id}", async (
     {
         ctx.Response.Headers["Cache-Control"] = "no-store";
         return Results.Json(
-            new { error = "access_denied", detail = "the user declined this mission" },
+            new { error = "denied", detail = "the user declined this mission" },
             statusCode: StatusCodes.Status403Forbidden);
     }
 
@@ -1072,7 +1072,7 @@ app.MapGet("/mission-pending/{id}", async (
             {
                 ctx.Response.Headers["Cache-Control"] = "no-store";
                 return Results.Json(
-                    new { error = "access_denied", detail = "the user denied this request" },
+                    new { error = "denied", detail = "the user denied this request" },
                     statusCode: StatusCodes.Status403Forbidden);
             }
             var token = IssueAuthToken(
@@ -1534,7 +1534,7 @@ app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent
 
 // Deny handler. Marks the pending entry as denied (rather than removing
 // it) so the agent's next poll receives a deterministic
-// `403 access_denied` instead of an ambiguous `404 unknown_pending`.
+// `403 denied` instead of an ambiguous `404 unknown_pending`.
 app.MapPost("/interaction/deny", async (HttpContext ctx, PendingStore pending, MissionPendingStore missionPending) =>
 {
     var code = (await ctx.Request.ReadFormAsync())["code"].ToString();
@@ -1556,7 +1556,7 @@ app.MapPost("/interaction/deny", async (HttpContext ctx, PendingStore pending, M
             + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#ddd6fe}</style>"
             + "<div class=badge><span class=dot></span>Person Server — mission governance</div>"
             + "<h1>Denied</h1>"
-            + $"<p>You denied <code>{System.Net.WebUtility.HtmlEncode(mission.AgentId)}</code>'s mission request. The agent's next poll will receive <code>403 access_denied</code>.</p>"
+            + $"<p>You denied <code>{System.Net.WebUtility.HtmlEncode(mission.AgentId)}</code>'s mission request. The agent's next poll will receive <code>403 denied</code>.</p>"
             + "<p>You can close this tab.</p>",
             contentType: "text/html");
     }
@@ -1574,7 +1574,7 @@ app.MapPost("/interaction/deny", async (HttpContext ctx, PendingStore pending, M
         + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}</style>"
         + "<div class=badge><span class=dot></span>Person Server</div>"
         + "<h1>Denied</h1>"
-        + $"<p>You denied <code>{System.Net.WebUtility.HtmlEncode(entry.Agent)}</code>'s request at the <b>Person Server</b>. The agent's next poll will receive <code>403 access_denied</code>.</p>"
+        + $"<p>You denied <code>{System.Net.WebUtility.HtmlEncode(entry.Agent)}</code>'s request at the <b>Person Server</b>. The agent's next poll will receive <code>403 denied</code>.</p>"
         + "<p>You can close this tab.</p>",
         contentType: "text/html");
 }).DisableAntiforgery();

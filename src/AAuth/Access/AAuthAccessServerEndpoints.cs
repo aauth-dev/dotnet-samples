@@ -339,7 +339,7 @@ public static class AAuthAccessServerEndpoints
             {
                 case AccessDecisionKind.Deny:
                     return Results.Json(
-                        new { error = "access_denied", detail = decision.Reason },
+                        new { error = "denied", detail = decision.Reason },
                         statusCode: StatusCodes.Status403Forbidden);
                 case AccessDecisionKind.NeedsPayment:
                 {
@@ -425,7 +425,7 @@ public static class AAuthAccessServerEndpoints
                 }
                 case AccessPendingStatus.Denied:
                     return Results.Json(
-                        new { error = "access_denied", detail = entry.DenyReason },
+                        new { error = "denied", detail = entry.DenyReason },
                         statusCode: StatusCodes.Status403Forbidden);
                 case AccessPendingStatus.Pending:
                 default:
@@ -525,7 +525,7 @@ public static class AAuthAccessServerEndpoints
                 case AccessDecisionKind.Deny:
                     pending.MarkDenied(entry.Id, decision.Reason ?? "access denied");
                     return Results.Json(
-                        new { error = "access_denied", detail = decision.Reason },
+                        new { error = "denied", detail = decision.Reason },
                         statusCode: StatusCodes.Status403Forbidden);
                 case AccessDecisionKind.NeedsClaims:
                 default:

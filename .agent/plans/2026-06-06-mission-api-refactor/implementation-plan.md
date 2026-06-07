@@ -583,7 +583,10 @@ truth `src/AAuth/`.
   DEV-13 (S-2) and DEV-14 (S-3) logged intentional; S-4 already DEV-10.
 - [x] `issues-and-deviations.md` updated (DEV-11..DEV-14); `dotnet build AAuth.slnx`
   0/0 (only `.md` files changed — no code touched).
-- [ ] DEV-12 (`access_denied`→`denied`) decision returned by the user.
+- [x] DEV-12 (`access_denied`→`denied`) full rename executed (user-approved, no alias):
+  all SDK emits/classifiers, AS path, sample mocks, SampleApp/GuidedTour narration,
+  conformance/integration tests, Playwright specs, and the docs snippet now use
+  `denied`; `dotnet build AAuth.slnx` 0/0.
 
 ---
 

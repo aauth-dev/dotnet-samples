@@ -107,7 +107,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         {
             case MissionApprovalOutcome.Declined:
                 return Results.Json(
-                    new { error = "access_denied", detail = decision.Message },
+                    new { error = "denied", detail = decision.Message },
                     statusCode: StatusCodes.Status403Forbidden);
 
             case MissionApprovalOutcome.Prompt:
@@ -117,7 +117,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
                 {
                     // No user channel: a prompt cannot be resolved — decline.
                     return Results.Json(
-                        new { error = "access_denied" }, statusCode: StatusCodes.Status403Forbidden);
+                        new { error = "denied" }, statusCode: StatusCodes.Status403Forbidden);
                 }
                 var parked = await store.ParkAsync(new DeferredConsent
                 {
@@ -324,7 +324,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
 
     // Resolve a parked deferred consent once the user has decided (§Deferred
     // Consent). Pending → 202 again; approved/declined → the final governance
-    // response (mission blob / permission decision / access_denied).
+    // response (mission blob / permission decision / denied).
     private static async Task<IResult> HandlePendingAsync(
         HttpContext ctx,
         string id,
@@ -358,7 +358,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
             {
                 ctx.Response.Headers.CacheControl = "no-store";
                 return Results.Json(
-                    new { error = "access_denied", detail = "the user declined this mission" },
+                    new { error = "denied", detail = "the user declined this mission" },
                     statusCode: StatusCodes.Status403Forbidden);
             }
             var proposal = entry.Proposal!;
@@ -375,7 +375,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
             return Results.Json(new { status = "ok" });
         }
 
-        // Permission: the endpoint always returns a decision (200), never access_denied.
+        // Permission: the endpoint always returns a decision (200), never a denial.
         var request = entry.Permission!;
         var granted = entry.Decision.Value;
         if (request.Mission is not null)

@@ -241,7 +241,7 @@ Section(elevatedScopeMissionApproved
 // cover it. The PS cannot grant it silently: out-of-mission scopes are NOT
 // auto-denied — the PS prompts the user (§Agent Token Request gate 3, §Scopes).
 // Approve in the browser and the consent accrues to the mission; deny and the
-// exchange throws AAuthInteractionDeniedException (access_denied). Declaring
+// exchange throws AAuthInteractionDeniedException (denied). Declaring
 // whoami:elevated_scope mission-approved (--mission-approved) makes this silent.
 if (elevatedScopeMissionApproved)
 {
@@ -255,7 +255,7 @@ try
 }
 catch (AAuthInteractionDeniedException)
 {
-    Console.WriteLine("   elevated scope  : denied by the user (access_denied) — the gate-2 token is unaffected");
+    Console.WriteLine("   elevated scope  : denied by the user (denied) — the gate-2 token is unaffected");
 }
 
 Section("6. Request a permission for a pre-approved tool — silent");

@@ -516,7 +516,7 @@ public class WhoAmIFlowTests : IAsyncLifetime
         // Same plumbing as the approval test, but the interaction
         // callback simulates the user clicking Deny instead of Approve.
         // The PS marks the pending entry as denied and the agent's
-        // next /pending/{id} poll receives 403 + access_denied. The
+        // next /pending/{id} poll receives 403 + denied. The
         // SDK must surface that as AAuthInteractionDeniedException
         // rather than a generic HttpRequestException.
         WebApplicationFactory<WhoAmI.Entry>? consentWhoAmI = null;

@@ -253,7 +253,7 @@ app.MapGet("/mission", async (HttpContext ctx, PendingStore pending) =>
 // at the PS). Returns:
 //   * 202 + same requirement=interaction while still unconsented downstream
 //   * 200 + combined chain result once the downstream auth token resolves
-//   * 403 access_denied if the user denied
+//   * 403 denied if the user denied
 //   * 404 if the pending id is unknown
 // -----------------------------------------------------------------------
 app.MapGet("/pending/{id}", async (HttpContext ctx, string id, PendingStore pending) =>
@@ -281,7 +281,7 @@ app.MapGet("/pending/{id}", async (HttpContext ctx, string id, PendingStore pend
         pending.Remove(id);
         ctx.Response.Headers["Cache-Control"] = "no-store";
         return Results.Json(
-            new { error = "access_denied", detail = "the user denied this request" },
+            new { error = "denied", detail = "the user denied this request" },
             statusCode: StatusCodes.Status403Forbidden);
     }
 });
@@ -312,7 +312,7 @@ app.MapGet("/mission-pending/{id}", async (HttpContext ctx, string id, PendingSt
         pending.Remove(id);
         ctx.Response.Headers["Cache-Control"] = "no-store";
         return Results.Json(
-            new { error = "access_denied", detail = "the user denied this request" },
+            new { error = "denied", detail = "the user denied this request" },
             statusCode: StatusCodes.Status403Forbidden);
     }
 });

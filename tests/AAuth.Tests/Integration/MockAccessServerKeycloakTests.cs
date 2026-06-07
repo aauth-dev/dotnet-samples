@@ -28,7 +28,7 @@ namespace AAuth.Tests.Integration;
 ///   2. The user's browser completes <c>/interaction/callback</c> (the AS
 ///      exchanges the code and asks Keycloak for the uma-ticket decision).
 ///   3. The PS polls <c>/pending/{id}</c> → <c>200 auth_token</c> (allow) or
-///      <c>403 access_denied</c> (deny), mirroring the PS deferred shape.
+///      <c>403 denied</c> (deny), mirroring the PS deferred shape.
 /// The stub Keycloak grants <c>whoami</c> to anyone and <c>whoami:admin</c>
 /// only when the claim_token carries the <c>whoami-admin</c> role.
 /// </summary>
@@ -107,7 +107,7 @@ public class MockAccessServerKeycloakTests
 
         Assert.Equal(HttpStatusCode.Forbidden, poll.StatusCode);
         var body = await poll.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("access_denied", (string?)body!["error"]);
+        Assert.Equal("denied", (string?)body!["error"]);
     }
 
     [Fact]
@@ -296,7 +296,7 @@ public class MockAccessServerKeycloakTests
                 var hasAdminRole = HasAdminRole(form.GetValueOrDefault("claim_token"));
                 return (!elevated || hasAdminRole)
                     ? Json(HttpStatusCode.OK, new JsonObject { ["result"] = true })
-                    : Json(HttpStatusCode.Forbidden, new JsonObject { ["error"] = "access_denied" });
+                    : Json(HttpStatusCode.Forbidden, new JsonObject { ["error"] = "denied" });
             }
 
             return new HttpResponseMessage(HttpStatusCode.BadRequest);

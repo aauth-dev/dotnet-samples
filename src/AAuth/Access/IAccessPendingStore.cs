@@ -43,7 +43,7 @@ public enum AccessPendingStatus
     /// <summary>Approved — the next poll mints the auth token.</summary>
     Allowed,
 
-    /// <summary>Denied — the next poll returns <c>403 access_denied</c>.</summary>
+    /// <summary>Denied — the next poll returns <c>403 denied</c>.</summary>
     Denied,
 }
 

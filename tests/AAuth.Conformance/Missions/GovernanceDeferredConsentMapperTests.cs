@@ -124,7 +124,7 @@ public class GovernanceDeferredConsentMapperTests
         ((IDisposable)app).Dispose();
     }
 
-    [Fact(DisplayName = "§Mission Creation — a declining approver yields 403 access_denied")]
+    [Fact(DisplayName = "§Mission Creation — a declining approver yields 403 denied")]
     public async Task Mission_DecliningApprover_Forbidden()
     {
         using var host = await BuildHostAsync(s =>
@@ -136,7 +136,7 @@ public class GovernanceDeferredConsentMapperTests
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         var json = await ReadJson(response);
-        Assert.Equal("access_denied", (string?)json?["error"]);
+        Assert.Equal("denied", (string?)json?["error"]);
         await host.StopAsync();
     }
 
@@ -176,7 +176,7 @@ public class GovernanceDeferredConsentMapperTests
         await host.StopAsync();
     }
 
-    [Fact(DisplayName = "§Deferred Consent — a declined mission poll resolves to 403 access_denied")]
+    [Fact(DisplayName = "§Deferred Consent — a declined mission poll resolves to 403 denied")]
     public async Task Mission_Prompt_Declined_Forbidden()
     {
         using var host = await BuildHostAsync(s =>
@@ -197,7 +197,7 @@ public class GovernanceDeferredConsentMapperTests
         using var done = await client.GetAsync("https://localhost" + location);
         Assert.Equal(HttpStatusCode.Forbidden, done.StatusCode);
         var json = await ReadJson(done);
-        Assert.Equal("access_denied", (string?)json?["error"]);
+        Assert.Equal("denied", (string?)json?["error"]);
 
         await host.StopAsync();
     }
@@ -231,7 +231,7 @@ public class GovernanceDeferredConsentMapperTests
         await host.StopAsync();
     }
 
-    [Fact(DisplayName = "§Deferred Consent — a declined permission poll resolves to a denied decision (200, not access_denied)")]
+    [Fact(DisplayName = "§Deferred Consent — a declined permission poll resolves to a denied decision (200, not denied)")]
     public async Task Permission_Prompt_Declined_ReturnsDenied()
     {
         using var host = await BuildHostAsync(s =>

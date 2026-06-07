@@ -7,6 +7,7 @@ using AAuth;
 using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Errors;
 using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Tokens;
@@ -930,7 +931,7 @@ public sealed class TourSession : IAsyncDisposable
                       "consent against the mission via `POST /interaction/approve`; the " +
                       "decision now accrues to the mission, so the agent may reuse this " +
                       "scope for the rest of the session. The agent learns the verdict on " +
-                      "its next poll. (A **Deny** here yields `access_denied`.)"
+                      "its next poll. (A **Deny** here yields `denied`.)"
                     : "The tour opened the PS's permission page in a new browser tab. The " +
                       "Person Server showed that the agent wants to run **delete_inbox** \u2014 " +
                       "an action that is **not** among the mission's pre-approved tools \u2014 " +
@@ -1572,7 +1573,7 @@ public sealed class TourSession : IAsyncDisposable
                     "recorded the PS responds with `200 OK` and the long-awaited " +
                     "`aa-auth+jwt`, bound (via `cnf.jwk`) to the agent's signing key. " +
                     "If the user clicks **Deny** instead, this step records a " +
-                    "`403 access_denied` and the flow aborts.",
+                    "`403 denied` and the flow aborts.",
                 RequestLine = $"{last.RequestLine}  →  {_pendingUrl}",
                 RequestHeaders = last.RequestHeaders,
                 SignatureBase = capturedBase,
@@ -1590,7 +1591,7 @@ public sealed class TourSession : IAsyncDisposable
     /// Shared pending-URL poll loop. Signs with <paramref name="tokenFactory"/>,
     /// long-polls <see cref="_pendingUrl"/>, and on terminal success invokes
     /// <paramref name="recordSuccess"/> to add the flow-specific step record.
-    /// Denial (403 access_denied) and timeout are recorded uniformly and abort
+    /// Denial (403 denied) and timeout are recorded uniformly and abort
     /// the flow. <paramref name="from"/>/<paramref name="to"/> drive the actors
     /// on the denied/timeout step records.
     /// </summary>
@@ -1651,13 +1652,13 @@ public sealed class TourSession : IAsyncDisposable
         {
             terminal = await poller.PollAsync(new Uri(_pendingUrl), ct);
 
-            // 403 access_denied → user clicked Deny on the PS consent
+            // 403 denied → user clicked Deny on the PS consent
             // page. Record a terminal "denied" step and abort the flow.
             if (terminal.StatusCode == HttpStatusCode.Forbidden)
             {
                 var deniedBody = await terminal.Content.ReadAsStringAsync(ct);
                 var deniedJson = JsonNode.Parse(deniedBody) as JsonObject;
-                if ((string?)deniedJson?["error"] == "access_denied")
+                if ((string?)deniedJson?["error"] == "denied")
                 {
                     RecordDeniedStep(capture.Last!, capturedBase, deniedBody, from, to);
                     _aborted = true;
@@ -1666,6 +1667,15 @@ public sealed class TourSession : IAsyncDisposable
             }
 
             recordSuccess(capture.Last!, capturedBase);
+        }
+        catch (PollingErrorException pex) when (pex.ErrorCode == PollingErrorCode.Denied)
+        {
+            // §Polling Error Codes: `denied` (403) is the explicit-denial code —
+            // the SDK's DeferredPoller raises it as a typed PollingErrorException.
+            // Record the terminal "denied" step and abort the flow.
+            RecordDeniedStep(
+                capture.Last!, capturedBase, "{\"error\":\"denied\"}", from, to);
+            _aborted = true;
         }
         catch (TimeoutException tex)
         {
@@ -1769,13 +1779,13 @@ public sealed class TourSession : IAsyncDisposable
         Steps.Add(new StepRecord
         {
             Number = Steps.Count + 1,
-            Title = "Poll pending URL → 403 access_denied (user denied)",
+            Title = "Poll pending URL → 403 denied (user denied)",
             From = from,
             To = to,
             Narrative =
                 "The user clicked **Deny** on the PS's interaction page. The PS marked " +
                 "the pending entry as denied and the next poll receives " +
-                "`403 Forbidden` with `error: \"access_denied\"`. The agent's SDK " +
+                "`403 Forbidden` with `error: \"denied\"`. The agent's SDK " +
                 "raises `AAuthInteractionDeniedException` so callers can distinguish " +
                 "denial from an unknown / expired pending id (which would be `404`). " +
                 "The tour is now in a terminal state — click **Reset** to start over.",
@@ -1860,7 +1870,7 @@ public sealed class TourSession : IAsyncDisposable
                 "The tour simulated the user clicking **Deny** on the PS's consent " +
                 "page (`POST /interaction/deny` with the single-use code). The PS " +
                 "marks the pending entry as denied; the next poll iteration will see " +
-                "`403 access_denied` and the flow will terminate.",
+                "`403 denied` and the flow will terminate.",
             ResponseBody = denyUrl,
             TokenDecoded =
                 $"Simulated POST /interaction/deny  (form: code={_interactionCode})\n" +
@@ -2795,7 +2805,7 @@ public sealed class TourSession : IAsyncDisposable
                     "(stored byte-for-byte) plus an `AAuth-Mission` header carrying the " +
                     "`s256` thumbprint. The agent verifies `s256 == base64url(SHA-256(" +
                     "blob))` and now holds a durable mission it can bind to later requests. " +
-                    "If the user clicks **Deny**, this step records `403 access_denied`.",
+                    "If the user clicks **Deny**, this step records `403 denied`.",
                 RequestLine = $"{last.RequestLine}  →  {_pendingUrl}",
                 RequestHeaders = last.RequestHeaders,
                 SignatureBase = capturedBase,
@@ -3046,7 +3056,7 @@ public sealed class TourSession : IAsyncDisposable
                 "fit. Unlike gate 2, the PS cannot mint silently: out-of-mission scopes " +
                 "are **not** auto-denied, so it parks the request and returns `202` + an " +
                 "interaction URL for the user to decide (gate 3). Only an explicit user " +
-                "**Deny** would yield `access_denied`.",
+                "**Deny** would yield `denied`.",
             RequestLine = $"{ex.RequestLine}  →  {_tokenEndpoint}",
             RequestHeaders = ex.RequestHeaders,
             RequestBody = PrettyJson(ex.RequestBody),
@@ -3076,7 +3086,7 @@ public sealed class TourSession : IAsyncDisposable
                     "`auth_token` carrying `whoami:elevated_scope`, bound to the agent's " +
                     "signing key. The consent now accrues to the mission, so a later " +
                     "elevated request would be silent. A **Deny** here records " +
-                    "`403 access_denied`.",
+                    "`403 denied`.",
                 RequestLine = $"{last.RequestLine}  →  {_pendingUrl}",
                 RequestHeaders = last.RequestHeaders,
                 SignatureBase = capturedBase,

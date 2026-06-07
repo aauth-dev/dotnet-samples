@@ -104,7 +104,7 @@ test.describe('Mission (Guided Tour)', () => {
     expect(elevated.scope).toEqual(['whoami:elevated_scope']);
   });
 
-  test('deny at the elevated-scope gate yields access_denied', async ({ page, context }) => {
+  test('deny at the elevated-scope gate yields denied', async ({ page, context }) => {
     await openTour(page);
     await selectFlow(page, TourMode.Mission);
 
@@ -130,7 +130,7 @@ test.describe('Mission (Guided Tour)', () => {
     await denyInPopup(elevatedPopup);
 
     // The flow aborts: the primary button locks to "Aborted" and the poll loop
-    // records a terminal denied step (403 access_denied).
+    // records a terminal denied step (403 denied).
     await expect(page.locator('button.primary')).toHaveText('Aborted', { timeout: 120_000 });
     await expect(doneSteps(page).last()).toContainText(/denied/i);
   });

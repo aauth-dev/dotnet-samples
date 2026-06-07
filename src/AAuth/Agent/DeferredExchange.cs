@@ -44,7 +44,7 @@ internal sealed class DeferredExchangeOptions
     /// <summary>
     /// Invoked after each poll in the interaction branch, before the loop
     /// re-checks for a <c>202</c>. Token exchange uses this to classify a polled
-    /// <c>403 access_denied</c>; the callback may throw. <see langword="null"/> =
+    /// <c>403 denied</c>; the callback may throw. <see langword="null"/> =
     /// no-op.
     /// </summary>
     public Func<HttpResponseMessage, CancellationToken, Task>? OnPolledResponse { get; init; }
@@ -197,7 +197,7 @@ internal sealed class DeferredExchange
 
                 response = await PollAsync(pendingUrl, options.PollerOptions, cancellationToken).ConfigureAwait(false);
 
-                // Token exchange classifies a polled 403 access_denied here (only
+                // Token exchange classifies a polled 403 denied here (only
                 // after an interaction poll, matching the original placement).
                 if (options.OnPolledResponse is not null)
                 {
@@ -237,6 +237,14 @@ internal sealed class DeferredExchange
             using var pollActivity = AAuthDiagnostics.Source.StartActivity("AAuth.DeferredPoll");
             return await new DeferredPoller(_signedClient, composed)
                 .PollAsync(pendingUrl, cancellationToken).ConfigureAwait(false);
+        }
+        catch (PollingErrorException ex) when (ex.ErrorCode == PollingErrorCode.Denied)
+        {
+            // §Polling Error Codes: `denied` (403) is an explicit user/approver
+            // denial. Surface the semantic interaction-denied exception so callers
+            // can distinguish it from a transport-level polling failure.
+            throw new AAuthInteractionDeniedException(
+                "The user denied the AAuth interaction request.", ex);
         }
         catch (TimeoutException ex)
         {

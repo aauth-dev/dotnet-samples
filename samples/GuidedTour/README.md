@@ -115,7 +115,7 @@ Steps 1–4 are the same as **Direct Grant**. From step 5 onward:
    sequence diagram shows a loop box with a live spinner and poll count.
    The loop resolves in one of three ways:
     * **Approve** → 200 + `auth_token`; the loop box turns solid green.
-    * **Deny** → 403 + `{"error":"access_denied"}` → SDK throws
+    * **Deny** → 403 + `{"error":"denied"}` → SDK throws
       `AAuthInteractionDeniedException`; the loop box turns red.
     * **Polling budget expires** (5 minutes by default) → SDK throws
       `AAuthInteractionTimeoutException`; the loop box turns amber.

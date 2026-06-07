@@ -116,7 +116,7 @@ test.describe('Mission (SampleApp)', () => {
     await expect(gateCard(page, 5).locator('.badge.bg-success').last()).toHaveText('granted');
   });
 
-  test('deny at the elevated-scope gate records access_denied without affecting the prior token', async ({ page, context }) => {
+  test('deny at the elevated-scope gate records denied without affecting the prior token', async ({ page, context }) => {
     await page.goto('/mission');
     await expect(page.locator('h2')).toContainText('Mission');
     await waitForInteractive(page, 'button.btn-primary');
@@ -140,10 +140,10 @@ test.describe('Mission (SampleApp)', () => {
     // an earlier token).
     await expect(gateCard(page, 2).locator('.badge.bg-success').last()).toHaveText('granted');
 
-    // Gate 3 — PROMPT, denied → access_denied.
+    // Gate 3 — PROMPT, denied → denied.
     await expect(gateCard(page, 3).locator('.badge.bg-warning')).toHaveText('prompt');
     await expect(gateCard(page, 3).locator('.badge.bg-danger')).toHaveText('denied');
-    await expect(gateCard(page, 3)).toContainText('access_denied');
+    await expect(gateCard(page, 3)).toContainText('denied');
 
     // Gate 5 — PROMPT, granted: denying gate 3 did not abort the mission.
     await expect(gateCard(page, 5).locator('.badge.bg-success').last()).toHaveText('granted');

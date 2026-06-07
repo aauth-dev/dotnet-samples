@@ -103,7 +103,7 @@ var who = await ok.Content.ReadFromJsonAsync&lt;JsonObject&gt;();   // the profi
 //    challenge -> exchange -> retry, but against an endpoint requiring
 //    `whoami:elevated_scope`. The mission's intent does not cover this
 //    scope, so the PS cannot grant it silently: it prompts the user.
-//    A user deny throws AAuthInteractionDeniedException (access_denied);
+//    A user deny throws AAuthInteractionDeniedException (denied);
 //    otherwise the consent accrues to the mission (§Scopes, gate 3).
 var elevated = await ExchangeForScopeAsync(
     $"{resourceOrigin}/protected_endpoint/elevated", mission, governanceOptions);
@@ -453,10 +453,10 @@ if (deleteInbox.IsGranted)
                 _steps.Add(new GateStep(3, "Resource token (elevated)", Prompted: true,
                     Outcome: "denied",
                     Summary: "This scope falls outside the mission's intent; the PS prompted the user, " +
-                             "who clicked Deny — so no auth_token was issued (access_denied).",
-                    Note: "Only an explicit user deny (or a terminated mission) yields access_denied; " +
+                             "who clicked Deny — so no auth_token was issued (denied).",
+                    Note: "Only an explicit user deny (or a terminated mission) yields denied; " +
                           "an out-of-mission scope on its own just prompts (§Scopes).",
-                    Payload: "{\n  \"error\": \"access_denied\"\n}",
+                    Payload: "{\n  \"error\": \"denied\"\n}",
                     PayloadLabel: "Token exchange outcome"));
             }
             await InvokeAsync(StateHasChanged);

@@ -19,7 +19,7 @@ A minimal AAuth Person Server for end-to-end demos and integration tests.
   - **Approve** (`POST /interaction/approve`, or `POST /admin/consent`
     from a script) → next poll returns `200` with the `auth_token`.
   - **Deny** (`POST /interaction/deny`) → next poll returns `403` with
-    `{"error":"access_denied"}`.
+    `{"error":"denied"}`.
   - No action → the agent's polling budget eventually expires.
 - `GET /interaction` renders a tiny built-in consent page used by the
   `GuidedTour` "Open consent page" button.

@@ -6,7 +6,7 @@ namespace AAuth.Agent;
 /// <summary>
 /// Thrown when a deferred AAuth interaction terminates with explicit
 /// user denial. Surfaced when the PS responds to a pending-URL poll
-/// with <c>403</c> and a body containing <c>error: "access_denied"</c>.
+/// with <c>403</c> and a body containing <c>error: "denied"</c>.
 /// </summary>
 /// <remarks>
 /// Distinct from a generic <see cref="System.Net.Http.HttpRequestException"/>

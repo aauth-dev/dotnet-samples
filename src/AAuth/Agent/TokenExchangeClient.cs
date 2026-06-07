@@ -123,13 +123,13 @@ public sealed class TokenExchangeClient
             // Token exchange cannot complete consent without an interaction
             // callback, so any deferred 202 with no callback fails fast.
             RequireInteractionCallback = true,
-            // §User Interaction: a user denial surfaces as 403 access_denied on
+            // §Polling Error Codes: a user denial surfaces as 403 `denied` on
             // the poll. Classify it only after an interaction poll (matching the
             // original placement) so a direct/clarification 403 stays a token error.
             OnPolledResponse = async (resp, ct) =>
             {
                 if (resp.StatusCode == HttpStatusCode.Forbidden
-                    && await IsAccessDeniedAsync(resp, ct).ConfigureAwait(false))
+                    && await IsDeniedAsync(resp, ct).ConfigureAwait(false))
                 {
                     throw new AAuthInteractionDeniedException(
                         "The user denied the AAuth interaction request.");
@@ -169,16 +169,16 @@ public sealed class TokenExchangeClient
         return capabilities;
     }
 
-    private static async Task<bool> IsAccessDeniedAsync(
+    private static async Task<bool> IsDeniedAsync(
         HttpResponseMessage response, CancellationToken cancellationToken)
     {
         // Buffer the body so the subsequent ReadAuthTokenAsync (if we
-        // decide it isn't access_denied) still sees it.
+        // decide it isn't a denial) still sees it.
         var body = await DeferredExchange.BufferBodyAsync(response, cancellationToken).ConfigureAwait(false);
         try
         {
             var json = JsonNode.Parse(body) as JsonObject;
-            return (string?)json?["error"] == "access_denied";
+            return (string?)json?["error"] == "denied";
         }
         catch (System.Text.Json.JsonException)
         {
