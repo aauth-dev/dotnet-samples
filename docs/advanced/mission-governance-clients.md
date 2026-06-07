@@ -93,7 +93,7 @@ user (§Permission Endpoint).
 
 ```csharp
 PermissionResult result = await session.RequestPermissionAsync(
-    "email.send",
+    new MissionAction("email.send"),
     description: "Send the booking confirmation to the four guests.");
 
 if (result.IsGranted)
