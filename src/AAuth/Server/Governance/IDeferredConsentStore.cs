@@ -22,6 +22,14 @@ public enum DeferredConsentKind
     /// until the user completes the interaction.
     /// </summary>
     Interaction,
+
+    /// <summary>
+    /// A <c>completion</c> summary the user is reviewing (§Interaction Response:
+    /// "The PS returns a deferred response while the user reviews."). The agent
+    /// polls until the user accepts (the PS terminates the mission) or responds
+    /// with follow-up questions (the mission stays active).
+    /// </summary>
+    Completion,
 }
 
 /// <summary>

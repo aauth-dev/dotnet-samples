@@ -179,8 +179,17 @@ internal sealed class DeferredExchange
                 {
                     var status = (int)response.StatusCode;
                     response.Dispose();
-                    throw new HttpRequestException(
-                        $"PS returned {status} (deferred response) but no onInteractionRequired callback was provided.");
+                    // The PS deferred for user interaction but the agent supplied no
+                    // interaction callback and did not declare the `interaction`
+                    // capability — there is no channel to the user. Surface the
+                    // terminal `user_unreachable` error (draft-02 §Token Endpoint
+                    // Error Codes) so callers can branch on it, instead of a generic
+                    // transport failure.
+                    throw new AAuthTokenExchangeException(
+                        new TokenErrorResponse(TokenErrorCode.UserUnreachable).ErrorCode,
+                        $"PS returned {status} (deferred response) but no onInteractionRequired callback was provided.",
+                        statusCode: 400,
+                        isTerminal: true);
                 }
 
                 var interaction = requirement is null ? null : Interaction.FromRequirement(requirement);

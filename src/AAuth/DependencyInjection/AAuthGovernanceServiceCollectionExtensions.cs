@@ -1,5 +1,8 @@
 using System;
+using AAuth.Agent.Governance;
 using AAuth.Server.Governance;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -34,6 +37,23 @@ public static class AAuthGovernanceServiceCollectionExtensions
         services.TryAddSingleton<IPermissionDecider, DefaultPermissionDecider>();
         services.TryAddSingleton<IAuditSink, DefaultAuditSink>();
         services.TryAddSingleton<IInteractionRelay, DefaultInteractionRelay>();
+        return services;
+    }
+
+    /// <summary>
+    /// Register an <see cref="AAuth.Server.Governance.IInteractionRelay"/> backed by a
+    /// delegate, so a PS can supply its user channel with a lambda instead of a full
+    /// class (§Interaction Endpoint). Replaces any relay registered earlier (including
+    /// the no-op <see cref="AAuth.Server.Governance.DefaultInteractionRelay"/>).
+    /// </summary>
+    public static IServiceCollection AddAAuthInteractionRelay(
+        this IServiceCollection services,
+        Func<InteractionRequest, CancellationToken, Task<InteractionRelayResult>> relay)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(relay);
+        services.RemoveAll<IInteractionRelay>();
+        services.AddSingleton<IInteractionRelay>(new DelegateInteractionRelay(relay));
         return services;
     }
 

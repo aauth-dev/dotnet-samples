@@ -181,7 +181,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         var response = await http.PostAsJsonAsync("/token",
             new JsonObject { ["resource_token"] = "irrelevant" });
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
         Assert.Equal("invalid_carrier_token", (string?)body!["error"]);
     }

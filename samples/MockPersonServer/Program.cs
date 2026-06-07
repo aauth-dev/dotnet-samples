@@ -207,14 +207,14 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
     {
         return Results.Json(
             new { error = "invalid_carrier_token", detail = $"expected {AAuthConstants.TokenTypes.AgentToken}, got {tokenType}" },
-            statusCode: StatusCodes.Status401Unauthorized);
+            statusCode: StatusCodes.Status403Forbidden);
     }
 
     var agentId = (string?)parsed.Payload?["sub"];
     if (string.IsNullOrEmpty(agentId))
     {
         return Results.Json(new { error = "invalid_carrier_token", detail = "missing sub" },
-            statusCode: StatusCodes.Status401Unauthorized);
+            statusCode: StatusCodes.Status403Forbidden);
     }
 
     JsonObject? body;
@@ -705,12 +705,12 @@ app.MapPost("/mission", async (
     var parsed = ctx.GetAAuthParsedKey()!;
     if (ctx.GetAAuthTokenType() != AAuthTokenType.AgentToken)
     {
-        return Results.Json(new { error = "invalid_carrier_token" }, statusCode: StatusCodes.Status401Unauthorized);
+        return Results.Json(new { error = "invalid_carrier_token" }, statusCode: StatusCodes.Status403Forbidden);
     }
     var agentId = (string?)parsed.Payload?["sub"];
     if (string.IsNullOrEmpty(agentId))
     {
-        return Results.Json(new { error = "invalid_carrier_token", detail = "missing sub" }, statusCode: StatusCodes.Status401Unauthorized);
+        return Results.Json(new { error = "invalid_carrier_token", detail = "missing sub" }, statusCode: StatusCodes.Status403Forbidden);
     }
 
     JsonObject? body;

@@ -80,7 +80,12 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         var verification = ctx.GetAAuthVerification();
         if (verification?.TokenType != AAuthTokenType.AgentToken || string.IsNullOrEmpty(verification.Agent))
         {
-            return Results.Json(new { error = "invalid_carrier_token" }, statusCode: StatusCodes.Status401Unauthorized);
+            // The signature already verified (this is past the verification
+            // middleware); presenting a non-agent token is a semantic authorization
+            // refusal, not a signature-authentication failure, so it is a 403 — the
+            // §Error Responses 401/`Signature-Error` rule is reserved for the
+            // §Verification (Server) signature-failure steps.
+            return Results.Json(new { error = "invalid_carrier_token" }, statusCode: StatusCodes.Status403Forbidden);
         }
 
         var body = await ReadJsonAsync(ctx).ConfigureAwait(false);
@@ -291,6 +296,26 @@ public static class AAuthGovernanceApplicationBuilderExtensions
                 return Results.Json(new { answer = result.Answer ?? string.Empty });
 
             case InteractionType.Completion:
+                // §Interaction Response: "The PS returns a deferred response while
+                // the user reviews." When the relay is still pending and a store is
+                // registered, park the completion and answer 202 + poll; the poll
+                // resolves to terminated (accepted) or active (follow-up). Without a
+                // store there is no user channel, so the relay's synchronous
+                // Accepted result is honored directly.
+                if (result.Pending)
+                {
+                    var completionStore = ctx.RequestServices.GetService<IDeferredConsentStore>();
+                    if (completionStore is not null)
+                    {
+                        var parkedCompletion = await completionStore.ParkAsync(new DeferredConsent
+                        {
+                            Kind = DeferredConsentKind.Completion,
+                            Approver = request.Mission?.Approver ?? string.Empty,
+                            Interaction = request,
+                        }, ctx.RequestAborted).ConfigureAwait(false);
+                        return DeferredAccepted(ctx, options, parkedCompletion.Id);
+                    }
+                }
                 if (result.Accepted == true && request.Mission is not null)
                 {
                     await missions.SetStateAsync(request.Mission.S256, MissionState.Terminated).ConfigureAwait(false);
@@ -373,6 +398,21 @@ public static class AAuthGovernanceApplicationBuilderExtensions
             // The interaction was already recorded in the mission log when it was
             // relayed, so no further bookkeeping is needed here.
             return Results.Json(new { status = "ok" });
+        }
+
+        if (entry.Kind == DeferredConsentKind.Completion)
+        {
+            // The user finished reviewing the completion summary (§Interaction
+            // Response). Accept → terminate the mission; follow-up/decline → the
+            // mission stays active.
+            var accepted = entry.Decision.Value;
+            var completionMission = entry.Interaction?.Mission;
+            if (accepted && completionMission is not null)
+            {
+                await missions.SetStateAsync(completionMission.S256, MissionState.Terminated).ConfigureAwait(false);
+                return Results.Json(new { mission_status = "terminated" });
+            }
+            return Results.Json(new { mission_status = "active" });
         }
 
         // Permission: the endpoint always returns a decision (200), never a denial.

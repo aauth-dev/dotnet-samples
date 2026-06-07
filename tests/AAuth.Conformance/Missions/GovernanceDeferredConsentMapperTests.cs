@@ -104,7 +104,7 @@ public class GovernanceDeferredConsentMapperTests
         await host.StopAsync();
     }
 
-    [Fact(DisplayName = "§Mission Creation — an agentless request is rejected (401 invalid_carrier_token)")]
+    [Fact(DisplayName = "§Mission Creation — an agentless request is rejected (403 invalid_carrier_token)")]
     public async Task Mission_NoAgentToken_Unauthorized()
     {
         var builder = WebApplication.CreateBuilder();
@@ -119,7 +119,7 @@ public class GovernanceDeferredConsentMapperTests
         var response = await client.PostAsync("https://localhost/mission",
             JsonContent(new JsonObject { ["description"] = "# Plan a trip" }));
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         await app.StopAsync();
         ((IDisposable)app).Dispose();
     }
@@ -384,6 +384,135 @@ public class GovernanceDeferredConsentMapperTests
         Assert.Null(response.Headers.Location);
         var json = await ReadJson(response);
         Assert.Equal("ok", (string?)json?["status"]);
+
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Interaction Response — a completion relay reviewing asynchronously parks 202, then terminates the mission on accept")]
+    public async Task Completion_PendingRelay_Parks202_ThenTerminates()
+    {
+        const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        using var host = await BuildHostAsync(s =>
+        {
+            s.AddAAuthDeferredConsent();
+            s.AddSingleton<IInteractionRelay>(new StubRelay(new InteractionRelayResult { Pending = true }));
+        });
+        var missionStore = host.Services.GetRequiredService<IMissionStore>();
+        await missionStore.SaveAsync(new StoredMission(s256, Ps, Agent, new byte[] { 1, 2, 3 }));
+        using var client = host.GetTestServer().CreateClient();
+
+        var body = new JsonObject
+        {
+            ["type"] = "completion",
+            ["summary"] = "# Booked the refundable option",
+            ["mission"] = new JsonObject { ["approver"] = Ps, ["s256"] = s256 },
+        };
+        var response = await client.PostAsync("https://localhost/mission-interaction", JsonContent(body));
+
+        // §Interaction Response: "The PS returns a deferred response while the user reviews."
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var location = response.Headers.Location!.ToString();
+        Assert.Contains("/governance-pending/", location);
+
+        // The mission stays active while the user reviews.
+        using var pendingPoll = await client.GetAsync("https://localhost" + location);
+        Assert.Equal(HttpStatusCode.Accepted, pendingPoll.StatusCode);
+        Assert.Equal(MissionState.Active, (await missionStore.GetAsync(s256))!.State);
+
+        // The user accepts the summary; the poll terminates the mission.
+        var id = location[(location.LastIndexOf('/') + 1)..];
+        var consent = host.Services.GetRequiredService<IDeferredConsentStore>();
+        await consent.ResolveAsync(id, approved: true);
+
+        using var done = await client.GetAsync("https://localhost" + location);
+        Assert.Equal(HttpStatusCode.OK, done.StatusCode);
+        var json = await ReadJson(done);
+        Assert.Equal("terminated", (string?)json?["mission_status"]);
+        Assert.Equal(MissionState.Terminated, (await missionStore.GetAsync(s256))!.State);
+
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Interaction Response — a reviewed completion the user does not accept keeps the mission active")]
+    public async Task Completion_PendingRelay_FollowUp_StaysActive()
+    {
+        const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        using var host = await BuildHostAsync(s =>
+        {
+            s.AddAAuthDeferredConsent();
+            s.AddSingleton<IInteractionRelay>(new StubRelay(new InteractionRelayResult { Pending = true }));
+        });
+        var missionStore = host.Services.GetRequiredService<IMissionStore>();
+        await missionStore.SaveAsync(new StoredMission(s256, Ps, Agent, new byte[] { 1, 2, 3 }));
+        using var client = host.GetTestServer().CreateClient();
+
+        var body = new JsonObject
+        {
+            ["type"] = "completion",
+            ["summary"] = "# Draft itinerary",
+            ["mission"] = new JsonObject { ["approver"] = Ps, ["s256"] = s256 },
+        };
+        var response = await client.PostAsync("https://localhost/mission-interaction", JsonContent(body));
+        var location = response.Headers.Location!.ToString();
+
+        var id = location[(location.LastIndexOf('/') + 1)..];
+        var consent = host.Services.GetRequiredService<IDeferredConsentStore>();
+        await consent.ResolveAsync(id, approved: false);
+
+        using var done = await client.GetAsync("https://localhost" + location);
+        Assert.Equal(HttpStatusCode.OK, done.StatusCode);
+        var json = await ReadJson(done);
+        Assert.Equal("active", (string?)json?["mission_status"]);
+        Assert.Equal(MissionState.Active, (await missionStore.GetAsync(s256))!.State);
+
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Interaction Response — without the deferred store a completion resolves synchronously off the relay's Accepted result")]
+    public async Task Completion_NoStore_ResolvesSynchronously()
+    {
+        const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        using var host = await BuildHostAsync(s =>
+            s.AddSingleton<IInteractionRelay>(new StubRelay(new InteractionRelayResult { Accepted = true })));
+        var missionStore = host.Services.GetRequiredService<IMissionStore>();
+        await missionStore.SaveAsync(new StoredMission(s256, Ps, Agent, new byte[] { 1, 2, 3 }));
+        using var client = host.GetTestServer().CreateClient();
+
+        var body = new JsonObject
+        {
+            ["type"] = "completion",
+            ["summary"] = "# Done",
+            ["mission"] = new JsonObject { ["approver"] = Ps, ["s256"] = s256 },
+        };
+        var response = await client.PostAsync("https://localhost/mission-interaction", JsonContent(body));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Null(response.Headers.Location);
+        var json = await ReadJson(response);
+        Assert.Equal("terminated", (string?)json?["mission_status"]);
+        Assert.Equal(MissionState.Terminated, (await missionStore.GetAsync(s256))!.State);
+
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Interaction Endpoint — AddAAuthInteractionRelay wires a delegate relay used for a question")]
+    public async Task DelegateInteractionRelay_AnswersQuestion()
+    {
+        using var host = await BuildHostAsync(s =>
+            s.AddAAuthInteractionRelay((req, ct) =>
+                Task.FromResult(new InteractionRelayResult { Answer = "Yes, the refundable option." })));
+        using var client = host.GetTestServer().CreateClient();
+
+        var body = new JsonObject
+        {
+            ["type"] = "question",
+            ["question"] = "# Which option?",
+        };
+        var response = await client.PostAsync("https://localhost/mission-interaction", JsonContent(body));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await ReadJson(response);
+        Assert.Equal("Yes, the refundable option.", (string?)json?["answer"]);
 
         await host.StopAsync();
     }
