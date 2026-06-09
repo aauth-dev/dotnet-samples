@@ -24,11 +24,11 @@ import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
  *   2. Out-of-mission elevated scope (steps 12/13): requesting
  *      `trips.book` falls outside the mission's intent, so the PS
  *      prompts before issuing the elevated auth_token (gate 3).
- *   3. Out-of-scope delete_inbox (steps 18/19): a tool that is NOT pre-approved
+ *   3. Out-of-scope cancel_booking (steps 18/19): a tool that is NOT pre-approved
  *      prompts the user; the PS returns a decision, not a token.
  *
  * In between, the in-scope `trips.read` token (gate 2) and the pre-approved
- * send_email tool (gate 4) resolve silently. Generous timeout covers three
+ * add_to_calendar tool (gate 4) resolve silently. Generous timeout covers three
  * poll loops.
  */
 test.describe('Mission (Guided Tour)', () => {
@@ -68,10 +68,10 @@ test.describe('Mission (Guided Tour)', () => {
     // user-approval + elevated poll resolve (13 of 20).
     await expect(doneSteps(page)).toHaveCount(13, { timeout: 120_000 });
 
-    // ---- Silent gate 4 tool + cycle 3: delete_inbox (PROMPT) -------------
+    // ---- Silent gate 4 tool + cycle 3: cancel_booking (PROMPT) -------------
     await runAll(page);
-    // Steps 14 (elevated replay), 15 (send_email SILENT), 16 (permission →
-    // 202), 17 (direct-user) run, parking on the delete_inbox approval (17).
+    // Steps 14 (elevated replay), 15 (add_to_calendar SILENT), 16 (permission →
+    // 202), 17 (direct-user) run, parking on the cancel_booking approval (17).
     await expect(doneSteps(page)).toHaveCount(17, { timeout: 60_000 });
     const deleteLink = page.locator('a.primary.approve');
     await expect(deleteLink).toBeVisible();

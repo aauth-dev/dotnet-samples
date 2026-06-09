@@ -10,7 +10,7 @@ export const Urls = {
   trips: 'http://localhost:5002',
   wallet: 'http://localhost:5003',
   personServer: 'http://localhost:5100',
-  orchestrator: 'http://localhost:5200',
+  concierge: 'http://localhost:5200',
   agentProvider: 'http://localhost:5301',
   accessServer: 'http://localhost:5500',
 } as const;

@@ -109,7 +109,7 @@ Two deployment models exist:
 
 | Model | How It Works | Used By |
 |-------|--------------|---------|
-| **Self-hosted** | Agent has a stable HTTPS URL → acts as its own AP → publishes `/.well-known/aauth-agent.json` → self-signs tokens | Web apps, APIs, orchestrators |
+| **Self-hosted** | Agent has a stable HTTPS URL → acts as its own AP → publishes `/.well-known/aauth-agent.json` → self-signs tokens | Web apps, APIs, concierges |
 | **Enrolled (external AP)** | Agent registers with an external AP that holds the public key and issues tokens | CLI tools, desktop apps, mobile apps |
 
 In both models, the agent holds the **private** signing key locally in its own keystore (`IKeyStore`). The AP holds only the **public** key. They never share a keystore.
@@ -251,7 +251,7 @@ Per the spec, any PS can assert identity claims to any resource without bilatera
 
 ### Self-Hosted Agent Example
 
-A hosted service (web app, API, orchestrator) acts as its own Agent Provider:
+A hosted service (web app, API, concierge) acts as its own Agent Provider:
 
 ```csharp
 using AAuth.Crypto;
@@ -374,7 +374,7 @@ When the resource has its own **Access Server (AS)**, the resource token's `aud`
 
 ## Self-Issued Agent Tokens (Hosted Services)
 
-Hosted services (web apps, APIs, orchestrators) that have a stable URL act as their own Agent Provider per spec §Self-Hosted Agents. They generate a key at startup, publish agent metadata at `/.well-known/aauth-agent.json`, and self-sign agent tokens. No external AP enrollment is needed — see the [Self-Hosted Agent Example](#self-hosted-agent-example) above for the `MapAAuthAgentWellKnown` + `AAuthClientBuilder.SelfIssuing` setup.
+Hosted services (web apps, APIs, concierges) that have a stable URL act as their own Agent Provider per spec §Self-Hosted Agents. They generate a key at startup, publish agent metadata at `/.well-known/aauth-agent.json`, and self-sign agent tokens. No external AP enrollment is needed — see the [Self-Hosted Agent Example](#self-hosted-agent-example) above for the `MapAAuthAgentWellKnown` + `AAuthClientBuilder.SelfIssuing` setup.
 
 ## Bootstrap with an Agent Provider (CLI / Desktop Agents)
 

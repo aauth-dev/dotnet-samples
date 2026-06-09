@@ -212,7 +212,7 @@ The `UpstreamAuthTokenFeature` is set on the HttpContext when a valid auth token
 ```csharp
 app.UseAAuthVerification(new AAuthVerificationOptions
 {
-    ResourceIdentifier = "https://orchestrator.example",
+    ResourceIdentifier = "https://concierge.example",
     RequireIssuerVerification = true,
     MaxActDepth = 5,              // limit chain depth for this resource
     ClockSkew = TimeSpan.FromSeconds(60), // generous skew for distributed systems

@@ -8,6 +8,15 @@
 
 <h2>HWK — Pseudonymous Signing</h2>
 
+<details class="alert alert-primary aria-narrative" open>
+    <summary>📖 What Aria is trying to do</summary>
+    Aria (your AI travel assistant) wants to look up your saved
+    travel preferences from the <strong>Profile</strong> server, but you'd rather stay
+    anonymous. It signs every request with a freshly generated key, so the server
+    recognises a consistent visitor (the key's thumbprint) without ever learning who
+    you really are.
+</details>
+
 <p>
     The simplest mode. No enrollment required. Generate a key and sign requests.
     The resource sees a stable pseudonymous identity (the key's JWK thumbprint)

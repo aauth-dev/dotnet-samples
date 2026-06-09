@@ -1,14 +1,14 @@
 using System.Collections.Concurrent;
 
-namespace Orchestrator;
+namespace Concierge;
 
 /// <summary>
-/// Demo-only in-memory store of interaction-chained requests the Orchestrator
+/// Demo-only in-memory store of interaction-chained requests the Concierge
 /// has deferred back to its caller (AAuth protocol §Interaction Chaining).
 /// </summary>
 /// <remarks>
-/// <para>When the Orchestrator's downstream token exchange returns
-/// <c>202 requirement=interaction</c>, the Orchestrator (which has no user of
+/// <para>When the Concierge's downstream token exchange returns
+/// <c>202 requirement=interaction</c>, the Concierge (which has no user of
 /// its own) cannot relay the interaction. Instead it persists an entry here,
 /// re-emits its <em>own</em> <c>202</c> to the caller with
 /// <c>Location=/pending/{id}</c>, and passes through the downstream PS's

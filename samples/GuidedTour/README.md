@@ -10,8 +10,14 @@ hop.
 
 ![Tour Screenshot](tour-screenshot.png)
 
+The root page (`/`) is an **Overview** that introduces Aria — the AI
+travel assistant used throughout the demos — and indexes every flow with
+a one-line description of what Aria is trying to do. Each card deep-links
+into the live walkthrough at `/tour?flow=<Flow>`; the tour's topbar has an
+**← Overview** link back.
+
 A swim-lane sequence diagram across up to four actors — **Agent**,
-**Orchestrator**, **Resource**, **Person Server** — with a payload
+**Concierge**, **Resource**, **Person Server** — with a payload
 inspector on the right that decodes each JWT and shows the canonical
 RFC 9421 signature base for every signed request. Eight flows are
 available, switchable at runtime from the topbar **Mode** picker:
@@ -25,7 +31,7 @@ available, switchable at runtime from the topbar **Mode** picker:
 * **PS-Asserted (Deferred)** (9 steps) — three-party flow where the PS
   parks the request on `202 Accepted` and asks the user to consent before
   the `auth_token` is issued.
-* **Call Chain / Multi-Agent** (7 steps) — the agent calls an Orchestrator
+* **Call Chain / Multi-Agent** (7 steps) — the agent calls a Concierge
   (intermediate service) which chains downstream to a Resource, producing
   nested `act` claims that record the full delegation path.
 * **Federated (Four-Party)** (7 steps; 10 on the interactive path) — the
@@ -48,9 +54,9 @@ available, switchable at runtime from the topbar **Mode** picker:
   governs two very different kinds of access. An out-of-mission elevated
   scope first triggers a **clarification chat** (the PS asks *why*, the
   agent answers) before the user approves it; then a **mission-forwarded
-  call chain** (Agent → Orchestrator → Calendar) flows **silently** because
+  call chain** (Agent → Concierge → Calendar) flows **silently** because
   both hops are in the mission's scope. The PS's mission log records the
-  whole trail. Requires a Person Server and an Orchestrator URL.
+  whole trail. Requires a Person Server and a Concierge URL.
 
 When `PersonServerUrl` is empty in `appsettings.json`, the picker locks
 to Identity-based (the three-party options are disabled). You can also set
@@ -134,23 +140,23 @@ Steps 1–4 are the same as **Direct Grant**. From step 5 onward:
 
 ### Call Chain / Multi-Agent (7 steps)
 
-Demonstrates multi-agent delegation. The agent calls an Orchestrator
+Demonstrates multi-agent delegation. The agent calls a Concierge
 (an intermediate AAuth-protected service) which itself calls a downstream
 Resource (Calendar), forwarding the caller's auth_token as `upstream_token`
 to produce a nested `act` claim.
 
-1. Discover Orchestrator metadata — unsigned `GET /.well-known/aauth-resource.json`.
-2. Signed `GET /` → **`401`** (agent token challenge from Orchestrator).
-3. Parse the Orchestrator's 401 challenge (resource_token).
+1. Discover Concierge metadata — unsigned `GET /.well-known/aauth-resource.json`.
+2. Signed `GET /` → **`401`** (agent token challenge from Concierge).
+3. Parse the Concierge's 401 challenge (resource_token).
 4. Discover Person Server — unsigned `GET /.well-known/aauth-person.json`.
 5. Signed `POST /token` (exchange) → **`200`** + `auth_token` scoped to
-   the Orchestrator.
+   the Concierge.
 6. Signed `GET /` carrying the `auth_token` → **`200`**. Internally the
-   Orchestrator performs its own challenge/exchange/retry cycle against
+   Concierge performs its own challenge/exchange/retry cycle against
    Calendar's `GET /events` endpoint, shown as sub-step arrows in the sequence
    diagram.
 7. Inspect multi-agent result — view the combined response with nested
-   `act` claims proving the full Agent → Orchestrator → Resource chain.
+   `act` claims proving the full Agent → Concierge → Resource chain.
 
 > [!TIP]
 > The PS-Asserted (Deferred) flow only fires when the Person Server is
@@ -167,7 +173,7 @@ From the repo root:
 make demo
 ```
 
-Starts the resource servers (Profile, Calendar, Trips, Wallet), Orchestrator,
+Starts the resource servers (Profile, Calendar, Trips, Wallet), Concierge,
 MockPersonServer (with `RequireConsent=true`), MockAgentProvider, and the Guided
 Tour together. Open <http://localhost:5400> and flip the topbar mode picker to
 **Call Chain** or **Deferred** to exercise those paths.
@@ -178,8 +184,8 @@ Tour together. Open <http://localhost:5400> and flip the topbar mode picker to
 # Terminal 1 — Resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003)
 make resources
 
-# Terminal 2 — Orchestrator (port 5200)
-dotnet run --project samples/Orchestrator
+# Terminal 2 — Concierge (port 5200)
+dotnet run --project samples/Concierge
 
 # Terminal 3 — Person Server (port 5100)
 MockPersonServer__RequireConsent=true dotnet run --project samples/MockPersonServer
@@ -204,7 +210,7 @@ with **Run step**).
 | `GuidedTour:CalendarUrl` | `http://localhost:5001` | Calendar (PS-asserted) resource server base URL. |
 | `GuidedTour:TripsUrl` | `http://localhost:5002` | Trips (mission-aware) resource server base URL. |
 | `GuidedTour:WalletUrl` | `http://localhost:5003` | Wallet (federated) resource server base URL. |
-| `GuidedTour:OrchestratorUrl` | `http://localhost:5200` | Orchestrator base URL for the call-chain flow. Set empty to disable that picker option. |
+| `GuidedTour:ConciergeUrl` | `http://localhost:5200` | Concierge base URL for the call-chain flow. Set empty to disable that picker option. |
 | `GuidedTour:PersonServerUrl` | `http://localhost:5100` | PS base URL. Set empty to lock the picker to identity-based mode. |
 | `GuidedTour:AgentProviderUrl` | `http://localhost:5301` | AP base URL. When set, bootstrap enrols with the real AP instead of self-signing. |
 | `GuidedTour:AgentId` | `aauth:tour-agent@ap.example` | Value placed in the agent token's `sub`. |

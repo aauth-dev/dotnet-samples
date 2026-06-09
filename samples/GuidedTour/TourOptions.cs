@@ -98,10 +98,10 @@ public sealed class TourOptions
     public string? AgentProviderUrl { get; set; }
 
     /// <summary>
-    /// Optional Orchestrator URL for the call-chain flow. When set, the
+    /// Optional Concierge URL for the call-chain flow. When set, the
     /// call-chain tour targets this URL instead of the Calendar.
     /// </summary>
-    public string? OrchestratorUrl { get; set; }
+    public string? ConciergeUrl { get; set; }
 
     /// <summary>
     /// Optional Access Server URL for the four-party federated flow. When set,

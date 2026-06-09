@@ -23,8 +23,8 @@ import { approveInPopup, denyInPopup } from '../../../tests/e2e/helpers/consent'
  *      answers (step 8, 204) — and only then prompts the user (step 10),
  *      issuing the elevated auth_token on the next poll (step 11).
  *   3. Mission-forwarded call chain (step 13): the SAME mission drives an
- *      Agent → Orchestrator → Trips chain. Both hops (`orchestrate`,
- *      `trips.read`) are in mission scope, so the Orchestrator forwards the
+ *      Agent → Concierge → Trips chain. Both hops (`concierge`,
+ *      `trips.read`) are in mission scope, so the Concierge forwards the
  *      `AAuth-Mission` header downstream and the whole chain resolves SILENTLY.
  *
  * The PS's mission log (step 14) records it all — including the clarification
@@ -80,12 +80,12 @@ test.describe('Mission + Call Chain (Guided Tour)', () => {
     await selectStep(page, 6);
     await expectResponse(page, 202, ['clarification']);
     const clarify = (await readResponseJson(page)) as Record<string, unknown>;
-    expect(String(clarify.clarification)).toContain('elevated access');
+    expect(String(clarify.clarification)).toContain('book and pay');
 
     // Step 8 ("Answer the clarification → 204"): the agent's answer is recorded.
     await selectStep(page, 7);
     await expectResponse(page, 204);
-    await expect(page.locator('section.payload')).toContainText('triage the inbox');
+    await expect(page.locator('section.payload')).toContainText('reserve and pay');
 
     // Step 12 ("Replay GET /trips/book → 200"): the elevated result.
     await selectStep(page, 11);
@@ -96,7 +96,7 @@ test.describe('Mission + Call Chain (Guided Tour)', () => {
 
     // Step 13 ("Mission-forwarded call chain → 200 (SILENT)"): one mission
     // governed every hop. The combined result nests Trips' mission-bound
-    // downstream object reached via the Orchestrator.
+    // downstream object reached via the Concierge.
     await selectStep(page, 12);
     await expectResponse(page, 200, ['downstream']);
     const chain = (await readResponseJson(page)) as Record<string, unknown>;

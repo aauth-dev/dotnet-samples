@@ -62,14 +62,14 @@ public sealed class StepRecord
     /// <summary>
     /// Optional sub-steps rendered as smaller arrows in the sequence diagram
     /// beneath this step's main arrow. Used to depict server-side actions
-    /// (e.g. what the Orchestrator does internally on call-chaining).
+    /// (e.g. what the Concierge does internally on call-chaining).
     /// </summary>
     public IReadOnlyList<SubStep>? SubSteps { get; init; }
 
     /// <summary>
     /// Label shown on the sub-steps box, naming the component these inner
-    /// steps run inside (e.g. "inside orchestrator", "inside person server").
-    /// Defaults to "inside orchestrator" when not set.
+    /// steps run inside (e.g. "inside concierge", "inside person server").
+    /// Defaults to "inside concierge" when not set.
     /// </summary>
     public string? SubStepsLabel { get; init; }
 
@@ -92,7 +92,7 @@ public enum Actor
     Resource,
     PersonServer,
     AgentProvider,
-    Orchestrator,
+    Concierge,
     AccessServer,
 }
 

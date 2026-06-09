@@ -15,7 +15,7 @@ AP_PROJECT     := samples/MockAgentProvider/MockAgentProvider.csproj
 TOUR_PROJECT   := samples/GuidedTour/GuidedTour.csproj
 AGENT_PROJECT  := samples/AgentConsole/AgentConsole.csproj
 SAMPLE_PROJECT := samples/SampleApp/SampleApp.csproj
-ORCH_PROJECT   := samples/Orchestrator/Orchestrator.csproj
+CONCIERGE_PROJECT   := samples/Concierge/Concierge.csproj
 LIVE_PROJECT   := samples/LiveWhoAmITest/LiveWhoAmITest.csproj
 MISSION_PROJECT := samples/MissionAgent/MissionAgent.csproj
 AS_PROJECT     := samples/MockAccessServer/MockAccessServer.csproj
@@ -26,7 +26,7 @@ TRIPS_URL    := http://localhost:5002
 WALLET_URL   := http://localhost:5003
 PS_URL     := http://localhost:5100
 AP_URL     := http://localhost:5301
-ORCH_URL   := http://localhost:5200
+CONCIERGE_URL   := http://localhost:5200
 TOUR_URL   := http://localhost:5400
 SAMPLE_URL := http://localhost:5240
 AS_URL     := http://localhost:5500
@@ -64,7 +64,7 @@ endef
 .DEFAULT_GOAL := help
 
 .PHONY: help build restore test test-unit test-conformance format clean \
-        resources ps ps-consent ap orchestrator tour sampleapp agent live \
+        resources ps ps-consent ap concierge tour sampleapp agent live \
         demo demo-mission agent-mission \
         keycloak access-server demo-keycloak \
         agent-federated agent-reset \
@@ -122,8 +122,8 @@ ps-consent: ## Run MockPersonServer with RequireConsent=true (deferred-flow demo
 ap: ## Run the MockAgentProvider (port 5301)
 	$(DOTNET) run --project $(AP_PROJECT)
 
-orchestrator: ## Run the Orchestrator service (port 5200)
-	$(DOTNET) run --project $(ORCH_PROJECT)
+concierge: ## Run the Concierge service (port 5200)
+	$(DOTNET) run --project $(CONCIERGE_PROJECT)
 
 tour: ## Run the GuidedTour Blazor app (port 5400)
 	$(DOTNET) run --project $(TOUR_PROJECT)
@@ -150,7 +150,7 @@ demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. f
 	@echo "   Calendar:           $(CALENDAR_URL)         (three-party resource server)"
 	@echo "   Trips:              $(TRIPS_URL)         (mission-aware resource server)"
 	@echo "   Wallet:             $(WALLET_URL)         (four-party resource server)"
-	@echo "   Orchestrator:       $(ORCH_URL)         (mission orchestrator)"
+	@echo "   Concierge:       $(CONCIERGE_URL)         (mission concierge)"
 	@echo "   MockPersonServer:   $(PS_URL)         (RequireConsent=true)"
 	@echo "   MockAgentProvider:  $(AP_URL)         (agent registry)"
 	@echo "   MockAccessServer:   $(AS_URL)         (stub, RequireConsent=true)"
@@ -166,7 +166,7 @@ demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. f
 	$(DOTNET) run --project $(CALENDAR_PROJECT) & \
 	$(DOTNET) run --project $(TRIPS_PROJECT) & \
 	$(DOTNET) run --project $(WALLET_PROJECT) & \
-	$(DOTNET) run --project $(ORCH_PROJECT) & \
+	$(DOTNET) run --project $(CONCIERGE_PROJECT) & \
 	$(DOTNET) run --project $(AP_PROJECT) & \
 	AccessServer__PolicyProvider=stub AccessServer__RequireConsent=true $(DOTNET) run --project $(AS_PROJECT) & \
 	$(DOTNET) run --project $(TOUR_PROJECT) & \
@@ -196,7 +196,7 @@ demo-keycloak: ## Four-party federated demo (both UIs) with the live Keycloak po
 	@echo " Backend services:"
 	@echo "   Keycloak:           $(KEYCLOAK_URL)         (admin/admin, realm 'aauth')"
 	@echo "   Wallet:             $(WALLET_URL)         (four-party resource server, /wallet)"
-	@echo "   Orchestrator:       $(ORCH_URL)         (mission orchestrator)"
+	@echo "   Concierge:       $(CONCIERGE_URL)         (mission concierge)"
 	@echo "   MockPersonServer:   $(PS_URL)         (RequireConsent=true)"
 	@echo "   MockAgentProvider:  $(AP_URL)         (agent registry)"
 	@echo "   MockAccessServer:   $(AS_URL)         (PolicyProvider=keycloak)"
@@ -216,7 +216,7 @@ demo-keycloak: ## Four-party federated demo (both UIs) with the live Keycloak po
 	@echo ""
 	@trap 'trap - INT TERM EXIT; echo; echo "Stopping..."; docker rm -f aauth-keycloak >/dev/null 2>&1; kill 0' INT TERM EXIT; \
 	$(DOTNET) run --no-build --project $(WALLET_PROJECT) & \
-	$(DOTNET) run --no-build --project $(ORCH_PROJECT) & \
+	$(DOTNET) run --no-build --project $(CONCIERGE_PROJECT) & \
 	MockPersonServer__RequireConsent=true $(DOTNET) run --no-build --project $(PS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(AP_PROJECT) & \
 	$(KEYCLOAK_AS_ENV) \

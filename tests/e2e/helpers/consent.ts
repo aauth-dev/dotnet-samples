@@ -17,7 +17,7 @@ import { Urls } from './agents';
  * Grant standing consent for (agent, resource[, scope]) so /token issues
  * immediately. The PS keys consent by (agent, resource, scope); pass `scope`
  * when the resource requires something other than the default `calendar.read` (e.g.
- * the Orchestrator's `orchestrate` scope on the first call-chain hop).
+ * the Concierge's `concierge` scope on the first call-chain hop).
  */
 export async function grantConsent(
   request: APIRequestContext,

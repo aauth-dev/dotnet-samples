@@ -34,14 +34,14 @@ export const SigningMode = {
 } as const;
 export type SigningMode = (typeof SigningMode)[keyof typeof SigningMode];
 
-/** Navigate to the tour root and wait until the Blazor circuit is interactive. */
+/** Navigate to the tour page and wait until the Blazor circuit is interactive. */
 export async function openTour(page: Page): Promise<void> {
-  await page.goto('/');
+  await page.goto('/tour');
   await expect(page.locator('header.topbar h1')).toHaveText('AAuth Guided Tour');
   await waitForInteractive(page, 'button.primary');
 }
 
-/** Planned step counts per flow (AP + PS + Orchestrator all configured). */
+/** Planned step counts per flow (AP + PS + Concierge all configured). */
 const PLAN_STEPS: Record<TourMode, number> = {
   Bootstrap: 3,
   Identity: 2,
@@ -54,11 +54,11 @@ const PLAN_STEPS: Record<TourMode, number> = {
   Federated: 7,
   // Mission (PS-governed): 20 steps across three consent cycles — mission
   // creation (4/5), the out-of-mission elevated scope token (12/13), and the
-  // out-of-scope delete_inbox permission (18/19).
+  // out-of-scope cancel_booking permission (18/19).
   Mission: 20,
   // Mission + Call Chain: one mission governs a clarified elevated-scope
   // grant (creation 4/5, elevated 10/11 with a clarification chat at 7/8) and
-  // a silent mission-forwarded call chain (Agent → Orchestrator → Trips).
+  // a silent mission-forwarded call chain (Agent → Concierge → Trips).
   MissionCallChain: 14,
 };
 

@@ -65,7 +65,7 @@ bool interactive = true;
 // gate 2a). A seeded (resource, scope) pair lets that resource access resolve
 // *silently* (reason = InScope) instead of prompting. By default the mission
 // approves `trips.read`, mirroring the SampleApp mission demo: the Trips token gate
-// (steps 3-4) is silent while the elevated scope and the delete_inbox tool still
+// (steps 3-4) is silent while the elevated scope and the cancel_booking tool still
 // prompt. Pass --mission-approved to replace this default set.
 var missionApprovedScopes = new List<string> { ResourceScope };
 bool missionApprovedOverridden = false;
@@ -183,14 +183,14 @@ Section("2. Propose a mission");
 // the agent quotes on every later request to bind it to this mission. In
 // interactive mode the PS shows a browser consent screen here; in --auto mode it
 // resolves the approval itself.
-var sendEmailTool = new MissionTool("send_email", "Send an email on the user's behalf");
+var addToCalendarTool = new MissionTool("add_to_calendar", "Add an itinerary item to the calendar");
 var session = await governance.ProposeMissionAsync(new MissionProposal(
-    "Help the user keep their inbox under control for the next hour.")
+    "Plan my weekend trip to Seattle.")
 {
     Tools = new[]
     {
-        sendEmailTool,
-        new MissionTool("summarize", "Summarize a thread"),
+        addToCalendarTool,
+        new MissionTool("compare_options", "Compare flight and hotel options"),
     },
 }, GovernanceFor("Approve this mission and its tools"));
 // The session wraps the approved mission and auto-threads its claim
@@ -237,7 +237,7 @@ Section(elevatedScopeMissionApproved
     ? "5. Access an ELEVATED scope — IN SCOPE (silent, no prompt)"
     : "5. Access an ELEVATED scope — OUT OF MISSION (prompt)");
 // The elevated endpoint demands `trips.book`, a scope the mission
-// never declared and whose intent ("keep the inbox under control") does not
+// never declared and whose intent ("plan my weekend trip") does not
 // cover it. The PS cannot grant it silently: out-of-mission scopes are NOT
 // auto-denied — the PS prompts the user (§Agent Token Request gate 3, §Scopes).
 // Approve in the browser and the consent accrues to the mission; deny and the
@@ -259,27 +259,27 @@ catch (AAuthInteractionDeniedException)
 }
 
 Section("6. Request a permission for a pre-approved tool — silent");
-// `send_email` is an approved tool, so the SDK short-circuits to granted
+// `add_to_calendar` is an approved tool, so the SDK short-circuits to granted
 // without ever calling the PS (§Permission Endpoint). We still hold the
-// sendEmailTool reference from the proposal, so we ask via tool.ToAction()
+// addToCalendarTool reference from the proposal, so we ask via tool.ToAction()
 // rather than re-typing the action name.
-var preApproved = await session.RequestPermissionAsync(sendEmailTool.ToAction());
-Console.WriteLine($"   send_email      : {(preApproved.IsGranted ? "granted" : "denied")} ({preApproved.Reason})");
+var preApproved = await session.RequestPermissionAsync(addToCalendarTool.ToAction());
+Console.WriteLine($"   add_to_calendar : {(preApproved.IsGranted ? "granted" : "denied")} ({preApproved.Reason})");
 
 Section("7. Request a permission for a NON-pre-approved tool");
-// `delete_inbox` is not an approved tool, so the PS is consulted and the user
+// `cancel_booking` is not an approved tool, so the PS is consulted and the user
 // is prompted to decide. The session threads the mission claim automatically.
 var adHoc = await session.RequestPermissionAsync(
-    new MissionAction("delete_inbox"),
-    options: GovernanceFor("Permission to permanently delete the inbox"));
-Console.WriteLine($"   delete_inbox    : {(adHoc.IsGranted ? "granted" : "denied")} ({adHoc.Reason})");
+    new MissionAction("cancel_booking"),
+    options: GovernanceFor("Permission to cancel an existing booking"));
+Console.WriteLine($"   cancel_booking  : {(adHoc.IsGranted ? "granted" : "denied")} ({adHoc.Reason})");
 
 Section("8. Report an action to the audit endpoint");
 // After acting, the agent records what it did under the mission (§Audit Endpoint).
-await session.RecordAuditAsync(sendEmailTool.ToAction(),
-    description: "Sent a reply to the design-review thread.",
+await session.RecordAuditAsync(addToCalendarTool.ToAction(),
+    description: "Saved the morning flight to the itinerary.",
     result: new JsonObject { ["status"] = "success" });
-Console.WriteLine("   recorded send_email = success");
+Console.WriteLine("   recorded add_to_calendar = success");
 
 Section("9. Ask the user a question");
 var answer = await session.AskQuestionAsync(
@@ -290,7 +290,7 @@ Console.WriteLine($"   user answered   : {answer ?? "(no answer)"}");
 
 Section("10. Propose mission completion (terminates the mission)");
 var terminated = await session.ProposeCompletionAsync(
-    "Inbox triaged: 12 read, 3 replied, 1 deleted.",
+    "Trip planned: 3 flights compared, 2 hotels shortlisted, 1 itinerary saved.",
     GovernanceFor("Your agent says the mission is done"));
 Console.WriteLine($"   mission ended   : {terminated}");
 

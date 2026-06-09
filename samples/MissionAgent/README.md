@@ -32,7 +32,7 @@ different PS endpoints:
   referred to the user (§Permission Endpoint).
 
 So `trips.read` and `trips.book` are **scopes** (steps 3–5, via the
-token endpoint) and `send_email` / `delete_inbox` are **tools** (steps 6–7, via
+token endpoint) and `add_to_calendar` / `cancel_booking` are **tools** (steps 6–7, via
 the permission endpoint).
 
 This sample drives the whole lifecycle against the live mock servers:
@@ -58,9 +58,9 @@ MockAgentProvider (:5301)  ->  MockPersonServer (:5100)  ->  Trips (:5002)
    `trips.book`). This scope falls **outside** the mission's intent,
    so the PS prompts (gate 3) — out-of-mission scopes are never
    auto-denied (§Scopes).
-6. **Request a pre-approved tool** permission (`send_email`) — granted silently,
+6. **Request a pre-approved tool** permission (`add_to_calendar`) — granted silently,
    without ever calling the PS (§Permission Endpoint).
-7. **Request a non-pre-approved tool** permission (`delete_inbox`) — the PS is
+7. **Request a non-pre-approved tool** permission (`cancel_booking`) — the PS is
    consulted and the user is prompted.
 8. **Report an action** to the audit endpoint (§Audit Endpoint).
 9. **Ask the user a question** via the interaction endpoint.
@@ -118,13 +118,13 @@ sequenceDiagram
     R-->>Agent: 200 — elevated claims
 
     Note over Agent,PS: Permission for a local action (no resource involved)
-    Agent->>PS: POST /permission {action: send_email}
-    Note right of PS: send_email is a pre-approved tool
+    Agent->>PS: POST /permission {action: add_to_calendar}
+    Note right of PS: add_to_calendar is a pre-approved tool
     PS-->>Agent: granted silently — no user prompt
-    Agent->>PS: POST /permission {action: delete_inbox}
-    Note right of PS: delete_inbox is NOT a pre-approved tool
+    Agent->>PS: POST /permission {action: cancel_booking}
+    Note right of PS: cancel_booking is NOT a pre-approved tool
     rect rgb(124, 58, 237)
-        Note over User,PS: 🖥️ BROWSER CONSENT SCREEN — local action<br/>shows the mission + approved tools, then<br/>"delete_inbox is not pre-approved" → approve?
+        Note over User,PS: 🖥️ BROWSER CONSENT SCREEN — local action<br/>shows the mission + approved tools, then<br/>"cancel_booking is not pre-approved" → approve?
         PS->>User: approve this action?
         User-->>PS: ✅ approve
     end
@@ -137,9 +137,9 @@ sequenceDiagram
 > request is checked against. **(2) Out-of-mission scope** — the elevated
 > `trips.book` falls outside the mission's intent, so the PS asks
 > before issuing the elevated token. **(3) Out-of-tool permission** — a local
-> `action` (`delete_inbox`) that isn't one of the mission's `approved_tools`, so
+> `action` (`cancel_booking`) that isn't one of the mission's `approved_tools`, so
 > the PS asks. The `trips.read` token gate (steps 3–4) and the pre-approved
-> `send_email` tool (step 6) are granted **silently** and never reach a screen.
+> `add_to_calendar` tool (step 6) are granted **silently** and never reach a screen.
 > In `--auto` mode each screen is resolved by the PS's scripted default instead
 > of a human click, but they are the same decision points.
 >
@@ -170,7 +170,7 @@ flowchart TD
 
 A mission carries **two independent** notions of "approved":
 
-- **Approved tools** (`send_email`, `summarize`) gate the **permission**
+- **Approved tools** (`add_to_calendar`, `compare_options`) gate the **permission**
   endpoint (step 6/7), *not* token issuance.
 - **In-scope `(resource, scope)` pairs** gate **silent token issuance**
   (gate 2a). By default this sample declares `trips.read` as mission-approved

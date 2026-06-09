@@ -57,7 +57,7 @@ apps:
 | Trips (resource) | 5002 |
 | Wallet (resource) | 5003 |
 | MockPersonServer (`RequireConsent=true`) | 5100 |
-| Orchestrator | 5200 |
+| Concierge | 5200 |
 | MockAgentProvider | 5301 |
 | MockAccessServer | 5500 |
 | GuidedTour | 5400 |
@@ -80,7 +80,7 @@ Otherwise Playwright starts them and waits on each service's health endpoint.
   outcome — the rendered HTTP status (e.g. `200`) and the returned claims/scheme
   shown in the demo's response panel — not just that a step "completed".
 - **Call-chain flow.** The SampleApp call-chain spec exercises the multi-hop
-  Agent → Orchestrator → Calendar delegation and asserts the rendered `200` plus
+  Agent → Concierge → Calendar delegation and asserts the rendered `200` plus
   the nested `act` chain in the payload. It is the first interactive SampleApp
   spec to click its button, so it uses `clickAndConfirm` to absorb the Blazor
   cold-circuit first-click drop.

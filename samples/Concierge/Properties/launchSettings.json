@@ -1,6 +1,6 @@
 {
   "profiles": {
-    "Orchestrator": {
+    "Concierge": {
       "commandName": "Project",
       "dotnetRunMessages": true,
       "launchBrowser": false,

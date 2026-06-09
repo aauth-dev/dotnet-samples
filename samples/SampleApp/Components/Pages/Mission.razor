@@ -16,6 +16,14 @@
 
 <h2>Mission — the Person Server governs every step</h2>
 
+<details class="alert alert-primary aria-narrative" open>
+    <summary>📖 What Aria is trying to do</summary>
+    You hand Aria (your AI travel assistant) a mission — "plan and
+    book my trip." From then on the Person Server governs every step under that mission,
+    letting Aria browse <strong>Trips</strong> freely (<code>trips.read</code>) but gating
+    an actual booking (<code>trips.book</code>) until you confirm the spend.
+</details>
+
 <p>
     A <strong>mission</strong> is a durable, human-approved statement of intent plus the
     tools the agent may use (§Missions). Once approved, the Person Server governs every
@@ -58,14 +66,14 @@ var governance = new AAuthGovernanceClient(signed, metadata, personServer, gover
 //    A proposal carries a Markdown description + an optional `tools`
 //    list ONLY. It declares NO scopes — scopes are never pre-listed
 //    on a mission (§Mission Creation).
-var sendEmailTool = new MissionTool("send_email", "Send email");
+var addToCalendarTool = new MissionTool("add_to_calendar", "Add to calendar");
 var session = await governance.ProposeMissionAsync(
-    new MissionProposal("Keep the inbox under control for an hour.")
+    new MissionProposal("Plan my weekend trip to Seattle.")
     {
         Tools = new[]
         {
-            sendEmailTool,
-            new MissionTool("summarize", "Summarize a thread"),
+            addToCalendarTool,
+            new MissionTool("compare_options", "Compare options"),
         },
     });
 var mission = session.Mission; // session threads the claim + PS for you
@@ -109,13 +117,13 @@ var elevated = await ExchangeForScopeAsync(
     $"{resourceOrigin}/protected_endpoint/elevated", mission, governanceOptions);
 
 // 4. Permission for a pre-approved tool (SILENT — no PS call).
-//    We still hold the sendEmailTool reference from the proposal above.
-var sendEmail = await session.RequestPermissionAsync(sendEmailTool.ToAction());
+//    We still hold the addToCalendarTool reference from the proposal above.
+var addToCalendar = await session.RequestPermissionAsync(addToCalendarTool.ToAction());
 
 // 5. Permission for a non-approved tool (PROMPT — the PS asks). The
 //    session injects the mission claim and the bound options.
-var deleteInbox = await session.RequestPermissionAsync(
-    new MissionAction("delete_inbox"));</code></pre>
+var cancelBooking = await session.RequestPermissionAsync(
+    new MissionAction("cancel_booking"));</code></pre>
     </div>
     <div class="col-md-6">
         <h5>Resource — protecting the action with a scope</h5>
@@ -127,8 +135,8 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
     SigningKeys = new() { [kid] = resourceKey },
     ScopeDescriptions = new()
     {
-        ["trips.read"] = "See basic profile information",
-        ["trips.book"] = "See your full account and profile history",
+        ["trips.read"] = "Browse trip options and availability",
+        ["trips.book"] = "Book a trip (reserve and pay)",
     },
 });
 
@@ -181,16 +189,16 @@ app.MapGet("/protected_endpoint/elevated", (HttpContext ctx) =&gt;
 <div class="row mt-4">
     <div class="col-md-6">
         <h5>Client — running the approved tool</h5>
-        <pre><code class="language-csharp">// Gate 5 returned `granted` for delete_inbox. It is a LOCAL tool —
+        <pre><code class="language-csharp">// Gate 5 returned `granted` for cancel_booking. It is a LOCAL tool —
 // the agent runs it itself; no resource is involved (§Permission
 // Endpoint). Run it, then record it on the mission log so the PS
 // keeps a complete audit trail (§Audit Endpoint).
-if (deleteInbox.IsGranted)
+if (cancelBooking.IsGranted)
 {
-    await DeleteInboxAsync(); // your own code / MCP tool call
+    await CancelBookingAsync(); // your own code / MCP tool call
     await session.RecordAuditAsync(
-        new MissionAction("delete_inbox"),
-        result: new JsonObject { ["deleted"] = true });
+        new MissionAction("cancel_booking"),
+        result: new JsonObject { ["cancelled"] = true });
 }</code></pre>
     </div>
 </div>
@@ -216,7 +224,7 @@ if (deleteInbox.IsGranted)
         <small>
             Two gates resolve silently (in-scope token, pre-approved tool); three prompt
             you in a new tab (mission creation, the elevated <code>trips.book</code>,
-            the <code>delete_inbox</code> action).
+            the <code>cancel_booking</code> action).
         </small>
     </p>
 }
@@ -385,14 +393,14 @@ if (deleteInbox.IsGranted)
 
             // ---- Gate 1: propose the mission (PROMPT) ----------------------
             _currentGate = "Mission creation";
-            var sendEmailTool = new MissionTool("send_email", "Send an email on the user's behalf");
+            var addToCalendarTool = new MissionTool("add_to_calendar", "Add an itinerary item to the calendar");
             var session = await governance.ProposeMissionAsync(new MissionProposal(
-                "Help the user keep their inbox under control for the next hour.")
+                "Plan my weekend trip to Seattle.")
             {
                 Tools = new[]
                 {
-                    sendEmailTool,
-                    new MissionTool("summarize", "Summarize a thread"),
+                    addToCalendarTool,
+                    new MissionTool("compare_options", "Compare flight and hotel options"),
                 },
             });
             // The session wraps the approved mission and threads its claim + PS
@@ -427,8 +435,8 @@ if (deleteInbox.IsGranted)
             await InvokeAsync(StateHasChanged);
 
             // ---- Gate 3: access an ELEVATED scope (PROMPT, out of mission) --
-            // The mission named no scopes and its intent ("keep the inbox under
-            // control") does not cover `trips.book`. The PS cannot
+            // The mission named no scopes and its intent ("plan my weekend trip")
+            // does not cover `trips.book`. The PS cannot
             // silently approve this exchange, so it prompts the user before
             // minting the auth_token (§Agent Token Request gate 3, §Scopes).
             _currentGate = "Resource token (elevated)";
@@ -462,43 +470,43 @@ if (deleteInbox.IsGranted)
             await InvokeAsync(StateHasChanged);
 
             // ---- Gate 4: permission for a pre-approved tool (SILENT) --------
-            // We still hold the sendEmailTool reference from Gate 1, so we ask
+            // We still hold the addToCalendarTool reference from Gate 1, so we ask
             // via tool.ToAction() rather than re-typing the action name. The
             // session injects the mission claim automatically.
-            var sendEmail = await session.RequestPermissionAsync(sendEmailTool.ToAction());
-            _steps.Add(new GateStep(4, "Permission send_email", Prompted: false,
-                Outcome: sendEmail.IsGranted ? "granted" : "denied",
+            var addToCalendar = await session.RequestPermissionAsync(addToCalendarTool.ToAction());
+            _steps.Add(new GateStep(4, "Permission add_to_calendar", Prompted: false,
+                Outcome: addToCalendar.IsGranted ? "granted" : "denied",
                 Summary: "Pre-approved tool — resolved locally without a PS round-trip.",
                 Note: "Tools listed in the mission's approved_tools are granted without calling the " +
                       "permission endpoint (§Permission Endpoint).",
-                Payload: PermissionPayload(sendEmail),
+                Payload: PermissionPayload(addToCalendar),
                 PayloadLabel: "Permission decision"));
             await InvokeAsync(StateHasChanged);
 
             // ---- Gate 5: permission for a non-approved tool (PROMPT) --------
-            _currentGate = "Permission delete_inbox";
+            _currentGate = "Permission cancel_booking";
             try
             {
                 // Not a pre-approved tool: the session threads the mission claim
                 // and the bound deferred-handling options, so the PS prompt is
                 // surfaced automatically.
-                var deleteInbox = await session.RequestPermissionAsync(
-                    new MissionAction("delete_inbox"));
+                var cancelBooking = await session.RequestPermissionAsync(
+                    new MissionAction("cancel_booking"));
                 ClearWaiting();
-                _steps.Add(new GateStep(5, "Permission delete_inbox", Prompted: true,
-                    Outcome: deleteInbox.IsGranted ? "granted" : "denied",
-                    Summary: deleteInbox.IsGranted
+                _steps.Add(new GateStep(5, "Permission cancel_booking", Prompted: true,
+                    Outcome: cancelBooking.IsGranted ? "granted" : "denied",
+                    Summary: cancelBooking.IsGranted
                         ? "Not a pre-approved tool — the PS prompted the user, who approved this action."
                         : "Not a pre-approved tool — the PS prompted the user, who denied this action.",
                     Note: "The permission endpoint returns a decision, not a token. This decision governs " +
                           "the action only; the Gate 2 token above is unchanged (§Permission Endpoint).",
-                    Payload: PermissionPayload(deleteInbox),
+                    Payload: PermissionPayload(cancelBooking),
                     PayloadLabel: "Permission decision"));
             }
             catch (AAuthInteractionDeniedException)
             {
                 ClearWaiting();
-                _steps.Add(new GateStep(5, "Permission delete_inbox", Prompted: true,
+                _steps.Add(new GateStep(5, "Permission cancel_booking", Prompted: true,
                     Outcome: "denied",
                     Summary: "Not a pre-approved tool — the user clicked Deny at the PS consent page.",
                     Note: "The permission endpoint returns a decision, not a token. Denying blocks this " +

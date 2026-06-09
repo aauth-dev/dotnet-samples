@@ -209,10 +209,10 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     {
         var agent = NewAgent();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true });
-        var mission = await ProposeMissionAsync(agent, "row09 approved-tool mission", "send_email");
+        var mission = await ProposeMissionAsync(agent, "row09 approved-tool mission", "add_to_calendar");
 
         var result = await PermissionClientFor(agent)
-            .RequestAsync(new MissionAction("send_email"), mission);
+            .RequestAsync(new MissionAction("add_to_calendar"), mission);
 
         Assert.True(result.IsGranted);
         Assert.Equal(PermissionGrant.Granted, result.Grant);
@@ -223,7 +223,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     {
         var agent = NewAgent();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["approvePermission"] = true });
-        var mission = await ProposeMissionAsync(agent, "row10 prompt-grant mission", "send_email");
+        var mission = await ProposeMissionAsync(agent, "row10 prompt-grant mission", "add_to_calendar");
 
         var request = new PermissionRequest(new MissionAction("delete_file"))
         {
@@ -240,7 +240,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     {
         var agent = NewAgent();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["approvePermission"] = false });
-        var mission = await ProposeMissionAsync(agent, "row11 prompt-deny mission", "send_email");
+        var mission = await ProposeMissionAsync(agent, "row11 prompt-deny mission", "add_to_calendar");
 
         var request = new PermissionRequest(new MissionAction("delete_file"))
         {

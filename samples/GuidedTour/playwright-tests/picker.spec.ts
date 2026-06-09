@@ -32,12 +32,12 @@ test('flow picker offers all eight flows and reacts to selection', async ({ page
     await flow.selectOption('Identity');
     await expect(page.locator('select#signing-mode-select')).toBeVisible({ timeout: 2_000 });
   }).toPass({ timeout: 20_000 });
-  await expect(page.locator('p.flow-picker__desc')).toContainText('access control');
+  await expect(page.locator('details.flow-picker__desc')).toContainText('access control');
 
   // Switching to a three-party flow hides the signing-mode picker again.
   await expect(async () => {
     await flow.selectOption('Autonomous');
     await expect(page.locator('select#signing-mode-select')).toHaveCount(0, { timeout: 2_000 });
   }).toPass({ timeout: 20_000 });
-  await expect(page.locator('p.flow-picker__desc')).toContainText('standing consent');
+  await expect(page.locator('details.flow-picker__desc')).toContainText('standing consent');
 });

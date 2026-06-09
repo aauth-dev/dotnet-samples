@@ -10,7 +10,7 @@ resource servers (Profile, Calendar, Trips, Wallet) live under
 | [Calendar](MockResourceServers/Calendar/) | 5001 | PS-Asserted (three-party) resource server — `/events` (`calendar.read`), `/events/write` (`calendar.write`), `/events/admin` (role `calendar.owner`) |
 | [Trips](MockResourceServers/Trips/) | 5002 | Mission-aware resource server — `/trips` (`trips.read`), `/trips/book` (`trips.book`) |
 | [Wallet](MockResourceServers/Wallet/) | 5003 | Federated (four-party) resource server — `/wallet` (`wallet.read`), `/wallet/charge` (`wallet.charge`) |
-| [Orchestrator](Orchestrator/) | 5200 | Intermediate service — call chaining with nested `act` delegation |
+| [Concierge](Concierge/) | 5200 | Intermediate service — call chaining with nested `act` delegation |
 | [MissionAgent](MissionAgent/) | — | CLI agent — drives the optional, orthogonal **agent governance** layer: proposes a mission, asks per-action permission, records audit, and relays interactions through a PS (§Agent Governance) |
 | [MockPersonServer](MockPersonServer/) | 5100 | Reference Person Server — verifies exchanges, mints auth tokens, federates to an Access Server. **Sample only — not part of the AAuth SDK.** |
 | [MockAgentProvider](MockAgentProvider/) | 5301 | Reference Agent Provider — issues agent tokens, hosts JWKS. **Sample only — not part of the AAuth SDK.** |
@@ -28,7 +28,7 @@ The fastest way to run all samples together:
 make demo
 ```
 
-This starts Profile + Calendar + Trips + Wallet + Orchestrator + MockPersonServer + MockAgentProvider + MockAccessServer (stub) + GuidedTour + SampleApp in parallel, prints their URLs, and tears them down on `Ctrl+C`. Then open the **GuidedTour** at <http://localhost:5400> and click **Run all**, or the **SampleApp** at <http://localhost:5240>.
+This starts Profile + Calendar + Trips + Wallet + Concierge + MockPersonServer + MockAgentProvider + MockAccessServer (stub) + GuidedTour + SampleApp in parallel, prints their URLs, and tears them down on `Ctrl+C`. Then open the **GuidedTour** at <http://localhost:5400> and click **Run all**, or the **SampleApp** at <http://localhost:5240>.
 
 For the **four-party (federated)** flow with an Access Server, `make demo` already
 includes a stub Access Server (no Docker). For the live Keycloak policy engine,
@@ -214,7 +214,7 @@ Implements AP enrollment and JWKS hosting. See [MockAgentProvider/README.md](Moc
 dotnet run --project samples/GuidedTour
 ```
 
-Requires the resource servers (Profile, Calendar, Trips, Wallet), MockPersonServer, Orchestrator, and MockAgentProvider already running (or use `make demo`). See [GuidedTour/README.md](GuidedTour/README.md) for mode configuration.
+Requires the resource servers (Profile, Calendar, Trips, Wallet), MockPersonServer, Concierge, and MockAgentProvider already running (or use `make demo`). See [GuidedTour/README.md](GuidedTour/README.md) for mode configuration.
 
 ### SampleApp
 
@@ -222,7 +222,7 @@ Requires the resource servers (Profile, Calendar, Trips, Wallet), MockPersonServ
 dotnet run --project samples/SampleApp
 ```
 
-Simple Blazor app showing each signing mode as a separate page. Open <http://localhost:5240>. Requires the resource servers (Profile, Calendar, Trips, Wallet), MockPersonServer, and Orchestrator running. MockAgentProvider is needed only for the JWKS-URI enrollment page.
+Simple Blazor app showing each signing mode as a separate page. Open <http://localhost:5240>. Requires the resource servers (Profile, Calendar, Trips, Wallet), MockPersonServer, and Concierge running. MockAgentProvider is needed only for the JWKS-URI enrollment page.
 
 ### LiveWhoAmITest
 
@@ -247,7 +247,7 @@ make restore         # restore NuGet packages
 make test            # run all tests (SDK + conformance)
 make test-unit       # SDK unit + integration tests only
 make test-conformance # spec conformance tests only
-make demo            # start the full stack (resource servers + Orchestrator + PS + AP + AS + both UIs)
+make demo            # start the full stack (resource servers + Concierge + PS + AP + AS + both UIs)
 make resources       # only the four Aria resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003)
 make ps              # MockPersonServer (port 5100)
 make ps-consent      # MockPersonServer with RequireConsent=true

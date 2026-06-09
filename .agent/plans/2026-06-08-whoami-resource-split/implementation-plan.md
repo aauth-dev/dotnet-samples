@@ -421,3 +421,264 @@ flow differently).
 | `tests/AAuth.Conformance` `Scope="whoami"` literals | Arbitrary SDK test values, not sample-coupled. |
 | `aauth-spec/**` | Upstream spec drafts; not ours to rename. |
 | New `wallet.charge` UI step in GuidedTour/SampleApp | Exercised via AgentConsole + Keycloak tests only (mirrors today's `/jwt/admin`); no mandatory new UI flow. |
+
+---
+
+# Narrative-coherence follow-up (Phases 11–16, 2026-06-09)
+
+After the split, a clarity pass added per-flow "What Aria is trying to do"
+narratives and surfaced two off-theme inconsistencies (see research.md
+**Follow-up — narrative coherence pass**). These phases make the whole demo
+surface read as one coherent Aria travel story. **Same guiding rules apply**
+(preservation guarantee, no back-compat aliases, SDK frozen, build 0/0 after
+each phase).
+
+## Phase 11 — Aria narratives + collapsible UX + chevron fix
+
+Add a plain-language "What Aria is trying to do" callout to every SampleApp flow
+page and every GuidedTour flow, gloss the first **Aria** mention with "(your AI
+travel assistant)", clarify the Bootstrap flow's enrol-vs-self-issue audience,
+and make every narrative collapsible so it does not eat screen space.
+
+### Files
+
+| File | Change |
+|---|---|
+| `samples/SampleApp/Components/Pages/{Hwk,JwksUri,JktJwt,Jwt,Deferred,Federated,Mission,CallChain,MissionCallChain}.razor` | Narrative `<details class="alert alert-primary aria-narrative" open>` with `<summary>📖 What Aria is trying to do</summary>`; first Aria glossed. |
+| `samples/SampleApp/wwwroot/app.css` | `details.aria-narrative > summary` styling; `list-style-position: inside` so the disclosure chevron stays inside the padded `.alert` box (overflow fix). |
+| `samples/GuidedTour/Components/Pages/Tour.razor` | `flow-picker__desc` becomes `<details open>` with summary; per-flow "What Aria is trying to do" lead sentence; Bootstrap flow gains the "who enrols vs hosted self-issues" note. |
+| `samples/GuidedTour/wwwroot/app.css` | `flow-picker__desc > summary` styling. |
+| `samples/GuidedTour/playwright-tests/picker.spec.ts` | Locator `p.flow-picker__desc` → `details.flow-picker__desc`. |
+
+### Definition of Done
+
+- [x] Every SampleApp flow page + GuidedTour flow has a collapsible narrative.
+- [x] Disclosure chevron stays inside the SampleApp alert box (no overflow).
+- [x] GuidedTour `picker` e2e passes against the new `details` selector.
+- [x] `dotnet build` 0/0 for SampleApp + GuidedTour.
+
+---
+
+## Phase 12 — Orchestrator → Concierge rename
+
+Rename the intermediate call-chain service to **Concierge** to fit the Aria
+travel narrative (research.md Finding A). Full rename: folder, project, scope,
+identity, config keys, actor enum, Makefile, UI, tests. **Keep port `:5200`.**
+
+### Implementation decisions
+
+- **Name:** `Concierge` (a travel concierge arranges things with other providers
+  on the user's behalf — exactly the Agent → intermediate → downstream pattern).
+- **Scope:** `orchestrate` → `concierge`. Demo-defined, not an SDK constant.
+- **Identity:** `aauth:orchestrator@localhost:5200` → `aauth:concierge@localhost:5200`.
+- **Port:** unchanged (`:5200`) — infra, no narrative value in churn.
+- **Folder/project:** `samples/Orchestrator/` → `samples/Concierge/`,
+  `Orchestrator.csproj` → `Concierge.csproj` (use `git mv` to preserve history).
+- **Config keys:** `OrchestratorUrl` → `ConciergeUrl`, `AAuth:Orchestrator` →
+  `AAuth:Concierge`. The Concierge's own downstream keys (`AAuth:Downstream`,
+  `AAuth:MissionDownstream`) keep their generic names (they describe *what they
+  point at*, not the service).
+- **Actor enum:** `Actor.Orchestrator` → `Actor.Concierge` (GuidedTour swimlane).
+
+### Files
+
+| File | Change |
+|---|---|
+| `samples/Orchestrator/**` → `samples/Concierge/**` | `git mv` folder + `.csproj`; rename namespace/marker if any; scope const `concierge`; default identity `aauth:concierge@…`; comments reframed (concierge arranges downstream calls). |
+| `AAuth.slnx` | Project path + name. |
+| `samples/Concierge/appsettings.json` | `AAuth:AgentId` identity; keep `:5200`. |
+| `samples/SampleApp/appsettings.json` + `Components/Pages/{CallChain,MissionCallChain}.razor` + `Home.razor` | `AAuth:Orchestrator`→`AAuth:Concierge`; UI labels "Orchestrator"→"Concierge"; scope `orchestrate`→`concierge`; local `orchestratorUrl`→`conciergeUrl`. |
+| `samples/GuidedTour/{TourOptions,TourSession,CodeSnippets}.cs` + `Components/Pages/Tour.razor` + `EntityHighlighter.cs` | `OrchestratorUrl`→`ConciergeUrl`; `Actor.Orchestrator`→`Actor.Concierge`; swimlane label; scope payload `concierge`; narrative prose; comments. |
+| `samples/GuidedTour/appsettings.json` | `OrchestratorUrl`→`ConciergeUrl`. |
+| `Makefile` | `ORCH_PROJECT`/`ORCH_URL`→`CONCIERGE_*`; target `orchestrator`→`concierge`; help text + port comment. |
+| `tests/e2e/playwright.config.ts` + `helpers/{agents,consent,tour}.ts` | project boot path; `orchestrator` URL key→`concierge`; identity assertions; comments. |
+| `samples/{SampleApp,GuidedTour}/playwright-tests/*call-chain*.spec.ts` + `mission-call-chain.spec.ts` | identity assertions `aauth:concierge@…`; scope `concierge`; comments. |
+| `docs/workflows/call-chaining.md`, `docs/advanced/interaction-chaining.md`, `docs/reference/{configuration,dependency-injection}.md`, `docs/getting-started.md` | scope/identity/name; narrative; config tables. (Deeper doc prose handled in Phase 15.) |
+
+> **Note:** `src/AAuth` XML-doc mentions of "orchestrator" (2) are generic
+> ("a resource acting as an agent, e.g. an orchestrator") and stay — the SDK is
+> theme-agnostic and frozen.
+
+### Definition of Done
+
+- [x] Folder/project/solution renamed; build 0/0; `make concierge` runs `:5200`.
+- [x] Scope `concierge` + identity `aauth:concierge@…` everywhere in samples/tests.
+- [x] No `Orchestrator`/`orchestrate` left in samples, config, Makefile, or e2e
+      (except the 2 generic SDK doc-comments and historical plan/log entries).
+- [x] Call-chain + mission-call-chain e2e pass (both apps). _(call-chain.spec: 5 passed both apps)_
+
+---
+
+## Phase 13 — Mission travel-theme + stale scope-description cleanup
+
+Re-theme the Mission demo from inbox → trip planning (research.md Finding B),
+preserving all gate semantics; fix stale `whoami`-era scope descriptions.
+
+### Implementation decisions
+
+- **Mission description:** "Plan my weekend trip to Seattle." (planning intent
+  only, so `trips.book` stays legitimately out-of-scope).
+- **Pre-approved tools:** `compare_options` ("Compare flight and hotel
+  options"), `add_to_calendar` ("Add an itinerary item to the calendar").
+- **Non-approved (prompting) tool:** `cancel_booking` ("Cancel an existing
+  booking") — destructive, parallels old `delete_inbox`.
+- **Scopes unchanged:** `trips.read` (silent, in-scope), `trips.book` (prompts).
+- **Clarification strings** (MissionCallChain + conformance seam tests) re-themed
+  to trips (e.g. "Needed to compare available trip options.").
+
+### Files
+
+| File | Change |
+|---|---|
+| `samples/SampleApp/Components/Pages/Mission.razor` | Mission description; tools `compare_options`/`add_to_calendar`/`cancel_booking`; gate commentary + step labels; fix stale scope descriptions (`trips.read`/`trips.book`). |
+| `samples/SampleApp/Components/Pages/MissionCallChain.razor` | Clarification question/answer + any inbox references → trips. |
+| `samples/MissionAgent/Program.cs` + `README.md` | CLI mission proposal strings, tool names, console output labels, mermaid/narrative. |
+| `samples/GuidedTour/TourSession.cs` + `CodeSnippets.cs` + `Components/Pages/Tour.razor` | Mission step titles/narratives, proposal payload tools, gate summary lines, UI prose (`send_email`/`delete_inbox`→new tools). |
+| `tests/AAuth.Conformance/Missions/{MissionHeaderSeamTests,ChallengeClarificationSeamTests}.cs` | Re-theme demo strings (`"Keep the inbox under control"`, `"Needed to summarize the inbox."`) — self-contained, not protocol. |
+| `tests/e2e/helpers/tour.ts` | Step comment `delete_inbox`→`cancel_booking`. |
+| `tests/AAuth.Tests/Integration/MissionAgentFlowTests.cs` | `send_email` demo tool string in row09–11 missions → `add_to_calendar` (keep behavior). |
+
+### Definition of Done
+
+- [x] Mission demo reads as one travel story; no `inbox`/`email`/`send_email`/
+      `delete_inbox`/`summarize` strings remain in samples (grep clean).
+- [x] All five gates still demonstrated (silent in-scope, prompt out-of-scope,
+      silent pre-approved tool, prompt non-approved tool, mission creation).
+- [x] Stale `whoami`-era scope descriptions corrected.
+- [x] Unit + conformance + Mission e2e (both apps) green. _(133 mission/governance conformance + 12 MissionAgent integration green; mission e2e validated in Phase 16 run)_
+
+---
+
+## Phase 14 — Console / CLI code + comment sweep
+
+Explicitly verify the console apps and CLIs (not just the Blazor UIs) carry
+correct code, identities, scopes, and **comments** after Phases 12–13.
+
+### Files
+
+| File | Change |
+|---|---|
+| `samples/Concierge/Program.cs` (ex-Orchestrator) | Header/banner comments reframed to the concierge role; scope/identity correct; any console `Console.WriteLine` labels. |
+| `samples/MissionAgent/Program.cs` | Section banners, gate comments, console output labels all travel-themed and scope-accurate (`trips.read`/`trips.book`, new tools). |
+| `samples/AgentConsole/Program.cs` + `README.md` | Mode→path table (`/pseudonymous`,`/identified`,`/anchored`,`/events`), scope mentions, comments; confirm no `whoami`/`orchestrate` leftovers. |
+| `samples/LiveWhoAmITest/Program.cs` | **Review only** — confirm it is intentionally external (`whoami.aauth.dev`); add a one-line comment clarifying it is deliberately *not* migrated, if missing. |
+
+### Definition of Done
+
+- [x] Each console/CLI builds and runs (`AgentConsole` all modes; `MissionAgent
+      --auto` full lifecycle; `Concierge` serves `:5200`).
+- [x] Comments/banners describe the *current* Aria roles, not legacy ones.
+- [x] `LiveWhoAmITest` clearly marked as the intentional external exception.
+
+---
+
+## Phase 15 — Docs & READMEs refresh (Concierge + mission theme)
+
+Redo the documentation pass focused on the Phase 12–14 changes (the original
+Phase 6 predates them).
+
+### Files
+
+| File | Change |
+|---|---|
+| `samples/Concierge/README.md` (renamed) | Re-title; concierge role; scope `concierge`; identity; curl examples. |
+| `samples/README.md` | Service table row + overview prose: Orchestrator→Concierge. |
+| `samples/MissionAgent/README.md` | Mission narrative + tools (covered in Phase 13; re-verify here). |
+| `docs/workflows/call-chaining.md`, `docs/advanced/interaction-chaining.md` | Concierge name/scope/identity; diagrams; narrative; mission-theme examples. |
+| `docs/reference/configuration.md`, `docs/reference/dependency-injection.md` | `ConciergeUrl`/`AAuth:Concierge` config tables. |
+| `docs/getting-started.md`, `docs/concepts.md` | Generic "orchestrator" prose vs the named Concierge sample; mission tools-vs-scopes example re-themed. |
+| `tests/e2e/README.md` | Service table label. |
+
+### Definition of Done
+
+- [x] No stale `Orchestrator`/`orchestrate`/inbox-mission references in `docs/`
+      or sample READMEs (grep clean, excluding historical plan/log).
+- [x] Config tables list `ConciergeUrl` / `AAuth:Concierge`.
+- [x] Markdown lints/links resolve. _(also re-themed standalone mission examples in mission-governed-access, mission-governance-clients, clarification-chat, error-handling to the trip story for cross-doc coherence)_
+
+---
+
+## Phase 16 — Focused new-reader clarity / consistency / spec-accuracy review
+
+Re-run the Phase 10 three-lens review, scoped to the Phase 11–15 surface.
+
+### Approach
+
+- Reviewer subagent over the changed files with the same three lenses
+  (new-reader comprehension, cross-file consistency, spec accuracy), plus a
+  fourth **theme-coherence** lens: does every flow now read as one Aria travel
+  story (Concierge arranges; the mission plans a trip), with no inbox/email or
+  Orchestrator residue and no scope/description drift?
+- Severity-grade; remediate blockers + majors in owning files; log minors.
+
+### Definition of Done
+
+- [x] Review run; findings severity-graded with file:line (+ cited spec ref for
+      accuracy findings). _(0 blocker, 5 major — all doc-only stale `concierge@ap.example` identities; 0 minor)_
+- [x] All blocker + major findings remediated; minors logged. _(5 majors fixed → `concierge@concierge.example`, consistent with self-hosted identity + the doc's `https://concierge.example`)_
+- [x] A new reader can trace the full Aria narrative — Profile → Calendar →
+      Trips → Wallet, Concierge delegation, and the trip-planning mission —
+      without contradiction. _(verified by review lens D + MissionAgent --auto live run)_
+- [x] `dotnet build AAuth.slnx` 0/0; unit + conformance + e2e green. _(387 unit + 481 conformance + 36 e2e passed, 1 skipped)_
+
+---
+
+## Phase 17 — ASCII flow diagrams → mermaid sequence diagrams
+
+Convert the remaining hand-drawn ASCII flow diagrams in our docs/READMEs to
+mermaid `sequenceDiagram` blocks (the other workflow docs already used mermaid).
+Doc-only; no code or build impact.
+
+### Files
+
+| File | Change |
+|---|---|
+| `samples/Concierge/README.md` | Call-chain flow (Agent → Concierge → PS → Calendar): 401 challenge, `upstream_token` exchange, nested `act`, combined 200. |
+| `docs/advanced/interaction-chaining.md` | Interaction-chaining flow: chained 202, browser consent, poll loop, final 200. |
+| `docs/workflows/call-chaining.md` | One-line scenario topology expanded to a sequence diagram of the 7-step delegation; numbered walkthrough kept alongside. |
+
+### Out of scope (intentionally NOT converted)
+
+- Workflow docs already on mermaid (`ps-asserted-access`, `deferred-consent`,
+  `federated-access`, `resource-managed-access`, `mission-governed-access`).
+- Non-flow ASCII: the key-store directory tree (`key-management.md`), the
+  annotated HTTP-header example (`signing-modes/overview.md`), markdown tables.
+- `aauth-spec/**` ASCII diagrams (upstream drafts).
+
+### Definition of Done
+
+- [x] All three hand-drawn flow diagrams in our docs/READMEs are mermaid
+      sequence diagrams; each accurately reflects the protocol exchange.
+- [x] No plain-fence ASCII *flow* diagrams remain in `docs/` or sample READMEs
+      (verified by grep for box-drawing/arrow art; only non-flow ASCII remains).
+- [x] Diagram actors/messages match the live behavior (Concierge identity,
+      ports, token types) validated in Phases 12–16.
+
+---
+
+## Phase 18 — GuidedTour Overview (home) page
+
+Add a landing page at `/` that introduces Aria + the overall narrative + the
+role of the Guided Tour, and indexes every flow as a card that deep-links into
+the live walkthrough. The tour itself moves to `/tour`.
+
+### Files
+
+| File | Change |
+|---|---|
+| `samples/GuidedTour/Components/Pages/Home.razor` | **New** static landing page: "Meet Aria" intro, four-server legend (Profile/Calendar/Trips/Wallet), the tour's role, and an 8-card flow index linking to `/tour?flow=<Mode>`. |
+| `samples/GuidedTour/Components/Pages/Tour.razor` | `@page "/"` → `@page "/tour"`; add `[SupplyParameterFromQuery] Flow` read in `OnInitializedAsync` to preselect a deep-linked flow; add `← Overview` link in the topbar. |
+| `samples/GuidedTour/wwwroot/app.css` | `.home`, `.intro`, `.flow-index`, `.flow-card*`, `.srv*`, `.topbar__back`/`__tag` styles. |
+| `samples/GuidedTour/README.md` | Document the Overview page + `/tour?flow=` deep-links. |
+| `tests/e2e/helpers/tour.ts` | `openTour` navigates to `/tour`. |
+| `samples/GuidedTour/playwright-tests/smoke.spec.ts` | Smoke loads `/tour`. |
+| `samples/GuidedTour/playwright-tests/home.spec.ts` | **New** specs: overview introduces Aria + indexes all 8 flows; a card deep-links into the matching flow (asserts `#flow-select` value) and `← Overview` returns home. |
+
+### Definition of Done
+
+- [x] `/` shows the Aria intro + the role of the tour + an 8-flow index; `/tour`
+      runs the walkthrough; `/tour?flow=<Mode>` preselects that flow.
+- [x] `home.spec.ts` passes (overview content + deep-link); `smoke` + all
+      existing guided-tour specs pass against the `/tour` route.
+- [x] `dotnet build` 0/0 for GuidedTour; home page verified in-browser.
+

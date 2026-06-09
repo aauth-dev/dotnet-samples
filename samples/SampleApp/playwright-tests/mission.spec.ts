@@ -13,8 +13,8 @@ import { approveInPopup, denyInPopup } from '../../../tests/e2e/helpers/consent'
  *                               mission's intent, so the PS mints silently, gate 2a).
  *   3. Resource token elevated— PROMPT (`trips.book` falls OUTSIDE the
  *                               mission's intent, so the PS prompts, gate 3).
- *   4. Permission send_email  — SILENT (a pre-approved tool resolves locally).
- *   5. Permission delete_inbox— PROMPT (a non-approved tool, so the PS asks).
+ *   4. Permission add_to_calendar  — SILENT (a pre-approved tool resolves locally).
+ *   5. Permission cancel_booking— PROMPT (a non-approved tool, so the PS asks).
  *
  * On run, the page scripts the PS for an interactive demo and seeds `trips.read`
  * in-scope, so the three out-of-mission gates each surface their own PS consent
@@ -81,7 +81,7 @@ test.describe('Mission (SampleApp)', () => {
     // Gate 3: approve the out-of-mission elevated scope (PROMPT).
     // Gate 3 approve → gate 3 card + silent gate 4 card (4 cards), then gate 5 prompts.
     await resolvePrompt(page, context, 'approve', 4);
-    // Gate 5: approve the non-pre-approved delete_inbox action (PROMPT).
+    // Gate 5: approve the non-pre-approved cancel_booking action (PROMPT).
     // Gate 5 approve → gate 5 card (5 cards); flow finishes.
     await resolvePrompt(page, context, 'approve', 5);
 
@@ -107,11 +107,11 @@ test.describe('Mission (SampleApp)', () => {
     await expect(gateCard(page, 3)).toContainText('trips.book');
 
     // Gate 4 — SILENT, granted (pre-approved tool).
-    await expect(gateCard(page, 4)).toContainText('send_email');
+    await expect(gateCard(page, 4)).toContainText('add_to_calendar');
     await expect(gateCard(page, 4).locator('.badge.bg-success').first()).toHaveText('silent');
 
     // Gate 5 — PROMPT, granted (non-pre-approved tool).
-    await expect(gateCard(page, 5)).toContainText('delete_inbox');
+    await expect(gateCard(page, 5)).toContainText('cancel_booking');
     await expect(gateCard(page, 5).locator('.badge.bg-warning')).toHaveText('prompt');
     await expect(gateCard(page, 5).locator('.badge.bg-success').last()).toHaveText('granted');
   });
@@ -128,7 +128,7 @@ test.describe('Mission (SampleApp)', () => {
     await resolvePrompt(page, context, 'approve', 2);
     // Gate 3: DENY the out-of-mission elevated scope (4 cards: gate 3 denied + silent gate 4).
     await resolvePrompt(page, context, 'deny', 4);
-    // Gate 5: approve the delete_inbox action — the flow continues past the
+    // Gate 5: approve the cancel_booking action — the flow continues past the
     // denied gate because each gate is independent (5 cards).
     await resolvePrompt(page, context, 'approve', 5);
 

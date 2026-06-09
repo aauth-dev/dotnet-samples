@@ -60,7 +60,7 @@ public class ChallengeClarificationSeamTests
         var challenge = BuildChallengeHandler(exchangeHandler, (clarification, _) =>
         {
             seen = clarification;
-            return Task.FromResult(ClarificationResponse.Respond("Needed to summarize the inbox."));
+            return Task.FromResult(ClarificationResponse.Respond("Needed to compare available trip options."));
         });
 
         using var client = new HttpClient(challenge) { BaseAddress = new Uri(ResourceUrl) };
@@ -69,7 +69,7 @@ public class ChallengeClarificationSeamTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.NotNull(seen);
         Assert.Equal("Why does this mission need this access?", seen!.Clarification);
-        Assert.Equal("Needed to summarize the inbox.", exchangeHandler.LastClarificationResponse);
+        Assert.Equal("Needed to compare available trip options.", exchangeHandler.LastClarificationResponse);
     }
 
     [Fact(DisplayName = "§Clarification Chat — the challenge seam surfaces a user interaction that follows the clarification")]
@@ -79,7 +79,7 @@ public class ChallengeClarificationSeamTests
         Interaction? surfaced = null;
         var challenge = BuildChallengeHandler(
             exchangeHandler,
-            (_, _) => Task.FromResult(ClarificationResponse.Respond("Needed to summarize the inbox.")),
+            (_, _) => Task.FromResult(ClarificationResponse.Respond("Needed to compare available trip options.")),
             (interaction, _) => { surfaced = interaction; return Task.CompletedTask; });
 
         using var client = new HttpClient(challenge) { BaseAddress = new Uri(ResourceUrl) };
@@ -88,7 +88,7 @@ public class ChallengeClarificationSeamTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         // The clarification was answered AND the follow-on user-interaction gate
         // was surfaced (a bare poll would have swallowed it).
-        Assert.Equal("Needed to summarize the inbox.", exchangeHandler.LastClarificationResponse);
+        Assert.Equal("Needed to compare available trip options.", exchangeHandler.LastClarificationResponse);
         Assert.NotNull(surfaced);
     }
 

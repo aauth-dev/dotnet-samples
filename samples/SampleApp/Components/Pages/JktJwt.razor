@@ -9,6 +9,14 @@
 
 <h2>JKT-JWT — Key Rotation (Two-Key Refresh)</h2>
 
+<details class="alert alert-primary aria-narrative" open>
+    <summary>📖 What Aria is trying to do</summary>
+    Aria (your AI travel assistant) has been running for a while and
+    wants to rotate the key it signs requests with — without bothering its Agent Provider
+    to re-enrol. Its durable enrolment key vouches for a fresh ephemeral key, which then
+    signs calls to the <strong>Profile</strong> server.
+</details>
+
 <p>
     Key rotation without re-enrolment. The enrolled <strong>durable key</strong> signs a
     naming JWT that binds a fresh <strong>ephemeral key</strong>. The ephemeral key signs

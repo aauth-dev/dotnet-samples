@@ -1,0 +1,84 @@
+@page "/"
+
+<PageTitle>AAuth Guided Tour — Overview</PageTitle>
+
+<header class="topbar">
+    <h1>AAuth Guided Tour</h1>
+    <span class="topbar__tag">a live, step-by-step walkthrough of every AAuth flow</span>
+</header>
+
+<main class="home">
+    <section class="intro">
+        <h2>Meet Aria 🧭</h2>
+        <p>
+            <strong>Aria</strong> is the AI travel assistant used throughout these demos. Like any
+            agent, Aria has to <em>prove who it is</em> and <em>get your permission</em> before it
+            touches anything that belongs to you — and AAuth is the protocol that lets it do so
+            safely. Each flow below follows Aria as it works on your behalf across four services:
+        </p>
+        <ul class="intro__servers">
+            <li><span class="srv srv--profile">Profile</span> your saved travel preferences (identity-based access)</li>
+            <li><span class="srv srv--calendar">Calendar</span> when you're free (PS-asserted, three-party)</li>
+            <li><span class="srv srv--trips">Trips</span> browsing and booking trips (mission-governed)</li>
+            <li><span class="srv srv--wallet">Wallet</span> paying for a booking (federated, four-party)</li>
+        </ul>
+        <p class="intro__role">
+            This Guided Tour runs each flow <strong>for real</strong> against live mock servers and
+            records every step — the signed requests, the <code>401</code> challenges, the token
+            exchanges, and the consent prompts — so you can watch exactly how Aria is authenticated
+            and authorized at each hop. Pick a flow to begin.
+        </p>
+    </section>
+
+    <section class="flow-index" aria-label="Flow index">
+        @foreach (var f in Flows)
+        {
+            <a class="flow-card" href="@($"tour?flow={f.Mode}")">
+                <div class="flow-card__num">@f.Number</div>
+                <div class="flow-card__body">
+                    <h3 class="flow-card__title">@f.Title</h3>
+                    <p class="flow-card__what">@f.What</p>
+                    <div class="flow-card__meta">
+                        @foreach (var badge in f.Badges)
+                        {
+                            <span class="flow-card__badge">@badge</span>
+                        }
+                    </div>
+                </div>
+                <div class="flow-card__go" aria-hidden="true">→</div>
+            </a>
+        }
+    </section>
+</main>
+
+@code {
+    private sealed record FlowCard(int Number, string Mode, string Title, string What, string[] Badges);
+
+    private static readonly FlowCard[] Flows =
+    {
+        new(1, "Bootstrap", "Bootstrap — keygen + AP enrol",
+            "Before Aria can help with anything, it generates its own keypair and enrols with an Agent Provider to get a signed agent token.",
+            new[] { "Agent ↔ Agent Provider", "no PS" }),
+        new(2, "Identity", "Identity-based access",
+            "Aria reads your Profile and the server grants or denies based purely on the request signature — no Person Server, no consent screen.",
+            new[] { "Agent + Profile", "2 steps", "hwk / jwks_uri / jkt-jwt" }),
+        new(3, "Autonomous", "PS-Asserted — Direct Grant",
+            "Aria reads your Calendar. Because you granted standing consent earlier, the Person Server issues a token immediately — no human in the loop.",
+            new[] { "Agent + Calendar + PS", "6 steps", "no prompt" }),
+        new(4, "Deferred", "PS-Asserted — Deferred Consent",
+            "Aria wants your Calendar but has no consent yet, so the Person Server pauses and waits for your one-time approval in a new tab.",
+            new[] { "Agent + Calendar + PS", "9 steps", "you approve" }),
+        new(5, "CallChain", "Call Chain — Multi-Agent",
+            "Aria delegates to a Concierge service that reads your Calendar on its behalf; you consent once per hop and the final resource sees the full delegation chain.",
+            new[] { "Agent + Concierge + Calendar + PS", "7 or 13 steps" }),
+        new(6, "Federated", "Federated — Four-Party",
+            "Aria charges your Wallet, but your money is held by a separate provider whose Access Server makes the final call on the payment.",
+            new[] { "Agent + Wallet + PS + AS", "7–10 steps" }),
+        new(7, "Mission", "Mission — PS-Governed",
+            "You give Aria a standing trip-planning mission; the Person Server then governs every later request, only prompting you for actions outside what you approved.",
+            new[] { "Agent + Trips + PS", "20 steps", "three prompts" }),
+        new(8, "MissionCallChain", "Mission + Call Chain",
+            "One mission governs both a clarification chat for an out-of-mission scope and a silent, mission-forwarded delegated chain down to your Trips.",
+            new[] { "Agent + Concierge + Trips + PS", "14 steps", "dual governance" }),
+    };
+}

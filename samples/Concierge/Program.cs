@@ -12,18 +12,20 @@ using AAuth.Server.Challenge;
 using AAuth.Server.Metadata;
 using AAuth.Server.Verification;
 using AAuth.Tokens;
-using Orchestrator;
+using Concierge;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // -----------------------------------------------------------------------
-// Orchestrator identity: acts as both a resource AND an agent.
+// Concierge identity: acts as both a resource AND an agent. Like a travel
+// concierge, the user asks it to arrange something and it makes the
+// downstream calls on their behalf.
 // Generates its own signing key on startup (demo only).
 // -----------------------------------------------------------------------
-var orchestratorKey = AAuthKey.Generate();
-const string OrchestratorKid = "orch-1";
-const string OrchestratorScope = "orchestrate";
-var orchestratorUrl = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5200";
+var conciergeKey = AAuthKey.Generate();
+const string ConciergeKid = "concierge-1";
+const string ConciergeScope = "concierge";
+var conciergeUrl = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5200";
 // The plain call chain hops to the Calendar (three-party). The mission-governed
 // chain hops to the mission-aware Trips so a mission in the upstream auth token
 // is forwarded and re-bound at each hop. Two downstreams because the Aria suite
@@ -31,9 +33,9 @@ var orchestratorUrl = builder.Configuration["AAuth:Issuer"] ?? "http://localhost
 var downstreamUrl = builder.Configuration["AAuth:Downstream"] ?? "http://localhost:5001";
 var missionDownstreamUrl = builder.Configuration["AAuth:MissionDownstream"] ?? "http://localhost:5002";
 var psUrl = builder.Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
-var agentId = builder.Configuration["AAuth:AgentId"] ?? "aauth:orchestrator@localhost:5200";
+var agentId = builder.Configuration["AAuth:AgentId"] ?? "aauth:concierge@localhost:5200";
 
-builder.Services.AddSingleton(orchestratorKey);
+builder.Services.AddSingleton(conciergeKey);
 builder.Services.AddSingleton(new AAuthVerifier());
 builder.Services.AddSingleton(new TokenVerifier());
 builder.Services.AddSingleton<PendingStore>();
@@ -52,25 +54,25 @@ var app = builder.Build();
 // -----------------------------------------------------------------------
 app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 {
-    Issuer = orchestratorUrl,
-    ClientName = "Orchestrator Demo",
-    SigningKeys = new Dictionary<string, AAuthKey> { [OrchestratorKid] = orchestratorKey },
+    Issuer = conciergeUrl,
+    ClientName = "Concierge Demo",
+    SigningKeys = new Dictionary<string, AAuthKey> { [ConciergeKid] = conciergeKey },
     ScopeDescriptions = new Dictionary<string, string>
     {
-        [OrchestratorScope] = "Orchestrate calls to downstream resources",
+        [ConciergeScope] = "Arrange calls to downstream resources on the user's behalf",
     },
 });
 
 // Agent metadata: downstream resources discover this to verify our identity.
 app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 {
-    Issuer = orchestratorUrl,
-    ClientName = "Orchestrator Demo",
-    SigningKeys = new Dictionary<string, AAuthKey> { [OrchestratorKid] = orchestratorKey },
+    Issuer = conciergeUrl,
+    ClientName = "Concierge Demo",
+    SigningKeys = new Dictionary<string, AAuthKey> { [ConciergeKid] = conciergeKey },
 });
 
 // -----------------------------------------------------------------------
-// Self-issued agent identity: per §Call Chaining Identity, the Orchestrator
+// Self-issued agent identity: per §Call Chaining Identity, the Concierge
 // is its own AP — it self-issues agent tokens signed by its own key.
 // This ensures agent_token.iss == resource URL, satisfying §Upstream Token
 // Verification step 3 (aud in upstream_token matches intermediary resource).
@@ -86,33 +88,33 @@ app.UseWhen(
     branch => branch.UseAAuthIntermediary(
         new AAuthVerificationOptions
         {
-            ResourceIdentifier = orchestratorUrl,
+            ResourceIdentifier = conciergeUrl,
             RequireIssuerVerification = true,
             TrustedAuthTokenIssuers = new HashSet<string> { psUrl },
         },
         new ChallengeOptions
         {
             AccessMode = AAuthAccessMode.RequireAuthToken,
-            ResourceSigningKey = orchestratorKey,
-            ResourceKeyId = OrchestratorKid,
-            ResourceIdentifier = orchestratorUrl,
-            DefaultScopes = OrchestratorScope,
+            ResourceSigningKey = conciergeKey,
+            ResourceKeyId = ConciergeKid,
+            ResourceIdentifier = conciergeUrl,
+            DefaultScopes = ConciergeScope,
             // Mission-aware: when an AAuth-Mission header is present, copy the
             // {approver, s256} into the resource token so the PS governs the
-            // agent→orchestrator exchange under the mission (§Mission Context at
+            // agent→concierge exchange under the mission (§Mission Context at
             // Resources). A no-op when no mission header is present, so the plain
             // call chain ("/" → Calendar "/events") is unaffected.
             MissionAware = true,
         }));
 
 // -----------------------------------------------------------------------
-// GET / — Orchestrator endpoint (call chaining via WithCallChaining).
+// GET / — Concierge endpoint (call chaining via WithCallChaining).
 //
 // The middleware handles verification + 401 challenge automatically.
 // Only auth-token callers reach this handler. The downstream client routes
 // the exchange to the correct PS/AS using the upstream auth token.
 //
-// Interaction Chaining (AAuth §Interaction Chaining): the Orchestrator has no
+// Interaction Chaining (AAuth §Interaction Chaining): the Concierge has no
 // user of its own, so it CANNOT relay a downstream consent prompt. Its
 // OnInteractionRequired callback therefore throws
 // AAuthInteractionChainedException, which aborts the in-flight exchange before
@@ -137,7 +139,7 @@ app.UseWhen(
 // the mission governs every hop (§Call Chaining).
 async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken, string downstreamBase, string downstreamPath)
 {
-    // Self-issued agent token (iss = orchestratorUrl) satisfies §Upstream Token
+    // Self-issued agent token (iss = conciergeUrl) satisfies §Upstream Token
     // Verification step 3 — the PS can match upstream_token.aud against iss.
     //
     // Mission governance composes with call chaining (AAuth §Agent Governance,
@@ -147,9 +149,9 @@ async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken, string 
     // downstream path then re-binds the mission into the next resource_token, so a
     // single mission governs the whole chain. With no mission present this same
     // handler follows §Call Chaining's "No mission, iss is a PS" path unchanged.
-    using var downstream = AAuthClientBuilder.SelfIssuing(orchestratorKey)
-        .As(orchestratorUrl, agentId)
-        .WithKid(OrchestratorKid)
+    using var downstream = AAuthClientBuilder.SelfIssuing(conciergeKey)
+        .As(conciergeUrl, agentId)
+        .WithKid(ConciergeKid)
         .WithPersonServer(psUrl)
         .WithCallChaining(upstreamToken)
         .WithChallengeHandling(opts =>
@@ -173,14 +175,14 @@ async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken, string 
     var downstreamName = downstreamPath.StartsWith("/trips", StringComparison.Ordinal) ? "Trips" : "Calendar";
     return Results.Ok(new
     {
-        chain = $"Agent → Orchestrator → {downstreamName}",
+        chain = $"Agent → Concierge → {downstreamName}",
         upstream = new
         {
             scheme = upstreamResult?.Scheme,
             agent = upstreamResult?.Agent,
             tokenType = upstreamResult?.TokenType,
         },
-        orchestrator = new
+        concierge = new
         {
             identity = agentId,
             action = "call-chained to downstream with upstream_token",
@@ -189,7 +191,7 @@ async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken, string 
     });
 }
 
-// Re-emit the Orchestrator's own 202 requirement=interaction for a parked
+// Re-emit the Concierge's own 202 requirement=interaction for a parked
 // chained request: its own Location (the pending URL, keyed by the entry's
 // poll-route prefix), the PS's pass-through interaction url/code. Spec
 // §Interaction Chaining + §Deferred Responses.
@@ -327,4 +329,4 @@ app.MapGet("/mission-pending/{id}", async (HttpContext ctx, string id, PendingSt
 app.Run();
 
 // Marker type for WebApplicationFactory in tests.
-namespace Orchestrator { public class Entry; }
+namespace Concierge { public class Entry; }

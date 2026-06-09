@@ -9,6 +9,14 @@
 
 <h2>JWKS URI — Agent Identity</h2>
 
+<details class="alert alert-primary aria-narrative" open>
+    <summary>📖 What Aria is trying to do</summary>
+    Aria (your AI travel assistant) needs the <strong>Profile</strong>
+    server to know exactly which enrolled agent is calling, so it presents its published
+    identity. The server fetches Aria's public key from its Agent Provider and confirms
+    the signature — no user consent or token exchange required.
+</details>
+
 <p>
     Identity-based access: the agent enrols with an AP which publishes the agent's
     public key at a per-agent JWKS endpoint. Resources verify the signature by

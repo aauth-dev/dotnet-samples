@@ -4,8 +4,27 @@ Call chaining enables multi-hop delegation where a resource acts as an agent to 
 
 ## Scenario
 
-```
-Agent A → Orchestrator (Resource B) → Calendar (Resource C)
+```mermaid
+sequenceDiagram
+    participant A as Agent A
+    participant B as Concierge (Resource B)
+    participant PS as Person Server
+    participant C as Calendar (Resource C)
+
+    A->>B: request (agent token)
+    B-->>A: 401 + resource token
+    A->>PS: exchange resource token
+    PS-->>A: auth token for Resource B
+    A->>B: retry (auth token)
+
+    Note over B,C: Resource B now acts as an agent
+    B->>C: request (agent token)
+    C-->>B: 401 + resource token
+    B->>PS: exchange (upstream_token = Agent A's auth token)
+    PS-->>B: chained auth token (nested act)
+    B->>C: retry (chained auth token)
+    C-->>B: 200 OK (sees full delegation chain)
+    B-->>A: 200 OK
 ```
 
 1. Agent A calls Resource B with an agent token → Resource B challenges with a resource token
@@ -19,11 +38,11 @@ Agent A → Orchestrator (Resource B) → Calendar (Resource C)
 ## Running the Sample
 
 ```bash
-make demo   # starts the resource servers (Profile, Calendar, Trips, Wallet), PS, AP, Orchestrator, stub Access Server, both UIs
+make demo   # starts the resource servers (Profile, Calendar, Trips, Wallet), PS, AP, Concierge, stub Access Server, both UIs
 ```
 
 Then open <http://localhost:5240/call-chain> to see the flow in action.
-The Orchestrator runs on port 5200, acting as both resource (verifies callers) and agent (calls Calendar's three-party `/events` endpoint on port 5001).
+The Concierge runs on port 5200, acting as both resource (verifies callers) and agent (calls Calendar's three-party `/events` endpoint on port 5001).
 
 ## SDK Support
 
@@ -49,14 +68,14 @@ using var client = new AAuthClientBuilder(key)
     .WithChallengeHandling(personServer)
     .Build();
 
-// The Orchestrator challenges with 401 + resource token.
+// The Concierge challenges with 401 + resource token.
 // SDK handles the exchange transparently.
-var response = await client.GetAsync("https://orchestrator.example");
+var response = await client.GetAsync("https://concierge.example");
 ```
 
 ### Intermediate Service — Resource + Agent Pattern
 
-The intermediate service (Orchestrator) acts as both a resource and an agent.
+The intermediate service (Concierge) acts as both a resource and an agent.
 
 #### Simplified Pattern (Recommended)
 
@@ -69,15 +88,15 @@ app.UseWhen(
     branch => branch.UseAAuthIntermediary(
         new AAuthVerificationOptions
         {
-            ResourceIdentifier = orchestratorUrl,
+            ResourceIdentifier = conciergeUrl,
             RequireIssuerVerification = true,
         },
         new ChallengeOptions
         {
             AccessMode = AAuthAccessMode.RequireAuthToken,
-            ResourceSigningKey = orchestratorKey,
+            ResourceSigningKey = conciergeKey,
             ResourceKeyId = "orch-1",
-            ResourceIdentifier = orchestratorUrl,
+            ResourceIdentifier = conciergeUrl,
         }));
 
 // Only auth-token callers reach this handler
@@ -108,7 +127,7 @@ For full control over the exchange, use the building blocks directly:
 // 1. Verify incoming requests with full issuer verification
 app.UseAAuthVerification(new AAuthVerificationOptions
 {
-    ResourceIdentifier = orchestratorUrl,
+    ResourceIdentifier = conciergeUrl,
     RequireIssuerVerification = true,
 });
 
@@ -122,13 +141,13 @@ app.MapGet("/", async (HttpContext ctx) =>
     {
         var rt = new ResourceTokenBuilder
         {
-            Issuer = orchestratorUrl,
+            Issuer = conciergeUrl,
             Audience = parsed.Payload?["ps"]?.ToString(),
             Agent = parsed.Payload?["sub"]?.ToString(),
             AgentJkt = parsed.ConfirmationKey!.ComputeJwkThumbprint(),
-            Key = orchestratorKey,
+            Key = conciergeKey,
             KeyId = "orch-1",
-            Scope = "orchestrate",
+            Scope = "concierge",
         }.Build();
 
         return ctx.ChallengeAAuth(rt);
@@ -190,9 +209,9 @@ When an auth token carries delegation context, the `act` claim is nested:
 {
   "iss": "https://ps.example",
   "sub": "pairwise-sub",
-  "agent": "aauth:orchestrator@ap.example",
+  "agent": "aauth:concierge@concierge.example",
   "act": {
-    "sub": "aauth:orchestrator@ap.example",
+    "sub": "aauth:concierge@concierge.example",
     "act": {
       "sub": "aauth:agent-a@ap.example"
     }
@@ -226,7 +245,7 @@ dotnet run --project samples/AgentConsole -- http://localhost:5001/events \
   --upstream-token "eyJ..."
 ```
 
-Or test the full call chain through the Orchestrator:
+Or test the full call chain through the Concierge:
 
 ```bash
 dotnet run --project samples/AgentConsole -- http://localhost:5200 \
@@ -318,10 +337,10 @@ Resources can inspect the full delegation chain for authorization policy:
 ```csharp
 var payload = verifiedToken.Payload;
 var chain = ActChainReader.GetDelegationChain(payload);
-// ["aauth:orchestrator@ap.example", "aauth:agent-a@ap.example"]
+// ["aauth:concierge@concierge.example", "aauth:agent-a@ap.example"]
 
 var immediate = ActChainReader.GetImmediateActor(payload);
-// "aauth:orchestrator@ap.example"
+// "aauth:concierge@concierge.example"
 
 var original = ActChainReader.GetOriginalActor(payload);
 // "aauth:agent-a@ap.example"

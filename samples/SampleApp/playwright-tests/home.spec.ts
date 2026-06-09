@@ -28,6 +28,16 @@ test.describe('Home', () => {
     }
   });
 
+  test('introduces Aria and the Sample App role', async ({ page }) => {
+    const intro = page.locator('.alert-primary');
+    await expect(intro).toContainText('Meet Aria');
+    await expect(intro).toContainText('AI travel assistant');
+    // The four Aria servers and the golden-example role are explained.
+    await expect(intro).toContainText('Profile');
+    await expect(intro).toContainText('Wallet');
+    await expect(intro).toContainText('golden example');
+  });
+
   test('shows the prerequisites block', async ({ page }) => {
     await expect(page.getByText('make demo')).toBeVisible();
   });

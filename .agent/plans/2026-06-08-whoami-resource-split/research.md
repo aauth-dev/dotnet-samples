@@ -477,6 +477,52 @@ replacement.
    tests, Makefile) is migrated in one pass. `LiveWhoAmITest` is the only
    exemption.
 
+## Follow-up — narrative coherence pass (2026-06-09)
+
+> **Update (2026-06):** After the split landed and the "What Aria is trying to
+> do" narratives were added (Phase 11), two narrative inconsistencies surfaced
+> that a find/replace migration could not catch. Recorded here as facts; the
+> concrete steps live in Phases 12–16 of the plan.
+
+### Finding A — "Orchestrator" does not fit the Aria narrative
+
+The intermediate call-chain service (`samples/Orchestrator`, `:5200`, scope
+`orchestrate`, identity `aauth:orchestrator@localhost:5200`) is described in
+generic middleware terms. Functionally it is the service Aria *asks* to arrange
+something with a downstream provider on the user's behalf — exactly a travel
+**concierge**. Decision: rename to **Concierge** across samples, config, tests,
+and docs. The SDK (`src/AAuth`) has **zero** `orchestrat*` references (only two
+incidental doc-comment mentions), so this is samples-only. Blast radius ≈ 235
+references; the only non-cosmetic identifiers are the demo-defined scope
+(`orchestrate`→`concierge`) and agent id (`aauth:orchestrator@…`→
+`aauth:concierge@…`) — neither is an SDK constant. Port `:5200` is kept (infra,
+no narrative value in changing it). See the per-category inventory captured by
+the research sweep saved alongside this initiative.
+
+### Finding B — the Mission demo's example is off-theme and self-contradictory
+
+The mission narrative is about an **email inbox** ("Keep the inbox under control
+for an hour"; tools `summarize`, `send_email`, `delete_inbox`) but the scopes it
+actually requests are `trips.read` / `trips.book`. A new reader sees an inbox
+mission suddenly read and book **trips**. Decision: re-theme the example to a
+single coherent travel story — mission "Plan my weekend trip to Seattle." —
+keeping the exact pedagogy:
+
+| Gate | Old demo string | New demo string | Teaches (unchanged) |
+|---|---|---|---|
+| 2 in-scope scope (SILENT) | `trips.read` | `trips.read` *(kept — protocol)* | scope fits intent → silent |
+| 3 out-of-scope scope (PROMPT) | `trips.book` | `trips.book` *(kept — protocol)* | booking ≠ "plan" → prompts |
+| 4 pre-approved tool (SILENT, local) | `send_email` | `add_to_calendar` | declared tool → no PS call |
+| 4′ pre-approved tool #2 | `summarize` | `compare_options` | declared tool list |
+| 5 non-approved tool (PROMPT) | `delete_inbox` | `cancel_booking` | undeclared, destructive → asks |
+
+Tool names are **pure demo strings** (the SDK has zero references to them; the
+conformance test `GovernanceServerTests` already uses `"SendEmail"`/`"Send the
+itinerary"` independently). Scope names `trips.read`/`trips.book` are
+protocol-bound and **stay**. Several mission scope *descriptions* are stale
+holdovers from `whoami` (e.g. `trips.read` shown as "See basic profile
+information") and are corrected in the same pass.
+
 ## Sources
 
 - [samples/WhoAmI/Program.cs](../../../samples/WhoAmI/Program.cs) — current

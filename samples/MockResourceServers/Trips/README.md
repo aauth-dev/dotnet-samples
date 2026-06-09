@@ -32,4 +32,4 @@ dotnet run --project samples/MockResourceServers/Trips
 
 This is the resource the [MissionAgent](../../MissionAgent/README.md) CLI drives,
 and the downstream hop of the GuidedTour / SampleApp **mission call-chain**
-(`Agent → Orchestrator → Trips`). See [Mock Resource Servers](../README.md).
+(`Agent → Concierge → Trips`). See [Mock Resource Servers](../README.md).

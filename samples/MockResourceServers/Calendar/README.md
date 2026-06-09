@@ -49,6 +49,6 @@ dotnet run --project samples/AgentConsole -- http://localhost:5001/events/admin 
   --ap http://localhost:5301 --ps http://localhost:5100 --sub aauth:demo@ap.example
 ```
 
-The Orchestrator's plain call chain also targets this server's `/events`
-endpoint (`Agent → Orchestrator → Calendar`). See
+The Concierge's plain call chain also targets this server's `/events`
+endpoint (`Agent → Concierge → Calendar`). See
 [Mock Resource Servers](../README.md).

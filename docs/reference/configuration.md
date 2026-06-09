@@ -253,14 +253,14 @@ SDK-required), shown here as a reference for wiring your own hosts.
 
 | Key | Type | Used by | Description |
 |-----|------|---------|-------------|
-| `AAuth:Issuer` | `string` | Profile/Calendar/Trips/Wallet, MockPersonServer, Orchestrator | The host's own canonical URL (resource/PS `iss`). |
+| `AAuth:Issuer` | `string` | Profile/Calendar/Trips/Wallet, MockPersonServer, Concierge | The host's own canonical URL (resource/PS `iss`). |
 | `AAuth:SignatureWindow` | `int` (seconds) | Profile/Calendar/Trips/Wallet, MockPersonServer | Max HTTP-signature age accepted; default `60`. |
 | `AAuth:TrustedPersonServers` | `string[]` | Calendar/Trips | Fail-closed allow-list mapped to `AAuthVerificationOptions.TrustedAuthTokenIssuers`. When unset, defaults to `http://localhost:5100`; an empty array rejects all auth tokens. |
 | `AAuth:LocalKeyHandle` | `string` | agent samples | Key handle in the `IKeyStore` for the agent's signing key. |
 | `AAuth:ApRefreshEndpoint` | `string` | agent samples | Agent Provider refresh endpoint for enrolled agents. |
-| `AAuth:PersonServer` | `string` | Orchestrator | Downstream Person Server URL. |
-| `AAuth:Downstream` | `string` | Orchestrator | Downstream resource URL. |
-| `AAuth:AgentId` | `string` | Orchestrator | The agent identifier this host signs as. |
+| `AAuth:PersonServer` | `string` | Concierge | Downstream Person Server URL. |
+| `AAuth:Downstream` | `string` | Concierge | Downstream resource URL. |
+| `AAuth:AgentId` | `string` | Concierge | The agent identifier this host signs as. |
 | `AAuth:SelfIssuer` / `AAuth:SelfAgentId` | `string` | SampleApp | Self-issued agent issuer / identifier. |
 
 ## Further Reading

@@ -58,9 +58,9 @@ var governance = new AAuthClientBuilder(key)
     .BuildGovernance();
 
 MissionSession session = await governance.ProposeMissionAsync(
-    new MissionProposal("Reconcile this month's expense receipts and email a summary.")
+    new MissionProposal("Plan my weekend trip to Seattle.")
     {
-        Tools = new[] { new MissionTool("email.send", "Email the reconciliation summary.") },
+        Tools = new[] { new MissionTool("add_to_calendar", "Add an itinerary item to the calendar.") },
     });
 
 Mission mission = session.Mission;
@@ -86,7 +86,7 @@ using var client = new AAuthClientBuilder(key)
 
 // Challenge → exchange → retry happens transparently; the PS judged the scope
 // against the mission intent during the exchange.
-var response = await client.GetAsync("https://expenses.example/receipts");
+var response = await client.GetAsync("https://trips.example/trips");
 ```
 
 A later request for a scope the PS has not seen and that does not fit the intent
@@ -101,16 +101,16 @@ other action goes to the PS, which prompts the user when it is out of mission.
 
 ```csharp
 // Pre-approved tool → granted silently.
-var send = await session.RequestPermissionAsync(new MissionAction("email.send"));
+var add = await session.RequestPermissionAsync(new MissionAction("add_to_calendar"));
 
 // Out-of-mission tool → the PS prompts the user (gate 3).
-var delete = await session.RequestPermissionAsync(
-    new MissionAction("files.delete"),
-    description: "Remove the duplicate receipt the user flagged.");
+var cancel = await session.RequestPermissionAsync(
+    new MissionAction("cancel_booking"),
+    description: "Cancel the existing hotel reservation the user flagged.");
 
-if (!delete.IsGranted)
+if (!cancel.IsGranted)
 {
-    Console.WriteLine($"Not allowed: {delete.Reason}");
+    Console.WriteLine($"Not allowed: {cancel.Reason}");
 }
 ```
 
@@ -121,9 +121,9 @@ fire-and-forget.
 
 ```csharp
 await session.RecordAuditAsync(
-    new MissionAction("email.send"),
-    description: "Emailed the reconciliation summary to the user.",
-    result: new JsonObject { ["recipients"] = 1 });
+    new MissionAction("add_to_calendar"),
+    description: "Added the flight and hotel to the user's calendar.",
+    result: new JsonObject { ["items"] = 2 });
 ```
 
 ## 6. Close the mission out
@@ -133,7 +133,7 @@ and the PS terminates the mission.
 
 ```csharp
 bool terminated = await session.ProposeCompletionAsync(
-    "Reconciled 24 receipts (2 duplicates removed) and emailed the summary.");
+    "Planned the weekend trip: compared 3 flights and 2 hotels, saved the itinerary.");
 ```
 
 If the PS's interaction relay cannot reach the user synchronously, it returns
