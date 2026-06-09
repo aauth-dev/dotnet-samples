@@ -52,20 +52,21 @@ this phase; record answers in `implementation-log.md`.
 
 ### Implementation Decisions (Phase 0)
 
-- [ ] **Q1** `user_unreachable` = 403 confirmed as the target (supersedes 400).
-- [ ] **Q2** Metadata issuer-mismatch exception type chosen.
-- [ ] **Q3** `AAuthAccessMode` additive vs rename decided.
-- [ ] **Q4** Interaction-code generator/validator ownership (SDK vs PS) decided.
-- [ ] **Q5** `interaction_unavailable` surface (exception vs relay outcome) decided.
-- [ ] **Q6** Markdown sanitizer: SDK-integrated vs documented UI responsibility.
-- [ ] **Q7** `prompt`/`capabilities` validation strictness + `provider_hint` hook.
-- [ ] **Q8** Sub-agent error codes agreed.
-- [ ] **Q9** No-back-compat posture confirmed for this migration.
+- [x] **Q1** `user_unreachable` = 403 confirmed as the target (supersedes 400).
+- [x] **Q2** Metadata issuer-mismatch exception type chosen — new `AAuthMetadataException`.
+- [x] **Q3** `AAuthAccessMode` additive (`AgentTokenRequired`); wire `access_mode` modeled separately.
+- [x] **Q4** Interaction-code generator/validator owned by the SDK (`InteractionCode` utility).
+- [x] **Q5** `interaction_unavailable` (424) modeled as a structured outcome, not an exception.
+- [x] **Q6** Markdown sanitization is the UI/consumer responsibility; no SDK sanitizer dependency.
+- [x] **Q7** `prompt`/`capabilities` tolerant pass-through; refresh = replace; `AdditionalParameters` bag for `provider_hint`.
+- [x] **Q8** Sub-agent failures reuse `invalid_request` with distinct descriptions.
+- [x] **Q9** No-back-compat posture confirmed for this migration.
 
 ### Definition of Done
 
-- [ ] Each of Q1–Q9 has a recorded ruling (or an explicit "default X, revert if
+- [x] Each of Q1–Q9 has a recorded ruling (or an explicit "default X, revert if
       you disagree") in `implementation-log.md`.
+
 
 ---
 
@@ -108,12 +109,14 @@ baseline.
 
 - `src/AAuth/Discovery/ServerMetadata.cs` — add `string? AccessMode` to
   `ResourceMetadata`; parse `access_mode`; make `JwksUri` optional (conditional).
-- `src/AAuth/Server/Metadata/*` — add `Description`-adjacent `AccessMode` option +
-  conditional `jwks_uri` emission in `WellKnownEndpoints`.
+- `src/AAuth/Server/Metadata/*` — add an `AccessMode` option + conditional
+  `jwks_uri` emission in `WellKnownEndpoints`. Per Q3, the wire `access_mode`
+  values are string constants (`agent-token`/`aauth-access-token`/`auth-token`),
+  modeled separately from the server `AAuthAccessMode` challenge enum.
 - `src/AAuth/Headers/AAuthRequirementHeader.cs` — add `agent-token` constant +
   `FormatAgentToken()` (no parameters).
-- `src/AAuth/Server/Verification/AAuthAccessMode.cs` — per Q3, add the
-  agent-token-required mode.
+- `src/AAuth/Server/Verification/AAuthAccessMode.cs` — per Q3, **add**
+  `AgentTokenRequired` (keep `IdentityOnly`/`RequireAuthToken`).
 - `src/AAuth/Server/Challenge/AAuthChallengeMiddleware.cs` — emit bare
   `requirement=agent-token` (401) in that mode.
 - `src/AAuth/Agent/ChallengeHandler.cs` — handle `requirement=agent-token` by
