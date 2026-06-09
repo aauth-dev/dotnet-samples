@@ -21,6 +21,7 @@ public enum TourMode
     Federated,
     Mission,
     MissionCallChain,
+    SubAgent,
 }
 
 /// <summary>

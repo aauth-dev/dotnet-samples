@@ -60,6 +60,14 @@ public sealed class StepRecord
     public string? CodeSnippet { get; init; }
 
     /// <summary>
+    /// Optional label naming which party actually runs the <see cref="CodeSnippet"/>
+    /// (e.g. "the Agent Provider runs this"). Clarifies issuer-side code (minting
+    /// tokens) versus client-side code an agent developer writes. Shown next to
+    /// the "SDK code" disclosure summary when set.
+    /// </summary>
+    public string? CodeSnippetRole { get; init; }
+
+    /// <summary>
     /// Optional sub-steps rendered as smaller arrows in the sequence diagram
     /// beneath this step's main arrow. Used to depict server-side actions
     /// (e.g. what the Concierge does internally on call-chaining).
@@ -94,6 +102,8 @@ public enum Actor
     AgentProvider,
     Concierge,
     AccessServer,
+    Parent,
+    SubAgent,
 }
 
 /// <summary>

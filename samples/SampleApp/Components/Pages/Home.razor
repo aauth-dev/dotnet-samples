@@ -140,6 +140,27 @@
     <div class="col">
         <div class="card h-100">
             <div class="card-body">
+                <h5 class="card-title">👥 Sub-Agents — Parent-Mediated Workers</h5>
+                <p class="card-text">
+                    An orchestrating <strong>parent</strong> spawns a short-lived
+                    <strong>worker</strong> sub-agent under one user consent. The worker has its
+                    own key (individually auditable + revocable) but the parent mediates its
+                    token exchange via <code>subagent_token</code>; the auth token's
+                    <code>act</code> records the chain.
+                </p>
+                <span class="badge bg-danger">sub-agents</span>
+                <span class="badge bg-secondary">parent_agent</span>
+                <span class="badge bg-info text-dark">in-process</span>
+            </div>
+            <div class="card-footer">
+                <a href="sub-agent" class="btn btn-outline-primary btn-sm">Open demo →</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col">
+        <div class="card h-100">
+            <div class="card-body">
                 <h5 class="card-title">🛡️ Federated — Four-Party</h5>
                 <p class="card-text">
                     Four-party flow with an <strong>Access Server</strong>. The Person

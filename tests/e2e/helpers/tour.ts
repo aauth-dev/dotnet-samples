@@ -24,6 +24,7 @@ export const TourMode = {
   Federated: 'Federated',
   Mission: 'Mission',
   MissionCallChain: 'MissionCallChain',
+  SubAgent: 'SubAgent',
 } as const;
 export type TourMode = (typeof TourMode)[keyof typeof TourMode];
 
@@ -60,6 +61,11 @@ const PLAN_STEPS: Record<TourMode, number> = {
   // grant (creation 4/5, elevated 10/11 with a clarification chat at 7/8) and
   // a silent mission-forwarded call chain (Agent → Concierge → Trips).
   MissionCallChain: 14,
+  // Sub-Agents (parent-mediated worker): 8 in-process steps — parent + worker
+  // identities, the worker's resource token, the parent-mediated exchange, the
+  // PS token return + handoff, the worker's resource call, and the single-level
+  // depth rejection. Runs entirely in-process (no live servers).
+  SubAgent: 8,
 };
 
 /** Select a flow in the `#flow-select` picker and wait for the timeline to reset. */

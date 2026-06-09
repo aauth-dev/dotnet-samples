@@ -19,6 +19,7 @@ const FLOWS = [
   'Federated',
   'Mission',
   'MissionCallChain',
+  'SubAgent',
 ] as const;
 
 test('overview introduces Aria and indexes every flow', async ({ page }) => {

@@ -10,6 +10,7 @@ using AAuth.Discovery;
 using AAuth.Errors;
 using AAuth.Headers;
 using AAuth.HttpSig;
+using AAuth.Identifiers;
 using AAuth.Tokens;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -69,6 +70,14 @@ public sealed class TourSession : IAsyncDisposable
     private string? _missionPendingId;
     private string? _clarificationQuestion;
     private string? _missionChainResponseBody;
+
+    // Sub-agent flow state (§Sub-Agents). The worker gets its own key +
+    // identity; later steps reference these to bind the resource token to
+    // the worker, drive the parent-mediated exchange, and nest the act claim.
+    private AAuthKey? _saWorkerKey;
+    private string? _saWorkerToken;
+    private string? _saResourceToken;
+    private string? _saAuthToken;
 
     // Background polling state (deferred mode, poll step). Mutated from
     // the polling task; the UI listens to StateChanged and re-renders.
@@ -201,7 +210,8 @@ public sealed class TourSession : IAsyncDisposable
     /// when no PS URL is configured, regardless of <see cref="Mode"/>.
     /// </summary>
     public bool IsIdentityMode =>
-        _mode == TourMode.Identity || (!HasPersonServer && _mode != TourMode.Bootstrap);
+        _mode == TourMode.Identity
+        || (!HasPersonServer && _mode != TourMode.Bootstrap && _mode != TourMode.SubAgent);
 
     /// <summary>True when the configured flow is the deferred / user-consent path.</summary>
     public bool IsDeferredMode =>
@@ -209,6 +219,14 @@ public sealed class TourSession : IAsyncDisposable
 
     /// <summary>True when the current flow is the bootstrap (keygen + AP enrolment) path.</summary>
     public bool IsBootstrapMode => _mode == TourMode.Bootstrap;
+
+    /// <summary>
+    /// True when the current flow is the sub-agent (parent-mediated worker) path.
+    /// This flow runs entirely in-process (no live mock servers) — a parent agent
+    /// obtains an auth token on a sub-agent's behalf — so it does not require a
+    /// configured Person Server.
+    /// </summary>
+    public bool IsSubAgentMode => _mode == TourMode.SubAgent;
 
     /// <summary>True when the configured flow is autonomous (standing consent, no user interaction).</summary>
     public bool IsAutonomousMode => HasPersonServer && _mode == TourMode.Autonomous;
@@ -255,6 +273,7 @@ public sealed class TourSession : IAsyncDisposable
         {
             if (IsBootstrapMode) return HasAgentProvider ? 3 : 2;
             if (IsIdentityMode) return 2;
+            if (IsSubAgentMode) return 8;
             if (IsMissionCallChainMode) return 14;
             if (IsMissionMode) return 20;
             if (IsCallChainMode) return _callChainPending ? 13 : 7;
@@ -275,6 +294,7 @@ public sealed class TourSession : IAsyncDisposable
         {
             if (IsBootstrapMode) return HasAgentProvider ? ApBootstrapPlan : LocalBootstrapPlan;
             if (IsIdentityMode) return IdentityPlan;
+            if (IsSubAgentMode) return SubAgentPlan;
             if (IsMissionCallChainMode) return MissionCallChainPlan;
             if (IsMissionMode) return MissionPlan;
             if (IsCallChainMode) return _callChainPending ? CallChainConsentPlan : CallChainPlan;
@@ -300,6 +320,25 @@ public sealed class TourSession : IAsyncDisposable
     {
         new(1, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
         new(2, "Signed GET → 200", "Resource trusts identity alone (no PS) on the per-mode endpoint (/pseudonymous, /identified, /anchored), returns 200 + claims directly.", Actor.Agent, Actor.Resource),
+    };
+
+    // The sub-agent (parent-mediated worker) flow (§Sub-Agents). An orchestrating
+    // PARENT spawns a short-lived SUB-AGENT under one user consent. The sub-agent
+    // has its own key + identity (individually auditable/revocable) but never
+    // calls the PS directly — the parent obtains an auth token on its behalf. This
+    // flow runs entirely IN-PROCESS with the real SDK builders (no live servers),
+    // so every wire artifact — the parent_agent claim, the subagent_token request,
+    // the sub-agent-bound cnf, and the nested act — is visible directly.
+    private static readonly TourPlanStep[] SubAgentPlan =
+    {
+        new(1, "Parent obtains its identity", "The orchestrator enrols with its Agent Provider and gets an aa-agent+jwt (its key + identifier) — an ordinary top-level agent.", Actor.Parent, Actor.Parent),
+        new(2, "Sub-agent obtains its identity (parent_agent)", "The worker gets its OWN key + identifier; the AP stamps the token with parent_agent naming the parent and a '+' local part.", Actor.SubAgent, Actor.SubAgent),
+        new(3, "Worker obtains a resource token", "The sub-agent calls the resource and gets a resource_token bound to ITS key (agent_jkt), then hands it to the parent out-of-band.", Actor.SubAgent, Actor.Resource),
+        new(4, "Parent exchanges with subagent_token", "The parent signs POST /token with its OWN key, including resource_token + subagent_token; the PS verifies parent_agent names the signer.", Actor.Parent, Actor.PersonServer),
+        new(5, "PS returns the auth token to the parent", "The PS mints an auth_token bound to the SUB-AGENT (agent + cnf, act nesting { sub: worker, act: { sub: parent } }) and returns it to the PARENT — the response to the exchange the parent signed.", Actor.PersonServer, Actor.Parent),
+        new(6, "Parent hands the token to the worker", "Out-of-band, the parent passes the worker-bound auth_token down to the sub-agent, which can now call the resource with its own-key proof-of-possession.", Actor.Parent, Actor.SubAgent),
+        new(7, "Sub-agent calls the resource with the token", "The worker signs the request with its OWN key and presents the auth_token; the resource verifies against cnf.jwk and audits the nested act. The parent never touches this call.", Actor.SubAgent, Actor.Resource),
+        new(8, "Single-level depth is enforced", "The AP rejects a sub-agent OF a sub-agent — the delegation tree stays one level deep.", Actor.SubAgent, Actor.SubAgent),
     };
 
     private static readonly TourPlanStep[] AutonomousPlan =
@@ -614,6 +653,10 @@ public sealed class TourSession : IAsyncDisposable
         _missionPendingId = null;
         _clarificationQuestion = null;
         _missionChainResponseBody = null;
+        _saWorkerKey = null;
+        _saWorkerToken = null;
+        _saResourceToken = null;
+        _saAuthToken = null;
     }
 
     /// <summary>
@@ -703,6 +746,23 @@ public sealed class TourSession : IAsyncDisposable
             else
             {
                 if (bStep == 2) { await BootstrapStepBuildTokenAsync(); return; }
+            }
+            return;
+        }
+
+        // ── Sub-agent flow (in-process; no live servers) ─────────────────
+        if (IsSubAgentMode)
+        {
+            switch (Steps.Count + 1)
+            {
+                case 1: SubAgentStepIssueParent(); return;
+                case 2: SubAgentStepIssueSubAgent(); return;
+                case 3: SubAgentStepWorkerResourceToken(); return;
+                case 4: SubAgentStepParentExchange(); return;
+                case 5: SubAgentStepMintAuthToken(); return;
+                case 6: SubAgentStepHandoffToWorker(); return;
+                case 7: SubAgentStepWorkerCallsResource(); return;
+                case 8: SubAgentStepSingleLevelDepth(); return;
             }
             return;
         }
@@ -1405,6 +1465,491 @@ public sealed class TourSession : IAsyncDisposable
             CodeSnippet = CodeSnippets.EnrolWithAp,
         });
     }
+
+    // -----------------------------------------------------------------
+    // Sub-agent flow (§Sub-Agents) — parent-mediated workers.
+    //
+    // Runs entirely IN-PROCESS with the real SDK builders + AgentId: an
+    // orchestrating PARENT spawns a short-lived SUB-AGENT under one user
+    // consent. The worker has its own key + identity but never calls the
+    // Person Server directly — the parent obtains an auth token on its
+    // behalf. No live servers are involved, so every wire artifact (the
+    // parent_agent claim, the subagent_token request, the worker-bound
+    // cnf, and the nested act) is built and shown directly.
+    // -----------------------------------------------------------------
+
+    private (string ParentId, string WorkerId, string ApUrl, string PersonServer, string ResourceUrl) SubAgentNames()
+    {
+        var apUrl = _selfIdentity.Issuer.TrimEnd('/');
+        var host = Uri.TryCreate(apUrl, UriKind.Absolute, out var u) ? u.Authority : "host";
+        var personServer = string.IsNullOrWhiteSpace(_options.PersonServerUrl)
+            ? "https://ps.example"
+            : _options.PersonServerUrl.TrimEnd('/');
+        return ($"aauth:aria@{host}", $"aauth:aria+worker1@{host}", apUrl,
+            personServer, _options.CalendarUrl.TrimEnd('/'));
+    }
+
+    private void SubAgentStepIssueParent()
+    {
+        var (parentId, _, apUrl, personServer, _) = SubAgentNames();
+        var parentKey = AAuthKey.Generate();    // the parent's own keypair
+        var parentToken = new AgentTokenBuilder
+        {
+            Issuer = apUrl,
+            Subject = parentId,
+            KeyId = _selfIdentity.KeyId,
+            Key = _selfIdentity.Key,            // the AP signs
+            ConfirmationKey = parentKey,        // bound to the parent's key
+            PersonServer = personServer,
+        }.Build();
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Parent obtains its identity",
+            From = Actor.Parent,
+            To = Actor.Parent,
+            Narrative =
+                "The orchestrating **parent** agent (Aria) enrols with its Agent " +
+                "Provider and receives an `aa-agent+jwt` binding its identifier " +
+                "(`sub`) to its own key (`cnf.jwk`). This is an ordinary top-level " +
+                "agent — note there is **no** `parent_agent` claim.",
+            TokenJwt = parentToken,
+            TokenHeader = DecodeJwt(parentToken)?.Header,
+            TokenPayload = DecodeJwt(parentToken)?.Payload,
+            CodeSnippet = SubAgentParentTokenSnippet,
+            CodeSnippetRole = "split: parent-side keygen + Agent Provider-side signing (labeled inline)",
+        });
+    }
+
+    private void SubAgentStepIssueSubAgent()
+    {
+        var (parentId, workerId, apUrl, personServer, _) = SubAgentNames();
+        _saWorkerKey = AAuthKey.Generate();     // the worker's OWN keypair
+        _saWorkerToken = new AgentTokenBuilder
+        {
+            Issuer = apUrl,
+            Subject = workerId,
+            KeyId = _selfIdentity.KeyId,
+            Key = _selfIdentity.Key,            // the AP signs
+            ConfirmationKey = _saWorkerKey,     // bound to the WORKER's own key
+            ParentAgent = parentId,             // §Sub-Agents — names the parent
+            PersonServer = personServer,
+        }.Build();
+
+        var parsed = AgentId.Parse(workerId);
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Sub-agent obtains its identity (parent_agent)",
+            From = Actor.SubAgent,
+            To = Actor.SubAgent,
+            Narrative =
+                "The parent spins up the **worker as a separate process** (a sandbox " +
+                "or container) — that isolation is what makes per-worker audit and " +
+                "revocation meaningful. The worker generates its **own** keypair and " +
+                "the **private key never leaves it**, so not even the parent can " +
+                "impersonate it. The **Agent Provider** — not the parent — then issues " +
+                "(signs) the worker's `aa-agent+jwt`, binding the worker's **public** " +
+                "key and stamping the authoritative `parent_agent` claim. How the token " +
+                "is requested is platform-dependent (the parent typically brokers it); " +
+                "the `+worker1` local part is a readability hint only.",
+            TokenJwt = _saWorkerToken,
+            TokenHeader = DecodeJwt(_saWorkerToken)?.Header,
+            TokenPayload = DecodeJwt(_saWorkerToken)?.Payload,
+            TokenDecoded =
+                $"AgentId.Parse(\"{workerId}\")\n" +
+                $"  .IsSubAgent  = {parsed.IsSubAgent}\n" +
+                $"  .ParentAgent = {parsed.ParentAgent}",
+            CodeSnippet = SubAgentWorkerTokenSnippet,
+            CodeSnippetRole = "split: worker-side keygen + Agent Provider-side signing (labeled inline)",
+        });
+    }
+
+    private void SubAgentStepWorkerResourceToken()
+    {
+        var (_, workerId, _, personServer, resourceUrl) = SubAgentNames();
+        var resourceKey = AAuthKey.Generate();  // the resource's own issuer key
+        _saResourceToken = new ResourceTokenBuilder
+        {
+            Issuer = resourceUrl,
+            Audience = personServer,
+            Agent = workerId,
+            AgentJkt = _saWorkerKey!.ComputeJwkThumbprint(),  // bound to the WORKER
+            Key = resourceKey,
+            KeyId = "calendar-1",
+            Scope = "calendar.read",
+        }.Build();
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Worker obtains a resource token",
+            From = Actor.SubAgent,
+            To = Actor.Resource,
+            Narrative =
+                "The **sub-agent** calls the resource directly, signing with **its " +
+                "own** key. The resource issues an `aa-resource+jwt` whose `agent_jkt` " +
+                "is bound to the worker's key thumbprint. The worker then hands this " +
+                "token to its parent **out-of-band** (e.g. IPC) — it never contacts " +
+                "the Person Server itself.",
+            RequestLine = $"GET {resourceUrl}/events   (signed by the sub-agent)",
+            StatusLine = "200 OK",
+            TokenJwt = _saResourceToken,
+            TokenHeader = DecodeJwt(_saResourceToken)?.Header,
+            TokenPayload = DecodeJwt(_saResourceToken)?.Payload,
+            CodeSnippet = SubAgentResourceTokenSnippet,
+            CodeSnippetRole = "the resource server runs this",
+        });
+    }
+
+    private void SubAgentStepParentExchange()
+    {
+        var (_, _, _, personServer, _) = SubAgentNames();
+        var requestBody = new JsonObject
+        {
+            ["resource_token"] = _saResourceToken,
+            ["subagent_token"] = _saWorkerToken,
+        }.ToJsonString(new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        });
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Parent exchanges with subagent_token",
+            From = Actor.Parent,
+            To = Actor.PersonServer,
+            Narrative =
+                "The **parent** — not the worker — drives the token exchange at the " +
+                "Person Server. It signs `POST /token` with **its own** key and " +
+                "includes both the worker's `resource_token` and the worker's agent " +
+                "token as `subagent_token`. The PS verifies the worker token's " +
+                "`parent_agent` names the request signer, enforces single-level depth, " +
+                "and binds the issued token's proof-of-possession to the **worker** " +
+                "(the step-6 `agent_jkt` override).",
+            RequestLine = $"POST {personServer}/token   (signed by the parent)",
+            RequestBody = requestBody,
+            CodeSnippet = SubAgentExchangeSnippet,
+            CodeSnippetRole = "the parent agent runs this (client-side)",
+        });
+    }
+
+    private void SubAgentStepMintAuthToken()
+    {
+        var (parentId, workerId, _, personServer, resourceUrl) = SubAgentNames();
+        var psKey = AAuthKey.Generate();        // the Person Server's issuer key
+        var authToken = new AuthTokenBuilder
+        {
+            Issuer = personServer,
+            Audience = resourceUrl,
+            Agent = workerId,
+            AgentConfirmationKey = _saWorkerKey!,   // PoP binds to the WORKER
+            Key = psKey,
+            KeyId = "ps-1",
+            Subject = "user:alice",
+            Scope = "calendar.read",
+            UpstreamAct = new JsonObject { ["sub"] = parentId },   // records the parent
+        }.Build();
+        _saAuthToken = authToken;
+
+        // Confirm the issued token's cnf binds to the WORKER, not the parent.
+        var rawPayload = JsonNode.Parse(
+            System.Text.Encoding.UTF8.GetString(
+                Base64UrlEncoder.DecodeBytes(authToken.Split('.')[1])));
+        var cnfJwk = rawPayload?["cnf"]?["jwk"] as JsonObject;
+        var boundToWorker = cnfJwk is not null
+            && AAuthKey.FromJwk(cnfJwk).ComputeJwkThumbprint() == _saWorkerKey!.ComputeJwkThumbprint();
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "PS returns the auth token to the parent",
+            From = Actor.PersonServer,
+            To = Actor.Parent,
+            Narrative =
+                "The Person Server mints an `aa-auth+jwt` and returns it to the " +
+                "**parent** — this is the HTTP response to the exchange the parent " +
+                "signed in the previous step. Crucially, the token is **bound to the " +
+                "sub-agent**: `agent` is the worker and `cnf.jwk` is the worker's key, " +
+                "and the `act` claim nests `{ sub: worker, act: { sub: parent } }`. So " +
+                "the parent receives a token it **cannot use itself** — only the worker " +
+                "holds the matching key.",
+            TokenJwt = authToken,
+            TokenHeader = DecodeJwt(authToken)?.Header,
+            TokenPayload = DecodeJwt(authToken)?.Payload,
+            TokenDecoded = boundToWorker
+                ? "✓ cnf.jwk thumbprint matches the sub-agent's key —\n  proof-of-possession binds to the WORKER, not the parent."
+                : "cnf.jwk does NOT match the sub-agent's key.",
+            CodeSnippet = SubAgentAuthTokenSnippet,
+            CodeSnippetRole = "the Person Server runs this",
+        });
+    }
+
+    private void SubAgentStepHandoffToWorker()
+    {
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Parent hands the token to the worker",
+            From = Actor.Parent,
+            To = Actor.SubAgent,
+            Narrative =
+                "The exchange response went to the **parent** (it signed the request), " +
+                "so the parent now holds the worker-bound `auth_token`. It passes the " +
+                "token **down to the sub-agent out-of-band** (e.g. IPC) — the reverse " +
+                "of how the worker handed its `resource_token` up. The worker can now " +
+                "call the resource **itself**, proving possession with **its own key** " +
+                "(the `cnf` the PS bound), while the nested `act` still lets the resource " +
+                "audit the full worker → parent chain.",
+            RequestLine = "(out-of-band handoff — not an HTTP call)",
+            TokenJwt = _saAuthToken,
+            TokenDecoded =
+                "The parent cannot use this token: its proof-of-possession is bound to\n" +
+                "the sub-agent's key, so only the worker can present it to the resource.",
+            CodeSnippet = SubAgentHandoffSnippet,
+            CodeSnippetRole = "the parent agent runs this (client-side)",
+        });
+    }
+
+    private void SubAgentStepWorkerCallsResource()
+    {
+        var (parentId, workerId, _, _, resourceUrl) = SubAgentNames();
+        // Show the token being PRESENTED (not re-issued): a short prefix is
+        // enough to identify it as the same auth token from step 5 without
+        // re-decoding it here.
+        var tokenPreview = string.IsNullOrEmpty(_saAuthToken)
+            ? "<auth_token>"
+            : _saAuthToken[..Math.Min(24, _saAuthToken.Length)] + "…";
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Sub-agent calls the resource with the token",
+            From = Actor.SubAgent,
+            To = Actor.Resource,
+            Narrative =
+                "Now holding the auth token, the **sub-agent** calls the resource " +
+                "**itself** — signing the request with **its own key** (the `cnf` the " +
+                "PS bound) and presenting the `auth_token` from step 5. The resource " +
+                "verifies the HTTP signature against the token's `cnf.jwk`, confirms " +
+                "`agent` is the worker, and reads the nested `act` to audit the full " +
+                "worker → parent chain. The parent never touches this call.",
+            RequestLine = $"GET {resourceUrl}/events   (signed by the sub-agent's key)",
+            RequestHeaders =
+                $"Authorization: AAuth {tokenPreview}\n" +
+                "Signature-Input: sig=(\"@method\" \"@target-uri\" \"authorization\");keyid=\"worker\"\n" +
+                "Signature: sig=:<worker-key signature>:",
+            StatusLine = "200 OK",
+            ResponseBody =
+                "// The resource accepted the call. It bound access to the\n" +
+                "// sub-agent (not the parent) and logged the delegation chain:\n" +
+                $"//   agent = {workerId}\n" +
+                $"//   act   = {{ sub: {workerId}, act: {{ sub: {parentId} }} }}\n" +
+                "{\n  \"events\": [ /* the worker's requested data */ ]\n}",
+            CodeSnippet = SubAgentResourceCallSnippet,
+            CodeSnippetRole = "the sub-agent runs this (client-side)",
+        });
+    }
+
+    private void SubAgentStepSingleLevelDepth()
+    {
+        var (_, workerId, apUrl, _, _) = SubAgentNames();
+        var host = Uri.TryCreate(apUrl, UriKind.Absolute, out var u) ? u.Authority : "host";
+        string message;
+        try
+        {
+            _ = new AgentTokenBuilder
+            {
+                Issuer = apUrl,
+                Subject = $"aauth:aria+worker1+deep@{host}",
+                KeyId = _selfIdentity.KeyId,
+                Key = _selfIdentity.Key,
+                ConfirmationKey = AAuthKey.Generate(),
+                ParentAgent = workerId,   // parent is itself a sub-agent → rejected
+            }.Build();
+            message = "(unexpected: no exception was thrown)";
+        }
+        catch (InvalidOperationException ex)
+        {
+            message = ex.Message;
+        }
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Single-level depth is enforced",
+            From = Actor.SubAgent,
+            To = Actor.SubAgent,
+            Narrative =
+                "The delegation tree stays exactly **one level deep**. When the AP is " +
+                "asked to issue a sub-agent whose `parent_agent` is *itself* a " +
+                "sub-agent, the builder refuses — a sub-agent cannot spawn its own " +
+                "sub-agents, and a sub-agent must never call the Person Server directly.",
+            TokenDecoded = $"// AgentTokenBuilder.Build() threw:\nInvalidOperationException: {message}",
+            CodeSnippet = SubAgentDepthSnippet,
+            CodeSnippetRole = "the Agent Provider runs this — not the agent",
+        });
+    }
+
+    private const string SubAgentParentTokenSnippet = """
+        // ===================== ON THE PARENT AGENT =====================
+        // The parent generates its OWN keypair. Only the PUBLIC half is
+        // ever sent to the AP; the private key stays here.
+        var parentKey = AAuthKey.Generate();          // parent's keypair (private stays local)
+
+        // (the parent sends its public key to its Agent Provider to enrol)
+
+        // ===================== ON THE AGENT PROVIDER ===================
+        // The AP signs the token with its OWN issuer credentials. In this
+        // demo the tour app plays the AP, so these are its self-issued id:
+        //   apUrl   = _selfIdentity.Issuer   // the AP's issuer URL
+        //   apKey   = _selfIdentity.Key      // the AP's Ed25519 SIGNING key
+        //   apKeyId = _selfIdentity.KeyId    // the AP's published key id (kid)
+        // The AP holds these; agents it issues tokens for never do.
+        var parentToken = new AgentTokenBuilder
+        {
+            Issuer          = apUrl,                  // the Agent Provider
+            Subject         = "aauth:aria@host",      // the parent's identifier
+            KeyId           = apKeyId,                // the AP signs…
+            Key             = apKey,                  // …with its OWN signing key
+            ConfirmationKey = parentKey,              // binds the parent's PUBLIC key
+            PersonServer    = personServer,
+        }.Build();                                    // → aa-agent+jwt (no parent_agent)
+
+        // (the AP returns the signed token to the parent)
+        """;
+
+    private const string SubAgentWorkerTokenSnippet = """
+        // ===================== ON THE WORKER (sub-agent) ===============
+        // The worker runs as a SEPARATE process. It generates its OWN
+        // keypair; the private key NEVER leaves it (not even the parent
+        // sees it), so only the worker can later prove possession.
+        var workerKey = AAuthKey.Generate();          // worker's keypair (private stays local)
+
+        // (the worker's PUBLIC key is sent to the AP — acquisition is
+        //  platform-dependent; the parent typically brokers the request)
+
+        // ===================== ON THE AGENT PROVIDER ===================
+        // The AP signs the token with its OWN issuer credentials (apUrl /
+        // apKey / apKeyId — the same ones from step 1, held by the AP, not
+        // the worker). It stamps `parent_agent` to mark this a sub-agent.
+        var workerToken = new AgentTokenBuilder
+        {
+            Issuer          = apUrl,                  // the Agent Provider (issuer)
+            Subject         = "aauth:aria+worker1@host", // parent + "+" + worker id
+            KeyId           = apKeyId,                // the AP's published key id
+            Key             = apKey,                  // the AP signs (NOT the worker)
+            ConfirmationKey = workerKey,              // binds the WORKER's PUBLIC key
+            ParentAgent     = "aauth:aria@host",      // §Sub-Agents — names the parent
+            PersonServer    = personServer,
+        }.Build();
+
+        // ===================== ANYONE (read-only helpers) ==============
+        var id = AgentId.Parse("aauth:aria+worker1@host");
+        _ = id.IsSubAgent;    // true
+        _ = id.ParentAgent;   // "aauth:aria@host"
+        """;
+
+    private const string SubAgentResourceTokenSnippet = """
+        // The SUB-AGENT calls the resource itself, signing with its own
+        // key. The resource issues a token bound to the worker (agent_jkt),
+        // which the worker then hands to its parent out-of-band.
+        var resourceToken = new ResourceTokenBuilder
+        {
+            Issuer   = resourceUrl,
+            Audience = personServer,
+            Agent    = "aauth:aria+worker1@host",
+            AgentJkt = workerKey.ComputeJwkThumbprint(),  // bound to the WORKER
+            Key      = resourceKey,                       // the resource signs
+            KeyId    = "calendar-1",
+            Scope    = "calendar.read",
+        }.Build();                                         // → aa-resource+jwt
+        """;
+
+    private const string SubAgentExchangeSnippet = """
+        // The PARENT mediates the exchange. It signs POST /token with its
+        // OWN key and presents the worker's resource_token together with
+        // the worker's agent token as `subagent_token`.
+        var exchange = new TokenExchangeClient(parentSignedClient, metadata);
+
+        var authToken = await exchange.ExchangeAsync(
+            personServer,
+            resourceToken,                       // obtained by the sub-agent
+            new TokenExchangeRequest
+            {
+                SubagentToken = workerToken,     // §Sub-Agents — the worker's token
+            });
+        """;
+
+    private const string SubAgentAuthTokenSnippet = """
+        // The Person Server mints the auth token bound to the SUB-AGENT —
+        // even though the parent signed. `act` nests the full chain so the
+        // resource can audit who acted for whom.
+        var authToken = new AuthTokenBuilder
+        {
+            Issuer               = personServer,
+            Audience             = resourceUrl,
+            Agent                = "aauth:aria+worker1@host",
+            AgentConfirmationKey = workerKey,    // PoP binds to the WORKER
+            Key                  = psKey,        // the PS signs
+            KeyId                = "ps-1",
+            Subject              = "user:alice",
+            Scope                = "calendar.read",
+            UpstreamAct = new JsonObject { ["sub"] = "aauth:aria@host" },
+        }.Build();
+        // payload.act = { sub: "aauth:aria+worker1@host",
+        //                 act: { sub: "aauth:aria@host" } }
+        // The PS returns this in the HTTP response to the PARENT's exchange.
+        """;
+
+    private const string SubAgentHandoffSnippet = """
+        // The exchange response came back to the PARENT (it signed the
+        // request), so the parent holds the worker-bound auth token. It
+        // hands the token DOWN to the sub-agent out-of-band — the reverse
+        // of how the worker passed its resource_token up.
+        worker.Deliver(authToken);   // e.g. IPC / in-memory channel
+
+        // Only the worker can use it: the token's `cnf` binds proof-of-
+        // possession to the worker's key, so the worker — not the parent —
+        // signs the downstream resource call with `workerKey`.
+        """;
+
+    private const string SubAgentResourceCallSnippet = """
+        // Runs ON THE WORKER. It now holds the auth token and calls the
+        // resource itself, signing the HTTP request with its OWN key
+        // (workerKey — the cnf the PS bound). The parent is not involved.
+        var client = new AAuthClientBuilder(workerKey)   // the worker's key
+            .WithAuthToken(authToken)                    // present the issued token
+            .Build();
+
+        var events = await client.GetAsync($"{resourceUrl}/events");
+        // The resource verifies the signature against the token's cnf.jwk,
+        // sees agent = the sub-agent, and reads act = { sub: worker,
+        // act: { sub: parent } } for its audit log. → 200 OK
+        """;
+
+    private const string SubAgentDepthSnippet = """
+        // Single-level depth: the AP MUST NOT issue a sub-agent whose
+        // parent is ITSELF a sub-agent. Build() throws.
+        try
+        {
+            _ = new AgentTokenBuilder
+            {
+                Issuer          = apUrl,
+                Subject         = "aauth:aria+worker1+deep@host",
+                KeyId           = apKeyId,
+                Key             = apKey,
+                ConfirmationKey = AAuthKey.Generate(),
+                ParentAgent     = "aauth:aria+worker1@host", // a sub-agent → rejected
+            }.Build();
+        }
+        catch (InvalidOperationException ex)
+        {
+            // "parent_agent must name a top-level agent…"
+        }
+        """;
 
     // -----------------------------------------------------------------
     // Protocol flow step implementations
