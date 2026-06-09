@@ -9,6 +9,9 @@ duplicated into both.
 The SDK currently targets **draft-01** ([`v01/`](v01/)). The newer IETF
 **draft-02** ([`v02/`](v02/)) is vendored for the in-progress migration.
 
+For a high-fidelity record of what changed between snapshots, see
+[`CHANGELOG.md`](CHANGELOG.md).
+
 ## `v01/` — protocol draft-01
 
 | Field | Value |
