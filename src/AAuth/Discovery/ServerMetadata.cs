@@ -18,6 +18,12 @@ public sealed class ServerMetadata
     /// <summary>JWKS URI for key resolution.</summary>
     public required string JwksUri { get; init; }
 
+    /// <summary>
+    /// Optional Markdown <c>description</c> for display to users. Server-supplied,
+    /// untrusted content: consumers MUST sanitize it before display.
+    /// </summary>
+    public string? Description { get; init; }
+
     /// <summary>Token endpoint (required for PS/AS).</summary>
     public string? TokenEndpoint { get; init; }
 
@@ -50,6 +56,7 @@ public sealed class ServerMetadata
         {
             Issuer = (string?)doc["issuer"] ?? throw new InvalidOperationException("Metadata missing 'issuer'."),
             JwksUri = (string?)doc["jwks_uri"] ?? throw new InvalidOperationException("Metadata missing 'jwks_uri'."),
+            Description = (string?)doc["description"],
             TokenEndpoint = (string?)doc["token_endpoint"],
             RevocationEndpoint = (string?)doc["revocation_endpoint"],
             MissionEndpoint = (string?)doc["mission_endpoint"],
@@ -88,6 +95,12 @@ public sealed class ResourceMetadata
     /// <summary>Human-readable name.</summary>
     public string? ClientName { get; init; }
 
+    /// <summary>
+    /// Optional Markdown <c>description</c> for display to users (e.g. at a consent
+    /// screen). Server-supplied, untrusted: consumers MUST sanitize before display.
+    /// </summary>
+    public string? Description { get; init; }
+
     /// <summary>Scope descriptions map.</summary>
     public JsonObject? ScopeDescriptions { get; init; }
 
@@ -110,6 +123,7 @@ public sealed class ResourceMetadata
             JwksUri = (string?)doc["jwks_uri"],
             AccessMode = (string?)doc["access_mode"],
             ClientName = (string?)doc["client_name"],
+            Description = (string?)doc["description"],
             ScopeDescriptions = doc["scope_descriptions"] as JsonObject,
             SignatureWindow = (int?)doc["signature_window"],
             AuthorizationEndpoint = (string?)doc["authorization_endpoint"],

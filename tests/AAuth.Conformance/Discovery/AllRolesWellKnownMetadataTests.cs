@@ -52,6 +52,7 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
         {
             Issuer = AgentIssuer,
             ClientName = "Test Agent",
+            Description = "**Test Agent** drafts email on your behalf.",
             SigningKeys = new Dictionary<string, AAuthKey> { [AgentKid] = _agentKey },
             CallbackEndpoint = $"{AgentIssuer}/callback",
         });
@@ -66,6 +67,7 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
         {
             Issuer = PsIssuer,
             TokenEndpoint = $"{PsIssuer}/token",
+            Description = "**Test PS** — manage which agents act for you.",
             SigningKeys = new Dictionary<string, AAuthKey> { [PsKid] = _psKey },
             MissionEndpoint = $"{PsIssuer}/mission",
             ScopesSupported = new[] { "whoami", "data.read" },
@@ -141,6 +143,16 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
     {
         var doc = await Get(_agentHost!, "/.well-known/aauth-agent.json");
         Assert.Equal($"{AgentIssuer}/callback", (string?)doc["callback_endpoint"]);
+    }
+
+    [Fact(DisplayName = "§Discovery — metadata MAY include a Markdown 'description' (agent + PS)")]
+    public async Task Metadata_OptionalDescription()
+    {
+        var agent = await Get(_agentHost!, "/.well-known/aauth-agent.json");
+        Assert.Equal("**Test Agent** drafts email on your behalf.", (string?)agent["description"]);
+
+        var ps = await Get(_psHost!, "/.well-known/aauth-person.json");
+        Assert.Equal("**Test PS** — manage which agents act for you.", (string?)ps["description"]);
     }
 
     [Fact(DisplayName = "§Discovery — standalone agent JWKS endpoint serves keys")]

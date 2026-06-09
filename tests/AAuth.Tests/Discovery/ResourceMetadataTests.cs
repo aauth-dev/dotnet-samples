@@ -51,4 +51,18 @@ public class ResourceMetadataTests
         Assert.Equal("agent-token", meta.AccessMode);
         Assert.Equal("https://resource.example", meta.Issuer);
     }
+
+    [Fact(DisplayName = "§Resource Metadata — parses optional Markdown description")]
+    public void FromJson_ParsesDescription()
+    {
+        var doc = new JsonObject
+        {
+            ["issuer"] = "https://resource.example",
+            ["description"] = "**Example Data Service** stores your documents.",
+        };
+
+        var meta = ResourceMetadata.FromJson(doc);
+
+        Assert.Equal("**Example Data Service** stores your documents.", meta.Description);
+    }
 }

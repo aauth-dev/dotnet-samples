@@ -124,6 +124,10 @@ public static class WellKnownEndpoints
         {
             doc["client_name"] = options.ClientName;
         }
+        if (!string.IsNullOrEmpty(options.Description))
+        {
+            doc["description"] = options.Description;
+        }
         if (options.ScopeDescriptions is { Count: > 0 })
         {
             var scopes = new JsonObject();
@@ -171,6 +175,8 @@ public static class WellKnownEndpoints
         };
         if (!string.IsNullOrEmpty(options.ClientName))
             doc["client_name"] = options.ClientName;
+        if (!string.IsNullOrEmpty(options.Description))
+            doc["description"] = options.Description;
         if (!string.IsNullOrEmpty(options.LogoUri))
             doc["logo_uri"] = options.LogoUri;
         if (!string.IsNullOrEmpty(options.CallbackEndpoint))
@@ -188,6 +194,8 @@ public static class WellKnownEndpoints
             ["token_endpoint"] = options.TokenEndpoint,
             ["jwks_uri"] = $"{options.Issuer.TrimEnd('/')}/.well-known/jwks.json",
         };
+        if (!string.IsNullOrEmpty(options.Description))
+            doc["description"] = options.Description;
         if (!string.IsNullOrEmpty(options.MissionEndpoint))
             doc["mission_endpoint"] = options.MissionEndpoint;
         if (!string.IsNullOrEmpty(options.PermissionEndpoint))
@@ -216,6 +224,8 @@ public static class WellKnownEndpoints
             ["token_endpoint"] = options.TokenEndpoint,
             ["jwks_uri"] = $"{options.Issuer.TrimEnd('/')}/.well-known/jwks.json",
         };
+        if (!string.IsNullOrEmpty(options.Description))
+            doc["description"] = options.Description;
         if (!string.IsNullOrEmpty(options.RevocationEndpoint))
             doc["revocation_endpoint"] = options.RevocationEndpoint;
         return doc;
@@ -281,6 +291,13 @@ public sealed class AAuthResourceMetadataOptions
 
     /// <summary>Optional human-readable name (<c>client_name</c>).</summary>
     public string? ClientName { get; init; }
+
+    /// <summary>
+    /// Optional Markdown <c>description</c> of the resource, for display to users
+    /// (e.g. at a consent screen) (§Resource Metadata). Implementations MUST
+    /// sanitize the Markdown before rendering.
+    /// </summary>
+    public string? Description { get; init; }
 
     /// <summary>Optional scope description map (<c>scope_descriptions</c>).</summary>
     public IReadOnlyDictionary<string, string>? ScopeDescriptions { get; init; }

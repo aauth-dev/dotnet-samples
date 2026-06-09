@@ -182,8 +182,9 @@ baseline. **Status: complete (2026-06-09).**
 
 ## Phase 4 — Sub-agents (largest net-new feature)
 
-Depends on Phase 1 (clean baseline) and reuses the existing `act` chain
-machinery.
+**Status: core complete (2026-06-09); four-party AS sub-agent federation deferred
+(see log).** Depends on Phase 1 (clean baseline) and reuses the existing `act`
+chain machinery.
 
 ### Scope
 
@@ -206,19 +207,29 @@ machinery.
 
 ### Definition of Done
 
-- [ ] A parent can mint a sub-agent token (`parent_agent` present) and obtain an
+- [x] A parent can mint a sub-agent token (`parent_agent` present) and obtain an
       auth token on the sub-agent's behalf; `act` nesting matches the spec's
-      verbatim shape.
-- [ ] Single-level depth enforced at PS and AP paths (both MUSTs) with tests.
-- [ ] Resource-token step-6 binds to the sub-agent key when `subagent_token`
-      present; PoP holds (parent signs).
-- [ ] Conformance suite for sub-agent identity + parent-mediated authorization.
+      verbatim shape. (Three-party; conformance test asserts the
+      `{sub: subagent, act: {sub: parent}}` nesting.)
+- [x] Single-level depth enforced at PS and AP paths (both MUSTs) with tests.
+      (AP: `AgentTokenBuilder` rejects a top-level `+`, a sub-agent of a
+      sub-agent, and a local part that doesn't derive from `parent_agent`. PS:
+      rejects a request signed by an agent whose token carries `parent_agent`.)
+- [x] Resource-token step-6 binds to the sub-agent key when `subagent_token`
+      present; PoP holds (parent signs). (`VerifyResourceTokenAsync` gains a
+      `subagentAgentJkt` override.)
+- [x] Conformance suite for sub-agent identity + parent-mediated authorization.
+      (`AgentIdTests`, `AgentTokenBuilderTests`, `PersonServerMapperTests`.)
+- [ ] **Deferred:** four-party AS sub-agent federation (PS forwards
+      `subagent_token` to the AS; AS binds + records the parent). The three-party
+      path proves the model; four-party is additive. Tracked in the log.
 
 ---
 
 ## Phase 5 — PS token-endpoint params (server-side wiring)
 
-Client side already shipped (verify only). Wire the PS server side.
+**Status: complete (2026-06-09).** Client side already shipped (verified). Wire
+the PS server side.
 
 ### Scope
 
@@ -231,16 +242,23 @@ Client side already shipped (verify only). Wire the PS server side.
 
 ### Definition of Done
 
-- [ ] PS reads `prompt`/`capabilities`; values reach the decider seam.
-- [ ] Within a mission, supplied `capabilities` refresh the approval-time values
-      (per Q7 ruling on override vs merge).
-- [ ] Client-side serialization re-confirmed against published v02 (no change
-      expected).
-- [ ] Server-side conformance tests added.
+- [x] PS reads `prompt`/`capabilities`; values reach the decider seam.
+      (`IdentityAssertionRequest.Prompt`/`.Capabilities`; conformance test asserts
+      they flow from the token body to the asserter.)
+- [x] Within a mission, supplied `capabilities` refresh the approval-time values
+      (per Q7 ruling on override vs merge). (The values are passed to the asserter
+      on every gate; "refresh = replace" is the asserter's contract — the host
+      hands it the request-time values, superseding approval-time for that call.)
+- [x] Client-side serialization re-confirmed against published v02 (no change
+      expected). (`subagent_token` added alongside; `prompt`/`capabilities`
+      unchanged.)
+- [x] Server-side conformance tests added.
 
 ---
 
 ## Phase 6 — Metadata `description` fields + sanitization guidance
+
+**Status: complete (2026-06-09).**
 
 ### Scope
 
@@ -254,16 +272,21 @@ Client side already shipped (verify only). Wire the PS server side.
 
 ### Definition of Done
 
-- [ ] `description` round-trips on all four metadata documents; optional/absent
-      tolerated.
-- [ ] Sanitization decision implemented or documented at the render boundary.
-- [ ] Tests for emit + parse.
+- [x] `description` round-trips on all four metadata documents; optional/absent
+      tolerated. (All four options classes gain `Description`; all four builders
+      emit it when set; `ServerMetadata`/`ResourceMetadata` parse it.)
+- [x] Sanitization decision implemented or documented at the render boundary.
+      (Per Q6, no SDK sanitizer; the read-model `Description` doc comments state
+      consumers MUST sanitize before display — matching the existing
+      Mission/Clarification pattern.)
+- [x] Tests for emit + parse. (Conformance emit test for agent + PS; unit parse
+      test for resource.)
 
 ---
 
 ## Phase 7 — Docs-only clarifications
 
-Mostly the change set 6 findings (all docs/advisory).
+**Status: complete (2026-06-09).** Mostly the change set 6 findings (all docs/advisory).
 
 ### Scope
 
@@ -279,14 +302,21 @@ Mostly the change set 6 findings (all docs/advisory).
 
 ### Definition of Done
 
-- [ ] Signing-mode docs corrected; no claim that hwk/jkt-jwt are standalone
-      access modes.
-- [ ] Sanitization + non-repudiation guidance present.
-- [ ] README/SPEC-VERSION reflect draft-02 as the SDK target.
+- [x] Signing-mode docs corrected; no claim that hwk/jkt-jwt are standalone
+      access modes. (Added the "agent token is AAuth's minimum credential"
+      callout to `docs/signing-modes/overview.md`.)
+- [x] Sanitization + non-repudiation guidance present. (Sanitization is surfaced
+      on the metadata `Description` doc comments; the jkt-jwt key-rotation +
+      non-repudiation rationale already lives in the signing-modes docs from the
+      prior jkt-jwt work.)
+- [x] README/SPEC-VERSION reflect draft-02 as the SDK target. (Both updated; live
+      doc links repointed to `v02/`.)
 
 ---
 
 ## Phase 8 — Samples + e2e + final verification
+
+**Status: verification complete; samples partially demonstrated (2026-06-09).**
 
 ### Scope
 
@@ -297,11 +327,23 @@ Mostly the change set 6 findings (all docs/advisory).
 
 ### Definition of Done
 
-- [ ] Samples demonstrate `access_mode`, `requirement=agent-token`, and (if in
-      scope) a sub-agent flow.
-- [ ] Full matrix green; `grep` shows no draft-01-only residue for migrated
-      features.
-- [ ] `aauth-spec/CHANGELOG.md` SDK-impact notes reconciled.
+- [x] Samples demonstrate `access_mode`, `requirement=agent-token`, and (if in
+      scope) a sub-agent flow. (The Trips mock resource publishes the wire
+      `access_mode` + `description`. A dedicated **Sub-Agents** sample now ships:
+      `samples/SampleApp/Components/Pages/SubAgent.razor` — a self-contained
+      in-process demo of the parent-mediated flow (real SDK builders +
+      `AgentId`), with a Home card, nav entry, and Playwright spec
+      (`sub-agent.spec.ts`); the GuidedTour Home cross-links it. The four-party
+      AS sub-agent leg remains deferred.)
+- [x] Full matrix green; `grep` shows no draft-01-only residue for migrated
+      features. (Build 0/0 across SDK+samples+tests; 416 unit + 500 conformance
+      green; residue grep clean — no `user_unreachable`+400 in `src/`, no `v01`
+      spec links in `src/`/`docs/`.)
+- [x] `aauth-spec/CHANGELOG.md` SDK-impact notes reconciled. (The
+      `user_unreachable` 400→403 note was updated in Phase 1.)
+- [ ] **Not run:** Playwright e2e (`tests/e2e`, GuidedTour/SampleApp specs) —
+      requires orchestrated browser servers; out of band for this session. The
+      unit + conformance matrix covers the migrated behaviors.
 
 ---
 

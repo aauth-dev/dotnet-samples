@@ -18,6 +18,40 @@ Each entry: `[YYYY-MM-DD] [Phase N] <title>` with status
 
 ## Decisions taken
 
+### [2026-06-09] [Post-Phase 8] Sub-agent worker sample added (in-process)
+- Added `samples/SampleApp/Components/Pages/SubAgent.razor` — a self-contained,
+  **in-process** demonstration of the parent-mediated sub-agent flow using the
+  real SDK builders (`AgentTokenBuilder.ParentAgent`, `ResourceTokenBuilder`,
+  `AuthTokenBuilder.UpstreamAct`) and `AgentId.IsSubAgent`/`ParentAgent`. It shows
+  the `parent_agent` claim, the `subagent_token` request shape, the
+  sub-agent-bound `cnf`, the nested `act`, and single-level-depth enforcement.
+  Plus a Home card, nav entry, and Playwright spec (`sub-agent.spec.ts`); the
+  GuidedTour Home cross-links it.
+- **Why in-process, not live against the mock servers:** `samples/MockPersonServer`
+  uses a **custom** `/token` handler (not the SDK's `MapAAuthPersonServer`), so the
+  Phase 4 PS sub-agent support is not in the mock orchestration; a live demo would
+  also require mock-server changes and could not be validated in this session. The
+  in-process page exercises the same conformance-tested code paths and is reliable
+  with no orchestration dependency. Validated at runtime via a throwaway test that
+  mirrored the page's `RunDemo()` (passed; then removed).
+- **Still deferred:** four-party AS sub-agent federation, and a *live* end-to-end
+  sub-agent flow through the mock servers (would need MockPersonServer wiring).
+
+### [2026-06-09] [Phase 8] Migration landed across Phases 1–7; two items deferred
+- **Done (committed Phases 1–3; uncommitted Phases 4–8 pending owner review):**
+  Phase 1 (user_unreachable 403 + metadata issuer host-binding), Phase 2
+  (access_mode + requirement=agent-token + conditional jwks_uri), Phase 3
+  (interaction_unavailable 424, max_wait, status, Crockford InteractionCode),
+  Phase 4 (sub-agents: parent_agent, subagent_token, single-level depth,
+  resource-token step-6 binding, act nesting — three-party), Phase 5 (PS reads
+  prompt/capabilities), Phase 6 (metadata description on all four docs), Phase 7
+  (docs + README/SPEC-VERSION → draft-02).
+- **Verification:** full solution builds 0 warnings / 0 errors; 416 unit + 500
+  conformance tests green; residue grep clean.
+- **Deferred (tracked):** (1) four-party AS sub-agent federation; (2) a dedicated
+  sub-agent worker **sample** + Playwright **e2e** run. Both are additive and
+  lower-value; the three-party parent-mediated path + conformance prove the model.
+
 ### [2026-06-09] [Grounding] Published draft-02 is the authoritative target
 - **Source of truth:** [`aauth-spec/v02/draft-hardt-oauth-aauth-protocol.md`](../../../aauth-spec/v02/draft-hardt-oauth-aauth-protocol.md)
   (commit `feda56b`), with the v01→v02 delta catalogued in
@@ -75,6 +109,31 @@ Each entry: `[YYYY-MM-DD] [Phase N] <title>` with status
 ---
 
 ## Deviations from plan
+
+### [2026-06-09] [Phase 4] Four-party AS sub-agent federation deferred — PROCEEDED (default: defer)
+- **Scope call.** The plan's Phase 4 Scope lists wiring `subagent_token` through
+  the AS client + AS endpoint so a four-party resource can federate a
+  parent-mediated sub-agent authorization. Implemented the **three-party**
+  parent-mediated path fully (token layer + PS + agent client + conformance), and
+  **deferred** the four-party AS leg. Rationale: the three-party path proves the
+  entire model (sub-agent token, parent-mediated request, single-level depth,
+  resource-token step-6 binding, `act` nesting); the four-party leg is additive
+  (`HandleFederatedAsync` forwards `subagent_token` to `AccessServerClient`; the
+  AS endpoint verifies it and binds), touches the AS pending/federation paths,
+  and is lower-value for the migration's intent. Revisit if a four-party
+  sub-agent demo is needed (Phase 8).
+- **What this means in practice:** a sub-agent whose resource issues a resource
+  token with `aud = AS` is not yet supported end-to-end; a sub-agent against a
+  three-party resource (`aud = PS`) is fully supported.
+
+### [2026-06-09] [Phase 4] `parent_agent` validity is enforced at the boundaries, not in generic agent-token verify — PROCEEDED
+- §5.2.4 step 7 says "if `parent_agent` is present, verify it is a valid agent
+  identifier." Rather than add a branch to the generic `TokenVerifier.Verify`
+  (used widely), validity is enforced where it matters: the **AP** builder
+  validates the full sub-agent naming relationship at issue time, and the **PS**
+  validates `subagent_token.parent_agent` names the signer at use time. A
+  malformed `parent_agent` therefore fails closed at both the issue and use
+  boundaries. Revisit if a standalone verify-time check is wanted.
 
 ### [2026-06-09] [Phase 3] Single-use + rate-limit are store responsibilities, not in `InteractionCode` — PROCEEDED
 - The new SDK-owned `InteractionCode` utility (Q4) implements the **pure-function**

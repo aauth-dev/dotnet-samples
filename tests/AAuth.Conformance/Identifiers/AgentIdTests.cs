@@ -84,4 +84,20 @@ public class AgentIdTests
         Assert.Equal("alice", id.Local);
         Assert.Equal("ap.example", id.Domain);
     }
+
+    [Fact(DisplayName = "§Sub-Agents — a top-level agent is not a sub-agent and has no parent")]
+    public void TopLevel_NotSubAgent()
+    {
+        var id = AgentId.Parse("aauth:planner.7f3c@vendor.example");
+        Assert.False(id.IsSubAgent);
+        Assert.Null(id.ParentAgent);
+    }
+
+    [Fact(DisplayName = "§Sub-Agents — a '+' local part marks a sub-agent and derives its parent")]
+    public void SubAgent_DerivesParent()
+    {
+        var id = AgentId.Parse("aauth:planner.7f3c+search1@vendor.example");
+        Assert.True(id.IsSubAgent);
+        Assert.Equal("aauth:planner.7f3c@vendor.example", id.ParentAgent);
+    }
 }

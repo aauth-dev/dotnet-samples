@@ -33,6 +33,15 @@ public sealed class TokenExchangeRequest
     public string? UpstreamToken { get; init; }
 
     /// <summary>
+    /// Optional sub-agent agent token (<c>subagent_token</c>) for parent-mediated
+    /// authorization (§Sub-Agents). When set, the signing agent is the parent and
+    /// the PS/AS issues an auth token bound to the sub-agent's key, recording the
+    /// parent in the <c>act</c> chain. The parent MUST be named by the
+    /// <c>subagent_token</c>'s <c>parent_agent</c> claim.
+    /// </summary>
+    public string? SubagentToken { get; init; }
+
+    /// <summary>
     /// Capabilities to declare to the PS in the token request body. When
     /// <see langword="null"/> (default), capabilities are inferred from the
     /// flow: <c>"interaction"</c> is sent when <see cref="OnInteractionRequired"/>

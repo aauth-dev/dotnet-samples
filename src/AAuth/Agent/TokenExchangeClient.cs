@@ -85,6 +85,11 @@ public sealed class TokenExchangeClient
         {
             body["upstream_token"] = upstreamToken;
         }
+        // §Sub-Agents: a parent requests authorization on behalf of one of its
+        // sub-agents by signing with its own key and including the sub-agent's
+        // agent token as subagent_token. The PS/AS binds the issued auth token to
+        // the sub-agent's key and records the parent in the act chain.
+        DeferredExchange.AddIfPresent(body, "subagent_token", options.SubagentToken);
         // Declare capabilities so the PS knows what the agent can do (e.g.
         // handle a 202 + user-facing consent redirect). Spec §AAuth-Capabilities
         // plus -02 token endpoint parameter. null = infer from flow; an explicit

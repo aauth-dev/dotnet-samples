@@ -143,6 +143,67 @@ public class AgentTokenBuilderTests
         Assert.Equal("https://ps.example", (string?)payload["ps"]);
     }
 
+    [Fact(DisplayName = "§Sub-Agents — a sub-agent token emits parent_agent")]
+    public void Build_EmitsParentAgent()
+    {
+        var jwt = new AgentTokenBuilder
+        {
+            Issuer = "https://vendor.example",
+            Subject = "aauth:planner.7f3c+search1@vendor.example",
+            KeyId = "k1",
+            Key = NewKey(),
+            ParentAgent = "aauth:planner.7f3c@vendor.example",
+        }.Build();
+
+        var (_, payload, _, _) = Decode(jwt);
+        Assert.Equal("aauth:planner.7f3c@vendor.example", (string?)payload["parent_agent"]);
+    }
+
+    [Fact(DisplayName = "§Sub-Agents — a top-level token MUST NOT contain the '+' delimiter")]
+    public void Build_RejectsPlusInTopLevelLocal()
+    {
+        var builder = new AgentTokenBuilder
+        {
+            Issuer = "https://vendor.example",
+            Subject = "aauth:planner+oops@vendor.example",
+            KeyId = "k1",
+            Key = NewKey(),
+            // No ParentAgent → top-level → '+' is illegal.
+        };
+
+        Assert.Throws<InvalidOperationException>(() => builder.Build());
+    }
+
+    [Fact(DisplayName = "§Sub-Agents — single-level depth: a sub-agent's parent MUST be top-level")]
+    public void Build_RejectsSubAgentOfSubAgent()
+    {
+        var builder = new AgentTokenBuilder
+        {
+            Issuer = "https://vendor.example",
+            Subject = "aauth:planner.7f3c+search1+deep@vendor.example",
+            KeyId = "k1",
+            Key = NewKey(),
+            ParentAgent = "aauth:planner.7f3c+search1@vendor.example", // parent is itself a sub-agent
+        };
+
+        Assert.Throws<InvalidOperationException>(() => builder.Build());
+    }
+
+    [Fact(DisplayName = "§Sub-Agents — a sub-agent local part MUST derive from its parent_agent")]
+    public void Build_RejectsMismatchedSubAgentParent()
+    {
+        var builder = new AgentTokenBuilder
+        {
+            Issuer = "https://vendor.example",
+            Subject = "aauth:other+search1@vendor.example",
+            KeyId = "k1",
+            Key = NewKey(),
+            ParentAgent = "aauth:planner.7f3c@vendor.example", // local part 'other' != 'planner.7f3c'
+        };
+
+        Assert.Throws<InvalidOperationException>(() => builder.Build());
+    }
+
     [Fact]
     public void Build_SignatureVerifiesWithEmbeddedPublicKey()
     {

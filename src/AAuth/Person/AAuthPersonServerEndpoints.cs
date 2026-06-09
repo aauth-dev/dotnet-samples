@@ -224,6 +224,24 @@ public static class AAuthPersonServerEndpoints
             }
 
             var upstreamTokenJwt = (string?)body?["upstream_token"];
+            var subagentTokenJwt = (string?)body?["subagent_token"];
+
+            // §Agent Token Request: optional consent-shaping params. `prompt` is an
+            // OIDC string; `capabilities` is the request-body equivalent of the
+            // AAuth-Capabilities header. Both are tolerant — unknown values flow to
+            // the asserter, which MAY honor or ignore them.
+            var prompt = (string?)body?["prompt"];
+            var capabilities = ParseStringArray(body?["capabilities"] as JsonArray);
+
+            // §Single-Level Depth: a PS MUST reject a token request signed by an
+            // agent whose own token carries `parent_agent` — a sub-agent cannot
+            // request authorization on its own behalf; its parent must mediate.
+            if (parsed.Payload?["parent_agent"] is not null)
+            {
+                return Results.Json(
+                    new { error = "invalid_request", detail = "a sub-agent MUST NOT request authorization directly; the parent mediates (§Sub-Agents)" },
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
 
             // Route on the resource token's `aud` (peeked, not trusted; both
             // branches fully verify the token afterwards). `aud == this PS` →
@@ -237,7 +255,7 @@ public static class AAuthPersonServerEndpoints
             }
 
             return await HandleThreePartyAsync(
-                ctx, parsed, agentId, resourceTokenJwt, upstreamTokenJwt);
+                ctx, parsed, agentId, resourceTokenJwt, upstreamTokenJwt, subagentTokenJwt, prompt, capabilities);
         });
 
         // -------------------------------------------------------------------
@@ -296,7 +314,8 @@ public static class AAuthPersonServerEndpoints
         // ---- three-party (PS-asserted) handler -----------------------------
         async Task<IResult> HandleThreePartyAsync(
             HttpContext ctx, SignatureKeyParser.ParsedSignatureKeyInfo parsed,
-            string agentId, string resourceTokenJwt, string? upstreamTokenJwt)
+            string agentId, string resourceTokenJwt, string? upstreamTokenJwt, string? subagentTokenJwt,
+            string? prompt = null, IReadOnlyList<string>? capabilities = null)
         {
             // Call-chaining: validate upstream_token (§Upstream Token Verification).
             JsonObject? upstreamAct = null;
@@ -317,9 +336,62 @@ public static class AAuthPersonServerEndpoints
                 upstreamAct = result.UpstreamAct;
             }
 
+            // §Sub-Agents (parent-mediated authorization): when a subagent_token is
+            // present the signing agent is the parent. Verify the sub-agent token,
+            // confirm its parent_agent names the signer, and bind the issued auth
+            // token to the SUB-AGENT's key/identity while recording the parent in
+            // the act chain. Consent is still evaluated for the parent (the agentId).
+            var boundAgentId = agentId;
+            var boundConfirmationKey = parsed.ConfirmationKey!;
+            var boundUpstreamAct = upstreamAct;
+            string? subagentJkt = null;
+            if (!string.IsNullOrEmpty(subagentTokenJwt))
+            {
+                string subagentId;
+                AAuthKey subagentKey;
+                string? subagentParent;
+                try
+                {
+                    var verifiedSub = await tokenVerifier.VerifyWithJwksAsync(
+                        subagentTokenJwt, metadataClient, jwksClient,
+                        AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk, expectedAudience: null);
+                    subagentId = (string?)verifiedSub.Payload["sub"]
+                        ?? throw new TokenVerificationException("subagent_token missing sub");
+                    var subCnf = verifiedSub.Payload["cnf"]?["jwk"] as JsonObject
+                        ?? throw new TokenVerificationException("subagent_token missing cnf.jwk");
+                    subagentKey = AAuthKey.FromJwk(subCnf);
+                    subagentParent = (string?)verifiedSub.Payload["parent_agent"]
+                        ?? throw new TokenVerificationException("subagent_token missing parent_agent");
+                }
+                catch (TokenVerificationException ex)
+                {
+                    return Results.Json(new { error = "invalid_agent_token", detail = ex.Message },
+                        statusCode: StatusCodes.Status400BadRequest);
+                }
+
+                // The signing agent (parent) MUST be named by subagent_token.parent_agent.
+                if (!string.Equals(subagentParent, agentId, StringComparison.Ordinal))
+                {
+                    return Results.Json(
+                        new { error = "invalid_request", detail = "subagent_token.parent_agent does not name the signing agent (§Sub-Agents)" },
+                        statusCode: StatusCodes.Status400BadRequest);
+                }
+
+                boundAgentId = subagentId;
+                boundConfirmationKey = subagentKey;
+                subagentJkt = subagentKey.ComputeJwkThumbprint();
+                // act chain: { sub: subagent, act: { sub: parent[, act: upstream] } }.
+                boundUpstreamAct = new JsonObject { ["sub"] = agentId };
+                if (upstreamAct is not null)
+                {
+                    boundUpstreamAct["act"] = upstreamAct.DeepClone();
+                }
+            }
+
             // Verify the resource token (§Resource Token Verification). `iss`
             // becomes the auth token's `aud`; `scope` is echoed; `mission` (if
-            // present) governs the request.
+            // present) governs the request. For a sub-agent the resource token's
+            // `agent`/`agent_jkt` bind to the sub-agent (step 6 uses subagentJkt).
             string audience;
             var requestedScope = options.DefaultScope;
             MissionClaim? missionClaim;
@@ -328,9 +400,12 @@ public static class AAuthPersonServerEndpoints
                 var verified = await tokenVerifier.VerifyResourceTokenAsync(
                     resourceTokenJwt,
                     expectedAudience: options.Issuer,
-                    expectedAgentId: agentId,
+                    expectedAgentId: boundAgentId,
                     expectedAgentJkt: parsed.ConfirmationKey!.ComputeJwkThumbprint(),
-                    metadataClient, jwksClient);
+                    metadataClient, jwksClient,
+                    expectedApprover: null,
+                    subagentAgentJkt: subagentJkt);
+
 
                 audience = (string?)verified.Payload["iss"]
                     ?? throw new TokenVerificationException("resource_token missing iss");
@@ -377,10 +452,12 @@ public static class AAuthPersonServerEndpoints
                         Scope = requestedScope,
                         AgentId = agentId,
                         Mission = missionClaim,
+                        Prompt = prompt,
+                        Capabilities = capabilities,
                     });
                     return MintFromAssertion(
-                        asserted, audience, agentId, requestedScope,
-                        parsed.ConfirmationKey!, upstreamAct, missionClaim)
+                        asserted, audience, boundAgentId, requestedScope,
+                        boundConfirmationKey, boundUpstreamAct, missionClaim)
                         ?? Results.Json(new { error = "denied", detail = asserted.Reason },
                             statusCode: StatusCodes.Status403Forbidden);
                 }
@@ -392,6 +469,8 @@ public static class AAuthPersonServerEndpoints
                     Scope = requestedScope,
                     AgentId = agentId,
                     Mission = missionClaim,
+                    Prompt = prompt,
+                    Capabilities = capabilities,
                 });
                 switch (decision.Kind)
                 {
@@ -400,9 +479,9 @@ public static class AAuthPersonServerEndpoints
                         return Results.Ok(new
                         {
                             auth_token = Mint(
-                                audience, agentId, requestedScope, parsed.ConfirmationKey!,
+                                audience, boundAgentId, requestedScope, boundConfirmationKey,
                                 decision.Subject ?? "pairwise-sub", decision.Tenant, decision.Roles,
-                                decision.Groups, decision.AdditionalClaims, upstreamAct, missionClaim),
+                                decision.Groups, decision.AdditionalClaims, boundUpstreamAct, missionClaim),
                         });
                     case IdentityAssertionKind.Deny:
                         return Results.Json(new { error = "denied", detail = decision.Reason },
@@ -410,7 +489,7 @@ public static class AAuthPersonServerEndpoints
                     case IdentityAssertionKind.NeedsConsent:
                     default:
                         var missionEntry = pending.Add(
-                            audience, requestedScope, agentId, parsed.ConfirmationKey, upstreamAct, missionClaim);
+                            audience, requestedScope, boundAgentId, boundConfirmationKey, boundUpstreamAct, missionClaim);
                         return Pending202(ctx, missionEntry, options, interactionUrl);
                 }
             }
@@ -421,6 +500,8 @@ public static class AAuthPersonServerEndpoints
                 ResourceUrl = audience,
                 Scope = requestedScope,
                 AgentId = agentId,
+                Prompt = prompt,
+                Capabilities = capabilities,
             });
             switch (assertion.Kind)
             {
@@ -428,16 +509,16 @@ public static class AAuthPersonServerEndpoints
                     return Results.Ok(new
                     {
                         auth_token = Mint(
-                            audience, agentId, requestedScope, parsed.ConfirmationKey!,
+                            audience, boundAgentId, requestedScope, boundConfirmationKey,
                             assertion.Subject ?? "pairwise-sub", assertion.Tenant, assertion.Roles,
-                            assertion.Groups, assertion.AdditionalClaims, upstreamAct, mission: null),
+                            assertion.Groups, assertion.AdditionalClaims, boundUpstreamAct, mission: null),
                     });
                 case IdentityAssertionKind.Deny:
                     return Results.Json(new { error = "denied", detail = assertion.Reason },
                         statusCode: StatusCodes.Status403Forbidden);
                 case IdentityAssertionKind.NeedsConsent:
                 default:
-                    var entry = pending.Add(audience, requestedScope, agentId, parsed.ConfirmationKey, upstreamAct);
+                    var entry = pending.Add(audience, requestedScope, boundAgentId, boundConfirmationKey, boundUpstreamAct);
                     return Pending202(ctx, entry, options, interactionUrl);
             }
         }
@@ -704,5 +785,25 @@ public static class AAuthPersonServerEndpoints
         var s = segment.Replace('-', '+').Replace('_', '/');
         s += (s.Length % 4) switch { 2 => "==", 3 => "=", _ => string.Empty };
         return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(s));
+    }
+
+    // Parse a JSON array of strings (e.g. the `capabilities` body parameter) into
+    // a list, skipping non-string entries. Returns null when absent/empty so the
+    // asserter can distinguish "not declared" from "declared empty".
+    private static IReadOnlyList<string>? ParseStringArray(JsonArray? array)
+    {
+        if (array is null || array.Count == 0)
+        {
+            return null;
+        }
+        var list = new List<string>(array.Count);
+        foreach (var node in array)
+        {
+            if (node is JsonValue v && v.TryGetValue<string>(out var s) && !string.IsNullOrEmpty(s))
+            {
+                list.Add(s);
+            }
+        }
+        return list.Count > 0 ? list : null;
     }
 }

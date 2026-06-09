@@ -63,6 +63,23 @@ public sealed class IdentityAssertionRequest
     /// </summary>
     public MissionClaim? Mission { get; init; }
 
+    /// <summary>
+    /// The OIDC <c>prompt</c> value from the token request, if any (space-delimited
+    /// <c>none</c>/<c>login</c>/<c>consent</c>/<c>select_account</c>, §Agent Token
+    /// Request). The asserter MAY honor it (e.g. force a consent prompt). Unknown
+    /// values are tolerated and ignored.
+    /// </summary>
+    public string? Prompt { get; init; }
+
+    /// <summary>
+    /// The capabilities the agent declared in the token request body, if any
+    /// (§Agent Token Request — the request-body equivalent of the
+    /// <c>AAuth-Capabilities</c> header). Without a mission this is how the PS
+    /// learns what the agent can drive (e.g. <c>interaction</c>); within a mission
+    /// these refresh the values captured at approval. Unknown values are tolerated.
+    /// </summary>
+    public IReadOnlyList<string>? Capabilities { get; init; }
+
     /// <summary>The pending-entry id when the request resumes a parked consent.</summary>
     public string? InteractionId { get; init; }
 }
