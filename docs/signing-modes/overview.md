@@ -8,6 +8,7 @@ All AAuth signing modes use HTTP Message Signatures (RFC 9421). The difference i
 |------|--------|--------------------:|-----------------|
 | Anonymous | (none) | No Signature-Key header | Nothing |
 | Pseudonymous | `sig=hwk` | `sig=hwk;jkt="<thumbprint>";jwk="<key>"` | Key thumbprint + inline public key — identity unknown |
+| Key Rotation | `sig=jkt-jwt` | `sig=jkt-jwt;jkt="<thumbprint>";jwt="<naming-jws>"` | An ephemeral key anchored to a durable key (naming JWT) — pseudonymous, rotatable |
 | Agent Identity | `sig=jwks_uri` | `sig=jwks_uri;uri="<url>";kid="<id>"` | Agent identifier + verifiable public key |
 | Agent Token | `sig=jwt` | `sig=jwt;jwt="<compact-jws>"` | Agent identity, PS URL, bound signing key |
 
@@ -17,6 +18,7 @@ All AAuth signing modes use HTTP Message Signatures (RFC 9421). The difference i
 |------|----------|----------|
 | Anonymous | Public endpoints, no access control | Nothing |
 | Pseudonymous (`hwk`) | Accountable access, rate-limiting by key | Just a keypair |
+| Key Rotation (`jkt-jwt`) | Pseudonymous access where the request-signing key must rotate without re-enrolment | A durable key + an ephemeral key (and the ability to mint naming JWTs) |
 | Agent Identity (`jwks_uri`) | Access control by identity, replacing API keys | JWKS host (AP or self-hosted) |
 | Agent Token (`jwt`) | Full PS-AS authorization flows | Token issuer (AP or self-issued) + Person Server |
 
@@ -79,11 +81,18 @@ The access mode determines which signing modes are valid:
 
 | Access Mode | Valid Signing Modes | Why |
 |-------------|--------------------:|-----|
-| **Identity-Based** | `hwk`, `jwks_uri` | Resource decides from the signature alone. `hwk` gives pseudonymous access (key thumbprint only); `jwks_uri` gives named agent identity. No PS involvement, so `jwt` is not applicable. |
-| **Resource-Managed** (two-party) | `hwk`, `jwks_uri`, `jwt` | Resource handles its own authorization (interaction, internal policy). Any signing mode works because the resource doesn't issue resource tokens to a PS — it manages access itself. |
+| **Identity-Based** | `hwk`, `jkt-jwt`, `jwks_uri` | Resource decides from the signature alone. `hwk` and `jkt-jwt` give pseudonymous access (key thumbprint only — `jkt-jwt` additionally supports key rotation); `jwks_uri` gives a named agent identity. No PS involvement, so `jwt` is not applicable. |
+| **Resource-Managed** (two-party) | `hwk`, `jkt-jwt`, `jwks_uri`, `jwt` | Resource handles its own authorization (interaction, internal policy). Any signing mode works because the resource doesn't issue resource tokens to a PS — it manages access itself. |
 | **PS-Asserted** (three-party) | `jwt` only | The resource issues a `resource_token` with `aud=PS`. The PS must verify the agent's identity via the agent token (`aa-agent+jwt`), which requires `scheme=jwt` in `Signature-Key`. |
 | **Federated** (four-party) | `jwt` only | Same as PS-Asserted — the PS federates with the AS, but the agent-side requirement is identical: present the agent token via `scheme=jwt`. |
-| **Bootstrap key rotation** | `jkt-jwt` | Special case: an ephemeral key is bound to a durable identity via a naming JWT. Used during key rotation, not as a primary access mode. |
+
+> **`jkt-jwt` is a pseudonymous *scheme*, not a separate access mode.** A durable
+> key signs a naming JWT that binds a fresh ephemeral signing key (key rotation
+> without re-enrolment). It is valid wherever pseudonymous access is — the Profile
+> server's [`/anchored`](../../samples/MockResourceServers/Profile/README.md)
+> endpoint demonstrates it under Identity-Based access (reporting
+> `signingMode = "pseudonymous"`) — and it is also what the SDK uses internally at
+> AP refresh (see [Bootstrap & Enrollment](../workflows/bootstrap-enrollment.md)).
 
 > **Common confusion**: "Identity-Based" access mode supports the `hwk` (pseudonymous) signing mode even though `hwk` doesn't disclose a named identity. The term "Identity-Based" refers to the *access pattern* — the resource grants or denies based solely on the cryptographic signature, with no token exchange. The resource may allowlist specific key thumbprints (pseudonymous) or specific agent identifiers (`jwks_uri`). Both are "identity-based" in the sense that no PS or AS is involved.
 

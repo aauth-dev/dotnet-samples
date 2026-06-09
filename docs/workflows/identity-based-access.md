@@ -12,12 +12,12 @@ Simplest access mode. The resource verifies the agent's signature and applies it
 sequenceDiagram
     participant Agent
     participant Resource
-    Agent->>Resource: GET /data (signed, Signature-Key: sig=hwk or sig=jwks_uri)
+    Agent->>Resource: GET /data (signed, Signature-Key: sig=hwk, sig=jkt-jwt, or sig=jwks_uri)
     Resource->>Resource: Verify signature
     Resource-->>Agent: 200 OK (or 403 Forbidden)
 ```
 
-Valid Signing Modes: `hwk` (pseudonymous) or `jwks_uri` (agent identity). NOT `jwt` — that requires a Person Server.
+Valid Signing Modes: `hwk` or `jkt-jwt` (pseudonymous) or `jwks_uri` (agent identity). NOT `jwt` — that requires a Person Server.
 
 ## Code Example
 

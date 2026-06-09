@@ -9,6 +9,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 
 - [Getting Started](getting-started.md) — Install, generate a key, make your first signed request
 - [Protocol Concepts](concepts.md) — The four participants (Agent, Resource, Person Server, Access Server), three layers, and how the SDK maps to them
+- [Glossary & Acronyms](glossary.md) — Every acronym and short protocol term used across the repo, with expansions
 
 ## Signing Modes
 
@@ -244,7 +245,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 
 ## Samples
 
-- [`SampleApp`](../samples/SampleApp/) — Golden example: one page per signing mode (hwk, jwt, jwks_uri)
+- [`SampleApp`](../samples/SampleApp/) — Golden example: one page per signing mode (hwk, jwks_uri, jkt-jwt, jwt)
 - [`GuidedTour`](../samples/GuidedTour/) — Interactive Blazor walkthrough of all flows
 - [`AgentConsole`](../samples/AgentConsole/) — CLI agent demonstrating signing modes
 - [`MockResourceServers`](../samples/MockResourceServers/) — Profile, Calendar, Trips, and Wallet resource servers with verification middleware

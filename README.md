@@ -250,6 +250,7 @@ Full SDK documentation lives in [`docs/`](docs/):
 
 - [Getting Started](docs/getting-started.md) — install, generate a key, three-party flow deep dive, enrollment models
 - [Concepts](docs/concepts.md) — the four participants and how the SDK maps to them
+- [Glossary & Acronyms](docs/glossary.md) — every acronym and short protocol term used across the repo
 - [Signing Modes](docs/signing-modes/overview.md) — hwk, jwks_uri, jwt, jkt-jwt
 - [Workflows](docs/workflows/identity-based-access.md) — identity-based, PS-asserted, federated
 - [Server Guide](docs/server/verification-middleware.md) — verification middleware, token issuance
