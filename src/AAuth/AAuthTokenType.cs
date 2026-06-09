@@ -15,8 +15,8 @@ public enum AAuthTokenType
     /// <summary>Resource token (<c>aa-resource+jwt</c>).</summary>
     ResourceToken,
 
-    /// <summary>Naming JWT for key delegation (<c>naming+jwt</c>).</summary>
-    NamingJwt,
+    /// <summary>Self-issued <c>jkt-jwt</c> key-delegation JWT (<c>jkt-s256+jwt</c>).</summary>
+    JktS256Jwt,
 }
 
 /// <summary>Extension methods for <see cref="AAuthTokenType"/>.</summary>
@@ -28,7 +28,7 @@ public static class AAuthTokenTypeExtensions
         AAuthTokenType.AgentToken => AAuthConstants.TokenTypes.AgentToken,
         AAuthTokenType.AuthToken => AAuthConstants.TokenTypes.AuthToken,
         AAuthTokenType.ResourceToken => AAuthConstants.TokenTypes.ResourceToken,
-        AAuthTokenType.NamingJwt => AAuthConstants.TokenTypes.NamingJwt,
+        AAuthTokenType.JktS256Jwt => AAuthConstants.TokenTypes.JktS256Jwt,
         _ => throw new System.ArgumentOutOfRangeException(nameof(type), type, "Unknown AAuth token type."),
     };
 
@@ -38,7 +38,7 @@ public static class AAuthTokenTypeExtensions
         AAuthConstants.TokenTypes.AgentToken => AAuthTokenType.AgentToken,
         AAuthConstants.TokenTypes.AuthToken => AAuthTokenType.AuthToken,
         AAuthConstants.TokenTypes.ResourceToken => AAuthTokenType.ResourceToken,
-        AAuthConstants.TokenTypes.NamingJwt => AAuthTokenType.NamingJwt,
+        AAuthConstants.TokenTypes.JktS256Jwt => AAuthTokenType.JktS256Jwt,
         _ => AAuthTokenType.Unknown,
     };
 }

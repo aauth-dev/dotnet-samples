@@ -165,8 +165,12 @@ public static class SignatureKeyParser
 
     private static ParsedSignatureKeyInfo ParseJktJwtScheme(IReadOnlyDictionary<string, string> parameters)
     {
-        if (!parameters.TryGetValue("jkt", out var jkt) || string.IsNullOrEmpty(jkt))
-            throw new AAuthVerificationException("Signature-Key jkt-jwt scheme missing 'jkt' parameter.");
+        // draft-hardt-httpbis-signature-key-04 §3.4: the jkt-jwt scheme carries a
+        // single 'jwt' parameter. A 'jkt' parameter belongs to the retired
+        // non-conformant format and is rejected.
+        if (parameters.ContainsKey("jkt"))
+            throw new AAuthVerificationException(
+                "Signature-Key jkt-jwt scheme: unexpected 'jkt' parameter (draft-04 §3.4 defines only 'jwt').");
         if (!parameters.TryGetValue("jwt", out var jwt) || string.IsNullOrEmpty(jwt))
             throw new AAuthVerificationException("Signature-Key jkt-jwt scheme missing 'jwt' parameter.");
 
@@ -177,18 +181,30 @@ public static class SignatureKeyParser
         var header = DecodeJsonSegment(segments[0], "header");
         var payload = DecodeJsonSegment(segments[1], "payload");
 
-        // Extract cnf.jwk if present (the key that matches the jkt)
-        IAAuthKey? key = null;
-        if (payload["cnf"] is JsonObject cnf && cnf["jwk"] is JsonObject jwk)
+        // The ephemeral signing key is named by cnf.jwk; it verifies the HTTP
+        // message signature.
+        IAAuthKey? confirmationKey = null;
+        if (payload["cnf"] is JsonObject cnf && cnf["jwk"] is JsonObject cnfJwk)
         {
-            key = Crypto.KeyFactory.TryFromJwk(jwk);
+            confirmationKey = Crypto.KeyFactory.TryFromJwk(cnfJwk);
+        }
+
+        // The stable pseudonym is the DURABLE key's thumbprint, taken from the
+        // self-issued delegation JWT's header jwk (§7.1). Full self-anchored
+        // verification (iss == thumbprint(header jwk) and the JWT signature) is
+        // performed by the Signature-Key resolver.
+        string? durableThumbprint = null;
+        if (header["jwk"] is JsonObject durableJwk &&
+            Crypto.KeyFactory.TryFromJwk(durableJwk) is { } durableKey)
+        {
+            durableThumbprint = durableKey.ComputeJwkThumbprint();
         }
 
         return new ParsedSignatureKeyInfo
         {
-            Scheme = "jkt-jwt",
-            Jkt = jkt,
-            ConfirmationKey = key,
+            Scheme = AAuthConstants.Schemes.JktJwt,
+            Jkt = durableThumbprint,
+            ConfirmationKey = confirmationKey,
             Jwt = jwt,
             Header = header,
             Payload = payload,

@@ -16,12 +16,21 @@ Port: `http://localhost:5000` (override with `--AAuth:Issuer`).
 | `/` | _(index)_ | — | — | none |
 | `/pseudonymous` | `hwk` | a key thumbprint (`jkt`) only — identity unknown | `pseudonymous` | none |
 | `/identified` | `jwks_uri` | a named, verifiable agent identity (key via JWKS) | `agent-identity` | `AAuth.Identified` |
-| `/anchored` | `jkt-jwt` | an ephemeral key anchored to a durable enrollment key | `pseudonymous` | none |
+| `/anchored` | `jkt-jwt` | the durable key's thumbprint, via a self-issued naming JWT that delegates to an ephemeral key | `pseudonymous` | none |
 
 The path name describes the **outcome** the resource concludes; the `scheme` is
 the unchanged protocol identifier. Per the spec, `jkt-jwt` is a key-rotation
 variant of presenting a hardware-backed key, so it yields **pseudonymous**
 access — the `/anchored` path reports `signingMode = "pseudonymous"`.
+
+Verification is **self-anchored** (draft-hardt-httpbis-signature-key-04 §3.4):
+the durable public key is carried in the naming JWT's header `jwk`, the issuer
+is that key's own thumbprint URN (`urn:jkt:sha-256:<thumbprint>`), and the
+resource computes the thumbprint from the header `jwk`, checks it equals `iss`,
+verifies the naming JWT signature, then trusts the ephemeral `cnf.jwk`. The
+reported pseudonym is the **durable** key's thumbprint (stable across rotation),
+not the rotating ephemeral key. The header carries a single parameter:
+`Signature-Key: sig=jkt-jwt;jwt="<jkt-s256+jwt>"`.
 
 `/.well-known/aauth-resource.json` and `/.well-known/jwks.json` are served
 without a signature.

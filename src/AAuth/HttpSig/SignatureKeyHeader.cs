@@ -20,13 +20,28 @@ public static class SignatureKeyHeader
     public const string Name = "Signature-Key";
 
     /// <summary>Build a <c>Signature-Key</c> header value with the <c>jkt-jwt</c> scheme.</summary>
-    /// <param name="jkt">Base64url-encoded JWK thumbprint of the signing key.</param>
-    /// <param name="jwt">The JWT (agent/auth token) that binds this thumbprint.</param>
-    public static string FormatJktJwt(string jkt, string jwt)
+    /// <param name="jwt">
+    /// The self-issued <c>jkt-s256+jwt</c> delegation JWT (the durable key signs it
+    /// and names the ephemeral key via <c>cnf.jwk</c>), per
+    /// <c>draft-hardt-httpbis-signature-key-04</c> §3.4.
+    /// </param>
+    public static string FormatJktJwt(string jwt)
     {
-        ArgumentException.ThrowIfNullOrEmpty(jkt);
         ArgumentException.ThrowIfNullOrEmpty(jwt);
-        return $"sig=jkt-jwt;jkt=\"{jkt}\";jwt=\"{jwt}\"";
+        foreach (var c in jwt)
+        {
+            // RFC 8941 sf-string excludes control chars and unescaped
+            // quote/backslash. Reject defensively (a compact JWS never contains
+            // these) so this is safe outside HttpClient too.
+            if (c < 0x20 || c == 0x7F || c == '"' || c == '\\')
+            {
+                throw new ArgumentException(
+                    "JWT must not contain control characters, quotes, or backslashes.",
+                    nameof(jwt));
+            }
+        }
+
+        return $"sig=jkt-jwt;jwt=\"{jwt}\"";
     }
 
     /// <summary>Build a <c>Signature-Key</c> header value with the <c>hwk</c> scheme (inline public key).</summary>

@@ -8,7 +8,7 @@ All AAuth signing modes use HTTP Message Signatures (RFC 9421). The difference i
 |------|--------|--------------------:|-----------------|
 | Anonymous | (none) | No Signature-Key header | Nothing |
 | Pseudonymous | `sig=hwk` | `sig=hwk;jkt="<thumbprint>";jwk="<key>"` | Key thumbprint + inline public key — identity unknown |
-| Key Rotation | `sig=jkt-jwt` | `sig=jkt-jwt;jkt="<thumbprint>";jwt="<naming-jws>"` | An ephemeral key anchored to a durable key (naming JWT) — pseudonymous, rotatable |
+| Key Rotation | `sig=jkt-jwt` | `sig=jkt-jwt;jwt="<jkt-s256+jwt>"` | A durable key's thumbprint (stable pseudonym) delegating to a rotatable ephemeral key via a self-issued naming JWT |
 | Agent Identity | `sig=jwks_uri` | `sig=jwks_uri;uri="<url>";kid="<id>"` | Agent identifier + verifiable public key |
 | Agent Token | `sig=jwt` | `sig=jwt;jwt="<compact-jws>"` | Agent identity, PS URL, bound signing key |
 

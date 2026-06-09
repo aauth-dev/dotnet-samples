@@ -192,38 +192,54 @@ app.MapPost("/refresh", (HttpContext ctx) =>
     }
     else // jkt-jwt
     {
-        // Two-key: naming JWT is signed by durable key, HTTP sig by ephemeral key
-        if (parsedKey.ConfirmationKey is null || parsedKey.Jwt is null || parsedKey.Header is null)
+        // Two-key refresh (draft-hardt-httpbis-signature-key-04 §3.4): the durable
+        // key is embedded in the naming JWT header jwk, the issuer is that key's
+        // own thumbprint URN, and cnf.jwk is the ephemeral key that signed the
+        // HTTP request. Verification is self-anchored, then bound to enrolment.
+        if (parsedKey.ConfirmationKey is null || parsedKey.Jwt is null ||
+            parsedKey.Header is null || parsedKey.Payload is null)
             return Results.Json(new JsonObject { ["error"] = "invalid_request", ["error_description"] = "jkt-jwt scheme missing required fields" }, statusCode: 400);
 
-        // The ephemeral key (from cnf.jwk in naming JWT) is what signed the HTTP request
-        signingKey = parsedKey.ConfirmationKey;
-        ephemeralKey = signingKey as AAuthKey ?? AAuthKey.FromJwk(parsedKey.Payload!["cnf"]!["jwk"]!.AsObject());
+        // §3.4 step 2: check the naming JWT typ.
+        var typ = (string?)parsedKey.Header["typ"];
+        if (typ != AAuth.AAuthConstants.TokenTypes.JktS256Jwt)
+            return Results.Json(new JsonObject { ["error"] = "invalid_request", ["error_description"] = $"Unexpected naming JWT typ '{typ}'" }, statusCode: 400);
 
-        // Look up agent by durable key thumbprint from naming JWT's kid header
-        var durableKid = (string?)parsedKey.Header["kid"];
-        if (string.IsNullOrEmpty(durableKid))
-            return Results.Json(new JsonObject { ["error"] = "invalid_request", ["error_description"] = "Naming JWT header missing kid" }, statusCode: 400);
+        // §3.4 step 4: extract the durable key from the header jwk.
+        if (parsedKey.Header["jwk"] is not JsonObject durableJwk)
+            return Results.Json(new JsonObject { ["error"] = "invalid_request", ["error_description"] = "Naming JWT header missing durable jwk" }, statusCode: 400);
+        var durableKey = AAuthKey.FromJwk(durableJwk);
+        var durableThumbprint = durableKey.ComputeJwkThumbprint();
 
-        // The kid in the naming JWT is the durable key's thumbprint
-        record = agents.Values.FirstOrDefault(a => a.PublicKey.ComputeJwkThumbprint() == durableKid);
-        if (record is null)
-            return Results.Json(new JsonObject { ["error"] = "invalid_grant", ["error_description"] = "No enrolled agent matches durable key thumbprint in naming JWT kid" }, statusCode: 400);
+        // §3.4 steps 5-7: the issuer must equal the durable key's thumbprint URN.
+        var iss = (string?)parsedKey.Payload["iss"];
+        if (iss != AAuth.AAuthConstants.JktThumbprintUrnPrefix + durableThumbprint)
+            return Results.Json(new JsonObject { ["error"] = "invalid_grant", ["error_description"] = "Naming JWT iss does not match the durable key thumbprint" }, statusCode: 401);
 
-        // Verify the naming JWT signature against the enrolled durable key
+        // §3.4 step 8: verify the naming JWT signature against the header jwk.
         var namingJwtParts = parsedKey.Jwt.Split('.');
         if (namingJwtParts.Length != 3)
             return Results.Json(new JsonObject { ["error"] = "invalid_request", ["error_description"] = "Naming JWT is not a valid compact JWS" }, statusCode: 400);
 
         var signingInputBytes = System.Text.Encoding.ASCII.GetBytes(namingJwtParts[0] + "." + namingJwtParts[1]);
         var namingSig = Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(namingJwtParts[2]);
-        if (!record.PublicKey.Verify(signingInputBytes, namingSig))
-            return Results.Json(new JsonObject { ["error"] = "invalid_signature", ["error_description"] = "Naming JWT signature verification failed against enrolled durable key" }, statusCode: 401);
+        if (!durableKey.Verify(signingInputBytes, namingSig))
+            return Results.Json(new JsonObject { ["error"] = "invalid_signature", ["error_description"] = "Naming JWT signature verification failed against the durable key" }, statusCode: 401);
 
-        // Validate naming JWT expiration
+        // AP-layer binding (bootstrap §Two-Key Refresh): look up the enrolment by
+        // the durable key's thumbprint and confirm it is the enrolled durable key.
+        record = agents.Values.FirstOrDefault(a => a.PublicKey.ComputeJwkThumbprint() == durableThumbprint);
+        if (record is null)
+            return Results.Json(new JsonObject { ["error"] = "invalid_grant", ["error_description"] = "No enrolled agent matches the durable key thumbprint in the naming JWT" }, statusCode: 400);
+
+        // §3.4 step 9: validate naming JWT expiration.
         var exp = (long?)parsedKey.Payload?["exp"];
         if (exp is null || DateTimeOffset.UtcNow.ToUnixTimeSeconds() > exp.Value)
             return Results.Json(new JsonObject { ["error"] = "invalid_grant", ["error_description"] = "Naming JWT has expired" }, statusCode: 401);
+
+        // §3.4 steps 10-11: the ephemeral key (cnf.jwk) signs the HTTP request.
+        signingKey = parsedKey.ConfirmationKey;
+        ephemeralKey = signingKey as AAuthKey ?? AAuthKey.FromJwk(parsedKey.Payload!["cnf"]!["jwk"]!.AsObject());
     }
 
     // Verify the HTTP message signature

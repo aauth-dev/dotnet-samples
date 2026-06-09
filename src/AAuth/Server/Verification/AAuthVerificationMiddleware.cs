@@ -178,9 +178,12 @@ public sealed class AAuthVerificationMiddleware
             }
         }
 
-        // Step 4-6: JWT issuer verification (for jwt and jkt-jwt schemes with carrier tokens).
+        // Step 4-6: external JWT issuer verification (jwt scheme: agent/auth tokens).
+        // The jkt-jwt scheme is self-anchored (draft-04 §3.4) and pseudonymous
+        // (§6.3) — it carries no externally-vouched issuer, so it is excluded here;
+        // its durable→ephemeral delegation is verified during key resolution.
         if (_options.RequireIssuerVerification &&
-            parsedInfo.Scheme is AAuthConstants.Schemes.Jwt or AAuthConstants.Schemes.JktJwt &&
+            parsedInfo.Scheme is AAuthConstants.Schemes.Jwt &&
             parsedInfo.Jwt is not null &&
             parsedInfo.Header is not null &&
             parsedInfo.Payload is not null)
@@ -203,8 +206,8 @@ public sealed class AAuthVerificationMiddleware
                     await VerifyAuthTokenIssuerAsync(parsedInfo, publicKey, context.RequestAborted)
                         .ConfigureAwait(false);
                 }
-                // Other token types (e.g. resource tokens in jkt-jwt naming JWTs) are not
-                // verified at this layer — they require different trust chains.
+                // Other token types require different trust chains and are not
+                // verified at this layer.
             }
             catch (TokenVerificationException ex)
             {
@@ -227,7 +230,7 @@ public sealed class AAuthVerificationMiddleware
             Subject = (string?)parsedInfo.Payload?["sub"],
             Scope = (string?)parsedInfo.Payload?["scope"],
             IssuerVerified = _options.RequireIssuerVerification &&
-                parsedInfo.Scheme is AAuthConstants.Schemes.Jwt or AAuthConstants.Schemes.JktJwt,
+                parsedInfo.Scheme is AAuthConstants.Schemes.Jwt,
         };
 
         // Store typed verification result in HttpContext.Features for
@@ -255,10 +258,14 @@ public sealed class AAuthVerificationMiddleware
             Roles = roles,
             Groups = groups,
             ActorSubject = actSub,
-            Jkt = parsedInfo.ConfirmationKey?.ComputeJwkThumbprint()
-                ?? parsedInfo.Jkt,
+            // For jkt-jwt the stable pseudonym is the DURABLE key's thumbprint
+            // (parsedInfo.Jkt), per draft-04 §7.1 — not the rotating ephemeral
+            // cnf.jwk. Other schemes report the confirmation-key thumbprint.
+            Jkt = parsedInfo.Scheme == AAuthConstants.Schemes.JktJwt
+                ? parsedInfo.Jkt
+                : parsedInfo.ConfirmationKey?.ComputeJwkThumbprint() ?? parsedInfo.Jkt,
             IssuerVerified = _options.RequireIssuerVerification &&
-                parsedInfo.Scheme is AAuthConstants.Schemes.Jwt or AAuthConstants.Schemes.JktJwt,
+                parsedInfo.Scheme is AAuthConstants.Schemes.Jwt,
         });
 
         // Set UpstreamAuthTokenFeature for aa-auth+jwt tokens so that
@@ -267,7 +274,7 @@ public sealed class AAuthVerificationMiddleware
         if (tokenType == AuthTokenBuilder.TokenType &&
             parsedInfo.Jwt is not null &&
             _options.RequireIssuerVerification &&
-            parsedInfo.Scheme is AAuthConstants.Schemes.Jwt or AAuthConstants.Schemes.JktJwt)
+            parsedInfo.Scheme is AAuthConstants.Schemes.Jwt)
         {
             context.Features.Set(new UpstreamAuthTokenFeature(parsedInfo.Jwt));
         }
@@ -290,7 +297,7 @@ public sealed class AAuthVerificationMiddleware
             if (scopeString is not null)
                 activity.SetTag(AAuthDiagnostics.TagScope, scopeString);
             activity.SetTag(AAuthDiagnostics.TagIssuerVerified,
-                _options.RequireIssuerVerification && parsedInfo.Scheme is AAuthConstants.Schemes.Jwt or AAuthConstants.Schemes.JktJwt);
+                _options.RequireIssuerVerification && parsedInfo.Scheme is AAuthConstants.Schemes.Jwt);
         }
 
         await _next(context).ConfigureAwait(false);

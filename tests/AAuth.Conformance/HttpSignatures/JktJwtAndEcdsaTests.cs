@@ -246,91 +246,62 @@ public class JktJwtAndEcdsaTests
         Assert.True(ecKey.Verify(Encoding.ASCII.GetBytes(sigBase), sigBytes));
     }
 
-    // ── jkt-jwt Naming JWT Verification Tests ──────────────────────────────
+    // ── jkt-jwt Naming JWT Verification Tests (self-anchored, draft-04 §3.4) ──
 
-    [Fact(DisplayName = "§jkt-jwt — naming JWT verified against issuer JWKS")]
-    public async Task JktJwtNamingJwtVerified()
+    [Fact(DisplayName = "§jkt-jwt — self-anchored naming JWT resolves to the ephemeral key")]
+    public async Task JktJwtSelfAnchoredVerified()
     {
         var durableKey = AAuthKey.Generate();
         var ephemeralKey = AAuthKey.Generate();
+        var resolver = new DefaultSignatureKeyResolver();
 
-        // Build metadata + JWKS server.
-        var metadataHost = await StartMetadataServer(durableKey, "durable-1");
-
-        var metadataClient = new MetadataClient(metadataHost.GetTestClient());
-        var jwksClient = new JwksClient(metadataHost.GetTestClient());
-        var resolver = new DefaultSignatureKeyResolver(jwksClient, metadataClient);
-
-        // Build naming JWT (jkt-s256+jwt) signed by durable key.
-        var namingJwt = BuildNamingJwt(durableKey, "durable-1", ephemeralKey);
-        var jkt = ephemeralKey.ComputeJwkThumbprint();
-
-        // Parse as jkt-jwt scheme.
-        var signatureKeyHeader = $"sig=jkt-jwt;jkt=\"{jkt}\";jwt=\"{namingJwt}\"";
-        var info = SignatureKeyParser.ParseAny(signatureKeyHeader);
+        var namingJwt = BuildNamingJwt(durableKey, ephemeralKey);
+        var info = SignatureKeyParser.ParseAny(SignatureKeyHeader.FormatJktJwt(namingJwt));
         Assert.Equal("jkt-jwt", info.Scheme);
+        // The reported pseudonym is the durable key's thumbprint (§7.1).
+        Assert.Equal(durableKey.ComputeJwkThumbprint(), info.Jkt);
 
         var resolution = await resolver.ResolveAsync(info);
-        // Should succeed — the naming JWT is properly signed.
+        // Resolution returns the ephemeral key that signs the HTTP request.
         Assert.NotNull(resolution.PublicKey);
-        Assert.Equal(jkt, resolution.PublicKey.ComputeJwkThumbprint());
-
-        await metadataHost.StopAsync();
-        metadataHost.Dispose();
+        Assert.Equal(ephemeralKey.ComputeJwkThumbprint(), resolution.PublicKey.ComputeJwkThumbprint());
     }
 
-    [Fact(DisplayName = "§jkt-jwt — forged naming JWT rejected")]
-    public async Task JktJwtForgedNamingJwtRejected()
+    [Fact(DisplayName = "§jkt-jwt — naming JWT signed by a non-header key is rejected")]
+    public async Task JktJwtForgedSignatureRejected()
     {
         var durableKey = AAuthKey.Generate();
-        var forgedKey = AAuthKey.Generate(); // sign with wrong key
+        var forgedKey = AAuthKey.Generate();
         var ephemeralKey = AAuthKey.Generate();
+        var resolver = new DefaultSignatureKeyResolver();
 
-        var metadataHost = await StartMetadataServer(durableKey, "durable-1");
-        var metadataClient = new MetadataClient(metadataHost.GetTestClient());
-        var jwksClient = new JwksClient(metadataHost.GetTestClient());
-        var resolver = new DefaultSignatureKeyResolver(jwksClient, metadataClient);
-
-        // Build naming JWT signed with the FORGED key (not the durable key in JWKS).
-        var namingJwt = BuildNamingJwt(forgedKey, "durable-1", ephemeralKey);
-        var jkt = ephemeralKey.ComputeJwkThumbprint();
-
-        var signatureKeyHeader = $"sig=jkt-jwt;jkt=\"{jkt}\";jwt=\"{namingJwt}\"";
-        var info = SignatureKeyParser.ParseAny(signatureKeyHeader);
+        // Header advertises durableKey, but the JWT is signed by forgedKey →
+        // the §3.4 signature check (step 8) against the header jwk fails.
+        var namingJwt = BuildNamingJwt(durableKey, ephemeralKey, signer: forgedKey);
+        var info = SignatureKeyParser.ParseAny(SignatureKeyHeader.FormatJktJwt(namingJwt));
 
         var ex = await Assert.ThrowsAsync<AAuthVerificationException>(() =>
             resolver.ResolveAsync(info));
         Assert.Contains("signature verification failed", ex.Message);
-
-        await metadataHost.StopAsync();
-        metadataHost.Dispose();
     }
 
-    [Fact(DisplayName = "§jkt-jwt — jkt mismatch still rejected")]
-    public async Task JktJwtThumbprintMismatchRejected()
+    [Fact(DisplayName = "§jkt-jwt — spoofed iss (mismatched thumbprint) is rejected")]
+    public async Task JktJwtSpoofedIssRejected()
     {
-        var durableKey = AAuthKey.Generate();
+        var attackerKey = AAuthKey.Generate();
+        var victimKey = AAuthKey.Generate();
         var ephemeralKey = AAuthKey.Generate();
-        var wrongKey = AAuthKey.Generate();
+        var resolver = new DefaultSignatureKeyResolver();
 
-        var metadataHost = await StartMetadataServer(durableKey, "durable-1");
-        var metadataClient = new MetadataClient(metadataHost.GetTestClient());
-        var jwksClient = new JwksClient(metadataHost.GetTestClient());
-        var resolver = new DefaultSignatureKeyResolver(jwksClient, metadataClient);
-
-        // Build naming JWT delegating to ephemeralKey, but claim jkt of wrongKey.
-        var namingJwt = BuildNamingJwt(durableKey, "durable-1", ephemeralKey);
-        var wrongJkt = wrongKey.ComputeJwkThumbprint();
-
-        var signatureKeyHeader = $"sig=jkt-jwt;jkt=\"{wrongJkt}\";jwt=\"{namingJwt}\"";
-        var info = SignatureKeyParser.ParseAny(signatureKeyHeader);
+        // Header jwk = attacker's key, but iss claims the victim's thumbprint →
+        // the §3.4 iss check (step 7) fails.
+        var namingJwt = BuildNamingJwt(attackerKey, ephemeralKey,
+            issOverride: AAuthConstants.JktThumbprintUrnPrefix + victimKey.ComputeJwkThumbprint());
+        var info = SignatureKeyParser.ParseAny(SignatureKeyHeader.FormatJktJwt(namingJwt));
 
         var ex = await Assert.ThrowsAsync<AAuthVerificationException>(() =>
             resolver.ResolveAsync(info));
-        Assert.Contains("jkt parameter does not match", ex.Message);
-
-        await metadataHost.StopAsync();
-        metadataHost.Dispose();
+        Assert.Contains("does not match", ex.Message);
     }
 
     [Fact(DisplayName = "§jkt-jwt — resolver returns key even when naming JWT is expired (exp enforced by middleware)")]
@@ -338,73 +309,45 @@ public class JktJwtAndEcdsaTests
     {
         var durableKey = AAuthKey.Generate();
         var ephemeralKey = AAuthKey.Generate();
+        var resolver = new DefaultSignatureKeyResolver();
 
-        var metadataHost = await StartMetadataServer(durableKey, "durable-1");
-        var metadataClient = new MetadataClient(metadataHost.GetTestClient());
-        var jwksClient = new JwksClient(metadataHost.GetTestClient());
-        var resolver = new DefaultSignatureKeyResolver(jwksClient, metadataClient);
+        // Naming JWT that expired 10 minutes ago.
+        var namingJwt = BuildNamingJwt(durableKey, ephemeralKey, exp: DateTimeOffset.UtcNow.AddMinutes(-10));
+        var info = SignatureKeyParser.ParseAny(SignatureKeyHeader.FormatJktJwt(namingJwt));
 
-        // Build naming JWT that expired 10 minutes ago.
-        var namingJwt = BuildExpiredNamingJwt(durableKey, "durable-1", ephemeralKey);
-        var jkt = ephemeralKey.ComputeJwkThumbprint();
-
-        var signatureKeyHeader = $"sig=jkt-jwt;jkt=\"{jkt}\";jwt=\"{namingJwt}\"";
-        var info = SignatureKeyParser.ParseAny(signatureKeyHeader);
-
-        // Resolver should succeed — exp is validated by the middleware, not here.
+        // Resolver self-anchors and returns the ephemeral key; exp is validated
+        // by the middleware, not the resolver.
         var resolution = await resolver.ResolveAsync(info);
         Assert.NotNull(resolution.PublicKey);
-
-        await metadataHost.StopAsync();
-        metadataHost.Dispose();
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
 
-    private static string BuildNamingJwt(IAAuthKey signingKey, string kid, IAAuthKey ephemeralKey)
+    private static string BuildNamingJwt(
+        IAAuthKey durableKey,
+        IAAuthKey ephemeralKey,
+        IAAuthKey? signer = null,
+        string? issOverride = null,
+        DateTimeOffset? exp = null)
     {
+        // draft-hardt-httpbis-signature-key-04 §3.4 self-issued naming JWT.
         var header = new JsonObject
         {
-            ["alg"] = signingKey.Algorithm,
-            ["typ"] = "jkt-s256+jwt",
-            ["kid"] = kid,
+            ["alg"] = durableKey.Algorithm,
+            ["typ"] = AAuthConstants.TokenTypes.JktS256Jwt,
+            ["jwk"] = durableKey.ToPublicJwk(),
         };
         var now = DateTimeOffset.UtcNow;
         var payload = new JsonObject
         {
-            ["iss"] = "http://localhost:5555",
-            ["dwk"] = AgentTokenBuilder.AgentDwk,
-            ["sub"] = "agent@test",
+            ["iss"] = issOverride ?? (AAuthConstants.JktThumbprintUrnPrefix + durableKey.ComputeJwkThumbprint()),
             ["iat"] = now.ToUnixTimeSeconds(),
-            ["exp"] = now.AddMinutes(60).ToUnixTimeSeconds(),
+            ["exp"] = (exp ?? now.AddMinutes(60)).ToUnixTimeSeconds(),
             ["jti"] = Guid.NewGuid().ToString("N"),
             ["cnf"] = new JsonObject { ["jwk"] = ephemeralKey.ToPublicJwk() },
         };
 
-        return SignJwt(header, payload, signingKey);
-    }
-
-    private static string BuildExpiredNamingJwt(IAAuthKey signingKey, string kid, IAAuthKey ephemeralKey)
-    {
-        var header = new JsonObject
-        {
-            ["alg"] = signingKey.Algorithm,
-            ["typ"] = "jkt-s256+jwt",
-            ["kid"] = kid,
-        };
-        var past = DateTimeOffset.UtcNow.AddMinutes(-20);
-        var payload = new JsonObject
-        {
-            ["iss"] = "http://localhost:5555",
-            ["dwk"] = AgentTokenBuilder.AgentDwk,
-            ["sub"] = "agent@test",
-            ["iat"] = past.ToUnixTimeSeconds(),
-            ["exp"] = past.AddMinutes(10).ToUnixTimeSeconds(), // expired 10 min ago
-            ["jti"] = Guid.NewGuid().ToString("N"),
-            ["cnf"] = new JsonObject { ["jwk"] = ephemeralKey.ToPublicJwk() },
-        };
-
-        return SignJwt(header, payload, signingKey);
+        return SignJwt(header, payload, signer ?? durableKey);
     }
 
     private static string SignJwt(JsonObject header, JsonObject payload, IAAuthKey key)
@@ -414,29 +357,6 @@ public class JktJwtAndEcdsaTests
         var signingInput = $"{headerB64}.{payloadB64}";
         var signature = key.Sign(Encoding.ASCII.GetBytes(signingInput));
         return $"{headerB64}.{payloadB64}.{Base64UrlEncoder.Encode(signature)}";
-    }
-
-    private static async Task<IHost> StartMetadataServer(AAuthKey durableKey, string kid)
-    {
-        var builder = WebApplication.CreateBuilder();
-        builder.WebHost.UseTestServer();
-        var app = builder.Build();
-
-        app.MapGet("/.well-known/aauth-agent.json", () => Results.Json(new
-        {
-            issuer = "http://localhost:5555",
-            jwks_uri = "http://localhost:5555/.well-known/jwks.json",
-        }));
-        app.MapGet("/.well-known/jwks.json", () =>
-        {
-            var jwk = durableKey.ToPublicJwk();
-            jwk["kid"] = kid;
-            jwk["use"] = "sig";
-            return Results.Json(new JsonObject { ["keys"] = new JsonArray { jwk } });
-        });
-
-        await app.StartAsync();
-        return app;
     }
 
     private sealed class MockHandler : HttpMessageHandler

@@ -7,34 +7,38 @@ using Microsoft.IdentityModel.Tokens;
 namespace AAuth.Agent;
 
 /// <summary>
-/// Builds a naming JWT for two-key (<c>jkt-jwt</c>) refresh per the bootstrap spec
-/// (§ Two-Key Refresh). The naming JWT is signed by the durable key and names
-/// the new ephemeral key via its <c>cnf.jwk</c> claim.
+/// Builds a self-issued <c>jkt-jwt</c> delegation JWT per
+/// <c>draft-hardt-httpbis-signature-key-04</c> §3.4. The durable (enclave) key
+/// signs the JWT and embeds its own public key in the header; the JWT delegates
+/// HTTP-signing authority to an ephemeral key named via the <c>cnf.jwk</c> claim.
+/// The issuer is the durable key's own JWK Thumbprint URI, so verification is
+/// self-anchored (no external issuer lookup).
 /// </summary>
 public static class NamingJwtBuilder
 {
     /// <summary>
-    /// Create a naming JWT signed by <paramref name="durableKey"/> that delegates
-    /// to <paramref name="ephemeralKey"/>.
+    /// Create a <c>jkt-s256+jwt</c> delegation JWT signed by
+    /// <paramref name="durableKey"/> that delegates to <paramref name="ephemeralKey"/>.
     /// </summary>
-    /// <param name="durableKey">The agent's durable enrollment key (signs this JWT).</param>
+    /// <param name="durableKey">The agent's durable enrollment key (signs this JWT; its public half is embedded in the header <c>jwk</c>).</param>
     /// <param name="ephemeralKey">The fresh ephemeral key whose public half is embedded as <c>cnf.jwk</c>.</param>
-    /// <param name="issuer">AP issuer URL (used as <c>iss</c> so the AP can verify against its own JWKS).</param>
-    /// <param name="kid">Key identifier for the JWT header (<c>kid</c>) — the durable key's thumbprint.</param>
-    public static string Build(IAAuthKey durableKey, IAAuthKey ephemeralKey, string issuer, string kid)
+    public static string Build(IAAuthKey durableKey, IAAuthKey ephemeralKey)
     {
+        ArgumentNullException.ThrowIfNull(durableKey);
+        ArgumentNullException.ThrowIfNull(ephemeralKey);
+
         var now = DateTimeOffset.UtcNow;
 
         var header = new JsonObject
         {
-            ["alg"] = AAuthKey.Algorithm,
-            ["typ"] = AAuthConstants.TokenTypes.NamingJwt,
-            ["kid"] = kid,
+            ["alg"] = durableKey.Algorithm,
+            ["typ"] = AAuthConstants.TokenTypes.JktS256Jwt,
+            ["jwk"] = durableKey.ToPublicJwk(),
         };
 
         var payload = new JsonObject
         {
-            ["iss"] = issuer,
+            ["iss"] = AAuthConstants.JktThumbprintUrnPrefix + durableKey.ComputeJwkThumbprint(),
             ["iat"] = now.ToUnixTimeSeconds(),
             ["exp"] = now.Add(TimeSpan.FromMinutes(5)).ToUnixTimeSeconds(),
             ["jti"] = Guid.NewGuid().ToString("N"),

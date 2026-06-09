@@ -642,16 +642,15 @@ public sealed class TourSession : IAsyncDisposable
                     _assignedKeyId ?? _selfIdentity.KeyId);
                 break;
             case SigningMode.JktJwt:
-                // jkt-jwt: ephemeral key signs the HTTP request; durable key signs the naming JWT.
+                // jkt-jwt: ephemeral key signs the HTTP request; durable key signs
+                // the self-issued naming JWT (draft-04 §3.4 — durable jwk in the
+                // header, iss = its own thumbprint URN).
                 _ephemeralKey ??= AAuthKey.Generate();
-                var apIssuer = _options.AgentProviderUrl!.TrimEnd('/');
-                var durableThumbprint = _agentKey!.ComputeJwkThumbprint();
                 builder = new AAuthClientBuilder(_ephemeralKey)
                     .WithInnerHandler(inner);
                 if (onSignatureBase is not null)
                     builder.OnSignatureBase(onSignatureBase);
-                builder.UseJktJwt(() => NamingJwtBuilder.Build(
-                    _agentKey!, _ephemeralKey, apIssuer, durableThumbprint));
+                builder.UseJktJwt(() => NamingJwtBuilder.Build(_agentKey!, _ephemeralKey));
                 return builder.BuildHandler();
             default:
                 builder.WithTokenRefresh(async (ctx, ct) => tokenFactory());

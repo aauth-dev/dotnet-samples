@@ -174,24 +174,23 @@ public sealed class AgentProviderClient
     }
 
     /// <summary>
-    /// Two-key (<c>jkt-jwt</c>) refresh per the bootstrap spec (§ Two-Key Refresh).
-    /// Generates a fresh ephemeral key, creates a naming JWT signed by the durable key,
+    /// Two-key (<c>jkt-jwt</c>) refresh per <c>draft-hardt-httpbis-signature-key-04</c>
+    /// §3.4. Generates a fresh ephemeral key, creates a self-issued
+    /// <c>jkt-s256+jwt</c> delegation JWT signed by the durable key (with the durable
+    /// public key in the header and <c>iss=urn:jkt:sha-256:&lt;thumbprint&gt;</c>),
     /// and signs the refresh request with the ephemeral key.
     /// </summary>
     /// <param name="refreshEndpoint">The AP's refresh endpoint URL.</param>
     /// <param name="localKeyHandle">Agent-local key handle for the durable signing key.</param>
-    /// <param name="apIssuer">The AP's issuer URL (for the naming JWT <c>iss</c> claim).</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The new agent token and the ephemeral key used for signing.</returns>
     public async Task<TwoKeyRefreshResult> RefreshTwoKeyAsync(
         string refreshEndpoint,
         string localKeyHandle,
-        string apIssuer,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(refreshEndpoint);
         ArgumentException.ThrowIfNullOrEmpty(localKeyHandle);
-        ArgumentException.ThrowIfNullOrEmpty(apIssuer);
 
         var durableKey = await _keyStore.LoadAsync(localKeyHandle, ct)
             ?? throw new InvalidOperationException($"Key '{localKeyHandle}' not found in store.");
@@ -199,13 +198,14 @@ public sealed class AgentProviderClient
         // Generate fresh ephemeral key
         var ephemeralKey = AAuthKey.Generate();
 
-        // Build naming JWT: signed by durable key, names ephemeral key via cnf.jwk
-        var durableThumbprint = durableKey.ComputeJwkThumbprint();
-        var namingJwt = NamingJwtBuilder.Build(durableKey, ephemeralKey, apIssuer, durableThumbprint);
+        // Build the self-issued delegation JWT: signed by the durable key, which
+        // embeds its own public key in the header and names the ephemeral key via
+        // cnf.jwk. The issuer is the durable key's own thumbprint URI.
+        var namingJwt = NamingJwtBuilder.Build(durableKey, ephemeralKey);
 
         // Sign the refresh request with the ephemeral key under jkt-jwt scheme
         using var signingHandler = new HttpSig.AAuthSigningHandler(
-            ephemeralKey, new HttpSig.JktJwtSignatureKeyProvider(ephemeralKey, () => namingJwt))
+            ephemeralKey, new HttpSig.JktJwtSignatureKeyProvider(() => namingJwt))
         {
             InnerHandler = new HttpClientHandler(),
         };

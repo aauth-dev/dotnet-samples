@@ -17,15 +17,12 @@ namespace AAuth.HttpSig;
 public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
 {
     private readonly JwksClient? _jwksClient;
-    private readonly MetadataClient? _metadataClient;
 
     /// <summary>Create the resolver.</summary>
-    /// <param name="jwksClient">Required for <c>jwks_uri</c> and <c>jkt-jwt</c> scheme resolution.</param>
-    /// <param name="metadataClient">Required for <c>jkt-jwt</c> naming JWT issuer verification.</param>
-    public DefaultSignatureKeyResolver(JwksClient? jwksClient = null, MetadataClient? metadataClient = null)
+    /// <param name="jwksClient">Required for the <c>jwks_uri</c> scheme. The <c>jkt-jwt</c> scheme is self-anchored (draft-04 §3.4) and needs no external client.</param>
+    public DefaultSignatureKeyResolver(JwksClient? jwksClient = null)
     {
         _jwksClient = jwksClient;
-        _metadataClient = metadataClient;
     }
 
     public async Task<SignatureKeyResolution> ResolveAsync(
@@ -90,75 +87,39 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
         return key;
     }
 
-    private async Task<IAAuthKey> ResolveJktJwtAsync(
+    private static Task<IAAuthKey> ResolveJktJwtAsync(
         SignatureKeyParser.ParsedSignatureKeyInfo info, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(info.Jkt))
-            throw new AAuthVerificationException("Signature-Key jkt-jwt scheme: missing jkt.");
-        if (info.ConfirmationKey is null)
-            throw new AAuthVerificationException(
-                "Signature-Key jkt-jwt scheme: naming JWT does not contain cnf.jwk.");
-
-        // The naming JWT's cnf.jwk is the ephemeral key. Its thumbprint must
-        // match the jkt parameter — confirming the naming JWT delegates to this
-        // specific ephemeral key.
-        var keyThumbprint = info.ConfirmationKey.ComputeJwkThumbprint();
-        if (!string.Equals(keyThumbprint, info.Jkt, StringComparison.Ordinal))
-            throw new AAuthVerificationException(
-                "Signature-Key jkt-jwt scheme: jkt parameter does not match cnf.jwk thumbprint.");
-
-        // Verify the naming JWT signature against the issuer's durable key.
+        // Self-anchored TOFU verification per draft-hardt-httpbis-signature-key-04
+        // §3.4. The durable (enclave) key is embedded in the naming JWT's header
+        // jwk; the issuer is that key's own thumbprint URI. No external lookup.
         if (info.Jwt is null || info.Header is null || info.Payload is null)
             throw new AAuthVerificationException(
                 "Signature-Key jkt-jwt scheme: naming JWT could not be parsed.");
 
+        // §3.4 step 2: check the typ header.
+        var typ = (string?)info.Header["typ"];
+        if (typ != AAuthConstants.TokenTypes.JktS256Jwt)
+            throw new AAuthVerificationException(
+                $"Signature-Key jkt-jwt scheme: unsupported naming JWT typ '{typ}' (expected '{AAuthConstants.TokenTypes.JktS256Jwt}').");
+
+        // §3.4 step 4: extract the durable key from the header jwk.
+        if (info.Header["jwk"] is not JsonObject durableJwk)
+            throw new AAuthVerificationException(
+                "Signature-Key jkt-jwt scheme: naming JWT header is missing the durable 'jwk'.");
+        var durableKey = Crypto.KeyFactory.TryFromJwk(durableJwk)
+            ?? throw new AAuthVerificationException(
+                "Signature-Key jkt-jwt scheme: naming JWT header 'jwk' is not a valid key.");
+
+        // §3.4 steps 5-7: compute the durable thumbprint, build the expected
+        // urn:jkt:sha-256: issuer, and compare to the iss claim by string equality.
+        var expectedIss = AAuthConstants.JktThumbprintUrnPrefix + durableKey.ComputeJwkThumbprint();
         var iss = (string?)info.Payload["iss"];
-        if (string.IsNullOrEmpty(iss) || !AAuthUrl.IsHttpsOrLoopback(iss))
+        if (!string.Equals(iss, expectedIss, StringComparison.Ordinal))
             throw new AAuthVerificationException(
-                "Signature-Key jkt-jwt scheme: naming JWT 'iss' must be an absolute https:// URL (or http://localhost).");
+                "Signature-Key jkt-jwt scheme: naming JWT 'iss' does not match the thumbprint of the header 'jwk'.");
 
-        // Note: expiration is validated by the middleware (clock-skew-aware),
-        // not here in the resolver. The resolver's job is key resolution only.
-
-        var kid = (string?)info.Header["kid"];
-        if (string.IsNullOrEmpty(kid))
-            throw new AAuthVerificationException(
-                "Signature-Key jkt-jwt scheme: naming JWT header is missing 'kid'.");
-
-        // Fetch issuer metadata to find JWKS endpoint.
-        if (_jwksClient is null || _metadataClient is null)
-        {
-            // Graceful fallback: if we don't have metadata/JWKS clients, trust
-            // the structural binding only (same as previous behavior).
-            return info.ConfirmationKey;
-        }
-
-        var metadataUrl = MetadataClient.BuildUrl(iss, AgentTokenBuilder.AgentDwk);
-        JsonObject metadataDoc;
-        try
-        {
-            metadataDoc = await _metadataClient.FetchAsync(metadataUrl, ct).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            throw new AAuthVerificationException(
-                $"Signature-Key jkt-jwt scheme: failed to fetch issuer metadata from {metadataUrl}.", ex);
-        }
-
-        var jwksUriRaw = (string?)metadataDoc["jwks_uri"];
-        if (string.IsNullOrEmpty(jwksUriRaw) || !Uri.TryCreate(jwksUriRaw, UriKind.Absolute, out var jwksUri))
-            throw new AAuthVerificationException(
-                $"Signature-Key jkt-jwt scheme: issuer metadata 'jwks_uri' is missing or invalid.");
-        if (!AAuthUrl.IsHttpsOrLoopback(jwksUriRaw))
-            throw new AAuthVerificationException(
-                $"Signature-Key jkt-jwt scheme: jwks_uri must be https (or http://localhost).");
-
-        var durableKey = await _jwksClient.ResolveKeyAsync(jwksUri, kid, ct).ConfigureAwait(false);
-        if (durableKey is null)
-            throw new AAuthVerificationException(
-                $"Signature-Key jkt-jwt scheme: no key with kid '{kid}' at {jwksUri}.");
-
-        // Verify the naming JWT signature against the durable key.
+        // §3.4 step 8: verify the naming JWT signature using the header jwk.
         var segments = info.Jwt.Split('.');
         if (segments.Length != 3)
             throw new AAuthVerificationException(
@@ -178,9 +139,16 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
         var signingInput = Encoding.ASCII.GetBytes(segments[0] + "." + segments[1]);
         if (!durableKey.Verify(signingInput, signature))
             throw new AAuthVerificationException(
-                "Signature-Key jkt-jwt scheme: naming JWT signature verification failed against issuer's durable key.");
+                "Signature-Key jkt-jwt scheme: naming JWT signature verification failed against the header durable key.");
 
-        return info.ConfirmationKey;
+        // §3.4 step 9 (exp/iat) is enforced by the verification middleware
+        // (clock-skew-aware). §3.4 step 10: extract the ephemeral key from cnf.jwk.
+        if (info.ConfirmationKey is null)
+            throw new AAuthVerificationException(
+                "Signature-Key jkt-jwt scheme: naming JWT does not contain cnf.jwk.");
+
+        // §3.4 step 11: the ephemeral key verifies the HTTP message signature.
+        return Task.FromResult(info.ConfirmationKey);
     }
 
     private static bool IsLoopback(Uri uri)

@@ -84,21 +84,22 @@ internal static class CodeSnippets
         """;
 
     public const string SignedGetJktJwt = """
-        // jkt-jwt mode: the durable key signs a naming JWT that binds
-        // the ephemeral signing key via cnf.jwk. The ephemeral key signs
-        // the HTTP request. Supports key rotation without re-enrolment.
+        // jkt-jwt mode: the durable key signs a self-issued naming JWT that
+        // embeds its own public key in the header and binds the ephemeral
+        // signing key via cnf.jwk. The ephemeral key signs the HTTP request.
+        // Supports key rotation without re-enrolment.
         //
-        // Spec: "The AP verifies the durable-key signature on the naming JWT,
-        //         looks up the enrollment by the durable key's thumbprint"
-        var namingJwt = NamingJwtBuilder.Build(
-            durableKey, ephemeralKey, apIssuer, durableKey.ComputeJwkThumbprint());
+        // Self-anchored (draft-04 §3.4): the verifier computes the durable
+        // key's thumbprint from the header jwk, checks it equals iss
+        // (urn:jkt:sha-256:<thumbprint>), then verifies the naming JWT signature.
+        var namingJwt = NamingJwtBuilder.Build(durableKey, ephemeralKey);
 
         using var client = new AAuthClientBuilder(ephemeralKey)
             .UseJktJwt(() => namingJwt)
             .Build();
 
         var response = await client.GetAsync("https://resource.example/data");
-        // Signature-Key: sig=jkt-jwt;jwt="<naming-jwt>";jkt="<thumbprint>"
+        // Signature-Key: sig=jkt-jwt;jwt="<jkt-s256+jwt>"
         """;
 
     public const string ParseChallenge = """

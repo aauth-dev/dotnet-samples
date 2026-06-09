@@ -84,7 +84,7 @@ public class EnrolledBuilderTests
         using var client = AAuthClientBuilder.Enrolled(_key)
             .RefreshingFrom(RefreshEndpoint, LocalKeyHandle)
             .WithKeyStore(new InMemoryKeyStore(_key))
-            .WithRefreshMode(RefreshMode.TwoKey, "http://localhost:5200")
+            .WithRefreshMode(RefreshMode.TwoKey)
             .WithChallengeHandling(PersonServer)
             .Build();
 

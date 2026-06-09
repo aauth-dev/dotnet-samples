@@ -1,5 +1,5 @@
 import { test, expect } from '../../../tests/e2e/helpers/fixtures';
-import { waitForInteractive } from '../../../tests/e2e/helpers/blazor';
+import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/blazor';
 import { readResponseJson, expectStatus } from '../../../tests/e2e/helpers/json';
 
 /**
@@ -12,9 +12,15 @@ test('jkt-jwt enrols, refreshes to an ephemeral key, then sends', async ({ page 
   await expect(page.locator('h2')).toContainText('JKT-JWT');
   await waitForInteractive(page, 'button');
 
+  // Enrol — only present when not yet enrolled this circuit. Use clickAndConfirm
+  // so a dropped first click on a cold Blazor circuit is retried.
   const enrol = page.getByRole('button', { name: /Enrol with Agent Provider/ });
   if (await enrol.isVisible().catch(() => false)) {
-    await enrol.click();
+    await clickAndConfirm(
+      page,
+      'button:has-text("Enrol with Agent Provider")',
+      () => page.locator('.alert-info').isVisible(),
+    );
   }
   await expect(page.locator('.alert-info')).toContainText('Durable key thumbprint');
 

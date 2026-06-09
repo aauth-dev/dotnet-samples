@@ -193,20 +193,19 @@ switch (signingMode)
         // The durable key signs the naming JWT; the ephemeral key signs HTTP requests.
         var twoKeyClient = new AgentProviderClient(new HttpClient(), keyStore);
         var twoKeyResult = twoKeyClient.RefreshTwoKeyAsync(
-            refreshEndpoint, localKeyHandle, apUrl.TrimEnd('/')).GetAwaiter().GetResult();
+            refreshEndpoint, localKeyHandle).GetAwaiter().GetResult();
         // Rebuild the builder with the ephemeral key (not the durable key)
         builder = new AAuthClientBuilder(twoKeyResult.EphemeralKey);
         // TODO: In a long-running client, the naming JWT (5-min expiry) and ephemeral key
         // must be regenerated on refresh. For this single-request demo, the initial pair suffices.
-        var currentNamingJwt = NamingJwtBuilder.Build(
-            key, twoKeyResult.EphemeralKey, apUrl.TrimEnd('/'), key.ComputeJwkThumbprint());
+        var currentNamingJwt = NamingJwtBuilder.Build(key, twoKeyResult.EphemeralKey);
         builder.UseJktJwt(() => currentNamingJwt);
         // Three-party challenge handling uses the refreshed agent token
         if (personServer is not null)
         {
             builder.WithTokenRefresh(AgentProviderTokenRefresher.Create(refreshEndpoint, localKeyHandle)
                 .WithKeyStore(keyStore)
-                .WithRefreshMode(RefreshMode.TwoKey, apUrl.TrimEnd('/'))
+                .WithRefreshMode(RefreshMode.TwoKey)
                 .Build());
         }
         break;

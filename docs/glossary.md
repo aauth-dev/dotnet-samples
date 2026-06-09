@@ -56,7 +56,7 @@ Canonical expansions follow the AAuth specification drafts under
 | **hwk** | HTTP Web Key | Pseudonymous scheme: the agent sends its **public key inline** in `Signature-Key`. Resource learns only a key thumbprint. |
 | **jwks_uri** | JWKS URI | Agent-identity scheme: `Signature-Key` carries a **URL + `kid`**; the resource fetches the JWKS to resolve a named identity. |
 | **jwt** | _(JWT scheme)_ | Agent-token scheme: the full agent token travels inline; required for all PS/AS flows. |
-| **jkt-jwt** | JWK Thumbprint + JWT | Key-rotation scheme: a durable-key-signed naming JWT binds an ephemeral signing key via its thumbprint. Access stays pseudonymous. |
+| **jkt-jwt** | JWK Thumbprint + JWT | Key-rotation scheme: a durable key signs a self-issued naming JWT (`jkt-s256+jwt`) that embeds the durable public key and delegates to an ephemeral signing key via `cnf.jwk`. Self-anchored — `iss` is the durable key's thumbprint URN. Access stays pseudonymous (the durable thumbprint is the stable identity). |
 | **jkt** | JWK Thumbprint (RFC 7638) | SHA-256 hash of a JWK — a short, stable fingerprint used to reference a key. |
 | **durable key** | _(bootstrap term)_ | Long-lived enrollment-anchor key (often hardware-backed); signs only at refresh. |
 | **ephemeral key** | _(bootstrap term)_ | Short-lived key that signs HTTP requests; rotated via `jkt-jwt`. |

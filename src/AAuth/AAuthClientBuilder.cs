@@ -187,11 +187,11 @@ public sealed class AAuthClientBuilder
         return this;
     }
 
-    /// <summary>Use the two-key delegation (jkt-jwt) signing mode.</summary>
-    /// <param name="namingJwtFactory">Returns the naming JWT (signed by the durable key) for each request.</param>
+    /// <summary>Use the self-issued two-key delegation (jkt-jwt) signing mode.</summary>
+    /// <param name="namingJwtFactory">Returns the <c>jkt-s256+jwt</c> delegation JWT (signed by the durable key) for each request.</param>
     public AAuthClientBuilder UseJktJwt(Func<string> namingJwtFactory)
     {
-        _provider = new JktJwtSignatureKeyProvider(_key, namingJwtFactory);
+        _provider = new JktJwtSignatureKeyProvider(namingJwtFactory);
         return this;
     }
 

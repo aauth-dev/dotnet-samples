@@ -18,8 +18,9 @@ using AAuth.Server.Verification;
 //   PATH            SCHEME      WHAT THE RESOURCE LEARNS
 //   /pseudonymous   hwk         a key thumbprint only — caller is a pseudonym
 //   /identified     jwks_uri    a named, verifiable agent identity (via JWKS)
-//   /anchored       jkt-jwt     an ephemeral key anchored to a durable
-//                               enrollment key (the spec's naming-JWT refresh)
+//   /anchored       jkt-jwt     a durable key's thumbprint, via a self-issued
+//                               naming JWT delegating to an ephemeral key
+//                               (self-anchored, draft-04 §3.4)
 //
 // The path names describe the *outcome* (what the resource concludes); the
 // scheme identifiers (hwk / jwks_uri / jkt-jwt) are the unchanged protocol
