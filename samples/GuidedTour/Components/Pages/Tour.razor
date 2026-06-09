@@ -43,7 +43,7 @@
             <option value="@TourMode.Federated" disabled="@(!Session.HasPersonServer || !Session.HasAccessServer)">6 · Federated (Four-Party) — Access Server, 7–10 steps</option>
             <option value="@TourMode.Mission" disabled="@(!Session.HasPersonServer)">7 · Mission (PS-Governed) — three prompts, 20 steps</option>
             <option value="@TourMode.MissionCallChain" disabled="@(!Session.HasPersonServer || !Session.HasConcierge)">8 · Mission + Call Chain — dual governance, 14 steps</option>
-            <option value="@TourMode.SubAgent">9 · Sub-Agents — parent-mediated worker, 8 steps</option>
+            <option value="@TourMode.SubAgent">9 · Sub-Agents — parent-mediated worker, 7 steps</option>
         </select>
     </label>
     @if (Session.Mode == TourMode.Identity)

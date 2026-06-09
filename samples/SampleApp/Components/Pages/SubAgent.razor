@@ -165,17 +165,6 @@ var authToken = await exchange.ExchangeAsync(
     </div>
 }
 
-@if (_depthMessage is not null)
-{
-    <div class="mt-3">
-        <h5>Single-level depth enforcement</h5>
-        <div class="alert alert-secondary">
-            Building a sub-agent <em>of a sub-agent</em> is rejected by the AP builder:
-            <br /><code>@_depthMessage</code>
-        </div>
-    </div>
-}
-
 @if (_error is not null)
 {
     <div class="mt-3 alert alert-danger">@_error</div>
@@ -192,7 +181,6 @@ var authToken = await exchange.ExchangeAsync(
     private string? _subAgentClaims;
     private string? _authClaims;
     private bool _cnfBound;
-    private string? _depthMessage;
     private string? _error;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -206,7 +194,6 @@ var authToken = await exchange.ExchangeAsync(
         _steps.Clear();
         _subAgentClaims = null;
         _authClaims = null;
-        _depthMessage = null;
         _error = null;
 
         try
@@ -335,25 +322,6 @@ var authToken = await exchange.ExchangeAsync(
                 "The worker signs the request with its OWN key and presents the auth_token. The " +
                 "resource verifies the signature against the token's cnf.jwk, sees agent = the " +
                 "sub-agent, and reads act = { sub: worker, act: { sub: parent } } for its audit log."));
-
-            // 8. Single-level depth: an AP MUST NOT issue a sub-agent of a sub-agent.
-            try
-            {
-                _ = new AgentTokenBuilder
-                {
-                    Issuer = apUrl,
-                    Subject = $"aauth:aria+worker1+deep@{Host(apUrl)}",
-                    KeyId = apKid,
-                    Key = apKey,
-                    ConfirmationKey = AAuthKey.Generate(),
-                    ParentAgent = subId, // parent is itself a sub-agent → rejected
-                }.Build();
-                _depthMessage = "(unexpected: no exception thrown)";
-            }
-            catch (InvalidOperationException ex)
-            {
-                _depthMessage = ex.Message;
-            }
         }
         catch (Exception ex)
         {

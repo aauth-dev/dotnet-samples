@@ -6,7 +6,7 @@ import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/
  * one runs the token lifecycle in-process with the real SDK builders, so it
  * needs no mock servers or standing consent. The spec asserts the wire
  * artifacts the page surfaces: the sub-agent's `parent_agent` claim, the
- * sub-agent-bound `cnf`, the nested `act`, and single-level depth enforcement.
+ * sub-agent-bound `cnf`, and the nested `act`.
  */
 test('sub-agent flow shows parent_agent, sub-agent-bound cnf, and nested act', async ({ page }) => {
   await page.goto('/sub-agent');
@@ -39,7 +39,4 @@ test('sub-agent flow shows parent_agent, sub-agent-bound cnf, and nested act', a
   const authClaims = page.locator('pre code.language-json').nth(1);
   await expect(authClaims).toContainText('"agent": "aauth:aria+worker1@');
   await expect(authClaims).toContainText('"act"');
-
-  // Single-level depth is enforced by the AP builder.
-  await expect(page.getByRole('heading', { name: 'Single-level depth enforcement' })).toBeVisible();
 });

@@ -2,12 +2,12 @@ import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { openTour, selectFlow, runAll, doneSteps, selectStep, TourMode } from '../../../tests/e2e/helpers/tour';
 
 /**
- * Sub-Agents — parent-mediated workers, 8 steps. Unlike the protocol flows this
+ * Sub-Agents — parent-mediated workers, 7 steps. Unlike the protocol flows this
  * one runs the token lifecycle entirely IN-PROCESS with the real SDK builders
  * (no live servers), so the DoD asserts the wire artifacts the steps surface:
  * the sub-agent's `parent_agent` claim (step 2), the issued auth token bound to
- * the worker with a nested `act` (step 5), the worker calling the resource with
- * that token (step 7), and single-level depth enforcement (step 8).
+ * the worker with a nested `act` (step 5), and the worker calling the resource
+ * with that token (step 7).
  */
 test.describe.configure({ timeout: 60_000 });
 
@@ -27,8 +27,8 @@ test('sub-agent flow binds parent_agent, the worker cnf, and a nested act', asyn
 
   await runAll(page);
 
-  // All eight in-process steps complete; no consent / poll parks the flow.
-  await expect(doneSteps(page)).toHaveCount(8);
+  // All seven in-process steps complete; no consent / poll parks the flow.
+  await expect(doneSteps(page)).toHaveCount(7);
   await expect(page.locator('button.primary')).toHaveText('Done');
 
   // Step 2 — the worker's agent token carries the authoritative `parent_agent`
@@ -55,10 +55,4 @@ test('sub-agent flow binds parent_agent, the worker cnf, and a nested act', asyn
   await expect(page.locator('section.payload article.inspector h2')).toHaveText(
     /Sub-agent calls the resource with the token/,
   );
-
-  // Step 8 — single-level depth: the AP refuses a sub-agent of a sub-agent.
-  await selectStep(page, 7);
-  await expect(
-    page.locator('section.payload article.inspector'),
-  ).toContainText('InvalidOperationException');
 });

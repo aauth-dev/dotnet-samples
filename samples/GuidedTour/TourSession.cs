@@ -273,7 +273,7 @@ public sealed class TourSession : IAsyncDisposable
         {
             if (IsBootstrapMode) return HasAgentProvider ? 3 : 2;
             if (IsIdentityMode) return 2;
-            if (IsSubAgentMode) return 8;
+            if (IsSubAgentMode) return 7;
             if (IsMissionCallChainMode) return 14;
             if (IsMissionMode) return 20;
             if (IsCallChainMode) return _callChainPending ? 13 : 7;
@@ -338,7 +338,6 @@ public sealed class TourSession : IAsyncDisposable
         new(5, "PS returns the auth token to the parent", "The PS mints an auth_token bound to the SUB-AGENT (agent + cnf, act nesting { sub: worker, act: { sub: parent } }) and returns it to the PARENT — the response to the exchange the parent signed.", Actor.PersonServer, Actor.Parent),
         new(6, "Parent hands the token to the worker", "Out-of-band, the parent passes the worker-bound auth_token down to the sub-agent, which can now call the resource with its own-key proof-of-possession.", Actor.Parent, Actor.SubAgent),
         new(7, "Sub-agent calls the resource with the token", "The worker signs the request with its OWN key and presents the auth_token; the resource verifies against cnf.jwk and audits the nested act. The parent never touches this call.", Actor.SubAgent, Actor.Resource),
-        new(8, "Single-level depth is enforced", "The AP rejects a sub-agent OF a sub-agent — the delegation tree stays one level deep.", Actor.SubAgent, Actor.SubAgent),
     };
 
     private static readonly TourPlanStep[] AutonomousPlan =
@@ -762,7 +761,6 @@ public sealed class TourSession : IAsyncDisposable
                 case 5: SubAgentStepMintAuthToken(); return;
                 case 6: SubAgentStepHandoffToWorker(); return;
                 case 7: SubAgentStepWorkerCallsResource(); return;
-                case 8: SubAgentStepSingleLevelDepth(); return;
             }
             return;
         }
@@ -1088,7 +1086,6 @@ public sealed class TourSession : IAsyncDisposable
                     "destination differs.) All of this happens in the user's browser → AS " +
                     "channel — neither the agent nor the Person Server is on this path. The " +
                     "agent discovers the result on its next poll of the PS pending URL.",
-                ResponseBody = userUrl,
                 TokenDecoded =
                     $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
                     "User performed (browser \u2192 AS):\n" +
@@ -1129,7 +1126,6 @@ public sealed class TourSession : IAsyncDisposable
                 From = Actor.PersonServer,
                 To = Actor.PersonServer,
                 Narrative = narrative,
-                ResponseBody = userUrl,
                 TokenDecoded =
                     $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
                     "User performed (browser → PS):\n" +
@@ -1181,7 +1177,6 @@ public sealed class TourSession : IAsyncDisposable
                 From = Actor.PersonServer,
                 To = Actor.PersonServer,
                 Narrative = narrative,
-                ResponseBody = userUrl,
                 TokenDecoded =
                     $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
                     "User performed (browser → PS):\n" +
@@ -1215,7 +1210,6 @@ public sealed class TourSession : IAsyncDisposable
                       "is keyed to the Concierge's identity, not yours — the agent " +
                       "never sees the chained credential."
                     : ""),
-            ResponseBody = userUrl,
             TokenDecoded =
                 $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
                 "User performed (browser → PS):\n" +
@@ -1340,15 +1334,16 @@ public sealed class TourSession : IAsyncDisposable
         Steps.Add(new StepRecord
         {
             Number = Steps.Count + 1,
-            Title = "Generate Ed25519 key",
+            Title = "Generate Ed25519 keypair",
             From = Actor.Agent,
             To = Actor.Agent,
             Narrative =
                 "The agent mints a fresh Ed25519 keypair locally. Only the public " +
                 "JWK travels — every signed request later proves possession of the " +
                 "private key.",
-            ResponseBody = jwk,
-            TokenDecoded = $"JWK thumbprint:\n{_agentKey.ComputeJwkThumbprint()}",
+            TokenDecoded =
+                $"Public JWK (only this leaves the agent):\n{jwk}\n\n" +
+                $"JWK thumbprint (sha-256):\n{_agentKey.ComputeJwkThumbprint()}",
             CodeSnippet = CodeSnippets.GenerateKey,
         });
     }
@@ -1669,6 +1664,7 @@ public sealed class TourSession : IAsyncDisposable
             Title = "PS returns the auth token to the parent",
             From = Actor.PersonServer,
             To = Actor.Parent,
+            IsResponse = true,
             Narrative =
                 "The Person Server mints an `aa-auth+jwt` and returns it to the " +
                 "**parent** — this is the HTTP response to the exchange the parent " +
@@ -1750,46 +1746,6 @@ public sealed class TourSession : IAsyncDisposable
                 "{\n  \"events\": [ /* the worker's requested data */ ]\n}",
             CodeSnippet = SubAgentResourceCallSnippet,
             CodeSnippetRole = "the sub-agent runs this (client-side)",
-        });
-    }
-
-    private void SubAgentStepSingleLevelDepth()
-    {
-        var (_, workerId, apUrl, _, _) = SubAgentNames();
-        var host = Uri.TryCreate(apUrl, UriKind.Absolute, out var u) ? u.Authority : "host";
-        string message;
-        try
-        {
-            _ = new AgentTokenBuilder
-            {
-                Issuer = apUrl,
-                Subject = $"aauth:aria+worker1+deep@{host}",
-                KeyId = _selfIdentity.KeyId,
-                Key = _selfIdentity.Key,
-                ConfirmationKey = AAuthKey.Generate(),
-                ParentAgent = workerId,   // parent is itself a sub-agent → rejected
-            }.Build();
-            message = "(unexpected: no exception was thrown)";
-        }
-        catch (InvalidOperationException ex)
-        {
-            message = ex.Message;
-        }
-
-        Steps.Add(new StepRecord
-        {
-            Number = Steps.Count + 1,
-            Title = "Single-level depth is enforced",
-            From = Actor.SubAgent,
-            To = Actor.SubAgent,
-            Narrative =
-                "The delegation tree stays exactly **one level deep**. When the AP is " +
-                "asked to issue a sub-agent whose `parent_agent` is *itself* a " +
-                "sub-agent, the builder refuses — a sub-agent cannot spawn its own " +
-                "sub-agents, and a sub-agent must never call the Person Server directly.",
-            TokenDecoded = $"// AgentTokenBuilder.Build() threw:\nInvalidOperationException: {message}",
-            CodeSnippet = SubAgentDepthSnippet,
-            CodeSnippetRole = "the Agent Provider runs this — not the agent",
         });
     }
 
@@ -1928,27 +1884,6 @@ public sealed class TourSession : IAsyncDisposable
         // The resource verifies the signature against the token's cnf.jwk,
         // sees agent = the sub-agent, and reads act = { sub: worker,
         // act: { sub: parent } } for its audit log. → 200 OK
-        """;
-
-    private const string SubAgentDepthSnippet = """
-        // Single-level depth: the AP MUST NOT issue a sub-agent whose
-        // parent is ITSELF a sub-agent. Build() throws.
-        try
-        {
-            _ = new AgentTokenBuilder
-            {
-                Issuer          = apUrl,
-                Subject         = "aauth:aria+worker1+deep@host",
-                KeyId           = apKeyId,
-                Key             = apKey,
-                ConfirmationKey = AAuthKey.Generate(),
-                ParentAgent     = "aauth:aria+worker1@host", // a sub-agent → rejected
-            }.Build();
-        }
-        catch (InvalidOperationException ex)
-        {
-            // "parent_agent must name a top-level agent…"
-        }
         """;
 
     // -----------------------------------------------------------------
@@ -2284,7 +2219,6 @@ public sealed class TourSession : IAsyncDisposable
                 "agent has — a browser redirect, a QR code on a phone agent, or just " +
                 "displaying the link. The `code` is single-use and ties the upcoming " +
                 "user session at the PS back to this specific pending request.",
-            ResponseBody = userUrl,
             TokenDecoded = $"Interaction URL:  {_interactionUrl}\nCode:             {_interactionCode}",
             CodeSnippet = CodeSnippets.DirectUserToInteraction,
         });
@@ -2313,6 +2247,10 @@ public sealed class TourSession : IAsyncDisposable
             var body = JsonNode.Parse(last.ResponseBody);
             _authToken = (string?)body?["auth_token"];
 
+            // Federated consent happens at the Access Server's page, even
+            // though the agent still polls the PS's pending URL.
+            var consentPage = IsFederatedMode ? "Access Server's" : "PS's";
+
             Steps.Add(new StepRecord
             {
                 Number = Steps.Count + 1,
@@ -2320,7 +2258,7 @@ public sealed class TourSession : IAsyncDisposable
                 From = Actor.Agent,
                 To = Actor.PersonServer,
                 Narrative =
-                    "While the user clicks through the PS's interaction page, the agent " +
+                    $"While the user clicks through the {consentPage} interaction page, the agent " +
                     "polls the pending URL with a signed `GET` (agent token via `sig=jwt`). " +
                     "Each request honors the PS's `Retry-After` cadence. Once consent is " +
                     "recorded the PS responds with `200 OK` and the long-awaited " +
@@ -3051,7 +2989,8 @@ public sealed class TourSession : IAsyncDisposable
                 "a nested auth_token that records the full delegation path, and " +
                 "the final resource (Calendar) can see exactly who acted on whose behalf." +
                 actExplanation,
-            ResponseBody = PrettyJson(_callChainResponseBody),
+            // The full combined response was shown at the retry step; here we
+            // only render the distilled chain summary.
             TokenDecoded = FormatChainSummary(parsed),
         });
     }
@@ -3351,7 +3290,6 @@ public sealed class TourSession : IAsyncDisposable
                 "its user (browser redirect, QR code, etc.). Note the user approves at the " +
                 "**Access Server** here — not at the Person Server — because the AS owns the " +
                 "policy decision.",
-            ResponseBody = userUrl,
             TokenDecoded = $"Interaction URL:  {_interactionUrl}\nCode:             {_interactionCode}",
             CodeSnippet = CodeSnippets.DirectUserToInteraction,
         });
@@ -3435,10 +3373,9 @@ public sealed class TourSession : IAsyncDisposable
                 "the agent that requested it can present it.\n\n" +
                 "The Person Server delegated the policy decision to the AS; the " +
                 "resource trusts the AS's verdict.",
-            ResponseBody = PrettyJson(_federatedResponseBody),
-            TokenJwt = _authToken,
-            TokenHeader = header,
-            TokenPayload = payload,
+            // The auth token was already decoded at the exchange/poll step;
+            // here we only summarize the four-party shape. The resource body
+            // was shown at the replay step.
             TokenDecoded = summary.ToString(),
         });
     }
@@ -4246,6 +4183,7 @@ public sealed class TourSession : IAsyncDisposable
                 new("200 + auth_token (SILENT — in scope)", Actor.PersonServer, Actor.Agent, IsResponse: true),
                 new("GET /mission (auth_token)", Actor.Agent, Actor.Concierge),
                 new("Concierge forwards AAuth-Mission → Trips /trips", Actor.Concierge, Actor.Resource),
+                new("200 + claims (mission-bound)", Actor.Resource, Actor.Concierge, IsResponse: true),
                 new("200 + combined chain result", Actor.Concierge, Actor.Agent, IsResponse: true),
             },
         });

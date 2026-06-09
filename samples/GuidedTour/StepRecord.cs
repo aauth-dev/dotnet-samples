@@ -68,6 +68,15 @@ public sealed class StepRecord
     public string? CodeSnippetRole { get; init; }
 
     /// <summary>
+    /// When true, the step's main sequence-diagram arrow is drawn as a dashed
+    /// RETURN line (From → To) rather than a solid request line. Use for steps
+    /// that model a response/return leg (e.g. a server handing a token back to
+    /// a client) where <see cref="From"/> is the responder and <see cref="To"/>
+    /// is the original caller.
+    /// </summary>
+    public bool IsResponse { get; init; }
+
+    /// <summary>
     /// Optional sub-steps rendered as smaller arrows in the sequence diagram
     /// beneath this step's main arrow. Used to depict server-side actions
     /// (e.g. what the Concierge does internally on call-chaining).
