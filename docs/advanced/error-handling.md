@@ -161,10 +161,10 @@ raises a **terminal** `AAuthTokenExchangeException` with
 Treat it as a configuration signal: supply an interaction callback (interactive
 agent) or accept that the request cannot complete unattended.
 
-> **Forward-looking (draft-02).** The PS *emitting* `user_unreachable` on the wire
-> is a draft-02 addition; today the SDK classifies the unreachable-user case
-> agent-side. The `TokenErrorCode.UserUnreachable` code is already modelled so
-> adopters can pattern-match on it now.
+> **Note.** `user_unreachable` is a terminal hard stop — the PS has no channel to
+> the user and the agent declared no `interaction` capability. It is distinct from
+> `interaction_required`, which is a non-terminal `202` carrying an interaction URL
+> the agent can still drive.
 
 ## Polling Errors (Deferred Consent)
 

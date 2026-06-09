@@ -6,8 +6,8 @@ cryptographic terms come first; general tech terms are at the bottom.
 
 Canonical expansions follow the AAuth specification drafts under
 [`aauth-spec/`](../aauth-spec/) (the Terminology sections of
-[the protocol draft](../aauth-spec/v01/draft-hardt-oauth-aauth-protocol.md) and
-[the bootstrap draft](../aauth-spec/v01/draft-hardt-aauth-bootstrap.md)).
+[the protocol draft](../aauth-spec/v02/draft-hardt-oauth-aauth-protocol.md) and
+[the bootstrap draft](../aauth-spec/v02/draft-hardt-aauth-bootstrap.md)).
 
 > **Keep this current.** When you introduce a new acronym anywhere in the repo,
 > add it here. Treat this file as the source of truth for expansions.

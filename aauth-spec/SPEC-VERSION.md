@@ -6,8 +6,11 @@ AAuth protocol draft version under [`v01/`](v01/) and [`v02/`](v02/). Each folde
 a self-contained snapshot, so shared documents (the HTTP Signature Keys draft) are
 duplicated into both.
 
-The SDK currently targets **draft-01** ([`v01/`](v01/)). The newer IETF
-**draft-02** ([`v02/`](v02/)) is vendored for the in-progress migration.
+The SDK targets **draft-02** ([`v02/`](v02/)) — migrated from draft-01 in the
+2026-06-09 migration (see `.agent/plans/2026-06-09-aauth-v02-spec-migration/`).
+The draft-01 snapshot ([`v01/`](v01/)) is retained for reference. One item is
+deferred: four-party AS federation of sub-agents (the three-party parent-mediated
+path is complete).
 
 For a high-fidelity record of what changed between snapshots, see
 [`CHANGELOG.md`](CHANGELOG.md).

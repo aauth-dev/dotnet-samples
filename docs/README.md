@@ -3,7 +3,7 @@
 This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It covers agent-side signing, server-side verification, all four signing modes, and all resource access workflows.
 
 - [Interactive Protocol Explorer](https://explorer.aauth.dev/)
-- [AAuth Protocol Specification](../aauth-spec/v01/draft-hardt-oauth-aauth-protocol.md)
+- [AAuth Protocol Specification](../aauth-spec/v02/draft-hardt-oauth-aauth-protocol.md)
 
 ## Getting Started
 

@@ -49,6 +49,17 @@ single canonical default. At an AP, the durable key is therefore **not** trusted
 by pure first-use — trust is established by the enrolment-time attestation and
 carried forward by the durable-key signature on each naming JWT.
 
+> **The agent token is AAuth's minimum credential.** The signing
+> schemes above are *credential-presentation mechanisms*, not AAuth access modes.
+> The identity schemes — `jwt` (agent token) and `jwks_uri` (self-hosted
+> identity) — are what AAuth authorization flows (PS-asserted three-party,
+> federated four-party) require. The pseudonym schemes are narrower: `hwk` gives
+> accountable, rate-limitable pseudonymity with no verified identity, and
+> `jkt-jwt` is used **only** in the agent provider's key-refresh ceremony, not
+> for protocol access to resources, PSes, or ASes. An agent participating in any
+> authorization flow presents an agent token (or, after authorization, an auth
+> token).
+
 ## SDK Types
 
 ```csharp

@@ -167,7 +167,7 @@ using var client = AAuthClientBuilder.Enrolled(key)
 
 ### Two-Key Refresh (jkt-jwt — key rotation)
 
-For agents using the `jkt-jwt` signing mode, the refresh flow uses **two keys**: the enrolled durable key for identity proof, and a fresh ephemeral key for signing HTTP requests. This enables key rotation without re-enrollment. The naming JWT is self-issued per [`draft-hardt-httpbis-signature-key-04`](../../aauth-spec/v01/draft-hardt-httpbis-signature-key-04.txt) §3.4: the durable public key travels in the JWT header and the issuer is its own thumbprint URN, so the AP verifies it self-anchored and then binds it to the enrolment record.
+For agents using the `jkt-jwt` signing mode, the refresh flow uses **two keys**: the enrolled durable key for identity proof, and a fresh ephemeral key for signing HTTP requests. This enables key rotation without re-enrollment. The naming JWT is self-issued per [`draft-hardt-httpbis-signature-key-04`](../../aauth-spec/v02/draft-hardt-httpbis-signature-key-04.txt) §3.4: the durable public key travels in the JWT header and the issuer is its own thumbprint URN, so the AP verifies it self-anchored and then binds it to the enrolment record.
 
 ```mermaid
 sequenceDiagram
