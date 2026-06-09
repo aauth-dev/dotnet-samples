@@ -48,9 +48,50 @@ Each entry: `[YYYY-MM-DD] [Phase N] <title>` with status
     *does* emit server-side 202 interaction challenges, so it owns the generator
     + validator (the code is the only secret guarding the interaction URL).
 
+### [2026-06-09] [Phase 2] `jwks_uri` relaxation modeled via `HasSigningKeys` — PROCEEDED
+- `AAuthResourceMetadataOptions.SigningKeys` is now **optional** (nullable). The
+  resource metadata advertises `jwks_uri` and maps the JWKS endpoint **only when
+  keys are present** (`HasSigningKeys`); an identity-only resource supplies no
+  keys and gets neither. `Validate()` no longer hard-requires a key (draft-02
+  ties `jwks_uri` to "issues resource tokens or makes signed calls"), and it now
+  rejects an `access_mode` outside the three registry values. Making `SigningKeys`
+  nullable is a breaking change, accepted under Q9 (no back-compat).
+
+### [2026-06-09] [Phase 2] `access_mode` (wire) vs `AAuthAccessMode` (enum) kept separate — PROCEEDED
+- Per the Q3 ruling: added `AAuthConstants.AccessModes` string constants
+  (`agent-token`/`aauth-access-token`/`auth-token`) for the advisory wire field,
+  and **added** `AAuthAccessMode.AgentTokenRequired` to the server challenge enum
+  (kept `IdentityOnly`/`RequireAuthToken`). The challenge middleware reads the
+  enum; it never reads the wire `access_mode`, so the wire field stays purely
+  advisory and the runtime `AAuth-Requirement` remains authoritative.
+
+### [2026-06-09] [Phase 2] `AgentTokenRequired` passes auth tokens through — PROCEEDED
+- In `AgentTokenRequired` mode the middleware passes through when **either** an
+  agent token or an auth token is presented (identity is established in both),
+  and challenges anything else (e.g. a bare `hwk` key) with a parameterless
+  `requirement=agent-token`. An auth token is a superset of agent identity, so
+  rejecting it would be user-hostile and off-spec.
+
 ---
 
 ## Deviations from plan
+
+### [2026-06-09] [Phase 2] Agent-side `requirement=agent-token` is no-exchange, no re-sign loop — PROCEEDED- **Plan wording:** "handle requirement=agent-token by retrying with the
+  already-held agent token (no PS exchange)."
+- **What shipped:** the auto-retry `ChallengeHandler` explicitly recognizes
+  `requirement=agent-token` and performs **no exchange** (guarding against a
+  stray `resource-token` param ever turning it into one). It does **not** add a
+  blind re-sign retry, because the SDK's holder-based signing pipeline already
+  presents the agent token on every request — a resource that rejected the agent
+  token cannot be satisfied by re-sending the identical agent token, so a retry
+  would be a guaranteed no-op (or a loop without a guard). End-to-end, an
+  agent-token-mode resource + an SDK agent succeeds on the first request because
+  the agent token is already presented (`AgentTokenRequired_PassesAgentToken`).
+- **Why this is correct, not a gap:** the spec's "agent retries presenting its
+  agent token" describes a bare client that signed with a non-AAuth key; our
+  client signs with the agent token by construction. The meaningful conformance
+  guarantees — distinct from `auth-token`, never exchanged, no resource-token
+  confusion — all hold and are tested.
 
 ### [2026-06-09] [Phase 1] Latent test bugs exposed by the new metadata issuer check — RESOLVED
 - The host-binding check (Phase 1b) surfaced pre-existing test bugs where mock

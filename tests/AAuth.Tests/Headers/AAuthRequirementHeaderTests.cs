@@ -37,4 +37,21 @@ public class AAuthRequirementHeaderTests
     {
         Assert.Throws<ArgumentException>(() => AAuthRequirementHeader.FormatAuthToken("abc\ndef"));
     }
+
+    [Fact(DisplayName = "§Agent Token Required — FormatAgentToken emits a bare requirement (no params)")]
+    public void FormatAgentToken_HasNoParameters()
+    {
+        var formatted = AAuthRequirementHeader.FormatAgentToken();
+        Assert.Equal("requirement=agent-token", formatted);
+    }
+
+    [Fact(DisplayName = "§Agent Token Required — agent-token requirement round-trips with no resource token")]
+    public void Parse_RoundTripsAgentToken()
+    {
+        var parsed = AAuthRequirementHeader.Parse(AAuthRequirementHeader.FormatAgentToken());
+
+        Assert.Equal(AAuthRequirementHeader.AgentTokenRequirement, parsed.Requirement);
+        Assert.Equal("agent-token", parsed.Requirement);
+        Assert.Null(parsed.ResourceToken);
+    }
 }

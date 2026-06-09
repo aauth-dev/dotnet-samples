@@ -17,4 +17,13 @@ public enum AAuthAccessMode
     /// agent can obtain an auth token from the PS/AS.
     /// </summary>
     RequireAuthToken,
+
+    /// <summary>
+    /// Require the agent's own AAuth agent token (<c>typ: aa-agent+jwt</c>).
+    /// If the caller presents no agent token, the middleware issues a 401
+    /// challenge with a bare <c>AAuth-Requirement: requirement=agent-token</c>
+    /// (no resource token, no PS/AS involved) — the agent need only present the
+    /// agent token it already holds (§Agent Token Required).
+    /// </summary>
+    AgentTokenRequired,
 }

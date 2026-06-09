@@ -125,12 +125,12 @@ public static class AAuthApplicationBuilderExtensions
         });
 
         // 3. Challenge middleware (only if there's a signing key available)
-        if (metadataOptions.SigningKeys.Count > 0)
+        if (metadataOptions.SigningKeys is { Count: > 0 } signingKeys)
         {
             // Use the first signing key for challenges
             string? kid = null;
             AAuth.Crypto.AAuthKey? key = null;
-            foreach (var kvp in metadataOptions.SigningKeys)
+            foreach (var kvp in signingKeys)
             {
                 kid = kvp.Key;
                 key = kvp.Value;

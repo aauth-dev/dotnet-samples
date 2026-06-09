@@ -24,6 +24,9 @@ namespace AAuth.Server.Challenge;
 /// <item>If <see cref="ChallengeOptions.AccessMode"/> is <see cref="AAuthAccessMode.RequireAuthToken"/>
 ///   and the token is <c>aa-agent+jwt</c>, mints a resource token and returns 401 with
 ///   <c>AAuth-Requirement: requirement=auth-token; resource-token="…"</c>.</item>
+/// <item>If <see cref="ChallengeOptions.AccessMode"/> is <see cref="AAuthAccessMode.AgentTokenRequired"/>,
+///   passes through when an AAuth agent or auth token is present, otherwise returns 401 with
+///   a bare <c>AAuth-Requirement: requirement=agent-token</c> (§Agent Token Required).</item>
 /// <item>If the token is <c>aa-auth+jwt</c> (or non-JWT schemes in identity-only mode),
 ///   passes through to the next middleware.</item>
 /// </list>
@@ -76,6 +79,25 @@ public sealed class AAuthChallengeMiddleware
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             context.Response.Headers[AAuthConstants.Headers.AAuthError] = $"Scheme '{scheme}' is not allowed by this resource.";
+            return;
+        }
+
+        // §Agent Token Required: this resource specifically wants an AAuth agent
+        // token, distinct from any other URI-identified key. Pass through when an
+        // AAuth token (agent or auth) is present — identity is established;
+        // otherwise challenge with a bare requirement=agent-token (no PS/AS, no
+        // resource token — the agent need only present the token it already holds).
+        if (_options.AccessMode == AAuthAccessMode.AgentTokenRequired)
+        {
+            if (tokenType is AAuthTokenType.AgentToken or AAuthTokenType.AuthToken)
+            {
+                await _next(context).ConfigureAwait(false);
+                return;
+            }
+
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            context.Response.Headers[AAuthRequirementHeader.Name] =
+                AAuthRequirementHeader.FormatAgentToken();
             return;
         }
 

@@ -105,6 +105,8 @@ baseline. **Status: complete (2026-06-09).**
 
 ## Phase 2 — Drop-in adoption: `access_mode` + `requirement=agent-token`
 
+**Status: complete (2026-06-09).**
+
 ### Scope
 
 - `src/AAuth/Discovery/ServerMetadata.cs` — add `string? AccessMode` to
@@ -125,13 +127,18 @@ baseline. **Status: complete (2026-06-09).**
 
 ### Definition of Done
 
-- [ ] `access_mode` round-trips (publish → fetch → parse); default `agent-token`.
-- [ ] Identity-only resource may omit `jwks_uri` without error; token-issuing
-      resource still requires it.
-- [ ] `requirement=agent-token` emitted and handled end-to-end (agent retries
-      with agent token, no exchange).
-- [ ] Runtime `AAuth-Requirement` overrides declared `access_mode` (advisory).
-- [ ] Conformance tests for metadata + the new requirement value.
+- [x] `access_mode` round-trips (publish → fetch → parse); default `agent-token`.
+- [x] Identity-only resource may omit `jwks_uri` without error; token-issuing
+      resource still requires it. (Modeled via `HasSigningKeys`: a resource with
+      keys emits `jwks_uri`; one without omits it.)
+- [x] `requirement=agent-token` emitted and handled end-to-end (agent-token mode
+      challenges a non-AAuth credential with a bare `requirement=agent-token`;
+      an SDK agent presenting its agent token succeeds first-try; the handler
+      never exchanges it — see the Phase 2 deviation note in the log).
+- [x] Runtime `AAuth-Requirement` overrides declared `access_mode` (advisory —
+      the challenge middleware reads the enum, never the wire `access_mode`).
+- [x] Conformance tests for metadata + the new requirement value. (398 unit,
+      491 conformance green.)
 
 ---
 

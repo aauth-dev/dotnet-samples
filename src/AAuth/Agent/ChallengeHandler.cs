@@ -177,6 +177,18 @@ public sealed class ChallengeHandler : DelegatingHandler
             try
             {
                 var candidate = AAuthRequirementHeader.Parse(raw);
+
+                // §Agent Token Required: a bare requirement=agent-token asks for
+                // the agent's own identity token — no PS/AS, no resource token to
+                // exchange. The SDK already signs every request with the agent
+                // token via the shared holder, so the agent token is being
+                // presented; there is nothing to exchange. Skip it (and never let
+                // a stray resource-token param turn it into an exchange).
+                if (candidate.Requirement == AAuthRequirementHeader.AgentTokenRequirement)
+                {
+                    continue;
+                }
+
                 if (candidate.Requirement == AAuthRequirementHeader.AuthTokenRequirement
                     && candidate.ResourceToken is not null)
                 {
