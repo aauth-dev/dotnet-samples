@@ -48,7 +48,7 @@ available, switchable at runtime from the topbar **Mode** picker:
   governs two very different kinds of access. An out-of-mission elevated
   scope first triggers a **clarification chat** (the PS asks *why*, the
   agent answers) before the user approves it; then a **mission-forwarded
-  call chain** (Agent → Orchestrator → WhoAmI) flows **silently** because
+  call chain** (Agent → Orchestrator → Calendar) flows **silently** because
   both hops are in the mission's scope. The PS's mission log records the
   whole trail. Requires a Person Server and an Orchestrator URL.
 
@@ -63,12 +63,15 @@ the default in `appsettings.json`:
 The Identity flow also exposes a **Signing Mode** picker (`hwk` or
 `jwks_uri`); three-party flows always use `jwt` per spec.
 
-WhoAmI now serves each flow from an isolated, per-mode endpoint rather
-than a single root path: `GET /hwk` and `GET /jkt-jwt` (pseudonymous),
-`GET /jwks-uri` (agent identity), and `GET /jwt` (three-party PS-asserted).
-WhoAmI also exposes `GET /jwt/admin` (elevated scope `whoami:admin`) and
-`GET /jwt/roles` (RBAC roles + groups); the tour exercises the base
-`GET /jwt` path. `GET /` is an unauthenticated index listing the flows.
+Each Aria resource server serves its flow from isolated, per-mode endpoints.
+**Profile** (:5000) handles Identity-based access: `GET /pseudonymous` and
+`GET /anchored` (pseudonymous), `GET /identified` (agent identity).
+**Calendar** (:5001) handles three-party PS-asserted access: `GET /events`
+(scope `calendar.read`), `GET /events/write` (elevated scope `calendar.write`),
+and `GET /events/admin` (RBAC roles + groups); the tour exercises the base
+`GET /events` path. **Trips** (:5002) handles mission-governed access
+(`GET /trips`, `GET /trips/book`), and **Wallet** (:5003) handles four-party
+federated access (`GET /wallet`, `GET /wallet/charge`).
 
 ### Bootstrap (2–3 steps)
 
@@ -90,18 +93,18 @@ When `AgentProviderUrl` is set, the tour enrols with a real AP:
 Assumes the agent is already bootstrapped (key + token exist).
 
 1. Discover resource metadata — unsigned `GET /.well-known/aauth-resource.json`.
-2. Signed `GET /hwk` or `GET /jwks-uri` → 200 + claims (path depends on signing mode picker).
+2. Signed `GET /pseudonymous` or `GET /identified` → 200 + claims (path depends on signing mode picker).
 
 ### PS-Asserted / Direct Grant (6 steps)
 
 Assumes the agent is already bootstrapped.
 
 1. Discover resource metadata — unsigned `GET /.well-known/aauth-resource.json`.
-2. Signed `GET /jwt` → **`401`** with a `resource_token` + `AAuth-Requirement`.
+2. Signed `GET /events` → **`401`** with a `resource_token` + `AAuth-Requirement`.
 3. Parse the 401 challenge (decode header + `resource_token` claims).
 4. Discover Person Server — unsigned `GET /.well-known/aauth-person.json`.
 5. Signed `POST /token` (exchange) → **`200`** + `auth_token`.
-6. Signed `GET /jwt` carrying the `auth_token` → 200 + claims.
+6. Signed `GET /events` carrying the `auth_token` → 200 + claims.
 
 ### PS-Asserted / Deferred (9 steps)
 
@@ -126,14 +129,14 @@ Steps 1–4 are the same as **Direct Grant**. From step 5 onward:
       `AAuthInteractionDeniedException`; the loop box turns red.
     * **Polling budget expires** (5 minutes by default) → SDK throws
       `AAuthInteractionTimeoutException`; the loop box turns amber.
-9. Signed `GET /jwt` carrying the `auth_token` → 200 + claims (only on the
+9. Signed `GET /events` carrying the `auth_token` → 200 + claims (only on the
    approve path).
 
 ### Call Chain / Multi-Agent (7 steps)
 
 Demonstrates multi-agent delegation. The agent calls an Orchestrator
 (an intermediate AAuth-protected service) which itself calls a downstream
-Resource (WhoAmI), forwarding the caller's auth_token as `upstream_token`
+Resource (Calendar), forwarding the caller's auth_token as `upstream_token`
 to produce a nested `act` claim.
 
 1. Discover Orchestrator metadata — unsigned `GET /.well-known/aauth-resource.json`.
@@ -144,7 +147,7 @@ to produce a nested `act` claim.
    the Orchestrator.
 6. Signed `GET /` carrying the `auth_token` → **`200`**. Internally the
    Orchestrator performs its own challenge/exchange/retry cycle against
-   WhoAmI's `GET /jwt` endpoint, shown as sub-step arrows in the sequence
+   Calendar's `GET /events` endpoint, shown as sub-step arrows in the sequence
    diagram.
 7. Inspect multi-agent result — view the combined response with nested
    `act` claims proving the full Agent → Orchestrator → Resource chain.
@@ -164,16 +167,16 @@ From the repo root:
 make demo
 ```
 
-Starts WhoAmI, Orchestrator, MockPersonServer (with `RequireConsent=true`),
-MockAgentProvider, and the Guided Tour together. Open
-<http://localhost:5400> and flip the topbar mode picker to **Call Chain**
-or **Deferred** to exercise those paths.
+Starts the resource servers (Profile, Calendar, Trips, Wallet), Orchestrator,
+MockPersonServer (with `RequireConsent=true`), MockAgentProvider, and the Guided
+Tour together. Open <http://localhost:5400> and flip the topbar mode picker to
+**Call Chain** or **Deferred** to exercise those paths.
 
-### Option 2: five terminals
+### Option 2: separate terminals
 
 ```bash
-# Terminal 1 — Resource (port 5000)
-dotnet run --project samples/WhoAmI
+# Terminal 1 — Resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003)
+make resources
 
 # Terminal 2 — Orchestrator (port 5200)
 dotnet run --project samples/Orchestrator
@@ -197,7 +200,10 @@ with **Run step**).
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `GuidedTour:WhoAmIUrl` | `http://localhost:5000` | Resource server base URL. |
+| `GuidedTour:ProfileUrl` | `http://localhost:5000` | Profile (Identity-based) resource server base URL. |
+| `GuidedTour:CalendarUrl` | `http://localhost:5001` | Calendar (PS-asserted) resource server base URL. |
+| `GuidedTour:TripsUrl` | `http://localhost:5002` | Trips (mission-aware) resource server base URL. |
+| `GuidedTour:WalletUrl` | `http://localhost:5003` | Wallet (federated) resource server base URL. |
 | `GuidedTour:OrchestratorUrl` | `http://localhost:5200` | Orchestrator base URL for the call-chain flow. Set empty to disable that picker option. |
 | `GuidedTour:PersonServerUrl` | `http://localhost:5100` | PS base URL. Set empty to lock the picker to identity-based mode. |
 | `GuidedTour:AgentProviderUrl` | `http://localhost:5301` | AP base URL. When set, bootstrap enrols with the real AP instead of self-signing. |

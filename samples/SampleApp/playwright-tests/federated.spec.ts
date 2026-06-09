@@ -21,7 +21,7 @@ test.describe('Federated (interactive consent)', () => {
   test.describe.configure({ timeout: 120_000 });
 
   test('approve at the AS consent screen resolves to a four-party identity', async ({ page, context }) => {
-    await page.goto('/federated');
+    await page.goto('/wallet');
     await expect(page.locator('h2')).toContainText('Federated');
     await waitForInteractive(page, 'button.btn-primary');
 
@@ -41,9 +41,9 @@ test.describe('Federated (interactive consent)', () => {
 
     await expectStatus(page, 200, 60_000);
     const json = (await readResponseJson(page)) as Record<string, unknown>;
-    expect(json.mode).toBe('four-party');
+    expect(json.accessMode).toBe('four-party');
     expect(json.scheme).toBe('jwt');
-    expect(json.scope).toEqual(['whoami']);
+    expect(json.scope).toEqual(['wallet.read']);
     // The auth token is minted by the Access Server, not the Person Server.
     expect(json.iss).toBe(Urls.accessServer);
     const act = json.act as Record<string, unknown>;

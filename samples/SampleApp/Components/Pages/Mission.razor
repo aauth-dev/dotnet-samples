@@ -1,4 +1,4 @@
-@page "/mission"
+@page "/trips"
 @using System.Net
 @using System.Net.Http.Json
 @using System.Text.Json.Nodes
@@ -88,7 +88,7 @@ var resourceToken = AAuthRequirementHeader
 
 //    b) Exchange the resource token at the PS for an auth token. The
 //       mission named no scopes, so the PS evaluates the requested
-//       `whoami` scope against the mission's description; it fits the
+//       `trips.read` scope against the mission's description; it fits the
 //       intent, so the PS grants it silently — no user prompt
 //       (§Scopes, §Agent Token Request, gate 2a).
 var authToken = await exchange.ExchangeAsync(personServer, resourceToken);
@@ -101,7 +101,7 @@ var who = await ok.Content.ReadFromJsonAsync&lt;JsonObject&gt;();   // the profi
 
 // 3. Access an ELEVATED scope (PROMPT — out of mission). The same
 //    challenge -> exchange -> retry, but against an endpoint requiring
-//    `whoami:elevated_scope`. The mission's intent does not cover this
+//    `trips.book`. The mission's intent does not cover this
 //    scope, so the PS cannot grant it silently: it prompts the user.
 //    A user deny throws AAuthInteractionDeniedException (denied);
 //    otherwise the consent accrues to the mission (§Scopes, gate 3).
@@ -127,41 +127,41 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
     SigningKeys = new() { [kid] = resourceKey },
     ScopeDescriptions = new()
     {
-        ["whoami"] = "See basic profile information",
-        ["whoami:elevated_scope"] = "See your full account and profile history",
+        ["trips.read"] = "See basic profile information",
+        ["trips.book"] = "See your full account and profile history",
     },
 });
 
-// Bind the `whoami` scope to a policy.
-builder.Services.AddAAuthScopePolicy("AAuth.Scope.whoami", "whoami");
+// arg 1 = policy name (any id, used by RequireAuthorization); arg 2 = scope value matched against the token. "AAuth.Scope." is just a naming convention.
+builder.Services.AddAAuthScopePolicy("AAuth.Scope.trips.read", "trips.read");
 // ...and the elevated scope used by gate 3.
 builder.Services.AddAAuthScopePolicy(
-    "AAuth.Scope.whoami:elevated_scope", "whoami:elevated_scope");
+    "AAuth.Scope.trips.book", "trips.book");
 
-// /protected_endpoint is the `whoami`-protected ACTION the agent calls
+// /protected_endpoint is the `trips.read`-protected ACTION the agent calls
 // in gate 2. The mission-aware challenge copies the {approver, s256}
 // from the signed AAuth-Mission header into the resource token, so
 // the PS governs the exchange under the mission. Presenting only an
 // agent token yields a 401 + resource token (aud = the agent's PS)
-// requesting `whoami`.
+// requesting `trips.read`.
 app.UseWhen(
     ctx =&gt; ctx.Request.Path.StartsWithSegments("/protected_endpoint"),
     branch =&gt;
     {
         branch.UseAAuthVerification(FullVerification());
-        branch.UseAAuthChallenge(ChallengeForMission("whoami"));
+        branch.UseAAuthChallenge(ChallengeForMission("trips.read"));
     });
 
-// The endpoint itself just requires the verified `whoami` scope.
+// The endpoint itself just requires the verified `trips.read` scope.
 app.MapGet("/protected_endpoint", (HttpContext ctx) =&gt;
 {
     var v = ctx.GetAAuthVerification()!;  // auth token already verified
-    // v.Scopes contains "whoami" — safe to return the profile.
+    // v.Scopes contains "trips.read" — safe to return the profile.
     return Results.Ok(Profile(v));
-}).RequireAuthorization("AAuth.Scope.whoami");
+}).RequireAuthorization("AAuth.Scope.trips.read");
 
 // /protected_endpoint/elevated is the ELEVATED action gate 3 calls. Same
-// mission-aware challenge, but it requests `whoami:elevated_scope`. Because
+// mission-aware challenge, but it requests `trips.book`. Because
 // the mission's intent does not cover this scope, the PS prompts the user
 // at the exchange step before issuing the auth token (§Scopes, gate 3).
 app.UseWhen(
@@ -169,12 +169,12 @@ app.UseWhen(
     branch =&gt;
     {
         branch.UseAAuthVerification(FullVerification());
-        branch.UseAAuthChallenge(ChallengeForMission("whoami:elevated_scope"));
+        branch.UseAAuthChallenge(ChallengeForMission("trips.book"));
     });
 
 app.MapGet("/protected_endpoint/elevated", (HttpContext ctx) =&gt;
     Results.Ok(Profile(ctx.GetAAuthVerification()!)))
-   .RequireAuthorization("AAuth.Scope.whoami:elevated_scope");</code></pre>
+   .RequireAuthorization("AAuth.Scope.trips.book");</code></pre>
     </div>
 </div>
 
@@ -215,7 +215,7 @@ if (deleteInbox.IsGranted)
     <p class="text-muted mt-1">
         <small>
             Two gates resolve silently (in-scope token, pre-approved tool); three prompt
-            you in a new tab (mission creation, the elevated <code>whoami:elevated_scope</code>,
+            you in a new tab (mission creation, the elevated <code>trips.book</code>,
             the <code>delete_inbox</code> action).
         </small>
     </p>
@@ -350,14 +350,14 @@ if (deleteInbox.IsGranted)
         _pollCount = 0;
 
         var personServer = Config["AAuth:PersonServer"]!.TrimEnd('/');
-        var resourceOrigin = Config["AAuth:Resource"]!.TrimEnd('/');
-        var resourceUrl = $"{resourceOrigin}/jwt/mission";
-        var elevatedUrl = $"{resourceOrigin}/jwt/mission/elevated";
+        var resourceOrigin = Config["AAuth:Trips"]!.TrimEnd('/');
+        var resourceUrl = $"{resourceOrigin}/trips";
+        var elevatedUrl = $"{resourceOrigin}/trips/book";
 
         try
         {
             // Reset prior runs and script the PS for an interactive demo: the
-            // browser decides the prompts, while `whoami` is seeded in scope so
+            // browser decides the prompts, while `trips.read` is seeded in scope so
             // the token gate resolves silently (gate 2a). The approve* flags are
             // only the scripted fallback used outside interactive mode.
             await ConfigurePersonServerAsync(personServer, resourceOrigin);
@@ -415,7 +415,7 @@ if (deleteInbox.IsGranted)
                 signed, exchange, personServer, resourceUrl, mission, poller);
             _resourceJson = Pretty(who);
             ClearWaiting();
-            _steps.Add(new GateStep(2, "Resource token (whoami)", Prompted: false,
+            _steps.Add(new GateStep(2, "Resource token (trips.read)", Prompted: false,
                 Outcome: "granted",
                 Summary: $"The mission named no scopes, so the PS evaluated the requested scope against " +
                          $"the mission's intent; it fit, so an auth_token was minted silently. " +
@@ -428,7 +428,7 @@ if (deleteInbox.IsGranted)
 
             // ---- Gate 3: access an ELEVATED scope (PROMPT, out of mission) --
             // The mission named no scopes and its intent ("keep the inbox under
-            // control") does not cover `whoami:elevated_scope`. The PS cannot
+            // control") does not cover `trips.book`. The PS cannot
             // silently approve this exchange, so it prompts the user before
             // minting the auth_token (§Agent Token Request gate 3, §Scopes).
             _currentGate = "Resource token (elevated)";
@@ -629,7 +629,7 @@ if (deleteInbox.IsGranted)
                 approveMission = true,
                 approveToken = true,
                 approvePermission = true,
-                inScope = new[] { new { resource = resourceOrigin, scope = "whoami" } },
+                inScope = new[] { new { resource = resourceOrigin, scope = "trips.read" } },
             });
         }
         catch

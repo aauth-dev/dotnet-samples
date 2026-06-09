@@ -14,11 +14,11 @@ import { approveInPopup } from '../../../tests/e2e/helpers/consent';
  *   3. Mission-forwarded chain — SILENT: the same mission is carried
  *                                (WithMission) to the Orchestrator's mission-aware
  *                                "/mission" endpoint, which forwards the
- *                                AAuth-Mission header to the WhoAmI "/jwt/mission"
+ *                                AAuth-Mission header to the Trips "/trips"
  *                                hop. Both hops are seeded in-scope, so no prompt.
  *
  * The page then fetches the PS-held mission log (§Mission Log) and renders it.
- * Needs PS + AP + Orchestrator + WhoAmI booted (the Playwright webServer array).
+ * Needs PS + AP + Orchestrator + Trips booted (the Playwright webServer array).
  */
 test.describe('Mission Call Chain (SampleApp)', () => {
   test.describe.configure({ timeout: 180_000 });
@@ -102,9 +102,9 @@ test.describe('Mission Call Chain (SampleApp)', () => {
     await expect(stepCard(page, 3).locator('.badge.bg-success').first()).toHaveText('silent');
     const chainJson = await stepCard(page, 3).locator('pre code').innerText();
     const chain = JSON.parse(chainJson) as Record<string, any>;
-    expect(chain.downstream.mode).toBe('three-party');
-    expect(chain.downstream.scope).toEqual(['whoami']);
-    // The downstream WhoAmI hop saw the Orchestrator as the immediate actor.
+    expect(chain.downstream.accessMode).toBe('three-party');
+    expect(chain.downstream.scope).toEqual(['trips.read']);
+    // The downstream Trips hop saw the Orchestrator as the immediate actor.
     expect(chain.downstream.agent).toBe('aauth:orchestrator@localhost:5200');
     // The mission was forwarded: the downstream auth token carries the mission.
     expect(chain.downstream.mission).toBeTruthy();

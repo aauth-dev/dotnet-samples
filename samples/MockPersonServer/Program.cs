@@ -41,18 +41,18 @@ var builder = WebApplication.CreateBuilder(args);
 // -----------------------------------------------------------------------
 var psKey = AAuthKey.Generate();
 const string PsKid = "ps-1";
-const string PsScope = "whoami";
-const string PsAdminScope = "whoami:admin";
+const string PsScope = "calendar.read";
+const string PsAdminScope = "calendar.write";
 // Demo identity claims the mock PS asserts about the user. A production PS
 // would resolve these from the signed-in user's directory entry. These let
-// the WhoAmI `/jwt/roles` (RBAC) endpoint succeed end-to-end.
+// the Calendar `/events/admin` (RBAC) endpoint succeed end-to-end.
 //
 // Roles/groups are asserted ONLY for recognized "admin" demo agents (those
 // whose id is `aauth:demo@...`). Any other agent receives an auth token
 // without the role, so role-based DENIAL is exercised end-to-end (a guest
-// agent calling `/jwt/roles` gets a 403). A production PS would resolve the
+// agent calling `/events/admin` gets a 403). A production PS would resolve the
 // principal's directory membership instead of a hard-coded prefix.
-string[] demoRoles = ["whoami-admin"];
+string[] demoRoles = ["calendar.owner"];
 string[] demoGroups = ["demo-users"];
 // Identity claims the PS can release for the bound principal when an Access
 // Server asks for them via the §Claims Required push. A production PS would
@@ -145,8 +145,8 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
     SigningKeys = new Dictionary<string, AAuthKey> { [PsKid] = psKey },
     ScopeDescriptions = new Dictionary<string, string>
     {
-        [PsScope] = "Issue AAuth auth tokens for WhoAmI",
-        [PsAdminScope] = "Issue elevated (admin) AAuth auth tokens for WhoAmI",
+        [PsScope] = "Issue AAuth auth tokens for the Calendar",
+        [PsAdminScope] = "Issue elevated (write) AAuth auth tokens for the Calendar",
     },
     SignatureWindow = signatureWindowSeconds,
 });
@@ -1186,7 +1186,7 @@ app.MapGet("/permission-pending/{id}", async (
 // consent flips. These exist so the GuidedTour's "User approves" button
 // and the §3.4 user-consent integration test can drive the consent
 // transition deterministically. Body shape:
-//   { "agent": "aauth:...@...", "resource": "https://whoami/", "scope": "whoami" }
+//   { "agent": "aauth:...@...", "resource": "https://calendar/", "scope": "calendar.read" }
 // `scope` is optional and defaults to the PS's single demo scope.
 // -----------------------------------------------------------------------
 app.MapPost("/admin/consent", async (HttpContext ctx, ConsentStore consent) =>
@@ -1666,8 +1666,8 @@ async Task<(string? Agent, string? Resource, string? Scope, IResult? Error)> Rea
 
 // Marker type for `WebApplicationFactory<MockPersonServer.Entry>` in the
 // integration tests. We don't expose `public partial class Program;` here
-// because the WhoAmI sample already declares its own global `Program`, and
-// adding both project references to a test assembly would make `Program`
+// because the resource-server samples also declare their own global `Program`,
+// and adding both project references to a test assembly would make `Program`
 // ambiguous. A dedicated, namespaced marker sidesteps that.
 namespace MockPersonServer
 {

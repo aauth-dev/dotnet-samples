@@ -1,6 +1,6 @@
 # Orchestrator
 
-Multi-agent call-chaining sample. The Orchestrator acts as both a **resource** (verifies incoming callers) and an **agent** (calls downstream WhoAmI with delegation).
+Multi-agent call-chaining sample. The Orchestrator acts as both a **resource** (verifies incoming callers) and an **agent** (calls downstream Calendar with delegation).
 
 ## What It Demonstrates
 
@@ -14,16 +14,16 @@ Multi-agent call-chaining sample. The Orchestrator acts as both a **resource** (
 
 ```
 Agent A ──agent token──→ Orchestrator ──401 + resource_token──→ Agent A
-Agent A ──auth token───→ Orchestrator ──agent token──→ WhoAmI ──401──→ Orchestrator
+Agent A ──auth token───→ Orchestrator ──agent token──→ Calendar ─┄01──→ Orchestrator
                          Orchestrator ──exchange(upstream_token)──→ PS
-                         Orchestrator ──chained auth token──→ WhoAmI ──200──→ Orchestrator ──200──→ Agent A
+                         Orchestrator ──chained auth token──→ Calendar ──200──→ Orchestrator ──200──→ Agent A
 ```
 
 The final response includes:
 
 ```json
 {
-  "chain": "Agent → Orchestrator → WhoAmI",
+  "chain": "Agent → Orchestrator → Calendar",
   "upstream": { "agent": "aauth:sample-app@ap.example" },
   "downstream": {
     "mode": "three-party",
@@ -41,7 +41,7 @@ The final response includes:
 make demo-sample   # starts all 5 services
 ```
 
-Or standalone (requires WhoAmI, PS, and AP already running):
+Or standalone (requires Calendar, PS, and AP already running):
 
 ```bash
 dotnet run --project samples/Orchestrator
@@ -53,7 +53,8 @@ dotnet run --project samples/Orchestrator
 | Key | Default | Purpose |
 |-----|---------|---------|
 | `AAuth:Issuer` | `http://localhost:5200` | Orchestrator's resource identifier |
-| `AAuth:Downstream` | `http://localhost:5000` | Downstream resource (WhoAmI) URL |
+| `AAuth:Downstream` | `http://localhost:5001` | Downstream resource (Calendar) URL for the plain chain |
+| `AAuth:MissionDownstream` | `http://localhost:5002` | Downstream resource (Trips) URL for the mission chain |
 | `AAuth:PersonServer` | `http://localhost:5100` | PS for token exchange |
 | `AAuth:AgentId` | `aauth:orchestrator@localhost:5200` | Orchestrator's agent identity |
 
@@ -67,7 +68,7 @@ curl -X POST http://localhost:5100/admin/consent \
 
 curl -X POST http://localhost:5100/admin/consent \
   -H "Content-Type: application/json" \
-  -d '{"agent":"aauth:orchestrator@localhost:5200","resource":"http://localhost:5000"}'
+  -d '{"agent":"aauth:orchestrator@localhost:5200","resource":"http://localhost:5001"}'
 
 # Call through the chain
 dotnet run --project samples/AgentConsole -- http://localhost:5200 \

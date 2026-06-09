@@ -9,8 +9,8 @@
     <Project Path="samples/MockPersonServer/MockPersonServer.csproj" />
     <Project Path="samples/Orchestrator/Orchestrator.csproj" />
     <Project Path="samples/SampleApp/SampleApp.csproj" />
-    <Project Path="samples/WhoAmI/WhoAmI.csproj" />
   </Folder>
+  <Folder Name="/samples/MockResourceServers/" />
   <Folder Name="/src/">
     <Project Path="src/AAuth/AAuth.csproj" />
   </Folder>

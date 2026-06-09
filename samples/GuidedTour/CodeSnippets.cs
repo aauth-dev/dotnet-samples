@@ -186,9 +186,9 @@ internal static class CodeSnippets
         // happens server-side inside the Orchestrator:
         //   1. Orchestrator validates our auth_token
         //   2. Extracts it as upstream_token
-        //   3. Calls downstream WhoAmI with its own agent token
+        //   3. Calls downstream Calendar with its own agent token
         //   4. Exchanges at PS with upstream_token → nested act
-        //   5. Retries WhoAmI with chained auth_token → 200
+        //   5. Retries Calendar with chained auth_token → 200
         using var chainClient = new AAuthClientBuilder(key)
             .UseJwt(authToken) // present the auth_token directly
             .Build();
@@ -281,7 +281,7 @@ internal static class CodeSnippets
         """;
 
     public const string MissionExchange = """
-        // The resource_token carries the mission claim; because (resource, whoami)
+        // The resource_token carries the mission claim; because (resource, trips.read)
         // is in the mission scope, the PS mints the auth_token SILENTLY.
         var authToken = await exchange.ExchangeAsync("https://ps.example", resourceToken);
         // Or, end-to-end: AAuthClientBuilder handles 401 → exchange → retry for you.
@@ -296,7 +296,7 @@ internal static class CodeSnippets
 
     public const string MissionElevatedChallenge = """
         // Same mission header, but the ELEVATED endpoint requires
-        // whoami:elevated_scope — a scope the mission never declared.
+        // trips.book — a scope the mission never declared.
         using var req = new HttpRequestMessage(HttpMethod.Get, elevatedUrl);
         req.Headers.Add(AAuthMissionHeader.Name,
             AAuthMissionHeader.FormatStructured(mission.Approver, mission.S256));
@@ -306,7 +306,7 @@ internal static class CodeSnippets
         """;
 
     public const string MissionElevatedExchange = """
-        // whoami:elevated_scope is OUTSIDE the mission's intent, so the PS
+        // trips.book is OUTSIDE the mission's intent, so the PS
         // cannot mint silently — it returns 202 and asks the user to decide.
         // (Out-of-mission scopes prompt; they are never auto-denied.)
         var authToken = await exchange.ExchangeAsync("https://ps.example", resourceToken,
@@ -355,7 +355,7 @@ internal static class CodeSnippets
     public const string MissionInspect = """
         // One mission approval governed the whole session:
         //   gate 1  mission creation .... PROMPT
-        //   gate 2  whoami token ........ SILENT (in scope)
+        //   gate 2  trips.read token ........ SILENT (in scope)
         //   gate 3  elevated scope ...... PROMPT (out of mission scope)
         //   gate 4  send_email tool ..... SILENT (pre-approved, local)
         //   gate 5  delete_inbox action . PROMPT (out of scope)
@@ -365,7 +365,7 @@ internal static class CodeSnippets
     // ── Combined mission + call chain (§Clarification Chat, §Call Chaining) ──
 
     public const string MissionChainClarify = """
-        // Requesting whoami:elevated_scope is OUT of the mission's intent, so the
+        // Requesting trips.book is OUT of the mission's intent, so the
         // PS opens a clarification chat BEFORE asking the user to decide.
         var session = governance.MissionSessionFor(mission);
         var authToken = await session.ExchangeAsync("https://ps.example", resourceToken,
@@ -406,7 +406,7 @@ internal static class CodeSnippets
             .Build();
         var resp = await client.GetAsync("https://orchestrator.example/mission");
         // 200: { chain, upstream, orchestrator, downstream } — downstream is
-        // WhoAmI's mission-bound /jwt/mission result. NO prompt: every hop in scope.
+        // Trips's mission-bound /trips result. NO prompt: every hop in scope.
         """;
 
     public const string MissionChainLog = """

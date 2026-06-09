@@ -38,7 +38,7 @@ var builder = WebApplication.CreateBuilder(args);
 // -----------------------------------------------------------------------
 var asKey = AAuthKey.Generate();
 const string AsKid = "as-1";
-const string AsScope = "whoami";
+const string AsScope = "wallet.read";
 var asIssuer = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5500";
 ConsentHtml.Authority = Uri.TryCreate(asIssuer, UriKind.Absolute, out var asIssuerUri)
     ? asIssuerUri.Authority

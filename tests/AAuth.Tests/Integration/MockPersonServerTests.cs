@@ -22,9 +22,9 @@ namespace AAuth.Tests.Integration;
 /// Unit-tests for the shipped <c>samples/MockPersonServer/</c> sample.
 ///
 /// These exercise the same endpoints the agent's <see cref="TokenExchangeClient"/>
-/// will hit at runtime, without spinning up WhoAmI. The integration tests
-/// in <see cref="WhoAmIFlowTests"/> exercise the same sample in the full
-/// three-party flow alongside WhoAmI.
+/// will hit at runtime, without spinning up Calendar. The integration tests
+/// in <see cref="CalendarFlowTests"/> exercise the same sample in the full
+/// three-party flow alongside Calendar.
 /// </summary>
 public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPersonServer.Entry>>, IDisposable
 {
@@ -116,7 +116,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
             AgentJkt = agentKey.ComputeJwkThumbprint(),
             Key = ResourceStub.Key,
             KeyId = ResourceStub.Kid,
-            Scope = "whoami",
+            Scope = "calendar.read",
         }.Build();
 
         var response = await http.PostAsJsonAsync("/token",
@@ -160,13 +160,13 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         var authTokenAsCarrier = new AuthTokenBuilder
         {
             Issuer = "https://ps.example",
-            Audience = "https://whoami.test",
+            Audience = "https://calendar.test",
             Agent = "aauth:demo@ap.example",
             AgentConfirmationKey = agentKey,
             Key = psKey,
             KeyId = "ps-x",
             Subject = "pairwise",
-            Scope = "whoami",
+            Scope = "calendar.read",
         }.Build();
 
         var signing = new AAuthSigningHandler(agentKey, () => authTokenAsCarrier)
@@ -248,7 +248,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
             AgentJkt = agentKey.ComputeJwkThumbprint(),
             Key = AAuthKey.Generate(),
             KeyId = ResourceStub.Kid,
-            Scope = "whoami",
+            Scope = "calendar.read",
         }.Build();
 
         var response = await http.PostAsJsonAsync("/token",
@@ -291,14 +291,14 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
             AgentJkt = agentKey.ComputeJwkThumbprint(),
             Key = ResourceStub.Key,
             KeyId = ResourceStub.Kid,
-            Scope = "whoami",
+            Scope = "calendar.read",
         }.Build();
 
         // Tamper: flip the scope to a privileged one without re-signing.
         var segments = genuine.Split('.');
         var payload = (JsonObject)JsonNode.Parse(
             Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(segments[1]))!;
-        payload["scope"] = "whoami:admin";
+        payload["scope"] = "calendar.write";
         segments[1] = Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Encode(
             payload.ToJsonString());
         var tampered = string.Join('.', segments);
@@ -323,7 +323,7 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
 public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsentTests.ConsentFactory>
 {
     private const string PsIssuer = "https://ps.test";
-    private const string ResourceUrl = "https://whoami.test";
+    private const string ResourceUrl = "https://calendar.test";
     private readonly ConsentFactory _factory;
 
     public MockPersonServerConsentTests(ConsentFactory factory)
@@ -383,7 +383,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
         {
             ["agent"] = agentId,
             ["resource"] = ResourceUrl,
-            ["scope"] = "whoami",
+            ["scope"] = "calendar.read",
         });
         Assert.True(admin.IsSuccessStatusCode);
 
@@ -406,7 +406,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
         {
             ["agent"] = agentId,
             ["resource"] = ResourceUrl,
-            ["scope"] = "whoami",
+            ["scope"] = "calendar.read",
         });
         Assert.True(admin.IsSuccessStatusCode);
 
@@ -547,20 +547,20 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
             AgentJkt = agentKey.ComputeJwkThumbprint(),
             Key = ResourceStub.Key,
             KeyId = ResourceStub.Kid,
-            Scope = "whoami",
+            Scope = "calendar.read",
         }.Build();
 }
 
 /// <summary>
-/// Shared in-process stub for the resource (WhoAmI) whose well-known
+/// Shared in-process stub for the resource (Calendar) whose well-known
 /// metadata + JWKS the MockPersonServer now fetches to verify the
 /// resource token before minting an auth token (Phase 10, §G9).
 /// </summary>
 internal static class ResourceStub
 {
-    public const string Url = "https://whoami.test";
-    public const string Host = "whoami.test";
-    public const string Kid = "whoami-1";
+    public const string Url = "https://calendar.test";
+    public const string Host = "calendar.test";
+    public const string Kid = "calendar-1";
     public static readonly AAuthKey Key = AAuthKey.Generate();
 
     /// <summary>

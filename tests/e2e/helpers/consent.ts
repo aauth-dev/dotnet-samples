@@ -16,7 +16,7 @@ import { Urls } from './agents';
 /**
  * Grant standing consent for (agent, resource[, scope]) so /token issues
  * immediately. The PS keys consent by (agent, resource, scope); pass `scope`
- * when the resource requires something other than the default `whoami` (e.g.
+ * when the resource requires something other than the default `calendar.read` (e.g.
  * the Orchestrator's `orchestrate` scope on the first call-chain hop).
  */
 export async function grantConsent(
@@ -71,7 +71,7 @@ export async function denyInPopup(popup: Page): Promise<void> {
  * In federated mode the surfaced interaction URL is the Access Server's
  * login-start endpoint, which 302-redirects to the Keycloak OIDC login form.
  * The realm ships two demo users (samples/MockAccessServer/keycloak):
- *   demo / demo   → has the `whoami-admin` role (full access)
+ *   demo / demo   → has the `wallet.payer` role (full access)
  *   guest / guest → no admin role (limited access)
  * After login Keycloak may render a consent/grant screen; approve it if shown.
  */

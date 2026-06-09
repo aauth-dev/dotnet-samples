@@ -9,7 +9,7 @@
 <header class="topbar">
     <h1>AAuth Guided Tour</h1>
     <div class="config">
-        <span class="hl-resource"><strong>Resource:</strong> @Options.Value.WhoAmIUrl</span>
+        <span class="hl-resource"><strong>@Session.ResourceDisplayName:</strong> @Session.ResourceBaseUrl</span>
         @if (Session.IsCallChainMode)
         {
             <span class="hl-resource"><strong>Orchestrator:</strong> @Options.Value.OrchestratorUrl</span>
@@ -89,7 +89,7 @@
                     The resource verifies the agent's signature and applies its own access
                     control — granting or denying based on who (or what key) signed the request.
                     The signed request hits the mode's dedicated endpoint
-                    (<code>/hwk</code>, <code>/jkt-jwt</code>, or <code>/jwks-uri</code>) and returns
+                    (<code>/pseudonymous</code>, <code>/anchored</code>, or <code>/identified</code>) and returns
                     <code>200</code> on the first call — no Person Server involved.
                     @switch (Session.SigningMode)
                     {
@@ -131,19 +131,19 @@
                 <text>
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — multi-agent delegation.
                     The agent calls an <strong>Orchestrator</strong> (an intermediate service) which itself calls
-                    a downstream resource (WhoAmI). The Orchestrator passes the agent's auth_token as
+                    a downstream resource (Calendar). The Orchestrator passes the agent's auth_token as
                     <code>upstream_token</code> during its own PS exchange, producing a <strong>nested <code>act</code>
                     claim</strong> that records the full delegation chain. The final resource sees exactly who
                     acted on whose behalf. <strong>Human approval required — two consents:</strong> first
                     for <em>Agent → Orchestrator</em>, then for the Orchestrator's chained
-                    <em>Orchestrator → WhoAmI</em> hop. Each surfaces its own interaction URL and pending poll.
+                    <em>Orchestrator → Calendar</em> hop. Each surfaces its own interaction URL and pending poll.
                 </text>
                 break;
             case TourMode.Federated:
                 <text>
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — four-party
                     federation.
-                    The resource's <code>/federated</code> branch challenges with a resource_token
+                    The resource's <code>/wallet</code> branch challenges with a resource_token
                     whose <code>aud</code> is an <strong>Access Server</strong> (not the Person Server).
                     The agent forwards it to its PS unchanged; the PS notices <code>aud ≠ self</code>,
                     federates to the AS, and the <strong>Access Server</strong> evaluates policy and
@@ -159,8 +159,8 @@
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — the Person Server
                     acts as the <strong>policy-enforcement point</strong>. The agent first proposes a durable
                     <strong>mission</strong> (description + pre-approved tools) which the user approves once;
-                    every later request is then checked against it. An <em>in-scope</em> token (<code>whoami</code>)
-                    is minted <strong>silently</strong>; an <em>out-of-mission</em> scope (<code>whoami:elevated_scope</code>)
+                    every later request is then checked against it. An <em>in-scope</em> token (<code>trips.read</code>)
+                    is minted <strong>silently</strong>; an <em>out-of-mission</em> scope (<code>trips.book</code>)
                     <strong>prompts</strong>; a <em>pre-approved</em> tool (<code>send_email</code>) is
                     resolved <strong>locally</strong> with no PS call; and an <em>out-of-scope</em> action
                     (<code>delete_inbox</code>) <strong>prompts</strong> again. <strong>Three human approvals:</strong>
@@ -171,11 +171,11 @@
                 <text>
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — one durable
                     <strong>mission</strong> governs two very different kinds of access. An
-                    <em>out-of-mission</em> elevated scope (<code>whoami:elevated_scope</code>) first triggers a
+                    <em>out-of-mission</em> elevated scope (<code>trips.book</code>) first triggers a
                     <strong>clarification chat</strong> — the PS asks <em>why</em>, the agent answers — and only
                     then prompts the user to approve. After that, a <strong>mission-forwarded call chain</strong>
-                    (Agent → Orchestrator → WhoAmI) flows <strong>silently</strong>: because both hops
-                    (<code>orchestrate</code>, <code>whoami</code>) are in the mission's scope, the Orchestrator
+                    (Agent → Orchestrator → Trips) flows <strong>silently</strong>: because both hops
+                    (<code>orchestrate</code>, <code>trips.read</code>) are in the mission's scope, the Orchestrator
                     forwards the <code>AAuth-Mission</code> header downstream and no prompt is needed.
                     <strong>Two human approvals</strong> (mission creation, the clarified elevated scope) frame an
                     otherwise-silent multi-agent chain, and the PS's <strong>mission log</strong> records it all.
@@ -248,21 +248,29 @@
     private static readonly SequenceDiagram.LaneDefinition[] IdentityLanes =
     {
         new("Agent", "agent", Actor.Agent),
-        new("Resource", "resource", Actor.Resource),
+        new("Profile", "resource", Actor.Resource),
+    };
+
+    // Autonomous + Deferred three-party flows target the Calendar.
+    private static readonly SequenceDiagram.LaneDefinition[] ThreePartyLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Calendar", "resource", Actor.Resource),
+        new("Person Server", "ps", Actor.PersonServer),
     };
 
     private static readonly SequenceDiagram.LaneDefinition[] CallChainLanes =
     {
         new("Agent", "agent", Actor.Agent),
         new("Orchestrator", "resource", Actor.Orchestrator),
-        new("Resource", "resource2", Actor.Resource),
+        new("Calendar", "resource2", Actor.Resource),
         new("Person Server", "ps", Actor.PersonServer),
     };
 
     private static readonly SequenceDiagram.LaneDefinition[] FederatedLanes =
     {
         new("Agent", "agent", Actor.Agent),
-        new("Resource", "resource", Actor.Resource),
+        new("Wallet", "resource", Actor.Resource),
         new("Person Server", "ps", Actor.PersonServer),
         new("Access Server", "as", Actor.AccessServer),
     };
@@ -270,14 +278,14 @@
     private static readonly SequenceDiagram.LaneDefinition[] MissionLanes =
     {
         new("Agent", "agent", Actor.Agent),
-        new("Resource", "resource", Actor.Resource),
+        new("Trips", "resource", Actor.Resource),
         new("Person Server", "ps", Actor.PersonServer),
     };
 
     private static readonly SequenceDiagram.LaneDefinition[] MissionCallChainLanes =
     {
         new("Agent", "agent", Actor.Agent),
-        new("Resource", "resource", Actor.Resource),
+        new("Trips", "resource", Actor.Resource),
         new("Orchestrator", "resource2", Actor.Orchestrator),
         new("Person Server", "ps", Actor.PersonServer),
     };
@@ -288,7 +296,7 @@
         Session.IsMissionCallChainMode ? MissionCallChainLanes :
         Session.IsCallChainMode ? CallChainLanes :
         Session.IsFederatedMode ? FederatedLanes :
-        Session.IsMissionMode ? MissionLanes : null;
+        Session.IsMissionMode ? MissionLanes : ThreePartyLanes;
 
     protected override async Task OnInitializedAsync()
     {

@@ -24,7 +24,12 @@ var orchestratorKey = AAuthKey.Generate();
 const string OrchestratorKid = "orch-1";
 const string OrchestratorScope = "orchestrate";
 var orchestratorUrl = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5200";
-var downstreamUrl = builder.Configuration["AAuth:Downstream"] ?? "http://localhost:5000";
+// The plain call chain hops to the Calendar (three-party). The mission-governed
+// chain hops to the mission-aware Trips so a mission in the upstream auth token
+// is forwarded and re-bound at each hop. Two downstreams because the Aria suite
+// splits these concerns across separate resource servers.
+var downstreamUrl = builder.Configuration["AAuth:Downstream"] ?? "http://localhost:5001";
+var missionDownstreamUrl = builder.Configuration["AAuth:MissionDownstream"] ?? "http://localhost:5002";
 var psUrl = builder.Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
 var agentId = builder.Configuration["AAuth:AgentId"] ?? "aauth:orchestrator@localhost:5200";
 
@@ -96,7 +101,7 @@ app.UseWhen(
             // {approver, s256} into the resource token so the PS governs the
             // agent→orchestrator exchange under the mission (§Mission Context at
             // Resources). A no-op when no mission header is present, so the plain
-            // call chain ("/" → "/jwt") is unaffected.
+            // call chain ("/" → Calendar "/events") is unaffected.
             MissionAware = true,
         }));
 
@@ -123,13 +128,14 @@ app.UseWhen(
 // Run the downstream chained call with the given upstream auth token. Returns
 // the combined chain result on success; throws AAuthInteractionChainedException
 // when the downstream PS defers for user consent, or
-// AAuthInteractionDeniedException when the user denied. <paramref name="downstreamPath"/>
-// selects the downstream resource path — "/jwt" for the plain chain or the
-// mission-aware "/jwt/mission" for a mission-governed chain (§Mission Context at
-// Resources). When the upstream auth token carries a mission, WithCallChaining
-// auto-forwards the AAuth-Mission header (via MissionForwardingHandler) and routes
-// the exchange to mission.approver, so the mission governs every hop (§Call Chaining).
-async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken, string downstreamPath)
+// AAuthInteractionDeniedException when the user denied. <paramref name="downstreamBase"/>
+// + <paramref name="downstreamPath"/> select the downstream resource — Calendar
+// "/events" for the plain chain or the mission-aware Trips "/trips" for a
+// mission-governed chain (§Mission Context at Resources). When the upstream auth
+// token carries a mission, WithCallChaining auto-forwards the AAuth-Mission header
+// (via MissionForwardingHandler) and routes the exchange to mission.approver, so
+// the mission governs every hop (§Call Chaining).
+async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken, string downstreamBase, string downstreamPath)
 {
     // Self-issued agent token (iss = orchestratorUrl) satisfies §Upstream Token
     // Verification step 3 — the PS can match upstream_token.aud against iss.
@@ -158,15 +164,16 @@ async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken, string 
         })
         .Build();
 
-    var response = await downstream.GetAsync($"{downstreamUrl.TrimEnd('/')}{downstreamPath}");
+    var response = await downstream.GetAsync($"{downstreamBase.TrimEnd('/')}{downstreamPath}");
     var body = await response.Content.ReadAsStringAsync();
     JsonNode? downstreamJson = null;
     try { downstreamJson = JsonNode.Parse(body); } catch { }
 
     var upstreamResult = ctx.GetAAuthVerification();
+    var downstreamName = downstreamPath.StartsWith("/trips", StringComparison.Ordinal) ? "Trips" : "Calendar";
     return Results.Ok(new
     {
-        chain = "Agent → Orchestrator → WhoAmI",
+        chain = $"Agent → Orchestrator → {downstreamName}",
         upstream = new
         {
             scheme = upstreamResult?.Scheme,
@@ -208,7 +215,7 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =>
 
     try
     {
-        return await RunChainAsync(ctx, upstreamToken, "/jwt");
+        return await RunChainAsync(ctx, upstreamToken, downstreamUrl, "/events");
     }
     catch (AAuthInteractionChainedException ex)
     {
@@ -219,9 +226,9 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =>
 });
 
 // GET /mission — the mission-governed twin of "/". Identical chaining, but the
-// downstream hop targets WhoAmI's mission-aware "/jwt/mission" so a mission
-// present in the upstream auth token is forwarded and re-bound at each hop
-// (§Mission Context at Resources, §Call Chaining).
+// downstream hop targets the mission-aware Trips "/trips" so a mission present
+// in the upstream auth token is forwarded and re-bound at each hop (§Mission
+// Context at Resources, §Call Chaining).
 app.MapGet("/mission", async (HttpContext ctx, PendingStore pending) =>
 {
     var upstreamToken = ctx.Features.Get<UpstreamAuthTokenFeature>()?.Token;
@@ -234,13 +241,13 @@ app.MapGet("/mission", async (HttpContext ctx, PendingStore pending) =>
 
     try
     {
-        return await RunChainAsync(ctx, upstreamToken, "/jwt/mission");
+        return await RunChainAsync(ctx, upstreamToken, missionDownstreamUrl, "/trips");
     }
     catch (AAuthInteractionChainedException ex)
     {
         var entry = pending.Add(
             upstreamToken, ex.Interaction.Url, ex.Interaction.Code,
-            downstreamPath: "/jwt/mission", pendingPrefix: "/mission-pending");
+            downstreamBase: missionDownstreamUrl, downstreamPath: "/trips", pendingPrefix: "/mission-pending");
         return ReEmitChainedInteraction(ctx, entry);
     }
 });
@@ -266,7 +273,7 @@ app.MapGet("/pending/{id}", async (HttpContext ctx, string id, PendingStore pend
 
     try
     {
-        var result = await RunChainAsync(ctx, entry.UpstreamToken, entry.DownstreamPath);
+        var result = await RunChainAsync(ctx, entry.UpstreamToken, entry.DownstreamBase, entry.DownstreamPath);
         pending.Remove(id); // resolved — drop the parked entry
         return result;
     }
@@ -288,7 +295,7 @@ app.MapGet("/pending/{id}", async (HttpContext ctx, string id, PendingStore pend
 
 // GET /mission-pending/{id} — the mission chain's poll route. Identical to
 // "/pending/{id}" but for entries whose downstream hop is the mission-aware
-// "/jwt/mission" (each poll re-drives RunChainAsync with the stored path).
+// Trips "/trips" (each poll re-drives RunChainAsync with the stored path).
 app.MapGet("/mission-pending/{id}", async (HttpContext ctx, string id, PendingStore pending) =>
 {
     var entry = pending.Get(id);
@@ -299,7 +306,7 @@ app.MapGet("/mission-pending/{id}", async (HttpContext ctx, string id, PendingSt
 
     try
     {
-        var result = await RunChainAsync(ctx, entry.UpstreamToken, entry.DownstreamPath);
+        var result = await RunChainAsync(ctx, entry.UpstreamToken, entry.DownstreamBase, entry.DownstreamPath);
         pending.Remove(id);
         return result;
     }

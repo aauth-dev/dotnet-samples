@@ -119,40 +119,40 @@ app.MapGet("/data", (HttpContext ctx) =>
 `DefaultScopes` controls which scope the minted resource token requests. To protect
 different endpoints with different scopes, give each one its own challenge branch so
 the 401 asks for exactly the scope that endpoint enforces. This is the pattern the
-WhoAmI sample uses: `/jwt` challenges for `whoami`, while the step-up `/jwt/admin`
-endpoint challenges for `whoami:admin`.
+Calendar sample uses: `/events` challenges for `calendar.read`, while the step-up
+`/events/write` endpoint challenges for `calendar.write`.
 
 ```csharp
 ChallengeOptions ChallengeForScope(string scope) => new()
 {
     AccessMode = AAuthAccessMode.RequireAuthToken,
     ResourceSigningKey = resourceKey,
-    ResourceKeyId = "whoami-1",
+    ResourceKeyId = "calendar-1",
     ResourceIdentifier = resourceUrl,
     DefaultScopes = scope,
 };
 
-// /jwt/admin — declared first so the more specific segment wins. Challenges for
+// /events/write — declared first so the more specific segment wins. Challenges for
 // the elevated scope.
 app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/jwt/admin"),
+    ctx => ctx.Request.Path.StartsWithSegments("/events/write"),
     branch =>
     {
         branch.UseAAuthVerification(fullVerification);
-        branch.UseAAuthChallenge(ChallengeForScope("whoami:admin"));
+        branch.UseAAuthChallenge(ChallengeForScope("calendar.write"));
     });
 
-// /jwt — three-party baseline. Challenges for the base scope.
+// /events — three-party baseline. Challenges for the base scope.
 app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/jwt")
-        && !ctx.Request.Path.StartsWithSegments("/jwt/admin"),
+    ctx => ctx.Request.Path.StartsWithSegments("/events")
+        && !ctx.Request.Path.StartsWithSegments("/events/write"),
     branch =>
     {
         branch.UseAAuthVerification(fullVerification);
-        branch.UseAAuthChallenge(ChallengeForScope("whoami"));
+        branch.UseAAuthChallenge(ChallengeForScope("calendar.read"));
     });
 ```
 
 Because each branch is an isolated pipeline, an agent that lacks the required scope
 receives a challenge for that endpoint's scope and re-exchanges at its PS for an
-auth token carrying it. See `samples/WhoAmI` for the full set of branches.
+auth token carrying it. See `samples/MockResourceServers/Calendar` for the full set of branches.

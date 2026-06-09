@@ -252,16 +252,24 @@ if (upstreamToken is not null)
 using var client = builder.Build();
 
 // If the target URL has no path (or just "/"), append the signing-mode-specific
-// path so the WhoAmI sample routes to the correct verification middleware.
+// path. The identity-based modes target the Aria Profile server, whose paths
+// describe the *outcome* the resource concludes (not the scheme name); the
+// default jwt mode targets the Calendar's three-party `/events` endpoint.
+//
+//   SIGNING MODE   PROFILE PATH      MEANING
+//   hwk        →   /pseudonymous     key thumbprint only (pseudonym)
+//   jwks_uri   →   /identified       named, verifiable identity
+//   jkt-jwt    →   /anchored         ephemeral key anchored to a durable key
+//   jwt        →   /events           three-party Calendar read (calendar.read)
 var targetUrl = url;
 if (url.AbsolutePath is "/" or "")
 {
     targetUrl = signingMode switch
     {
-        "hwk" => new Uri(url, "/hwk"),
-        "jkt-jwt" => new Uri(url, "/jkt-jwt"),
-        "jwks_uri" => new Uri(url, "/jwks-uri"),
-        _ => new Uri(url, "/jwt"), // jwt → three-party baseline endpoint
+        "hwk" => new Uri(url, "/pseudonymous"),
+        "jkt-jwt" => new Uri(url, "/anchored"),
+        "jwks_uri" => new Uri(url, "/identified"),
+        _ => new Uri(url, "/events"), // jwt → three-party baseline endpoint
     };
 }
 

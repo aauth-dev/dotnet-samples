@@ -269,7 +269,7 @@ dotnet test tests/AAuth.Conformance   # spec conformance suite only
 |------|-------------|
 | [src/AAuth/](src/AAuth/) | AAuth SDK library (the NuGet package) |
 | [docs/](docs/) | SDK documentation — signing modes, workflows, server guides |
-| [samples/](samples/) | Sample applications — WhoAmI, Orchestrator, AgentConsole, MockPersonServer, MockAgentProvider, GuidedTour, SampleApp |
+| [samples/](samples/) | Sample applications — Profile, Calendar, Trips, Wallet resource servers, Orchestrator, AgentConsole, MockPersonServer, MockAgentProvider, GuidedTour, SampleApp |
 | [tests/](tests/) | Unit, integration, and spec-conformance tests |
 | [aauth-spec/](aauth-spec/) | Protocol specifications (draft-01) from [dickhardt/AAuth](https://github.com/dickhardt/AAuth) |
 

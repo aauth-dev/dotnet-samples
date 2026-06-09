@@ -15,7 +15,7 @@ import {
  * Identity-based access (no Person Server, 2 steps): the resource trusts the
  * agent's signature directly and returns 200 on the first signed call. Run for
  * each of the three signing modes; assert the actual 200 result plus the exact
- * mode/scheme the WhoAmI resource reports back, plus the identifying claim it
+ * mode/scheme the Profile resource reports back, plus the identifying claim it
  * surfaces (key thumbprint or key id).
  *
  *   Hwk      → pseudonymous, scheme "hwk"      → jkt thumbprint
@@ -48,7 +48,7 @@ for (const { mode, resultMode, scheme, idClaim } of cases) {
     await expectResponse(page, 200, [scheme]);
 
     const json = (await readResponseJson(page)) as Record<string, unknown>;
-    expect(json.mode).toBe(resultMode);
+    expect(json.signingMode).toBe(resultMode);
     expect(json.scheme).toBe(scheme);
     expect(typeof json[idClaim]).toBe('string');
     expect(String(json[idClaim])).not.toHaveLength(0);

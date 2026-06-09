@@ -105,15 +105,15 @@ PS-asserted identity claim the handler emits (`NameIdentifier`, `Role`,
 user record on the full key rather than on `sub` alone.
 
 Use `UseWhen` to give each access mode its own **isolated verification pipeline**.
-This is the pattern used in the WhoAmI sample: every signing mode has a dedicated
-path-segment branch with its own verification (and, for three-party endpoints, its
-own challenge) options. Each branch is self-contained, so there is no single shared
-verification step with negative path matching:
+This is the pattern the Profile and Calendar samples use: every signing mode has a
+dedicated path-segment branch with its own verification (and, for three-party
+endpoints, its own challenge) options. Each branch is self-contained, so there is no
+single shared verification step with negative path matching:
 
 ```csharp
 // Pseudonymous (hwk) — signature only, no JWT verification
 app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/hwk"),
+    ctx => ctx.Request.Path.StartsWithSegments("/pseudonymous"),
     branch => branch.UseAAuthVerification(new AAuthVerificationOptions
     {
         RequireIssuerVerification = false,
@@ -121,7 +121,7 @@ app.UseWhen(
 
 // Agent identity (jwks_uri) — verifies key against published JWKS
 app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/jwks-uri"),
+    ctx => ctx.Request.Path.StartsWithSegments("/identified"),
     branch => branch.UseAAuthVerification(new AAuthVerificationOptions
     {
         RequireIssuerVerification = false,
@@ -130,7 +130,7 @@ app.UseWhen(
 // Three-party (jwt) — full issuer + audience verification, plus a per-endpoint
 // challenge requesting the scope this branch protects.
 app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/jwt"),
+    ctx => ctx.Request.Path.StartsWithSegments("/events"),
     branch =>
     {
         branch.UseAAuthVerification(new AAuthVerificationOptions
@@ -144,17 +144,17 @@ app.UseWhen(
             ResourceSigningKey = resourceKey,
             ResourceKeyId = "key-1",
             ResourceIdentifier = "https://resource.example",
-            DefaultScopes = "whoami",
+            DefaultScopes = "calendar.read",
         });
     });
 ```
 
-Declare more specific segments (for example `/jwt/admin`) before the general
-`/jwt` branch so segment matching stays unambiguous. After the branches,
+Declare more specific segments (for example `/events/write`) before the general
+`/events` branch so segment matching stays unambiguous. After the branches,
 `UseAuthentication`/`UseAuthorization` run globally and per-endpoint policies
 decide what each route requires.
 
-See `samples/WhoAmI` for the complete working example.
+See `samples/MockResourceServers/` for the complete working examples.
 
 ## Verification Result
 

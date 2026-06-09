@@ -103,7 +103,7 @@ handler semantics and the role/group discussion.
 
 ## Wiring style 1 — Minimal APIs
 
-This is what the [WhoAmI sample](../../samples/WhoAmI/) uses. Per-mode
+This is what the [Calendar sample](../../samples/MockResourceServers/Calendar/) uses. Per-mode
 verification branches with `UseWhen`, then per-endpoint policies with
 `RequireAuthorization`.
 
@@ -114,9 +114,9 @@ builder.Services.AddSingleton(new AAuthVerifier());
 builder.Services.AddSingleton<IJtiStore, InMemoryJtiStore>();
 builder.Services.AddAAuthAuthentication();
 builder.Services.AddAAuthAuthorization();
-builder.Services.AddAAuthScopePolicy("AAuth.Scope.whoami", "whoami");
-builder.Services.AddAAuthScopePolicy("AAuth.Scope.whoami:admin", "whoami:admin");
-builder.Services.AddAAuthRolePolicy("AAuth.Role.whoami-admin", "whoami-admin");
+builder.Services.AddAAuthScopePolicy("AAuth.Scope.calendar.read", "calendar.read");
+builder.Services.AddAAuthScopePolicy("AAuth.Scope.calendar.write", "calendar.write");
+builder.Services.AddAAuthRolePolicy("AAuth.Role.calendar.owner", "calendar.owner");
 
 var app = builder.Build();
 
@@ -125,7 +125,7 @@ app.MapAAuthResourceWellKnown(metadataOptions);
 
 // Three-party branch: verify the auth token, challenge for the scope.
 app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/jwt"),
+    ctx => ctx.Request.Path.StartsWithSegments("/events"),
     branch =>
     {
         branch.UseAAuthVerification(new AAuthVerificationOptions
@@ -140,11 +140,11 @@ app.UseWhen(
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGet("/jwt", (HttpContext ctx) => Results.Ok(/* ... */))
-    .RequireAuthorization("AAuth.Scope.whoami");
+app.MapGet("/events", (HttpContext ctx) => Results.Ok(/* ... */))
+    .RequireAuthorization("AAuth.Scope.calendar.read");
 
-app.MapGet("/jwt/roles", (HttpContext ctx) => Results.Ok(/* ... */))
-    .RequireAuthorization("AAuth.Role.whoami-admin");
+app.MapGet("/events/admin", (HttpContext ctx) => Results.Ok(/* ... */))
+    .RequireAuthorization("AAuth.Role.calendar.owner");
 
 app.Run();
 ```
@@ -152,7 +152,7 @@ app.Run();
 `MapGroup` works the same way when several endpoints share a policy:
 
 ```csharp
-var admin = app.MapGroup("/admin").RequireAuthorization("AAuth.Scope.whoami:admin");
+var admin = app.MapGroup("/admin").RequireAuthorization("AAuth.Scope.calendar.write");
 admin.MapGet("/profile", () => Results.Ok(/* ... */));
 admin.MapPost("/profile", () => Results.Ok(/* ... */));
 ```

@@ -13,13 +13,13 @@
 <p>
     Demonstrates multi-hop call chaining with genuine <strong>interaction chaining</strong>:
     <strong>Agent&nbsp;A</strong> (this app) calls the <strong>Orchestrator</strong> (an
-    intermediate service), which then calls the <strong>WhoAmI</strong> resource. Each hop
+    intermediate service), which then calls the <strong>Calendar</strong> resource. Each hop
     requires the user's consent at the Person Server:
 </p>
 <ul>
     <li><strong>Hop&nbsp;1</strong> (Agent&nbsp;A → Orchestrator, scope <code>orchestrate</code>):
         plain <em>Interaction Required</em> — Agent&nbsp;A relays you to the PS consent page.</li>
-    <li><strong>Hop&nbsp;2</strong> (Orchestrator → WhoAmI, scope <code>whoami</code>):
+    <li><strong>Hop&nbsp;2</strong> (Orchestrator → Calendar, scope <code>calendar.read</code>):
         the Orchestrator has no user, so it re-emits its <em>own</em> <code>202</code>
         (AAuth §Interaction Chaining). Agent&nbsp;A relays you to that consent page too,
         then receives the final chained result.</li>
@@ -61,7 +61,7 @@ using var client = AAuthClientBuilder.SelfIssuing(key)
     })
     .Build();
 
-// Calls the Orchestrator (not WhoAmI directly).
+// Calls the Orchestrator (not Calendar directly).
 var response = await client.GetAsync(orchestratorUrl);</code></pre>
 </div>
 <div class="col-md-6">
@@ -88,7 +88,7 @@ async Task&lt;IResult&gt; RunChainAsync(HttpContext ctx, string upstream)
         })
         .Build();
 
-    var r = await downstream.GetAsync($"{whoAmIUrl}/jwt");
+    var r = await downstream.GetAsync($"{calendarUrl}/events");
     return Results.Ok(/* combined chain result */);
 }
 
@@ -119,7 +119,7 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
 @if (!_waitingForApproval && _response is null)
 {
     <button class="btn btn-primary" @onclick="SendChainedRequest" disabled="@_loading">
-        @(_loading ? "Sending..." : "Send Chained Request (Agent → Orchestrator → WhoAmI)")
+        @(_loading ? "Sending..." : "Send Chained Request (Agent → Orchestrator → Calendar)")
     </button>
     <p class="text-muted mt-1">
         <small>
@@ -238,7 +238,7 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
                 _currentHopNumber = hopIndex;
                 _currentHop = hopIndex == 1
                     ? "Hop 1: Agent → Orchestrator (orchestrate)"
-                    : "Hop 2: Orchestrator → WhoAmI (whoami, chained)";
+                    : "Hop 2: Orchestrator → Calendar (calendar.read, chained)";
                 _interactionUrl = userUrl;
                 _waitingForApproval = true;
                 await InvokeAsync(StateHasChanged);

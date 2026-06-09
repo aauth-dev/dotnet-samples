@@ -1,4 +1,4 @@
-@page "/hwk"
+@page "/pseudonymous"
 @using AAuth.Crypto
 @using AAuth.HttpSig
 @inject IJSRuntime JS
@@ -35,12 +35,12 @@ app.UseAAuthVerification(new AAuthVerificationOptions
     RequireIssuerVerification = false,
 });
 
-app.MapGet("/hwk", (HttpContext ctx) =>
+app.MapGet("/pseudonymous", (HttpContext ctx) =>
 {
     var parsed = ctx.GetAAuthParsedKey()!;
     return Results.Ok(new
     {
-        mode = "pseudonymous",
+        signingMode = "pseudonymous",
         scheme = "hwk",
         jkt = parsed.Jkt,
     });
@@ -98,8 +98,8 @@ app.MapGet("/hwk", (HttpContext ctx) =>
                 .UseHwk()
                 .Build();
 
-            var resourceUrl = Config["AAuth:Resource"]!;
-            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/hwk");
+            var resourceUrl = Config["AAuth:Profile"]!;
+            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/pseudonymous");
 
             _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
             _success = response.IsSuccessStatusCode;

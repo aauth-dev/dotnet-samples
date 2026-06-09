@@ -46,7 +46,7 @@ async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken)
         })
         .Build();
 
-    var response = await downstream.GetAsync($"{downstreamUrl}/jwt");
+    var response = await downstream.GetAsync($"{downstreamUrl}/events");
     var body = await response.Content.ReadFromJsonAsync<JsonNode>();
     return Results.Ok(new { chain = "ok", downstream = body });
 }

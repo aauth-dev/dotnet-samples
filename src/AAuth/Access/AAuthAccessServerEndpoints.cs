@@ -38,10 +38,12 @@ public sealed class AAuthAccessServerOptions
     public string PendingPathPrefix { get; init; } = "/pending";
 
     /// <summary>
-    /// The fallback scope when the resource token carries none. Default
-    /// <c>whoami</c>.
+    /// The fallback scope when the resource token carries none. Default empty:
+    /// the spec makes <c>scope</c> OPTIONAL, so a scopeless resource token mints
+    /// a scopeless auth token (still valid via its <c>sub</c>) rather than
+    /// injecting an arbitrary scope.
     /// </summary>
-    public string DefaultScope { get; init; } = "whoami";
+    public string DefaultScope { get; init; } = "";
 
     /// <summary>
     /// The fallback directed <c>sub</c> when neither the policy nor a claims

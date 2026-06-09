@@ -58,7 +58,7 @@ const PLAN_STEPS: Record<TourMode, number> = {
   Mission: 20,
   // Mission + Call Chain: one mission governs a clarified elevated-scope
   // grant (creation 4/5, elevated 10/11 with a clarification chat at 7/8) and
-  // a silent mission-forwarded call chain (Agent → Orchestrator → WhoAmI).
+  // a silent mission-forwarded call chain (Agent → Orchestrator → Trips).
   MissionCallChain: 14,
 };
 

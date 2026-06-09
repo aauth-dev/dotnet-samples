@@ -28,7 +28,7 @@ builder.Services.AddScoped<TourSession>();
 
 var app = builder.Build();
 
-// Publish agent metadata + JWKS so verifiers (WhoAmI, Orchestrator) can
+// Publish agent metadata + JWKS so verifiers (the Aria resource servers, Orchestrator) can
 // discover the tour's signing key when it self-issues agent tokens.
 app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 {

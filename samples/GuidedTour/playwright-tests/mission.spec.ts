@@ -16,18 +16,18 @@ import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
  * Mission (PS-Governed) — the Person Server acts as the policy-enforcement
  * point for a durable, human-approved mission, 20 steps across three consent
  * cycles. On flow selection the tour seeds the PS for an interactive run with
- * the `whoami` scope in-scope (so the first token gate is silent), while every
+ * the `trips.read` scope in-scope (so the first token gate is silent), while every
  * out-of-mission request surfaces its own PS consent page:
  *
  *   1. Mission creation (steps 4/5): the user approves the durable mission +
  *      its tools; the agent polls for the signed approval blob.
  *   2. Out-of-mission elevated scope (steps 12/13): requesting
- *      `whoami:elevated_scope` falls outside the mission's intent, so the PS
+ *      `trips.book` falls outside the mission's intent, so the PS
  *      prompts before issuing the elevated auth_token (gate 3).
  *   3. Out-of-scope delete_inbox (steps 18/19): a tool that is NOT pre-approved
  *      prompts the user; the PS returns a decision, not a token.
  *
- * In between, the in-scope `whoami` token (gate 2) and the pre-approved
+ * In between, the in-scope `trips.read` token (gate 2) and the pre-approved
  * send_email tool (gate 4) resolve silently. Generous timeout covers three
  * poll loops.
  */
@@ -87,21 +87,21 @@ test.describe('Mission (Guided Tour)', () => {
     await runAll(page);
     await expect(doneSteps(page)).toHaveCount(20, { timeout: 30_000 });
 
-    // Step 8 ("Replay GET /jwt/mission → 200") is the in-scope resource result.
+    // Step 8 ("Replay GET /trips → 200") is the in-scope resource result.
     await selectStep(page, 7);
     await expectResponse(page, 200, ['mission']);
     const inScope = (await readResponseJson(page)) as Record<string, unknown>;
     expect(inScope.access).toBe('mission');
-    expect(inScope.scope).toEqual(['whoami']);
+    expect(inScope.scope).toEqual(['trips.read']);
     expect(inScope.iss).toBe(Urls.personServer);
     expect(inScope.agent).toBe(Agents.tour);
 
-    // Step 14 ("Replay GET /jwt/mission/elevated → 200") is the elevated result.
+    // Step 14 ("Replay GET /trips/book → 200") is the elevated result.
     await selectStep(page, 13);
     await expectResponse(page, 200, ['mission-elevated']);
     const elevated = (await readResponseJson(page)) as Record<string, unknown>;
     expect(elevated.access).toBe('mission-elevated');
-    expect(elevated.scope).toEqual(['whoami:elevated_scope']);
+    expect(elevated.scope).toEqual(['trips.book']);
   });
 
   test('deny at the elevated-scope gate yields denied', async ({ page, context }) => {

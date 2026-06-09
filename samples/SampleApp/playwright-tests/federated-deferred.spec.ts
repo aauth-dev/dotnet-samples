@@ -24,7 +24,7 @@ test.describe('Federated (interactive Keycloak)', () => {
   test.skip(!keycloakEnabled, 'Set KEYCLOAK_E2E=1 to run the Keycloak interactive path.');
 
   test('approve path (demo user) resolves to a four-party identity', async ({ page, context }) => {
-    await page.goto('/federated');
+    await page.goto('/wallet');
     await expect(page.locator('h2')).toContainText('Federated');
     await waitForInteractive(page, 'button.btn-primary');
 
@@ -42,7 +42,7 @@ test.describe('Federated (interactive Keycloak)', () => {
 
     await expectStatus(page, 200, 60_000);
     const json = (await readResponseJson(page)) as Record<string, unknown>;
-    expect(json.mode).toBe('four-party');
+    expect(json.accessMode).toBe('four-party');
     expect(json.scheme).toBe('jwt');
     expect(json.iss).toBe(Urls.accessServer);
     const act = json.act as Record<string, unknown>;

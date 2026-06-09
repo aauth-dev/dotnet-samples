@@ -5,7 +5,7 @@ Call chaining enables multi-hop delegation where a resource acts as an agent to 
 ## Scenario
 
 ```
-Agent A → Orchestrator (Resource B) → WhoAmI (Resource C)
+Agent A → Orchestrator (Resource B) → Calendar (Resource C)
 ```
 
 1. Agent A calls Resource B with an agent token → Resource B challenges with a resource token
@@ -19,11 +19,11 @@ Agent A → Orchestrator (Resource B) → WhoAmI (Resource C)
 ## Running the Sample
 
 ```bash
-make demo   # starts WhoAmI, PS, AP, Orchestrator, stub Access Server, both UIs
+make demo   # starts the resource servers (Profile, Calendar, Trips, Wallet), PS, AP, Orchestrator, stub Access Server, both UIs
 ```
 
 Then open <http://localhost:5240/call-chain> to see the flow in action.
-The Orchestrator runs on port 5200, acting as both resource (verifies callers) and agent (calls WhoAmI's three-party `/jwt` endpoint on port 5000).
+The Orchestrator runs on port 5200, acting as both resource (verifies callers) and agent (calls Calendar's three-party `/events` endpoint on port 5001).
 
 ## SDK Support
 
@@ -147,7 +147,7 @@ app.MapGet("/", async (HttpContext ctx) =>
     using var downstream = new AAuthClientBuilder(myKey)
         .UseJwt(chained)
         .Build();
-    var result = await downstream.GetAsync(whoamiUrl); // e.g. http://localhost:5000/jwt
+    var result = await downstream.GetAsync(calendarUrl); // e.g. http://localhost:5001/events
     // ...
 });
 ```
@@ -221,7 +221,7 @@ var token = new AuthTokenBuilder
 Pass `--upstream-token` to include an upstream auth token in the exchange:
 
 ```bash
-dotnet run --project samples/AgentConsole -- http://localhost:5000/jwt \
+dotnet run --project samples/AgentConsole -- http://localhost:5001/events \
   --ap http://localhost:5301 --ps http://localhost:5100 \
   --upstream-token "eyJ..."
 ```
@@ -235,7 +235,7 @@ dotnet run --project samples/AgentConsole -- http://localhost:5200 \
 
 ## Verification at the Final Resource
 
-The final resource (WhoAmI) validates the chained auth token using standard middleware with `RequireIssuerVerification = true`. The middleware verifies:
+The final resource (Calendar) validates the chained auth token using standard middleware with `RequireIssuerVerification = true`. The middleware verifies:
 
 - JWT signature against the PS's JWKS
 - `aud` matches the resource's identifier

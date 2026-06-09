@@ -13,11 +13,11 @@ test.describe('Home', () => {
     await expect(page.locator('h1')).toHaveText('AAuth SDK — Sample App');
 
     const expected: Array<[string, string]> = [
-      ['HWK', 'hwk'],
-      ['JWKS URI', 'jwks-uri'],
-      ['JWT', 'jwt'],
-      ['Deferred', 'deferred'],
-      ['JKT-JWT', 'jkt-jwt'],
+      ['HWK', 'pseudonymous'],
+      ['JWKS URI', 'identified'],
+      ['JWT', 'calendar'],
+      ['Deferred', 'calendar-deferred'],
+      ['JKT-JWT', 'anchored'],
       ['Call Chain', 'call-chain'],
     ];
 

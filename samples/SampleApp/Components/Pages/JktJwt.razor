@@ -1,4 +1,4 @@
-@page "/jkt-jwt"
+@page "/anchored"
 @using AAuth.Agent
 @using AAuth.Crypto
 @using AAuth.HttpSig
@@ -199,8 +199,8 @@ else
                 .UseJktJwt(() => namingJwt)
                 .Build();
 
-            var resourceUrl = Config["AAuth:Resource"]!;
-            var response = await client.GetAsync(resourceUrl.TrimEnd('/') + "/jkt-jwt");
+            var resourceUrl = Config["AAuth:Profile"]!;
+            var response = await client.GetAsync(resourceUrl.TrimEnd('/') + "/anchored");
 
             _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
             _success = response.IsSuccessStatusCode;

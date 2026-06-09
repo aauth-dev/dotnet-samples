@@ -4,10 +4,10 @@ import { readResponseJson, expectStatus } from '../../../tests/e2e/helpers/json'
 
 /**
  * JWKS URI — agent-identity 2-party flow. Step 1 enrols with the AP, step 2
- * sends a signed GET /jwks-uri → 200. Needs MockAgentProvider + WhoAmI.
+ * sends a signed GET /identified → 200. Needs MockAgentProvider + Profile.
  */
 test('jwks-uri enrols then sends a signed request', async ({ page }) => {
-  await page.goto('/jwks-uri');
+  await page.goto('/identified');
   await expect(page.locator('h2')).toHaveText('JWKS URI — Agent Identity');
   await waitForInteractive(page, 'button');
 
@@ -23,7 +23,7 @@ test('jwks-uri enrols then sends a signed request', async ({ page }) => {
 
   await expectStatus(page, 200);
   const json = (await readResponseJson(page)) as Record<string, unknown>;
-  expect(json.mode).toBe('agent-identity');
+  expect(json.signingMode).toBe('agent-identity');
   expect(json.scheme).toBe('jwks_uri');
   // Agent identity is established by a published JWKS — both the URI and the
   // key id the resource resolved must be present and well-formed.

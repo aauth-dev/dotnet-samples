@@ -33,7 +33,7 @@
     <li>
         <strong>Mission-forwarded call chain</strong> (§Mission Context at Resources, §Call Chaining) —
         the same mission is carried (<code>WithMission(...)</code>) to the Orchestrator, which forwards
-        the <code>AAuth-Mission</code> header to the downstream WhoAmI hop so the mission governs every hop.
+        the <code>AAuth-Mission</code> header to the downstream Trips hop so the mission governs every hop.
     </li>
     <li>
         <strong>Mission log</strong> (§Mission Log) — the PS-held, ordered trail of every governed
@@ -43,7 +43,7 @@
 
 <div class="alert alert-secondary">
     The elevated scope is <em>not</em> seeded in the mission's intent, so the PS runs a clarification
-    round before prompting. The orchestrate + whoami scopes <em>are</em> seeded in-scope, so the chain
+    round before prompting. The orchestrate + trips.read scopes <em>are</em> seeded in-scope, so the chain
     hops resolve silently — keeping the chain focused on mission <strong>forwarding</strong>, not consent.
     Each step is labelled <span class="badge bg-warning text-dark">prompt</span> (the user must decide)
     or <span class="badge bg-success">silent</span> (resolved without a screen).
@@ -94,7 +94,7 @@ using var chain = AAuthClientBuilder.SelfIssuing(identity.Key)
     .Build();
 
 // "/mission" is the Orchestrator's mission-aware twin of "/": it chains to
-// WhoAmI's "/jwt/mission" so the forwarded mission re-binds at the next hop.
+// Trips' "/trips" so the forwarded mission re-binds at the next hop.
 var response = await chain.GetAsync($"{orchestrator}/mission");</code></pre>
     </div>
 </div>
@@ -274,9 +274,9 @@ var response = await chain.GetAsync($"{orchestrator}/mission");</code></pre>
         ClearWaiting();
 
         var personServer = Config["AAuth:PersonServer"]!.TrimEnd('/');
-        var resourceOrigin = Config["AAuth:Resource"]!.TrimEnd('/');
+        var resourceOrigin = Config["AAuth:Trips"]!.TrimEnd('/');
         var orchestratorUrl = Config["AAuth:Orchestrator"]!.TrimEnd('/');
-        var elevatedUrl = $"{resourceOrigin}/jwt/mission/elevated";
+        var elevatedUrl = $"{resourceOrigin}/trips/book";
 
         try
         {
@@ -336,10 +336,10 @@ var response = await chain.GetAsync($"{orchestrator}/mission");</code></pre>
             var chainJson = await RunMissionChainAsync(personServer, orchestratorUrl, mission);
             _steps.Add(new Step(3, "Mission call chain", Prompted: false, Outcome: "granted",
                 Summary: "The same mission was carried to the Orchestrator (WithMission), which forwarded " +
-                         "the AAuth-Mission header to its downstream WhoAmI hop. Both hops were in-scope, " +
+                         "the AAuth-Mission header to its downstream Trips hop. Both hops were in-scope, " +
                          "so the chain resolved without a prompt — the mission governed every hop.",
                 Payload: chainJson,
-                PayloadLabel: "Chain result (Agent → Orchestrator → WhoAmI /jwt/mission)"));
+                PayloadLabel: "Chain result (Agent → Orchestrator → Trips /trips)"));
             await InvokeAsync(StateHasChanged);
 
             // ---- Mission log: the PS-held trail the mission accrued --------
@@ -430,7 +430,7 @@ var response = await chain.GetAsync($"{orchestrator}/mission");</code></pre>
     // Carry the mission to the Orchestrator's mission-aware "/mission" endpoint.
     // WithMission attaches the signed AAuth-Mission header; the mission-aware
     // Orchestrator copies it into its resource token (so the exchange is governed
-    // by the mission) and forwards it to the downstream WhoAmI hop.
+    // by the mission) and forwards it to the downstream Trips hop.
     private async Task<string> RunMissionChainAsync(
         string personServer, string orchestratorUrl, AAuth.Agent.Mission mission)
     {
@@ -551,7 +551,7 @@ var response = await chain.GetAsync($"{orchestrator}/mission");</code></pre>
                 inScope = new[]
                 {
                     new { resource = orchestratorUrl, scope = "orchestrate" },
-                    new { resource = resourceOrigin, scope = "whoami" },
+                    new { resource = resourceOrigin, scope = "trips.read" },
                 },
             });
         }

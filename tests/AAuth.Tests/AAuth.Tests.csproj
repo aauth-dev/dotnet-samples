@@ -4,13 +4,13 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AAuth\AAuth.csproj" />
-    <ProjectReference Include="..\..\samples\WhoAmI\WhoAmI.csproj" />
+    <ProjectReference Include="..\..\samples\MockResourceServers\Calendar\Calendar.csproj" />
     <ProjectReference Include="..\..\samples\MockPersonServer\MockPersonServer.csproj" />
     <ProjectReference Include="..\..\samples\MockAccessServer\MockAccessServer.csproj" />
   </ItemGroup>
 
   <!--
-    Integration tests spin up the WhoAmI sample (and an in-process mock
+    Integration tests spin up the Calendar sample (and an in-process mock
     Person Server) via WebApplicationFactory<T>. The MVC test host package
     surfaces WebApplicationFactory, TestServer, and the associated handler
     that lets the agent HttpClient talk to the test server without a real

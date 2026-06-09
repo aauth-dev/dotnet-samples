@@ -16,7 +16,7 @@ import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
  * Federated (four-party) — Guided Tour, interactive consent path.
  *
  * Runs against a **stub** Access Server with `RequireConsent=true` (no Keycloak
- * / Docker). The resource's /federated branch challenges with a resource_token
+ * / Docker). The resource's /wallet branch challenges with a resource_token
  * whose `aud` is the Access Server; the PS federates to the AS, which returns
  * `202 requirement=interaction`. The PS relays it, the tour parks on the
  * user-approval step and surfaces the AS interaction link, and the user clicks
@@ -63,15 +63,15 @@ test.describe('Federated (Guided Tour)', () => {
     await runAll(page);
     await expect(doneSteps(page)).toHaveCount(10, { timeout: 30_000 });
 
-    // Step 9 ("Replay GET /federated with auth_token → 200") holds the result.
+    // Step 9 ("Replay GET /wallet with auth_token → 200") holds the result.
     await selectStep(page, 8);
     await expectResponse(page, 200, ['four-party']);
 
     const json = (await readResponseJson(page)) as Record<string, unknown>;
-    expect(json.mode).toBe('four-party');
+    expect(json.accessMode).toBe('four-party');
     expect(json.scheme).toBe('jwt');
     expect(json.agent).toBe(Agents.tour);
-    expect(json.scope).toEqual(['whoami']);
+    expect(json.scope).toEqual(['wallet.read']);
     // The auth token is issued by the Access Server, not the Person Server.
     expect(json.iss).toBe(Urls.accessServer);
     const act = json.act as Record<string, unknown>;

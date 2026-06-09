@@ -237,7 +237,7 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
 {
     Issuer               = psIssuer,
     SigningKeys          = new Dictionary<string, AAuthKey> { [PsKid] = psKey },
-    DefaultScope         = "whoami",
+    DefaultScope         = "calendar.read",
     TrustedAccessServers = trustedAccessServers,   // omit ⇒ three-party only
 });
 ```
@@ -250,7 +250,7 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
 | `SigningKeys` | Yes | — | `kid → AAuthKey` map published at the PS JWKS |
 | `TokenPath` | No | `/token` | The token endpoint path |
 | `PendingPathPrefix` | No | `/pending` | The deferred-consent poll path prefix |
-| `DefaultScope` | No | `whoami` | Scope assumed when the resource token omits one |
+| `DefaultScope` | No | `""` | Scope assumed when the resource token omits one |
 | `InteractionPath` | No | `/interaction` | Path the host maps for the consent page |
 | `TrustedAccessServers` | No | `null` | Access Server URLs the PS will federate to; `null`/empty ⇒ three-party only |
 

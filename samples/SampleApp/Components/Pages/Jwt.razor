@@ -1,4 +1,4 @@
-@page "/jwt"
+@page "/calendar"
 @using AAuth.Crypto
 @using AAuth.HttpSig
 @inject IJSRuntime JS
@@ -42,6 +42,15 @@ builder.Services.AddSingleton(sp =&gt;
 builder.Services.AddSingleton(sp =&gt;
     new JwksClient(httpClient));
 
+// Authn scheme + scope policy: maps the verified
+// token to a ClaimsPrincipal, then enforces that
+// it actually carries the `calendar.read` scope.
+builder.Services.AddAAuthAuthentication();
+builder.Services.AddAAuthAuthorization();
+// arg 1 = policy name (any id, used by RequireAuthorization); arg 2 = scope value matched against the token. "AAuth.Scope." is just a naming convention.
+builder.Services.AddAAuthScopePolicy(
+    "AAuth.Scope.calendar.read", "calendar.read");
+
 var app = builder.Build();
 
 // Middleware verifies HTTP signature AND the
@@ -61,22 +70,28 @@ app.UseAAuthChallenge(new ChallengeOptions
     AccessMode = AAuthAccessMode.RequireAuthToken,
 });
 
-app.MapGet("/jwt", (HttpContext ctx) =&gt;
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapGet("/events", (HttpContext ctx) =&gt;
 {
-    // Middleware already verified the auth token.
-    // Claims are available via Features:
+    // Middleware already verified the auth token AND
+    // the scope policy below enforced `calendar.read`.
     var r = ctx.Features
         .Get&lt;AAuthVerificationResult&gt;()!;
     return Results.Ok(new
     {
-        mode = "three-party",
+        accessMode = "three-party",
         scheme = "jwt",
         agent = r.Agent,
         sub = r.Subject,
-        scope = r.Scopes, // ["whoami"]
+        scope = r.Scopes, // ["calendar.read"]
         iss = r.Issuer,
     });
-});</code></pre>
+})
+// Enforce the scope — without this the endpoint
+// would accept ANY valid auth token, ignoring scope.
+.RequireAuthorization("AAuth.Scope.calendar.read");</code></pre>
 </div>
 </div>
 
@@ -129,7 +144,7 @@ app.MapGet("/jwt", (HttpContext ctx) =&gt;
         try
         {
             var personServer = Config["AAuth:PersonServer"]!;
-            var resourceUrl = Config["AAuth:Resource"]!;
+            var resourceUrl = Config["AAuth:Calendar"]!;
 
             // Pre-grant consent so the PS issues a token immediately
             // (autonomous / direct-grant mode — no user interaction)
@@ -143,7 +158,7 @@ app.MapGet("/jwt", (HttpContext ctx) =&gt;
                 .WithChallengeHandling()
                 .Build();
 
-            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/jwt");
+            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/events");
 
             _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
             _success = response.IsSuccessStatusCode;
@@ -167,7 +182,7 @@ app.MapGet("/jwt", (HttpContext ctx) =&gt;
         if (string.IsNullOrEmpty(personServer)) return;
 
         var agentId = _identity.AgentId;
-        var resource = Config["AAuth:Resource"]!;
+        var resource = Config["AAuth:Calendar"]!;
 
         using var http = new HttpClient();
         try

@@ -28,10 +28,10 @@ public sealed class KeycloakOptions
     /// <summary>
     /// The Keycloak resource name registered for the protected resource;
     /// combined with the requested scope into the <c>permission</c>
-    /// (<c>RESOURCE#SCOPE</c>). The demo registers a single <c>whoami</c>
+    /// (<c>RESOURCE#SCOPE</c>). The demo registers a single <c>wallet</c>
     /// resource.
     /// </summary>
-    public string ResourceName { get; set; } = "whoami";
+    public string ResourceName { get; set; } = "wallet";
 
     /// <summary>The OIDC authorization endpoint.</summary>
     public string AuthorizationEndpoint => $"{Authority.TrimEnd('/')}/protocol/openid-connect/auth";

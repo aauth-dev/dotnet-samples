@@ -1,4 +1,4 @@
-@page "/jwks-uri"
+@page "/identified"
 @using AAuth.Agent
 @using AAuth.Crypto
 @using AAuth.HttpSig
@@ -32,6 +32,12 @@ using var client = new AAuthClientBuilder(key)
 <pre><code class="language-csharp">builder.Services.AddSingleton(new AAuthVerifier());
 builder.Services.AddSingleton(sp =&gt; new JwksClient(httpClient));
 
+// Authn scheme + the Identified policy: requires a
+// VERIFIED named identity (key resolved via JWKS),
+// not just any signature.
+builder.Services.AddAAuthAuthentication();
+builder.Services.AddAAuthAuthorization();
+
 var app = builder.Build();
 
 // Resolves the agent's key from their jwks_uri.
@@ -40,17 +46,23 @@ app.UseAAuthVerification(new AAuthVerificationOptions
     RequireIssuerVerification = false,
 });
 
-app.MapGet("/jwks-uri", (HttpContext ctx) =>
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapGet("/identified", (HttpContext ctx) =>
 {
     var parsed = ctx.GetAAuthParsedKey()!;
     return Results.Ok(new
     {
-        mode = "agent-identity",
+        signingMode = "agent-identity",
         scheme = "jwks_uri",
         jwks_uri = parsed.JwksUri,
         kid = parsed.Kid,
     });
-});</code></pre>
+})
+// Enforce a verified identity — a pseudonymous (hwk)
+// caller has no identity and is rejected here.
+.RequireAuthorization("AAuth.Identified");</code></pre>
 </div>
 </div>
 
@@ -152,8 +164,8 @@ else
                 .UseJwksUri(jwksUri, kid)
                 .Build();
 
-            var resourceUrl = Config["AAuth:Resource"]!;
-            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/jwks-uri");
+            var resourceUrl = Config["AAuth:Profile"]!;
+            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/identified");
 
             _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
             _success = response.IsSuccessStatusCode;

@@ -13,20 +13,20 @@ import { approveInPopup } from '../../../tests/e2e/helpers/consent';
 import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
 
 /**
- * Call Chain — multi-agent delegation Agent → Orchestrator → WhoAmI with two
+ * Call Chain — multi-agent delegation Agent → Orchestrator → Calendar with two
  * human approvals, 13 steps. The tour wipes the PS consent store on init
  * (PrepareConsentStateAsync), so BOTH hops surface their own interaction:
  *
  *   1. Agent → Orchestrator: POST /token returns 202; the user approves at the
  *      PS consent page and the agent polls the PS pending URL for the
  *      Orchestrator-audience auth_token.
- *   2. Orchestrator → WhoAmI: the agent retries the Orchestrator, which drives
+ *   2. Orchestrator → Calendar: the agent retries the Orchestrator, which drives
  *      its own downstream exchange, hits the SAME no-consent wall, and re-emits
  *      a chained 202 pointing at its OWN pending URL. The user approves the
  *      second hop at the PS and the agent polls the Orchestrator pending URL for
  *      the combined 200.
  *
- * The internal Orchestrator → PS → WhoAmI hops are shown as grouped sub-steps,
+ * The internal Orchestrator → PS → Calendar hops are shown as grouped sub-steps,
  * never as separate agent-visible steps. The final poll renders the combined
  * 200 with a three-party downstream identity and a nested `act` delegation
  * chain. Generous timeout covers two poll loops.
@@ -57,7 +57,7 @@ test.describe('Call Chain (Guided Tour)', () => {
     // 202) and the direct-user step, then parks on the second approval.
     await runAll(page);
 
-    // Hop 2 — parked on the Orchestrator → WhoAmI approval (10 steps done).
+    // Hop 2 — parked on the Orchestrator → Calendar approval (10 steps done).
     const hop2Link = page.locator('a.primary.approve');
     await expect(hop2Link).toBeVisible();
     const [hop2Popup] = await Promise.all([
@@ -89,13 +89,13 @@ test.describe('Call Chain (Guided Tour)', () => {
     const orchestrator = json.orchestrator as Record<string, unknown>;
     expect(orchestrator.identity).toBe('aauth:orchestrator@localhost:5200');
 
-    // Downstream: WhoAmI's three-party identity with the nested act chain.
+    // Downstream: Calendar's three-party identity with the nested act chain.
     const downstream = json.downstream as Record<string, unknown>;
-    expect(downstream.mode).toBe('three-party');
+    expect(downstream.accessMode).toBe('three-party');
     expect(downstream.scheme).toBe('jwt');
     expect(downstream.agent).toBe('aauth:orchestrator@localhost:5200');
     expect(downstream.sub).toBe('pairwise-sub');
-    expect(downstream.scope).toEqual(['whoami']);
+    expect(downstream.scope).toEqual(['calendar.read']);
     expect(downstream.iss).toBe(Urls.personServer);
 
     // The act chain proves the full delegation path:
@@ -107,7 +107,7 @@ test.describe('Call Chain (Guided Tour)', () => {
     expect(innerAct.sub).toBe(Agents.tour);
 
     // Step 13 ("Inspect multi-agent chain result") renders the decoded chain
-    // summary showing the full Agent → Orchestrator → WhoAmI delegation.
+    // summary showing the full Agent → Orchestrator → Calendar delegation.
     await selectStep(page, 12);
     await expect(
       page.locator('section.payload article.inspector details.token pre code'),

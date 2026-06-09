@@ -5,9 +5,9 @@ import { grantConsent } from '../../../tests/e2e/helpers/consent';
 import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
 
 /**
- * Call Chain — multi-hop delegation Agent → Orchestrator → WhoAmI. The test
+ * Call Chain — multi-hop delegation Agent → Orchestrator → Calendar. The test
  * pre-grants consent at the PS for both hops, then a single chained GET → 200
- * with a nested `act` delegation chain. Needs PS + AP + Orchestrator + WhoAmI.
+ * with a nested `act` delegation chain. Needs PS + AP + Orchestrator + Calendar.
  *
  * This is the first interactive test in the SampleApp suite to click the
  * `/call-chain` button, so it is exposed to the Blazor cold-circuit
@@ -20,9 +20,9 @@ test.describe.configure({ timeout: 60_000 });
 
 test.beforeEach(async ({ request }) => {
   // Hop 1 (agent → Orchestrator) needs the Orchestrator's `orchestrate` scope;
-  // hop 2 (Orchestrator → WhoAmI) needs the default `whoami` scope.
+  // hop 2 (Orchestrator → Calendar) needs the default `calendar.read` scope.
   await grantConsent(request, Agents.sampleApp, Urls.orchestrator, 'orchestrate');
-  await grantConsent(request, 'aauth:orchestrator@localhost:5200', Urls.whoami);
+  await grantConsent(request, 'aauth:orchestrator@localhost:5200', Urls.calendar);
 });
 
 test('call chain returns a nested act delegation chain', async ({ page }) => {
@@ -61,14 +61,14 @@ test('call chain returns a nested act delegation chain', async ({ page }) => {
   const orchestrator = json.orchestrator as Record<string, unknown>;
   expect(orchestrator.identity).toBe('aauth:orchestrator@localhost:5200');
 
-  // Downstream: WhoAmI's three-party identity with the nested act chain.
+  // Downstream: Calendar's three-party identity with the nested act chain.
   const downstream = json.downstream as Record<string, unknown>;
-  expect(downstream.mode).toBe('three-party');
+  expect(downstream.accessMode).toBe('three-party');
   expect(downstream.scheme).toBe('jwt');
   // The resource sees the Orchestrator as the immediate actor.
   expect(downstream.agent).toBe('aauth:orchestrator@localhost:5200');
   expect(downstream.iss).toBe(Urls.personServer);
-  expect(downstream.scope).toEqual(['whoami']);
+  expect(downstream.scope).toEqual(['calendar.read']);
 
   // The act chain proves the full delegation path end to end:
   //   act.sub      = the Orchestrator (immediate actor)

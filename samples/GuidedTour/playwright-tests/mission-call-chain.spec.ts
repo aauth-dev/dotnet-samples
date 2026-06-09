@@ -18,13 +18,13 @@ import { approveInPopup, denyInPopup } from '../../../tests/e2e/helpers/consent'
  *   1. Mission creation (steps 4/5): the user approves the durable mission and
  *      its tools; the agent polls for the signed approval blob.
  *   2. Clarified elevated scope (steps 7/8/10/11): requesting
- *      `whoami:elevated_scope` falls outside the mission's intent, so the PS
+ *      `trips.book` falls outside the mission's intent, so the PS
  *      first opens a CLARIFICATION CHAT — it asks WHY (step 7, 202), the agent
  *      answers (step 8, 204) — and only then prompts the user (step 10),
  *      issuing the elevated auth_token on the next poll (step 11).
  *   3. Mission-forwarded call chain (step 13): the SAME mission drives an
- *      Agent → Orchestrator → WhoAmI chain. Both hops (`orchestrate`,
- *      `whoami`) are in mission scope, so the Orchestrator forwards the
+ *      Agent → Orchestrator → Trips chain. Both hops (`orchestrate`,
+ *      `trips.read`) are in mission scope, so the Orchestrator forwards the
  *      `AAuth-Mission` header downstream and the whole chain resolves SILENTLY.
  *
  * The PS's mission log (step 14) records it all — including the clarification
@@ -87,24 +87,24 @@ test.describe('Mission + Call Chain (Guided Tour)', () => {
     await expectResponse(page, 204);
     await expect(page.locator('section.payload')).toContainText('triage the inbox');
 
-    // Step 12 ("Replay GET /jwt/mission/elevated → 200"): the elevated result.
+    // Step 12 ("Replay GET /trips/book → 200"): the elevated result.
     await selectStep(page, 11);
     await expectResponse(page, 200, ['mission-elevated']);
     const elevated = (await readResponseJson(page)) as Record<string, unknown>;
     expect(elevated.access).toBe('mission-elevated');
-    expect(elevated.scope).toEqual(['whoami:elevated_scope']);
+    expect(elevated.scope).toEqual(['trips.book']);
 
     // Step 13 ("Mission-forwarded call chain → 200 (SILENT)"): one mission
-    // governed every hop. The combined result nests WhoAmI's mission-bound
+    // governed every hop. The combined result nests Trips' mission-bound
     // downstream object reached via the Orchestrator.
     await selectStep(page, 12);
     await expectResponse(page, 200, ['downstream']);
     const chain = (await readResponseJson(page)) as Record<string, unknown>;
-    expect(String(chain.chain)).toContain('WhoAmI');
+    expect(String(chain.chain)).toContain('Trips');
     const downstream = chain.downstream as Record<string, unknown>;
-    expect(downstream.mode).toBe('three-party');
+    expect(downstream.accessMode).toBe('three-party');
     expect(downstream.access).toBe('mission');
-    expect(downstream.scope).toEqual(['whoami']);
+    expect(downstream.scope).toEqual(['trips.read']);
     // The mission travelled all the way downstream (silent because in scope).
     expect(downstream.mission).toBeTruthy();
 

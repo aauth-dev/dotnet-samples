@@ -10,14 +10,14 @@ import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
  *
  *   Hop 1: Agent → Orchestrator. The PS returns 202; the SDK surfaces the
  *          consent URL via WithChallengeHandling. The user approves.
- *   Hop 2: Orchestrator → WhoAmI. The Orchestrator's downstream client throws
+ *   Hop 2: Orchestrator → Calendar. The Orchestrator's downstream client throws
  *          AAuthInteractionChainedException, so the Orchestrator parks the
  *          flow and re-emits its OWN 202 to the agent. The agent's top-level
  *          InteractionHandler (WithInteractionHandling) surfaces the second
  *          consent URL. The user approves again, and the chain resolves to a
  *          200 with the full nested `act` delegation chain.
  *
- * Needs PS + AP + Orchestrator + WhoAmI. Extended timeout for the two poll
+ * Needs PS + AP + Orchestrator + Calendar. Extended timeout for the two poll
  * loops.
  */
 test.describe('Call Chain (deferred)', () => {
@@ -45,7 +45,7 @@ test.describe('Call Chain (deferred)', () => {
     ]);
     await approveInPopup(popup1);
 
-    // --- Hop 2: Orchestrator → WhoAmI (whoami, chained) ---
+    // --- Hop 2: Orchestrator → Calendar (calendar.read, chained) ---
     await expect(heading).toContainText('Approval 2 of 2', { timeout: 60_000 });
     await expect(link).toBeVisible({ timeout: 30_000 });
 
@@ -68,13 +68,13 @@ test.describe('Call Chain (deferred)', () => {
     const orchestrator = json.orchestrator as Record<string, unknown>;
     expect(orchestrator.identity).toBe('aauth:orchestrator@localhost:5200');
 
-    // Downstream: WhoAmI's three-party identity with the nested act chain.
+    // Downstream: Calendar's three-party identity with the nested act chain.
     const downstream = json.downstream as Record<string, unknown>;
-    expect(downstream.mode).toBe('three-party');
+    expect(downstream.accessMode).toBe('three-party');
     expect(downstream.scheme).toBe('jwt');
     expect(downstream.agent).toBe('aauth:orchestrator@localhost:5200');
     expect(downstream.iss).toBe(Urls.personServer);
-    expect(downstream.scope).toEqual(['whoami']);
+    expect(downstream.scope).toEqual(['calendar.read']);
 
     // act.sub = the Orchestrator; act.act.sub = the original calling agent.
     const act = downstream.act as Record<string, unknown>;
