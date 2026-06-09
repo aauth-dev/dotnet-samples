@@ -195,6 +195,9 @@ demo-keycloak: ## Four-party federated demo (both UIs) with the live Keycloak po
 	@echo "------------------------------------------------------------------"
 	@echo " Backend services:"
 	@echo "   Keycloak:           $(KEYCLOAK_URL)         (admin/admin, realm 'aauth')"
+	@echo "   Profile:            $(PROFILE_URL)         (identity resource server)"
+	@echo "   Calendar:           $(CALENDAR_URL)         (three-party resource server)"
+	@echo "   Trips:              $(TRIPS_URL)         (mission-aware resource server)"
 	@echo "   Wallet:             $(WALLET_URL)         (four-party resource server, /wallet)"
 	@echo "   Concierge:       $(CONCIERGE_URL)         (mission concierge)"
 	@echo "   MockPersonServer:   $(PS_URL)         (RequireConsent=true)"
@@ -215,6 +218,9 @@ demo-keycloak: ## Four-party federated demo (both UIs) with the live Keycloak po
 	@echo "------------------------------------------------------------------"
 	@echo ""
 	@trap 'trap - INT TERM EXIT; echo; echo "Stopping..."; docker rm -f aauth-keycloak >/dev/null 2>&1; kill 0' INT TERM EXIT; \
+	$(DOTNET) run --no-build --project $(PROFILE_PROJECT) & \
+	$(DOTNET) run --no-build --project $(CALENDAR_PROJECT) & \
+	$(DOTNET) run --no-build --project $(TRIPS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(WALLET_PROJECT) & \
 	$(DOTNET) run --no-build --project $(CONCIERGE_PROJECT) & \
 	MockPersonServer__RequireConsent=true $(DOTNET) run --no-build --project $(PS_PROJECT) & \

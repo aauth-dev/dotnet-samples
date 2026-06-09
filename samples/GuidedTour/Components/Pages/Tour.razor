@@ -174,9 +174,9 @@
                     federates to the AS, and the <strong>Access Server</strong> evaluates policy and
                     mints the <code>aa-auth+jwt</code> (<code>dwk=aauth-access.json</code>). The resource
                     verifies it against the AS's JWKS. <strong>Interactive consent at the Access
-                    Server</strong> — with the default <code>RequireConsent=true</code> the stub
-                    policy parks the decision and prompts for Approve/Deny (Keycloak shows its own
-                    login/consent).
+                    Server</strong> — you'll either approve at the stub AS's own Approve/Deny
+                    screen (<code>make demo</code>) or sign in at a Keycloak login
+                    (<code>make demo-keycloak</code>).
                 </text>
                 break;
             case TourMode.Mission:

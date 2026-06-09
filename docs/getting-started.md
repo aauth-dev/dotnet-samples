@@ -132,10 +132,10 @@ AAuth supports four resource access modes. Each adds parties and capabilities:
 
 | Flow | Parties | When to Use | Signing Mode | See it run |
 |------|---------|-------------|--------------|------------|
-| **[Identity-Based](workflows/identity-based-access.md)** | Agent + Resource | API-key replacement, simple access control by identity | `hwk` or `jwks_uri` | GuidedTour flow **2**; SampleApp `/hwk`, `/jwks-uri` |
+| **[Identity-Based](workflows/identity-based-access.md)** | Agent + Resource | API-key replacement, simple access control by identity | `hwk` or `jwks_uri` | GuidedTour **Identity-based**; SampleApp `/pseudonymous`, `/identified` |
 | **[Resource-Managed](workflows/resource-managed-access.md)** (two-party) | Agent + Resource | Resource handles its own auth (interaction, existing OAuth) | Any (`hwk`, `jwks_uri`, or `jwt`) | Workflow guide |
-| **[PS-Asserted](workflows/ps-asserted-access.md)** (three-party) | Agent + Resource + PS | User consent required, resource delegates auth to PS | `jwt` | GuidedTour flows **3** & **4**; SampleApp `/jwt`, `/deferred` |
-| **[Federated](workflows/federated-access.md)** (four-party) | Agent + Resource + PS + AS | Cross-domain policy, resource has its own Access Server | `jwt` | GuidedTour flow **6**; SampleApp `/federated` (live Keycloak: `make demo-keycloak`) |
+| **[PS-Asserted](workflows/ps-asserted-access.md)** (three-party) | Agent + Resource + PS | User consent required, resource delegates auth to PS | `jwt` | GuidedTour **PS-Asserted (Direct Grant)** & **(Deferred)**; SampleApp `/calendar`, `/calendar-deferred` |
+| **[Federated](workflows/federated-access.md)** (four-party) | Agent + Resource + PS + AS | Cross-domain policy, resource has its own Access Server | `jwt` | GuidedTour **Federated (Four-Party)**; SampleApp `/wallet` (live Keycloak: `make demo-keycloak`) |
 
 Adoption is incremental — each party can add support independently, and modes build on each other. See [Signing Modes](signing-modes/overview.md) for details on each scheme.
 

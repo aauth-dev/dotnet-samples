@@ -36,10 +36,10 @@
     the AS requires consent it returns <code>202 requirement=interaction</code>;
     the PS relays it, and the agent surfaces the AS consent URL on the
     <em>same</em> challenge callback, then polls until the AS mints the auth
-    token. <strong>From the agent's perspective the stub AS and Keycloak are
-    identical</strong> — same 202 → interaction URL → poll → mint; only the
-    interaction URL's destination differs (the stub's own <em>Access Server</em>
-    consent screen vs a Keycloak login).
+    token. <strong>The consent screen tells you which Access Server you're
+    using:</strong> the stub AS shows its own Approve/Deny page
+    (<code>make demo</code>), while Keycloak shows a login page
+    (<code>make demo-keycloak</code>).
 </p>
 
 <div class="row">
