@@ -33,7 +33,7 @@ public class MissionHeaderSeamTests
             ["approver"] = Approver,
             ["agent"] = "aauth:agent@example",
             ["approved_at"] = "2026-06-06T00:00:00Z",
-            ["description"] = "Keep the inbox under control",
+            ["description"] = "Plan my weekend trip to Seattle",
             ["approved_tools"] = new JsonArray(),
         }.ToJsonString();
         return Mission.FromApprovalBytes(Encoding.UTF8.GetBytes(blob));

@@ -8,17 +8,29 @@ When an intermediary resource calls a downstream resource and the downstream PS/
 
 ## Flow Diagram
 
-```
-Agent A → Orchestrator (Resource B) → Downstream PS
-                                      ← 202 + requirement=interaction
-         ← 202 + requirement=interaction (Orchestrator's own URL/code)
+```mermaid
+sequenceDiagram
+    participant A as Agent A
+    participant C as Concierge (Resource B)
+    participant PS as Downstream PS
+    participant U as User
 
-Agent A opens interaction URL in browser...
-User completes consent...
+    A->>C: request (auth token)
+    C->>PS: exchange for downstream auth token
+    PS-->>C: 202 + requirement=interaction
+    C-->>A: 202 + requirement=interaction (Concierge's own URL + code)
 
-Agent A → Orchestrator (polls Location)
-         Orchestrator polls downstream PS → gets auth token → retries downstream
-         ← 200 (final result)
+    A->>U: open interaction URL in browser
+    U->>PS: complete consent
+
+    loop poll until resolved
+        A->>C: GET Location (pending URL)
+        C->>PS: poll downstream PS
+        PS-->>C: still pending / auth token
+        C-->>A: 202 (still pending)
+    end
+    Note over C,PS: Concierge obtains the downstream auth token,<br/>retries the downstream call
+    C-->>A: 200 (final result)
 ```
 
 ## SDK Support: throw `AAuthInteractionChainedException`
@@ -33,9 +45,9 @@ flow, and re-emits its **own** `202 Accepted` to the caller:
 ```csharp
 async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken)
 {
-    using var downstream = AAuthClientBuilder.SelfIssuing(orchestratorKey)
-        .As(orchestratorUrl, agentId)
-        .WithKid(orchestratorKid)
+    using var downstream = AAuthClientBuilder.SelfIssuing(conciergeKey)
+        .As(conciergeUrl, agentId)
+        .WithKid(conciergeKid)
         .WithPersonServer(psUrl)
         .WithCallChaining(upstreamToken)
         .WithChallengeHandling(opts =>
@@ -46,7 +58,7 @@ async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken)
         })
         .Build();
 
-    var response = await downstream.GetAsync($"{downstreamUrl}/jwt");
+    var response = await downstream.GetAsync($"{downstreamUrl}/events");
     var body = await response.Content.ReadFromJsonAsync<JsonNode>();
     return Results.Ok(new { chain = "ok", downstream = body });
 }

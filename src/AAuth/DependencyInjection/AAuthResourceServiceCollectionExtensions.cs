@@ -61,8 +61,7 @@ public static class AAuthResourceServiceCollectionExtensions
             services.TryAddSingleton<ISignatureKeyResolver>(sp =>
             {
                 var jwksClient = sp.GetRequiredService<JwksClient>();
-                var metadataClient = sp.GetService<MetadataClient>();
-                return new DefaultSignatureKeyResolver(jwksClient, metadataClient);
+                return new DefaultSignatureKeyResolver(jwksClient);
             });
         }
 
@@ -176,7 +175,7 @@ public static class AAuthResourceServiceCollectionExtensions
     /// standard ASP.NET Core <c>RequireRole</c>.
     /// </summary>
     /// <param name="services">The service collection.</param>
-    /// <param name="policyName">The policy name (e.g. <c>"AAuth.Role.whoami-admin"</c>).</param>
+    /// <param name="policyName">The policy name (e.g. <c>"AAuth.Role.calendar.owner"</c>).</param>
     /// <param name="requiredRole">The required role value.</param>
     public static IServiceCollection AddAAuthRolePolicy(
         this IServiceCollection services,

@@ -1,4 +1,4 @@
-@page "/jkt-jwt"
+@page "/anchored"
 @using AAuth.Agent
 @using AAuth.Crypto
 @using AAuth.HttpSig
@@ -8,6 +8,14 @@
 <PageTitle>JKT-JWT — Key Rotation</PageTitle>
 
 <h2>JKT-JWT — Key Rotation (Two-Key Refresh)</h2>
+
+<details class="alert alert-primary aria-narrative" open>
+    <summary>📖 What Aria is trying to do</summary>
+    Aria (your AI travel assistant) has been running for a while and
+    wants to rotate the key it signs requests with — without bothering its Agent Provider
+    to re-enrol. Its durable enrolment key vouches for a fresh ephemeral key, which then
+    signs calls to the <strong>Profile</strong> server.
+</details>
 
 <p>
     Key rotation without re-enrolment. The enrolled <strong>durable key</strong> signs a
@@ -21,12 +29,12 @@
 <h5>Client Code</h5>
 <pre><code class="language-csharp">// Two-key refresh: get ephemeral key from AP
 var result = await apClient.RefreshTwoKeyAsync(
-    refreshEndpoint, localKeyHandle, apIssuer);
+    refreshEndpoint, localKeyHandle);
 
-// Durable key signs naming JWT binding ephemeral key
-var namingJwt = NamingJwtBuilder.Build(
-    durableKey, result.EphemeralKey,
-    apIssuer, durableKey.ComputeJwkThumbprint());
+// Durable key signs a self-issued naming JWT (jkt-s256+jwt):
+// durable jwk in the header, iss = its thumbprint URN,
+// ephemeral key bound via cnf.jwk
+var namingJwt = NamingJwtBuilder.Build(durableKey, result.EphemeralKey);
 
 // Ephemeral key signs HTTP requests
 using var client = new AAuthClientBuilder(result.EphemeralKey)
@@ -159,21 +167,21 @@ else
         _error = null;
         try
         {
-            var apBase = Config["AAuth:AgentProvider"]!;
             var apClient = new AgentProviderClient(new HttpClient(), _enrollment.KeyStore);
 
-            // Spec: two-key refresh generates an ephemeral key, builds a naming JWT
-            // signed by the durable key, and sends the refresh signed by the ephemeral key.
+            // Spec: two-key refresh generates an ephemeral key, builds a self-issued
+            // naming JWT signed by the durable key, and sends the refresh signed by
+            // the ephemeral key.
             var result = await apClient.RefreshTwoKeyAsync(
-                _enrollment.RefreshEndpoint, _enrollment.LocalKeyHandle, apBase.TrimEnd('/'));
+                _enrollment.RefreshEndpoint, _enrollment.LocalKeyHandle);
 
             _ephemeralKey = result.EphemeralKey;
             _ephemeralThumbprint = ((AAuthKey)_ephemeralKey).ComputeJwkThumbprint();
 
-            // Build the naming JWT for resource requests.
-            // The durable key signs it, binding the ephemeral key via cnf.jwk.
-            _namingJwt = NamingJwtBuilder.Build(
-                _enrollment.Key, _ephemeralKey, apBase.TrimEnd('/'), _durableThumbprint!);
+            // Build the naming JWT for resource requests (draft-04 §3.4): the
+            // durable key signs it, embeds its own public key in the header, and
+            // binds the ephemeral key via cnf.jwk.
+            _namingJwt = NamingJwtBuilder.Build(_enrollment.Key, _ephemeralKey);
         }
         catch (Exception ex)
         {
@@ -199,8 +207,8 @@ else
                 .UseJktJwt(() => namingJwt)
                 .Build();
 
-            var resourceUrl = Config["AAuth:Resource"]!;
-            var response = await client.GetAsync(resourceUrl.TrimEnd('/') + "/jkt-jwt");
+            var resourceUrl = Config["AAuth:Profile"]!;
+            var response = await client.GetAsync(resourceUrl.TrimEnd('/') + "/anchored");
 
             _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
             _success = response.IsSuccessStatusCode;

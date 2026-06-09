@@ -1,6 +1,11 @@
 // Live test: hit whoami.aauth.dev demonstrating all protocol modes.
 // Parity with the reference agent at https://github.com/aauth-dev/web-agent-demo
 //
+// NOTE: This is the ONE sample deliberately NOT migrated to the local "Aria"
+// servers (Profile/Calendar/Trips/Wallet). It targets the public, external
+// whoami.aauth.dev deployment and the live person.hello.coop PS, so it cannot
+// adopt the local renamed scopes/endpoints. Leave its `whoami` references as-is.
+//
 // Mode 1:  No signature        → 401 + Accept-Signature header
 // Mode 2a: aa-agent+jwt (no scope) → 200 + agent identity (sub echoed back)
 // Mode 2b: aa-agent+jwt (scope)    → 401 + AAuth-Requirement (resource token)

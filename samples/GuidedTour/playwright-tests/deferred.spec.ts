@@ -53,16 +53,16 @@ test.describe('Deferred (Guided Tour)', () => {
 
     await expect(doneSteps(page)).toHaveCount(9, { timeout: 30_000 });
 
-    // Step 9 ("Replay GET /jwt with auth_token") is the resource result.
+    // Step 9 ("Replay GET /events with auth_token") is the resource result.
     await selectStep(page, 8);
     await expectResponse(page, 200, ['three-party']);
 
     const json = (await readResponseJson(page)) as Record<string, unknown>;
-    expect(json.mode).toBe('three-party');
+    expect(json.accessMode).toBe('three-party');
     expect(json.scheme).toBe('jwt');
     expect(json.agent).toBe(Agents.tour);
     expect(json.sub).toBe('pairwise-sub');
-    expect(json.scope).toEqual(['whoami']);
+    expect(json.scope).toEqual(['calendar.read']);
     expect(json.iss).toBe(Urls.personServer);
     const act = json.act as Record<string, unknown>;
     expect(act.sub).toBe(Agents.tour);

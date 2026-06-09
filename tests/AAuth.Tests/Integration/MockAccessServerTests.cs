@@ -30,12 +30,12 @@ public class MockAccessServerTests : IClassFixture<WebApplicationFactory<MockAcc
     private const string AsIssuer = "https://as.test";
     private const string PsIssuer = "https://ps.test";
     private const string ApIssuer = "https://ap.test";
-    private const string ResourceUrl = "https://whoami.test";
+    private const string ResourceUrl = "https://wallet.test";
     private const string AgentId = "aauth:demo@ap.test";
 
     private const string PsKid = "ps-1";
     private const string ApKid = "ap-1";
-    private const string ResourceKid = "whoami-1";
+    private const string ResourceKid = "wallet-1";
 
     private static readonly AAuthKey PsKey = AAuthKey.Generate();
     private static readonly AAuthKey ApKey = AAuthKey.Generate();
@@ -104,7 +104,7 @@ public class MockAccessServerTests : IClassFixture<WebApplicationFactory<MockAcc
         Assert.Equal(AsIssuer, (string?)payload["iss"]);
         Assert.Equal(ResourceUrl, (string?)payload["aud"]);
         Assert.Equal(AgentId, (string?)payload["agent"]);
-        Assert.Equal("whoami", (string?)payload["scope"]);
+        Assert.Equal("wallet.read", (string?)payload["scope"]);
 
         // cnf.jwk binds to the agent's key.
         var cnfJwk = payload["cnf"]?["jwk"] as JsonObject;
@@ -161,11 +161,11 @@ public class MockAccessServerTests : IClassFixture<WebApplicationFactory<MockAcc
     [Fact]
     public async Task Token_GrantsElevatedScope_ForAdminAgent()
     {
-        // The default stub policy grants whoami:admin to an admin agent
+        // The default stub policy grants wallet.charge to an admin agent
         // (the demo convention: agent id starts with "aauth:demo@").
         var agentKey = AAuthKey.Generate();
         var agentToken = BuildAgentToken(agentKey, AgentId);
-        var resourceToken = BuildResourceToken(agentKey, audience: AsIssuer, agent: AgentId, scope: "whoami:admin");
+        var resourceToken = BuildResourceToken(agentKey, audience: AsIssuer, agent: AgentId, scope: "wallet.charge");
 
         using var http = BuildPsSignedClient();
         var response = await http.PostAsJsonAsync("/token", new JsonObject
@@ -180,18 +180,18 @@ public class MockAccessServerTests : IClassFixture<WebApplicationFactory<MockAcc
         var payload = (JsonObject)JsonNode.Parse(
             Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(
                 ((string?)body!["auth_token"])!.Split('.')[1]))!;
-        Assert.Equal("whoami:admin", (string?)payload["scope"]);
+        Assert.Equal("wallet.charge", (string?)payload["scope"]);
     }
 
     [Fact]
     public async Task Token_DeniesElevatedScope_ForNonAdminAgent()
     {
-        // A non-admin agent requesting whoami:admin is denied by the stub
-        // policy (no whoami-admin role) → 403 denied.
+        // A non-admin agent requesting wallet.charge is denied by the stub
+        // policy (no wallet.payer role) → 403 denied.
         const string GuestId = "aauth:guest@ap.test";
         var agentKey = AAuthKey.Generate();
         var agentToken = BuildAgentToken(agentKey, GuestId);
-        var resourceToken = BuildResourceToken(agentKey, audience: AsIssuer, agent: GuestId, scope: "whoami:admin");
+        var resourceToken = BuildResourceToken(agentKey, audience: AsIssuer, agent: GuestId, scope: "wallet.charge");
 
         using var http = BuildPsSignedClient();
         var response = await http.PostAsJsonAsync("/token", new JsonObject
@@ -343,7 +343,7 @@ public class MockAccessServerTests : IClassFixture<WebApplicationFactory<MockAcc
             AgentJkt = agentKey.ComputeJwkThumbprint(),
             Key = ResourceKey,
             KeyId = ResourceKid,
-            Scope = "whoami",
+            Scope = "wallet.read",
         }.Build();
 
     /// <summary>
@@ -373,8 +373,8 @@ public class MockAccessServerTests : IClassFixture<WebApplicationFactory<MockAcc
                 "other-ps.test/.well-known/jwks.json" => Jwks(PsKey, PsKid),
                 "ap.test/.well-known/aauth-agent.json" => Metadata(ApIssuer),
                 "ap.test/.well-known/jwks.json" => Jwks(ApKey, ApKid),
-                "whoami.test/.well-known/aauth-resource.json" => Metadata(ResourceUrl),
-                "whoami.test/.well-known/jwks.json" => Jwks(ResourceKey, ResourceKid),
+                "wallet.test/.well-known/aauth-resource.json" => Metadata(ResourceUrl),
+                "wallet.test/.well-known/jwks.json" => Jwks(ResourceKey, ResourceKid),
                 _ => null,
             };
 

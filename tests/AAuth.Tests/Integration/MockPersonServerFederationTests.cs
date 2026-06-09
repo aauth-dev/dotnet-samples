@@ -32,7 +32,7 @@ public class MockPersonServerFederationTests
 {
     private const string PsIssuer = "https://ps.test";
     private const string AsIssuer = "https://as.test";
-    private const string ResourceUrl = ResourceStub.Url;
+    private const string ResourceUrl = "https://wallet.test";
     private const string AsKid = "as-fed-1";
     private const string AgentId = "aauth:demo@ap.example";
 
@@ -42,11 +42,11 @@ public class MockPersonServerFederationTests
     public async Task Token_FederatesToAccessServer_WhenResourceAudIsAs()
     {
         var agentKey = AAuthKey.Generate();
-        using var factory = BuildFactory(agentKey, AgentId, scope: "whoami");
+        using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read");
         using var http = BuildSignedAgentClient(factory, agentKey, AgentId);
 
         // Resource token audience is the ACCESS SERVER, not the PS → federate.
-        var resourceToken = BuildResourceToken(AgentId, agentKey, audience: AsIssuer, scope: "whoami");
+        var resourceToken = BuildResourceToken(AgentId, agentKey, audience: AsIssuer, scope: "wallet.read");
 
         using var response = await http.PostAsJsonAsync("/token",
             new JsonObject { ["resource_token"] = resourceToken });
@@ -69,12 +69,12 @@ public class MockPersonServerFederationTests
     public async Task Token_Rejects_WhenAccessServerNotTrusted()
     {
         var agentKey = AAuthKey.Generate();
-        using var factory = BuildFactory(agentKey, AgentId, scope: "whoami");
+        using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read");
         using var http = BuildSignedAgentClient(factory, agentKey, AgentId);
 
         // aud is some other Access Server the PS has no federation trust with.
         var resourceToken = BuildResourceToken(AgentId, agentKey,
-            audience: "https://untrusted-as.test", scope: "whoami");
+            audience: "https://untrusted-as.test", scope: "wallet.read");
 
         using var response = await http.PostAsJsonAsync("/token",
             new JsonObject { ["resource_token"] = resourceToken });
@@ -90,10 +90,10 @@ public class MockPersonServerFederationTests
         // Three-party (collapsed PS+AS) path must remain intact even when the
         // PS is configured for federation.
         var agentKey = AAuthKey.Generate();
-        using var factory = BuildFactory(agentKey, AgentId, scope: "whoami");
+        using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read");
         using var http = BuildSignedAgentClient(factory, agentKey, AgentId);
 
-        var resourceToken = BuildResourceToken(AgentId, agentKey, audience: PsIssuer, scope: "whoami");
+        var resourceToken = BuildResourceToken(AgentId, agentKey, audience: PsIssuer, scope: "wallet.read");
 
         using var response = await http.PostAsJsonAsync("/token",
             new JsonObject { ["resource_token"] = resourceToken });
@@ -118,10 +118,10 @@ public class MockPersonServerFederationTests
         // AS-issued auth token through the federated pending URL.
         var agentKey = AAuthKey.Generate();
         var stubState = new InteractiveAsState();
-        using var factory = BuildFactory(agentKey, AgentId, scope: "whoami", interactive: stubState);
+        using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read", interactive: stubState);
         using var http = BuildSignedAgentClient(factory, agentKey, AgentId);
 
-        var resourceToken = BuildResourceToken(AgentId, agentKey, audience: AsIssuer, scope: "whoami");
+        var resourceToken = BuildResourceToken(AgentId, agentKey, audience: AsIssuer, scope: "wallet.read");
 
         using var post = await http.PostAsJsonAsync("/token",
             new JsonObject { ["resource_token"] = resourceToken });
@@ -244,7 +244,7 @@ public class MockPersonServerFederationTests
     }
 
     /// <summary>
-    /// In-process stub for BOTH the resource (whoami.test) and the Access
+    /// In-process stub for BOTH the resource (wallet.test) and the Access
     /// Server (as.test): serves their well-known metadata + JWKS for discovery,
     /// and mints a valid Access-Server auth token on <c>POST {as}/token</c>.
     /// When constructed with an <see cref="InteractiveAsState"/>, the AS token
@@ -321,12 +321,12 @@ public class MockPersonServerFederationTests
 
             string? json = key switch
             {
-                "whoami.test/.well-known/aauth-resource.json" => new JsonObject
+                "wallet.test/.well-known/aauth-resource.json" => new JsonObject
                 {
                     ["issuer"] = ResourceUrl,
                     ["jwks_uri"] = $"{ResourceUrl}/.well-known/jwks.json",
                 }.ToJsonString(),
-                "whoami.test/.well-known/jwks.json" => Jwks(ResourceStub.Key, ResourceStub.Kid),
+                "wallet.test/.well-known/jwks.json" => Jwks(ResourceStub.Key, ResourceStub.Kid),
                 "as.test/.well-known/aauth-access.json" => new JsonObject
                 {
                     ["issuer"] = AsIssuer,

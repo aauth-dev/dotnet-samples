@@ -84,21 +84,22 @@ internal static class CodeSnippets
         """;
 
     public const string SignedGetJktJwt = """
-        // jkt-jwt mode: the durable key signs a naming JWT that binds
-        // the ephemeral signing key via cnf.jwk. The ephemeral key signs
-        // the HTTP request. Supports key rotation without re-enrolment.
+        // jkt-jwt mode: the durable key signs a self-issued naming JWT that
+        // embeds its own public key in the header and binds the ephemeral
+        // signing key via cnf.jwk. The ephemeral key signs the HTTP request.
+        // Supports key rotation without re-enrolment.
         //
-        // Spec: "The AP verifies the durable-key signature on the naming JWT,
-        //         looks up the enrollment by the durable key's thumbprint"
-        var namingJwt = NamingJwtBuilder.Build(
-            durableKey, ephemeralKey, apIssuer, durableKey.ComputeJwkThumbprint());
+        // Self-anchored (draft-04 §3.4): the verifier computes the durable
+        // key's thumbprint from the header jwk, checks it equals iss
+        // (urn:jkt:sha-256:<thumbprint>), then verifies the naming JWT signature.
+        var namingJwt = NamingJwtBuilder.Build(durableKey, ephemeralKey);
 
         using var client = new AAuthClientBuilder(ephemeralKey)
             .UseJktJwt(() => namingJwt)
             .Build();
 
         var response = await client.GetAsync("https://resource.example/data");
-        // Signature-Key: sig=jkt-jwt;jwt="<naming-jwt>";jkt="<thumbprint>"
+        // Signature-Key: sig=jkt-jwt;jwt="<jkt-s256+jwt>"
         """;
 
     public const string ParseChallenge = """
@@ -181,19 +182,19 @@ internal static class CodeSnippets
         """;
 
     public const string CallChainRetry = """
-        // Retry Orchestrator with the auth_token.
+        // Retry Concierge with the auth_token.
         // From our side this looks like a normal retry — the chaining
-        // happens server-side inside the Orchestrator:
-        //   1. Orchestrator validates our auth_token
+        // happens server-side inside the Concierge:
+        //   1. Concierge validates our auth_token
         //   2. Extracts it as upstream_token
-        //   3. Calls downstream WhoAmI with its own agent token
+        //   3. Calls downstream Calendar with its own agent token
         //   4. Exchanges at PS with upstream_token → nested act
-        //   5. Retries WhoAmI with chained auth_token → 200
+        //   5. Retries Calendar with chained auth_token → 200
         using var chainClient = new AAuthClientBuilder(key)
             .UseJwt(authToken) // present the auth_token directly
             .Build();
 
-        var response = await chainClient.GetAsync("https://orchestrator.example/");
+        var response = await chainClient.GetAsync("https://concierge.example/");
         // 200 → combined result with full delegation chain
         """;
 
@@ -248,12 +249,12 @@ internal static class CodeSnippets
         var governance = new AAuthGovernanceClient(
             signedClient, metadata, "https://ps.example");
         var session = await governance.ProposeMissionAsync(
-            new MissionProposal("Triage the user's inbox…")
+            new MissionProposal("Plan my weekend trip to Seattle.")
             {
                 Tools =
                 {
-                    new MissionTool("summarize"),
-                    new MissionTool("send_email"),
+                    new MissionTool("compare_options"),
+                    new MissionTool("add_to_calendar"),
                 },
             },
             new GovernanceOptions { OnInteractionRequired = SurfaceToUser });
@@ -281,7 +282,7 @@ internal static class CodeSnippets
         """;
 
     public const string MissionExchange = """
-        // The resource_token carries the mission claim; because (resource, whoami)
+        // The resource_token carries the mission claim; because (resource, trips.read)
         // is in the mission scope, the PS mints the auth_token SILENTLY.
         var authToken = await exchange.ExchangeAsync("https://ps.example", resourceToken);
         // Or, end-to-end: AAuthClientBuilder handles 401 → exchange → retry for you.
@@ -296,7 +297,7 @@ internal static class CodeSnippets
 
     public const string MissionElevatedChallenge = """
         // Same mission header, but the ELEVATED endpoint requires
-        // whoami:elevated_scope — a scope the mission never declared.
+        // trips.book — a scope the mission never declared.
         using var req = new HttpRequestMessage(HttpMethod.Get, elevatedUrl);
         req.Headers.Add(AAuthMissionHeader.Name,
             AAuthMissionHeader.FormatStructured(mission.Approver, mission.S256));
@@ -306,7 +307,7 @@ internal static class CodeSnippets
         """;
 
     public const string MissionElevatedExchange = """
-        // whoami:elevated_scope is OUTSIDE the mission's intent, so the PS
+        // trips.book is OUTSIDE the mission's intent, so the PS
         // cannot mint silently — it returns 202 and asks the user to decide.
         // (Out-of-mission scopes prompt; they are never auto-denied.)
         var authToken = await exchange.ExchangeAsync("https://ps.example", resourceToken,
@@ -331,14 +332,14 @@ internal static class CodeSnippets
         // Pre-approved tools never hit the network — the SDK short-circuits.
         // We kept the MissionTool reference from the proposal, so we ask via
         // tool.ToAction() rather than re-typing the action name.
-        var result = await session.RequestPermissionAsync(sendEmailTool.ToAction());
-        // result.IsGranted == true   (no PS call: send_email ∈ mission.ApprovedTools)
+        var result = await session.RequestPermissionAsync(addToCalendarTool.ToAction());
+        // result.IsGranted == true   (no PS call: add_to_calendar ∈ mission.ApprovedTools)
         """;
 
     public const string MissionPermissionPrompt = """
-        // delete_inbox is NOT pre-approved → the PS prompts the user.
+        // cancel_booking is NOT pre-approved → the PS prompts the user.
         var result = await session.RequestPermissionAsync(
-            new MissionAction("delete_inbox"),
+            new MissionAction("cancel_booking"),
             options: new GovernanceOptions { OnInteractionRequired = SurfaceToUser });
         // SDK POSTs /permission → 202; surfaces the link; polls for the decision.
         """;
@@ -348,24 +349,24 @@ internal static class CodeSnippets
         // unaffected by whatever the user chooses here.
         if (!result.IsGranted)
             throw new InvalidOperationException(result.Reason); // user denied
-        // On grant: run delete_inbox, then report it to the audit_endpoint.
-        await session.RecordAuditAsync(new MissionAction("delete_inbox"));
+        // On grant: run cancel_booking, then report it to the audit_endpoint.
+        await session.RecordAuditAsync(new MissionAction("cancel_booking"));
         """;
 
     public const string MissionInspect = """
         // One mission approval governed the whole session:
         //   gate 1  mission creation .... PROMPT
-        //   gate 2  whoami token ........ SILENT (in scope)
+        //   gate 2  trips.read token ........ SILENT (in scope)
         //   gate 3  elevated scope ...... PROMPT (out of mission scope)
-        //   gate 4  send_email tool ..... SILENT (pre-approved, local)
-        //   gate 5  delete_inbox action . PROMPT (out of scope)
+        //   gate 4  add_to_calendar tool ..... SILENT (pre-approved, local)
+        //   gate 5  cancel_booking action . PROMPT (out of scope)
         // The PS is the policy-enforcement point; the resource stays oblivious.
         """;
 
     // ── Combined mission + call chain (§Clarification Chat, §Call Chaining) ──
 
     public const string MissionChainClarify = """
-        // Requesting whoami:elevated_scope is OUT of the mission's intent, so the
+        // Requesting trips.book is OUT of the mission's intent, so the
         // PS opens a clarification chat BEFORE asking the user to decide.
         var session = governance.MissionSessionFor(mission);
         var authToken = await session.ExchangeAsync("https://ps.example", resourceToken,
@@ -374,7 +375,7 @@ internal static class CodeSnippets
                 // The SDK surfaces the PS's question and lets the agent answer.
                 OnClarificationRequired = (q, _) =>
                     Task.FromResult(ClarificationResponse.Respond(
-                        "This mission needs the full account history to triage the inbox.")),
+                        "Booking the trip needs permission to reserve and pay.")),
                 OnInteractionRequired = SurfaceToUser,
             });
         // Raw HTTP: POST /token → 202 + AAuth-Requirement: requirement=clarification
@@ -388,7 +389,7 @@ internal static class CodeSnippets
         req.Content = JsonContent.Create(new
         {
             clarification_response =
-                "This mission needs the full account history to triage the inbox.",
+                "Booking the trip needs permission to reserve and pay.",
         });
         var resp = await signedClient.SendAsync(req); // → 204 No Content
         // Now the agent surfaces {ps}/interaction?code={pendingId} for the user.
@@ -397,16 +398,16 @@ internal static class CodeSnippets
     public const string MissionChainForward = """
         // The SAME mission now governs a multi-agent CALL CHAIN. WithMission binds
         // the AAuth-Mission header; WithChallengeHandling threads the silent
-        // in-scope exchange; the Orchestrator forwards the mission downstream.
+        // in-scope exchange; the Concierge forwards the mission downstream.
         using var client = new AAuthClientBuilder(key)
             .As("https://ps.example", agentId).WithKid(kid)
             .WithPersonServer("https://ps.example")
             .WithMission(mission)
-            .WithChallengeHandling()      // (Orchestrator, orchestrate) is in scope
+            .WithChallengeHandling()      // (Concierge, concierge) is in scope
             .Build();
-        var resp = await client.GetAsync("https://orchestrator.example/mission");
-        // 200: { chain, upstream, orchestrator, downstream } — downstream is
-        // WhoAmI's mission-bound /jwt/mission result. NO prompt: every hop in scope.
+        var resp = await client.GetAsync("https://concierge.example/mission");
+        // 200: { chain, upstream, concierge, downstream } — downstream is
+        // Trips's mission-bound /trips result. NO prompt: every hop in scope.
         """;
 
     public const string MissionChainLog = """

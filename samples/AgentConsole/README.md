@@ -31,28 +31,30 @@ dotnet run --project samples/AgentConsole -- <url> --ap <agent-provider-url> [op
 ## Signing-mode → path mapping
 
 When the target URL has no path (or just `/`), AgentConsole appends the path
-that routes the WhoAmI sample (port 5000) to the matching verification
-pipeline:
+that routes to the matching verification pipeline. The pseudonymous and
+agent-identity modes target the **Profile** server (port 5000); the default
+three-party `jwt` mode targets the **Calendar** server (port 5001):
 
-| `--signing-mode` | Appended path | WhoAmI endpoint |
+| `--signing-mode` | Appended path | Server endpoint |
 |------------------|---------------|-----------------|
-| `hwk` | `/hwk` | Pseudonymous (signature only) |
-| `jkt-jwt` | `/jkt-jwt` | Pseudonymous, key delegation |
-| `jwks_uri` | `/jwks-uri` | Agent identity |
-| `jwt` _(default)_ | `/jwt` | Three-party baseline |
+| `hwk` | `/pseudonymous` | Profile :5000 — Pseudonymous (signature only) |
+| `jkt-jwt` | `/anchored` | Profile :5000 — Pseudonymous, key delegation |
+| `jwks_uri` | `/identified` | Profile :5000 — Agent identity |
+| `jwt` _(default)_ | `/events` | Calendar :5001 — Three-party baseline |
 
-To reach the elevated (`/jwt/admin`) or RBAC (`/jwt/roles`) endpoints, pass the
-explicit path — these are not auto-appended.
+To reach the elevated (`/events/write`), RBAC (`/events/admin`), or payment
+(`/wallet/charge`) endpoints, pass the explicit path — these are not
+auto-appended.
 
 ## Validated invocations
 
-Against the running WhoAmI (5000), MockAgentProvider (5301), and
-MockPersonServer (5100):
+Against the running Profile (5000), Calendar (5001), Wallet (5003),
+MockAgentProvider (5301), and MockPersonServer (5100):
 
 ```bash
 # Pseudonymous — HTTP signature only (no PS)
 dotnet run --project samples/AgentConsole -- \
-  http://localhost:5000/hwk --ap http://localhost:5301
+  http://localhost:5000/pseudonymous --ap http://localhost:5301
 
 # Pseudonymous, key delegation via naming JWT
 dotnet run --project samples/AgentConsole -- \
@@ -62,36 +64,41 @@ dotnet run --project samples/AgentConsole -- \
 dotnet run --project samples/AgentConsole -- \
   http://localhost:5000 --ap http://localhost:5301 --signing-mode jwks_uri
 
-# Three-party baseline — scope "whoami" (grant consent first)
+# Three-party baseline — scope "calendar.read" (grant consent first)
 dotnet run --project samples/AgentConsole -- \
-  http://localhost:5000 --ap http://localhost:5301 --ps http://localhost:5100
+  http://localhost:5001 --ap http://localhost:5301 --ps http://localhost:5100
 
-# Three-party, elevated scope "whoami:admin"
+# Three-party, elevated scope "calendar.write"
 dotnet run --project samples/AgentConsole -- \
-  http://localhost:5000/jwt/admin --ap http://localhost:5301 \
+  http://localhost:5001/events/write --ap http://localhost:5301 \
   --ps http://localhost:5100 --signing-mode jwt
 
-# Three-party, RBAC — PS asserts roles ["whoami-admin"], groups ["demo-users"]
+# Three-party, RBAC — PS asserts roles ["calendar.owner"], groups ["demo-users"]
 dotnet run --project samples/AgentConsole -- \
-  http://localhost:5000/jwt/roles --ap http://localhost:5301 \
+  http://localhost:5001/events/admin --ap http://localhost:5301 \
+  --ps http://localhost:5100 --signing-mode jwt
+
+# Four-party payment — scope "wallet.charge" (Access Server requires the wallet.payer role)
+dotnet run --project samples/AgentConsole -- \
+  http://localhost:5003/wallet/charge --ap http://localhost:5301 \
   --ps http://localhost:5100 --signing-mode jwt
 ```
 
 ## Granting consent
 
 MockPersonServer keys consent by `(agent, resource, scope)`. Grant it ahead of
-a three-party run (the `scope` field defaults to `whoami` if omitted):
+a three-party run (the `scope` field defaults to `calendar.read` if omitted):
 
 ```bash
-# Baseline / RBAC endpoints use scope "whoami"
+# Baseline / RBAC endpoints use scope "calendar.read"
 curl -X POST http://localhost:5100/admin/consent \
   -H 'content-type: application/json' \
-  -d '{"agent":"aauth:demo@ap.example","resource":"http://localhost:5000","scope":"whoami"}'
+  -d '{"agent":"aauth:demo@ap.example","resource":"http://localhost:5001","scope":"calendar.read"}'
 
-# The /jwt/admin endpoint requires the elevated scope
+# The /events/write endpoint requires the elevated scope
 curl -X POST http://localhost:5100/admin/consent \
   -H 'content-type: application/json' \
-  -d '{"agent":"aauth:demo@ap.example","resource":"http://localhost:5000","scope":"whoami:admin"}'
+  -d '{"agent":"aauth:demo@ap.example","resource":"http://localhost:5001","scope":"calendar.write"}'
 ```
 
 ## Enrollment-cache quirk

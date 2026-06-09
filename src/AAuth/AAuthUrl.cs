@@ -9,7 +9,7 @@ namespace AAuth;
 /// <remarks>
 /// The AAuth spec requires <c>https://</c> for issuer/audience/PS URLs.
 /// For local development the loopback <c>http://localhost</c> / <c>http://127.0.0.1</c>
-/// hosts are also accepted so the WhoAmI and AgentConsole samples can run
+/// hosts are also accepted so the resource-server and AgentConsole samples can run
 /// against the default Kestrel HTTP binding without a dev certificate. Production
 /// resources MUST still serve over HTTPS — there is no environment switch here;
 /// the loopback exemption is purely a function of <see cref="Uri.IsLoopback"/>.

@@ -141,7 +141,7 @@ app.MapAAuthAccessServer(new AAuthAccessServerOptions
 {
     Issuer               = asIssuer,
     SigningKeys          = new Dictionary<string, AAuthKey> { [AsKid] = asKey },
-    DefaultScope         = "whoami",
+    DefaultScope         = "wallet.read",
     TrustedPersonServers = trustedPersonServers,
 });
 ```
@@ -168,8 +168,8 @@ The reference [Mock Access Server](../../samples/MockAccessServer/README.md)
 ships a pluggable `IAccessPolicy`. The `keycloak` provider makes Keycloak the
 policy decision point: the AS adapter performs the AAuth crypto while Keycloak
 handles the interactive user login and the authorization decision (UMA
-`uma-ticket` grant). The realm models the resource scopes (`whoami`,
-`whoami:admin`) and an admin role.
+`uma-ticket` grant). The realm models the resource scopes (`wallet.read`,
+`wallet.charge`) and a payer role.
 
 See the [Mock Access Server README](../../samples/MockAccessServer/README.md)
 for the realm/client/resource/scope/policy setup and the claim mapping.

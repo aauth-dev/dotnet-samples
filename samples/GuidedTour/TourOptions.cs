@@ -66,8 +66,17 @@ public enum SigningMode
 /// </summary>
 public sealed class TourOptions
 {
-    /// <summary>Base URL of the WhoAmI resource server.</summary>
-    public string WhoAmIUrl { get; set; } = "http://localhost:5000";
+    /// <summary>Base URL of the Aria <b>Profile</b> resource server (identity-based access).</summary>
+    public string ProfileUrl { get; set; } = "http://localhost:5000";
+
+    /// <summary>Base URL of the Aria <b>Calendar</b> resource server (PS-asserted three-party).</summary>
+    public string CalendarUrl { get; set; } = "http://localhost:5001";
+
+    /// <summary>Base URL of the Aria <b>Trips</b> resource server (mission-aware three-party).</summary>
+    public string TripsUrl { get; set; } = "http://localhost:5002";
+
+    /// <summary>Base URL of the Aria <b>Wallet</b> resource server (four-party federated).</summary>
+    public string WalletUrl { get; set; } = "http://localhost:5003";
 
     /// <summary>
     /// Optional MockPersonServer URL. When set, the tour walks one of the
@@ -89,15 +98,15 @@ public sealed class TourOptions
     public string? AgentProviderUrl { get; set; }
 
     /// <summary>
-    /// Optional Orchestrator URL for the call-chain flow. When set, the
-    /// call-chain tour targets this URL instead of WhoAmI.
+    /// Optional Concierge URL for the call-chain flow. When set, the
+    /// call-chain tour targets this URL instead of the Calendar.
     /// </summary>
-    public string? OrchestratorUrl { get; set; }
+    public string? ConciergeUrl { get; set; }
 
     /// <summary>
     /// Optional Access Server URL for the four-party federated flow. When set,
     /// the Federated tour mode becomes selectable: the agent calls the
-    /// resource's <c>/federated</c> branch (whose resource token has
+    /// Wallet's <c>/wallet</c> branch (whose resource token has
     /// <c>aud</c> = this AS), the Person Server federates to the AS, and the
     /// AS mints the <c>aa-auth+jwt</c> (<c>dwk=aauth-access.json</c>).
     /// </summary>

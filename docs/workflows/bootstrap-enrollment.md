@@ -167,7 +167,7 @@ using var client = AAuthClientBuilder.Enrolled(key)
 
 ### Two-Key Refresh (jkt-jwt — key rotation)
 
-For agents using the `jkt-jwt` signing mode, the refresh flow uses **two keys**: the enrolled durable key for identity proof, and a fresh ephemeral key for signing HTTP requests. This enables key rotation without re-enrollment.
+For agents using the `jkt-jwt` signing mode, the refresh flow uses **two keys**: the enrolled durable key for identity proof, and a fresh ephemeral key for signing HTTP requests. This enables key rotation without re-enrollment. The naming JWT is self-issued per [`draft-hardt-httpbis-signature-key-04`](../../aauth-spec/draft-hardt-httpbis-signature-key-04.txt) §3.4: the durable public key travels in the JWT header and the issuer is its own thumbprint URN, so the AP verifies it self-anchored and then binds it to the enrolment record.
 
 ```mermaid
 sequenceDiagram
@@ -175,21 +175,21 @@ sequenceDiagram
     participant AP as Agent Provider
     Note over Agent: Token nearing expiry
     Agent->>Agent: Generate ephemeral Ed25519 key
-    Agent->>Agent: Build naming JWT (signed by durable key,<br/>embeds ephemeral key as cnf.jwk)
-    Agent->>AP: POST /refresh (signed with ephemeral key,<br/>Signature-Key: sig=jkt-jwt jwt=naming-jwt)
-    AP->>AP: Extract durable key thumbprint from naming JWT kid
-    AP->>AP: Verify naming JWT signature against enrolled durable key
-    AP->>AP: Verify HTTP signature against ephemeral key
+    Agent->>Agent: Build naming JWT (jkt-s256+jwt, signed by durable key,<br/>durable jwk in header, iss=urn:jkt:sha-256:&lt;thumbprint&gt;,<br/>ephemeral key as cnf.jwk)
+    Agent->>AP: POST /refresh (signed with ephemeral key,<br/>Signature-Key: sig=jkt-jwt;jwt="&lt;naming-jwt&gt;")
+    AP->>AP: Self-anchor — thumbprint(header jwk) == iss, verify naming JWT signature
+    AP->>AP: Look up enrolment by the durable key thumbprint (bind to record)
+    AP->>AP: Verify HTTP signature against ephemeral cnf.jwk
     AP-->>Agent: New aa-agent+jwt (cnf.jwk = ephemeral key)
 ```
 
 ```csharp
-// Spec: "The AP verifies the durable-key signature on the naming JWT,
-//        looks up the enrollment by the durable key's thumbprint"
+// Self-anchored verification (draft-04 §3.4), then the AP looks up the
+// enrolment by the durable key's thumbprint and binds it to the record.
 using var client = AAuthClientBuilder.Enrolled(key)
     .RefreshingFrom(apRefreshEndpoint, localKeyHandle)
     .WithKeyStore(keyStore)
-    .WithRefreshMode(RefreshMode.TwoKey, apIssuer)
+    .WithRefreshMode(RefreshMode.TwoKey)
     .Build();
 ```
 

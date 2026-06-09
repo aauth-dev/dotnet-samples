@@ -1,20 +1,26 @@
 import { test, expect } from '../../../tests/e2e/helpers/fixtures';
-import { waitForInteractive } from '../../../tests/e2e/helpers/blazor';
+import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/blazor';
 import { readResponseJson, expectStatus } from '../../../tests/e2e/helpers/json';
 
 /**
  * JKT-JWT — key-rotation 2-party flow. Three steps: enrol, two-key refresh
- * (generates an ephemeral key), then signed GET /jkt-jwt → 200.
- * Needs MockAgentProvider + WhoAmI.
+ * (generates an ephemeral key), then signed GET /anchored → 200.
+ * Needs MockAgentProvider + Profile.
  */
 test('jkt-jwt enrols, refreshes to an ephemeral key, then sends', async ({ page }) => {
-  await page.goto('/jkt-jwt');
+  await page.goto('/anchored');
   await expect(page.locator('h2')).toContainText('JKT-JWT');
   await waitForInteractive(page, 'button');
 
+  // Enrol — only present when not yet enrolled this circuit. Use clickAndConfirm
+  // so a dropped first click on a cold Blazor circuit is retried.
   const enrol = page.getByRole('button', { name: /Enrol with Agent Provider/ });
   if (await enrol.isVisible().catch(() => false)) {
-    await enrol.click();
+    await clickAndConfirm(
+      page,
+      'button:has-text("Enrol with Agent Provider")',
+      () => page.locator('.alert-info').isVisible(),
+    );
   }
   await expect(page.locator('.alert-info')).toContainText('Durable key thumbprint');
 
@@ -25,7 +31,7 @@ test('jkt-jwt enrols, refreshes to an ephemeral key, then sends', async ({ page 
 
   await expectStatus(page, 200);
   const json = (await readResponseJson(page)) as Record<string, unknown>;
-  expect(json.mode).toBe('pseudonymous');
+  expect(json.signingMode).toBe('pseudonymous');
   expect(json.scheme).toBe('jkt-jwt');
   // The resource identifies the agent by the DURABLE key thumbprint carried in
   // the naming JWT, even though the request was signed by the ephemeral key.

@@ -165,10 +165,10 @@
             <div class="label" style="left:@(Fmt(labelCenter))%;">@s.Number. @s.Title</div>
         </div>
 
-        @* 2) Inner work performed inside the target component (e.g. orchestrator). *@
+        @* 2) Inner work performed inside the target component (e.g. concierge). *@
         @if (s.SubSteps is { Count: > 0 } subs)
         {
-            var subsLabel = string.IsNullOrWhiteSpace(s.SubStepsLabel) ? "inside orchestrator" : s.SubStepsLabel;
+            var subsLabel = string.IsNullOrWhiteSpace(s.SubStepsLabel) ? "inside concierge" : s.SubStepsLabel;
             <div class="substeps" style="--substeps-label:'@subsLabel';">
                 @foreach (var sub in subs)
                 {

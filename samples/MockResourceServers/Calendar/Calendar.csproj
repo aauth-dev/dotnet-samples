@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\AAuth\AAuth.csproj" />
+    <ProjectReference Include="..\..\..\src\AAuth\AAuth.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

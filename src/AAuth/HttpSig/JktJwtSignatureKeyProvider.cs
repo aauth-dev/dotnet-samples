@@ -4,27 +4,26 @@ using AAuth.Crypto;
 namespace AAuth.HttpSig;
 
 /// <summary>
-/// Produces <c>Signature-Key: sig=jkt-jwt;jkt="...";jwt="..."</c> — the two-key
-/// delegation signing mode. The HTTP signature is made with the ephemeral key;
-/// a naming JWT (signed by the durable key) binds the ephemeral key's thumbprint.
+/// Produces <c>Signature-Key: sig=jkt-jwt;jwt="..."</c> — the self-issued
+/// two-key delegation signing mode (<c>draft-hardt-httpbis-signature-key-04</c>
+/// §3.4). The HTTP message signature is made with the ephemeral key (held by the
+/// signing handler); the naming JWT supplied here (signed by the durable key)
+/// embeds the durable public key and names the ephemeral key via <c>cnf.jwk</c>.
 /// </summary>
 public sealed class JktJwtSignatureKeyProvider : ISignatureKeyProvider
 {
-    private readonly IAAuthKey _ephemeralKey;
     private readonly Func<string> _namingJwtFactory;
 
-    public JktJwtSignatureKeyProvider(IAAuthKey ephemeralKey, Func<string> namingJwtFactory)
+    /// <summary>Create the provider.</summary>
+    /// <param name="namingJwtFactory">Supplies the current <c>jkt-s256+jwt</c> delegation JWT (regenerated per request as needed).</param>
+    public JktJwtSignatureKeyProvider(Func<string> namingJwtFactory)
     {
-        ArgumentNullException.ThrowIfNull(ephemeralKey);
         ArgumentNullException.ThrowIfNull(namingJwtFactory);
-        _ephemeralKey = ephemeralKey;
         _namingJwtFactory = namingJwtFactory;
     }
 
     public string GetSignatureKeyHeader()
     {
-        var jkt = _ephemeralKey.ComputeJwkThumbprint();
-        var jwt = _namingJwtFactory();
-        return SignatureKeyHeader.FormatJktJwt(jkt, jwt);
+        return SignatureKeyHeader.FormatJktJwt(_namingJwtFactory());
     }
 }

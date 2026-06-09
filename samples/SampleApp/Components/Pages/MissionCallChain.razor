@@ -17,6 +17,14 @@
 
 <h2>Mission Call Chain — one mission governs a clarification chat <em>and</em> a delegated chain</h2>
 
+<details class="alert alert-primary aria-narrative" open>
+    <summary>📖 What Aria is trying to do</summary>
+    Under a single trip-planning mission,
+    Aria (your AI travel assistant) first <em>clarifies</em> what you want, then <em>delegates</em> the work down a
+    chain of services to reach your <strong>Trips</strong> — and every step, the
+    clarification and each hop, is governed by the one mission you approved.
+</details>
+
 <p>
     This page joins the <strong>gates</strong> of the Mission demo with the <strong>hops</strong> of
     the Call Chain demo, combining three AAuth capabilities under a
@@ -32,8 +40,8 @@
     </li>
     <li>
         <strong>Mission-forwarded call chain</strong> (§Mission Context at Resources, §Call Chaining) —
-        the same mission is carried (<code>WithMission(...)</code>) to the Orchestrator, which forwards
-        the <code>AAuth-Mission</code> header to the downstream WhoAmI hop so the mission governs every hop.
+        the same mission is carried (<code>WithMission(...)</code>) to the Concierge, which forwards
+        the <code>AAuth-Mission</code> header to the downstream Trips hop so the mission governs every hop.
     </li>
     <li>
         <strong>Mission log</strong> (§Mission Log) — the PS-held, ordered trail of every governed
@@ -43,7 +51,7 @@
 
 <div class="alert alert-secondary">
     The elevated scope is <em>not</em> seeded in the mission's intent, so the PS runs a clarification
-    round before prompting. The orchestrate + whoami scopes <em>are</em> seeded in-scope, so the chain
+    round before prompting. The concierge + trips.read scopes <em>are</em> seeded in-scope, so the chain
     hops resolve silently — keeping the chain focused on mission <strong>forwarding</strong>, not consent.
     Each step is labelled <span class="badge bg-warning text-dark">prompt</span> (the user must decide)
     or <span class="badge bg-success">silent</span> (resolved without a screen).
@@ -55,7 +63,7 @@
         <pre><code class="language-csharp">// One mission, threaded through every step by the bound session.
 var governance = new AAuthGovernanceClient(signed, metadata, personServer, options);
 var session = await governance.ProposeMissionAsync(
-    new MissionProposal("Keep the inbox under control for an hour."));
+    new MissionProposal("Plan my weekend trip to Seattle."));
 var mission = session.Mission;
 
 // Out-of-mission elevated scope: the PS asks a question first. The SDK
@@ -71,16 +79,16 @@ var authToken = await exchange.ExchangeAsync(personServer, resourceToken,
             // sanitized (Blazor HTML-encodes it) before showing the user.
             SurfaceClarification(question.Clarification);
             return Task.FromResult(ClarificationResponse.Respond(
-                "This mission needs the full account history to triage the inbox."));
+                "Booking the trip needs permission to reserve and pay."));
         },
     });</code></pre>
     </div>
     <div class="col-md-6">
         <h5>Client Code — the mission-forwarded chain</h5>
-        <pre><code class="language-csharp">// Carry the SAME mission to the Orchestrator. WithMission attaches the
-// signed AAuth-Mission header; the mission-aware Orchestrator copies it
-// into its resource token, so the agent->orchestrator exchange is governed
-// by the mission. The Orchestrator then forwards the mission to its own
+        <pre><code class="language-csharp">// Carry the SAME mission to the Concierge. WithMission attaches the
+// signed AAuth-Mission header; the mission-aware Concierge copies it
+// into its resource token, so the agent->concierge exchange is governed
+// by the mission. The Concierge then forwards the mission to its own
 // downstream hop (§Mission Context at Resources, §Call Chaining).
 using var chain = AAuthClientBuilder.SelfIssuing(identity.Key)
     .As(identity.Issuer, identity.AgentId)
@@ -93,9 +101,9 @@ using var chain = AAuthClientBuilder.SelfIssuing(identity.Key)
         (url, code, ct) =&gt; SurfaceInteraction(url))
     .Build();
 
-// "/mission" is the Orchestrator's mission-aware twin of "/": it chains to
-// WhoAmI's "/jwt/mission" so the forwarded mission re-binds at the next hop.
-var response = await chain.GetAsync($"{orchestrator}/mission");</code></pre>
+// "/mission" is the Concierge's mission-aware twin of "/": it chains to
+// Trips' "/trips" so the forwarded mission re-binds at the next hop.
+var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
     </div>
 </div>
 
@@ -274,9 +282,9 @@ var response = await chain.GetAsync($"{orchestrator}/mission");</code></pre>
         ClearWaiting();
 
         var personServer = Config["AAuth:PersonServer"]!.TrimEnd('/');
-        var resourceOrigin = Config["AAuth:Resource"]!.TrimEnd('/');
-        var orchestratorUrl = Config["AAuth:Orchestrator"]!.TrimEnd('/');
-        var elevatedUrl = $"{resourceOrigin}/jwt/mission/elevated";
+        var resourceOrigin = Config["AAuth:Trips"]!.TrimEnd('/');
+        var conciergeUrl = Config["AAuth:Concierge"]!.TrimEnd('/');
+        var elevatedUrl = $"{resourceOrigin}/trips/book";
 
         try
         {
@@ -284,7 +292,7 @@ var response = await chain.GetAsync($"{orchestrator}/mission");</code></pre>
             // on out-of-scope tokens, and BOTH chain scopes seeded in-scope so the
             // chain hops resolve silently. The in-scope set is captured per mission
             // at approval, so it must be seeded BEFORE proposing.
-            await ConfigurePersonServerAsync(personServer, resourceOrigin, orchestratorUrl);
+            await ConfigurePersonServerAsync(personServer, resourceOrigin, conciergeUrl);
 
             _agentToken = MintAgentToken(personServer);
             var handler = new AAuthSigningHandler(_identity.Key, () => _agentToken)
@@ -305,9 +313,9 @@ var response = await chain.GetAsync($"{orchestrator}/mission");</code></pre>
             // ---- Step 1: propose the mission (PROMPT) ----------------------
             _currentGate = "Mission creation";
             var session = await governance.ProposeMissionAsync(new MissionProposal(
-                "Help the user keep their inbox under control for the next hour.")
+                "Plan my weekend trip to Seattle.")
             {
-                Tools = new[] { new MissionTool("summarize", "Summarize a thread") },
+                Tools = new[] { new MissionTool("compare_options", "Compare flight and hotel options") },
             });
             var mission = session.Mission;
             ClearWaiting();
@@ -333,13 +341,13 @@ var response = await chain.GetAsync($"{orchestrator}/mission");</code></pre>
 
             // ---- Step 3: mission-forwarded call chain (SILENT) -------------
             _currentGate = "Mission call chain";
-            var chainJson = await RunMissionChainAsync(personServer, orchestratorUrl, mission);
+            var chainJson = await RunMissionChainAsync(personServer, conciergeUrl, mission);
             _steps.Add(new Step(3, "Mission call chain", Prompted: false, Outcome: "granted",
-                Summary: "The same mission was carried to the Orchestrator (WithMission), which forwarded " +
-                         "the AAuth-Mission header to its downstream WhoAmI hop. Both hops were in-scope, " +
+                Summary: "The same mission was carried to the Concierge (WithMission), which forwarded " +
+                         "the AAuth-Mission header to its downstream Trips hop. Both hops were in-scope, " +
                          "so the chain resolved without a prompt — the mission governed every hop.",
                 Payload: chainJson,
-                PayloadLabel: "Chain result (Agent → Orchestrator → WhoAmI /jwt/mission)"));
+                PayloadLabel: "Chain result (Agent → Concierge → Trips /trips)"));
             await InvokeAsync(StateHasChanged);
 
             // ---- Mission log: the PS-held trail the mission accrued --------
@@ -412,7 +420,7 @@ var response = await chain.GetAsync($"{orchestrator}/mission");</code></pre>
                 // store it for HTML-encoded (sanitized) rendering only — never as
                 // raw markup (§Markdown — sanitize before rendering).
                 _clarificationAnswer =
-                    "This mission needs the full account history to triage the inbox.";
+                    "Booking the trip needs permission to reserve and pay.";
                 SurfaceClarification(question.Clarification);
                 return Task.FromResult(ClarificationResponse.Respond(_clarificationAnswer));
             },
@@ -427,12 +435,12 @@ var response = await chain.GetAsync($"{orchestrator}/mission");</code></pre>
         return await ok.Content.ReadFromJsonAsync<JsonObject>();
     }
 
-    // Carry the mission to the Orchestrator's mission-aware "/mission" endpoint.
+    // Carry the mission to the Concierge's mission-aware "/mission" endpoint.
     // WithMission attaches the signed AAuth-Mission header; the mission-aware
-    // Orchestrator copies it into its resource token (so the exchange is governed
-    // by the mission) and forwards it to the downstream WhoAmI hop.
+    // Concierge copies it into its resource token (so the exchange is governed
+    // by the mission) and forwards it to the downstream Trips hop.
     private async Task<string> RunMissionChainAsync(
-        string personServer, string orchestratorUrl, AAuth.Agent.Mission mission)
+        string personServer, string conciergeUrl, AAuth.Agent.Mission mission)
     {
         using var chain = AAuthClientBuilder.SelfIssuing(_identity.Key)
             .As(_identity.Issuer, _identity.AgentId)
@@ -454,7 +462,7 @@ var response = await chain.GetAsync($"{orchestrator}/mission");</code></pre>
             })
             .Build();
 
-        using var response = await chain.GetAsync($"{orchestratorUrl}/mission");
+        using var response = await chain.GetAsync($"{conciergeUrl}/mission");
         var raw = await response.Content.ReadAsStringAsync();
         try
         {
@@ -532,7 +540,7 @@ var response = await chain.GetAsync($"{orchestrator}/mission");</code></pre>
     }
 
     private async Task ConfigurePersonServerAsync(
-        string personServer, string resourceOrigin, string orchestratorUrl)
+        string personServer, string resourceOrigin, string conciergeUrl)
     {
         using var http = new HttpClient();
         try
@@ -547,11 +555,11 @@ var response = await chain.GetAsync($"{orchestrator}/mission");</code></pre>
                 approvePermission = true,
                 requireClarification = true,
                 clarificationQuestion =
-                    "Why does this mission need elevated access to your full account history?",
+                    "Why does this mission need to book and pay for a trip?",
                 inScope = new[]
                 {
-                    new { resource = orchestratorUrl, scope = "orchestrate" },
-                    new { resource = resourceOrigin, scope = "whoami" },
+                    new { resource = conciergeUrl, scope = "concierge" },
+                    new { resource = resourceOrigin, scope = "trips.read" },
                 },
             });
         }

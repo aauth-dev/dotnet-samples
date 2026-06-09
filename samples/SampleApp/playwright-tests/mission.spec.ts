@@ -9,14 +9,14 @@ import { approveInPopup, denyInPopup } from '../../../tests/e2e/helpers/consent'
  * gates in order against the same self-issued agent identity (§Missions):
  *
  *   1. Mission creation       — PROMPT (the user approves intent + tools).
- *   2. Resource token whoami  — SILENT (in scope: the seeded `whoami` fits the
+ *   2. Resource token trips.read — SILENT (in scope: the seeded `trips.read` fits the
  *                               mission's intent, so the PS mints silently, gate 2a).
- *   3. Resource token elevated— PROMPT (`whoami:elevated_scope` falls OUTSIDE the
+ *   3. Resource token elevated— PROMPT (`trips.book` falls OUTSIDE the
  *                               mission's intent, so the PS prompts, gate 3).
- *   4. Permission send_email  — SILENT (a pre-approved tool resolves locally).
- *   5. Permission delete_inbox— PROMPT (a non-approved tool, so the PS asks).
+ *   4. Permission add_to_calendar  — SILENT (a pre-approved tool resolves locally).
+ *   5. Permission cancel_booking— PROMPT (a non-approved tool, so the PS asks).
  *
- * On run, the page scripts the PS for an interactive demo and seeds `whoami`
+ * On run, the page scripts the PS for an interactive demo and seeds `trips.read`
  * in-scope, so the three out-of-mission gates each surface their own PS consent
  * page while the two in-mission gates resolve without a prompt. Each gate hits
  * the resource with a freshly-minted agent token (a new `jti`) so the resource's
@@ -67,7 +67,7 @@ test.describe('Mission (SampleApp)', () => {
   }
 
   test('three approvals drive all five gates to their expected outcomes', async ({ page, context }) => {
-    await page.goto('/mission');
+    await page.goto('/trips');
     await expect(page.locator('h2')).toContainText('Mission');
     await waitForInteractive(page, 'button.btn-primary');
 
@@ -81,7 +81,7 @@ test.describe('Mission (SampleApp)', () => {
     // Gate 3: approve the out-of-mission elevated scope (PROMPT).
     // Gate 3 approve → gate 3 card + silent gate 4 card (4 cards), then gate 5 prompts.
     await resolvePrompt(page, context, 'approve', 4);
-    // Gate 5: approve the non-pre-approved delete_inbox action (PROMPT).
+    // Gate 5: approve the non-pre-approved cancel_booking action (PROMPT).
     // Gate 5 approve → gate 5 card (5 cards); flow finishes.
     await resolvePrompt(page, context, 'approve', 5);
 
@@ -95,29 +95,29 @@ test.describe('Mission (SampleApp)', () => {
     await expect(gateCard(page, 1).locator('.badge.bg-warning')).toHaveText('prompt');
     await expect(gateCard(page, 1).locator('.badge.bg-success').last()).toHaveText('approved');
 
-    // Gate 2 — SILENT, granted (in-scope whoami).
-    await expect(gateCard(page, 2)).toContainText('whoami');
+    // Gate 2 — SILENT, granted (in-scope trips.read).
+    await expect(gateCard(page, 2)).toContainText('trips.read');
     await expect(gateCard(page, 2).locator('.badge.bg-success').first()).toHaveText('silent');
-    await expect(gateCard(page, 2)).toContainText('whoami');
+    await expect(gateCard(page, 2)).toContainText('trips.read');
 
     // Gate 3 — PROMPT, granted (out-of-mission elevated scope).
     await expect(gateCard(page, 3)).toContainText('elevated');
     await expect(gateCard(page, 3).locator('.badge.bg-warning')).toHaveText('prompt');
     await expect(gateCard(page, 3).locator('.badge.bg-success').last()).toHaveText('granted');
-    await expect(gateCard(page, 3)).toContainText('whoami:elevated_scope');
+    await expect(gateCard(page, 3)).toContainText('trips.book');
 
     // Gate 4 — SILENT, granted (pre-approved tool).
-    await expect(gateCard(page, 4)).toContainText('send_email');
+    await expect(gateCard(page, 4)).toContainText('add_to_calendar');
     await expect(gateCard(page, 4).locator('.badge.bg-success').first()).toHaveText('silent');
 
     // Gate 5 — PROMPT, granted (non-pre-approved tool).
-    await expect(gateCard(page, 5)).toContainText('delete_inbox');
+    await expect(gateCard(page, 5)).toContainText('cancel_booking');
     await expect(gateCard(page, 5).locator('.badge.bg-warning')).toHaveText('prompt');
     await expect(gateCard(page, 5).locator('.badge.bg-success').last()).toHaveText('granted');
   });
 
   test('deny at the elevated-scope gate records denied without affecting the prior token', async ({ page, context }) => {
-    await page.goto('/mission');
+    await page.goto('/trips');
     await expect(page.locator('h2')).toContainText('Mission');
     await waitForInteractive(page, 'button.btn-primary');
 
@@ -128,14 +128,14 @@ test.describe('Mission (SampleApp)', () => {
     await resolvePrompt(page, context, 'approve', 2);
     // Gate 3: DENY the out-of-mission elevated scope (4 cards: gate 3 denied + silent gate 4).
     await resolvePrompt(page, context, 'deny', 4);
-    // Gate 5: approve the delete_inbox action — the flow continues past the
+    // Gate 5: approve the cancel_booking action — the flow continues past the
     // denied gate because each gate is independent (5 cards).
     await resolvePrompt(page, context, 'approve', 5);
 
     await expect(page.getByRole('button', { name: /Running/ })).toHaveCount(0, { timeout: 30_000 });
     await expect(page.locator('.card')).toHaveCount(5);
 
-    // Gate 2 (the in-scope whoami token) was issued BEFORE the deny and is
+    // Gate 2 (the in-scope trips.read token) was issued BEFORE the deny and is
     // unaffected by it (§Missions: a permission/scope decision does not revoke
     // an earlier token).
     await expect(gateCard(page, 2).locator('.badge.bg-success').last()).toHaveText('granted');

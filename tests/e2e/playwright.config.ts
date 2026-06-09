@@ -58,11 +58,23 @@ export default defineConfig({
 
   webServer: [
     {
-      ...dotnetRun('samples/WhoAmI/WhoAmI.csproj'),
+      ...dotnetRun('samples/MockResourceServers/Profile/Profile.csproj'),
       url: 'http://localhost:5000/.well-known/aauth-resource.json',
     },
     {
-      ...dotnetRun('samples/Orchestrator/Orchestrator.csproj'),
+      ...dotnetRun('samples/MockResourceServers/Calendar/Calendar.csproj'),
+      url: 'http://localhost:5001/.well-known/aauth-resource.json',
+    },
+    {
+      ...dotnetRun('samples/MockResourceServers/Trips/Trips.csproj'),
+      url: 'http://localhost:5002/.well-known/aauth-resource.json',
+    },
+    {
+      ...dotnetRun('samples/MockResourceServers/Wallet/Wallet.csproj'),
+      url: 'http://localhost:5003/.well-known/aauth-resource.json',
+    },
+    {
+      ...dotnetRun('samples/Concierge/Concierge.csproj'),
       url: 'http://localhost:5200/.well-known/aauth-resource.json',
     },
     {

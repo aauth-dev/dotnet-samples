@@ -4,11 +4,25 @@
 
 <h1>AAuth SDK — Sample App</h1>
 
-<p>
-    This app demonstrates all AAuth signing modes and consent flows, making real
-    HTTP requests to the <strong>WhoAmI</strong> resource server. Each page is a
-    self-contained example showing one flow end-to-end.
-</p>
+<div class="alert alert-primary">
+    <h5 class="mb-2">Meet Aria 🧭</h5>
+    <p class="mb-2">
+        <strong>Aria</strong> is the AI travel assistant used throughout these demos. Like any
+        agent, Aria has to <em>prove who it is</em> and <em>get your permission</em> before it
+        touches anything that belongs to you — and AAuth is the protocol that lets it do so
+        safely. Each page below follows Aria as it works on your behalf across the four
+        <strong>Aria</strong> resource servers — <strong>Profile</strong> (your preferences),
+        <strong>Calendar</strong> (when you're free), <strong>Trips</strong> (browsing and
+        booking), and <strong>Wallet</strong> (paying).
+    </p>
+    <p class="mb-0 text-muted">
+        This <strong>Sample App</strong> is the “golden example”: each page is a small,
+        self-contained, copy-paste-ready demonstration of one flow end-to-end with real HTTP
+        requests. For a narrated, step-by-step visualisation of the same flows, see the
+        <strong>GuidedTour</strong> at <code>:5400</code>.
+    </p>
+</div>
+
 
 <div class="row row-cols-1 row-cols-md-2 g-4 mt-2">
     <div class="col">
@@ -24,7 +38,7 @@
                 <span class="badge bg-secondary">sig=hwk</span>
             </div>
             <div class="card-footer">
-                <a href="hwk" class="btn btn-outline-primary btn-sm">Open demo →</a>
+                <a href="pseudonymous" class="btn btn-outline-primary btn-sm">Open demo →</a>
             </div>
         </div>
     </div>
@@ -42,7 +56,7 @@
                 <span class="badge bg-secondary">sig=jwks_uri</span>
             </div>
             <div class="card-footer">
-                <a href="jwks-uri" class="btn btn-outline-primary btn-sm">Open demo →</a>
+                <a href="identified" class="btn btn-outline-primary btn-sm">Open demo →</a>
             </div>
         </div>
     </div>
@@ -61,7 +75,7 @@
                 <span class="badge bg-info text-dark">autonomous</span>
             </div>
             <div class="card-footer">
-                <a href="jwt" class="btn btn-outline-primary btn-sm">Open demo →</a>
+                <a href="calendar" class="btn btn-outline-primary btn-sm">Open demo →</a>
             </div>
         </div>
     </div>
@@ -80,7 +94,7 @@
                 <span class="badge bg-info text-dark">deferred</span>
             </div>
             <div class="card-footer">
-                <a href="deferred" class="btn btn-outline-primary btn-sm">Open demo →</a>
+                <a href="calendar-deferred" class="btn btn-outline-primary btn-sm">Open demo →</a>
             </div>
         </div>
     </div>
@@ -88,7 +102,7 @@
     <div class="col">
         <div class="card h-100">
             <div class="card-body">
-                <h5 class="card-title">� JKT-JWT — Key Rotation</h5>
+                <h5 class="card-title">🔄 JKT-JWT — Key Rotation</h5>
                 <p class="card-text">
                     Pseudonymous access with key delegation. A hardware-backed durable
                     key signs a naming JWT that delegates to an ephemeral key. Supports
@@ -99,7 +113,7 @@
                 <span class="badge bg-info text-dark">two-key</span>
             </div>
             <div class="card-footer">
-                <a href="jkt-jwt" class="btn btn-outline-primary btn-sm">Open demo →</a>
+                <a href="anchored" class="btn btn-outline-primary btn-sm">Open demo →</a>
             </div>
         </div>
     </div>
@@ -107,9 +121,9 @@
     <div class="col">
         <div class="card h-100">
             <div class="card-body">
-                <h5 class="card-title">�🔗 Call Chain — Multi-Agent</h5>
+                <h5 class="card-title">🔗 Call Chain — Multi-Agent</h5>
                 <p class="card-text">
-                    Multi-hop delegation: Agent&nbsp;A → Orchestrator → WhoAmI. Each hop
+                    Multi-hop delegation: Agent&nbsp;A → Concierge → Calendar. Each hop
                     authenticates independently. The PS builds a nested <code>act</code>
                     chain so the final resource sees the full delegation path.
                 </p>
@@ -138,7 +152,7 @@
                 <span class="badge bg-info text-dark">federated</span>
             </div>
             <div class="card-footer">
-                <a href="federated" class="btn btn-outline-primary btn-sm">Open demo →</a>
+                <a href="wallet" class="btn btn-outline-primary btn-sm">Open demo →</a>
             </div>
         </div>
     </div>
@@ -158,7 +172,7 @@
                 <span class="badge bg-info text-dark">governance</span>
             </div>
             <div class="card-footer">
-                <a href="mission" class="btn btn-outline-primary btn-sm">Open demo →</a>
+                <a href="trips" class="btn btn-outline-primary btn-sm">Open demo →</a>
             </div>
         </div>
     </div>
@@ -170,7 +184,7 @@
                 <p class="card-text">
                     One mission governs three seams at once: a <strong>clarification chat</strong>
                     on an out-of-mission scope, a <strong>mission-forwarded call chain</strong>
-                    (Agent → Orchestrator → WhoAmI), and the PS-held <strong>mission log</strong>.
+                    (Agent → Concierge → Calendar), and the PS-held <strong>mission log</strong>.
                 </p>
                 <span class="badge bg-danger">multi-hop</span>
                 <span class="badge bg-secondary">sig=jwt</span>
@@ -189,7 +203,9 @@
 <pre><code>make demo</code></pre>
 <p>
     This starts the Agent Provider (<code>:5301</code>), Person Server
-    (<code>:5100</code> with consent required), WhoAmI resource (<code>:5000</code>),
-    Orchestrator (<code>:5200</code>), and the stub Access Server (<code>:5500</code>),
+    (<code>:5100</code> with consent required), the four Aria resource servers
+    (Profile <code>:5000</code>, Calendar <code>:5001</code>, Trips
+    <code>:5002</code>, Wallet <code>:5003</code>), Concierge
+    (<code>:5200</code>), and the stub Access Server (<code>:5500</code>),
     then opens this app at <code>:5240</code> and the GuidedTour at <code>:5400</code>.
 </p>

@@ -4,7 +4,7 @@
 
 ## Overview
 
-Resources must handle all four signing modes (hwk, jwks_uri, jwt, jkt_jwt). The `ISignatureKeyResolver` interface resolves the `Signature-Key` header into a verified public key regardless of scheme.
+Resources must handle all four signing modes (hwk, jwks_uri, jwt, jkt-jwt). The `ISignatureKeyResolver` interface resolves the `Signature-Key` header into a verified public key regardless of scheme.
 
 ## ISignatureKeyResolver Interface
 
@@ -69,7 +69,7 @@ app.UseAAuthVerification(new AAuthVerificationOptions
 | `hwk` | Extracts inline public key from `Signature-Key` header (`jwk` parameter) |
 | `jwks_uri` | Fetches JWKS from the declared URI, finds key by `kid` |
 | `jwt` | Extracts `cnf.jwk` from agent token, fetches AP's JWKS to verify token signature |
-| `jkt_jwt` | Extracts `cnf.jwk` from naming JWT delegation to ephemeral key |
+| `jkt-jwt` | Self-anchored (draft-04 §3.4): derives the durable key from the naming JWT header `jwk`, checks `iss` equals its thumbprint URN, verifies the naming JWT signature, then returns the ephemeral `cnf.jwk` |
 
 ## HWK — Inline Public Key
 
@@ -84,12 +84,12 @@ After resolution, the parsed info is available via `HttpContext.Items[AAuthVerif
 ```csharp
 public sealed class ParsedSignatureKeyInfo
 {
-    public required string Scheme { get; init; }     // "hwk", "jwks_uri", "jwt", "jkt_jwt"
+    public required string Scheme { get; init; }     // "hwk", "jwks_uri", "jwt", "jkt-jwt"
     public IAAuthKey? ConfirmationKey { get; init; } // resolved public key
     public string? Jkt { get; init; }                // key thumbprint
     public string? JwksUri { get; init; }            // declared JWKS URI (jwks_uri scheme)
     public string? Kid { get; init; }                // key ID (jwks_uri scheme)
-    public string? Jwt { get; init; }                // raw agent token (jwt/jkt_jwt schemes)
+    public string? Jwt { get; init; }                // raw agent token (jwt/jkt-jwt schemes)
     public JsonObject? Header { get; init; }         // parsed JWT header
     public JsonObject? Payload { get; init; }        // parsed JWT payload (claims)
 }

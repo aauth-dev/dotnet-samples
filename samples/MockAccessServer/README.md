@@ -72,7 +72,7 @@ dotnet run --project samples/MockAccessServer
 | `AccessServer:Keycloak:ClientId` | `aauth-access-server` | Confidential client the AS authenticates as. |
 | `AccessServer:Keycloak:ClientSecret` | — | Client secret for the AS client. |
 | `AccessServer:Keycloak:ResourceServerAudience` | _(client id)_ | UMA audience for the `uma-ticket` grant. |
-| `AccessServer:Keycloak:ResourceName` | `whoami` | Keycloak authorization resource backing the WhoAmI scopes. |
+| `AccessServer:Keycloak:ResourceName` | `wallet` | Keycloak authorization resource backing the Wallet scopes. |
 
 ## Keycloak policy engine (four-party demo)
 
@@ -83,21 +83,21 @@ authorization decision.
 The realm import at `keycloak/realm-aauth.json` defines:
 
 - Client `aauth-access-server` (confidential, authorization services enabled).
-- Resource `whoami` with scopes `whoami` and `whoami:admin`.
-- Base scope `whoami` granted to any authenticated user.
-- Elevated scope `whoami:admin` granted only to users with the `whoami-admin`
+- Resource `wallet` with scopes `wallet.read` and `wallet.charge`.
+- Base scope `wallet.read` granted to any authenticated user.
+- Elevated scope `wallet.charge` granted only to users with the `wallet.payer`
   realm role.
-- Two login users: `demo`/`demo` (has `whoami-admin`) and `guest`/`guest`.
+- Two login users: `demo`/`demo` (has `wallet.payer`) and `guest`/`guest`.
 
 ### Demo credentials
 
 | Where | Username | Password | Notes |
 | --- | --- | --- | --- |
-| Keycloak login (browser) | `demo` | `demo` | Has the `whoami-admin` role -> full access. |
-| Keycloak login (browser) | `guest` | `guest` | No admin role -> limited access. |
+| Keycloak login (browser) | `demo` | `demo` | Has the `wallet.payer` role -> can charge the wallet. |
+| Keycloak login (browser) | `guest` | `guest` | No payer role -> read-only access. |
 | Keycloak admin console | `admin` | `admin` | `http://localhost:8080/admin` (realm management). |
 
-Run the whole four-party demo (Keycloak + WhoAmI + PS + AP + AS) with:
+Run the whole four-party demo (Keycloak + Wallet + PS + AP + AS) with:
 
 ```bash
 make demo-keycloak

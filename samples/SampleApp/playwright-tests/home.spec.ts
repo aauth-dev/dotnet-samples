@@ -13,11 +13,11 @@ test.describe('Home', () => {
     await expect(page.locator('h1')).toHaveText('AAuth SDK — Sample App');
 
     const expected: Array<[string, string]> = [
-      ['HWK', 'hwk'],
-      ['JWKS URI', 'jwks-uri'],
-      ['JWT', 'jwt'],
-      ['Deferred', 'deferred'],
-      ['JKT-JWT', 'jkt-jwt'],
+      ['HWK', 'pseudonymous'],
+      ['JWKS URI', 'identified'],
+      ['JWT', 'calendar'],
+      ['Deferred', 'calendar-deferred'],
+      ['JKT-JWT', 'anchored'],
       ['Call Chain', 'call-chain'],
     ];
 
@@ -26,6 +26,16 @@ test.describe('Home', () => {
       await expect(card).toBeVisible();
       await expect(card.locator(`a[href="${href}"]`)).toBeVisible();
     }
+  });
+
+  test('introduces Aria and the Sample App role', async ({ page }) => {
+    const intro = page.locator('.alert-primary');
+    await expect(intro).toContainText('Meet Aria');
+    await expect(intro).toContainText('AI travel assistant');
+    // The four Aria servers and the golden-example role are explained.
+    await expect(intro).toContainText('Profile');
+    await expect(intro).toContainText('Wallet');
+    await expect(intro).toContainText('golden example');
   });
 
   test('shows the prerequisites block', async ({ page }) => {

@@ -29,7 +29,6 @@ public sealed class EnrolledBuilder
     private string? _localKeyHandle;
     private IKeyStore? _keyStore;
     private RefreshMode _refreshMode = RefreshMode.SingleKey;
-    private string? _apIssuer;
 
     internal EnrolledBuilder(IAAuthKey key)
     {
@@ -64,11 +63,9 @@ public sealed class EnrolledBuilder
     /// Set the refresh mode. Default is <see cref="RefreshMode.SingleKey"/>.
     /// </summary>
     /// <param name="mode">Refresh mode to use.</param>
-    /// <param name="apIssuer">AP issuer URL (required for <see cref="RefreshMode.TwoKey"/>).</param>
-    public EnrolledBuilder WithRefreshMode(RefreshMode mode, string? apIssuer = null)
+    public EnrolledBuilder WithRefreshMode(RefreshMode mode)
     {
         _refreshMode = mode;
-        _apIssuer = apIssuer;
         return this;
     }
 
@@ -148,7 +145,7 @@ public sealed class EnrolledBuilder
 
         var refresher = AgentProviderTokenRefresher.Create(_refreshEndpoint, _localKeyHandle)
             .WithKeyStore(_keyStore ?? FileKeyStore.Default())
-            .WithRefreshMode(_refreshMode, _apIssuer)
+            .WithRefreshMode(_refreshMode)
             .Build();
 
         return new AAuthClientBuilder(_key)

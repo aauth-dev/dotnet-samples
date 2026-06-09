@@ -1,14 +1,14 @@
 using System.Collections.Concurrent;
 
-namespace Orchestrator;
+namespace Concierge;
 
 /// <summary>
-/// Demo-only in-memory store of interaction-chained requests the Orchestrator
+/// Demo-only in-memory store of interaction-chained requests the Concierge
 /// has deferred back to its caller (AAuth protocol §Interaction Chaining).
 /// </summary>
 /// <remarks>
-/// <para>When the Orchestrator's downstream token exchange returns
-/// <c>202 requirement=interaction</c>, the Orchestrator (which has no user of
+/// <para>When the Concierge's downstream token exchange returns
+/// <c>202 requirement=interaction</c>, the Concierge (which has no user of
 /// its own) cannot relay the interaction. Instead it persists an entry here,
 /// re-emits its <em>own</em> <c>202</c> to the caller with
 /// <c>Location=/pending/{id}</c>, and passes through the downstream PS's
@@ -25,6 +25,7 @@ public sealed class PendingStore
         string UpstreamToken,
         string InteractionUrl,
         string InteractionCode,
+        string DownstreamBase,
         string DownstreamPath,
         string PendingPrefix);
 
@@ -33,9 +34,10 @@ public sealed class PendingStore
     /// <summary>
     /// Create a pending entry capturing the upstream auth token (used to
     /// re-drive the chained call on each poll) and the pass-through PS
-    /// interaction <c>url</c> + <c>code</c>. <paramref name="downstreamPath"/>
-    /// is the downstream resource path re-driven on each poll (e.g. <c>/jwt</c>
-    /// or the mission-aware <c>/jwt/mission</c>); <paramref name="pendingPrefix"/>
+    /// interaction <c>url</c> + <c>code</c>. <paramref name="downstreamBase"/> +
+    /// <paramref name="downstreamPath"/> are the downstream resource origin and
+    /// path re-driven on each poll (e.g. Calendar <c>/events</c> or the
+    /// mission-aware Trips <c>/trips</c>); <paramref name="pendingPrefix"/>
     /// is the caller-facing poll route prefix (e.g. <c>/pending</c> or
     /// <c>/mission-pending</c>).
     /// </summary>
@@ -43,12 +45,13 @@ public sealed class PendingStore
         string upstreamToken,
         string interactionUrl,
         string interactionCode,
-        string downstreamPath = "/jwt",
+        string downstreamBase = "http://localhost:5001",
+        string downstreamPath = "/events",
         string pendingPrefix = "/pending")
     {
         var id = Guid.NewGuid().ToString("N");
         var entry = new Entry(
-            id, upstreamToken, interactionUrl, interactionCode, downstreamPath, pendingPrefix);
+            id, upstreamToken, interactionUrl, interactionCode, downstreamBase, downstreamPath, pendingPrefix);
         _entries[id] = entry;
         return entry;
     }

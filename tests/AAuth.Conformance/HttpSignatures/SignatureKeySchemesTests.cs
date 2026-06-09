@@ -36,11 +36,11 @@ public class SignatureKeySchemesTests
         Assert.Equal("sig=jwks_uri;uri=\"https://example.com/.well-known/jwks.json\";kid=\"key-1\"", header);
     }
 
-    [Fact(DisplayName = "§4 — jkt-jwt scheme formats with jkt and jwt parameters")]
+    [Fact(DisplayName = "§4 — jkt-jwt scheme formats with a single jwt parameter")]
     public void JktJwtScheme_FormatsCorrectly()
     {
-        var header = SignatureKeyHeader.FormatJktJwt("thumbprint123", "eyJ.payload.sig");
-        Assert.Equal("sig=jkt-jwt;jkt=\"thumbprint123\";jwt=\"eyJ.payload.sig\"", header);
+        var header = SignatureKeyHeader.FormatJktJwt("eyJ.payload.sig");
+        Assert.Equal("sig=jkt-jwt;jwt=\"eyJ.payload.sig\"", header);
     }
 
     [Fact(DisplayName = "§4 — ParseAny handles jwt scheme")]
@@ -90,25 +90,34 @@ public class SignatureKeySchemesTests
         Assert.Equal("kid1", info.Kid);
     }
 
-    [Fact(DisplayName = "§4 — ParseAny handles jkt-jwt scheme")]
+    [Fact(DisplayName = "§4 — ParseAny handles jkt-jwt scheme (self-issued naming JWT)")]
     public void ParseAny_JktJwtScheme()
     {
-        var key = AAuthKey.Generate();
-        var agentToken = new AAuth.Tokens.AgentTokenBuilder
-        {
-            Issuer = "https://ap.example",
-            Subject = "aauth:test@example.com",
-            Key = key,
-            KeyId = "k1",
-            PersonServer = "https://ps.example",
-        }.Build();
-        var jkt = key.ComputeJwkThumbprint();
-        var headerValue = SignatureKeyHeader.FormatJktJwt(jkt, agentToken);
+        var durableKey = AAuthKey.Generate();
+        var ephemeralKey = AAuthKey.Generate();
+        var namingJwt = AAuth.Agent.NamingJwtBuilder.Build(durableKey, ephemeralKey);
+        var headerValue = SignatureKeyHeader.FormatJktJwt(namingJwt);
 
         var info = SignatureKeyParser.ParseAny(headerValue);
         Assert.Equal("jkt-jwt", info.Scheme);
-        Assert.Equal(jkt, info.Jkt);
+        // The reported pseudonym is the DURABLE key's thumbprint (§7.1).
+        Assert.Equal(durableKey.ComputeJwkThumbprint(), info.Jkt);
+        // The confirmation key is the ephemeral key (cnf.jwk).
+        Assert.NotNull(info.ConfirmationKey);
+        Assert.Equal(ephemeralKey.ComputeJwkThumbprint(), info.ConfirmationKey.ComputeJwkThumbprint());
         Assert.NotNull(info.Jwt);
         Assert.NotNull(info.Payload);
+    }
+
+    [Fact(DisplayName = "§3.4 — ParseAny rejects a jkt-jwt header carrying a stray jkt parameter")]
+    public void ParseAny_JktJwtScheme_RejectsStrayJktParameter()
+    {
+        var durableKey = AAuthKey.Generate();
+        var ephemeralKey = AAuthKey.Generate();
+        var namingJwt = AAuth.Agent.NamingJwtBuilder.Build(durableKey, ephemeralKey);
+        // The retired non-conformant format carried a jkt parameter.
+        var headerValue = $"sig=jkt-jwt;jkt=\"{ephemeralKey.ComputeJwkThumbprint()}\";jwt=\"{namingJwt}\"";
+
+        Assert.Throws<AAuthVerificationException>(() => SignatureKeyParser.ParseAny(headerValue));
     }
 }

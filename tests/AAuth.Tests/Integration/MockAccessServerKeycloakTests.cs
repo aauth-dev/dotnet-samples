@@ -29,33 +29,33 @@ namespace AAuth.Tests.Integration;
 ///      exchanges the code and asks Keycloak for the uma-ticket decision).
 ///   3. The PS polls <c>/pending/{id}</c> → <c>200 auth_token</c> (allow) or
 ///      <c>403 denied</c> (deny), mirroring the PS deferred shape.
-/// The stub Keycloak grants <c>whoami</c> to anyone and <c>whoami:admin</c>
-/// only when the claim_token carries the <c>whoami-admin</c> role.
+/// The stub Keycloak grants <c>wallet.read</c> to anyone and <c>wallet.charge</c>
+/// only when the claim_token carries the <c>wallet.payer</c> role.
 /// </summary>
 public class MockAccessServerKeycloakTests
 {
     private const string AsIssuer = "https://as.test";
     private const string PsIssuer = "https://ps.test";
     private const string ApIssuer = "https://ap.test";
-    private const string ResourceUrl = "https://whoami.test";
+    private const string ResourceUrl = "https://wallet.test";
     private const string AdminAgentId = "aauth:demo@ap.test";  // admin by demo convention.
     private const string GuestAgentId = "aauth:guest@ap.test"; // non-admin.
 
     private const string PsKid = "ps-1";
     private const string ApKid = "ap-1";
-    private const string ResourceKid = "whoami-1";
+    private const string ResourceKid = "wallet-1";
 
     private static readonly AAuthKey PsKey = AAuthKey.Generate();
     private static readonly AAuthKey ApKey = AAuthKey.Generate();
     private static readonly AAuthKey ResourceKey = AAuthKey.Generate();
 
     [Fact]
-    public async Task InteractiveFlow_GrantsWhoami_AfterKeycloakLogin()
+    public async Task InteractiveFlow_GrantsWalletRead_AfterKeycloakLogin()
     {
         using var factory = BuildFactory();
 
         // 1. PS POSTs /token → expect 202 requirement=interaction.
-        var pendingPath = await StartInteractionAsync(factory, GuestAgentId, "whoami");
+        var pendingPath = await StartInteractionAsync(factory, GuestAgentId, "wallet.read");
 
         // 2. The user completes the Keycloak login/consent round-trip.
         await CompleteCallbackAsync(factory, pendingPath);
@@ -71,7 +71,7 @@ public class MockAccessServerKeycloakTests
         Assert.Equal(AuthTokenBuilder.AccessDwk, (string?)payload["dwk"]);
         Assert.Equal(AsIssuer, (string?)payload["iss"]);
         Assert.Equal(ResourceUrl, (string?)payload["aud"]);
-        Assert.Equal("whoami", (string?)payload["scope"]);
+        Assert.Equal("wallet.read", (string?)payload["scope"]);
     }
 
     [Fact]
@@ -79,7 +79,7 @@ public class MockAccessServerKeycloakTests
     {
         using var factory = BuildFactory();
 
-        var pendingPath = await StartInteractionAsync(factory, AdminAgentId, "whoami:admin");
+        var pendingPath = await StartInteractionAsync(factory, AdminAgentId, "wallet.charge");
         await CompleteCallbackAsync(factory, pendingPath);
 
         using var signed = BuildPsSignedClient(factory);
@@ -89,7 +89,7 @@ public class MockAccessServerKeycloakTests
 
         var body = await poll.Content.ReadFromJsonAsync<JsonObject>();
         var payload = DecodePayload((string?)body!["auth_token"]);
-        Assert.Equal("whoami:admin", (string?)payload["scope"]);
+        Assert.Equal("wallet.charge", (string?)payload["scope"]);
     }
 
     [Fact]
@@ -98,8 +98,8 @@ public class MockAccessServerKeycloakTests
         using var factory = BuildFactory();
 
         // Guest agent requesting the elevated scope: Keycloak denies because
-        // the claim_token carries no whoami-admin role.
-        var pendingPath = await StartInteractionAsync(factory, GuestAgentId, "whoami:admin");
+        // the claim_token carries no wallet.payer role.
+        var pendingPath = await StartInteractionAsync(factory, GuestAgentId, "wallet.charge");
         await CompleteCallbackAsync(factory, pendingPath);
 
         using var signed = BuildPsSignedClient(factory);
@@ -120,7 +120,7 @@ public class MockAccessServerKeycloakTests
         var response = await signed.PostAsJsonAsync("/token", new JsonObject
         {
             ["agent_token"] = BuildAgentToken(agentKey, GuestAgentId),
-            ["resource_token"] = BuildResourceToken(agentKey, AsIssuer, GuestAgentId, "whoami"),
+            ["resource_token"] = BuildResourceToken(agentKey, AsIssuer, GuestAgentId, "wallet.read"),
         });
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -170,7 +170,7 @@ public class MockAccessServerKeycloakTests
             b.UseSetting("AccessServer:Keycloak:Authority", "http://localhost:18080/realms/aauth");
             b.UseSetting("AccessServer:Keycloak:ClientId", "aauth-access-server");
             b.UseSetting("AccessServer:Keycloak:ClientSecret", "test-secret");
-            b.UseSetting("AccessServer:Keycloak:ResourceName", "whoami");
+            b.UseSetting("AccessServer:Keycloak:ResourceName", "wallet");
             b.ConfigureServices(services =>
             {
                 WireDiscovery(services);
@@ -240,8 +240,8 @@ public class MockAccessServerKeycloakTests
                 "ps.test/.well-known/jwks.json" => Jwks(PsKey, PsKid),
                 "ap.test/.well-known/aauth-agent.json" => Metadata(ApIssuer),
                 "ap.test/.well-known/jwks.json" => Jwks(ApKey, ApKid),
-                "whoami.test/.well-known/aauth-resource.json" => Metadata(ResourceUrl),
-                "whoami.test/.well-known/jwks.json" => Jwks(ResourceKey, ResourceKid),
+                "wallet.test/.well-known/aauth-resource.json" => Metadata(ResourceUrl),
+                "wallet.test/.well-known/jwks.json" => Jwks(ResourceKey, ResourceKid),
                 _ => null,
             };
 
@@ -273,8 +273,8 @@ public class MockAccessServerKeycloakTests
     /// <summary>
     /// Stand-in for Keycloak's token endpoint. Handles the authorization-code
     /// exchange (returns a fake access token) and the <c>uma-ticket</c>
-    /// decision request (grants <c>whoami</c>; grants <c>whoami:admin</c> only
-    /// when the pushed claim_token carries the <c>whoami-admin</c> role).
+    /// decision request (grants <c>wallet.read</c>; grants <c>wallet.charge</c> only
+    /// when the pushed claim_token carries the <c>wallet.payer</c> role).
     /// </summary>
     private sealed class StubKeycloakHandler : HttpMessageHandler
     {
@@ -292,7 +292,7 @@ public class MockAccessServerKeycloakTests
             if (grantType == "urn:ietf:params:oauth:grant-type:uma-ticket")
             {
                 var permission = form.GetValueOrDefault("permission") ?? "";
-                var elevated = permission.Contains(":", StringComparison.Ordinal);
+                var elevated = permission.Contains("wallet.charge", StringComparison.Ordinal);
                 var hasAdminRole = HasAdminRole(form.GetValueOrDefault("claim_token"));
                 return (!elevated || hasAdminRole)
                     ? Json(HttpStatusCode.OK, new JsonObject { ["result"] = true })
@@ -320,7 +320,7 @@ public class MockAccessServerKeycloakTests
 
                 foreach (var role in roles)
                 {
-                    if ((string?)role == "whoami-admin")
+                    if ((string?)role == "wallet.payer")
                     {
                         return true;
                     }

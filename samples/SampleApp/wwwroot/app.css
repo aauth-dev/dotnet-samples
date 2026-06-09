@@ -58,3 +58,15 @@ h1:focus {
 .form-floating > .form-control-plaintext:focus::placeholder, .form-floating > .form-control:focus::placeholder {
     text-align: start;
 }
+
+/* Collapsible "What Aria is trying to do" narrative callouts. */
+details.aria-narrative > summary {
+    cursor: pointer;
+    font-weight: 600;
+    user-select: none;
+    list-style-position: inside;
+}
+
+details.aria-narrative[open] > summary {
+    margin-bottom: 0.5rem;
+}

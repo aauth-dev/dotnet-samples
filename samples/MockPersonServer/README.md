@@ -94,7 +94,7 @@ dotnet run --project samples/MockPersonServer
 # → http://localhost:5100
 ```
 
-Pair it with `samples/WhoAmI` (configured with `AAuth:Issuer=http://localhost:5000`)
+Pair it with `samples/MockResourceServers/Calendar` (configured with `AAuth:Issuer=http://localhost:5001`)
 and exercise the three-party flow with `samples/AgentConsole`:
 
 ```bash
@@ -103,12 +103,12 @@ ASPNETCORE_URLS=http://localhost:5100 \
   dotnet run --project samples/MockPersonServer
 
 # Terminal 2
-ASPNETCORE_URLS=http://localhost:5000 \
-  dotnet run --project samples/WhoAmI
+ASPNETCORE_URLS=http://localhost:5001 \
+  dotnet run --project samples/MockResourceServers/Calendar
 
 # Terminal 3
 dotnet run --project samples/AgentConsole -- \
-  http://localhost:5000 --ap http://localhost:5301 --ps http://localhost:5100
+  http://localhost:5001 --ap http://localhost:5301 --ps http://localhost:5100
 ```
 
 ## Configuration

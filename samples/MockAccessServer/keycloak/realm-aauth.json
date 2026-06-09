@@ -7,8 +7,8 @@
   "roles": {
     "realm": [
       {
-        "name": "whoami-admin",
-        "description": "Grants the elevated whoami:admin scope at the Access Server."
+        "name": "wallet.payer",
+        "description": "Grants the elevated wallet.charge scope at the Access Server."
       }
     ]
   },
@@ -34,7 +34,7 @@
         }
       ],
       "realmRoles": [
-        "whoami-admin"
+        "wallet.payer"
       ],
       "groups": [
         "/demo-users"
@@ -64,7 +64,7 @@
     {
       "clientId": "aauth-access-server",
       "name": "AAuth Access Server",
-      "description": "Confidential client the .NET AS adapter authenticates as; hosts the WhoAmI authorization resource and policies.",
+      "description": "Confidential client the .NET AS adapter authenticates as; hosts the Wallet authorization resource and policies.",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
@@ -89,18 +89,18 @@
         "decisionStrategy": "AFFIRMATIVE",
         "resources": [
           {
-            "name": "whoami",
-            "displayName": "WhoAmI resource",
+            "name": "wallet",
+            "displayName": "Wallet resource",
             "ownerManagedAccess": false,
             "scopes": [
-              { "name": "whoami" },
-              { "name": "whoami:admin" }
+              { "name": "wallet.read" },
+              { "name": "wallet.charge" }
             ]
           }
         ],
         "scopes": [
-          { "name": "whoami" },
-          { "name": "whoami:admin" }
+          { "name": "wallet.read" },
+          { "name": "wallet.charge" }
         ],
         "policies": [
           {
@@ -114,37 +114,37 @@
             }
           },
           {
-            "name": "whoami-admin-role",
-            "description": "Requires the realm role whoami-admin.",
+            "name": "wallet-payer-role",
+            "description": "Requires the realm role wallet.payer.",
             "type": "role",
             "logic": "POSITIVE",
             "decisionStrategy": "UNANIMOUS",
             "config": {
-              "roles": "[{\"id\":\"whoami-admin\",\"required\":true}]"
+              "roles": "[{\"id\":\"wallet.payer\",\"required\":true}]"
             }
           },
           {
-            "name": "whoami-permission",
-            "description": "Base whoami scope: any authenticated user.",
+            "name": "wallet-read-permission",
+            "description": "Base wallet.read scope: any authenticated user.",
             "type": "scope",
             "logic": "POSITIVE",
             "decisionStrategy": "AFFIRMATIVE",
             "config": {
-              "resources": "[\"whoami\"]",
-              "scopes": "[\"whoami\"]",
+              "resources": "[\"wallet\"]",
+              "scopes": "[\"wallet.read\"]",
               "applyPolicies": "[\"any-authenticated-client\"]"
             }
           },
           {
-            "name": "whoami-admin-permission",
-            "description": "Elevated whoami:admin scope: requires the whoami-admin role.",
+            "name": "wallet-charge-permission",
+            "description": "Elevated wallet.charge scope: requires the wallet.payer role.",
             "type": "scope",
             "logic": "POSITIVE",
             "decisionStrategy": "UNANIMOUS",
             "config": {
-              "resources": "[\"whoami\"]",
-              "scopes": "[\"whoami:admin\"]",
-              "applyPolicies": "[\"whoami-admin-role\"]"
+              "resources": "[\"wallet\"]",
+              "scopes": "[\"wallet.charge\"]",
+              "applyPolicies": "[\"wallet-payer-role\"]"
             }
           }
         ]

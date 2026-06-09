@@ -140,7 +140,7 @@ needed:
 
 ```csharp
 var session = await governance.ProposeMissionAsync(
-    new MissionProposal("Reconcile last month's invoices."),
+    new MissionProposal("Plan my weekend trip to Seattle."),
     new GovernanceOptions
     {
         MaxClarificationRounds = 3,

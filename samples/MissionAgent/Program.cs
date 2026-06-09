@@ -31,7 +31,7 @@ using AAuth.Tokens;
 //   gate 3  out of scope              -> the user is prompted to decide
 //
 // This sample drives the full lifecycle against the live mock servers:
-//   MockAgentProvider (:5301) -> MockPersonServer (:5100) -> WhoAmI (:5000)
+//   MockAgentProvider (:5301) -> MockPersonServer (:5100) -> Trips (:5002)
 //
 // Run the three servers first (see samples/MissionAgent/README.md), then:
 //   dotnet run --project samples/MissionAgent
@@ -46,26 +46,26 @@ const string Usage =
     "Usage: MissionAgent [--ap <url>] [--ps <url>] [--resource <url>] [--sub <agent-id>]\n"
     + "                   [--mission-approved <scope>]... [--auto]";
 
-// The scope WhoAmI's /jwt/mission resource demands (and therefore the scope the
+// The scope the Trips `/trips` resource demands (and therefore the scope the
 // PS gates the token request on). It is mission-approved by default, so steps
 // 3-4 resolve silently (gate 2a - InScope).
-const string ResourceScope = "whoami";
+const string ResourceScope = "trips.read";
 
-// The elevated scope WhoAmI's /jwt/mission/elevated resource demands. It is
+// The elevated scope the Trips `/trips/book` resource demands. It is
 // deliberately NOT part of the mission's intent, so requesting it prompts the
 // user (step 5) unless declared mission-approved as in-scope.
-const string ElevatedScope = "whoami:elevated_scope";
+const string ElevatedScope = "trips.book";
 
 string apUrl = "http://localhost:5301";
 string personServer = "http://localhost:5100";
-string resourceUrl = "http://localhost:5000/jwt/mission";
+string resourceUrl = "http://localhost:5002/trips";
 string subject = "aauth:mission-demo@ap.example";
 bool interactive = true;
 // Scopes declared as within the mission's intent up front (§Agent Token Request,
 // gate 2a). A seeded (resource, scope) pair lets that resource access resolve
 // *silently* (reason = InScope) instead of prompting. By default the mission
-// approves `whoami`, mirroring the SampleApp mission demo: the WhoAmI token gate
-// (steps 3-4) is silent while the elevated scope and the delete_inbox tool still
+// approves `trips.read`, mirroring the SampleApp mission demo: the Trips token gate
+// (steps 3-4) is silent while the elevated scope and the cancel_booking tool still
 // prompt. Pass --mission-approved to replace this default set.
 var missionApprovedScopes = new List<string> { ResourceScope };
 bool missionApprovedOverridden = false;
@@ -95,7 +95,7 @@ for (int i = 0; i < args.Length; i++)
                 case "--sub": subject = value; break;
                 case "--mission-approved":
                     // The first --mission-approved flag replaces the default
-                    // {whoami} set so callers get full control of the in-scope list.
+                    // {trips.read} set so callers get full control of the in-scope list.
                     if (!missionApprovedOverridden)
                     {
                         missionApprovedScopes.Clear();
@@ -116,7 +116,7 @@ apUrl = apUrl.TrimEnd('/');
 personServer = personServer.TrimEnd('/');
 
 // The PS gates the token request on the resource token's (iss, scope). The
-// resource's iss is the WhoAmI *origin* (not the /jwt/mission path), so seed
+// resource's iss is the Trips *origin* (not the /trips path), so seed
 // the in-scope set against the origin to match what the PS will compare.
 var resourceOrigin = new Uri(resourceUrl).GetLeftPart(UriPartial.Authority);
 bool resourceScopeMissionApproved = missionApprovedScopes.Contains(ResourceScope, StringComparer.Ordinal);
@@ -153,7 +153,7 @@ var governance = new AAuthGovernanceClient(signedClient, metadata, personServer)
 // open until you decide in the browser; --auto resolves via scripted defaults.
 // The mission-approved scopes are seeded as in-scope (resource origin, scope)
 // pairs so the matching token request resolves silently at gate 2a (§Agent Token
-// Request). By default this includes `whoami`, so steps 3-4 never prompt.
+// Request). By default this includes `trips.read`, so steps 3-4 never prompt.
 var inScopeSeed = new JsonArray();
 foreach (var scope in missionApprovedScopes)
 {
@@ -183,14 +183,14 @@ Section("2. Propose a mission");
 // the agent quotes on every later request to bind it to this mission. In
 // interactive mode the PS shows a browser consent screen here; in --auto mode it
 // resolves the approval itself.
-var sendEmailTool = new MissionTool("send_email", "Send an email on the user's behalf");
+var addToCalendarTool = new MissionTool("add_to_calendar", "Add an itinerary item to the calendar");
 var session = await governance.ProposeMissionAsync(new MissionProposal(
-    "Help the user keep their inbox under control for the next hour.")
+    "Plan my weekend trip to Seattle.")
 {
     Tools = new[]
     {
-        sendEmailTool,
-        new MissionTool("summarize", "Summarize a thread"),
+        addToCalendarTool,
+        new MissionTool("compare_options", "Compare flight and hotel options"),
     },
 }, GovernanceFor("Approve this mission and its tools"));
 // The session wraps the approved mission and auto-threads its claim
@@ -208,7 +208,7 @@ Console.WriteLine($"   mission s256    : {mission.S256}  (thumbprint reference t
 Section(resourceScopeMissionApproved
     ? "3. Access a mission-aware resource — IN SCOPE (silent, no prompt)"
     : "3. Access a mission-aware resource — first call is OUT OF SCOPE");
-// WhoAmI's /jwt/mission endpoint is mission-aware: it copies the mission claim
+// The Trips /trips endpoint is mission-aware: it copies the mission claim
 // from the AAuth-Mission header into the resource token it issues (§Terminology).
 // The PS reads that claim and governs the token request. When this (resource,
 // scope) is mission-approved as in-scope it resolves silently at gate 2a;
@@ -236,18 +236,18 @@ Console.WriteLine($"   resource said   : access={second?["access"]}, scope={seco
 Section(elevatedScopeMissionApproved
     ? "5. Access an ELEVATED scope — IN SCOPE (silent, no prompt)"
     : "5. Access an ELEVATED scope — OUT OF MISSION (prompt)");
-// The elevated endpoint demands `whoami:elevated_scope`, a scope the mission
-// never declared and whose intent ("keep the inbox under control") does not
+// The elevated endpoint demands `trips.book`, a scope the mission
+// never declared and whose intent ("plan my weekend trip") does not
 // cover it. The PS cannot grant it silently: out-of-mission scopes are NOT
 // auto-denied — the PS prompts the user (§Agent Token Request gate 3, §Scopes).
 // Approve in the browser and the consent accrues to the mission; deny and the
 // exchange throws AAuthInteractionDeniedException (denied). Declaring
-// whoami:elevated_scope mission-approved (--mission-approved) makes this silent.
+// trips.book mission-approved (--mission-approved) makes this silent.
 if (elevatedScopeMissionApproved)
 {
     Console.WriteLine($"   mission-approved: {resourceOrigin} / {ElevatedScope} is in-scope, so this is granted silently (gate 2a — InScope)");
 }
-var elevatedUrl = $"{resourceOrigin}/jwt/mission/elevated";
+var elevatedUrl = $"{resourceOrigin}/trips/book";
 try
 {
     var elevated = await AccessMissionResourceAsync(elevatedUrl);
@@ -259,27 +259,27 @@ catch (AAuthInteractionDeniedException)
 }
 
 Section("6. Request a permission for a pre-approved tool — silent");
-// `send_email` is an approved tool, so the SDK short-circuits to granted
+// `add_to_calendar` is an approved tool, so the SDK short-circuits to granted
 // without ever calling the PS (§Permission Endpoint). We still hold the
-// sendEmailTool reference from the proposal, so we ask via tool.ToAction()
+// addToCalendarTool reference from the proposal, so we ask via tool.ToAction()
 // rather than re-typing the action name.
-var preApproved = await session.RequestPermissionAsync(sendEmailTool.ToAction());
-Console.WriteLine($"   send_email      : {(preApproved.IsGranted ? "granted" : "denied")} ({preApproved.Reason})");
+var preApproved = await session.RequestPermissionAsync(addToCalendarTool.ToAction());
+Console.WriteLine($"   add_to_calendar : {(preApproved.IsGranted ? "granted" : "denied")} ({preApproved.Reason})");
 
 Section("7. Request a permission for a NON-pre-approved tool");
-// `delete_inbox` is not an approved tool, so the PS is consulted and the user
+// `cancel_booking` is not an approved tool, so the PS is consulted and the user
 // is prompted to decide. The session threads the mission claim automatically.
 var adHoc = await session.RequestPermissionAsync(
-    new MissionAction("delete_inbox"),
-    options: GovernanceFor("Permission to permanently delete the inbox"));
-Console.WriteLine($"   delete_inbox    : {(adHoc.IsGranted ? "granted" : "denied")} ({adHoc.Reason})");
+    new MissionAction("cancel_booking"),
+    options: GovernanceFor("Permission to cancel an existing booking"));
+Console.WriteLine($"   cancel_booking  : {(adHoc.IsGranted ? "granted" : "denied")} ({adHoc.Reason})");
 
 Section("8. Report an action to the audit endpoint");
 // After acting, the agent records what it did under the mission (§Audit Endpoint).
-await session.RecordAuditAsync(sendEmailTool.ToAction(),
-    description: "Sent a reply to the design-review thread.",
+await session.RecordAuditAsync(addToCalendarTool.ToAction(),
+    description: "Saved the morning flight to the itinerary.",
     result: new JsonObject { ["status"] = "success" });
-Console.WriteLine("   recorded send_email = success");
+Console.WriteLine("   recorded add_to_calendar = success");
 
 Section("9. Ask the user a question");
 var answer = await session.AskQuestionAsync(
@@ -290,7 +290,7 @@ Console.WriteLine($"   user answered   : {answer ?? "(no answer)"}");
 
 Section("10. Propose mission completion (terminates the mission)");
 var terminated = await session.ProposeCompletionAsync(
-    "Inbox triaged: 12 read, 3 replied, 1 deleted.",
+    "Trip planned: 3 flights compared, 2 hotels shortlisted, 1 itinerary saved.",
     GovernanceFor("Your agent says the mission is done"));
 Console.WriteLine($"   mission ended   : {terminated}");
 

@@ -35,6 +35,14 @@ body {
 .topbar h1 { margin: 0; font-size: 1.15rem; }
 .topbar .config { font-size: 0.85rem; color: var(--muted); display: flex; gap: 1.5rem; flex-wrap: wrap; }
 .topbar .error { color: var(--accent-2); font-family: ui-monospace, monospace; font-size: 0.85rem; }
+.topbar__tag { color: var(--muted); font-size: 0.85rem; }
+.topbar__back {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+.topbar__back:hover { text-decoration: underline; }
 
 button {
     background: var(--panel-2);
@@ -154,6 +162,16 @@ button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef44
   font-size: 0.9rem;
   line-height: 1.45;
   max-width: 60rem;
+}
+.flow-picker__desc > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--fg);
+  user-select: none;
+  list-style-position: outside;
+}
+.flow-picker__desc[open] > summary {
+  margin-bottom: 0.5rem;
 }
 .flow-picker__desc code {
   background: var(--code-bg);
@@ -387,7 +405,7 @@ button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef44
     border-radius: 6px;
 }
 .substeps::before {
-    content: var(--substeps-label, "inside orchestrator");
+    content: var(--substeps-label, "inside concierge");
     position: absolute;
     top: -0.55rem;
     left: 0.6rem;
@@ -561,3 +579,93 @@ pre.code-snippet { color: #c9d1d9; white-space: pre-wrap; }
 .ext-link svg { vertical-align: -1px; }
 
 .hint { color: var(--muted); }
+
+/* ----- Overview / Home page ----- */
+.home {
+    max-width: 64rem;
+    margin: 0 auto;
+    padding: 1.5rem 1.25rem 3rem;
+}
+.intro h2 { margin: 0.5rem 0 0.75rem; font-size: 1.5rem; }
+.intro p { line-height: 1.55; color: var(--fg); max-width: 60rem; }
+.intro__role { color: var(--muted); }
+.intro__servers {
+    list-style: none;
+    margin: 1rem 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 0.5rem;
+}
+.intro__servers li {
+    color: var(--muted);
+    font-size: 0.9rem;
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+}
+.srv {
+    font-weight: 600;
+    color: var(--fg);
+    padding: 0.05rem 0.45rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+}
+.srv--profile  { border-color: var(--accent); }
+.srv--calendar { border-color: var(--ok); }
+.srv--trips    { border-color: var(--warn); }
+.srv--wallet   { border-color: var(--accent-2); }
+
+.flow-index {
+    margin-top: 1.5rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+    gap: 1rem;
+}
+.flow-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.85rem;
+    padding: 1rem;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 0.15s, transform 0.15s;
+}
+.flow-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+}
+.flow-card__num {
+    flex: 0 0 auto;
+    width: 2rem;
+    height: 2rem;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    font-weight: 700;
+    color: var(--accent);
+}
+.flow-card__body { flex: 1 1 auto; min-width: 0; }
+.flow-card__title { margin: 0.15rem 0 0.35rem; font-size: 1.02rem; }
+.flow-card__what { margin: 0 0 0.6rem; font-size: 0.88rem; line-height: 1.45; color: var(--muted); }
+.flow-card__meta { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.flow-card__badge {
+    font-size: 0.72rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+}
+.flow-card__go {
+    flex: 0 0 auto;
+    align-self: center;
+    color: var(--accent);
+    font-size: 1.25rem;
+}

@@ -36,7 +36,7 @@ namespace AAuth.Tests.Integration;
 public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPersonServer.Entry>>, IDisposable
 {
     private const string PsIssuer = "https://ps.test";
-    private const string ResourceUrl = "https://whoami.test";
+    private const string ResourceUrl = "https://trips.test";
     private const string ApIssuer = "https://ap.example";
 
     private readonly WebApplicationFactory<MockPersonServer.Entry> _factory;
@@ -87,14 +87,14 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
         await ScriptAsync(agent, new JsonObject
         {
             ["reset"] = true,
-            ["inScope"] = new JsonArray(InScope(ResourceUrl, "whoami")),
+            ["inScope"] = new JsonArray(InScope(ResourceUrl, "trips.read")),
         });
         var mission = await ProposeMissionAsync(agent, "row03 in-scope mission");
 
-        var token = await ExchangeAsync(agent, mission, "whoami", new TokenExchangeRequest());
+        var token = await ExchangeAsync(agent, mission, "trips.read", new TokenExchangeRequest());
 
         Assert.False(string.IsNullOrEmpty(token));
-        await AssertTokenReasonAsync(mission, "whoami", granted: true, reason: "InScope");
+        await AssertTokenReasonAsync(mission, "trips.read", granted: true, reason: "InScope");
     }
 
     [Fact]
@@ -105,12 +105,12 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
         var mission = await ProposeMissionAsync(agent, "row04 prior-consent mission");
 
         // First out-of-scope request: prompted then approved -> recorded as prior consent.
-        _ = await ExchangeAsync(agent, mission, "whoami:admin", Promptable());
+        _ = await ExchangeAsync(agent, mission, "trips.book", Promptable());
         // Second request for the same (resource, scope): now silent via prior consent.
-        var token = await ExchangeAsync(agent, mission, "whoami:admin", new TokenExchangeRequest());
+        var token = await ExchangeAsync(agent, mission, "trips.book", new TokenExchangeRequest());
 
         Assert.False(string.IsNullOrEmpty(token));
-        await AssertTokenReasonAsync(mission, "whoami:admin", granted: true, reason: "PriorConsent");
+        await AssertTokenReasonAsync(mission, "trips.book", granted: true, reason: "PriorConsent");
     }
 
     [Fact]
@@ -125,11 +125,11 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
         {
             OnInteractionRequired = (_, _) => { prompted = true; return Task.CompletedTask; },
         };
-        var token = await ExchangeAsync(agent, mission, "whoami:admin", options);
+        var token = await ExchangeAsync(agent, mission, "trips.book", options);
 
         Assert.True(prompted);
         Assert.False(string.IsNullOrEmpty(token));
-        await AssertTokenReasonAsync(mission, "whoami:admin", granted: true, reason: "OutOfScope");
+        await AssertTokenReasonAsync(mission, "trips.book", granted: true, reason: "OutOfScope");
     }
 
     [Fact]
@@ -140,8 +140,8 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
         var mission = await ProposeMissionAsync(agent, "row06 out-of-scope deny mission");
 
         await Assert.ThrowsAsync<AAuthInteractionDeniedException>(
-            () => ExchangeAsync(agent, mission, "whoami:admin", Promptable()));
-        await AssertTokenReasonAsync(mission, "whoami:admin", granted: false, reason: "OutOfScope");
+            () => ExchangeAsync(agent, mission, "trips.book", Promptable()));
+        await AssertTokenReasonAsync(mission, "trips.book", granted: false, reason: "OutOfScope");
     }
 
     [Fact]
@@ -166,11 +166,11 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
                 return Task.FromResult(ClarificationResponse.Respond("The mission needs admin scope to read roles."));
             },
         };
-        var token = await ExchangeAsync(agent, mission, "whoami:admin", options);
+        var token = await ExchangeAsync(agent, mission, "trips.book", options);
 
         Assert.True(asked);
         Assert.False(string.IsNullOrEmpty(token));
-        await AssertTokenReasonAsync(mission, "whoami:admin", granted: true, reason: "OutOfScope");
+        await AssertTokenReasonAsync(mission, "trips.book", granted: true, reason: "OutOfScope");
         var entries = await ReadLogAsync(mission);
         Assert.Contains(entries, e => e.Kind == MissionLogEntryKind.Clarification);
     }
@@ -194,7 +194,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
         };
 
         await Assert.ThrowsAsync<AAuthClarificationCancelledException>(
-            () => ExchangeAsync(agent, mission, "whoami:admin", options));
+            () => ExchangeAsync(agent, mission, "trips.book", options));
 
         var entries = await ReadLogAsync(mission);
         Assert.Contains(entries, e => e.Kind == MissionLogEntryKind.Clarification && e.Detail == "cancelled");
@@ -209,10 +209,10 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     {
         var agent = NewAgent();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true });
-        var mission = await ProposeMissionAsync(agent, "row09 approved-tool mission", "send_email");
+        var mission = await ProposeMissionAsync(agent, "row09 approved-tool mission", "add_to_calendar");
 
         var result = await PermissionClientFor(agent)
-            .RequestAsync(new MissionAction("send_email"), mission);
+            .RequestAsync(new MissionAction("add_to_calendar"), mission);
 
         Assert.True(result.IsGranted);
         Assert.Equal(PermissionGrant.Granted, result.Grant);
@@ -223,7 +223,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     {
         var agent = NewAgent();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["approvePermission"] = true });
-        var mission = await ProposeMissionAsync(agent, "row10 prompt-grant mission", "send_email");
+        var mission = await ProposeMissionAsync(agent, "row10 prompt-grant mission", "add_to_calendar");
 
         var request = new PermissionRequest(new MissionAction("delete_file"))
         {
@@ -240,7 +240,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     {
         var agent = NewAgent();
         await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["approvePermission"] = false });
-        var mission = await ProposeMissionAsync(agent, "row11 prompt-deny mission", "send_email");
+        var mission = await ProposeMissionAsync(agent, "row11 prompt-deny mission", "add_to_calendar");
 
         var request = new PermissionRequest(new MissionAction("delete_file"))
         {
@@ -262,7 +262,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
         await ScriptAsync(agent, new JsonObject
         {
             ["reset"] = true,
-            ["inScope"] = new JsonArray(InScope(ResourceUrl, "whoami")),
+            ["inScope"] = new JsonArray(InScope(ResourceUrl, "trips.read")),
         });
         var mission = await ProposeMissionAsync(agent, "row12 terminated mission");
 
@@ -272,7 +272,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
         Assert.True(terminate.IsSuccessStatusCode);
 
         await Assert.ThrowsAsync<AAuthMissionTerminatedException>(
-            () => ExchangeAsync(agent, mission, "whoami", new TokenExchangeRequest()));
+            () => ExchangeAsync(agent, mission, "trips.read", new TokenExchangeRequest()));
     }
 
     // ---- Helpers -------------------------------------------------------

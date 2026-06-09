@@ -25,6 +25,20 @@ public class AAuthConstantsTests
     }
 
     [Fact]
+    public void TokenType_JktS256Jwt_IsSpecValue()
+    {
+        // draft-hardt-httpbis-signature-key-04 §3.4 Table 1.
+        Assert.Equal("jkt-s256+jwt", AAuthConstants.TokenTypes.JktS256Jwt);
+    }
+
+    [Fact]
+    public void JktThumbprintUrnPrefix_IsSpecValue()
+    {
+        // draft-hardt-httpbis-signature-key-04 §3.4 Table 1.
+        Assert.Equal("urn:jkt:sha-256:", AAuthConstants.JktThumbprintUrnPrefix);
+    }
+
+    [Fact]
     public void DwkFiles_Agent_MatchesBuilder()
     {
         Assert.Equal(AgentTokenBuilder.AgentDwk, AAuthConstants.DwkFiles.Agent);

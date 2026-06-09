@@ -170,18 +170,12 @@ public class SigningModeEndToEndTests
         // Ephemeral key (signs the HTTP request)
         var ephemeralKey = AAuthKey.Generate();
 
-        // Build a naming JWT: durable key signs, cnf.jwk = ephemeral public key
-        var namingJwt = new AgentTokenBuilder
-        {
-            Issuer = "https://ap.example",
-            Subject = "aauth:agent@ap.example",
-            Key = durableKey,
-            KeyId = "durable-1",
-            PersonServer = "https://ps.example",
-            ConfirmationKey = ephemeralKey,
-        }.Build();
+        // Build a self-issued naming JWT (draft-04 §3.4): durable key signs, its
+        // public key is in the header, iss is its thumbprint URN, cnf.jwk is the
+        // ephemeral public key.
+        var namingJwt = AAuth.Agent.NamingJwtBuilder.Build(durableKey, ephemeralKey);
 
-        var provider = new JktJwtSignatureKeyProvider(ephemeralKey, () => namingJwt);
+        var provider = new JktJwtSignatureKeyProvider(() => namingJwt);
         var request = await SignRequest(ephemeralKey, provider);
 
         var sigKeyHeader = request.Headers.GetValues("Signature-Key").Single();
@@ -190,13 +184,18 @@ public class SigningModeEndToEndTests
 
         var info = SignatureKeyParser.ParseAny(sigKeyHeader);
         Assert.Equal("jkt-jwt", info.Scheme);
-        Assert.Equal(ephemeralKey.ComputeJwkThumbprint(), info.Jkt);
+        // The reported pseudonym is the durable key's thumbprint (§7.1).
+        Assert.Equal(durableKey.ComputeJwkThumbprint(), info.Jkt);
         Assert.NotNull(info.ConfirmationKey);
 
         // The naming JWT's cnf.jwk should be the ephemeral key
         Assert.Equal(
             ephemeralKey.ComputeJwkThumbprint(),
             info.ConfirmationKey!.ComputeJwkThumbprint());
+
+        // The single-parameter wire format carries only the jwt.
+        Assert.StartsWith("sig=jkt-jwt;jwt=\"", sigKeyHeader);
+        Assert.DoesNotContain(";jkt=", sigKeyHeader);
 
         // Verify the HTTP signature using the ephemeral key
         var verifier = CreateVerifier();
@@ -251,50 +250,49 @@ public class SigningModeEndToEndTests
         Assert.Equal(key.ComputeJwkThumbprint(), result.PublicKey.ComputeJwkThumbprint());
     }
 
-    [Fact(DisplayName = "§Verification — DefaultSignatureKeyResolver resolves jkt-jwt with thumbprint match")]
+    [Fact(DisplayName = "§Verification — DefaultSignatureKeyResolver resolves self-anchored jkt-jwt")]
     public async Task Resolver_JktJwt()
     {
         var durableKey = AAuthKey.Generate();
         var ephemeralKey = AAuthKey.Generate();
-        var namingJwt = new AgentTokenBuilder
-        {
-            Issuer = "https://ap.example",
-            Subject = "aauth:agent@ap.example",
-            Key = durableKey,
-            KeyId = "durable-1",
-            PersonServer = "https://ps.example",
-            ConfirmationKey = ephemeralKey,
-        }.Build();
+        var namingJwt = AAuth.Agent.NamingJwtBuilder.Build(durableKey, ephemeralKey);
 
-        var jkt = ephemeralKey.ComputeJwkThumbprint();
-        var header = SignatureKeyHeader.FormatJktJwt(jkt, namingJwt);
+        var header = SignatureKeyHeader.FormatJktJwt(namingJwt);
         var info = SignatureKeyParser.ParseAny(header);
 
         var resolver = new DefaultSignatureKeyResolver();
         var result = await resolver.ResolveAsync(info);
 
-        Assert.Equal(jkt, result.PublicKey.ComputeJwkThumbprint());
+        // Resolution returns the ephemeral key (cnf.jwk) that signs HTTP requests.
+        Assert.Equal(ephemeralKey.ComputeJwkThumbprint(), result.PublicKey.ComputeJwkThumbprint());
     }
 
-    [Fact(DisplayName = "§Verification — DefaultSignatureKeyResolver rejects jkt-jwt thumbprint mismatch")]
+    [Fact(DisplayName = "§Verification — DefaultSignatureKeyResolver rejects jkt-jwt with spoofed iss")]
     public async Task Resolver_JktJwt_ThumbprintMismatch()
     {
-        var durableKey = AAuthKey.Generate();
+        var attackerKey = AAuthKey.Generate();
+        var victimKey = AAuthKey.Generate();
         var ephemeralKey = AAuthKey.Generate();
-        var namingJwt = new AgentTokenBuilder
-        {
-            Issuer = "https://ap.example",
-            Subject = "aauth:agent@ap.example",
-            Key = durableKey,
-            KeyId = "durable-1",
-            PersonServer = "https://ps.example",
-            ConfirmationKey = ephemeralKey,
-        }.Build();
 
-        // Use a WRONG jkt (different key's thumbprint)
-        var wrongKey = AAuthKey.Generate();
-        var wrongJkt = wrongKey.ComputeJwkThumbprint();
-        var header = SignatureKeyHeader.FormatJktJwt(wrongJkt, namingJwt);
+        // Header jwk = attacker's key, but iss claims the victim's thumbprint —
+        // self-anchored verification (§3.4 step 7) must reject this.
+        var jwtHeader = new System.Text.Json.Nodes.JsonObject
+        {
+            ["alg"] = AAuthKey.Algorithm,
+            ["typ"] = AAuthConstants.TokenTypes.JktS256Jwt,
+            ["jwk"] = attackerKey.ToPublicJwk(),
+        };
+        var now = DateTimeOffset.UtcNow;
+        var jwtPayload = new System.Text.Json.Nodes.JsonObject
+        {
+            ["iss"] = AAuthConstants.JktThumbprintUrnPrefix + victimKey.ComputeJwkThumbprint(),
+            ["iat"] = now.ToUnixTimeSeconds(),
+            ["exp"] = now.AddMinutes(5).ToUnixTimeSeconds(),
+            ["jti"] = Guid.NewGuid().ToString("N"),
+            ["cnf"] = new System.Text.Json.Nodes.JsonObject { ["jwk"] = ephemeralKey.ToPublicJwk() },
+        };
+        var namingJwt = JwtWriter.SignCompact(jwtHeader, jwtPayload, attackerKey);
+        var header = SignatureKeyHeader.FormatJktJwt(namingJwt);
         var info = SignatureKeyParser.ParseAny(header);
 
         var resolver = new DefaultSignatureKeyResolver();

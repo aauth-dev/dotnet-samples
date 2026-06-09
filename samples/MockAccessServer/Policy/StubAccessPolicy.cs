@@ -14,11 +14,11 @@ namespace MockAccessServer.Policy;
 /// locally so the four-party flow runs without Docker (the default provider;
 /// keeps <c>make e2e</c>/CI dependency-free).
 ///
-/// Demo policy (mirrors WhoAmI <c>/jwt</c> vs <c>/jwt/admin</c>):
+/// Demo policy (mirrors Wallet <c>/wallet</c> vs <c>/wallet/charge</c>):
 /// <list type="bullet">
-///   <item>any verified agent may obtain the base <c>whoami</c> scope;</item>
-///   <item>an elevated scope (<c>whoami:admin</c>) is granted only when the
-///   PS-asserted claims carry the <c>whoami-admin</c> role.</item>
+///   <item>any verified agent may obtain the base <c>wallet.read</c> scope;</item>
+///   <item>the elevated <c>wallet.charge</c> scope is granted only when the
+///   PS-asserted claims carry the <c>wallet.payer</c> role.</item>
 /// </list>
 ///
 /// When <c>requireConsent</c> is set (from <c>AccessServer:RequireConsent</c>)
@@ -30,8 +30,11 @@ namespace MockAccessServer.Policy;
 /// </summary>
 public sealed class StubAccessPolicy : IAccessPolicy
 {
-    /// <summary>The role a principal must hold to be granted an elevated scope.</summary>
-    public const string AdminRole = "whoami-admin";
+    /// <summary>The role a principal must hold to be granted the elevated scope.</summary>
+    public const string AdminRole = "wallet.payer";
+
+    /// <summary>The elevated scope that requires <see cref="AdminRole"/>.</summary>
+    public const string ElevatedScope = "wallet.charge";
 
     private readonly IReadOnlyList<string> _requiredClaims;
     private readonly bool _requireConsent;
@@ -65,7 +68,7 @@ public sealed class StubAccessPolicy : IAccessPolicy
             return Task.FromResult(AccessDecision.NeedsClaims(missing));
         }
 
-        // An elevated (admin) scope requires the admin role; the base scope is
+        // An elevated scope requires the payer role; the base scope is
         // open to any verified agent.
         if (IsElevatedScope(request.Scope) && !HasRole(request.Claims, AdminRole))
         {
@@ -99,7 +102,7 @@ public sealed class StubAccessPolicy : IAccessPolicy
     }
 
     private static bool IsElevatedScope(string scope) =>
-        scope.Contains(':', StringComparison.Ordinal);
+        string.Equals(scope, ElevatedScope, StringComparison.Ordinal);
 
     private static bool HasRole(JsonObject? claims, string role)
     {

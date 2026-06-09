@@ -9,7 +9,7 @@ public class AAuthTokenTypeTests
     [InlineData("aa-agent+jwt", AAuthTokenType.AgentToken)]
     [InlineData("aa-auth+jwt", AAuthTokenType.AuthToken)]
     [InlineData("aa-resource+jwt", AAuthTokenType.ResourceToken)]
-    [InlineData("naming+jwt", AAuthTokenType.NamingJwt)]
+    [InlineData("jkt-s256+jwt", AAuthTokenType.JktS256Jwt)]
     public void ParseTokenType_KnownValues(string input, AAuthTokenType expected)
     {
         Assert.Equal(expected, AAuthTokenTypeExtensions.ParseTokenType(input));
@@ -29,7 +29,7 @@ public class AAuthTokenTypeTests
     [InlineData(AAuthTokenType.AgentToken, "aa-agent+jwt")]
     [InlineData(AAuthTokenType.AuthToken, "aa-auth+jwt")]
     [InlineData(AAuthTokenType.ResourceToken, "aa-resource+jwt")]
-    [InlineData(AAuthTokenType.NamingJwt, "naming+jwt")]
+    [InlineData(AAuthTokenType.JktS256Jwt, "jkt-s256+jwt")]
     public void ToHeaderValue_RoundTrips(AAuthTokenType type, string expected)
     {
         Assert.Equal(expected, type.ToHeaderValue());

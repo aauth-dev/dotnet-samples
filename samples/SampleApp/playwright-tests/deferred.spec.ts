@@ -13,7 +13,7 @@ test.describe('Deferred', () => {
   test.describe.configure({ timeout: 150_000 });
 
   test('approve path resolves to a three-party identity', async ({ page, context }) => {
-    await page.goto('/deferred');
+    await page.goto('/calendar-deferred');
     await expect(page.locator('h2')).toContainText('Deferred');
     await waitForInteractive(page, 'button.btn-primary');
 
@@ -35,19 +35,19 @@ test.describe('Deferred', () => {
 
     await expectStatus(page, 200);
     const json = (await readResponseJson(page)) as Record<string, unknown>;
-    expect(json.mode).toBe('three-party');
+    expect(json.accessMode).toBe('three-party');
     expect(json.scheme).toBe('jwt');
     // Consent was granted interactively, but the minted auth token carries the
     // same PS-asserted claims as the direct grant.
     expect(json.sub).toBe('pairwise-sub');
-    expect(json.scope).toEqual(['whoami']);
+    expect(json.scope).toEqual(['calendar.read']);
     expect(json.iss).toBe(Urls.personServer);
     const act = json.act as Record<string, unknown>;
     expect(act.sub).toBe(Agents.sampleApp);
   });
 
   test('deny path surfaces an access-denied error', async ({ page, context }) => {
-    await page.goto('/deferred');
+    await page.goto('/calendar-deferred');
     await waitForInteractive(page, 'button.btn-primary');
 
     const link = page.locator('a[target="_blank"]', { hasText: /interaction/ });

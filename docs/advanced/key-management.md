@@ -149,23 +149,23 @@ public sealed class AzureKeyVaultStore : IKeyStore
 
 ## Key Rotation
 
-For key rotation with continuity, use the `jkt_jwt` signing mode:
+For key rotation with continuity, use the `jkt-jwt` signing mode:
 
 1. Generate new key, store in `IKeyStore`
 2. Create a delegation JWT from old key to new key
 3. Use `JktJwtSignatureKeyProvider` — resource sees the same identity
 
-See [Key Rotation (jkt_jwt)](../signing-modes/key-rotation-jkt-jwt.md) for details.
+See [Key Rotation (jkt-jwt)](../signing-modes/key-rotation-jkt-jwt.md) for details.
 
 ## Security Considerations
 
 - Never expose private keys in logs or error messages
 - Use file permissions (600) for `FileKeyStore` directory
 - Prefer KMS/HSM backends for production workloads
-- Rotate keys periodically (jkt_jwt enables seamless rotation)
+- Rotate keys periodically (jkt-jwt enables seamless rotation)
 
 ## Further Reading
 
-- [Key Rotation (jkt_jwt)](../signing-modes/key-rotation-jkt-jwt.md)
+- [Key Rotation (jkt-jwt)](../signing-modes/key-rotation-jkt-jwt.md)
 - [Bootstrap & Enrollment](../workflows/bootstrap-enrollment.md) — keys generated during enrollment
 - [Platform Attestation](platform-attestation.md) — hardware-bound keys

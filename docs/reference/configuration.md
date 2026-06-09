@@ -45,7 +45,7 @@ All configurable options across the AAuth .NET SDK, grouped by component.
 | `SigningKeys` | `IReadOnlyDictionary<string, AAuthKey>` | — (required) | Key-id → signing key map (published at the PS JWKS) |
 | `TokenPath` | `string` | `/token` | Token endpoint path |
 | `PendingPathPrefix` | `string` | `/pending` | Deferred-consent poll path prefix |
-| `DefaultScope` | `string` | `whoami` | Scope assumed when the resource token omits one |
+| `DefaultScope` | `string` | `""` | Scope assumed when the resource token omits one |
 | `InteractionPath` | `string` | `/interaction` | Path the host maps for the consent page |
 | `TrustedAccessServers` | `IReadOnlyCollection<string>?` | `null` | AS URLs the PS will federate to; `null`/empty ⇒ three-party only |
 
@@ -253,14 +253,14 @@ SDK-required), shown here as a reference for wiring your own hosts.
 
 | Key | Type | Used by | Description |
 |-----|------|---------|-------------|
-| `AAuth:Issuer` | `string` | WhoAmI, MockPersonServer, Orchestrator | The host's own canonical URL (resource/PS `iss`). |
-| `AAuth:SignatureWindow` | `int` (seconds) | WhoAmI, MockPersonServer | Max HTTP-signature age accepted; default `60`. |
-| `AAuth:TrustedPersonServers` | `string[]` | WhoAmI | Fail-closed allow-list mapped to `AAuthVerificationOptions.TrustedAuthTokenIssuers`. When unset, defaults to `http://localhost:5100`; an empty array rejects all auth tokens. |
+| `AAuth:Issuer` | `string` | Profile/Calendar/Trips/Wallet, MockPersonServer, Concierge | The host's own canonical URL (resource/PS `iss`). |
+| `AAuth:SignatureWindow` | `int` (seconds) | Profile/Calendar/Trips/Wallet, MockPersonServer | Max HTTP-signature age accepted; default `60`. |
+| `AAuth:TrustedPersonServers` | `string[]` | Calendar/Trips | Fail-closed allow-list mapped to `AAuthVerificationOptions.TrustedAuthTokenIssuers`. When unset, defaults to `http://localhost:5100`; an empty array rejects all auth tokens. |
 | `AAuth:LocalKeyHandle` | `string` | agent samples | Key handle in the `IKeyStore` for the agent's signing key. |
 | `AAuth:ApRefreshEndpoint` | `string` | agent samples | Agent Provider refresh endpoint for enrolled agents. |
-| `AAuth:PersonServer` | `string` | Orchestrator | Downstream Person Server URL. |
-| `AAuth:Downstream` | `string` | Orchestrator | Downstream resource URL. |
-| `AAuth:AgentId` | `string` | Orchestrator | The agent identifier this host signs as. |
+| `AAuth:PersonServer` | `string` | Concierge | Downstream Person Server URL. |
+| `AAuth:Downstream` | `string` | Concierge | Downstream resource URL. |
+| `AAuth:AgentId` | `string` | Concierge | The agent identifier this host signs as. |
 | `AAuth:SelfIssuer` / `AAuth:SelfAgentId` | `string` | SampleApp | Self-issued agent issuer / identifier. |
 
 ## Further Reading

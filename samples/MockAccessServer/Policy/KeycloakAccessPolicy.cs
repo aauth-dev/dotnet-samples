@@ -168,7 +168,7 @@ public sealed class KeycloakAccessPolicy : IAccessPolicy, IInteractiveAccessPoli
         }
 
         // Push the PS-asserted claims so Keycloak ABAC/JS/claim-gathering
-        // policies can read them (e.g. the whoami-admin role gate, or a tenant
+        // policies can read them (e.g. the wallet.payer role gate, or a tenant
         // attribute).
         if (request.Claims is not null)
         {

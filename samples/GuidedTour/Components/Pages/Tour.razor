@@ -1,4 +1,4 @@
-@page "/"
+@page "/tour"
 @rendermode InteractiveServer
 @implements IDisposable
 @inject TourSession Session
@@ -7,12 +7,13 @@
 <PageTitle>AAuth Guided Tour</PageTitle>
 
 <header class="topbar">
+    <a class="topbar__back" href="">← Overview</a>
     <h1>AAuth Guided Tour</h1>
     <div class="config">
-        <span class="hl-resource"><strong>Resource:</strong> @Options.Value.WhoAmIUrl</span>
+        <span class="hl-resource"><strong>@Session.ResourceDisplayName:</strong> @Session.ResourceBaseUrl</span>
         @if (Session.IsCallChainMode)
         {
-            <span class="hl-resource"><strong>Orchestrator:</strong> @Options.Value.OrchestratorUrl</span>
+            <span class="hl-resource"><strong>Concierge:</strong> @Options.Value.ConciergeUrl</span>
         }
         @if (Session.IsFederatedMode)
         {
@@ -38,10 +39,10 @@
             <option value="@TourMode.Identity">2 · Identity-based — no PS, 2 steps</option>
             <option value="@TourMode.Autonomous" disabled="@(!Session.HasPersonServer)">3 · PS-Asserted (Direct Grant) — no user, 6 steps</option>
             <option value="@TourMode.Deferred" disabled="@(!Session.HasPersonServer)">4 · PS-Asserted (Deferred) — user approves, 9 steps</option>
-            <option value="@TourMode.CallChain" disabled="@(!Session.HasPersonServer || !Session.HasOrchestrator)">5 · Call Chain (Multi-Agent) — user approves, 7 or 13 steps</option>
+            <option value="@TourMode.CallChain" disabled="@(!Session.HasPersonServer || !Session.HasConcierge)">5 · Call Chain (Multi-Agent) — user approves, 7 or 13 steps</option>
             <option value="@TourMode.Federated" disabled="@(!Session.HasPersonServer || !Session.HasAccessServer)">6 · Federated (Four-Party) — Access Server, 7–10 steps</option>
             <option value="@TourMode.Mission" disabled="@(!Session.HasPersonServer)">7 · Mission (PS-Governed) — three prompts, 20 steps</option>
-            <option value="@TourMode.MissionCallChain" disabled="@(!Session.HasPersonServer || !Session.HasOrchestrator)">8 · Mission + Call Chain — dual governance, 14 steps</option>
+            <option value="@TourMode.MissionCallChain" disabled="@(!Session.HasPersonServer || !Session.HasConcierge)">8 · Mission + Call Chain — dual governance, 14 steps</option>
         </select>
     </label>
     @if (Session.Mode == TourMode.Identity)
@@ -72,24 +73,36 @@
         <button @onclick="RunAllAsync" disabled="@(Session.IsComplete || _busy)">Run all</button>
         <button @onclick="ResetAsync" disabled="@_busy">Reset</button>
     </div>
-    <p class="flow-picker__desc">
+    <details class="flow-picker__desc" open>
+        <summary>📖 What Aria is trying to do — and how</summary>
         @switch (Session.Mode)
         {
             case TourMode.Bootstrap:
                 <text>
+                    Before Aria (your AI travel assistant) can help you with
+                    anything, it needs an identity of its own — here it generates a keypair and
+                    registers with an Agent Provider so every later flow can prove who it is.<br /><br />
                     The agent generates a keypair and registers with an Agent Provider to obtain
                     a signed <code>aa-agent+jwt</code>. Required before Agent Identity
                     (<code>jwks_uri</code>) access and all Person Server flows (Direct Grant / Deferred).
                     Not needed for Pseudonymous (<code>hwk</code>) access — that uses a bare key.
-                    <strong>Agent ↔ Agent Provider only.</strong>
+                    <strong>Agent ↔ Agent Provider only.</strong><br /><br />
+                    <em>Who enrols?</em> Only agents <strong>without</strong> a stable URL —
+                    CLI tools, desktop, mobile, or browser apps like this one — enrol with a
+                    separate Agent Provider. A <strong>hosted service</strong> with its own
+                    domain is <strong>its own provider</strong>: it self-issues agent tokens
+                    signed by its published JWKS key, so it skips this step entirely.
                 </text>
                 break;
             case TourMode.Identity:
                 <text>
+                    Aria (your AI travel assistant) wants to read something from
+                    your <strong>Profile</strong> server, and the server decides access purely from the
+                    signature on the request — no Person Server and no consent screen.<br /><br />
                     The resource verifies the agent's signature and applies its own access
                     control — granting or denying based on who (or what key) signed the request.
                     The signed request hits the mode's dedicated endpoint
-                    (<code>/hwk</code>, <code>/jkt-jwt</code>, or <code>/jwks-uri</code>) and returns
+                    (<code>/pseudonymous</code>, <code>/anchored</code>, or <code>/identified</code>) and returns
                     <code>200</code> on the first call — no Person Server involved.
                     @switch (Session.SigningMode)
                     {
@@ -110,6 +123,9 @@
                 break;
             case TourMode.Autonomous:
                 <text>
+                    Aria (your AI travel assistant) is planning a trip and reads
+                    your <strong>Calendar</strong> to see when you're free. Because you granted standing
+                    consent earlier, it never has to interrupt you.<br /><br />
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — required for all
                     Person Server flows.
                     The agent already has standing consent at the Person Server. <code>POST /token</code>
@@ -119,6 +135,9 @@
                 break;
             case TourMode.Deferred:
                 <text>
+                    Aria (your AI travel assistant) wants to read your
+                    <strong>Calendar</strong> to plan around your schedule, but you haven't approved it
+                    yet — so it pauses and waits for your one-time approval.<br /><br />
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — required for all
                     Person Server flows.
                     The agent has <em>no</em> consent yet. <code>POST /token</code> returns <code>202 Accepted</code>
@@ -129,60 +148,72 @@
                 break;
             case TourMode.CallChain:
                 <text>
+                    Aria (your AI travel assistant) doesn't read your
+                    <strong>Calendar</strong> itself — it hands the job to a <strong>Concierge</strong>
+                    service that reads it on Aria's behalf, so you consent once for each hop.<br /><br />
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — multi-agent delegation.
-                    The agent calls an <strong>Orchestrator</strong> (an intermediate service) which itself calls
-                    a downstream resource (WhoAmI). The Orchestrator passes the agent's auth_token as
+                    The agent calls a <strong>Concierge</strong> (an intermediate service) which itself calls
+                    a downstream resource (Calendar). The Concierge passes the agent's auth_token as
                     <code>upstream_token</code> during its own PS exchange, producing a <strong>nested <code>act</code>
                     claim</strong> that records the full delegation chain. The final resource sees exactly who
                     acted on whose behalf. <strong>Human approval required — two consents:</strong> first
-                    for <em>Agent → Orchestrator</em>, then for the Orchestrator's chained
-                    <em>Orchestrator → WhoAmI</em> hop. Each surfaces its own interaction URL and pending poll.
+                    for <em>Agent → Concierge</em>, then for the Concierge's chained
+                    <em>Concierge → Calendar</em> hop. Each surfaces its own interaction URL and pending poll.
                 </text>
                 break;
             case TourMode.Federated:
                 <text>
+                    Aria (your AI travel assistant) is ready to pay for a booking
+                    and needs to charge your <strong>Wallet</strong>, but your money is held by a separate
+                    financial provider that makes the final call on the payment.<br /><br />
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — four-party
                     federation.
-                    The resource's <code>/federated</code> branch challenges with a resource_token
+                    The resource's <code>/wallet</code> branch challenges with a resource_token
                     whose <code>aud</code> is an <strong>Access Server</strong> (not the Person Server).
                     The agent forwards it to its PS unchanged; the PS notices <code>aud ≠ self</code>,
                     federates to the AS, and the <strong>Access Server</strong> evaluates policy and
                     mints the <code>aa-auth+jwt</code> (<code>dwk=aauth-access.json</code>). The resource
                     verifies it against the AS's JWKS. <strong>Interactive consent at the Access
-                    Server</strong> — with the default <code>RequireConsent=true</code> the stub
-                    policy parks the decision and prompts for Approve/Deny (Keycloak shows its own
-                    login/consent).
+                    Server</strong> — you'll either approve at the stub AS's own Approve/Deny
+                    screen (<code>make demo</code>) or sign in at a Keycloak login
+                    (<code>make demo-keycloak</code>).
                 </text>
                 break;
             case TourMode.Mission:
                 <text>
+                    You give Aria (your AI travel assistant) a standing mission to
+                    plan and book a trip. From then on it works against your <strong>Trips</strong> server
+                    freely, only stopping to ask you when an action falls outside what you approved.<br /><br />
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — the Person Server
                     acts as the <strong>policy-enforcement point</strong>. The agent first proposes a durable
                     <strong>mission</strong> (description + pre-approved tools) which the user approves once;
-                    every later request is then checked against it. An <em>in-scope</em> token (<code>whoami</code>)
-                    is minted <strong>silently</strong>; an <em>out-of-mission</em> scope (<code>whoami:elevated_scope</code>)
-                    <strong>prompts</strong>; a <em>pre-approved</em> tool (<code>send_email</code>) is
+                    every later request is then checked against it. An <em>in-scope</em> token (<code>trips.read</code>)
+                    is minted <strong>silently</strong>; an <em>out-of-mission</em> scope (<code>trips.book</code>)
+                    <strong>prompts</strong>; a <em>pre-approved</em> tool (<code>add_to_calendar</code>) is
                     resolved <strong>locally</strong> with no PS call; and an <em>out-of-scope</em> action
-                    (<code>delete_inbox</code>) <strong>prompts</strong> again. <strong>Three human approvals:</strong>
+                    (<code>cancel_booking</code>) <strong>prompts</strong> again. <strong>Three human approvals:</strong>
                     creating the mission, the out-of-mission scope, and the out-of-scope action — everything in between flows without friction.
                 </text>
                 break;
             case TourMode.MissionCallChain:
                 <text>
+                    Under one trip-planning mission,
+                    Aria (your AI travel assistant) first clarifies what you want, then delegates the work down a chain of services to
+                    reach your <strong>Trips</strong> server — all governed by that single approval.<br /><br />
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — one durable
                     <strong>mission</strong> governs two very different kinds of access. An
-                    <em>out-of-mission</em> elevated scope (<code>whoami:elevated_scope</code>) first triggers a
+                    <em>out-of-mission</em> elevated scope (<code>trips.book</code>) first triggers a
                     <strong>clarification chat</strong> — the PS asks <em>why</em>, the agent answers — and only
                     then prompts the user to approve. After that, a <strong>mission-forwarded call chain</strong>
-                    (Agent → Orchestrator → WhoAmI) flows <strong>silently</strong>: because both hops
-                    (<code>orchestrate</code>, <code>whoami</code>) are in the mission's scope, the Orchestrator
+                    (Agent → Concierge → Trips) flows <strong>silently</strong>: because both hops
+                    (<code>concierge</code>, <code>trips.read</code>) are in the mission's scope, the Concierge
                     forwards the <code>AAuth-Mission</code> header downstream and no prompt is needed.
                     <strong>Two human approvals</strong> (mission creation, the clarified elevated scope) frame an
                     otherwise-silent multi-agent chain, and the PS's <strong>mission log</strong> records it all.
                 </text>
                 break;
         }
-    </p>
+    </details>
 </section>
 
 @if (Session.IsPolling)
@@ -239,6 +270,13 @@
     private string? _error;
     private bool _initialized;
 
+    /// <summary>
+    /// Optional <c>?flow=</c> query parameter (e.g. <c>/tour?flow=Mission</c>) used by the
+    /// Overview page's flow cards to deep-link straight into a specific flow.
+    /// </summary>
+    [Microsoft.AspNetCore.Components.SupplyParameterFromQuery]
+    public string? Flow { get; set; }
+
     private static readonly SequenceDiagram.LaneDefinition[] BootstrapLanes =
     {
         new("Agent", "agent", Actor.Agent),
@@ -248,21 +286,29 @@
     private static readonly SequenceDiagram.LaneDefinition[] IdentityLanes =
     {
         new("Agent", "agent", Actor.Agent),
-        new("Resource", "resource", Actor.Resource),
+        new("Profile", "resource", Actor.Resource),
+    };
+
+    // Autonomous + Deferred three-party flows target the Calendar.
+    private static readonly SequenceDiagram.LaneDefinition[] ThreePartyLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Calendar", "resource", Actor.Resource),
+        new("Person Server", "ps", Actor.PersonServer),
     };
 
     private static readonly SequenceDiagram.LaneDefinition[] CallChainLanes =
     {
         new("Agent", "agent", Actor.Agent),
-        new("Orchestrator", "resource", Actor.Orchestrator),
-        new("Resource", "resource2", Actor.Resource),
+        new("Concierge", "resource", Actor.Concierge),
+        new("Calendar", "resource2", Actor.Resource),
         new("Person Server", "ps", Actor.PersonServer),
     };
 
     private static readonly SequenceDiagram.LaneDefinition[] FederatedLanes =
     {
         new("Agent", "agent", Actor.Agent),
-        new("Resource", "resource", Actor.Resource),
+        new("Wallet", "resource", Actor.Resource),
         new("Person Server", "ps", Actor.PersonServer),
         new("Access Server", "as", Actor.AccessServer),
     };
@@ -270,15 +316,15 @@
     private static readonly SequenceDiagram.LaneDefinition[] MissionLanes =
     {
         new("Agent", "agent", Actor.Agent),
-        new("Resource", "resource", Actor.Resource),
+        new("Trips", "resource", Actor.Resource),
         new("Person Server", "ps", Actor.PersonServer),
     };
 
     private static readonly SequenceDiagram.LaneDefinition[] MissionCallChainLanes =
     {
         new("Agent", "agent", Actor.Agent),
-        new("Resource", "resource", Actor.Resource),
-        new("Orchestrator", "resource2", Actor.Orchestrator),
+        new("Trips", "resource", Actor.Resource),
+        new("Concierge", "resource2", Actor.Concierge),
         new("Person Server", "ps", Actor.PersonServer),
     };
 
@@ -288,12 +334,19 @@
         Session.IsMissionCallChainMode ? MissionCallChainLanes :
         Session.IsCallChainMode ? CallChainLanes :
         Session.IsFederatedMode ? FederatedLanes :
-        Session.IsMissionMode ? MissionLanes : null;
+        Session.IsMissionMode ? MissionLanes : ThreePartyLanes;
 
     protected override async Task OnInitializedAsync()
     {
         if (_initialized) return;
         _initialized = true;
+        // Deep-link support: the Overview page links to /tour?flow=<Mode>. When a
+        // valid flow is supplied, preselect it before preparing consent state so
+        // the PS's consent store matches the linked mode.
+        if (!string.IsNullOrWhiteSpace(Flow) && Enum.TryParse<TourMode>(Flow, ignoreCase: true, out var linkedMode))
+        {
+            Session.Mode = linkedMode;
+        }
         // Sync the MockPS consent store so each fresh tour session starts
         // in the right state for its configured mode.
         await Session.PrepareConsentStateAsync();

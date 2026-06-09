@@ -265,7 +265,7 @@ public sealed class AAuthMissionTerminatedException : Exception
 ```csharp
 try
 {
-    await session.RecordAuditAsync(new MissionAction("email.send"));
+    await session.RecordAuditAsync(new MissionAction("add_to_calendar"));
 }
 catch (AAuthMissionTerminatedException ex)
 {

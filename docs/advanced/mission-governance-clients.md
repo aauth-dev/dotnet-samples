@@ -58,12 +58,12 @@ pre-approved. The PS may approve all tools, a subset, or none, and may run a
 returns a **session** scoped to the approved mission:
 
 ```csharp
-var proposal = new MissionProposal("Book a table for four near the office on Friday.")
+var proposal = new MissionProposal("Plan a weekend trip to Seattle for four.")
 {
     Tools = new[]
     {
-        new MissionTool("calendar.read", "Check the user's Friday schedule."),
-        new MissionTool("email.send", "Send the confirmation to the group."),
+        new MissionTool("calendar.read", "Check the user's weekend schedule."),
+        new MissionTool("add_to_calendar", "Add the itinerary to the calendar."),
     },
 };
 
@@ -72,7 +72,7 @@ MissionSession session = await governance.ProposeMissionAsync(
     new GovernanceOptions
     {
         OnClarificationRequired = async (requirement, ct) =>
-            ClarificationResponse.Respond("Friday dinner, around 7pm, four people."),
+            ClarificationResponse.Respond("This weekend, leaving Friday evening, four people."),
     });
 
 Mission mission = session.Mission;
@@ -93,14 +93,14 @@ user (§Permission Endpoint).
 
 ```csharp
 PermissionResult result = await session.RequestPermissionAsync(
-    new MissionAction("email.send"),
-    description: "Send the booking confirmation to the four guests.");
+    new MissionAction("add_to_calendar"),
+    description: "Add the flight and hotel to the user's calendar.");
 
 if (result.IsGranted)
 {
     // Pre-approved tool → granted locally with reason
     // "Pre-approved tool on the active mission."
-    SendEmail();
+    AddToCalendar();
 }
 else
 {
@@ -108,16 +108,16 @@ else
 }
 ```
 
-The action is a `MissionAction` POCO — construct it with `new MissionAction("email.send")`
+The action is a `MissionAction` POCO — construct it with `new MissionAction("add_to_calendar")`
 (or `tool.ToAction()` from a `MissionTool`). For an action not on the mission, the PS evaluates
 it against the mission log and may prompt the user. Supply `OnInteractionRequired`
 / `OnClarificationRequired` via `GovernanceOptions` to participate in any deferral.
 
 ```csharp
 PermissionResult outcome = await session.RequestPermissionAsync(
-    new MissionAction("files.delete"),
-    description: "Remove the stale draft the user mentioned.",
-    parameters: new JsonObject { ["path"] = "/drafts/old.md" });
+    new MissionAction("cancel_booking"),
+    description: "Cancel the stale hotel hold the user mentioned.",
+    parameters: new JsonObject { ["bookingId"] = "htl-old" });
 ```
 
 ## Recording an audit entry
@@ -129,9 +129,9 @@ surfaces as `AAuthMissionTerminatedException` (see
 
 ```csharp
 await session.RecordAuditAsync(
-    new MissionAction("email.send"),
-    description: "Sent booking confirmation to 4 recipients.",
-    result: new JsonObject { ["messageId"] = "msg-8842" });
+    new MissionAction("add_to_calendar"),
+    description: "Added the flight and hotel to the user's calendar.",
+    result: new JsonObject { ["items"] = 2 });
 ```
 
 ## Reaching the user
@@ -143,17 +143,17 @@ question, or propose mission completion. Each request type resolves to a typed
 
 ```csharp
 // Ask the user a clarifying question mid-mission.
-string? answer = await session.AskQuestionAsync("Window seat or booth?");
+string? answer = await session.AskQuestionAsync("Window seat or aisle?");
 
 // Relay a resource interaction (e.g. a payment-style confirmation URL + code).
 await session.RelayInteractionAsync(
     url: "https://resource.example/confirm/abc",
     code: "4821",
-    description: "Confirm the reservation.");
+    description: "Confirm the booking.");
 
 // Propose completion; true when the user accepted and the PS terminated the mission.
 bool done = await session.ProposeCompletionAsync(
-    "Booked Table 12 for four at 7pm Friday and emailed the group.");
+    "Booked the Friday-evening flight and a hotel for four, and added them to the calendar.");
 ```
 
 Each interaction call returns an `InteractionResult` whose populated fields depend

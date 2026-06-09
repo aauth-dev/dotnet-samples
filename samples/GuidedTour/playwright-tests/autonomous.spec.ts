@@ -25,16 +25,16 @@ test('autonomous flow exchanges and replays to a three-party 200', async ({ page
 
   await runAll(page);
 
-  // Step 6 ("Replay GET /jwt with auth_token") is the resource result.
+  // Step 6 ("Replay GET /events with auth_token") is the resource result.
   await selectStep(page, 5);
   await expectResponse(page, 200, ['three-party']);
 
   const json = (await readResponseJson(page)) as Record<string, unknown>;
-  expect(json.mode).toBe('three-party');
+  expect(json.accessMode).toBe('three-party');
   expect(json.scheme).toBe('jwt');
   expect(json.agent).toBe(Agents.tour);
   expect(json.sub).toBe('pairwise-sub');
-  expect(json.scope).toEqual(['whoami']);
+  expect(json.scope).toEqual(['calendar.read']);
   expect(json.iss).toBe(Urls.personServer);
   // Standing-consent single-hop grant — act names the tour agent, no nesting.
   const act = json.act as Record<string, unknown>;

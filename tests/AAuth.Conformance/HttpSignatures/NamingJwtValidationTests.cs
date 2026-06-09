@@ -116,20 +116,96 @@ public class NamingJwtValidationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response2.StatusCode);
     }
 
-    // ── Helpers ────────────────────────────────────────────────────────────
+    [Fact(DisplayName = "§3.4 — spoofed iss (claims another key's thumbprint) returns 401")]
+    public async Task SpoofedIss_Returns401()
+    {
+        // Attacker signs with their OWN durable key but claims the legitimate
+        // durable key's thumbprint as iss. Self-anchoring computes the thumbprint
+        // from the header jwk (attacker's) and finds it != iss → reject.
+        var attackerDurable = AAuthKey.Generate();
+        var header = new JsonObject
+        {
+            ["alg"] = AAuthKey.Algorithm,
+            ["typ"] = AAuthConstants.TokenTypes.JktS256Jwt,
+            ["jwk"] = attackerDurable.ToPublicJwk(),
+        };
+        var payload = new JsonObject
+        {
+            ["iss"] = AAuthConstants.JktThumbprintUrnPrefix + _durableKey.ComputeJwkThumbprint(),
+            ["iat"] = FixedClock.ToUnixTimeSeconds(),
+            ["exp"] = FixedClock.AddMinutes(5).ToUnixTimeSeconds(),
+            ["jti"] = Guid.NewGuid().ToString("N"),
+            ["cnf"] = new JsonObject { ["jwk"] = _ephemeralKey.ToPublicJwk() },
+        };
+        var spoofed = JwtWriter.SignCompact(header, payload, attackerDurable);
 
-    private string BuildNamingJwt(DateTimeOffset exp, string? jti = null)
+        var response = await SendSignedRequest(spoofed);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact(DisplayName = "§3.4 — naming JWT signed by a non-header key returns 401")]
+    public async Task ForgedSignature_Returns401()
+    {
+        // Header advertises the durable key, but the JWT is signed by a different
+        // key — the §3.4 signature check (step 8) against the header jwk fails.
+        var header = new JsonObject
+        {
+            ["alg"] = AAuthKey.Algorithm,
+            ["typ"] = AAuthConstants.TokenTypes.JktS256Jwt,
+            ["jwk"] = _durableKey.ToPublicJwk(),
+        };
+        var payload = new JsonObject
+        {
+            ["iss"] = AAuthConstants.JktThumbprintUrnPrefix + _durableKey.ComputeJwkThumbprint(),
+            ["iat"] = FixedClock.ToUnixTimeSeconds(),
+            ["exp"] = FixedClock.AddMinutes(5).ToUnixTimeSeconds(),
+            ["jti"] = Guid.NewGuid().ToString("N"),
+            ["cnf"] = new JsonObject { ["jwk"] = _ephemeralKey.ToPublicJwk() },
+        };
+        var forged = JwtWriter.SignCompact(header, payload, AAuthKey.Generate());
+
+        var response = await SendSignedRequest(forged);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact(DisplayName = "§3.4 — unsupported naming JWT typ returns 401")]
+    public async Task WrongTyp_Returns401()
     {
         var header = new JsonObject
         {
             ["alg"] = AAuthKey.Algorithm,
-            ["typ"] = "naming+jwt",
-            ["kid"] = _durableKey.ComputeJwkThumbprint(),
+            ["typ"] = "naming+jwt", // retired/unsupported typ
+            ["jwk"] = _durableKey.ToPublicJwk(),
+        };
+        var payload = new JsonObject
+        {
+            ["iss"] = AAuthConstants.JktThumbprintUrnPrefix + _durableKey.ComputeJwkThumbprint(),
+            ["iat"] = FixedClock.ToUnixTimeSeconds(),
+            ["exp"] = FixedClock.AddMinutes(5).ToUnixTimeSeconds(),
+            ["jti"] = Guid.NewGuid().ToString("N"),
+            ["cnf"] = new JsonObject { ["jwk"] = _ephemeralKey.ToPublicJwk() },
+        };
+        var wrongTyp = JwtWriter.SignCompact(header, payload, _durableKey);
+
+        var response = await SendSignedRequest(wrongTyp);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────
+
+    private string BuildNamingJwt(DateTimeOffset exp, string? jti = null)
+    {
+        // draft-hardt-httpbis-signature-key-04 §3.4 self-issued naming JWT.
+        var header = new JsonObject
+        {
+            ["alg"] = AAuthKey.Algorithm,
+            ["typ"] = AAuthConstants.TokenTypes.JktS256Jwt,
+            ["jwk"] = _durableKey.ToPublicJwk(),
         };
 
         var payload = new JsonObject
         {
-            ["iss"] = "https://ap.example",
+            ["iss"] = AAuthConstants.JktThumbprintUrnPrefix + _durableKey.ComputeJwkThumbprint(),
             ["iat"] = FixedClock.ToUnixTimeSeconds(),
             ["exp"] = exp.ToUnixTimeSeconds(),
             ["jti"] = jti ?? Guid.NewGuid().ToString("N"),
@@ -148,7 +224,7 @@ public class NamingJwtValidationTests : IAsyncLifetime
         var capture = new CaptureHandler();
         var signingHandler = new AAuthSigningHandler(
             _ephemeralKey,
-            new JktJwtSignatureKeyProvider(_ephemeralKey, () => namingJwt),
+            new JktJwtSignatureKeyProvider(() => namingJwt),
             () => FixedClock)
         {
             InnerHandler = capture,

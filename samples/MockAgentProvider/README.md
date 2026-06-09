@@ -28,7 +28,7 @@ Defaults to `http://localhost:5301` (HTTP) / `https://localhost:5300` (HTTPS).
 ## Using with AgentConsole
 
 ```bash
-dotnet run --project samples/AgentConsole -- http://localhost:5000/hwk \
+dotnet run --project samples/AgentConsole -- http://localhost:5000/pseudonymous \
   --ap http://localhost:5301 \
   --sub "aauth:myagent@ap.example"
 ```

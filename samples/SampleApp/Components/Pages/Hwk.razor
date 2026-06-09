@@ -1,4 +1,4 @@
-@page "/hwk"
+@page "/pseudonymous"
 @using AAuth.Crypto
 @using AAuth.HttpSig
 @inject IJSRuntime JS
@@ -7,6 +7,15 @@
 <PageTitle>HWK — Pseudonymous</PageTitle>
 
 <h2>HWK — Pseudonymous Signing</h2>
+
+<details class="alert alert-primary aria-narrative" open>
+    <summary>📖 What Aria is trying to do</summary>
+    Aria (your AI travel assistant) wants to look up your saved
+    travel preferences from the <strong>Profile</strong> server, but you'd rather stay
+    anonymous. It signs every request with a freshly generated key, so the server
+    recognises a consistent visitor (the key's thumbprint) without ever learning who
+    you really are.
+</details>
 
 <p>
     The simplest mode. No enrollment required. Generate a key and sign requests.
@@ -35,12 +44,12 @@ app.UseAAuthVerification(new AAuthVerificationOptions
     RequireIssuerVerification = false,
 });
 
-app.MapGet("/hwk", (HttpContext ctx) =>
+app.MapGet("/pseudonymous", (HttpContext ctx) =>
 {
     var parsed = ctx.GetAAuthParsedKey()!;
     return Results.Ok(new
     {
-        mode = "pseudonymous",
+        signingMode = "pseudonymous",
         scheme = "hwk",
         jkt = parsed.Jkt,
     });
@@ -98,8 +107,8 @@ app.MapGet("/hwk", (HttpContext ctx) =>
                 .UseHwk()
                 .Build();
 
-            var resourceUrl = Config["AAuth:Resource"]!;
-            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/hwk");
+            var resourceUrl = Config["AAuth:Profile"]!;
+            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/pseudonymous");
 
             _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
             _success = response.IsSuccessStatusCode;

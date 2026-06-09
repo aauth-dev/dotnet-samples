@@ -10,17 +10,26 @@
 
 <h2>Call Chain — Multi-Agent Delegation</h2>
 
+<details class="alert alert-primary aria-narrative" open>
+    <summary>📖 What Aria is trying to do</summary>
+    Aria (your AI travel assistant) doesn't read your
+    <strong>Calendar</strong> directly — it delegates the planning to an
+    <strong>Concierge</strong> service, which reads the Calendar on Aria's behalf. You
+    consent once for Aria to use the Concierge, and again for the Concierge to reach
+    your Calendar, so the final resource sees the full delegation path.
+</details>
+
 <p>
     Demonstrates multi-hop call chaining with genuine <strong>interaction chaining</strong>:
-    <strong>Agent&nbsp;A</strong> (this app) calls the <strong>Orchestrator</strong> (an
-    intermediate service), which then calls the <strong>WhoAmI</strong> resource. Each hop
+    <strong>Agent&nbsp;A</strong> (this app) calls the <strong>Concierge</strong> (an
+    intermediate service), which then calls the <strong>Calendar</strong> resource. Each hop
     requires the user's consent at the Person Server:
 </p>
 <ul>
-    <li><strong>Hop&nbsp;1</strong> (Agent&nbsp;A → Orchestrator, scope <code>orchestrate</code>):
+    <li><strong>Hop&nbsp;1</strong> (Agent&nbsp;A → Concierge, scope <code>concierge</code>):
         plain <em>Interaction Required</em> — Agent&nbsp;A relays you to the PS consent page.</li>
-    <li><strong>Hop&nbsp;2</strong> (Orchestrator → WhoAmI, scope <code>whoami</code>):
-        the Orchestrator has no user, so it re-emits its <em>own</em> <code>202</code>
+    <li><strong>Hop&nbsp;2</strong> (Concierge → Calendar, scope <code>calendar.read</code>):
+        the Concierge has no user, so it re-emits its <em>own</em> <code>202</code>
         (AAuth §Interaction Chaining). Agent&nbsp;A relays you to that consent page too,
         then receives the final chained result.</li>
 </ul>
@@ -42,7 +51,7 @@
 <h5>Agent (Client) Code</h5>
 <pre><code class="language-csharp">// Agent A wires TWO callbacks. Hop 1 (the PS exchange
 // 202) flows through the challenge pipeline; hop 2 (the
-// Orchestrator's CHAINED resource 202) flows through the
+// Concierge's CHAINED resource 202) flows through the
 // interaction pipeline. Both surface a consent URL.
 using var client = AAuthClientBuilder.SelfIssuing(key)
     .As(issuer, agentId)
@@ -55,26 +64,26 @@ using var client = AAuthClientBuilder.SelfIssuing(key)
                 Surface(interaction.BuildUserUrl());
     })
     .WithInteractionHandling(opts =&gt;
-    {   // hop 2: Orchestrator's chained 202
+    {   // hop 2: Concierge's chained 202
         opts.OnInteractionRequired =
             (userUrl, code, ct) =&gt; Surface(userUrl);
     })
     .Build();
 
-// Calls the Orchestrator (not WhoAmI directly).
-var response = await client.GetAsync(orchestratorUrl);</code></pre>
+// Calls the Concierge (not Calendar directly).
+var response = await client.GetAsync(conciergeUrl);</code></pre>
 </div>
 <div class="col-md-6">
-<h5>Orchestrator Handler (interaction chaining)</h5>
-<pre><code class="language-csharp">// The Orchestrator is BOTH a resource AND an agent,
+<h5>Concierge Handler (interaction chaining)</h5>
+<pre><code class="language-csharp">// The Concierge is BOTH a resource AND an agent,
 // but has NO user — so its downstream client CHAINS
 // the interaction instead of relaying it: the callback
 // THROWS, unwinding the exchange before it blocks.
 async Task&lt;IResult&gt; RunChainAsync(HttpContext ctx, string upstream)
 {
     using var downstream = AAuthClientBuilder
-        .SelfIssuing(orchestratorKey)
-        .As(orchestratorUrl, agentId)
+        .SelfIssuing(conciergeKey)
+        .As(conciergeUrl, agentId)
         .WithKid(kid)
         .WithPersonServer(psUrl)
         .WithCallChaining(upstream)   // forwards upstream token
@@ -88,7 +97,7 @@ async Task&lt;IResult&gt; RunChainAsync(HttpContext ctx, string upstream)
         })
         .Build();
 
-    var r = await downstream.GetAsync($"{whoAmIUrl}/jwt");
+    var r = await downstream.GetAsync($"{calendarUrl}/events");
     return Results.Ok(/* combined chain result */);
 }
 
@@ -119,7 +128,7 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
 @if (!_waitingForApproval && _response is null)
 {
     <button class="btn btn-primary" @onclick="SendChainedRequest" disabled="@_loading">
-        @(_loading ? "Sending..." : "Send Chained Request (Agent → Orchestrator → WhoAmI)")
+        @(_loading ? "Sending..." : "Send Chained Request (Agent → Concierge → Calendar)")
     </button>
     <p class="text-muted mt-1">
         <small>
@@ -221,12 +230,12 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
         try
         {
             var personServer = Config["AAuth:PersonServer"]!;
-            var orchestratorUrl = Config["AAuth:Orchestrator"]!;
+            var conciergeUrl = Config["AAuth:Concierge"]!;
 
             var hopIndex = 0;
 
             // Surfaces a consent URL to the UI. Hop 1 (PS exchange 202) arrives
-            // via the challenge pipeline; hop 2 (the Orchestrator's chained 202)
+            // via the challenge pipeline; hop 2 (the Concierge's chained 202)
             // arrives via the top-level interaction pipeline. Both funnel here.
             async Task SurfaceInteraction(string userUrl)
             {
@@ -237,15 +246,15 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
                 hopIndex++;
                 _currentHopNumber = hopIndex;
                 _currentHop = hopIndex == 1
-                    ? "Hop 1: Agent → Orchestrator (orchestrate)"
-                    : "Hop 2: Orchestrator → WhoAmI (whoami, chained)";
+                    ? "Hop 1: Agent → Concierge (concierge)"
+                    : "Hop 2: Concierge → Calendar (calendar.read, chained)";
                 _interactionUrl = userUrl;
                 _waitingForApproval = true;
                 await InvokeAsync(StateHasChanged);
             }
 
             // Self-issued token refresh + interaction relay. A 202 from the PS
-            // (hop 1) or the Orchestrator's chained 202 (hop 2) both surface a
+            // (hop 1) or the Concierge's chained 202 (hop 2) both surface a
             // consent URL here; the SDK then polls and resumes.
             using var client = AAuthClientBuilder.SelfIssuing(_identity.Key)
                 .As(_identity.Issuer, _identity.AgentId)
@@ -278,7 +287,7 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
                 }
             });
 
-            var response = await client.GetAsync(orchestratorUrl);
+            var response = await client.GetAsync(conciergeUrl);
 
             pollTimer.Dispose();
 

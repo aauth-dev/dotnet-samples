@@ -6,7 +6,7 @@ Register AAuth services in ASP.NET Core and hosted applications using the built-
 
 How your agent obtains its token depends on its deployment model:
 
-- **Hosted services** (web apps, APIs, orchestrators with a stable URL): Self-issue agent tokens at runtime. Generate a key at startup, publish `/.well-known/aauth-agent.json`, and build tokens locally. No external AP needed.
+- **Hosted services** (web apps, APIs, concierges with a stable URL): Self-issue agent tokens at runtime. Generate a key at startup, publish `/.well-known/aauth-agent.json`, and build tokens locally. No external AP needed.
 - **CLI / desktop / mobile agents** (no stable URL): Enrol with an Agent Provider once (provisioning step), then refresh tokens from the AP at runtime.
 
 In both cases, the agent token is short-lived (typically 1 hour) and refreshed automatically by the SDK. You never persist it.
@@ -266,7 +266,7 @@ builder.Services.AddAAuthAgent("external-api", options =>
 ## Complete Example: Agent + Resource in One App
 
 An app that verifies inbound AAuth requests AND makes signed outbound requests.
-See `samples/Orchestrator` for a full working implementation with call chaining.
+See `samples/Concierge` for a full working implementation with call chaining.
 
 ```csharp
 var builder = WebApplication.CreateBuilder(args);

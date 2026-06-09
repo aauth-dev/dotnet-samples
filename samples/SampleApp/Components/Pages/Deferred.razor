@@ -1,4 +1,4 @@
-@page "/deferred"
+@page "/calendar-deferred"
 @using AAuth.Agent
 @using AAuth.Crypto
 @using AAuth.Headers
@@ -9,6 +9,14 @@
 <PageTitle>Deferred — User Consent</PageTitle>
 
 <h2>Deferred — User Consent (Three-Party)</h2>
+
+<details class="alert alert-primary aria-narrative" open>
+    <summary>📖 What Aria is trying to do</summary>
+    Aria (your AI travel assistant) wants to read your
+    <strong>Calendar</strong> to plan around your schedule, but you haven't pre-approved
+    this yet. The Person Server pauses the request and asks you to approve it in another
+    tab; Aria waits, then continues once you say yes.
+</details>
 
 <p>
     Full three-party flow with <strong>deferred consent</strong>: the Person Server
@@ -49,6 +57,13 @@ builder.Services.AddSingleton(sp =&gt;
 builder.Services.AddSingleton(sp =&gt;
     new JwksClient(httpClient));
 
+// Authn scheme + scope policy enforcing `calendar.read`.
+builder.Services.AddAAuthAuthentication();
+builder.Services.AddAAuthAuthorization();
+// arg 1 = policy name (any id, used by RequireAuthorization); arg 2 = scope value matched against the token. "AAuth.Scope." is just a naming convention.
+builder.Services.AddAAuthScopePolicy(
+    "AAuth.Scope.calendar.read", "calendar.read");
+
 var app = builder.Build();
 
 // Middleware verifies HTTP signature AND the
@@ -64,23 +79,28 @@ app.UseAAuthChallenge(new ChallengeOptions
     AccessMode = AAuthAccessMode.RequireAuthToken,
 });
 
+app.UseAuthentication();
+app.UseAuthorization();
+
 // Resource challenges on first call, accepts
 // on retry after user approves via PS.
-app.MapGet("/jwt", (HttpContext ctx) =&gt;
+app.MapGet("/events", (HttpContext ctx) =&gt;
 {
-    // Middleware already verified the auth token.
+    // Middleware verified the auth token AND the
+    // scope policy below enforced `calendar.read`.
     var r = ctx.Features
         .Get&lt;AAuthVerificationResult&gt;()!;
     return Results.Ok(new
     {
-        mode = "three-party",
+        accessMode = "three-party",
         scheme = "jwt",
         agent = r.Agent,
         sub = r.Subject,
-        scope = r.Scopes, // ["whoami"]
+        scope = r.Scopes, // ["calendar.read"]
         iss = r.Issuer,
     });
-});</code></pre>
+})
+.RequireAuthorization("AAuth.Scope.calendar.read");</code></pre>
 </div>
 </div>
 
@@ -185,7 +205,7 @@ app.MapGet("/jwt", (HttpContext ctx) =&gt;
                 })
                 .Build();
 
-            var resourceUrl = Config["AAuth:Resource"]!;
+            var resourceUrl = Config["AAuth:Calendar"]!;
 
             // Start a background timer to update poll count in the UI
             using var pollTimer = new PeriodicTimer(TimeSpan.FromSeconds(1));
@@ -198,7 +218,7 @@ app.MapGet("/jwt", (HttpContext ctx) =&gt;
                 }
             });
 
-            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/jwt");
+            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/events");
 
             // Stop the poll counter
             pollTimer.Dispose();
@@ -237,7 +257,7 @@ app.MapGet("/jwt", (HttpContext ctx) =&gt;
         if (string.IsNullOrEmpty(personServer)) return;
 
         var agentId = _identity.AgentId;
-        var resource = Config["AAuth:Resource"]!;
+        var resource = Config["AAuth:Calendar"]!;
 
         using var http = new HttpClient();
         try

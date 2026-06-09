@@ -1,4 +1,4 @@
-@page "/federated"
+@page "/wallet"
 @using AAuth.Agent
 @using AAuth.Crypto
 @using AAuth.Headers
@@ -10,9 +10,17 @@
 
 <h2>Federated — Four-Party (Access Server)</h2>
 
+<details class="alert alert-primary aria-narrative" open>
+    <summary>📖 What Aria is trying to do</summary>
+    Aria (your AI travel assistant) is ready to pay for a booking and
+    needs to charge your <strong>Wallet</strong> — but your funds live with a separate
+    financial provider. The Person Server hands off to that provider's Access Server,
+    which checks policy and authorises the charge on your behalf.
+</details>
+
 <p>
     The full <strong>four-party (federated)</strong> flow. The resource's
-    <code>/federated</code> branch challenges with a resource token whose
+    <code>/wallet</code> branch challenges with a resource token whose
     <code>aud</code> is an <strong>Access Server (AS)</strong> — not the Person
     Server. The agent forwards it to its PS unchanged; the PS notices
     <code>aud&nbsp;&ne;&nbsp;self</code>, federates to the AS, and the
@@ -24,14 +32,14 @@
 <p class="text-muted">
     <strong>Federation is transparent to the agent.</strong> This page's agent
     code is identical to the three-party
-    <a href="deferred">Deferred</a> page — only the PS behaves differently. When
+    <a href="calendar-deferred">Deferred</a> page — only the PS behaves differently. When
     the AS requires consent it returns <code>202 requirement=interaction</code>;
     the PS relays it, and the agent surfaces the AS consent URL on the
     <em>same</em> challenge callback, then polls until the AS mints the auth
-    token. <strong>From the agent's perspective the stub AS and Keycloak are
-    identical</strong> — same 202 → interaction URL → poll → mint; only the
-    interaction URL's destination differs (the stub's own <em>Access Server</em>
-    consent screen vs a Keycloak login).
+    token. <strong>The consent screen tells you which Access Server you're
+    using:</strong> the stub AS shows its own Approve/Deny page
+    (<code>make demo</code>), while Keycloak shows a login page
+    (<code>make demo-keycloak</code>).
 </p>
 
 <div class="row">
@@ -60,8 +68,8 @@ using var client = AAuthClientBuilder.SelfIssuing(key)
     })
     .Build();
 
-// Calls the resource's /federated branch (aud = AS).
-var response = await client.GetAsync($"{resource}/federated");</code></pre>
+// Calls the resource's /wallet branch (aud = AS).
+var response = await client.GetAsync($"{resource}/wallet");</code></pre>
 </div>
 <div class="col-md-6">
 <h5>Person Server (federation) Code</h5>
@@ -102,7 +110,7 @@ return Results.Json(new { auth_token = auth.Token });</code></pre>
 @if (!_waitingForApproval && _response is null)
 {
     <button class="btn btn-primary" @onclick="SendRequest" disabled="@_loading">
-        @(_loading ? "Sending..." : "Send Signed Request to /federated")
+        @(_loading ? "Sending..." : "Send Signed Request to /wallet")
     </button>
     <p class="text-muted mt-1">
         <small>
@@ -211,7 +219,7 @@ return Results.Json(new { auth_token = auth.Token });</code></pre>
                 })
                 .Build();
 
-            var resourceUrl = Config["AAuth:Resource"]!;
+            var resourceUrl = Config["AAuth:Wallet"]!;
 
             // Background timer to update the poll count in the UI.
             using var pollTimer = new PeriodicTimer(TimeSpan.FromSeconds(1));
@@ -224,7 +232,7 @@ return Results.Json(new { auth_token = auth.Token });</code></pre>
                 }
             });
 
-            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/federated");
+            var response = await client.GetAsync($"{resourceUrl.TrimEnd('/')}/wallet");
 
             pollTimer.Dispose();
 
@@ -262,14 +270,14 @@ return Results.Json(new { auth_token = auth.Token });</code></pre>
         if (string.IsNullOrEmpty(personServer)) return;
 
         var agentId = _identity.AgentId;
-        var resource = Config["AAuth:Resource"]!;
+        var resource = Config["AAuth:Wallet"]!;
 
         using var http = new HttpClient();
         try
         {
             await http.PostAsJsonAsync(
                 $"{personServer.TrimEnd('/')}/admin/revoke",
-                new { agent = agentId, resource = $"{resource.TrimEnd('/')}/federated" });
+                new { agent = agentId, resource = $"{resource.TrimEnd('/')}/wallet" });
         }
         catch
         {
