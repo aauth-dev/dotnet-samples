@@ -318,7 +318,7 @@ public class ChallengeHandlerTests
     [Theory(DisplayName = "TokenExchangeClient — non-2xx with error body throws typed exception")]
     [InlineData(HttpStatusCode.BadRequest, "invalid_resource_token", true)]
     [InlineData(HttpStatusCode.BadRequest, "expired_agent_token", true)]
-    [InlineData((HttpStatusCode)400, "user_unreachable", true)]
+    [InlineData(HttpStatusCode.Forbidden, "user_unreachable", true)]
     [InlineData(HttpStatusCode.Forbidden, "interaction_required", true)]
     [InlineData(HttpStatusCode.InternalServerError, "server_error", false)]
     public async Task Exchange_NonSuccessWithErrorBody_ThrowsTyped(

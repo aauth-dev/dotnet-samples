@@ -52,7 +52,33 @@ Each entry: `[YYYY-MM-DD] [Phase N] <title>` with status
 
 ## Deviations from plan
 
-_None yet — research only. Entries land as phases execute._
+### [2026-06-09] [Phase 1] Latent test bugs exposed by the new metadata issuer check — RESOLVED
+- The host-binding check (Phase 1b) surfaced pre-existing test bugs where mock
+  metadata declared an `issuer` that did not match the origin it was served from
+  — invisible before because nothing verified it. Fixed the fixtures, not the
+  check:
+  - `tests/AAuth.Tests/Integration/MissionAgentFlowTests.cs` built resource
+    tokens with `iss = https://trips.test` while `ResourceStub` served metadata
+    declaring `issuer: https://calendar.test` and signed with the stub's key.
+    PS-side resource-token verification fetches the resource metadata, so the
+    mismatch now (correctly) fails as `invalid_resource_token`. Aligned the const
+    to `ResourceStub.Url` (7 rows fixed).
+  - `tests/AAuth.Conformance/Observability/ActivityDiagnosticsTests.cs` served PS
+    metadata with **no `issuer`** at all (3 spans). Added the matching issuer
+    (`http://localhost:9999/9998/9997`) — what a real PS emits.
+- **Why fixtures, not the check:** the check is spec-mandated (§Metadata
+  Documents) and the fixtures were internally inconsistent; production behavior
+  is correct. This is exactly the host-poisoning class the MUST exists to prevent.
+
+### [2026-06-09] [Phase 1] Metadata issuer comparison is authority-based — PROCEEDED
+- The spec says compare the document `issuer` to "the URL minus the
+  `/.well-known/{dwk}` suffix." Since AAuth server identifiers are scheme + host
+  only (§Server Identifiers — no port/path/query), the expected issuer is the
+  fetch URL's authority (`Uri.GetLeftPart(UriPartial.Authority)`), which is also
+  exactly what `MetadataClient.BuildUrl` uses in the forward direction. Ordinal
+  comparison; a missing/blank/non-string `issuer` is rejected too (cannot verify
+  ⇒ MUST reject). Revert to a literal suffix-strip if a non-root-hosted
+  well-known ever appears (it should not under RFC 8615).
 
 ---
 

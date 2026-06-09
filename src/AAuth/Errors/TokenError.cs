@@ -25,7 +25,7 @@ public enum TokenErrorCode
 
     /// <summary>
     /// The PS has no channel to reach the user and the agent did not declare
-    /// the <c>interaction</c> capability. Terminal (HTTP 400) — distinct from
+    /// the <c>interaction</c> capability. Terminal (HTTP 403) — distinct from
     /// <see cref="InteractionRequired"/>, which is a non-terminal 202 carrying
     /// an interaction URL. Per draft-02 §Token Endpoint Error Codes.
     /// </summary>

@@ -85,7 +85,7 @@ public enum TokenErrorCode
     InvalidResourceToken,   // Resource token fails validation
     ExpiredResourceToken,   // Resource token exp has passed
     InteractionRequired,    // User must approve (deferred consent, non-terminal 202)
-    UserUnreachable,        // No channel to the user; agent declared no interaction capability (terminal 400)
+    UserUnreachable,        // No channel to the user; agent declared no interaction capability (terminal 403)
     MissionTerminated,      // Mission already terminated (terminal 403 mission_terminated)
     ServerError,            // Internal server error (transient, retryable)
 }
@@ -157,7 +157,7 @@ to a `202` deferred requirement but the agent declared **no** interaction
 capability (no `OnInteractionRequired` callback was supplied), there is no channel
 to drive the consent to a verdict, so the SDK does not hang or poll forever — it
 raises a **terminal** `AAuthTokenExchangeException` with
-`ErrorCode = "user_unreachable"`, `StatusCode = 400`, and `IsTerminal = true`.
+`ErrorCode = "user_unreachable"`, `StatusCode = 403`, and `IsTerminal = true`.
 Treat it as a configuration signal: supply an interaction callback (interactive
 agent) or accept that the request cannot complete unattended.
 

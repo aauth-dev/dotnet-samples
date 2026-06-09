@@ -188,7 +188,7 @@ internal sealed class DeferredExchange
                     throw new AAuthTokenExchangeException(
                         new TokenErrorResponse(TokenErrorCode.UserUnreachable).ErrorCode,
                         $"PS returned {status} (deferred response) but no onInteractionRequired callback was provided.",
-                        statusCode: 400,
+                        statusCode: 403,
                         isTerminal: true);
                 }
 

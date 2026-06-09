@@ -73,7 +73,7 @@ this phase; record answers in `implementation-log.md`.
 ## Phase 1 — Critical conformance fixes (wire mismatch + security)
 
 Two small, high-value changes. Land first; everything else builds on a correct
-baseline.
+baseline. **Status: complete (2026-06-09).**
 
 ### 1a. `user_unreachable` 400 → 403
 
@@ -95,11 +95,11 @@ baseline.
 
 ### Definition of Done
 
-- [ ] SDK emits/classifies `user_unreachable` as 403 everywhere; no 400 residue
+- [x] SDK emits/classifies `user_unreachable` as 403 everywhere; no 400 residue
       (grep clean in `src/`, `docs/`, `tests/`).
-- [ ] Host-poisoned metadata (issuer ≠ fetch URL) is rejected for all four
+- [x] Host-poisoned metadata (issuer ≠ fetch URL) is rejected for all four
       metadata types, with a negative test proving it.
-- [ ] Build + unit + conformance green.
+- [x] Build + unit + conformance green. (393 unit, 485 conformance.)
 
 ---
 

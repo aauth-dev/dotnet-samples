@@ -105,8 +105,8 @@ fully specified interaction-code format.
   (`#token-endpoint-error-codes`, v02 line 2194).
   > Note: the earlier planning note [`v01/upcoming-changes-02.md`](v01/upcoming-changes-02.md)
   > §2 proposed status **400** for this error. The published draft uses **403**.
-  > The SDK's forward-looking `TokenErrorCode.UserUnreachable` was modeled at 400
-  > and should be reconciled to 403 during the draft-02 migration.
+  > The SDK's forward-looking `TokenErrorCode.UserUnreachable` was modeled at 400;
+  > it was reconciled to 403 in the draft-02 migration (Phase 1).
 - New non-terminal error **`interaction_unavailable`** (424) (0 → 6) — the PS
   declining to relay a *specific* interaction; the agent falls back to directing
   the user itself. Defined in new section `### Interaction Endpoint Errors`
