@@ -10,7 +10,12 @@
     <Project Path="samples/MockPersonServer/MockPersonServer.csproj" />
     <Project Path="samples/SampleApp/SampleApp.csproj" />
   </Folder>
-  <Folder Name="/samples/MockResourceServers/" />
+  <Folder Name="/samples/MockResourceServers/">
+    <Project Path="samples/MockResourceServers/Calendar/Calendar.csproj" />
+    <Project Path="samples/MockResourceServers/Profile/Profile.csproj" />
+    <Project Path="samples/MockResourceServers/Trips/Trips.csproj" />
+    <Project Path="samples/MockResourceServers/Wallet/Wallet.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/AAuth/AAuth.csproj" />
   </Folder>
