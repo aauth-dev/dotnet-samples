@@ -133,8 +133,25 @@ Each entry: `[YYYY-MM-DD] [Phase N] <title>` with status
 
 ## Open questions / inputs needed
 
-### [2026-06-09] [Research] AP-refresh vs `jwt`-scheme overlap (upstream spec)
-- §3.4's `jkt-jwt` is built around self-anchored device identity; the AAuth
-  refresh case (AP already knows the durable key) overlaps with the `jwt`
-  scheme. We chose Option A (conform), which is spec-valid. Any upstream spec
-  clarification is out of scope here — noted for completeness.
+### [2026-06-09] [Research] AP-refresh vs `jwt`-scheme overlap — RESOLVED by the spec author
+- **Question:** §3.4's `jkt-jwt` is built around self-anchored device identity;
+  the AAuth refresh case (AP already knows the durable key) seemed to overlap with
+  the `jwt` scheme. Which is canonical for refresh?
+- **Spec author's answer (Dick Hardt, 2026-06-09):** *"It all depends on the
+  environment. I added jkt-jwt when I was implementing bootstrapping a mobile app
+  where there is an enclave to store the key, but not practical to use for signing
+  everything. On first use, the AP drives a platform attestation in addition to
+  the jkt-jwt — and then the jkt-jwt is all that is needed for future agent
+  tokens."*
+- **Resolution:** `jkt-jwt` IS the intended scheme for the two-key refresh leg —
+  it was purpose-built for the enclave-backed case we use it in. It is not
+  redundant with `jwt`: the enclave can't sign every request, so it delegates to a
+  fast ephemeral key, and scheme choice is environment-driven (enclave → jkt-jwt;
+  single durable key → hwk; issuer-discoverable → jwt). At the AP the durable key
+  is **not** trusted by pure TOFU — trust is established by the **platform
+  attestation at enrollment** and then carried forward by the durable-key
+  signature on each naming JWT (no re-attestation per refresh). This is exactly
+  Phase 4 Option A: the AP runs the §3.4 self-anchored verification, then
+  cross-checks the durable key against the enrolment record the attestation
+  established (`MockAgentProvider`). No code change required — the choice is
+  confirmed correct.

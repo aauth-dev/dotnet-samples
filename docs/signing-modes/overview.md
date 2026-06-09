@@ -22,6 +22,33 @@ All AAuth signing modes use HTTP Message Signatures (RFC 9421). The difference i
 | Agent Identity (`jwks_uri`) | Access control by identity, replacing API keys | JWKS host (AP or self-hosted) |
 | Agent Token (`jwt`) | Full PS-AS authorization flows | Token issuer (AP or self-issued) + Person Server |
 
+### Choosing by environment
+
+The signing mode follows from **where and how the agent's key is stored** — as
+the scheme's designer puts it, *"it all depends on the environment."*
+
+- **Secure enclave / hardware-backed key** (mobile apps, TPM) → **`jkt-jwt`**.
+  The durable key lives in an enclave that can prove its own genuineness but is
+  slow or impractical to invoke on every request, so the agent delegates
+  request-signing to a fast ephemeral software key via a naming JWT. On **first**
+  enrolment the AP drives a **platform attestation** (e.g. Apple App Attest or
+  Google Play Integrity) *alongside* the `jkt-jwt` to prove the durable key is
+  real enclave material; after that, the durable-key signature on each naming JWT
+  is all that is needed for future agent tokens — no re-attestation per refresh.
+  `jkt-jwt` was introduced specifically for this case.
+- **Single software keypair, no enclave constraint** → **`hwk`**. Simplest: the
+  public key travels inline and the durable key signs requests directly. Use when
+  nothing forces key delegation.
+- **Published / discoverable key** (a host with a stable HTTPS URL + JWKS) →
+  **`jwks_uri`** (named agent identity) or **`jwt`** (full agent token for PS/AS
+  flows). The verifier resolves and trusts the key through the issuer's JWKS.
+
+This is why the same two-key `jkt-jwt` machinery serves both the enclave-refresh
+case and pseudonymous resource access: the choice is environment-driven, not a
+single canonical default. At an AP, the durable key is therefore **not** trusted
+by pure first-use — trust is established by the enrolment-time attestation and
+carried forward by the durable-key signature on each naming JWT.
+
 ## SDK Types
 
 ```csharp
@@ -53,7 +80,7 @@ ISignatureKeyProvider provider = mode switch
     "hwk"      => new HwkSignatureKeyProvider(key),
     "jwks_uri" => new JwksUriSignatureKeyProvider(jwksUri, kid),
     "jwt"      => new JwtSignatureKeyProvider(() => agentToken),
-    "jkt-jwt"  => new JktJwtSignatureKeyProvider(ephemeralKey, () => namingJwt),
+    "jkt-jwt"  => new JktJwtSignatureKeyProvider(() => namingJwt),
 };
 
 var handler = new AAuthSigningHandler(key, provider);

@@ -20,7 +20,7 @@ namespace AAuth.Agent;
 /// the <b>public</b> key, indexed in its enrollment database by JWK thumbprint.
 /// At refresh time the AP identifies the agent from the HTTP signature
 /// (matching the thumbprint of the bound JWK) — never from a string the agent
-/// sends. See <c>aauth-spec/draft-hardt-aauth-bootstrap.md</c> § "Refresh Patterns".
+/// sends. See <c>aauth-spec/v01/draft-hardt-aauth-bootstrap.md</c> § "Refresh Patterns".
 /// </remarks>
 public sealed class AgentProviderClient
 {
