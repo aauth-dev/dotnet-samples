@@ -76,6 +76,23 @@ Each entry: `[YYYY-MM-DD] [Phase N] <title>` with status
 
 ## Deviations from plan
 
+### [2026-06-09] [Phase 3] Single-use + rate-limit are store responsibilities, not in `InteractionCode` — PROCEEDED
+- The new SDK-owned `InteractionCode` utility (Q4) implements the **pure-function**
+  spec rules: Crockford alphabet, ≥40-bit CSPRNG generation, hyphen stripping,
+  case + glyph folding, and constant-shape comparison. The **stateful** MUSTs —
+  single-use and rate-limiting — are not pure functions; they belong to the
+  server's pending-interaction store (a code maps to a pending entry consumed on
+  use, with bounded validation attempts). Documented on the type rather than
+  faked in a stateless helper. The existing pending stores already consume codes
+  single-use; a dedicated rate-limit counter is a store concern revisited in
+  samples (Phase 8) if needed.
+
+### [2026-06-09] [Phase 3] `status:"interacting"` is surfaced, prompt-suppression is the host's — PROCEEDED
+- Added `InteractionResult.Status` so the agent observes the deferred `status`
+  (`"interacting"`). The poller correctly keeps polling on 202; actually
+  *stopping the user prompt* is a host-UX reaction to the surfaced status, not an
+  SDK side effect. The SDK gives the host the signal; it does not own the UI.
+
 ### [2026-06-09] [Phase 2] Agent-side `requirement=agent-token` is no-exchange, no re-sign loop — PROCEEDED- **Plan wording:** "handle requirement=agent-token by retrying with the
   already-held agent token (no PS exchange)."
 - **What shipped:** the auto-retry `ChallengeHandler` explicitly recognizes

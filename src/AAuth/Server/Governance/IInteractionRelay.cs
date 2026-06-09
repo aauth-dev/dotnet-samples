@@ -25,6 +25,15 @@ public sealed record InteractionRelayResult
     /// response and let the agent poll (for <c>interaction</c> / <c>payment</c>).
     /// </summary>
     public bool Pending { get; init; }
+
+    /// <summary>
+    /// Whether the PS has no channel available to relay this specific
+    /// <c>interaction</c>/<c>payment</c> to the user. When <see langword="true"/>
+    /// the endpoint returns <c>424 interaction_unavailable</c> (§Interaction
+    /// Endpoint Errors) — a non-terminal signal that the agent should fall back to
+    /// directing the user itself. Distinct from the terminal <c>user_unreachable</c>.
+    /// </summary>
+    public bool Unavailable { get; init; }
 }
 
 /// <summary>

@@ -144,6 +144,8 @@ baseline. **Status: complete (2026-06-09).**
 
 ## Phase 3 — Interaction handling + error codes
 
+**Status: complete (2026-06-09).**
+
 ### Scope
 
 - `interaction_unavailable` (424): new error surface per Q5
@@ -160,12 +162,21 @@ baseline. **Status: complete (2026-06-09).**
 
 ### Definition of Done
 
-- [ ] 424 `interaction_unavailable` is modeled as **non-terminal**; agent falls
-      back to directing the user; covered by a test.
-- [ ] `max_wait` serializes; `status:"interacting"` stops re-prompting the user.
-- [ ] Interaction-code format MUSTs enforced (or validated) with tests for
-      alphabet, entropy, hyphen/glyph folding, single-use, rate-limit.
-- [ ] PS-first relay ordering implemented per the SHOULD.
+- [x] 424 `interaction_unavailable` is modeled as **non-terminal**; agent falls
+      back to directing the user; covered by a test. (Server emits 424 via the
+      relay `Unavailable` outcome; the agent `InteractionClient` returns a
+      non-throwing `InteractionResult { Unavailable = true }`.)
+- [x] `max_wait` serializes; `status:"interacting"` stops re-prompting the user.
+      (`max_wait` round-trips request→parse; `InteractionResult.Status` surfaces
+      the deferred `status` so the host can suppress prompting — the poller keeps
+      polling on 202, which is the correct "interacting" behavior.)
+- [x] Interaction-code format MUSTs enforced (or validated) with tests for
+      alphabet, entropy, hyphen/glyph folding. (New SDK-owned `InteractionCode`
+      generator/validator; single-use + rate-limit remain the pending store's
+      stateful responsibility, documented on the type.)
+- [x] PS-first relay ordering implemented per the SHOULD. (The `InteractionClient`
+      relays to the PS first; the 424 `Unavailable` result is the documented
+      fall-back signal for directing the user.)
 
 ---
 

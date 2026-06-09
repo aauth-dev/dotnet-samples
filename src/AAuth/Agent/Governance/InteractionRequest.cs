@@ -42,6 +42,14 @@ public sealed record InteractionRequest(InteractionType Type)
     /// <summary>Markdown summary of what was accomplished (for <c>completion</c>). Optional.</summary>
     public string? Summary { get; init; }
 
+    /// <summary>
+    /// Maximum seconds the PS SHOULD hold the relay's deferred response before
+    /// resolving it (for <c>interaction</c>/<c>payment</c>). Optional. When the
+    /// interaction URL is resource-hosted, the PS resolves once the user has
+    /// engaged or this window elapses, whichever comes first (§Interaction Request).
+    /// </summary>
+    public int? MaxWait { get; init; }
+
     /// <summary>Mission binding (<c>approver</c> + <c>s256</c>). Optional.</summary>
     public MissionClaim? Mission { get; init; }
 
@@ -64,6 +72,7 @@ public sealed record InteractionRequest(InteractionType Type)
         if (!string.IsNullOrEmpty(Code)) { body["code"] = Code; }
         if (!string.IsNullOrEmpty(Question)) { body["question"] = Question; }
         if (!string.IsNullOrEmpty(Summary)) { body["summary"] = Summary; }
+        if (MaxWait is { } maxWait) { body["max_wait"] = maxWait; }
         if (Mission is not null) { body["mission"] = Mission.ToJsonObject(); }
         return body;
     }

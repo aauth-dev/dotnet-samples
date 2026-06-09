@@ -339,6 +339,31 @@ public class GovernanceDeferredConsentMapperTests
         await host.StopAsync();
     }
 
+    [Fact(DisplayName = "§Interaction Endpoint Errors — an unavailable relay returns 424 interaction_unavailable (non-terminal)")]
+    public async Task Interaction_Unavailable_Returns424()
+    {
+        using var host = await BuildHostAsync(s =>
+        {
+            s.AddAAuthDeferredConsent();
+            s.AddSingleton<IInteractionRelay>(new StubRelay(new InteractionRelayResult { Unavailable = true }));
+        });
+        using var client = host.GetTestServer().CreateClient();
+
+        var body = new JsonObject
+        {
+            ["type"] = "interaction",
+            ["url"] = "https://booking.example/confirm",
+            ["code"] = "X7K2-M9P4",
+        };
+        var response = await client.PostAsync("https://localhost/mission-interaction", JsonContent(body));
+
+        Assert.Equal(HttpStatusCode.FailedDependency, response.StatusCode); // 424
+        var json = await ReadJson(response);
+        Assert.Equal("interaction_unavailable", (string?)json?["error"]);
+
+        await host.StopAsync();
+    }
+
     [Fact(DisplayName = "§Interaction Response — a non-pending interaction relay resolves synchronously (200, no poll)")]
     public async Task Interaction_NotPending_Returns200()
     {

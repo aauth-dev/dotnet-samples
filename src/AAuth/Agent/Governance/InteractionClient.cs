@@ -50,6 +50,16 @@ public sealed class InteractionClient
             options?.ToExchangeOptions() ?? new DeferredExchangeOptions(), cancellationToken).ConfigureAwait(false);
         try
         {
+            // §Interaction Endpoint Errors: 424 interaction_unavailable is
+            // non-terminal — the PS cannot relay this specific interaction, so the
+            // agent falls back to directing the user itself. Surface it as a
+            // structured result, not an exception (per the migration ruling Q5).
+            if ((int)response.StatusCode == StatusCodes424
+                && await IsInteractionUnavailableAsync(response, cancellationToken).ConfigureAwait(false))
+            {
+                return new InteractionResult(request.Type) { Unavailable = true };
+            }
+
             if (!response.IsSuccessStatusCode)
             {
                 var error = await DeferredExchange.BufferBodyAsync(response, cancellationToken).ConfigureAwait(false);
@@ -65,11 +75,14 @@ public sealed class InteractionClient
                 catch (JsonException) { body = null; }
             }
 
+            var status = (string?)body?["status"];
+
             return request.Type switch
             {
                 InteractionType.Question => new InteractionResult(request.Type)
                 {
                     Answer = (string?)body?["answer"],
+                    Status = status,
                     Body = body,
                 },
                 InteractionType.Completion => new InteractionResult(request.Type)
@@ -77,14 +90,35 @@ public sealed class InteractionClient
                     // The PS terminates the mission on acceptance and returns 200.
                     // A body may carry mission_status=active when the user kept it open.
                     Terminated = (string?)body?["mission_status"] != "active",
+                    Status = status,
                     Body = body,
                 },
-                _ => new InteractionResult(request.Type) { Body = body },
+                _ => new InteractionResult(request.Type) { Status = status, Body = body },
             };
         }
         finally
         {
             response.Dispose();
+        }
+    }
+
+    private const int StatusCodes424 = 424;
+
+    // True when a 424 response actually carries error=interaction_unavailable, so
+    // an unrelated 424 still surfaces as an error rather than a silent fallback.
+    private static async Task<bool> IsInteractionUnavailableAsync(
+        HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        var raw = await DeferredExchange.BufferBodyAsync(response, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(raw)) { return false; }
+        try
+        {
+            return JsonNode.Parse(raw) is JsonObject obj
+                && (string?)obj["error"] == "interaction_unavailable";
+        }
+        catch (JsonException)
+        {
+            return false;
         }
     }
 
