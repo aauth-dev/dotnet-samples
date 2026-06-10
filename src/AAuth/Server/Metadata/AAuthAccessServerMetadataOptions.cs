@@ -18,6 +18,13 @@ public sealed class AAuthAccessServerMetadataOptions
     /// <summary>Signing keys served via the JWKS endpoint, keyed by <c>kid</c>. REQUIRED.</summary>
     public required IReadOnlyDictionary<string, AAuthKey> SigningKeys { get; init; }
 
+    /// <summary>
+    /// Optional Markdown <c>description</c> of the access server, for display to
+    /// users (§Access Server Metadata). Implementations MUST sanitize the Markdown
+    /// before rendering.
+    /// </summary>
+    public string? Description { get; init; }
+
     /// <summary>Optional revocation endpoint (<c>revocation_endpoint</c>).</summary>
     public string? RevocationEndpoint { get; init; }
 

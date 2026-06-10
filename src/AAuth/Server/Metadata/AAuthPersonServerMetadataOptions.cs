@@ -18,6 +18,13 @@ public sealed class AAuthPersonServerMetadataOptions
     /// <summary>Signing keys served via the JWKS endpoint, keyed by <c>kid</c>. REQUIRED.</summary>
     public required IReadOnlyDictionary<string, AAuthKey> SigningKeys { get; init; }
 
+    /// <summary>
+    /// Optional Markdown <c>description</c> of the person server, for display to
+    /// users (§Person Server Metadata). Implementations MUST sanitize the Markdown
+    /// before rendering.
+    /// </summary>
+    public string? Description { get; init; }
+
     /// <summary>Optional mission endpoint (<c>mission_endpoint</c>).</summary>
     public string? MissionEndpoint { get; init; }
 

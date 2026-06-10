@@ -133,6 +133,119 @@ public class PersonServerMapperTests
         await host.StopAsync();
     }
 
+    [Fact(DisplayName = "§Sub-Agents — parent-mediated three-party mint binds the SUB-AGENT key and nests act")]
+    public async Task SubAgent_ParentMediated_BindsSubAgentKey_NestsAct()
+    {
+        const string ParentId = "aauth:demo@ap.example";
+        const string SubId = "aauth:demo+w1@ap.example";
+        var parentKey = AAuthKey.Generate();
+        var subKey = AAuthKey.Generate();
+
+        // Sub-agent token: signed by the AP key the stub serves (ResourceKey/ResKid),
+        // cnf bound to the sub-agent key, carrying parent_agent.
+        var subagentToken = new AgentTokenBuilder
+        {
+            Issuer = "https://ap.example",
+            Subject = SubId,
+            KeyId = ResKid,
+            Key = ResourceKey,
+            ConfirmationKey = subKey,
+            ParentAgent = ParentId,
+            PersonServer = PsIssuer,
+        }.Build();
+
+        // Resource token the SUB-AGENT obtained (bound to its own key).
+        var resourceToken = ResourceToken(subKey, SubId, PsIssuer);
+
+        using var host = await BuildHostAsync();
+        using var http = SignedAgentClient(host, parentKey, ParentId); // parent signs
+
+        using var response = await http.PostAsJsonAsync("/token", new JsonObject
+        {
+            ["resource_token"] = resourceToken,
+            ["subagent_token"] = subagentToken,
+        });
+
+        Assert.True(response.IsSuccessStatusCode,
+            $"Status={(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        var payload = DecodePayload((string)body!["auth_token"]!);
+
+        // Auth token binds to the sub-agent's identity + key.
+        Assert.Equal(SubId, (string?)payload["agent"]);
+        var boundKey = AAuthKey.FromJwk((JsonObject)payload["cnf"]!["jwk"]!);
+        Assert.Equal(subKey.ComputeJwkThumbprint(), boundKey.ComputeJwkThumbprint());
+
+        // act nests: { sub: subagent, act: { sub: parent } } (§Delegation Chain Examples).
+        var act = (JsonObject)payload["act"]!;
+        Assert.Equal(SubId, (string?)act["sub"]);
+        var parentAct = (JsonObject)act["act"]!;
+        Assert.Equal(ParentId, (string?)parentAct["sub"]);
+
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Agent Token Request — the PS flows prompt and capabilities to the asserter")]
+    public async Task TokenRequest_PromptAndCapabilities_ReachAsserter()
+    {
+        var agentKey = AAuthKey.Generate();
+        var asserter = new CapturingAsserter();
+        using var host = await BuildHostAsync(asserter);
+        using var http = SignedAgentClient(host, agentKey, AgentId);
+
+        using var response = await http.PostAsJsonAsync("/token", new JsonObject
+        {
+            ["resource_token"] = ResourceToken(agentKey, AgentId, PsIssuer),
+            ["prompt"] = "consent",
+            ["capabilities"] = new JsonArray("interaction", "payment"),
+        });
+
+        Assert.True(response.IsSuccessStatusCode,
+            $"Status={(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+        Assert.NotNull(asserter.Last);
+        Assert.Equal("consent", asserter.Last!.Prompt);
+        Assert.NotNull(asserter.Last.Capabilities);
+        Assert.Contains("interaction", asserter.Last.Capabilities!);
+        Assert.Contains("payment", asserter.Last.Capabilities!);
+
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Single-Level Depth — the PS rejects a request signed by a sub-agent")]
+    public async Task SubAgent_DirectRequest_Rejected()
+    {
+        const string ParentId = "aauth:demo@ap.example";
+        const string SubId = "aauth:demo+w1@ap.example";
+        var subKey = AAuthKey.Generate();
+
+        // A sub-agent token used to SIGN the request directly (not allowed).
+        var subagentToken = new AgentTokenBuilder
+        {
+            Issuer = "https://ap.example",
+            Subject = SubId,
+            KeyId = "agent-1",
+            Key = subKey,
+            ParentAgent = ParentId,
+            PersonServer = PsIssuer,
+        }.Build();
+
+        using var host = await BuildHostAsync();
+        var signing = new AAuthSigningHandler(subKey, () => subagentToken)
+        {
+            InnerHandler = host.GetTestServer().CreateHandler(),
+        };
+        using var http = new HttpClient(signing) { BaseAddress = new Uri(PsIssuer) };
+
+        using var response = await http.PostAsJsonAsync("/token",
+            new JsonObject { ["resource_token"] = ResourceToken(subKey, SubId, PsIssuer) });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("invalid_request", (string?)body!["error"]);
+
+        await host.StopAsync();
+    }
+
     [Fact(DisplayName = "§Error Responses — an auth token presented as carrier is refused (403 invalid_carrier_token)")]
     public async Task ThreeParty_RejectsAuthTokenAsCarrier()
     {
@@ -335,6 +448,19 @@ public class PersonServerMapperTests
             => Task.FromResult(_assertion);
     }
 
+    // Captures the request the host hands the asserter so tests can assert that
+    // prompt/capabilities flowed from the token-request body to the decision seam.
+    private sealed class CapturingAsserter : IIdentityClaimsAsserter
+    {
+        public IdentityAssertionRequest? Last { get; private set; }
+        public Task<IdentityAssertion> AssertAsync(
+            IdentityAssertionRequest request, CancellationToken cancellationToken = default)
+        {
+            Last = request;
+            return Task.FromResult(IdentityAssertion.Assert("user-42"));
+        }
+    }
+
     // Serves the resource's well-known metadata + JWKS so the SDK's
     // VerifyResourceTokenAsync resolves the resource's signing key in-process.
     private sealed class StubResourceHandler : HttpMessageHandler
@@ -350,6 +476,18 @@ public class PersonServerMapperTests
                 {
                     ["issuer"] = ResourceUrl,
                     ["jwks_uri"] = $"{ResourceUrl}/.well-known/jwks.json",
+                }.ToJsonString();
+            }
+            else if (path == "/.well-known/aauth-agent.json")
+            {
+                // AP metadata for sub-agent (subagent_token) verification. The
+                // jwks_uri resolves (via the else branch below) to the shared
+                // ResourceKey JWKS, so a sub-agent token signed with ResourceKey
+                // verifies. issuer must match the fetch origin (host-binding).
+                json = new JsonObject
+                {
+                    ["issuer"] = "https://ap.example",
+                    ["jwks_uri"] = "https://ap.example/.well-known/jwks.json",
                 }.ToJsonString();
             }
             else

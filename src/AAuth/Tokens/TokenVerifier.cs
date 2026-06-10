@@ -469,6 +469,14 @@ public sealed class TokenVerifier
     /// When set, the token's <c>mission.approver</c> must match (step 7). Optional —
     /// resources/PSs without a mission constraint pass <c>null</c>.
     /// </param>
+    /// <param name="subagentAgentJkt">
+    /// For a parent-mediated sub-agent authorization (§Sub-Agents): the JWK
+    /// thumbprint of the <b>sub-agent's</b> key (from the <c>subagent_token</c>'s
+    /// <c>cnf.jwk</c>). When set, step 6 verifies <c>agent_jkt</c> against this value
+    /// instead of <paramref name="expectedAgentJkt"/>, because the <b>parent</b> —
+    /// not the sub-agent — signs the HTTP request. When <see langword="null"/>
+    /// (the common case), step 6 checks <paramref name="expectedAgentJkt"/>.
+    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     public async Task<VerifiedToken> VerifyResourceTokenAsync(
         string jwt,
@@ -478,6 +486,7 @@ public sealed class TokenVerifier
         MetadataClient metadata,
         JwksClient jwks,
         string? expectedApprover = null,
+        string? subagentAgentJkt = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(jwt);
@@ -505,12 +514,18 @@ public sealed class TokenVerifier
                 $"Resource token 'agent' does not match the signing agent (expected '{expectedAgentId}', got '{agent}').");
         }
 
-        // Step 6: agent_jkt matches the agent's signing key thumbprint.
+        // Step 6: agent_jkt matches the agent's signing key thumbprint. For a
+        // parent-mediated sub-agent authorization the parent signs the request, so
+        // agent_jkt must match the sub-agent's key (from subagent_token.cnf.jwk),
+        // not the signing (parent) key (§Resource Token Verification step 6).
+        var expectedJkt = subagentAgentJkt ?? expectedAgentJkt;
         var agentJkt = (string?)verified.Payload["agent_jkt"];
-        if (agentJkt != expectedAgentJkt)
+        if (agentJkt != expectedJkt)
         {
             throw new TokenVerificationException(
-                "Resource token 'agent_jkt' does not match the agent's HTTP signature key (PoP binding mismatch).");
+                subagentAgentJkt is null
+                    ? "Resource token 'agent_jkt' does not match the agent's HTTP signature key (PoP binding mismatch)."
+                    : "Resource token 'agent_jkt' does not match the sub-agent's key (sub-agent PoP binding mismatch).");
         }
 
         // Step 7: optional mission.approver constraint.

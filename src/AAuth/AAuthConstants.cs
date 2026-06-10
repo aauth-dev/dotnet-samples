@@ -44,6 +44,25 @@ public static class AAuthConstants
         public const string JwksUri = "jwks_uri";
     }
 
+    /// <summary>
+    /// Resource <c>access_mode</c> metadata values (§Resource Metadata). Advisory
+    /// declaration of the credential flow an agent should expect; the runtime
+    /// <c>AAuth-Requirement</c> remains authoritative. Distinct from the server-side
+    /// <see cref="AAuth.Server.Verification.AAuthAccessMode"/> challenge enum.
+    /// </summary>
+    public static class AccessModes
+    {
+        /// <summary>Identity-only: the agent signs with its agent token.</summary>
+        public const string AgentToken = "agent-token";
+
+        /// <summary>Resource-managed: the agent completes the resource's interaction/
+        /// consent flow and receives an opaque token via <c>AAuth-Access</c>.</summary>
+        public const string AAuthAccessToken = "aauth-access-token";
+
+        /// <summary>The agent obtains an auth token from its PS using a resource token.</summary>
+        public const string AuthToken = "auth-token";
+    }
+
     /// <summary>Token type (<c>typ</c> header) values.</summary>
     public static class TokenTypes
     {

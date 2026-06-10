@@ -26,6 +26,9 @@ public static class AAuthRequirementHeader
     /// <summary>Requirement type: <c>auth-token</c>.</summary>
     public const string AuthTokenRequirement = "auth-token";
 
+    /// <summary>Requirement type: <c>agent-token</c> (§Agent Token Required).</summary>
+    public const string AgentTokenRequirement = "agent-token";
+
     /// <summary>The parameter name carrying the resource token.</summary>
     public const string ResourceTokenParameter = "resource-token";
 
@@ -48,6 +51,13 @@ public static class AAuthRequirementHeader
 
         return $"requirement={AuthTokenRequirement}; {ResourceTokenParameter}=\"{resourceToken}\"";
     }
+
+    /// <summary>
+    /// Build an <c>agent-token</c> requirement header value (§Agent Token
+    /// Required). The challenge carries no parameters — the agent already holds
+    /// its agent token and need only present it.
+    /// </summary>
+    public static string FormatAgentToken() => $"requirement={AgentTokenRequirement}";
 
     /// <summary>Parsed <c>AAuth-Requirement</c> header.</summary>
     /// <param name="Requirement">The requirement type (e.g. <c>auth-token</c>).</param>

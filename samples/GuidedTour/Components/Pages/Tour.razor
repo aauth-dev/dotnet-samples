@@ -43,6 +43,7 @@
             <option value="@TourMode.Federated" disabled="@(!Session.HasPersonServer || !Session.HasAccessServer)">6 · Federated (Four-Party) — Access Server, 7–10 steps</option>
             <option value="@TourMode.Mission" disabled="@(!Session.HasPersonServer)">7 · Mission (PS-Governed) — three prompts, 20 steps</option>
             <option value="@TourMode.MissionCallChain" disabled="@(!Session.HasPersonServer || !Session.HasConcierge)">8 · Mission + Call Chain — dual governance, 14 steps</option>
+            <option value="@TourMode.SubAgent">9 · Sub-Agents — parent-mediated worker, 7 steps</option>
         </select>
     </label>
     @if (Session.Mode == TourMode.Identity)
@@ -212,6 +213,29 @@
                     otherwise-silent multi-agent chain, and the PS's <strong>mission log</strong> records it all.
                 </text>
                 break;
+            case TourMode.SubAgent:
+                <text>
+                    Aria (your AI travel assistant) spins up a short-lived
+                    <strong>worker</strong> — a <strong>separate process / sandbox</strong> — to handle one
+                    slice of a task (searching flights) under the single consent <em>you</em> already gave
+                    Aria. The worker generates its <strong>own</strong> key and gets its own identity from the
+                    <strong>Agent Provider</strong> (so it's individually auditable and revocable, and not even
+                    Aria can impersonate it), but it never talks to your Person Server directly:
+                    <strong>Aria mediates</strong> on its behalf.<br /><br />
+                    The worker's agent token carries a <code>parent_agent</code> claim naming Aria. The
+                    worker obtains a <code>resource_token</code> bound to <em>its own</em> key and hands it up
+                    to the parent; Aria then signs <code>POST /token</code> with the <strong>parent's</strong>
+                    key, including the worker's token as <code>subagent_token</code>. The Person Server binds
+                    the issued <code>auth_token</code> to the <strong>worker</strong> (nesting the
+                    <code>act</code> claim <code>{ sub: worker, act: { sub: parent } }</code> for audit) and
+                    returns it to the <strong>parent</strong> — which <strong>hands it down</strong> to the
+                    worker, the only party whose key can use it.
+                    Delegation stays <strong>one level deep</strong> — a sub-agent can't spawn its own
+                    sub-agents.<br /><br />
+                    <em>Runs entirely in-process with the real SDK builders</em> — no live servers — so every
+                    wire artifact is built and shown directly. <strong>No human approval in this demo.</strong>
+                </text>
+                break;
         }
     </details>
 </section>
@@ -328,8 +352,20 @@
         new("Person Server", "ps", Actor.PersonServer),
     };
 
+    // Sub-agent flow: a parent-mediated worker. The parent and worker each
+    // get their own lane; the worker fetches the resource token, the parent
+    // exchanges at the Person Server.
+    private static readonly SequenceDiagram.LaneDefinition[] SubAgentLanes =
+    {
+        new("Parent", "agent", Actor.Parent),
+        new("Sub-Agent", "ap", Actor.SubAgent),
+        new("Resource", "resource", Actor.Resource),
+        new("Person Server", "ps", Actor.PersonServer),
+    };
+
     private SequenceDiagram.LaneDefinition[]? ActiveLanes =>
         Session.IsBootstrapMode ? BootstrapLanes :
+        Session.IsSubAgentMode ? SubAgentLanes :
         Session.IsIdentityMode ? IdentityLanes :
         Session.IsMissionCallChainMode ? MissionCallChainLanes :
         Session.IsCallChainMode ? CallChainLanes :

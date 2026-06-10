@@ -46,8 +46,8 @@ public class TokenErrorTests
     [Fact(DisplayName = "draft-02 §Token Endpoint Errors — user_unreachable is terminal")]
     public void UserUnreachable_IsTerminal()
     {
-        // Per upcoming-changes-02 item 2: user_unreachable (HTTP 400) is a
-        // distinct terminal error, not retryable.
+        // Per published draft-02 §Token Endpoint Error Codes: user_unreachable
+        // (HTTP 403) is a distinct terminal error, not retryable.
         Assert.Equal("user_unreachable",
             new TokenErrorResponse(TokenErrorCode.UserUnreachable).ErrorCode);
         Assert.True(AAuthTokenExchangeException.IsTerminalCode("user_unreachable"));

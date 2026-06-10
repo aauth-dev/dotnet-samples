@@ -53,6 +53,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
     private IHost? _challengeHost;
     private IHost? _identityOnlyHost;
     private IHost? _schemeFilterHost;
+    private IHost? _agentTokenRequiredHost;
     private IHost? _metadataHost;
 
     public async Task InitializeAsync()
@@ -87,6 +88,12 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
             DefaultScopes = ResourceScope,
             AllowedSignatureKeySchemes = new HashSet<string> { "jwt" },
         });
+
+        // Start a resource server with AgentTokenRequired mode (§Agent Token Required).
+        _agentTokenRequiredHost = await StartResourceServer(new ChallengeOptions
+        {
+            AccessMode = AAuthAccessMode.AgentTokenRequired,
+        });
     }
 
     public async Task DisposeAsync()
@@ -94,6 +101,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         if (_challengeHost is not null) { await _challengeHost.StopAsync(); _challengeHost.Dispose(); }
         if (_identityOnlyHost is not null) { await _identityOnlyHost.StopAsync(); _identityOnlyHost.Dispose(); }
         if (_schemeFilterHost is not null) { await _schemeFilterHost.StopAsync(); _schemeFilterHost.Dispose(); }
+        if (_agentTokenRequiredHost is not null) { await _agentTokenRequiredHost.StopAsync(); _agentTokenRequiredHost.Dispose(); }
         if (_metadataHost is not null) { await _metadataHost.StopAsync(); _metadataHost.Dispose(); }
     }
 
@@ -295,6 +303,52 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         var token = BuildAuthToken();
         var response = await SendSigned(_identityOnlyHost!, token);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact(DisplayName = "§Agent Token Required — passes an agent token through")]
+    public async Task AgentTokenRequired_PassesAgentToken()
+    {
+        var token = BuildAgentToken();
+        var response = await SendSigned(_agentTokenRequiredHost!, token);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact(DisplayName = "§Agent Token Required — passes an auth token through (identity established)")]
+    public async Task AgentTokenRequired_PassesAuthToken()
+    {
+        var token = BuildAuthToken();
+        var response = await SendSigned(_agentTokenRequiredHost!, token);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact(DisplayName = "§Agent Token Required — challenges a non-agent-token credential with a bare requirement=agent-token")]
+    public async Task AgentTokenRequired_ChallengesHwkWithBareAgentToken()
+    {
+        // hwk is a valid pseudonymous scheme but not an AAuth agent token; the
+        // resource specifically wants an agent token, so it challenges.
+        var capture = new CaptureHandler();
+        var provider = new HwkSignatureKeyProvider(_agentKey);
+        var handler = new AAuthSigningHandler(_agentKey, provider, () => FixedClock)
+        {
+            InnerHandler = capture,
+        };
+        using var client = new HttpClient(handler);
+        await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "http://localhost:5000/protected"));
+
+        var signed = capture.Captured!;
+        var relay = new HttpRequestMessage(HttpMethod.Get, "/protected");
+        foreach (var h in signed.Headers)
+            relay.Headers.TryAddWithoutValidation(h.Key, h.Value);
+        relay.Headers.Host = "localhost:5000";
+
+        var response = await _agentTokenRequiredHost!.GetTestClient().SendAsync(relay);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.True(response.Headers.Contains(AAuthRequirementHeader.Name));
+        var headerValue = string.Join(",", response.Headers.GetValues(AAuthRequirementHeader.Name));
+        var parsed = AAuthRequirementHeader.Parse(headerValue);
+        Assert.Equal(AAuthRequirementHeader.AgentTokenRequirement, parsed.Requirement);
+        Assert.Null(parsed.ResourceToken);
     }
 
     [Fact(DisplayName = "§Challenge — scheme filter rejects unlisted scheme")]

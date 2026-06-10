@@ -97,7 +97,33 @@ Typical scenarios:
 - Premium resource access (resource requires platform verification)
 - Regulated environments (compliance mandates hardware binding)
 
+## Attestation and the `jkt-jwt` signing mode
+
+Attestation is what makes the [`jkt-jwt`](../signing-modes/key-rotation-jkt-jwt.md)
+key-rotation scheme trustworthy in the enclave-backed mobile case it was designed
+for. The pattern, in the scheme designer's words — *"on first use, the AP drives a
+platform attestation in addition to the jkt-jwt, and then the jkt-jwt is all that
+is needed for future agent tokens"*:
+
+1. **At enrolment (once):** the agent's durable key is generated inside a secure
+   enclave. The AP sends an `attestation_challenge`; the agent returns an App
+   Attest / Play Integrity / WebAuthn statement proving the durable key is genuine
+   enclave-resident material. This is the strong, one-time trust anchor.
+2. **At every refresh thereafter:** the enclave signs a short-lived **naming JWT**
+   (`jkt-s256+jwt`) delegating to a fast ephemeral software key (the `jkt-jwt`
+   scheme). The AP verifies the durable-key signature on the naming JWT against
+   its enrolment record — **no re-attestation is needed**, because the same enclave
+   key is demonstrably making the request.
+
+So the enclave key signs rarely (once per agent-token lifetime), while the
+ephemeral key signs every HTTP request. Attestation anchors the durable key at
+enrolment; `jkt-jwt` carries that established trust forward cheaply. This is why
+the AP-side `jkt-jwt` verification is **not** pure trust-on-first-use even though
+the wire format is self-anchored — see
+[Bootstrap & Enrollment § Two-Key Refresh](../workflows/bootstrap-enrollment.md).
+
 ## Further Reading
 
 - [Bootstrap & Enrollment](../workflows/bootstrap-enrollment.md)
+- [Key Rotation (`jkt-jwt`)](../signing-modes/key-rotation-jkt-jwt.md) — the enclave delegation scheme
 - [Key Management](key-management.md) — hardware-backed key storage

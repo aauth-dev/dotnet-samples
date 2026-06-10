@@ -69,6 +69,8 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 {
     Issuer = resourceUrl,
     ClientName = "Aria Trips",
+    Description = "**Aria Trips** books travel and manages itineraries on your behalf.",
+    AccessMode = AAuthConstants.AccessModes.AuthToken,
     SigningKeys = new Dictionary<string, AAuthKey> { [ResourceKid] = resourceKey },
     ScopeDescriptions = new Dictionary<string, string>
     {

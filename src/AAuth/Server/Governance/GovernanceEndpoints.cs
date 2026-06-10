@@ -83,6 +83,7 @@ public static class GovernanceEndpoints
             Code = (string?)body["code"],
             Question = (string?)body["question"],
             Summary = (string?)body["summary"],
+            MaxWait = (int?)body["max_wait"],
             Mission = MissionClaim.FromPayload(body),
         };
     }

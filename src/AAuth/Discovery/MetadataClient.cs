@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using AAuth.Errors;
 
 namespace AAuth.Discovery;
 
@@ -74,12 +75,42 @@ public sealed class MetadataClient
         var doc = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Metadata at {url} is not a JSON object.");
 
+        // §Metadata Documents (draft-02): the document's `issuer` MUST match the
+        // URL it was fetched from (the URL minus the `/.well-known/{dwk}` suffix).
+        // Reject on mismatch — only verified documents are ever cached.
+        VerifyIssuer(url, doc);
+
         _cache[url] = new CacheEntry(doc, now + _cacheTtl);
         return CloneObject(doc);
     }
 
     /// <summary>Discard any cached entry for <paramref name="url"/>.</summary>
     public void Invalidate(Uri url) => _cache.TryRemove(url, out _);
+
+    // §Metadata Documents (draft-02): verify the document's `issuer` matches the
+    // origin it was retrieved from, preventing host-poisoned metadata (an attacker
+    // serving a document that claims another origin's `issuer`, whose `jwks_uri` a
+    // permissive verifier would then trust for the impersonated issuer). AAuth
+    // server identifiers are scheme + host only (§Server Identifiers), so the
+    // expected issuer is the fetch URL's authority and the well-known path drops out.
+    private static void VerifyIssuer(Uri url, JsonObject doc)
+    {
+        var expectedIssuer = url.GetLeftPart(UriPartial.Authority);
+
+        string? claimedIssuer = null;
+        if (doc.TryGetPropertyValue("issuer", out var node)
+            && node is JsonValue value
+            && value.TryGetValue<string>(out var issuer))
+        {
+            claimedIssuer = issuer;
+        }
+
+        if (string.IsNullOrEmpty(claimedIssuer)
+            || !string.Equals(claimedIssuer, expectedIssuer, StringComparison.Ordinal))
+        {
+            throw new AAuthMetadataException(url, claimedIssuer, expectedIssuer);
+        }
+    }
 
     private static JsonObject CloneObject(JsonObject source) =>
         (JsonObject)source.DeepClone();

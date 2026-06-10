@@ -90,6 +90,7 @@ public class InteractionChainingTests
             () => exchangeClient.ExchangeAsync(PsUrl, "fake-resource-token"));
 
         Assert.Equal("user_unreachable", ex.ErrorCode);
+        Assert.Equal(403, ex.StatusCode);
         Assert.True(ex.IsTerminal);
         Assert.False(handler.PendingPolled);
     }

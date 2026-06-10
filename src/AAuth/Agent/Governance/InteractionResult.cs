@@ -26,4 +26,19 @@ public sealed record InteractionResult(InteractionType Type)
 
     /// <summary>The raw terminal response body, if any.</summary>
     public JsonObject? Body { get; init; }
+
+    /// <summary>
+    /// The deferred-response <c>status</c> when present (e.g. <c>"interacting"</c>
+    /// once the user has engaged with a resource-hosted interaction). Agents treat
+    /// unrecognized values as <c>"pending"</c> (§Deferred Responses).
+    /// </summary>
+    public string? Status { get; init; }
+
+    /// <summary>
+    /// <see langword="true"/> when the PS returned <c>424 interaction_unavailable</c>
+    /// (§Interaction Endpoint Errors): it has no channel to relay this specific
+    /// interaction/payment. Non-terminal — the agent falls back to directing the
+    /// user itself. Distinct from the terminal <c>user_unreachable</c>.
+    /// </summary>
+    public bool Unavailable { get; init; }
 }

@@ -83,6 +83,33 @@ public class GovernanceServerTests
         => Assert.Throws<FormatException>(() =>
             GovernanceEndpoints.ParseInteraction(new JsonObject { ["type"] = "bogus" }));
 
+    [Fact(DisplayName = "§Interaction Request — parser maps max_wait when present")]
+    public void ParseInteraction_MapsMaxWait()
+    {
+        var request = GovernanceEndpoints.ParseInteraction(new JsonObject
+        {
+            ["type"] = "interaction",
+            ["url"] = "https://resource.example/i",
+            ["code"] = "A1B2C3D4",
+            ["max_wait"] = 45,
+        });
+
+        Assert.Equal(45, request.MaxWait);
+    }
+
+    [Fact(DisplayName = "§Interaction Request — max_wait round-trips through the request body")]
+    public void InteractionRequest_SerializesMaxWait()
+    {
+        var body = new InteractionRequest(InteractionType.Interaction)
+        {
+            Url = "https://resource.example/i",
+            Code = "A1B2C3D4",
+            MaxWait = 30,
+        }.ToJsonObject();
+
+        Assert.Equal(30, (int?)body["max_wait"]);
+    }
+
     [Fact(DisplayName = "§Mission Creation — proposal parser maps description and tools")]
     public void ParseMissionProposal_MapsFields()
     {

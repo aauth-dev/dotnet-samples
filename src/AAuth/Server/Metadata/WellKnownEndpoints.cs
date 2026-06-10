@@ -28,7 +28,12 @@ public static class WellKnownEndpoints
             BuildResourceMetadata(options),
             contentType: "application/json"));
 
-        RegisterJwksKeys(endpoints, options.SigningKeys);
+        // draft-02: publish a JWKS endpoint only when the resource has keys to
+        // serve. An identity-only resource omits both keys and jwks_uri.
+        if (options.HasSigningKeys)
+        {
+            RegisterJwksKeys(endpoints, options.SigningKeys!);
+        }
         return endpoints;
     }
 
@@ -104,11 +109,24 @@ public static class WellKnownEndpoints
         var doc = new JsonObject
         {
             ["issuer"] = options.Issuer,
-            ["jwks_uri"] = $"{options.Issuer.TrimEnd('/')}/.well-known/jwks.json",
         };
+        // draft-02: advertise jwks_uri only when the resource publishes keys
+        // (issues resource tokens or makes signed calls).
+        if (options.HasSigningKeys)
+        {
+            doc["jwks_uri"] = $"{options.Issuer.TrimEnd('/')}/.well-known/jwks.json";
+        }
+        if (!string.IsNullOrEmpty(options.AccessMode))
+        {
+            doc["access_mode"] = options.AccessMode;
+        }
         if (!string.IsNullOrEmpty(options.ClientName))
         {
             doc["client_name"] = options.ClientName;
+        }
+        if (!string.IsNullOrEmpty(options.Description))
+        {
+            doc["description"] = options.Description;
         }
         if (options.ScopeDescriptions is { Count: > 0 })
         {
@@ -157,6 +175,8 @@ public static class WellKnownEndpoints
         };
         if (!string.IsNullOrEmpty(options.ClientName))
             doc["client_name"] = options.ClientName;
+        if (!string.IsNullOrEmpty(options.Description))
+            doc["description"] = options.Description;
         if (!string.IsNullOrEmpty(options.LogoUri))
             doc["logo_uri"] = options.LogoUri;
         if (!string.IsNullOrEmpty(options.CallbackEndpoint))
@@ -174,6 +194,8 @@ public static class WellKnownEndpoints
             ["token_endpoint"] = options.TokenEndpoint,
             ["jwks_uri"] = $"{options.Issuer.TrimEnd('/')}/.well-known/jwks.json",
         };
+        if (!string.IsNullOrEmpty(options.Description))
+            doc["description"] = options.Description;
         if (!string.IsNullOrEmpty(options.MissionEndpoint))
             doc["mission_endpoint"] = options.MissionEndpoint;
         if (!string.IsNullOrEmpty(options.PermissionEndpoint))
@@ -202,6 +224,8 @@ public static class WellKnownEndpoints
             ["token_endpoint"] = options.TokenEndpoint,
             ["jwks_uri"] = $"{options.Issuer.TrimEnd('/')}/.well-known/jwks.json",
         };
+        if (!string.IsNullOrEmpty(options.Description))
+            doc["description"] = options.Description;
         if (!string.IsNullOrEmpty(options.RevocationEndpoint))
             doc["revocation_endpoint"] = options.RevocationEndpoint;
         return doc;
@@ -247,11 +271,33 @@ public sealed class AAuthResourceMetadataOptions
     /// <summary>HTTPS URL of this resource (<c>issuer</c>).</summary>
     public required string Issuer { get; init; }
 
-    /// <summary>Signing keys served via the JWKS endpoint, keyed by <c>kid</c>.</summary>
-    public required IReadOnlyDictionary<string, AAuthKey> SigningKeys { get; init; }
+    /// <summary>
+    /// Signing keys served via the JWKS endpoint, keyed by <c>kid</c>. Optional in
+    /// draft-02: a resource that issues resource tokens or makes signed calls MUST
+    /// supply keys (and <c>jwks_uri</c> is then published); an identity-only resource
+    /// that only verifies agent signatures MAY omit them, in which case no
+    /// <c>jwks_uri</c> is advertised and no JWKS endpoint is mapped (§Resource Metadata).
+    /// </summary>
+    public IReadOnlyDictionary<string, AAuthKey>? SigningKeys { get; init; }
+
+    /// <summary>
+    /// Optional advisory <c>access_mode</c> declaring the credential flow agents
+    /// should expect — one of <see cref="AAuthConstants.AccessModes"/>
+    /// (<c>agent-token</c>, <c>aauth-access-token</c>, <c>auth-token</c>). The runtime
+    /// <c>AAuth-Requirement</c> remains authoritative. Omitted when <see langword="null"/>
+    /// (the spec default is <c>agent-token</c>).
+    /// </summary>
+    public string? AccessMode { get; init; }
 
     /// <summary>Optional human-readable name (<c>client_name</c>).</summary>
     public string? ClientName { get; init; }
+
+    /// <summary>
+    /// Optional Markdown <c>description</c> of the resource, for display to users
+    /// (e.g. at a consent screen) (§Resource Metadata). Implementations MUST
+    /// sanitize the Markdown before rendering.
+    /// </summary>
+    public string? Description { get; init; }
 
     /// <summary>Optional scope description map (<c>scope_descriptions</c>).</summary>
     public IReadOnlyDictionary<string, string>? ScopeDescriptions { get; init; }
@@ -264,6 +310,9 @@ public sealed class AAuthResourceMetadataOptions
 
     /// <summary>Optional revocation endpoint.</summary>
     public string? RevocationEndpoint { get; init; }
+
+    /// <summary>Whether this resource publishes signing keys (and thus a <c>jwks_uri</c>).</summary>
+    internal bool HasSigningKeys => SigningKeys is { Count: > 0 };
 
     /// <summary>Throw if any required field is unset/invalid.</summary>
     public void Validate()
@@ -279,9 +328,16 @@ public sealed class AAuthResourceMetadataOptions
             // bind plain HTTP) can still configure a sensible issuer.
             throw new InvalidOperationException("Issuer must be an absolute https:// URL (or http://localhost).");
         }
-        if (SigningKeys is null || SigningKeys.Count == 0)
+        // draft-02 relaxes jwks_uri: signing keys are REQUIRED only when the
+        // resource issues resource tokens or makes signed calls. An identity-only
+        // resource MAY omit them, so no hard "at least one key" requirement here.
+        if (AccessMode is not null
+            && AccessMode is not (AAuthConstants.AccessModes.AgentToken
+                or AAuthConstants.AccessModes.AAuthAccessToken
+                or AAuthConstants.AccessModes.AuthToken))
         {
-            throw new InvalidOperationException("At least one signing key must be supplied.");
+            throw new InvalidOperationException(
+                $"access_mode must be one of 'agent-token', 'aauth-access-token', or 'auth-token' (was '{AccessMode}').");
         }
     }
 }

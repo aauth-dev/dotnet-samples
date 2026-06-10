@@ -22,6 +22,30 @@ public readonly struct AgentId : IEquatable<AgentId>
     /// <summary>The domain part (after @).</summary>
     public string Domain => _value[(_value.IndexOf('@') + 1)..];
 
+    /// <summary>
+    /// Whether this identifier names a <b>sub-agent</b> — its local part contains
+    /// the reserved <c>+</c> delimiter (§Sub-Agents, §Agent Identifiers). This is a
+    /// naming convention for operational readability; the authoritative sub-agent
+    /// marker is the <c>parent_agent</c> claim in the agent token, not this check.
+    /// </summary>
+    public bool IsSubAgent => Local.Contains('+', StringComparison.Ordinal);
+
+    /// <summary>
+    /// For a sub-agent identifier, the parent's full agent identifier — the local
+    /// part up to the first <c>+</c>, with the same domain. <see langword="null"/>
+    /// for a top-level agent. Derived from the naming convention only; protocol
+    /// decisions use the <c>parent_agent</c> claim.
+    /// </summary>
+    public string? ParentAgent
+    {
+        get
+        {
+            var local = Local;
+            var plus = local.IndexOf('+', StringComparison.Ordinal);
+            return plus < 0 ? null : $"aauth:{local[..plus]}@{Domain}";
+        }
+    }
+
     /// <summary>Parse and validate an agent identifier. Throws on invalid input.</summary>
     public static AgentId Parse(string input)
     {

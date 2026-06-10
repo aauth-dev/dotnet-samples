@@ -18,6 +18,12 @@ public sealed class ServerMetadata
     /// <summary>JWKS URI for key resolution.</summary>
     public required string JwksUri { get; init; }
 
+    /// <summary>
+    /// Optional Markdown <c>description</c> for display to users. Server-supplied,
+    /// untrusted content: consumers MUST sanitize it before display.
+    /// </summary>
+    public string? Description { get; init; }
+
     /// <summary>Token endpoint (required for PS/AS).</summary>
     public string? TokenEndpoint { get; init; }
 
@@ -50,6 +56,7 @@ public sealed class ServerMetadata
         {
             Issuer = (string?)doc["issuer"] ?? throw new InvalidOperationException("Metadata missing 'issuer'."),
             JwksUri = (string?)doc["jwks_uri"] ?? throw new InvalidOperationException("Metadata missing 'jwks_uri'."),
+            Description = (string?)doc["description"],
             TokenEndpoint = (string?)doc["token_endpoint"],
             RevocationEndpoint = (string?)doc["revocation_endpoint"],
             MissionEndpoint = (string?)doc["mission_endpoint"],
@@ -68,11 +75,31 @@ public sealed class ResourceMetadata
     /// <summary>The resource issuer URL.</summary>
     public required string Issuer { get; init; }
 
-    /// <summary>JWKS URI for key resolution.</summary>
-    public required string JwksUri { get; init; }
+    /// <summary>
+    /// JWKS URI for key resolution. Optional in draft-02: REQUIRED only when the
+    /// resource issues resource tokens or makes signed calls; an identity-only
+    /// resource that only verifies agent signatures MAY omit it (§Resource Metadata).
+    /// </summary>
+    public string? JwksUri { get; init; }
+
+    /// <summary>
+    /// The credential flow the resource expects — one of <c>agent-token</c>,
+    /// <c>aauth-access-token</c>, or <c>auth-token</c> (see
+    /// <see cref="AAuthConstants.AccessModes"/>). Advisory: the runtime
+    /// <c>AAuth-Requirement</c> remains authoritative. <see langword="null"/> when
+    /// the document omits it, which the spec treats as the <c>agent-token</c>
+    /// default (§Resource Metadata).
+    /// </summary>
+    public string? AccessMode { get; init; }
 
     /// <summary>Human-readable name.</summary>
     public string? ClientName { get; init; }
+
+    /// <summary>
+    /// Optional Markdown <c>description</c> for display to users (e.g. at a consent
+    /// screen). Server-supplied, untrusted: consumers MUST sanitize before display.
+    /// </summary>
+    public string? Description { get; init; }
 
     /// <summary>Scope descriptions map.</summary>
     public JsonObject? ScopeDescriptions { get; init; }
@@ -93,8 +120,10 @@ public sealed class ResourceMetadata
         return new ResourceMetadata
         {
             Issuer = (string?)doc["issuer"] ?? throw new InvalidOperationException("Metadata missing 'issuer'."),
-            JwksUri = (string?)doc["jwks_uri"] ?? throw new InvalidOperationException("Metadata missing 'jwks_uri'."),
+            JwksUri = (string?)doc["jwks_uri"],
+            AccessMode = (string?)doc["access_mode"],
             ClientName = (string?)doc["client_name"],
+            Description = (string?)doc["description"],
             ScopeDescriptions = doc["scope_descriptions"] as JsonObject,
             SignatureWindow = (int?)doc["signature_window"],
             AuthorizationEndpoint = (string?)doc["authorization_endpoint"],

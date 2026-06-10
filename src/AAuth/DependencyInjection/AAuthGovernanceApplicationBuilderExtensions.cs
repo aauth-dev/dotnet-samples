@@ -281,6 +281,16 @@ public static class AAuthGovernanceApplicationBuilderExtensions
 
         var result = await relay.RelayAsync(request, ctx.RequestAborted).ConfigureAwait(false);
 
+        // §Interaction Endpoint Errors: the PS has no channel to relay this specific
+        // interaction/payment. Non-terminal — the agent falls back to directing the
+        // user itself. Distinct from the terminal user_unreachable.
+        if (result.Unavailable)
+        {
+            return Results.Json(
+                new { error = "interaction_unavailable" },
+                statusCode: StatusCodes.Status424FailedDependency);
+        }
+
         if (request.Mission is not null)
         {
             await log.AppendAsync(new MissionLogEntry(

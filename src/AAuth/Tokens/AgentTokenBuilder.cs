@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
+using AAuth.Identifiers;
 using Microsoft.IdentityModel.Tokens;
 
 namespace AAuth.Tokens;
@@ -49,6 +50,17 @@ public sealed class AgentTokenBuilder
 
     /// <summary>Optional Person Server URL (<c>ps</c>).</summary>
     public string? PersonServer { get; init; }
+
+    /// <summary>
+    /// Optional parent agent identifier (<c>parent_agent</c>). When set, this token
+    /// belongs to a <b>sub-agent</b> and the value names its parent (§Sub-Agents).
+    /// Its presence is the authoritative marker of sub-agent status; the sub-agent
+    /// MUST NOT request authorization directly — its parent obtains auth tokens on
+    /// its behalf. The local part of <see cref="Subject"/> SHOULD be the parent's
+    /// local part followed by <c>+</c> and a discriminator, but parties rely on this
+    /// claim, not local-part parsing, for protocol decisions.
+    /// </summary>
+    public string? ParentAgent { get; init; }
 
     /// <summary>Token lifetime. Spec recommends &le; 24 hours; default is 1 hour.</summary>
     public TimeSpan Lifetime { get; init; } = TimeSpan.FromHours(1);
@@ -99,6 +111,51 @@ public sealed class AgentTokenBuilder
             throw new InvalidOperationException("PersonServer must be an absolute https:// URL (or http://localhost).");
         }
 
+        // §Sub-Agents / §Agent Identifiers: enforce the +-delimiter naming rules at
+        // the AP, the only party that issues tokens. A top-level agent (no
+        // parent_agent) MUST NOT contain '+'; a sub-agent's local part MUST be its
+        // parent's local part + '+' + a non-empty discriminator, and the parent
+        // MUST itself be top-level (single-level depth: an AP MUST NOT issue a
+        // sub-agent token whose parent is itself a sub-agent).
+        if (ParentAgent is null)
+        {
+            // The agent token's sub MUST be a valid agent identifier; fail fast
+            // rather than emitting a token with a malformed sub (and silently
+            // skipping the '+' rule because TryParse returned false).
+            if (!AgentId.TryParse(Subject, out var topLevel, out var subjectError))
+            {
+                throw new InvalidOperationException(
+                    $"Subject is not a valid agent identifier: {subjectError}");
+            }
+            if (topLevel.IsSubAgent)
+            {
+                throw new InvalidOperationException(
+                    "A top-level agent identifier (no parent_agent) MUST NOT contain the '+' sub-agent delimiter.");
+            }
+        }
+        else
+        {
+            if (!AgentId.TryParse(ParentAgent, out var parent, out var parentError))
+            {
+                throw new InvalidOperationException($"parent_agent is not a valid agent identifier: {parentError}");
+            }
+            if (parent.IsSubAgent)
+            {
+                throw new InvalidOperationException(
+                    "Single-level depth: an AP MUST NOT issue a sub-agent token whose parent is itself a sub-agent.");
+            }
+            if (!AgentId.TryParse(Subject, out var sub, out _) || !sub.IsSubAgent)
+            {
+                throw new InvalidOperationException(
+                    "A sub-agent's local part MUST be its parent's local part followed by '+' and a non-empty discriminator.");
+            }
+            if (sub.ParentAgent != parent.Value)
+            {
+                throw new InvalidOperationException(
+                    $"Sub-agent local part '{sub.Value}' does not derive from parent_agent '{parent.Value}'.");
+            }
+        }
+
         var iat = IssuedAt ?? DateTimeOffset.UtcNow;
         var exp = iat + Lifetime;
         var jti = TokenId ?? Guid.NewGuid().ToString("N");
@@ -124,6 +181,12 @@ public sealed class AgentTokenBuilder
         if (PersonServer is not null)
         {
             payload["ps"] = PersonServer;
+        }
+
+        if (ParentAgent is not null)
+        {
+            // §Sub-Agents: presence of parent_agent marks this as a sub-agent token.
+            payload["parent_agent"] = ParentAgent;
         }
 
         if (AdditionalClaims is not null)

@@ -36,7 +36,11 @@ namespace AAuth.Tests.Integration;
 public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPersonServer.Entry>>, IDisposable
 {
     private const string PsIssuer = "https://ps.test";
-    private const string ResourceUrl = "https://trips.test";
+    // Must match the identity ResourceStub serves metadata/JWKS for: the PS now
+    // verifies a fetched metadata document's `issuer` against its origin
+    // (§Metadata Documents), so the resource token's `iss` and the stub's
+    // served `issuer` must agree.
+    private const string ResourceUrl = ResourceStub.Url;
     private const string ApIssuer = "https://ap.example";
 
     private readonly WebApplicationFactory<MockPersonServer.Entry> _factory;

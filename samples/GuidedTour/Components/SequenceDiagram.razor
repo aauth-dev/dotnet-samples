@@ -150,8 +150,11 @@
         // response (e.g. local "parse" steps) draw only the request arrow.
         var hasResponse = !isSelf && !string.IsNullOrEmpty(s.StatusLine);
         var statusBadge = hasResponse ? StatusBadge(s.StatusLine) : null;
+        // The main arrow is solid for requests; dashed (response style) when
+        // the step models a return leg (StepRecord.IsResponse).
+        var mainArrowClass = (s.IsResponse ? "response " : "") + (rightward ? "rightward" : "leftward");
 
-        @* 1) Request: solid arrow From -> To. *@
+        @* 1) Request: solid arrow From -> To (dashed when IsResponse). *@
         <div class="msg@(highlight ? " highlight" : "")">
             @if (isSelf)
             {
@@ -159,7 +162,7 @@
             }
             else
             {
-                <div class="arrow @(rightward ? "rightward" : "leftward")"
+                <div class="arrow @mainArrowClass"
                      style="left:@(Fmt(leftCenter))%; width:@(Fmt(widthPct))%;"></div>
             }
             <div class="label" style="left:@(Fmt(labelCenter))%;">@s.Number. @s.Title</div>

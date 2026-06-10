@@ -3,13 +3,13 @@
 
 <article class="inspector">
     <h2>@Step.Number. @Step.Title</h2>
-    <p class="from-to"><strong>@Step.From</strong> → <strong>@Step.To</strong></p>
+    <p class="from-to"><strong>@ActorLabel(Step.From)</strong> → <strong>@ActorLabel(Step.To)</strong></p>
     <p class="narrative">@(RenderNarrative(Step.Narrative))</p>
 
     @if (!string.IsNullOrWhiteSpace(Step.CodeSnippet))
     {
         <details open>
-            <summary>SDK code</summary>
+            <summary>SDK code@(string.IsNullOrWhiteSpace(Step.CodeSnippetRole) ? null : $" · {Step.CodeSnippetRole}")</summary>
             <pre class="code-snippet"><code>@(HighlightCSharp(Step.CodeSnippet))</code></pre>
         </details>
     }
@@ -52,6 +52,15 @@
 
 @code {
     [Parameter, EditorRequired] public StepRecord Step { get; set; } = default!;
+
+    private static string ActorLabel(Actor a) => a switch
+    {
+        Actor.PersonServer => "Person Server",
+        Actor.AgentProvider => "Agent Provider",
+        Actor.AccessServer => "Access Server",
+        Actor.SubAgent => "Sub-Agent",
+        _ => a.ToString(),
+    };
 
     private EntityHighlighter? _highlighter;
 

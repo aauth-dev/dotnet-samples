@@ -18,6 +18,13 @@ public sealed class AAuthAgentMetadataOptions
     /// <summary>Optional human-readable name (<c>client_name</c>).</summary>
     public string? ClientName { get; init; }
 
+    /// <summary>
+    /// Optional Markdown <c>description</c> of the agent or its provider, for
+    /// display to users (§Agent Provider Metadata). Implementations MUST sanitize
+    /// the Markdown before rendering.
+    /// </summary>
+    public string? Description { get; init; }
+
     /// <summary>Optional logo URL (<c>logo_uri</c>).</summary>
     public string? LogoUri { get; init; }
 

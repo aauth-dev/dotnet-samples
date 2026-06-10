@@ -7,7 +7,7 @@ naming JWT that delegates HTTP-message signing to a short-lived ephemeral key.
 The scheme is **self-anchored**: the durable public key travels in the naming
 JWT's header, and the issuer is that key's own thumbprint — so a verifier needs
 no external lookup. Access stays **pseudonymous**. Defined in
-[`draft-hardt-httpbis-signature-key-04`](../../aauth-spec/draft-hardt-httpbis-signature-key-04.txt)
+[`draft-hardt-httpbis-signature-key-04`](../../aauth-spec/v02/draft-hardt-httpbis-signature-key-04.txt)
 §3.4; the AAuth protocol references this scheme normatively.
 
 ## When to Use
@@ -15,6 +15,22 @@ no external lookup. Access stays **pseudonymous**. Defined in
 - Rotating the request-signing key without re-enrolling
 - Hardware-backed durable keys that delegate to software ephemeral keys
 - Two-key bootstrap refresh (agent ↔ AP) and pseudonymous resource access
+
+### Why this scheme exists (enclave delegation)
+
+`jkt-jwt` was designed for the **secure-enclave mobile** case: the durable key
+lives in a hardware enclave that can prove it is genuine but is slow or
+impractical to invoke on every HTTP request. The enclave therefore signs a
+naming JWT **once per agent-token lifetime** to delegate signing to a fast
+ephemeral software key, which signs the actual requests.
+
+Trust is anchored at enrolment, not by pure trust-on-first-use: on first use the
+Agent Provider drives a **platform attestation** (e.g. Apple App Attest or Google
+Play Integrity) *alongside* the `jkt-jwt` to prove the durable key really is
+enclave-resident material. After that, the durable-key signature on each naming
+JWT is sufficient for every future agent token — the AP does not re-attest on
+each refresh. See [Bootstrap & Enrollment](../workflows/bootstrap-enrollment.md)
+for the attestation ceremony and the two-key refresh flow.
 
 ## Code Example
 
@@ -82,5 +98,5 @@ identity, not authority-vouched identity (§6.3).
 
 ## Further Reading
 
-- [`draft-hardt-httpbis-signature-key-04`](../../aauth-spec/draft-hardt-httpbis-signature-key-04.txt) §3.4
+- [`draft-hardt-httpbis-signature-key-04`](../../aauth-spec/v02/draft-hardt-httpbis-signature-key-04.txt) §3.4
 - [Bootstrap](../workflows/bootstrap-enrollment.md)
