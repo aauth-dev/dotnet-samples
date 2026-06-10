@@ -88,4 +88,15 @@ public class InteractionCodeTests
         Assert.False(InteractionCode.Matches(null, "ABCDEFGH"));
         Assert.False(InteractionCode.Matches("ABCDEFGH", ""));
     }
+
+    [Theory(DisplayName = "§Interaction Code — codes shorter than 40 bits never match")]
+    [InlineData("ABC", "ABC")]      // identical but only 3 symbols
+    [InlineData("ABCDEFG", "ABCDEFG")] // identical but only 7 symbols
+    [InlineData("1AB", "LAB")]      // glyph-folds to the same short string
+    public void Matches_RejectsTooShortCodes(string expected, string actual)
+    {
+        // Even when both sides normalize to the same value, a string carrying
+        // fewer than the spec minimum (8 symbols / 40 bits) MUST NOT validate.
+        Assert.False(InteractionCode.Matches(expected, actual));
+    }
 }

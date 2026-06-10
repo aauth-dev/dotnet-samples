@@ -112,13 +112,15 @@ public static class InteractionCode
     /// <summary>
     /// Compare a user-entered code against the expected code per §Interaction Code
     /// Format: hyphen-insensitive, case-insensitive, and glyph-folded on both
-    /// sides. Returns <see langword="false"/> if either side is malformed.
+    /// sides. Returns <see langword="false"/> if either side is malformed or
+    /// carries fewer than <see cref="MinimumSymbols"/> symbols — a string too
+    /// short to be a valid code (≥ 40 bits of entropy) MUST never match.
     /// </summary>
     public static bool Matches(string? expected, string? actual)
     {
         var a = Normalize(expected);
         var b = Normalize(actual);
-        if (a is null || b is null || a.Length == 0 || b.Length == 0)
+        if (a is not { Length: >= MinimumSymbols } || b is not { Length: >= MinimumSymbols })
         {
             return false;
         }

@@ -119,7 +119,15 @@ public sealed class AgentTokenBuilder
         // sub-agent token whose parent is itself a sub-agent).
         if (ParentAgent is null)
         {
-            if (AgentId.TryParse(Subject, out var topLevel, out _) && topLevel.IsSubAgent)
+            // The agent token's sub MUST be a valid agent identifier; fail fast
+            // rather than emitting a token with a malformed sub (and silently
+            // skipping the '+' rule because TryParse returned false).
+            if (!AgentId.TryParse(Subject, out var topLevel, out var subjectError))
+            {
+                throw new InvalidOperationException(
+                    $"Subject is not a valid agent identifier: {subjectError}");
+            }
+            if (topLevel.IsSubAgent)
             {
                 throw new InvalidOperationException(
                     "A top-level agent identifier (no parent_agent) MUST NOT contain the '+' sub-agent delimiter.");

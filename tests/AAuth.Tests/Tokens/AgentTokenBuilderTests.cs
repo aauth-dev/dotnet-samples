@@ -174,6 +174,24 @@ public class AgentTokenBuilderTests
         Assert.Throws<InvalidOperationException>(() => builder.Build());
     }
 
+    [Theory(DisplayName = "§Agent Identifiers — a malformed top-level Subject fails fast")]
+    [InlineData("not-an-agent-id")]        // no scheme/@, but contains no '+'
+    [InlineData("bob+worker@ap.example")]  // missing aauth: scheme, contains '+'
+    [InlineData("aauth:@ap.example")]      // empty local part
+    public void Build_RejectsMalformedTopLevelSubject(string subject)
+    {
+        var builder = new AgentTokenBuilder
+        {
+            Issuer = "https://ap.example",
+            Subject = subject,
+            KeyId = "k1",
+            Key = NewKey(),
+            // No ParentAgent → top-level. A malformed sub must throw, not emit.
+        };
+
+        Assert.Throws<InvalidOperationException>(() => builder.Build());
+    }
+
     [Fact(DisplayName = "§Sub-Agents — single-level depth: a sub-agent's parent MUST be top-level")]
     public void Build_RejectsSubAgentOfSubAgent()
     {
