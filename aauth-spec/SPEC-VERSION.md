@@ -2,15 +2,34 @@
 
 These spec files were copied from the [AAuth](https://github.com/dickhardt/AAuth)
 repository for reference while building the .NET samples. They are grouped by the
-AAuth protocol draft version under [`v01/`](v01/) and [`v02/`](v02/). Each folder is
-a self-contained snapshot, so shared documents (the HTTP Signature Keys draft) are
-duplicated into both.
+AAuth protocol draft version under [`v01/`](v01/), [`v02/`](v02/), and
+[`v08/`](v08/). Each folder is a self-contained snapshot, so each carries its own
+copy of the HTTP Signature Keys draft at the version that snapshot's protocol
+references.
 
-The SDK targets **draft-02** ([`v02/`](v02/)) — migrated from draft-01 in the
-2026-06-09 migration (see `.agent/plans/2026-06-09-aauth-v02-spec-migration/`).
-The draft-01 snapshot ([`v01/`](v01/)) is retained for reference. One item is
-deferred: four-party AS federation of sub-agents (the three-party parent-mediated
-path is complete).
+The GitHub repository is the working source we vendor from. The canonical,
+permanent home is the **IETF Datatracker**, which retains every published revision
+(and its `.txt` / `.html` renderings) even if the GitHub repo is moved or
+deprecated. Use it as the source of record and fallback:
+
+- Datatracker document — <https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/>
+- Per-revision text (example) — <https://www.ietf.org/archive/id/draft-hardt-oauth-aauth-protocol-08.txt>
+
+The vendored `.md` files are the upstream kramdown source; if the GitHub repo is
+unavailable, the Datatracker `.txt`/`.html` renderings are the authoritative
+substitute.
+
+The SDK code currently targets **draft-02** ([`v02/`](v02/)) — migrated from
+draft-01 in the 2026-06-09 migration (see
+`.agent/plans/2026-06-09-aauth-v02-spec-migration/`). One item from that migration
+is deferred: four-party AS federation of sub-agents (the three-party
+parent-mediated path is complete). The draft-01 snapshot ([`v01/`](v01/)) is
+retained for reference.
+
+The latest upstream snapshot is **draft-08** ([`v08/`](v08/)), vendored 2026-06-25
+for reference. **The SDK has not yet been migrated to draft-08** — it is pulled
+down ahead of that work so the delta can be planned. Until that migration lands,
+`v02/` remains the version the code conforms to.
 
 For a high-fidelity record of what changed between snapshots, see
 [`CHANGELOG.md`](CHANGELOG.md).
@@ -65,3 +84,57 @@ For a high-fidelity record of what changed between snapshots, see
 - Added `requirement=agent-token` (401) and an `access_mode` resource-metadata field.
 - Added an OPTIONAL Markdown `description` field to each well-known metadata document.
 - Named the `{approver, s256}` pair the "mission reference" and used it consistently.
+
+## `v08/` — protocol draft-08
+
+> Reference snapshot only — the SDK has **not** been migrated to draft-08 yet. See
+> the intro and [`CHANGELOG.md`](CHANGELOG.md) for the draft-02 → draft-08 delta.
+
+| Field | Value |
+|---|---|
+| Source repository | <https://github.com/dickhardt/AAuth> |
+| Commit | `dd2b8524eb8a6beb1a6cd922f285cc8bd0464cd8` |
+| Commit date | 2026-06-25 |
+| Tagged version | `draft-hardt-oauth-aauth-protocol-08` |
+| Document date | 2026-06-17 |
+| IETF draft | <https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/08/> |
+| Copied on | 2026-06-25 |
+
+- `draft-hardt-oauth-aauth-protocol.md` — Main AAuth protocol specification (draft-08)
+- `draft-hardt-aauth-bootstrap.md` — Agent bootstrap guidance (draft-01, byte-identical
+  to `v01/` and `v02/`)
+- `draft-hardt-aauth-r3.md` — Rich Resource Requests (R3) specification (draft-00,
+  byte-identical to `v02/`)
+- `interop-demo-profile.md` — Interoperability Demo Profile (informational; **new** in
+  this snapshot — extracted from the protocol spec in draft-06). Describes the minimum
+  live surfaces for an end-to-end interop demo.
+- `draft-hardt-httpbis-signature-key-05.txt` — HTTP Signature Keys (Internet-Draft,
+  draft-05; bumped from draft-04 in `v01/`/`v02/`). The Signature Keys spec now lives in
+  its own repository (<https://github.com/dickhardt/signature-key>); the protocol
+  references it as `[@!I-D.hardt-httpbis-signature-key]`. Downloaded 2026-06-25 from
+  <https://www.ietf.org/archive/id/draft-hardt-httpbis-signature-key-05.txt>
+  (Internet-Draft, 17 June 2026 revision).
+
+### Notable changes since draft-02
+
+draft-08 bundles six published protocol drafts (03 → 08). The headline deltas:
+
+- **Structural reorg**: `Multi-Hop Resource Access` and `Sub-Agents` are now
+  subsections of a new top-level `# Agent Delegation` section; the sub-agent
+  subsections collapsed into a single `## Delegation Chain`.
+- **Auth-token `act` semantics** (drafts 04–05): `act` is now OPTIONAL (absent in
+  direct authorization); `act.sub` replaced by `act.agent` identifying the immediate
+  upstream agent (the delegator, not the presenter); nesting records the full chain.
+- **Call-chaining binding** (draft-08): upstream token `aud` MUST equal the `iss` of
+  the intermediary's agent token; PS/AS routing is derived from the upstream auth token
+  (`mission.approver` or `iss`), not the caller's `ps` claim.
+- **Interaction code** clarified as a correlation identifier, not an authorization
+  credential (the code alone MUST NOT authorize the decision).
+- **New `## Interaction Callback Errors`** (draft-07) defining the `?error=` redirect
+  wire format and PS-to-polling error mapping.
+- **Metadata** (draft-03): common-fields table across all four well-known docs,
+  documented RFC 9728 divergences, and a `documentation_uri` field on the agent,
+  person, and access metadata documents.
+- **New `## PS Approval Endpoint Authentication`** section and an implementation-clarity
+  pass (draft-06): `AAuth-Requirement`/`AAuth-Access`/`AAuth-Capabilities` grammar,
+  JWKS same-`kid` refresh, and structured `cnf.jwk` verification ordering.

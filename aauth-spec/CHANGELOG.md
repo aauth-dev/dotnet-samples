@@ -10,18 +10,37 @@ Entries are grouped by snapshot folder, so every document in a release (protocol
 R3, bootstrap) is listed together and a change to R3 or bootstrap travels with the
 protocol version it shipped in.
 
-Section and line references point into the **draft-02** files under
-[`v02/`](v02/) as vendored (commit `feda56b`). Anchors in parentheses (e.g.
-`#sub-agents`) are the spec's own kramdown anchors and are stable across line
-shifts.
+Section and line references in the **`v02/`** entry point into the draft-02 files
+under [`v02/`](v02/) (commit `feda56b`); references in the **`v08/`** entry point
+into the draft-08 files under [`v08/`](v08/) (commit `dd2b852`). Anchors in
+parentheses (e.g. `#sub-agents`) are the spec's own kramdown anchors and are stable
+across line shifts.
 
 | Snapshot | Protocol | Bootstrap | R3 | Source commit |
 |---|---|---|---|---|
 | [`v01/`](v01/) | draft-01 | draft-01 | draft-00 | `c090879` (2026-05-11) |
 | [`v02/`](v02/) | draft-02 | draft-01 (unchanged) | draft-00 (revised) | `feda56b` (2026-06-09) |
+| [`v08/`](v08/) | draft-08 | draft-01 (unchanged) | draft-00 (unchanged) | `dd2b852` (2026-06-25) |
+
+> **The SDK code targets `v02/` (draft-02).** The `v08/` snapshot was vendored
+> 2026-06-25 as the latest upstream reference; migrating the SDK to draft-08 is
+> tracked separately and has not started. See
+> [`SPEC-VERSION.md`](SPEC-VERSION.md).
 
 ## Contents
 
+- [`v08/` — AAuth draft-08 snapshot](#v08--aauth-draft-08-snapshot)
+  - [Protocol (drafts 03–08)](#protocol-drafts-0308)
+    - [1. Agent-delegation restructure](#1-agent-delegation-restructure)
+    - [2. Auth-token `act` semantics (drafts 04–05)](#2-auth-token-act-semantics-drafts-0405)
+    - [3. Call chaining and routing (draft-08)](#3-call-chaining-and-routing-draft-08)
+    - [4. Interactions (drafts 03, 07–08)](#4-interactions-drafts-03-0708)
+    - [5. Metadata (draft-03)](#5-metadata-draft-03)
+    - [6. PS approval auth and implementation clarity (draft-06)](#6-ps-approval-auth-and-implementation-clarity-draft-06)
+  - [R3 and Bootstrap (unchanged)](#r3-and-bootstrap-unchanged)
+  - [Interoperability Demo Profile (new)](#interoperability-demo-profile-new)
+  - [HTTP Signature Keys (draft-05)](#http-signature-keys-draft-05)
+  - [Author's verbatim changelog (drafts 03–08)](#authors-verbatim-changelog-drafts-0308)
 - [`v02/` — AAuth draft-02 snapshot](#v02--aauth-draft-02-snapshot)
   - [Protocol (draft-02)](#protocol-draft-02)
     - [1. Sub-agents (new)](#1-sub-agents-new)
@@ -34,6 +53,186 @@ shifts.
   - [Bootstrap (draft-01, unchanged)](#bootstrap-draft-01-unchanged)
   - [Author's verbatim changelog (protocol)](#authors-verbatim-changelog-protocol)
 - [`v01/` — AAuth draft-01 snapshot (baseline)](#v01--aauth-draft-01-snapshot-baseline)
+
+---
+
+## `v08/` — AAuth draft-08 snapshot
+
+The latest upstream snapshot, vendored 2026-06-25 for reference. It bundles
+protocol **draft-08** with the unchanged R3 (**draft-00**) and bootstrap
+(**draft-01**), adds the new informational **Interoperability Demo Profile**, and
+bumps the HTTP Signature Keys draft to **draft-05**.
+
+> **Reference only — the SDK has not been migrated to draft-08.** The entries
+> below measure draft-08 against the **draft-02** baseline the code currently
+> targets ([`v02/`](v02/)). They are a planning catalogue, not a record of shipped
+> code changes.
+
+### Protocol (drafts 03–08)
+
+Published as IETF
+[draft-hardt-oauth-aauth-protocol-08](https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/08/)
+(commit `dd2b852`, document date 2026-06-17). draft-08 is the cumulative result of
+six published drafts (03 → 08). Grouped below by theme; the author's verbatim
+per-draft changelog is reproduced at the end. Anchors in parentheses are the
+spec's own kramdown anchors.
+
+#### 1. Agent-delegation restructure
+
+The multi-hop and sub-agent material was reorganized under a single umbrella, and
+the sub-agent subsections were consolidated.
+
+- New top-level section `# Agent Delegation` (`#agent-delegation`) now contains
+  `## Multi-Hop Resource Access` (`#multi-hop`) and `## Sub-Agents`
+  (`#sub-agents`), both previously top-level sections in draft-02.
+- The draft-02 sub-agent subsections (Sub-Agent Identity, Single-Level Depth,
+  Parent-Mediated Authorization, Delegation Chain Examples) collapsed into a
+  single `## Delegation Chain` (`#delegation-chain`).
+- New `## PS Approval Endpoint Authentication` (`#ps-approval-endpoint-auth`).
+
+#### 2. Auth-token `act` semantics (drafts 04–05)
+
+The delegation-chain claim was reworked so the `act` chain identifies agents, not
+subjects, and is omitted when there is no delegation.
+
+- `act.sub` replaced by **`act.agent`** within each `act` node
+  ([issue #47](https://github.com/dickhardt/AAuth/issues/47)).
+- `act` is now **OPTIONAL** — absent in direct authorization. `act.agent`
+  identifies the immediate upstream agent (the delegator, not the presenter);
+  nesting records the full chain. Verification steps, sub-agent issuance, PS
+  upstream-token construction, and the delegation-chain examples were updated to
+  match.
+
+#### 3. Call chaining and routing (draft-08)
+
+Call-chaining gained explicit token-binding and routing rules.
+
+- Upstream token **`aud` MUST equal the `iss`** of the intermediary's agent token.
+- PS-vs-AS routing is derived from the **upstream auth token**
+  (`mission.approver` or `iss`), not the calling agent's `ps` claim.
+- A PS **MUST require a mission** to remain in the loop for four-party upstream
+  chains.
+
+#### 4. Interactions (drafts 03, 07–08)
+
+- New `## Interaction Callback Errors` (draft-07) defining the `?error=` redirect
+  wire format — `access_denied`, `user_abandoned`, `server_error`,
+  `temporarily_unavailable`, `interaction_expired` — and the PS mapping to polling
+  errors. Resource-Initiated Interaction now references it and specifies PS
+  behavior on error callbacks.
+- **Interaction code** is now described as a **correlation identifier, not an
+  authorization credential** (draft-08): the code alone MUST NOT authorize the
+  decision.
+- Crockford base32 citation updated to
+  `[@?I-D.crockford-davis-base32-for-humans]` (draft-03).
+
+#### 5. Metadata (draft-03)
+
+- New **common-fields table** at the top of the Metadata Documents section
+  covering all four well-known files; documented intentional RFC 9728 divergences
+  (`issuer` not `resource`; unprefixed field names).
+- New **`documentation_uri`** field on `aauth-agent.json`, `aauth-person.json`,
+  and `aauth-access.json`.
+
+#### 6. PS approval auth and implementation clarity (draft-06)
+
+An implementation- and interop-driven clarity pass (feedback from Joshua Gay):
+
+- Mission-reference dereference boundary and `approver` / `s256` syntax rules.
+- Agent keying material restricted to **`scheme=jwt`**.
+- `AAuth-Requirement` parameter shape and unknown-value behavior; `AAuth-Access`
+  token grammar (`token68`); `AAuth-Capabilities` forward-compatibility.
+- JWKS **same-`kid` refresh** and egress admission.
+- Auth-token verification split into **JWT trust** vs. **request-context binding**
+  with structured `cnf.jwk` failure ordering.
+- New PS approval-endpoint authentication security consideration and a
+  freshness/replay policy subsection.
+- The Interoperability Demo Profile was **extracted** to a standalone
+  non-normative document (see below).
+
+### R3 and Bootstrap (unchanged)
+
+Both are byte-identical to the [`v02/`](v02/) snapshot:
+
+- **R3** stays at **draft-00** (`draft-hardt-aauth-r3.md`).
+- **Bootstrap** stays at **draft-01** (`draft-hardt-aauth-bootstrap.md`) —
+  byte-identical across `v01/`, `v02/`, and `v08/`.
+
+### Interoperability Demo Profile (new)
+
+`interop-demo-profile.md` is **new** in this snapshot — a non-normative document
+extracted from the protocol spec in draft-06. It describes the minimum live
+surfaces for an end-to-end interop demo: PS mission approval, `AAuth-Mission`
+presentation and resource-token echo, resource-token issuance, auth-token issuance
+and presentation, and parent-mediated sub-agent handling.
+
+### HTTP Signature Keys (draft-05)
+
+Bumped **draft-04 → draft-05** (`draft-hardt-httpbis-signature-key-05.txt`). The
+Signature Keys spec is now maintained in its own repository
+(<https://github.com/dickhardt/signature-key>); the protocol references its
+editor's copy via `[@!I-D.hardt-httpbis-signature-key]`. draft-05 names a second
+author (T. Meunier, Cloudflare) and a `Signature-Error` header for structured
+error reporting.
+
+### Author's verbatim changelog (drafts 03–08)
+
+Reproduced from the Document History section of
+[`v08/draft-hardt-oauth-aauth-protocol.md`](v08/draft-hardt-oauth-aauth-protocol.md):
+
+> **draft-hardt-oauth-aauth-protocol-08**
+>
+> - Call chaining: upstream token `aud` MUST equal the `iss` of the intermediary's
+>   agent token; routing to PS or AS is derived from the upstream auth token
+>   (`mission.approver` or `iss`), not the calling agent's `ps` claim; PS MUST
+>   require a mission to remain in the loop for four-party upstream chains.
+> - Interaction code: added that the code is a correlation identifier, not an
+>   authorization credential; the code alone MUST NOT authorize the decision.
+>
+> **draft-hardt-oauth-aauth-protocol-07**
+>
+> - Added `Interaction Callback Errors` section defining the `?error=` wire format
+>   for callback redirects (`access_denied`, `user_abandoned`, `server_error`,
+>   `temporarily_unavailable`, `interaction_expired`) and the PS mapping to polling
+>   errors. Updated Resource-Initiated Interaction to reference the new section and
+>   specify PS behavior on error callbacks. Added Joshua Gay to Acknowledgments.
+>
+> **draft-hardt-oauth-aauth-protocol-06**
+>
+> - Implementation and interoperability clarity driven by feedback from Joshua Gay
+>   (sidecat): mission reference dereference boundary and `approver`/`s256` syntax
+>   rules; agent keying material restricted to `scheme=jwt`; `AAuth-Requirement`
+>   parameter shape and unknown-value behavior; `AAuth-Access` token grammar
+>   (`token68`); `AAuth-Capabilities` forward-compatibility; JWKS same-`kid` refresh
+>   and egress admission; auth token verification split into JWT trust and
+>   request-context binding with structured `cnf.jwk` failure ordering; PS approval
+>   endpoint authentication security consideration; freshness and replay policy
+>   subsection. Interoperability demo profile extracted to a standalone
+>   non-normative document.
+>
+> **draft-hardt-oauth-aauth-protocol-05**
+>
+> - Auth tokens: `act` is OPTIONAL, absent in direct authorization; `act.agent`
+>   identifies the immediate upstream agent (the delegator), not the presenter;
+>   nesting records the full chain. Updated verification steps, sub-agent issuance,
+>   PS upstream token construction, and delegation chain examples accordingly.
+>   Replaced the "sub-agent calls a chained resource" example with "sub-agent inside
+>   a chain."
+>
+> **draft-hardt-oauth-aauth-protocol-04**
+>
+> - Auth tokens: replaced `act.sub` with `act.agent` within each `act` node; see
+>   [issue #47](https://github.com/dickhardt/AAuth/issues/47).
+>
+> **draft-hardt-oauth-aauth-protocol-03**
+>
+> - Metadata: added a common-fields table at the top of the Metadata Documents
+>   section covering all four well-known files; documented intentional RFC 9728
+>   divergences (`issuer` not `resource`; unprefixed field names).
+> - Metadata: added `documentation_uri` to `aauth-agent.json`, `aauth-person.json`,
+>   and `aauth-access.json`.
+> - Interaction code: updated Crockford base32 citation to
+>   `[@?I-D.crockford-davis-base32-for-humans]`.
 
 ---
 
