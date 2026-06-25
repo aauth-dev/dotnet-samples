@@ -89,11 +89,15 @@ public sealed class AuthTokenBuilder
     public string? TokenId { get; init; }
 
     /// <summary>
-    /// Optional upstream <c>act</c> object for call-chaining scenarios.
-    /// When set, nested inside the token's <c>act</c> claim to preserve
-    /// the full delegation chain (caller → resource → downstream).
+    /// The complete <c>act</c> delegation-chain node (§Delegation Chain), emitted
+    /// verbatim. OPTIONAL — leave <see langword="null"/> for direct authorization
+    /// (the token then carries no <c>act</c>). When chaining or issuing to a
+    /// sub-agent, build it with <see cref="ActChainBuilder.BuildNestedAct"/>:
+    /// <c>act.agent</c> names the immediate upstream agent (the delegator), with the
+    /// upstream's own chain nested as <c>act.act</c>. The presenter's identity is in
+    /// the top-level <c>agent</c> claim and is not repeated inside <c>act</c>.
     /// </summary>
-    public JsonObject? UpstreamAct { get; init; }
+    public JsonObject? Act { get; init; }
 
     /// <summary>
     /// Additional identity claims to merge into the payload — used by an
@@ -155,16 +159,10 @@ public sealed class AuthTokenBuilder
             ["kid"] = KeyId,
         };
 
-        // Build the act claim. In call-chaining, nest the upstream act
-        // inside the current agent's act to preserve the delegation chain.
-        // UpstreamAct is the RAW act from the upstream token; the builder
-        // performs the single nesting per §Upstream Token Verification step 4.
-        var act = new JsonObject { ["sub"] = Agent };
-        if (UpstreamAct is not null)
-        {
-            act["act"] = UpstreamAct.DeepClone();
-        }
-
+        // The act claim is OPTIONAL (§Delegation Chain) — absent for direct
+        // authorization. When present (call chaining or sub-agent issuance), it is
+        // the complete node: act.agent is the immediate upstream agent (delegator),
+        // not the presenter, whose identity is in the top-level `agent` claim.
         var payload = new JsonObject
         {
             ["iss"] = Issuer,
@@ -173,10 +171,14 @@ public sealed class AuthTokenBuilder
             ["jti"] = jti,
             ["agent"] = Agent,
             ["cnf"] = new JsonObject { ["jwk"] = AgentConfirmationKey.ToPublicJwk() },
-            ["act"] = act,
             ["iat"] = iat.ToUnixTimeSeconds(),
             ["exp"] = exp.ToUnixTimeSeconds(),
         };
+
+        if (Act is not null)
+        {
+            payload["act"] = Act.DeepClone();
+        }
 
         if (Subject is not null)
         {

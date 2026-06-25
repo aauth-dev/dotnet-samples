@@ -42,8 +42,8 @@ test.describe('Deferred', () => {
     expect(json.sub).toBe('pairwise-sub');
     expect(json.scope).toEqual(['calendar.read']);
     expect(json.iss).toBe(Urls.personServer);
-    const act = json.act as Record<string, unknown>;
-    expect(act.sub).toBe(Agents.sampleApp);
+    // Direct authorization (deferred consent) — no act chain.
+    expect(json.act).toBeFalsy();
   });
 
   test('deny path surfaces an access-denied error', async ({ page, context }) => {

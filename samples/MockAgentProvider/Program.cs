@@ -36,7 +36,7 @@ app.MapGet("/.well-known/aauth-agent.json", () => Results.Json(new JsonObject
     ["jwks_uri"] = $"{issuer}/.well-known/jwks.json",
     ["enrol_endpoint"] = $"{issuer}/enrol",
     ["refresh_endpoint"] = $"{issuer}/refresh",
-    ["client_name"] = "Mock Agent Provider",
+    ["name"] = "Mock Agent Provider",
     ["localhost_callback_allowed"] = true,
 }, contentType: "application/json"));
 
@@ -192,7 +192,7 @@ app.MapPost("/refresh", (HttpContext ctx) =>
     }
     else // jkt-jwt
     {
-        // Two-key refresh (draft-hardt-httpbis-signature-key-04 §3.4): the durable
+        // Two-key refresh (draft-hardt-httpbis-signature-key-05 §3.4): the durable
         // key is embedded in the naming JWT header jwk, the issuer is that key's
         // own thumbprint URN, and cnf.jwk is the ephemeral key that signed the
         // HTTP request. Verification is self-anchored, then bound to enrolment.

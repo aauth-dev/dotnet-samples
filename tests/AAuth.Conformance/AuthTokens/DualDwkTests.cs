@@ -68,7 +68,6 @@ public class DualDwkTests
         {
             ["iss"] = Iss, ["dwk"] = "aauth-resource.json", ["aud"] = Aud,
             ["agent"] = Agent, ["cnf"] = new JsonObject { ["jwk"] = agentKey.ToPublicJwk() },
-            ["act"] = new JsonObject { ["sub"] = Agent },
             ["sub"] = "x", ["iat"] = iat, ["exp"] = exp, ["jti"] = "t1",
         };
         var jwt = JwtWriter.SignCompact(headerObj, payloadObj, psKey);
@@ -90,7 +89,6 @@ public class DualDwkTests
         {
             ["iss"] = Iss, ["dwk"] = "aauth-agent.json", ["aud"] = Aud,
             ["agent"] = Agent, ["cnf"] = new JsonObject { ["jwk"] = agentKey.ToPublicJwk() },
-            ["act"] = new JsonObject { ["sub"] = Agent },
             ["sub"] = "x", ["iat"] = iat, ["exp"] = exp, ["jti"] = "t1",
         };
         var jwt = JwtWriter.SignCompact(headerObj, payloadObj, psKey);

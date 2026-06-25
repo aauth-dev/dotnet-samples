@@ -174,7 +174,7 @@ public sealed class AgentProviderClient
     }
 
     /// <summary>
-    /// Two-key (<c>jkt-jwt</c>) refresh per <c>draft-hardt-httpbis-signature-key-04</c>
+    /// Two-key (<c>jkt-jwt</c>) refresh per <c>draft-hardt-httpbis-signature-key-05</c>
     /// §3.4. Generates a fresh ephemeral key, creates a self-issued
     /// <c>jkt-s256+jwt</c> delegation JWT signed by the durable key (with the durable
     /// public key in the header and <c>iss=urn:jkt:sha-256:&lt;thumbprint&gt;</c>),

@@ -46,7 +46,7 @@ test.describe('Federated (interactive consent)', () => {
     expect(json.scope).toEqual(['wallet.read']);
     // The auth token is minted by the Access Server, not the Person Server.
     expect(json.iss).toBe(Urls.accessServer);
-    const act = json.act as Record<string, unknown>;
-    expect(act.sub).toBe(Agents.sampleApp);
+    // Four-party direct authorization — no act chain.
+    expect(json.act).toBeFalsy();
   });
 });

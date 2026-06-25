@@ -77,7 +77,7 @@ public static class AAuthConstants
 
         /// <summary>
         /// Self-issued <c>jkt-jwt</c> delegation JWT type (SHA-256 thumbprint), per
-        /// <c>draft-hardt-httpbis-signature-key-04</c> §3.4 Table 1.
+        /// <c>draft-hardt-httpbis-signature-key-05</c> §3.4 Table 1.
         /// </summary>
         public const string JktS256Jwt = "jkt-s256+jwt";
     }
@@ -85,7 +85,7 @@ public static class AAuthConstants
     /// <summary>
     /// JWK Thumbprint URI prefix for the SHA-256 <c>jkt-jwt</c> issuer claim
     /// (<c>urn:jkt:sha-256:&lt;thumbprint&gt;</c>), per
-    /// <c>draft-hardt-httpbis-signature-key-04</c> §3.4 Table 1.
+    /// <c>draft-hardt-httpbis-signature-key-05</c> §3.4 Table 1.
     /// </summary>
     public const string JktThumbprintUrnPrefix = "urn:jkt:sha-256:";
 

@@ -18,14 +18,21 @@ public sealed record UpstreamTokenValidationResult
     /// <summary>Error description when invalid.</summary>
     public string? Error { get; init; }
 
-    /// <summary>The raw <c>act</c> object from the upstream token.
-    /// Pass this to <see cref="AuthTokenBuilder.UpstreamAct"/> — the builder
-    /// performs the nesting (wrapping inside the intermediary's act) per
-    /// §Upstream Token Verification step 4.</summary>
+    /// <summary>The upstream token's own <c>act</c> claim (its delegation chain),
+    /// or <see langword="null"/> if the upstream token was a direct authorization.
+    /// Combine with <see cref="Agent"/> via <see cref="ActChainBuilder.BuildNestedAct"/>
+    /// to compose the downstream <c>act</c> node per §Upstream Token Verification step 4.</summary>
     public JsonObject? UpstreamAct { get; init; }
 
     /// <summary>The upstream token's issuer.</summary>
     public string? Issuer { get; init; }
+
+    /// <summary>The upstream token's <c>dwk</c> claim, which authoritatively
+    /// identifies the issuer's role: <c>aauth-access.json</c> when issued by an
+    /// AS (four-party), <c>aauth-person.json</c> when issued by a PS (three-party).
+    /// Verified during validation, since the issuer's signing key was resolved at
+    /// <c>{iss}/.well-known/{dwk}</c>.</summary>
+    public string? IssuerDwk { get; init; }
 
     /// <summary>The upstream token's agent identifier.</summary>
     public string? Agent { get; init; }
@@ -35,6 +42,11 @@ public sealed record UpstreamTokenValidationResult
 
     /// <summary>The upstream token's scope.</summary>
     public string? Scope { get; init; }
+
+    /// <summary>The <c>mission.approver</c> of the upstream token, or
+    /// <see langword="null"/> when the upstream token carries no mission. A
+    /// present approver means the chain is anchored to a PS for governance.</summary>
+    public string? MissionApprover { get; init; }
 }
 
 /// <summary>
@@ -102,50 +114,61 @@ public sealed class UpstreamTokenValidator
 
         // Step 3: aud already verified by Verify() above.
 
-        // Step 4: Extract act for caller to nest.
+        // Step 4: Extract act for the caller to nest. `act` is OPTIONAL in draft-08
+        // — absent when the upstream token was a direct authorization (no chaining).
         var act = verified.Payload["act"] as JsonObject;
-        if (act is null)
-        {
-            return new UpstreamTokenValidationResult
-            {
-                IsValid = false,
-                Error = "missing_act: upstream token is missing required 'act' claim.",
-            };
-        }
-
-        // Validate chain well-formedness: each level has 'sub', depth is within limits.
-        if (!ActChainBuilder.ValidateChain(act, _verifier.MaxActDepth))
-        {
-            return new UpstreamTokenValidationResult
-            {
-                IsValid = false,
-                Error = "invalid_act_chain: act chain is malformed (missing sub or exceeds max depth).",
-            };
-        }
-
-        // Verify act.sub matches the 'agent' claim (the token was issued for this agent).
-        var actSub = (string?)act["sub"];
         var agent = (string?)verified.Payload["agent"];
-        if (actSub != agent)
+
+        // §Upstream Token Verification step 1 requires full Auth Token Verification.
+        // VerifyWithoutPoPAsync covers JWT trust; enforce the request-context presence
+        // checks the upstream token must still satisfy: `agent` (used to compose the
+        // downstream act node — a null here would otherwise throw at BuildNestedAct)
+        // and a `dwk` constrained to the auth-token set (the four-party mission gate
+        // classifies AS vs PS from `dwk`, so an out-of-set value MUST NOT pass).
+        if (string.IsNullOrEmpty(agent))
         {
             return new UpstreamTokenValidationResult
             {
                 IsValid = false,
-                Error = $"act_sub_mismatch: act.sub '{actSub}' does not match agent '{agent}'.",
+                Error = "invalid_upstream_token: missing 'agent'.",
+            };
+        }
+        var upstreamDwk = (string?)verified.Payload["dwk"];
+        if (upstreamDwk != AuthTokenBuilder.PersonDwk && upstreamDwk != AuthTokenBuilder.AccessDwk)
+        {
+            return new UpstreamTokenValidationResult
+            {
+                IsValid = false,
+                Error = $"invalid_upstream_token: 'dwk' must be '{AuthTokenBuilder.PersonDwk}' or '{AuthTokenBuilder.AccessDwk}'.",
             };
         }
 
-        // Return the raw upstream act. The caller (AuthTokenBuilder) performs
-        // the nesting (wrapping this inside { sub: intermediary, act: ... })
+        // When present, validate chain well-formedness: each level has `agent`,
+        // depth is within limits. The presenter is the top-level `agent`; `act.agent`
+        // identifies the upstream delegator and is intentionally different — so there
+        // is no self-reference check.
+        if (act is not null && !ActChainBuilder.ValidateChain(act, _verifier.MaxActDepth))
+        {
+            return new UpstreamTokenValidationResult
+            {
+                IsValid = false,
+                Error = "invalid_act_chain: act chain is malformed (missing agent or exceeds max depth).",
+            };
+        }
+
+        // Return the upstream token's agent and its (optional) act chain. The caller
+        // composes the downstream act via ActChainBuilder.BuildNestedAct(agent, act)
         // per §Upstream Token Verification step 4.
         return new UpstreamTokenValidationResult
         {
             IsValid = true,
-            UpstreamAct = act.DeepClone() as JsonObject,
+            UpstreamAct = act?.DeepClone() as JsonObject,
             Issuer = verified.Issuer,
+            IssuerDwk = upstreamDwk,
             Agent = agent,
             Subject = (string?)verified.Payload["sub"],
             Scope = (string?)verified.Payload["scope"],
+            MissionApprover = (string?)(verified.Payload["mission"] as JsonObject)?["approver"],
         };
     }
 

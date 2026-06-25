@@ -5,7 +5,7 @@ namespace AAuth.HttpSig;
 
 /// <summary>
 /// Produces <c>Signature-Key: sig=jkt-jwt;jwt="..."</c> — the self-issued
-/// two-key delegation signing mode (<c>draft-hardt-httpbis-signature-key-04</c>
+/// two-key delegation signing mode (<c>draft-hardt-httpbis-signature-key-05</c>
 /// §3.4). The HTTP message signature is made with the ephemeral key (held by the
 /// signing handler); the naming JWT supplied here (signed by the durable key)
 /// embeds the durable public key and names the ephemeral key via <c>cnf.jwk</c>.

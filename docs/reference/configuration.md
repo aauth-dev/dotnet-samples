@@ -31,7 +31,7 @@ All configurable options across the AAuth .NET SDK, grouped by component.
 |----------|------|---------|-------------|
 | `Issuer` | `string` | — (required) | HTTPS issuer URL for this resource |
 | `SigningKeys` | `Dictionary<string, AAuthKey>` | `{}` | Key-id → signing key map |
-| `ClientName` | `string?` | `null` | Human-readable resource name |
+| `Name` | `string?` | `null` | Human-readable resource name (`name`) |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | `null` | Scope → description map for metadata |
 | `SignatureWindow` | `int?` | `null` | Advertised signature validity (seconds) |
 | `AuthorizationEndpoint` | `string?` | `null` | AS authorization URL |
@@ -152,7 +152,7 @@ Methods:
 |----------|------|:--------:|-------------|
 | `Issuer` | `string` | Yes | Resource canonical URL |
 | `SigningKeys` | `IReadOnlyDictionary<string, AAuthKey>` | Yes | Key-id → signing key map |
-| `ClientName` | `string?` | No | Human-readable resource name |
+| `Name` | `string?` | No | Human-readable resource name (`name`) |
 | `ScopeDescriptions` | `IReadOnlyDictionary<string, string>?` | No | Scope → description |
 | `SignatureWindow` | `int?` | No | Advertised signature validity (seconds) |
 | `AuthorizationEndpoint` | `string?` | No | AS authorization URL |
@@ -209,7 +209,7 @@ Standard `DelegatingHandler` — no configurable options. Requires an `ISignatur
 |----------|------|:--------:|-------------|
 | `Issuer` | `string` | Yes | Resource canonical URL |
 | `SigningKeys` | `Dictionary<string, AAuthKey>` | Yes | Key-id → signing key map |
-| `ClientName` | `string?` | No | Resource display name |
+| `Name` | `string?` | No | Resource display name (`name`) |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | No | Scope descriptions for metadata |
 | `SignatureWindow` | `int?` | No | Advertised signature validity (seconds) |
 | `AuthorizationEndpoint` | `string?` | No | AS authorization URL |

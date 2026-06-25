@@ -6,9 +6,13 @@ namespace AAuth.Headers;
 
 /// <summary>
 /// Generates and validates interaction <c>code</c> values per the AAuth protocol
-/// §Interaction Code Format (draft-02). The code is the only secret guarding the
-/// interaction URL, so the SDK owns a single correct implementation that servers
-/// use to mint codes and validate user input.
+/// §Interaction Code Format. The code is a <b>correlation identifier</b>, not an
+/// authorization credential: it ties the user's browser session to the pending
+/// interaction so the server can look up the correct request. The person's
+/// approve/deny decision MUST be recorded via an authenticated channel at the PS —
+/// the code alone MUST NOT authorize the decision (§Interaction Relay). The SDK
+/// owns a single correct implementation that servers use to mint codes and
+/// correlate user input.
 /// </summary>
 /// <remarks>
 /// Rules implemented here (the pure-function parts of the spec):

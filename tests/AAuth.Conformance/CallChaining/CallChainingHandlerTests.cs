@@ -239,7 +239,7 @@ public class CallChainingHandlerTests
             ["iss"] = iss,
             ["aud"] = "http://localhost:6000",
             ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new JsonObject { ["agent"] = "agent-1" },
         };
         return BuildToken(payload);
     }
@@ -251,7 +251,7 @@ public class CallChainingHandlerTests
             ["iss"] = "http://localhost:5555",
             ["aud"] = "http://localhost:6000",
             ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new JsonObject { ["agent"] = "agent-1" },
             ["mission"] = new JsonObject { ["approver"] = approver },
         };
         return BuildToken(payload);

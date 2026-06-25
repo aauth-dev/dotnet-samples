@@ -51,8 +51,9 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
         a.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
         {
             Issuer = AgentIssuer,
-            ClientName = "Test Agent",
+            Name = "Test Agent",
             Description = "**Test Agent** drafts email on your behalf.",
+            DocumentationUri = $"{AgentIssuer}/docs",
             SigningKeys = new Dictionary<string, AAuthKey> { [AgentKid] = _agentKey },
             CallbackEndpoint = $"{AgentIssuer}/callback",
         });
@@ -131,11 +132,18 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
         Assert.Equal($"{AgentIssuer}/.well-known/jwks.json", (string?)doc["jwks_uri"]);
     }
 
-    [Fact(DisplayName = "§Discovery — aauth-agent.json MAY include 'client_name'")]
-    public async Task AgentMetadata_OptionalClientName()
+    [Fact(DisplayName = "§Discovery — aauth-agent.json MAY include 'name'")]
+    public async Task AgentMetadata_OptionalName()
     {
         var doc = await Get(_agentHost!, "/.well-known/aauth-agent.json");
-        Assert.Equal("Test Agent", (string?)doc["client_name"]);
+        Assert.Equal("Test Agent", (string?)doc["name"]);
+    }
+
+    [Fact(DisplayName = "§Discovery — aauth-agent.json MAY include 'documentation_uri'")]
+    public async Task AgentMetadata_OptionalDocumentationUri()
+    {
+        var doc = await Get(_agentHost!, "/.well-known/aauth-agent.json");
+        Assert.Equal($"{AgentIssuer}/docs", (string?)doc["documentation_uri"]);
     }
 
     [Fact(DisplayName = "§Discovery — aauth-agent.json MAY include 'callback_endpoint'")]

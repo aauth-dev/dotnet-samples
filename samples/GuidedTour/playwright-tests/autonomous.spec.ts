@@ -36,8 +36,6 @@ test('autonomous flow exchanges and replays to a three-party 200', async ({ page
   expect(json.sub).toBe('pairwise-sub');
   expect(json.scope).toEqual(['calendar.read']);
   expect(json.iss).toBe(Urls.personServer);
-  // Standing-consent single-hop grant — act names the tour agent, no nesting.
-  const act = json.act as Record<string, unknown>;
-  expect(act.sub).toBe(Agents.tour);
-  expect(act.act).toBeUndefined();
+  // Standing-consent single-hop grant — direct authorization, so no act chain.
+  expect(json.act).toBeFalsy();
 });

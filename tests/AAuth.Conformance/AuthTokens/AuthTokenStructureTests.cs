@@ -21,7 +21,7 @@ public class AuthTokenStructureTests
     private static AAuthKey NewKey() => AAuthKey.Generate();
 
     private static string BuildToken(AAuthKey signingKey, AAuthKey agentKey,
-        string? subject = "pairwise-sub", string? scope = "whoami") => new AuthTokenBuilder
+        string? subject = "pairwise-sub", string? scope = "whoami", JsonObject? act = null) => new AuthTokenBuilder
     {
         Issuer = Iss,
         Audience = Aud,
@@ -31,6 +31,7 @@ public class AuthTokenStructureTests
         KeyId = Kid,
         Subject = subject,
         Scope = scope,
+        Act = act,
     }.Build();
 
     private static (JsonObject Header, JsonObject Payload) Decode(string jwt)
@@ -126,13 +127,24 @@ public class AuthTokenStructureTests
         Assert.Null(jwk["d"]); // private MUST NOT leak
     }
 
-    [Fact(DisplayName = "§Auth Token Structure — payload.act MUST be present with act.sub = agent")]
-    public void PayloadAct_IsPresentWithAgentSub()
+    [Fact(DisplayName = "§Auth Token Structure — payload.act OMITTED for direct authorization")]
+    public void PayloadAct_OmittedForDirectAuth()
     {
+        // `act` is OPTIONAL (§Delegation Chain) — a direct-auth token carries no act.
         var (_, payload) = Decode(BuildToken(NewKey(), NewKey()));
-        var act = payload["act"]?.AsObject();
-        Assert.NotNull(act);
-        Assert.Equal(Agent, (string?)act["sub"]);
+        Assert.Null(payload["act"]);
+    }
+
+    [Fact(DisplayName = "§Auth Token Structure — payload.act carries the upstream delegator's agent")]
+    public void PayloadAct_CarriesUpstreamAgent()
+    {
+        // When delegating, act.agent names the immediate upstream agent (delegator),
+        // not the presenter (whose identity is the top-level `agent` claim).
+        var act = ActChainBuilder.BuildNestedAct("aauth:up@example");
+        var (_, payload) = Decode(BuildToken(NewKey(), NewKey(), act: act));
+        var actClaim = payload["act"]?.AsObject();
+        Assert.NotNull(actClaim);
+        Assert.Equal("aauth:up@example", (string?)actClaim!["agent"]);
     }
 
     [Fact(DisplayName = "§Auth Token Structure — payload.iat MUST be set")]

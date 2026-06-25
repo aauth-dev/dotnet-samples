@@ -8,6 +8,7 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.Errors;
 using AAuth.HttpSig;
+using AAuth.Identifiers;
 using AAuth.Server.CallChaining;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Http;
@@ -134,6 +135,22 @@ public sealed class AAuthVerificationMiddleware
             return;
         }
 
+        // §Agent Token Usage: an agent token (and likewise an auth token) is an
+        // externally-vouched JWT and MUST be presented via Signature-Key scheme=jwt.
+        // Reject one smuggled through a self-anchored/pseudonymous scheme (jkt-jwt)
+        // or a keyless inline scheme, which carry no externally-verified issuer.
+        var presentedTyp = (string?)parsedInfo.Header?["typ"];
+        if ((presentedTyp == AgentTokenBuilder.TokenType || presentedTyp == AuthTokenBuilder.TokenType)
+            && parsedInfo.Scheme != AAuthConstants.Schemes.Jwt)
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            context.Response.Headers[SignatureError.HeaderName] =
+                SignatureError.Format(SignatureErrorCode.InvalidJwt);
+            context.Response.Headers[AAuthConstants.Headers.AAuthError] =
+                $"{presentedTyp} MUST be presented with Signature-Key scheme=jwt.";
+            return;
+        }
+
         // Replay detection.
         var tokenId = parsedInfo.Payload?["jti"]?.GetValue<string>();
         if (context.Items.TryGetValue(JtiStoreItemKey, out var storeObj) &&
@@ -179,7 +196,7 @@ public sealed class AAuthVerificationMiddleware
         }
 
         // Step 4-6: external JWT issuer verification (jwt scheme: agent/auth tokens).
-        // The jkt-jwt scheme is self-anchored (draft-04 §3.4) and pseudonymous
+        // The jkt-jwt scheme is self-anchored (draft-05 §3.4) and pseudonymous
         // (§6.3) — it carries no externally-vouched issuer, so it is excluded here;
         // its durable→ephemeral delegation is verified during key resolution.
         if (_options.RequireIssuerVerification &&
@@ -242,7 +259,7 @@ public sealed class AAuthVerificationMiddleware
         var scopes = ParseScopes(scopeString);
         var roles = ParseStringArray(parsedInfo.Payload?["roles"]);
         var groups = ParseStringArray(parsedInfo.Payload?["groups"]);
-        var actSub = parsedInfo.Payload?["act"]?["sub"]?.GetValue<string>();
+        var actAgent = parsedInfo.Payload?["act"]?["agent"]?.GetValue<string>();
 
         context.Features.Set(new AAuthVerificationResult
         {
@@ -257,9 +274,9 @@ public sealed class AAuthVerificationMiddleware
             Scopes = scopes,
             Roles = roles,
             Groups = groups,
-            ActorSubject = actSub,
+            ActorAgent = actAgent,
             // For jkt-jwt the stable pseudonym is the DURABLE key's thumbprint
-            // (parsedInfo.Jkt), per draft-04 §7.1 — not the rotating ephemeral
+            // (parsedInfo.Jkt), per draft-05 §7.1 — not the rotating ephemeral
             // cnf.jwk. Other schemes report the confirmation-key thumbprint.
             Jkt = parsedInfo.Scheme == AAuthConstants.Schemes.JktJwt
                 ? parsedInfo.Jkt
@@ -446,29 +463,48 @@ public sealed class AAuthVerificationMiddleware
         }
         else
         {
-            // Signature is verified but aud is not validated because
-            // ResourceIdentifier was not configured. PoP and act are
-            // still checked via the underlying Verify + manual checks.
+            // ResourceIdentifier is not configured, so `aud` cannot be bound — this
+            // is an identity-only posture. Resources that accept auth tokens SHOULD
+            // set ResourceIdentifier so the §Request-Context Binding `aud` check
+            // (step 5) runs; without it, audience confusion is possible. The
+            // remaining REQUIRED checks below are enforced at parity with
+            // VerifyAuthToken (signature already verified via Verify).
             var verified = _tokenVerifier.Verify(
                 info.Jwt!, issuerKey,
                 AuthTokenBuilder.TokenType, dwk, expectedAudience: null);
 
-            // §Step 7: cnf.jwk matches HTTP signature key.
+            // §Request-Context Binding step 7: cnf.jwk REQUIRED, with the same
+            // ordered failure classification as VerifyAuthToken —
+            // structurally-incomplete before key decode, then invalid key material,
+            // then PoP mismatch.
             var cnf = verified.Payload["cnf"] as JsonObject;
             var jwk = cnf?["jwk"] as JsonObject;
-            if (jwk is null)
-                throw new TokenVerificationException("Auth token is missing 'cnf.jwk'.");
+            if (jwk is null || !TokenVerifier.IsStructurallyCompleteJwk(jwk))
+                throw new TokenVerificationException("Auth token 'cnf.jwk' is absent or structurally incomplete.");
             var tokenKey = KeyFactory.TryFromJwk(jwk)
-                ?? throw new TokenVerificationException("Auth token 'cnf.jwk' is not a supported key type.");
+                ?? throw new TokenVerificationException("Auth token 'cnf.jwk' is not parseable as a supported public key (invalid key material).");
             if (tokenKey.ComputeJwkThumbprint() != httpSignatureKey.ComputeJwkThumbprint())
                 throw new TokenVerificationException("Auth token 'cnf.jwk' does not match the HTTP signature key.");
 
-            // §Step 8: act.sub matches agent.
+            // §Request-Context Binding step 8: act is OPTIONAL — absent for direct
+            // authorization. When present, act.agent identifies the immediate
+            // upstream agent (the delegator), not the presenter, and the chain must
+            // be well-formed within the depth limit.
             var act = verified.Payload["act"] as JsonObject;
-            if (act is null)
-                throw new TokenVerificationException("Auth token is missing required 'act' claim.");
-            if ((string?)act["sub"] != expectedAgent)
-                throw new TokenVerificationException("Auth token 'act.sub' does not match expected agent.");
+            if (act is not null)
+            {
+                var actAgent = (string?)act["agent"];
+                if (string.IsNullOrEmpty(actAgent) || !AgentId.TryParse(actAgent, out _, out _))
+                    throw new TokenVerificationException("Auth token 'act.agent' is missing or not a valid AAuth agent identifier.");
+                if (!ActChainBuilder.ValidateChain(act, _tokenVerifier.MaxActDepth))
+                    throw new TokenVerificationException("Auth token 'act' chain is malformed (missing 'agent' or exceeds max depth).");
+            }
+
+            // §Auth Token Verification step 9: at least one of sub or scope.
+            var sub = (string?)verified.Payload["sub"];
+            var scope = (string?)verified.Payload["scope"];
+            if (sub is null && string.IsNullOrEmpty(scope))
+                throw new TokenVerificationException("Auth token must contain at least one of 'sub' or 'scope'.");
         }
     }
 

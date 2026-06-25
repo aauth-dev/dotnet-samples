@@ -10,40 +10,36 @@ namespace AAuth.Tokens;
 public static class ActChainBuilder
 {
     /// <summary>
-    /// Construct the nested act claim for a downstream auth token.
-    /// Wraps the upstream token's act inside a new act identifying the intermediary.
+    /// Construct the nested <c>act</c> node for a downstream auth token
+    /// (§Delegation Chain). The node identifies the <em>immediate upstream</em>
+    /// agent (the delegator) via <c>act.agent</c>; the upstream agent's own chain,
+    /// if any, is nested as <c>act.act</c>. The presenter's identity stays in the
+    /// token's top-level <c>agent</c> claim and is not repeated here.
     /// </summary>
-    /// <remarks>
-    /// This is a standalone utility for manual act chain construction.
-    /// Do NOT pass the result to <see cref="AuthTokenBuilder.UpstreamAct"/> — the builder
-    /// performs its own nesting. Pass the raw upstream act to the builder instead.
-    /// </remarks>
-    /// <param name="intermediaryAgentId">The intermediary resource's agent identifier.</param>
-    /// <param name="upstreamAct">The act claim from the validated upstream token.</param>
-    /// <returns>A new JsonObject representing the full nested act chain.</returns>
+    /// <param name="upstreamAgentId">The immediate upstream agent identifier (delegator).</param>
+    /// <param name="upstreamChain">The upstream agent's own <c>act</c> claim, nested as <c>act.act</c>. Omitted when <see langword="null"/>.</param>
+    /// <returns>A new JsonObject suitable for <see cref="AuthTokenBuilder.Act"/>.</returns>
     /// <example>
-    /// Input: intermediaryAgentId = "aauth:orch@example", upstreamAct = { "sub": "aauth:agent@example" }
-    /// Output: { "sub": "aauth:orch@example", "act": { "sub": "aauth:agent@example" } }
+    /// Input: upstreamAgentId = "aauth:asst@example", upstreamChain = null
+    /// Output: { "agent": "aauth:asst@example" }
     /// </example>
-    public static JsonObject BuildNestedAct(string intermediaryAgentId, JsonObject upstreamAct)
+    public static JsonObject BuildNestedAct(string upstreamAgentId, JsonObject? upstreamChain = null)
     {
-        ArgumentException.ThrowIfNullOrEmpty(intermediaryAgentId);
-        ArgumentNullException.ThrowIfNull(upstreamAct);
+        ArgumentException.ThrowIfNullOrEmpty(upstreamAgentId);
 
-        return new JsonObject
-        {
-            ["sub"] = intermediaryAgentId,
-            ["act"] = upstreamAct.DeepClone(),
-        };
+        var node = new JsonObject { ["agent"] = upstreamAgentId };
+        if (upstreamChain is not null)
+            node["act"] = upstreamChain.DeepClone();
+        return node;
     }
 
     /// <summary>
     /// Validate that a constructed act chain is semantically consistent:
-    /// each level has a <c>sub</c> and nested levels don't exceed max depth.
+    /// each level has an <c>agent</c> and nested levels don't exceed max depth.
     /// </summary>
     /// <param name="act">The act claim to validate.</param>
     /// <param name="maxDepth">Maximum allowed nesting depth (default 10).</param>
-    /// <returns><c>true</c> if valid; <c>false</c> if missing sub or too deep.</returns>
+    /// <returns><c>true</c> if valid; <c>false</c> if missing agent or too deep.</returns>
     public static bool ValidateChain(JsonObject act, int maxDepth = 10)
     {
         ArgumentNullException.ThrowIfNull(act);
@@ -56,7 +52,7 @@ public static class ActChainBuilder
             if (++depth > maxDepth)
                 return false;
 
-            if (string.IsNullOrEmpty((string?)current["sub"]))
+            if (string.IsNullOrEmpty((string?)current["agent"]))
                 return false;
 
             current = current["act"] as JsonObject;

@@ -16,8 +16,8 @@ public static class ActChainReader
     /// </summary>
     /// <param name="payload">The decoded JWT payload containing the <c>act</c> claim.</param>
     /// <param name="maxDepth">Maximum traversal depth (default 10).</param>
-    /// <returns>List of <c>act.sub</c> values from outer to inner.</returns>
-    /// <exception cref="InvalidOperationException">Thrown if depth exceeds <paramref name="maxDepth"/> or act.sub is missing.</exception>
+    /// <returns>List of <c>act.agent</c> values from outer to inner.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if depth exceeds <paramref name="maxDepth"/> or act.agent is missing.</exception>
     public static IReadOnlyList<string> GetDelegationChain(JsonObject payload, int maxDepth = 10)
     {
         ArgumentNullException.ThrowIfNull(payload);
@@ -31,26 +31,26 @@ public static class ActChainReader
                 throw new InvalidOperationException(
                     $"Act chain depth exceeds maximum allowed ({maxDepth}).");
 
-            var sub = (string?)current["sub"]
-                ?? throw new InvalidOperationException("Act claim is missing required 'sub' field.");
+            var agent = (string?)current["agent"]
+                ?? throw new InvalidOperationException("Act claim is missing required 'agent' field.");
 
-            chain.Add(sub);
+            chain.Add(agent);
             current = current["act"] as JsonObject;
         }
 
         return chain;
     }
 
-    /// <summary>Get the immediate actor (<c>act.sub</c>).</summary>
-    /// <returns>The immediate actor's identifier, or null if no <c>act</c> claim.</returns>
+    /// <summary>Get the immediate actor (<c>act.agent</c>) — the upstream delegator.</summary>
+    /// <returns>The immediate upstream agent's identifier, or null if no <c>act</c> claim.</returns>
     public static string? GetImmediateActor(JsonObject payload)
     {
         ArgumentNullException.ThrowIfNull(payload);
         var act = payload["act"] as JsonObject;
-        return (string?)act?["sub"];
+        return (string?)act?["agent"];
     }
 
-    /// <summary>Get the original requester (innermost <c>act.sub</c>).</summary>
+    /// <summary>Get the original requester (innermost <c>act.agent</c>).</summary>
     /// <returns>The original actor's identifier, or null if no <c>act</c> claim.</returns>
     public static string? GetOriginalActor(JsonObject payload, int maxDepth = 10)
     {
@@ -67,7 +67,7 @@ public static class ActChainReader
                 throw new InvalidOperationException(
                     $"Act chain depth exceeds maximum allowed ({maxDepth}).");
 
-            last = (string?)current["sub"];
+            last = (string?)current["agent"];
             current = current["act"] as JsonObject;
         }
 

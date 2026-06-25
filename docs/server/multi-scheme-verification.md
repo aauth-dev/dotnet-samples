@@ -69,7 +69,7 @@ app.UseAAuthVerification(new AAuthVerificationOptions
 | `hwk` | Extracts inline public key from `Signature-Key` header (`jwk` parameter) |
 | `jwks_uri` | Fetches JWKS from the declared URI, finds key by `kid` |
 | `jwt` | Extracts `cnf.jwk` from agent token, fetches AP's JWKS to verify token signature |
-| `jkt-jwt` | Self-anchored (draft-04 §3.4): derives the durable key from the naming JWT header `jwk`, checks `iss` equals its thumbprint URN, verifies the naming JWT signature, then returns the ephemeral `cnf.jwk` |
+| `jkt-jwt` | Self-anchored (draft-05 §3.4): derives the durable key from the naming JWT header `jwk`, checks `iss` equals its thumbprint URN, verifies the naming JWT signature, then returns the ephemeral `cnf.jwk` |
 
 ## HWK — Inline Public Key
 

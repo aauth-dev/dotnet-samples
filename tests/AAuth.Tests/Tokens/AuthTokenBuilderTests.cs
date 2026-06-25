@@ -35,7 +35,8 @@ public class AuthTokenBuilderTests
         Assert.Equal("whoami", (string?)payload["scope"]);
         var cnfJwk = (JsonObject)payload["cnf"]!["jwk"]!;
         Assert.Equal(agentKey.ComputeJwkThumbprint(), AAuthKey.FromJwk(cnfJwk).ComputeJwkThumbprint());
-        Assert.Equal("aauth:demo@ap.example", (string?)payload["act"]!["sub"]);
+        // act is OPTIONAL (§Delegation Chain) — a direct-auth token carries no act.
+        Assert.Null(payload["act"]);
     }
 
     [Fact]

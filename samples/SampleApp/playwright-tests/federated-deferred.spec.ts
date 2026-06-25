@@ -45,7 +45,7 @@ test.describe('Federated (interactive Keycloak)', () => {
     expect(json.accessMode).toBe('four-party');
     expect(json.scheme).toBe('jwt');
     expect(json.iss).toBe(Urls.accessServer);
-    const act = json.act as Record<string, unknown>;
-    expect(act.sub).toBe(Agents.sampleApp);
+    // Four-party direct authorization — no act chain.
+    expect(json.act).toBeFalsy();
   });
 });

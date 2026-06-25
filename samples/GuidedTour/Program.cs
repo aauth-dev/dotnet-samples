@@ -33,7 +33,7 @@ var app = builder.Build();
 app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 {
     Issuer = tourUrl,
-    ClientName = "Guided Tour Demo",
+    Name = "Guided Tour Demo",
     SigningKeys = new Dictionary<string, AAuthKey> { [TourKid] = tourKey },
 });
 

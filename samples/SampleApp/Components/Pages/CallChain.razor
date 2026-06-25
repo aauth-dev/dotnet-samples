@@ -232,6 +232,19 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
             var personServer = Config["AAuth:PersonServer"]!;
             var conciergeUrl = Config["AAuth:Concierge"]!;
 
+            // Reset the PS consent store so BOTH hops always surface their own
+            // approval. The hop-2 consent — (Concierge, Calendar, calendar.read) —
+            // is keyed by the Concierge's identity, independent of which agent
+            // started the chain, so a prior run (or the Guided Tour's call-chain
+            // flow) that already approved it would otherwise silently skip hop 2.
+            // Mirrors the Guided Tour's per-flow reset. /admin/* is MockPersonServer-only.
+            try
+            {
+                using var resetClient = new System.Net.Http.HttpClient();
+                await resetClient.PostAsync($"{personServer.TrimEnd('/')}/admin/reset", null);
+            }
+            catch { /* swallow — the admin reset endpoint is demo-only */ }
+
             var hopIndex = 0;
 
             // Surfaces a consent URL to the UI. Hop 1 (PS exchange 202) arrives

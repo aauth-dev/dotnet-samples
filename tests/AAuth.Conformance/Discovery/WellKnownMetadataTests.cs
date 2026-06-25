@@ -38,7 +38,8 @@ public class WellKnownMetadataTests : IAsyncLifetime
         app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
         {
             Issuer = Issuer,
-            ClientName = "Conformance Demo",
+            Name = "Conformance Demo",
+            DocumentationUri = $"{Issuer}/docs",
             SigningKeys = new Dictionary<string, AAuthKey> { [Kid] = _key },
             ScopeDescriptions = new Dictionary<string, string> { ["whoami"] = "See your basic profile." },
             SignatureWindow = 90,
@@ -70,11 +71,18 @@ public class WellKnownMetadataTests : IAsyncLifetime
         Assert.Equal($"{Issuer}/.well-known/jwks.json", (string?)doc["jwks_uri"]);
     }
 
-    [Fact(DisplayName = "§Discovery — resource metadata MAY include 'client_name'")]
-    public async Task ResourceMetadata_OptionalClientName()
+    [Fact(DisplayName = "§Discovery — resource metadata MAY include 'name'")]
+    public async Task ResourceMetadata_OptionalName()
     {
         var doc = await Get("/.well-known/aauth-resource.json");
-        Assert.Equal("Conformance Demo", (string?)doc["client_name"]);
+        Assert.Equal("Conformance Demo", (string?)doc["name"]);
+    }
+
+    [Fact(DisplayName = "§Discovery — resource metadata MAY include 'documentation_uri'")]
+    public async Task ResourceMetadata_OptionalDocumentationUri()
+    {
+        var doc = await Get("/.well-known/aauth-resource.json");
+        Assert.Equal($"{Issuer}/docs", (string?)doc["documentation_uri"]);
     }
 
     [Fact(DisplayName = "§Discovery — resource metadata MAY include 'scope_descriptions'")]

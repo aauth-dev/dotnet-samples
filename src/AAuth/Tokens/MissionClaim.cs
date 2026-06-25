@@ -1,4 +1,7 @@
+using System;
 using System.Text.Json.Nodes;
+using AAuth.Identifiers;
+using Microsoft.IdentityModel.Tokens;
 
 namespace AAuth.Tokens;
 
@@ -32,6 +35,28 @@ public sealed record MissionClaim(string Approver, string S256)
         if (string.IsNullOrEmpty(approver) || string.IsNullOrEmpty(s256))
             return null;
 
+        // §Mission Reference: `approver` MUST be a Server Identifier (https,
+        // scheme+host only) and `s256` MUST be the unpadded base64url of a 32-byte
+        // SHA-256 digest. A non-conformant reference is dropped here so it cannot
+        // govern a token request on the server's authorization path.
+        if (!ServerId.TryParse(approver, out _, out _) || !IsValidMissionS256(s256))
+            return null;
+
         return new MissionClaim(approver, s256);
+    }
+
+    // Unpadded base64url of exactly 32 bytes (SHA-256), per §Mission Reference.
+    private static bool IsValidMissionS256(string value)
+    {
+        if (value.IndexOf('=') >= 0 || value.IndexOf('+') >= 0 || value.IndexOf('/') >= 0)
+            return false;
+        try
+        {
+            return Base64UrlEncoder.DecodeBytes(value).Length == 32;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
     }
 }

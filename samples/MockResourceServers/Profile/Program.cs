@@ -20,7 +20,7 @@ using AAuth.Server.Verification;
 //   /identified     jwks_uri    a named, verifiable agent identity (via JWKS)
 //   /anchored       jkt-jwt     a durable key's thumbprint, via a self-issued
 //                               naming JWT delegating to an ephemeral key
-//                               (self-anchored, draft-04 §3.4)
+//                               (self-anchored, draft-05 §3.4)
 //
 // The path names describe the *outcome* (what the resource concludes); the
 // scheme identifiers (hwk / jwks_uri / jkt-jwt) are the unchanged protocol
@@ -64,7 +64,7 @@ var app = builder.Build();
 app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 {
     Issuer = resourceUrl,
-    ClientName = "Aria Profile",
+    Name = "Aria Profile",
     SigningKeys = new Dictionary<string, AAuthKey> { [ResourceKid] = resourceKey },
     SignatureWindow = signatureWindowSeconds,
 });

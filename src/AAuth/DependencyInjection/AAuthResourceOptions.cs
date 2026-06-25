@@ -47,7 +47,7 @@ public sealed class AAuthResourceOptions
 
 
     /// <summary>Optional human-readable resource name for metadata.</summary>
-    public string? ClientName { get; set; }
+    public string? Name { get; set; }
 
     /// <summary>Optional scope descriptions for metadata.</summary>
     public Dictionary<string, string>? ScopeDescriptions { get; set; }

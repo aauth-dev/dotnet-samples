@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
+using AAuth.Identifiers;
 using Microsoft.IdentityModel.Tokens;
 
 namespace AAuth.Tokens;
@@ -212,16 +213,19 @@ public sealed class TokenVerifier
                 $"Auth token 'agent' does not match expected agent (expected '{expectedAgentId}', got '{agent}').");
         }
 
-        // §Auth Token Verification step 7: cnf.jwk matches HTTP signature key.
+        // §Request-Context Binding step 7: cnf.jwk is REQUIRED, with ordered failure
+        // classification — structural completeness is checked BEFORE key decoding.
         var cnf = verified.Payload["cnf"] as JsonObject;
         var jwk = cnf?["jwk"] as JsonObject;
-        if (jwk is null)
+        if (jwk is null || !IsStructurallyCompleteJwk(jwk))
         {
-            throw new TokenVerificationException("Auth token is missing 'cnf.jwk'.");
+            throw new TokenVerificationException(
+                "Auth token 'cnf.jwk' is absent or structurally incomplete (missing 'kty' or the members required for its key type).");
         }
-        // Compare via JWK thumbprint — algorithm-agnostic PoP binding check.
+        // Parseable as a supported public key? If not, it is invalid key material.
         var tokenKey = KeyFactory.TryFromJwk(jwk)
-            ?? throw new TokenVerificationException("Auth token 'cnf.jwk' is not a supported key type.");
+            ?? throw new TokenVerificationException("Auth token 'cnf.jwk' is not parseable as a supported public key (invalid key material).");
+        // PoP binding — algorithm-agnostic JWK thumbprint comparison.
         var tokenKeyThumbprint = tokenKey.ComputeJwkThumbprint();
         var httpKeyThumbprint = httpSignatureKey.ComputeJwkThumbprint();
         if (tokenKeyThumbprint != httpKeyThumbprint)
@@ -230,21 +234,26 @@ public sealed class TokenVerifier
                 "Auth token 'cnf.jwk' does not match the HTTP signature key (PoP binding mismatch).");
         }
 
-        // §Auth Token Verification step 8: act is present and act.sub matches agent.
+        // §Request-Context Binding step 8: act is OPTIONAL (§Delegation Chain) —
+        // absent for direct authorization. When present, act.agent identifies the
+        // immediate upstream agent (the delegator), NOT the presenter (whose identity
+        // is the top-level `agent` claim). Verify it is a valid agent identifier and
+        // the chain is well-formed within the depth limit.
         var act = verified.Payload["act"] as JsonObject;
-        if (act is null)
+        if (act is not null)
         {
-            throw new TokenVerificationException("Auth token is missing required 'act' claim.");
+            var actAgent = (string?)act["agent"];
+            if (string.IsNullOrEmpty(actAgent) || !AgentId.TryParse(actAgent, out _, out _))
+            {
+                throw new TokenVerificationException(
+                    "Auth token 'act.agent' is missing or not a valid AAuth agent identifier.");
+            }
+            if (!ActChainBuilder.ValidateChain(act, MaxActDepth))
+            {
+                throw new TokenVerificationException(
+                    "Auth token 'act' chain is malformed (missing 'agent' or exceeds max depth).");
+            }
         }
-        var actSub = (string?)act["sub"];
-        if (actSub != expectedAgentId)
-        {
-            throw new TokenVerificationException(
-                $"Auth token 'act.sub' does not match expected agent (expected '{expectedAgentId}', got '{actSub}').");
-        }
-
-        // Walk nested act claims to enforce depth limit.
-        ValidateActDepth(act, 1);
 
         // §Auth Token Verification step 9: at least one of sub or scope.
         var sub = (string?)verified.Payload["sub"];
@@ -339,8 +348,25 @@ public sealed class TokenVerifier
         var issuerKey = await jwks.ResolveKeyAsync(jwksUri, kid, cancellationToken).ConfigureAwait(false)
             ?? throw new TokenVerificationException($"No key with kid '{kid}' at {jwksUri}.");
 
-        return VerifyAuthToken(jwt, issuerKey, expectedAudience, httpSignatureKey, expectedAgentId,
-            expectedDwk: dwk, expectedMaxScope: expectedMaxScope);
+        try
+        {
+            return VerifyAuthToken(jwt, issuerKey, expectedAudience, httpSignatureKey, expectedAgentId,
+                expectedDwk: dwk, expectedMaxScope: expectedMaxScope);
+        }
+        catch (TokenVerificationException)
+        {
+            // Silent re-keying ([@!I-D.hardt-httpbis-signature-key]): force one
+            // rate-limited JWKS refresh and retry only if the key material rotated
+            // under the same kid; otherwise re-throw the original failure.
+            var refreshed = await jwks.ForceRefreshKeyAsync(jwksUri, kid, cancellationToken).ConfigureAwait(false);
+            if (refreshed is null
+                || refreshed.ComputeJwkThumbprint() == issuerKey.ComputeJwkThumbprint())
+            {
+                throw;
+            }
+            return VerifyAuthToken(jwt, refreshed, expectedAudience, httpSignatureKey, expectedAgentId,
+                expectedDwk: dwk, expectedMaxScope: expectedMaxScope);
+        }
     }
 
     /// <summary>
@@ -439,7 +465,24 @@ public sealed class TokenVerifier
         var issuerKey = await jwks.ResolveKeyAsync(jwksUri, kid, cancellationToken).ConfigureAwait(false)
             ?? throw new TokenVerificationException($"No key with kid '{kid}' at {jwksUri}.");
 
-        return Verify(jwt, issuerKey, expectedType, expectedDwk, expectedAudience);
+        try
+        {
+            return Verify(jwt, issuerKey, expectedType, expectedDwk, expectedAudience);
+        }
+        catch (TokenVerificationException)
+        {
+            // Silent re-keying ([@!I-D.hardt-httpbis-signature-key]): the issuer may
+            // have rotated key material under an unchanged kid, leaving a stale
+            // cached key. Force one rate-limited JWKS refresh and retry only if the
+            // key material actually changed; otherwise re-throw the original failure.
+            var refreshed = await jwks.ForceRefreshKeyAsync(jwksUri, kid, cancellationToken).ConfigureAwait(false);
+            if (refreshed is null
+                || refreshed.ComputeJwkThumbprint() == issuerKey.ComputeJwkThumbprint())
+            {
+                throw;
+            }
+            return Verify(jwt, refreshed, expectedType, expectedDwk, expectedAudience);
+        }
     }
 
     /// <summary>
@@ -543,17 +586,23 @@ public sealed class TokenVerifier
         return verified;
     }
 
-    private void ValidateActDepth(JsonObject act, int depth)
+    // §Request-Context Binding step 7: a cnf.jwk is structurally complete when it
+    // has a `kty` and the members required for that key type. Unknown key types are
+    // deferred to key decoding (which classifies them as invalid key material).
+    internal static bool IsStructurallyCompleteJwk(JsonObject jwk)
     {
-        if (depth > MaxActDepth)
+        var kty = (string?)jwk["kty"];
+        if (string.IsNullOrEmpty(kty))
         {
-            throw new TokenVerificationException(
-                $"Nested 'act' chain exceeds maximum depth of {MaxActDepth}.");
+            return false;
         }
-        if (act["act"] is JsonObject nestedAct)
+        return kty switch
         {
-            ValidateActDepth(nestedAct, depth + 1);
-        }
+            "OKP" => jwk["crv"] is not null && jwk["x"] is not null,
+            "EC" => jwk["crv"] is not null && jwk["x"] is not null && jwk["y"] is not null,
+            "RSA" => jwk["n"] is not null && jwk["e"] is not null,
+            _ => true,
+        };
     }
 
     private static bool TryGetUnixTime(JsonObject payload, string claim, out long value)

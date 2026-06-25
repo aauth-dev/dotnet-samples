@@ -72,7 +72,7 @@ var app = builder.Build();
 app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 {
     Issuer = resourceUrl,
-    ClientName = "Aria Calendar",
+    Name = "Aria Calendar",
     SigningKeys = new Dictionary<string, AAuthKey> { [ResourceKid] = resourceKey },
     ScopeDescriptions = new Dictionary<string, string>
     {

@@ -98,13 +98,12 @@ test.describe('Call Chain (Guided Tour)', () => {
     expect(downstream.scope).toEqual(['calendar.read']);
     expect(downstream.iss).toBe(Urls.personServer);
 
-    // The act chain proves the full delegation path:
-    //   act.sub      = the Concierge (immediate actor)
-    //   act.act.sub  = the original calling agent (the tour agent)
+    // The act chain records the upstream delegation: the presenter (Concierge)
+    // is the top-level `agent`, and act.agent names the immediate upstream
+    // delegator (the tour agent). The tour agent's grant was direct — no nesting.
     const act = downstream.act as Record<string, unknown>;
-    expect(act.sub).toBe('aauth:concierge@localhost:5200');
-    const innerAct = act.act as Record<string, unknown>;
-    expect(innerAct.sub).toBe(Agents.tour);
+    expect(act.agent).toBe(Agents.tour);
+    expect(act.act).toBeUndefined();
 
     // Step 13 ("Inspect multi-agent chain result") renders the decoded chain
     // summary showing the full Agent → Concierge → Calendar delegation.

@@ -55,7 +55,7 @@ var app = builder.Build();
 app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 {
     Issuer = conciergeUrl,
-    ClientName = "Concierge Demo",
+    Name = "Concierge Demo",
     SigningKeys = new Dictionary<string, AAuthKey> { [ConciergeKid] = conciergeKey },
     ScopeDescriptions = new Dictionary<string, string>
     {
@@ -67,7 +67,7 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 {
     Issuer = conciergeUrl,
-    ClientName = "Concierge Demo",
+    Name = "Concierge Demo",
     SigningKeys = new Dictionary<string, AAuthKey> { [ConciergeKid] = conciergeKey },
 });
 
@@ -180,7 +180,9 @@ async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken, string 
         {
             scheme = upstreamResult?.Scheme,
             agent = upstreamResult?.Agent,
-            tokenType = upstreamResult?.TokenType,
+            // Render the token type as its protocol `typ` string (e.g. "aa-auth+jwt")
+            // rather than letting System.Text.Json emit the enum's integer value.
+            tokenType = upstreamResult?.TokenType.ToHeaderValue(),
         },
         concierge = new
         {
