@@ -11,7 +11,7 @@ The [AAuth protocol](https://aauth.dev) SDK for .NET — agent-to-resource autho
 
 ## What is AAuth?
 
-AAuth is a four-party authorization protocol for AI agents. Every HTTP request carries a cryptographic signature — there are no bearer tokens. See the [protocol spec](aauth-spec/v02/draft-hardt-oauth-aauth-protocol.md) for full details.
+AAuth is a four-party authorization protocol for AI agents. Every HTTP request carries a cryptographic signature — there are no bearer tokens. See the [protocol spec](aauth-spec/v08/draft-hardt-oauth-aauth-protocol.md) for full details.
 
 The four parties are:
 
@@ -272,19 +272,19 @@ dotnet test tests/AAuth.Conformance   # spec conformance suite only
 | [docs/](docs/) | SDK documentation — signing modes, workflows, server guides |
 | [samples/](samples/) | Sample applications — Profile, Calendar, Trips, Wallet resource servers, Concierge, AgentConsole, MockPersonServer, MockAgentProvider, GuidedTour, SampleApp |
 | [tests/](tests/) | Unit, integration, and spec-conformance tests |
-| [aauth-spec/](aauth-spec/) | Protocol specifications (drafts 01 and 02) from [dickhardt/AAuth](https://github.com/dickhardt/AAuth) |
+| [aauth-spec/](aauth-spec/) | Protocol specifications (drafts 01, 02, and 08) from [dickhardt/AAuth](https://github.com/dickhardt/AAuth) |
 
 ## Spec Compatibility
 
-This SDK targets **draft-02** of the AAuth protocol specification:
+This SDK targets **draft-08** of the AAuth protocol specification:
 
 | Spec | Draft |
 |------|-------|
-| [draft-hardt-oauth-aauth-protocol](aauth-spec/v02/draft-hardt-oauth-aauth-protocol.md) | 02 |
-| [draft-hardt-aauth-bootstrap](aauth-spec/v02/draft-hardt-aauth-bootstrap.md) | 01 |
-| [draft-hardt-aauth-r3](aauth-spec/v02/draft-hardt-aauth-r3.md) | 00 |
+| [draft-hardt-oauth-aauth-protocol](aauth-spec/v08/draft-hardt-oauth-aauth-protocol.md) | 08 |
+| [draft-hardt-aauth-bootstrap](aauth-spec/v08/draft-hardt-aauth-bootstrap.md) | 01 |
+| [draft-hardt-aauth-r3](aauth-spec/v08/draft-hardt-aauth-r3.md) | 00 |
 
-The protocol tracks IETF **draft-02** ([`aauth-spec/v02/`](aauth-spec/v02/), source commit [`feda56b`](https://github.com/dickhardt/AAuth/commit/feda56b04ef9d631abab71bdbb6bbb80b007872f), 2026-06-09). The draft-01 snapshot is retained under [`aauth-spec/v01/`](aauth-spec/v01/). Four-party AS federation of sub-agents is the one deferred item; the three-party parent-mediated path is complete. See [SPEC-VERSION.md](aauth-spec/SPEC-VERSION.md) and [aauth-spec/CHANGELOG.md](aauth-spec/CHANGELOG.md) for details.
+The protocol tracks IETF **draft-08** ([`aauth-spec/v08/`](aauth-spec/v08/), source commit [`dd2b852`](https://github.com/dickhardt/AAuth/commit/dd2b8524eb8a6beb1a6cd922f285cc8bd0464cd8), 2026-06-25). Earlier draft-02 ([`aauth-spec/v02/`](aauth-spec/v02/)) and draft-01 ([`aauth-spec/v01/`](aauth-spec/v01/)) snapshots are retained for reference. The `AAuth-Access` opaque-token flow (resource-managed, two-party access) is the one protocol surface not yet implemented. See [SPEC-VERSION.md](aauth-spec/SPEC-VERSION.md) and [aauth-spec/CHANGELOG.md](aauth-spec/CHANGELOG.md) for details.
 
 ## Contributing
 

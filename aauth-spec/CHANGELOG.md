@@ -63,10 +63,10 @@ protocol **draft-08** with the unchanged R3 (**draft-00**) and bootstrap
 (**draft-01**), adds the new informational **Interoperability Demo Profile**, and
 bumps the HTTP Signature Keys draft to **draft-05**.
 
-> **Reference only — the SDK has not been migrated to draft-08.** The entries
-> below measure draft-08 against the **draft-02** baseline the code currently
-> targets ([`v02/`](v02/)). They are a planning catalogue, not a record of shipped
-> code changes.
+> **The SDK now targets draft-08** (migrated 2026-06-25). The entries below measure
+> draft-08 against the prior **draft-02** baseline ([`v02/`](v02/)) — they double as
+> the migration's change catalogue. The `AAuth-Access` opaque-token flow
+> (resource-managed access) is the one surface tracked here but not yet implemented.
 
 ### Protocol (drafts 03–08)
 
