@@ -74,8 +74,8 @@ test.describe('Federated (Guided Tour)', () => {
     expect(json.scope).toEqual(['wallet.read']);
     // The auth token is issued by the Access Server, not the Person Server.
     expect(json.iss).toBe(Urls.accessServer);
-    const act = json.act as Record<string, unknown>;
-    expect(act.sub).toBe(Agents.tour);
+    // Four-party direct authorization — no act chain.
+    expect(json.act).toBeFalsy();
   });
 
   test('deny at the AS consent page aborts the flow', async ({ page, context }) => {

@@ -15,7 +15,7 @@ builder.Services.AddAAuthResource(options =>
 {
     options.Issuer = "https://resource.example";
     options.SigningKeys = new() { ["key-1"] = signingKey };
-    options.ClientName = "My Resource API";
+    options.Name = "My Resource API";
     options.ScopeDescriptions = new()
     {
         ["read"] = "Read access to your data",
@@ -42,7 +42,8 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 {
     Issuer = "https://resource.example",
     SigningKeys = new Dictionary<string, AAuthKey> { ["key-1"] = signingKey },
-    ClientName = "My Resource API",
+    Name = "My Resource API",
+    DocumentationUri = "https://docs.resource.example",
     ScopeDescriptions = new Dictionary<string, string>
     {
         ["read"] = "Read access to your data",
@@ -62,7 +63,8 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 |----------|:--------:|-------------|
 | `Issuer` | Yes | The resource's canonical URL (used as `iss` in resource tokens) |
 | `SigningKeys` | Yes | Dictionary of key-id → `AAuthKey` used to sign resource tokens |
-| `ClientName` | No | Human-readable name for the resource |
+| `Name` | No | Human-readable name for the resource (`name`) |
+| `DocumentationUri` | No | Developer-documentation URL (`documentation_uri`) |
 | `ScopeDescriptions` | No | Scope → description map (displayed during consent) |
 | `SignatureWindow` | No | Signature validity window in seconds (advertised to agents) |
 | `AuthorizationEndpoint` | No | URL of the Access Server's authorization endpoint |
@@ -75,7 +77,8 @@ The extension maps `GET /.well-known/aauth-resource.json` returning:
 ```json
 {
   "issuer": "https://resource.example",
-  "client_name": "My Resource API",
+  "name": "My Resource API",
+  "documentation_uri": "https://docs.resource.example",
   "jwks_uri": "https://resource.example/.well-known/jwks.json",
   "scope_descriptions": {
     "read": "Read access to your data",

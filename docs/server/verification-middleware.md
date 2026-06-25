@@ -74,7 +74,7 @@ public sealed class AAuthVerificationOptions
 
 | `RequireIssuerVerification` | `ResourceIdentifier` | Effect |
 |:--:|:--:|:--|
-| `true` | set | Full verification: HTTP sig + JWT issuer JWKS + aud + PoP + act.sub |
+| `true` | set | Full verification: HTTP sig + JWT issuer JWKS + aud + PoP + agent |
 | `true` | `null` | Verifies JWT issuer sig + PoP, but skips `aud` check |
 | `false` | any | HTTP signature only — no JWT issuer verification |
 
@@ -201,11 +201,12 @@ When `Activity.Current` is present, the middleware enriches it with tags. See [O
 
 ## Call Chaining Verification
 
-When verifying auth tokens from call-chaining scenarios, the middleware validates the nested `act` chain:
+When verifying auth tokens from call-chaining scenarios, the middleware validates the optional nested `act` chain:
 
-- `act.sub` must match the HTTP request signer's agent identity
+- the HTTP request signer's agent identity is the token's top-level `agent` claim
+- `act` is OPTIONAL (absent for direct authorization); when present, `act.agent` names the upstream delegator
 - Nested `act` depth cannot exceed `MaxActDepth` (default 10)
-- Each nested level must contain a `sub` field
+- Each nested level must contain an `agent` field
 
 The `UpstreamAuthTokenFeature` is set on the HttpContext when a valid auth token is verified, making the upstream token available to downstream `WithCallChaining(httpContext)` calls:
 
@@ -230,3 +231,26 @@ app.MapGet("/", async (HttpContext ctx) =>
     return await client.GetStringAsync("https://downstream.example");
 });
 ```
+
+## Egress Admission (SSRF Prevention)
+
+When verifying `jwks_uri` (and any issuer metadata it is discovered from), the
+verifier fetches a URL controlled by the asserted signer. An unconstrained
+verifier can be induced to fetch attacker-chosen internal URLs (SSRF). Per
+[`draft-hardt-httpbis-signature-key-05`](../../aauth-spec/v08/draft-hardt-httpbis-signature-key-05.txt)
+§6.3, apply **egress admission** before any outbound fetch. This is a
+deployment-level control (HTTP stack, network policy, firewall), not signature
+logic:
+
+- Require HTTPS for all outbound fetches.
+- Enforce response-size and timeout limits.
+- Refuse or constrain redirects — at minimum, do not follow redirects to a
+  different host.
+- Reject private, loopback, and link-local destination addresses unless a
+  deployment explicitly allows them.
+- Defend against DNS rebinding by pinning the resolved IP for the connection.
+- Treat a cross-origin `jwks_uri` (JWKS host ≠ metadata host) as requiring
+  explicit deployment admission.
+
+The SDK relies on the host's `HttpClient`/network policy for these controls;
+configure them in the resource's deployment rather than per request.

@@ -33,7 +33,7 @@ public class ChallengeHandlerTests
             ["iss"] = PsUrl,
             ["aud"] = ResourceUrl,
             ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new JsonObject { ["agent"] = "agent-1" },
             ["mission"] = new JsonObject { ["approver"] = approverUrl },
         });
 
@@ -71,7 +71,7 @@ public class ChallengeHandlerTests
             ["iss"] = PsUrl,
             ["aud"] = ResourceUrl,
             ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new JsonObject { ["agent"] = "agent-1" },
         });
 
         string? capturedTokenEndpoint = null;
@@ -137,7 +137,7 @@ public class ChallengeHandlerTests
             ["iss"] = "http://localhost:7777",
             ["aud"] = ResourceUrl,
             ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new JsonObject { ["agent"] = "agent-1" },
         });
 
         string? capturedTokenEndpoint = null;

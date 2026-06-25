@@ -31,7 +31,7 @@ public class AuthTokenDeliveryTests
         string? agent = null,
         IAAuthKey? agentConfirmationKey = null,
         string? scope = null,
-        JsonObject? upstreamAct = null)
+        JsonObject? act = null)
     {
         return new AuthTokenBuilder
         {
@@ -43,7 +43,7 @@ public class AuthTokenDeliveryTests
             KeyId = AsKid,
             Scope = scope ?? "data.read",
             Subject = "user-123",
-            UpstreamAct = upstreamAct,
+            Act = act,
             Dwk = AuthTokenBuilder.AccessDwk,
         }.Build();
     }
@@ -127,9 +127,11 @@ public class AuthTokenDeliveryTests
     [Fact(DisplayName = "§Auth Token Delivery — step 6: act chain matches upstream context")]
     public async Task ActChainMatchesUpstreamContext()
     {
-        // Simulate call chaining: upstream act has an original agent
-        var upstreamAct = new JsonObject { ["sub"] = "aauth:original@example" };
-        var token = BuildAuthToken(upstreamAct: upstreamAct);
+        // Simulate call chaining: the downstream act nests the upstream delegation
+        // context under act.act; act.agent names the immediate upstream (delegator).
+        var upstreamAct = new JsonObject { ["agent"] = "aauth:original@example" };
+        var token = BuildAuthToken(
+            act: ActChainBuilder.BuildNestedAct("aauth:intermediary@example", upstreamAct));
         var validator = CreateValidator();
 
         // PS passes the expected upstream context (what it used to construct the act)
@@ -143,12 +145,13 @@ public class AuthTokenDeliveryTests
     [Fact(DisplayName = "§Auth Token Delivery — step 6: act chain mismatch rejected")]
     public async Task ActChainMismatch_Rejected()
     {
-        var upstreamAct = new JsonObject { ["sub"] = "aauth:original@example" };
-        var token = BuildAuthToken(upstreamAct: upstreamAct);
+        var upstreamAct = new JsonObject { ["agent"] = "aauth:original@example" };
+        var token = BuildAuthToken(
+            act: ActChainBuilder.BuildNestedAct("aauth:intermediary@example", upstreamAct));
         var validator = CreateValidator();
 
         // PS expects a different chain
-        var wrongContext = new JsonObject { ["sub"] = "aauth:attacker@example" };
+        var wrongContext = new JsonObject { ["agent"] = "aauth:attacker@example" };
         var result = await validator.ValidateAsync(
             token, AsIssuer, ResourceAudience, AgentId, _agentKey,
             expectedActContext: wrongContext);

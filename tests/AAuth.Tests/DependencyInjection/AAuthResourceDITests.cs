@@ -89,13 +89,13 @@ public class AAuthResourceDITests
         {
             opts.Issuer = "https://resource.example";
             opts.SigningKeys["k1"] = _key;
-            opts.ClientName = "Test Resource";
+            opts.Name = "Test Resource";
         });
 
         var provider = services.BuildServiceProvider();
         var metadata = provider.GetRequiredService<AAuthResourceMetadataOptions>();
         Assert.Equal("https://resource.example", metadata.Issuer);
-        Assert.Equal("Test Resource", metadata.ClientName);
+        Assert.Equal("Test Resource", metadata.Name);
     }
 
     [Fact]

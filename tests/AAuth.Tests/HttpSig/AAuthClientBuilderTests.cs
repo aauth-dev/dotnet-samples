@@ -242,7 +242,7 @@ public class AAuthClientBuilderTests
             ["iss"] = "http://localhost:9999",
             ["aud"] = "http://localhost:6000",
             ["agent"] = "agent-1",
-            ["act"] = new System.Text.Json.Nodes.JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new System.Text.Json.Nodes.JsonObject { ["agent"] = "agent-1" },
         };
         var h = Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Encode(
             System.Text.Encoding.UTF8.GetBytes(header.ToJsonString()));

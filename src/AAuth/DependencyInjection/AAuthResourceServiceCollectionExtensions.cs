@@ -76,7 +76,7 @@ public static class AAuthResourceServiceCollectionExtensions
         {
             Issuer = options.Issuer,
             SigningKeys = options.SigningKeys,
-            ClientName = options.ClientName,
+            Name = options.Name,
             ScopeDescriptions = options.ScopeDescriptions,
         };
         services.TryAddSingleton(metadataOptions);

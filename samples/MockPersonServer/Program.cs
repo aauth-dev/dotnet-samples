@@ -141,7 +141,7 @@ var app = builder.Build();
 app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 {
     Issuer = psIssuer,
-    ClientName = "Mock Person Server",
+    Name = "Mock Person Server",
     SigningKeys = new Dictionary<string, AAuthKey> { [PsKid] = psKey },
     ScopeDescriptions = new Dictionary<string, string>
     {
@@ -451,8 +451,9 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
                 statusCode: StatusCodes.Status400BadRequest);
         }
 
-        // The result contains the fully nested act (intermediary wrapping upstream).
-        upstreamAct = result.UpstreamAct;
+        // Compose the downstream act node (§Delegation Chain): act.agent is the
+        // upstream token's agent (the delegator), nesting the upstream's own chain.
+        upstreamAct = ActChainBuilder.BuildNestedAct(result.Agent!, result.UpstreamAct);
     }
 
     // Verify the resource token per §"Resource Token Verification" before we
@@ -1602,7 +1603,7 @@ string IssueAuthToken(string agentId, string audience, string scope, IAAuthKey c
         Scope = scope,
         Roles = IsAdminAgent(agentId) ? demoRoles : null,
         Groups = IsAdminAgent(agentId) ? demoGroups : null,
-        UpstreamAct = upstreamAct,
+        Act = upstreamAct,
         Mission = mission,
     }.Build();
 

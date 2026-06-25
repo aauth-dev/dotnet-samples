@@ -64,8 +64,8 @@ test.describe('Deferred (Guided Tour)', () => {
     expect(json.sub).toBe('pairwise-sub');
     expect(json.scope).toEqual(['calendar.read']);
     expect(json.iss).toBe(Urls.personServer);
-    const act = json.act as Record<string, unknown>;
-    expect(act.sub).toBe(Agents.tour);
+    // Direct authorization (deferred consent) — no act chain.
+    expect(json.act).toBeFalsy();
   });
 
   test('deny at the PS consent page aborts the flow', async ({ page, context }) => {

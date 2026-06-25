@@ -15,8 +15,8 @@ public sealed class AAuthAgentMetadataOptions
     /// <summary>Signing keys served via the JWKS endpoint, keyed by <c>kid</c>. REQUIRED.</summary>
     public required IReadOnlyDictionary<string, AAuthKey> SigningKeys { get; init; }
 
-    /// <summary>Optional human-readable name (<c>client_name</c>).</summary>
-    public string? ClientName { get; init; }
+    /// <summary>Optional human-readable name (<c>name</c>).</summary>
+    public string? Name { get; init; }
 
     /// <summary>
     /// Optional Markdown <c>description</c> of the agent or its provider, for
@@ -27,6 +27,18 @@ public sealed class AAuthAgentMetadataOptions
 
     /// <summary>Optional logo URL (<c>logo_uri</c>).</summary>
     public string? LogoUri { get; init; }
+
+    /// <summary>Optional dark-background logo URL (<c>logo_dark_uri</c>).</summary>
+    public string? LogoDarkUri { get; init; }
+
+    /// <summary>Optional developer-documentation URL (<c>documentation_uri</c>).</summary>
+    public string? DocumentationUri { get; init; }
+
+    /// <summary>Optional terms-of-service URL (<c>tos_uri</c>).</summary>
+    public string? TosUri { get; init; }
+
+    /// <summary>Optional privacy-policy URL (<c>policy_uri</c>).</summary>
+    public string? PolicyUri { get; init; }
 
     /// <summary>Optional callback endpoint (<c>callback_endpoint</c>).</summary>
     public string? CallbackEndpoint { get; init; }

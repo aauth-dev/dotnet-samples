@@ -41,7 +41,7 @@ if (!app.Environment.IsDevelopment())
 app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 {
     Issuer = sampleAppUrl,
-    ClientName = "SampleApp Demo",
+    Name = "SampleApp Demo",
     SigningKeys = new Dictionary<string, AAuthKey> { [SelfIssuedKid] = selfIssuedKey },
 });
 

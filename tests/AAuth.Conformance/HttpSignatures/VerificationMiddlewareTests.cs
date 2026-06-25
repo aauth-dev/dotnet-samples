@@ -193,6 +193,39 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         }
     }
 
+    // Present a self-anchored jkt-jwt naming JWT whose header `typ` is forced to
+    // <paramref name="typ"/>, signed by the durable key and delegating to the
+    // ephemeral key, then sign the HTTP request with the ephemeral key.
+    private async Task<HttpResponseMessage> SendJktJwtSigned(AAuthKey durable, AAuthKey ephemeral, string typ)
+    {
+        var header = new JsonObject
+        {
+            ["alg"] = AAuthKey.Algorithm,
+            ["typ"] = typ,
+            ["jwk"] = durable.ToPublicJwk(),
+        };
+        var payload = new JsonObject
+        {
+            ["iss"] = AAuthConstants.JktThumbprintUrnPrefix + durable.ComputeJwkThumbprint(),
+            ["iat"] = FixedClock.ToUnixTimeSeconds(),
+            ["exp"] = FixedClock.AddMinutes(5).ToUnixTimeSeconds(),
+            ["cnf"] = new JsonObject { ["jwk"] = ephemeral.ToPublicJwk() },
+        };
+        var namingJwt = JwtWriter.SignCompact(header, payload, durable);
+
+        var capture = new CaptureHandler();
+        var provider = new JktJwtSignatureKeyProvider(() => namingJwt);
+        var handler = new AAuthSigningHandler(ephemeral, provider, () => FixedClock) { InnerHandler = capture };
+        using var client = new HttpClient(handler);
+        await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "http://localhost:5000/protected"));
+        var signed = capture.Captured!;
+        var relay = new HttpRequestMessage(HttpMethod.Get, "/protected");
+        foreach (var h in signed.Headers)
+            relay.Headers.TryAddWithoutValidation(h.Key, h.Value);
+        relay.Headers.Host = "localhost:5000";
+        return await _host!.GetTestClient().SendAsync(relay);
+    }
+
     // ── Tests ──────────────────────────────────────────────────────────────
 
     [Fact(DisplayName = "§Verification — accepts AP-issued agent token with valid JWKS")]
@@ -208,6 +241,24 @@ public class VerificationMiddlewareTests : IAsyncLifetime
     {
         var token = BuildAuthToken();
         var response = await SendSigned(token);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact(DisplayName = "§Agent Token Usage — agent token typ via jkt-jwt scheme is rejected (scheme=jwt required)")]
+    public async Task RejectsAgentTokenTypViaJktJwtScheme()
+    {
+        var durable = AAuthKey.Generate();
+        var ephemeral = AAuthKey.Generate();
+        var response = await SendJktJwtSigned(durable, ephemeral, AgentTokenBuilder.TokenType);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact(DisplayName = "§Agent Token Usage — legitimate jkt-jwt naming JWT (typ=jkt-s256+jwt) is accepted")]
+    public async Task AcceptsLegitimateJktJwtScheme()
+    {
+        var durable = AAuthKey.Generate();
+        var ephemeral = AAuthKey.Generate();
+        var response = await SendJktJwtSigned(durable, ephemeral, AAuthConstants.TokenTypes.JktS256Jwt);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
@@ -354,10 +405,12 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Verification — rejects auth token missing act claim")]
-    public async Task RejectsAuthTokenMissingAct()
+    [Fact(DisplayName = "§Verification — accepts direct-auth token without act claim")]
+    public async Task AcceptsDirectAuthTokenWithoutAct()
     {
-        // Manually construct a token without the act claim.
+        // Manually construct a token without the act claim. In draft-08 `act` is
+        // OPTIONAL (§Delegation Chain) — absent for direct authorization — so the
+        // verifier MUST accept it.
         var header = new JsonObject
         {
             ["alg"] = AAuthKey.Algorithm,
@@ -372,7 +425,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             ["jti"] = Guid.NewGuid().ToString("N"),
             ["agent"] = AgentId,
             ["cnf"] = new JsonObject { ["jwk"] = _agentKey.ToPublicJwk() },
-            // NO act claim
+            // No act claim — direct authorization.
             ["sub"] = "pairwise-sub",
             ["scope"] = "whoami",
             ["iat"] = FixedClock.ToUnixTimeSeconds(),
@@ -381,7 +434,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         var token = JwtWriter.SignCompact(header, payload, _psKey);
 
         var response = await SendSigned(token);
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     [Fact(DisplayName = "§Verification — missing headers returns 401")]

@@ -176,7 +176,7 @@ public static class AAuthPersonServerEndpoints
                 Roles = roles,
                 Groups = groups,
                 AdditionalClaims = additionalClaims,
-                UpstreamAct = upstreamAct,
+                Act = upstreamAct,
                 Mission = mission,
             }.Build();
 
@@ -324,16 +324,45 @@ public static class AAuthPersonServerEndpoints
                 var validator = app.Services.GetRequiredService<UpstreamTokenValidator>();
                 var intermediaryResourceUrl = (string?)parsed.Payload?["iss"]
                     ?? throw new InvalidOperationException("Agent token missing 'iss' claim.");
+                // §Upstream Token Verification step 2: trust upstream tokens issued by
+                // this PS (three-party upstream) or by an AS we federate with
+                // (four-party upstream). Without the AS set a four-party upstream would
+                // be rejected as untrusted before the mission gate could evaluate it.
+                var trustedUpstreamIssuers = new HashSet<string>(trustedAccessServers, StringComparer.OrdinalIgnoreCase)
+                {
+                    issuer,
+                };
                 var result = await validator.ValidateAsync(
                     upstreamTokenJwt,
                     expectedAudience: intermediaryResourceUrl,
-                    new HashSet<string> { issuer });
+                    trustedUpstreamIssuers);
                 if (!result.IsValid)
                 {
                     return Results.Json(new { error = "invalid_upstream_token", detail = result.Error },
                         statusCode: StatusCodes.Status400BadRequest);
                 }
-                upstreamAct = result.UpstreamAct;
+
+                // Four-party PS mission gate (§Call Chaining, draft-08 L1765): a PS
+                // MUST require a mission to remain in the loop for four-party upstream
+                // chains. The upstream token's `dwk` authoritatively identifies its
+                // issuer (resolved and signature-verified during validation above):
+                // `aauth-access.json` ⇒ an AS (four-party), `aauth-person.json` ⇒ a PS
+                // (three-party). When a four-party upstream carries no mission, no
+                // `mission.approver` anchors the chain to any PS — the intermediary
+                // should have routed to its AS, not here — so reject. A three-party
+                // upstream (PS-issued) without a mission stays allowed.
+                if (result.MissionApprover is null
+                    && string.Equals(result.IssuerDwk, AuthTokenBuilder.AccessDwk, StringComparison.Ordinal))
+                {
+                    return Results.Json(
+                        new { error = "invalid_request", detail = "call chaining from a four-party (AS-issued) upstream token requires a mission so the PS stays in the loop (§Call Chaining)" },
+                        statusCode: StatusCodes.Status400BadRequest);
+                }
+
+                // Compose the downstream act node (§Delegation Chain): act.agent is
+                // the upstream token's agent (the delegator), nesting the upstream's
+                // own chain as act.act. `upstreamAct` now holds this complete node.
+                upstreamAct = ActChainBuilder.BuildNestedAct(result.Agent!, result.UpstreamAct);
             }
 
             // §Sub-Agents (parent-mediated authorization): when a subagent_token is
@@ -380,12 +409,11 @@ public static class AAuthPersonServerEndpoints
                 boundAgentId = subagentId;
                 boundConfirmationKey = subagentKey;
                 subagentJkt = subagentKey.ComputeJwkThumbprint();
-                // act chain: { sub: subagent, act: { sub: parent[, act: upstream] } }.
-                boundUpstreamAct = new JsonObject { ["sub"] = agentId };
-                if (upstreamAct is not null)
-                {
-                    boundUpstreamAct["act"] = upstreamAct.DeepClone();
-                }
+                // Sub-agent act (§Delegation Chain): act.agent = the parent (the
+                // signer that mediates). When the parent presented an upstream_token,
+                // `upstreamAct` already records the parent as its top node; otherwise
+                // build a single-node act naming the parent.
+                boundUpstreamAct = upstreamAct ?? ActChainBuilder.BuildNestedAct(agentId);
             }
 
             // Verify the resource token (§Resource Token Verification). `iss`

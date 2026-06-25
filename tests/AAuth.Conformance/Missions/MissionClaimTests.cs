@@ -146,4 +146,33 @@ public class MissionClaimTests
 
         Assert.Null(verified.Mission);
     }
+
+    [Theory(DisplayName = "§Mission Reference — FromPayload rejects a malformed approver or s256")]
+    [InlineData("http://ps.example", S256)]                                   // non-https approver
+    [InlineData("https://ps.example/path", S256)]                             // approver has a path
+    [InlineData("https://ps.example:8443", S256)]                             // approver has a port
+    [InlineData(Approver, "47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU=")]    // padded s256
+    [InlineData(Approver, "tooshort")]                                        // wrong-length s256
+    [InlineData(Approver, "47DEQpj8HBSa+_TImW/5JCeuQeRkm5NMpJWZG3hSuFU")]     // non-url base64 chars
+    public void FromPayload_RejectsMalformedReference(string approver, string s256)
+    {
+        var payload = new JsonObject
+        {
+            ["mission"] = new JsonObject { ["approver"] = approver, ["s256"] = s256 },
+        };
+        Assert.Null(MissionClaim.FromPayload(payload));
+    }
+
+    [Fact(DisplayName = "§Mission Reference — FromPayload accepts a conformant reference")]
+    public void FromPayload_AcceptsConformantReference()
+    {
+        var payload = new JsonObject
+        {
+            ["mission"] = new JsonObject { ["approver"] = Approver, ["s256"] = S256 },
+        };
+        var claim = MissionClaim.FromPayload(payload);
+        Assert.NotNull(claim);
+        Assert.Equal(Approver, claim!.Approver);
+        Assert.Equal(S256, claim.S256);
+    }
 }

@@ -19,17 +19,17 @@ The vendored `.md` files are the upstream kramdown source; if the GitHub repo is
 unavailable, the Datatracker `.txt`/`.html` renderings are the authoritative
 substitute.
 
-The SDK code currently targets **draft-02** ([`v02/`](v02/)) — migrated from
-draft-01 in the 2026-06-09 migration (see
-`.agent/plans/2026-06-09-aauth-v02-spec-migration/`). One item from that migration
-is deferred: four-party AS federation of sub-agents (the three-party
-parent-mediated path is complete). The draft-01 snapshot ([`v01/`](v01/)) is
-retained for reference.
+The SDK code now targets **draft-08** ([`v08/`](v08/)) — migrated from draft-02 in
+the 2026-06-25 migration (see `.agent/plans/2026-06-25-aauth-v08-spec-migration/`).
+One protocol surface is not yet implemented: the `AAuth-Access` opaque-token flow
+(resource-managed, two-party access), scoped as a follow-up under
+`.agent/plans/2026-06-25-aauth-access-token-flow/`. The runnable four-party
+sub-agent (S5) interop demo is also deferred, though the parent-mediated code path
+is implemented and conformance-tested.
 
-The latest upstream snapshot is **draft-08** ([`v08/`](v08/)), vendored 2026-06-25
-for reference. **The SDK has not yet been migrated to draft-08** — it is pulled
-down ahead of that work so the delta can be planned. Until that migration lands,
-`v02/` remains the version the code conforms to.
+`v08/` is therefore both the version the SDK conforms to and the latest upstream
+snapshot, vendored 2026-06-25. The earlier draft-02 ([`v02/`](v02/)) and draft-01
+([`v01/`](v01/)) snapshots are retained for reference.
 
 For a high-fidelity record of what changed between snapshots, see
 [`CHANGELOG.md`](CHANGELOG.md).
@@ -87,8 +87,8 @@ For a high-fidelity record of what changed between snapshots, see
 
 ## `v08/` — protocol draft-08
 
-> Reference snapshot only — the SDK has **not** been migrated to draft-08 yet. See
-> the intro and [`CHANGELOG.md`](CHANGELOG.md) for the draft-02 → draft-08 delta.
+> This is the version the SDK targets (migrated 2026-06-25). See the intro and
+> [`CHANGELOG.md`](CHANGELOG.md) for the draft-02 → draft-08 delta.
 
 | Field | Value |
 |---|---|

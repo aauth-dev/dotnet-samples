@@ -28,7 +28,7 @@ public class CallChainingRouterTests
             ["iss"] = "https://ps.example",
             ["aud"] = "https://resource.example",
             ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new JsonObject { ["agent"] = "agent-1" },
             ["mission"] = new JsonObject { ["approver"] = "https://mission-ps.example" },
         });
 
@@ -45,7 +45,7 @@ public class CallChainingRouterTests
             ["iss"] = "https://ps.example",
             ["aud"] = "https://resource.example",
             ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new JsonObject { ["agent"] = "agent-1" },
         });
 
         var result = CallChainingRouter.ResolveDownstreamServer(token);
@@ -61,7 +61,7 @@ public class CallChainingRouterTests
             ["iss"] = "https://as.resource.example",
             ["aud"] = "https://resource.example",
             ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new JsonObject { ["agent"] = "agent-1" },
         });
 
         var result = CallChainingRouter.ResolveDownstreamServer(token);
@@ -77,7 +77,7 @@ public class CallChainingRouterTests
             ["iss"] = "https://ps.example",
             ["aud"] = "https://resource.example",
             ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new JsonObject { ["agent"] = "agent-1" },
             ["mission"] = new JsonObject { ["approver"] = "http://evil.example" },
         });
 
@@ -94,7 +94,7 @@ public class CallChainingRouterTests
             ["iss"] = "https://ps.example",
             ["aud"] = "https://resource.example",
             ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new JsonObject { ["agent"] = "agent-1" },
             ["mission"] = new JsonObject { ["approver"] = "" },
         });
 
@@ -112,7 +112,7 @@ public class CallChainingRouterTests
             ["iss"] = "https://ps.example",
             ["aud"] = "https://resource.example",
             ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new JsonObject { ["agent"] = "agent-1" },
             ["mission"] = new JsonObject { ["approver"] = "   " },
         });
 
@@ -128,7 +128,7 @@ public class CallChainingRouterTests
         {
             ["aud"] = "https://resource.example",
             ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new JsonObject { ["agent"] = "agent-1" },
         });
 
         var ex = Assert.Throws<InvalidOperationException>(
@@ -151,7 +151,7 @@ public class CallChainingRouterTests
             ["iss"] = "http://localhost:5000",
             ["aud"] = "http://localhost:6000",
             ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new JsonObject { ["agent"] = "agent-1" },
         });
 
         var result = CallChainingRouter.ResolveDownstreamServer(token);
@@ -167,7 +167,7 @@ public class CallChainingRouterTests
             ["iss"] = "https://ps.example",
             ["aud"] = "https://resource.example",
             ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new JsonObject { ["agent"] = "agent-1" },
             ["mission"] = new JsonObject { ["approver"] = "http://127.0.0.1:8080" },
         });
 
@@ -184,7 +184,7 @@ public class CallChainingRouterTests
             ["iss"] = "http://external-server.com",
             ["aud"] = "https://resource.example",
             ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new JsonObject { ["agent"] = "agent-1" },
         });
 
         var ex = Assert.Throws<InvalidOperationException>(
@@ -207,7 +207,7 @@ public class CallChainingRouterTests
             ["iss"] = "https://ps.example",
             ["aud"] = "https://resource.example",
             ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new JsonObject { ["agent"] = "agent-1" },
             ["mission"] = new JsonObject { ["s256"] = "abc123" },
         });
 

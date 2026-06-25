@@ -23,7 +23,7 @@ public static class SignatureKeyHeader
     /// <param name="jwt">
     /// The self-issued <c>jkt-s256+jwt</c> delegation JWT (the durable key signs it
     /// and names the ephemeral key via <c>cnf.jwk</c>), per
-    /// <c>draft-hardt-httpbis-signature-key-04</c> §3.4.
+    /// <c>draft-hardt-httpbis-signature-key-05</c> §3.4.
     /// </param>
     public static string FormatJktJwt(string jwt)
     {

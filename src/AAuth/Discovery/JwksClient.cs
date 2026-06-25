@@ -68,6 +68,34 @@ public sealed class JwksClient
         return entry.Keys.TryGetValue(kid, out var key) ? key : null;
     }
 
+    /// <summary>
+    /// Force a single JWKS refresh and resolve <paramref name="kid"/> from the
+    /// fresh document — for the <em>silent re-keying</em> case where the issuer
+    /// rotated key material under an unchanged <c>kid</c> and the cached key now
+    /// fails signature verification. The once-per-minute rate-limit floor still
+    /// applies: when the last fetch is within the refresh window the cached key is
+    /// returned unchanged (no fetch), so a flood of bad-signature tokens cannot
+    /// hammer the <c>jwks_uri</c>.
+    /// </summary>
+    /// <returns>The freshly-resolved key, or <see langword="null"/> if absent.</returns>
+    public async Task<IAAuthKey?> ForceRefreshKeyAsync(
+        Uri jwksUri, string kid, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(jwksUri);
+        ArgumentException.ThrowIfNullOrEmpty(kid);
+
+        var now = _clock();
+        var entry = _cache.GetValueOrDefault(jwksUri);
+        if (entry is not null && now - entry.FetchedAt <= _minRefreshInterval)
+        {
+            // Within the rate-limit window — do not refetch; return what we have.
+            return entry.Keys.TryGetValue(kid, out var cached) ? cached : null;
+        }
+
+        entry = await FetchAsync(jwksUri, cancellationToken).ConfigureAwait(false);
+        return entry.Keys.TryGetValue(kid, out var key) ? key : null;
+    }
+
     private async Task<CacheEntry> FetchAsync(Uri jwksUri, CancellationToken cancellationToken)
     {
         using var response = await _http.GetAsync(jwksUri, cancellationToken).ConfigureAwait(false);

@@ -70,7 +70,7 @@ var app = builder.Build();
 app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 {
     Issuer = resourceUrl,
-    ClientName = "Aria Wallet",
+    Name = "Aria Wallet",
     SigningKeys = new Dictionary<string, AAuthKey> { [ResourceKid] = resourceKey },
     ScopeDescriptions = new Dictionary<string, string>
     {

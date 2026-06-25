@@ -19,7 +19,7 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
     private readonly JwksClient? _jwksClient;
 
     /// <summary>Create the resolver.</summary>
-    /// <param name="jwksClient">Required for the <c>jwks_uri</c> scheme. The <c>jkt-jwt</c> scheme is self-anchored (draft-04 §3.4) and needs no external client.</param>
+    /// <param name="jwksClient">Required for the <c>jwks_uri</c> scheme. The <c>jkt-jwt</c> scheme is self-anchored (draft-05 §3.4) and needs no external client.</param>
     public DefaultSignatureKeyResolver(JwksClient? jwksClient = null)
     {
         _jwksClient = jwksClient;
@@ -90,7 +90,7 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
     private static Task<IAAuthKey> ResolveJktJwtAsync(
         SignatureKeyParser.ParsedSignatureKeyInfo info, CancellationToken ct)
     {
-        // Self-anchored TOFU verification per draft-hardt-httpbis-signature-key-04
+        // Self-anchored TOFU verification per draft-hardt-httpbis-signature-key-05
         // §3.4. The durable (enclave) key is embedded in the naming JWT's header
         // jwk; the issuer is that key's own thumbprint URI. No external lookup.
         if (info.Jwt is null || info.Header is null || info.Payload is null)

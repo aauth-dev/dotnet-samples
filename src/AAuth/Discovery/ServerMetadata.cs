@@ -18,11 +18,29 @@ public sealed class ServerMetadata
     /// <summary>JWKS URI for key resolution.</summary>
     public required string JwksUri { get; init; }
 
+    /// <summary>Optional human-readable name (<c>name</c>).</summary>
+    public string? Name { get; init; }
+
     /// <summary>
     /// Optional Markdown <c>description</c> for display to users. Server-supplied,
     /// untrusted content: consumers MUST sanitize it before display.
     /// </summary>
     public string? Description { get; init; }
+
+    /// <summary>Optional logo URL (<c>logo_uri</c>).</summary>
+    public string? LogoUri { get; init; }
+
+    /// <summary>Optional dark-background logo URL (<c>logo_dark_uri</c>).</summary>
+    public string? LogoDarkUri { get; init; }
+
+    /// <summary>Optional developer-documentation URL (<c>documentation_uri</c>).</summary>
+    public string? DocumentationUri { get; init; }
+
+    /// <summary>Optional terms-of-service URL (<c>tos_uri</c>).</summary>
+    public string? TosUri { get; init; }
+
+    /// <summary>Optional privacy-policy URL (<c>policy_uri</c>).</summary>
+    public string? PolicyUri { get; init; }
 
     /// <summary>Token endpoint (required for PS/AS).</summary>
     public string? TokenEndpoint { get; init; }
@@ -56,7 +74,13 @@ public sealed class ServerMetadata
         {
             Issuer = (string?)doc["issuer"] ?? throw new InvalidOperationException("Metadata missing 'issuer'."),
             JwksUri = (string?)doc["jwks_uri"] ?? throw new InvalidOperationException("Metadata missing 'jwks_uri'."),
+            Name = (string?)doc["name"],
             Description = (string?)doc["description"],
+            LogoUri = (string?)doc["logo_uri"],
+            LogoDarkUri = (string?)doc["logo_dark_uri"],
+            DocumentationUri = (string?)doc["documentation_uri"],
+            TosUri = (string?)doc["tos_uri"],
+            PolicyUri = (string?)doc["policy_uri"],
             TokenEndpoint = (string?)doc["token_endpoint"],
             RevocationEndpoint = (string?)doc["revocation_endpoint"],
             MissionEndpoint = (string?)doc["mission_endpoint"],
@@ -92,14 +116,29 @@ public sealed class ResourceMetadata
     /// </summary>
     public string? AccessMode { get; init; }
 
-    /// <summary>Human-readable name.</summary>
-    public string? ClientName { get; init; }
+    /// <summary>Human-readable name (<c>name</c>).</summary>
+    public string? Name { get; init; }
 
     /// <summary>
     /// Optional Markdown <c>description</c> for display to users (e.g. at a consent
     /// screen). Server-supplied, untrusted: consumers MUST sanitize before display.
     /// </summary>
     public string? Description { get; init; }
+
+    /// <summary>Optional logo URL (<c>logo_uri</c>).</summary>
+    public string? LogoUri { get; init; }
+
+    /// <summary>Optional dark-background logo URL (<c>logo_dark_uri</c>).</summary>
+    public string? LogoDarkUri { get; init; }
+
+    /// <summary>Optional developer-documentation URL (<c>documentation_uri</c>).</summary>
+    public string? DocumentationUri { get; init; }
+
+    /// <summary>Optional terms-of-service URL (<c>tos_uri</c>).</summary>
+    public string? TosUri { get; init; }
+
+    /// <summary>Optional privacy-policy URL (<c>policy_uri</c>).</summary>
+    public string? PolicyUri { get; init; }
 
     /// <summary>Scope descriptions map.</summary>
     public JsonObject? ScopeDescriptions { get; init; }
@@ -122,8 +161,13 @@ public sealed class ResourceMetadata
             Issuer = (string?)doc["issuer"] ?? throw new InvalidOperationException("Metadata missing 'issuer'."),
             JwksUri = (string?)doc["jwks_uri"],
             AccessMode = (string?)doc["access_mode"],
-            ClientName = (string?)doc["client_name"],
+            Name = (string?)doc["name"],
             Description = (string?)doc["description"],
+            LogoUri = (string?)doc["logo_uri"],
+            LogoDarkUri = (string?)doc["logo_dark_uri"],
+            DocumentationUri = (string?)doc["documentation_uri"],
+            TosUri = (string?)doc["tos_uri"],
+            PolicyUri = (string?)doc["policy_uri"],
             ScopeDescriptions = doc["scope_descriptions"] as JsonObject,
             SignatureWindow = (int?)doc["signature_window"],
             AuthorizationEndpoint = (string?)doc["authorization_endpoint"],

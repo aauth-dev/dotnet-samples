@@ -89,7 +89,7 @@ internal static class CodeSnippets
         // signing key via cnf.jwk. The ephemeral key signs the HTTP request.
         // Supports key rotation without re-enrolment.
         //
-        // Self-anchored (draft-04 §3.4): the verifier computes the durable
+        // Self-anchored (draft-05 §3.4): the verifier computes the durable
         // key's thumbprint from the header jwk, checks it equals iss
         // (urn:jkt:sha-256:<thumbprint>), then verifies the naming JWT signature.
         var namingJwt = NamingJwtBuilder.Build(durableKey, ephemeralKey);

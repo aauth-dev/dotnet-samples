@@ -163,7 +163,7 @@ builder.Services.AddAAuthResource(options =>
 {
     options.Issuer = "https://my-resource.example";
     options.SigningKeys = new() { ["key-1"] = resourceKey };
-    options.ClientName = "Supply Chain Service";
+    options.Name = "Supply Chain Service";
     options.ScopeDescriptions = new()
     {
         ["data:read"] = "Read supply chain data",
@@ -327,7 +327,7 @@ app.Run();
 |----------|------|---------|-------------|
 | `Issuer` | `string` | required | Resource HTTPS URL (metadata + audience) |
 | `SigningKeys` | `Dictionary<string, AAuthKey>` | empty | Keys for signing resource tokens |
-| `ClientName` | `string?` | `null` | Human-readable name in metadata |
+| `Name` | `string?` | `null` | Human-readable name in metadata (`name`) |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | `null` | Scope descriptions in metadata |
 | `SignatureWindow` | `int?` | `null` | Advertised signature validity (seconds) |
 | `AuthorizationEndpoint` | `string?` | `null` | AS authorization URL |

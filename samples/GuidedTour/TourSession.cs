@@ -685,7 +685,7 @@ public sealed class TourSession : IAsyncDisposable
                 break;
             case SigningMode.JktJwt:
                 // jkt-jwt: ephemeral key signs the HTTP request; durable key signs
-                // the self-issued naming JWT (draft-04 §3.4 — durable jwk in the
+                // the self-issued naming JWT (draft-05 §3.4 — durable jwk in the
                 // header, iss = its own thumbprint URN).
                 _ephemeralKey ??= AAuthKey.Generate();
                 builder = new AAuthClientBuilder(_ephemeralKey)
@@ -1646,7 +1646,7 @@ public sealed class TourSession : IAsyncDisposable
             KeyId = "ps-1",
             Subject = "user:alice",
             Scope = "calendar.read",
-            UpstreamAct = new JsonObject { ["sub"] = parentId },   // records the parent
+            Act = ActChainBuilder.BuildNestedAct(parentId),   // records the parent (act.agent)
         }.Build();
         _saAuthToken = authToken;
 
@@ -2966,9 +2966,10 @@ public sealed class TourSession : IAsyncDisposable
         // Build a narrative explaining the nested act chain
         var actExplanation = downstreamAct is not null
             ? $"\n\nThe `act` claim in the downstream response shows the delegation " +
-              $"chain: the outermost `act.sub` is the Concierge's identity, and " +
-              $"any nested `act.act.sub` is the original calling agent (you). This " +
-              $"proves end-to-end that Calendar was accessed on behalf of a specific " +
+              $"chain: the top-level `agent` is the Concierge (the presenter), and " +
+              $"`act.agent` names the immediate upstream delegator — the original " +
+              $"calling agent (you). A direct grant adds no deeper `act.act` nesting. " +
+              $"This proves end-to-end that Calendar was accessed on behalf of a specific " +
               $"person, delegated through a known intermediary."
             : "";
 
@@ -3030,11 +3031,11 @@ public sealed class TourSession : IAsyncDisposable
             var act = downstream["act"];
             if (act is not null)
             {
-                lines.AppendLine($"    act.sub:    {act["sub"]}  (Concierge)");
+                lines.AppendLine($"    act.agent:     {act["agent"]}  (upstream delegator = you)");
                 var innerAct = act["act"];
                 if (innerAct is not null)
                 {
-                    lines.AppendLine($"    act.act.sub: {innerAct["sub"]}  (original caller = you)");
+                    lines.AppendLine($"    act.act.agent: {innerAct["agent"]}  (further upstream)");
                 }
             }
         }
@@ -3350,7 +3351,7 @@ public sealed class TourSession : IAsyncDisposable
             var act = node["act"];
             if (act is not null)
             {
-                summary.AppendLine($"    act.sub:  {act["sub"]}");
+                summary.AppendLine($"    act.agent: {act["agent"]}");
             }
         }
         var header = DecodeJwt(_authToken)?.Header;

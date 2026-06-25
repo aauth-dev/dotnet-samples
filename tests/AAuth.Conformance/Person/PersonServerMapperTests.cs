@@ -101,6 +101,26 @@ public class PersonServerMapperTests
             Mission = mission,
         }.Build();
 
+    // Build an auth token to present as `upstream_token` in a call-chaining
+    // request. `dwk` selects the issuer role the PS mission gate sees:
+    // aauth-access.json ⇒ an AS (four-party), aauth-person.json ⇒ a PS
+    // (three-party). `aud` MUST equal the intermediary agent token's `iss`
+    // (= https://ap.example here) per §Upstream Token Verification step 3.
+    private static string UpstreamToken(string issuer, string dwk, MissionClaim? mission = null)
+        => new AuthTokenBuilder
+        {
+            Issuer = issuer,
+            Dwk = dwk,
+            Audience = "https://ap.example",
+            Agent = "aauth:upstream-caller@ap.example",
+            AgentConfirmationKey = AAuthKey.Generate(),
+            Key = ResourceKey,
+            KeyId = ResKid,
+            Scope = "data.read",
+            Subject = "user-1",
+            Mission = mission,
+        }.Build();
+
     private static JsonObject DecodePayload(string jwt)
     {
         var segments = jwt.Split('.');
@@ -176,11 +196,11 @@ public class PersonServerMapperTests
         var boundKey = AAuthKey.FromJwk((JsonObject)payload["cnf"]!["jwk"]!);
         Assert.Equal(subKey.ComputeJwkThumbprint(), boundKey.ComputeJwkThumbprint());
 
-        // act nests: { sub: subagent, act: { sub: parent } } (§Delegation Chain Examples).
+        // Sub-agent is the top-level agent; act names the parent (immediate upstream).
+        // act = { agent: parent } with no deeper node (§Delegation Chain).
         var act = (JsonObject)payload["act"]!;
-        Assert.Equal(SubId, (string?)act["sub"]);
-        var parentAct = (JsonObject)act["act"]!;
-        Assert.Equal(ParentId, (string?)parentAct["sub"]);
+        Assert.Equal(ParentId, (string?)act["agent"]);
+        Assert.Null(act["act"]);
 
         await host.StopAsync();
     }
@@ -439,6 +459,70 @@ public class PersonServerMapperTests
         await host.StopAsync();
     }
 
+    [Fact(DisplayName = "§Call Chaining — four-party upstream (AS-issued) without a mission is rejected")]
+    public async Task CallChaining_FourPartyUpstream_NoMission_Rejected()
+    {
+        var agentKey = AAuthKey.Generate();
+        using var host = await BuildHostAsync();
+        using var http = SignedAgentClient(host, agentKey, AgentId);
+
+        using var response = await http.PostAsJsonAsync("/token", new JsonObject
+        {
+            ["resource_token"] = ResourceToken(agentKey, AgentId, PsIssuer),
+            ["upstream_token"] = UpstreamToken(AsIssuer, AuthTokenBuilder.AccessDwk),
+        });
+
+        // The PS MUST require a mission to stay in the loop for four-party chains.
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("invalid_request", (string?)body!["error"]);
+        Assert.Contains("mission", (string?)body["detail"], StringComparison.OrdinalIgnoreCase);
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Call Chaining — three-party upstream (PS-issued) without a mission is allowed")]
+    public async Task CallChaining_ThreePartyUpstream_NoMission_Allowed()
+    {
+        var agentKey = AAuthKey.Generate();
+        using var host = await BuildHostAsync();
+        using var http = SignedAgentClient(host, agentKey, AgentId);
+
+        using var response = await http.PostAsJsonAsync("/token", new JsonObject
+        {
+            ["resource_token"] = ResourceToken(agentKey, AgentId, PsIssuer),
+            ["upstream_token"] = UpstreamToken(PsIssuer, AuthTokenBuilder.PersonDwk),
+        });
+
+        Assert.True(response.IsSuccessStatusCode,
+            $"Status={(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        var payload = DecodePayload((string)body!["auth_token"]!);
+        // The downstream act records the upstream delegator, proving the chain was accepted.
+        var act = (JsonObject)payload["act"]!;
+        Assert.Equal("aauth:upstream-caller@ap.example", (string?)act["agent"]);
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Call Chaining — four-party upstream (AS-issued) with a mission is allowed")]
+    public async Task CallChaining_FourPartyUpstream_WithMission_Allowed()
+    {
+        var agentKey = AAuthKey.Generate();
+        const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        using var host = await BuildHostAsync();
+        using var http = SignedAgentClient(host, agentKey, AgentId);
+
+        using var response = await http.PostAsJsonAsync("/token", new JsonObject
+        {
+            ["resource_token"] = ResourceToken(agentKey, AgentId, PsIssuer),
+            // A mission.approver anchors the four-party chain to a PS — the gate passes.
+            ["upstream_token"] = UpstreamToken(AsIssuer, AuthTokenBuilder.AccessDwk, new MissionClaim(PsIssuer, s256)),
+        });
+
+        Assert.True(response.IsSuccessStatusCode,
+            $"Status={(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+        await host.StopAsync();
+    }
+
     private sealed class StubAsserter : IIdentityClaimsAsserter
     {
         private readonly IdentityAssertion _assertion;
@@ -488,6 +572,20 @@ public class PersonServerMapperTests
                 {
                     ["issuer"] = "https://ap.example",
                     ["jwks_uri"] = "https://ap.example/.well-known/jwks.json",
+                }.ToJsonString();
+            }
+            else if (path == "/.well-known/aauth-person.json" || path == "/.well-known/aauth-access.json")
+            {
+                // Upstream-issuer metadata for call-chaining (upstream_token)
+                // verification. The issuer is the fetch origin (host-binding), and
+                // the jwks_uri resolves (via the else branch) to the shared
+                // ResourceKey JWKS, so an upstream token signed with ResourceKey
+                // verifies regardless of whether the issuer role is PS or AS.
+                var authority = request.RequestUri!.GetLeftPart(UriPartial.Authority);
+                json = new JsonObject
+                {
+                    ["issuer"] = authority,
+                    ["jwks_uri"] = $"{authority}/.well-known/jwks.json",
                 }.ToJsonString();
             }
             else

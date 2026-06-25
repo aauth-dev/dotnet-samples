@@ -8,7 +8,7 @@ namespace AAuth.Agent;
 
 /// <summary>
 /// Builds a self-issued <c>jkt-jwt</c> delegation JWT per
-/// <c>draft-hardt-httpbis-signature-key-04</c> §3.4. The durable (enclave) key
+/// <c>draft-hardt-httpbis-signature-key-05</c> §3.4. The durable (enclave) key
 /// signs the JWT and embeds its own public key in the header; the JWT delegates
 /// HTTP-signing authority to an ephemeral key named via the <c>cnf.jwk</c> claim.
 /// The issuer is the durable key's own JWK Thumbprint URI, so verification is

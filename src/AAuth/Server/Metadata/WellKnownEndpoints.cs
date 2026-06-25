@@ -104,6 +104,37 @@ public static class WellKnownEndpoints
     }
 
 
+    /// <summary>
+    /// Emit the OPTIONAL metadata fields defined identically across all four
+    /// well-known documents (§Metadata Documents common fields). Each is written
+    /// only when set; <c>issuer</c>/<c>jwks_uri</c> are written by each builder.
+    /// </summary>
+    private static void AddCommonMetadataFields(
+        JsonObject doc,
+        string? name,
+        string? description,
+        string? logoUri,
+        string? logoDarkUri,
+        string? documentationUri,
+        string? tosUri,
+        string? policyUri)
+    {
+        if (!string.IsNullOrEmpty(name))
+            doc["name"] = name;
+        if (!string.IsNullOrEmpty(description))
+            doc["description"] = description;
+        if (!string.IsNullOrEmpty(logoUri))
+            doc["logo_uri"] = logoUri;
+        if (!string.IsNullOrEmpty(logoDarkUri))
+            doc["logo_dark_uri"] = logoDarkUri;
+        if (!string.IsNullOrEmpty(documentationUri))
+            doc["documentation_uri"] = documentationUri;
+        if (!string.IsNullOrEmpty(tosUri))
+            doc["tos_uri"] = tosUri;
+        if (!string.IsNullOrEmpty(policyUri))
+            doc["policy_uri"] = policyUri;
+    }
+
     private static JsonObject BuildResourceMetadata(AAuthResourceMetadataOptions options)
     {
         var doc = new JsonObject
@@ -120,14 +151,9 @@ public static class WellKnownEndpoints
         {
             doc["access_mode"] = options.AccessMode;
         }
-        if (!string.IsNullOrEmpty(options.ClientName))
-        {
-            doc["client_name"] = options.ClientName;
-        }
-        if (!string.IsNullOrEmpty(options.Description))
-        {
-            doc["description"] = options.Description;
-        }
+        AddCommonMetadataFields(
+            doc, options.Name, options.Description, options.LogoUri,
+            options.LogoDarkUri, options.DocumentationUri, options.TosUri, options.PolicyUri);
         if (options.ScopeDescriptions is { Count: > 0 })
         {
             var scopes = new JsonObject();
@@ -173,12 +199,9 @@ public static class WellKnownEndpoints
             ["issuer"] = options.Issuer,
             ["jwks_uri"] = $"{options.Issuer.TrimEnd('/')}/.well-known/jwks.json",
         };
-        if (!string.IsNullOrEmpty(options.ClientName))
-            doc["client_name"] = options.ClientName;
-        if (!string.IsNullOrEmpty(options.Description))
-            doc["description"] = options.Description;
-        if (!string.IsNullOrEmpty(options.LogoUri))
-            doc["logo_uri"] = options.LogoUri;
+        AddCommonMetadataFields(
+            doc, options.Name, options.Description, options.LogoUri,
+            options.LogoDarkUri, options.DocumentationUri, options.TosUri, options.PolicyUri);
         if (!string.IsNullOrEmpty(options.CallbackEndpoint))
             doc["callback_endpoint"] = options.CallbackEndpoint;
         if (!string.IsNullOrEmpty(options.LoginEndpoint))
@@ -194,8 +217,9 @@ public static class WellKnownEndpoints
             ["token_endpoint"] = options.TokenEndpoint,
             ["jwks_uri"] = $"{options.Issuer.TrimEnd('/')}/.well-known/jwks.json",
         };
-        if (!string.IsNullOrEmpty(options.Description))
-            doc["description"] = options.Description;
+        AddCommonMetadataFields(
+            doc, options.Name, options.Description, options.LogoUri,
+            options.LogoDarkUri, options.DocumentationUri, options.TosUri, options.PolicyUri);
         if (!string.IsNullOrEmpty(options.MissionEndpoint))
             doc["mission_endpoint"] = options.MissionEndpoint;
         if (!string.IsNullOrEmpty(options.PermissionEndpoint))
@@ -224,8 +248,9 @@ public static class WellKnownEndpoints
             ["token_endpoint"] = options.TokenEndpoint,
             ["jwks_uri"] = $"{options.Issuer.TrimEnd('/')}/.well-known/jwks.json",
         };
-        if (!string.IsNullOrEmpty(options.Description))
-            doc["description"] = options.Description;
+        AddCommonMetadataFields(
+            doc, options.Name, options.Description, options.LogoUri,
+            options.LogoDarkUri, options.DocumentationUri, options.TosUri, options.PolicyUri);
         if (!string.IsNullOrEmpty(options.RevocationEndpoint))
             doc["revocation_endpoint"] = options.RevocationEndpoint;
         return doc;
@@ -289,8 +314,8 @@ public sealed class AAuthResourceMetadataOptions
     /// </summary>
     public string? AccessMode { get; init; }
 
-    /// <summary>Optional human-readable name (<c>client_name</c>).</summary>
-    public string? ClientName { get; init; }
+    /// <summary>Optional human-readable name (<c>name</c>).</summary>
+    public string? Name { get; init; }
 
     /// <summary>
     /// Optional Markdown <c>description</c> of the resource, for display to users
@@ -298,6 +323,21 @@ public sealed class AAuthResourceMetadataOptions
     /// sanitize the Markdown before rendering.
     /// </summary>
     public string? Description { get; init; }
+
+    /// <summary>Optional logo URL (<c>logo_uri</c>).</summary>
+    public string? LogoUri { get; init; }
+
+    /// <summary>Optional dark-background logo URL (<c>logo_dark_uri</c>).</summary>
+    public string? LogoDarkUri { get; init; }
+
+    /// <summary>Optional developer-documentation URL (<c>documentation_uri</c>).</summary>
+    public string? DocumentationUri { get; init; }
+
+    /// <summary>Optional terms-of-service URL (<c>tos_uri</c>).</summary>
+    public string? TosUri { get; init; }
+
+    /// <summary>Optional privacy-policy URL (<c>policy_uri</c>).</summary>
+    public string? PolicyUri { get; init; }
 
     /// <summary>Optional scope description map (<c>scope_descriptions</c>).</summary>
     public IReadOnlyDictionary<string, string>? ScopeDescriptions { get; init; }

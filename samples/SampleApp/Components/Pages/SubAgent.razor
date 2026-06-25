@@ -280,7 +280,9 @@ var authToken = await exchange.ExchangeAsync(
                 "binds the resource-token PoP to the worker's key (step 6 override)."));
 
             // 5. The auth token the PS mints, parent-mediated: bound to the
-            // sub-agent's key, with act nesting { sub: subagent, act: { sub: parent } }.
+            // sub-agent's key, with act recording the parent as the immediate
+            // upstream agent ({ agent: parent }). The sub-agent is the top-level
+            // `agent` and is not repeated inside `act`.
             var psKey = AAuthKey.Generate();
             var authToken = new AuthTokenBuilder
             {
@@ -292,7 +294,7 @@ var authToken = await exchange.ExchangeAsync(
                 KeyId = "ps-1",
                 Subject = "user:alice",
                 Scope = "calendar.read",
-                UpstreamAct = new JsonObject { ["sub"] = parentId },
+                Act = ActChainBuilder.BuildNestedAct(parentId),
             }.Build();
 
             var authPayload = DecodePayload(authToken);

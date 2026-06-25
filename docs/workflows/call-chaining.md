@@ -203,7 +203,10 @@ The SDK includes the upstream token as `upstream_token` in the POST body to the 
 
 ### Auth Token Builder — Nested Act Claims
 
-When an auth token carries delegation context, the `act` claim is nested:
+When an auth token carries delegation context, the `act` claim records the
+upstream delegator. The presenter (the intermediary that signs the downstream
+request) is the top-level `agent`; `act.agent` names the immediate upstream
+delegator, and any further-upstream chain nests as `act.act`:
 
 ```json
 {
@@ -211,15 +214,13 @@ When an auth token carries delegation context, the `act` claim is nested:
   "sub": "pairwise-sub",
   "agent": "aauth:concierge@concierge.example",
   "act": {
-    "sub": "aauth:concierge@concierge.example",
-    "act": {
-      "sub": "aauth:agent-a@ap.example"
-    }
+    "agent": "aauth:agent-a@ap.example"
   }
 }
 ```
 
-The `AuthTokenBuilder` supports this via `UpstreamAct`:
+The `AuthTokenBuilder` supports this via `Act` (the composed delegation node;
+omitted entirely for direct authorization):
 
 ```csharp
 var token = new AuthTokenBuilder
@@ -231,7 +232,7 @@ var token = new AuthTokenBuilder
     Key = psKey,
     KeyId = "ps-key-1",
     Scope = "downstream:read",
-    UpstreamAct = upstreamActClaim, // nested JsonObject
+    Act = upstreamActNode, // nested JsonObject ({ agent, act? }); null ⇒ no act
 }.Build();
 ```
 
@@ -259,9 +260,11 @@ The final resource (Calendar) validates the chained auth token using standard mi
 - JWT signature against the PS's JWKS
 - `aud` matches the resource's identifier
 - `cnf.jwk` matches the request signing key (PoP binding)
-- `act.sub` matches the presenting agent
+- `agent` is the presenting agent; `act.agent`, when present, names the upstream delegator
 
-The `act` claim is available in the response for audit/logging purposes but is not verified recursively — that responsibility lies with the PS that minted the token.
+The `act` claim is OPTIONAL (absent for direct authorization) and, when present,
+is available in the response for audit/logging purposes but is not verified
+recursively — that responsibility lies with the PS that minted the token.
 
 ## PS-Side — Upstream Token Validation
 
@@ -281,13 +284,13 @@ var trustedIssuers = new HashSet<string> { psIssuer };
 var result = await validator.ValidateAsync(
     upstreamToken,
     expectedAudience: intermediaryResourceUrl, // aud must match the caller
-    trustedIssuers,
-    intermediaryAgentId: intermediaryAgentId);  // constructs nested act
+    trustedIssuers);
 
 if (!result.IsValid)
     return Results.BadRequest(new { error = "invalid_upstream_token", detail = result.Error });
 
-// result.UpstreamAct is ready to use in AuthTokenBuilder
+// Compose the downstream act node from the upstream token's agent + its own chain.
+var downstreamAct = ActChainBuilder.BuildNestedAct(result.Agent!, result.UpstreamAct);
 var authToken = new AuthTokenBuilder
 {
     Issuer = psIssuer,
@@ -296,7 +299,7 @@ var authToken = new AuthTokenBuilder
     AgentConfirmationKey = intermediaryKey,
     Key = psKey, KeyId = "ps-1",
     Scope = "downstream:read",
-    UpstreamAct = result.UpstreamAct, // fully nested delegation chain
+    Act = downstreamAct, // composed delegation chain ({ agent, act? })
 }.Build();
 ```
 
@@ -304,9 +307,11 @@ The validator performs:
 1. JWT signature verification via issuer JWKS discovery
 2. Issuer trust check against provided set
 3. Audience binding (aud == intermediary resource URL)
-4. Act chain well-formedness (each level has `sub`, depth within limits)
-5. Consistency check (`act.sub` == `agent` claim)
-6. Nested act construction when `intermediaryAgentId` is provided
+4. Act chain well-formedness (each level has `agent`, depth within limits)
+
+It returns `result.Agent` (the upstream token's agent) and `result.UpstreamAct`
+(its raw, optional chain); the caller composes the downstream node via
+`ActChainBuilder.BuildNestedAct`.
 
 ## PS-Side — Auth Token Delivery Validation
 
@@ -356,9 +361,9 @@ PS implementations constructing downstream tokens can use `ActChainBuilder`:
 ```csharp
 // Wrap upstream act inside new intermediary act
 var nestedAct = ActChainBuilder.BuildNestedAct(
-    intermediaryAgentId: "aauth:orch@ap.example",
-    upstreamAct: validatedUpstreamAct);
-// { "sub": "aauth:orch@ap.example", "act": { "sub": "aauth:agent@ap.example" } }
+    upstreamAgentId: "aauth:agent@ap.example",
+    upstreamChain: validatedUpstreamAct);
+// { "agent": "aauth:agent@ap.example", "act": { "agent": "..." } }
 
 // Validate chain before issuing
 bool valid = ActChainBuilder.ValidateChain(nestedAct, maxDepth: 10);

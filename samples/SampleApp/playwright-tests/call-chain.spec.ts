@@ -1,63 +1,73 @@
 import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/blazor';
 import { readResponseJson, expectStatus } from '../../../tests/e2e/helpers/json';
-import { grantConsent } from '../../../tests/e2e/helpers/consent';
+import { grantConsent, approveInPopup } from '../../../tests/e2e/helpers/consent';
 import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
 
 /**
- * Call Chain — multi-hop delegation Agent → Concierge → Calendar. The test
- * pre-grants consent at the PS for both hops, then a single chained GET → 200
- * with a nested `act` delegation chain. Needs PS + AP + Concierge + Calendar.
+ * Call Chain — multi-hop delegation Agent → Concierge → Calendar, asserting the
+ * page RESETS standing consent so BOTH hops always surface their own approval.
  *
- * This is the first interactive test in the SampleApp suite to click the
- * `/call-chain` button, so it is exposed to the Blazor cold-circuit
- * first-click drop (the freshly connected SignalR circuit can silently discard
- * the very first event even after the button reports enabled). We use
- * `clickAndConfirm` to re-click until the page reflects the request, then
- * assert the rendered 200 status and the nested `act` chain in the payload.
+ * We deliberately pre-grant consent for both hops. The page's SendChainedRequest
+ * POSTs `/admin/reset` before running, so the grants are wiped and the user must
+ * still approve hop 1 (Agent → Concierge) and hop 2 (the Concierge's chained
+ * Concierge → Calendar). This guards the bug where a prior run — or the Guided
+ * Tour's call-chain flow — left the Concierge-keyed hop-2 consent
+ * (`Concierge → Calendar`, independent of the calling agent) in place and
+ * silently skipped the second approval. Needs PS + AP + Concierge + Calendar.
  */
-test.describe.configure({ timeout: 60_000 });
+test.describe.configure({ timeout: 180_000 });
 
 test.beforeEach(async ({ request }) => {
-  // Hop 1 (agent → Concierge) needs the Concierge's `concierge` scope;
-  // hop 2 (Concierge → Calendar) needs the default `calendar.read` scope.
+  // Pre-grant BOTH hops; the page must reset these so each hop still prompts.
   await grantConsent(request, Agents.sampleApp, Urls.concierge, 'concierge');
   await grantConsent(request, 'aauth:concierge@localhost:5200', Urls.calendar);
 });
 
-test('call chain returns a nested act delegation chain', async ({ page }) => {
+test('the page resets standing consent so both hops still prompt', async ({ page, context }) => {
   await page.goto('/call-chain');
   await expect(page.locator('h2')).toContainText('Call Chain');
   await waitForInteractive(page, 'button.btn-primary');
 
-  // The first click on a cold circuit can be dropped — confirm the handler
-  // actually fired (button enters "Sending…" or a result/error renders).
-  await clickAndConfirm(page, 'button.btn-primary', async () => {
-    const sending = await page
-      .locator('button.btn-primary', { hasText: 'Sending' })
-      .isVisible()
-      .catch(() => false);
-    const done = await page
-      .locator('pre code.language-json')
-      .first()
-      .isVisible()
-      .catch(() => false);
-    const err = await page
-      .locator('div.alert.alert-danger')
-      .isVisible()
-      .catch(() => false);
-    return sending || done || err;
-  });
+  const link = page.locator('a[target="_blank"]', { hasText: /interaction/ });
+  const heading = page.locator('.alert .badge', { hasText: /Approval/ });
 
-  await expectStatus(page, 200, 30_000);
+  // First click on a cold circuit can be dropped — confirm hop 1 surfaced. The
+  // reset wiped the pre-granted consent, so hop 1 MUST prompt.
+  await clickAndConfirm(page, 'button.btn-primary', () => link.isVisible());
+
+  // --- Hop 1: Agent → Concierge (concierge) ---
+  await expect(heading).toContainText('Approval 1 of 2', { timeout: 30_000 });
+  await expect(link).toBeVisible({ timeout: 30_000 });
+  const [popup1] = await Promise.all([
+    context.waitForEvent('page'),
+    link.click(),
+  ]);
+  await approveInPopup(popup1);
+
+  // --- Hop 2: Concierge → Calendar (calendar.read, chained) ---
+  // This is the hop the bug skipped: its consent is keyed by the Concierge, so a
+  // pre-existing grant would have resolved silently without the reset.
+  await expect(heading).toContainText('Approval 2 of 2', { timeout: 60_000 });
+  await expect(link).toBeVisible({ timeout: 30_000 });
+  const [popup2] = await Promise.all([
+    context.waitForEvent('page'),
+    link.click(),
+  ]);
+  await approveInPopup(popup2);
+
+  // --- Chain resolves ---
+  await expectStatus(page, 200, 60_000);
   const json = (await readResponseJson(page)) as Record<string, unknown>;
 
   // Upstream: how *we* (the calling agent) authenticated to the Concierge.
   const upstream = json.upstream as Record<string, unknown>;
   expect(upstream.scheme).toBe('jwt');
   expect(upstream.agent).toBe(Agents.sampleApp);
+  // The token type renders as its protocol `typ` string, not the enum's integer.
+  expect(upstream.tokenType).toBe('aa-auth+jwt');
 
-  // Concierge: the intermediary's own identity + what it did.
+  // Concierge: the intermediary's own identity.
   const concierge = json.concierge as Record<string, unknown>;
   expect(concierge.identity).toBe('aauth:concierge@localhost:5200');
 
@@ -70,11 +80,10 @@ test('call chain returns a nested act delegation chain', async ({ page }) => {
   expect(downstream.iss).toBe(Urls.personServer);
   expect(downstream.scope).toEqual(['calendar.read']);
 
-  // The act chain proves the full delegation path end to end:
-  //   act.sub      = the Concierge (immediate actor)
-  //   act.act.sub  = the original calling agent (us)
+  // The act chain records the upstream delegation: the presenter (Concierge) is
+  // the top-level `agent`, and act.agent names the immediate upstream delegator
+  // (us). Our grant was direct — no nesting.
   const act = downstream.act as Record<string, unknown>;
-  expect(act.sub).toBe('aauth:concierge@localhost:5200');
-  const innerAct = act.act as Record<string, unknown>;
-  expect(innerAct.sub).toBe(Agents.sampleApp);
+  expect(act.agent).toBe(Agents.sampleApp);
+  expect(act.act).toBeUndefined();
 });

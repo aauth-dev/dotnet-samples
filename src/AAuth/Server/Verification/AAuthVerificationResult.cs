@@ -37,8 +37,10 @@ public sealed class AAuthVerificationResult
     /// <summary>Verified groups from the auth token's <c>groups</c> claim ([@!RFC9068]).</summary>
     public IReadOnlySet<string> Groups { get; init; } = new HashSet<string>();
 
-    /// <summary>Actor subject from <c>act.sub</c> (identifies the agent in auth tokens).</summary>
-    public string? ActorSubject { get; init; }
+    /// <summary>The immediate upstream agent (delegator) from <c>act.agent</c>, when
+    /// the auth token carries a delegation chain; <see langword="null"/> for direct
+    /// authorization.</summary>
+    public string? ActorAgent { get; init; }
 
     /// <summary>JWK thumbprint of the signing key (available for all schemes).</summary>
     public string? Jkt { get; init; }

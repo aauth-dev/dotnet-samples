@@ -76,11 +76,11 @@ test.describe('Call Chain (deferred)', () => {
     expect(downstream.iss).toBe(Urls.personServer);
     expect(downstream.scope).toEqual(['calendar.read']);
 
-    // act.sub = the Concierge; act.act.sub = the original calling agent.
+    // The presenter (Concierge) is the top-level `agent`; act.agent names the
+    // immediate upstream delegator (us). Our grant was direct — no nesting.
     const act = downstream.act as Record<string, unknown>;
-    expect(act.sub).toBe('aauth:concierge@localhost:5200');
-    const innerAct = act.act as Record<string, unknown>;
-    expect(innerAct.sub).toBe(Agents.sampleApp);
+    expect(act.agent).toBe(Agents.sampleApp);
+    expect(act.act).toBeUndefined();
 
     // Both hops should be recorded as approved.
     await expect(page.locator('text=Approved:')).toContainText('Hop 1');

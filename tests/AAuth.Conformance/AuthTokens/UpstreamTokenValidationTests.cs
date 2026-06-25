@@ -30,7 +30,9 @@ public class UpstreamTokenValidationTests
         string? issuer = null,
         string? audience = null,
         string? agent = null,
-        JsonObject? upstreamAct = null)
+        JsonObject? upstreamAct = null,
+        string? dwk = null,
+        MissionClaim? mission = null)
     {
         return new AuthTokenBuilder
         {
@@ -40,9 +42,11 @@ public class UpstreamTokenValidationTests
             AgentConfirmationKey = _agentKey,
             Key = _psKey,
             KeyId = PsKid,
+            Dwk = dwk ?? AuthTokenBuilder.PersonDwk,
             Scope = "data.read",
             Subject = "user-123",
-            UpstreamAct = upstreamAct,
+            Act = upstreamAct,
+            Mission = mission,
         }.Build();
     }
 
@@ -66,11 +70,50 @@ public class UpstreamTokenValidationTests
 
         Assert.True(result.IsValid);
         Assert.Null(result.Error);
-        Assert.NotNull(result.UpstreamAct);
+        // A direct-auth upstream token carries no act (OPTIONAL in draft-08).
+        Assert.Null(result.UpstreamAct);
         Assert.Equal(PsIssuer, result.Issuer);
         Assert.Equal(AgentId, result.Agent);
         Assert.Equal("user-123", result.Subject);
         Assert.Equal("data.read", result.Scope);
+        // A PS-issued upstream token reports dwk = aauth-person.json and no mission.
+        Assert.Equal(AuthTokenBuilder.PersonDwk, result.IssuerDwk);
+        Assert.Null(result.MissionApprover);
+    }
+
+    [Fact(DisplayName = "§Upstream Token Verification — AS-issued (dwk) and mission approver surfaced")]
+    public async Task IssuerDwkAndMissionApprover_Surfaced()
+    {
+        const string Approver = "https://ps.governing";
+        const string S256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        var token = BuildValidUpstreamToken(
+            dwk: AuthTokenBuilder.AccessDwk,
+            mission: new MissionClaim(Approver, S256));
+        var validator = CreateValidator();
+        var trusted = new HashSet<string> { PsIssuer };
+
+        var result = await validator.ValidateAsync(token, ResourceAudience, trusted);
+
+        Assert.True(result.IsValid);
+        // The four-party discriminator: dwk = aauth-access.json identifies an AS issuer.
+        Assert.Equal(AuthTokenBuilder.AccessDwk, result.IssuerDwk);
+        // mission.approver anchors the chain to a governing PS.
+        Assert.Equal(Approver, result.MissionApprover);
+    }
+
+    [Fact(DisplayName = "§Upstream Token Verification — an out-of-set dwk is rejected")]
+    public async Task OutOfSetDwk_Rejected()
+    {
+        // A token whose dwk is neither aauth-person.json nor aauth-access.json must
+        // be rejected — the four-party mission gate classifies AS vs PS from dwk.
+        var token = BuildValidUpstreamToken(dwk: "aauth-resource.json");
+        var validator = CreateValidator();
+        var trusted = new HashSet<string> { PsIssuer };
+
+        var result = await validator.ValidateAsync(token, ResourceAudience, trusted);
+
+        Assert.False(result.IsValid);
+        Assert.Contains("dwk", result.Error, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact(DisplayName = "§Upstream Token Verification — untrusted issuer rejected")]
@@ -128,8 +171,10 @@ public class UpstreamTokenValidationTests
     [Fact(DisplayName = "§Upstream Token Verification — returns UpstreamAct for nesting")]
     public async Task ValidToken_ReturnsUpstreamAct()
     {
-        // Token with a nested act (simulating a 2-hop chain)
-        var innerAct = new JsonObject { ["sub"] = "aauth:original@example" };
+        // Token whose act is itself a 2-hop chain (the upstream was already chained).
+        var innerAct = ActChainBuilder.BuildNestedAct(
+            "aauth:intermediary@example",
+            new JsonObject { ["agent"] = "aauth:original@example" });
         var token = BuildValidUpstreamToken(upstreamAct: innerAct);
         var validator = CreateValidator();
         var trusted = new HashSet<string> { PsIssuer };
@@ -138,17 +183,19 @@ public class UpstreamTokenValidationTests
 
         Assert.True(result.IsValid);
         Assert.NotNull(result.UpstreamAct);
-        // The act claim should have sub = AgentId, act = { sub = "original" }
-        Assert.Equal(AgentId, (string?)result.UpstreamAct!["sub"]);
+        // The validator returns the token's raw act unchanged: { agent: intermediary, act: { agent: original } }.
+        Assert.Equal("aauth:intermediary@example", (string?)result.UpstreamAct!["agent"]);
         var nested = result.UpstreamAct["act"] as JsonObject;
         Assert.NotNull(nested);
-        Assert.Equal("aauth:original@example", (string?)nested!["sub"]);
+        Assert.Equal("aauth:original@example", (string?)nested!["agent"]);
     }
 
     [Fact(DisplayName = "§Upstream Token Verification — returns raw upstream act for nesting")]
     public async Task ReturnsRawUpstreamAct()
     {
-        var token = BuildValidUpstreamToken();
+        // The validator returns the upstream token's raw act unchanged (no wrapping).
+        var rawAct = new JsonObject { ["agent"] = "aauth:original@example" };
+        var token = BuildValidUpstreamToken(upstreamAct: rawAct);
         var validator = CreateValidator();
         var trusted = new HashSet<string> { PsIssuer };
 
@@ -156,24 +203,21 @@ public class UpstreamTokenValidationTests
 
         Assert.True(result.IsValid);
         Assert.NotNull(result.UpstreamAct);
-        // UpstreamAct returns the RAW upstream act (not pre-nested).
-        // AuthTokenBuilder performs the nesting: { sub: intermediary, act: UpstreamAct }.
-        Assert.Equal(AgentId, (string?)result.UpstreamAct!["sub"]);
+        Assert.Equal("aauth:original@example", (string?)result.UpstreamAct!["agent"]);
     }
 
     [Fact(DisplayName = "§Upstream Token Verification — chain depth exceeded rejected")]
     public async Task ChainDepthExceeded_Rejected()
     {
         // Build a deeply nested act chain that exceeds MaxActDepth (default 10).
-        // AuthTokenBuilder wraps UpstreamAct inside act { sub: agent, act: upstreamAct },
-        // so total depth = nested depth + 1. Build 10 levels so total = 11 > max 10.
-        JsonObject act = new JsonObject { ["sub"] = "aauth:deep10@example" };
-        for (int i = 9; i >= 1; i--)
+        // In draft-08 the Act node is emitted verbatim (no extra wrapping), so build
+        // 11 levels directly so total depth = 11 > max 10.
+        JsonObject act = new JsonObject { ["agent"] = "aauth:deep11@example" };
+        for (int i = 10; i >= 1; i--)
         {
-            act = new JsonObject { ["sub"] = $"aauth:deep{i}@example", ["act"] = act };
+            act = new JsonObject { ["agent"] = $"aauth:deep{i}@example", ["act"] = act };
         }
 
-        // Use a custom agent that matches the outermost act.sub that AuthTokenBuilder will set
         var token = BuildValidUpstreamToken(agent: AgentId, upstreamAct: act);
         var validator = CreateValidator();
         var trusted = new HashSet<string> { PsIssuer };
@@ -205,17 +249,6 @@ public class UpstreamTokenValidationTests
         {
             var path = request.RequestUri?.AbsolutePath ?? "";
 
-            if (path.EndsWith("aauth-person.json"))
-            {
-                var meta = new JsonObject
-                {
-                    ["issuer"] = _issuer,
-                    ["jwks_uri"] = $"{_issuer}/.well-known/jwks.json",
-                    ["token_endpoint"] = $"{_issuer}/token",
-                };
-                return JsonResponse(meta);
-            }
-
             if (path.EndsWith("jwks.json"))
             {
                 var jwk = _key.ToPublicJwk();
@@ -227,6 +260,20 @@ public class UpstreamTokenValidationTests
                     ["keys"] = new JsonArray { jwk },
                 };
                 return JsonResponse(jwks);
+            }
+
+            if (path.EndsWith(".json"))
+            {
+                // Serve metadata for any well-known document name (person, access,
+                // or — for negative dwk tests — anything else) so the validator's
+                // own dwk allow-list, not a 404, is what rejects an out-of-set dwk.
+                var meta = new JsonObject
+                {
+                    ["issuer"] = _issuer,
+                    ["jwks_uri"] = $"{_issuer}/.well-known/jwks.json",
+                    ["token_endpoint"] = $"{_issuer}/token",
+                };
+                return JsonResponse(meta);
             }
 
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));

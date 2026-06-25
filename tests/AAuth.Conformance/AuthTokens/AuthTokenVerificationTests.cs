@@ -50,7 +50,7 @@ public class AuthTokenVerificationTests
     {
         var agentKey = AAuthKey.Generate();
         var header = $"{{\"alg\":\"none\",\"typ\":\"aa-auth+jwt\",\"kid\":\"{Kid}\"}}";
-        var payload = $"{{\"iss\":\"{Iss}\",\"dwk\":\"aauth-person.json\",\"aud\":\"{Aud}\",\"agent\":\"{Agent}\",\"cnf\":{{\"jwk\":{agentKey.ToPublicJwk().ToJsonString()}}},\"act\":{{\"sub\":\"{Agent}\"}},\"sub\":\"x\",\"iat\":1,\"exp\":9999999999,\"jti\":\"t1\"}}";
+        var payload = $"{{\"iss\":\"{Iss}\",\"dwk\":\"aauth-person.json\",\"aud\":\"{Aud}\",\"agent\":\"{Agent}\",\"cnf\":{{\"jwk\":{agentKey.ToPublicJwk().ToJsonString()}}},\"sub\":\"x\",\"iat\":1,\"exp\":9999999999,\"jti\":\"t1\"}}";
         var jwt = $"{Base64UrlEncoder.Encode(header)}.{Base64UrlEncoder.Encode(payload)}.AAAA";
 
         var psKey = AAuthKey.Generate();
@@ -99,10 +99,11 @@ public class AuthTokenVerificationTests
             new TokenVerifier().VerifyAuthToken(jwt, psKey, Aud, differentKey, Agent));
     }
 
-    [Fact(DisplayName = "§Auth Token Verification — MUST reject missing act claim")]
-    public void Rejects_MissingAct()
+    [Fact(DisplayName = "§Auth Token Verification — direct-auth token (no act) verifies")]
+    public void Accepts_MissingActIsDirectAuth()
     {
-        // Build a token manually without act
+        // Build a token manually without act — direct authorization. In draft-08
+        // `act` is OPTIONAL (§Delegation Chain) and absent for direct authorization.
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
         var iat = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -113,18 +114,18 @@ public class AuthTokenVerificationTests
             ["iss"] = Iss, ["dwk"] = "aauth-person.json", ["aud"] = Aud,
             ["agent"] = Agent, ["cnf"] = new JsonObject { ["jwk"] = agentKey.ToPublicJwk() },
             ["sub"] = "x", ["iat"] = iat, ["exp"] = exp, ["jti"] = "t1",
-            // No "act" claim
+            // No "act" claim — direct authorization.
         };
         var jwt = JwtWriter.SignCompact(headerObj, payloadObj, psKey);
 
-        Assert.Throws<TokenVerificationException>(() =>
-            new TokenVerifier().VerifyAuthToken(jwt, psKey, Aud, agentKey, Agent));
+        var verified = new TokenVerifier().VerifyAuthToken(jwt, psKey, Aud, agentKey, Agent);
+        Assert.Equal(AuthTokenBuilder.TokenType, verified.TokenType);
     }
 
-    [Fact(DisplayName = "§Auth Token Verification — MUST reject act.sub ≠ agent")]
-    public void Rejects_ActSubMismatch()
+    [Fact(DisplayName = "§Auth Token Verification — MUST reject malformed act.agent")]
+    public void Rejects_InvalidActAgent()
     {
-        // Build a token with wrong act.sub
+        // act.agent that is not a valid AAuth agent identifier is rejected.
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
         var iat = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -134,7 +135,7 @@ public class AuthTokenVerificationTests
         {
             ["iss"] = Iss, ["dwk"] = "aauth-person.json", ["aud"] = Aud,
             ["agent"] = Agent, ["cnf"] = new JsonObject { ["jwk"] = agentKey.ToPublicJwk() },
-            ["act"] = new JsonObject { ["sub"] = "aauth:wrong@ap.example" },
+            ["act"] = new JsonObject { ["agent"] = "not-a-valid-agent-id" },
             ["sub"] = "x", ["iat"] = iat, ["exp"] = exp, ["jti"] = "t1",
         };
         var jwt = JwtWriter.SignCompact(headerObj, payloadObj, psKey);
@@ -155,7 +156,6 @@ public class AuthTokenVerificationTests
         {
             ["iss"] = Iss, ["dwk"] = "aauth-person.json", ["aud"] = Aud,
             ["agent"] = Agent, ["cnf"] = new JsonObject { ["jwk"] = agentKey.ToPublicJwk() },
-            ["act"] = new JsonObject { ["sub"] = Agent },
             ["iat"] = iat, ["exp"] = exp, ["jti"] = "t1",
             // No sub, no scope
         };
@@ -177,7 +177,6 @@ public class AuthTokenVerificationTests
         {
             ["iss"] = Iss, ["dwk"] = "aauth-resource.json", ["aud"] = Aud,
             ["agent"] = Agent, ["cnf"] = new JsonObject { ["jwk"] = agentKey.ToPublicJwk() },
-            ["act"] = new JsonObject { ["sub"] = Agent },
             ["sub"] = "x", ["iat"] = iat, ["exp"] = exp, ["jti"] = "t1",
         };
         var jwt = JwtWriter.SignCompact(headerObj, payloadObj, psKey);
@@ -196,12 +195,12 @@ public class AuthTokenVerificationTests
         var exp = iat + 3600;
 
         // Build nested act 12 levels deep (exceeds default MaxActDepth=10)
-        JsonObject innerAct = new() { ["sub"] = "aauth:inner@x.example" };
+        JsonObject innerAct = new() { ["agent"] = "aauth:inner@x.example" };
         for (int i = 0; i < 11; i++)
         {
-            innerAct = new JsonObject { ["sub"] = $"aauth:level{i}@x.example", ["act"] = innerAct };
+            innerAct = new JsonObject { ["agent"] = $"aauth:level{i}@x.example", ["act"] = innerAct };
         }
-        var topAct = new JsonObject { ["sub"] = Agent, ["act"] = innerAct };
+        var topAct = new JsonObject { ["agent"] = "aauth:up@x.example", ["act"] = innerAct };
 
         var headerObj = new JsonObject { ["alg"] = "EdDSA", ["typ"] = "aa-auth+jwt", ["kid"] = Kid };
         var payloadObj = new JsonObject

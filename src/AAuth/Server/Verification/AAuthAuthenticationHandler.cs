@@ -53,8 +53,8 @@ public sealed class AAuthAuthenticationHandler : AuthenticationHandler<Authentic
     /// <summary>Claim type for individual groups (one claim per group).</summary>
     public const string GroupClaimType = "aauth:group";
 
-    /// <summary>Claim type for the actor subject.</summary>
-    public const string ActorSubjectClaimType = "aauth:act_sub";
+    /// <summary>Claim type for the upstream actor agent (<c>act.agent</c>).</summary>
+    public const string ActorAgentClaimType = "aauth:act_agent";
 
     /// <summary>Create the handler.</summary>
     public AAuthAuthenticationHandler(
@@ -113,9 +113,9 @@ public sealed class AAuthAuthenticationHandler : AuthenticationHandler<Authentic
             claims.Add(new Claim(IssuerClaimType, result.Issuer));
         }
 
-        if (result.ActorSubject is not null)
+        if (result.ActorAgent is not null)
         {
-            claims.Add(new Claim(ActorSubjectClaimType, result.ActorSubject));
+            claims.Add(new Claim(ActorAgentClaimType, result.ActorAgent));
         }
 
         foreach (var scope in result.Scopes)

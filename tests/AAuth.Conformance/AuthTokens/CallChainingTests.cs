@@ -84,14 +84,17 @@ public class CallChainingTests
 
     // ── Act Chain Construction ──────────────────────────────────────────────
 
-    [Fact(DisplayName = "§CallChaining — AuthTokenBuilder nests upstream act in delegation chain")]
+    [Fact(DisplayName = "§CallChaining — AuthTokenBuilder emits the act delegation node verbatim")]
     public void AuthTokenBuilderNestsUpstreamAct()
     {
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
 
-        // Simulate upstream auth token's act: { sub: "upstream-agent" }
-        var upstreamAct = new JsonObject { ["sub"] = "upstream-agent" };
+        // Complete act node (§Delegation Chain): act.agent names the immediate upstream
+        // (delegator), nesting the upstream's own chain under act.act.
+        var act = ActChainBuilder.BuildNestedAct(
+            "resource-as-agent",
+            new JsonObject { ["agent"] = "upstream-agent" });
 
         var token = new AuthTokenBuilder
         {
@@ -103,22 +106,22 @@ public class CallChainingTests
             KeyId = "ps-1",
             Subject = "user-1",
             Scope = "read",
-            UpstreamAct = upstreamAct,
+            Act = act,
         }.Build();
 
-        // Decode and verify the act chain.
+        // Decode and verify the act chain is emitted verbatim.
         var payload = DecodePayload(token);
-        var act = payload["act"] as JsonObject;
-        Assert.NotNull(act);
-        Assert.Equal("resource-as-agent", (string?)act!["sub"]);
+        var decodedAct = payload["act"] as JsonObject;
+        Assert.NotNull(decodedAct);
+        Assert.Equal("resource-as-agent", (string?)decodedAct!["agent"]);
 
         // Nested act from upstream.
-        var nestedAct = act["act"] as JsonObject;
+        var nestedAct = decodedAct["act"] as JsonObject;
         Assert.NotNull(nestedAct);
-        Assert.Equal("upstream-agent", (string?)nestedAct!["sub"]);
+        Assert.Equal("upstream-agent", (string?)nestedAct!["agent"]);
     }
 
-    [Fact(DisplayName = "§CallChaining — AuthTokenBuilder without UpstreamAct produces flat act")]
+    [Fact(DisplayName = "§CallChaining — AuthTokenBuilder without Act omits act (direct authorization)")]
     public void AuthTokenBuilderWithoutUpstreamActProducesFlatAct()
     {
         var psKey = AAuthKey.Generate();
@@ -137,52 +140,48 @@ public class CallChainingTests
         }.Build();
 
         var payload = DecodePayload(token);
-        var act = payload["act"] as JsonObject;
-        Assert.NotNull(act);
-        Assert.Equal("my-agent", (string?)act!["sub"]);
-        Assert.Null(act["act"]); // No nesting.
+        // act is OPTIONAL — a direct-auth token carries no act.
+        Assert.Null(payload["act"]);
     }
 
-    [Fact(DisplayName = "§CallChaining — three-level act chain verified by TokenVerifier")]
+    [Fact(DisplayName = "§CallChaining — nested act chain verified by TokenVerifier")]
     public void ThreeLevelActChainVerified()
     {
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
 
-        // Level 1: original agent
-        var level1Act = new JsonObject { ["sub"] = "original-agent" };
-        // Level 2: intermediate resource — wraps level 1
-        var level2Act = new JsonObject { ["sub"] = "intermediate-resource", ["act"] = level1Act };
+        // Delegation chain: original-agent → intermediate-resource → final-resource (presenter).
+        // The presenter is the top-level `agent`; act names the immediate upstream and nests its chain.
+        var level1Act = new JsonObject { ["agent"] = "aauth:original@example" };
+        var level2Act = new JsonObject { ["agent"] = "aauth:intermediate@example", ["act"] = level1Act };
 
         var token = new AuthTokenBuilder
         {
             Issuer = "http://localhost:5555",
             Audience = "http://localhost:7000",
-            Agent = "final-resource",
+            Agent = "aauth:final@example",
             AgentConfirmationKey = agentKey,
             Key = psKey,
             KeyId = "ps-1",
             Subject = "user-1",
             Scope = "read",
-            UpstreamAct = level2Act,
+            Act = level2Act,
         }.Build();
 
         // Verify: TokenVerifier validates act chain depth.
         var verifier = new TokenVerifier();
         var result = verifier.VerifyAuthToken(
             token, psKey, "http://localhost:7000", agentKey,
-            expectedAgentId: "final-resource");
+            expectedAgentId: "aauth:final@example");
 
         Assert.Equal("http://localhost:5555", result.Issuer);
 
-        // Validate the full chain: final-resource → intermediate-resource → original-agent.
+        // Validate the full chain: act.agent = intermediate, act.act.agent = original.
         var payload = DecodePayload(token);
         var act = payload["act"]!.AsObject();
-        Assert.Equal("final-resource", (string?)act["sub"]);
+        Assert.Equal("aauth:intermediate@example", (string?)act["agent"]);
         var nested1 = act["act"]!.AsObject();
-        Assert.Equal("intermediate-resource", (string?)nested1["sub"]);
-        var nested2 = nested1["act"]!.AsObject();
-        Assert.Equal("original-agent", (string?)nested2["sub"]);
+        Assert.Equal("aauth:original@example", (string?)nested1["agent"]);
     }
 
     [Fact(DisplayName = "§CallChaining — act chain exceeding max depth rejected")]
@@ -192,10 +191,10 @@ public class CallChainingTests
         var agentKey = AAuthKey.Generate();
 
         // Build a deeply nested act chain (depth > 10).
-        JsonObject deepAct = new JsonObject { ["sub"] = "deep-0" };
+        JsonObject deepAct = new JsonObject { ["agent"] = "aauth:deep0@example" };
         for (int i = 1; i <= 11; i++)
         {
-            deepAct = new JsonObject { ["sub"] = $"deep-{i}", ["act"] = deepAct };
+            deepAct = new JsonObject { ["agent"] = $"aauth:deep{i}@example", ["act"] = deepAct };
         }
 
         var token = new AuthTokenBuilder
@@ -208,7 +207,7 @@ public class CallChainingTests
             KeyId = "ps-1",
             Subject = "user-1",
             Scope = "read",
-            UpstreamAct = deepAct,
+            Act = deepAct,
         }.Build();
 
         var verifier = new TokenVerifier();
@@ -254,7 +253,7 @@ public class CallChainingTests
             ["iss"] = "http://external-server.com",
             ["aud"] = "http://localhost:6000",
             ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new JsonObject { ["agent"] = "agent-1" },
         };
         var token = EncodeUnsignedJwt(header, payload);
 
@@ -341,7 +340,7 @@ public class CallChainingTests
             ["aud"] = "http://localhost:6000",
             ["jti"] = Guid.NewGuid().ToString("N"),
             ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["sub"] = "agent-1" },
+            ["act"] = new JsonObject { ["agent"] = "agent-1" },
             ["cnf"] = new JsonObject { ["jwk"] = agentKey.ToPublicJwk() },
             ["iat"] = now.ToUnixTimeSeconds(),
             ["exp"] = now.AddMinutes(60).ToUnixTimeSeconds(),

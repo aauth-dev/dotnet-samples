@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
+using AAuth.Identifiers;
 using Microsoft.IdentityModel.Tokens;
 
 namespace AAuth.Agent;
@@ -213,6 +214,39 @@ public static class AAuthMissionHeader
                 s256 = raw;
         }
 
-        return !string.IsNullOrEmpty(approver) && !string.IsNullOrEmpty(s256);
+        if (string.IsNullOrEmpty(approver) || string.IsNullOrEmpty(s256))
+        {
+            approver = null;
+            s256 = null;
+            return false;
+        }
+
+        // §Mission Reference: `approver` MUST be a Server Identifier (https,
+        // scheme+host only, no port/path/query/fragment) and `s256` MUST be the
+        // unpadded base64url encoding of a 32-byte SHA-256 digest. A reference that
+        // does not conform is rejected — the malformed mission is dropped.
+        if (!ServerId.TryParse(approver, out _, out _) || !IsValidMissionS256(s256))
+        {
+            approver = null;
+            s256 = null;
+            return false;
+        }
+
+        return true;
+    }
+
+    // Unpadded base64url of exactly 32 bytes (SHA-256), per §Mission Reference.
+    private static bool IsValidMissionS256(string value)
+    {
+        if (value.IndexOf('=') >= 0 || value.IndexOf('+') >= 0 || value.IndexOf('/') >= 0)
+            return false;
+        try
+        {
+            return Base64UrlEncoder.DecodeBytes(value).Length == 32;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
     }
 }

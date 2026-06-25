@@ -68,7 +68,7 @@ app.MapGet("/.well-known/aauth-agent.json", () => Results.Json(new JsonObject
 {
     ["issuer"] = tunnelUrl,
     ["jwks_uri"] = $"{tunnelUrl}/.well-known/jwks.json",
-    ["client_name"] = "AAuth .NET SDK Live Test",
+    ["name"] = "AAuth .NET SDK Live Test",
 }, contentType: "application/json"));
 
 app.MapGet("/.well-known/jwks.json", () =>

@@ -39,16 +39,16 @@ test('sub-agent flow binds parent_agent, the worker cnf, and a nested act', asyn
   expect(workerToken.sub).toBe('aauth:aria+worker1@localhost:5400');
   expect(workerToken.cnf).toBeTruthy();
 
-  // Step 5 — the PS returns an auth token bound to the SUB-AGENT (agent + cnf),
-  // whose act nests { sub: worker, act: { sub: parent } } for audit.
+  // Step 5 — the PS returns an auth token bound to the SUB-AGENT (agent + cnf).
+  // The sub-agent is the top-level `agent`; act.agent names the parent that
+  // mediated. The parent's grant was direct, so there is no deeper nesting.
   await selectStep(page, 4);
   const authToken = await decodedPayload(page);
   expect(authToken.agent).toBe('aauth:aria+worker1@localhost:5400');
   expect(authToken.cnf).toBeTruthy();
   const act = authToken.act as Record<string, unknown>;
-  expect(act.sub).toBe('aauth:aria+worker1@localhost:5400');
-  const innerAct = act.act as Record<string, unknown>;
-  expect(innerAct.sub).toBe('aauth:aria@localhost:5400');
+  expect(act.agent).toBe('aauth:aria@localhost:5400');
+  expect(act.act).toBeUndefined();
 
   // Step 7 — the sub-agent calls the resource itself with the issued token.
   await selectStep(page, 6);

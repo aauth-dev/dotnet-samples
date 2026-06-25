@@ -165,12 +165,12 @@ public static class SignatureKeyParser
 
     private static ParsedSignatureKeyInfo ParseJktJwtScheme(IReadOnlyDictionary<string, string> parameters)
     {
-        // draft-hardt-httpbis-signature-key-04 §3.4: the jkt-jwt scheme carries a
+        // draft-hardt-httpbis-signature-key-05 §3.4: the jkt-jwt scheme carries a
         // single 'jwt' parameter. A 'jkt' parameter belongs to the retired
         // non-conformant format and is rejected.
         if (parameters.ContainsKey("jkt"))
             throw new AAuthVerificationException(
-                "Signature-Key jkt-jwt scheme: unexpected 'jkt' parameter (draft-04 §3.4 defines only 'jwt').");
+                "Signature-Key jkt-jwt scheme: unexpected 'jkt' parameter (draft-05 §3.4 defines only 'jwt').");
         if (!parameters.TryGetValue("jwt", out var jwt) || string.IsNullOrEmpty(jwt))
             throw new AAuthVerificationException("Signature-Key jkt-jwt scheme missing 'jwt' parameter.");
 

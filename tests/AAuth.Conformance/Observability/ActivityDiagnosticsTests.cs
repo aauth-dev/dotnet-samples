@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -51,7 +52,11 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
 
     private IHost? _metadataHost;
     private ActivityListener? _listener;
-    private readonly List<Activity> _activities = new();
+    // Thread-safe: the global ActivityListener fires ActivityStarted concurrently
+    // for activities emitted by other test classes running in parallel (they share
+    // the AAuth ActivitySource). A plain List would race on Add and drop entries,
+    // flaking the Assert.Contains checks below.
+    private readonly ConcurrentBag<Activity> _activities = new();
 
     public async Task InitializeAsync()
     {

@@ -7,7 +7,7 @@ naming JWT that delegates HTTP-message signing to a short-lived ephemeral key.
 The scheme is **self-anchored**: the durable public key travels in the naming
 JWT's header, and the issuer is that key's own thumbprint — so a verifier needs
 no external lookup. Access stays **pseudonymous**. Defined in
-[`draft-hardt-httpbis-signature-key-04`](../../aauth-spec/v02/draft-hardt-httpbis-signature-key-04.txt)
+[`draft-hardt-httpbis-signature-key-05`](../../aauth-spec/v08/draft-hardt-httpbis-signature-key-05.txt)
 §3.4; the AAuth protocol references this scheme normatively.
 
 ## When to Use
@@ -98,5 +98,5 @@ identity, not authority-vouched identity (§6.3).
 
 ## Further Reading
 
-- [`draft-hardt-httpbis-signature-key-04`](../../aauth-spec/v02/draft-hardt-httpbis-signature-key-04.txt) §3.4
+- [`draft-hardt-httpbis-signature-key-05`](../../aauth-spec/v08/draft-hardt-httpbis-signature-key-05.txt) §3.4
 - [Bootstrap](../workflows/bootstrap-enrollment.md)

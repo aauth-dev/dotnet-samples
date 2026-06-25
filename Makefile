@@ -106,11 +106,13 @@ clean: ## dotnet clean + remove bin/ obj/ trees
 # ----------------------------------------------------------------------------
 
 resources: ## Run all four Aria resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003)
-	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \
-	$(DOTNET) run --project $(PROFILE_PROJECT) & \
-	$(DOTNET) run --project $(CALENDAR_PROJECT) & \
-	$(DOTNET) run --project $(TRIPS_PROJECT) & \
-	$(DOTNET) run --project $(WALLET_PROJECT) & \
+	@echo "Building services (once) before launch..."
+	@$(DOTNET) build $(SOLUTION) -v q
+	@trap 'trap - INT TERM; echo; echo "Stopping..."; kill 0' INT TERM; \
+	$(DOTNET) run --no-build --project $(PROFILE_PROJECT) & \
+	$(DOTNET) run --no-build --project $(CALENDAR_PROJECT) & \
+	$(DOTNET) run --no-build --project $(TRIPS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(WALLET_PROJECT) & \
 	wait
 
 ps: ## Run the MockPersonServer (port 5100)
@@ -160,17 +162,19 @@ demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. f
 	@echo "   SampleApp:          $(SAMPLE_URL)         (minimal app: /federated, /deferred, /callchain)"
 	@echo "------------------------------------------------------------------"
 	@echo ""
-	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \
-	MockPersonServer__RequireConsent=true $(DOTNET) run --project $(PS_PROJECT) & \
-	$(DOTNET) run --project $(PROFILE_PROJECT) & \
-	$(DOTNET) run --project $(CALENDAR_PROJECT) & \
-	$(DOTNET) run --project $(TRIPS_PROJECT) & \
-	$(DOTNET) run --project $(WALLET_PROJECT) & \
-	$(DOTNET) run --project $(CONCIERGE_PROJECT) & \
-	$(DOTNET) run --project $(AP_PROJECT) & \
-	AccessServer__PolicyProvider=stub AccessServer__RequireConsent=true $(DOTNET) run --project $(AS_PROJECT) & \
-	$(DOTNET) run --project $(TOUR_PROJECT) & \
-	$(DOTNET) run --project $(SAMPLE_PROJECT) & \
+	@echo "Building services (once) before launch..."
+	@$(DOTNET) build $(SOLUTION) -v q
+	@trap 'trap - INT TERM; echo; echo "Stopping..."; kill 0' INT TERM; \
+	MockPersonServer__RequireConsent=true $(DOTNET) run --no-build --project $(PS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(PROFILE_PROJECT) & \
+	$(DOTNET) run --no-build --project $(CALENDAR_PROJECT) & \
+	$(DOTNET) run --no-build --project $(TRIPS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(WALLET_PROJECT) & \
+	$(DOTNET) run --no-build --project $(CONCIERGE_PROJECT) & \
+	$(DOTNET) run --no-build --project $(AP_PROJECT) & \
+	AccessServer__PolicyProvider=stub AccessServer__RequireConsent=true $(DOTNET) run --no-build --project $(AS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(TOUR_PROJECT) & \
+	$(DOTNET) run --no-build --project $(SAMPLE_PROJECT) & \
 	wait
 
 # ----------------------------------------------------------------------------
@@ -271,10 +275,12 @@ demo-mission: ## Start the mission stack (AP + PS + Trips) for the MissionAgent 
 	@echo "    MISSION_APPROVED='trips.read trips.book' to silence the elevated step too)"
 	@echo "------------------------------------------------------------------"
 	@echo ""
-	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \
-	$(DOTNET) run --project $(PS_PROJECT) & \
-	$(DOTNET) run --project $(TRIPS_PROJECT) & \
-	$(DOTNET) run --project $(AP_PROJECT) & \
+	@echo "Building services (once) before launch..."
+	@$(DOTNET) build $(SOLUTION) -v q
+	@trap 'trap - INT TERM; echo; echo "Stopping..."; kill 0' INT TERM; \
+	$(DOTNET) run --no-build --project $(PS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(TRIPS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(AP_PROJECT) & \
 	wait
 
 agent-mission: ## Drive the MissionAgent CLI through the full mission lifecycle (AUTO=1 for scripted prompts; MISSION_APPROVED="<scope>..." to replace the default in-scope set)

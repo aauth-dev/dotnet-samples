@@ -152,7 +152,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
                 subject = user.FindFirst(ClaimTypes.NameIdentifier)?.Value,
                 subjectIssuer = user.FindFirst(ClaimTypes.NameIdentifier)?.Issuer,
                 subIss = user.FindFirst(AAuthAuthenticationHandler.SubjectIssuerClaimType)?.Value,
-                actSub = user.FindFirst(AAuthAuthenticationHandler.ActorSubjectClaimType)?.Value,
+                actAgent = user.FindFirst(AAuthAuthenticationHandler.ActorAgentClaimType)?.Value,
                 scopes = user.FindAll(AAuthAuthenticationHandler.ScopeClaimType)
                     .Select(c => c.Value).ToArray(),
             });
@@ -177,7 +177,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
         }.Build();
     }
 
-    private string BuildAuthToken(string scope = "whoami")
+    private string BuildAuthToken(string scope = "whoami", JsonObject? act = null)
     {
         return new AuthTokenBuilder
         {
@@ -189,6 +189,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
             KeyId = "ps-key-1",
             Subject = "pairwise-sub-123",
             Scope = scope,
+            Act = act,
             IssuedAt = FixedClock,
         }.Build();
     }
@@ -361,15 +362,16 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
         Assert.Contains("data:read", scopes);
     }
 
-    [Fact(DisplayName = "§Auth — auth token carries act.sub as claim")]
-    public async Task AuthTokenCarriesActSub()
+    [Fact(DisplayName = "§Auth — delegated auth token carries act.agent as claim")]
+    public async Task AuthTokenCarriesActAgent()
     {
-        var token = BuildAuthToken();
+        // A delegated auth token names the immediate upstream agent in act.agent.
+        const string upstreamAgent = "aauth:orchestrator@ap.example";
+        var token = BuildAuthToken(act: ActChainBuilder.BuildNestedAct(upstreamAgent));
         var response = await SendSigned(token, "/claims");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
-        // AuthTokenBuilder sets act.sub = Agent
-        Assert.Equal(AgentId, (string?)json["actSub"]);
+        Assert.Equal(upstreamAgent, (string?)json["actAgent"]);
     }
 }

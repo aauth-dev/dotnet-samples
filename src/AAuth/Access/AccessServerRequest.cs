@@ -45,7 +45,7 @@ public sealed class AccessServerRequest
 
     /// <summary>
     /// The agent identifier that submitted the request. Used by Auth Token
-    /// Delivery step 4 (<c>agent</c> / <c>act.sub</c> checks).
+    /// Delivery step 4 (<c>agent</c> / <c>act.agent</c> checks).
     /// </summary>
     public required string ExpectedAgentId { get; init; }
 

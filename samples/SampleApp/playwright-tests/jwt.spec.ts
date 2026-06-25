@@ -29,8 +29,6 @@ test('jwt direct grant returns a three-party identity', async ({ page }) => {
   expect(json.sub).toBe('pairwise-sub');
   expect(json.scope).toEqual(['calendar.read']);
   expect(json.iss).toBe(Urls.personServer);
-  // Direct grant — single-hop act chain naming the calling agent, no nesting.
-  const act = json.act as Record<string, unknown>;
-  expect(act.sub).toBe(Agents.sampleApp);
-  expect(act.act).toBeUndefined();
+  // Direct grant — direct authorization, so no act chain.
+  expect(json.act).toBeFalsy();
 });

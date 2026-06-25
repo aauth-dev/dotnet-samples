@@ -51,7 +51,7 @@ public sealed class AuthTokenResponseValidator
     /// <param name="expectedActContext">
     /// Optional act context for chain consistency check (step 6).
     /// When provided, verifies that the auth token's nested <c>act</c> claims match this context.
-    /// For direct authorization: null (only <c>act.sub == expectedAgentId</c> is checked).
+    /// For direct authorization: null (the auth token then carries no <c>act</c>).
     /// For call chaining: the upstream act that was submitted with the token request.
     /// </param>
     /// <param name="requestedScope">
@@ -81,11 +81,11 @@ public sealed class AuthTokenResponseValidator
             // Steps 1, 3–5, 8–9: Reuse VerifyAuthTokenWithJwksAsync which performs:
             //  - JWT signature via JWKS discovery (step 1)
             //  - aud check (step 3)
-            //  - agent claim check (step 4)
-            //  - cnf.jwk binding against agentKey (step 5)
-            //  - act.sub == expectedAgentId (step 6 partial)
-            //  - sub or scope present (step 9)
-            //  - scope narrowing (step 7)
+            //  - agent claim check (step 5)
+            //  - cnf.jwk binding against agentKey (step 4)
+            //  - act OPTIONAL; when present act.agent is a valid agent id (step 6)
+            //  - sub or scope present
+            //  - scope narrowing
             var verified = await _verifier.VerifyAuthTokenWithJwksAsync(
                 authToken,
                 _metadata,
@@ -106,9 +106,10 @@ public sealed class AuthTokenResponseValidator
                 };
             }
 
-            // Step 6 (full): Verify act accurately reflects the delegation chain.
-            // act.sub == expectedAgentId is already checked by VerifyAuthToken.
-            // If expectedActContext provided, verify nested act claims match.
+            // Step 6 (full): when the caller supplies the expected upstream
+            // delegation context, verify the nested act chain matches it. act is
+            // OPTIONAL (§Delegation Chain); act.agent is the immediate upstream
+            // agent and its own chain is nested as act.act.
             if (expectedActContext is not null)
             {
                 var act = verified.Payload["act"] as JsonObject;
@@ -142,7 +143,7 @@ public sealed class AuthTokenResponseValidator
 
     /// <summary>
     /// Compare two act chain objects for structural equivalence.
-    /// Checks that <c>sub</c> values match at each nesting level.
+    /// Checks that <c>agent</c> values match at each nesting level.
     /// </summary>
     private static bool ActChainsMatch(JsonObject? actual, JsonObject? expected)
     {
@@ -151,9 +152,9 @@ public sealed class AuthTokenResponseValidator
         if (actual is null || expected is null)
             return false;
 
-        var actualSub = (string?)actual["sub"];
-        var expectedSub = (string?)expected["sub"];
-        if (actualSub != expectedSub)
+        var actualAgent = (string?)actual["agent"];
+        var expectedAgent = (string?)expected["agent"];
+        if (actualAgent != expectedAgent)
             return false;
 
         var actualNested = actual["act"] as JsonObject;
