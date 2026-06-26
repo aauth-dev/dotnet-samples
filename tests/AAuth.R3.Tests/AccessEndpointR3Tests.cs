@@ -40,6 +40,59 @@ public class AccessEndpointR3Tests
     }
 
     [Fact]
+    public async Task TokenEndpoint_AuditsClassR3TokenIssuance()
+    {
+        var auditSink = new InMemoryR3AuditSink();
+        var fixture = await R3AccessFixture.CreateAsync(auditSink: auditSink);
+        await using var app = fixture.App;
+        var before = DateTimeOffset.UtcNow;
+
+        var response = await fixture.PostTokenAsync();
+        var after = DateTimeOffset.UtcNow;
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var record = Assert.Single(auditSink.Records);
+        AssertAuditRecord(
+            record,
+            fixture.R3Uri,
+            fixture.R3S256,
+            R3TokenIssuanceKind.Class,
+            before,
+            after);
+    }
+
+    [Fact]
+    public async Task TokenEndpoint_AuditsPerCallProposalTokenIssuance()
+    {
+        var auditSink = new InMemoryR3AuditSink();
+        var fixture = await R3AccessFixture.CreateAsync(auditSink: auditSink);
+        await using var app = fixture.App;
+        var before = DateTimeOffset.UtcNow;
+
+        var response = await fixture.PostTokenAsync(fixture.ProposalResourceToken);
+        var after = DateTimeOffset.UtcNow;
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var record = Assert.Single(auditSink.Records);
+        AssertAuditRecord(
+            record,
+            fixture.ProposalUri,
+            fixture.ProposalS256,
+            R3TokenIssuanceKind.Proposal,
+            before,
+            after);
+    }
+
+    [Fact]
+    public async Task TokenEndpoint_DoesNotIssueTokenWhenConfiguredAuditSinkFails()
+    {
+        var fixture = await R3AccessFixture.CreateAsync(auditSink: new ThrowingAuditSink());
+        await using var app = fixture.App;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.PostTokenAsync());
+    }
+
+    [Fact]
     public async Task TokenEndpoint_RejectsFetchedBytesWhoseHashDoesNotMatchResourceToken()
     {
         var fixture = await R3AccessFixture.CreateAsync(resourceTokenS256Override: "wrong");
@@ -125,6 +178,31 @@ public class AccessEndpointR3Tests
         return payload!;
     }
 
+    private static void AssertAuditRecord(
+        R3TokenIssuanceAuditRecord record,
+        string expectedUri,
+        string expectedS256,
+        R3TokenIssuanceKind expectedKind,
+        DateTimeOffset earliest,
+        DateTimeOffset latest)
+    {
+        Assert.Equal(expectedUri, record.R3Uri);
+        Assert.Equal(expectedS256, record.R3S256);
+        Assert.Equal(R3TestData.AgentId, record.AgentId);
+        Assert.Equal(R3TestData.ResourceIssuer, record.ResourceIssuer);
+        Assert.Equal(R3TestData.AsIssuer, record.AccessServerIssuer);
+        Assert.Equal(expectedKind, record.IssuanceKind);
+        Assert.InRange(record.IssuedAt, earliest, latest);
+    }
+
+    private sealed class ThrowingAuditSink : IR3AuditSink
+    {
+        public Task RecordTokenIssuanceAsync(R3TokenIssuanceAuditRecord record, CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("audit sink unavailable");
+        }
+    }
+
     private sealed class R3AccessFixture
     {
         public required WebApplication App { get; init; }
@@ -144,7 +222,8 @@ public class AccessEndpointR3Tests
         public static async Task<R3AccessFixture> CreateAsync(
             string? resourceTokenS256Override = null,
             string? resourceTokenUriOverride = null,
-            IReadOnlyCollection<string>? trustedPersonServers = null)
+            IReadOnlyCollection<string>? trustedPersonServers = null,
+            IR3AuditSink? auditSink = null)
         {
             var asKey = AAuthKey.Generate();
             var psKey = AAuthKey.Generate();
@@ -188,6 +267,7 @@ public class AccessEndpointR3Tests
                 SigningKeys = new Dictionary<string, AAuthKey> { [R3TestData.AsKid] = asKey },
                 TrustedPersonServers = trustedPersonServers ?? [R3TestData.PsIssuer],
                 ConditionalTools = new HashSet<string>(StringComparer.Ordinal) { "book_trip" },
+                AuditSink = auditSink ?? R3NoOpAuditSink.Instance,
                 FetchAndVerifyAsync = (_, uri, s256, _, _) =>
                 {
                     var bytes = uri == r3Uri ? docBytes : uri == proposalUri ? proposalBytes : throw new InvalidOperationException("unknown R3 URI");

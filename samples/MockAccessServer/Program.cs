@@ -109,6 +109,10 @@ switch (policyProvider)
 // Keycloak login/consent round-trip (and across the §Claims Required push).
 // Shared between the SDK helper and this sample's interaction endpoints.
 builder.Services.AddSingleton<IAccessPendingStore, InMemoryAccessPendingStore>();
+if (string.Equals(serverMode, "R3", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddSingleton<InMemoryR3AuditSink>();
+}
 
 var app = builder.Build();
 
@@ -118,12 +122,15 @@ if (string.Equals(serverMode, "R3", StringComparison.OrdinalIgnoreCase))
         .GetSection("R3:ConditionalTools")
         .Get<string[]>() ?? ["book_trip"];
 
+    // Diagnostic-only memory sink; production R3 AS hosts should configure a durable IR3AuditSink.
+    var r3AuditSink = app.Services.GetRequiredService<InMemoryR3AuditSink>();
     app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
     {
         Issuer = asIssuer,
         SigningKeys = new Dictionary<string, AAuthKey> { [AsKid] = asKey },
         TrustedPersonServers = trustedPersonServers,
         ConditionalTools = new HashSet<string>(conditionalTools, StringComparer.Ordinal),
+        AuditSink = r3AuditSink,
     });
 
     app.Run();

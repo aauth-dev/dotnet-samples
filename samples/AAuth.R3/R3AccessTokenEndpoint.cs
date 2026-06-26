@@ -123,35 +123,45 @@ public static class R3AccessTokenEndpoint
                 return Results.Json(new { error = "invalid_resource_token", detail = "resource_token missing iss" }, statusCode: StatusCodes.Status400BadRequest);
             }
 
+            AuthMintParts mintParts;
             try
             {
-                var mintParts = await EvaluateDocumentAsync(context, options, r3DocumentClaims, resourceIssuer, context.RequestAborted);
-
-                var claims = R3AuthClaims.AuthToken(
-                    mintParts.Uri,
-                    mintParts.S256,
-                    mintParts.Granted,
-                    mintParts.Conditional);
-
-                var authToken = new AuthTokenBuilder
-                {
-                    Issuer = issuer,
-                    Audience = resourceIssuer,
-                    Agent = agentId,
-                    AgentConfirmationKey = agentConfirmationKey,
-                    Key = signingKey,
-                    KeyId = signingKid,
-                    Dwk = AuthTokenBuilder.AccessDwk,
-                    Subject = options.Subject,
-                    AdditionalClaims = claims,
-                }.Build();
-
-                return Results.Ok(new { auth_token = authToken, expires_in = 3600 });
+                mintParts = await EvaluateDocumentAsync(context, options, r3DocumentClaims, resourceIssuer, context.RequestAborted);
             }
             catch (Exception ex) when (ex is R3HashMismatchException or InvalidOperationException or HttpRequestException or TaskCanceledException)
             {
                 return Results.Json(new { error = "r3_evaluation_failed", detail = ex.Message }, statusCode: StatusCodes.Status400BadRequest);
             }
+
+            var claims = R3AuthClaims.AuthToken(
+                mintParts.Uri,
+                mintParts.S256,
+                mintParts.Granted,
+                mintParts.Conditional);
+
+            var authToken = new AuthTokenBuilder
+            {
+                Issuer = issuer,
+                Audience = resourceIssuer,
+                Agent = agentId,
+                AgentConfirmationKey = agentConfirmationKey,
+                Key = signingKey,
+                KeyId = signingKid,
+                Dwk = AuthTokenBuilder.AccessDwk,
+                Subject = options.Subject,
+                AdditionalClaims = claims,
+            }.Build();
+
+            await options.AuditSink.RecordTokenIssuanceAsync(new R3TokenIssuanceAuditRecord(
+                mintParts.Uri,
+                mintParts.S256,
+                agentId,
+                resourceIssuer,
+                issuer,
+                options.TimeProvider.GetUtcNow(),
+                mintParts.IssuanceKind), context.RequestAborted);
+
+            return Results.Ok(new { auth_token = authToken, expires_in = 3600 });
         });
 
         return app;
@@ -172,7 +182,8 @@ public static class R3AccessTokenEndpoint
                 r3.Uri,
                 r3.S256,
                 new R3Grant { Vocabulary = proposal.Vocabulary, Operations = proposal.Operations },
-                null);
+                null,
+                R3TokenIssuanceKind.Proposal);
         }
 
         var document = R3Document.FromUtf8Bytes(bytes);
@@ -193,7 +204,8 @@ public static class R3AccessTokenEndpoint
             r3.Uri,
             r3.S256,
             new R3Grant { Vocabulary = document.Vocabulary, Operations = granted },
-            conditional.Count == 0 ? null : new R3Grant { Vocabulary = document.Vocabulary, Operations = conditional });
+            conditional.Count == 0 ? null : new R3Grant { Vocabulary = document.Vocabulary, Operations = conditional },
+            R3TokenIssuanceKind.Class);
     }
 
     private static async Task<byte[]> FetchAsync(
@@ -221,7 +233,12 @@ public static class R3AccessTokenEndpoint
     private static T GetServiceOrDefault<T>(HttpContext context, T fallback) where T : class =>
         context.RequestServices.GetService<T>() ?? fallback;
 
-    private sealed record AuthMintParts(string Uri, string S256, R3Grant Granted, R3Grant? Conditional);
+    private sealed record AuthMintParts(
+        string Uri,
+        string S256,
+        R3Grant Granted,
+        R3Grant? Conditional,
+        R3TokenIssuanceKind IssuanceKind);
 
     private static bool IsProposal(byte[] bytes)
     {
@@ -239,6 +256,13 @@ public sealed class R3AccessTokenEndpointOptions
     public IReadOnlyCollection<string>? TrustedPersonServers { get; init; }
     public ISet<string> ConditionalTools { get; init; } = new HashSet<string>(StringComparer.Ordinal);
     public Func<HttpContext, string, string, string, CancellationToken, Task<byte[]>>? FetchAndVerifyAsync { get; init; }
+    /// <summary>
+    /// AS-side R3 token issuance audit sink. Defaults to no-op for sample ergonomics;
+    /// production AS deployments should configure a durable sink. If the configured
+    /// sink throws, token issuance is not returned to the caller.
+    /// </summary>
+    public IR3AuditSink AuditSink { get; init; } = R3NoOpAuditSink.Instance;
+    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
     internal void Validate()
     {
@@ -257,6 +281,14 @@ public sealed class R3AccessTokenEndpointOptions
         if (string.IsNullOrWhiteSpace(Subject))
         {
             throw new InvalidOperationException("Subject must be set.");
+        }
+        if (AuditSink is null)
+        {
+            throw new InvalidOperationException("AuditSink must be set.");
+        }
+        if (TimeProvider is null)
+        {
+            throw new InvalidOperationException("TimeProvider must be set.");
         }
     }
 
