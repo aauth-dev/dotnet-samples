@@ -10,10 +10,11 @@
         <strong>Aria</strong> is the AI travel assistant used throughout these demos. Like any
         agent, Aria has to <em>prove who it is</em> and <em>get your permission</em> before it
         touches anything that belongs to you — and AAuth is the protocol that lets it do so
-        safely. Each page below follows Aria as it works on your behalf across the four
+        safely. Each page below follows Aria as it works on your behalf across the five
         <strong>Aria</strong> resource servers — <strong>Profile</strong> (your preferences),
         <strong>Calendar</strong> (when you're free), <strong>Trips</strong> (browsing and
-        booking), and <strong>Wallet</strong> (paying).
+        booking), <strong>Wallet</strong> (paying), and <strong>Bookings</strong>
+        (rich trip booking requests).
     </p>
     <p class="mb-0 text-muted">
         This <strong>Sample App</strong> is the “golden example”: each page is a small,
@@ -181,6 +182,27 @@
     <div class="col">
         <div class="card h-100">
             <div class="card-body">
+                <h5 class="card-title">🧾 Rich Trip Booking (R3)</h5>
+                <p class="card-text">
+                    Experimental Rich Resource Requests flow. Aria asks Bookings for
+                    <code>search_trip_options</code>, <code>hold_itinerary</code>, and a
+                    conditional <code>book_trip</code>; the PS/AS fetch and verify R3
+                    documents before you approve the initial consent and concrete proposal.
+                </p>
+                <span class="badge bg-dark">4-party</span>
+                <span class="badge bg-secondary">R3</span>
+                <span class="badge bg-info text-dark">conditional</span>
+                <span class="badge bg-warning text-dark">experimental</span>
+            </div>
+            <div class="card-footer">
+                <a href="rich-request" class="btn btn-outline-primary btn-sm">Open demo →</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col">
+        <div class="card h-100">
+            <div class="card-body">
                 <h5 class="card-title">🎯 Mission — PS-Governed Agent</h5>
                 <p class="card-text">
                     A human-approved <strong>mission</strong> lets the Person Server govern
@@ -224,9 +246,11 @@
 <pre><code>make demo</code></pre>
 <p>
     This starts the Agent Provider (<code>:5301</code>), Person Server
-    (<code>:5100</code> with consent required), the four Aria resource servers
+    (<code>:5100</code> with consent required), the five Aria resource servers
     (Profile <code>:5000</code>, Calendar <code>:5001</code>, Trips
-    <code>:5002</code>, Wallet <code>:5003</code>), Concierge
-    (<code>:5200</code>), and the stub Access Server (<code>:5500</code>),
+    <code>:5002</code>, Wallet <code>:5003</code>, Bookings
+    <code>:5004</code>), Concierge
+    (<code>:5200</code>), the stub Access Server (<code>:5500</code>),
+    and the dedicated R3 Access Server (<code>:5501</code>),
     then opens this app at <code>:5240</code> and the GuidedTour at <code>:5400</code>.
 </p>

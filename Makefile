@@ -149,6 +149,8 @@ live: ## Run LiveWhoAmITest against whoami.aauth.dev (needs cloudflared + networ
 
 demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. four-party federated, stub AS — no Docker)
 	@echo "Starting demo (all flows including call-chain + four-party federated, stub AS)..."
+	@echo "Building services (once) before launch..."
+	@$(DOTNET) build $(SOLUTION) -v q
 	@echo ""
 	@echo "------------------------------------------------------------------"
 	@echo " Backend services:"
@@ -168,8 +170,6 @@ demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. f
 	@echo "   SampleApp:          $(SAMPLE_URL)         (minimal app: /federated, /deferred, /callchain)"
 	@echo "------------------------------------------------------------------"
 	@echo ""
-	@echo "Building services (once) before launch..."
-	@$(DOTNET) build $(SOLUTION) -v q
 	@trap 'trap - INT TERM; echo; echo "Stopping..."; kill 0' INT TERM; \
 	MockPersonServer__RequireConsent=true MockPersonServer__TrustedAccessServers__1=$(R3_AS_URL) $(DOTNET) run --no-build --project $(PS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(PROFILE_PROJECT) & \

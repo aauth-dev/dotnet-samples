@@ -1,7 +1,7 @@
 # Samples
 
-Thirteen sample applications demonstrating AAuth flows end-to-end. The four Aria
-resource servers (Profile, Calendar, Trips, Wallet) live under
+Fourteen sample applications demonstrating AAuth flows end-to-end. The five Aria
+resource servers (Profile, Calendar, Trips, Wallet, Bookings) live under
 [MockResourceServers/](MockResourceServers/).
 
 | Sample | Port | Description |
@@ -10,13 +10,14 @@ resource servers (Profile, Calendar, Trips, Wallet) live under
 | [Calendar](MockResourceServers/Calendar/) | 5001 | PS-Asserted (three-party) resource server — `/events` (`calendar.read`), `/events/write` (`calendar.write`), `/events/admin` (role `calendar.owner`) |
 | [Trips](MockResourceServers/Trips/) | 5002 | Mission-aware resource server — `/trips` (`trips.read`), `/trips/book` (`trips.book`) |
 | [Wallet](MockResourceServers/Wallet/) | 5003 | Federated (four-party) resource server — `/wallet` (`wallet.read`), `/wallet/charge` (`wallet.charge`) |
+| Bookings | 5004 | Experimental Rich Resource Requests (R3) resource server — trip search, hold, and conditional booking proposal |
 | [Concierge](Concierge/) | 5200 | Intermediate service — call chaining with nested `act` delegation |
 | [MissionAgent](MissionAgent/) | — | CLI agent — drives the optional, orthogonal **agent governance** layer: proposes a mission, asks per-action permission, records audit, and relays interactions through a PS (§Agent Governance) |
 | [MockPersonServer](MockPersonServer/) | 5100 | Reference Person Server — verifies exchanges, mints auth tokens, federates to an Access Server. **Sample only — not part of the AAuth SDK.** |
 | [MockAgentProvider](MockAgentProvider/) | 5301 | Reference Agent Provider — issues agent tokens, hosts JWKS. **Sample only — not part of the AAuth SDK.** |
 | [MockAccessServer](MockAccessServer/) | 5500 | Reference Access Server — the fourth party in federated access; evaluates policy (stub or Keycloak) and mints `aa-auth+jwt` (`dwk=aauth-access.json`). **Sample only — not part of the AAuth SDK.** |
 | [GuidedTour](GuidedTour/) | 5400 | Blazor walk-through — visualises every AAuth flow step by step, including the four-party federated flow |
-| [SampleApp](SampleApp/) | 5240 | Golden example — one page per signing mode (hwk, jwks_uri, jkt-jwt, jwt, call chain, federated four-party) |
+| [SampleApp](SampleApp/) | 5240 | Golden example — one page per signing mode plus call chain, federated four-party, and experimental R3 rich trip booking |
 | [AgentConsole](AgentConsole/) | — | CLI agent — signs requests, handles challenges, exchanges with a PS |
 | [LiveWhoAmITest](LiveWhoAmITest/) | 5199 | Live interop test against `whoami.aauth.dev` + `person.hello.coop` — exercises all 3 protocol modes over a public tunnel |
 
@@ -28,7 +29,7 @@ The fastest way to run all samples together:
 make demo
 ```
 
-This starts Profile + Calendar + Trips + Wallet + Concierge + MockPersonServer + MockAgentProvider + MockAccessServer (stub) + GuidedTour + SampleApp in parallel, prints their URLs, and tears them down on `Ctrl+C`. Then open the **GuidedTour** at <http://localhost:5400> and click **Run all**, or the **SampleApp** at <http://localhost:5240>.
+This starts Profile + Calendar + Trips + Wallet + Bookings + Concierge + MockPersonServer + MockAgentProvider + MockAccessServer (stub + dedicated R3 AS) + GuidedTour + SampleApp in parallel, prints their URLs, and tears them down on `Ctrl+C`. Then open the **GuidedTour** at <http://localhost:5400> and click **Run all**, or the **SampleApp** at <http://localhost:5240>.
 
 For the **four-party (federated)** flow with an Access Server, `make demo` already
 includes a stub Access Server (no Docker). For the live Keycloak policy engine,
@@ -222,7 +223,7 @@ Requires the resource servers (Profile, Calendar, Trips, Wallet), MockPersonServ
 dotnet run --project samples/SampleApp
 ```
 
-Simple Blazor app showing each signing mode as a separate page. Open <http://localhost:5240>. Requires the resource servers (Profile, Calendar, Trips, Wallet), MockPersonServer, and Concierge running. MockAgentProvider is needed only for the JWKS-URI enrollment page.
+Simple Blazor app showing each signing mode as a separate page. Open <http://localhost:5240>. Requires the resource servers (Profile, Calendar, Trips, Wallet, Bookings), MockPersonServer, Concierge, and the dedicated R3 Access Server on `:5501` for the Rich Trip Booking page. MockAgentProvider is needed only for the JWKS-URI enrollment page.
 
 ### LiveWhoAmITest
 

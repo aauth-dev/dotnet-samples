@@ -1,0 +1,494 @@
+@page "/rich-request"
+@using System.Net
+@using System.Net.Http.Json
+@using System.Text
+@using System.Text.Json
+@using System.Text.Json.Nodes
+@using AAuth
+@using AAuth.Agent
+@using AAuth.Discovery
+@using AAuth.R3
+@using AAuth.R3.Model
+@inject IJSRuntime JS
+@rendermode InteractiveServer
+
+<PageTitle>Rich Requests (R3) — Trip Booking</PageTitle>
+
+<h2>Rich Requests (R3) — Trip Booking</h2>
+
+<details class="alert alert-primary aria-narrative" open>
+    <summary>📖 What Aria is trying to do</summary>
+    Aria wants to search Seattle trip options, hold itinerary
+    <strong>SEA-2026-09-18-A</strong>, and book it only after you approve the
+    concrete itinerary proposal.
+</details>
+
+<div class="alert alert-warning">
+    <strong>Experimental:</strong> Rich Resource Requests (R3) are implemented in the
+    preview <code>AAuth.R3</code> sample library. This page decodes JWT
+    <code>r3_*</code> claims and tokens for visibility, but the agent does
+    <strong>not</strong> fetch R3 documents directly; the Person Server and Access
+    Server are the trusted fetchers.
+</div>
+
+<p>
+    Copy-paste-oriented R3 flow: discover Bookings metadata, request
+    <code>r3_operations</code>, exchange through the Person Server, call the granted
+    operations, handle the conditional <code>book_trip</code> proposal, approve it,
+    and retry with <code>approved_proposal_s256</code>.
+</p>
+
+<div class="row">
+<div class="col-md-6">
+<h5>Agent Code</h5>
+<pre><code class="language-csharp">var operations = R3Request.CreateMcpOperations(
+    "search_trip_options", "hold_itinerary", "book_trip");
+
+using var agent = AAuthClientBuilder.SelfIssuing(key)
+    .As(issuer, agentId)
+    .WithKid(keyId)
+    .WithPersonServer(personServer)
+    .Build();
+
+var resource = await R3Request.PostAuthorizeAsync(
+    agent, authorizationEndpoint, operations);
+var resourceToken = R3Request.ReadChallenge(resource)!.ResourceToken;
+
+var exchange = new TokenExchangeClient(
+    agent, new MetadataClient(new HttpClient()));
+var authToken = await exchange.ExchangeAsync(
+    personServer,
+    resourceToken,
+    new TokenExchangeRequest
+    {
+        OnInteractionRequired = async (interaction, ct) =>
+        {
+            var url = interaction.BuildUserUrl();
+            // Surface URL to user; PS renders the R3 display.
+        },
+        Prompt = "consent",
+    });</code></pre>
+</div>
+<div class="col-md-6">
+<h5>Booking Parameters</h5>
+<pre><code class="language-json">@Pretty(BookingParameters())</code></pre>
+</div>
+</div>
+
+<div class="alert alert-info">
+    Self-issued agent identity. Key ID: <code>@_identity.KeyId</code>
+    &mdash; Bookings: <code>@_bookings</code>
+    &mdash; R3 AS: <code>@_r3AccessServer</code>
+</div>
+
+@if (!_loading && _finalJson is null)
+{
+    <button class="btn btn-primary" @onclick="RunFlow" disabled="@_loading">
+        Run Rich Trip Booking
+    </button>
+}
+
+@if (_loading)
+{
+    <div class="mt-3 alert alert-secondary">
+        <strong>@_phase</strong>
+        @if (!_waitingForApproval)
+        {
+            <span class="spinner-border spinner-border-sm ms-2" role="status"></span>
+        }
+    </div>
+}
+
+@if (_waitingForApproval)
+{
+    <div class="mt-3 alert alert-warning">
+        <h5>@_approvalTitle</h5>
+        <p>@_approvalDescription</p>
+        <p>
+            <strong>Interaction URL:</strong><br />
+            <a href="@_interactionUrl" target="_blank" rel="noopener">Open interaction link</a>
+        </p>
+        <p class="text-muted">
+            Approve in the new tab. The SDK is polling the pending endpoint&hellip;
+            <span class="spinner-border spinner-border-sm" role="status"></span>
+            (@_pollCount polls)
+        </p>
+    </div>
+}
+
+@if (_steps.Count > 0)
+{
+    <div class="mt-3">
+        <h5>Flow Output</h5>
+        @foreach (var step in _steps)
+        {
+            <details class="mb-2" open="@step.Open">
+                <summary><strong>@step.Title</strong> <span class="text-muted">@step.Status</span></summary>
+                @if (!string.IsNullOrWhiteSpace(step.Body))
+                {
+                    <pre><code class="language-json">@step.Body</code></pre>
+                }
+                @if (!string.IsNullOrWhiteSpace(step.Claims))
+                {
+                    <pre><code>@step.Claims</code></pre>
+                }
+            </details>
+        }
+    </div>
+}
+
+@if (_finalJson is not null)
+{
+    <div class="mt-3">
+        <h5>Final Response</h5>
+        <div class="alert @(_success ? "alert-success" : "alert-warning")">
+            <strong>@_statusCode</strong>
+        </div>
+        <pre><code class="language-json">@_finalJson</code></pre>
+    </div>
+}
+
+@if (_error is not null)
+{
+    <div class="mt-3 alert alert-danger">@_error</div>
+}
+
+@code {
+    [Inject] private SelfIssuedIdentity _identity { get; set; } = default!;
+    [Inject] private IConfiguration Config { get; set; } = default!;
+
+    private readonly List<FlowStep> _steps = new();
+    private bool _loading;
+    private bool _waitingForApproval;
+    private bool _success;
+    private string? _interactionUrl;
+    private string? _approvalTitle;
+    private string? _approvalDescription;
+    private string? _phase;
+    private string? _statusCode;
+    private string? _finalJson;
+    private string? _error;
+    private int _pollCount;
+    private string _bookings = "";
+    private string _r3AccessServer = "";
+
+    protected override void OnInitialized()
+    {
+        _bookings = Config["AAuth:Bookings"] ?? "http://localhost:5004";
+        _r3AccessServer = Config["AAuth:RichRequestAccessServer"] ?? "http://localhost:5501";
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await JS.InvokeVoidAsync("highlightCode");
+    }
+
+    private async Task RunFlow()
+    {
+        _loading = true;
+        _waitingForApproval = false;
+        _interactionUrl = null;
+        _finalJson = null;
+        _statusCode = null;
+        _error = null;
+        _success = false;
+        _pollCount = 0;
+        _steps.Clear();
+
+        try
+        {
+            var personServer = Config["AAuth:PersonServer"]!;
+            var bookings = _bookings.TrimEnd('/');
+
+            SetPhase("Discovering Bookings metadata");
+            using var unsigned = new HttpClient();
+            var metadataResponse = await unsigned.GetAsync($"{bookings}/.well-known/aauth-resource.json");
+            var metadataRaw = await metadataResponse.Content.ReadAsStringAsync();
+            metadataResponse.EnsureSuccessStatusCode();
+            var metadata = JsonNode.Parse(metadataRaw) as JsonObject;
+            var authorizationEndpoint = (string?)metadata?["authorization_endpoint"] ?? $"{bookings}/authorize";
+            AddStep(
+                "1. Discover Bookings metadata",
+                $"{(int)metadataResponse.StatusCode} {metadataResponse.ReasonPhrase}",
+                Pretty(metadataRaw),
+                $"authorization_endpoint: {authorizationEndpoint}\nr3_vocabularies[{Vocabulary.Mcp}]: {metadata?["r3_vocabularies"]?[Vocabulary.Mcp]}");
+
+            using var agentClient = AAuthClientBuilder.SelfIssuing(_identity.Key)
+                .As(_identity.Issuer, _identity.AgentId)
+                .WithKid(_identity.KeyId)
+                .WithPersonServer(personServer)
+                .Build();
+
+            SetPhase("Requesting r3_operations from Bookings");
+            var operations = R3Request.CreateMcpOperations("search_trip_options", "hold_itinerary", "book_trip");
+            using var authorizeResponse = await R3Request.PostAuthorizeAsync(agentClient, authorizationEndpoint, operations);
+            var authorizeRaw = await authorizeResponse.Content.ReadAsStringAsync();
+            var resourceToken = ReadResourceToken(authorizeResponse, authorizeRaw)
+                ?? throw new InvalidOperationException("Bookings did not return a resource_token.");
+            var resourceClaims = DescribeR3ResourceToken(resourceToken);
+            AddStep(
+                "2. POST r3_operations → resource token",
+                $"{(int)authorizeResponse.StatusCode} {authorizeResponse.ReasonPhrase}",
+                Pretty(new JsonObject
+                {
+                    ["request"] = R3Request.CreateBody(operations),
+                    ["response"] = TryJson(authorizeRaw),
+                }),
+                resourceClaims);
+
+            SetPhase("Exchanging initial R3 resource token through the Person Server");
+            var exchange = new TokenExchangeClient(agentClient, new MetadataClient(new HttpClient()));
+            var authToken = await exchange.ExchangeAsync(personServer, resourceToken, ExchangeOptions(
+                "Initial R3 consent required",
+                "The Person Server renders the R3 document display for search, hold, and conditional book." ));
+            AddStep(
+                "3. PS exchange → R3 auth token",
+                "200 OK",
+                Pretty(new JsonObject { ["auth_token"] = authToken }),
+                DescribeR3AuthToken(authToken));
+
+            SetPhase("Calling granted Bookings operations");
+            var search = await SendBookingOperationAsync("search_trip_options", authToken, new JsonObject
+            {
+                ["destination"] = "Seattle",
+                ["depart_after"] = "2026-09-18",
+                ["return_before"] = "2026-09-21",
+            });
+            var hold = await SendBookingOperationAsync("hold_itinerary", authToken, new JsonObject
+            {
+                ["itinerary_id"] = "SEA-2026-09-18-A",
+            });
+            AddStep(
+                "4. Granted operations → 200",
+                $"{search.StatusCode}; {hold.StatusCode}",
+                Pretty(new JsonObject
+                {
+                    ["search_trip_options"] = TryJson(search.Body),
+                    ["hold_itinerary"] = TryJson(hold.Body),
+                }));
+
+            SetPhase("Calling conditional book_trip to get a per-call proposal");
+            var proposal = await SendBookingOperationAsync("book_trip", authToken, new JsonObject
+            {
+                ["parameters"] = BookingParameters(),
+            });
+            var proposalJson = JsonNode.Parse(proposal.Body) as JsonObject;
+            var proposalS256 = (string?)proposalJson?["r3_s256"]
+                ?? throw new InvalidOperationException("Proposal response did not include r3_s256.");
+            var proposalToken = proposal.ChallengeResourceToken
+                ?? throw new InvalidOperationException("Proposal response did not include an R3 resource token.");
+            AddStep(
+                "5. book_trip → per-call proposal",
+                proposal.StatusCode,
+                Pretty(proposal.Body),
+                DescribeR3ResourceToken(proposalToken));
+
+            SetPhase("Exchanging proposal resource token through the Person Server");
+            var perCallAuthToken = await exchange.ExchangeAsync(personServer, proposalToken, ExchangeOptions(
+                "Per-call proposal approval required",
+                "The Person Server renders the concrete Seattle itinerary, price, and cancellation policy." ));
+            AddStep(
+                "6. Proposal exchange → per-call auth token",
+                "200 OK",
+                Pretty(new JsonObject { ["auth_token"] = perCallAuthToken }),
+                DescribeR3AuthToken(perCallAuthToken));
+
+            SetPhase("Retrying book_trip with approved_proposal_s256");
+            var final = await SendBookingOperationAsync("book_trip", perCallAuthToken, new JsonObject
+            {
+                ["parameters"] = BookingParameters(),
+                ["approved_proposal_s256"] = proposalS256,
+            });
+
+            _statusCode = final.StatusCode;
+            _success = final.IsSuccessStatusCode;
+            _finalJson = Pretty(new JsonObject
+            {
+                ["final_book_trip"] = TryJson(final.Body),
+                ["approved_proposal_s256"] = proposalS256,
+                ["initial_r3_claims"] = DescribeR3AuthToken(authToken),
+                ["proposal_r3_claims"] = DescribeR3AuthToken(perCallAuthToken),
+            });
+        }
+        catch (AAuthInteractionDeniedException)
+        {
+            _error = "The user denied the R3 consent request.";
+        }
+        catch (AAuthInteractionTimeoutException)
+        {
+            _error = "Timed out waiting for R3 consent approval.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _waitingForApproval = false;
+            _loading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private TokenExchangeRequest ExchangeOptions(string title, string description) => new()
+    {
+        Prompt = "consent",
+        OnInteractionRequired = async (interaction, ct) =>
+        {
+            _approvalTitle = title;
+            _approvalDescription = description;
+            _interactionUrl = interaction.BuildUserUrl();
+            _waitingForApproval = true;
+            _pollCount = 0;
+            await InvokeAsync(StateHasChanged);
+        },
+        PollerOptions = new DeferredPollerOptions
+        {
+            MaxTotalWait = TimeSpan.FromMinutes(2),
+            DefaultPollInterval = TimeSpan.FromSeconds(1),
+            OnPoll = _ =>
+            {
+                _pollCount++;
+                InvokeAsync(StateHasChanged);
+            },
+        },
+    };
+
+    private async Task<OperationResult> SendBookingOperationAsync(string tool, string authToken, JsonObject body)
+    {
+        var candidates = new[]
+        {
+            $"{_bookings.TrimEnd('/')}/operations/{tool}",
+            $"{_bookings.TrimEnd('/')}/mcp/{tool}",
+            $"{_bookings.TrimEnd('/')}/{tool}",
+        };
+
+        foreach (var url in candidates)
+        {
+            using var client = new AAuthClientBuilder(_identity.Key)
+                .UseJwt(authToken)
+                .Build();
+            using var response = await client.PostAsJsonAsync(url, body);
+            var raw = await response.Content.ReadAsStringAsync();
+            var challengeToken = R3Request.ReadChallenge(response)?.ResourceToken;
+            if (response.StatusCode != HttpStatusCode.NotFound)
+            {
+                return new OperationResult(
+                    $"{(int)response.StatusCode} {response.ReasonPhrase}",
+                    response.IsSuccessStatusCode,
+                    raw,
+                    challengeToken);
+            }
+        }
+
+        throw new InvalidOperationException($"Bookings did not expose an endpoint for {tool}.");
+    }
+
+    private static string? ReadResourceToken(HttpResponseMessage response, string body)
+    {
+        var challenge = R3Request.ReadChallenge(response);
+        if (challenge is not null)
+        {
+            return challenge.ResourceToken;
+        }
+
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return null;
+        }
+
+        var json = JsonNode.Parse(body) as JsonObject;
+        return (string?)json?["resource_token"] ?? (string?)json?["resourceToken"];
+    }
+
+    private static JsonObject BookingParameters() => new()
+    {
+        ["itinerary_id"] = "SEA-2026-09-18-A",
+        ["destination"] = "Seattle",
+        ["depart"] = "2026-09-18",
+        ["return"] = "2026-09-21",
+        ["total_usd"] = 842.50,
+        ["cancellation_policy"] = "Refundable within 24 hours; then airline/hotel penalties may apply.",
+    };
+
+    private void SetPhase(string phase)
+    {
+        _phase = phase;
+        _waitingForApproval = false;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void AddStep(string title, string status, string? body = null, string? claims = null)
+    {
+        _steps.Add(new FlowStep(title, status, body, claims, _steps.Count == 0));
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private static string DescribeR3ResourceToken(string jwt)
+    {
+        var payload = JwtPayloadObject(jwt);
+        if (payload is null) return "(resource token unavailable)";
+        var document = R3ClaimReader.ReadResourceDocument(payload);
+        return
+            $"aud:     {(string?)payload["aud"]}\n" +
+            $"r3_uri:  {document?.Uri}\n" +
+            $"r3_s256: {document?.S256}";
+    }
+
+    private static string DescribeR3AuthToken(string jwt)
+    {
+        var payload = JwtPayloadObject(jwt);
+        if (payload is null) return "(auth token unavailable)";
+        var claims = R3ClaimReader.ReadAuthToken(payload);
+        var granted = string.Join(", ", claims.Granted.Operations.Select(o => o.Tool));
+        var conditional = claims.Conditional is null
+            ? "(none)"
+            : string.Join(", ", claims.Conditional.Operations.Select(o => o.Tool));
+        return
+            $"r3_uri:         {claims.Uri}\n" +
+            $"r3_s256:        {claims.S256}\n" +
+            $"r3_granted:     {granted}\n" +
+            $"r3_conditional: {conditional}";
+    }
+
+    private static JsonObject? JwtPayloadObject(string jwt)
+    {
+        var parts = jwt.Split('.');
+        if (parts.Length < 2) return null;
+        var base64 = parts[1].Replace('-', '+').Replace('_', '/');
+        base64 = base64.PadRight(base64.Length + ((4 - base64.Length % 4) % 4), '=');
+        var json = Encoding.UTF8.GetString(Convert.FromBase64String(base64));
+        return JsonNode.Parse(json) as JsonObject;
+    }
+
+    private static JsonNode? TryJson(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        try { return JsonNode.Parse(raw); }
+        catch (JsonException) { return raw; }
+    }
+
+    private static string Pretty(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return raw;
+        try { return Pretty(JsonNode.Parse(raw)); }
+        catch (JsonException) { return raw; }
+    }
+
+    private static string Pretty(JsonNode? node) =>
+        node?.ToJsonString(JsonOptions) ?? "";
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    private sealed record FlowStep(string Title, string Status, string? Body, string? Claims, bool Open);
+
+    private sealed record OperationResult(
+        string StatusCode,
+        bool IsSuccessStatusCode,
+        string Body,
+        string? ChallengeResourceToken);
+}

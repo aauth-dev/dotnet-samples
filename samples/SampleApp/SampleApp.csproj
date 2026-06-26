@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AAuth\AAuth.csproj" />
+    <ProjectReference Include="..\AAuth.R3\AAuth.R3.csproj" />
   </ItemGroup>
 
 </Project>

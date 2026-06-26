@@ -496,3 +496,131 @@ the AS → AS grants search + hold, marks book conditional → granted 200
 | Reusing the Wallet for R3 | Superseded 2026-06-23 by a dedicated new `Bookings` server |
 | Mission-aware R3 on Bookings | Kept simple by request; Bookings reuses nothing from Trips/missions |
 | SDK-owned trusted-fetcher allowlist | Resource-owned by Decision 3; the `AAuth.R3` library only verifies signatures |
+
+---
+
+## Amendment 2026-06-26: SampleApp R3 Support
+
+Scenario 10 now exists in GuidedTour, but `samples/SampleApp` still stops at the
+pre-R3 flows. Add a SampleApp page for the same Rich Trip Booking scenario so the
+SampleApp remains the copy-paste-oriented companion to GuidedTour.
+
+### Phase 3.1: SampleApp dependency and configuration
+
+**Goal:** Make SampleApp able to call the R3 helper library and target the live
+Bookings stack without changing `src/AAuth`.
+
+| File | Action |
+|------|--------|
+| `samples/SampleApp/SampleApp.csproj` | **Modify**: add a project reference to `samples/AAuth.R3/AAuth.R3.csproj` alongside the existing `src/AAuth` reference |
+| `samples/SampleApp/appsettings.json` | **Modify**: add `AAuth:Bookings` (`http://localhost:5004`) and `AAuth:RichRequestAccessServer` (`http://localhost:5501`) |
+| `samples/SampleApp/appsettings.Development.json` | **Modify if needed**: mirror any local overrides used by the SampleApp pages |
+
+#### Implementation Decisions
+
+- Keep R3 out of `src/AAuth`. SampleApp consumes `AAuth.R3` exactly like
+  GuidedTour and the mock servers do.
+- Reuse the existing self-issued SampleApp identity. Do not add enrollment or a
+  new AP dependency for this page.
+- Treat Bookings as the fifth Aria resource server in SampleApp copy and
+  prerequisites.
+
+#### Definition of Done
+
+- [x] SampleApp builds with the new `AAuth.R3` reference.
+- [x] Configuration exposes Bookings and the dedicated R3 AS without changing the
+      existing Wallet AS (`:5500`) behavior.
+- [x] `src/AAuth` shows no diff.
+
+### Phase 3.2: Rich Trip Booking page
+
+**Goal:** Add a standalone interactive SampleApp page that demonstrates R3 as
+copy-pasteable application code, not as a narrated stepper.
+
+| File | Action |
+|------|--------|
+| `samples/SampleApp/Components/Pages/RichRequest.razor` | **New**: page at `/rich-request`; uses `AAuth.R3.R3Request` and `R3ClaimReader`; discovers Bookings metadata; posts `r3_operations` for `search_trip_options`, `hold_itinerary`, and `book_trip`; exchanges the returned resource token through the PS; calls granted operations; handles the `book_trip` per-call proposal; exchanges the proposal token; retries with `approved_proposal_s256`; renders request/response JSON and decoded `r3_*` claims |
+| `samples/SampleApp/Components/Layout/NavMenu.razor` | **Modify**: add a `Rich Requests (R3)` navigation item |
+| `samples/SampleApp/Components/Pages/Home.razor` | **Modify**: add a Rich Trip Booking card, update the Aria server list to include Bookings, and update prerequisites to mention Bookings `:5004` plus the dedicated R3 AS `:5501` |
+
+#### Implementation Decisions
+
+- Mirror GuidedTour's proven operation sequence, but present it as concise sample
+  code and live output: discover metadata, authorize `r3_operations`, PS exchange,
+  granted calls, conditional proposal, per-call exchange, digest-matched retry.
+- Keep the agent opaque to R3 documents. The page may decode and display JWT
+  `r3_uri`, `r3_s256`, `r3_granted`, and `r3_conditional`, but it must not fetch
+  the R3 document directly. The PS and AS remain the trusted fetchers.
+- Use the same concrete booking parameters as GuidedTour so server behavior and
+  e2e expectations stay aligned:
+  `SEA-2026-09-18-A`, Seattle, `2026-09-18` to `2026-09-21`, `842.50`, and the
+  existing cancellation policy text.
+- Use the existing `AAuthClientBuilder.SelfIssuing(...)` challenge callback style
+  from the Deferred/Federated pages so the PS-rendered initial R3 consent and the
+  per-call proposal consent are surfaced as user-openable interaction links.
+- Do not add a new reusable abstraction until duplication with GuidedTour or other
+  pages becomes material. This page is a sample first.
+
+#### Definition of Done
+
+- [x] `/rich-request` completes the initial R3 exchange and displays an auth token
+      containing `r3_uri`, `r3_s256`, `r3_granted`, and `r3_conditional`.
+- [x] `search_trip_options` and `hold_itinerary` return `200` from the initial
+      auth token.
+- [x] `book_trip` first returns a per-call proposal with proposal `r3_uri` and
+      `r3_s256`, then returns final `200` only after approval and retry with the
+      same parameters plus `approved_proposal_s256`.
+- [x] The page text carries the experimental R3 status and makes clear that the
+      R3 document is fetched by the PS/AS, not by the agent.
+- [x] Existing SampleApp pages continue to run unchanged.
+
+### Phase 3.3: SampleApp tests and demo wiring
+
+**Goal:** Cover the new page in the same browser-test style as the existing
+SampleApp flows and make sure `make demo` starts all services it needs.
+
+| File | Action |
+|------|--------|
+| `samples/SampleApp/playwright-tests/rich-request.spec.ts` | **New**: drive `/rich-request`, approve the initial PS-rendered R3 consent, approve the per-call proposal consent, assert final `200`, and assert the visible `r3_*` claims / proposal digest |
+| `samples/SampleApp/playwright-tests/home.spec.ts` | **Modify**: include the Rich Trip Booking card and Bookings prerequisite text |
+| `tests/e2e/helpers/agents.ts` and related helpers | **Modify if needed**: expose Bookings and the dedicated R3 AS URLs for SampleApp tests |
+| `Makefile` | **Modify if needed**: ensure the standard `make demo` path used by SampleApp starts Bookings `:5004` and the dedicated R3 AS `:5501`; otherwise document that the R3 page requires `make demo-tour-r3` or the equivalent R3 stack |
+| `samples/README.md` or `samples/SampleApp/README.md` | **Modify if present/needed**: mention the new R3 SampleApp page and prerequisites |
+
+#### Implementation Decisions
+
+- Prefer one focused browser test over broad visual coverage. The risk is protocol
+  wiring, not layout.
+- Reuse the shared consent helper for both interaction links. The test should prove
+  that there are two approvals: initial document consent and concrete
+  `book_trip` proposal consent.
+- The cheapest disconfirming check after implementation is:
+
+  ```bash
+  dotnet build samples/SampleApp/SampleApp.csproj
+  ```
+
+  The behavior check is:
+
+  ```bash
+  cd tests/e2e && npx playwright test --project=sample-app rich-request.spec.ts
+  ```
+
+#### Definition of Done
+
+- [x] `dotnet build samples/SampleApp/SampleApp.csproj` succeeds.
+- [x] `rich-request.spec.ts` passes against the live R3 stack.
+- [x] Home-page tests include the Rich Trip Booking card and Bookings/R3
+      prerequisites.
+- [x] `make demo` or the documented R3 demo command provides every service needed
+      by the SampleApp page.
+
+### Phase 3 exit criteria
+
+- [x] SampleApp has R3 support at `/rich-request` with navigation and home-page
+      entry points.
+- [x] The page demonstrates the same Rich Trip Booking behavior as GuidedTour
+      scenario 10, but in SampleApp's copy-paste-oriented style.
+- [x] Browser coverage proves both consent approvals and the final digest-matched
+      `book_trip` success.
+- [x] No core SDK changes; R3 remains in `samples/AAuth.R3`.

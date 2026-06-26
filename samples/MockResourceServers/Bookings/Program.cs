@@ -417,7 +417,7 @@ static JsonObject BuildJwks(string kid, AAuthKey key)
 async Task<IReadOnlyDictionary<string, R3Parameter>> ReadBookingParametersAsync(HttpContext ctx)
 {
     JsonObject body = [];
-    if (ctx.Request.ContentLength is > 0)
+    if (ctx.Request.ContentLength != 0)
     {
         try
         {
