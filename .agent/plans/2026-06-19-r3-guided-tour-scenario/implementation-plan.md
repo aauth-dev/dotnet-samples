@@ -439,6 +439,8 @@ the AS → AS grants search + hold, marks book conditional → granted 200
 | `samples/GuidedTour/GuidedTour.csproj` | **Modify** — reference `AAuth.R3` |
 | `samples/GuidedTour/TourSession.cs` | **Modify** — `IsRichRequestMode`, `TotalSteps`, `RichRequestPlan`, step methods, `RunNextAsync` dispatch |
 | `samples/GuidedTour/Components/Pages/Tour.razor` | **Modify** — picker option `10 · Rich Trip Booking (R3) …` + experimental blurb |
+| `samples/GuidedTour/Components/Pages/Home.razor` | **Modify** — overview card #10 (`tour?flow=RichRequest`) + introduce **Bookings** as the fifth service |
+| `samples/GuidedTour/wwwroot/app.css` | **Modify** — `.srv--bookings` service-badge accent |
 | `samples/GuidedTour/CodeSnippets.cs` | **Modify** — `AAuth.R3` preview-library snippets per step (make clear `src/AAuth` is unchanged) |
 | `samples/GuidedTour/appsettings.json` | **Modify** — Bookings/AS/PS URLs for the flow |
 
@@ -459,6 +461,7 @@ the AS → AS grants search + hold, marks book conditional → granted 200
 | `Makefile` | **Modify** — `demo-tour-r3` target (Bookings `:5004` + dedicated R3 AS `:5501` + PS `:5100` + GuidedTour); add Bookings to the run-all resource targets |
 | `samples/GuidedTour/playwright-tests/rich-request.spec.ts` | **New** — drive the flow to 200; assert claims + conditional retry |
 | `samples/GuidedTour/playwright-tests/picker.spec.ts` | **Modify** — option count 9 → 10 |
+| `samples/GuidedTour/playwright-tests/home.spec.ts` | **Modify** — overview `FLOWS` 9 → 10 (`RichRequest`); intro servers 4 → 5 (`Bookings`) |
 | `tests/e2e/helpers/` | **Modify** — `RichRequest` mode + any new URLs |
 | `docs/workflows/rich-resource-requests.md` | **New** — full walkthrough, experimental note |
 | `samples/GuidedTour/README.md` | **Modify** — add flow #10 to "What you'll see" |

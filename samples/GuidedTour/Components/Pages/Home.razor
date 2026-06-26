@@ -14,13 +14,14 @@
             <strong>Aria</strong> is the AI travel assistant used throughout these demos. Like any
             agent, Aria has to <em>prove who it is</em> and <em>get your permission</em> before it
             touches anything that belongs to you — and AAuth is the protocol that lets it do so
-            safely. Each flow below follows Aria as it works on your behalf across four services:
+            safely. Each flow below follows Aria as it works on your behalf across five services:
         </p>
         <ul class="intro__servers">
             <li><span class="srv srv--profile">Profile</span> your saved travel preferences (identity-based access)</li>
             <li><span class="srv srv--calendar">Calendar</span> when you're free (PS-asserted, three-party)</li>
             <li><span class="srv srv--trips">Trips</span> browsing and booking trips (mission-governed)</li>
             <li><span class="srv srv--wallet">Wallet</span> paying for a booking (federated, four-party)</li>
+            <li><span class="srv srv--bookings">Bookings</span> rich trip booking (experimental R3 requests)</li>
         </ul>
         <p class="intro__role">
             This Guided Tour runs each flow <strong>for real</strong> against live mock servers and
@@ -83,5 +84,8 @@
         new(9, "SubAgent", "Sub-Agents — Parent-Mediated Workers",
             "Aria spins up a short-lived worker with its own key + identity under one consent; the worker fetches a resource token, Aria mediates the exchange, and hands the worker-bound token back down to it.",
             new[] { "Parent + Sub-Agent + Resource + PS", "7 steps", "in-process" }),
+        new(10, "RichRequest", "Rich Trip Booking — R3 (experimental)",
+            "Aria searches, holds, and books a trip with Bookings using content-addressed Rich Resource Requests; search and hold are granted, while booking is conditional and needs a second per-call approval tied to the exact itinerary.",
+            new[] { "Agent + Bookings + PS + AS", "12 steps", "experimental R3" }),
     };
 }

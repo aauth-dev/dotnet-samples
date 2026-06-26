@@ -20,6 +20,7 @@ const FLOWS = [
   'Mission',
   'MissionCallChain',
   'SubAgent',
+  'RichRequest',
 ] as const;
 
 test('overview introduces Aria and indexes every flow', async ({ page }) => {
@@ -33,7 +34,7 @@ test('overview introduces Aria and indexes every flow', async ({ page }) => {
 
   // The four Aria servers are introduced.
   const servers = page.locator('.intro__servers .srv');
-  await expect(servers).toHaveText(['Profile', 'Calendar', 'Trips', 'Wallet']);
+  await expect(servers).toHaveText(['Profile', 'Calendar', 'Trips', 'Wallet', 'Bookings']);
 
   // One card per flow, each deep-linking into the tour.
   const cards = page.locator('.flow-card');
