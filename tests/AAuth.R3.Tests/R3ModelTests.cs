@@ -33,6 +33,35 @@ public class R3ModelTests
     }
 
     [Fact]
+    public void Display_IrreversibleSerializesAndRoundTripsAsString()
+    {
+        const string irreversible = "Submitting the booking may create cancellation fees.";
+        var doc = new R3Document
+        {
+            Version = "v02",
+            Vocabulary = Vocabulary.Mcp,
+            Operations = [new McpOperation { Tool = "book_trip" }],
+            Display = new R3Display
+            {
+                Summary = "Book trip",
+                Irreversible = irreversible,
+            },
+        };
+
+        var bytes = doc.ToUtf8Bytes();
+        using var json = JsonDocument.Parse(bytes);
+        var irreversibleJson = json.RootElement
+            .GetProperty("display")
+            .GetProperty("irreversible");
+        var roundTrip = R3Document.FromUtf8Bytes(bytes);
+
+        Assert.Equal(JsonValueKind.String, irreversibleJson.ValueKind);
+        Assert.Equal(irreversible, irreversibleJson.GetString());
+        Assert.Equal(irreversible, roundTrip.Display!.Irreversible);
+        Assert.Equal(bytes, roundTrip.ToUtf8Bytes());
+    }
+
+    [Fact]
     public void Proposal_RoundTripsParametersAndRequiresSingleOperationAndParameters()
     {
         var proposal = new R3ProposalDocument

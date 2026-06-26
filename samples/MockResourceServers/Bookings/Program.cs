@@ -111,6 +111,8 @@ app.MapPost("/authorize", async (HttpContext ctx, R3ProposalStore documents) =>
     {
         operations = body?["r3_operations"]?.Deserialize<R3Operations>(R3Json.Options)
             ?? throw new InvalidOperationException("missing r3_operations");
+        // Resource-token issuance is gated by the authoritative MCP tool set
+        // published from /mcp.
         ValidateRequestedOperations(operations);
     }
     catch (Exception ex) when (ex is JsonException or InvalidOperationException)
@@ -258,7 +260,9 @@ StoredR3Proposal StoreR3Document(R3ProposalStore store, IEnumerable<string> requ
             Summary = "Search and temporarily hold trip options. Booking a trip may charge your payment method.",
             Implications = "Search and hold are low risk; book_trip is conditional because it purchases a concrete itinerary.",
             DataAccessed = "Traveler itinerary preferences, availability, price, and cancellation terms.",
-            Irreversible = false,
+            Irreversible = ordered.Any(op => string.Equals(op.Tool, BookTrip, StringComparison.Ordinal))
+                ? "Calling book_trip may charge the payment method on file; cancellation and refundability depend on the selected itinerary policy."
+                : null,
         },
     };
     return store.AddBytes(doc.ToUtf8Bytes(), new Uri(resourceUrl), "/r3");
@@ -484,7 +488,7 @@ static R3Display BookingDisplay(IReadOnlyDictionary<string, R3Parameter> paramet
     Summary = $"Approve booking {ParameterString(parameters, "itinerary_id")} to {ParameterString(parameters, "destination")}",
     Implications = $"This will book travel for {ParameterString(parameters, "depart")} through {ParameterString(parameters, "return")} and may charge the payment method on file.",
     DataAccessed = "Selected itinerary, destination, travel dates, total price, and cancellation policy.",
-    Irreversible = false,
+    Irreversible = "Submitting this booking may charge the payment method on file; cancellation and refundability depend on the displayed policy.",
     Detail = $"Book itinerary `{ParameterString(parameters, "itinerary_id")}` to **{ParameterString(parameters, "destination")}** for **${ParameterNumber(parameters, "total_usd")}**. Cancellation policy: {ParameterString(parameters, "cancellation_policy")}",
 };
 

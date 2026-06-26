@@ -1520,7 +1520,7 @@ app.MapGet("/interaction", (string? code, PendingStore pending, MissionPendingSt
             + $"<div class=row><b>Summary:</b> <span>{System.Net.WebUtility.HtmlEncode(display.Summary ?? string.Empty)}</span></div>"
             + OptionalRow("Implications", display.Implications)
             + OptionalRow("Data", display.DataAccessed)
-            + (display.Irreversible is null ? string.Empty : $"<div class=row><b>Irreversible:</b> <span>{display.Irreversible.Value}</span></div>")
+            + OptionalRow("Irreversible", display.Irreversible)
             + (string.IsNullOrWhiteSpace(display.Detail) ? string.Empty : $"<div class=row><b>Detail:</b> <span class=detail>{System.Net.WebUtility.HtmlEncode(display.Detail)}</span></div>")
             + "</div>"
             + "<form method=post action=\"/interaction/approve\">"

@@ -86,5 +86,5 @@ public sealed record R3ConsentDisplay(
     string? Summary,
     string? Implications,
     string? DataAccessed,
-    bool? Irreversible,
+    string? Irreversible,
     string? Detail);

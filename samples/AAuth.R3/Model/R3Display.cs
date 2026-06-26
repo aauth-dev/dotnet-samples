@@ -19,7 +19,7 @@ public sealed record R3Display
 
     [JsonPropertyName("irreversible")]
     [JsonPropertyOrder(4)]
-    public bool? Irreversible { get; init; }
+    public string? Irreversible { get; init; }
 
     [JsonPropertyName("detail")]
     [JsonPropertyOrder(5)]

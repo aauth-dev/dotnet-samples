@@ -69,7 +69,7 @@ internal static class R3TestData
         Display = new R3Display
         {
             Summary = "Search and hold trip options; booking may charge payment.",
-            Irreversible = true,
+            Irreversible = "Booking a trip may charge the payment method on file.",
         },
     };
 }
