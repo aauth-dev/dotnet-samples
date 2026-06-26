@@ -117,7 +117,7 @@ full deep-dive spec model lives in the prior
 
 ### Definition of Done
 
-- [ ] `AAuth.R3` + `AAuth.R3.Tests` build 0/0; `src/AAuth` shows no diff.
+- [x] `AAuth.R3` + `AAuth.R3.Tests` build 0/0; `src/AAuth` shows no diff.
 
 ## Phase 1.1 — R3 hash primitive
 
@@ -133,9 +133,9 @@ no canonicalization).
 
 ### Definition of Done
 
-- [ ] `r3_s256` matches a pre-computed digest over **pinned exact payload bytes**
+- [x] `r3_s256` matches a pre-computed digest over **pinned exact payload bytes**
       (local fixtures — the draft publishes JSON examples but no expected digests).
-- [ ] Hashing operates on exact bytes (round-trip through serialize→hash→serve is
+- [x] Hashing operates on exact bytes (round-trip through serialize→hash→serve is
       byte-identical); a byte-different-but-similar payload or a tampered digest is
       detected (negative test).
 
@@ -167,9 +167,9 @@ no canonicalization).
 
 ### Definition of Done
 
-- [ ] Models round-trip JSON for the MCP vocabulary, byte-stable for hashing.
-- [ ] `display.summary` required when `display` present; validation enforced.
-- [ ] `R3ProposalDocument` round-trips (`parameters` incl. digest objects,
+- [x] Models round-trip JSON for the MCP vocabulary, byte-stable for hashing.
+- [x] `display.summary` required when `display` present; validation enforced.
+- [x] `R3ProposalDocument` round-trips (`parameters` incl. digest objects,
       `display.detail`), serializes byte-stable, and enforces required `parameters`
       and a single conditional operation (Finding 3).
 
@@ -206,16 +206,16 @@ extension points; supply a custom R3 challenge where the SDK has no hook.
 
 ### Definition of Done
 
-- [ ] Resource-token challenge emits both `r3_uri` and `r3_s256` when R3 applies;
+- [x] Resource-token challenge emits both `r3_uri` and `r3_s256` when R3 applies;
       neither otherwise; never one without the other (validated).
-- [ ] Auth-token R3 claim set round-trips through `AdditionalClaims`; `r3_granted`
+- [x] Auth-token R3 claim set round-trips through `AdditionalClaims`; `r3_granted`
       (+ optional `r3_conditional`) parse back to typed values.
-- [ ] **Parity (Finding 5):** the hand-built R3 resource token passes
+- [x] **Parity (Finding 5):** the hand-built R3 resource token passes
       `TokenVerifier.VerifyResourceTokenAsync` — header `typ = aa-resource+jwt`,
       `dwk = aauth-resource.json`, expected `aud`/`agent`/`agent_jkt`/`iat`/`exp`,
       signature verifies through the resource JWKS path — and both `r3_uri` and
       `r3_s256` survive verification; one-sided R3 claims rejected before minting.
-- [ ] `src/AAuth` shows no diff.
+- [x] `src/AAuth` shows no diff.
 
 ## Phase 1.4 — Resource metadata + R3 endpoint + enforcement
 
@@ -247,14 +247,14 @@ AS + PS per §R3 Processing — see CC8); §Resource Enforcement; §Per-Call Pro
 
 ### Definition of Done
 
-- [ ] `r3_vocabularies` published in resource metadata.
-- [ ] R3-document endpoint **verifies** the signature, surfaces the caller, and
+- [x] `r3_vocabularies` published in resource metadata.
+- [x] R3-document endpoint **verifies** the signature, surfaces the caller, and
       serves only to the resource-configured trusted **AS or PS**, rejecting agents
       and untrusted callers — tested all ways (AS sig → 200; PS sig → 200; agent →
       401/403; untrusted → 401/403).
-- [ ] Enforcement serves `r3_granted`, challenges `r3_conditional` with a per-call
+- [x] Enforcement serves `r3_granted`, challenges `r3_conditional` with a per-call
       proposal, rejects unmatched.
-- [ ] Per-call retry **digest-matches** presented params against the stored
+- [x] Per-call retry **digest-matches** presented params against the stored
       proposal; mismatch rejected (negative test).
 
 ## Phase 1.5 — Agent-side R3 request (no SDK edits)
@@ -272,9 +272,9 @@ from the `AAuth.R3` library / demo, without modifying the SDK agent client.
 
 ### Definition of Done
 
-- [ ] `r3_operations` carried in the resource `authorization_endpoint` request body
+- [x] `r3_operations` carried in the resource `authorization_endpoint` request body
       (`POST /authorize`), with a 401-challenge fallback (no SDK agent change).
-- [ ] Grant claims surfaced to the caller; conditional per-call round-trip
+- [x] Grant claims surfaced to the caller; conditional per-call round-trip
       exercised end-to-end in-process.
 
 ## Phase 1.6 — AS-side R3 token endpoint (no SDK edits)
@@ -309,17 +309,17 @@ payload, so a plain `IAccessPolicy` cannot read `r3_uri`/`r3_s256` (Finding 1,
 
 ### Definition of Done
 
-- [ ] Endpoint mints an auth token carrying `r3_uri`/`r3_s256`/`r3_granted`
+- [x] Endpoint mints an auth token carrying `r3_uri`/`r3_s256`/`r3_granted`
       (+ optional `r3_conditional`) that passes `TokenVerifier`.
-- [ ] Rejects a resource token whose `r3_s256` does not match the fetched bytes.
-- [ ] Per-call proposal request mints a per-call token granting the conditional op.
-- [ ] `src/AAuth` shows no diff.
+- [x] Rejects a resource token whose `r3_s256` does not match the fetched bytes.
+- [x] Per-call proposal request mints a per-call token granting the conditional op.
+- [x] `src/AAuth` shows no diff.
 
 ### Part 1 exit criteria
 
-- [ ] `AAuth.R3` builds 0 warnings / 0 errors; **`src/AAuth` shows no diff**.
-- [ ] All Phase 1.0–1.6 `AAuth.R3.Tests` green.
-- [ ] `AAuth.R3` depends only on the public `AAuth` surface; no reverse dependency
+- [x] `AAuth.R3` builds 0 warnings / 0 errors; **`src/AAuth` shows no diff**.
+- [x] All Phase 1.0–1.6 `AAuth.R3.Tests` green.
+- [x] `AAuth.R3` depends only on the public `AAuth` surface; no reverse dependency
       from `src/AAuth`; no GuidedTour/live-server dependency in the library.
 
 ---
