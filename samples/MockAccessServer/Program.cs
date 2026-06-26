@@ -4,6 +4,7 @@ using AAuth.Access;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
+using AAuth.R3;
 using AAuth.Server;
 using AAuth.Server.Authorization;
 using AAuth.Server.CallChaining;
@@ -52,6 +53,8 @@ var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:Signatu
 var trustedPersonServers = builder.Configuration
     .GetSection("MockAccessServer:TrustedPersonServers")
     .Get<string[]>() ?? ["http://localhost:5100"];
+var serverMode = (builder.Configuration["MockAccessServer:Mode"] ?? "Default")
+    .Trim();
 
 builder.Services.AddSingleton(asKey);
 builder.Services.AddSingleton(new AAuthVerifier
@@ -108,6 +111,24 @@ switch (policyProvider)
 builder.Services.AddSingleton<IAccessPendingStore, InMemoryAccessPendingStore>();
 
 var app = builder.Build();
+
+if (string.Equals(serverMode, "R3", StringComparison.OrdinalIgnoreCase))
+{
+    var conditionalTools = builder.Configuration
+        .GetSection("R3:ConditionalTools")
+        .Get<string[]>() ?? ["book_trip"];
+
+    app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
+    {
+        Issuer = asIssuer,
+        SigningKeys = new Dictionary<string, AAuthKey> { [AsKid] = asKey },
+        TrustedPersonServers = trustedPersonServers,
+        ConditionalTools = new HashSet<string>(conditionalTools, StringComparer.Ordinal),
+    });
+
+    app.Run();
+    return;
+}
 
 // -----------------------------------------------------------------------
 // Map the whole AS pipeline in one call (§AS Token Endpoint): publishes

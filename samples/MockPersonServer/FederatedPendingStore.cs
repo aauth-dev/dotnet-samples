@@ -61,6 +61,16 @@ public sealed class FederatedPendingEntry
     /// <summary>The single-use interaction code paired with <see cref="InteractionUrl"/>.</summary>
     public string? InteractionCode { get; set; }
 
+    public string? Agent { get; set; }
+
+    public string? Resource { get; set; }
+
+    public string? Scope { get; set; }
+
+    public R3ConsentDisplay? R3Display { get; set; }
+
+    public bool? PersonServerDecision { get; set; }
+
     /// <summary>
     /// Completed once the entry has produced its first agent-facing answer:
     /// either the AS interaction was captured (relay a 202), or federation
@@ -69,3 +79,12 @@ public sealed class FederatedPendingEntry
     public TaskCompletionSource FirstAnswer { get; } =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
+
+public sealed record R3ConsentDisplay(
+    string Uri,
+    string S256,
+    string? Summary,
+    string? Implications,
+    string? DataAccessed,
+    bool? Irreversible,
+    string? Detail);

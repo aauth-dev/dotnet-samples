@@ -1,6 +1,6 @@
 # Mock Resource Servers
 
-Four small ASP.NET Core resource servers that together demonstrate **every**
+Five small ASP.NET Core resource servers that together demonstrate **every**
 AAuth access mode and signing mode. They replace the former single `WhoAmI`
 sample by splitting one mega-server into four focused, copy-paste-able templates,
 each a short `Program.cs` (well-known + one verification pipeline + a couple of
@@ -21,11 +21,14 @@ traveler's behalf — each protocol concept gets a real-feeling home:
 | [**Calendar**](Calendar/) | 5001 | PS-Asserted (three-party) | the traveler's events | `/events` → `calendar.read`, `/events/write` → `calendar.write` (step-up), `/events/admin` → role `calendar.owner` (RBAC) |
 | [**Trips**](Trips/) | 5002 | three-party + mission-aware | trip planning under a mission | `/trips` → `trips.read` (in-mission, silent), `/trips/book` → `trips.book` (out-of-mission, prompts) |
 | [**Wallet**](Wallet/) | 5003 | Federated (four-party) | the bank, with its own Access Server | `/wallet` → `wallet.read`, `/wallet/charge` → `wallet.charge` (AS role `wallet.payer`) |
+| [**Bookings**](Bookings/) | 5004 | Federated R3 (four-party) | rich trip booking operations | `/search_trip_options`, `/hold_itinerary` → R3 granted, `/book_trip` → R3 conditional proposal |
 
 The narrative reads as a journey: *Aria identifies itself (Profile), reads your
 **Calendar**, drafts a **Trip** under a mission you approved, then asks the bank
 before charging your **Wallet** — and the bank's own Access Server decides if
-you're allowed to pay.*
+you're allowed to pay. The experimental **Bookings** server demonstrates Rich
+Resource Requests (R3): MCP operations replace legacy scopes, and `book_trip`
+requires a per-call approval bound to exact itinerary parameters.*
 
 ## Signing mode ↔ Profile path
 
@@ -56,7 +59,7 @@ demo JSON.
 
 ## Running
 
-Run all four at once:
+Run the original four at once:
 
 ```bash
 make resources
@@ -69,6 +72,7 @@ dotnet run --project samples/MockResourceServers/Profile    # :5000
 dotnet run --project samples/MockResourceServers/Calendar   # :5001
 dotnet run --project samples/MockResourceServers/Trips      # :5002
 dotnet run --project samples/MockResourceServers/Wallet     # :5003
+dotnet run --project samples/MockResourceServers/Bookings   # :5004
 ```
 
 Each serves `/.well-known/aauth-resource.json` and `/.well-known/jwks.json`

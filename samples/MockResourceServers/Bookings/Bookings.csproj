@@ -1,15 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\AAuth\AAuth.csproj" />
-    <ProjectReference Include="..\AAuth.R3\AAuth.R3.csproj" />
+    <ProjectReference Include="..\..\..\src\AAuth\AAuth.csproj" />
+    <ProjectReference Include="..\..\AAuth.R3\AAuth.R3.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>MockPersonServer</RootNamespace>
   </PropertyGroup>
 
 </Project>

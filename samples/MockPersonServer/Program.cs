@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using AAuth;
 using AAuth.Access;
@@ -8,6 +10,8 @@ using AAuth.Discovery;
 using AAuth.Errors;
 using AAuth.Headers;
 using AAuth.HttpSig;
+using AAuth.R3;
+using AAuth.R3.Model;
 using AAuth.Server;
 using AAuth.Server.Authorization;
 using AAuth.Server.CallChaining;
@@ -75,7 +79,7 @@ var requireConsent = builder.Configuration.GetValue<bool>("MockPersonServer:Requ
 // this set per the operator's federation agreements.
 var trustedAccessServers = builder.Configuration
         .GetSection("MockPersonServer:TrustedAccessServers").Get<string[]>()
-    ?? ["http://localhost:5500"];
+    ?? ["http://localhost:5500", "http://localhost:5501"];
 var trustedAsSet = new HashSet<string>(
     trustedAccessServers.Select(a => a.TrimEnd('/')), StringComparer.OrdinalIgnoreCase);
 
@@ -91,6 +95,7 @@ builder.Services.AddSingleton<JwksClient>(sp =>
     new JwksClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-jwks")));
 builder.Services.AddHttpClient("aauth-metadata");
 builder.Services.AddHttpClient("aauth-jwks");
+builder.Services.AddHttpClient("aauth-r3-fetch");
 builder.Services.AddSingleton<ConsentStore>();
 builder.Services.AddSingleton<PendingStore>();
 builder.Services.AddSingleton<FederatedPendingStore>();
@@ -236,6 +241,8 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
     }
 
     var upstreamTokenJwt = (string?)body?["upstream_token"];
+    var proposalUri = (string?)body?["proposal_uri"];
+    var proposalS256 = (string?)body?["proposal_s256"];
 
     // Four-party (federated) branch. When the resource token's `aud` is NOT
     // this PS, the resource delegated authorization to an Access Server. The PS
@@ -266,6 +273,7 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
         // token it has no business relaying.
         string resourceUrl;
         string federatedScope = PsScope;
+        R3ConsentDisplay? r3Consent = null;
         try
         {
             var verified = await federationVerifier.VerifyResourceTokenAsync(
@@ -283,6 +291,12 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
             {
                 federatedScope = scopeClaim;
             }
+
+            r3Consent = await FetchR3ConsentDisplayAsync(
+                ctx,
+                R3ClaimReader.ReadResourceDocument(verified.Payload),
+                proposalUri,
+                proposalS256);
         }
         catch (TokenVerificationException ex)
         {
@@ -294,10 +308,20 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
                 new { error = expired ? "expired_resource_token" : "invalid_resource_token", detail = ex.Message },
                 statusCode: StatusCodes.Status400BadRequest);
         }
+        catch (Exception ex) when (ex is R3HashMismatchException or InvalidOperationException or HttpRequestException or TaskCanceledException)
+        {
+            return Results.Json(
+                new { error = "invalid_r3_document", detail = ex.Message },
+                statusCode: StatusCodes.Status400BadRequest);
+        }
 
         var federation = app.Services.GetRequiredService<AccessServerClient>();
         var fedPending = app.Services.GetRequiredService<FederatedPendingStore>();
         var entry = fedPending.Add();
+        entry.Agent = agentId;
+        entry.Resource = resourceUrl;
+        entry.Scope = federatedScope;
+        entry.R3Display = r3Consent;
 
         // Capture everything the background task needs BEFORE it runs — the
         // HttpContext is gone once we return the response.
@@ -353,7 +377,9 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
         {
             try
             {
-                var token = await federation.FederateAsync(resourceAudience, fedRequest);
+                var token = string.IsNullOrWhiteSpace(proposalUri) && string.IsNullOrWhiteSpace(proposalS256)
+                    ? await federation.FederateAsync(resourceAudience, fedRequest)
+                    : await FederateR3ProposalAsync(resourceAudience, fedRequest, proposalUri, proposalS256);
                 entry.AuthToken = token;
                 entry.Status = FederatedPendingStatus.Allowed;
             }
@@ -411,6 +437,15 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
         // The AS resolved without interaction (e.g. an auto-allow stub AS).
         if (entry.Status == FederatedPendingStatus.Allowed)
         {
+            if (entry.R3Display is not null && entry.PersonServerDecision is null)
+            {
+                ctx.Response.Headers.Location = $"/federated-pending/{entry.Id}";
+                ctx.Response.Headers["Retry-After"] = "0";
+                ctx.Response.Headers["Cache-Control"] = "no-store";
+                ctx.Response.Headers[AAuthRequirementHeader.Name] =
+                    Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", entry.Id);
+                return Results.Json(new { status = "pending", r3_display = entry.R3Display }, statusCode: StatusCodes.Status202Accepted);
+            }
             return Results.Ok(new { auth_token = entry.AuthToken });
         }
 
@@ -667,6 +702,21 @@ app.MapGet("/federated-pending/{id}", (HttpContext ctx, string id, FederatedPend
     switch (entry.Status)
     {
         case FederatedPendingStatus.Allowed:
+            if (entry.R3Display is not null && entry.PersonServerDecision is null)
+            {
+                ctx.Response.Headers["Retry-After"] = "1";
+                ctx.Response.Headers["Cache-Control"] = "no-store";
+                ctx.Response.Headers[AAuthRequirementHeader.Name] =
+                    Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", entry.Id);
+                return Results.Json(new { status = "pending", r3_display = entry.R3Display }, statusCode: StatusCodes.Status202Accepted);
+            }
+            if (entry.PersonServerDecision == false)
+            {
+                ctx.Response.Headers["Cache-Control"] = "no-store";
+                return Results.Json(
+                    new { error = "denied", detail = "the user denied this R3 request" },
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
             return Results.Ok(new { auth_token = entry.AuthToken });
         case FederatedPendingStatus.Denied:
             ctx.Response.Headers["Cache-Control"] = "no-store";
@@ -1309,7 +1359,7 @@ app.MapGet("/admin/mission-log/{s256}", async (string s256, IMissionLog log) =>
 // (cookie/passkey/SSO); here we trust the demo environment and just look
 // up the pending entry by its single-use code. The form submits to
 // /interaction/approve or /interaction/deny.
-app.MapGet("/interaction", (string? code, PendingStore pending, MissionPendingStore missionPending, MissionPolicyStore missionPolicy) =>
+app.MapGet("/interaction", (string? code, PendingStore pending, MissionPendingStore missionPending, MissionPolicyStore missionPolicy, FederatedPendingStore fedPending) =>
 {
     if (string.IsNullOrEmpty(code))
     {
@@ -1447,6 +1497,48 @@ app.MapGet("/interaction", (string? code, PendingStore pending, MissionPendingSt
         return Results.Content(missionHtml, contentType: "text/html");
     }
 
+    var federated = fedPending.Get(code);
+    if (federated?.R3Display is not null)
+    {
+        var display = federated.R3Display;
+        var r3Html =
+            "<!doctype html><meta charset=utf-8><title>Approve rich request — Person Server</title>"
+            + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
+            + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#1d4ed8;color:#fff;"
+            + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
+            + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}"
+            + ".sub{color:#777;font-size:.85rem;margin:.35rem 0 1.25rem}"
+            + "h1{font-size:1.25rem}.row{display:flex;gap:.5rem;margin:.25rem 0}.row b{min-width:7rem;color:#555}"
+            + ".r3{margin:1rem 0;padding:.75rem .9rem;background:#eff6ff;border:1px solid #bfdbfe;border-radius:.4rem}"
+            + ".detail{white-space:pre-wrap}"
+            + "form{margin-top:1.5rem;display:inline-flex;gap:.75rem}"
+            + "button{padding:.5rem 1rem;font-size:1rem;cursor:pointer;border-radius:.25rem;border:1px solid #999}"
+            + "button.approve{background:#6ee7b7;border-color:#34d399}"
+            + "button.deny{background:#fecaca;border-color:#f87171}</style>"
+            + "<div class=badge><span class=dot></span>Person Server — R3 consent</div>"
+            + "<div class=sub>localhost:5100 — rendering the resource's Rich Resource Request display</div>"
+            + "<h1>An agent is requesting rich resource access</h1>"
+            + $"<div class=row><b>Agent:</b> <code>{System.Net.WebUtility.HtmlEncode(federated.Agent ?? string.Empty)}</code></div>"
+            + $"<div class=row><b>Resource:</b> <code>{System.Net.WebUtility.HtmlEncode(federated.Resource ?? string.Empty)}</code></div>"
+            + $"<div class=row><b>R3 hash:</b> <code>{System.Net.WebUtility.HtmlEncode(display.S256)}</code></div>"
+            + "<div class=r3>"
+            + $"<div class=row><b>Summary:</b> <span>{System.Net.WebUtility.HtmlEncode(display.Summary ?? string.Empty)}</span></div>"
+            + OptionalRow("Implications", display.Implications)
+            + OptionalRow("Data", display.DataAccessed)
+            + (display.Irreversible is null ? string.Empty : $"<div class=row><b>Irreversible:</b> <span>{display.Irreversible.Value}</span></div>")
+            + (string.IsNullOrWhiteSpace(display.Detail) ? string.Empty : $"<div class=row><b>Detail:</b> <span class=detail>{System.Net.WebUtility.HtmlEncode(display.Detail)}</span></div>")
+            + "</div>"
+            + "<form method=post action=\"/interaction/approve\">"
+            + $"<input type=hidden name=code value=\"{System.Net.WebUtility.HtmlEncode(code)}\">"
+            + "<button class=approve type=submit>Approve</button>"
+            + "</form>"
+            + "<form method=post action=\"/interaction/deny\">"
+            + $"<input type=hidden name=code value=\"{System.Net.WebUtility.HtmlEncode(code)}\">"
+            + "<button class=deny type=submit>Deny</button>"
+            + "</form>";
+        return Results.Content(r3Html, contentType: "text/html");
+    }
+
     var entry = pending.Get(code);
     if (entry is null)
     {
@@ -1492,7 +1584,7 @@ app.MapGet("/interaction", (string? code, PendingStore pending, MissionPendingSt
 // consent for the entry's (agent, resource, scope) triple, and shows a
 // confirmation page. Idempotent: re-submitting a code whose entry is
 // already approved still 200s.
-app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent, PendingStore pending, MissionPendingStore missionPending) =>
+app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent, PendingStore pending, MissionPendingStore missionPending, FederatedPendingStore fedPending) =>
 {
     var code = (await ctx.Request.ReadFormAsync())["code"].ToString();
     if (string.IsNullOrEmpty(code))
@@ -1515,6 +1607,23 @@ app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent
             + "<h1>Approved</h1>"
             + $"<p>You approved <code>{System.Net.WebUtility.HtmlEncode(mission.AgentId)}</code>'s mission request. The agent will proceed on its next poll.</p>"
             + "<p>You can close this tab.</p>",
+            contentType: "text/html");
+    }
+    var federated = fedPending.Get(code);
+    if (federated?.R3Display is not null)
+    {
+        federated.PersonServerDecision = true;
+        return Results.Content(
+            "<!doctype html><meta charset=utf-8><title>Approved — Person Server</title>"
+            + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
+            + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#1d4ed8;color:#fff;"
+            + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
+            + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}</style>"
+            + "<div class=badge><span class=dot></span>Person Server — R3 consent</div>"
+            + "<h1>Approved</h1>"
+            + $"<p>You approved <code>{System.Net.WebUtility.HtmlEncode(federated.Agent ?? string.Empty)}</code>'s rich request for "
+            + $"<code>{System.Net.WebUtility.HtmlEncode(federated.Resource ?? string.Empty)}</code>.</p>"
+            + "<p>You can close this tab — the agent will receive its auth token on its next poll.</p>",
             contentType: "text/html");
     }
     var entry = pending.Get(code);
@@ -1541,7 +1650,7 @@ app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent
 // Deny handler. Marks the pending entry as denied (rather than removing
 // it) so the agent's next poll receives a deterministic
 // `403 denied` instead of an ambiguous `404 unknown_pending`.
-app.MapPost("/interaction/deny", async (HttpContext ctx, PendingStore pending, MissionPendingStore missionPending) =>
+app.MapPost("/interaction/deny", async (HttpContext ctx, PendingStore pending, MissionPendingStore missionPending, FederatedPendingStore fedPending) =>
 {
     var code = (await ctx.Request.ReadFormAsync())["code"].ToString();
     if (string.IsNullOrEmpty(code))
@@ -1563,6 +1672,22 @@ app.MapPost("/interaction/deny", async (HttpContext ctx, PendingStore pending, M
             + "<div class=badge><span class=dot></span>Person Server — mission governance</div>"
             + "<h1>Denied</h1>"
             + $"<p>You denied <code>{System.Net.WebUtility.HtmlEncode(mission.AgentId)}</code>'s mission request. The agent's next poll will receive <code>403 denied</code>.</p>"
+            + "<p>You can close this tab.</p>",
+            contentType: "text/html");
+    }
+    var federated = fedPending.Get(code);
+    if (federated?.R3Display is not null)
+    {
+        federated.PersonServerDecision = false;
+        return Results.Content(
+            "<!doctype html><meta charset=utf-8><title>Denied — Person Server</title>"
+            + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
+            + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#1d4ed8;color:#fff;"
+            + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
+            + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}</style>"
+            + "<div class=badge><span class=dot></span>Person Server — R3 consent</div>"
+            + "<h1>Denied</h1>"
+            + $"<p>You denied <code>{System.Net.WebUtility.HtmlEncode(federated.Agent ?? string.Empty)}</code>'s rich request. The agent's next poll will receive <code>403 denied</code>.</p>"
             + "<p>You can close this tab.</p>",
             contentType: "text/html");
     }
@@ -1590,6 +1715,149 @@ app.Run();
 // -----------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------
+async Task<R3ConsentDisplay?> FetchR3ConsentDisplayAsync(
+    HttpContext ctx,
+    R3ClaimReader.ResourceDocumentClaims? documentClaims,
+    string? proposalUri,
+    string? proposalS256)
+{
+    if (string.IsNullOrWhiteSpace(proposalUri) != string.IsNullOrWhiteSpace(proposalS256))
+    {
+        throw new InvalidOperationException("proposal_uri and proposal_s256 must be present together.");
+    }
+
+    var transport = ctx.RequestServices.GetRequiredService<IHttpMessageHandlerFactory>()
+        .CreateHandler("aauth-r3-fetch");
+    var fetchClient = R3FetchClient.Create(
+        psKey,
+        $"{psIssuer.TrimEnd('/')}/.well-known/jwks.json",
+        PsKid,
+        transport);
+
+    if (!string.IsNullOrWhiteSpace(proposalUri) && !string.IsNullOrWhiteSpace(proposalS256))
+    {
+        var proposalBytes = await fetchClient.FetchAndVerifyAsync(proposalUri, proposalS256, ctx.RequestAborted);
+        var proposal = R3ProposalDocument.FromUtf8Bytes(proposalBytes);
+        return ToConsentDisplay(proposalUri, proposalS256, proposal.Display);
+    }
+
+    if (documentClaims is null)
+    {
+        return null;
+    }
+
+    var bytes = await fetchClient.FetchAndVerifyAsync(documentClaims.Uri, documentClaims.S256, ctx.RequestAborted);
+    var document = R3Document.FromUtf8Bytes(bytes);
+    return ToConsentDisplay(documentClaims.Uri, documentClaims.S256, document.Display);
+}
+
+async Task<string> FederateR3ProposalAsync(
+    string accessServer,
+    AccessServerRequest request,
+    string? proposalUri,
+    string? proposalS256)
+{
+    if (string.IsNullOrWhiteSpace(proposalUri) || string.IsNullOrWhiteSpace(proposalS256))
+    {
+        throw new InvalidOperationException("proposal_uri and proposal_s256 must be present together.");
+    }
+
+    var metadata = app.Services.GetRequiredService<MetadataClient>();
+    var metadataUrl = MetadataClient.BuildUrl(accessServer, AAuthConstants.DwkFiles.Access);
+    var doc = await metadata.FetchAsync(metadataUrl);
+    var tokenEndpoint = (string?)doc["token_endpoint"]
+        ?? throw new InvalidOperationException($"Access Server metadata at {metadataUrl} is missing 'token_endpoint'.");
+    if (!Uri.TryCreate(tokenEndpoint, UriKind.Absolute, out var tokenEndpointUri)
+        || !Uri.TryCreate(accessServer, UriKind.Absolute, out var asUri)
+        || !string.Equals(tokenEndpointUri.GetLeftPart(UriPartial.Authority), asUri.GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException($"Access Server token_endpoint must share an origin with {accessServer}: {tokenEndpoint}");
+    }
+
+    var transport = app.Services.GetRequiredService<IHttpMessageHandlerFactory>()
+        .CreateHandler("aauth-federation");
+    using var signedClient = new AAuthClientBuilder(psKey)
+        .UseJwksUri($"{psIssuer.TrimEnd('/')}/.well-known/jwks.json", PsKid)
+        .WithInnerHandler(transport)
+        .Build();
+    var body = new JsonObject
+    {
+        ["resource_token"] = request.ResourceToken,
+        ["agent_token"] = request.AgentToken,
+        ["proposal_uri"] = proposalUri,
+        ["proposal_s256"] = proposalS256,
+    };
+    if (!string.IsNullOrEmpty(request.UpstreamToken))
+    {
+        body["upstream_token"] = request.UpstreamToken;
+    }
+
+    using var response = await signedClient.PostAsJsonAsync(tokenEndpointUri, body);
+    var responseBody = await response.Content.ReadAsStringAsync();
+    if (response.StatusCode == HttpStatusCode.Forbidden && TryReadJsonError(responseBody) == "denied")
+    {
+        throw new AAuthInteractionDeniedException("The Access Server denied the request.");
+    }
+    if (!response.IsSuccessStatusCode)
+    {
+        throw new AAuthTokenExchangeException(
+            TryReadJsonError(responseBody) ?? "r3_federation_failed",
+            responseBody,
+            (int)response.StatusCode,
+            isTerminal: true);
+    }
+    var json = JsonNode.Parse(responseBody) as JsonObject
+        ?? throw new InvalidOperationException("Access Server response was not a JSON object.");
+    var authToken = (string?)json["auth_token"]
+        ?? throw new InvalidOperationException("Access Server response did not include 'auth_token'.");
+
+    var validator = new AuthTokenResponseValidator(
+        metadata,
+        app.Services.GetRequiredService<JwksClient>());
+    var delivery = await validator.ValidateAsync(
+        authToken,
+        expectedIssuer: accessServer,
+        expectedAudience: request.ExpectedAudience,
+        expectedAgentId: request.ExpectedAgentId,
+        agentKey: request.AgentKey,
+        expectedActContext: request.ExpectedActContext,
+        requestedScope: request.RequestedScope);
+    if (!delivery.IsValid)
+    {
+        throw new TokenVerificationException($"Auth token delivery verification failed: {delivery.Error}");
+    }
+    return authToken;
+}
+
+static R3ConsentDisplay? ToConsentDisplay(string uri, string s256, R3Display? display) =>
+    display is null
+        ? null
+        : new R3ConsentDisplay(
+            uri,
+            s256,
+            display.Summary,
+            display.Implications,
+            display.DataAccessed,
+            display.Irreversible,
+            display.Detail);
+
+static string? TryReadJsonError(string body)
+{
+    try
+    {
+        return (string?)(JsonNode.Parse(body) as JsonObject)?["error"];
+    }
+    catch (System.Text.Json.JsonException)
+    {
+        return null;
+    }
+}
+
+static string OptionalRow(string label, string? value) =>
+    string.IsNullOrWhiteSpace(value)
+        ? string.Empty
+        : $"<div class=row><b>{System.Net.WebUtility.HtmlEncode(label)}:</b> <span>{System.Net.WebUtility.HtmlEncode(value)}</span></div>";
+
 string IssueAuthToken(string agentId, string audience, string scope, IAAuthKey confirmationKey, JsonObject? upstreamAct = null, MissionClaim? mission = null)
     => new AuthTokenBuilder
     {
