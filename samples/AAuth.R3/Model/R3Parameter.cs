@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -11,12 +12,26 @@ public sealed record R3Parameter
     public required JsonNode Json { get; init; }
 
     public bool IsDigest =>
-        Json is JsonObject obj
-        && obj["s256"] is JsonValue value
-        && value.TryGetValue<string>(out var s256)
-        && !string.IsNullOrWhiteSpace(s256);
+        TryGetDigestS256(out _);
 
-    public string? S256 => IsDigest ? (string?)Json["s256"] : null;
+    public string? S256 => TryGetDigestS256(out var s256) ? s256 : null;
+
+    public bool TryGetDigestS256([NotNullWhen(true)] out string? s256)
+    {
+        if (Json is JsonObject obj
+            && obj["s256"] is JsonValue value
+            && value.TryGetValue<string>(out var candidate)
+            && !string.IsNullOrWhiteSpace(candidate))
+        {
+            s256 = candidate;
+            return true;
+        }
+
+        s256 = null;
+        return false;
+    }
+
+    public R3Parameter DeepClone() => new() { Json = Json.DeepClone() };
 
     public static R3Parameter Inline(JsonNode value) => new() { Json = value.DeepClone() };
 
@@ -34,6 +49,45 @@ public sealed record R3Parameter
         }
         return new R3Parameter { Json = obj };
     }
+}
+
+/// <summary>Parameters presented on retry: inline JSON values plus raw bytes for digest-backed values.</summary>
+public sealed class R3PresentedParameters
+{
+    private readonly Dictionary<string, byte[]> _digestParameterBytes;
+
+    public R3PresentedParameters(
+        IReadOnlyDictionary<string, R3Parameter>? jsonParameters = null,
+        IReadOnlyDictionary<string, byte[]>? digestParameterBytes = null)
+    {
+        JsonParameters = jsonParameters?.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.DeepClone(),
+            StringComparer.Ordinal) ?? new Dictionary<string, R3Parameter>(StringComparer.Ordinal);
+        _digestParameterBytes = digestParameterBytes?.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.ToArray(),
+            StringComparer.Ordinal) ?? new Dictionary<string, byte[]>(StringComparer.Ordinal);
+    }
+
+    public IReadOnlyDictionary<string, R3Parameter> JsonParameters { get; }
+
+    public IReadOnlyCollection<string> DigestParameterNames => _digestParameterBytes.Keys;
+
+    public bool TryGetDigestParameterBytes(string name, out ReadOnlyMemory<byte> bytes)
+    {
+        if (_digestParameterBytes.TryGetValue(name, out var value))
+        {
+            bytes = value;
+            return true;
+        }
+
+        bytes = default;
+        return false;
+    }
+
+    public static R3PresentedParameters FromJsonParameters(IReadOnlyDictionary<string, R3Parameter> parameters) =>
+        new(parameters);
 }
 
 internal sealed class R3ParameterJsonConverter : JsonConverter<R3Parameter>

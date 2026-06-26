@@ -1,14 +1,18 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json.Nodes;
 using AAuth;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Headers;
 using AAuth.R3.Model;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.IdentityModel.Tokens;
 
 namespace AAuth.R3.Tests;
 
@@ -175,6 +179,11 @@ public class ResourceR3Tests
         {
             ["itinerary_id"] = R3Parameter.Inline(JsonValue.Create("it-123")!),
             ["total_usd"] = R3Parameter.Inline(JsonValue.Create(1200)!),
+            ["traveler"] = R3Parameter.Inline(new JsonObject
+            {
+                ["name"] = "Aria",
+                ["party_size"] = 1,
+            }),
         };
 
         Assert.Equal(R3EnforcementDecisionKind.Granted,
@@ -187,8 +196,16 @@ public class ResourceR3Tests
         Assert.Equal(R3EnforcementDecisionKind.Conditional, conditional.Kind);
         Assert.True(store.TryGet(conditional.ProposalS256!, out _));
 
+        var reorderedInline = new Dictionary<string, R3Parameter>(parameters)
+        {
+            ["traveler"] = R3Parameter.Inline(new JsonObject
+            {
+                ["party_size"] = 1,
+                ["name"] = "Aria",
+            }),
+        };
         Assert.Equal(R3EnforcementDecisionKind.Granted,
-            enforcement.Evaluate(claims, "book_trip", parameters, approvedProposalS256: conditional.ProposalS256).Kind);
+            enforcement.Evaluate(claims, "book_trip", reorderedInline, approvedProposalS256: conditional.ProposalS256).Kind);
 
         var tampered = new Dictionary<string, R3Parameter>(parameters)
         {
@@ -196,6 +213,97 @@ public class ResourceR3Tests
         };
         Assert.Equal(R3EnforcementDecisionKind.Rejected,
             enforcement.Evaluate(claims, "book_trip", tampered, approvedProposalS256: conditional.ProposalS256).Kind);
+    }
+
+    [Fact]
+    public void Enforcement_DigestBackedProposalRetryMatchesPresentedBytes()
+    {
+        var initialClaims = new R3ClaimReader.AuthTokenClaims(
+            "https://resource.test/r3/doc",
+            "doc-hash",
+            R3Grant.Mcp("search_trip_options"),
+            R3Grant.Mcp("book_trip"));
+        var store = new R3ProposalStore();
+        var enforcement = new R3Enforcement(store, new Uri(R3TestData.ResourceIssuer));
+        var policyBytes = Encoding.UTF8.GetBytes("Refundable for 24 hours, then airline fare rules apply.");
+        var parameters = new Dictionary<string, R3Parameter>
+        {
+            ["itinerary_id"] = R3Parameter.Inline(JsonValue.Create("it-123")!),
+            ["cancellation_policy"] = R3Parameter.Digest(
+                R3Hash.ComputeS256(policyBytes),
+                excerpt: "Refundable for 24 hours",
+                mediaType: "text/plain"),
+        };
+
+        var conditional = enforcement.Evaluate(initialClaims, "book_trip", parameters);
+        var approvedClaims = new R3ClaimReader.AuthTokenClaims(
+            conditional.ProposalUri!,
+            conditional.ProposalS256!,
+            R3Grant.Mcp("book_trip"),
+            null);
+        var presented = new R3PresentedParameters(
+            new Dictionary<string, R3Parameter>
+            {
+                ["itinerary_id"] = R3Parameter.Inline(JsonValue.Create("it-123")!),
+            },
+            new Dictionary<string, byte[]>
+            {
+                ["cancellation_policy"] = policyBytes,
+            });
+
+        Assert.Equal(R3EnforcementDecisionKind.Granted,
+            enforcement.Evaluate(approvedClaims, "book_trip", presented, approvedClaims.S256).Kind);
+
+        var tampered = new R3PresentedParameters(
+            presented.JsonParameters,
+            new Dictionary<string, byte[]>
+            {
+                ["cancellation_policy"] = Encoding.UTF8.GetBytes("Non-refundable after purchase."),
+            });
+        var rejected = enforcement.Evaluate(approvedClaims, "book_trip", tampered, approvedClaims.S256);
+        Assert.Equal(R3EnforcementDecisionKind.Rejected, rejected.Kind);
+        Assert.Equal("proposal_digest_mismatch", rejected.Error);
+    }
+
+    [Fact]
+    public async Task Enforcement_ConditionalChallengeResultEmitsAAuthRequirementWithProposalResourceToken()
+    {
+        var resourceKey = AAuthKey.Generate();
+        var agentKey = AAuthKey.Generate();
+        var decision = R3EnforcementDecision.Conditional(
+            "https://resource.test/r3/proposals/proposal-hash",
+            "proposal-hash");
+        var context = new DefaultHttpContext
+        {
+            RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider(),
+            Response =
+            {
+                Body = new MemoryStream(),
+            },
+        };
+        var challenge = new R3Challenge
+        {
+            ResourceIssuer = R3TestData.ResourceIssuer,
+            Audience = R3TestData.AsIssuer,
+            Key = resourceKey,
+            KeyId = R3TestData.ResourceKid,
+        };
+
+        await decision.ToResult(
+            context,
+            challenge,
+            R3TestData.AgentId,
+            agentKey.ComputeJwkThumbprint()).ExecuteAsync(context);
+
+        Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+        var header = Assert.Single(context.Response.Headers[AAuthRequirementHeader.Name]);
+        var parsed = AAuthRequirementHeader.Parse(header!);
+        Assert.Equal(AAuthRequirementHeader.AuthTokenRequirement, parsed.Requirement);
+        Assert.False(string.IsNullOrWhiteSpace(parsed.ResourceToken));
+        var resourceToken = parsed.ResourceToken!;
+        var payload = (JsonObject)JsonNode.Parse(Base64UrlEncoder.DecodeBytes(resourceToken.Split('.')[1]))!;
+        Assert.Equal(decision.ProposalUri, (string?)payload[R3AuthClaims.UriClaim]);
+        Assert.Equal(decision.ProposalS256, (string?)payload[R3AuthClaims.S256Claim]);
     }
 
     private static async Task<HttpResponseMessage> SignedGet(WebApplication app, AAuthKey key, string jwksUri, string kid)

@@ -71,6 +71,22 @@ public sealed class R3Challenge
         return SignCompact(header, payload, Key);
     }
 
+    public string BuildResourceToken(
+        TokenVerifier.VerifiedToken verifiedAuthToken,
+        string r3Uri,
+        string r3S256,
+        string? scope = null)
+    {
+        ArgumentNullException.ThrowIfNull(verifiedAuthToken);
+        var payload = verifiedAuthToken.Payload;
+        var agent = (string?)payload["agent"]
+            ?? throw new InvalidOperationException("auth token missing agent");
+        var cnf = payload["cnf"]?["jwk"] as JsonObject
+            ?? throw new InvalidOperationException("auth token missing cnf.jwk");
+        var agentJkt = KeyFactory.FromJwk(cnf).ComputeJwkThumbprint();
+        return BuildResourceToken(agent, agentJkt, r3Uri, r3S256, scope);
+    }
+
     public IResult Challenge(HttpContext context, string agent, string agentJkt, string r3Uri, string r3S256, string? scope = null)
     {
         var token = BuildResourceToken(agent, agentJkt, r3Uri, r3S256, scope);
