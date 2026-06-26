@@ -3,7 +3,8 @@
 > [!WARNING]
 > R3 is experimental. This repository demonstrates it through the
 > extraction-ready `samples/AAuth.R3` preview library; the core `src/AAuth` SDK
-> is unchanged.
+> is unchanged. The preview library currently implements the MCP vocabulary
+> only.
 
 Rich Resource Requests replace opaque scope strings with content-addressed
 operation documents. In the Guided Tour, Aria asks the `Bookings` resource for
@@ -38,3 +39,18 @@ make demo-tour-r3
 The target launches Bookings on `:5004`, the dedicated R3 AS on `:5501`, the
 MockPersonServer on `:5100`, the Agent Provider on `:5301`, and GuidedTour on
 `:5400`.
+
+## Conformance scope
+
+This demo exercises the MCP vocabulary (`urn:aauth:vocabulary:mcp`) only.
+Bookings validates incoming `r3_operations` against the same MCP tool set it
+publishes from `/mcp` before it issues a resource token. The sample uses one
+internal R3 definition for those tools, so multi-definition R3 document
+composition is not exercised here; resources that split operations across
+multiple internal definitions must compose and persist one content-addressed R3
+document before issuing their resource token.
+
+The latest upstream R3 draft drift in this area is limited to future AsyncAPI
+and AAuth Events wording. This phase intentionally defers syncing the checked-in
+v02 draft and adds no AsyncAPI implementation code while the sample remains
+MCP-only.

@@ -57,14 +57,15 @@ available, switchable at runtime from the topbar **Mode** picker:
   call chain** (Agent → Concierge → Calendar) flows **silently** because
   both hops are in the mission's scope. The PS's mission log records the
   whole trail. Requires a Person Server and a Concierge URL.
-* **Rich Trip Booking (R3)** (12 steps; experimental) — Aria sends
+* **Rich Trip Booking (R3)** (12 steps; experimental, MCP-only) — Aria sends
   `r3_operations` to **Bookings** (:5004) for MCP tools
   `search_trip_options`, `hold_itinerary`, and `book_trip`. Bookings returns a
   content-addressed R3 document (`r3_uri`/`r3_s256`), the PS renders its
   `display`, the dedicated R3 AS (:5501) mints `r3_granted` +
   `r3_conditional`, and the final `book_trip` call succeeds only after a
   digest-matched per-call proposal approval. Implemented with the
-  `samples/AAuth.R3` preview library; `src/AAuth` is unchanged.
+  `samples/AAuth.R3` preview library, which currently supports the MCP
+  vocabulary only; `src/AAuth` is unchanged.
 
 When `PersonServerUrl` is empty in `appsettings.json`, the picker locks
 to Identity-based (the three-party options are disabled). You can also set

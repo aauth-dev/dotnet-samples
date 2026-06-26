@@ -25,17 +25,17 @@
 
 <div class="alert alert-warning">
     <strong>Experimental:</strong> Rich Resource Requests (R3) are implemented in the
-    preview <code>AAuth.R3</code> sample library. This page decodes JWT
+    MCP-only preview <code>AAuth.R3</code> sample library. This page decodes JWT
     <code>r3_*</code> claims and tokens for visibility, but the agent does
     <strong>not</strong> fetch R3 documents directly; the Person Server and Access
     Server are the trusted fetchers.
 </div>
 
 <p>
-    Copy-paste-oriented R3 flow: discover Bookings metadata, request
-    <code>r3_operations</code>, exchange through the Person Server, call the granted
-    operations, handle the conditional <code>book_trip</code> proposal, approve it,
-    and retry with <code>approved_proposal_s256</code>.
+    Copy-paste-oriented R3 flow: discover Bookings MCP metadata, request
+    <code>r3_operations</code> for MCP tools, exchange through the Person Server,
+    call the granted operations, handle the conditional <code>book_trip</code> proposal,
+    approve it, and retry with <code>approved_proposal_s256</code>.
 </p>
 
 <div class="row">
