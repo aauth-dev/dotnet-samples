@@ -369,17 +369,17 @@ four-party shape (`aud` = AS) but reuses nothing from Trips/missions.
 
 ### Definition of Done
 
-- [ ] `GET /.well-known/aauth-resource.json` includes `r3_vocabularies`
+- [x] `GET /.well-known/aauth-resource.json` includes `r3_vocabularies`
       (`urn:aauth:vocabulary:mcp` ⇒ `{bookings}/mcp`) **and** `authorization_endpoint`.
-- [ ] `POST /authorize` accepts `r3_operations`, persists exact R3 bytes, and returns
+- [x] `POST /authorize` accepts `r3_operations`, persists exact R3 bytes, and returns
       a resource token carrying `r3_uri`/`r3_s256` (aud = AS).
-- [ ] R3 endpoint at `/r3/{hash}` serves the trusted AS + PS (parsed `JwksUri`
+- [x] R3 endpoint at `/r3/{hash}` serves the trusted AS + PS (parsed `JwksUri`
       authority match), rejects agents/untrusted.
-- [ ] Scenario endpoints gate on R3 claims (not scope); `book_trip` triggers a
+- [x] Scenario endpoints gate on R3 claims (not scope); `book_trip` triggers a
       per-call proposal (`itinerary_id`, `destination`, `depart`/`return`,
       `total_usd`, `cancellation_policy`); granted ops (`search_trip_options`,
       `hold_itinerary`) served from the token.
-- [ ] No mission handling on Bookings (no `AAuth-Mission`; `MissionAware = false`).
+- [x] No mission handling on Bookings (no `AAuth-Mission`; `MissionAware = false`).
 
 ## Phase 2.2 — AS + PS R3 processing
 
@@ -408,15 +408,15 @@ fetches/verifies R3, evaluates `operations`, and mints grants.
 
 ### Definition of Done
 
-- [ ] PS fetches R3 with a valid `jwks_uri` signature, hash-verifies, and renders the
+- [x] PS fetches R3 with a valid `jwks_uri` signature, hash-verifies, and renders the
       `display` fields at consent **in the federated branch right after
       `VerifyResourceTokenAsync`, before `FederateAsync` / the `202` interaction
       relay** (not later).
-- [ ] AS R3 token endpoint fetches R3 with a valid signature, hash-verifies before
+- [x] AS R3 token endpoint fetches R3 with a valid signature, hash-verifies before
       use, and rejects a hash mismatch.
-- [ ] AS auth token carries `r3_uri`/`r3_s256`/`r3_granted` (+ `r3_conditional`)
+- [x] AS auth token carries `r3_uri`/`r3_s256`/`r3_granted` (+ `r3_conditional`)
       and passes `TokenVerifier`.
-- [ ] The Bookings AS runs on its **own origin** (`:5501`); the PS reaches it purely
+- [x] The Bookings AS runs on its **own origin** (`:5501`); the PS reaches it purely
       via the resource token's `aud`; the `:5500` AS and scenario 6 / Wallet are
       unaffected (CC12).
 
@@ -444,11 +444,11 @@ the AS → AS grants search + hold, marks book conditional → granted 200
 
 ### Definition of Done
 
-- [ ] Flow runs end-to-end against the live four-party stack to a final `200`.
-- [ ] Steps show `r3_uri`/`r3_s256`, the PS-rendered `display`, the PS→AS
+- [x] Flow runs end-to-end against the live four-party stack to a final `200`.
+- [x] Steps show `r3_uri`/`r3_s256`, the PS-rendered `display`, the PS→AS
       federation, `r3_granted`/`r3_conditional`, and the digest-matched per-call
       `book_trip` retry.
-- [ ] Blurb carries the experimental disclaimer.
+- [x] Blurb carries the experimental disclaimer.
 
 ## Phase 2.4 — Wiring, E2E, docs
 
@@ -466,15 +466,15 @@ the AS → AS grants search + hold, marks book conditional → granted 200
 
 ### Definition of Done
 
-- [ ] `make demo-tour-r3` brings up the stack and the flow completes.
-- [ ] `rich-request.spec.ts` green; picker count assertion updated.
-- [ ] Docs build; experimental status called out in blurb + workflow page.
+- [x] `make demo-tour-r3` brings up the stack and the flow completes.
+- [x] `rich-request.spec.ts` green; picker count assertion updated.
+- [x] Docs build; experimental status called out in blurb + workflow page.
 
 ### Part 2 exit criteria
 
-- [ ] Full repo build 0/0; unit + conformance + R3 E2E green.
-- [ ] Multi-subagent review adjudicated against v02 spec text before merge.
-- [ ] research updated with any findings via dated `> **Update**` callout.
+- [x] Full repo build 0/0; unit + conformance + R3 E2E green.
+- [x] Multi-subagent review adjudicated against v02 spec text before merge.
+- [x] research updated with any findings via dated `> **Update**` callout.
 
 ---
 

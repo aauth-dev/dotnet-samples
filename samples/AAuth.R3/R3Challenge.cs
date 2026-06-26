@@ -78,13 +78,6 @@ public sealed class R3Challenge
         return Results.Json(new { error = "auth_token_required" }, statusCode: StatusCodes.Status401Unauthorized);
     }
 
-    public static string BuildConditionalRequirementHeader(string proposalUri, string proposalS256)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(proposalUri);
-        ArgumentException.ThrowIfNullOrEmpty(proposalS256);
-        return $"requirement=r3-approval; r3_uri=\"{EscapeSfString(proposalUri)}\"; r3_s256=\"{EscapeSfString(proposalS256)}\"";
-    }
-
     internal static string SignCompact(JsonObject header, JsonObject payload, IAAuthKey key)
     {
         var headerBytes = Encoding.UTF8.GetBytes(header.ToJsonString());
@@ -94,5 +87,4 @@ public sealed class R3Challenge
         return signingInput + "." + Base64UrlEncoder.Encode(signature);
     }
 
-    private static string EscapeSfString(string value) => value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
 }

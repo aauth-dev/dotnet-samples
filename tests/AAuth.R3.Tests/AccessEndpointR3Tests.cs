@@ -53,16 +53,38 @@ public class AccessEndpointR3Tests
     }
 
     [Fact]
+    public async Task TokenEndpoint_RejectsPersonServerWhenAllowListIsMissing()
+    {
+        var fixture = await R3AccessFixture.CreateAsync(trustedPersonServers: []);
+        await using var app = fixture.App;
+
+        var response = await fixture.PostTokenAsync();
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("untrusted_person_server", (string?)body!["error"]);
+    }
+
+    [Fact]
+    public async Task TokenEndpoint_RejectsR3UriWhoseOriginDoesNotMatchResourceIssuer()
+    {
+        var fixture = await R3AccessFixture.CreateAsync(resourceTokenUriOverride: "https://evil.test/r3/doc");
+        await using var app = fixture.App;
+
+        var response = await fixture.PostTokenAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("r3_evaluation_failed", (string?)body!["error"]);
+    }
+
+    [Fact]
     public async Task TokenEndpoint_MintsPerCallTokenForProposal()
     {
         var fixture = await R3AccessFixture.CreateAsync();
         await using var app = fixture.App;
 
-        var response = await fixture.PostTokenAsync(new JsonObject
-        {
-            ["proposal_uri"] = fixture.ProposalUri,
-            ["proposal_s256"] = fixture.ProposalS256,
-        });
+        var response = await fixture.PostTokenAsync(fixture.ProposalResourceToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var payload = await ReadAuthPayloadAsync(response);
@@ -117,8 +139,12 @@ public class AccessEndpointR3Tests
         public required string R3S256 { get; init; }
         public required string ProposalUri { get; init; }
         public required string ProposalS256 { get; init; }
+        public required string ProposalResourceToken { get; init; }
 
-        public static async Task<R3AccessFixture> CreateAsync(string? resourceTokenS256Override = null)
+        public static async Task<R3AccessFixture> CreateAsync(
+            string? resourceTokenS256Override = null,
+            string? resourceTokenUriOverride = null,
+            IReadOnlyCollection<string>? trustedPersonServers = null)
         {
             var asKey = AAuthKey.Generate();
             var psKey = AAuthKey.Generate();
@@ -160,9 +186,9 @@ public class AccessEndpointR3Tests
             {
                 Issuer = R3TestData.AsIssuer,
                 SigningKeys = new Dictionary<string, AAuthKey> { [R3TestData.AsKid] = asKey },
-                TrustedPersonServers = [R3TestData.PsIssuer],
+                TrustedPersonServers = trustedPersonServers ?? [R3TestData.PsIssuer],
                 ConditionalTools = new HashSet<string>(StringComparer.Ordinal) { "book_trip" },
-                FetchAndVerifyAsync = (_, uri, s256, _) =>
+                FetchAndVerifyAsync = (_, uri, s256, _, _) =>
                 {
                     var bytes = uri == r3Uri ? docBytes : uri == proposalUri ? proposalBytes : throw new InvalidOperationException("unknown R3 URI");
                     R3Hash.Verify(bytes, s256);
@@ -180,15 +206,16 @@ public class AccessEndpointR3Tests
                 ResourceKey = resourceKey,
                 AgentKey = agentKey,
                 AgentToken = R3TestData.AgentToken(apKey, agentKey),
-                ResourceToken = R3TestData.ResourceToken(resourceKey, agentKey, r3Uri, resourceTokenS256Override ?? r3S256),
+                ResourceToken = R3TestData.ResourceToken(resourceKey, agentKey, resourceTokenUriOverride ?? r3Uri, resourceTokenS256Override ?? r3S256),
                 R3Uri = r3Uri,
                 R3S256 = r3S256,
                 ProposalUri = proposalUri,
                 ProposalS256 = proposalS256,
+                ProposalResourceToken = R3TestData.ResourceToken(resourceKey, agentKey, proposalUri, proposalS256),
             };
         }
 
-        public async Task<HttpResponseMessage> PostTokenAsync(JsonObject? extra = null)
+        public async Task<HttpResponseMessage> PostTokenAsync(string? resourceToken = null, JsonObject? extra = null)
         {
             using var client = new AAuthClientBuilder(PsKey)
                 .UseJwksUri($"{R3TestData.PsIssuer}/.well-known/jwks.json", R3TestData.PsKid)
@@ -198,7 +225,7 @@ public class AccessEndpointR3Tests
             var body = new JsonObject
             {
                 ["agent_token"] = AgentToken,
-                ["resource_token"] = ResourceToken,
+                ["resource_token"] = resourceToken ?? ResourceToken,
             };
             if (extra is not null)
             {

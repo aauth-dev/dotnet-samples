@@ -95,7 +95,8 @@ builder.Services.AddSingleton<JwksClient>(sp =>
     new JwksClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-jwks")));
 builder.Services.AddHttpClient("aauth-metadata");
 builder.Services.AddHttpClient("aauth-jwks");
-builder.Services.AddHttpClient("aauth-r3-fetch");
+builder.Services.AddHttpClient("aauth-r3-fetch")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<ConsentStore>();
 builder.Services.AddSingleton<PendingStore>();
 builder.Services.AddSingleton<FederatedPendingStore>();
@@ -241,9 +242,6 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
     }
 
     var upstreamTokenJwt = (string?)body?["upstream_token"];
-    var proposalUri = (string?)body?["proposal_uri"];
-    var proposalS256 = (string?)body?["proposal_s256"];
-
     // Four-party (federated) branch. When the resource token's `aud` is NOT
     // this PS, the resource delegated authorization to an Access Server. The PS
     // does not mint the auth token itself — it forwards a signed PS->AS request
@@ -295,8 +293,7 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
             r3Consent = await FetchR3ConsentDisplayAsync(
                 ctx,
                 R3ClaimReader.ReadResourceDocument(verified.Payload),
-                proposalUri,
-                proposalS256);
+                resourceUrl);
         }
         catch (TokenVerificationException ex)
         {
@@ -377,9 +374,7 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
         {
             try
             {
-                var token = string.IsNullOrWhiteSpace(proposalUri) && string.IsNullOrWhiteSpace(proposalS256)
-                    ? await federation.FederateAsync(resourceAudience, fedRequest)
-                    : await FederateR3ProposalAsync(resourceAudience, fedRequest, proposalUri, proposalS256);
+                var token = await federation.FederateAsync(resourceAudience, fedRequest);
                 entry.AuthToken = token;
                 entry.Status = FederatedPendingStatus.Allowed;
             }
@@ -444,7 +439,7 @@ app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore
                 ctx.Response.Headers["Cache-Control"] = "no-store";
                 ctx.Response.Headers[AAuthRequirementHeader.Name] =
                     Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", entry.Id);
-                return Results.Json(new { status = "pending", r3_display = entry.R3Display }, statusCode: StatusCodes.Status202Accepted);
+                return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
             }
             return Results.Ok(new { auth_token = entry.AuthToken });
         }
@@ -708,7 +703,7 @@ app.MapGet("/federated-pending/{id}", (HttpContext ctx, string id, FederatedPend
                 ctx.Response.Headers["Cache-Control"] = "no-store";
                 ctx.Response.Headers[AAuthRequirementHeader.Name] =
                     Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", entry.Id);
-                return Results.Json(new { status = "pending", r3_display = entry.R3Display }, statusCode: StatusCodes.Status202Accepted);
+                return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
             }
             if (entry.PersonServerDecision == false)
             {
@@ -1718,14 +1713,8 @@ app.Run();
 async Task<R3ConsentDisplay?> FetchR3ConsentDisplayAsync(
     HttpContext ctx,
     R3ClaimReader.ResourceDocumentClaims? documentClaims,
-    string? proposalUri,
-    string? proposalS256)
+    string resourceIssuer)
 {
-    if (string.IsNullOrWhiteSpace(proposalUri) != string.IsNullOrWhiteSpace(proposalS256))
-    {
-        throw new InvalidOperationException("proposal_uri and proposal_s256 must be present together.");
-    }
-
     var transport = ctx.RequestServices.GetRequiredService<IHttpMessageHandlerFactory>()
         .CreateHandler("aauth-r3-fetch");
     var fetchClient = R3FetchClient.Create(
@@ -1734,99 +1723,20 @@ async Task<R3ConsentDisplay?> FetchR3ConsentDisplayAsync(
         PsKid,
         transport);
 
-    if (!string.IsNullOrWhiteSpace(proposalUri) && !string.IsNullOrWhiteSpace(proposalS256))
-    {
-        var proposalBytes = await fetchClient.FetchAndVerifyAsync(proposalUri, proposalS256, ctx.RequestAborted);
-        var proposal = R3ProposalDocument.FromUtf8Bytes(proposalBytes);
-        return ToConsentDisplay(proposalUri, proposalS256, proposal.Display);
-    }
-
     if (documentClaims is null)
     {
         return null;
     }
 
-    var bytes = await fetchClient.FetchAndVerifyAsync(documentClaims.Uri, documentClaims.S256, ctx.RequestAborted);
+    var bytes = await fetchClient.FetchAndVerifyAsync(documentClaims.Uri, documentClaims.S256, resourceIssuer, ctx.RequestAborted);
+    if (IsProposal(bytes))
+    {
+        var proposal = R3ProposalDocument.FromUtf8Bytes(bytes);
+        return ToConsentDisplay(documentClaims.Uri, documentClaims.S256, proposal.Display);
+    }
+
     var document = R3Document.FromUtf8Bytes(bytes);
     return ToConsentDisplay(documentClaims.Uri, documentClaims.S256, document.Display);
-}
-
-async Task<string> FederateR3ProposalAsync(
-    string accessServer,
-    AccessServerRequest request,
-    string? proposalUri,
-    string? proposalS256)
-{
-    if (string.IsNullOrWhiteSpace(proposalUri) || string.IsNullOrWhiteSpace(proposalS256))
-    {
-        throw new InvalidOperationException("proposal_uri and proposal_s256 must be present together.");
-    }
-
-    var metadata = app.Services.GetRequiredService<MetadataClient>();
-    var metadataUrl = MetadataClient.BuildUrl(accessServer, AAuthConstants.DwkFiles.Access);
-    var doc = await metadata.FetchAsync(metadataUrl);
-    var tokenEndpoint = (string?)doc["token_endpoint"]
-        ?? throw new InvalidOperationException($"Access Server metadata at {metadataUrl} is missing 'token_endpoint'.");
-    if (!Uri.TryCreate(tokenEndpoint, UriKind.Absolute, out var tokenEndpointUri)
-        || !Uri.TryCreate(accessServer, UriKind.Absolute, out var asUri)
-        || !string.Equals(tokenEndpointUri.GetLeftPart(UriPartial.Authority), asUri.GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase))
-    {
-        throw new InvalidOperationException($"Access Server token_endpoint must share an origin with {accessServer}: {tokenEndpoint}");
-    }
-
-    var transport = app.Services.GetRequiredService<IHttpMessageHandlerFactory>()
-        .CreateHandler("aauth-federation");
-    using var signedClient = new AAuthClientBuilder(psKey)
-        .UseJwksUri($"{psIssuer.TrimEnd('/')}/.well-known/jwks.json", PsKid)
-        .WithInnerHandler(transport)
-        .Build();
-    var body = new JsonObject
-    {
-        ["resource_token"] = request.ResourceToken,
-        ["agent_token"] = request.AgentToken,
-        ["proposal_uri"] = proposalUri,
-        ["proposal_s256"] = proposalS256,
-    };
-    if (!string.IsNullOrEmpty(request.UpstreamToken))
-    {
-        body["upstream_token"] = request.UpstreamToken;
-    }
-
-    using var response = await signedClient.PostAsJsonAsync(tokenEndpointUri, body);
-    var responseBody = await response.Content.ReadAsStringAsync();
-    if (response.StatusCode == HttpStatusCode.Forbidden && TryReadJsonError(responseBody) == "denied")
-    {
-        throw new AAuthInteractionDeniedException("The Access Server denied the request.");
-    }
-    if (!response.IsSuccessStatusCode)
-    {
-        throw new AAuthTokenExchangeException(
-            TryReadJsonError(responseBody) ?? "r3_federation_failed",
-            responseBody,
-            (int)response.StatusCode,
-            isTerminal: true);
-    }
-    var json = JsonNode.Parse(responseBody) as JsonObject
-        ?? throw new InvalidOperationException("Access Server response was not a JSON object.");
-    var authToken = (string?)json["auth_token"]
-        ?? throw new InvalidOperationException("Access Server response did not include 'auth_token'.");
-
-    var validator = new AuthTokenResponseValidator(
-        metadata,
-        app.Services.GetRequiredService<JwksClient>());
-    var delivery = await validator.ValidateAsync(
-        authToken,
-        expectedIssuer: accessServer,
-        expectedAudience: request.ExpectedAudience,
-        expectedAgentId: request.ExpectedAgentId,
-        agentKey: request.AgentKey,
-        expectedActContext: request.ExpectedActContext,
-        requestedScope: request.RequestedScope);
-    if (!delivery.IsValid)
-    {
-        throw new TokenVerificationException($"Auth token delivery verification failed: {delivery.Error}");
-    }
-    return authToken;
 }
 
 static R3ConsentDisplay? ToConsentDisplay(string uri, string s256, R3Display? display) =>
@@ -1841,16 +1751,10 @@ static R3ConsentDisplay? ToConsentDisplay(string uri, string s256, R3Display? di
             display.Irreversible,
             display.Detail);
 
-static string? TryReadJsonError(string body)
+static bool IsProposal(byte[] bytes)
 {
-    try
-    {
-        return (string?)(JsonNode.Parse(body) as JsonObject)?["error"];
-    }
-    catch (System.Text.Json.JsonException)
-    {
-        return null;
-    }
+    var node = JsonNode.Parse(bytes) as JsonObject;
+    return node?["parameters"] is not null;
 }
 
 static string OptionalRow(string label, string? value) =>

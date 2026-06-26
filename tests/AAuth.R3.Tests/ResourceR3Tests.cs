@@ -6,6 +6,7 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.R3.Model;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -21,8 +22,8 @@ public class ResourceR3Tests
             $"{R3TestData.ResourceIssuer}/.well-known/jwks.json",
             $"{R3TestData.ResourceIssuer}/authorize");
 
-        var vocabularies = Assert.IsType<JsonArray>(doc["r3_vocabularies"]);
-        Assert.Contains(vocabularies, node => (string?)node == Vocabulary.Mcp);
+        var vocabularies = Assert.IsType<JsonObject>(doc["r3_vocabularies"]);
+        Assert.Equal($"{R3TestData.ResourceIssuer}/mcp", (string?)vocabularies[Vocabulary.Mcp]);
     }
 
     [Fact]
@@ -36,8 +37,7 @@ public class ResourceR3Tests
         var discovery = new StaticJsonHandler()
             .AddJson("https://as.test/.well-known/jwks.json", R3TestData.Jwks("as-1", asKey))
             .AddJson("https://ps.test/.well-known/jwks.json", R3TestData.Jwks("ps-1", psKey))
-            .AddJson("https://agent.test/.well-known/jwks.json", R3TestData.Jwks("agent-1", agentKey))
-            .AddJson("https://other.test/.well-known/jwks.json", R3TestData.Jwks("other-1", untrustedKey));
+            .AddJson("http://ps.test/.well-known/jwks.json", R3TestData.Jwks("ps-1", psKey));
 
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
@@ -45,12 +45,15 @@ public class ResourceR3Tests
         var app = builder.Build();
         app.MapR3Document("/r3/doc", _ => bytes, fetcher =>
             fetcher.JwksUri is not null
-            && (fetcher.JwksUri.Authority == "as.test" || fetcher.JwksUri.Authority == "ps.test"));
+            && ($"{fetcher.JwksUri.Scheme}://{fetcher.JwksUri.Authority}" == "https://as.test"
+                || $"{fetcher.JwksUri.Scheme}://{fetcher.JwksUri.Authority}" == "https://ps.test"
+                || $"{fetcher.JwksUri.Scheme}://{fetcher.JwksUri.Authority}" == "http://ps.test"));
         await app.StartAsync();
         try
         {
             Assert.Equal(HttpStatusCode.OK, (await SignedGet(app, asKey, "https://as.test/.well-known/jwks.json", "as-1")).StatusCode);
             Assert.Equal(HttpStatusCode.OK, (await SignedGet(app, psKey, "https://ps.test/.well-known/jwks.json", "ps-1")).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await SignedGet(app, psKey, "http://ps.test/.well-known/jwks.json", "ps-1")).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await SignedGet(app, agentKey, "https://agent.test/.well-known/jwks.json", "agent-1")).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await SignedGet(app, untrustedKey, "https://other.test/.well-known/jwks.json", "other-1")).StatusCode);
 
@@ -62,6 +65,69 @@ public class ResourceR3Tests
         {
             await app.DisposeAsync();
         }
+    }
+
+    [Fact]
+    public async Task VerifyFetcher_RejectsJwksUriWhenTrustPredicateIsMissing()
+    {
+        var asKey = AAuthKey.Generate();
+        var discovery = new StaticJsonHandler()
+            .AddJson("https://as.test/.well-known/jwks.json", R3TestData.Jwks("as-1", asKey));
+
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton(new JwksClient(new HttpClient(discovery)));
+        var app = builder.Build();
+        app.MapGet("/verify", async (HttpContext context) =>
+        {
+            try
+            {
+                await R3DocumentEndpoint.VerifyFetcherAsync(context);
+                return Results.Ok();
+            }
+            catch (R3UntrustedJwksUriException)
+            {
+                return Results.Json(new { error = "untrusted_fetcher" }, statusCode: StatusCodes.Status403Forbidden);
+            }
+        });
+        await app.StartAsync();
+        try
+        {
+            using var client = new AAuthClientBuilder(asKey)
+                .UseJwksUri("https://as.test/.well-known/jwks.json", "as-1")
+                .WithInnerHandler(app.GetTestServer().CreateHandler())
+                .Build();
+            client.BaseAddress = new Uri(R3TestData.ResourceIssuer);
+
+            var response = await client.GetAsync("/verify");
+
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+        finally
+        {
+            await app.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public void FetchClient_BindsR3UriToResourceIssuerAndRejectsPrivateTargets()
+    {
+        var sameOrigin = R3FetchClient.ValidateFetchTarget(
+            "https://resource.test/r3/doc",
+            R3TestData.ResourceIssuer);
+        Assert.Equal("https://resource.test/r3/doc", sameOrigin.ToString());
+
+        var loopback = R3FetchClient.ValidateFetchTarget(
+            "http://localhost:5004/r3/doc",
+            "http://localhost:5004");
+        Assert.Equal("localhost", loopback.Host);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            R3FetchClient.ValidateFetchTarget("https://evil.test/r3/doc", R3TestData.ResourceIssuer));
+        Assert.Throws<InvalidOperationException>(() =>
+            R3FetchClient.ValidateFetchTarget("https://192.168.1.10/r3/doc", "https://192.168.1.10"));
+        Assert.Throws<InvalidOperationException>(() =>
+            R3FetchClient.ValidateFetchTarget("http://resource.test/r3/doc", "http://resource.test"));
     }
 
     [Fact]
@@ -83,11 +149,11 @@ public class ResourceR3Tests
         {
             var client = R3FetchClient.Create(asKey, "https://as.test/.well-known/jwks.json", "as-1", app.GetTestServer().CreateHandler());
 
-            var fetched = await client.FetchAndVerifyAsync($"{R3TestData.ResourceIssuer}/r3/doc", s256);
+            var fetched = await client.FetchAndVerifyAsync($"{R3TestData.ResourceIssuer}/r3/doc", s256, R3TestData.ResourceIssuer);
 
             Assert.Equal(bytes, fetched);
             await Assert.ThrowsAsync<R3HashMismatchException>(() =>
-                client.FetchAndVerifyAsync($"{R3TestData.ResourceIssuer}/r3/doc", "tampered"));
+                client.FetchAndVerifyAsync($"{R3TestData.ResourceIssuer}/r3/doc", "tampered", R3TestData.ResourceIssuer));
         }
         finally
         {

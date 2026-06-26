@@ -181,6 +181,102 @@ internal static class CodeSnippets
         // Now signed with the auth_token → 200 OK
         """;
 
+    // ── Rich Resource Requests (R3) preview flow ───────────────────────
+
+    public const string RichRequestDiscover = """
+        // R3 is experimental and lives in samples/AAuth.R3 today.
+        // The core src/AAuth SDK is unchanged.
+        // Resource metadata includes:
+        //   authorization_endpoint
+        //   r3_vocabularies["urn:aauth:vocabulary:mcp"]
+        var meta = await metadata.FetchAsync(
+            "https://bookings.example/.well-known/aauth-resource.json");
+        var authorize = (string)meta["authorization_endpoint"]!;
+        """;
+
+    public const string RichRequestAuthorize = """
+        using AAuth.R3;
+
+        var operations = R3Request.CreateMcpOperations(
+            "search_trip_options",
+            "hold_itinerary",
+            "book_trip");
+
+        var response = await R3Request.PostAuthorizeAsync(
+            signedAgentClient,
+            authorize,
+            operations);
+        // → resource_token with r3_uri + r3_s256 (aud = dedicated AS)
+        """;
+
+    public const string RichRequestReadClaims = """
+        using AAuth.R3;
+
+        var payload = verifiedResourceToken.Payload; // JsonObject
+        var r3 = R3ClaimReader.ReadResourceDocument(payload);
+        Console.WriteLine(r3!.Uri);
+        Console.WriteLine(r3.S256);
+        """;
+
+    public const string RichRequestExchange = """
+        // The agent still talks only to its Person Server.
+        // The PS fetches the R3 document with a jwks_uri signature,
+        // verifies r3_s256 over the exact bytes, renders display consent,
+        // then federates to the AS named by resource_token.aud.
+        var response = await signedAgentClient.PostAsJsonAsync(
+            psTokenEndpoint,
+            new { resource_token });
+        """;
+
+    public const string RichRequestAuthClaims = """
+        using AAuth.R3;
+
+        var claims = R3ClaimReader.ReadAuthToken(verifiedAuthToken.Payload);
+        // claims.Granted     → search_trip_options, hold_itinerary
+        // claims.Conditional → book_trip
+        """;
+
+    public const string RichRequestGrantedCalls = """
+        // Bookings enforces directly from r3_granted — not from src/AAuth
+        // scope policies and not from an opaque scope string.
+        await bookings.PostAsJsonAsync("/mcp/search_trip_options", search);
+        await bookings.PostAsJsonAsync("/mcp/hold_itinerary", hold);
+        """;
+
+    public const string RichRequestConditionalCall = """
+        // book_trip is conditional. The first call returns:
+        // { error: "r3_approval_required", r3_uri, r3_s256 }
+        var response = await bookings.PostAsJsonAsync(
+            "/mcp/book_trip",
+            new { parameters = itinerary });
+        """;
+
+    public const string RichRequestProposalExchange = """
+        // Per-call proposal approval uses the same PS-mediated path.
+        // The conditional challenge returned a new resource_token whose
+        // r3_uri/r3_s256 point at the proposal document.
+        var response = await signedAgentClient.PostAsJsonAsync(
+            psTokenEndpoint,
+            new
+            {
+                resource_token = proposalResourceToken,
+            });
+        """;
+
+    public const string RichRequestDigestRetry = """
+        // Retry with the per-call auth token and the exact parameters.
+        // Bookings recomputes the proposal digest and only commits if it
+        // matches the approved proposal_s256.
+        using var approved = new AAuthClientBuilder(key)
+            .UseJwt(perCallAuthToken)
+            .Build();
+
+        var final = await approved.PostAsJsonAsync(
+            "/mcp/book_trip",
+            new { parameters = itinerary, approved_proposal_s256 });
+        // → 200 OK
+        """;
+
     public const string CallChainRetry = """
         // Retry Concierge with the auth_token.
         // From our side this looks like a normal retry — the chaining

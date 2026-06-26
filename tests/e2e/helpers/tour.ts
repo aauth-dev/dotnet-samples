@@ -25,6 +25,7 @@ export const TourMode = {
   Mission: 'Mission',
   MissionCallChain: 'MissionCallChain',
   SubAgent: 'SubAgent',
+  RichRequest: 'RichRequest',
 } as const;
 export type TourMode = (typeof TourMode)[keyof typeof TourMode];
 
@@ -66,6 +67,9 @@ const PLAN_STEPS: Record<TourMode, number> = {
   // PS token return + handoff, and the worker's resource call. Runs entirely
   // in-process (no live servers).
   SubAgent: 7,
+  // Rich Resource Requests (R3): experimental Bookings four-party flow with
+  // two PS-rendered approvals (document display, then per-call proposal).
+  RichRequest: 12,
 };
 
 /** Select a flow in the `#flow-select` picker and wait for the timeline to reset. */

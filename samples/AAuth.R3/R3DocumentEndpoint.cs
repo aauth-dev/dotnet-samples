@@ -27,7 +27,11 @@ public static class R3DocumentEndpoint
             R3VerifiedFetcher fetcher;
             try
             {
-                fetcher = await VerifyFetcherAsync(context);
+                fetcher = await VerifyFetcherAsync(context, candidate => isTrustedFetcher(candidate));
+            }
+            catch (R3UntrustedJwksUriException)
+            {
+                return Results.Json(new { error = "untrusted_fetcher" }, statusCode: StatusCodes.Status403Forbidden);
             }
             catch (Exception ex) when (ex is R3FetchVerificationException or AAuthVerificationException)
             {
@@ -47,7 +51,9 @@ public static class R3DocumentEndpoint
         return endpoints;
     }
 
-    public static async Task<R3VerifiedFetcher> VerifyFetcherAsync(HttpContext context)
+    public static async Task<R3VerifiedFetcher> VerifyFetcherAsync(
+        HttpContext context,
+        Func<R3VerifiedFetcher, bool>? isAllowedJwksUri = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         var request = context.Request;
@@ -64,11 +70,28 @@ public static class R3DocumentEndpoint
         {
             var jwks = context.RequestServices.GetService(typeof(JwksClient)) as JwksClient
                 ?? throw new R3FetchVerificationException("JwksClient is required to resolve jwks_uri fetch signatures.");
+            if (isAllowedJwksUri is null)
+            {
+                throw new R3UntrustedJwksUriException("jwks_uri Signature-Key requires an explicit trust predicate.");
+            }
             if (string.IsNullOrWhiteSpace(parsed.JwksUri) || string.IsNullOrWhiteSpace(parsed.Kid))
             {
                 throw new R3FetchVerificationException("jwks_uri Signature-Key is missing uri or kid.");
             }
-            publicKey = await jwks.ResolveKeyAsync(new Uri(parsed.JwksUri), parsed.Kid, context.RequestAborted)
+            if (!Uri.TryCreate(parsed.JwksUri, UriKind.Absolute, out var jwksUri)
+                || !R3FetchClient.IsHttpOrHttps(jwksUri)
+                || (!string.Equals(jwksUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) && !jwksUri.IsLoopback)
+                || (isAllowedJwksUri is not null
+                    && !isAllowedJwksUri(new R3VerifiedFetcher(
+                        parsed.Scheme,
+                        jwksUri,
+                        parsed.Kid,
+                        parsed.Jkt,
+                        parsed))))
+            {
+                throw new R3UntrustedJwksUriException("jwks_uri Signature-Key is not trusted.");
+            }
+            publicKey = await jwks.ResolveKeyAsync(jwksUri, parsed.Kid, context.RequestAborted)
                 ?? throw new R3FetchVerificationException("jwks_uri Signature-Key key was not found.");
         }
         else
@@ -121,8 +144,13 @@ public sealed record R3VerifiedFetcher(
     string? KeyThumbprint,
     SignatureKeyParser.ParsedSignatureKeyInfo ParsedKey);
 
-public sealed class R3FetchVerificationException : Exception
+public class R3FetchVerificationException : Exception
 {
     public R3FetchVerificationException(string message) : base(message) { }
     public R3FetchVerificationException(string message, Exception inner) : base(message, inner) { }
+}
+
+public sealed class R3UntrustedJwksUriException : R3FetchVerificationException
+{
+    public R3UntrustedJwksUriException(string message) : base(message) { }
 }

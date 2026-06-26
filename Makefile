@@ -10,6 +10,7 @@ PROFILE_PROJECT  := samples/MockResourceServers/Profile/Profile.csproj
 CALENDAR_PROJECT := samples/MockResourceServers/Calendar/Calendar.csproj
 TRIPS_PROJECT    := samples/MockResourceServers/Trips/Trips.csproj
 WALLET_PROJECT   := samples/MockResourceServers/Wallet/Wallet.csproj
+BOOKINGS_PROJECT := samples/MockResourceServers/Bookings/Bookings.csproj
 PS_PROJECT     := samples/MockPersonServer/MockPersonServer.csproj
 AP_PROJECT     := samples/MockAgentProvider/MockAgentProvider.csproj
 TOUR_PROJECT   := samples/GuidedTour/GuidedTour.csproj
@@ -24,12 +25,14 @@ PROFILE_URL  := http://localhost:5000
 CALENDAR_URL := http://localhost:5001
 TRIPS_URL    := http://localhost:5002
 WALLET_URL   := http://localhost:5003
+BOOKINGS_URL := http://localhost:5004
 PS_URL     := http://localhost:5100
 AP_URL     := http://localhost:5301
 CONCIERGE_URL   := http://localhost:5200
 TOUR_URL   := http://localhost:5400
 SAMPLE_URL := http://localhost:5240
 AS_URL     := http://localhost:5500
+R3_AS_URL  := http://localhost:5501
 KEYCLOAK_URL   := http://localhost:8080
 KEYCLOAK_IMAGE := quay.io/keycloak/keycloak:26.0
 KEYCLOAK_REALM := samples/MockAccessServer/keycloak
@@ -65,7 +68,7 @@ endef
 
 .PHONY: help build restore test test-unit test-conformance format clean \
         resources ps ps-consent ap concierge tour sampleapp agent live \
-        demo demo-mission agent-mission \
+        demo demo-mission demo-tour-r3 agent-mission \
         keycloak access-server demo-keycloak \
         agent-federated agent-reset \
         e2e-install e2e e2e-tour e2e-sample e2e-report
@@ -105,7 +108,7 @@ clean: ## dotnet clean + remove bin/ obj/ trees
 # Individual services & apps
 # ----------------------------------------------------------------------------
 
-resources: ## Run all four Aria resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003)
+resources: ## Run all Aria resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003, Bookings :5004)
 	@echo "Building services (once) before launch..."
 	@$(DOTNET) build $(SOLUTION) -v q
 	@trap 'trap - INT TERM; echo; echo "Stopping..."; kill 0' INT TERM; \
@@ -113,6 +116,7 @@ resources: ## Run all four Aria resource servers (Profile :5000, Calendar :5001,
 	$(DOTNET) run --no-build --project $(CALENDAR_PROJECT) & \
 	$(DOTNET) run --no-build --project $(TRIPS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(WALLET_PROJECT) & \
+	$(DOTNET) run --no-build --project $(BOOKINGS_PROJECT) & \
 	wait
 
 ps: ## Run the MockPersonServer (port 5100)
@@ -152,10 +156,12 @@ demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. f
 	@echo "   Calendar:           $(CALENDAR_URL)         (three-party resource server)"
 	@echo "   Trips:              $(TRIPS_URL)         (mission-aware resource server)"
 	@echo "   Wallet:             $(WALLET_URL)         (four-party resource server)"
+	@echo "   Bookings:           $(BOOKINGS_URL)         (experimental R3 resource server)"
 	@echo "   Concierge:       $(CONCIERGE_URL)         (mission concierge)"
 	@echo "   MockPersonServer:   $(PS_URL)         (RequireConsent=true)"
 	@echo "   MockAgentProvider:  $(AP_URL)         (agent registry)"
 	@echo "   MockAccessServer:   $(AS_URL)         (stub, RequireConsent=true)"
+	@echo "   R3 Access Server:   $(R3_AS_URL)         (dedicated R3 AS)"
 	@echo ""
 	@echo " Open in your browser:"
 	@echo "   GuidedTour:         $(TOUR_URL)         (step-by-step walkthrough of every flow)"
@@ -165,16 +171,42 @@ demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. f
 	@echo "Building services (once) before launch..."
 	@$(DOTNET) build $(SOLUTION) -v q
 	@trap 'trap - INT TERM; echo; echo "Stopping..."; kill 0' INT TERM; \
-	MockPersonServer__RequireConsent=true $(DOTNET) run --no-build --project $(PS_PROJECT) & \
+	MockPersonServer__RequireConsent=true MockPersonServer__TrustedAccessServers__1=$(R3_AS_URL) $(DOTNET) run --no-build --project $(PS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(PROFILE_PROJECT) & \
 	$(DOTNET) run --no-build --project $(CALENDAR_PROJECT) & \
 	$(DOTNET) run --no-build --project $(TRIPS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(WALLET_PROJECT) & \
+	$(DOTNET) run --no-build --project $(BOOKINGS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(CONCIERGE_PROJECT) & \
 	$(DOTNET) run --no-build --project $(AP_PROJECT) & \
 	AccessServer__PolicyProvider=stub AccessServer__RequireConsent=true $(DOTNET) run --no-build --project $(AS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(AS_PROJECT) --launch-profile MockAccessServer.R3 & \
 	$(DOTNET) run --no-build --project $(TOUR_PROJECT) & \
 	$(DOTNET) run --no-build --project $(SAMPLE_PROJECT) & \
+	wait
+
+demo-tour-r3: ## Start the experimental GuidedTour R3 stack (Bookings :5004 + R3 AS :5501 + PS + AP + Tour)
+	@echo "Starting GuidedTour Rich Resource Requests (R3) demo..."
+	@echo "Building services (once) before launch..."
+	@$(DOTNET) build $(SOLUTION) -v q
+	@echo ""
+	@echo "------------------------------------------------------------------"
+	@echo " Backend services:"
+	@echo "   Bookings:          $(BOOKINGS_URL)         (experimental R3 resource)"
+	@echo "   MockPersonServer:  $(PS_URL)         (renders R3 display + proposals)"
+	@echo "   MockAgentProvider: $(AP_URL)         (agent registry)"
+	@echo "   R3 Access Server:  $(R3_AS_URL)         (dedicated R3 AS)"
+	@echo ""
+	@echo " Open in your browser:"
+	@echo "   GuidedTour:        $(TOUR_URL)         (flow #10: Rich Trip Booking (R3))"
+	@echo "------------------------------------------------------------------"
+	@echo ""
+	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \
+	MockPersonServer__RequireConsent=true MockPersonServer__TrustedAccessServers__1=$(R3_AS_URL) $(DOTNET) run --no-build --project $(PS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(BOOKINGS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(AP_PROJECT) & \
+	$(DOTNET) run --no-build --project $(AS_PROJECT) --launch-profile MockAccessServer.R3 & \
+	$(DOTNET) run --no-build --project $(TOUR_PROJECT) & \
 	wait
 
 # ----------------------------------------------------------------------------

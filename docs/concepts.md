@@ -39,6 +39,10 @@ Four modes:
 - **PS-Asserted** (3-party) — Resource issues resource token → agent exchanges at PS → auth token. SDK: `ChallengeHandler`, `TokenExchangeClient`
 - **Federated** (4-party) — PS delegates to Access Server. SDK: same agent-side types; AS is the PS's concern.
 
+Experimental R3 rich requests layer content-addressed operation documents
+(`r3_uri`/`r3_s256`, `r3_granted`, `r3_conditional`) onto the federated shape.
+See [Rich Resource Requests (R3)](workflows/rich-resource-requests.md).
+
 ### 3. Governance (Missions)
 
 Optional layer. The agent proposes a mission — a Markdown **description** of intent plus an optional list of **tools** — and the PS approves it (§Mission Creation, §Mission Approval).

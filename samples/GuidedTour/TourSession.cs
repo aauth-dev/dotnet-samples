@@ -11,6 +11,8 @@ using AAuth.Errors;
 using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Identifiers;
+using AAuth.R3;
+using AAuth.R3.Model;
 using AAuth.Tokens;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -78,6 +80,22 @@ public sealed class TourSession : IAsyncDisposable
     private string? _saWorkerToken;
     private string? _saResourceToken;
     private string? _saAuthToken;
+
+    // Rich Resource Requests (R3) flow state. The initial authorization request
+    // returns a content-addressed R3 document; the conditional booking call
+    // later returns a second content-addressed per-call proposal.
+    private string? _richAuthorizationEndpoint;
+    private string? _richResourceToken;
+    private string? _richAuthToken;
+    private string? _richPerCallAuthToken;
+    private string? _richR3Uri;
+    private string? _richR3S256;
+    private string? _richProposalUri;
+    private string? _richProposalS256;
+    private string? _richProposalResourceToken;
+    private string? _richSearchResponseBody;
+    private string? _richHoldResponseBody;
+    private string? _richBookResponseBody;
 
     // Background polling state (deferred mode, poll step). Mutated from
     // the polling task; the UI listens to StateChanged and re-renders.
@@ -158,6 +176,7 @@ public sealed class TourSession : IAsyncDisposable
         Mode is TourMode.Identity ? _options.ProfileUrl.TrimEnd('/') :
         Mode is TourMode.Mission or TourMode.MissionCallChain ? _options.TripsUrl.TrimEnd('/') :
         Mode is TourMode.Federated ? _options.WalletUrl.TrimEnd('/') :
+        Mode is TourMode.RichRequest ? _options.BookingsUrl.TrimEnd('/') :
         _options.CalendarUrl.TrimEnd('/');
 
     /// <summary>The display name of the resource server the current flow targets.</summary>
@@ -165,6 +184,7 @@ public sealed class TourSession : IAsyncDisposable
         Mode is TourMode.Identity ? "Profile" :
         Mode is TourMode.Mission or TourMode.MissionCallChain ? "Trips" :
         Mode is TourMode.Federated ? "Wallet" :
+        Mode is TourMode.RichRequest ? "Bookings" :
         "Calendar";
 
     /// <summary>
@@ -211,7 +231,7 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public bool IsIdentityMode =>
         _mode == TourMode.Identity
-        || (!HasPersonServer && _mode != TourMode.Bootstrap && _mode != TourMode.SubAgent);
+        || (!HasPersonServer && _mode != TourMode.Bootstrap && _mode != TourMode.SubAgent && _mode != TourMode.RichRequest);
 
     /// <summary>True when the configured flow is the deferred / user-consent path.</summary>
     public bool IsDeferredMode =>
@@ -236,6 +256,9 @@ public sealed class TourSession : IAsyncDisposable
 
     /// <summary>True when the current flow is the four-party federated path.</summary>
     public bool IsFederatedMode => HasPersonServer && _mode == TourMode.Federated && HasAccessServer;
+
+    /// <summary>True when the current flow is the experimental R3 rich request path.</summary>
+    public bool IsRichRequestMode => HasPersonServer && _mode == TourMode.RichRequest && HasRichRequestAccessServer;
 
     /// <summary>True when the current flow is the mission-governed (PS-as-policy) path.</summary>
     public bool IsMissionMode => HasPersonServer && _mode == TourMode.Mission;
@@ -263,6 +286,9 @@ public sealed class TourSession : IAsyncDisposable
     /// <summary>True when an Access Server URL is configured for the federated flow.</summary>
     public bool HasAccessServer => !string.IsNullOrWhiteSpace(_options.AccessServerUrl);
 
+    /// <summary>True when a dedicated R3 Access Server URL is configured.</summary>
+    public bool HasRichRequestAccessServer => !string.IsNullOrWhiteSpace(_options.RichRequestAccessServerUrl);
+
     /// <summary>True when an Agent Provider URL is configured for real AP enrolment.</summary>
     public bool HasAgentProvider => !string.IsNullOrWhiteSpace(_options.AgentProviderUrl);
 
@@ -274,6 +300,7 @@ public sealed class TourSession : IAsyncDisposable
             if (IsBootstrapMode) return HasAgentProvider ? 3 : 2;
             if (IsIdentityMode) return 2;
             if (IsSubAgentMode) return 7;
+            if (IsRichRequestMode) return 12;
             if (IsMissionCallChainMode) return 14;
             if (IsMissionMode) return 20;
             if (IsCallChainMode) return _callChainPending ? 13 : 7;
@@ -295,6 +322,7 @@ public sealed class TourSession : IAsyncDisposable
             if (IsBootstrapMode) return HasAgentProvider ? ApBootstrapPlan : LocalBootstrapPlan;
             if (IsIdentityMode) return IdentityPlan;
             if (IsSubAgentMode) return SubAgentPlan;
+            if (IsRichRequestMode) return RichRequestPlan;
             if (IsMissionCallChainMode) return MissionCallChainPlan;
             if (IsMissionMode) return MissionPlan;
             if (IsCallChainMode) return _callChainPending ? CallChainConsentPlan : CallChainPlan;
@@ -486,6 +514,22 @@ public sealed class TourSession : IAsyncDisposable
         new(10, "Inspect federated result", "Review the AS-minted auth token: dwk=aauth-access.json, cnf.jwk bound to the agent key.", Actor.Agent, Actor.Agent),
     };
 
+    private static readonly TourPlanStep[] RichRequestPlan =
+    {
+        new(1, "Discover Bookings metadata + MCP", "Unsigned GET /.well-known/aauth-resource.json; inspect r3_vocabularies and authorization_endpoint.", Actor.Agent, Actor.Resource),
+        new(2, "Request r3_operations", "Signed POST /authorize asking for search_trip_options, hold_itinerary, and book_trip.", Actor.Agent, Actor.Resource),
+        new(3, "Inspect R3 resource token", "Decode aud, r3_uri, and r3_s256 from the resource token.", Actor.Agent, Actor.Agent),
+        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint.", Actor.Agent, Actor.PersonServer),
+        new(5, "Exchange → R3 display consent", "PS verifies the token, fetches the R3 document, renders display consent, and parks on 202.", Actor.Agent, Actor.PersonServer),
+        new(6, "User approves R3 display", "User approves the PS-rendered R3 consent screen.", Actor.PersonServer, Actor.PersonServer),
+        new(7, "Poll → R3 auth_token", "PS federates to the dedicated R3 AS; AS grants search+hold and marks book conditional.", Actor.Agent, Actor.PersonServer),
+        new(8, "Granted operations → 200", "search_trip_options and hold_itinerary succeed from r3_granted.", Actor.Agent, Actor.Resource),
+        new(9, "book_trip → per-call proposal", "Conditional book_trip returns a concrete itinerary proposal with r3_uri/r3_s256.", Actor.Agent, Actor.Resource),
+        new(10, "Exchange proposal token → approval", "Agent sends the proposal resource_token for per-call approval.", Actor.Agent, Actor.PersonServer),
+        new(11, "User approves itinerary", "User approves the PS-rendered concrete itinerary proposal.", Actor.PersonServer, Actor.PersonServer),
+        new(12, "Digest-matched retry → 200", "Poll per-call token, retry book_trip with the same parameters, and get final 200.", Actor.Agent, Actor.Resource),
+    };
+
     /// <summary>True when no more steps remain in the current flow.</summary>
     public bool IsComplete => _aborted || Steps.Count >= TotalSteps;
 
@@ -498,7 +542,9 @@ public sealed class TourSession : IAsyncDisposable
 
     /// <summary>The step number at which user approval occurs in deferred mode.</summary>
     public int UserApprovalStepNumber =>
-        IsMissionCallChainMode
+        IsRichRequestMode
+            ? (Steps.Count + 1 <= RichInitialApprovalStep ? RichInitialApprovalStep : RichProposalApprovalStep)
+        : IsMissionCallChainMode
             ? (Steps.Count <= MissionChainCreatePollStep ? MissionChainCreateApprovalStep
                 : MissionChainElevatedApprovalStep)
         : IsMissionMode
@@ -511,7 +557,9 @@ public sealed class TourSession : IAsyncDisposable
 
     /// <summary>The step number at which polling occurs in deferred mode.</summary>
     public int PollStepNumber =>
-        IsMissionCallChainMode
+        IsRichRequestMode
+            ? (Steps.Count + 1 <= RichInitialPollStep ? RichInitialPollStep : RichProposalPollRetryStep)
+        : IsMissionCallChainMode
             ? (Steps.Count <= MissionChainCreatePollStep ? MissionChainCreatePollStep
                 : MissionChainElevatedPollStep)
         : IsMissionMode
@@ -521,6 +569,13 @@ public sealed class TourSession : IAsyncDisposable
         : IsCallChainPending
             ? (Steps.Count <= CallChainHop1PollStep ? CallChainHop1PollStep : CallChainHop2PollStep)
             : 8;
+
+    // Rich Request consent path step numbers: initial R3 display consent and
+    // the concrete per-call booking proposal consent.
+    private const int RichInitialApprovalStep = 6;
+    private const int RichInitialPollStep = 7;
+    private const int RichProposalApprovalStep = 11;
+    private const int RichProposalPollRetryStep = 12;
 
     // Call-chain consent path step numbers: hop 1 (Agent → Concierge) and
     // hop 2 (the Concierge's chained 202 for Concierge → Calendar).
@@ -563,7 +618,7 @@ public sealed class TourSession : IAsyncDisposable
     /// and the UI should expose the "Approve as user" action button.
     /// </summary>
     public bool AwaitingUserApproval =>
-        (IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode || IsMissionCallChainMode)
+        (IsDeferredMode || (IsFederatedMode && _federatedPending) || IsRichRequestMode || IsCallChainPending || IsMissionMode || IsMissionCallChainMode)
         && Steps.Count + 1 == UserApprovalStepNumber && !_userApproved;
 
     /// <summary>The user-facing interaction URL captured during step 7 (deferred only).</summary>
@@ -656,6 +711,18 @@ public sealed class TourSession : IAsyncDisposable
         _saWorkerToken = null;
         _saResourceToken = null;
         _saAuthToken = null;
+        _richAuthorizationEndpoint = null;
+        _richResourceToken = null;
+        _richAuthToken = null;
+        _richPerCallAuthToken = null;
+        _richR3Uri = null;
+        _richR3S256 = null;
+        _richProposalUri = null;
+        _richProposalS256 = null;
+        _richProposalResourceToken = null;
+        _richSearchResponseBody = null;
+        _richHoldResponseBody = null;
+        _richBookResponseBody = null;
     }
 
     /// <summary>
@@ -867,6 +934,42 @@ public sealed class TourSession : IAsyncDisposable
                 case 7: StepFederatedInspectResult(); break;
             }
         }
+        else if (IsRichRequestMode)
+        {
+            switch (nextStep)
+            {
+                case 1: await StepRichDiscoverResourceAsync(ct); break;
+                case 2: await StepRichAuthorizeAsync(ct); break;
+                case 3: StepRichParseResourceToken(); break;
+                case 4: await StepFetchPersonMetadataAsync(ct); break;
+                case 5: await StepRichInitialExchangeAsync(ct); break;
+                case 6: StepUserApprovesPlaceholder(); break;
+                case 7:
+                    if (_pollingTask is { } r3Initial && !r3Initial.IsCompleted)
+                    {
+                        await r3Initial.ConfigureAwait(false);
+                    }
+                    else if (Steps.Count + 1 == PollStepNumber)
+                    {
+                        await StepRichInitialPollAsync(ct);
+                    }
+                    break;
+                case 8: await StepRichGrantedCallsAsync(ct); break;
+                case 9: await StepRichBookProposalAsync(ct); break;
+                case 10: await StepRichProposalExchangeAsync(ct); break;
+                case 11: StepUserApprovesPlaceholder(); break;
+                case 12:
+                    if (_pollingTask is { } r3Proposal && !r3Proposal.IsCompleted)
+                    {
+                        await r3Proposal.ConfigureAwait(false);
+                    }
+                    else if (Steps.Count + 1 == PollStepNumber)
+                    {
+                        await StepRichProposalPollAndRetryAsync(ct);
+                    }
+                    break;
+            }
+        }
         else if (IsMissionCallChainMode)
         {
             switch (nextStep)
@@ -1057,7 +1160,7 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public Task RecordUserApprovalOpenedAsync(CancellationToken ct = default)
     {
-        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode || IsMissionCallChainMode)) { return Task.CompletedTask; }
+        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsRichRequestMode || IsCallChainPending || IsMissionMode || IsMissionCallChainMode)) { return Task.CompletedTask; }
         if (Steps.Count + 1 != UserApprovalStepNumber)
         {
             throw new InvalidOperationException(
@@ -1066,6 +1169,38 @@ public sealed class TourSession : IAsyncDisposable
 
         var userUrl = UserInteractionUrl ?? "(no interaction URL captured)";
         _userApproved = true;
+
+        if (IsRichRequestMode)
+        {
+            var isProposal = Steps.Count + 1 == RichProposalApprovalStep;
+            Steps.Add(new StepRecord
+            {
+                Number = Steps.Count + 1,
+                Title = isProposal
+                    ? "User approves itinerary proposal at the PS"
+                    : "User approves R3 display at the PS",
+                From = Actor.PersonServer,
+                To = Actor.PersonServer,
+                Narrative = isProposal
+                    ? "The tour opened the PS's R3 proposal page in a new browser tab. " +
+                      "The Person Server rendered the concrete `book_trip` display — " +
+                      "itinerary id, destination, dates, total price, and cancellation " +
+                      "policy — fetched from the proposal URI and verified against " +
+                      "`r3_s256`. The user clicked **Approve**, allowing exactly those " +
+                      "parameters to be retried."
+                    : "The tour opened the PS's R3 consent page in a new browser tab. " +
+                      "The Person Server rendered the R3 document's `display` fields " +
+                      "after fetching the content-addressed document from Bookings and " +
+                      "verifying `r3_s256`. The user clicked **Approve**, allowing the " +
+                      "PS to federate to the dedicated R3 Access Server.",
+                TokenDecoded =
+                    $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
+                    "User performed (browser → PS):\n" +
+                    $"  GET  /interaction?code={_interactionCode}\n" +
+                    $"  POST /interaction/approve  (form: code={_interactionCode})",
+            });
+            return Task.CompletedTask;
+        }
 
         if (IsFederatedMode)
         {
@@ -2394,7 +2529,7 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public Task StartPendingPollAsync()
     {
-        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode || IsMissionCallChainMode) || _pendingUrl is null)
+        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsRichRequestMode || IsCallChainPending || IsMissionMode || IsMissionCallChainMode) || _pendingUrl is null)
         {
             return Task.CompletedTask;
         }
@@ -2409,6 +2544,8 @@ public sealed class TourSession : IAsyncDisposable
         // Concierge-audience auth_token); every other poll hits the PS pending
         // URL with the agent token.
         var hop2 = IsCallChainPending && Steps.Count + 1 == CallChainHop2PollStep;
+        var richInitialPoll = IsRichRequestMode && Steps.Count + 1 == RichInitialPollStep;
+        var richProposalPoll = IsRichRequestMode && Steps.Count + 1 == RichProposalPollRetryStep;
 
         // Mission mode has three distinct poll cycles: cycle 1 returns the mission
         // approval blob (step 5), cycle 2 returns the elevated auth_token (step 13),
@@ -2447,6 +2584,8 @@ public sealed class TourSession : IAsyncDisposable
                         : missionPermissionPoll ? StepMissionPollPermissionAsync(ct)
                         : missionChainCreatePoll ? StepMissionPollCreateAsync(ct)
                         : missionChainElevatedPoll ? StepMissionElevatedPollAsync(ct)
+                        : richInitialPoll ? StepRichInitialPollAsync(ct)
+                        : richProposalPoll ? StepRichProposalPollAndRetryAsync(ct)
                         : hop2 ? StepCallChainPollHop2Async(ct)
                         : StepPollPendingAsync(ct);
                     await poll.ConfigureAwait(false);
@@ -3048,6 +3187,392 @@ public sealed class TourSession : IAsyncDisposable
     // -----------------------------------------------------------------
 
     private string? _federatedResponseBody;
+
+    // -----------------------------------------------------------------
+    // Rich Resource Requests (R3) step implementations
+    // -----------------------------------------------------------------
+
+    private string BookingsTargetUrl(string tool) => $"{_options.BookingsUrl.TrimEnd('/')}/mcp/{tool}";
+
+    private JsonObject BookingParameters() => new()
+    {
+        ["itinerary_id"] = "SEA-2026-09-18-A",
+        ["destination"] = "Seattle",
+        ["depart"] = "2026-09-18",
+        ["return"] = "2026-09-21",
+        ["total_usd"] = 842.50,
+        ["cancellation_policy"] = "Refundable within 24 hours; then airline/hotel penalties may apply.",
+    };
+
+    private async Task StepRichDiscoverResourceAsync(CancellationToken ct)
+    {
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        using var client = new HttpClient(capture);
+        var url = $"{_options.BookingsUrl.TrimEnd('/')}/.well-known/aauth-resource.json";
+        await client.GetAsync(url, ct);
+        var ex = capture.Last!;
+
+        var meta = JsonNode.Parse(ex.ResponseBody) as JsonObject;
+        _richAuthorizationEndpoint = (string?)meta?["authorization_endpoint"]
+            ?? $"{_options.BookingsUrl.TrimEnd('/')}/authorize";
+        var vocab = meta?["r3_vocabularies"]?[Vocabulary.Mcp]?.ToString()
+            ?? $"{_options.BookingsUrl.TrimEnd('/')}/mcp";
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Discover Bookings metadata + MCP",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "The agent discovers Bookings' well-known metadata before asking for " +
+                "authorization. The important R3 additions are `authorization_endpoint` " +
+                "and `r3_vocabularies`: Bookings advertises the MCP vocabulary " +
+                $"(`{Vocabulary.Mcp}`) at `{vocab}`. The MCP endpoint is the vocabulary " +
+                "anchor; this tour uses the fixed R3 operations from the scenario.",
+            RequestLine = $"{ex.RequestLine}  →  {url}",
+            RequestHeaders = ex.RequestHeaders,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            TokenDecoded =
+                $"authorization_endpoint: {_richAuthorizationEndpoint}\n" +
+                $"r3_vocabularies[{Vocabulary.Mcp}]: {vocab}",
+            CodeSnippet = CodeSnippets.RichRequestDiscover,
+        });
+    }
+
+    private async Task StepRichAuthorizeAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(() => _agentToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        var endpoint = _richAuthorizationEndpoint ?? $"{_options.BookingsUrl.TrimEnd('/')}/authorize";
+        var operations = R3Request.CreateMcpOperations("search_trip_options", "hold_itinerary", "book_trip");
+        using var resp = await R3Request.PostAuthorizeAsync(client, endpoint, operations, ct);
+        var ex = capture.Last!;
+
+        _richResourceToken = await ReadResourceTokenFromAuthorizeAsync(resp, ex.ResponseBody, ct);
+        if (string.IsNullOrWhiteSpace(_richResourceToken))
+        {
+            throw new InvalidOperationException("Bookings /authorize did not return a resource_token.");
+        }
+        _resourceToken = _richResourceToken;
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Request r3_operations → resource_token",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "Instead of asking for an opaque scope, the agent sends `r3_operations` " +
+                "to Bookings' resource authorization endpoint. The request names three " +
+                "MCP tools: `search_trip_options`, `hold_itinerary`, and `book_trip`. " +
+                "Bookings maps that vocabulary request to an R3 document, persists the " +
+                "exact bytes, computes `r3_s256`, and returns a resource token whose " +
+                "`aud` is the dedicated R3 Access Server.",
+            RequestLine = $"{ex.RequestLine}  →  {endpoint}",
+            RequestHeaders = ex.RequestHeaders,
+            RequestBody = PrettyJson(ex.RequestBody),
+            SignatureBase = capturedBase,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            TokenJwt = _richResourceToken,
+            TokenHeader = DecodeJwt(_richResourceToken)?.Header,
+            TokenPayload = DecodeJwt(_richResourceToken)?.Payload,
+            CodeSnippet = CodeSnippets.RichRequestAuthorize,
+        });
+    }
+
+    private void StepRichParseResourceToken()
+    {
+        var payload = JwtPayloadObject(_richResourceToken);
+        var doc = payload is null ? null : R3ClaimReader.ReadResourceDocument(payload);
+        _richR3Uri = doc?.Uri;
+        _richR3S256 = doc?.S256;
+        var aud = (string?)payload?["aud"];
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Inspect R3 resource token",
+            From = Actor.Agent,
+            To = Actor.Agent,
+            Narrative =
+                "The agent can decode the resource token but does not fetch the R3 " +
+                "document itself. The content-addressing claims are visible: `r3_uri` " +
+                "names the persisted document and `r3_s256` is the SHA-256 digest of " +
+                "the exact bytes served. The token's `aud` points at the dedicated R3 " +
+                "AS, so the PS will federate by AS discovery rather than minting locally.",
+            TokenJwt = _richResourceToken,
+            TokenHeader = DecodeJwt(_richResourceToken)?.Header,
+            TokenPayload = DecodeJwt(_richResourceToken)?.Payload,
+            TokenDecoded =
+                $"aud:     {aud}\n" +
+                $"r3_uri:  {_richR3Uri}\n" +
+                $"r3_s256: {_richR3S256}",
+            CodeSnippet = CodeSnippets.RichRequestReadClaims,
+        });
+    }
+
+    private async Task StepRichInitialExchangeAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(() => _agentToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
+        {
+            resource_token = _richResourceToken,
+        }, ct);
+        var ex = capture.Last!;
+        CaptureInteractionFrom(resp, _tokenEndpoint!);
+        _userApproved = false;
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Exchange → 202 (PS renders R3 display)",
+            From = Actor.Agent,
+            To = Actor.PersonServer,
+            Narrative =
+                "The agent forwards the R3 resource token to its Person Server. In the " +
+                "R3 path the PS verifies the token, reads `r3_uri`/`r3_s256`, signs a " +
+                "`jwks_uri` fetch to Bookings, hash-verifies the received bytes, and " +
+                "renders the document's `display` consent before returning `202`. The " +
+                "agent only sees the interaction URL; the R3 document remains opaque to it.",
+            RequestLine = $"{ex.RequestLine}  →  {_tokenEndpoint}",
+            RequestHeaders = ex.RequestHeaders,
+            RequestBody = PrettyJson(ex.RequestBody),
+            SignatureBase = capturedBase,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            CodeSnippet = CodeSnippets.RichRequestExchange,
+            SubSteps = new SubStep[]
+            {
+                new("verify resource_token; read r3_uri/r3_s256", Actor.PersonServer, Actor.PersonServer),
+                new("signed fetch R3 document", Actor.PersonServer, Actor.Resource),
+                new("render display consent", Actor.PersonServer, Actor.PersonServer),
+            },
+            SubStepsLabel = "inside person server",
+        });
+    }
+
+    private Task StepRichInitialPollAsync(CancellationToken ct) =>
+        RunPendingPollAsync(ct, () => _agentToken!, Actor.Agent, Actor.PersonServer, (last, capturedBase) =>
+        {
+            var body = JsonNode.Parse(last.ResponseBody);
+            _richAuthToken = (string?)body?["auth_token"];
+            _authToken = _richAuthToken;
+
+            Steps.Add(new StepRecord
+            {
+                Number = Steps.Count + 1,
+                Title = "Poll → R3 auth_token (granted + conditional)",
+                From = Actor.Agent,
+                To = Actor.PersonServer,
+                Narrative =
+                    "After the user approves the PS-rendered R3 display, the PS federates " +
+                    "to the dedicated R3 Access Server named by the resource token's `aud`. " +
+                    "The AS independently fetches and hash-verifies the same R3 document, " +
+                    "then mints an auth token with `r3_granted` for `search_trip_options` " +
+                    "and `hold_itinerary`, plus `r3_conditional` for `book_trip`.",
+                RequestLine = $"{last.RequestLine}  →  {_pendingUrl}",
+                RequestHeaders = last.RequestHeaders,
+                SignatureBase = capturedBase,
+                StatusLine = last.StatusLine,
+                ResponseHeaders = last.ResponseHeaders,
+                ResponseBody = PrettyJson(last.ResponseBody),
+                TokenJwt = _richAuthToken,
+                TokenHeader = DecodeJwt(_richAuthToken)?.Header,
+                TokenPayload = DecodeJwt(_richAuthToken)?.Payload,
+                TokenDecoded = DescribeR3AuthToken(_richAuthToken),
+                CodeSnippet = CodeSnippets.RichRequestAuthClaims,
+                SubSteps = new SubStep[]
+                {
+                    new("discover dedicated R3 AS", Actor.PersonServer, Actor.AccessServer),
+                    new("signed POST /token", Actor.PersonServer, Actor.AccessServer),
+                    new("fetch + hash-verify R3", Actor.AccessServer, Actor.Resource),
+                    new("mint r3_granted + r3_conditional", Actor.AccessServer, Actor.PersonServer, IsResponse: true),
+                },
+                SubStepsLabel = "inside person server",
+            });
+        });
+
+    private async Task StepRichGrantedCallsAsync(CancellationToken ct)
+    {
+        var search = await SendBookingOperationAsync("search_trip_options", _richAuthToken!, new JsonObject
+        {
+            ["destination"] = "Seattle",
+            ["depart_after"] = "2026-09-18",
+            ["return_before"] = "2026-09-21",
+        }, ct);
+        _richSearchResponseBody = search.Exchange.ResponseBody;
+
+        var hold = await SendBookingOperationAsync("hold_itinerary", _richAuthToken!, new JsonObject
+        {
+            ["itinerary_id"] = "SEA-2026-09-18-A",
+        }, ct);
+        _richHoldResponseBody = hold.Exchange.ResponseBody;
+
+        var combined = new JsonObject
+        {
+            ["search_trip_options"] = JsonNode.Parse(search.Exchange.ResponseBody),
+            ["hold_itinerary"] = JsonNode.Parse(hold.Exchange.ResponseBody),
+        };
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Granted operations → 200",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "`search_trip_options` and `hold_itinerary` are in the auth token's " +
+                "`r3_granted` claim, so Bookings serves them immediately. This is the " +
+                "R3 enforcement point: the resource matches the MCP tool in the token's " +
+                "grant list instead of checking a legacy scope string.",
+            RequestLine = $"{search.Exchange.RequestLine}  →  {search.Url}\n{hold.Exchange.RequestLine}  →  {hold.Url}",
+            RequestHeaders = search.Exchange.RequestHeaders,
+            RequestBody = PrettyJson(search.Exchange.RequestBody) + "\n\n--- hold_itinerary ---\n" + PrettyJson(hold.Exchange.RequestBody),
+            SignatureBase = search.SignatureBase,
+            StatusLine = $"{search.Exchange.StatusLine}\n{hold.Exchange.StatusLine}",
+            ResponseHeaders = search.Exchange.ResponseHeaders,
+            ResponseBody = PrettyJson(combined.ToJsonString()),
+            CodeSnippet = CodeSnippets.RichRequestGrantedCalls,
+        });
+    }
+
+    private async Task StepRichBookProposalAsync(CancellationToken ct)
+    {
+        var result = await SendBookingOperationAsync("book_trip", _richAuthToken!, new JsonObject
+        {
+            ["parameters"] = BookingParameters(),
+        }, ct);
+        var ex = result.Exchange;
+        var body = JsonNode.Parse(ex.ResponseBody) as JsonObject;
+        _richProposalUri = (string?)body?["r3_uri"];
+        _richProposalS256 = (string?)body?["r3_s256"];
+        _richProposalResourceToken = result.ChallengeResourceToken
+            ?? throw new InvalidOperationException("Bookings did not return a proposal resource token.");
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "book_trip → per-call proposal",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "`book_trip` was only conditional in `r3_conditional`, so Bookings does " +
+                "not commit the purchase on the first call. It persists a per-call R3 " +
+                "proposal for these concrete itinerary parameters, returns its `r3_uri` " +
+                "and `r3_s256`, and waits for a digest-bound approval.",
+            RequestLine = $"{ex.RequestLine}  →  {result.Url}",
+            RequestHeaders = ex.RequestHeaders,
+            RequestBody = PrettyJson(ex.RequestBody),
+            SignatureBase = result.SignatureBase,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            TokenJwt = _richProposalResourceToken,
+            TokenHeader = DecodeJwt(_richProposalResourceToken)?.Header,
+            TokenPayload = DecodeJwt(_richProposalResourceToken)?.Payload,
+            TokenDecoded =
+                $"proposal r3_uri:  {_richProposalUri}\n" +
+                $"proposal r3_s256: {_richProposalS256}",
+            CodeSnippet = CodeSnippets.RichRequestConditionalCall,
+        });
+    }
+
+    private async Task StepRichProposalExchangeAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(() => _agentToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
+        {
+            resource_token = _richProposalResourceToken,
+        }, ct);
+        var ex = capture.Last!;
+        CaptureInteractionFrom(resp, _tokenEndpoint!);
+        _userApproved = false;
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Exchange proposal → 202 (per-call approval)",
+            From = Actor.Agent,
+            To = Actor.PersonServer,
+            Narrative =
+                "For the conditional operation, the agent sends the proposal URI and " +
+                "digest through the same PS-mediated path. The PS fetches the proposal " +
+                "with `jwks_uri`, verifies the digest, and renders the concrete itinerary " +
+                "display (including amount and cancellation policy) for per-call approval.",
+            RequestLine = $"{ex.RequestLine}  →  {_tokenEndpoint}",
+            RequestHeaders = ex.RequestHeaders,
+            RequestBody = PrettyJson(ex.RequestBody),
+            SignatureBase = capturedBase,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            CodeSnippet = CodeSnippets.RichRequestProposalExchange,
+            SubSteps = new SubStep[]
+            {
+                new("signed fetch per-call proposal", Actor.PersonServer, Actor.Resource),
+                new("render concrete itinerary display", Actor.PersonServer, Actor.PersonServer),
+            },
+            SubStepsLabel = "inside person server",
+        });
+    }
+
+    private async Task StepRichProposalPollAndRetryAsync(CancellationToken ct)
+    {
+        var poll = await PollForAuthTokenAsync(ct);
+        _richPerCallAuthToken = poll.AuthToken;
+
+        var retry = await SendBookingOperationAsync("book_trip", _richPerCallAuthToken!, new JsonObject
+        {
+            ["parameters"] = BookingParameters(),
+            ["approved_proposal_s256"] = _richProposalS256,
+        }, ct);
+        _richBookResponseBody = retry.Exchange.ResponseBody;
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Digest-matched retry → final 200",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "The poll returns a per-call auth token whose `r3_granted` contains only " +
+                "`book_trip` for the approved proposal. The agent retries `book_trip` with " +
+                "the same itinerary parameters and the approved proposal digest. Bookings " +
+                "recomputes the proposal hash over the presented parameters; because it " +
+                "matches `r3_s256`, the booking is committed and the final call returns 200.",
+            RequestLine = $"{retry.Exchange.RequestLine}  →  {retry.Url}",
+            RequestHeaders = retry.Exchange.RequestHeaders,
+            RequestBody = PrettyJson(retry.Exchange.RequestBody),
+            SignatureBase = retry.SignatureBase,
+            StatusLine = retry.Exchange.StatusLine,
+            ResponseHeaders = retry.Exchange.ResponseHeaders,
+            ResponseBody = PrettyJson(retry.Exchange.ResponseBody),
+            TokenJwt = _richPerCallAuthToken,
+            TokenHeader = DecodeJwt(_richPerCallAuthToken)?.Header,
+            TokenPayload = DecodeJwt(_richPerCallAuthToken)?.Payload,
+            TokenDecoded =
+                $"Poll result:\n{poll.StatusLine}\n\n" +
+                DescribeR3AuthToken(_richPerCallAuthToken),
+            CodeSnippet = CodeSnippets.RichRequestDigestRetry,
+        });
+    }
 
     /// <summary>The resource's federated branch the agent targets (aud = AS).</summary>
     private string FederatedTargetUrl => $"{_options.WalletUrl.TrimEnd('/')}/wallet";
@@ -4264,6 +4789,171 @@ public sealed class TourSession : IAsyncDisposable
     // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------
+
+    private sealed record BookingOperationResult(string Url, CapturedExchange Exchange, string? SignatureBase, string? ChallengeResourceToken);
+
+    private sealed record PollAuthTokenResult(string AuthToken, string StatusLine);
+
+    private async Task<string?> ReadResourceTokenFromAuthorizeAsync(
+        HttpResponseMessage response,
+        string responseBody,
+        CancellationToken ct)
+    {
+        var challenge = R3Request.ReadChallenge(response);
+        if (challenge is not null)
+        {
+            return challenge.ResourceToken;
+        }
+
+        if (!string.IsNullOrWhiteSpace(responseBody))
+        {
+            var node = JsonNode.Parse(responseBody) as JsonObject;
+            var resourceToken =
+                (string?)node?["resource_token"]
+                ?? (string?)node?["resourceToken"];
+            if (!string.IsNullOrWhiteSpace(resourceToken))
+            {
+                return resourceToken;
+            }
+        }
+
+        var fallbackBody = await response.Content.ReadAsStringAsync(ct);
+        if (!string.IsNullOrWhiteSpace(fallbackBody))
+        {
+            var node = JsonNode.Parse(fallbackBody) as JsonObject;
+            return (string?)node?["resource_token"] ?? (string?)node?["resourceToken"];
+        }
+
+        return null;
+    }
+
+    private async Task<BookingOperationResult> SendBookingOperationAsync(
+        string tool,
+        string carrierToken,
+        JsonObject body,
+        CancellationToken ct)
+    {
+        var candidates = new[]
+        {
+            $"{_options.BookingsUrl.TrimEnd('/')}/operations/{tool}",
+            BookingsTargetUrl(tool),
+            $"{_options.BookingsUrl.TrimEnd('/')}/{tool}",
+        };
+
+        CapturedExchange? lastExchange = null;
+        string? lastSignatureBase = null;
+        string? lastUrl = null;
+        string? lastChallengeResourceToken = null;
+
+        foreach (var url in candidates)
+        {
+            string? capturedBase = null;
+            var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+            var signing = BuildSigningHandler(() => carrierToken, capture, (_, b) => capturedBase = b);
+            using var client = new HttpClient(signing);
+            using var response = await client.PostAsJsonAsync(url, body, ct);
+            lastExchange = capture.Last!;
+            lastSignatureBase = capturedBase;
+            lastUrl = url;
+            lastChallengeResourceToken = R3Request.ReadChallenge(response)?.ResourceToken;
+
+            if (response.StatusCode != HttpStatusCode.NotFound)
+            {
+                break;
+            }
+        }
+
+        return new BookingOperationResult(lastUrl!, lastExchange!, lastSignatureBase, lastChallengeResourceToken);
+    }
+
+    private async Task<PollAuthTokenResult> PollForAuthTokenAsync(CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(_pendingUrl))
+        {
+            throw new InvalidOperationException("No pending URL captured for R3 proposal polling.");
+        }
+
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(() => _agentToken!, capture);
+        using var client = new HttpClient(signing);
+        var poller = new DeferredPoller(client, new DeferredPollerOptions
+        {
+            MaxTotalWait = TimeSpan.FromMinutes(2),
+            DefaultPollInterval = TimeSpan.FromMilliseconds(500),
+            MinPollInterval = TimeSpan.Zero,
+            PreferWaitSeconds = 30,
+        })
+        {
+            OnPoll = _ =>
+            {
+                PollCount++;
+                StateChanged?.Invoke();
+            },
+        };
+
+        IsPolling = true;
+        PollCount = 0;
+        PollingStartedAt = DateTimeOffset.UtcNow;
+        StateChanged?.Invoke();
+
+        try
+        {
+            using var terminal = await poller.PollAsync(new Uri(_pendingUrl), ct);
+            var bodyText = await terminal.Content.ReadAsStringAsync(ct);
+            if (terminal.StatusCode == HttpStatusCode.Forbidden)
+            {
+                var deniedJson = JsonNode.Parse(bodyText) as JsonObject;
+                if ((string?)deniedJson?["error"] == "denied")
+                {
+                    RecordDeniedStep(capture.Last!, null, bodyText, Actor.Agent, Actor.PersonServer);
+                    _aborted = true;
+                    throw new AAuthInteractionDeniedException("The user denied the R3 proposal.");
+                }
+            }
+
+            var body = JsonNode.Parse(bodyText) as JsonObject;
+            var authToken = (string?)body?["auth_token"]
+                ?? throw new InvalidOperationException("R3 proposal poll did not return auth_token.");
+            return new PollAuthTokenResult(authToken, capture.Last!.StatusLine);
+        }
+        finally
+        {
+            IsPolling = false;
+            StateChanged?.Invoke();
+        }
+    }
+
+    private static JsonObject? JwtPayloadObject(string? jwt)
+    {
+        if (string.IsNullOrWhiteSpace(jwt)) return null;
+        var parts = jwt.Split('.');
+        if (parts.Length < 2) return null;
+        var payloadJson = System.Text.Encoding.UTF8.GetString(Base64UrlEncoder.DecodeBytes(parts[1]));
+        return JsonNode.Parse(payloadJson) as JsonObject;
+    }
+
+    private static string DescribeR3AuthToken(string? jwt)
+    {
+        var payload = JwtPayloadObject(jwt);
+        if (payload is null) return "(auth token unavailable)";
+        try
+        {
+            var claims = R3ClaimReader.ReadAuthToken(payload);
+            var granted = string.Join(", ", claims.Granted.Operations.Select(o => o.Tool));
+            var conditional = claims.Conditional is null
+                ? "(none)"
+                : string.Join(", ", claims.Conditional.Operations.Select(o => o.Tool));
+            return
+                $"r3_uri:         {claims.Uri}\n" +
+                $"r3_s256:        {claims.S256}\n" +
+                $"r3_granted:     {granted}\n" +
+                $"r3_conditional: {conditional}";
+        }
+        catch (Exception ex)
+        {
+            return $"R3 claim parse failed: {ex.Message}";
+        }
+    }
 
     private static (string Header, string Payload)? DecodeJwt(string? jwt)
     {

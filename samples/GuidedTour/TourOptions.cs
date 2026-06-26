@@ -10,6 +10,8 @@ namespace GuidedTour;
 /// exchange returns 202, the agent surfaces an interaction URL to its
 /// user, the user approves, and the agent polls until the PS mints the
 /// auth token.
+/// <see cref="RichRequest"/> renders the experimental R3 rich trip
+/// booking path where Bookings publishes content-addressed operations.
 /// </summary>
 public enum TourMode
 {
@@ -22,6 +24,7 @@ public enum TourMode
     Mission,
     MissionCallChain,
     SubAgent,
+    RichRequest,
 }
 
 /// <summary>
@@ -79,6 +82,9 @@ public sealed class TourOptions
     /// <summary>Base URL of the Aria <b>Wallet</b> resource server (four-party federated).</summary>
     public string WalletUrl { get; set; } = "http://localhost:5003";
 
+    /// <summary>Base URL of the Aria <b>Bookings</b> resource server (experimental R3 rich requests).</summary>
+    public string BookingsUrl { get; set; } = "http://localhost:5004";
+
     /// <summary>
     /// Optional MockPersonServer URL. When set, the tour walks one of the
     /// three-party flows (selected by <see cref="Mode"/>); when null/empty
@@ -114,6 +120,13 @@ public sealed class TourOptions
     public string? AccessServerUrl { get; set; }
 
     /// <summary>
+    /// Optional dedicated Access Server URL for the experimental R3 Bookings
+    /// flow. It is intentionally separate from <see cref="AccessServerUrl"/>
+    /// so the Wallet federated scenario keeps using the shared AS.
+    /// </summary>
+    public string? RichRequestAccessServerUrl { get; set; } = "http://localhost:5501";
+
+    /// <summary>
     /// Which flow to walk by default when the page loads. Defaults to
     /// <see cref="TourMode.Bootstrap"/>; the user can flip to other
     /// modes via the in-page picker. When <see cref="PersonServerUrl"/>
@@ -122,4 +135,3 @@ public sealed class TourOptions
     /// </summary>
     public TourMode Mode { get; set; } = TourMode.Bootstrap;
 }
-

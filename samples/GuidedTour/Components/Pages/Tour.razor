@@ -19,6 +19,10 @@
         {
             <span class="hl-as"><strong>Access Server:</strong> @Options.Value.AccessServerUrl</span>
         }
+        @if (Session.IsRichRequestMode)
+        {
+            <span class="hl-as"><strong>R3 Access Server:</strong> @Options.Value.RichRequestAccessServerUrl</span>
+        }
         @if (!Session.IsIdentityMode)
         {
             <span class="hl-ps"><strong>Person Server:</strong> @(string.IsNullOrWhiteSpace(Options.Value.PersonServerUrl) ? "(none)" : Options.Value.PersonServerUrl)</span>
@@ -44,6 +48,7 @@
             <option value="@TourMode.Mission" disabled="@(!Session.HasPersonServer)">7 · Mission (PS-Governed) — three prompts, 20 steps</option>
             <option value="@TourMode.MissionCallChain" disabled="@(!Session.HasPersonServer || !Session.HasConcierge)">8 · Mission + Call Chain — dual governance, 14 steps</option>
             <option value="@TourMode.SubAgent">9 · Sub-Agents — parent-mediated worker, 7 steps</option>
+            <option value="@TourMode.RichRequest" disabled="@(!Session.HasPersonServer || !Session.HasRichRequestAccessServer)">10 · Rich Trip Booking (R3) — experimental rich requests, 12 steps</option>
         </select>
     </label>
     @if (Session.Mode == TourMode.Identity)
@@ -62,7 +67,7 @@
         {
             <a class="primary approve" href="@Session.UserInteractionUrl" target="_blank" rel="noopener"
                @onclick="MarkInteractionOpenedAsync" @onclick:preventDefault="false">
-                @(Session.IsFederatedMode ? "Open Access Server consent ↗" : "Open consent page ↗")
+                @(Session.IsFederatedMode ? "Open Access Server consent ↗" : Session.IsRichRequestMode ? "Open R3 consent ↗" : "Open consent page ↗")
             </a>
         }
         else
@@ -236,6 +241,24 @@
                     wire artifact is built and shown directly. <strong>No human approval in this demo.</strong>
                 </text>
                 break;
+            case TourMode.RichRequest:
+                <text>
+                    Aria (your AI travel assistant) is ready to search, hold, and book a
+                    trip with <strong>Bookings</strong>, but the resource needs a richer,
+                    content-addressed statement of what the agent will do than a scope string
+                    can provide.<br /><br />
+                    <strong>Experimental:</strong> Rich Resource Requests (R3) are implemented
+                    here with the <code>AAuth.R3</code> preview library under <code>samples/</code>;
+                    the core <code>src/AAuth</code> SDK is unchanged. The agent sends
+                    <code>r3_operations</code> for MCP tools
+                    (<code>search_trip_options</code>, <code>hold_itinerary</code>,
+                    <code>book_trip</code>) to Bookings. The resource returns a token with
+                    <code>r3_uri</code>/<code>r3_s256</code>; the PS fetches that document,
+                    renders its <code>display</code> consent, then federates to the dedicated
+                    R3 AS. Search and hold are granted; booking is conditional and requires a
+                    second per-call approval tied to the concrete itinerary digest.
+                </text>
+                break;
         }
     </details>
 </section>
@@ -252,7 +275,7 @@
                 elapsed <strong>@ElapsedPolling()</strong>
             </div>
             <div class="polling__hint">
-                Waiting for you to complete the @(Session.IsFederatedMode ? "Access Server consent" : "Approve or Deny on the PS consent")
+                Waiting for you to complete the @(Session.IsFederatedMode ? "Access Server consent" : Session.IsRichRequestMode ? "R3 approval on the PS consent" : "Approve or Deny on the PS consent")
                 tab. You can come back here anytime — the poll loop is live.
             </div>
         </div>
@@ -270,8 +293,8 @@
                          Lanes="@ActiveLanes"
                          IsPolling="@Session.IsPolling"
                          PollCount="@Session.PollCount"
-                         LoopGhostStep="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending || Session.IsMissionMode || Session.IsMissionCallChainMode) ? new SequenceDiagram.GhostStep(Session.PollStepNumber, $"polling /pending/{{id}}…", Actor.Agent, Session.PollLoopTarget) : null)"
-                         LoopAroundStepNumber="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending || Session.IsMissionMode || Session.IsMissionCallChainMode) ? Session.PollStepNumber : 0)"
+                         LoopGhostStep="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsRichRequestMode || Session.IsCallChainPending || Session.IsMissionMode || Session.IsMissionCallChainMode) ? new SequenceDiagram.GhostStep(Session.PollStepNumber, $"polling /pending/{{id}}…", Actor.Agent, Session.PollLoopTarget) : null)"
+                         LoopAroundStepNumber="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsRichRequestMode || Session.IsCallChainPending || Session.IsMissionMode || Session.IsMissionCallChainMode) ? Session.PollStepNumber : 0)"
                          CompletedLoopLabel="@CompletedLoopLabel()"
                          LoopCompletedKind="@CompletedLoopKind()" />
     </section>
@@ -337,6 +360,14 @@
         new("Access Server", "as", Actor.AccessServer),
     };
 
+    private static readonly SequenceDiagram.LaneDefinition[] RichRequestLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Bookings", "resource", Actor.Resource),
+        new("Person Server", "ps", Actor.PersonServer),
+        new("R3 Access Server", "as", Actor.AccessServer),
+    };
+
     private static readonly SequenceDiagram.LaneDefinition[] MissionLanes =
     {
         new("Agent", "agent", Actor.Agent),
@@ -369,6 +400,7 @@
         Session.IsIdentityMode ? IdentityLanes :
         Session.IsMissionCallChainMode ? MissionCallChainLanes :
         Session.IsCallChainMode ? CallChainLanes :
+        Session.IsRichRequestMode ? RichRequestLanes :
         Session.IsFederatedMode ? FederatedLanes :
         Session.IsMissionMode ? MissionLanes : ThreePartyLanes;
 
@@ -414,7 +446,7 @@
     }
 
     private StepRecord? PollStepRecord =>
-        (Session.IsDeferredMode || Session.IsFederatedMode || Session.IsCallChainPending)
+        (Session.IsDeferredMode || Session.IsFederatedMode || Session.IsRichRequestMode || Session.IsCallChainPending)
             ? Session.Steps.FirstOrDefault(s => s.Number == Session.PollStepNumber)
             : null;
 
@@ -502,6 +534,8 @@
                     // click the consent link themselves.
                     _error = Session.IsFederatedMode
                         ? "Stopped: the next step requires you to open the Access Server login (Keycloak) and sign in. Click the green link above."
+                        : Session.IsRichRequestMode
+                            ? "Stopped: the next step requires you to open the R3 consent page and click Approve. Click the green link above."
                         : "Stopped: the next step requires you to open the PS consent page and click Approve. Click the green link above.";
                     break;
                 }

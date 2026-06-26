@@ -33,6 +33,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 - [Deferred Consent](workflows/deferred-consent.md)
 - [Call Chaining](workflows/call-chaining.md)
 - [Mission-Governed Access](workflows/mission-governed-access.md)
+- [Rich Resource Requests (R3)](workflows/rich-resource-requests.md) — experimental content-addressed operation grants
 
 ## Server Implementation
 

@@ -2,16 +2,16 @@ import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { openTour } from '../../../tests/e2e/helpers/tour';
 
 /**
- * Flow picker structure: all nine flows are offered, the signing-mode picker is
+ * Flow picker structure: all ten flows are offered, the signing-mode picker is
  * Identity-only, and the description text reacts to the selected flow. This is a
  * UI-structure spec (no protocol result), guarding the entry point every other
  * spec depends on.
  */
-test('flow picker offers all nine flows and reacts to selection', async ({ page }) => {
+test('flow picker offers all ten flows and reacts to selection', async ({ page }) => {
   await openTour(page);
 
   const flow = page.locator('select#flow-select');
-  await expect(flow.locator('option')).toHaveCount(9);
+  await expect(flow.locator('option')).toHaveCount(10);
   await expect(flow.locator('option')).toContainText([
     'Bootstrap',
     'Identity-based',
@@ -22,6 +22,7 @@ test('flow picker offers all nine flows and reacts to selection', async ({ page 
     'Mission (PS-Governed)',
     'Mission + Call Chain',
     'Sub-Agents',
+    'Rich Trip Booking (R3)',
   ]);
 
   // Signing-mode picker only appears for the Identity flow.

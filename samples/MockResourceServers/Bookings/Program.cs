@@ -27,9 +27,9 @@ var trustedFetcherAuthorities = builder.Configuration
     .GetSection("Bookings:TrustedR3Fetchers")
     .Get<string[]>() ?? [accessServerUrl, personServerUrl];
 var trustedFetcherSet = trustedFetcherAuthorities
-    .Select(ToAuthority)
-    .Where(static authority => authority is not null)
-    .Select(static authority => authority!)
+    .Select(ToOrigin)
+    .Where(static origin => origin is not null)
+    .Select(static origin => origin!)
     .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
 builder.Services.AddSingleton(resourceKey);
@@ -231,14 +231,14 @@ app.MapPost("/book_trip", async (HttpContext ctx, R3ProposalStore proposals) =>
         Display = BookingDisplay(parameters),
     };
     var stored = proposals.Add(proposal, new Uri(resourceUrl), "/r3/proposals");
-    ctx.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = R3Challenge.BuildConditionalRequirementHeader(stored.Uri, stored.S256);
+    var proposalResourceToken = BuildProposalResourceToken(auth.Verified!, stored.Uri, stored.S256);
+    ctx.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatAuthToken(proposalResourceToken);
     return Results.Json(new
     {
         error = "r3_approval_required",
         tool = BookTrip,
         r3_uri = stored.Uri,
         r3_s256 = stored.S256,
-        proposal = R3ProposalDocument.FromUtf8Bytes(stored.Bytes),
     }, statusCode: StatusCodes.Status401Unauthorized);
 });
 
@@ -272,6 +272,17 @@ string BuildResourceToken(string agentId, string agentJkt, string r3Uri, string 
         Key = resourceKey,
         KeyId = ResourceKid,
     }.BuildResourceToken(agentId, agentJkt, r3Uri, r3S256);
+
+string BuildProposalResourceToken(TokenVerifier.VerifiedToken verifiedAuthToken, string proposalUri, string proposalS256)
+{
+    var payload = verifiedAuthToken.Payload;
+    var agentId = (string?)payload["agent"]
+        ?? throw new InvalidOperationException("auth token missing agent");
+    var cnf = payload["cnf"]?["jwk"] as JsonObject
+        ?? throw new InvalidOperationException("auth token missing cnf.jwk");
+    var agentJkt = KeyFactory.FromJwk(cnf).ComputeJwkThumbprint();
+    return BuildResourceToken(agentId, agentJkt, proposalUri, proposalS256);
+}
 
 async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCollection<string> fallbackTools)
 {
@@ -391,7 +402,8 @@ void ValidateRequestedOperations(R3Operations operations)
 bool IsTrustedR3Fetcher(R3VerifiedFetcher fetcher) =>
     fetcher.Scheme == AAuthConstants.Schemes.JwksUri
     && fetcher.JwksUri is not null
-    && trustedFetcherSet.Contains(fetcher.JwksUri.Authority);
+    && (trustedFetcherSet.Contains($"{fetcher.JwksUri.Scheme}://{fetcher.JwksUri.Authority}")
+        || trustedFetcherSet.Contains(fetcher.JwksUri.Authority));
 
 static JsonObject BuildJwks(string kid, AAuthKey key)
 {
@@ -417,14 +429,15 @@ async Task<IReadOnlyDictionary<string, R3Parameter>> ReadBookingParametersAsync(
         }
     }
 
+    var parameterSource = body["parameters"] as JsonObject ?? body;
     var values = new JsonObject
     {
-        ["itinerary_id"] = body["itinerary_id"]?.DeepClone() ?? JsonValue.Create("itinerary-paris-001"),
-        ["destination"] = body["destination"]?.DeepClone() ?? JsonValue.Create("Paris"),
-        ["depart"] = body["depart"]?.DeepClone() ?? JsonValue.Create("2026-07-12"),
-        ["return"] = body["return"]?.DeepClone() ?? JsonValue.Create("2026-07-19"),
-        ["total_usd"] = body["total_usd"]?.DeepClone() ?? JsonValue.Create(1284),
-        ["cancellation_policy"] = body["cancellation_policy"]?.DeepClone() ?? JsonValue.Create("Refundable for 24 hours, then airline fare rules apply."),
+        ["itinerary_id"] = parameterSource["itinerary_id"]?.DeepClone() ?? JsonValue.Create("itinerary-paris-001"),
+        ["destination"] = parameterSource["destination"]?.DeepClone() ?? JsonValue.Create("Paris"),
+        ["depart"] = parameterSource["depart"]?.DeepClone() ?? JsonValue.Create("2026-07-12"),
+        ["return"] = parameterSource["return"]?.DeepClone() ?? JsonValue.Create("2026-07-19"),
+        ["total_usd"] = parameterSource["total_usd"]?.DeepClone() ?? JsonValue.Create(1284),
+        ["cancellation_policy"] = parameterSource["cancellation_policy"]?.DeepClone() ?? JsonValue.Create("Refundable for 24 hours, then airline fare rules apply."),
     };
 
     return values.ToDictionary(
@@ -485,11 +498,11 @@ static decimal ParameterNumber(IReadOnlyDictionary<string, R3Parameter> paramete
         ? number
         : 0m;
 
-static string? ToAuthority(string value)
+static string? ToOrigin(string value)
 {
     if (Uri.TryCreate(value, UriKind.Absolute, out var uri))
     {
-        return uri.Authority;
+        return $"{uri.Scheme}://{uri.Authority}";
     }
     return value;
 }

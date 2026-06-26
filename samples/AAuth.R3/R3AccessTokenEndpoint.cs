@@ -37,7 +37,11 @@ public static class R3AccessTokenEndpoint
             R3VerifiedFetcher caller;
             try
             {
-                caller = await R3DocumentEndpoint.VerifyFetcherAsync(context);
+                caller = await R3DocumentEndpoint.VerifyFetcherAsync(context, options.IsTrustedPersonServer);
+            }
+            catch (R3UntrustedJwksUriException)
+            {
+                return Results.Json(new { error = "untrusted_person_server" }, statusCode: StatusCodes.Status403Forbidden);
             }
             catch (Exception ex) when (ex is R3FetchVerificationException or AAuth.HttpSig.AAuthVerificationException)
             {
@@ -113,19 +117,15 @@ public static class R3AccessTokenEndpoint
                 return Results.Json(new { error = "invalid_resource_token", detail = ex.Message }, statusCode: StatusCodes.Status400BadRequest);
             }
 
-            var resourceAudience = (string?)verifiedResource.Payload["iss"];
-            if (string.IsNullOrWhiteSpace(resourceAudience))
+            var resourceIssuer = (string?)verifiedResource.Payload["iss"];
+            if (string.IsNullOrWhiteSpace(resourceIssuer))
             {
                 return Results.Json(new { error = "invalid_resource_token", detail = "resource_token missing iss" }, statusCode: StatusCodes.Status400BadRequest);
             }
 
             try
             {
-                var proposalUri = (string?)body?["proposal_uri"];
-                var proposalS256 = (string?)body?["proposal_s256"];
-                AuthMintParts mintParts = string.IsNullOrWhiteSpace(proposalUri) && string.IsNullOrWhiteSpace(proposalS256)
-                    ? await EvaluateDocumentAsync(context, options, r3DocumentClaims, context.RequestAborted)
-                    : await EvaluateProposalAsync(context, options, proposalUri, proposalS256, context.RequestAborted);
+                var mintParts = await EvaluateDocumentAsync(context, options, r3DocumentClaims, resourceIssuer, context.RequestAborted);
 
                 var claims = R3AuthClaims.AuthToken(
                     mintParts.Uri,
@@ -136,7 +136,7 @@ public static class R3AccessTokenEndpoint
                 var authToken = new AuthTokenBuilder
                 {
                     Issuer = issuer,
-                    Audience = resourceAudience,
+                    Audience = resourceIssuer,
                     Agent = agentId,
                     AgentConfirmationKey = agentConfirmationKey,
                     Key = signingKey,
@@ -161,9 +161,20 @@ public static class R3AccessTokenEndpoint
         HttpContext context,
         R3AccessTokenEndpointOptions options,
         R3ClaimReader.ResourceDocumentClaims r3,
+        string resourceIssuer,
         CancellationToken cancellationToken)
     {
-        var bytes = await FetchAsync(context, options, r3.Uri, r3.S256, cancellationToken);
+        var bytes = await FetchAsync(context, options, r3.Uri, r3.S256, resourceIssuer, cancellationToken);
+        if (IsProposal(bytes))
+        {
+            var proposal = R3ProposalDocument.FromUtf8Bytes(bytes);
+            return new AuthMintParts(
+                r3.Uri,
+                r3.S256,
+                new R3Grant { Vocabulary = proposal.Vocabulary, Operations = proposal.Operations },
+                null);
+        }
+
         var document = R3Document.FromUtf8Bytes(bytes);
         var granted = new List<McpOperation>();
         var conditional = new List<McpOperation>();
@@ -185,41 +196,23 @@ public static class R3AccessTokenEndpoint
             conditional.Count == 0 ? null : new R3Grant { Vocabulary = document.Vocabulary, Operations = conditional });
     }
 
-    private static async Task<AuthMintParts> EvaluateProposalAsync(
-        HttpContext context,
-        R3AccessTokenEndpointOptions options,
-        string? proposalUri,
-        string? proposalS256,
-        CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(proposalUri) || string.IsNullOrWhiteSpace(proposalS256))
-        {
-            throw new InvalidOperationException("proposal_uri and proposal_s256 must be present together.");
-        }
-        var bytes = await FetchAsync(context, options, proposalUri, proposalS256, cancellationToken);
-        var proposal = R3ProposalDocument.FromUtf8Bytes(bytes);
-        return new AuthMintParts(
-            proposalUri,
-            proposalS256,
-            new R3Grant { Vocabulary = proposal.Vocabulary, Operations = proposal.Operations },
-            null);
-    }
-
     private static async Task<byte[]> FetchAsync(
         HttpContext context,
         R3AccessTokenEndpointOptions options,
         string uri,
         string s256,
+        string resourceIssuer,
         CancellationToken cancellationToken)
     {
+        R3FetchClient.ValidateFetchTarget(uri, resourceIssuer);
         if (options.FetchAndVerifyAsync is not null)
         {
-            return await options.FetchAndVerifyAsync(context, uri, s256, cancellationToken).ConfigureAwait(false);
+            return await options.FetchAndVerifyAsync(context, uri, s256, resourceIssuer, cancellationToken).ConfigureAwait(false);
         }
 
         var (kid, key) = options.FirstSigningKey();
         var client = R3FetchClient.Create(key, $"{options.Issuer.TrimEnd('/')}/.well-known/jwks.json", kid);
-        return await client.FetchAndVerifyAsync(uri, s256, cancellationToken).ConfigureAwait(false);
+        return await client.FetchAndVerifyAsync(uri, s256, resourceIssuer, cancellationToken).ConfigureAwait(false);
     }
 
     private static T GetRequired<T>(HttpContext context) where T : notnull =>
@@ -229,6 +222,12 @@ public static class R3AccessTokenEndpoint
         context.RequestServices.GetService<T>() ?? fallback;
 
     private sealed record AuthMintParts(string Uri, string S256, R3Grant Granted, R3Grant? Conditional);
+
+    private static bool IsProposal(byte[] bytes)
+    {
+        var node = JsonNode.Parse(bytes) as JsonObject;
+        return node?["parameters"] is not null;
+    }
 }
 
 public sealed class R3AccessTokenEndpointOptions
@@ -239,7 +238,7 @@ public sealed class R3AccessTokenEndpointOptions
     public string Subject { get; init; } = "pairwise-sub";
     public IReadOnlyCollection<string>? TrustedPersonServers { get; init; }
     public ISet<string> ConditionalTools { get; init; } = new HashSet<string>(StringComparer.Ordinal);
-    public Func<HttpContext, string, string, CancellationToken, Task<byte[]>>? FetchAndVerifyAsync { get; init; }
+    public Func<HttpContext, string, string, string, CancellationToken, Task<byte[]>>? FetchAndVerifyAsync { get; init; }
 
     internal void Validate()
     {
@@ -278,11 +277,12 @@ public sealed class R3AccessTokenEndpointOptions
         }
         if (TrustedPersonServers is null || TrustedPersonServers.Count == 0)
         {
-            return true;
+            return false;
         }
         var allowed = TrustedPersonServers
-            .Select(ps => Uri.TryCreate(ps, UriKind.Absolute, out var uri) ? uri.Authority : ps)
+            .Select(ps => Uri.TryCreate(ps, UriKind.Absolute, out var uri) ? $"{uri.Scheme}://{uri.Authority}" : ps)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return allowed.Contains(fetcher.JwksUri.Authority);
+        return allowed.Contains($"{fetcher.JwksUri.Scheme}://{fetcher.JwksUri.Authority}")
+            || allowed.Contains(fetcher.JwksUri.Authority);
     }
 }

@@ -74,6 +74,10 @@ export default defineConfig({
       url: 'http://localhost:5003/.well-known/aauth-resource.json',
     },
     {
+      ...dotnetRun('samples/MockResourceServers/Bookings/Bookings.csproj'),
+      url: 'http://localhost:5004/.well-known/aauth-resource.json',
+    },
+    {
       ...dotnetRun('samples/Concierge/Concierge.csproj'),
       url: 'http://localhost:5200/.well-known/aauth-resource.json',
     },
@@ -84,6 +88,7 @@ export default defineConfig({
     {
       ...dotnetRun('samples/MockPersonServer/MockPersonServer.csproj', {
         MockPersonServer__RequireConsent: 'true',
+        MockPersonServer__TrustedAccessServers__1: 'http://localhost:5501',
       }),
       url: 'http://localhost:5100/.well-known/aauth-person.json',
     },
@@ -100,6 +105,13 @@ export default defineConfig({
         AccessServer__RequireConsent: process.env.AccessServer__RequireConsent ?? 'true',
       }),
       url: 'http://localhost:5500/.well-known/aauth-access.json',
+    },
+    {
+      // Dedicated Access Server for the experimental R3 Bookings flow. The
+      // server selects R3 mode by configuration so the shared :5500 AS used by
+      // Wallet/federated specs remains untouched.
+      ...dotnetRun('samples/MockAccessServer/MockAccessServer.csproj --launch-profile MockAccessServer.R3'),
+      url: 'http://localhost:5501/.well-known/aauth-access.json',
     },
     {
       ...dotnetRun('samples/GuidedTour/GuidedTour.csproj'),

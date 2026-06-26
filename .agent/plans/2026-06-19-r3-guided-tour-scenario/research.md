@@ -125,6 +125,17 @@ The prior research was written against the pre-v02 spec. The v02 migration
 > `IAAuthKey.Sign` reproduces the internal `JwtWriter`); Bookings enforces by R3
 > claims, not legacy scope (Finding 6).
 
+> **Update (2026-06-26) — implementation review findings resolved.** Final
+> spec/security review tightened three R3 invariants now captured by the
+> implementation: (1) agent-facing responses stay opaque and do not include fetched
+> R3 `display` or proposal documents; only the PS renders display after a signed,
+> hash-verified fetch, (2) per-call proposal approval is bound by a proposal
+> resource token carrying that proposal's `r3_uri`/`r3_s256`, not by caller-supplied
+> proposal URI/hash fields, and (3) R3 fetch trust fails closed: PS allowlists are
+> required, `jwks_uri` is checked against an explicit trusted-origin predicate before
+> any JWKS fetch, and R3 document/proposal fetches are origin-bound to the verified
+> resource issuer before outbound requests.
+
 | Decision | Choice |
 |----------|--------|
 | Reality tier | **Live mock servers** — real HTTP, real tokens; not in-process |

@@ -17,9 +17,9 @@ into the live walkthrough at `/tour?flow=<Flow>`; the tour's topbar has an
 **← Overview** link back.
 
 A swim-lane sequence diagram across up to four actors — **Agent**,
-**Concierge**, **Resource**, **Person Server** — with a payload
+**Concierge**, **Resource**, **Person Server**, and **Access Server** as needed — with a payload
 inspector on the right that decodes each JWT and shows the canonical
-RFC 9421 signature base for every signed request. Eight flows are
+RFC 9421 signature base for every signed request. Ten flows are
 available, switchable at runtime from the topbar **Mode** picker:
 
 * **Bootstrap** (2–3 steps) — generate the agent's signing key and build
@@ -57,6 +57,14 @@ available, switchable at runtime from the topbar **Mode** picker:
   call chain** (Agent → Concierge → Calendar) flows **silently** because
   both hops are in the mission's scope. The PS's mission log records the
   whole trail. Requires a Person Server and a Concierge URL.
+* **Rich Trip Booking (R3)** (12 steps; experimental) — Aria sends
+  `r3_operations` to **Bookings** (:5004) for MCP tools
+  `search_trip_options`, `hold_itinerary`, and `book_trip`. Bookings returns a
+  content-addressed R3 document (`r3_uri`/`r3_s256`), the PS renders its
+  `display`, the dedicated R3 AS (:5501) mints `r3_granted` +
+  `r3_conditional`, and the final `book_trip` call succeeds only after a
+  digest-matched per-call proposal approval. Implemented with the
+  `samples/AAuth.R3` preview library; `src/AAuth` is unchanged.
 
 When `PersonServerUrl` is empty in `appsettings.json`, the picker locks
 to Identity-based (the three-party options are disabled). You can also set
@@ -210,9 +218,10 @@ with **Run step**).
 | `GuidedTour:CalendarUrl` | `http://localhost:5001` | Calendar (PS-asserted) resource server base URL. |
 | `GuidedTour:TripsUrl` | `http://localhost:5002` | Trips (mission-aware) resource server base URL. |
 | `GuidedTour:WalletUrl` | `http://localhost:5003` | Wallet (federated) resource server base URL. |
+| `GuidedTour:BookingsUrl` | `http://localhost:5004` | Bookings (experimental R3) resource server base URL. |
 | `GuidedTour:ConciergeUrl` | `http://localhost:5200` | Concierge base URL for the call-chain flow. Set empty to disable that picker option. |
 | `GuidedTour:PersonServerUrl` | `http://localhost:5100` | PS base URL. Set empty to lock the picker to identity-based mode. |
 | `GuidedTour:AgentProviderUrl` | `http://localhost:5301` | AP base URL. When set, bootstrap enrols with the real AP instead of self-signing. |
 | `GuidedTour:AgentId` | `aauth:tour-agent@ap.example` | Value placed in the agent token's `sub`. |
+| `GuidedTour:RichRequestAccessServerUrl` | `http://localhost:5501` | Dedicated R3 Access Server used by the Bookings flow. |
 | `GuidedTour:Mode` | `Bootstrap` | Default flow on startup. `Bootstrap`, `Identity`, `Autonomous` (Direct Grant), `Deferred`, `CallChain`, `Federated`, or `Mission`. The topbar picker overrides this at runtime. |
-
