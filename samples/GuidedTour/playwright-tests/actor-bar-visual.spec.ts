@@ -1,7 +1,7 @@
 import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { openTour, selectFlow, TourMode } from '../../../tests/e2e/helpers/tour';
 
-// Phase 8 visual verification: for each flow, confirm the top actor bar shows
+// Actor-bar visual verification: for each flow, confirm the top actor bar shows
 // the CORRECT Aria resource server name + URL, then screenshot the bar +
 // swimlanes. Capture-and-assert (not part of the product spec suite).
 
@@ -23,7 +23,7 @@ for (const { mode, server, url } of cases) {
     await expect(resourceEntry).toContainText(server);
     await expect(resourceEntry).toContainText(url);
 
-    await page.locator('header.topbar').screenshot({ path: `/tmp/phase8-bar-${server}.png` });
-    await page.screenshot({ path: `/tmp/phase8-full-${server}.png`, fullPage: true });
+    await page.locator('header.topbar').screenshot({ path: `/tmp/actor-bar-${server}.png` });
+    await page.screenshot({ path: `/tmp/actor-bar-full-${server}.png`, fullPage: true });
   });
 }
