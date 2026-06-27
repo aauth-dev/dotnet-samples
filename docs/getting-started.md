@@ -133,7 +133,7 @@ AAuth supports four resource access modes. Each adds parties and capabilities:
 | Flow | Parties | When to Use | Signing Mode | See it run |
 |------|---------|-------------|--------------|------------|
 | **[Identity-Based](workflows/identity-based-access.md)** | Agent + Resource | API-key replacement, simple access control by identity | `hwk`, `jkt-jwt`, or `jwks_uri` | GuidedTour **Identity-based**; SampleApp `/pseudonymous`, `/anchored`, `/identified` |
-| **[Resource-Managed](workflows/resource-managed-access.md)** (two-party) | Agent + Resource | Resource handles its own auth (interaction, existing OAuth) | Any (`hwk`, `jwks_uri`, or `jwt`) | GuidedTour **Resource-Managed (Inbox)**; SampleApp `/inbox` |
+| **[Resource-Managed](workflows/resource-managed-access.md)** (two-party) | Agent + Resource | Resource handles its own auth (interaction, existing OAuth) | Any (`hwk`, `jwks_uri`, `jwt`, or `jkt-jwt`) | GuidedTour **Resource-Managed (Two-Party)**; SampleApp `/inbox` |
 | **[PS-Asserted](workflows/ps-asserted-access.md)** (three-party) | Agent + Resource + PS | User consent required, resource delegates auth to PS | `jwt` | GuidedTour **PS-Asserted (Direct Grant)** & **(Deferred)**; SampleApp `/calendar`, `/calendar-deferred` |
 | **[Federated](workflows/federated-access.md)** (four-party) | Agent + Resource + PS + AS | Cross-domain policy, resource has its own Access Server | `jwt` | GuidedTour **Federated (Four-Party)**; SampleApp `/wallet` (live Keycloak: `make demo-keycloak`) |
 

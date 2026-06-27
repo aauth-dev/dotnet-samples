@@ -26,7 +26,7 @@ available, switchable at runtime from the topbar **Mode** picker:
   (or obtain) an agent token. Default.
 * **Identity-based** (2 steps) — resource trusts the agent token directly;
   no PS involvement.
-* **Resource-Managed (Inbox)** (6 steps) — two-party flow where the
+* **Resource-Managed (Two-Party)** (6 steps) — two-party flow where the
   **Inbox** resource manages authorization itself: no Person Server, no
   token exchange. The signed `GET /messages` returns `202` with an
   `AAuth-Requirement` pointing at the Inbox's own consent page; after you
@@ -66,7 +66,7 @@ available, switchable at runtime from the topbar **Mode** picker:
 
 When `PersonServerUrl` is empty in `appsettings.json`, the three-party
 options are disabled; the two-party flows — **Identity-based** and
-**Resource-Managed (Inbox)** — still run, since neither needs a Person
+**Resource-Managed (Two-Party)** — still run, since neither needs a Person
 Server. You can also set the default in `appsettings.json`:
 
 ```json
@@ -111,7 +111,7 @@ Assumes the agent is already bootstrapped (key + token exist).
 1. Discover resource metadata — unsigned `GET /.well-known/aauth-resource.json`.
 2. Signed `GET /pseudonymous` or `GET /identified` → 200 + claims (path depends on signing mode picker).
 
-### Resource-Managed (Inbox) (6 steps)
+### Resource-Managed (Two-Party) (6 steps)
 
 Assumes the agent is already bootstrapped. Two-party — no Person Server and
 no token exchange; the **Inbox** manages authorization itself.
