@@ -14,7 +14,7 @@
             <strong>Aria</strong> is the AI travel assistant used throughout these demos. Like any
             agent, Aria has to <em>prove who it is</em> and <em>get your permission</em> before it
             touches anything that belongs to you — and AAuth is the protocol that lets it do so
-            safely. Each flow below follows Aria as it works on your behalf across four services:
+            safely. Each flow below follows Aria as it works on your behalf across five services:
         </p>
         <ul class="intro__servers">
             <li><span class="srv srv--profile">Profile</span> your saved travel preferences (identity-based access)</li>
@@ -63,9 +63,9 @@
         new(2, "Identity", "Identity-based access",
             "Aria reads your Profile and the server grants or denies based purely on the request signature — no Person Server, no consent screen.",
             new[] { "Agent + Profile", "2 steps", "hwk / jwks_uri / jkt-jwt" }),
-        new(3, "ResourceManaged", "Resource-Managed — Two-Party (Inbox)",
+        new(3, "ResourceManaged", "Resource-Managed — Two-Party",
             "Aria reads your Inbox to import trip confirmations, but the Inbox manages authorization itself — its own consent page issues an opaque AAuth-Access token, no Person Server in sight.",
-            new[] { "Agent + Inbox", "6 steps", "you approve", "drops in where you use OAuth" }),
+            new[] { "Agent + Inbox", "6 steps", "you approve", "first-party OAuth role" }),
         new(4, "Autonomous", "PS-Asserted — Direct Grant",
             "Aria reads your Calendar. Because you granted standing consent earlier, the Person Server issues a token immediately — no human in the loop.",
             new[] { "Agent + Calendar + PS", "6 steps", "no prompt" }),

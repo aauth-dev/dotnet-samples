@@ -7,7 +7,9 @@ Person Server and no Access Server. After the user approves, the Inbox hands the
 agent an opaque access token (`AAuth-Access`) that the agent replays — bound to
 its HTTP-message signature — on subsequent calls.
 
-> This is the access mode that "drops in where you use OAuth"
+> This is the AAuth mode for resources that authorize requests themselves — the
+> role a first-party OAuth deployment plays when a service runs its own
+> authorization server alongside its API
 > ([draft-hardt-oauth-aauth-protocol §Resource-Managed Access](../../../aauth-spec/v08/draft-hardt-oauth-aauth-protocol.md)):
 > the opaque token models a resource's existing OAuth access token, wrapped so it
 > is useless without a valid AAuth signature.

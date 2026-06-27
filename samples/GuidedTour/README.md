@@ -19,7 +19,7 @@ into the live walkthrough at `/tour?flow=<Flow>`; the tour's topbar has an
 A swim-lane sequence diagram across up to four actors — **Agent**,
 **Concierge**, **Resource**, **Person Server** — with a payload
 inspector on the right that decodes each JWT and shows the canonical
-RFC 9421 signature base for every signed request. Nine flows are
+RFC 9421 signature base for every signed request. Ten flows are
 available, switchable at runtime from the topbar **Mode** picker:
 
 * **Bootstrap** (2–3 steps) — generate the agent's signing key and build

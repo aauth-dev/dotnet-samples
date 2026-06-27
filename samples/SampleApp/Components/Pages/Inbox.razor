@@ -15,7 +15,8 @@
     The Inbox manages authorization <strong>itself</strong> — it has its own consent
     page, with no Person Server involved. After you approve, the Inbox hands Aria an
     opaque access token that Aria replays (bound to its signature) on later calls.
-    This is the access mode that <em>drops in where you use OAuth</em>.
+    The resource is its own authorization server here — the role a <em>first-party
+    OAuth</em> deployment plays.
 </details>
 
 <p>

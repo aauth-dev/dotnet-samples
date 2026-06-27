@@ -345,9 +345,10 @@ public sealed class TourSession : IAsyncDisposable
     // The resource-managed (two-party AAuth-Access) flow (§AAuth-Access Response
     // Header, §Resource-Managed Authorization). The Inbox manages authorization
     // ITSELF — via its OWN consent page — with no Person Server and no token
-    // exchange. It is the access mode that "drops in where you use OAuth": the
-    // opaque token it hands back models an OAuth access token, but is bound to
-    // the agent's signature so it is useless as a standalone bearer token.
+    // exchange. The resource is its own authorization server — the role a
+    // first-party OAuth deployment plays — so the opaque token it hands back
+    // models an OAuth access token, but is bound to the agent's signature so it
+    // is useless as a standalone bearer token.
     // Structurally mirrors deferred mode (202 → interaction → poll → retry) but
     // every leg is agent ↔ resource — there is no third party.
     private static readonly TourPlanStep[] ResourceManagedPlan =
@@ -2507,7 +2508,8 @@ public sealed class TourSession : IAsyncDisposable
                     "cadence. Once consent is recorded the Inbox responds with `200 OK` " +
                     "and the `AAuth-Access` header carrying an **opaque token68** — bound " +
                     "to the polling key's thumbprint, so it is useless as a standalone " +
-                    "bearer token. This is the value that \"drops in where you use OAuth\".",
+                    "bearer token. This models the access token a first-party OAuth " +
+                    "deployment would mint from its own authorization server.",
                 RequestLine = $"{last.RequestLine}  →  {_pendingUrl}",
                 RequestHeaders = last.RequestHeaders,
                 SignatureBase = capturedBase,

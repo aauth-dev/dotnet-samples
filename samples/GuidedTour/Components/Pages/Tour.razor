@@ -37,7 +37,7 @@
         <select id="flow-select" value="@Session.Mode" @onchange="OnModeChangedAsync" disabled="@_busy">
             <option value="@TourMode.Bootstrap" disabled="@(!Session.HasAgentProvider)">1 · Bootstrap — keygen + AP enrol</option>
             <option value="@TourMode.Identity">2 · Identity-based — no PS, 2 steps</option>
-            <option value="@TourMode.ResourceManaged">3 · Resource-Managed (Inbox) — two-party, 6 steps</option>
+            <option value="@TourMode.ResourceManaged">3 · Resource-Managed (Two-Party) — own consent, 6 steps</option>
             <option value="@TourMode.Autonomous" disabled="@(!Session.HasPersonServer)">4 · PS-Asserted (Direct Grant) — no user, 6 steps</option>
             <option value="@TourMode.Deferred" disabled="@(!Session.HasPersonServer)">5 · PS-Asserted (Deferred) — user approves, 9 steps</option>
             <option value="@TourMode.CallChain" disabled="@(!Session.HasPersonServer || !Session.HasConcierge)">6 · Call Chain (Multi-Agent) — user approves, 7 or 13 steps</option>
