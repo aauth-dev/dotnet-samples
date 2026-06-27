@@ -130,7 +130,16 @@ public static class AAuthApplicationBuilderExtensions
                     statusCode: StatusCodes.Status401Unauthorized);
             }
 
-            // Body: { "scope": "a b c" } — scope is REQUIRED.
+            // Body: { "scope": "a b c" } — scope is REQUIRED. Reject a non-JSON
+            // content type up front: ReadFromJsonAsync would otherwise throw
+            // InvalidOperationException (not JsonException) and surface as a 500.
+            if (!context.Request.HasJsonContentType())
+            {
+                return Results.Json(
+                    new { error = "invalid_request", error_description = "Content-Type must be application/json" },
+                    statusCode: StatusCodes.Status415UnsupportedMediaType);
+            }
+
             AuthorizationEndpointBody? body;
             try
             {

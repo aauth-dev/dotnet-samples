@@ -104,6 +104,20 @@ public class InboxFlowTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Authorize_NonJsonContentType_Returns415()
+    {
+        using var agent = BuildAgent();
+
+        // A signed POST that passes verification but carries a non-JSON body must
+        // fail cleanly (415), not surface ReadFromJsonAsync's InvalidOperationException
+        // as a 500.
+        using var content = new StringContent("scope=inbox.read", System.Text.Encoding.UTF8, "text/plain");
+        var resp = await agent.PostAsync($"{Base}/authorize", content);
+
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, resp.StatusCode);
+    }
+
+    [Fact]
     public async Task WellKnown_AdvertisesAccessModeAndAuthorizationEndpoint()
     {
         using var client = _inbox!.CreateClient();

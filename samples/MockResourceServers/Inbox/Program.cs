@@ -284,7 +284,12 @@ sealed class PendingConsent
 {
     public required string AgentJkt { get; init; }
     public required string Scope { get; init; }
-    public bool Approved { get; set; }
+
+    // Written by POST /consent/approve, read by GET /pending/{code} on a different
+    // request thread — volatile gives the cross-thread read/write release/acquire
+    // visibility a plain auto-property would not guarantee.
+    private volatile bool _approved;
+    public bool Approved { get => _approved; set => _approved = value; }
 }
 
 // Marker type for `WebApplicationFactory<Inbox.Entry>` in integration tests.
