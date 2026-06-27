@@ -114,18 +114,13 @@ single shared verification step with negative path matching:
 // Pseudonymous (hwk) — signature only, no JWT verification
 app.UseWhen(
     ctx => ctx.Request.Path.StartsWithSegments("/pseudonymous"),
-    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
-    {
-        RequireIssuerVerification = false,
-    }));
+    branch => branch.UseAAuthVerification(AAuthVerificationOptions.SignatureOnly()));
 
-// Agent identity (jwks_uri) — verifies key against published JWKS
+// Agent identity (jwks_uri) — signature only (the key is resolved from the
+// agent's published JWKS; there is still no auth-token issuer to verify)
 app.UseWhen(
     ctx => ctx.Request.Path.StartsWithSegments("/identified"),
-    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
-    {
-        RequireIssuerVerification = false,
-    }));
+    branch => branch.UseAAuthVerification(AAuthVerificationOptions.SignatureOnly()));
 
 // Three-party (jwt) — full issuer + audience verification, plus a per-endpoint
 // challenge requesting the scope this branch protects.

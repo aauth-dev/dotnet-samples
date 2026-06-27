@@ -12,7 +12,7 @@ using AAuth.HttpSig;
 
 const string Usage = "Usage: AgentConsole <url> --ap <agent-provider-url> [--sub <agent-id>] " +
     "[--ps <person-server-url>] [--signing-mode jwt|hwk|jwks_uri|jkt-jwt] " +
-    "[--prefer-wait <seconds>] [--upstream-token <jwt>]";
+    "[--resource-managed] [--prefer-wait <seconds>] [--upstream-token <jwt>]";
 
 if (args.Length < 1 || args[0] is "--help" or "-h")
 {
@@ -39,6 +39,7 @@ string? apUrl = null;
 string? signingMode = null;
 int? preferWaitSeconds = null;
 string? upstreamToken = null;
+bool resourceManaged = false;
 for (int i = 1; i < args.Length; i++)
 {
     string flag = args[i];
@@ -67,6 +68,10 @@ for (int i = 1; i < args.Length; i++)
             case "--upstream-token": upstreamToken = value; break;
         }
     }
+    else if (flag is "--resource-managed")
+    {
+        resourceManaged = true;
+    }
     else
     {
         Console.Error.WriteLine($"Unknown argument: {flag}");
@@ -94,6 +99,12 @@ if (personServer is null && signingMode is "jwt")
 {
     Console.Error.WriteLine("Agent Token mode (jwt) requires a Person Server (--ps).");
     Console.Error.WriteLine("For identity-based access without a PS, use --signing-mode hwk, jwks_uri, or jkt-jwt.");
+    return 1;
+}
+
+if (resourceManaged && personServer is not null)
+{
+    Console.Error.WriteLine("Resource-managed (--resource-managed) is a two-party flow; do not pass --ps.");
     return 1;
 }
 
@@ -248,6 +259,25 @@ if (upstreamToken is not null)
     Console.WriteLine("Upstream token provided for call chaining.");
 }
 
+// Resource-managed (two-party) opaque-token flow: capture/replay AAuth-Access
+// and drive the resource's own consent handshake.
+if (resourceManaged)
+{
+    builder.WithResourceManagedAccess()
+        .WithInteractionHandling(opts =>
+        {
+            opts.MinPollInterval = TimeSpan.FromMilliseconds(200);
+            opts.OnInteractionRequired = (consentUrl, code, ct) =>
+            {
+                Console.WriteLine();
+                Console.WriteLine("  [interaction] The resource needs your approval. Open:");
+                Console.WriteLine($"    {consentUrl}");
+                Console.WriteLine("  Waiting for approval (polling)...");
+                return Task.CompletedTask;
+            };
+        });
+}
+
 using var client = builder.Build();
 
 // If the target URL has no path (or just "/"), append the signing-mode-specific
@@ -263,22 +293,42 @@ using var client = builder.Build();
 var targetUrl = url;
 if (url.AbsolutePath is "/" or "")
 {
-    targetUrl = signingMode switch
-    {
-        "hwk" => new Uri(url, "/pseudonymous"),
-        "jkt-jwt" => new Uri(url, "/anchored"),
-        "jwks_uri" => new Uri(url, "/identified"),
-        _ => new Uri(url, "/events"), // jwt → three-party baseline endpoint
-    };
+    targetUrl = resourceManaged
+        ? new Uri(url, "/messages") // resource-managed two-party (Inbox)
+        : signingMode switch
+        {
+            "hwk" => new Uri(url, "/pseudonymous"),
+            "jkt-jwt" => new Uri(url, "/anchored"),
+            "jwks_uri" => new Uri(url, "/identified"),
+            _ => new Uri(url, "/events"), // jwt → three-party baseline endpoint
+        };
 }
 
-var request = new HttpRequestMessage(HttpMethod.Get, targetUrl);
-Console.WriteLine($"GET {targetUrl}");
-
+HttpRequestMessage request;
 HttpResponseMessage response;
 try
 {
-    response = await client.SendAsync(request);
+    if (resourceManaged)
+    {
+        // First call drives the 202 → consent → poll handshake; the SDK captures
+        // the issued AAuth-Access token.
+        Console.WriteLine($"GET {targetUrl} (initial — may require consent)");
+        using (var first = await client.GetAsync(targetUrl))
+        {
+            Console.WriteLine($"  → {(int)first.StatusCode} {first.ReasonPhrase}");
+        }
+
+        // Second call replays Authorization: AAuth, bound to the signature.
+        Console.WriteLine($"GET {targetUrl} (replaying AAuth-Access)");
+        request = new HttpRequestMessage(HttpMethod.Get, targetUrl);
+        response = await client.SendAsync(request);
+    }
+    else
+    {
+        request = new HttpRequestMessage(HttpMethod.Get, targetUrl);
+        Console.WriteLine($"GET {targetUrl}");
+        response = await client.SendAsync(request);
+    }
 }
 catch (Exception ex)
 {

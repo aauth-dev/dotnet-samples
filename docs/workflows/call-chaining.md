@@ -38,7 +38,7 @@ sequenceDiagram
 ## Running the Sample
 
 ```bash
-make demo   # starts the resource servers (Profile, Calendar, Trips, Wallet), PS, AP, Concierge, stub Access Server, both UIs
+make demo   # starts the resource servers (Profile, Calendar, Trips, Wallet, Inbox), PS, AP, Concierge, stub Access Server, both UIs
 ```
 
 Then open <http://localhost:5240/call-chain> to see the flow in action.

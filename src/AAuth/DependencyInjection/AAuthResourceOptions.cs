@@ -39,6 +39,16 @@ public sealed class AAuthResourceOptions
     public bool EnableReplayDetection { get; set; } = true;
 
     /// <summary>
+    /// Enable the resource-managed (two-party) <c>AAuth-Access</c> opaque-token
+    /// flow (§Resource-Managed Authorization). When <see langword="true"/>, a
+    /// default <see cref="Server.IOpaqueTokenStore"/>
+    /// (<see cref="Server.InMemoryOpaqueTokenStore"/>) is registered unless the
+    /// app already registered one. The resource's endpoints drive the flow via
+    /// the <c>HttpContext</c> resource-managed helpers. Default: false.
+    /// </summary>
+    public bool EnableResourceManagedAccess { get; set; }
+
+    /// <summary>
     /// Custom <see cref="ISignatureKeyResolver"/>. When null, <see cref="DefaultSignatureKeyResolver"/>
     /// is used with a <see cref="Discovery.JwksClient"/> registered via DI.
     /// </summary>

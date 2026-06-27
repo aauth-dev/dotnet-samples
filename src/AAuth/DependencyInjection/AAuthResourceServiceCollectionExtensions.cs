@@ -71,6 +71,14 @@ public static class AAuthResourceServiceCollectionExtensions
             services.TryAddSingleton<IJtiStore, InMemoryJtiStore>();
         }
 
+        // Register a default opaque-token store for the resource-managed
+        // (two-party) AAuth-Access flow when enabled (§Resource-Managed
+        // Authorization). The app may register its own IOpaqueTokenStore first.
+        if (options.EnableResourceManagedAccess)
+        {
+            services.TryAddSingleton<IOpaqueTokenStore, InMemoryOpaqueTokenStore>();
+        }
+
         // Register the well-known metadata options for UseAAuthVerification / MapAAuthWellKnown.
         var metadataOptions = new AAuthResourceMetadataOptions
         {

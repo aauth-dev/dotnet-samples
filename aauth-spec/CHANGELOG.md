@@ -66,7 +66,8 @@ bumps the HTTP Signature Keys draft to **draft-05**.
 > **The SDK now targets draft-08** (migrated 2026-06-25). The entries below measure
 > draft-08 against the prior **draft-02** baseline ([`v02/`](v02/)) — they double as
 > the migration's change catalogue. The `AAuth-Access` opaque-token flow
-> (resource-managed access) is the one surface tracked here but not yet implemented.
+> (resource-managed access) is implemented (see
+> `.agent/plans/2026-06-25-aauth-access-token-flow/`).
 
 ### Protocol (drafts 03–08)
 

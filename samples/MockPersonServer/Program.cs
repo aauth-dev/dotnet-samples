@@ -173,10 +173,7 @@ app.UseWhen(
     ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
         && !ctx.Request.Path.StartsWithSegments("/admin")
         && !ctx.Request.Path.StartsWithSegments("/interaction"),
-    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
-    {
-        RequireIssuerVerification = false,
-    }));
+    branch => branch.UseAAuthVerification(AAuthVerificationOptions.SignatureOnly()));
 
 // -----------------------------------------------------------------------
 // POST /token — the exchange endpoint.

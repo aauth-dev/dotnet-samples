@@ -39,10 +39,7 @@ using var client = new AAuthClientBuilder(key)
 var app = builder.Build();
 
 // HWK carries the public key inline; no JWKS needed.
-app.UseAAuthVerification(new AAuthVerificationOptions
-{
-    RequireIssuerVerification = false,
-});
+app.UseAAuthVerification(AAuthVerificationOptions.SignatureOnly());
 
 app.MapGet("/pseudonymous", (HttpContext ctx) =>
 {

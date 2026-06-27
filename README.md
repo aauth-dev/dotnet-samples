@@ -31,7 +31,7 @@ AAuth supports four resource access modes. Each adds parties and capabilities, a
 | Mode | Parties | When to Use | Signing | See it in the demos |
 |------|---------|-------------|---------|---------------------|
 | **Identity-Based** | Agent + Resource | Replacing API keys with cryptographic identity | `hwk` / `jwks_uri` | GuidedTour → [**Identity-based**](http://localhost:5400/tour?flow=Identity); SampleApp → [`/pseudonymous`](http://localhost:5240/pseudonymous) and [`/identified`](http://localhost:5240/identified) |
-| **Resource-Managed** (two-party) | Agent + Resource | Resource manages authorization itself (interaction, OAuth/OIDC, internal policy) without an external PS or AS | Any | [Workflow guide](docs/workflows/resource-managed-access.md) — the resource owns the consent step |
+| **Resource-Managed** (two-party) | Agent + Resource | Resource manages authorization itself (interaction, OAuth/OIDC, internal policy) without an external PS or AS | Any | GuidedTour → [**Resource-Managed (Inbox)**](http://localhost:5400/tour?flow=ResourceManaged); SampleApp → [`/inbox`](http://localhost:5240/inbox) |
 | **PS-Asserted** (three-party) | Agent + Resource + PS | Resource accepts identity claims (`sub`, `email`, `tenant`, `groups`, `roles`) from any Person Server | `jwt` | GuidedTour → [**PS-Asserted (Direct Grant)**](http://localhost:5400/tour?flow=Autonomous) and [**PS-Asserted (Deferred)**](http://localhost:5400/tour?flow=Deferred); SampleApp → [`/calendar`](http://localhost:5240/calendar) and [`/calendar-deferred`](http://localhost:5240/calendar-deferred) |
 | **Federated** (four-party) | Agent + Resource + PS + AS | Cross-domain access with the resource's own Access Server enforcing policy | `jwt` | GuidedTour → [**Federated (Four-Party)**](http://localhost:5400/tour?flow=Federated); SampleApp → [`/wallet`](http://localhost:5240/wallet). Live Keycloak consent: `make demo-keycloak` |
 
@@ -58,7 +58,7 @@ Step-by-step walk-through showing every HTTP exchange, header, and token claim a
 
 ### Sample App — http://localhost:5240
 
-Self-contained Blazor app with one page per AAuth flow (HWK, JWKS URI, JWT direct grant, deferred user consent, call-chain multi-agent delegation, four-party federated).
+Self-contained Blazor app with one page per AAuth flow (HWK, JWKS URI, resource-managed Inbox, JWT direct grant, deferred user consent, call-chain multi-agent delegation, four-party federated).
 
 ![Sample App](samples/SampleApp/sample-app.png)
 
@@ -270,7 +270,7 @@ dotnet test tests/AAuth.Conformance   # spec conformance suite only
 |------|-------------|
 | [src/AAuth/](src/AAuth/) | AAuth SDK library (the NuGet package) |
 | [docs/](docs/) | SDK documentation — signing modes, workflows, server guides |
-| [samples/](samples/) | Sample applications — Profile, Calendar, Trips, Wallet resource servers, Concierge, AgentConsole, MockPersonServer, MockAgentProvider, GuidedTour, SampleApp |
+| [samples/](samples/) | Sample applications — Profile, Calendar, Trips, Wallet, Inbox resource servers, Concierge, AgentConsole, MockPersonServer, MockAgentProvider, GuidedTour, SampleApp |
 | [tests/](tests/) | Unit, integration, and spec-conformance tests |
 | [aauth-spec/](aauth-spec/) | Protocol specifications (drafts 01, 02, and 08) from [dickhardt/AAuth](https://github.com/dickhardt/AAuth) |
 
@@ -284,7 +284,7 @@ This SDK targets **draft-08** of the AAuth protocol specification:
 | [draft-hardt-aauth-bootstrap](aauth-spec/v08/draft-hardt-aauth-bootstrap.md) | 01 |
 | [draft-hardt-aauth-r3](aauth-spec/v08/draft-hardt-aauth-r3.md) | 00 |
 
-The protocol tracks IETF **draft-08** ([`aauth-spec/v08/`](aauth-spec/v08/), source commit [`dd2b852`](https://github.com/dickhardt/AAuth/commit/dd2b8524eb8a6beb1a6cd922f285cc8bd0464cd8), 2026-06-25). Earlier draft-02 ([`aauth-spec/v02/`](aauth-spec/v02/)) and draft-01 ([`aauth-spec/v01/`](aauth-spec/v01/)) snapshots are retained for reference. The `AAuth-Access` opaque-token flow (resource-managed, two-party access) is the one protocol surface not yet implemented. See [SPEC-VERSION.md](aauth-spec/SPEC-VERSION.md) and [aauth-spec/CHANGELOG.md](aauth-spec/CHANGELOG.md) for details.
+The protocol tracks IETF **draft-08** ([`aauth-spec/v08/`](aauth-spec/v08/), source commit [`dd2b852`](https://github.com/dickhardt/AAuth/commit/dd2b8524eb8a6beb1a6cd922f285cc8bd0464cd8), 2026-06-25). Earlier draft-02 ([`aauth-spec/v02/`](aauth-spec/v02/)) and draft-01 ([`aauth-spec/v01/`](aauth-spec/v01/)) snapshots are retained for reference. All four resource access modes — including the `AAuth-Access` opaque-token flow (resource-managed, two-party access) — are implemented. See [SPEC-VERSION.md](aauth-spec/SPEC-VERSION.md) and [aauth-spec/CHANGELOG.md](aauth-spec/CHANGELOG.md) for details.
 
 ## Contributing
 

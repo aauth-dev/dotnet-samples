@@ -21,10 +21,10 @@ substitute.
 
 The SDK code now targets **draft-08** ([`v08/`](v08/)) — migrated from draft-02 in
 the 2026-06-25 migration (see `.agent/plans/2026-06-25-aauth-v08-spec-migration/`).
-One protocol surface is not yet implemented: the `AAuth-Access` opaque-token flow
-(resource-managed, two-party access), scoped as a follow-up under
+All four resource access modes are implemented, including the `AAuth-Access`
+opaque-token flow (resource-managed, two-party access), added under
 `.agent/plans/2026-06-25-aauth-access-token-flow/`. The runnable four-party
-sub-agent (S5) interop demo is also deferred, though the parent-mediated code path
+sub-agent (S5) interop demo is deferred, though the parent-mediated code path
 is implemented and conformance-tested.
 
 `v08/` is therefore both the version the SDK conforms to and the latest upstream

@@ -26,6 +26,13 @@ public static class AAuthConstants
 
         /// <summary>AAuth capabilities header.</summary>
         public const string AAuthCapabilities = "AAuth-Capabilities";
+
+        /// <summary>
+        /// AAuth opaque access-token response header (§AAuth-Access Response
+        /// Header). Carries a <c>token68</c> the agent replays as
+        /// <c>Authorization: AAuth &lt;token68&gt;</c>.
+        /// </summary>
+        public const string AAuthAccess = "AAuth-Access";
     }
 
     /// <summary>Signature-Key scheme identifiers.</summary>

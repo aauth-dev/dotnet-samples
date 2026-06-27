@@ -10,6 +10,7 @@ PROFILE_PROJECT  := samples/MockResourceServers/Profile/Profile.csproj
 CALENDAR_PROJECT := samples/MockResourceServers/Calendar/Calendar.csproj
 TRIPS_PROJECT    := samples/MockResourceServers/Trips/Trips.csproj
 WALLET_PROJECT   := samples/MockResourceServers/Wallet/Wallet.csproj
+INBOX_PROJECT    := samples/MockResourceServers/Inbox/Inbox.csproj
 PS_PROJECT     := samples/MockPersonServer/MockPersonServer.csproj
 AP_PROJECT     := samples/MockAgentProvider/MockAgentProvider.csproj
 TOUR_PROJECT   := samples/GuidedTour/GuidedTour.csproj
@@ -24,6 +25,7 @@ PROFILE_URL  := http://localhost:5000
 CALENDAR_URL := http://localhost:5001
 TRIPS_URL    := http://localhost:5002
 WALLET_URL   := http://localhost:5003
+INBOX_URL    := http://localhost:5004
 PS_URL     := http://localhost:5100
 AP_URL     := http://localhost:5301
 CONCIERGE_URL   := http://localhost:5200
@@ -105,7 +107,7 @@ clean: ## dotnet clean + remove bin/ obj/ trees
 # Individual services & apps
 # ----------------------------------------------------------------------------
 
-resources: ## Run all four Aria resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003)
+resources: ## Run all five Aria resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003, Inbox :5004)
 	@echo "Building services (once) before launch..."
 	@$(DOTNET) build $(SOLUTION) -v q
 	@trap 'trap - INT TERM; echo; echo "Stopping..."; kill 0' INT TERM; \
@@ -113,6 +115,7 @@ resources: ## Run all four Aria resource servers (Profile :5000, Calendar :5001,
 	$(DOTNET) run --no-build --project $(CALENDAR_PROJECT) & \
 	$(DOTNET) run --no-build --project $(TRIPS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(WALLET_PROJECT) & \
+	$(DOTNET) run --no-build --project $(INBOX_PROJECT) & \
 	wait
 
 ps: ## Run the MockPersonServer (port 5100)
@@ -152,6 +155,7 @@ demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. f
 	@echo "   Calendar:           $(CALENDAR_URL)         (three-party resource server)"
 	@echo "   Trips:              $(TRIPS_URL)         (mission-aware resource server)"
 	@echo "   Wallet:             $(WALLET_URL)         (four-party resource server)"
+	@echo "   Inbox:              $(INBOX_URL)         (resource-managed two-party server)"
 	@echo "   Concierge:       $(CONCIERGE_URL)         (mission concierge)"
 	@echo "   MockPersonServer:   $(PS_URL)         (RequireConsent=true)"
 	@echo "   MockAgentProvider:  $(AP_URL)         (agent registry)"
@@ -170,6 +174,7 @@ demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. f
 	$(DOTNET) run --no-build --project $(CALENDAR_PROJECT) & \
 	$(DOTNET) run --no-build --project $(TRIPS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(WALLET_PROJECT) & \
+	$(DOTNET) run --no-build --project $(INBOX_PROJECT) & \
 	$(DOTNET) run --no-build --project $(CONCIERGE_PROJECT) & \
 	$(DOTNET) run --no-build --project $(AP_PROJECT) & \
 	AccessServer__PolicyProvider=stub AccessServer__RequireConsent=true $(DOTNET) run --no-build --project $(AS_PROJECT) & \

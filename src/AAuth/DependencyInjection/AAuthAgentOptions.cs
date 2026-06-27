@@ -47,4 +47,20 @@ public sealed class AAuthAgentOptions
     /// Polling timeout for deferred responses. Default: 5 minutes.
     /// </summary>
     public TimeSpan PollingTimeout { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Enable the resource-managed (two-party) <c>AAuth-Access</c> opaque-token
+    /// flow: capture <c>AAuth-Access</c> response headers and replay them as
+    /// <c>Authorization: AAuth &lt;token68&gt;</c>, bound to the signature
+    /// (§AAuth-Access Response Header). Usually paired with
+    /// <see cref="OnResourceInteraction"/> so the resource's interaction handshake
+    /// is driven automatically.
+    /// </summary>
+    public bool EnableResourceManagedAccess { get; set; }
+
+    /// <summary>
+    /// Optional per-origin <see cref="IAAuthAccessStore"/> for the resource-managed
+    /// flow. When <see langword="null"/> (default) an in-memory store is used.
+    /// </summary>
+    public IAAuthAccessStore? AAuthAccessStore { get; set; }
 }
