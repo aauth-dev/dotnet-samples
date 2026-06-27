@@ -320,6 +320,8 @@ app.Run();
 | `OnApprovalPending` | `Func<CancellationToken, Task>?` | `null` | Resource `202` + `requirement=approval` |
 | `TokenRefresher` | `ITokenRefresher?` | `null` | Auto-refresh before token expiry (JWT identity); omit for HWK signing |
 | `PollingTimeout` | `TimeSpan` | 5 minutes | Max deferred polling time |
+| `EnableResourceManagedAccess` | `bool` | `false` | Capture + replay the opaque `AAuth-Access` token (resource-managed, two-party) |
+| `AAuthAccessStore` | `IAAuthAccessStore?` | `null` | Per-origin token store for the resource-managed flow (default in-memory) |
 
 ### AAuthResourceOptions
 
@@ -332,6 +334,7 @@ app.Run();
 | `SignatureWindow` | `int?` | `null` | Advertised signature validity (seconds) |
 | `AuthorizationEndpoint` | `string?` | `null` | AS authorization URL |
 | `RevocationEndpoint` | `string?` | `null` | Revocation endpoint URL |
+| `EnableResourceManagedAccess` | `bool` | `false` | Register a default `IOpaqueTokenStore` for the resource-managed (two-party) flow |
 
 ### AAuthDiscoveryOptions
 

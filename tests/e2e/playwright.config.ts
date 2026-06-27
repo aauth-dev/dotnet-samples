@@ -74,6 +74,10 @@ export default defineConfig({
       url: 'http://localhost:5003/.well-known/aauth-resource.json',
     },
     {
+      ...dotnetRun('samples/MockResourceServers/Inbox/Inbox.csproj'),
+      url: 'http://localhost:5004/.well-known/aauth-resource.json',
+    },
+    {
       ...dotnetRun('samples/Concierge/Concierge.csproj'),
       url: 'http://localhost:5200/.well-known/aauth-resource.json',
     },

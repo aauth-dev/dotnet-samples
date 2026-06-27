@@ -141,10 +141,7 @@ public static class AAuthPersonServerEndpoints
         app.UseWhen(
             ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
                 && !ctx.Request.Path.StartsWithSegments(interactionPrefix),
-            branch => branch.UseAAuthVerification(new AAuthVerificationOptions
-            {
-                RequireIssuerVerification = false,
-            }));
+            branch => branch.UseAAuthVerification(AAuthVerificationOptions.SignatureOnly()));
 
         var tokenVerifier = app.Services.GetRequiredService<TokenVerifier>();
         var metadataClient = app.Services.GetRequiredService<MetadataClient>();

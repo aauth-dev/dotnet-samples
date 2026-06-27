@@ -35,7 +35,7 @@ How a resource decides what the agent may do. See [Access Mode Comparison](https
 Four modes:
 
 - **Identity-Based** — Resource trusts the signature directly. No tokens beyond the agent token.
-- **Resource-Managed** — Resource handles auth itself (interaction/OAuth). SDK: `IOpaqueTokenStore`
+- **Resource-Managed** (2-party) — Resource handles auth itself (interaction/OAuth) and issues an opaque `AAuth-Access` token. SDK: agent `WithResourceManagedAccess()`; resource `IOpaqueTokenStore` + `ResolveAAuthAccessAsync` / `IssueAAuthAccessAsync` / `MapAAuthAuthorizationEndpoint`
 - **PS-Asserted** (3-party) — Resource issues resource token → agent exchanges at PS → auth token. SDK: `ChallengeHandler`, `TokenExchangeClient`
 - **Federated** (4-party) — PS delegates to Access Server. SDK: same agent-side types; AS is the PS's concern.
 

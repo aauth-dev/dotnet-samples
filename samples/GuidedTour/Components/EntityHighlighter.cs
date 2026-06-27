@@ -25,11 +25,13 @@ public sealed class EntityHighlighter
         if (!string.IsNullOrWhiteSpace(options.AgentProviderUrl))
             entries.Add((BaseOrigin(options.AgentProviderUrl), "hl-agent", "Agent Provider"));
 
-        // Resource servers — the Aria suite has four (Profile, Calendar, Trips,
-        // Wallet). All are highlighted as "Resource" since each flow talks to
-        // exactly one of them; the label names which server.
+        // Resource servers — the Aria suite has five (Profile, Inbox, Calendar,
+        // Trips, Wallet). All are highlighted as "Resource" since each flow talks
+        // to exactly one of them; the label names which server.
         if (!string.IsNullOrWhiteSpace(options.ProfileUrl))
             entries.Add((BaseOrigin(options.ProfileUrl), "hl-resource", "Profile"));
+        if (!string.IsNullOrWhiteSpace(options.InboxUrl))
+            entries.Add((BaseOrigin(options.InboxUrl), "hl-resource", "Inbox"));
         if (!string.IsNullOrWhiteSpace(options.CalendarUrl))
             entries.Add((BaseOrigin(options.CalendarUrl), "hl-resource", "Calendar"));
         if (!string.IsNullOrWhiteSpace(options.TripsUrl))

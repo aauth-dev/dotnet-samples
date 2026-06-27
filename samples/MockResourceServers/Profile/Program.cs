@@ -70,23 +70,20 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 });
 
 // Identity-based verification: HTTP signature only, no JWT issuer check (these
-// schemes carry no auth-token issuer to verify).
-static AAuthVerificationOptions SignatureOnly() => new()
-{
-    RequireIssuerVerification = false,
-};
+// schemes carry no auth-token issuer to verify). The SDK ships the
+// AAuthVerificationOptions.SignatureOnly() factory for exactly this.
 
 // One isolated verification pipeline per path — no prefix disambiguation needed
 // because each path is a distinct first segment.
 app.UseWhen(
     ctx => ctx.Request.Path.StartsWithSegments("/pseudonymous"),
-    branch => branch.UseAAuthVerification(SignatureOnly()));
+    branch => branch.UseAAuthVerification(AAuthVerificationOptions.SignatureOnly()));
 app.UseWhen(
     ctx => ctx.Request.Path.StartsWithSegments("/identified"),
-    branch => branch.UseAAuthVerification(SignatureOnly()));
+    branch => branch.UseAAuthVerification(AAuthVerificationOptions.SignatureOnly()));
 app.UseWhen(
     ctx => ctx.Request.Path.StartsWithSegments("/anchored"),
-    branch => branch.UseAAuthVerification(SignatureOnly()));
+    branch => branch.UseAAuthVerification(AAuthVerificationOptions.SignatureOnly()));
 
 app.UseAuthentication();
 app.UseAuthorization();

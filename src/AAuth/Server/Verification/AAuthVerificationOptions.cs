@@ -42,6 +42,25 @@ public sealed class AAuthVerificationOptions
     public bool RequireIssuerVerification { get; init; } = true;
 
     /// <summary>
+    /// Create options for <b>two-party / signature-only</b> verification: HTTP
+    /// Message Signature proof-of-possession with <b>no</b> JWT issuer
+    /// verification. This is the correct configuration for identity-based and
+    /// resource-managed (<c>AAuth-Access</c>) access, where the agent signs with
+    /// <c>hwk</c> / <c>jwks_uri</c> / <c>jkt-jwt</c> and presents no PS/AS-issued
+    /// auth token whose issuer could be verified. The binding that matters in
+    /// these flows is the HTTP signature itself (and, for resource-managed, that
+    /// <c>authorization</c> is covered) — not an issuer signature.
+    /// </summary>
+    /// <param name="clock">Optional clock for signature-freshness checks (testing).</param>
+    /// <returns>A fresh options instance with <see cref="RequireIssuerVerification"/> set to <c>false</c>.</returns>
+    public static AAuthVerificationOptions SignatureOnly(Func<DateTimeOffset>? clock = null)
+        => new()
+        {
+            RequireIssuerVerification = false,
+            Clock = clock,
+        };
+
+    /// <summary>
     /// Maximum depth of nested <c>act</c> claims allowed in auth tokens.
     /// Prevents unbounded chain depth. Default: <c>10</c>.
     /// </summary>

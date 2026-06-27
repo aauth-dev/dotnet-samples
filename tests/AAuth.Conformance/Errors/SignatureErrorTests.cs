@@ -35,10 +35,7 @@ public class SignatureErrorTests : IAsyncLifetime
         builder.WebHost.UseTestServer();
         builder.Services.AddSingleton(new AAuthVerifier());
         var app = builder.Build();
-        app.UseAAuthVerification(new AAuthVerificationOptions
-        {
-            RequireIssuerVerification = false,
-        });
+        app.UseAAuthVerification(AAuthVerificationOptions.SignatureOnly());
         app.MapGet("/protected", () => Results.Ok("hello"));
         await app.StartAsync();
         _host = app;

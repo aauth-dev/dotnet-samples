@@ -18,6 +18,7 @@ import { waitForInteractive } from './blazor';
 export const TourMode = {
   Bootstrap: 'Bootstrap',
   Identity: 'Identity',
+  ResourceManaged: 'ResourceManaged',
   Autonomous: 'Autonomous',
   Deferred: 'Deferred',
   CallChain: 'CallChain',
@@ -46,6 +47,8 @@ export async function openTour(page: Page): Promise<void> {
 const PLAN_STEPS: Record<TourMode, number> = {
   Bootstrap: 3,
   Identity: 2,
+  // Resource-managed (two-party): signed GET → 202 → consent → poll → replay.
+  ResourceManaged: 6,
   Autonomous: 6,
   Deferred: 9,
   CallChain: 7,

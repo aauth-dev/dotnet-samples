@@ -7,6 +7,7 @@ import { openTour, selectFlow, TourMode } from '../../../tests/e2e/helpers/tour'
 
 const cases: Array<{ mode: TourMode; server: string; url: string }> = [
   { mode: TourMode.Identity, server: 'Profile', url: 'http://localhost:5000' },
+  { mode: TourMode.ResourceManaged, server: 'Inbox', url: 'http://localhost:5004' },
   { mode: TourMode.Autonomous, server: 'Calendar', url: 'http://localhost:5001' },
   { mode: TourMode.Mission, server: 'Trips', url: 'http://localhost:5002' },
   { mode: TourMode.Federated, server: 'Wallet', url: 'http://localhost:5003' },

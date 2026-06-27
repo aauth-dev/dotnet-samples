@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Threading.Tasks;
 using AAuth;
 using AAuth.Crypto;
 using AAuth.Discovery;
@@ -10,6 +13,7 @@ using AAuth.Server.CallChaining;
 using AAuth.Server.Challenge;
 using AAuth.Server.Metadata;
 using AAuth.Server.Verification;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -89,6 +93,72 @@ public static class AAuthApplicationBuilderExtensions
         var options = endpoints.ServiceProvider.GetRequiredService<AAuthResourceMetadataOptions>();
         return WellKnownEndpoints.MapAAuthResourceWellKnown(endpoints, options);
     }
+
+    /// <summary>
+    /// Map a resource <c>authorization_endpoint</c> (§Authorization Endpoint
+    /// Request): a signed <c>POST</c> that the agent calls proactively to request
+    /// access. The request body is <c>{ "scope": "…" }</c> (scope REQUIRED). The
+    /// request MUST be AAuth-verified (place this route behind
+    /// <see cref="UseAAuthVerification"/>); the agent token is read from the
+    /// verified <c>Signature-Key</c>. The <paramref name="handler"/> runs the
+    /// resource's authorization decision — returning, for example, a
+    /// <c>202 + requirement=interaction</c> (via
+    /// <c>HttpContext.InteractionRequiredAAuth</c>) or issuing a token (via
+    /// <c>HttpContext.IssueAAuthAccessAsync</c>) — sharing one code path with the
+    /// reactive endpoint.
+    /// </summary>
+    /// <param name="endpoints">The endpoint route builder.</param>
+    /// <param name="pattern">The route pattern (e.g. <c>/authorize</c>), matching the published <c>authorization_endpoint</c>.</param>
+    /// <param name="handler">The authorization decision, given the verified request and requested scope.</param>
+    public static RouteHandlerBuilder MapAAuthAuthorizationEndpoint(
+        this IEndpointRouteBuilder endpoints,
+        string pattern,
+        Func<HttpContext, AAuthAuthorizationRequest, Task<IResult>> handler)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentException.ThrowIfNullOrEmpty(pattern);
+        ArgumentNullException.ThrowIfNull(handler);
+
+        return endpoints.MapPost(pattern, async (HttpContext context) =>
+        {
+            // Require a verified AAuth signature (the agent token is in Signature-Key).
+            var verification = context.GetAAuthVerification();
+            if (verification is null)
+            {
+                return Results.Json(
+                    new { error = "invalid_request" },
+                    statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            // Body: { "scope": "a b c" } — scope is REQUIRED.
+            AuthorizationEndpointBody? body;
+            try
+            {
+                body = await context.Request
+                    .ReadFromJsonAsync<AuthorizationEndpointBody>(context.RequestAborted)
+                    .ConfigureAwait(false);
+            }
+            catch (JsonException)
+            {
+                return Results.Json(
+                    new { error = "invalid_request", error_description = "malformed JSON body" },
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            if (body is null || string.IsNullOrWhiteSpace(body.Scope))
+            {
+                return Results.Json(
+                    new { error = "invalid_request", error_description = "scope is required" },
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var request = new AAuthAuthorizationRequest(body.Scope, verification);
+            return await handler(context, request).ConfigureAwait(false);
+        });
+    }
+
+    private sealed record AuthorizationEndpointBody(
+        [property: JsonPropertyName("scope")] string? Scope);
 
     /// <summary>
     /// Configure the full AAuth resource pipeline in one call: maps well-known endpoints,

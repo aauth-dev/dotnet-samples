@@ -12,6 +12,9 @@ runs the three-party exchange to obtain an auth token.
   `--signing-mode`.
 - With `--ps`, performs the three-party exchange: agent token → resource
   token → PS `POST /token` → auth token → retried request.
+- With `--resource-managed`, performs the two-party flow: a `202` from the
+  resource yields a consent URL to approve, then a poll returns an opaque
+  `AAuth-Access` token that is replayed as `Authorization: AAuth`. No `--ps`.
 
 ## Run
 
@@ -24,6 +27,7 @@ dotnet run --project samples/AgentConsole -- <url> --ap <agent-provider-url> [op
 | `--ap <url>` | _(required)_ | Agent Provider URL (enrol + refresh endpoints) |
 | `--sub <id>` | `aauth:demo@ap.example` | Agent subject identifier |
 | `--ps <url>` | _(none)_ | Person Server URL — enables the three-party flow |
+| `--resource-managed` | _(off)_ | Two-party resource-managed flow — HWK signing, no `--ps`; drives `202` → consent → poll → `AAuth-Access`, then replays `Authorization: AAuth` |
 | `--signing-mode <mode>` | `jwt` (with `--ps`) / `hwk` (without) | One of `jwt`, `hwk`, `jwks_uri`, `jkt-jwt` |
 | `--prefer-wait <seconds>` | _(none)_ | Long-poll hint for deferred PS responses |
 | `--upstream-token <jwt>` | _(none)_ | Upstream auth token for call-chaining scenarios |
@@ -33,7 +37,8 @@ dotnet run --project samples/AgentConsole -- <url> --ap <agent-provider-url> [op
 When the target URL has no path (or just `/`), AgentConsole appends the path
 that routes to the matching verification pipeline. The pseudonymous and
 agent-identity modes target the **Profile** server (port 5000); the default
-three-party `jwt` mode targets the **Calendar** server (port 5001):
+three-party `jwt` mode targets the **Calendar** server (port 5001); the
+`--resource-managed` flag targets the **Inbox** server (port 5004):
 
 | `--signing-mode` | Appended path | Server endpoint |
 |------------------|---------------|-----------------|
@@ -41,6 +46,7 @@ three-party `jwt` mode targets the **Calendar** server (port 5001):
 | `jkt-jwt` | `/anchored` | Profile :5000 — Pseudonymous, key delegation |
 | `jwks_uri` | `/identified` | Profile :5000 — Agent identity |
 | `jwt` _(default)_ | `/events` | Calendar :5001 — Three-party baseline |
+| `--resource-managed` _(flag)_ | `/messages` | Inbox :5004 — Resource-managed (two-party) |
 
 To reach the elevated (`/events/write`), RBAC (`/events/admin`), or payment
 (`/wallet/charge`) endpoints, pass the explicit path — these are not
@@ -49,7 +55,7 @@ auto-appended.
 ## Validated invocations
 
 Against the running Profile (5000), Calendar (5001), Wallet (5003),
-MockAgentProvider (5301), and MockPersonServer (5100):
+Inbox (5004), MockAgentProvider (5301), and MockPersonServer (5100):
 
 ```bash
 # Pseudonymous — HTTP signature only (no PS)
@@ -63,6 +69,11 @@ dotnet run --project samples/AgentConsole -- \
 # Agent identity — key verified via JWKS URI
 dotnet run --project samples/AgentConsole -- \
   http://localhost:5000 --ap http://localhost:5301 --signing-mode jwks_uri
+
+# Resource-managed (two-party) — opaque AAuth-Access token, no PS
+# Prints a consent URL; approve it in the browser, then the read replays.
+dotnet run --project samples/AgentConsole -- \
+  http://localhost:5004 --ap http://localhost:5301 --resource-managed
 
 # Three-party baseline — scope "calendar.read" (grant consent first)
 dotnet run --project samples/AgentConsole -- \

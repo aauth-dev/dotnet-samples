@@ -26,6 +26,10 @@ public enum AAuthAccessMode
 
     // Require auth token — issue 401 challenge if only agent token present
     RequireAuthToken,
+
+    // Resource manages authorization itself (two-party) — challenge middleware
+    // passes through; endpoints issue/validate the AAuth-Access opaque token
+    ResourceManaged,
 }
 ```
 

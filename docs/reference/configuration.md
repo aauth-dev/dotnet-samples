@@ -253,8 +253,8 @@ SDK-required), shown here as a reference for wiring your own hosts.
 
 | Key | Type | Used by | Description |
 |-----|------|---------|-------------|
-| `AAuth:Issuer` | `string` | Profile/Calendar/Trips/Wallet, MockPersonServer, Concierge | The host's own canonical URL (resource/PS `iss`). |
-| `AAuth:SignatureWindow` | `int` (seconds) | Profile/Calendar/Trips/Wallet, MockPersonServer | Max HTTP-signature age accepted; default `60`. |
+| `AAuth:Issuer` | `string` | Profile/Calendar/Trips/Wallet/Inbox, MockPersonServer, Concierge | The host's own canonical URL (resource/PS `iss`). |
+| `AAuth:SignatureWindow` | `int` (seconds) | Profile/Calendar/Trips/Wallet/Inbox, MockPersonServer | Max HTTP-signature age accepted; default `60`. |
 | `AAuth:TrustedPersonServers` | `string[]` | Calendar/Trips | Fail-closed allow-list mapped to `AAuthVerificationOptions.TrustedAuthTokenIssuers`. When unset, defaults to `http://localhost:5100`; an empty array rejects all auth tokens. |
 | `AAuth:LocalKeyHandle` | `string` | agent samples | Key handle in the `IKeyStore` for the agent's signing key. |
 | `AAuth:ApRefreshEndpoint` | `string` | agent samples | Agent Provider refresh endpoint for enrolled agents. |

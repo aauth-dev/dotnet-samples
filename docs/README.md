@@ -83,6 +83,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `AAuthClientBuilder.SelfIssuing(key)` | Fluent factory for self-hosted services (self-issued identity) |
 | `AAuthClientBuilder.Enrolled(key)` | Fluent factory for AP-enrolled agents |
 | `.WithPersonServer()` | Sets PS for both token `ps` claim and challenge handling |
+| `.WithResourceManagedAccess()` | Captures the `AAuth-Access` token and replays it as `Authorization: AAuth <token68>` (resource-managed two-party access) |
 | `app.MapAAuthResource()` | Unified resource pipeline (well-known + verification + challenge) |
 | `AAuthSigningHandler` | `DelegatingHandler` that signs outbound requests (RFC 9421) |
 | `AAuthVerifier` | Server-side signature verification |
@@ -103,6 +104,8 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `AAuthTokenHolder` | Holds current carrier token (agent or auth) |
 | `ChallengeHandler` | `DelegatingHandler` — intercepts 401, exchanges with PS |
 | `InteractionHandler` | `DelegatingHandler` — handles 202 deferred/interaction |
+| `AAuthAccessHandler` | `DelegatingHandler` — captures/replays the resource-managed `AAuth-Access` token |
+| `IAAuthAccessStore` / `InMemoryAAuthAccessStore` | Per-origin store for captured `AAuth-Access` tokens |
 | `TokenExchangeClient` | Sends signed `POST /token` to the Person Server |
 | `DeferredPoller` | Polls the pending URL until auth_token or timeout |
 | `AgentProviderClient` | Enrols with an Agent Provider (CLI/desktop agents; hosted services self-issue) |
@@ -151,6 +154,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `AAuthRequirementHeader` | Format/parse the `AAuth-Requirement` challenge header |
 | `Interaction` | Interaction URL + code from 202 responses |
 | `ClarificationRequirement` | Typed `requirement=clarification` projection (untrusted question) |
+| `AAuthAccessHeader` | Format/parse/validate the `AAuth-Access` opaque token (`token68`) |
 
 > The `AAuthCapabilitiesHeader` and `AAuthMissionHeader` types live in the `AAuth.Agent` namespace (alongside `Mission` and `MissionForwardingHandler`), not in `AAuth.Headers`.
 
@@ -207,7 +211,9 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 |------|---------|
 | `RevocationEndpoint` | Token revocation endpoint |
 | `IJtiStore` / `InMemoryJtiStore` | Replay detection (JTI tracking) |
-| `IOpaqueTokenStore` | Opaque token storage abstraction |
+| `IOpaqueTokenStore` / `InMemoryOpaqueTokenStore` | Resource-managed opaque access-token store (mint/validate) |
+| `HttpContext.ResolveAAuthAccessAsync` / `IssueAAuthAccessAsync` / `InteractionRequiredAAuth` | Resource-managed (two-party) request/response helpers |
+| `MapAAuthAuthorizationEndpoint` | Maps a signed `POST authorization_endpoint` (proactive entry point) |
 
 ### `AAuth` — Diagnostics
 
@@ -245,7 +251,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 
 ## Samples
 
-- [`SampleApp`](../samples/SampleApp/) — Golden example: one page per signing mode (hwk, jwks_uri, jkt-jwt, jwt)
+- [`SampleApp`](../samples/SampleApp/) — Golden example: one page per signing mode (hwk, jwks_uri, jkt-jwt, jwt) plus the resource-managed Inbox
 - [`GuidedTour`](../samples/GuidedTour/) — Interactive Blazor walkthrough of all flows
 - [`AgentConsole`](../samples/AgentConsole/) — CLI agent demonstrating signing modes
-- [`MockResourceServers`](../samples/MockResourceServers/) — Profile, Calendar, Trips, and Wallet resource servers with verification middleware
+- [`MockResourceServers`](../samples/MockResourceServers/) — Profile, Calendar, Trips, Wallet, and Inbox resource servers with verification middleware (Inbox demonstrates the two-party resource-managed `AAuth-Access` flow)

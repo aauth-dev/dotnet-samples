@@ -1,7 +1,7 @@
 # Samples
 
-Thirteen sample applications demonstrating AAuth flows end-to-end. The four Aria
-resource servers (Profile, Calendar, Trips, Wallet) live under
+Fourteen sample applications demonstrating AAuth flows end-to-end. The five Aria
+resource servers (Profile, Calendar, Trips, Wallet, Inbox) live under
 [MockResourceServers/](MockResourceServers/).
 
 | Sample | Port | Description |
@@ -10,13 +10,14 @@ resource servers (Profile, Calendar, Trips, Wallet) live under
 | [Calendar](MockResourceServers/Calendar/) | 5001 | PS-Asserted (three-party) resource server — `/events` (`calendar.read`), `/events/write` (`calendar.write`), `/events/admin` (role `calendar.owner`) |
 | [Trips](MockResourceServers/Trips/) | 5002 | Mission-aware resource server — `/trips` (`trips.read`), `/trips/book` (`trips.book`) |
 | [Wallet](MockResourceServers/Wallet/) | 5003 | Federated (four-party) resource server — `/wallet` (`wallet.read`), `/wallet/charge` (`wallet.charge`) |
+| [Inbox](MockResourceServers/Inbox/) | 5004 | Resource-Managed (two-party) resource server — manages authorization itself via its own consent page; issues an opaque `AAuth-Access` token (`GET /messages`, `POST /authorize`) |
 | [Concierge](Concierge/) | 5200 | Intermediate service — call chaining with nested `act` delegation |
 | [MissionAgent](MissionAgent/) | — | CLI agent — drives the optional, orthogonal **agent governance** layer: proposes a mission, asks per-action permission, records audit, and relays interactions through a PS (§Agent Governance) |
 | [MockPersonServer](MockPersonServer/) | 5100 | Reference Person Server — verifies exchanges, mints auth tokens, federates to an Access Server. **Sample only — not part of the AAuth SDK.** |
 | [MockAgentProvider](MockAgentProvider/) | 5301 | Reference Agent Provider — issues agent tokens, hosts JWKS. **Sample only — not part of the AAuth SDK.** |
 | [MockAccessServer](MockAccessServer/) | 5500 | Reference Access Server — the fourth party in federated access; evaluates policy (stub or Keycloak) and mints `aa-auth+jwt` (`dwk=aauth-access.json`). **Sample only — not part of the AAuth SDK.** |
 | [GuidedTour](GuidedTour/) | 5400 | Blazor walk-through — visualises every AAuth flow step by step, including the four-party federated flow |
-| [SampleApp](SampleApp/) | 5240 | Golden example — one page per signing mode (hwk, jwks_uri, jkt-jwt, jwt, call chain, federated four-party) |
+| [SampleApp](SampleApp/) | 5240 | Golden example — one page per signing mode (hwk, jwks_uri, jkt-jwt, jwt, call chain, federated four-party) plus the resource-managed Inbox |
 | [AgentConsole](AgentConsole/) | — | CLI agent — signs requests, handles challenges, exchanges with a PS |
 | [LiveWhoAmITest](LiveWhoAmITest/) | 5199 | Live interop test against `whoami.aauth.dev` + `person.hello.coop` — exercises all 3 protocol modes over a public tunnel |
 
@@ -28,7 +29,7 @@ The fastest way to run all samples together:
 make demo
 ```
 
-This starts Profile + Calendar + Trips + Wallet + Concierge + MockPersonServer + MockAgentProvider + MockAccessServer (stub) + GuidedTour + SampleApp in parallel, prints their URLs, and tears them down on `Ctrl+C`. Then open the **GuidedTour** at <http://localhost:5400> and click **Run all**, or the **SampleApp** at <http://localhost:5240>.
+This starts Profile + Calendar + Trips + Wallet + Inbox + Concierge + MockPersonServer + MockAgentProvider + MockAccessServer (stub) + GuidedTour + SampleApp in parallel, prints their URLs, and tears them down on `Ctrl+C`. Then open the **GuidedTour** at <http://localhost:5400> and click **Run all**, or the **SampleApp** at <http://localhost:5240>.
 
 For the **four-party (federated)** flow with an Access Server, `make demo` already
 includes a stub Access Server (no Docker). For the live Keycloak policy engine,
@@ -103,6 +104,21 @@ dotnet run --project samples/MockResourceServers/Wallet
 |------|------|-----------------------|
 | `/wallet` | Four-party | Scope `wallet.read` — verified against the Access Server |
 | `/wallet/charge` | Four-party (step-up) | Scope `wallet.charge` — requires the AS `wallet.payer` role |
+
+### Inbox (Resource-Managed Resource Server)
+
+```bash
+dotnet run --project samples/MockResourceServers/Inbox
+```
+
+| Path | Mode | Verification / Policy |
+|------|------|-----------------------|
+| `/messages` | Resource-managed (reactive) | Signature only; first call returns `202` + interaction at the Inbox's own consent page, then serves messages once an `AAuth-Access` token is presented |
+| `/authorize` | Resource-managed (proactive) | Signed `POST { "scope" }` — same consent path (§Authorization Endpoint Request) |
+
+The Inbox manages authorization **itself** (two-party, no PS/AS) and issues an
+opaque `AAuth-Access` token bound to the agent's signature. See
+[MockResourceServers/Inbox/README.md](MockResourceServers/Inbox/README.md).
 
 All paths serve `/.well-known/aauth-resource.json` and `/.well-known/jwks.json` without requiring a signature.
 
@@ -214,7 +230,7 @@ Implements AP enrollment and JWKS hosting. See [MockAgentProvider/README.md](Moc
 dotnet run --project samples/GuidedTour
 ```
 
-Requires the resource servers (Profile, Calendar, Trips, Wallet), MockPersonServer, Concierge, and MockAgentProvider already running (or use `make demo`). See [GuidedTour/README.md](GuidedTour/README.md) for mode configuration.
+Requires the resource servers (Profile, Calendar, Trips, Wallet, Inbox), MockPersonServer, Concierge, and MockAgentProvider already running (or use `make demo`). See [GuidedTour/README.md](GuidedTour/README.md) for mode configuration.
 
 ### SampleApp
 
@@ -222,7 +238,7 @@ Requires the resource servers (Profile, Calendar, Trips, Wallet), MockPersonServ
 dotnet run --project samples/SampleApp
 ```
 
-Simple Blazor app showing each signing mode as a separate page. Open <http://localhost:5240>. Requires the resource servers (Profile, Calendar, Trips, Wallet), MockPersonServer, and Concierge running. MockAgentProvider is needed only for the JWKS-URI enrollment page.
+Simple Blazor app showing each signing mode as a separate page. Open <http://localhost:5240>. Requires the resource servers (Profile, Calendar, Trips, Wallet, Inbox), MockPersonServer, and Concierge running. MockAgentProvider is needed only for the JWKS-URI enrollment page.
 
 ### LiveWhoAmITest
 
@@ -248,7 +264,7 @@ make test            # run all tests (SDK + conformance)
 make test-unit       # SDK unit + integration tests only
 make test-conformance # spec conformance tests only
 make demo            # start the full stack (resource servers + Concierge + PS + AP + AS + both UIs)
-make resources       # only the four Aria resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003)
+make resources       # only the five Aria resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003, Inbox :5004)
 make ps              # MockPersonServer (port 5100)
 make ps-consent      # MockPersonServer with RequireConsent=true
 make ap              # MockAgentProvider (port 5301)

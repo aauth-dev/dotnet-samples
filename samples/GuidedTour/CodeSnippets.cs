@@ -181,6 +181,58 @@ internal static class CodeSnippets
         // Now signed with the auth_token → 200 OK
         """;
 
+    public const string ResourceManagedSignedGet = """
+        // Two-party resource-managed access (§AAuth-Access Response Header):
+        // the resource manages authorization ITSELF — no Person Server, no
+        // token exchange. WithResourceManagedAccess() captures the opaque
+        // AAuth-Access token and replays it; WithInteractionHandling() drives
+        // the 202 → consent → poll → 200 handshake.
+        using var client = new AAuthClientBuilder(key)
+            .UseHwk() // pseudonymous: bound to the key, not an identity
+            .WithResourceManagedAccess()
+            .WithInteractionHandling(o =>
+            {
+                o.OnInteractionRequired = (url, code, ct) =>
+                {
+                    Console.WriteLine($"Approve at: {url}?code={code}");
+                    return Task.CompletedTask;
+                };
+            })
+            .Build();
+
+        // First call: 202 + AAuth-Requirement: requirement=interaction.
+        // The Inbox owns its consent page; there is no PS in the loop.
+        var response = await client.GetAsync("https://inbox.example/messages");
+        """;
+
+    public const string ResourceManagedPoll = """
+        // While the user approves on the Inbox's own consent page, the SDK
+        // polls the pending URL (signed). Once consent is recorded the Inbox
+        // replies 200 + AAuth-Access: <token68> — an opaque token bound to the
+        // agent's signature (useless as a standalone bearer token).
+        var poller = new DeferredPoller(signedClient,
+            new DeferredPollerOptions { PreferWaitSeconds = 30 });
+
+        var result = await poller.PollAsync(pendingUri);
+        var token68 = result.Headers
+            .GetValues("AAuth-Access").Single();
+        // store.Set(origin, token68) — replayed on later calls
+        """;
+
+    public const string ResourceManagedReplay = """
+        // Later calls present the opaque token as an Authorization credential.
+        // The signer automatically COVERS `authorization`, binding the token to
+        // this request — so a stolen token cannot be replayed without the key.
+        using var req = new HttpRequestMessage(
+            HttpMethod.Get, "https://inbox.example/messages");
+        req.Headers.Authorization =
+            new AuthenticationHeaderValue("AAuth", token68);
+
+        var response = await client.SendAsync(req); // signed + covered
+        // 200 → { scope, messages }
+        // (WithResourceManagedAccess() does this replay for you.)
+        """;
+
     public const string CallChainRetry = """
         // Retry Concierge with the auth_token.
         // From our side this looks like a normal retry — the chaining

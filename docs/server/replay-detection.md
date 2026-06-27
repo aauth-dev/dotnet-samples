@@ -51,10 +51,7 @@ builder.Services.AddSingleton(new AAuthVerifier());
 builder.Services.AddSingleton<IJtiStore>(new InMemoryJtiStore());
 
 var app = builder.Build();
-app.UseAAuthVerification(new AAuthVerificationOptions
-{
-    RequireIssuerVerification = false,
-});
+app.UseAAuthVerification(AAuthVerificationOptions.SignatureOnly());
 
 // Optional: periodic cleanup of expired entries
 var jtiStore = app.Services.GetRequiredService<IJtiStore>() as InMemoryJtiStore;
