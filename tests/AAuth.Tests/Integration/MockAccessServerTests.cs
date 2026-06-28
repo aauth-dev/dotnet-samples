@@ -10,6 +10,7 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Tokens;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -25,7 +26,7 @@ namespace AAuth.Tests.Integration;
 /// supplies the agent + resource tokens in the body, and asserts the AS
 /// mints a verifiable <c>aa-auth+jwt</c> with <c>dwk = aauth-access.json</c>.
 /// </summary>
-public class MockAccessServerTests : IClassFixture<WebApplicationFactory<MockAccessServer.Entry>>, IDisposable
+public class MockAccessServerTests : IDisposable
 {
     private const string AsIssuer = "https://as.test";
     private const string PsIssuer = "https://ps.test";
@@ -43,15 +44,26 @@ public class MockAccessServerTests : IClassFixture<WebApplicationFactory<MockAcc
 
     private readonly WebApplicationFactory<MockAccessServer.Entry> _factory;
 
-    public MockAccessServerTests(WebApplicationFactory<MockAccessServer.Entry> factory)
+    public MockAccessServerTests()
     {
-        _factory = factory.WithWebHostBuilder(b =>
+        _factory = CreateFactory();
+    }
+
+    // Build a fully-isolated AS host. Each test gets its own factory with all
+    // configuration applied in a single WithWebHostBuilder pass, so per-test
+    // settings (e.g. AccessServer:RequireClaims) can never bleed across the
+    // suite. (A shared IClassFixture + chained WithWebHostBuilder leaked config
+    // between tests under some orderings — the base-config tests intermittently
+    // saw another test's RequireClaims.)
+    private static WebApplicationFactory<MockAccessServer.Entry> CreateFactory(
+        Action<IWebHostBuilder>? extra = null)
+        => new WebApplicationFactory<MockAccessServer.Entry>().WithWebHostBuilder(b =>
         {
             b.UseSetting("AAuth:Issuer", AsIssuer);
             b.UseSetting("MockAccessServer:TrustedPersonServers:0", PsIssuer);
             b.ConfigureServices(WireDiscovery);
+            extra?.Invoke(b);
         });
-    }
 
     public void Dispose() => _factory.Dispose();
 
@@ -211,7 +223,7 @@ public class MockAccessServerTests : IClassFixture<WebApplicationFactory<MockAcc
         // §Claims Required: with a configured claim requirement the stub policy
         // parks a requirement=claims, the PS pushes a directed sub + the claim,
         // and the AS mints the auth token asserting it.
-        using var factory = _factory.WithWebHostBuilder(b =>
+        using var factory = CreateFactory(b =>
             b.UseSetting("AccessServer:RequireClaims:0", "email"));
 
         var agentKey = AAuthKey.Generate();
@@ -248,7 +260,7 @@ public class MockAccessServerTests : IClassFixture<WebApplicationFactory<MockAcc
     {
         // F2: the pending push re-pins the caller. A different (untrusted)
         // Person Server cannot push a sub/claims into another PS's entry.
-        using var factory = _factory.WithWebHostBuilder(b =>
+        using var factory = CreateFactory(b =>
             b.UseSetting("AccessServer:RequireClaims:0", "email"));
 
         var agentKey = AAuthKey.Generate();
