@@ -129,7 +129,9 @@ public class MockPersonServerFederationTests
         // The PS relays the AS interaction as its own 202.
         Assert.Equal(HttpStatusCode.Accepted, post.StatusCode);
         Assert.NotNull(post.Headers.Location);
-        Assert.StartsWith("/federated-pending/", post.Headers.Location!.OriginalString);
+        // The SDK mapper unifies all deferred polls under a single pending path;
+        // the agent follows the Location header to the relayed poll URL.
+        Assert.StartsWith("/pending/", post.Headers.Location!.OriginalString);
         Assert.True(post.Headers.TryGetValues("AAuth-Requirement", out var requirementValues));
         var requirement = string.Join(string.Empty, requirementValues!);
         Assert.Contains("requirement=interaction", requirement);
@@ -187,7 +189,7 @@ public class MockPersonServerFederationTests
                     new HttpClient(new FederatedStub(agentKey, agentId, scope, interactive))));
 
                 // Route the PS→AS federation transport at the same in-process AS.
-                services.AddHttpClient("aauth-federation")
+                services.AddHttpClient(AAuthFederationServiceCollectionExtensions.FederationHttpClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => new FederatedStub(agentKey, agentId, scope, interactive));
             });
         });

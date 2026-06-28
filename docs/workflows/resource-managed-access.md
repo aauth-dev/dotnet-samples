@@ -72,33 +72,45 @@ if (response.StatusCode == HttpStatusCode.Accepted)
 
 ### Server-Side (endpoint helpers)
 
-The resource resolves the inbound opaque token, issues new ones, and opens consent interactions via `HttpContext` helpers (the signature binding — that `authorization` is covered — is enforced by `AAuthVerifier`):
+The resource resolves the inbound opaque token and opens consent interactions via `HttpContext` helpers; the module's poll endpoint mints the `AAuth-Access` token on approval (the signature binding — that `authorization` is covered — is enforced by `AAuthVerifier`):
 
 ```csharp
-app.MapGet("/messages", async (HttpContext ctx, IOpaqueTokenStore store) =>
+// One handle to the SDK-registered opaque-token store.
+var store = app.Services.GetRequiredService<IOpaqueTokenStore>();
+
+// Payload endpoint: serve when an opaque token is presented; otherwise open a
+// consent interaction. The module owns code generation, the consent URL, and
+// parking — the resource supplies only the scope.
+app.MapGet("/messages", async (HttpContext ctx) =>
 {
-    var info = await ctx.ResolveAAuthAccessAsync(store);
+    var info = await ctx.ResolveAAuthAccessAsync(store, ctx.RequestAborted);
     if (info is not null)
-        return Results.Ok(new { messages });
+        return Results.Ok(new { scope = info.Scope, messages });
 
-    // No token yet → open a consent interaction at the resource's own page.
-    return ctx.InteractionRequiredAAuth(consentUrl, code, pendingUrl);
-});
+    // No token yet → 202 + AAuth-Requirement: interaction (url + code + poll
+    // Location all sourced from the module options).
+    return ctx.RequireAAuthInteraction("inbox.read");
+}).RequireAAuthSignature();
 
-// On consent completion (e.g. from the poll target), mint + emit AAuth-Access:
-await ctx.IssueAAuthAccessAsync(store, new OpaqueTokenInfo
-{
-    AgentJkt = ctx.GetAAuthVerification()!.Jkt!,
-    Scope = "inbox.read",
-    Expiration = DateTimeOffset.UtcNow.AddMinutes(30),
-});
+// The SDK serves the deferred-response poll target and issues the opaque token
+// on approval — the resource maps no poll plumbing of its own.
+app.MapAAuthInteractionPoll().RequireAAuthSignature();
 
-// Optional proactive entry point (§Authorization Endpoint Request):
+// Optional proactive entry point (§Authorization Endpoint Request) — same
+// decision path as /messages.
 app.MapAAuthAuthorizationEndpoint("/authorize", async (ctx, request) =>
 {
-    // request.Scope + ctx.GetAAuthVerification() → same decision as /messages
-    return /* 202 interaction or issue a token */;
-});
+    var info = await ctx.ResolveAAuthAccessAsync(store, ctx.RequestAborted);
+    if (info is not null)
+        return Results.Ok(new { authorized = true, scope = info.Scope });
+
+    return ctx.RequireAAuthInteraction(request.Scope);
+}).RequireAAuthSignature();
+
+// The resource's own consent page records the user's decision; the next poll
+// then issues the AAuth-Access token.
+app.MapPost("/consent/approve", (string code, IInteractionPendingStore pending) =>
+    pending.Approve(code) ? Results.Ok() : Results.NotFound());
 ```
 
 ## DI Registration
@@ -127,13 +139,24 @@ builder.Services.AddAAuthResource(options =>
 {
     options.Issuer = "https://resource.example";
     options.SigningKeys = new() { ["key-1"] = resourceKey };
-    options.EnableResourceManagedAccess = true; // registers a default IOpaqueTokenStore
+    options.AccessMode = AAuthConstants.AccessModes.AAuthAccessToken;
+    options.AuthorizationEndpoint = "https://resource.example/authorize";
+});
+
+// The resource-managed module registers the opaque-token store, the interaction
+// pending store, and the consent/poll wiring. The SDK owns code generation,
+// parking, the poll endpoint, and token issuance.
+builder.Services.AddAAuthResourceManaged(options =>
+{
+    options.ConsentUrl = "https://resource.example/consent";
+    options.PollPath = "/pending";
 });
 ```
 
 The endpoints then drive the flow with `ResolveAAuthAccessAsync` /
-`IssueAAuthAccessAsync` / `InteractionRequiredAAuth` and, optionally,
-`MapAAuthAuthorizationEndpoint`.
+`RequireAAuthInteraction` and `MapAAuthInteractionPoll`; the consent page records
+the decision via `IInteractionPendingStore.Approve`, and (optionally)
+`MapAAuthAuthorizationEndpoint` adds the proactive entry point.
 
 See [Dependency Injection](../reference/dependency-injection.md) for full reference.
 

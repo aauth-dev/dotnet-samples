@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Person;
 using AAuth.Server.Governance;
@@ -41,8 +42,10 @@ public class PersonServerMapperTests
     private static readonly AAuthKey ResourceKey = AAuthKey.Generate();
 
     // Build a PS host: real verification middleware + stub resource discovery +
-    // the supplied asserter (default asserts a fixed sub).
-    private static async Task<IHost> BuildHostAsync(IIdentityClaimsAsserter? asserter = null)
+    // the supplied asserter (default asserts a fixed sub) and optional mission
+    // consent seam (default = the conservative DefaultMissionTokenConsent).
+    private static async Task<IHost> BuildHostAsync(
+        IIdentityClaimsAsserter? asserter = null, IMissionTokenConsent? consent = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
@@ -57,6 +60,10 @@ public class PersonServerMapperTests
             sp.GetRequiredService<MetadataClient>(), sp.GetRequiredService<JwksClient>()));
         builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>();
         builder.Services.AddSingleton(asserter ?? new DefaultIdentityClaimsAsserter("user-42"));
+        if (consent is not null)
+        {
+            builder.Services.AddSingleton<IMissionTokenConsent>(consent);
+        }
         builder.Services.AddRouting();
 
         var app = builder.Build();
@@ -419,7 +426,9 @@ public class PersonServerMapperTests
     public async Task Mission_InScope_Mints_AndLogsGrant()
     {
         var agentKey = AAuthKey.Generate();
-        using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Assert("user-42")));
+        using var host = await BuildHostAsync(
+            new StubAsserter(IdentityAssertion.Assert("user-42")),
+            new StubMissionConsent(_ => MissionTokenConsentDecision.Grant()));
         using var http = SignedAgentClient(host, agentKey, AgentId);
 
         const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
@@ -440,6 +449,131 @@ public class PersonServerMapperTests
         // The grant was recorded so a repeat request resolves via prior consent.
         var log = host.Services.GetRequiredService<IMissionLog>();
         Assert.True(await log.HasPriorConsentAsync(s256, ResourceUrl, "whoami"));
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Clarification Chat — out-of-scope clarify round, then a grant logged OutOfScope")]
+    public async Task Mission_OutOfScope_ClarifyThenGrant()
+    {
+        var agentKey = AAuthKey.Generate();
+        const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        // Gate ⇒ ask a question; once the agent answers, grant.
+        var consent = new StubMissionConsent(ctx => ctx.ClarificationHistory.Count == 0
+            ? MissionTokenConsentDecision.Clarify("Why do you need this scope?")
+            : MissionTokenConsentDecision.Grant());
+        using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Assert("user-42")), consent);
+        using var http = SignedAgentClient(host, agentKey, AgentId);
+
+        var resourceToken = ResourceToken(agentKey, AgentId, PsIssuer, mission: new MissionClaim(PsIssuer, s256));
+        using var first = await http.PostAsJsonAsync("/token", new JsonObject { ["resource_token"] = resourceToken });
+
+        Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+        Assert.Equal($"requirement={ClarificationRequirement.RequirementType}",
+            first.Headers.GetValues(AAuth.Headers.AAuthRequirementHeader.Name).Single());
+        var pendingUrl = first.Headers.Location!.ToString();
+        var firstBody = await first.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("Why do you need this scope?", (string?)firstBody!["clarification"]);
+
+        // Answer the clarification, then resume polling.
+        using var answer = await http.PostAsJsonAsync(pendingUrl,
+            new JsonObject { ["clarification_response"] = "It is required to read the resource." });
+        Assert.Equal(HttpStatusCode.NoContent, answer.StatusCode);
+
+        using var poll = await http.GetAsync(pendingUrl);
+        Assert.True(poll.IsSuccessStatusCode,
+            $"Status={(int)poll.StatusCode} {await poll.Content.ReadAsStringAsync()}");
+        var token = (string)(await poll.Content.ReadFromJsonAsync<JsonObject>())!["auth_token"]!;
+        Assert.False(string.IsNullOrEmpty(token));
+
+        var log = host.Services.GetRequiredService<IMissionLog>();
+        var entries = await log.ReadAsync(s256);
+        Assert.Contains(entries, e => e.Kind == MissionLogEntryKind.Clarification);
+        var tokenEntry = entries.Last(e => e.Kind == MissionLogEntryKind.Token);
+        Assert.Equal(true, tokenEntry.Granted);
+        Assert.Equal("OutOfScope", tokenEntry.Detail);
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Agent Token Request — an out-of-scope mission the seam denies returns 403 + logs OutOfScope")]
+    public async Task Mission_OutOfScope_Deny()
+    {
+        var agentKey = AAuthKey.Generate();
+        const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        // Gate ⇒ interactive hold; the poll denies.
+        var consent = new StubMissionConsent(ctx => ctx.Stage == MissionTokenConsentStage.Gate
+            ? MissionTokenConsentDecision.Interact()
+            : MissionTokenConsentDecision.Deny("not allowed"));
+        using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Assert("user-42")), consent);
+        using var http = SignedAgentClient(host, agentKey, AgentId);
+
+        var resourceToken = ResourceToken(agentKey, AgentId, PsIssuer, mission: new MissionClaim(PsIssuer, s256));
+        using var first = await http.PostAsJsonAsync("/token", new JsonObject { ["resource_token"] = resourceToken });
+        Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+        var pendingUrl = first.Headers.Location!.ToString();
+
+        using var poll = await http.GetAsync(pendingUrl);
+        Assert.Equal(HttpStatusCode.Forbidden, poll.StatusCode);
+        var body = await poll.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("denied", (string?)body!["error"]);
+
+        var log = host.Services.GetRequiredService<IMissionLog>();
+        var tokenEntry = (await log.ReadAsync(s256)).Last(e => e.Kind == MissionLogEntryKind.Token);
+        Assert.Equal(false, tokenEntry.Granted);
+        Assert.Equal("OutOfScope", tokenEntry.Detail);
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Agent Response to Clarification — a withdrawn request is 410 and logs a cancellation")]
+    public async Task Mission_Clarification_Withdraw()
+    {
+        var agentKey = AAuthKey.Generate();
+        const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        var consent = new StubMissionConsent(_ => MissionTokenConsentDecision.Clarify("Why?"));
+        using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Assert("user-42")), consent);
+        using var http = SignedAgentClient(host, agentKey, AgentId);
+
+        var resourceToken = ResourceToken(agentKey, AgentId, PsIssuer, mission: new MissionClaim(PsIssuer, s256));
+        using var first = await http.PostAsJsonAsync("/token", new JsonObject { ["resource_token"] = resourceToken });
+        var pendingUrl = first.Headers.Location!.ToString();
+
+        using var withdraw = await http.DeleteAsync(pendingUrl);
+        Assert.Equal(HttpStatusCode.NoContent, withdraw.StatusCode);
+
+        using var poll = await http.GetAsync(pendingUrl);
+        Assert.Equal(HttpStatusCode.Gone, poll.StatusCode);
+
+        var log = host.Services.GetRequiredService<IMissionLog>();
+        var entries = await log.ReadAsync(s256);
+        Assert.Contains(entries, e => e.Kind == MissionLogEntryKind.Clarification && e.Detail == "cancelled");
+        Assert.DoesNotContain(entries, e => e.Kind == MissionLogEntryKind.Token && e.Granted == true);
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Agent Response to Clarification — a foreign agent cannot answer or withdraw another's pending")]
+    public async Task Mission_Clarification_RejectsForeignAgent()
+    {
+        var agentKey = AAuthKey.Generate();
+        const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        var consent = new StubMissionConsent(_ => MissionTokenConsentDecision.Clarify("Why?"));
+        using var host = await BuildHostAsync(new StubAsserter(IdentityAssertion.Assert("user-42")), consent);
+        using var owner = SignedAgentClient(host, agentKey, AgentId);
+
+        var resourceToken = ResourceToken(agentKey, AgentId, PsIssuer, mission: new MissionClaim(PsIssuer, s256));
+        using var first = await owner.PostAsJsonAsync("/token", new JsonObject { ["resource_token"] = resourceToken });
+        var pendingUrl = first.Headers.Location!.ToString();
+
+        // A different, validly-signed agent must not touch the owner's pending entry.
+        using var attacker = SignedAgentClient(host, AAuthKey.Generate(), "aauth:attacker@ap.example");
+        using var foreignPost = await attacker.PostAsJsonAsync(pendingUrl,
+            new JsonObject { ["clarification_response"] = "let me in" });
+        Assert.Equal(HttpStatusCode.NotFound, foreignPost.StatusCode);
+        using var foreignDelete = await attacker.DeleteAsync(pendingUrl);
+        Assert.Equal(HttpStatusCode.NotFound, foreignDelete.StatusCode);
+
+        // The owner's own clarification round still works.
+        using var ownerPost = await owner.PostAsJsonAsync(pendingUrl,
+            new JsonObject { ["clarification_response"] = "for the user's records" });
+        Assert.Equal(HttpStatusCode.NoContent, ownerPost.StatusCode);
         await host.StopAsync();
     }
 
@@ -530,6 +664,18 @@ public class PersonServerMapperTests
         public Task<IdentityAssertion> AssertAsync(
             IdentityAssertionRequest request, CancellationToken cancellationToken = default)
             => Task.FromResult(_assertion);
+    }
+
+    // A mission-consent seam driven by a per-context decision function, so each
+    // test scripts the gate / clarify / resolve outcomes it needs.
+    private sealed class StubMissionConsent : IMissionTokenConsent
+    {
+        private readonly Func<MissionTokenConsentContext, MissionTokenConsentDecision> _decide;
+        public StubMissionConsent(Func<MissionTokenConsentContext, MissionTokenConsentDecision> decide)
+            => _decide = decide;
+        public Task<MissionTokenConsentDecision> ReviewAsync(
+            MissionTokenConsentContext context, CancellationToken cancellationToken = default)
+            => Task.FromResult(_decide(context));
     }
 
     // Captures the request the host hands the asserter so tests can assert that

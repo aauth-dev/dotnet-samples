@@ -25,17 +25,18 @@ public static class AAuthDiscoveryServiceCollectionExtensions
         configure?.Invoke(options);
 
         services.TryAddSingleton(sp =>
-        {
-            var http = new HttpClient();
-            return new MetadataClient(http, options.MetadataCacheTtl);
-        });
+            new MetadataClient(CreateDiscoveryHttpClient(), options.MetadataCacheTtl));
 
         services.TryAddSingleton(sp =>
-        {
-            var http = new HttpClient();
-            return new JwksClient(http, options.JwksCacheTtl, options.JwksMinRefreshInterval);
-        });
+            new JwksClient(CreateDiscoveryHttpClient(), options.JwksCacheTtl, options.JwksMinRefreshInterval));
 
         return services;
     }
+
+    // The discovery clients are singletons that hold their HttpClient for the
+    // app lifetime, so a SocketsHttpHandler with a bounded PooledConnectionLifetime
+    // keeps connections (and DNS) rotating without an IHttpClientFactory — the SDK
+    // owns this so consumers register no HttpClient plumbing.
+    private static HttpClient CreateDiscoveryHttpClient() =>
+        new(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(2) });
 }

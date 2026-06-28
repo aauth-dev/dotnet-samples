@@ -8,23 +8,34 @@ A minimal AAuth Person Server for end-to-end demos and integration tests.
 
 - Serves PS discovery metadata at `/.well-known/aauth-person.json` (with `token_endpoint`).
 - Serves its signing JWKS at `/.well-known/jwks.json`.
-- On `POST /token`, validates the incoming RFC 9421 signature, reads
-  `resource_token` from the JSON body, and returns an `aa-auth+jwt` bound
-  to the agent's confirmation key.
-- When started with `RequireConsent=true`, defers the exchange instead:
-  the first `POST /token` returns `202 Accepted` with
-  `Location: /pending/{id}`, a `Retry-After`, and
-  `AAuth-Requirement: requirement=interaction; url; code`. The agent then
-  polls the signed `GET /pending/{id}` until the user makes a choice:
-  - **Approve** (`POST /interaction/approve`, or `POST /admin/consent`
-    from a script) → next poll returns `200` with the `auth_token`.
+- Maps the token endpoint, the deferred-poll endpoint, and PS metadata in one
+  call — [`app.MapAAuthPersonServer(...)`](../../docs/server/token-issuance.md#one-call-person-server-mapaauthpersonserver).
+  The SDK owns the protocol (RFC 9421 signature verification, `resource_token`
+  verification, the three-/four-party mint, PS→AS federation, and the mission
+  three-gate + the normative `requirement=clarification` round-trip); this sample
+  supplies only the **decisions** through DI seams:
+  - `IIdentityClaimsAsserter` (`SampleIdentityClaimsAsserter`) — the directed
+    identity, plus the non-mission `ConsentStore` gate.
+  - `IMissionTokenConsent` (`ScriptMissionTokenConsent`) — the out-of-scope
+    mission decision (grant / deny / clarify / hold), driven by the scripted
+    `MissionConsentScript` (a stand-in for a live consent screen, or an LLM).
+  - `IPersonPendingStore` (`ConsentBridgePersonPendingStore`) — bridges the demo
+    `ConsentStore` into the SDK's id-keyed pending model.
+- On `POST /token`, the mapper validates the signature, reads `resource_token`,
+  and returns an `aa-auth+jwt` bound to the agent's confirmation key.
+- When started with `RequireConsent=true`, the exchange defers instead:
+  `POST /token` returns `202 Accepted` with `Location: /pending/{id}`, a
+  `Retry-After`, and `AAuth-Requirement: requirement=interaction; url; code`. The
+  agent then polls the signed `GET /pending/{id}` until the user decides:
+  - **Approve** (`POST /interaction/approve`, or `POST /admin/consent` from a
+    script) → next poll returns `200` with the `auth_token`.
   - **Deny** (`POST /interaction/deny`) → next poll returns `403` with
     `{"error":"denied"}`.
   - No action → the agent's polling budget eventually expires.
 - `GET /interaction` renders a tiny built-in consent page used by the
   `GuidedTour` "Open consent page" button.
 
-It **verifies** the posted `resource_token` using the SDK helper
+The mapper **verifies** the posted `resource_token` using the SDK helper
 `TokenVerifier.VerifyResourceTokenAsync` (JWKS discovery against the issuing
 resource per §Resource Token Verification): `typ`/`dwk`/signature, `exp`/`iat`,
 `aud`, `agent`, and `agent_jkt`. Forged or expired tokens are rejected with
@@ -51,23 +62,23 @@ The PS only federates to Access Servers listed in
 `MockPersonServer:TrustedAccessServers`; any other `aud` is rejected with
 `untrusted_access_server` (403).
 
-> **SDK one-call alternative.** Both branches above — the three-party collapsed
-> mint and the four-party federation routing — are packaged by the SDK host helper
-> [`MapAAuthPersonServer`](../../docs/server/token-issuance.md#one-call-person-server-mapaauthpersonserver),
-> with the identity/consent decision delegated to an `IIdentityClaimsAsserter`.
-> This sample keeps the endpoints hand-wired so it can render its own interactive
-> consent / mission screens; a non-interactive PS can adopt the one-call helper
-> directly.
+> **One call, pluggable decisions.** Both branches above — the three-party
+> collapsed mint and the four-party federation routing — are packaged by
+> [`MapAAuthPersonServer`](../../docs/server/token-issuance.md#one-call-person-server-mapaauthpersonserver).
+> This sample adopts that helper and injects its policy through the
+> `IIdentityClaimsAsserter` / `IMissionTokenConsent` / `IPersonPendingStore`
+> seams, while keeping its own browser consent + mission screens (the SDK leaves
+> *how the PS authenticates the approving party* out of scope).
 
 ## Agent governance (missions)
 
 Beyond minting tokens, this PS doubles as the **contextual policy point** for
 the optional, orthogonal agent-governance layer (§Agent Governance). Governance
-is wired with a single call \u2014 `builder.Services.AddAAuthGovernance()` \u2014 which
+is wired with a single call — `builder.Services.AddAAuthGovernance()` — which
 registers an in-memory mission store and log; the sample then supplies the
 policy and user-channel seams (`IPermissionDecider`, `IAuditSink`,
-`IInteractionRelay`) plus a deterministic consent script that stands in for a
-real user-consent screen.
+`IInteractionRelay`, and `IMissionTokenConsent` for the out-of-scope token gate)
+plus a deterministic consent script that stands in for a real user-consent screen.
 
 It serves the four governance endpoints from the protocol exchange diagram:
 
@@ -78,8 +89,12 @@ It serves the four governance endpoints from the protocol exchange diagram:
 | `POST /audit` | §Audit Endpoint | The agent reports an action it took; the PS appends it to the mission log (fire-and-forget). |
 | `POST /mission-interaction` | §Interaction Endpoint | The agent relays a question, payment, or completion proposal to the user through the PS. |
 
-Pending governance interactions resolve via `POST /mission-pending/{id}`,
-mirroring the deferred-consent `/pending/{id}` poll used by `POST /token`.
+The **mission token gate** (silent in-scope grant, prior-consent, the
+out-of-scope decision, and the clarification chat) is owned by
+`MapAAuthPersonServer` and resolves under the unified `/pending/{id}` poll; the
+`IMissionTokenConsent` seam supplies the decision. The governance endpoints'
+own deferred prompts (`POST /permission`, mission creation) resolve via
+`POST /permission-pending/{id}` and `POST /mission-create-pending/{id}`.
 
 A **mission-aware resource** copies the mission object (`approver`, `s256`) from
 the `AAuth-Mission` header into the resource token it issues (§Resource Token

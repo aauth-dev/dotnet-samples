@@ -4,7 +4,23 @@
 
 ## Overview
 
-HTTP signatures have a `created` timestamp and a unique `nonce` parameter, but a valid signature could still be replayed within its validity window. The `IJtiStore` interface prevents replay by tracking seen token IDs (`jti` claims) and rejecting duplicates.
+An auth token (and a `jkt-jwt` naming JWT) is a **reusable** proof-of-possession
+credential: the agent re-signs and presents it on every request, so replay
+protection cannot live on the token itself. Per the spec's §Freshness and Replay,
+the `created` timestamp is the primary defense — a captured signature is unusable
+once its validity window (default 60 s) closes — and a verifier MAY additionally
+reject a captured signature *replayed within* that window. This profile defines no
+nonce mechanism.
+
+The verification middleware implements that optional defense by recording the
+**verified signature** for the freshness window via `IJtiStore`. The signature
+cryptographically binds the spec's replay tuple `(signing-key-thumbprint, created,
+@method, @authority, @path)` **plus** the covered `signature-key` (the carrier), so
+an exact captured-signature replay collides and is rejected, while legitimately
+distinct requests — a fresh `created`, a different carrier, a different path —
+never do. **Reusing the same auth token across requests is always accepted.** The
+token `jti` is used only for revocation and audit, never to make a token
+single-use.
 
 ## IJtiStore Interface
 
@@ -24,6 +40,11 @@ public interface IJtiStore
 }
 ```
 
+> The middleware passes the per-request **signature** to `TryRecordAsync` (the
+> replay key) and the carrier token's **`jti`** to `RevokeAsync` /
+> `IsRevokedAsync` (revocation). The `jti` parameter name is historical — a custom
+> store should treat the recorded value as an opaque key.
+
 ## Built-in: InMemoryJtiStore
 
 Thread-safe, in-process implementation. Suitable for single-instance deployments and testing.
@@ -40,18 +61,17 @@ builder.Services.AddAAuthResource(options =>
 ```
 
 <details>
-<summary>Manual Setup</summary>
+<summary>Override the JTI store (building block)</summary>
 
 ```csharp
 using AAuth.Server;
-using AAuth;
-using AAuth.Server.Verification;
 
-builder.Services.AddSingleton(new AAuthVerifier());
+// AddAAuthResource registers InMemoryJtiStore by default (via TryAdd), so
+// register your own IJtiStore first to override it.
 builder.Services.AddSingleton<IJtiStore>(new InMemoryJtiStore());
+builder.Services.AddAAuthResource(options => options.Issuer = "https://resource.example");
 
 var app = builder.Build();
-app.UseAAuthVerification(AAuthVerificationOptions.SignatureOnly());
 
 // Optional: periodic cleanup of expired entries
 var jtiStore = app.Services.GetRequiredService<IJtiStore>() as InMemoryJtiStore;

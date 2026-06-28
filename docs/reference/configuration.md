@@ -12,6 +12,26 @@ All configurable options across the AAuth .NET SDK, grouped by component.
 | `MaxFutureSkew` | `TimeSpan` | 5 seconds | Clock skew tolerance into the future |
 | `Clock` | `Func<DateTimeOffset>` | `UtcNow` | Clock source (override for testing) |
 
+### AAuthServerOptions (via UseAAuth)
+
+The single `UseAAuth` pipeline middleware. Defaults to the DI-registered resource
+metadata (issuer + first signing key); a typical resource sets only trust.
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `TrustedAuthTokenIssuers` | `IReadOnlySet<string>?` | `null` | Fail-closed allow-list of trusted auth token (PS/AS) issuers. When `null` or empty, **every** auth token is rejected. |
+| `PersonServerAudience` | `string?` | `null` | Resource-token audience for the challenge. Set to an Access Server URL for four-party (federated) resources; when `null` the audience is the agent token's `ps` claim (three-party). |
+| `RequireIssuerVerification` | `bool` | `true` | Verify the auth-token issuer's JWKS signature. |
+| `TrustedAgentProviderIssuers` | `IReadOnlySet<string>?` | `null` | Allow-list of trusted Agent Provider issuers (for `aa-agent+jwt`). |
+| `ResourceIdentifier` | `string?` | DI metadata issuer | Override the resource identifier used for `aud` checks and challenges. |
+| `ResourceSigningKey` | `AAuthKey?` | DI metadata first key | Override the challenge signing key. |
+| `ResourceKeyId` | `string?` | DI metadata first kid | Override the challenge key id. |
+
+> `AAuthVerificationOptions` and `ChallengeOptions` are the low-level building
+> blocks `UseAAuth` configures from each endpoint's `.RequireAAuth(...)` /
+> `.RequireAAuthSignature(...)` requirement; use them directly only for custom
+> pipelines.
+
 ### AAuthVerificationOptions (via UseAAuthVerification)
 
 | Property | Type | Default | Description |
@@ -255,7 +275,7 @@ SDK-required), shown here as a reference for wiring your own hosts.
 |-----|------|---------|-------------|
 | `AAuth:Issuer` | `string` | Profile/Calendar/Trips/Wallet/Inbox, MockPersonServer, Concierge | The host's own canonical URL (resource/PS `iss`). |
 | `AAuth:SignatureWindow` | `int` (seconds) | Profile/Calendar/Trips/Wallet/Inbox, MockPersonServer | Max HTTP-signature age accepted; default `60`. |
-| `AAuth:TrustedPersonServers` | `string[]` | Calendar/Trips | Fail-closed allow-list mapped to `AAuthVerificationOptions.TrustedAuthTokenIssuers`. When unset, defaults to `http://localhost:5100`; an empty array rejects all auth tokens. |
+| `AAuth:TrustedPersonServers` | `string[]` | Calendar/Trips | Fail-closed allow-list mapped to the resource pipeline's `TrustedAuthTokenIssuers` (`app.UseAAuth(o => o.TrustedAuthTokenIssuers = …)`). When unset, defaults to `http://localhost:5100`; an empty array rejects all auth tokens. |
 | `AAuth:LocalKeyHandle` | `string` | agent samples | Key handle in the `IKeyStore` for the agent's signing key. |
 | `AAuth:ApRefreshEndpoint` | `string` | agent samples | Agent Provider refresh endpoint for enrolled agents. |
 | `AAuth:PersonServer` | `string` | Concierge | Downstream Person Server URL. |

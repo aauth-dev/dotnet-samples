@@ -37,6 +37,7 @@ public static class AAuthGovernanceServiceCollectionExtensions
         services.TryAddSingleton<IPermissionDecider, DefaultPermissionDecider>();
         services.TryAddSingleton<IAuditSink, DefaultAuditSink>();
         services.TryAddSingleton<IInteractionRelay, DefaultInteractionRelay>();
+        services.TryAddSingleton<IMissionTokenConsent, DefaultMissionTokenConsent>();
         return services;
     }
 

@@ -171,44 +171,38 @@ The resource verifies signatures, publishes metadata, and issues resource token 
 ```csharp
 using AAuth.Crypto;
 using AAuth;
-using AAuth.Server.Challenge;
-using AAuth.Server.Verification;
-using AAuth.Server.Metadata;
 
 var builder = WebApplication.CreateBuilder(args);
 var resourceKey = AAuthKey.Generate();
 
-// Register AAuth resource services
+// One DI call registers the verifier, discovery clients, JTI store, and metadata.
 builder.Services.AddAAuthResource(options =>
 {
     options.Issuer = "https://resource.example";
-    options.SigningKeys = new() { ["resource-key-1"] = resourceKey };
+    options.SigningKeys["resource-key-1"] = resourceKey;
     options.ScopeDescriptions = new() { ["read"] = "Read your data" };
 });
+builder.Services.AddAAuthAuthentication();
+builder.Services.AddAAuthAuthorization();
 
 var app = builder.Build();
 
 // Serve /.well-known/aauth-resource.json + JWKS
 app.MapAAuthWellKnown();
 
-// Verify HTTP signatures and auth tokens from trusted Person Servers
-app.UseAAuthVerification(new AAuthVerificationOptions
-{
-    ResourceIdentifier = "https://resource.example",
-    RequireIssuerVerification = true,
-    TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" },
-});
+// One declarative pipeline. Per-route scope/role lives on the endpoint; this
+// single post-routing middleware verifies and challenges each matched endpoint.
+app.UseRouting();
+app.UseAAuth(o => o.TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" });
+app.UseAuthentication();
+app.UseAuthorization();
 
-// Issue 401 + resource_token when agent presents only an agent token
-app.UseAAuthChallenge(new ChallengeOptions
-{
-    ResourceSigningKey = resourceKey,
-    ResourceKeyId = "resource-key-1",
-    ResourceIdentifier = "https://resource.example",
-});
+// Protected endpoint — reached only after the auth token is verified.
+app.MapGet("/data", (HttpContext ctx) => Results.Ok(new { ok = true }))
+    .RequireAAuth(scope: "read");
 ```
 
-The `UseAAuthChallenge` middleware (registered after verification) automatically returns `401` with an `AAuth-Requirement` header containing a resource token when the agent lacks an auth token. The `TrustedAuthTokenIssuers` allow-list restricts which Person Servers the resource will accept auth tokens from.
+The single `UseAAuth` middleware (placed after `UseRouting()`) reads each endpoint's `.RequireAAuth(...)` requirement: it verifies the HTTP signature and, when an auth token is required, automatically returns `401` with an `AAuth-Requirement` header carrying a resource token. The `TrustedAuthTokenIssuers` allow-list restricts which Person Servers the resource will accept auth tokens from.
 
 ### Self-Hosted Agent (Server-Side)
 

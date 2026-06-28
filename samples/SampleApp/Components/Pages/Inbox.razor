@@ -52,35 +52,56 @@ var resp = await client.GetAsync($"{inbox}/messages");</code></pre>
 </div>
 <div class="col-md-6">
 <h5>Server Code</h5>
-<pre><code class="language-csharp">// Two-party (no PS/AS): verify the HTTP signature only — there is no
-// auth-token issuer to verify.
-app.UseAAuthVerification(AAuthVerificationOptions.SignatureOnly());
+<pre><code class="language-csharp">// One DI call: verifier, JTI store, and the published
+// metadata (access_mode + authorization_endpoint).
+builder.Services.AddAAuthResource(o =&gt;
+{
+    o.Issuer = "https://resource.example";
+    o.SigningKeys["inbox-1"] = resourceKey;
+    o.AccessMode = AAuthConstants.AccessModes.AAuthAccessToken;
+    o.AuthorizationEndpoint = "https://resource.example/authorize";
+});
 
-var store = app.Services.GetRequiredService&lt;IOpaqueTokenStore&gt;(); // mints/validates tokens
-var pending = new PendingStore();   // sample-only: remembers approved consent codes
+// Resource-managed interaction module: the SDK owns the
+// opaque-token store, the pending store, code generation,
+// parking, the poll endpoint, and token issuance. The
+// Inbox keeps only its own consent page.
+builder.Services.AddAAuthResourceManaged(o =&gt;
+{
+    o.ConsentUrl = "https://resource.example/consent";
+    o.PollPath = "/pending";
+});
 
-// Serve messages when a valid AAuth-Access token is presented; otherwise
-// open a consent interaction.
+var app = builder.Build();
+var store = app.Services.GetRequiredService&lt;IOpaqueTokenStore&gt;();
+
+app.MapAAuthWellKnown();
+
+// Two-party (no PS/AS): verify the HTTP signature only —
+// there is no auth-token issuer to verify.
+app.UseRouting();
+app.UseAAuth();
+
+// Serve messages when a valid AAuth-Access token is presented;
+// otherwise open a consent interaction at the Inbox's own page.
 app.MapGet("/messages", async (HttpContext ctx) =&gt;
 {
-    // ResolveAAuthAccessAsync token68-validates Authorization: AAuth,
-    // confirms the signature covered it, and looks it up in the store.
+    // ResolveAAuthAccessAsync token68-validates Authorization:
+    // AAuth, confirms the signature covered it, and looks it
+    // up in the store.
     var info = await ctx.ResolveAAuthAccessAsync(store);
     if (info is not null)
         return Results.Ok(new { scope = info.Scope, messages });
 
-    return await RequireConsent(ctx, "inbox.read");
-});
+    // The SDK parks the request and returns 202 + interaction;
+    // its poll endpoint issues the AAuth-Access token once the
+    // user approves at the consent page.
+    return ctx.RequireAAuthInteraction("inbox.read");
+}).RequireAAuthSignature();
 
-// Opens a consent interaction at the Inbox's OWN page; `pending` records the
-// code so the /pending poll can issue the AAuth-Access token once approved.
-async Task&lt;IResult&gt; RequireConsent(HttpContext ctx, string scope)
-{
-    var code = NewInteractionCode();
-    pending.Create(code, ctx.GetAAuthVerification()!.Jkt!, scope);
-    return ctx.InteractionRequiredAAuth(
-        $"{issuer}/consent", code, $"{issuer}/pending/{code}");
-}</code></pre>
+// The deferred-response poll target, mapped by the SDK from the
+// module's PollPath — the Inbox owns no poll plumbing.
+app.MapAAuthInteractionPoll().RequireAAuthSignature();</code></pre>
 </div>
 </div>
 

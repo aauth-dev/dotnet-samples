@@ -59,12 +59,9 @@ builder.Services.AddSingleton(new AAuthVerifier
     MaxAge = TimeSpan.FromSeconds(signatureWindowSeconds),
 });
 builder.Services.AddSingleton(new TokenVerifier());
-builder.Services.AddSingleton<MetadataClient>(sp =>
-    new MetadataClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-metadata")));
-builder.Services.AddSingleton<JwksClient>(sp =>
-    new JwksClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-jwks")));
-builder.Services.AddHttpClient("aauth-metadata");
-builder.Services.AddHttpClient("aauth-jwks");
+// Shared discovery clients (MetadataClient + JwksClient) with a pooled handler;
+// no manual HttpClient wiring.
+builder.Services.AddAAuthDiscovery();
 
 // -----------------------------------------------------------------------
 // Policy Decision Point (S3). The AAuth crypto stays in the SDK helper; only

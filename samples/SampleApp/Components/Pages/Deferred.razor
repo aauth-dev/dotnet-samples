@@ -51,33 +51,29 @@
 <h5>Server Code</h5>
 <pre><code class="language-csharp">// Same as JWT three-party — deferred consent
 // is transparent to the resource server.
-builder.Services.AddSingleton(new AAuthVerifier());
-builder.Services.AddSingleton(sp =&gt;
-    new MetadataClient(httpClient));
-builder.Services.AddSingleton(sp =&gt;
-    new JwksClient(httpClient));
-
-// Authn scheme + scope policy enforcing `calendar.read`.
+builder.Services.AddAAuthResource(o =&gt;
+{
+    o.Issuer = "https://resource.example";
+    o.SigningKeys["calendar-1"] = resourceKey;
+    o.ScopeDescriptions = new()
+    {
+        ["calendar.read"] = "See your calendar events",
+    };
+});
 builder.Services.AddAAuthAuthentication();
 builder.Services.AddAAuthAuthorization();
-// arg 1 = policy name (any id, used by RequireAuthorization); arg 2 = scope value matched against the token. "AAuth.Scope." is just a naming convention.
-builder.Services.AddAAuthScopePolicy(
-    "AAuth.Scope.calendar.read", "calendar.read");
 
 var app = builder.Build();
 
-// Middleware verifies HTTP signature AND the
-// JWT issuer (via JWKS discovery).
-app.UseAAuthVerification(new AAuthVerificationOptions
-{
-    ResourceIdentifier = "https://resource.example",
-    RequireIssuerVerification = true,
-});
+// Well-known metadata + JWKS from the DI registration.
+app.MapAAuthWellKnown();
 
-app.UseAAuthChallenge(new ChallengeOptions
-{
-    AccessMode = AAuthAccessMode.RequireAuthToken,
-});
+// One declarative pipeline verifies and challenges
+// each matched endpoint from its metadata. Trust
+// only the configured Person Servers (fail-closed).
+app.UseRouting();
+app.UseAAuth(o =&gt;
+    o.TrustedAuthTokenIssuers = trustedPersonServers);
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -87,9 +83,8 @@ app.UseAuthorization();
 app.MapGet("/events", (HttpContext ctx) =&gt;
 {
     // Middleware verified the auth token AND the
-    // scope policy below enforced `calendar.read`.
-    var r = ctx.Features
-        .Get&lt;AAuthVerificationResult&gt;()!;
+    // .RequireAAuth(...) below enforced the scope.
+    var r = ctx.GetAAuthVerification()!;
     return Results.Ok(new
     {
         accessMode = "three-party",
@@ -100,7 +95,7 @@ app.MapGet("/events", (HttpContext ctx) =&gt;
         iss = r.Issuer,
     });
 })
-.RequireAuthorization("AAuth.Scope.calendar.read");</code></pre>
+.RequireAAuth(scope: "calendar.read");</code></pre>
 </div>
 </div>
 
