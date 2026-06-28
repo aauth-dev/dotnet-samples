@@ -41,6 +41,25 @@ public static class AAuthInteractionEndpointExtensions
                 return Results.NotFound(new { error = "unknown_pending" });
             }
 
+            // §Resource-Managed Authorization (spec, #aauth-access): the issued
+            // AAuth-Access token is bound to the agent's verified signature, so the
+            // poll MUST be verified. Fail closed when no verification ran (the route
+            // is missing signature verification), and only the agent that parked the
+            // interaction may claim it.
+            var pollerJkt = ctx.GetAAuthVerification()?.Jkt;
+            if (string.IsNullOrEmpty(pollerJkt))
+            {
+                return Results.Json(
+                    new { error = "invalid_request", detail = "poll requires a verified AAuth signature" },
+                    statusCode: StatusCodes.Status401Unauthorized);
+            }
+            if (!string.Equals(pollerJkt, entry.AgentJkt, StringComparison.Ordinal))
+            {
+                return Results.Json(
+                    new { error = "denied", detail = "interaction belongs to a different agent" },
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+
             if (!entry.Approved)
             {
                 ctx.Response.Headers.RetryAfter = "1";
@@ -57,7 +76,7 @@ public static class AAuthInteractionEndpointExtensions
 
             var grant = new OpaqueTokenInfo
             {
-                AgentJkt = ctx.GetAAuthVerification()?.Jkt ?? consumed.AgentJkt,
+                AgentJkt = pollerJkt,
                 Scope = consumed.Scope,
                 Expiration = DateTimeOffset.UtcNow.Add(options.TokenTtl),
             };

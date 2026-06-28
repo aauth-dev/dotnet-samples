@@ -103,6 +103,31 @@ public static class AAuthAccessServerEndpoints
             throw new InvalidOperationException("AAuthAccessServerOptions.SigningKeys must contain at least one key.");
         }
 
+        // Fail fast on misconfigured spec-constrained URLs/paths: the issuer is the
+        // auth-token `iss`/`aud` anchor (MUST be absolute https), the login path is
+        // appended with `?code=…` (so it carries no query/fragment), and each trusted
+        // Person Server is a four-party anchor (MUST be absolute https).
+        if (!AAuth.AAuthUrl.IsHttpsOrLoopback(options.Issuer))
+        {
+            throw new InvalidOperationException(
+                "AAuthAccessServerOptions.Issuer must be an absolute https URL (loopback http allowed for development).");
+        }
+        if (options.InteractionLoginPath is { } loginPathRaw
+            && (loginPathRaw.Contains('?') || loginPathRaw.Contains('#')))
+        {
+            throw new InvalidOperationException(
+                "AAuthAccessServerOptions.InteractionLoginPath must not contain a query or fragment.");
+        }
+        foreach (var trustedPs in options.TrustedPersonServers ?? Array.Empty<string>())
+        {
+            if (!AAuth.AAuthUrl.IsHttpsOrLoopback(trustedPs))
+            {
+                throw new InvalidOperationException(
+                    $"AAuthAccessServerOptions.TrustedPersonServers entry '{trustedPs}' must be an absolute https URL " +
+                    "(loopback http allowed for development).");
+            }
+        }
+
         string signingKid = string.Empty;
         AAuthKey signingKey = null!;
         foreach (var (kid, key) in options.SigningKeys)

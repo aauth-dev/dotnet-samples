@@ -74,7 +74,7 @@ public sealed class InMemoryInteractionPendingStore : IInteractionPendingStore
     public InteractionPendingEntry Park(string scope, string agentJkt, TimeSpan ttl)
     {
         ArgumentException.ThrowIfNullOrEmpty(scope);
-        ArgumentNullException.ThrowIfNull(agentJkt);
+        ArgumentException.ThrowIfNullOrEmpty(agentJkt);
         var entry = new InteractionPendingEntry
         {
             Code = AAuthInteractionCode.Generate(),

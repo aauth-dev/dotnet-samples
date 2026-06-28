@@ -208,6 +208,9 @@ public sealed class InMemoryPersonPendingStore : IPersonPendingStore
         JsonObject? upstreamAct = null,
         MissionClaim? mission = null)
     {
+        ArgumentException.ThrowIfNullOrEmpty(resourceUrl);
+        ArgumentException.ThrowIfNullOrEmpty(scope);
+        ArgumentException.ThrowIfNullOrEmpty(agentId);
         Sweep();
         var entry = new PersonPendingEntry
         {

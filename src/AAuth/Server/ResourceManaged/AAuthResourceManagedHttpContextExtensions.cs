@@ -28,7 +28,17 @@ public static class AAuthResourceManagedHttpContextExtensions
         var store = context.RequestServices.GetRequiredService<IInteractionPendingStore>();
         var options = context.RequestServices.GetRequiredService<AAuthResourceManagedOptions>();
 
-        var jkt = context.GetAAuthVerification()?.Jkt ?? "unknown";
+        // §Resource-Managed Authorization (spec, #aauth-access): the opaque token
+        // issued on approval is bound to the agent's verified signature, so the
+        // interaction MUST be parked under a verified key. Fail closed when no
+        // verification ran — the route is missing signature verification.
+        var jkt = context.GetAAuthVerification()?.Jkt;
+        if (string.IsNullOrEmpty(jkt))
+        {
+            throw new InvalidOperationException(
+                "RequireAAuthInteraction requires a verified AAuth signature on the request; " +
+                "place the endpoint behind signature verification (.RequireAAuthSignature()).");
+        }
         var entry = store.Park(scope, jkt, options.CodeTtl);
         var pollLocation = $"{options.PollPath.TrimEnd('/')}/{entry.Code}";
 

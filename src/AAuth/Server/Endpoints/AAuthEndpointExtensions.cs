@@ -138,6 +138,18 @@ public static class AAuthEndpointExtensions
                 return next(context);
             }
 
+            // Fail-closed: an auth-token endpoint without a resource identifier cannot
+            // bind the auth token's `aud` to this resource, so the verifier would skip
+            // the audience check and admit a token minted for a different resource
+            // (§Request-Context Binding `aud`). Refuse to serve such a misconfiguration.
+            if (req.Mode == AAuthAccessMode.RequireAuthToken && string.IsNullOrEmpty(resourceIdentifier))
+            {
+                throw new InvalidOperationException(
+                    "An endpoint requires an auth token but no resource identifier is configured. " +
+                    "Set AAuthResourceOptions.Issuer (via AddAAuthResource) or AAuthServerOptions.ResourceIdentifier " +
+                    "so the auth token's `aud` is verified against this resource.");
+            }
+
             if (jtiStore is not null)
             {
                 context.Items[AAuthVerificationMiddleware.JtiStoreItemKey] = jtiStore;
