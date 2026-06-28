@@ -1,11 +1,6 @@
-using System.Collections.Concurrent;
-using System.Security.Cryptography;
 using AAuth;
 using AAuth.Crypto;
-using AAuth.Discovery;
-using AAuth.HttpSig;
 using AAuth.Server;
-using AAuth.Server.Metadata;
 using AAuth.Server.Verification;
 
 // ---------------------------------------------------------------------------
@@ -45,55 +40,44 @@ const string ResourceKid = "inbox-1";
 var resourceUrl = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5004";
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
 
-builder.Services.AddSingleton(resourceKey);
-builder.Services.AddSingleton(new AAuthVerifier
+// One DI call: verifier, discovery clients (pooled handler), JTI store, and the
+// published metadata (access_mode + authorization_endpoint) — no manual
+// HttpClient/discovery wiring.
+builder.Services.AddAAuthResource(o =>
 {
-    MaxAge = TimeSpan.FromSeconds(signatureWindowSeconds),
+    o.Issuer = resourceUrl;
+    o.SigningKeys[ResourceKid] = resourceKey;
+    o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
+    o.SignatureWindow = signatureWindowSeconds;
+    o.Name = "Aria Inbox";
+    o.AccessMode = AAuthConstants.AccessModes.AAuthAccessToken;
+    o.AuthorizationEndpoint = $"{resourceUrl}/authorize";
 });
-builder.Services.AddSingleton<IJtiStore, InMemoryJtiStore>();
-builder.Services.AddSingleton<MetadataClient>(sp =>
-    new MetadataClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-metadata")));
-builder.Services.AddSingleton<JwksClient>(sp =>
-    new JwksClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-jwks")));
-builder.Services.AddSingleton<ISignatureKeyResolver>(sp =>
-    new DefaultSignatureKeyResolver(sp.GetRequiredService<JwksClient>()));
-builder.Services.AddHttpClient("aauth-metadata");
-builder.Services.AddHttpClient("aauth-jwks");
 
-// Resource-managed seam: the store mints + validates the opaque tokens; the
-// pending store tracks in-flight consent (sample-only orchestration).
-builder.Services.AddSingleton<IOpaqueTokenStore, InMemoryOpaqueTokenStore>();
-builder.Services.AddSingleton<PendingStore>();
+// Resource-managed interaction module: registers the opaque-token store, the
+// interaction pending store, and the module options (consent page url + poll
+// path). The SDK owns code generation, parking, the poll endpoint, and token
+// issuance; the Inbox keeps only its own consent page.
+builder.Services.AddAAuthResourceManaged(o =>
+{
+    o.ConsentUrl = $"{resourceUrl}/consent";
+    o.PollPath = "/pending";
+});
 
 var app = builder.Build();
 
 var store = app.Services.GetRequiredService<IOpaqueTokenStore>();
-var pending = app.Services.GetRequiredService<PendingStore>();
 
-// Well-known metadata: advertises the access mode and the proactive
-// authorization endpoint. Served before verification so it is reachable
-// without an AAuth signature.
-app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
-{
-    Issuer = resourceUrl,
-    Name = "Aria Inbox",
-    SigningKeys = new Dictionary<string, AAuthKey> { [ResourceKid] = resourceKey },
-    SignatureWindow = signatureWindowSeconds,
-    AccessMode = AAuthConstants.AccessModes.AAuthAccessToken,
-    AuthorizationEndpoint = $"{resourceUrl}/authorize",
-});
+// Well-known metadata + JWKS from the DI-registered resource metadata. Served
+// unsigned (no endpoint requirement metadata, so UseAAuth passes it through).
+app.MapAAuthWellKnown();
 
-// Signature-only verification on the protected paths (two-party: no issuer
-// verification, no PS). The consent pages and well-known stay unsigned.
-app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/messages")
-        || ctx.Request.Path.StartsWithSegments("/pending")
-        || ctx.Request.Path.StartsWithSegments("/authorize"),
-    branch => branch.UseAAuthVerification(AAuthVerificationOptions.SignatureOnly()));
-
-// Generate a single-use interaction code with >=40 bits of entropy
-// (§Interaction Code Format): 8 random bytes rendered as hex.
-static string NewInteractionCode() => Convert.ToHexString(RandomNumberGenerator.GetBytes(8));
+// Resource-managed (two-party) access: the protected endpoints declare
+// .RequireAAuthSignature(); this single post-routing middleware verifies the
+// agent's HTTP signature only (no issuer check, no auth-token challenge). The
+// consent pages and well-known stay unsigned.
+app.UseRouting();
+app.UseAAuth();
 
 // Sample inbox contents (illustrative; not spec-defined).
 string[] sampleMessages =
@@ -102,19 +86,6 @@ string[] sampleMessages =
     "Hotel booking - Fairmont Pacific Rim, 3 nights",
     "Car rental - compact, YVR airport",
 ];
-
-// Shared decision path: serve when a valid opaque token is presented, otherwise
-// open a consent interaction. Used by BOTH entry points (§Consuming a Resource:
-// "the runtime AAuth-Requirement remains authoritative").
-async Task<IResult> RequireConsent(HttpContext ctx, string scope)
-{
-    var jkt = ctx.GetAAuthVerification()?.Jkt ?? "unknown";
-    var code = NewInteractionCode();
-    pending.Create(code, jkt, scope);
-    // The agent shows the user {issuer}/consent?code=...; it polls /pending/{code}.
-    return ctx.InteractionRequiredAAuth(
-        $"{resourceUrl}/consent", code, $"{resourceUrl}/pending/{code}");
-}
 
 // GET / — unauthenticated flow index.
 app.MapGet("/", () => Results.Ok(new
@@ -142,8 +113,8 @@ app.MapGet("/messages", async (HttpContext ctx) =>
         });
     }
 
-    return await RequireConsent(ctx, "inbox.read");
-});
+    return ctx.RequireAAuthInteraction("inbox.read");
+}).RequireAAuthSignature();
 
 // POST /authorize — proactive entry point (§Authorization Endpoint Request).
 // Same decision path as /messages.
@@ -155,43 +126,22 @@ app.MapAAuthAuthorizationEndpoint("/authorize", async (ctx, request) =>
         return Results.Ok(new { authorized = true, scope = info.Scope });
     }
 
-    return await RequireConsent(ctx, request.Scope);
-});
+    return ctx.RequireAAuthInteraction(request.Scope);
+}).RequireAAuthSignature();
 
-// GET /pending/{code} — the deferred-response poll target. While the user has not
-// approved, returns 202; once approved, issues the opaque token bound to the
-// polling agent and returns 200 + AAuth-Access.
-app.MapGet("/pending/{code}", async (HttpContext ctx, string code) =>
-{
-    if (!pending.TryGet(code, out var entry))
-    {
-        return Results.NotFound(new { error = "unknown_pending" });
-    }
-
-    if (!entry.Approved)
-    {
-        ctx.Response.Headers.RetryAfter = "1";
-        return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
-    }
-
-    var info = new OpaqueTokenInfo
-    {
-        AgentJkt = ctx.GetAAuthVerification()?.Jkt ?? entry.AgentJkt,
-        Scope = entry.Scope,
-        Expiration = DateTimeOffset.UtcNow.AddMinutes(30),
-    };
-    await ctx.IssueAAuthAccessAsync(store, info, ctx.RequestAborted);
-    pending.Remove(code);
-    return Results.Ok(new { status = "complete" });
-});
+// The deferred-response poll target (§Resource-Managed Authorization): 202 while
+// the user has not approved, 200 + AAuth-Access on approval. Mapped by the SDK
+// from the module's PollPath; the Inbox owns no poll plumbing.
+app.MapAAuthInteractionPoll().RequireAAuthSignature();
 
 // GET /consent — the Inbox's OWN consent page (unsigned; the user visits it in a
 // browser). Mirrors a classic OAuth "Connect your account" screen — and, like
 // the Person Server's and Access Server's consent screens, notes that a real
 // deployment would sign the user in first.
-app.MapGet("/consent", (string? code) =>
+app.MapGet("/consent", (string? code, IInteractionPendingStore pending) =>
 {
-    if (string.IsNullOrEmpty(code) || !pending.TryGet(code, out var entry))
+    var entry = string.IsNullOrEmpty(code) ? null : pending.Get(code);
+    if (entry is null)
     {
         return Results.Content(
             "<!doctype html><meta charset=utf-8><title>Aria Inbox</title>"
@@ -232,7 +182,7 @@ app.MapGet("/consent", (string? code) =>
 });
 
 // POST /consent/approve — the user approves; mark the pending interaction done.
-app.MapPost("/consent/approve", async (HttpContext ctx) =>
+app.MapPost("/consent/approve", async (HttpContext ctx, IInteractionPendingStore pending) =>
 {
     var form = await ctx.Request.ReadFormAsync(ctx.RequestAborted);
     var code = form["code"].ToString();
@@ -253,44 +203,6 @@ app.MapPost("/consent/approve", async (HttpContext ctx) =>
 });
 
 app.Run();
-
-
-/// <summary>In-memory pending-consent tracker (sample-only orchestration).</summary>
-sealed class PendingStore
-{
-    private readonly ConcurrentDictionary<string, PendingConsent> _entries = new(StringComparer.Ordinal);
-
-    public void Create(string code, string agentJkt, string scope)
-        => _entries[code] = new PendingConsent { AgentJkt = agentJkt, Scope = scope };
-
-    public bool TryGet(string code, out PendingConsent entry) => _entries.TryGetValue(code, out entry!);
-
-    public bool Approve(string code)
-    {
-        if (_entries.TryGetValue(code, out var entry))
-        {
-            entry.Approved = true;
-            return true;
-        }
-
-        return false;
-    }
-
-    public void Remove(string code) => _entries.TryRemove(code, out _);
-}
-
-/// <summary>A single pending consent interaction.</summary>
-sealed class PendingConsent
-{
-    public required string AgentJkt { get; init; }
-    public required string Scope { get; init; }
-
-    // Written by POST /consent/approve, read by GET /pending/{code} on a different
-    // request thread — volatile gives the cross-thread read/write release/acquire
-    // visibility a plain auto-property would not guarantee.
-    private volatile bool _approved;
-    public bool Approved { get => _approved; set => _approved = value; }
-}
 
 // Marker type for `WebApplicationFactory<Inbox.Entry>` in integration tests.
 namespace Inbox

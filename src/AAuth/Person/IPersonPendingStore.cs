@@ -57,6 +57,18 @@ public enum PersonPendingStatus
 
     /// <summary>Denied — the next poll returns <c>403 denied</c>.</summary>
     Denied,
+
+    /// <summary>
+    /// A mission-gate entry awaiting the agent's clarification answer
+    /// (§Clarification Chat). The next poll re-emits <c>requirement=clarification</c>.
+    /// </summary>
+    AwaitingClarification,
+
+    /// <summary>
+    /// The agent withdrew the request (DELETE on the pending URL). The next poll
+    /// returns <c>410 Gone</c>.
+    /// </summary>
+    Withdrawn,
 }
 
 /// <summary>A parked Person Server token decision.</summary>
@@ -86,6 +98,38 @@ public sealed class PersonPendingEntry
 
     /// <summary>The mission context governing the request, if any.</summary>
     public MissionClaim? Mission { get; init; }
+
+    /// <summary>
+    /// When set, this entry's out-of-scope decision (and any clarification
+    /// round-trip) is driven by <c>IMissionTokenConsent</c> on each poll, rather
+    /// than by an out-of-band <see cref="MarkAllowed"/>/<see cref="MarkDenied"/>.
+    /// </summary>
+    public bool MissionGate { get; set; }
+
+    /// <summary>The agent's justification (#aauth-prompt), captured for re-review.</summary>
+    public string? Prompt { get; set; }
+
+    /// <summary>The agent's declared capabilities (#aauth-capabilities), captured for re-review.</summary>
+    public IReadOnlyList<string>? Capabilities { get; set; }
+
+    /// <summary>The pending clarification question (§Clarification Chat), when awaiting an answer.</summary>
+    public string? ClarificationQuestion { get; set; }
+
+    /// <summary>Optional clarification timeout in seconds (#requirement-clarification).</summary>
+    public int? ClarificationTimeout { get; set; }
+
+    /// <summary>Optional discrete clarification choices (#requirement-clarification).</summary>
+    public IReadOnlyList<string>? ClarificationOptions { get; set; }
+
+    /// <summary>The agent's clarification answers so far, oldest first.</summary>
+    public List<string> ClarificationAnswers { get; } = [];
+
+    /// <summary>
+    /// Set once a mission-gate entry's out-of-scope verdict has been recorded in
+    /// the mission log, so repeat polls return the cached result idempotently
+    /// without re-logging.
+    /// </summary>
+    public bool MissionResolved { get; set; }
 
     /// <summary>The entry's lifecycle state.</summary>
     public PersonPendingStatus Status { get; set; }
@@ -164,6 +208,9 @@ public sealed class InMemoryPersonPendingStore : IPersonPendingStore
         JsonObject? upstreamAct = null,
         MissionClaim? mission = null)
     {
+        ArgumentException.ThrowIfNullOrEmpty(resourceUrl);
+        ArgumentException.ThrowIfNullOrEmpty(scope);
+        ArgumentException.ThrowIfNullOrEmpty(agentId);
         Sweep();
         var entry = new PersonPendingEntry
         {

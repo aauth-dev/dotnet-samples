@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
@@ -65,6 +66,34 @@ public sealed class AAuthPersonServerOptions
     /// audienced to this PS).
     /// </summary>
     public IReadOnlyCollection<string>? TrustedAccessServers { get; init; }
+
+    /// <summary>
+    /// The §Interaction Endpoint URL advertised in the PS metadata
+    /// (<c>interaction_endpoint</c>), where agents POST mission interaction /
+    /// payment / question / completion requests. Distinct from
+    /// <see cref="InteractionPath"/> (the consent URL on <c>requirement=interaction</c>).
+    /// When null the metadata falls back to <see cref="InteractionPath"/>.
+    /// </summary>
+    public string? InteractionEndpoint { get; init; }
+
+    /// <summary>The mission endpoint URL advertised in the PS metadata (<c>mission_endpoint</c>), if any.</summary>
+    public string? MissionEndpoint { get; init; }
+
+    /// <summary>The permission endpoint URL advertised in the PS metadata (<c>permission_endpoint</c>), if any.</summary>
+    public string? PermissionEndpoint { get; init; }
+
+    /// <summary>The audit endpoint URL advertised in the PS metadata (<c>audit_endpoint</c>), if any.</summary>
+    public string? AuditEndpoint { get; init; }
+
+    /// <summary>
+    /// Additional path prefixes the mapper's request-signature verification skips,
+    /// on top of <c>/.well-known</c> and the interaction path. A PS uses this to
+    /// declare its own unsigned surfaces — e.g. a browser consent/admin page that
+    /// records the user's decision (§PS Approval Endpoint Authentication: how the
+    /// PS authenticates the approving party is out of scope, so these stay the
+    /// PS's own). Prefixes are matched with <c>StartsWithSegments</c>.
+    /// </summary>
+    public IReadOnlyCollection<string>? UnsignedPathPrefixes { get; init; }
 }
 
 /// <summary>
@@ -104,6 +133,31 @@ public static class AAuthPersonServerEndpoints
             throw new InvalidOperationException("AAuthPersonServerOptions.SigningKeys must contain at least one key.");
         }
 
+        // Fail fast on misconfigured spec-constrained URLs/paths: the issuer is the
+        // token `iss`/`aud` anchor (MUST be absolute https), the interaction path is
+        // appended with `?code=…` (so it carries no query/fragment), and each trusted
+        // Access Server is a four-party anchor (MUST be absolute https).
+        if (!AAuth.AAuthUrl.IsHttpsOrLoopback(options.Issuer))
+        {
+            throw new InvalidOperationException(
+                "AAuthPersonServerOptions.Issuer must be an absolute https URL (loopback http allowed for development).");
+        }
+        if (options.InteractionPath is { } interactionPathRaw
+            && (interactionPathRaw.Contains('?') || interactionPathRaw.Contains('#')))
+        {
+            throw new InvalidOperationException(
+                "AAuthPersonServerOptions.InteractionPath must not contain a query or fragment.");
+        }
+        foreach (var trustedAs in options.TrustedAccessServers ?? Array.Empty<string>())
+        {
+            if (!AAuth.AAuthUrl.IsHttpsOrLoopback(trustedAs))
+            {
+                throw new InvalidOperationException(
+                    $"AAuthPersonServerOptions.TrustedAccessServers entry '{trustedAs}' must be an absolute https URL " +
+                    "(loopback http allowed for development).");
+            }
+        }
+
         string signingKid = string.Empty;
         AAuthKey signingKey = null!;
         foreach (var (kid, key) in options.SigningKeys)
@@ -126,21 +180,31 @@ public static class AAuthPersonServerEndpoints
             trustedAccessServers.Add(asUrl.TrimEnd('/'));
         }
 
+        var unsignedPrefixes = (options.UnsignedPathPrefixes ?? Array.Empty<string>())
+            .Select(p => "/" + p.Trim('/'))
+            .Where(p => p.Length > 1)
+            .ToArray();
+
         // 1. Well-known metadata + JWKS (reachable without a signature).
         WellKnownEndpoints.MapAAuthPersonServerWellKnown(app, new AAuthPersonServerMetadataOptions
         {
             Issuer = options.Issuer,
             TokenEndpoint = $"{issuer}{options.TokenPath}",
             SigningKeys = new Dictionary<string, AAuthKey>(options.SigningKeys),
-            InteractionEndpoint = interactionUrl,
+            InteractionEndpoint = options.InteractionEndpoint ?? interactionUrl,
+            MissionEndpoint = options.MissionEndpoint,
+            PermissionEndpoint = options.PermissionEndpoint,
+            AuditEndpoint = options.AuditEndpoint,
         });
 
         // 2. Verification middleware. The agent signs with the jwt scheme
         //    (RequireIssuerVerification=false); the browser-facing interaction
-        //    endpoint carries no signature, so exclude it.
+        //    endpoint carries no signature, so exclude it — plus any unsigned
+        //    surfaces the PS declares (e.g. its own consent/admin page).
         app.UseWhen(
             ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
-                && !ctx.Request.Path.StartsWithSegments(interactionPrefix),
+                && !ctx.Request.Path.StartsWithSegments(interactionPrefix)
+                && !unsignedPrefixes.Any(p => ctx.Request.Path.StartsWithSegments(p)),
             branch => branch.UseAAuthVerification(AAuthVerificationOptions.SignatureOnly()));
 
         var tokenVerifier = app.Services.GetRequiredService<TokenVerifier>();
@@ -266,6 +330,13 @@ public static class AAuthPersonServerEndpoints
                 return Results.NotFound(new { error = "unknown_interaction" });
             }
 
+            // Mission-gate entries resolve through the consent seam + the
+            // clarification protocol (§Agent Token Request gate 2c).
+            if (entry.MissionGate)
+            {
+                return await ResolveMissionGateAsync(ctx, entry);
+            }
+
             // Four-party entries resolve via the background federation task.
             if (entry.AgentConfirmationKey is null)
             {
@@ -291,10 +362,6 @@ public static class AAuthPersonServerEndpoints
             switch (entry.Status)
             {
                 case PersonPendingStatus.Allowed:
-                    if (entry.Mission is not null)
-                    {
-                        await AppendMissionGrantAsync(app, entry, "Consent");
-                    }
                     return Results.Ok(new { auth_token = MintEntry(entry) });
                 case PersonPendingStatus.Denied:
                     return Results.Json(
@@ -306,7 +373,210 @@ public static class AAuthPersonServerEndpoints
             }
         });
 
+        // POST {PendingPathPrefix}/{id} — the agent answers a clarification
+        // (§Agent Response to Clarification) or replaces its request. The SDK
+        // records it in the mission log and readies the next review.
+        app.MapPost($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
+        {
+            var entry = pending.Get(id);
+            // 404 (not 403) on a missing entry or a mismatched requester so the
+            // endpoint never confirms another agent's pending id exists.
+            if (entry is null || !entry.MissionGate || !RequesterMatches(ctx, entry))
+            {
+                return Results.NotFound(new { error = "unknown_interaction" });
+            }
+            if (entry.Status == PersonPendingStatus.Withdrawn)
+            {
+                return Results.Json(new { error = "request_withdrawn" }, statusCode: StatusCodes.Status410Gone);
+            }
+
+            JsonObject? body;
+            try { body = await ctx.Request.ReadFromJsonAsync<JsonObject>(); }
+            catch (System.Text.Json.JsonException)
+            {
+                return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            // §Agent Response to Clarification: the body MUST carry a
+            // clarification_response or a replacement resource_token.
+            var answer = (string?)body?["clarification_response"];
+            var updatedResourceToken = (string?)body?["resource_token"];
+            if (answer is null && string.IsNullOrEmpty(updatedResourceToken))
+            {
+                return Results.Json(
+                    new { error = "invalid_request", detail = "expected clarification_response or resource_token" },
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+            if (answer is not null)
+            {
+                entry.ClarificationAnswers.Add(answer);
+            }
+            var missionLog = app.Services.GetRequiredService<IMissionLog>();
+            await missionLog.AppendAsync(new MissionLogEntry(
+                entry.Mission!.S256, MissionLogEntryKind.Clarification, DateTimeOffset.UtcNow)
+            {
+                Detail = answer ?? "updated_request",
+            });
+            // The clarification round is answered — re-review on the next poll.
+            entry.ClarificationQuestion = null;
+            entry.Status = PersonPendingStatus.Pending;
+            return Results.NoContent();
+        });
+
+        // DELETE {PendingPathPrefix}/{id} — the agent withdraws the request
+        // (§Agent Response to Clarification — cancel). A later poll returns 410.
+        app.MapDelete($"{options.PendingPathPrefix}/{{id}}", async (HttpContext ctx, string id) =>
+        {
+            var entry = pending.Get(id);
+            if (entry is null || !entry.MissionGate || !RequesterMatches(ctx, entry))
+            {
+                return Results.NotFound(new { error = "unknown_interaction" });
+            }
+            entry.Status = PersonPendingStatus.Withdrawn;
+            var missionLog = app.Services.GetRequiredService<IMissionLog>();
+            await missionLog.AppendAsync(new MissionLogEntry(
+                entry.Mission!.S256, MissionLogEntryKind.Clarification, DateTimeOffset.UtcNow)
+            {
+                Detail = "cancelled",
+            });
+            return Results.NoContent();
+        });
+
         return app;
+
+        // ---- mission-gate resolution (gate 2c) -----------------------------
+        async Task<IResult> ResolveMissionGateAsync(HttpContext ctx, PersonPendingEntry entry)
+        {
+            var missionLog = app.Services.GetRequiredService<IMissionLog>();
+            var consent = app.Services.GetRequiredService<IMissionTokenConsent>();
+            var s256 = entry.Mission!.S256;
+
+            switch (entry.Status)
+            {
+                case PersonPendingStatus.Withdrawn:
+                    ctx.Response.Headers["Cache-Control"] = "no-store";
+                    return Results.Json(new { error = "request_withdrawn" }, statusCode: StatusCodes.Status410Gone);
+
+                case PersonPendingStatus.AwaitingClarification:
+                    return Pending202Clarification(ctx, entry, options);
+
+                case PersonPendingStatus.Allowed:
+                    // Resolved out-of-band by the PS's user channel (MarkAllowed).
+                    if (!entry.MissionResolved)
+                    {
+                        await AppendMissionTokenAsync(missionLog, s256, entry.ResourceUrl, entry.Scope, "OutOfScope");
+                        entry.MissionResolved = true;
+                    }
+                    return Results.Ok(new { auth_token = MintEntry(entry) });
+
+                case PersonPendingStatus.Denied:
+                    if (!entry.MissionResolved)
+                    {
+                        await AppendMissionTokenDenialAsync(missionLog, s256, entry.ResourceUrl, entry.Scope);
+                        entry.MissionResolved = true;
+                    }
+                    ctx.Response.Headers["Cache-Control"] = "no-store";
+                    return Results.Json(new { error = "denied", detail = entry.DenyReason },
+                        statusCode: StatusCodes.Status403Forbidden);
+
+                case PersonPendingStatus.Pending:
+                default:
+                    var decision = await consent.ReviewAsync(new MissionTokenConsentContext
+                    {
+                        AgentId = entry.AgentId,
+                        ResourceUrl = entry.ResourceUrl,
+                        Scope = entry.Scope,
+                        Mission = entry.Mission!,
+                        Stage = MissionTokenConsentStage.Resolve,
+                        Prompt = entry.Prompt,
+                        Capabilities = entry.Capabilities,
+                        ClarificationHistory = entry.ClarificationAnswers,
+                    });
+                    switch (decision.Kind)
+                    {
+                        case MissionTokenConsentKind.Grant:
+                            await AppendMissionTokenAsync(missionLog, s256, entry.ResourceUrl, entry.Scope, "OutOfScope");
+                            entry.MissionResolved = true;
+                            return await ResolveMissionGrantAsync(entry);
+                        case MissionTokenConsentKind.Deny:
+                            await AppendMissionTokenDenialAsync(missionLog, s256, entry.ResourceUrl, entry.Scope);
+                            entry.MissionResolved = true;
+                            entry.Status = PersonPendingStatus.Denied;
+                            entry.DenyReason = decision.Reason ?? "the user denied this request";
+                            ctx.Response.Headers["Cache-Control"] = "no-store";
+                            return Results.Json(new { error = "denied", detail = entry.DenyReason },
+                                statusCode: StatusCodes.Status403Forbidden);
+                        case MissionTokenConsentKind.Clarify:
+                            entry.Status = PersonPendingStatus.AwaitingClarification;
+                            entry.ClarificationQuestion = decision.Question;
+                            entry.ClarificationTimeout = decision.Timeout;
+                            entry.ClarificationOptions = decision.Options;
+                            return Pending202Clarification(ctx, entry, options);
+                        case MissionTokenConsentKind.Interact:
+                        default:
+                            return Pending202(ctx, entry, options, interactionUrl);
+                    }
+            }
+        }
+
+        // Mint an out-of-scope grant: the asserter supplies identity, the verdict
+        // is cached on the entry so a repeat poll is idempotent.
+        async Task<IResult> ResolveMissionGrantAsync(PersonPendingEntry entry)
+        {
+            var asserted = await asserter.AssertAsync(new IdentityAssertionRequest
+            {
+                ResourceUrl = entry.ResourceUrl,
+                Scope = entry.Scope,
+                AgentId = entry.AgentId,
+                Mission = entry.Mission,
+                Prompt = entry.Prompt,
+                Capabilities = entry.Capabilities,
+            });
+            if (asserted.Kind != IdentityAssertionKind.Assert)
+            {
+                entry.Status = PersonPendingStatus.Denied;
+                entry.DenyReason = asserted.Reason ?? "identity assertion failed";
+                return Results.Json(new { error = "denied", detail = entry.DenyReason },
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+            entry.Subject = asserted.Subject;
+            entry.Tenant = asserted.Tenant;
+            entry.Roles = asserted.Roles;
+            entry.Groups = asserted.Groups;
+            entry.AdditionalClaims = asserted.AdditionalClaims;
+            entry.Status = PersonPendingStatus.Allowed;
+            return Results.Ok(new { auth_token = MintEntry(entry) });
+        }
+
+        // Silent grant (gate 2a / 2b): the asserter supplies identity, the SDK
+        // mints immediately without parking.
+        async Task<IResult> MintMissionGrantAsync(
+            string audience, string boundAgentId, string scope, IAAuthKey confirmationKey,
+            JsonObject? upstreamAct, MissionClaim mission, string? prompt,
+            IReadOnlyList<string>? capabilities, string agentId)
+        {
+            var asserted = await asserter.AssertAsync(new IdentityAssertionRequest
+            {
+                ResourceUrl = audience,
+                Scope = scope,
+                AgentId = agentId,
+                Mission = mission,
+                Prompt = prompt,
+                Capabilities = capabilities,
+            });
+            if (asserted.Kind != IdentityAssertionKind.Assert)
+            {
+                return Results.Json(new { error = "denied", detail = asserted.Reason },
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+            return Results.Ok(new
+            {
+                auth_token = Mint(
+                    audience, boundAgentId, scope, confirmationKey,
+                    asserted.Subject ?? "pairwise-sub", asserted.Tenant, asserted.Roles,
+                    asserted.Groups, asserted.AdditionalClaims, upstreamAct, mission),
+            });
+        }
 
         // ---- three-party (PS-asserted) handler -----------------------------
         async Task<IResult> HandleThreePartyAsync(
@@ -453,11 +723,15 @@ public static class AAuthPersonServerEndpoints
                     statusCode: StatusCodes.Status400BadRequest);
             }
 
-            // Mission gate (§Agent Token Request, three-gate model).
+            // Mission gate (§Agent Token Request, three-gate model). The SDK owns
+            // the gate structure + the clarification protocol; IMissionTokenConsent
+            // owns the out-of-scope decision (L3226 "does not prescribe how the
+            // decision is made"). Identity claims on a grant come from the asserter.
             if (missionClaim is not null)
             {
                 var missionStore = app.Services.GetRequiredService<IMissionStore>();
                 var missionLog = app.Services.GetRequiredService<IMissionLog>();
+                var consent = app.Services.GetRequiredService<IMissionTokenConsent>();
                 var s256 = missionClaim.S256;
 
                 // Gate 1: a terminated mission is rejected outright.
@@ -471,51 +745,50 @@ public static class AAuthPersonServerEndpoints
                 if (await missionLog.HasPriorConsentAsync(s256, audience, requestedScope))
                 {
                     await AppendMissionTokenAsync(missionLog, s256, audience, requestedScope, "PriorConsent");
-                    var asserted = await asserter.AssertAsync(new IdentityAssertionRequest
-                    {
-                        ResourceUrl = audience,
-                        Scope = requestedScope,
-                        AgentId = agentId,
-                        Mission = missionClaim,
-                        Prompt = prompt,
-                        Capabilities = capabilities,
-                    });
-                    return MintFromAssertion(
-                        asserted, audience, boundAgentId, requestedScope,
-                        boundConfirmationKey, boundUpstreamAct, missionClaim)
-                        ?? Results.Json(new { error = "denied", detail = asserted.Reason },
-                            statusCode: StatusCodes.Status403Forbidden);
+                    return await MintMissionGrantAsync(
+                        audience, boundAgentId, requestedScope, boundConfirmationKey,
+                        boundUpstreamAct, missionClaim, prompt, capabilities, agentId);
                 }
 
-                // Gate 2a / 3: the asserter decides in-scope (silent) vs prompt.
-                var decision = await asserter.AssertAsync(new IdentityAssertionRequest
+                // Gate 2a/2c: the consent seam decides in-scope-silent vs the
+                // out-of-scope review (grant / deny / clarify / interactive hold).
+                var decision = await consent.ReviewAsync(new MissionTokenConsentContext
                 {
+                    AgentId = agentId,
                     ResourceUrl = audience,
                     Scope = requestedScope,
-                    AgentId = agentId,
                     Mission = missionClaim,
+                    Stage = MissionTokenConsentStage.Gate,
                     Prompt = prompt,
                     Capabilities = capabilities,
                 });
                 switch (decision.Kind)
                 {
-                    case IdentityAssertionKind.Assert:
+                    case MissionTokenConsentKind.Grant:
+                        // Gate 2a: within the approved intent → silent grant.
                         await AppendMissionTokenAsync(missionLog, s256, audience, requestedScope, "InScope");
-                        return Results.Ok(new
-                        {
-                            auth_token = Mint(
-                                audience, boundAgentId, requestedScope, boundConfirmationKey,
-                                decision.Subject ?? "pairwise-sub", decision.Tenant, decision.Roles,
-                                decision.Groups, decision.AdditionalClaims, boundUpstreamAct, missionClaim),
-                        });
-                    case IdentityAssertionKind.Deny:
+                        return await MintMissionGrantAsync(
+                            audience, boundAgentId, requestedScope, boundConfirmationKey,
+                            boundUpstreamAct, missionClaim, prompt, capabilities, agentId);
+                    case MissionTokenConsentKind.Deny:
+                        await AppendMissionTokenDenialAsync(missionLog, s256, audience, requestedScope);
                         return Results.Json(new { error = "denied", detail = decision.Reason },
                             statusCode: StatusCodes.Status403Forbidden);
-                    case IdentityAssertionKind.NeedsConsent:
+                    case MissionTokenConsentKind.Clarify:
+                        var clarifyEntry = ParkMissionGate(
+                            pending, audience, requestedScope, boundAgentId, boundConfirmationKey,
+                            boundUpstreamAct, missionClaim, prompt, capabilities);
+                        clarifyEntry.Status = PersonPendingStatus.AwaitingClarification;
+                        clarifyEntry.ClarificationQuestion = decision.Question;
+                        clarifyEntry.ClarificationTimeout = decision.Timeout;
+                        clarifyEntry.ClarificationOptions = decision.Options;
+                        return Pending202Clarification(ctx, clarifyEntry, options);
+                    case MissionTokenConsentKind.Interact:
                     default:
-                        var missionEntry = pending.Add(
-                            audience, requestedScope, boundAgentId, boundConfirmationKey, boundUpstreamAct, missionClaim);
-                        return Pending202(ctx, missionEntry, options, interactionUrl);
+                        var interactEntry = ParkMissionGate(
+                            pending, audience, requestedScope, boundAgentId, boundConfirmationKey,
+                            boundUpstreamAct, missionClaim, prompt, capabilities);
+                        return Pending202(ctx, interactEntry, options, interactionUrl);
                 }
             }
 
@@ -700,23 +973,18 @@ public static class AAuthPersonServerEndpoints
                 new { error = entry.Error ?? "denied" },
                 statusCode: entry.ErrorStatus ?? StatusCodes.Status403Forbidden);
         }
+    }
 
-        IResult? MintFromAssertion(
-            IdentityAssertion asserted, string audience, string agentId, string scope,
-            IAAuthKey confirmationKey, JsonObject? upstreamAct, MissionClaim? mission)
-        {
-            if (asserted.Kind != IdentityAssertionKind.Assert)
-            {
-                return null;
-            }
-            return Results.Ok(new
-            {
-                auth_token = Mint(
-                    audience, agentId, scope, confirmationKey,
-                    asserted.Subject ?? "pairwise-sub", asserted.Tenant, asserted.Roles,
-                    asserted.Groups, asserted.AdditionalClaims, upstreamAct, mission),
-            });
-        }
+    private static PersonPendingEntry ParkMissionGate(
+        IPersonPendingStore pending, string audience, string scope, string agentId,
+        IAAuthKey confirmationKey, JsonObject? upstreamAct, MissionClaim mission,
+        string? prompt, IReadOnlyList<string>? capabilities)
+    {
+        var entry = pending.Add(audience, scope, agentId, confirmationKey, upstreamAct, mission);
+        entry.MissionGate = true;
+        entry.Prompt = prompt;
+        entry.Capabilities = capabilities;
+        return entry;
     }
 
     private static IResult Pending202(
@@ -729,11 +997,55 @@ public static class AAuthPersonServerEndpoints
         return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
     }
 
-    private static async Task AppendMissionGrantAsync(WebApplication app, PersonPendingEntry entry, string detail)
+    // True when the verified carrier on this request is the agent that parked the
+    // entry — guards the clarification POST/DELETE so one agent cannot answer or
+    // withdraw another's pending request (the signature is already verified).
+    private static bool RequesterMatches(HttpContext ctx, PersonPendingEntry entry)
     {
-        var missionLog = app.Services.GetRequiredService<IMissionLog>();
-        await AppendMissionTokenAsync(missionLog, entry.Mission!.S256, entry.ResourceUrl, entry.Scope, detail);
+        var sub = (string?)ctx.GetAAuthParsedKey()?.Payload?["sub"];
+        return sub is not null && string.Equals(sub, entry.AgentId, StringComparison.Ordinal);
     }
+
+    // The §requirement-clarification 202: emit the AAuth-Requirement header and a
+    // body carrying the question (plus optional timeout/options).
+    private static IResult Pending202Clarification(
+        HttpContext ctx, PersonPendingEntry entry, AAuthPersonServerOptions options)
+    {
+        ctx.Response.Headers.Location = $"{options.PendingPathPrefix}/{entry.Id}";
+        ctx.Response.Headers["Retry-After"] = "0";
+        ctx.Response.Headers["Cache-Control"] = "no-store";
+        ctx.Response.Headers[AAuthRequirementHeader.Name] =
+            $"requirement={ClarificationRequirement.RequirementType}";
+        var body = new JsonObject
+        {
+            ["status"] = "pending",
+            ["clarification"] = entry.ClarificationQuestion,
+        };
+        if (entry.ClarificationTimeout is int timeout)
+        {
+            body["timeout"] = timeout;
+        }
+        if (entry.ClarificationOptions is { Count: > 0 } opts)
+        {
+            var array = new JsonArray();
+            foreach (var option in opts)
+            {
+                array.Add(option);
+            }
+            body["options"] = array;
+        }
+        return Results.Json(body, statusCode: StatusCodes.Status202Accepted);
+    }
+
+    private static Task AppendMissionTokenDenialAsync(
+        IMissionLog missionLog, string s256, string resource, string scope)
+        => missionLog.AppendAsync(new MissionLogEntry(s256, MissionLogEntryKind.Token, DateTimeOffset.UtcNow)
+        {
+            Resource = resource,
+            Scope = scope,
+            Granted = false,
+            Detail = "OutOfScope",
+        });
 
     private static Task AppendMissionTokenAsync(
         IMissionLog missionLog, string s256, string resource, string scope, string detail)

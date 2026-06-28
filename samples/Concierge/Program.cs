@@ -36,32 +36,29 @@ var psUrl = builder.Configuration["AAuth:PersonServer"] ?? "http://localhost:510
 var agentId = builder.Configuration["AAuth:AgentId"] ?? "aauth:concierge@localhost:5200";
 
 builder.Services.AddSingleton(conciergeKey);
-builder.Services.AddSingleton(new AAuthVerifier());
 builder.Services.AddSingleton(new TokenVerifier());
 builder.Services.AddSingleton<PendingStore>();
-builder.Services.AddSingleton<MetadataClient>(sp =>
-    new MetadataClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-metadata")));
-builder.Services.AddSingleton<JwksClient>(sp =>
-    new JwksClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-jwks")));
-builder.Services.AddHttpClient("aauth-metadata");
-builder.Services.AddHttpClient("aauth-jwks");
 builder.Services.AddHttpClient();
+
+// Resource role: verifier, discovery clients (pooled handler), JTI store, and the
+// published metadata — no manual HttpClient/discovery wiring.
+builder.Services.AddAAuthResource(o =>
+{
+    o.Issuer = conciergeUrl;
+    o.SigningKeys[ConciergeKid] = conciergeKey;
+    o.Name = "Concierge Demo";
+    o.ScopeDescriptions = new Dictionary<string, string>
+    {
+        [ConciergeScope] = "Arrange calls to downstream resources on the user's behalf",
+    };
+});
 
 var app = builder.Build();
 
 // -----------------------------------------------------------------------
 // Well-known endpoints: resource metadata + agent metadata + JWKS
 // -----------------------------------------------------------------------
-app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
-{
-    Issuer = conciergeUrl,
-    Name = "Concierge Demo",
-    SigningKeys = new Dictionary<string, AAuthKey> { [ConciergeKid] = conciergeKey },
-    ScopeDescriptions = new Dictionary<string, string>
-    {
-        [ConciergeScope] = "Arrange calls to downstream resources on the user's behalf",
-    },
-});
+app.MapAAuthWellKnown();
 
 // Agent metadata: downstream resources discover this to verify our identity.
 app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions

@@ -4,7 +4,7 @@
 
 ## Overview
 
-Resources publish a `.well-known/aauth-resource.json` document so agents can discover signing requirements, token endpoints, and public keys. The SDK provides `WellKnownEndpoints.MapAAuthResourceWellKnown()` to serve this automatically.
+Resources publish a `.well-known/aauth-resource.json` document so agents can discover signing requirements, token endpoints, and public keys. The SDK serves it automatically: register the resource with `AddAAuthResource(...)` and map `app.MapAAuthWellKnown()`.
 
 ## Setup
 
@@ -28,7 +28,12 @@ app.MapAAuthWellKnown(); // serves /.well-known/aauth-resource.json
 ```
 
 <details>
-<summary>Manual Setup</summary>
+<summary>Manual Setup (building block)</summary>
+
+> `AddAAuthResource(...)` + `app.MapAAuthWellKnown()` is the preferred setup for
+> the common case. Reach for `MapAAuthResourceWellKnown(...)` directly only when
+> you need to publish a metadata field that `AAuthResourceOptions` does not expose
+> (for example `RevocationEndpoint`).
 
 ```csharp
 using AAuth.Server.Metadata;

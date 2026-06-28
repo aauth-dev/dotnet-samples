@@ -133,7 +133,7 @@ AAuth supports four resource access modes. Each adds parties and capabilities:
 | Flow | Parties | When to Use | Signing Mode | See it run |
 |------|---------|-------------|--------------|------------|
 | **[Identity-Based](workflows/identity-based-access.md)** | Agent + Resource | API-key replacement, simple access control by identity | `hwk`, `jkt-jwt`, or `jwks_uri` | GuidedTour **Identity-based**; SampleApp `/pseudonymous`, `/anchored`, `/identified` |
-| **[Resource-Managed](workflows/resource-managed-access.md)** (two-party) | Agent + Resource | Resource handles its own auth (interaction, existing OAuth) | Any (`hwk`, `jwks_uri`, or `jwt`) | GuidedTour **Resource-Managed (Inbox)**; SampleApp `/inbox` |
+| **[Resource-Managed](workflows/resource-managed-access.md)** (two-party) | Agent + Resource | Resource handles its own auth (interaction, existing OAuth) | Any (`hwk`, `jwks_uri`, `jwt`, or `jkt-jwt`) | GuidedTour **Resource-Managed (Two-Party)**; SampleApp `/inbox` |
 | **[PS-Asserted](workflows/ps-asserted-access.md)** (three-party) | Agent + Resource + PS | User consent required, resource delegates auth to PS | `jwt` | GuidedTour **PS-Asserted (Direct Grant)** & **(Deferred)**; SampleApp `/calendar`, `/calendar-deferred` |
 | **[Federated](workflows/federated-access.md)** (four-party) | Agent + Resource + PS + AS | Cross-domain policy, resource has its own Access Server | `jwt` | GuidedTour **Federated (Four-Party)**; SampleApp `/wallet` (live Keycloak: `make demo-keycloak`) |
 
@@ -291,56 +291,47 @@ A resource that verifies signatures and issues resource token challenges:
 ```csharp
 using AAuth.Crypto;
 using AAuth;
-using AAuth.Server.Verification;
-using AAuth.Server.Challenge;
-using AAuth.Server.Metadata;
 
 var builder = WebApplication.CreateBuilder(args);
 var resourceKey = AAuthKey.Generate();
 
-// Register resource services (metadata + signing key)
+// One DI call registers the verifier, discovery clients, JTI store, and metadata.
 builder.Services.AddAAuthResource(options =>
 {
     options.Issuer = "https://resource.example";
-    options.SigningKeys = new() { ["resource-key-1"] = resourceKey };
+    options.SigningKeys["resource-key-1"] = resourceKey;
     options.ScopeDescriptions = new()
     {
         ["read"] = "Read access to your documents",
         ["write"] = "Write access to your documents",
     };
 });
+builder.Services.AddAAuthAuthentication();
+builder.Services.AddAAuthAuthorization();
 
 var app = builder.Build();
 
 // Serve /.well-known/aauth-resource.json and JWKS endpoint
 app.MapAAuthWellKnown();
 
-// Verify HTTP signatures and auth tokens from trusted Person Servers
-app.UseAAuthVerification(new AAuthVerificationOptions
-{
-    ResourceIdentifier = "https://resource.example",
-    RequireIssuerVerification = true,
-    // Restrict which Person Servers this resource trusts.
-    // The resource verifies auth tokens against the PS's JWKS
-    // (discovered at {iss}/.well-known/aauth-person.json).
-    // Omit to dynamically accept any PS — claims are namespaced by issuer.
-    TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" },
-});
+// One declarative pipeline: this single post-routing middleware verifies the
+// signature and, when an endpoint needs an auth token, challenges for one.
+// Restrict which Person Servers this resource trusts — the resource verifies
+// auth tokens against the PS's JWKS (discovered at
+// {iss}/.well-known/aauth-person.json). Omit TrustedAuthTokenIssuers to accept
+// any PS dynamically — claims are namespaced by issuer.
+app.UseRouting();
+app.UseAAuth(o => o.TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" });
+app.UseAuthentication();
+app.UseAuthorization();
 
-// Issue 401 + resource_token when agent presents only an agent token
-app.UseAAuthChallenge(new ChallengeOptions
-{
-    ResourceSigningKey = resourceKey,
-    ResourceKeyId = "resource-key-1",
-    ResourceIdentifier = "https://resource.example",
-});
-
-// Protected endpoint — reached only after auth token is verified
+// Protected endpoint — declares the scope it needs; reached only after the
+// auth token is verified.
 app.MapGet("/data", (HttpContext ctx) =>
 {
-    var agent = ctx.GetAAuthAgent(); // parsed from verified signature
-    return Results.Ok(new { message = $"Hello {agent.Subject}" });
-});
+    var result = ctx.GetAAuthVerification()!; // parsed from the verified signature
+    return Results.Ok(new { message = $"Hello {result.Subject}" });
+}).RequireAAuth(scope: "read");
 
 app.Run();
 ```

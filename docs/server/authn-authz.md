@@ -13,31 +13,34 @@ This page ties together two adjacent topics:
 
 ## Pipeline at a glance
 
-AAuth runs as three ordered layers. The order matters: each layer consumes what
-the previous one produced.
+AAuth runs as ordered layers. The order matters: each layer consumes what the
+previous one produced.
 
-1. **Verification** (`UseAAuthVerification`) — verifies the HTTP signature
-   (RFC 9421) and, for three-party flows, the auth token against the issuer's
-   JWKS. It writes an `AAuthVerificationResult` to `HttpContext.Features`.
-2. **Challenge** (`UseAAuthChallenge`, three-party endpoints only) — when only an
-   agent token is presented, returns a `401` with a resource token requesting the
-   endpoint's scope.
+1. **Routing** (`UseRouting`) — resolves the matched endpoint so the next layer can
+   read its `.RequireAAuth(...)` / `.RequireAAuthSignature(...)` metadata.
+2. **AAuth** (`UseAAuth`) — the single AAuth middleware. For each matched endpoint
+   it verifies the HTTP signature (RFC 9421) and, for auth-token endpoints, the auth
+   token against the issuer's JWKS, then returns a `401` resource-token challenge
+   when only an agent token is presented. It writes an `AAuthVerificationResult` to
+   `HttpContext.Features`. (Internally it runs the verification and challenge
+   middleware described in [Verification Middleware](verification-middleware.md) and
+   [Challenge Middleware](challenge-middleware.md).)
 3. **Authentication + authorization** (`UseAuthentication` / `UseAuthorization`) —
    `AAuthAuthenticationHandler` maps the verification result to a
-   `ClaimsPrincipal`; scope/role/level policies then decide access per endpoint.
+   `ClaimsPrincipal`; each route's `.RequireAAuth(...)` policy then decides access.
 
 ```mermaid
 flowchart LR
-    req([request]) --> ver["UseAAuthVerification<br/>(writes Features)"]
-    ver --> chal["UseAAuthChallenge<br/>(401 + resource token)"]
-    chal --> authn["UseAuthentication<br/>(Features → Principal)"]
+    req([request]) --> route["UseRouting<br/>(resolve endpoint)"]
+    route --> aauth["UseAAuth<br/>(verify + challenge<br/>per matched endpoint)"]
+    aauth --> authn["UseAuthentication<br/>(Features → Principal)"]
     authn --> authz["UseAuthorization<br/>(policy check)"]
     authz --> ep([endpoint])
 ```
 
-> **Well-known endpoints come first.** Map `MapAAuthResourceWellKnown(...)`
-> *before* `UseAAuthVerification` so the metadata document and JWKS stay reachable
-> without an AAuth signature.
+> **Well-known endpoints pass through.** Map `app.MapAAuthWellKnown()` to serve the
+> metadata document and JWKS. They carry no `.RequireAAuth(...)` metadata, so
+> `UseAAuth` lets them through unverified — no AAuth signature required.
 
 ## Authentication (authN)
 
@@ -84,90 +87,98 @@ the full table). The identity claims asserted by a Person Server — `sub`
 ## Authorization (authZ)
 
 Register the handlers and built-in policies with `AddAAuthAuthorization()`, then
-add named policies:
+protect each route with `.RequireAAuth(...)`:
 
 ```csharp
 builder.Services.AddAAuthAuthentication();
 builder.Services.AddAAuthAuthorization();
-builder.Services.AddAAuthScopePolicy("AAuth.Scope.data:read", "data:read");
-builder.Services.AddAAuthRolePolicy("AAuth.Role.admin", "admin");
+
+// ...
+app.MapGet("/data", handler).RequireAAuth(scope: "data:read");
+app.MapGet("/admin", handler).RequireAAuth(scope: "data:read", role: "admin");
 ```
 
-`AddAAuthAuthorization()` registers the built-in level policies
+`.RequireAAuth(...)` attaches the verification/challenge metadata and an inline
+authorization policy in one call — there is no named policy string to keep in sync.
+`AddAAuthAuthorization()` also registers the built-in level policies
 `AAuth.Authenticated`, `AAuth.Identified`, and `AAuth.Authorized`.
 
-Scope and role policies both require `AAuthLevel.Authorized` — a signature-only or
-agent-token-only request can never satisfy them, even if it carried a matching
+Scope and role requirements both require `AAuthLevel.Authorized` — a signature-only
+or agent-token-only request can never satisfy them, even if it carried a matching
 scope claim. See [Authorization Policies](authorization-policies.md) for the scope
 handler semantics and the role/group discussion.
 
 ## Wiring style 1 — Minimal APIs
 
-This is what the [Calendar sample](../../samples/MockResourceServers/Calendar/) uses. Per-mode
-verification branches with `UseWhen`, then per-endpoint policies with
-`RequireAuthorization`.
+This is what the [Calendar sample](../../samples/MockResourceServers/Calendar/) uses.
+One `AddAAuthResource` registration, one `UseAAuth` pipeline, and per-endpoint
+`.RequireAAuth(...)`.
 
 ```csharp
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddSingleton(new AAuthVerifier());
-builder.Services.AddSingleton<IJtiStore, InMemoryJtiStore>();
+// One call: verifier, discovery clients (pooled handler), JTI store, and the
+// published metadata.
+builder.Services.AddAAuthResource(o =>
+{
+    o.Issuer = resourceUrl;
+    o.SigningKeys["calendar-1"] = resourceKey;
+    o.ScopeDescriptions = new()
+    {
+        ["calendar.read"] = "See your calendar events",
+        ["calendar.write"] = "Add and change calendar events",
+    };
+});
 builder.Services.AddAAuthAuthentication();
 builder.Services.AddAAuthAuthorization();
-builder.Services.AddAAuthScopePolicy("AAuth.Scope.calendar.read", "calendar.read");
-builder.Services.AddAAuthScopePolicy("AAuth.Scope.calendar.write", "calendar.write");
-builder.Services.AddAAuthRolePolicy("AAuth.Role.calendar.owner", "calendar.owner");
 
 var app = builder.Build();
 
-// Reachable without a signature.
-app.MapAAuthResourceWellKnown(metadataOptions);
+// Well-known metadata + JWKS from the DI metadata (no signature required).
+app.MapAAuthWellKnown();
 
-// Three-party branch: verify the auth token, challenge for the scope.
-app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/events"),
-    branch =>
-    {
-        branch.UseAAuthVerification(new AAuthVerificationOptions
-        {
-            ResourceIdentifier = resourceUrl,
-            RequireIssuerVerification = true,
-            TrustedAuthTokenIssuers = trustedPersonServers,
-        });
-        branch.UseAAuthChallenge(challengeOptions);
-    });
-
+// One declarative pipeline. Resource-level config is trust only; key and issuer
+// default from the DI metadata.
+app.UseRouting();
+app.UseAAuth(o => o.TrustedAuthTokenIssuers = trustedPersonServers);
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapGet("/events", (HttpContext ctx) => Results.Ok(/* ... */))
-    .RequireAuthorization("AAuth.Scope.calendar.read");
+    .RequireAAuth(scope: "calendar.read");
 
 app.MapGet("/events/admin", (HttpContext ctx) => Results.Ok(/* ... */))
-    .RequireAuthorization("AAuth.Role.calendar.owner");
+    .RequireAAuth(scope: "calendar.read", role: "calendar.owner");
 
 app.Run();
 ```
 
-`MapGroup` works the same way when several endpoints share a policy:
+`MapGroup` organizes endpoints under a shared prefix; attach `.RequireAAuth(...)`
+to each endpoint in the group:
 
 ```csharp
-var admin = app.MapGroup("/admin").RequireAuthorization("AAuth.Scope.calendar.write");
-admin.MapGet("/profile", () => Results.Ok(/* ... */));
-admin.MapPost("/profile", () => Results.Ok(/* ... */));
+var admin = app.MapGroup("/admin");
+admin.MapGet("/profile", () => Results.Ok(/* ... */)).RequireAAuth(scope: "calendar.write");
+admin.MapPost("/profile", () => Results.Ok(/* ... */)).RequireAAuth(scope: "calendar.write");
 ```
 
 ## Wiring style 2 — Classic MVC controllers
 
-Service registration is identical. The difference is only how endpoints declare
-their policies — via `[Authorize]` attributes instead of `RequireAuthorization`.
+Controllers can't use the per-route `.RequireAAuth(...)` extension (it targets
+minimal-API endpoints), so the MVC style composes the building-block verification
+and challenge middleware directly and binds scope/role requirements through named
+policies referenced by `[Authorize]`. Service registration still uses
+`AddAAuthResource`.
 
 ```csharp
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
-builder.Services.AddSingleton(new AAuthVerifier());
-builder.Services.AddSingleton<IJtiStore, InMemoryJtiStore>();
+builder.Services.AddAAuthResource(o =>
+{
+    o.Issuer = resourceUrl;
+    o.SigningKeys["key-1"] = resourceKey;
+});
 builder.Services.AddAAuthAuthentication();
 builder.Services.AddAAuthAuthorization();
 builder.Services.AddAAuthScopePolicy("AAuth.Scope.data:read", "data:read");
@@ -175,7 +186,7 @@ builder.Services.AddAAuthRolePolicy("AAuth.Role.admin", "admin");
 
 var app = builder.Build();
 
-app.MapAAuthResourceWellKnown(metadataOptions);
+app.MapAAuthWellKnown();
 
 app.UseAAuthVerification(new AAuthVerificationOptions
 {

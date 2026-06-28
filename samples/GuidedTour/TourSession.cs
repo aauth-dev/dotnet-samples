@@ -1096,15 +1096,13 @@ public sealed class TourSession : IAsyncDisposable
     }
 
     /// <summary>
-    /// Re-mints <see cref="_agentToken"/> with a fresh `jti` (the
-    /// <see cref="AgentTokenBuilder"/> generates a new token id on each
-    /// <c>Build()</c>). The resource server enforces replay detection per
-    /// signed request, so a single long-lived agent token cannot be reused
-    /// across two separate signed requests to the same resource. The mission
-    /// flow hits the resource twice (the `/trips` and
-    /// `/trips/book` challenges), so each challenge must present a
-    /// distinct agent token — exactly as a real agent would refresh its token
-    /// per access (spec §Agent Token, replay protection).
+    /// Re-mints <see cref="_agentToken"/> (the <see cref="AgentTokenBuilder"/>
+    /// also generates a fresh `jti` on each <c>Build()</c>). This models a real
+    /// agent rotating its short-lived agent token per access. Token reuse is
+    /// itself fine — the resource enforces replay detection per <em>signed
+    /// request</em> (keyed on the signature, not the token), so one long-lived
+    /// token can serve many distinct requests; only a captured signature
+    /// replayed verbatim is rejected (spec §Freshness and Replay).
     /// </summary>
     private void RefreshAgentToken()
     {
@@ -3840,8 +3838,9 @@ public sealed class TourSession : IAsyncDisposable
 
     private async Task StepMissionResourceChallengeAsync(CancellationToken ct)
     {
-        // Fresh agent token (new jti) so the resource's replay detection does
-        // not reject this signed request if the agent token was used earlier.
+        // Rotate the short-lived agent token to model a real agent. Reuse is
+        // also fine: replay detection is keyed on the per-request signature, not
+        // the token.
         RefreshAgentToken();
         string? capturedBase = null;
         var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
@@ -3981,9 +3980,9 @@ public sealed class TourSession : IAsyncDisposable
 
     private async Task StepMissionElevatedChallengeAsync(CancellationToken ct)
     {
-        // Fresh agent token (new jti): the resource already recorded the agent
-        // token used for the /trips challenge, so reusing it here would
-        // trip replay detection and return a bare 401 (no resource_token).
+        // Rotate the short-lived agent token to model a real agent. The two
+        // challenges (/trips then /trips/book) are distinct signed requests, so
+        // reuse would also pass — replay is keyed on the signature, not the token.
         RefreshAgentToken();
         string? capturedBase = null;
         var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
@@ -4411,8 +4410,8 @@ public sealed class TourSession : IAsyncDisposable
 
     private async Task StepMissionChainForwardedAsync(CancellationToken ct)
     {
-        // Fresh agent token (new jti) so the Concierge's replay detection
-        // does not reject the mission-aware challenge.
+        // Rotate the short-lived agent token to model a real agent (replay is
+        // keyed on the per-request signature, so reuse would also pass).
         RefreshAgentToken();
 
         // ── Hop A: challenge the Concierge's mission endpoint ─────────────

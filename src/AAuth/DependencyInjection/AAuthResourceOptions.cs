@@ -59,6 +59,29 @@ public sealed class AAuthResourceOptions
     /// <summary>Optional human-readable resource name for metadata.</summary>
     public string? Name { get; set; }
 
+    /// <summary>Optional Markdown description for metadata (consent display).</summary>
+    public string? Description { get; set; }
+
     /// <summary>Optional scope descriptions for metadata.</summary>
     public Dictionary<string, string>? ScopeDescriptions { get; set; }
+
+    /// <summary>
+    /// Optional signature validity window in seconds (<c>signature_window</c>),
+    /// published in resource metadata. Default <c>null</c> (the spec default of
+    /// 60 s applies and the value is omitted from the document).
+    /// </summary>
+    public int? SignatureWindow { get; set; }
+
+    /// <summary>
+    /// Optional advisory <c>access_mode</c> published in resource metadata: one
+    /// of <c>agent-token</c>, <c>aauth-access-token</c>, or <c>auth-token</c>.
+    /// </summary>
+    public string? AccessMode { get; set; }
+
+    /// <summary>
+    /// Optional <c>authorization_endpoint</c> URL published in resource metadata
+    /// (the proactive authorization flow). When absent, the resource issues
+    /// resource tokens via <c>401</c> challenges instead.
+    /// </summary>
+    public string? AuthorizationEndpoint { get; set; }
 }

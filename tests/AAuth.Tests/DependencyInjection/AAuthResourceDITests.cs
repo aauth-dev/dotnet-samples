@@ -10,6 +10,7 @@ using AAuth.Server.Challenge;
 using AAuth.Server.Metadata;
 using AAuth.Server.Verification;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Xunit;
 
 namespace AAuth.Tests.DependencyInjection;
@@ -140,5 +141,61 @@ public class AAuthResourceDITests
         var provider = services.BuildServiceProvider();
         var verifier = provider.GetRequiredService<AAuthVerifier>();
         Assert.Equal(TimeSpan.FromSeconds(30), verifier.MaxAge);
+    }
+
+    [Fact]
+    public void AddAAuthResource_RegistersDiscoveryClients()
+    {
+        var services = new ServiceCollection();
+        services.AddAAuthResource(opts =>
+        {
+            opts.Issuer = "https://resource.example";
+            opts.SigningKeys["k1"] = _key;
+        });
+
+        var provider = services.BuildServiceProvider();
+        // The SDK owns the discovery clients (no consumer HttpClient wiring).
+        Assert.NotNull(provider.GetRequiredService<MetadataClient>());
+        Assert.NotNull(provider.GetRequiredService<JwksClient>());
+    }
+
+    [Fact]
+    public void AddAAuthResource_PublishesNewMetadataFields()
+    {
+        var services = new ServiceCollection();
+        services.AddAAuthResource(opts =>
+        {
+            opts.Issuer = "https://resource.example";
+            opts.SigningKeys["k1"] = _key;
+            opts.SignatureWindow = 90;
+            opts.AccessMode = AAuthConstants.AccessModes.AuthToken;
+            opts.AuthorizationEndpoint = "https://resource.example/authorize";
+        });
+
+        var provider = services.BuildServiceProvider();
+        var metadata = provider.GetRequiredService<AAuthResourceMetadataOptions>();
+        Assert.Equal(90, metadata.SignatureWindow);
+        Assert.Equal(AAuthConstants.AccessModes.AuthToken, metadata.AccessMode);
+        Assert.Equal("https://resource.example/authorize", metadata.AuthorizationEndpoint);
+    }
+
+    [Fact]
+    public void AddAAuthResource_DiscoveryClientsRemainOverridable()
+    {
+        // The integration harness overrides discovery by RemoveAll + re-add; the
+        // SDK registers via TryAdd so an explicit later registration wins (G4).
+        var services = new ServiceCollection();
+        services.AddAAuthResource(opts =>
+        {
+            opts.Issuer = "https://resource.example";
+            opts.SigningKeys["k1"] = _key;
+        });
+
+        var custom = new JwksClient(new System.Net.Http.HttpClient());
+        services.RemoveAll<JwksClient>();
+        services.AddSingleton(custom);
+
+        var provider = services.BuildServiceProvider();
+        Assert.Same(custom, provider.GetRequiredService<JwksClient>());
     }
 }

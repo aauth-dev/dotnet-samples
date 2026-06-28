@@ -1,11 +1,5 @@
-using AAuth.Crypto;
 using AAuth;
-using AAuth.Discovery;
-using AAuth.HttpSig;
-using AAuth.Server;
-using AAuth.Server.Authorization;
-using AAuth.Server.Challenge;
-using AAuth.Server.Metadata;
+using AAuth.Crypto;
 using AAuth.Server.Verification;
 
 // ---------------------------------------------------------------------------
@@ -43,79 +37,36 @@ var trustedPersonServers = new HashSet<string>(
     builder.Configuration.GetSection("AAuth:TrustedPersonServers").Get<string[]>()
         ?? new[] { "http://localhost:5100" });
 
-builder.Services.AddSingleton(resourceKey);
-builder.Services.AddSingleton(new AAuthVerifier
+// One DI call: verifier, discovery clients (pooled handler), JTI store, and the
+// published metadata — no manual HttpClient/discovery wiring.
+builder.Services.AddAAuthResource(o =>
 {
-    MaxAge = TimeSpan.FromSeconds(signatureWindowSeconds),
-});
-builder.Services.AddSingleton<IJtiStore, InMemoryJtiStore>();
-builder.Services.AddSingleton<MetadataClient>(sp =>
-    new MetadataClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-metadata")));
-builder.Services.AddSingleton<JwksClient>(sp =>
-    new JwksClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-jwks")));
-builder.Services.AddSingleton<ISignatureKeyResolver>(sp =>
-    new DefaultSignatureKeyResolver(sp.GetRequiredService<JwksClient>()));
-builder.Services.AddHttpClient("aauth-metadata");
-builder.Services.AddHttpClient("aauth-jwks");
-
-builder.Services.AddAAuthAuthentication();
-builder.Services.AddAAuthAuthorization();
-builder.Services.AddAAuthScopePolicy("AAuth.Scope.trips.read", ScopeRead);
-builder.Services.AddAAuthScopePolicy("AAuth.Scope.trips.book", ScopeBook);
-
-var app = builder.Build();
-
-app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
-{
-    Issuer = resourceUrl,
-    Name = "Aria Trips",
-    Description = "**Aria Trips** books travel and manages itineraries on your behalf.",
-    AccessMode = AAuthConstants.AccessModes.AuthToken,
-    SigningKeys = new Dictionary<string, AAuthKey> { [ResourceKid] = resourceKey },
-    ScopeDescriptions = new Dictionary<string, string>
+    o.Issuer = resourceUrl;
+    o.SigningKeys[ResourceKid] = resourceKey;
+    o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
+    o.SignatureWindow = signatureWindowSeconds;
+    o.Name = "Aria Trips";
+    o.Description = "**Aria Trips** books travel and manages itineraries on your behalf.";
+    o.AccessMode = AAuthConstants.AccessModes.AuthToken;
+    o.ScopeDescriptions = new Dictionary<string, string>
     {
         [ScopeRead] = "See your trips and itineraries",
         [ScopeBook] = "Book travel on your behalf",
-    },
-    SignatureWindow = signatureWindowSeconds,
+    };
 });
+builder.Services.AddAAuthAuthentication();
+builder.Services.AddAAuthAuthorization();
 
-AAuthVerificationOptions FullVerification() => new()
-{
-    ResourceIdentifier = resourceUrl,
-    RequireIssuerVerification = true,
-    TrustedAuthTokenIssuers = trustedPersonServers,
-};
+var app = builder.Build();
 
-// Mission-aware challenge: when the agent sends a signed AAuth-Mission header,
-// the issued resource token carries the mission object (approver + s256), so
-// the agent's PS governs the token exchange against that mission.
-ChallengeOptions ChallengeForMission(string scope) => new()
-{
-    AccessMode = AAuthAccessMode.RequireAuthToken,
-    ResourceSigningKey = resourceKey,
-    ResourceKeyId = ResourceKid,
-    ResourceIdentifier = resourceUrl,
-    DefaultScopes = scope,
-    MissionAware = true,
-};
+// Well-known metadata + JWKS from the DI-registered resource metadata.
+app.MapAAuthWellKnown();
 
-// Declare the more specific /trips/book before the general /trips.
-app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/trips/book"),
-    branch =>
-    {
-        branch.UseAAuthVerification(FullVerification());
-        branch.UseAAuthChallenge(ChallengeForMission(ScopeBook));
-    });
-app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/trips")
-        && !ctx.Request.Path.StartsWithSegments("/trips/book"),
-    branch =>
-    {
-        branch.UseAAuthVerification(FullVerification());
-        branch.UseAAuthChallenge(ChallengeForMission(ScopeRead));
-    });
+// One declarative pipeline. Mission-aware: when the agent sends a signed
+// AAuth-Mission header, the issued resource token carries the mission object so
+// the PS governs the exchange. Trust only the configured Person Servers.
+app.UseRouting();
+app.UseAAuth(o => o.TrustedAuthTokenIssuers = trustedPersonServers);
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -155,7 +106,7 @@ app.MapGet("/trips", (HttpContext ctx) =>
         missionAware = true,
         act = parsed.Payload?["act"],
     });
-}).RequireAuthorization("AAuth.Scope.trips.read");
+}).RequireAAuth(scope: ScopeRead, missionAware: true);
 
 // GET /trips/book — out-of-mission elevated scope. Identical mission mechanics,
 // but it requires `trips.book`. When the agent operates under a mission whose
@@ -180,7 +131,7 @@ app.MapGet("/trips/book", (HttpContext ctx) =>
         missionAware = true,
         act = parsed.Payload?["act"],
     });
-}).RequireAuthorization("AAuth.Scope.trips.book");
+}).RequireAAuth(scope: ScopeBook, missionAware: true);
 
 app.Run();
 

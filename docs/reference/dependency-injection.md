@@ -142,18 +142,27 @@ builder.Services.AddAAuthAgent("refreshing", options =>
 
 ## Resource Registration (Inbound Verification)
 
-### Verification Middleware
+### Resource Pipeline
 
 ```csharp
 builder.Services.AddAAuthResource(options =>
 {
     options.Issuer = "https://my-resource.example";
-    options.SigningKeys = new() { ["key-1"] = resourceKey };
+    options.SigningKeys["key-1"] = resourceKey;
 });
+builder.Services.AddAAuthAuthentication();
+builder.Services.AddAAuthAuthorization();
 
 var app = builder.Build();
-app.UseAAuthVerification(); // HTTP sig + JWT issuer verification middleware
-app.MapAAuthWellKnown();    // /.well-known/aauth-resource.json + /jwks.json
+app.MapAAuthWellKnown(); // /.well-known/aauth-resource.json + /jwks.json
+app.UseRouting();
+app.UseAAuth(o => o.TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" });
+app.UseAuthentication();
+app.UseAuthorization();
+
+// Each protected endpoint declares what it needs:
+app.MapGet("/data", (HttpContext ctx) => Results.Ok(ctx.GetAAuthVerification()!.Scopes))
+    .RequireAAuth(scope: "data:read");
 ```
 
 ### With Scope Descriptions (Published in Metadata)
@@ -188,26 +197,32 @@ builder.Services.AddAAuthResource(options =>
 ### Authentication & Authorization Policies
 
 To map verification results into a `ClaimsPrincipal` and enforce per-endpoint
-access, register the AAuth authentication scheme, the authorization handlers, and
-any named scope/role policies:
+access, register the AAuth authentication scheme and the authorization handlers,
+then declare each endpoint's requirement inline:
 
 ```csharp
 builder.Services.AddAAuthAuthentication();   // maps result → ClaimsPrincipal
 builder.Services.AddAAuthAuthorization();    // scope handler + built-in policies
 
-// Named convenience policies (apply with RequireAuthorization(...)):
-builder.Services.AddAAuthScopePolicy("AAuth.Scope.data:read", "data:read");
-builder.Services.AddAAuthRolePolicy("AAuth.Role.admin", "admin");
+var app = builder.Build();
+app.UseRouting();
+app.UseAAuth(o => o.TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" });
+app.UseAuthentication();
+app.UseAuthorization();
+
+// Per-route scope/role lives on the endpoint:
+app.MapGet("/data", handler).RequireAAuth(scope: "data:read");
+app.MapGet("/admin", handler).RequireAAuth(scope: "data:read", role: "admin");
+app.MapGet("/me", handler).RequireAAuthSignature(identified: true); // agent identity, no token
 ```
 
 - `AddAAuthAuthorization()` registers the built-in `AAuth.Authenticated`,
   `AAuth.Identified`, and `AAuth.Authorized` policies plus `AAuthScopeHandler`.
-- `AddAAuthScopePolicy(policyName, requiredScope)` registers a policy that requires
-  an `AAuthLevel.Authorized` auth token carrying `requiredScope` — an agent-token-only
-  (PoP) request cannot satisfy it.
-- `AddAAuthRolePolicy(policyName, requiredRole)` registers a policy that requires an
-  `AAuthLevel.Authorized` auth token plus `requiredRole` (mapped from the token's
-  `roles` claim to the standard `ClaimTypes.Role`).
+- `.RequireAAuth(scope: "x")` requires an `AAuthLevel.Authorized` auth token carrying
+  `x` — an agent-token-only (PoP) request cannot satisfy it. Add `role: "y"` to also
+  require a role (mapped from the token's `roles` claim to the standard `ClaimTypes.Role`).
+- `.RequireAAuthSignature()` requires only a verified HTTP signature (identity-based or
+  resource-managed access); pass `identified: true` to require at least an agent token.
 
 See [Authorization Policies](../server/authorization-policies.md) for details.
 
@@ -275,8 +290,10 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddAAuthResource(options =>
 {
     options.Issuer = "https://my-service.example";
-    options.SigningKeys = new() { ["rs-1"] = resourceKey };
+    options.SigningKeys["rs-1"] = resourceKey;
 });
+builder.Services.AddAAuthAuthentication();
+builder.Services.AddAAuthAuthorization();
 
 // Outbound: sign requests to downstream resources
 builder.Services.AddAAuthAgent("downstream", options =>
@@ -289,12 +306,15 @@ builder.Services.AddAAuthAgent("downstream", options =>
 });
 
 var app = builder.Build();
-app.UseAAuthVerification();
 app.MapAAuthWellKnown();
+app.UseRouting();
+app.UseAAuth();
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapGet("/data", async (HttpContext ctx, IHttpClientFactory factory) =>
 {
-    // Inbound request was verified by middleware
+    // Inbound request was verified by the AAuth pipeline
     var parsed = ctx.GetAAuthParsedKey()!;
 
     // Make signed outbound request
@@ -302,7 +322,7 @@ app.MapGet("/data", async (HttpContext ctx, IHttpClientFactory factory) =>
     var downstream = await client.GetStringAsync("https://other-resource.example/api");
 
     return Results.Ok(new { agent = parsed.Payload?["sub"]?.ToString(), downstream });
-});
+}).RequireAAuthSignature(identified: true);
 
 app.Run();
 ```

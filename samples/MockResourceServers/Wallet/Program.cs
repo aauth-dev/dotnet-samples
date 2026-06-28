@@ -1,11 +1,4 @@
 using AAuth.Crypto;
-using AAuth;
-using AAuth.Discovery;
-using AAuth.HttpSig;
-using AAuth.Server;
-using AAuth.Server.Authorization;
-using AAuth.Server.Challenge;
-using AAuth.Server.Metadata;
 using AAuth.Server.Verification;
 
 // ---------------------------------------------------------------------------
@@ -45,80 +38,38 @@ var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:Signatu
 var accessServerUrl = builder.Configuration["AAuth:AccessServer"] ?? "http://localhost:5500";
 var trustedAccessServers = new HashSet<string> { accessServerUrl };
 
-builder.Services.AddSingleton(resourceKey);
-builder.Services.AddSingleton(new AAuthVerifier
+// One DI call: verifier, discovery clients (pooled handler), JTI store, and the
+// published metadata — no manual HttpClient/discovery wiring.
+builder.Services.AddAAuthResource(o =>
 {
-    MaxAge = TimeSpan.FromSeconds(signatureWindowSeconds),
-});
-builder.Services.AddSingleton<IJtiStore, InMemoryJtiStore>();
-builder.Services.AddSingleton<MetadataClient>(sp =>
-    new MetadataClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-metadata")));
-builder.Services.AddSingleton<JwksClient>(sp =>
-    new JwksClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-jwks")));
-builder.Services.AddSingleton<ISignatureKeyResolver>(sp =>
-    new DefaultSignatureKeyResolver(sp.GetRequiredService<JwksClient>()));
-builder.Services.AddHttpClient("aauth-metadata");
-builder.Services.AddHttpClient("aauth-jwks");
-
-builder.Services.AddAAuthAuthentication();
-builder.Services.AddAAuthAuthorization();
-builder.Services.AddAAuthScopePolicy("AAuth.Scope.wallet.read", ScopeRead);
-builder.Services.AddAAuthScopePolicy("AAuth.Scope.wallet.charge", ScopeCharge);
-
-var app = builder.Build();
-
-app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
-{
-    Issuer = resourceUrl,
-    Name = "Aria Wallet",
-    SigningKeys = new Dictionary<string, AAuthKey> { [ResourceKid] = resourceKey },
-    ScopeDescriptions = new Dictionary<string, string>
+    o.Issuer = resourceUrl;
+    o.SigningKeys[ResourceKid] = resourceKey;
+    o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
+    o.SignatureWindow = signatureWindowSeconds;
+    o.Name = "Aria Wallet";
+    o.ScopeDescriptions = new Dictionary<string, string>
     {
         [ScopeRead] = "See your balance and saved cards",
         [ScopeCharge] = "Charge your wallet to pay for travel",
-    },
-    SignatureWindow = signatureWindowSeconds,
+    };
 });
+builder.Services.AddAAuthAuthentication();
+builder.Services.AddAAuthAuthorization();
 
-// Four-party verification: the auth token is issued by the AS (iss = AS,
-// dwk = aauth-access.json), so the AS is the trusted auth-token issuer here —
-// not the PS.
-AAuthVerificationOptions FederatedVerification() => new()
+var app = builder.Build();
+
+// Well-known metadata + JWKS from the DI-registered resource metadata.
+app.MapAAuthWellKnown();
+
+// One declarative pipeline. Four-party: the resource token's `aud` is the AS
+// (PersonServerAudience), routing the PS to federate; the AS is the trusted
+// auth-token issuer (iss = AS, dwk = aauth-access.json).
+app.UseRouting();
+app.UseAAuth(o =>
 {
-    ResourceIdentifier = resourceUrl,
-    RequireIssuerVerification = true,
-    TrustedAuthTokenIssuers = trustedAccessServers,
-};
-
-// Four-party challenge: the resource token's `aud` is the AS (via
-// PersonServerAudience), which routes the PS to federate to the AS rather than
-// asserting access itself.
-ChallengeOptions ChallengeForFederated(string scope) => new()
-{
-    AccessMode = AAuthAccessMode.RequireAuthToken,
-    ResourceSigningKey = resourceKey,
-    ResourceKeyId = ResourceKid,
-    ResourceIdentifier = resourceUrl,
-    PersonServerAudience = accessServerUrl,
-    DefaultScopes = scope,
-};
-
-// Declare the more specific /wallet/charge before the general /wallet.
-app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/wallet/charge"),
-    branch =>
-    {
-        branch.UseAAuthVerification(FederatedVerification());
-        branch.UseAAuthChallenge(ChallengeForFederated(ScopeCharge));
-    });
-app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/wallet")
-        && !ctx.Request.Path.StartsWithSegments("/wallet/charge"),
-    branch =>
-    {
-        branch.UseAAuthVerification(FederatedVerification());
-        branch.UseAAuthChallenge(ChallengeForFederated(ScopeRead));
-    });
+    o.TrustedAuthTokenIssuers = trustedAccessServers;
+    o.PersonServerAudience = accessServerUrl;
+});
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -155,7 +106,7 @@ app.MapGet("/wallet", (HttpContext ctx) =>
         userKey = result.Issuer is null ? null : $"{result.Issuer}|{result.Subject}",
         act = parsed.Payload?["act"],
     });
-}).RequireAuthorization("AAuth.Scope.wallet.read");
+}).RequireAAuth(scope: ScopeRead);
 
 // GET /wallet/charge — four-party payment. The AS grants `wallet.charge` ONLY
 // to users carrying the `wallet.payer` role; everyone else is denied 403 by the
@@ -176,7 +127,7 @@ app.MapGet("/wallet/charge", (HttpContext ctx) =>
         iss = result.Issuer,
         act = parsed.Payload?["act"],
     });
-}).RequireAuthorization("AAuth.Scope.wallet.charge");
+}).RequireAAuth(scope: ScopeCharge);
 
 app.Run();
 

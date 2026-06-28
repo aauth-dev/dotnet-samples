@@ -303,9 +303,9 @@ return 0;
 // ---------------------------------------------------------------------------
 async Task<JsonObject?> AccessMissionResourceAsync(string url)
 {
-    // A real agent rotates its short-lived agent token; refreshing here gives
-    // each request a fresh `jti`, which also satisfies the resource's replay
-    // detection (§HTTP Message Signatures — replay).
+    // A real agent rotates its short-lived agent token; we refresh here to
+    // model that. Replay detection is keyed on the per-request signature, so the
+    // token itself stays reusable (§HTTP Message Signatures — replay).
     agentToken = await apClient.RefreshAsync(refreshEndpoint, localKeyHandle);
 
     // One mission-aware client does the whole resource-access leg:

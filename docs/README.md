@@ -183,6 +183,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `IPermissionDecider` | PS policy seam for the permission endpoint |
 | `IAuditSink` | PS sink for audit records |
 | `IInteractionRelay` | PS user-channel seam for interactions |
+| `IMissionTokenConsent` | PS decision seam for the out-of-scope mission **token** gate (`Grant`/`Deny`/`Clarify`/`Interact`); the mapper owns the `requirement=clarification` round-trip |
 | `StoredMission` / `MissionLogEntry` | Persisted mission + log entry records |
 | `PermissionDecision` / `PermissionOutcome` / `PermissionDecisionReason` | Typed permission decision vocabulary |
 
@@ -210,10 +211,14 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | Type | Purpose |
 |------|---------|
 | `RevocationEndpoint` | Token revocation endpoint |
-| `IJtiStore` / `InMemoryJtiStore` | Replay detection (JTI tracking) |
-| `IOpaqueTokenStore` / `InMemoryOpaqueTokenStore` | Resource-managed opaque access-token store (mint/validate) |
-| `HttpContext.ResolveAAuthAccessAsync` / `IssueAAuthAccessAsync` / `InteractionRequiredAAuth` | Resource-managed (two-party) request/response helpers |
-| `MapAAuthAuthorizationEndpoint` | Maps a signed `POST authorization_endpoint` (proactive entry point) |
+| `IJtiStore` / `InMemoryJtiStore` | Replay detection (records the per-request signature) + revocation |
+| `AddAAuthResourceManaged` | High-level resource-managed (two-party) setup: opaque-token store + interaction store + poll endpoint |
+| `HttpContext.RequireAAuthInteraction` | Opt an endpoint into a consent interaction (`202` + `AAuth-Requirement`) |
+| `MapAAuthInteractionPoll` | SDK-owned poll endpoint that issues the `AAuth-Access` token on approval |
+| `IInteractionPendingStore` / `InMemoryInteractionPendingStore` | Interaction park store; the consent page records approval via `Approve(code)` |
+| `AAuthInteractionCode` | Single-use interaction code (Crockford base32) |
+| `IOpaqueTokenStore` / `InMemoryOpaqueTokenStore` | Opaque access-token store (mint/validate); read a request's token via `ResolveAAuthAccessAsync` |
+| `HttpContext.IssueAAuthAccessAsync` / `InteractionRequiredAAuth`, `MapAAuthAuthorizationEndpoint` | Low-level building blocks `AddAAuthResourceManaged` wires for you |
 
 ### `AAuth` — Diagnostics
 
@@ -226,10 +231,13 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | Type | Purpose |
 |------|---------|
 | `AAuthAgentServiceCollectionExtensions` | `services.AddAAuthAgent(...)` |
-| `AAuthResourceServiceCollectionExtensions` | `services.AddAAuthResource(...)` |
+| `AAuthResourceServiceCollectionExtensions` | `services.AddAAuthResource(...)`, `services.AddAAuthAuthentication()`, `services.AddAAuthAuthorization()` |
+| `AAuthResourceManagedServiceCollectionExtensions` | `services.AddAAuthResourceManaged(...)` — resource-managed (two-party) setup |
+| `AAuthFederationServiceCollectionExtensions` | `services.AddAAuthFederation(...)` — PS→AS four-party client |
 | `AAuthDiscoveryServiceCollectionExtensions` | `services.AddAAuthDiscovery(...)` |
 | `AAuthGovernanceServiceCollectionExtensions` | `services.AddAAuthGovernance()` |
-| `AAuthApplicationBuilderExtensions` | `app.UseAAuthVerification()` |
+| `AAuthEndpointExtensions` | `endpoint.RequireAAuth(scope, role)` / `.RequireAAuthSignature()` + `app.UseAAuth(...)` — per-route requirements |
+| `AAuthApplicationBuilderExtensions` | `app.MapAAuthResource()` (unified pipeline); `app.UseAAuthVerification()` (low-level building block) |
 
 > These extension methods live in the conventional `Microsoft.Extensions.DependencyInjection` and `Microsoft.AspNetCore.Builder` namespaces so they surface automatically in ASP.NET Core projects. The associated options records (`AAuthAgentOptions`, `AAuthResourceOptions`, `AAuthDiscoveryOptions`, etc.) live in the root `AAuth` namespace.
 

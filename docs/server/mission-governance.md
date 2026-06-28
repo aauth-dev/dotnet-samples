@@ -58,6 +58,7 @@ builder.Services.AddAAuthInteractionRelay(async (request, ct) =>
 | `IPermissionDecider` | `DefaultPermissionDecider` (no-op) | PS supplies policy |
 | `IAuditSink` | `DefaultAuditSink` (logs to the mission log) | PS supplies storage/alerting |
 | `IInteractionRelay` | `DefaultInteractionRelay` (no user channel) | PS supplies the user channel |
+| `IMissionTokenConsent` | `DefaultMissionTokenConsent` (hold for a user verdict) | PS supplies the out-of-scope mission **token** decision (`MapAAuthPersonServer`) |
 
 By default a `Prompt` outcome is resolved synchronously (a permission denial / a
 mission decline), since the mapper has no user channel. To opt into the deferred

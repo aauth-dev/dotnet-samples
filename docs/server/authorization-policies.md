@@ -24,60 +24,63 @@ builder.Services.AddAAuthAuthorization();
 
 ## Scope-Based Policies
 
-Use the `AddAAuthScopePolicy` convenience helper to register a named policy that
-requires a specific scope. It binds the `AAuth` authentication scheme and adds an
-`AAuthScopeRequirement`:
+Protect a minimal-API endpoint with `.RequireAAuth(scope: ...)`. It attaches the
+verification and challenge metadata and an inline authorization policy in one call
+— there is no named policy string to keep in sync:
 
 ```csharp
-builder.Services.AddAAuthScopePolicy("AAuth.Scope.data:read", "data:read");
-builder.Services.AddAAuthScopePolicy("AAuth.Scope.data:write", "data:write");
+app.MapGet("/data", () => Results.Ok("data"))
+    .RequireAAuth(scope: "data:read");
 ```
 
-`AAuthScopeHandler` requires **both** of the following — a verified scope alone is
-not sufficient:
+`.RequireAAuth(scope: ...)` enforces an `AAuthScopeRequirement`, which requires
+**both** of the following — a verified scope alone is not sufficient:
 
 - `AAuthVerificationResult.Level == AAuthLevel.Authorized` (the request presented a
   verified auth token, not just an agent token), **and**
 - the required scope is present in `AAuthVerificationResult.Scopes`.
 
 Because of the level check, a signature-only or agent-token-only (PoP) request can
-never satisfy a scope policy, even if it somehow carried a matching scope claim.
+never satisfy a scope requirement, even if it somehow carried a matching scope claim.
 
-Apply via `[Authorize]` or endpoint metadata:
+### Named policies (building block)
 
-```csharp
-app.MapGet("/data", () => Results.Ok("data"))
-    .RequireAuthorization("AAuth.Scope.data:read");
-
-// Or in controllers:
-[Authorize("AAuth.Scope.data:read")]
-public IActionResult GetData() => Ok("data");
-```
-
-To build a policy by hand instead of using the helper, add the requirement directly
-(remember to also bind the `AAuth` scheme so the claims are available):
+MVC controllers and other call sites that can't use the per-route `.RequireAAuth`
+extension bind the same requirement through a named policy. Build it by hand with
+`AAuthScopeRequirement` (remember to also bind the `AAuth` scheme so the claims are
+available):
 
 ```csharp
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy("ReadData", policy =>
         policy.AddAuthenticationSchemes(AAuthAuthenticationHandler.SchemeName)
             .AddRequirements(new AAuthScopeRequirement("data:read")));
+
+// Reference it from a controller:
+[Authorize("ReadData")]
+public IActionResult GetData() => Ok("data");
 ```
+
+The `AddAAuthScopePolicy(name, scope)` helper is a shortcut for the same
+registration. Prefer `.RequireAAuth(scope: ...)` for minimal-API endpoints; reach
+for named policies only where the endpoint extension is unavailable.
 
 ## Role-Based Policies
 
 Enterprise roles asserted in the auth token's `roles` claim are mapped to the
 standard `System.Security.Claims.ClaimTypes.Role` claim, so they work with the
-built-in ASP.NET Core `RequireRole` / `[Authorize(Roles = ...)]`. Use
-`AddAAuthRolePolicy` to register a named policy that requires the
-`AAuthLevel.Authorized` level **and** a specific role:
+built-in ASP.NET Core `RequireRole` / `[Authorize(Roles = ...)]`. On a minimal-API
+endpoint, require a role with `.RequireAAuth(role: ...)` — it enforces the
+`AAuthLevel.Authorized` level **and** the named role (and a scope too when both are
+supplied):
 
 ```csharp
-builder.Services.AddAAuthRolePolicy("AAuth.Role.admin", "admin");
-
 app.MapGet("/admin", () => Results.Ok("admin data"))
-    .RequireAuthorization("AAuth.Role.admin");
+    .RequireAAuth(scope: "data:read", role: "admin");
 ```
+
+For MVC controllers, register a named role policy (by hand, or with the
+`AddAAuthRolePolicy(name, role)` helper) and reference it from `[Authorize]`.
 
 > **Role assertion is the PS's decision.** A role policy enforces a role that
 > the Person Server *may* assert in the auth token (the protocol leaves it
@@ -106,7 +109,7 @@ auditing but are not enforced by a built-in helper.
 
 ## AAuthAuthenticationHandler
 
-The authentication handler reads `AAuthVerificationResult` from `HttpContext.Features` (set by `UseAAuthVerification`) and maps it to a `ClaimsPrincipal`:
+The authentication handler reads `AAuthVerificationResult` from `HttpContext.Features` (set by the verification middleware that `UseAAuth` runs) and maps it to a `ClaimsPrincipal`:
 
 | Claim | Source |
 |-------|--------|
@@ -140,28 +143,28 @@ public enum AAuthLevel
 
 ```csharp
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddSingleton(new AAuthVerifier());
-builder.Services.AddSingleton(sp => new MetadataClient(httpClient));
-builder.Services.AddSingleton(sp => new JwksClient(httpClient));
+
+// One call: verifier, discovery clients (pooled handler), JTI store, and metadata.
+builder.Services.AddAAuthResource(o =>
+{
+    o.Issuer = "https://resource.example";
+    o.SigningKeys["key-1"] = resourceKey;
+});
 builder.Services.AddAAuthAuthentication();
 builder.Services.AddAAuthAuthorization();
-builder.Services.AddAAuthScopePolicy("AAuth.Scope.data:read", "data:read");
-builder.Services.AddAAuthRolePolicy("AAuth.Role.admin", "admin");
 
 var app = builder.Build();
-app.UseAAuthVerification();
-app.UseAAuthChallenge(new ChallengeOptions
-{
-    AccessMode = AAuthAccessMode.RequireAuthToken,
-    ResourceSigningKey = resourceKey,
-    ResourceKeyId = "key-1",
-    ResourceIdentifier = "https://resource.example",
-    DefaultScopes = "data:read",
-});
+
+app.MapAAuthWellKnown();
+
+app.UseRouting();
+app.UseAAuth(o => o.TrustedAuthTokenIssuers = trustedPersonServers);
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapGet("/data", () => Results.Ok("protected data"))
-    .RequireAuthorization("AAuth.Scope.data:read");
+    .RequireAAuth(scope: "data:read");
+app.MapGet("/admin", () => Results.Ok("admin data"))
+    .RequireAAuth(scope: "data:read", role: "admin");
 app.Run();
 ```

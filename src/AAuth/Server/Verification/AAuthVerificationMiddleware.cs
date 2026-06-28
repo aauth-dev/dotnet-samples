@@ -151,29 +151,44 @@ public sealed class AAuthVerificationMiddleware
             return;
         }
 
-        // Replay detection.
+        // Replay detection (§Freshness and Replay, spec L2376/L2378). Replay is
+        // defended on the per-request SIGNATURE, not the carrier token: an auth
+        // token (or jkt-jwt naming JWT) is a reusable credential presented on
+        // every request, so keying the cache on its `jti` would make it
+        // single-use and break legitimate reuse — e.g. an intermediary
+        // re-driving a chained call on each `GET /pending/{id}` poll. We key on
+        // the verified signature itself, which cryptographically binds the spec's
+        // tuple `(key-thumbprint, created, @method, @authority, @path)` PLUS the
+        // covered `signature-key` (the carrier). So a captured signature replayed
+        // verbatim collides and is rejected, while legitimately distinct requests
+        // — a fresh `created`, a different carrier, a different path — never do.
+        // The carrier `jti` is kept only for revocation.
         var tokenId = parsedInfo.Payload?["jti"]?.GetValue<string>();
         if (context.Items.TryGetValue(JtiStoreItemKey, out var storeObj) &&
-            storeObj is IJtiStore jtiStore &&
-            tokenId is { Length: > 0 } jti)
+            storeObj is IJtiStore jtiStore)
         {
-            var expNode = parsedInfo.Payload?["exp"];
-            var expiration = expNode is not null
-                ? DateTimeOffset.FromUnixTimeSeconds(expNode.GetValue<long>())
-                : DateTimeOffset.UtcNow.AddMinutes(5);
-            if (!await jtiStore.TryRecordAsync(jti, expiration, context.RequestAborted))
+            // Revocation is keyed on the token's own `jti` (audit/revocation).
+            if (tokenId is { Length: > 0 } revocableJti &&
+                await jtiStore.IsRevokedAsync(revocableJti, context.RequestAborted).ConfigureAwait(false))
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 context.Response.Headers[SignatureError.HeaderName] =
                     SignatureError.Format(SignatureErrorCode.InvalidJwt);
                 return;
             }
-            if (await jtiStore.IsRevokedAsync(jti, context.RequestAborted))
+
+            // Replay is keyed on the verified signature for the freshness window.
+            if (ParseSignatureCreated(signatureInput) is { } createdSeconds)
             {
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                context.Response.Headers[SignatureError.HeaderName] =
-                    SignatureError.Format(SignatureErrorCode.InvalidJwt);
-                return;
+                var replayKey = $"{publicKey.ComputeJwkThumbprint()}|{signature}";
+                var replayExpiry = DateTimeOffset.FromUnixTimeSeconds(createdSeconds) + _verifier.MaxAge;
+                if (!await jtiStore.TryRecordAsync(replayKey, replayExpiry, context.RequestAborted).ConfigureAwait(false))
+                {
+                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    context.Response.Headers[SignatureError.HeaderName] =
+                        SignatureError.Format(SignatureErrorCode.InvalidJwt);
+                    return;
+                }
             }
         }
 
@@ -546,6 +561,31 @@ public sealed class AAuthVerificationMiddleware
             return false;
         value = values[0]!;
         return true;
+    }
+
+    // Extract the `created` Unix timestamp from a Signature-Input value
+    // (`sig=(...);created=NNN`), used only to bound the replay-cache entry's
+    // expiry. This is a lightweight extract, NOT the authoritative parse — the
+    // signature has already been fully validated by AAuthVerifier (see
+    // AAuthVerifier.ParseSignatureInput, which validates `created` and the
+    // covered components and throws on a missing/invalid `created`). Returns null
+    // when absent; because verification already requires `created`, a null here
+    // only means no replay entry is written (replay defense is MAY, not MUST).
+    private static long? ParseSignatureCreated(string signatureInput)
+    {
+        const string Marker = "created=";
+        var idx = signatureInput.IndexOf(Marker, StringComparison.Ordinal);
+        if (idx < 0)
+            return null;
+        var start = idx + Marker.Length;
+        var end = start;
+        if (end < signatureInput.Length && signatureInput[end] == '-')
+            end++;
+        while (end < signatureInput.Length && char.IsDigit(signatureInput[end]))
+            end++;
+        return long.TryParse(signatureInput.AsSpan(start, end - start), out var created)
+            ? created
+            : null;
     }
 
     private static AAuthLevel DetermineLevel(string scheme, string? tokenType)

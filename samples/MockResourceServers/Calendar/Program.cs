@@ -1,11 +1,4 @@
 using AAuth.Crypto;
-using AAuth;
-using AAuth.Discovery;
-using AAuth.HttpSig;
-using AAuth.Server;
-using AAuth.Server.Authorization;
-using AAuth.Server.Challenge;
-using AAuth.Server.Metadata;
 using AAuth.Server.Verification;
 
 // ---------------------------------------------------------------------------
@@ -46,90 +39,35 @@ var trustedPersonServers = new HashSet<string>(
     builder.Configuration.GetSection("AAuth:TrustedPersonServers").Get<string[]>()
         ?? new[] { "http://localhost:5100" });
 
-builder.Services.AddSingleton(resourceKey);
-builder.Services.AddSingleton(new AAuthVerifier
+// One DI call: verifier, discovery clients (pooled handler), JTI store, and the
+// published metadata — no manual HttpClient/discovery wiring.
+builder.Services.AddAAuthResource(o =>
 {
-    MaxAge = TimeSpan.FromSeconds(signatureWindowSeconds),
-});
-builder.Services.AddSingleton<IJtiStore, InMemoryJtiStore>();
-builder.Services.AddSingleton<MetadataClient>(sp =>
-    new MetadataClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-metadata")));
-builder.Services.AddSingleton<JwksClient>(sp =>
-    new JwksClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-jwks")));
-builder.Services.AddSingleton<ISignatureKeyResolver>(sp =>
-    new DefaultSignatureKeyResolver(sp.GetRequiredService<JwksClient>()));
-builder.Services.AddHttpClient("aauth-metadata");
-builder.Services.AddHttpClient("aauth-jwks");
-
-builder.Services.AddAAuthAuthentication();
-builder.Services.AddAAuthAuthorization();
-builder.Services.AddAAuthScopePolicy("AAuth.Scope.calendar.read", ScopeRead);
-builder.Services.AddAAuthScopePolicy("AAuth.Scope.calendar.write", ScopeWrite);
-builder.Services.AddAAuthRolePolicy("AAuth.Role.calendar.owner", RoleOwner);
-
-var app = builder.Build();
-
-app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
-{
-    Issuer = resourceUrl,
-    Name = "Aria Calendar",
-    SigningKeys = new Dictionary<string, AAuthKey> { [ResourceKid] = resourceKey },
-    ScopeDescriptions = new Dictionary<string, string>
+    o.Issuer = resourceUrl;
+    o.SigningKeys[ResourceKid] = resourceKey;
+    o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
+    o.SignatureWindow = signatureWindowSeconds;
+    o.Name = "Aria Calendar";
+    o.ScopeDescriptions = new Dictionary<string, string>
     {
         [ScopeRead] = "See your calendar events",
         [ScopeWrite] = "Add and change calendar events",
-    },
-    SignatureWindow = signatureWindowSeconds,
+    };
 });
+builder.Services.AddAAuthAuthentication();
+builder.Services.AddAAuthAuthorization();
 
-// Full issuer verification: discover the auth-token issuer's JWKS, bind `aud`
-// to this resource, and trust only the configured Person Servers.
-AAuthVerificationOptions FullVerification() => new()
-{
-    ResourceIdentifier = resourceUrl,
-    RequireIssuerVerification = true,
-    TrustedAuthTokenIssuers = trustedPersonServers,
-};
+var app = builder.Build();
 
-// Challenge options requesting a specific scope. When only an agent token is
-// presented, the middleware returns a 401 with a resource token (aud = the
-// agent token's `ps`) requesting `scope`.
-ChallengeOptions ChallengeForScope(string scope) => new()
-{
-    AccessMode = AAuthAccessMode.RequireAuthToken,
-    ResourceSigningKey = resourceKey,
-    ResourceKeyId = ResourceKid,
-    ResourceIdentifier = resourceUrl,
-    DefaultScopes = scope,
-};
+// Well-known metadata + JWKS from the DI-registered resource metadata.
+app.MapAAuthWellKnown();
 
-// Isolated pipelines. Declare the more specific /events/write and /events/admin
-// before the general /events so segment matching stays unambiguous.
-app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/events/write"),
-    branch =>
-    {
-        branch.UseAAuthVerification(FullVerification());
-        branch.UseAAuthChallenge(ChallengeForScope(ScopeWrite));
-    });
-app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/events/admin"),
-    branch =>
-    {
-        branch.UseAAuthVerification(FullVerification());
-        // The role is enforced from the auth token's `roles` claim; the
-        // challenge only requests the base read scope.
-        branch.UseAAuthChallenge(ChallengeForScope(ScopeRead));
-    });
-app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/events")
-        && !ctx.Request.Path.StartsWithSegments("/events/write")
-        && !ctx.Request.Path.StartsWithSegments("/events/admin"),
-    branch =>
-    {
-        branch.UseAAuthVerification(FullVerification());
-        branch.UseAAuthChallenge(ChallengeForScope(ScopeRead));
-    });
+// One declarative pipeline: per-route scope/role lives on the endpoint
+// (.RequireAAuth(...)); this single post-routing middleware verifies and
+// challenges each matched endpoint from its metadata. Trust only the configured
+// Person Servers (fail-closed).
+app.UseRouting();
+app.UseAAuth(o => o.TrustedAuthTokenIssuers = trustedPersonServers);
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -167,7 +105,7 @@ app.MapGet("/events", (HttpContext ctx) =>
         userKey = result.Issuer is null ? null : $"{result.Issuer}|{result.Subject}",
         act = parsed.Payload?["act"],
     });
-}).RequireAuthorization("AAuth.Scope.calendar.read");
+}).RequireAAuth(scope: ScopeRead);
 
 // GET /events/write — step-up scope. Requires the elevated `calendar.write`.
 app.MapGet("/events/write", (HttpContext ctx) =>
@@ -184,7 +122,7 @@ app.MapGet("/events/write", (HttpContext ctx) =>
         scope = result.Scopes,
         iss = result.Issuer,
     });
-}).RequireAuthorization("AAuth.Scope.calendar.write");
+}).RequireAAuth(scope: ScopeWrite);
 
 // GET /events/admin — RBAC. Requires the `calendar.owner` role asserted by the
 // PS in the auth token's `roles` claim (mapped to the ASP.NET role claim).
@@ -203,7 +141,7 @@ app.MapGet("/events/admin", (HttpContext ctx) =>
         groups = result.Groups,
         iss = result.Issuer,
     });
-}).RequireAuthorization("AAuth.Role.calendar.owner");
+}).RequireAAuth(scope: ScopeRead, role: RoleOwner);
 
 app.Run();
 
