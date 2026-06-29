@@ -67,6 +67,17 @@ four-party interop reveals a gap; logged as a default, not a hard ruling.
 
 ## Deviations from plan
 
+### [2026-06-29] [Phase 14] PR #41 review remediation
+Validated the 4 Copilot reviewer comments (one read-only subagent each): 3 valid,
+1 invalid. Applied fixes: (1) `/revoke` catches `InvalidOperationException` (non-JSON
+Content-Type) → `400` not `500`, with a new conformance test; (2) AS token endpoint
+rejects missing/invalid `jwks_uri` before the trust gate (defense-in-depth — the
+verification middleware already pre-empts it, so no dedicated test); (3) corrected the
+AS-audience error message to note loopback http is allowed. The `IssuerTrust` "LINQ
+O(n)" comment is **invalid** (`Enumerable.Contains` ICollection fast path keeps
+`HashSet` O(1)); replied on the PR, no code change. Tests 517 / Conformance 571 / e2e
+44 pass; solution builds clean.
+
 ### [2026-06-29] [Phases 8–13] Post-review remediation complete
 Owner pulled the revocation gap into scope and asked to tighten #5, improve #4
 coverage, document the TOP false positive, redo docs/review, and rename the

@@ -158,6 +158,19 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    [Fact(DisplayName = "§Token Revocation — non-JSON Content-Type is rejected (400, not 500)")]
+    public async Task Revocation_RejectsNonJsonContentType()
+    {
+        await StartRevocationHost(o => o.TrustedRevokers = new[] { ApIssuer });
+
+        // Verified + authorized caller, but a non-JSON body: ReadFromJsonAsync
+        // throws InvalidOperationException, which must surface as 400, not 500.
+        var response = await PostSignedRevoke(
+            new StringContent("jti=x", System.Text.Encoding.UTF8, "application/x-www-form-urlencoded"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────
 
     private async Task StartRevocationHost(Action<AAuthRevocationOptions>? configure)
@@ -178,7 +191,13 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
         _host = app;
     }
 
-    private async Task<HttpResponseMessage> SendSignedRevoke(string? jti)
+    private Task<HttpResponseMessage> SendSignedRevoke(string? jti)
+    {
+        var body = jti is null ? new JsonObject() : new JsonObject { ["jti"] = jti };
+        return PostSignedRevoke(JsonContent.Create(body));
+    }
+
+    private async Task<HttpResponseMessage> PostSignedRevoke(HttpContent content)
     {
         var agentToken = new AgentTokenBuilder
         {
@@ -196,9 +215,7 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
             InnerHandler = _host!.GetTestServer().CreateHandler(),
         };
         using var client = new HttpClient(signing) { BaseAddress = new Uri("http://localhost") };
-
-        var body = jti is null ? new JsonObject() : new JsonObject { ["jti"] = jti };
-        return await client.PostAsJsonAsync("/revoke", body);
+        return await client.PostAsync("/revoke", content);
     }
 
     private async Task<IHost> StartMetadataServer()

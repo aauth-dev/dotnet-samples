@@ -276,10 +276,18 @@ public static class AAuthAccessServerEndpoints
 
             {
                 var jwksUri = parsed.JwksUri;
-                var callerAuthority = Uri.TryCreate(jwksUri, UriKind.Absolute, out var psUri)
-                    ? psUri.Authority
-                    : string.Empty;
-                if (!IssuerTrust.IsTrusted(trustedPsHostsOrNull, options.IsTrustedPersonServer, callerAuthority))
+                // Reject a missing/invalid jwks_uri BEFORE the trust gate: an empty
+                // authority would otherwise pass an open-by-default trust policy and
+                // proceed with an unauthenticated PS identity. Mirrors the pending
+                // poll/push gate (AuthorizePsCaller).
+                if (string.IsNullOrEmpty(jwksUri)
+                    || !Uri.TryCreate(jwksUri, UriKind.Absolute, out var psUri))
+                {
+                    return Results.Json(
+                        new { error = "untrusted_person_server", detail = "missing or invalid jwks_uri" },
+                        statusCode: StatusCodes.Status403Forbidden);
+                }
+                if (!IssuerTrust.IsTrusted(trustedPsHostsOrNull, options.IsTrustedPersonServer, psUri.Authority))
                 {
                     return Results.Json(
                         new { error = "untrusted_person_server", detail = $"jwks_uri '{jwksUri}' is not a trusted Person Server" },

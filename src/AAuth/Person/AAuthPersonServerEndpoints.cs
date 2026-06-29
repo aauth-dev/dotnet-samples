@@ -869,7 +869,7 @@ public static class AAuthPersonServerEndpoints
             if (!AAuthUrl.IsHttpsOrLoopback(resourceAudience))
             {
                 return Results.Json(
-                    new { error = "untrusted_access_server", detail = $"Access Server audience '{resourceAudience}' must be an absolute https URL." },
+                    new { error = "untrusted_access_server", detail = $"Access Server audience '{resourceAudience}' must be an absolute https URL (loopback http allowed for development)." },
                     statusCode: StatusCodes.Status400BadRequest);
             }
             if (!IssuerTrust.IsTrusted(trustedAccessServersOrNull, options.IsTrustedAccessServer, resourceAudience.TrimEnd('/')))

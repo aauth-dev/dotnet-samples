@@ -86,9 +86,10 @@ public static class RevocationEndpoint
                     jti = jtiEl.GetString();
                 }
             }
-            catch (JsonException)
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException)
             {
-                // fall through to the 400 below
+                // Malformed JSON (JsonException) or a missing/non-JSON Content-Type
+                // (InvalidOperationException from ReadFromJsonAsync) — fall through to 400.
             }
 
             if (string.IsNullOrEmpty(jti))

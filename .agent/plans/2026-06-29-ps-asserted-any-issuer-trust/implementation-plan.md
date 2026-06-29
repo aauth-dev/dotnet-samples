@@ -409,3 +409,34 @@ plan, with severity-graded findings.
 
 - [x] All four trust-lists + `#5` + revocation validated against their spec lines.
 - [x] Severity-graded findings recorded; criticals resolved or logged.
+
+## Phase 14 — PR #41 review remediation
+
+Address the Copilot reviewer comments on
+[PR #41](https://github.com/aauth-dev/dotnet-samples/pull/41). Each comment was
+validated by a read-only subagent (3 valid, 1 invalid).
+
+### Files & responsibilities
+
+| File | Fix | Verdict |
+|---|---|---|
+| [`src/AAuth/Server/RevocationEndpoint.cs`](../../../src/AAuth/Server/RevocationEndpoint.cs) | Catch `InvalidOperationException` (non-JSON Content-Type) alongside `JsonException` so a non-JSON POST returns `400`, not `500`. | Valid |
+| [`src/AAuth/Access/AAuthAccessServerEndpoints.cs`](../../../src/AAuth/Access/AAuthAccessServerEndpoints.cs) | Reject missing/invalid `jwks_uri` at the token endpoint BEFORE the trust gate (an empty authority would pass an open-by-default policy); mirrors the pending poll/push gate. | Valid (defense-in-depth) |
+| [`src/AAuth/Person/AAuthPersonServerEndpoints.cs`](../../../src/AAuth/Person/AAuthPersonServerEndpoints.cs) | Correct the AS-audience error message to note loopback http is allowed, matching the codebase convention. | Valid (cosmetic) |
+| `IssuerTrust.IsTrusted` LINQ "O(n)" | **No change** — `Enumerable.Contains` uses the `ICollection<T>` fast path, so a `HashSet` stays O(1) regardless of the `IReadOnlyCollection` static type; sets are single-digit anyway. Replied on the PR. | Invalid |
+
+### Implementation Decisions
+
+- The AS token-endpoint `jwks_uri` reject is **defense-in-depth**: the verification
+  middleware already rejects an invalid `jwks_uri` (401) before the endpoint, and an
+  invalid `jwks_uri` cannot produce a valid PoP signature — so the endpoint's 403 is
+  not independently reachable in the integration harness. No dedicated test is added;
+  existing AS integration tests confirm no happy-path regression.
+
+### Definition of Done
+
+- [x] Non-JSON POST to `/revoke` (verified+authorized) returns `400` (not `500`).
+- [x] AS token endpoint rejects missing/invalid `jwks_uri` before the trust gate.
+- [x] AS-audience error message matches the loopback-allowed convention.
+- [x] Reviewer comment on `IssuerTrust` O(1) answered on the PR.
+- [x] Build + suites + e2e green.
