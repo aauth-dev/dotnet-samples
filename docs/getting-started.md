@@ -318,8 +318,9 @@ app.MapAAuthWellKnown();
 // signature and, when an endpoint needs an auth token, challenges for one.
 // Restrict which Person Servers this resource trusts — the resource verifies
 // auth tokens against the PS's JWKS (discovered at
-// {iss}/.well-known/aauth-person.json). Omit TrustedAuthTokenIssuers to accept
-// any PS dynamically — claims are namespaced by issuer.
+// {iss}/.well-known/aauth-person.json). Omit TrustedAuthTokenIssuers (or assign
+// AAuthTrust.Any) to accept any *verifiable* PS dynamically — claims are
+// namespaced by issuer; leaving it open logs a startup warning.
 app.UseRouting();
 app.UseAAuth(o => o.TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" });
 app.UseAuthentication();

@@ -12,22 +12,42 @@ public sealed class AAuthVerificationOptions
 {
     /// <summary>
     /// Optional allow-list of trusted Agent Provider issuers (for <c>aa-agent+jwt</c>).
-    /// When null, any issuer whose JWKS is resolvable is accepted.
+    /// When <c>null</c>, any issuer whose JWKS is resolvable is accepted; an empty
+    /// set denies all. Composed by AND with <see cref="IsTrustedAgentProviderIssuer"/>.
     /// </summary>
     public IReadOnlySet<string>? TrustedAgentProviderIssuers { get; init; }
 
     /// <summary>
-    /// Allow-list of trusted Person Server / Access Server issuers (for <c>aa-auth+jwt</c>).
+    /// Optional trust policy for Agent Provider issuers, evaluated per <c>iss</c>
+    /// during agent-token verification and composed by AND with
+    /// <see cref="TrustedAgentProviderIssuers"/>. <c>null</c> ⇒ no policy constraint.
+    /// </summary>
+    public Func<string, bool>? IsTrustedAgentProviderIssuer { get; init; }
+
+    /// <summary>
+    /// Optional allow-list of trusted Person Server / Access Server issuers (for
+    /// <c>aa-auth+jwt</c>).
     /// <para>
-    /// <b>Fail-closed:</b> a PS-asserted auth token is honored only when its
-    /// <c>iss</c> is in this set. When <c>null</c> or empty, every auth token is
-    /// rejected — a resource MUST declare which Person Servers it trusts before
-    /// it will accept their asserted identity claims. Signature-only flows
-    /// (<c>hwk</c>/<c>jkt-jwt</c>/<c>jwks_uri</c>) carry no issuer and are
-    /// unaffected.
+    /// <b>Open by default (spec-compliant):</b> when <c>null</c>, any auth token
+    /// from a <em>verifiable</em> issuer is accepted — PS-asserted access accepts
+    /// identity claims from any Person Server, namespaced by <c>iss</c> (§Trust
+    /// Posture in PS-Asserted Access). An <b>empty</b> set denies all (a deliberate
+    /// kill-switch). A non-empty set restricts to the listed issuers. Composed by
+    /// AND with <see cref="IsTrustedAuthTokenIssuer"/>. Signature-only flows
+    /// (<c>hwk</c>/<c>jkt-jwt</c>/<c>jwks_uri</c>) carry no auth-token issuer and
+    /// are unaffected.
     /// </para>
     /// </summary>
     public IReadOnlySet<string>? TrustedAuthTokenIssuers { get; init; }
+
+    /// <summary>
+    /// Optional trust policy for auth-token issuers (Person Servers / Access
+    /// Servers), evaluated per <c>iss</c> during auth-token verification and
+    /// composed by AND with <see cref="TrustedAuthTokenIssuers"/>. <c>null</c> ⇒ no
+    /// policy constraint. Assign <see cref="AAuthTrust.Any"/> to state intentional
+    /// open trust explicitly (and suppress the startup warning).
+    /// </summary>
+    public Func<string, bool>? IsTrustedAuthTokenIssuer { get; init; }
 
     /// <summary>
     /// This resource's own identifier — used for <c>aud</c> validation on auth tokens.

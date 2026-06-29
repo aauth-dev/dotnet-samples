@@ -81,8 +81,9 @@ the full table). The identity claims asserted by a Person Server — `sub`
 > **`sub` alone is not an identity.** The same `sub` asserted by two different
 > Person Servers is two different users. Key your application records on
 > `(iss, sub)` (or the `aauth:sub_iss` claim), never on `sub` alone. Issuer trust
-> is fail-closed: only auth tokens whose `iss` is in
-> `AAuthVerificationOptions.TrustedAuthTokenIssuers` are honored.
+> is open by default — an unset `AAuthVerificationOptions.TrustedAuthTokenIssuers`
+> honors any *verifiable* Person Server (namespaced by `iss`); set the list (or
+> the `IsTrustedAuthTokenIssuer` predicate) to restrict which issuers are honored.
 
 ## Authorization (authZ)
 

@@ -165,6 +165,12 @@ app.MapGet("/data", (HttpContext ctx) => Results.Ok(ctx.GetAAuthVerification()!.
     .RequireAAuth(scope: "data:read");
 ```
 
+> `TrustedAuthTokenIssuers` is optional. Omit it (or assign `AAuthTrust.Any`) to
+> accept any *verifiable* Person Server — the spec default — with claims
+> namespaced by `iss`; pass a set or the `IsTrustedAuthTokenIssuer` predicate to
+> restrict. Leaving it unset while issuer verification is on logs an open-trust
+> `Warning` at startup.
+
 ### With Scope Descriptions (Published in Metadata)
 
 ```csharp
@@ -472,7 +478,7 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
 {
     Issuer               = psIssuer,
     SigningKeys          = new Dictionary<string, AAuthKey> { [PsKid] = psKey },
-    TrustedAccessServers = trustedAccessServers,        // omit ⇒ three-party only
+    TrustedAccessServers = trustedAccessServers,        // null ⇒ federate to verified aud; empty ⇒ three-party only
 });
 ```
 

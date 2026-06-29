@@ -202,7 +202,7 @@ app.MapGet("/data", (HttpContext ctx) => Results.Ok(new { ok = true }))
     .RequireAAuth(scope: "read");
 ```
 
-The single `UseAAuth` middleware (placed after `UseRouting()`) reads each endpoint's `.RequireAAuth(...)` requirement: it verifies the HTTP signature and, when an auth token is required, automatically returns `401` with an `AAuth-Requirement` header carrying a resource token. The `TrustedAuthTokenIssuers` allow-list restricts which Person Servers the resource will accept auth tokens from.
+The single `UseAAuth` middleware (placed after `UseRouting()`) reads each endpoint's `.RequireAAuth(...)` requirement: it verifies the HTTP signature and, when an auth token is required, automatically returns `401` with an `AAuth-Requirement` header carrying a resource token. The optional `TrustedAuthTokenIssuers` allow-list restricts which Person Servers the resource will accept auth tokens from; omit it (or assign `AAuthTrust.Any`) to accept any *verifiable* Person Server — the spec default — with claims namespaced by issuer.
 
 ### Self-Hosted Agent (Server-Side)
 

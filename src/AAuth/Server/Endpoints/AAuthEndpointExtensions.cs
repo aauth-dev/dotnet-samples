@@ -12,6 +12,7 @@ using AAuth.Server.Verification;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -100,6 +101,15 @@ public static class AAuthEndpointExtensions
         var opts = new AAuthServerOptions();
         configure?.Invoke(opts);
 
+        // Startup footgun guards (diagnostics only): throw on a configured-but-
+        // ignored trust policy; warn when auth-token endpoints are implicitly open.
+        TrustConfigDiagnostics.Validate(
+            app.ApplicationServices.GetService<ILoggerFactory>()?.CreateLogger("AAuth"),
+            opts.RequireIssuerVerification,
+            authTrustConfigured: opts.TrustedAuthTokenIssuers is not null || opts.IsTrustedAuthTokenIssuer is not null,
+            agentTrustConfigured: opts.TrustedAgentProviderIssuers is not null || opts.IsTrustedAgentProviderIssuer is not null,
+            contextLabel: "UseAAuth");
+
         var verifier = app.ApplicationServices.GetRequiredService<AAuthVerifier>();
         var resolver = app.ApplicationServices.GetService<ISignatureKeyResolver>()
             ?? new DefaultSignatureKeyResolver(app.ApplicationServices.GetService<JwksClient>());
@@ -161,7 +171,9 @@ public static class AAuthEndpointExtensions
                     ResourceIdentifier = resourceIdentifier,
                     RequireIssuerVerification = opts.RequireIssuerVerification,
                     TrustedAuthTokenIssuers = opts.TrustedAuthTokenIssuers,
+                    IsTrustedAuthTokenIssuer = opts.IsTrustedAuthTokenIssuer,
                     TrustedAgentProviderIssuers = opts.TrustedAgentProviderIssuers,
+                    IsTrustedAgentProviderIssuer = opts.IsTrustedAgentProviderIssuer,
                 }
                 : AAuthVerificationOptions.SignatureOnly();
 

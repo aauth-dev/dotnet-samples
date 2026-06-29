@@ -75,15 +75,32 @@ public sealed class UpstreamTokenValidator
     /// <param name="trustedIssuers">Set of trusted AS/PS issuer URLs.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Validation result with parsed claims or error.</returns>
-    public async Task<UpstreamTokenValidationResult> ValidateAsync(
+    public Task<UpstreamTokenValidationResult> ValidateAsync(
         string upstreamToken,
         string expectedAudience,
         IReadOnlySet<string> trustedIssuers,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(trustedIssuers);
+        return ValidateAsync(upstreamToken, expectedAudience, trustedIssuers.Contains, ct);
+    }
+
+    /// <summary>
+    /// Validates an upstream_token per §Upstream Token Verification, deciding issuer
+    /// trust (step 2) with a predicate rather than a static set.
+    /// <paramref name="isTrustedIssuer"/> MUST return true only for an issuer the
+    /// recipient previously brokered or is authorized to extend (e.g. self, or an
+    /// Access Server it federates with).
+    /// </summary>
+    public async Task<UpstreamTokenValidationResult> ValidateAsync(
+        string upstreamToken,
+        string expectedAudience,
+        Func<string, bool> isTrustedIssuer,
+        CancellationToken ct = default)
+    {
         ArgumentException.ThrowIfNullOrEmpty(upstreamToken);
         ArgumentException.ThrowIfNullOrEmpty(expectedAudience);
-        ArgumentNullException.ThrowIfNull(trustedIssuers);
+        ArgumentNullException.ThrowIfNull(isTrustedIssuer);
 
         // Step 1: Standard auth token verification (signature, temporal, structure).
         // We don't enforce PoP binding (cnf.jwk vs HTTP signature key) since the
@@ -103,7 +120,7 @@ public sealed class UpstreamTokenValidator
         }
 
         // Step 2: Verify iss is a trusted issuer.
-        if (!trustedIssuers.Contains(verified.Issuer))
+        if (!isTrustedIssuer(verified.Issuer))
         {
             return new UpstreamTokenValidationResult
             {

@@ -239,7 +239,7 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
     Issuer               = psIssuer,
     SigningKeys          = new Dictionary<string, AAuthKey> { [PsKid] = psKey },
     DefaultScope         = "calendar.read",
-    TrustedAccessServers = trustedAccessServers,   // omit ⇒ three-party only
+    TrustedAccessServers = trustedAccessServers,   // null ⇒ federate to verified aud; empty ⇒ three-party only
 });
 ```
 
@@ -253,7 +253,8 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
 | `PendingPathPrefix` | No | `/pending` | The deferred-consent poll path prefix |
 | `DefaultScope` | No | `""` | Scope assumed when the resource token omits one |
 | `InteractionPath` | No | `/interaction` | Path the host maps for the consent page |
-| `TrustedAccessServers` | No | `null` | Access Server URLs the PS will federate to; `null`/empty ⇒ three-party only |
+| `TrustedAccessServers` | No | `null` | Access Server URLs the PS will federate to. `null` ⇒ federate to the AS named in a verified resource token's `aud` (the spec default); empty ⇒ three-party only (four-party disabled); non-empty ⇒ restrict to the listed Access Servers. AND-composed with `IsTrustedAccessServer`. |
+| `IsTrustedAccessServer` | No | `null` | Optional predicate AND-composed with `TrustedAccessServers`; assign `AAuthTrust.Any` to federate to any verifiable AS explicitly. |
 | `InteractionEndpoint` | No | `null` | §Interaction Endpoint URL advertised in metadata (falls back to `InteractionPath`) |
 | `MissionEndpoint` / `PermissionEndpoint` / `AuditEndpoint` | No | `null` | Governance endpoint URLs advertised in `aauth-person.json` (the PS maps the endpoints) |
 | `UnsignedPathPrefixes` | No | `null` | Extra path prefixes the mapper's signature verification skips (e.g. the PS's own unsigned `/admin` consent surface) |

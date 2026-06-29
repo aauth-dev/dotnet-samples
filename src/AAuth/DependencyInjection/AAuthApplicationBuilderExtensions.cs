@@ -16,6 +16,7 @@ using AAuth.Server.Verification;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -45,6 +46,15 @@ public static class AAuthApplicationBuilderExtensions
         var jwks = app.ApplicationServices.GetService<JwksClient>();
         var jtiStore = app.ApplicationServices.GetService<IJtiStore>();
         var resolvedOptions = options ?? new AAuthVerificationOptions();
+
+        // Startup footgun guards (diagnostics only — no runtime policy change):
+        // throw on a configured-but-ignored trust policy; warn on implicit-open.
+        TrustConfigDiagnostics.Validate(
+            app.ApplicationServices.GetService<ILoggerFactory>()?.CreateLogger("AAuth.Verification"),
+            resolvedOptions.RequireIssuerVerification,
+            authTrustConfigured: resolvedOptions.TrustedAuthTokenIssuers is not null || resolvedOptions.IsTrustedAuthTokenIssuer is not null,
+            agentTrustConfigured: resolvedOptions.TrustedAgentProviderIssuers is not null || resolvedOptions.IsTrustedAgentProviderIssuer is not null,
+            contextLabel: "UseAAuthVerification");
 
         if (jtiStore is not null)
         {
@@ -200,7 +210,9 @@ public static class AAuthApplicationBuilderExtensions
             ResourceIdentifier = metadataOptions.Issuer,
             RequireIssuerVerification = pipelineOptions.RequireIssuerVerification,
             TrustedAuthTokenIssuers = pipelineOptions.TrustedAuthTokenIssuers,
+            IsTrustedAuthTokenIssuer = pipelineOptions.IsTrustedAuthTokenIssuer,
             TrustedAgentProviderIssuers = pipelineOptions.TrustedAgentProviderIssuers,
+            IsTrustedAgentProviderIssuer = pipelineOptions.IsTrustedAgentProviderIssuer,
         });
 
         // 3. Challenge middleware (only if there's a signing key available)

@@ -59,13 +59,23 @@ public sealed class AAuthPersonServerOptions
     public string InteractionPath { get; init; } = "/interaction";
 
     /// <summary>
-    /// Access Server URLs this PS will federate to (four-party). When a resource
-    /// token's <c>aud</c> identifies one of these, the PS forwards a signed
-    /// PS→AS request via <see cref="AccessServerClient"/> instead of minting
-    /// itself. Empty disables the four-party branch (every request must be
-    /// audienced to this PS).
+    /// Access Server allow-list for four-party federation. <b>Open by default
+    /// (spec-compliant):</b> when <c>null</c>, the PS federates to the AS named in
+    /// a <em>verified</em> resource token's <c>aud</c> — §PS-AS Trust Establishment
+    /// requires no separate registration step. An <b>empty</b> set disables the
+    /// four-party branch (three-party only). A non-empty set restricts to the listed
+    /// Access Servers. Composed by AND with <see cref="IsTrustedAccessServer"/>.
     /// </summary>
     public IReadOnlyCollection<string>? TrustedAccessServers { get; init; }
+
+    /// <summary>
+    /// Optional trust policy for Access Servers, evaluated per resource-token
+    /// <c>aud</c> before the PS→AS federation call and composed by AND with
+    /// <see cref="TrustedAccessServers"/>. <c>null</c> ⇒ no policy constraint.
+    /// Assign <see cref="AAuth.Server.AAuthTrust.Any"/> to state intentional open
+    /// federation explicitly.
+    /// </summary>
+    public Func<string, bool>? IsTrustedAccessServer { get; init; }
 
     /// <summary>
     /// The §Interaction Endpoint URL advertised in the PS metadata
@@ -180,6 +190,12 @@ public static class AAuthPersonServerEndpoints
             trustedAccessServers.Add(asUrl.TrimEnd('/'));
         }
 
+        // Preserve null (open: federate to the AS named in a verified resource
+        // token's aud) vs. empty (three-party only). The materialized set drives
+        // membership; the nullable form drives the open/empty distinction.
+        IReadOnlyCollection<string>? trustedAccessServersOrNull =
+            options.TrustedAccessServers is null ? null : trustedAccessServers;
+
         var unsignedPrefixes = (options.UnsignedPathPrefixes ?? Array.Empty<string>())
             .Select(p => "/" + p.Trim('/'))
             .Where(p => p.Length > 1)
@@ -213,6 +229,17 @@ public static class AAuthPersonServerEndpoints
         var asserter = app.Services.GetRequiredService<IIdentityClaimsAsserter>();
         var pending = app.Services.GetRequiredService<IPersonPendingStore>();
         var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("AAuth.PersonServer");
+
+        // Startup footgun guard (diagnostics only): warn when federation is open by
+        // default. Suppressed by any explicit policy (including AAuthTrust.Any).
+        TrustConfigDiagnostics.WarnIfOpenFederation(
+            logger,
+            trustConfigured: options.TrustedAccessServers is not null || options.IsTrustedAccessServer is not null,
+            "MapAAuthPersonServer",
+            "this Person Server federates to any Access Server named in a verified resource token's aud " +
+            "because no TrustedAccessServers / IsTrustedAccessServer policy is configured (the AAuth spec " +
+            "default). Configure a policy to restrict, or assign AAuthTrust.Any to declare intentional open " +
+            "federation and silence this warning.");
 
         string MintEntry(PersonPendingEntry entry) => Mint(
             entry.ResourceUrl, entry.AgentId, entry.Scope, entry.AgentConfirmationKey!,
@@ -591,18 +618,26 @@ public static class AAuthPersonServerEndpoints
                 var validator = app.Services.GetRequiredService<UpstreamTokenValidator>();
                 var intermediaryResourceUrl = (string?)parsed.Payload?["iss"]
                     ?? throw new InvalidOperationException("Agent token missing 'iss' claim.");
-                // §Upstream Token Verification step 2: trust upstream tokens issued by
-                // this PS (three-party upstream) or by an AS we federate with
-                // (four-party upstream). Without the AS set a four-party upstream would
-                // be rejected as untrusted before the mission gate could evaluate it.
-                var trustedUpstreamIssuers = new HashSet<string>(trustedAccessServers, StringComparer.OrdinalIgnoreCase)
+                // §Upstream Token Verification step 2 (L1742): trust an upstream
+                // issuer only when the PS "previously brokered" it (self) or is
+                // "authorized to extend" it — explicitly: it is in the configured
+                // TrustedAccessServers set or accepted by IsTrustedAccessServer.
+                // Unlike first-hop federation (#4, open by default — L1581), four-party
+                // CALL-CHAINING extension is a tighter, explicit decision (higher
+                // delegation stakes): an unconfigured PS trusts only its own
+                // (three-party) upstreams.
+                Func<string, bool> isTrustedUpstreamIssuer = upstreamIss =>
                 {
-                    issuer,
+                    var normalized = upstreamIss.TrimEnd('/');
+                    return string.Equals(normalized, issuer, StringComparison.OrdinalIgnoreCase)
+                        || trustedAccessServers.Contains(normalized)
+                        || (options.IsTrustedAccessServer?.Invoke(normalized) ?? false);
                 };
+
                 var result = await validator.ValidateAsync(
                     upstreamTokenJwt,
                     expectedAudience: intermediaryResourceUrl,
-                    trustedUpstreamIssuers);
+                    isTrustedUpstreamIssuer);
                 if (!result.IsValid)
                 {
                     return Results.Json(new { error = "invalid_upstream_token", detail = result.Error },
@@ -826,8 +861,18 @@ public static class AAuthPersonServerEndpoints
             HttpContext ctx, SignatureKeyParser.ParsedSignatureKeyInfo parsed,
             string agentId, string resourceTokenJwt, string? upstreamTokenJwt, string resourceAudience)
         {
-            if (trustedAccessServers.Count == 0
-                || !trustedAccessServers.Contains(resourceAudience.TrimEnd('/')))
+            // §PS-AS Trust Establishment (L1581): trust may be pre-established OR
+            // established dynamically — "no separate registration step". Default
+            // open: federate to the AS named in the (verified) resource-token aud.
+            // An empty TrustedAccessServers set disables four-party (three-party
+            // only); a non-empty set and/or predicate restricts.
+            if (!AAuthUrl.IsHttpsOrLoopback(resourceAudience))
+            {
+                return Results.Json(
+                    new { error = "untrusted_access_server", detail = $"Access Server audience '{resourceAudience}' must be an absolute https URL (loopback http allowed for development)." },
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+            if (!IssuerTrust.IsTrusted(trustedAccessServersOrNull, options.IsTrustedAccessServer, resourceAudience.TrimEnd('/')))
             {
                 return Results.Json(
                     new { error = "untrusted_access_server", detail = $"'{resourceAudience}' is not a trusted Access Server." },
