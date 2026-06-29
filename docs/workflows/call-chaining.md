@@ -270,6 +270,18 @@ recursively — that responsibility lies with the PS that minted the token.
 
 When a PS receives an `upstream_token` parameter during a call-chaining exchange, it must validate the token per §Upstream Token Verification. Use `UpstreamTokenValidator`:
 
+> **Upstream trust is tight by default — the inverse of first-hop federation.**
+> First-hop PS→AS federation (`TrustedAccessServers` on the PS) is *open* by default:
+> a `null` policy lets the PS federate to the AS named in a verified resource token's
+> `aud` (§PS-AS Trust Establishment, L1581). Call-chaining (§Upstream Token
+> Verification, L1742) is deliberately the opposite — **tight by default**: an
+> unconfigured PS trusts only its **own** (three-party, previously-brokered)
+> upstreams. Extending a *four-party* chain — trusting an upstream token an AS
+> issued — requires explicitly listing that AS in `TrustedAccessServers` or
+> accepting it via `IsTrustedAccessServer`. The asymmetry is intentional:
+> call-chaining extends an existing delegation chain, so the stakes are higher than
+> opening a fresh first-hop delegation.
+
 ```csharp
 // Register in DI
 builder.Services.AddSingleton(sp =>

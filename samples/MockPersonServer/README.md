@@ -60,7 +60,9 @@ The PS decides which role to play from the resource token's `aud` claim:
 
 The PS only federates to Access Servers listed in
 `MockPersonServer:TrustedAccessServers`; any other `aud` is rejected with
-`untrusted_access_server` (403).
+`untrusted_access_server` (403). That pinning is this sample's explicit choice —
+the SDK default for an unset `TrustedAccessServers` is open (`null` ⇒ federate to
+the AS named in the verified resource token's `aud`).
 
 > **One call, pluggable decisions.** Both branches above — the three-party
 > collapsed mint and the four-party federation routing — are packaged by
@@ -133,4 +135,4 @@ dotnet run --project samples/AgentConsole -- \
 | `AAuth:Issuer` | `http://localhost:5100` | PS issuer URL — must match what agents put in their agent token's `ps` claim |
 | `AAuth:SignatureWindow` | `60` | RFC 9421 `created` freshness window, in seconds |
 | `MockPersonServer:RequireConsent` | `false` | When `true`, `POST /token` returns `202 + Location` and the user must approve or deny via `/interaction/{approve,deny}` before the poll resolves. `make demo` sets this to `true`. |
-| `MockPersonServer:TrustedAccessServers` | `["http://localhost:5500"]` | Access Servers this PS will federate to in the four-party flow (resource token `aud` ≠ PS). Any other `aud` is rejected with `untrusted_access_server`. |
+| `MockPersonServer:TrustedAccessServers` | `["http://localhost:5500"]` | Access Servers this PS will federate to in the four-party flow (resource token `aud` ≠ PS). Any other `aud` is rejected with `untrusted_access_server`. This sample pins one AS explicitly; the SDK default for an unset list is open (`null` ⇒ federate to the verified `aud`'s AS), an empty list is three-party only, and a non-empty list restricts. |

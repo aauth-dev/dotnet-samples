@@ -25,15 +25,27 @@ public sealed class AAuthResourcePipelineOptions
 
     /// <summary>
     /// Optional allow-list of trusted Person Server / Access Server issuers (for <c>aa-auth+jwt</c>).
-    /// When null, any issuer whose JWKS is resolvable is accepted.
+    /// When null, any verifiable issuer is accepted; an empty set denies all.
     /// </summary>
     public IReadOnlySet<string>? TrustedAuthTokenIssuers { get; set; }
+
+    /// <summary>
+    /// Optional trust policy for auth-token issuers, AND-composed with
+    /// <see cref="TrustedAuthTokenIssuers"/>.
+    /// </summary>
+    public Func<string, bool>? IsTrustedAuthTokenIssuer { get; set; }
 
     /// <summary>
     /// Optional allow-list of trusted Agent Provider issuers (for <c>aa-agent+jwt</c>).
     /// When null, any issuer whose JWKS is resolvable is accepted.
     /// </summary>
     public IReadOnlySet<string>? TrustedAgentProviderIssuers { get; set; }
+
+    /// <summary>
+    /// Optional trust policy for Agent Provider issuers, AND-composed with
+    /// <see cref="TrustedAgentProviderIssuers"/>.
+    /// </summary>
+    public Func<string, bool>? IsTrustedAgentProviderIssuer { get; set; }
 
     /// <summary>
     /// Default scopes to request in the resource token. Space-separated.

@@ -19,10 +19,12 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `TrustedAuthTokenIssuers` | `IReadOnlySet<string>?` | `null` | Fail-closed allow-list of trusted auth token (PS/AS) issuers. When `null` or empty, **every** auth token is rejected. |
+| `TrustedAuthTokenIssuers` | `IReadOnlySet<string>?` | `null` | Allow-list of trusted auth token (PS/AS) issuers. `null` ⇒ accept any *verifiable* auth-token issuer (the spec default — the JWT signature still verifies against the issuer's JWKS); empty ⇒ deny all; non-empty ⇒ restrict to the listed issuers. AND-composed with `IsTrustedAuthTokenIssuer`. |
+| `IsTrustedAuthTokenIssuer` | `Func<string, bool>?` | `null` | Optional predicate AND-composed with `TrustedAuthTokenIssuers` (each only narrows). Assign `AAuthTrust.Any` to trust any verifiable issuer explicitly and suppress the open-trust startup warning. |
 | `PersonServerAudience` | `string?` | `null` | Resource-token audience for the challenge. Set to an Access Server URL for four-party (federated) resources; when `null` the audience is the agent token's `ps` claim (three-party). |
 | `RequireIssuerVerification` | `bool` | `true` | Verify the auth-token issuer's JWKS signature. |
-| `TrustedAgentProviderIssuers` | `IReadOnlySet<string>?` | `null` | Allow-list of trusted Agent Provider issuers (for `aa-agent+jwt`). |
+| `TrustedAgentProviderIssuers` | `IReadOnlySet<string>?` | `null` | Allow-list of trusted Agent Provider issuers (for `aa-agent+jwt`). `null` ⇒ accept any verifiable Agent Provider; empty ⇒ deny all; non-empty ⇒ restrict. AND-composed with `IsTrustedAgentProviderIssuer`. |
+| `IsTrustedAgentProviderIssuer` | `Func<string, bool>?` | `null` | Optional predicate AND-composed with `TrustedAgentProviderIssuers`. Assign `AAuthTrust.Any` to trust any verifiable Agent Provider explicitly. |
 | `ResourceIdentifier` | `string?` | DI metadata issuer | Override the resource identifier used for `aud` checks and challenges. |
 | `ResourceSigningKey` | `AAuthKey?` | DI metadata first key | Override the challenge signing key. |
 | `ResourceKeyId` | `string?` | DI metadata first kid | Override the challenge key id. |
@@ -37,13 +39,35 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `ResourceIdentifier` | `string?` | `null` | Resource's own identifier for `aud` checks. When `null`, audience validation is skipped. |
-| `RequireIssuerVerification` | `bool` | `true` | When `true`, verifies JWT signatures against the issuer's published JWKS via metadata discovery. |
-| `TrustedAgentProviderIssuers` | `IReadOnlySet<string>?` | `null` | Optional allow-list of trusted AP issuers (null = any) |
-| `TrustedAuthTokenIssuers` | `IReadOnlySet<string>?` | `null` | Fail-closed allow-list of trusted auth token (PS/AS) issuers. When `null` or empty, **every** auth token is rejected — set the issuers you trust to honor PS-asserted tokens. |
+| `RequireIssuerVerification` | `bool` | `true` | When `true`, verifies JWT signatures against the issuer's published JWKS via metadata discovery. The crypto gate is orthogonal to the trust lists below — they only narrow which verified issuers are honored. |
+| `TrustedAgentProviderIssuers` | `IReadOnlySet<string>?` | `null` | Optional allow-list of trusted AP issuers. `null` ⇒ any verifiable AP; empty ⇒ deny all; non-empty ⇒ restrict. AND-composed with `IsTrustedAgentProviderIssuer`. |
+| `IsTrustedAgentProviderIssuer` | `Func<string, bool>?` | `null` | Optional predicate AND-composed with `TrustedAgentProviderIssuers`; assign `AAuthTrust.Any` for explicit open trust. |
+| `TrustedAuthTokenIssuers` | `IReadOnlySet<string>?` | `null` | Allow-list of trusted auth token (PS/AS) issuers. `null` ⇒ accept any *verifiable* PS (the spec default); empty ⇒ deny all PS-asserted tokens; non-empty ⇒ restrict to the listed issuers. AND-composed with `IsTrustedAuthTokenIssuer`. |
+| `IsTrustedAuthTokenIssuer` | `Func<string, bool>?` | `null` | Optional predicate AND-composed with `TrustedAuthTokenIssuers` (each only narrows). Assign `AAuthTrust.Any` to trust any verifiable issuer explicitly and suppress the open-trust startup warning. |
 | `MaxActDepth` | `int` | `10` | Maximum delegation chain depth for nested `act` claims |
 | `ClockSkew` | `TimeSpan` | 30 seconds | Tolerance applied to `exp`/`iat` checks |
 | `MaxFutureSkew` | `TimeSpan` | 5 seconds | Maximum allowed skew into the future for HTTP signature timestamps |
 | `Clock` | `Func<DateTimeOffset>?` | `null` (UtcNow) | Clock source for all time-dependent checks. Inject for deterministic testing. |
+
+> **Two startup guards (diagnostics only — neither changes runtime behavior):**
+>
+> - **Open-trust warning** — when issuer verification is on and no auth-token
+>   trust policy is configured (no set, no predicate, no `AAuthTrust.Any`), the
+>   resource accepts any verifiable Person Server and a `Warning` is logged at
+>   startup. The same warning fires for an open PS (no `TrustedAccessServers` /
+>   `IsTrustedAccessServer`) or open AS (no `TrustedPersonServers` /
+>   `IsTrustedPersonServer`); any explicit policy suppresses it.
+>   - *False positive on signature-only resources:* a `UseAAuth` resource whose
+>     endpoints are **all** `RequireAAuthSignature` (no auth-token endpoints) still
+>     logs this warning — the SDK can't know at startup that no auth-token endpoint
+>     exists. It is benign; silence it by assigning
+>     `IsTrustedAuthTokenIssuer = AAuthTrust.Any`.
+> - **Contradiction throw** — configuring a trust policy
+>   (`TrustedAuthTokenIssuers` / `IsTrustedAuthTokenIssuer` /
+>   `TrustedAgentProviderIssuers` / `IsTrustedAgentProviderIssuer`) while
+>   `RequireIssuerVerification == false` throws `InvalidOperationException` at
+>   `UseAAuth` / `UseAAuthVerification` construction, because the policy would
+>   otherwise be silently ignored.
 
 ### AAuthResourceOptions (via AddAAuthResource)
 
@@ -67,7 +91,8 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 | `PendingPathPrefix` | `string` | `/pending` | Deferred-consent poll path prefix |
 | `DefaultScope` | `string` | `""` | Scope assumed when the resource token omits one |
 | `InteractionPath` | `string` | `/interaction` | Path the host maps for the consent page |
-| `TrustedAccessServers` | `IReadOnlyCollection<string>?` | `null` | AS URLs the PS will federate to; `null`/empty ⇒ three-party only |
+| `TrustedAccessServers` | `IReadOnlyCollection<string>?` | `null` | AS URLs the PS will federate to. `null` ⇒ federate to the AS named in a verified resource token's `aud` (the spec default); empty ⇒ three-party only (four-party disabled); non-empty ⇒ restrict to the listed Access Servers. AND-composed with `IsTrustedAccessServer`. |
+| `IsTrustedAccessServer` | `Func<string, bool>?` | `null` | Optional predicate AND-composed with `TrustedAccessServers`; assign `AAuthTrust.Any` to federate to any verifiable AS explicitly. |
 
 The helper resolves `IIdentityClaimsAsserter` and `IPersonPendingStore` from DI
 (and the `IMissionStore` / `IMissionLog` mission primitives when a request carries
@@ -275,7 +300,7 @@ SDK-required), shown here as a reference for wiring your own hosts.
 |-----|------|---------|-------------|
 | `AAuth:Issuer` | `string` | Profile/Calendar/Trips/Wallet/Inbox, MockPersonServer, Concierge | The host's own canonical URL (resource/PS `iss`). |
 | `AAuth:SignatureWindow` | `int` (seconds) | Profile/Calendar/Trips/Wallet/Inbox, MockPersonServer | Max HTTP-signature age accepted; default `60`. |
-| `AAuth:TrustedPersonServers` | `string[]` | Calendar/Trips | Fail-closed allow-list mapped to the resource pipeline's `TrustedAuthTokenIssuers` (`app.UseAAuth(o => o.TrustedAuthTokenIssuers = …)`). When unset, defaults to `http://localhost:5100`; an empty array rejects all auth tokens. |
+| `AAuth:TrustedPersonServers` | `string[]` | Calendar/Trips | Allow-list mapped to the resource pipeline's `TrustedAuthTokenIssuers` (`app.UseAAuth(o => o.TrustedAuthTokenIssuers = …)`). The SDK default for an unset list is open (accept any *verifiable* PS, namespaced by `iss`), but these samples default to `http://localhost:5100`; an empty array denies all auth tokens (deny-all kill-switch). |
 | `AAuth:LocalKeyHandle` | `string` | agent samples | Key handle in the `IKeyStore` for the agent's signing key. |
 | `AAuth:ApRefreshEndpoint` | `string` | agent samples | Agent Provider refresh endpoint for enrolled agents. |
 | `AAuth:PersonServer` | `string` | Concierge | Downstream Person Server URL. |

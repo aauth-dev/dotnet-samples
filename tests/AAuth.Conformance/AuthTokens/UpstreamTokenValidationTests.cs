@@ -129,6 +129,30 @@ public class UpstreamTokenValidationTests
         Assert.Contains("untrusted_issuer", result.Error);
     }
 
+    [Fact(DisplayName = "§Upstream Token Verification — predicate may reject an otherwise-valid issuer")]
+    public async Task PredicateRejectsIssuer_Rejected()
+    {
+        var token = BuildValidUpstreamToken();
+        var validator = CreateValidator();
+
+        var result = await validator.ValidateAsync(token, ResourceAudience, isTrustedIssuer: _ => false);
+
+        Assert.False(result.IsValid);
+        Assert.Contains("untrusted_issuer", result.Error);
+    }
+
+    [Fact(DisplayName = "§Upstream Token Verification — predicate authorizes a trusted issuer")]
+    public async Task PredicateAcceptsIssuer_Accepted()
+    {
+        var token = BuildValidUpstreamToken();
+        var validator = CreateValidator();
+
+        var result = await validator.ValidateAsync(token, ResourceAudience, isTrustedIssuer: iss => iss == PsIssuer);
+
+        Assert.True(result.IsValid);
+        Assert.Equal(PsIssuer, result.Issuer);
+    }
+
     [Fact(DisplayName = "§Upstream Token Verification — audience mismatch rejected")]
     public async Task AudienceMismatch_Rejected()
     {

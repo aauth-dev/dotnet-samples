@@ -160,12 +160,12 @@ public class CalendarFlowTests : IAsyncLifetime
     [Fact]
     public async Task ThreePartyFlow_RejectsAuthTokenFromNonAllowlistedIssuer()
     {
-        // §G8 fail-closed: the resource only honors PS-asserted (auth) tokens
-        // whose issuer it explicitly trusts. Stand up a dedicated PS + Calendar
-        // pair where the Calendar's TrustedPersonServers points at a different
-        // PS, so the genuine auth token minted by our PS (iss = PsIssuer) is
-        // rejected at the final resource call even though the exchange
-        // (including resource-token verification) succeeds.
+        // §G8: when a resource restricts its trusted issuers, it honors only
+        // PS-asserted (auth) tokens whose issuer is allow-listed. Stand up a
+        // dedicated PS + Calendar pair where the Calendar's TrustedPersonServers
+        // points at a different PS, so the genuine auth token minted by our PS
+        // (iss = PsIssuer) is rejected at the final resource call even though the
+        // exchange (including resource-token verification) succeeds.
         WebApplicationFactory<Calendar.Entry>? negCalendar = null;
         using var negPs = new WebApplicationFactory<MockPersonServer.Entry>().WithWebHostBuilder(b =>
         {

@@ -121,23 +121,58 @@ public sealed class RedisJtiStore : IJtiStore
 
 ## Revocation Endpoint
 
-The SDK provides a pre-built revocation endpoint for token revocation:
+The SDK provides a pre-built revocation endpoint for token revocation. Per the
+spec's §Token Revocation (L2302) a resource that accepts revocation MUST verify the
+caller's HTTP signature and MUST only accept revocation from the issuer of the token
+or a trusted Person Server. The endpoint enforces both: it is **deny-by-default**.
+
+> **Revocation is deny-by-default — the inverse of the PS-asserted trust-lists.**
+> The auth-token / agent-provider trust-lists are *open* by default (null ⇒ accept
+> any verifiable issuer). Revocation is the deliberate opposite: an unconfigured
+> endpoint authorizes **no one**, because L2302 mandates restricting revocation to
+> the token issuer or a trusted PS.
+
+Map the endpoint **behind AAuth verification** (`UseAAuthVerification`, or an
+endpoint marked `.RequireAAuthSignature()`) so the verified caller identity is
+available, then authorize callers with `AAuthRevocationOptions`:
 
 ```csharp
 using AAuth.Server;
 
-app.MapAAuthRevocationEndpoint(jtiStore, path: "/revoke");
+// /revoke is behind verification, so the caller's signature is already verified.
+app.MapAAuthRevocationEndpoint(
+    jtiStore,
+    configure: o => o.TrustedRevokers = new[] { "https://ps.example" },
+    path: "/revoke");
 ```
 
-This maps `POST /revoke` accepting form-encoded data:
+`AAuthRevocationOptions` authorizes the verified caller (deny-by-default):
+
+- `TrustedRevokers` — an allow-list of caller identities (a trusted PS's issuer
+  URL, or the token issuer's own identity) permitted to revoke.
+- `IsTrustedRevoker` — a `Func<string, bool>` predicate, OR-composed with the set.
+- With neither configured, **every caller is denied** (the no-`configure` overload,
+  `MapAAuthRevocationEndpoint(jtiStore, path)`, exists only for wiring; it rejects
+  all revocations until you declare who may revoke).
+
+This maps `POST /revoke` accepting a **JSON** body naming the token's `jti`:
 
 ```
-Content-Type: application/x-www-form-urlencoded
+Content-Type: application/json
 
-token=token-id-to-revoke
+{ "jti": "token-id-to-revoke" }
 ```
 
-The endpoint calls `jtiStore.RevokeAsync(token)` and returns `200 OK`.
+The endpoint enforces, in order:
+
+| Condition | Response |
+|-----------|----------|
+| Caller has no verified AAuth signature | `401 Unauthorized` (`invalid_request`) |
+| Verified caller is not an authorized revoker | `403 Forbidden` (`untrusted_revoker`) |
+| Body has no `jti` string | `400 Bad Request` (`invalid_request`) |
+| Authorized caller, valid `jti` | `200 OK` (calls `jtiStore.RevokeAsync(jti)`) |
+
+`200 OK` is returned whether the token was live or already invalid.
 
 Advertise it in resource metadata:
 

@@ -102,9 +102,11 @@ auditing but are not enforced by a built-in helper.
 > surfaced as the composite `aauth:sub_iss` claim
 > (`AAuthAuthenticationHandler.SubjectIssuerClaimType`). A role named `admin`
 > asserted by `https://ps-a.example` is therefore distinct from the same role
-> asserted by `https://ps-b.example`. Issuer trust is fail-closed: the
-> verification middleware only honors auth tokens whose `iss` is in
-> `AAuthVerificationOptions.TrustedAuthTokenIssuers` (see
+> asserted by `https://ps-b.example`. Issuer trust is open by default: the
+> verification middleware honors auth tokens from any *verifiable* Person Server
+> (namespaced by `iss`) when `AAuthVerificationOptions.TrustedAuthTokenIssuers`
+> is unset; set the list (or the `IsTrustedAuthTokenIssuer` predicate) to
+> restrict which issuers are honored (see
 > [verification-middleware.md](verification-middleware.md)).
 
 ## AAuthAuthenticationHandler

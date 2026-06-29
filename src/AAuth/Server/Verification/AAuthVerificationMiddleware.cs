@@ -348,8 +348,10 @@ public sealed class AAuthVerificationMiddleware
             throw new TokenVerificationException("Agent token 'iss' must be an absolute https:// URL (or http://localhost).");
 
         // Check issuer allow-list.
-        if (_options.TrustedAgentProviderIssuers is { } trusted && !trusted.Contains(iss))
-            throw new TokenVerificationException($"Agent token issuer '{iss}' is not in the trusted issuers list.");
+        // Trust policy (default open: any verifiable AP issuer), narrowed by an
+        // optional allow-list and/or predicate, composed by AND.
+        if (!IssuerTrust.IsTrusted(_options.TrustedAgentProviderIssuers, _options.IsTrustedAgentProviderIssuer, iss))
+            throw new TokenVerificationException($"Agent token issuer '{iss}' is not trusted by policy.");
 
         var kid = (string?)header["kid"]
             ?? throw new TokenVerificationException("Agent token header is missing 'kid'.");
@@ -417,15 +419,15 @@ public sealed class AAuthVerificationMiddleware
         if (!AAuthUrl.IsHttpsOrLoopback(iss))
             throw new TokenVerificationException("Auth token 'iss' must be an absolute https:// URL (or http://localhost).");
 
-        // Fail-closed issuer namespacing: a PS-asserted auth token is trusted
-        // only when its issuer is in the configured allow-list. An unset or
-        // empty allow-list rejects ALL auth tokens — the resource MUST declare
-        // which Person Servers it trusts before it will honor their claims.
-        var trusted = _options.TrustedAuthTokenIssuers;
-        if (trusted is null || trusted.Count == 0 || !trusted.Contains(iss))
+        // Trust policy (§Trust Posture in PS-Asserted Access): default open —
+        // accept any verifiable PS, namespaced by `iss` — narrowed by an optional
+        // allow-list and/or predicate, composed by AND. An empty allow-list denies
+        // all. The issuer's JWT signature is verified below via JWKS discovery;
+        // this is the policy layer on top of that crypto check.
+        if (!IssuerTrust.IsTrusted(_options.TrustedAuthTokenIssuers, _options.IsTrustedAuthTokenIssuer, iss))
             throw new TokenVerificationException(
-                $"Auth token issuer '{iss}' is not in the trusted issuers list " +
-                "(set AAuthVerificationOptions.TrustedAuthTokenIssuers to the Person Servers this resource trusts).");
+                $"Auth token issuer '{iss}' is not trusted by policy " +
+                "(TrustedAuthTokenIssuers / IsTrustedAuthTokenIssuer).");
 
         var kid = (string?)header["kid"]
             ?? throw new TokenVerificationException("Auth token header is missing 'kid'.");

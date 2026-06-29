@@ -55,13 +55,22 @@ public sealed class AAuthVerificationOptions
     // Whether to verify JWT signatures against the issuer's JWKS (default: true)
     public bool RequireIssuerVerification { get; init; } = true;
 
-    // Optional allow-list of trusted agent provider issuers
+    // Optional allow-list of trusted agent provider issuers.
+    // null = accept any verifiable AP; empty = deny all; non-empty = restrict.
     public IReadOnlySet<string>? TrustedAgentProviderIssuers { get; init; }
 
-    // Fail-closed allow-list of trusted auth token issuers (Person Servers).
-    // When issuer verification is on, an auth token is accepted only if its
-    // `iss` is in this set. null/empty = reject ALL PS-asserted tokens.
+    // Optional predicate AND-composed with TrustedAgentProviderIssuers.
+    public Func<string, bool>? IsTrustedAgentProviderIssuer { get; init; }
+
+    // Allow-list of trusted auth token issuers (Person Servers / Access Servers).
+    // null = accept any *verifiable* PS (the spec default — the JWT signature
+    // still verifies against the issuer's JWKS); empty = deny all; non-empty =
+    // restrict to the listed issuers. AND-composed with IsTrustedAuthTokenIssuer.
     public IReadOnlySet<string>? TrustedAuthTokenIssuers { get; init; }
+
+    // Optional predicate AND-composed with TrustedAuthTokenIssuers (each only
+    // narrows). Assign AAuthTrust.Any to trust any verifiable issuer explicitly.
+    public Func<string, bool>? IsTrustedAuthTokenIssuer { get; init; }
 
     // Maximum depth of nested act claims (default: 10)
     public int MaxActDepth { get; init; } = 10;
@@ -85,10 +94,19 @@ public sealed class AAuthVerificationOptions
 | `true` | `null` | Verifies JWT issuer sig + PoP, but skips `aud` check |
 | `false` | any | HTTP signature only — no JWT issuer verification |
 
-> **Auth-token issuer trust is fail-closed.** When `RequireIssuerVerification`
-> is `true`, a PS-asserted (auth) token is accepted only when its `iss` appears
-> in `TrustedAuthTokenIssuers`. If that set is `null` or empty, **every** auth
-> token is rejected with `401`. Declare the Person Servers this resource trusts:
+> **Auth-token issuer trust is open by default, narrowed by policy.** This is a
+> two-layer model. `RequireIssuerVerification` is the crypto gate (unchanged):
+> when `true`, an auth token's `iss` JWKS signature must verify. The trust policy
+> only *narrows* that verifiable floor — "accept any PS" means "any PS whose
+> signature verifies"; the policy never replaces verification.
+>
+> - `TrustedAuthTokenIssuers = null` (unset) ⇒ accept any *verifiable* Person
+>   Server, namespaced by `iss` (the AAuth spec default).
+> - empty set ⇒ deny all PS-asserted tokens (a deliberate kill-switch).
+> - non-empty set ⇒ restrict to the listed issuers.
+> - `IsTrustedAuthTokenIssuer` ⇒ a `Func<string, bool>` predicate AND-composed
+>   with the set (each only narrows). Assign `AAuthTrust.Any` to trust any
+>   verifiable issuer explicitly and suppress the open-trust startup warning.
 >
 > ```csharp
 > app.UseAAuthVerification(new AAuthVerificationOptions
@@ -98,6 +116,20 @@ public sealed class AAuthVerificationOptions
 >     TrustedAuthTokenIssuers = new HashSet<string> { "https://person.example.com" },
 > });
 > ```
+>
+> Two startup guards (diagnostics only — neither changes runtime behavior): when
+> issuer verification is on and no trust policy is configured, a `Warning` is
+> logged because the resource accepts any verifiable PS; and configuring a trust
+> policy while `RequireIssuerVerification == false` throws
+> `InvalidOperationException` (the policy would otherwise be silently ignored).
+>
+> **False positive on signature-only resources.** A resource that uses `UseAAuth`
+> with **only** `RequireAAuthSignature` endpoints (no auth-token / `RequireAAuth`
+> endpoints) and no auth-token trust policy still logs the open-trust `Warning` —
+> the SDK can't tell at startup whether any auth-token endpoint exists, so it warns
+> conservatively. It is benign. Suppress it by assigning any policy — e.g.
+> `o.IsTrustedAuthTokenIssuer = AAuthTrust.Any` — to declare the unused auth-token
+> path intentionally open.
 >
 > Signature-only flows (`hwk` / `jkt-jwt` / `jwks_uri`) carry no `iss`
 > assertion and are unaffected by this allow-list.

@@ -38,11 +38,17 @@ public sealed class AAuthServerOptions
     /// <summary>Verify the auth-token issuer's JWKS signature. Default true.</summary>
     public bool RequireIssuerVerification { get; set; } = true;
 
-    /// <summary>Allow-list of trusted PS/AS auth-token issuers (fail-closed when set).</summary>
+    /// <summary>Allow-list of trusted PS/AS auth-token issuers. Null ⇒ accept any verifiable issuer; empty ⇒ deny all.</summary>
     public IReadOnlySet<string>? TrustedAuthTokenIssuers { get; set; }
+
+    /// <summary>Trust policy for PS/AS auth-token issuers, AND-composed with the allow-list.</summary>
+    public Func<string, bool>? IsTrustedAuthTokenIssuer { get; set; }
 
     /// <summary>Allow-list of trusted Agent Provider issuers (for <c>aa-agent+jwt</c>).</summary>
     public IReadOnlySet<string>? TrustedAgentProviderIssuers { get; set; }
+
+    /// <summary>Trust policy for Agent Provider issuers, AND-composed with the allow-list.</summary>
+    public Func<string, bool>? IsTrustedAgentProviderIssuer { get; set; }
 
     /// <summary>
     /// Explicit resource-token audience for the challenge. Set to an Access Server

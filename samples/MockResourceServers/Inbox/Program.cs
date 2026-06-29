@@ -77,7 +77,12 @@ app.MapAAuthWellKnown();
 // agent's HTTP signature only (no issuer check, no auth-token challenge). The
 // consent pages and well-known stay unsigned.
 app.UseRouting();
-app.UseAAuth();
+// The Inbox accepts no auth tokens — every protected endpoint is
+// .RequireAAuthSignature() — so declare the (unused) auth-token trust path
+// intentionally open. This silences the startup open-trust warning, which would
+// otherwise false-positive here: the SDK can't tell at startup that no auth-token
+// endpoint exists. (AAuthTrust lives in AAuth.Server, already imported above.)
+app.UseAAuth(o => o.IsTrustedAuthTokenIssuer = AAuthTrust.Any);
 
 // Sample inbox contents (illustrative; not spec-defined).
 string[] sampleMessages =

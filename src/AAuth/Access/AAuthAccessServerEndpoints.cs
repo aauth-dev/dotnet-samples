@@ -14,6 +14,7 @@ using AAuth.Tokens;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace AAuth.Access;
 
@@ -52,11 +53,23 @@ public sealed class AAuthAccessServerOptions
     public string FallbackSubject { get; init; } = "pairwise-sub";
 
     /// <summary>
-    /// Person Server URLs this AS will broker for. When non-empty, the caller's
-    /// <c>jwks_uri</c> host is pinned to this set (pre-established trust). Empty
-    /// trusts any validly-signed caller.
+    /// Person Server allow-list this AS will broker for, matched on the caller's
+    /// <c>jwks_uri</c> host. <b>Open by default (spec-compliant):</b> when
+    /// <c>null</c>, any validly-signed PS is brokered — §PS-AS Trust Establishment
+    /// requires no separate registration step. An <b>empty</b> set denies all; a
+    /// non-empty set restricts (pre-established trust). Composed by AND with
+    /// <see cref="IsTrustedPersonServer"/>.
     /// </summary>
     public IReadOnlyCollection<string>? TrustedPersonServers { get; init; }
+
+    /// <summary>
+    /// Optional trust policy for Person Servers, evaluated per caller
+    /// <c>jwks_uri</c> host and composed by AND with
+    /// <see cref="TrustedPersonServers"/>. <c>null</c> ⇒ no policy constraint.
+    /// Assign <see cref="AAuth.Server.AAuthTrust.Any"/> to state intentional open
+    /// trust explicitly.
+    /// </summary>
+    public Func<string, bool>? IsTrustedPersonServer { get; init; }
 
     /// <summary>
     /// Optional hook deriving baseline policy claims from the verified agent id
@@ -152,6 +165,21 @@ public static class AAuthAccessServerEndpoints
             }
         }
 
+        // Preserve null (open: broker any verifiable PS) vs. empty (deny all). The
+        // host set drives membership; the nullable form drives the open/empty split.
+        IReadOnlyCollection<string>? trustedPsHostsOrNull =
+            options.TrustedPersonServers is null ? null : trustedPsHosts;
+
+        // Startup footgun guard (diagnostics only): warn when brokering is open by
+        // default. Suppressed by any explicit policy (including AAuthTrust.Any).
+        TrustConfigDiagnostics.WarnIfOpenFederation(
+            app.Services.GetService<ILoggerFactory>()?.CreateLogger("AAuth.AccessServer"),
+            trustConfigured: options.TrustedPersonServers is not null || options.IsTrustedPersonServer is not null,
+            "MapAAuthAccessServer",
+            "this Access Server brokers for any verifiable Person Server because no TrustedPersonServers / " +
+            "IsTrustedPersonServer policy is configured (the AAuth spec default). Configure a policy to " +
+            "restrict, or assign AAuthTrust.Any to declare intentional open brokering and silence this warning.");
+
         // 1. Well-known metadata + JWKS (reachable without a signature).
         WellKnownEndpoints.MapAAuthAccessServerWellKnown(app, new AAuthAccessServerMetadataOptions
         {
@@ -196,7 +224,7 @@ public static class AAuthAccessServerEndpoints
                     statusCode: StatusCodes.Status403Forbidden);
             }
 
-            if (trustedPsHosts.Count > 0 && !trustedPsHosts.Contains(callerUri.Authority))
+            if (!IssuerTrust.IsTrusted(trustedPsHostsOrNull, options.IsTrustedPersonServer, callerUri.Authority))
             {
                 return Results.Json(
                     new { error = "untrusted_person_server", detail = $"jwks_uri '{parsedKey.JwksUri}' is not a trusted Person Server" },
@@ -246,12 +274,12 @@ public static class AAuthAccessServerEndpoints
                     statusCode: StatusCodes.Status401Unauthorized);
             }
 
-            if (trustedPsHosts.Count > 0)
             {
                 var jwksUri = parsed.JwksUri;
-                if (string.IsNullOrEmpty(jwksUri)
-                    || !Uri.TryCreate(jwksUri, UriKind.Absolute, out var psUri)
-                    || !trustedPsHosts.Contains(psUri.Authority))
+                var callerAuthority = Uri.TryCreate(jwksUri, UriKind.Absolute, out var psUri)
+                    ? psUri.Authority
+                    : string.Empty;
+                if (!IssuerTrust.IsTrusted(trustedPsHostsOrNull, options.IsTrustedPersonServer, callerAuthority))
                 {
                     return Results.Json(
                         new { error = "untrusted_person_server", detail = $"jwks_uri '{jwksUri}' is not a trusted Person Server" },
