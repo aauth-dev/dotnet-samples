@@ -613,6 +613,7 @@ pre.code-snippet { color: #c9d1d9; white-space: pre-wrap; }
     white-space: nowrap;
 }
 .srv--profile  { border-color: var(--accent); }
+.srv--inbox    { border-color: #a371f7; }
 .srv--calendar { border-color: var(--ok); }
 .srv--trips    { border-color: var(--warn); }
 .srv--wallet   { border-color: var(--accent-2); }

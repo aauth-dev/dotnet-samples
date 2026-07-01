@@ -31,7 +31,7 @@ AAuth supports four resource access modes. Each adds parties and capabilities, a
 | Mode | Parties | When to Use | Signing | See it in the demos |
 |------|---------|-------------|---------|---------------------|
 | **Identity-Based** | Agent + Resource | Replacing API keys with cryptographic identity | `hwk` / `jwks_uri` | GuidedTour → [**Identity-based**](http://localhost:5400/tour?flow=Identity); SampleApp → [`/pseudonymous`](http://localhost:5240/pseudonymous) and [`/identified`](http://localhost:5240/identified) |
-| **Resource-Managed** (two-party) | Agent + Resource | Resource manages authorization itself (interaction, OAuth/OIDC, internal policy) without an external PS or AS | Any | [Workflow guide](docs/workflows/resource-managed-access.md) — the resource owns the consent step |
+| **Resource-Managed** (two-party) | Agent + Resource | Resource manages authorization itself (interaction, OAuth/OIDC, internal policy) without an external PS or AS | Any | GuidedTour → [**Resource-Managed (Two-Party)**](http://localhost:5400/tour?flow=ResourceManaged); SampleApp → [`/inbox`](http://localhost:5240/inbox) |
 | **PS-Asserted** (three-party) | Agent + Resource + PS | Resource accepts identity claims (`sub`, `email`, `tenant`, `groups`, `roles`) from any Person Server | `jwt` | GuidedTour → [**PS-Asserted (Direct Grant)**](http://localhost:5400/tour?flow=Autonomous) and [**PS-Asserted (Deferred)**](http://localhost:5400/tour?flow=Deferred); SampleApp → [`/calendar`](http://localhost:5240/calendar) and [`/calendar-deferred`](http://localhost:5240/calendar-deferred) |
 | **Federated** (four-party) | Agent + Resource + PS + AS | Cross-domain access with the resource's own Access Server enforcing policy | `jwt` | GuidedTour → [**Federated (Four-Party)**](http://localhost:5400/tour?flow=Federated); SampleApp → [`/wallet`](http://localhost:5240/wallet). Live Keycloak consent: `make demo-keycloak` |
 
@@ -58,7 +58,7 @@ Step-by-step walk-through showing every HTTP exchange, header, and token claim a
 
 ### Sample App — http://localhost:5240
 
-Self-contained Blazor app with one page per AAuth flow (HWK, JWKS URI, JWT direct grant, deferred user consent, call-chain multi-agent delegation, four-party federated).
+Self-contained Blazor app with one page per AAuth flow (HWK, JWKS URI, resource-managed Inbox, JWT direct grant, deferred user consent, call-chain multi-agent delegation, four-party federated).
 
 ![Sample App](samples/SampleApp/sample-app.png)
 
@@ -171,44 +171,38 @@ The resource verifies signatures, publishes metadata, and issues resource token 
 ```csharp
 using AAuth.Crypto;
 using AAuth;
-using AAuth.Server.Challenge;
-using AAuth.Server.Verification;
-using AAuth.Server.Metadata;
 
 var builder = WebApplication.CreateBuilder(args);
 var resourceKey = AAuthKey.Generate();
 
-// Register AAuth resource services
+// One DI call registers the verifier, discovery clients, JTI store, and metadata.
 builder.Services.AddAAuthResource(options =>
 {
     options.Issuer = "https://resource.example";
-    options.SigningKeys = new() { ["resource-key-1"] = resourceKey };
+    options.SigningKeys["resource-key-1"] = resourceKey;
     options.ScopeDescriptions = new() { ["read"] = "Read your data" };
 });
+builder.Services.AddAAuthAuthentication();
+builder.Services.AddAAuthAuthorization();
 
 var app = builder.Build();
 
 // Serve /.well-known/aauth-resource.json + JWKS
 app.MapAAuthWellKnown();
 
-// Verify HTTP signatures and auth tokens from trusted Person Servers
-app.UseAAuthVerification(new AAuthVerificationOptions
-{
-    ResourceIdentifier = "https://resource.example",
-    RequireIssuerVerification = true,
-    TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" },
-});
+// One declarative pipeline. Per-route scope/role lives on the endpoint; this
+// single post-routing middleware verifies and challenges each matched endpoint.
+app.UseRouting();
+app.UseAAuth(o => o.TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" });
+app.UseAuthentication();
+app.UseAuthorization();
 
-// Issue 401 + resource_token when agent presents only an agent token
-app.UseAAuthChallenge(new ChallengeOptions
-{
-    ResourceSigningKey = resourceKey,
-    ResourceKeyId = "resource-key-1",
-    ResourceIdentifier = "https://resource.example",
-});
+// Protected endpoint — reached only after the auth token is verified.
+app.MapGet("/data", (HttpContext ctx) => Results.Ok(new { ok = true }))
+    .RequireAAuth(scope: "read");
 ```
 
-The `UseAAuthChallenge` middleware (registered after verification) automatically returns `401` with an `AAuth-Requirement` header containing a resource token when the agent lacks an auth token. The `TrustedAuthTokenIssuers` allow-list restricts which Person Servers the resource will accept auth tokens from.
+The single `UseAAuth` middleware (placed after `UseRouting()`) reads each endpoint's `.RequireAAuth(...)` requirement: it verifies the HTTP signature and, when an auth token is required, automatically returns `401` with an `AAuth-Requirement` header carrying a resource token. The optional `TrustedAuthTokenIssuers` allow-list restricts which Person Servers the resource will accept auth tokens from; omit it (or assign `AAuthTrust.Any`) to accept any *verifiable* Person Server — the spec default — with claims namespaced by issuer.
 
 ### Self-Hosted Agent (Server-Side)
 
@@ -270,7 +264,7 @@ dotnet test tests/AAuth.Conformance   # spec conformance suite only
 |------|-------------|
 | [src/AAuth/](src/AAuth/) | AAuth SDK library (the NuGet package) |
 | [docs/](docs/) | SDK documentation — signing modes, workflows, server guides |
-| [samples/](samples/) | Sample applications — Profile, Calendar, Trips, Wallet resource servers, Concierge, AgentConsole, MockPersonServer, MockAgentProvider, GuidedTour, SampleApp |
+| [samples/](samples/) | Sample applications — Profile, Calendar, Trips, Wallet, Inbox resource servers, Concierge, AgentConsole, MockPersonServer, MockAgentProvider, GuidedTour, SampleApp |
 | [tests/](tests/) | Unit, integration, and spec-conformance tests |
 | [aauth-spec/](aauth-spec/) | Protocol specifications (drafts 01, 02, and 08) from [dickhardt/AAuth](https://github.com/dickhardt/AAuth) |
 
@@ -284,7 +278,7 @@ This SDK targets **draft-08** of the AAuth protocol specification:
 | [draft-hardt-aauth-bootstrap](aauth-spec/v08/draft-hardt-aauth-bootstrap.md) | 01 |
 | [draft-hardt-aauth-r3](aauth-spec/v08/draft-hardt-aauth-r3.md) | 00 |
 
-The protocol tracks IETF **draft-08** ([`aauth-spec/v08/`](aauth-spec/v08/), source commit [`dd2b852`](https://github.com/dickhardt/AAuth/commit/dd2b8524eb8a6beb1a6cd922f285cc8bd0464cd8), 2026-06-25). Earlier draft-02 ([`aauth-spec/v02/`](aauth-spec/v02/)) and draft-01 ([`aauth-spec/v01/`](aauth-spec/v01/)) snapshots are retained for reference. The `AAuth-Access` opaque-token flow (resource-managed, two-party access) is the one protocol surface not yet implemented. See [SPEC-VERSION.md](aauth-spec/SPEC-VERSION.md) and [aauth-spec/CHANGELOG.md](aauth-spec/CHANGELOG.md) for details.
+The protocol tracks IETF **draft-08** ([`aauth-spec/v08/`](aauth-spec/v08/), source commit [`dd2b852`](https://github.com/dickhardt/AAuth/commit/dd2b8524eb8a6beb1a6cd922f285cc8bd0464cd8), 2026-06-25). Earlier draft-02 ([`aauth-spec/v02/`](aauth-spec/v02/)) and draft-01 ([`aauth-spec/v01/`](aauth-spec/v01/)) snapshots are retained for reference. All four resource access modes — including the `AAuth-Access` opaque-token flow (resource-managed, two-party access) — are implemented. See [SPEC-VERSION.md](aauth-spec/SPEC-VERSION.md) and [aauth-spec/CHANGELOG.md](aauth-spec/CHANGELOG.md) for details.
 
 ## Contributing
 

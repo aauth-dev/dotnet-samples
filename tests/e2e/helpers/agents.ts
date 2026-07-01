@@ -9,7 +9,7 @@ export const Urls = {
   calendar: 'http://localhost:5001',
   trips: 'http://localhost:5002',
   wallet: 'http://localhost:5003',
-  bookings: 'http://localhost:5004',
+  bookings: 'http://localhost:5005',
   personServer: 'http://localhost:5100',
   concierge: 'http://localhost:5200',
   agentProvider: 'http://localhost:5301',

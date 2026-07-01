@@ -151,29 +151,44 @@ public sealed class AAuthVerificationMiddleware
             return;
         }
 
-        // Replay detection.
+        // Replay detection (§Freshness and Replay, spec L2376/L2378). Replay is
+        // defended on the per-request SIGNATURE, not the carrier token: an auth
+        // token (or jkt-jwt naming JWT) is a reusable credential presented on
+        // every request, so keying the cache on its `jti` would make it
+        // single-use and break legitimate reuse — e.g. an intermediary
+        // re-driving a chained call on each `GET /pending/{id}` poll. We key on
+        // the verified signature itself, which cryptographically binds the spec's
+        // tuple `(key-thumbprint, created, @method, @authority, @path)` PLUS the
+        // covered `signature-key` (the carrier). So a captured signature replayed
+        // verbatim collides and is rejected, while legitimately distinct requests
+        // — a fresh `created`, a different carrier, a different path — never do.
+        // The carrier `jti` is kept only for revocation.
         var tokenId = parsedInfo.Payload?["jti"]?.GetValue<string>();
         if (context.Items.TryGetValue(JtiStoreItemKey, out var storeObj) &&
-            storeObj is IJtiStore jtiStore &&
-            tokenId is { Length: > 0 } jti)
+            storeObj is IJtiStore jtiStore)
         {
-            var expNode = parsedInfo.Payload?["exp"];
-            var expiration = expNode is not null
-                ? DateTimeOffset.FromUnixTimeSeconds(expNode.GetValue<long>())
-                : DateTimeOffset.UtcNow.AddMinutes(5);
-            if (!await jtiStore.TryRecordAsync(jti, expiration, context.RequestAborted))
+            // Revocation is keyed on the token's own `jti` (audit/revocation).
+            if (tokenId is { Length: > 0 } revocableJti &&
+                await jtiStore.IsRevokedAsync(revocableJti, context.RequestAborted).ConfigureAwait(false))
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 context.Response.Headers[SignatureError.HeaderName] =
                     SignatureError.Format(SignatureErrorCode.InvalidJwt);
                 return;
             }
-            if (await jtiStore.IsRevokedAsync(jti, context.RequestAborted))
+
+            // Replay is keyed on the verified signature for the freshness window.
+            if (ParseSignatureCreated(signatureInput) is { } createdSeconds)
             {
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                context.Response.Headers[SignatureError.HeaderName] =
-                    SignatureError.Format(SignatureErrorCode.InvalidJwt);
-                return;
+                var replayKey = $"{publicKey.ComputeJwkThumbprint()}|{signature}";
+                var replayExpiry = DateTimeOffset.FromUnixTimeSeconds(createdSeconds) + _verifier.MaxAge;
+                if (!await jtiStore.TryRecordAsync(replayKey, replayExpiry, context.RequestAborted).ConfigureAwait(false))
+                {
+                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    context.Response.Headers[SignatureError.HeaderName] =
+                        SignatureError.Format(SignatureErrorCode.InvalidJwt);
+                    return;
+                }
             }
         }
 
@@ -333,8 +348,10 @@ public sealed class AAuthVerificationMiddleware
             throw new TokenVerificationException("Agent token 'iss' must be an absolute https:// URL (or http://localhost).");
 
         // Check issuer allow-list.
-        if (_options.TrustedAgentProviderIssuers is { } trusted && !trusted.Contains(iss))
-            throw new TokenVerificationException($"Agent token issuer '{iss}' is not in the trusted issuers list.");
+        // Trust policy (default open: any verifiable AP issuer), narrowed by an
+        // optional allow-list and/or predicate, composed by AND.
+        if (!IssuerTrust.IsTrusted(_options.TrustedAgentProviderIssuers, _options.IsTrustedAgentProviderIssuer, iss))
+            throw new TokenVerificationException($"Agent token issuer '{iss}' is not trusted by policy.");
 
         var kid = (string?)header["kid"]
             ?? throw new TokenVerificationException("Agent token header is missing 'kid'.");
@@ -402,15 +419,15 @@ public sealed class AAuthVerificationMiddleware
         if (!AAuthUrl.IsHttpsOrLoopback(iss))
             throw new TokenVerificationException("Auth token 'iss' must be an absolute https:// URL (or http://localhost).");
 
-        // Fail-closed issuer namespacing: a PS-asserted auth token is trusted
-        // only when its issuer is in the configured allow-list. An unset or
-        // empty allow-list rejects ALL auth tokens — the resource MUST declare
-        // which Person Servers it trusts before it will honor their claims.
-        var trusted = _options.TrustedAuthTokenIssuers;
-        if (trusted is null || trusted.Count == 0 || !trusted.Contains(iss))
+        // Trust policy (§Trust Posture in PS-Asserted Access): default open —
+        // accept any verifiable PS, namespaced by `iss` — narrowed by an optional
+        // allow-list and/or predicate, composed by AND. An empty allow-list denies
+        // all. The issuer's JWT signature is verified below via JWKS discovery;
+        // this is the policy layer on top of that crypto check.
+        if (!IssuerTrust.IsTrusted(_options.TrustedAuthTokenIssuers, _options.IsTrustedAuthTokenIssuer, iss))
             throw new TokenVerificationException(
-                $"Auth token issuer '{iss}' is not in the trusted issuers list " +
-                "(set AAuthVerificationOptions.TrustedAuthTokenIssuers to the Person Servers this resource trusts).");
+                $"Auth token issuer '{iss}' is not trusted by policy " +
+                "(TrustedAuthTokenIssuers / IsTrustedAuthTokenIssuer).");
 
         var kid = (string?)header["kid"]
             ?? throw new TokenVerificationException("Auth token header is missing 'kid'.");
@@ -546,6 +563,31 @@ public sealed class AAuthVerificationMiddleware
             return false;
         value = values[0]!;
         return true;
+    }
+
+    // Extract the `created` Unix timestamp from a Signature-Input value
+    // (`sig=(...);created=NNN`), used only to bound the replay-cache entry's
+    // expiry. This is a lightweight extract, NOT the authoritative parse — the
+    // signature has already been fully validated by AAuthVerifier (see
+    // AAuthVerifier.ParseSignatureInput, which validates `created` and the
+    // covered components and throws on a missing/invalid `created`). Returns null
+    // when absent; because verification already requires `created`, a null here
+    // only means no replay entry is written (replay defense is MAY, not MUST).
+    private static long? ParseSignatureCreated(string signatureInput)
+    {
+        const string Marker = "created=";
+        var idx = signatureInput.IndexOf(Marker, StringComparison.Ordinal);
+        if (idx < 0)
+            return null;
+        var start = idx + Marker.Length;
+        var end = start;
+        if (end < signatureInput.Length && signatureInput[end] == '-')
+            end++;
+        while (end < signatureInput.Length && char.IsDigit(signatureInput[end]))
+            end++;
+        return long.TryParse(signatureInput.AsSpan(start, end - start), out var created)
+            ? created
+            : null;
     }
 
     private static AAuthLevel DetermineLevel(string scheme, string? tokenType)

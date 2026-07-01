@@ -4,10 +4,13 @@ namespace GuidedTour;
 /// Which protocol flow the tour walks through.
 /// <see cref="Identity"/> renders the 4-step identity-based path where
 /// the resource trusts the agent token directly and no Person Server is
-/// involved. <see cref="Autonomous"/> renders the 8-step three-party
-/// "happy path" where the PS issues an auth token immediately.
-/// <see cref="Deferred"/> renders the 11-step user-consent path:
-/// exchange returns 202, the agent surfaces an interaction URL to its
+/// involved. <see cref="ResourceManaged"/> renders the 6-step two-party
+/// AAuth-Access path: the resource manages authorization itself via its
+/// own consent page and hands back an opaque token the agent replays
+/// (no Person Server, no token exchange). <see cref="Autonomous"/> renders
+/// the 8-step three-party "happy path" where the PS issues an auth token
+/// immediately. <see cref="Deferred"/> renders the 11-step user-consent
+/// path: exchange returns 202, the agent surfaces an interaction URL to its
 /// user, the user approves, and the agent polls until the PS mints the
 /// auth token.
 /// <see cref="RichRequest"/> renders the experimental R3 rich trip
@@ -17,6 +20,7 @@ public enum TourMode
 {
     Bootstrap,
     Identity,
+    ResourceManaged,
     Autonomous,
     Deferred,
     CallChain,
@@ -73,6 +77,9 @@ public sealed class TourOptions
     /// <summary>Base URL of the Aria <b>Profile</b> resource server (identity-based access).</summary>
     public string ProfileUrl { get; set; } = "http://localhost:5000";
 
+    /// <summary>Base URL of the Aria <b>Inbox</b> resource server (resource-managed two-party AAuth-Access).</summary>
+    public string InboxUrl { get; set; } = "http://localhost:5004";
+
     /// <summary>Base URL of the Aria <b>Calendar</b> resource server (PS-asserted three-party).</summary>
     public string CalendarUrl { get; set; } = "http://localhost:5001";
 
@@ -83,7 +90,7 @@ public sealed class TourOptions
     public string WalletUrl { get; set; } = "http://localhost:5003";
 
     /// <summary>Base URL of the Aria <b>Bookings</b> resource server (experimental R3 rich requests).</summary>
-    public string BookingsUrl { get; set; } = "http://localhost:5004";
+    public string BookingsUrl { get; set; } = "http://localhost:5005";
 
     /// <summary>
     /// Optional MockPersonServer URL. When set, the tour walks one of the

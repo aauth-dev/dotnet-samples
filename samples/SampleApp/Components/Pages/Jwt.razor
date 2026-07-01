@@ -44,49 +44,41 @@ using var client = AAuthClientBuilder.Enrolled(key)
 </div>
 <div class="col-md-6">
 <h5>Server Code</h5>
-<pre><code class="language-csharp">builder.Services.AddSingleton(new AAuthVerifier());
-builder.Services.AddSingleton(sp =&gt;
-    new MetadataClient(httpClient));
-builder.Services.AddSingleton(sp =&gt;
-    new JwksClient(httpClient));
-
-// Authn scheme + scope policy: maps the verified
-// token to a ClaimsPrincipal, then enforces that
-// it actually carries the `calendar.read` scope.
+<pre><code class="language-csharp">// One DI call: verifier, discovery clients, JTI
+// store, and published metadata — no manual wiring.
+builder.Services.AddAAuthResource(o =&gt;
+{
+    o.Issuer = "https://resource.example";
+    o.SigningKeys["calendar-1"] = resourceKey;
+    o.ScopeDescriptions = new()
+    {
+        ["calendar.read"] = "See your calendar events",
+    };
+});
 builder.Services.AddAAuthAuthentication();
 builder.Services.AddAAuthAuthorization();
-// arg 1 = policy name (any id, used by RequireAuthorization); arg 2 = scope value matched against the token. "AAuth.Scope." is just a naming convention.
-builder.Services.AddAAuthScopePolicy(
-    "AAuth.Scope.calendar.read", "calendar.read");
 
 var app = builder.Build();
 
-// Middleware verifies HTTP signature AND the
-// JWT issuer (via JWKS discovery), then stores
-// the result in HttpContext.Features.
-app.UseAAuthVerification(new AAuthVerificationOptions
-{
-    ResourceIdentifier = "https://resource.example",
-    RequireIssuerVerification = true,
-});
+// Well-known metadata + JWKS from the DI registration.
+app.MapAAuthWellKnown();
 
-// Auto-challenge: returns 401 with a resource
-// token if only an agent token is presented.
-// On retry the PS provides an auth token.
-app.UseAAuthChallenge(new ChallengeOptions
-{
-    AccessMode = AAuthAccessMode.RequireAuthToken,
-});
+// One declarative pipeline: a single post-routing
+// middleware verifies and challenges each matched
+// endpoint from its metadata. Trust only the
+// configured Person Servers (fail-closed).
+app.UseRouting();
+app.UseAAuth(o =&gt;
+    o.TrustedAuthTokenIssuers = trustedPersonServers);
 
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapGet("/events", (HttpContext ctx) =&gt;
 {
-    // Middleware already verified the auth token AND
-    // the scope policy below enforced `calendar.read`.
-    var r = ctx.Features
-        .Get&lt;AAuthVerificationResult&gt;()!;
+    // Middleware verified the auth token AND the
+    // .RequireAAuth(...) below enforced the scope.
+    var r = ctx.GetAAuthVerification()!;
     return Results.Ok(new
     {
         accessMode = "three-party",
@@ -97,9 +89,8 @@ app.MapGet("/events", (HttpContext ctx) =&gt;
         iss = r.Issuer,
     });
 })
-// Enforce the scope — without this the endpoint
-// would accept ANY valid auth token, ignoring scope.
-.RequireAuthorization("AAuth.Scope.calendar.read");</code></pre>
+// Per-route scope — no magic-string policies.
+.RequireAAuth(scope: "calendar.read");</code></pre>
 </div>
 </div>
 

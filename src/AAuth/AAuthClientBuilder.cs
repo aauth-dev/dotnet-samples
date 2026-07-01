@@ -92,6 +92,10 @@ public sealed class AAuthClientBuilder
     private bool _interactionHandling;
     private Action<InteractionHandlingOptions>? _interactionOptionsConfigure;
 
+    // Resource-managed (AAuth-Access) opaque-token state
+    private bool _resourceManagedAccess;
+    private IAAuthAccessStore? _accessStore;
+
     // Stored token (for reading claims)
     private string? _agentToken;
     private Func<string>? _tokenFactory;
@@ -411,6 +415,28 @@ public sealed class AAuthClientBuilder
         return this;
     }
 
+    /// <summary>
+    /// Enable the resource-managed (two-party) <c>AAuth-Access</c> opaque-token
+    /// flow: capture an <c>AAuth-Access</c> response header and replay it as
+    /// <c>Authorization: AAuth &lt;token68&gt;</c> on subsequent requests to the
+    /// same resource origin, bound to the request signature
+    /// (§AAuth-Access Response Header). Typically combined with
+    /// <see cref="WithInteractionHandling()"/> so the resource's
+    /// <c>202 → interaction → 200 + AAuth-Access</c> handshake is driven
+    /// automatically.
+    /// </summary>
+    /// <param name="store">
+    /// Optional per-origin token store. Defaults to a new
+    /// <see cref="InMemoryAAuthAccessStore"/>. Supply a shared store for a
+    /// multi-instance agent.
+    /// </param>
+    public AAuthClientBuilder WithResourceManagedAccess(IAAuthAccessStore? store = null)
+    {
+        _resourceManagedAccess = true;
+        _accessStore = store;
+        return this;
+    }
+
     /// <summary>Build the configured <see cref="HttpClient"/>.</summary>
     /// <exception cref="InvalidOperationException">No signing mode was configured.</exception>
     public HttpClient Build() => new HttpClient(BuildHandler());
@@ -510,8 +536,12 @@ public sealed class AAuthClientBuilder
                 OnSignatureBase = _onSignatureBase,
             };
 
+            // Resource-managed access handler sits just above the signer so the
+            // Authorization: AAuth header it sets is covered by the signature.
+            var signed = WrapWithAccessHandler(handler);
+
             if (!_interactionHandling)
-                return WithMissionHeader(handler);
+                return WithMissionHeader(signed);
 
             // Wrap with interaction handler
             var interactionOpts = new InteractionHandlingOptions();
@@ -525,7 +555,7 @@ public sealed class AAuthClientBuilder
                 interactionOpts.PreferWaitSeconds,
                 interactionOpts.OnPoll)
             {
-                InnerHandler = handler,
+                InnerHandler = signed,
             };
             return WithMissionHeader(interactionHandler);
         }
@@ -578,7 +608,7 @@ public sealed class AAuthClientBuilder
             challengeOptions.OnInteractionRequired, pollerOptions,
             _upstreamTokenProvider)
         {
-            InnerHandler = outerSigner,
+            InnerHandler = WrapWithAccessHandler(outerSigner),
             Capabilities = challengeOptions.Capabilities is { } caps
                 ? new System.Collections.Generic.List<string>(caps)
                 : null,
@@ -647,6 +677,20 @@ public sealed class AAuthClientBuilder
         return new MissionHeaderHandler(_mission) { InnerHandler = inner };
     }
 
+    // Wrap a signing handler with the resource-managed AAuth-Access handler when
+    // WithResourceManagedAccess(...) was called. It sits directly above the signer
+    // (inner of interaction/challenge) so the Authorization: AAuth header it sets
+    // is present when the signer covers `authorization`.
+    private HttpMessageHandler WrapWithAccessHandler(HttpMessageHandler signer)
+    {
+        if (!_resourceManagedAccess)
+            return signer;
+        return new AAuthAccessHandler(_accessStore ?? new InMemoryAAuthAccessStore())
+        {
+            InnerHandler = signer,
+        };
+    }
+
     private HttpMessageHandler BuildRefreshOnlyHandler()
     {
         var holder = new AAuthTokenHolder();
@@ -662,7 +706,7 @@ public sealed class AAuthClientBuilder
 
         var refreshHandler = new TokenRefreshHandler(holder, _tokenRefresher!, signingKeyThumbprint, _refreshThreshold)
         {
-            InnerHandler = signingHandler,
+            InnerHandler = WrapWithAccessHandler(signingHandler),
         };
 
         if (!_interactionHandling)

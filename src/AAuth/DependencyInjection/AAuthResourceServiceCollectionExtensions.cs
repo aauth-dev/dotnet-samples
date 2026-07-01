@@ -44,12 +44,10 @@ public static class AAuthResourceServiceCollectionExtensions
             Clock = options.Clock ?? (() => DateTimeOffset.UtcNow),
         });
 
-        // Register JwksClient (singleton) for key resolution.
-        services.TryAddSingleton(sp =>
-        {
-            var httpClient = new HttpClient();
-            return new JwksClient(httpClient);
-        });
+        // Register the shared discovery clients (MetadataClient + JwksClient) with
+        // a pooled handler. Folded in so consumers wire no HttpClient/factory
+        // plumbing; both stay overridable singletons (TryAdd) for tests.
+        services.AddAAuthDiscovery();
 
         // Register ISignatureKeyResolver.
         if (options.KeyResolver is not null)
@@ -71,13 +69,25 @@ public static class AAuthResourceServiceCollectionExtensions
             services.TryAddSingleton<IJtiStore, InMemoryJtiStore>();
         }
 
+        // Register a default opaque-token store for the resource-managed
+        // (two-party) AAuth-Access flow when enabled (§Resource-Managed
+        // Authorization). The app may register its own IOpaqueTokenStore first.
+        if (options.EnableResourceManagedAccess)
+        {
+            services.TryAddSingleton<IOpaqueTokenStore, InMemoryOpaqueTokenStore>();
+        }
+
         // Register the well-known metadata options for UseAAuthVerification / MapAAuthWellKnown.
         var metadataOptions = new AAuthResourceMetadataOptions
         {
             Issuer = options.Issuer,
             SigningKeys = options.SigningKeys,
             Name = options.Name,
+            Description = options.Description,
             ScopeDescriptions = options.ScopeDescriptions,
+            SignatureWindow = options.SignatureWindow,
+            AccessMode = options.AccessMode,
+            AuthorizationEndpoint = options.AuthorizationEndpoint,
         };
         services.TryAddSingleton(metadataOptions);
 

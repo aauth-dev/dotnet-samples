@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -41,6 +42,11 @@ public sealed class TourSession : IAsyncDisposable
     private string? _interactionUrl;
     private string? _interactionCode;
     private bool _userApproved;
+    // Resource-managed (two-party AAuth-Access) flow state. The opaque
+    // token68 the Inbox issues on the terminal poll (§AAuth-Access Response
+    // Header); replayed on the retry as `Authorization: AAuth <token68>`,
+    // which the signer auto-covers to bind it to the request.
+    private string? _aauthAccessToken;
     // True once the federated exchange (step 5) came back 202 — the AS (Keycloak)
     // needs an interactive login/consent, so the flow grows the consent + poll
     // steps (mirroring deferred mode). Stays false against an auto-allow stub AS.
@@ -160,7 +166,9 @@ public sealed class TourSession : IAsyncDisposable
     /// respects the user's choice; three-party flows force jwt.
     /// </summary>
     private SigningMode EffectiveSigningMode =>
-        Mode is TourMode.Identity ? SigningMode : SigningMode.Jwt;
+        Mode is TourMode.Identity ? SigningMode :
+        Mode is TourMode.ResourceManaged ? SigningMode.Hwk :
+        SigningMode.Jwt;
 
     /// <summary>Kept for backwards compatibility — always true now that the picker is always rendered.</summary>
     public bool CanSwitchMode => true;
@@ -174,6 +182,7 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public string ResourceBaseUrl =>
         Mode is TourMode.Identity ? _options.ProfileUrl.TrimEnd('/') :
+        Mode is TourMode.ResourceManaged ? _options.InboxUrl.TrimEnd('/') :
         Mode is TourMode.Mission or TourMode.MissionCallChain ? _options.TripsUrl.TrimEnd('/') :
         Mode is TourMode.Federated ? _options.WalletUrl.TrimEnd('/') :
         Mode is TourMode.RichRequest ? _options.BookingsUrl.TrimEnd('/') :
@@ -182,6 +191,7 @@ public sealed class TourSession : IAsyncDisposable
     /// <summary>The display name of the resource server the current flow targets.</summary>
     public string ResourceDisplayName =>
         Mode is TourMode.Identity ? "Profile" :
+        Mode is TourMode.ResourceManaged ? "Inbox" :
         Mode is TourMode.Mission or TourMode.MissionCallChain ? "Trips" :
         Mode is TourMode.Federated ? "Wallet" :
         Mode is TourMode.RichRequest ? "Bookings" :
@@ -231,7 +241,15 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public bool IsIdentityMode =>
         _mode == TourMode.Identity
-        || (!HasPersonServer && _mode != TourMode.Bootstrap && _mode != TourMode.SubAgent && _mode != TourMode.RichRequest);
+        || (!HasPersonServer && _mode != TourMode.Bootstrap && _mode != TourMode.SubAgent && _mode != TourMode.ResourceManaged && _mode != TourMode.RichRequest);
+
+    /// <summary>
+    /// True when the current flow is the resource-managed (two-party
+    /// AAuth-Access) path. The Inbox manages authorization itself via its own
+    /// consent page and issues an opaque token the agent replays — no Person
+    /// Server and no token exchange, so it never depends on a configured PS.
+    /// </summary>
+    public bool IsResourceManagedMode => _mode == TourMode.ResourceManaged;
 
     /// <summary>True when the configured flow is the deferred / user-consent path.</summary>
     public bool IsDeferredMode =>
@@ -299,6 +317,7 @@ public sealed class TourSession : IAsyncDisposable
         {
             if (IsBootstrapMode) return HasAgentProvider ? 3 : 2;
             if (IsIdentityMode) return 2;
+            if (IsResourceManagedMode) return 6;
             if (IsSubAgentMode) return 7;
             if (IsRichRequestMode) return 12;
             if (IsMissionCallChainMode) return 14;
@@ -321,6 +340,7 @@ public sealed class TourSession : IAsyncDisposable
         {
             if (IsBootstrapMode) return HasAgentProvider ? ApBootstrapPlan : LocalBootstrapPlan;
             if (IsIdentityMode) return IdentityPlan;
+            if (IsResourceManagedMode) return ResourceManagedPlan;
             if (IsSubAgentMode) return SubAgentPlan;
             if (IsRichRequestMode) return RichRequestPlan;
             if (IsMissionCallChainMode) return MissionCallChainPlan;
@@ -348,6 +368,25 @@ public sealed class TourSession : IAsyncDisposable
     {
         new(1, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
         new(2, "Signed GET → 200", "Resource trusts identity alone (no PS) on the per-mode endpoint (/pseudonymous, /identified, /anchored), returns 200 + claims directly.", Actor.Agent, Actor.Resource),
+    };
+
+    // The resource-managed (two-party AAuth-Access) flow (§AAuth-Access Response
+    // Header, §Resource-Managed Authorization). The Inbox manages authorization
+    // ITSELF — via its OWN consent page — with no Person Server and no token
+    // exchange. The resource is its own authorization server — the role a
+    // first-party OAuth deployment plays — so the opaque token it hands back
+    // models an OAuth access token, but is bound to the agent's signature so it
+    // is useless as a standalone bearer token.
+    // Structurally mirrors deferred mode (202 → interaction → poll → retry) but
+    // every leg is agent ↔ resource — there is no third party.
+    private static readonly TourPlanStep[] ResourceManagedPlan =
+    {
+        new(1, "Discover Inbox metadata", "Unsigned GET /.well-known/aauth-resource.json — access_mode=aauth-access-token + authorization_endpoint.", Actor.Agent, Actor.Resource),
+        new(2, "Signed GET /messages → 202", "HWK-signed request; the Inbox manages authorization itself and returns 202 + AAuth-Requirement: interaction + Location.", Actor.Agent, Actor.Resource),
+        new(3, "Direct user to Inbox consent", "Agent surfaces the {url}?code={code} link to the Inbox's OWN consent page.", Actor.Agent, Actor.Agent),
+        new(4, "User approves at the Inbox", "User opens the Inbox consent page in a new tab and clicks Approve; the Inbox records consent.", Actor.Resource, Actor.Resource),
+        new(5, "Poll pending URL → 200 AAuth-Access", "Signed GETs to /pending/{code} until the Inbox issues the opaque AAuth-Access token.", Actor.Agent, Actor.Resource),
+        new(6, "Replay GET /messages with AAuth-Access", "HWK-signed retry sets Authorization: AAuth <token68>; the signature covers `authorization` → 200 + messages.", Actor.Agent, Actor.Resource),
     };
 
     // The sub-agent (parent-mediated worker) flow (§Sub-Agents). An orchestrating
@@ -544,6 +583,8 @@ public sealed class TourSession : IAsyncDisposable
     public int UserApprovalStepNumber =>
         IsRichRequestMode
             ? (Steps.Count + 1 <= RichInitialApprovalStep ? RichInitialApprovalStep : RichProposalApprovalStep)
+        : IsResourceManagedMode
+            ? ResourceManagedApprovalStep
         : IsMissionCallChainMode
             ? (Steps.Count <= MissionChainCreatePollStep ? MissionChainCreateApprovalStep
                 : MissionChainElevatedApprovalStep)
@@ -559,6 +600,8 @@ public sealed class TourSession : IAsyncDisposable
     public int PollStepNumber =>
         IsRichRequestMode
             ? (Steps.Count + 1 <= RichInitialPollStep ? RichInitialPollStep : RichProposalPollRetryStep)
+        : IsResourceManagedMode
+            ? ResourceManagedPollStep
         : IsMissionCallChainMode
             ? (Steps.Count <= MissionChainCreatePollStep ? MissionChainCreatePollStep
                 : MissionChainElevatedPollStep)
@@ -576,6 +619,12 @@ public sealed class TourSession : IAsyncDisposable
     private const int RichInitialPollStep = 7;
     private const int RichProposalApprovalStep = 11;
     private const int RichProposalPollRetryStep = 12;
+
+    // Resource-managed (two-party AAuth-Access) consent path step numbers: the
+    // user approves at the Inbox (step 4) and the agent polls the Inbox's
+    // pending URL (step 5).
+    private const int ResourceManagedApprovalStep = 4;
+    private const int ResourceManagedPollStep = 5;
 
     // Call-chain consent path step numbers: hop 1 (Agent → Concierge) and
     // hop 2 (the Concierge's chained 202 for Concierge → Calendar).
@@ -609,7 +658,9 @@ public sealed class TourSession : IAsyncDisposable
     /// for the call-chain hop-2 (chained) poll.
     /// </summary>
     public Actor PollLoopTarget =>
-        (IsCallChainPending && PollStepNumber == CallChainHop2PollStep)
+        IsResourceManagedMode
+            ? Actor.Resource
+        : (IsCallChainPending && PollStepNumber == CallChainHop2PollStep)
             ? Actor.Concierge
             : Actor.PersonServer;
 
@@ -618,7 +669,7 @@ public sealed class TourSession : IAsyncDisposable
     /// and the UI should expose the "Approve as user" action button.
     /// </summary>
     public bool AwaitingUserApproval =>
-        (IsDeferredMode || (IsFederatedMode && _federatedPending) || IsRichRequestMode || IsCallChainPending || IsMissionMode || IsMissionCallChainMode)
+        (IsDeferredMode || (IsFederatedMode && _federatedPending) || IsRichRequestMode || IsCallChainPending || IsMissionMode || IsMissionCallChainMode || IsResourceManagedMode)
         && Steps.Count + 1 == UserApprovalStepNumber && !_userApproved;
 
     /// <summary>The user-facing interaction URL captured during step 7 (deferred only).</summary>
@@ -697,6 +748,7 @@ public sealed class TourSession : IAsyncDisposable
         _federatedPending = false;
         _callChainPending = false;
         _aborted = false;
+        _aauthAccessToken = null;
         _missionApprover = null;
         _missionS256 = null;
         _missionDescription = null;
@@ -1067,6 +1119,27 @@ public sealed class TourSession : IAsyncDisposable
                 case 20: StepMissionInspectResult(); break;
             }
         }
+        else if (IsResourceManagedMode)
+        {
+            switch (nextStep)
+            {
+                case 1: await StepResourceManagedDiscoverAsync(ct); break;
+                case 2: await StepResourceManagedSignedGetAsync(ct); break;
+                case 3: StepDirectUserToInteraction(); break;
+                case 4: StepUserApprovesPlaceholder(); break;
+                case 5:
+                    if (_pollingTask is { } rmPoll && !rmPoll.IsCompleted)
+                    {
+                        await rmPoll.ConfigureAwait(false);
+                    }
+                    else if (Steps.Count + 1 == PollStepNumber)
+                    {
+                        await StepResourceManagedPollAsync(ct);
+                    }
+                    break;
+                case 6: await StepResourceManagedRetryAsync(ct); break;
+            }
+        }
         else
         {
             switch (nextStep)
@@ -1126,15 +1199,13 @@ public sealed class TourSession : IAsyncDisposable
     }
 
     /// <summary>
-    /// Re-mints <see cref="_agentToken"/> with a fresh `jti` (the
-    /// <see cref="AgentTokenBuilder"/> generates a new token id on each
-    /// <c>Build()</c>). The resource server enforces replay detection per
-    /// signed request, so a single long-lived agent token cannot be reused
-    /// across two separate signed requests to the same resource. The mission
-    /// flow hits the resource twice (the `/trips` and
-    /// `/trips/book` challenges), so each challenge must present a
-    /// distinct agent token — exactly as a real agent would refresh its token
-    /// per access (spec §Agent Token, replay protection).
+    /// Re-mints <see cref="_agentToken"/> (the <see cref="AgentTokenBuilder"/>
+    /// also generates a fresh `jti` on each <c>Build()</c>). This models a real
+    /// agent rotating its short-lived agent token per access. Token reuse is
+    /// itself fine — the resource enforces replay detection per <em>signed
+    /// request</em> (keyed on the signature, not the token), so one long-lived
+    /// token can serve many distinct requests; only a captured signature
+    /// replayed verbatim is rejected (spec §Freshness and Replay).
     /// </summary>
     private void RefreshAgentToken()
     {
@@ -1160,7 +1231,7 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public Task RecordUserApprovalOpenedAsync(CancellationToken ct = default)
     {
-        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsRichRequestMode || IsCallChainPending || IsMissionMode || IsMissionCallChainMode)) { return Task.CompletedTask; }
+        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsRichRequestMode || IsCallChainPending || IsMissionMode || IsMissionCallChainMode || IsResourceManagedMode)) { return Task.CompletedTask; }
         if (Steps.Count + 1 != UserApprovalStepNumber)
         {
             throw new InvalidOperationException(
@@ -1169,6 +1240,31 @@ public sealed class TourSession : IAsyncDisposable
 
         var userUrl = UserInteractionUrl ?? "(no interaction URL captured)";
         _userApproved = true;
+
+        if (IsResourceManagedMode)
+        {
+            Steps.Add(new StepRecord
+            {
+                Number = Steps.Count + 1,
+                Title = "User approves at the Inbox",
+                From = Actor.Resource,
+                To = Actor.Resource,
+                Narrative =
+                    "The tour opened the Inbox's **own consent page** in a new browser " +
+                    "tab. There is no Person Server here — the Inbox manages " +
+                    "authorization itself, just like a classic OAuth provider. The user " +
+                    "clicked **Approve** and the Inbox recorded consent on its pending " +
+                    "entry via `POST /consent/approve`. All of this happens in the " +
+                    "user's browser → Inbox channel; the agent is not on this path and " +
+                    "discovers the result on its next poll of the pending URL.",
+                TokenDecoded =
+                    $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
+                    "User performed (browser → Inbox):\n" +
+                    $"  GET  /consent?code={_interactionCode}\n" +
+                    $"  POST /consent/approve  (form: code={_interactionCode})",
+            });
+            return Task.CompletedTask;
+        }
 
         if (IsRichRequestMode)
         {
@@ -1362,6 +1458,9 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public async Task PrepareConsentStateAsync(CancellationToken ct = default)
     {
+        // Resource-managed mode is two-party: the Inbox manages authorization
+        // itself, so there is no Person Server consent store to prime.
+        if (IsResourceManagedMode) { return; }
         if (string.IsNullOrWhiteSpace(_options.PersonServerUrl)) { return; }
         using var client = new HttpClient();
 
@@ -2353,7 +2452,7 @@ public sealed class TourSession : IAsyncDisposable
                 "as `{url}?code={code}` and surfaces it through whatever channel the " +
                 "agent has — a browser redirect, a QR code on a phone agent, or just " +
                 "displaying the link. The `code` is single-use and ties the upcoming " +
-                "user session at the PS back to this specific pending request.",
+                $"user session at the {(IsResourceManagedMode ? "Inbox" : "PS")} back to this specific pending request.",
             TokenDecoded = $"Interaction URL:  {_interactionUrl}\nCode:             {_interactionCode}",
             CodeSnippet = CodeSnippets.DirectUserToInteraction,
         });
@@ -2413,8 +2512,220 @@ public sealed class TourSession : IAsyncDisposable
             });
         });
 
+    // -----------------------------------------------------------------
+    // Resource-managed (two-party AAuth-Access) step implementations
+    // -----------------------------------------------------------------
+
+    private async Task StepResourceManagedDiscoverAsync(CancellationToken ct)
+    {
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        using var client = new HttpClient(capture);
+        var url = $"{ResourceBaseUrl}/.well-known/aauth-resource.json";
+        await client.GetAsync(url, ct);
+        var ex = capture.Last!;
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Discover Inbox metadata",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "Before signing anything, the agent fetches the Inbox's well-known " +
+                "metadata. The tell for this access mode is `access_mode: " +
+                "\"aauth-access-token\"` plus an `authorization_endpoint` — the Inbox " +
+                "manages authorization **itself**, with no Person Server. This call is " +
+                "unsigned.",
+            RequestLine = $"{ex.RequestLine}  →  {url}",
+            RequestHeaders = ex.RequestHeaders,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            CodeSnippet = CodeSnippets.DiscoverResource,
+        });
+    }
+
+    private async Task StepResourceManagedSignedGetAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        var url = $"{ResourceBaseUrl}/messages";
+        using var resp = await client.GetAsync(url, ct);
+        var ex = capture.Last!;
+
+        // The Inbox manages authorization itself: the first signed call has no
+        // token, so it returns 202 + Location (the pending URL to poll) +
+        // AAuth-Requirement: requirement=interaction (its own consent URL + code).
+        if (resp.StatusCode == HttpStatusCode.Accepted)
+        {
+            var location = resp.Headers.Location?.ToString();
+            if (location is not null)
+            {
+                _pendingUrl = location.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                    ? location
+                    : $"{ResourceBaseUrl}{location}";
+            }
+
+            if (resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqVals))
+            {
+                foreach (var raw in reqVals)
+                {
+                    if (string.IsNullOrWhiteSpace(raw)) { continue; }
+                    try
+                    {
+                        var parsed = AAuthRequirementHeader.Parse(raw);
+                        var interaction = AAuth.Headers.Interaction.FromRequirement(parsed);
+                        if (interaction is not null)
+                        {
+                            _interactionUrl = interaction.Url;
+                            _interactionCode = interaction.Code;
+                            break;
+                        }
+                    }
+                    catch (FormatException) { /* try the next header value */ }
+                }
+            }
+        }
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Signed GET /messages → 202",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "The agent signs the request per RFC 9421 with `sig=hwk` (pseudonymous — " +
+                "the key thumbprint travels inline, no agent identity disclosed). The " +
+                "Inbox has no opaque token for this key yet, so instead of `401` + a " +
+                "resource_token (the three-party challenge) it returns `202 Accepted` " +
+                "with a `Location` pointing at the pending URL the agent will poll, plus " +
+                "an `AAuth-Requirement: requirement=interaction` header carrying the " +
+                "Inbox's **own** consent URL and a single-use code. No Person Server is " +
+                "named anywhere — the Inbox is its own authority.",
+            RequestLine = $"{ex.RequestLine}  →  {url}",
+            RequestHeaders = ex.RequestHeaders,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            SignatureBase = capturedBase,
+            CodeSnippet = CodeSnippets.ResourceManagedSignedGet,
+        });
+    }
+
+    private Task StepResourceManagedPollAsync(CancellationToken ct) =>
+        RunPendingPollAsync(ct, () => _agentToken!, Actor.Agent, Actor.Resource, (last, capturedBase) =>
+        {
+            // The terminal 200 carries the opaque token in the AAuth-Access
+            // RESPONSE header (§AAuth-Access Response Header). CapturedExchange
+            // only buffers the formatted header block, so pull the value out of
+            // it and validate the token68 grammar before storing.
+            var headerValue = ExtractHeaderValue(last.ResponseHeaders, AAuthAccessHeader.Name);
+            if (headerValue is not null && AAuthAccessHeader.TryParseAccess(headerValue, out var token68))
+            {
+                _aauthAccessToken = token68;
+            }
+
+            Steps.Add(new StepRecord
+            {
+                Number = Steps.Count + 1,
+                Title = "Poll pending URL → 200 AAuth-Access",
+                From = Actor.Agent,
+                To = Actor.Resource,
+                Narrative =
+                    "While the user clicks through the Inbox's consent page, the agent " +
+                    "polls the pending URL with a signed `GET` (still `sig=hwk` — same " +
+                    "key, no token yet). Each request honors the Inbox's `Retry-After` " +
+                    "cadence. Once consent is recorded the Inbox responds with `200 OK` " +
+                    "and the `AAuth-Access` header carrying an **opaque token68** — bound " +
+                    "to the polling key's thumbprint, so it is useless as a standalone " +
+                    "bearer token. This models the access token a first-party OAuth " +
+                    "deployment would mint from its own authorization server.",
+                RequestLine = $"{last.RequestLine}  →  {_pendingUrl}",
+                RequestHeaders = last.RequestHeaders,
+                SignatureBase = capturedBase,
+                StatusLine = last.StatusLine,
+                ResponseHeaders = last.ResponseHeaders,
+                ResponseBody = PrettyJson(last.ResponseBody),
+                TokenDecoded = _aauthAccessToken is null
+                    ? "(no AAuth-Access header captured — did the Inbox issue the token?)"
+                    : $"AAuth-Access (opaque token68):\n  {_aauthAccessToken}\n\n" +
+                      "Replayed on the next request as:\n" +
+                      $"  Authorization: AAuth {_aauthAccessToken}",
+                CodeSnippet = CodeSnippets.ResourceManagedPoll,
+            });
+        });
+
+    private async Task StepResourceManagedRetryAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        var url = $"{ResourceBaseUrl}/messages";
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        // Present the opaque token as an Authorization credential. The signer
+        // automatically COVERS `authorization` (§HTTP Signatures Profile),
+        // binding the token to this exact request.
+        if (_aauthAccessToken is not null)
+        {
+            req.Headers.Authorization = new AuthenticationHeaderValue(
+                AAuthAccessHeader.AuthorizationScheme, _aauthAccessToken);
+        }
+        await client.SendAsync(req, ct);
+        var ex = capture.Last!;
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Replay GET /messages with AAuth-Access",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "Same request as the initial signed GET, but now the agent sets " +
+                "`Authorization: AAuth <token68>`. The signer notices the header and " +
+                "adds `authorization` to the covered components — so the opaque token is " +
+                "cryptographically bound to this request and cannot be replayed by a " +
+                "thief who lacks the key. The Inbox validates the signature, resolves " +
+                "the opaque token against its own store, and returns `200` + the inbox " +
+                "`{ scope, messages }`. Two parties, one round trip — no Person Server.",
+            RequestLine = $"{ex.RequestLine}  →  {url}",
+            RequestHeaders = ex.RequestHeaders,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            SignatureBase = capturedBase,
+            CodeSnippet = CodeSnippets.ResourceManagedReplay,
+        });
+    }
+
     /// <summary>
-    /// Shared pending-URL poll loop. Signs with <paramref name="tokenFactory"/>,
+    /// Pull a single header value out of the formatted header block captured by
+    /// <see cref="CapturingMessageHandler"/> (one <c>Name: value</c> per line).
+    /// Used to recover the <c>AAuth-Access</c> response header — the
+    /// <see cref="CapturedExchange"/> only retains the formatted block, not the
+    /// live <see cref="HttpResponseMessage"/>.
+    /// </summary>
+    private static string? ExtractHeaderValue(string? headers, string name)
+    {
+        if (string.IsNullOrEmpty(headers)) { return null; }
+        foreach (var rawLine in headers.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r');
+            var idx = line.IndexOf(": ", StringComparison.Ordinal);
+            if (idx > 0 && line[..idx].Equals(name, StringComparison.OrdinalIgnoreCase))
+            {
+                return line[(idx + 2)..];
+            }
+        }
+        return null;
+    }
+
+
     /// long-polls <see cref="_pendingUrl"/>, and on terminal success invokes
     /// <paramref name="recordSuccess"/> to add the flow-specific step record.
     /// Denial (403 denied) and timeout are recorded uniformly and abort
@@ -2529,7 +2840,7 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public Task StartPendingPollAsync()
     {
-        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsRichRequestMode || IsCallChainPending || IsMissionMode || IsMissionCallChainMode) || _pendingUrl is null)
+        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsRichRequestMode || IsCallChainPending || IsMissionMode || IsMissionCallChainMode || IsResourceManagedMode) || _pendingUrl is null)
         {
             return Task.CompletedTask;
         }
@@ -2560,6 +2871,11 @@ public sealed class TourSession : IAsyncDisposable
         var missionChainCreatePoll = IsMissionCallChainMode && Steps.Count + 1 == MissionChainCreatePollStep;
         var missionChainElevatedPoll = IsMissionCallChainMode && Steps.Count + 1 == MissionChainElevatedPollStep;
 
+        // Resource-managed (two-party) mode polls the Inbox's pending URL once
+        // (step 5), signed with the agent's HWK key, until the Inbox issues the
+        // opaque AAuth-Access token.
+        var resourceManagedPoll = IsResourceManagedMode && Steps.Count + 1 == ResourceManagedPollStep;
+
         // Serialize the check-then-assign so two near-simultaneous UI
         // events (e.g. "Open consent" + "Simulate deny") can't both kick
         // off a poll. Blazor Server's circuit context already serializes
@@ -2586,6 +2902,7 @@ public sealed class TourSession : IAsyncDisposable
                         : missionChainElevatedPoll ? StepMissionElevatedPollAsync(ct)
                         : richInitialPoll ? StepRichInitialPollAsync(ct)
                         : richProposalPoll ? StepRichProposalPollAndRetryAsync(ct)
+                        : resourceManagedPoll ? StepResourceManagedPollAsync(ct)
                         : hop2 ? StepCallChainPollHop2Async(ct)
                         : StepPollPendingAsync(ct);
                     await poll.ConfigureAwait(false);
@@ -4046,8 +4363,9 @@ public sealed class TourSession : IAsyncDisposable
 
     private async Task StepMissionResourceChallengeAsync(CancellationToken ct)
     {
-        // Fresh agent token (new jti) so the resource's replay detection does
-        // not reject this signed request if the agent token was used earlier.
+        // Rotate the short-lived agent token to model a real agent. Reuse is
+        // also fine: replay detection is keyed on the per-request signature, not
+        // the token.
         RefreshAgentToken();
         string? capturedBase = null;
         var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
@@ -4187,9 +4505,9 @@ public sealed class TourSession : IAsyncDisposable
 
     private async Task StepMissionElevatedChallengeAsync(CancellationToken ct)
     {
-        // Fresh agent token (new jti): the resource already recorded the agent
-        // token used for the /trips challenge, so reusing it here would
-        // trip replay detection and return a bare 401 (no resource_token).
+        // Rotate the short-lived agent token to model a real agent. The two
+        // challenges (/trips then /trips/book) are distinct signed requests, so
+        // reuse would also pass — replay is keyed on the signature, not the token.
         RefreshAgentToken();
         string? capturedBase = null;
         var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
@@ -4617,8 +4935,8 @@ public sealed class TourSession : IAsyncDisposable
 
     private async Task StepMissionChainForwardedAsync(CancellationToken ct)
     {
-        // Fresh agent token (new jti) so the Concierge's replay detection
-        // does not reject the mission-aware challenge.
+        // Rotate the short-lived agent token to model a real agent (replay is
+        // keyed on the per-request signature, so reuse would also pass).
         RefreshAgentToken();
 
         // ── Hop A: challenge the Concierge's mission endpoint ─────────────

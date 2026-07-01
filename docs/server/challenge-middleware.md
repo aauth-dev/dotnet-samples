@@ -2,6 +2,12 @@
 
 `AAuthChallengeMiddleware` automatically issues 401 challenges with resource tokens when an agent presents only an agent token but the resource requires an auth token.
 
+> **Prefer the high-level pipeline for the common case.** `app.UseAAuth(...)` after
+> `app.UseRouting()` runs this challenge middleware internally for every endpoint
+> marked with `.RequireAAuth(...)`, minting a resource token that requests exactly
+> that endpoint's scope. Use `UseAAuthChallenge` directly only when composing a
+> custom, low-level pipeline.
+
 ## Registration
 
 ```csharp
@@ -26,6 +32,10 @@ public enum AAuthAccessMode
 
     // Require auth token — issue 401 challenge if only agent token present
     RequireAuthToken,
+
+    // Resource manages authorization itself (two-party) — challenge middleware
+    // passes through; endpoints issue/validate the AAuth-Access opaque token
+    ResourceManaged,
 }
 ```
 
@@ -94,6 +104,11 @@ claim threads through the tokens, and
 
 ## Typical Pipeline
 
+> This is the low-level composition that `app.UseAAuth(...)` runs internally for
+> each `.RequireAAuth(...)` endpoint. Prefer `UseRouting` + `UseAAuth` +
+> `.RequireAAuth(...)` for the common case; reach for the two middleware directly
+> only for fully custom pipelines.
+
 ```csharp
 app.UseAAuthVerification(new AAuthVerificationOptions
 {
@@ -116,43 +131,27 @@ app.MapGet("/data", (HttpContext ctx) =>
 
 ## Per-Endpoint Scope Challenges
 
-`DefaultScopes` controls which scope the minted resource token requests. To protect
-different endpoints with different scopes, give each one its own challenge branch so
-the 401 asks for exactly the scope that endpoint enforces. This is the pattern the
-Calendar sample uses: `/events` challenges for `calendar.read`, while the step-up
-`/events/write` endpoint challenges for `calendar.write`.
+With the high-level pipeline, the scope each endpoint challenges for is declared on
+the endpoint itself with `.RequireAAuth(scope: ...)`. The single `UseAAuth`
+middleware mints a resource token requesting exactly that scope when only an agent
+token is presented. This is the pattern the Calendar sample uses: `/events`
+challenges for `calendar.read`, while the step-up `/events/write` endpoint
+challenges for `calendar.write`.
 
 ```csharp
-ChallengeOptions ChallengeForScope(string scope) => new()
-{
-    AccessMode = AAuthAccessMode.RequireAuthToken,
-    ResourceSigningKey = resourceKey,
-    ResourceKeyId = "calendar-1",
-    ResourceIdentifier = resourceUrl,
-    DefaultScopes = scope,
-};
-
-// /events/write — declared first so the more specific segment wins. Challenges for
-// the elevated scope.
-app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/events/write"),
-    branch =>
-    {
-        branch.UseAAuthVerification(fullVerification);
-        branch.UseAAuthChallenge(ChallengeForScope("calendar.write"));
-    });
+app.UseRouting();
+app.UseAAuth(o => o.TrustedAuthTokenIssuers = trustedPersonServers);
+app.UseAuthentication();
+app.UseAuthorization();
 
 // /events — three-party baseline. Challenges for the base scope.
-app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/events")
-        && !ctx.Request.Path.StartsWithSegments("/events/write"),
-    branch =>
-    {
-        branch.UseAAuthVerification(fullVerification);
-        branch.UseAAuthChallenge(ChallengeForScope("calendar.read"));
-    });
+app.MapGet("/events", handler).RequireAAuth(scope: "calendar.read");
+
+// /events/write — step-up. Challenges for the elevated scope.
+app.MapGet("/events/write", handler).RequireAAuth(scope: "calendar.write");
 ```
 
-Because each branch is an isolated pipeline, an agent that lacks the required scope
+Because each endpoint declares its own scope, an agent that lacks the required scope
 receives a challenge for that endpoint's scope and re-exchanges at its PS for an
-auth token carrying it. See `samples/MockResourceServers/Calendar` for the full set of branches.
+auth token carrying it. See `samples/MockResourceServers/Calendar` for the full set
+of endpoints.

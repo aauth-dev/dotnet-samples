@@ -18,7 +18,7 @@ const string HoldItinerary = "hold_itinerary";
 const string BookTrip = "book_trip";
 string[] SupportedTools = [SearchTripOptions, HoldItinerary, BookTrip];
 
-var resourceUrl = (builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5004").TrimEnd('/');
+var resourceUrl = (builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5005").TrimEnd('/');
 var accessServerUrl = (builder.Configuration["AAuth:AccessServer"] ?? "http://localhost:5501").TrimEnd('/');
 var personServerUrl = (builder.Configuration["AAuth:PersonServer"] ?? "http://localhost:5100").TrimEnd('/');
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;

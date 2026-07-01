@@ -10,6 +10,7 @@ PROFILE_PROJECT  := samples/MockResourceServers/Profile/Profile.csproj
 CALENDAR_PROJECT := samples/MockResourceServers/Calendar/Calendar.csproj
 TRIPS_PROJECT    := samples/MockResourceServers/Trips/Trips.csproj
 WALLET_PROJECT   := samples/MockResourceServers/Wallet/Wallet.csproj
+INBOX_PROJECT    := samples/MockResourceServers/Inbox/Inbox.csproj
 BOOKINGS_PROJECT := samples/MockResourceServers/Bookings/Bookings.csproj
 PS_PROJECT     := samples/MockPersonServer/MockPersonServer.csproj
 AP_PROJECT     := samples/MockAgentProvider/MockAgentProvider.csproj
@@ -25,7 +26,8 @@ PROFILE_URL  := http://localhost:5000
 CALENDAR_URL := http://localhost:5001
 TRIPS_URL    := http://localhost:5002
 WALLET_URL   := http://localhost:5003
-BOOKINGS_URL := http://localhost:5004
+INBOX_URL    := http://localhost:5004
+BOOKINGS_URL := http://localhost:5005
 PS_URL     := http://localhost:5100
 AP_URL     := http://localhost:5301
 CONCIERGE_URL   := http://localhost:5200
@@ -108,7 +110,7 @@ clean: ## dotnet clean + remove bin/ obj/ trees
 # Individual services & apps
 # ----------------------------------------------------------------------------
 
-resources: ## Run all Aria resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003, Bookings :5004)
+resources: ## Run all six Aria resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003, Inbox :5004, Bookings :5005)
 	@echo "Building services (once) before launch..."
 	@$(DOTNET) build $(SOLUTION) -v q
 	@trap 'trap - INT TERM; echo; echo "Stopping..."; kill 0' INT TERM; \
@@ -116,6 +118,7 @@ resources: ## Run all Aria resource servers (Profile :5000, Calendar :5001, Trip
 	$(DOTNET) run --no-build --project $(CALENDAR_PROJECT) & \
 	$(DOTNET) run --no-build --project $(TRIPS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(WALLET_PROJECT) & \
+	$(DOTNET) run --no-build --project $(INBOX_PROJECT) & \
 	$(DOTNET) run --no-build --project $(BOOKINGS_PROJECT) & \
 	wait
 
@@ -158,6 +161,7 @@ demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. f
 	@echo "   Calendar:           $(CALENDAR_URL)         (three-party resource server)"
 	@echo "   Trips:              $(TRIPS_URL)         (mission-aware resource server)"
 	@echo "   Wallet:             $(WALLET_URL)         (four-party resource server)"
+	@echo "   Inbox:              $(INBOX_URL)         (resource-managed two-party server)"
 	@echo "   Bookings:           $(BOOKINGS_URL)         (experimental R3 resource server)"
 	@echo "   Concierge:       $(CONCIERGE_URL)         (mission concierge)"
 	@echo "   MockPersonServer:   $(PS_URL)         (RequireConsent=true)"
@@ -176,6 +180,7 @@ demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. f
 	$(DOTNET) run --no-build --project $(CALENDAR_PROJECT) & \
 	$(DOTNET) run --no-build --project $(TRIPS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(WALLET_PROJECT) & \
+	$(DOTNET) run --no-build --project $(INBOX_PROJECT) & \
 	$(DOTNET) run --no-build --project $(BOOKINGS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(CONCIERGE_PROJECT) & \
 	$(DOTNET) run --no-build --project $(AP_PROJECT) & \
@@ -185,7 +190,7 @@ demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. f
 	$(DOTNET) run --no-build --project $(SAMPLE_PROJECT) & \
 	wait
 
-demo-tour-r3: ## Start the experimental GuidedTour R3 stack (Bookings :5004 + R3 AS :5501 + PS + AP + Tour)
+demo-tour-r3: ## Start the experimental GuidedTour R3 stack (Bookings :5005 + R3 AS :5501 + PS + AP + Tour)
 	@echo "Starting GuidedTour Rich Resource Requests (R3) demo..."
 	@echo "Building services (once) before launch..."
 	@$(DOTNET) build $(SOLUTION) -v q

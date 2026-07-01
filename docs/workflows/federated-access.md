@@ -112,8 +112,11 @@ return Results.Json(new { auth_token = authToken });
 ```
 
 > Both branches above — the three-party mint and the four-party federation — are
-> packaged in the one-call host helper `MapAAuthPersonServer` (set
-> `TrustedAccessServers` to enable the federation branch). See
+> packaged in the one-call host helper `MapAAuthPersonServer`. Federation is open
+> by default: with `TrustedAccessServers` unset the PS federates to the AS named
+> in a verified resource token's `aud`; set the list (or the
+> `IsTrustedAccessServer` predicate) to pin specific Access Servers, or set it
+> empty for three-party only. See
 > [Token Issuance → One-Call Person Server](../server/token-issuance.md#one-call-person-server-mapaauthpersonserver).
 
 ## Access-Server-Side Code
@@ -150,6 +153,11 @@ The helper resolves `IAccessPolicy` and `IAccessPendingStore` from DI. The
 policy returns one of `Allow` / `Deny` / `NeedsInteraction` / `NeedsClaims` /
 `NeedsPayment`; the helper maps those to a minted auth token, `403`, or a `202`
 that parks the decision and advertises the requirement to the PS.
+
+> `TrustedPersonServers` follows the same open-by-default rule: `null` brokers
+> for any *verifiable* Person Server (the spec's "no separate registration
+> step"); empty denies all; a non-empty set or the `IsTrustedPersonServer`
+> predicate restricts. Leaving it open logs a startup `Warning`.
 ### The `dwk=aauth-access.json` tell
 
 The auth token's `dwk` (discovery well-known) claim points at

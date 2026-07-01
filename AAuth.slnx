@@ -14,6 +14,7 @@
   <Folder Name="/samples/MockResourceServers/">
     <Project Path="samples/MockResourceServers/Bookings/Bookings.csproj" />
     <Project Path="samples/MockResourceServers/Calendar/Calendar.csproj" />
+    <Project Path="samples/MockResourceServers/Inbox/Inbox.csproj" />
     <Project Path="samples/MockResourceServers/Profile/Profile.csproj" />
     <Project Path="samples/MockResourceServers/Trips/Trips.csproj" />
     <Project Path="samples/MockResourceServers/Wallet/Wallet.csproj" />

@@ -51,7 +51,7 @@ public sealed class R3FetchClient
         }
         if (IsPrivateOrLinkLocal(uri) && !uri.IsLoopback)
         {
-            throw new InvalidOperationException("r3_uri host must not resolve to a private or link-local address.");
+            throw new InvalidOperationException("r3_uri IP-literal host must not be private or link-local.");
         }
         if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) && !uri.IsLoopback)
         {

@@ -26,6 +26,12 @@ available, switchable at runtime from the topbar **Mode** picker:
   (or obtain) an agent token. Default.
 * **Identity-based** (2 steps) — resource trusts the agent token directly;
   no PS involvement.
+* **Resource-Managed (Two-Party)** (6 steps) — two-party flow where the
+  **Inbox** resource manages authorization itself: no Person Server, no
+  token exchange. The signed `GET /messages` returns `202` with an
+  `AAuth-Requirement` pointing at the Inbox's own consent page; after you
+  approve there, the Inbox issues an opaque `AAuth-Access` token bound to
+  the agent's signature, which the agent replays to read the inbox.
 * **PS-Asserted (Direct Grant)** (6 steps) — three-party flow where the
   PS mints the `auth_token` synchronously; no user interaction.
 * **PS-Asserted (Deferred)** (9 steps) — three-party flow where the PS
@@ -58,7 +64,7 @@ available, switchable at runtime from the topbar **Mode** picker:
   both hops are in the mission's scope. The PS's mission log records the
   whole trail. Requires a Person Server and a Concierge URL.
 * **Rich Trip Booking (R3)** (12 steps; experimental, MCP-only) — Aria sends
-  `r3_operations` to **Bookings** (:5004) for MCP tools
+  `r3_operations` to **Bookings** (:5005) for MCP tools
   `search_trip_options`, `hold_itinerary`, and `book_trip`. Bookings returns a
   content-addressed R3 document (`r3_uri`/`r3_s256`), the PS renders its
   `display`, the dedicated R3 AS (:5501) mints `r3_granted` +
@@ -67,9 +73,10 @@ available, switchable at runtime from the topbar **Mode** picker:
   `samples/AAuth.R3` preview library, which currently supports the MCP
   vocabulary only; `src/AAuth` is unchanged.
 
-When `PersonServerUrl` is empty in `appsettings.json`, the picker locks
-to Identity-based (the three-party options are disabled). You can also set
-the default in `appsettings.json`:
+When `PersonServerUrl` is empty in `appsettings.json`, the three-party
+options are disabled; the two-party flows — **Identity-based** and
+**Resource-Managed (Two-Party)** — still run, since neither needs a Person
+Server. You can also set the default in `appsettings.json`:
 
 ```json
 "GuidedTour": { "Mode": "Deferred" }
@@ -81,7 +88,10 @@ The Identity flow also exposes a **Signing Mode** picker (`hwk` or
 Each Aria resource server serves its flow from isolated, per-mode endpoints.
 **Profile** (:5000) handles Identity-based access: `GET /pseudonymous` and
 `GET /anchored` (pseudonymous), `GET /identified` (agent identity).
-**Calendar** (:5001) handles three-party PS-asserted access: `GET /events`
+**Inbox** (:5004) handles two-party resource-managed access (`GET /messages`,
+scope `inbox.read`): it runs its own consent page and issues an opaque
+`AAuth-Access` token bound to the agent's signature — no Person Server or
+Access Server. **Calendar** (:5001) handles three-party PS-asserted access: `GET /events`
 (scope `calendar.read`), `GET /events/write` (elevated scope `calendar.write`),
 and `GET /events/admin` (RBAC roles + groups); the tour exercises the base
 `GET /events` path. **Trips** (:5002) handles mission-governed access
@@ -109,6 +119,28 @@ Assumes the agent is already bootstrapped (key + token exist).
 
 1. Discover resource metadata — unsigned `GET /.well-known/aauth-resource.json`.
 2. Signed `GET /pseudonymous` or `GET /identified` → 200 + claims (path depends on signing mode picker).
+
+### Resource-Managed (Two-Party) (6 steps)
+
+Assumes the agent is already bootstrapped. Two-party — no Person Server and
+no token exchange; the **Inbox** manages authorization itself.
+
+1. Discover Inbox metadata — unsigned `GET /.well-known/aauth-resource.json`
+   (`access_mode=aauth-access-token` + `authorization_endpoint`).
+2. Signed `GET /messages` → **`202 Accepted`** with `Location: /pending/{id}`
+   and an `AAuth-Requirement: interaction` pointing at the Inbox's own consent
+   page + single-use code.
+3. Agent surfaces the user-facing `{url}?code={code}` link to the Inbox's own
+   consent page.
+4. **User approves at the Inbox.** The consent page opens in a new tab; the
+   user clicks **Approve** and the Inbox records consent. No Person Server is
+   involved.
+5. Agent polls `Location` with a signed `GET` until the Inbox responds
+   **`200`** with an opaque `AAuth-Access` token (token68) bound to the
+   agent's signature.
+6. Replay `GET /messages` carrying `Authorization: AAuth <token>` → 200 +
+   messages (scope `inbox.read`). The signature covers the `authorization`
+   header, proving the token is bound to the agent's key.
 
 ### PS-Asserted / Direct Grant (6 steps)
 
@@ -182,7 +214,7 @@ From the repo root:
 make demo
 ```
 
-Starts the resource servers (Profile, Calendar, Trips, Wallet), Concierge,
+Starts the resource servers (Profile, Inbox, Calendar, Trips, Wallet), Concierge,
 MockPersonServer (with `RequireConsent=true`), MockAgentProvider, and the Guided
 Tour together. Open <http://localhost:5400> and flip the topbar mode picker to
 **Call Chain** or **Deferred** to exercise those paths.
@@ -190,7 +222,7 @@ Tour together. Open <http://localhost:5400> and flip the topbar mode picker to
 ### Option 2: separate terminals
 
 ```bash
-# Terminal 1 — Resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003)
+# Terminal 1 — Resource servers (Profile :5000, Inbox :5004, Calendar :5001, Trips :5002, Wallet :5003, Bookings :5005)
 make resources
 
 # Terminal 2 — Concierge (port 5200)
@@ -216,13 +248,14 @@ with **Run step**).
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `GuidedTour:ProfileUrl` | `http://localhost:5000` | Profile (Identity-based) resource server base URL. |
+| `GuidedTour:InboxUrl` | `http://localhost:5004` | Inbox (resource-managed, two-party) resource server base URL. |
 | `GuidedTour:CalendarUrl` | `http://localhost:5001` | Calendar (PS-asserted) resource server base URL. |
 | `GuidedTour:TripsUrl` | `http://localhost:5002` | Trips (mission-aware) resource server base URL. |
 | `GuidedTour:WalletUrl` | `http://localhost:5003` | Wallet (federated) resource server base URL. |
-| `GuidedTour:BookingsUrl` | `http://localhost:5004` | Bookings (experimental R3) resource server base URL. |
+| `GuidedTour:BookingsUrl` | `http://localhost:5005` | Bookings (experimental R3) resource server base URL. |
 | `GuidedTour:ConciergeUrl` | `http://localhost:5200` | Concierge base URL for the call-chain flow. Set empty to disable that picker option. |
 | `GuidedTour:PersonServerUrl` | `http://localhost:5100` | PS base URL. Set empty to lock the picker to identity-based mode. |
 | `GuidedTour:AgentProviderUrl` | `http://localhost:5301` | AP base URL. When set, bootstrap enrols with the real AP instead of self-signing. |
 | `GuidedTour:AgentId` | `aauth:tour-agent@ap.example` | Value placed in the agent token's `sub`. |
 | `GuidedTour:RichRequestAccessServerUrl` | `http://localhost:5501` | Dedicated R3 Access Server used by the Bookings flow. |
-| `GuidedTour:Mode` | `Bootstrap` | Default flow on startup. `Bootstrap`, `Identity`, `Autonomous` (Direct Grant), `Deferred`, `CallChain`, `Federated`, or `Mission`. The topbar picker overrides this at runtime. |
+| `GuidedTour:Mode` | `Bootstrap` | Default flow on startup. `Bootstrap`, `Identity`, `ResourceManaged`, `Autonomous` (Direct Grant), `Deferred`, `CallChain`, `Federated`, `Mission`, `SubAgent`, or `RichRequest`. The topbar picker overrides this at runtime. |

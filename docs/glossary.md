@@ -34,7 +34,7 @@ Canonical expansions follow the AAuth specification drafts under
 | **sub** | subject | Identifier of the principal the token is about (often directed/pairwise per resource). |
 | **aud** | audience | The intended recipient — the PS or AS URL for a resource token; the resource for an auth token. |
 | **iss** | issuer | URL of the entity that issued the token. |
-| **jti** | JWT ID | Unique token id used for replay detection. |
+| **jti** | JWT ID | Unique token id used for revocation and audit. Replay is keyed on the request signature, not the `jti` — see [Replay Detection](server/replay-detection.md). |
 | **iat** | issued at | Unix timestamp the token was issued. |
 | **exp** | expiration time | Unix timestamp after which the token is invalid. |
 | **cnf** | confirmation | Holds `jwk`, the public key the token is bound to (proof-of-possession). |

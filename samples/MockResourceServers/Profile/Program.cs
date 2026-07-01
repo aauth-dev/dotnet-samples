@@ -1,9 +1,4 @@
 using AAuth.Crypto;
-using AAuth;
-using AAuth.Discovery;
-using AAuth.HttpSig;
-using AAuth.Server;
-using AAuth.Server.Metadata;
 using AAuth.Server.Verification;
 
 // ---------------------------------------------------------------------------
@@ -38,55 +33,29 @@ const string ResourceKid = "profile-1";
 var resourceUrl = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5000";
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
 
-builder.Services.AddSingleton(resourceKey);
-builder.Services.AddSingleton(new AAuthVerifier
+// One DI call: verifier, discovery clients (pooled handler), JTI store, and the
+// published metadata — no manual HttpClient/discovery wiring.
+builder.Services.AddAAuthResource(o =>
 {
-    MaxAge = TimeSpan.FromSeconds(signatureWindowSeconds),
+    o.Issuer = resourceUrl;
+    o.SigningKeys[ResourceKid] = resourceKey;
+    o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
+    o.SignatureWindow = signatureWindowSeconds;
+    o.Name = "Aria Profile";
 });
-builder.Services.AddSingleton<IJtiStore, InMemoryJtiStore>();
-builder.Services.AddSingleton<MetadataClient>(sp =>
-    new MetadataClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-metadata")));
-builder.Services.AddSingleton<JwksClient>(sp =>
-    new JwksClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-jwks")));
-builder.Services.AddSingleton<ISignatureKeyResolver>(sp =>
-    new DefaultSignatureKeyResolver(sp.GetRequiredService<JwksClient>()));
-builder.Services.AddHttpClient("aauth-metadata");
-builder.Services.AddHttpClient("aauth-jwks");
-
-// Authentication scheme + the Identified policy (a verified agent identity).
 builder.Services.AddAAuthAuthentication();
 builder.Services.AddAAuthAuthorization();
 
 var app = builder.Build();
 
-// Well-known endpoints: served BEFORE verification so metadata + JWKS are
-// reachable without an AAuth signature.
-app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
-{
-    Issuer = resourceUrl,
-    Name = "Aria Profile",
-    SigningKeys = new Dictionary<string, AAuthKey> { [ResourceKid] = resourceKey },
-    SignatureWindow = signatureWindowSeconds,
-});
+// Well-known metadata + JWKS from the DI-registered resource metadata.
+app.MapAAuthWellKnown();
 
-// Identity-based verification: HTTP signature only, no JWT issuer check (these
-// schemes carry no auth-token issuer to verify).
-static AAuthVerificationOptions SignatureOnly() => new()
-{
-    RequireIssuerVerification = false,
-};
-
-// One isolated verification pipeline per path — no prefix disambiguation needed
-// because each path is a distinct first segment.
-app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/pseudonymous"),
-    branch => branch.UseAAuthVerification(SignatureOnly()));
-app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/identified"),
-    branch => branch.UseAAuthVerification(SignatureOnly()));
-app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/anchored"),
-    branch => branch.UseAAuthVerification(SignatureOnly()));
+// Identity-based access: every endpoint declares .RequireAAuthSignature(); this
+// single post-routing middleware verifies the agent's HTTP signature only (no
+// auth-token challenge, no JWT issuer check).
+app.UseRouting();
+app.UseAAuth();
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -118,7 +87,7 @@ app.MapGet("/pseudonymous", (HttpContext ctx) =>
         jkt = parsed.Jkt,
         note = "Resource sees key thumbprint only — agent identity unknown.",
     });
-});
+}).RequireAAuthSignature();
 
 // GET /identified — scheme=jwks_uri. Agent-identity access: the resource fetches
 // the agent's public key from its published JWKS URI and learns a named,
@@ -135,7 +104,7 @@ app.MapGet("/identified", (HttpContext ctx) =>
         kid = parsed.Kid,
         note = "Resource verified agent's key via JWKS URI — full cryptographic identity.",
     });
-}).RequireAuthorization("AAuth.Identified");
+}).RequireAAuthSignature(identified: true);
 
 // GET /anchored — scheme=jkt-jwt. Key-rotation access: a naming JWT (signed by
 // the agent's durable enrollment key) names an ephemeral signing key. The
@@ -157,7 +126,7 @@ app.MapGet("/anchored", (HttpContext ctx) =>
         jkt = parsed.Jkt,
         note = "Ephemeral key anchored to a durable enrollment key via naming JWT — agent known by durable key thumbprint.",
     });
-});
+}).RequireAAuthSignature();
 
 app.Run();
 

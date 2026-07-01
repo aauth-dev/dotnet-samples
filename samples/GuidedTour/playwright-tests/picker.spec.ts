@@ -15,6 +15,7 @@ test('flow picker offers all ten flows and reacts to selection', async ({ page }
   await expect(flow.locator('option')).toContainText([
     'Bootstrap',
     'Identity-based',
+    'Resource-Managed',
     'PS-Asserted (Direct Grant)',
     'PS-Asserted (Deferred)',
     'Call Chain',

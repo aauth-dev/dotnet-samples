@@ -15,10 +15,12 @@ test.describe('Home', () => {
     const expected: Array<[string, string]> = [
       ['HWK', 'pseudonymous'],
       ['JWKS URI', 'identified'],
+      ['Inbox', 'inbox'],
       ['JWT', 'calendar'],
       ['Deferred', 'calendar-deferred'],
       ['JKT-JWT', 'anchored'],
       ['Call Chain', 'call-chain'],
+      ['Federated', 'wallet'],
       ['Rich Trip Booking', 'rich-request'],
     ];
 
@@ -35,6 +37,7 @@ test.describe('Home', () => {
     await expect(intro).toContainText('AI travel assistant');
     // The Aria servers and the golden-example role are explained.
     await expect(intro).toContainText('Profile');
+    await expect(intro).toContainText('Inbox');
     await expect(intro).toContainText('Wallet');
     await expect(intro).toContainText('Bookings');
     await expect(intro).toContainText('golden example');
@@ -42,8 +45,10 @@ test.describe('Home', () => {
 
   test('shows the prerequisites block', async ({ page }) => {
     await expect(page.getByText('make demo')).toBeVisible();
-    await expect(page.locator('body')).toContainText('Bookings');
+    await expect(page.locator('body')).toContainText('Inbox');
     await expect(page.locator('body')).toContainText(':5004');
+    await expect(page.locator('body')).toContainText('Bookings');
+    await expect(page.locator('body')).toContainText(':5005');
     await expect(page.locator('body')).toContainText('R3 Access Server');
     await expect(page.locator('body')).toContainText(':5501');
   });

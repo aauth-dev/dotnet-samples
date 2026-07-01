@@ -152,6 +152,37 @@ var session = await governance.ProposeMissionAsync(
 When the callback is `null` and the server asks for clarification, the request
 fails rather than blocking.
 
+## Server side: emitting a clarification
+
+A Person Server built on [`MapAAuthPersonServer`](../server/token-issuance.md#one-call-person-server-mapaauthpersonserver)
+gets the **server half** of the protocol for free. For an out-of-scope mission
+token request the helper calls the `IMissionTokenConsent` seam; returning
+`Clarify` makes the SDK emit the `requirement=clarification` `202`, accept the
+agent's `clarification_response` / updated `resource_token` / `DELETE` on the
+pending URL, record each round in the mission log, and re-consult the seam:
+
+```csharp
+public sealed class LlmMissionConsent : IMissionTokenConsent
+{
+    public async Task<MissionTokenConsentDecision> ReviewAsync(
+        MissionTokenConsentContext ctx, CancellationToken ct = default)
+    {
+        // First pass with no answers yet → ask the agent to justify.
+        if (ctx.ClarificationHistory.Count == 0)
+            return MissionTokenConsentDecision.Clarify("Why does this mission need this scope?");
+
+        // The agent answered — let the policy (here, an LLM) decide.
+        return await _reviewer.IsJustified(ctx, ctx.ClarificationHistory)
+            ? MissionTokenConsentDecision.Grant()
+            : MissionTokenConsentDecision.Deny("not justified by the mission");
+    }
+}
+```
+
+The SDK owns the wire protocol and the mission log; the seam owns **how** the
+question is formed and the answer judged (a consent screen, a scripted test, or
+an LLM reviewer). See [Mission Governance (Server)](../server/mission-governance.md).
+
 ## Further reading
 
 - [Mission Governance Clients](mission-governance-clients.md) — where governance clarification fits

@@ -45,14 +45,12 @@ app.UseAAuthVerification();
 <summary>Manual Setup</summary>
 
 ```csharp
-using AAuth.HttpSig;
-using AAuth.Discovery;
 using AAuth.Server.Verification;
 
-// Register required services
-builder.Services.AddSingleton(new AAuthVerifier());
-builder.Services.AddSingleton(sp => new JwksClient(new HttpClient()));
-builder.Services.AddSingleton(sp => new MetadataClient(new HttpClient()));
+// AddAAuthResource registers the verifier, the discovery clients, and the
+// DefaultSignatureKeyResolver that resolves all four schemes — no manual
+// HttpClient/discovery wiring.
+builder.Services.AddAAuthResource(options => options.Issuer = "https://resource.example");
 
 app.UseAAuthVerification(new AAuthVerificationOptions
 {
@@ -132,6 +130,19 @@ public sealed class PolicyEnforcingResolver : ISignatureKeyResolver
         return resolution;
     }
 }
+```
+
+Register a custom resolver through `AddAAuthResource` — set `o.KeyResolver` and the
+SDK uses it instead of the default (it is registered via `TryAdd`, so your resolver
+wins):
+
+```csharp
+builder.Services.AddAAuthResource(options =>
+{
+    options.Issuer = "https://resource.example";
+    options.KeyResolver = new PolicyEnforcingResolver(
+        new DefaultSignatureKeyResolver(jwksClient), policyService);
+});
 ```
 
 ## Further Reading

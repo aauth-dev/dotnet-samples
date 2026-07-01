@@ -68,6 +68,11 @@ public static class AAuthAgentServiceCollectionExtensions
                     });
                 }
 
+                if (options.EnableResourceManagedAccess)
+                {
+                    builder.WithResourceManagedAccess(options.AAuthAccessStore);
+                }
+
                 return builder.BuildHandler();
             })
             .SetHandlerLifetime(Timeout.InfiniteTimeSpan);

@@ -72,13 +72,18 @@ using var client = new HttpClient(handler);
 
 ## Verification
 
-Resource needs a `JwksClient` in DI (handles caching + rate-limiting).
+`AddAAuthResource` registers the discovery clients — a pooled `JwksClient`
+(caching + rate-limiting) — so no manual `HttpClient` wiring is needed.
 
 ```csharp
-builder.Services.AddSingleton(new JwksClient(new HttpClient()));
+builder.Services.AddAAuthResource(o =>
+{
+    o.Issuer = resourceUrl;
+    o.SigningKeys[ResourceKid] = resourceKey;
+});
 ```
 
-The `DefaultSignatureKeyResolver` handles JWKS fetch automatically. URI MUST be `https` (loopback allowed for dev).
+The `DefaultSignatureKeyResolver` then fetches the agent's JWKS automatically. URI MUST be `https` (loopback allowed for dev).
 
 ## Further Reading
 

@@ -49,7 +49,8 @@ var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:Signatu
 // Person Servers this AS will broker for. The PS authenticates to the AS
 // via an HTTP Sig using the `jwks_uri` scheme; the helper resolves its key
 // from that URI during signature verification and pins the URI's host to this
-// trusted set (pre-established trust). An empty set rejects all callers.
+// trusted set (pre-established trust). In the default AS pipeline, an empty
+// set trusts any validly signed caller.
 var trustedPersonServers = builder.Configuration
     .GetSection("MockAccessServer:TrustedPersonServers")
     .Get<string[]>() ?? ["http://localhost:5100"];
@@ -62,12 +63,9 @@ builder.Services.AddSingleton(new AAuthVerifier
     MaxAge = TimeSpan.FromSeconds(signatureWindowSeconds),
 });
 builder.Services.AddSingleton(new TokenVerifier());
-builder.Services.AddSingleton<MetadataClient>(sp =>
-    new MetadataClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-metadata")));
-builder.Services.AddSingleton<JwksClient>(sp =>
-    new JwksClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-jwks")));
-builder.Services.AddHttpClient("aauth-metadata");
-builder.Services.AddHttpClient("aauth-jwks");
+// Shared discovery clients (MetadataClient + JwksClient) with a pooled handler;
+// no manual HttpClient wiring.
+builder.Services.AddAAuthDiscovery();
 
 // -----------------------------------------------------------------------
 // Policy Decision Point (S3). The AAuth crypto stays in the SDK helper; only

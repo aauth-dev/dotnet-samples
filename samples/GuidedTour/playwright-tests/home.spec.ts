@@ -13,6 +13,7 @@ import { waitForInteractive } from '../../../tests/e2e/helpers/blazor';
 const FLOWS = [
   'Bootstrap',
   'Identity',
+  'ResourceManaged',
   'Autonomous',
   'Deferred',
   'CallChain',
@@ -32,9 +33,9 @@ test('overview introduces Aria and indexes every flow', async ({ page }) => {
   await expect(page.locator('.intro')).toContainText('AI travel assistant');
   await expect(page.locator('.intro')).toContainText('for real');
 
-  // The four Aria servers are introduced.
+  // The five Aria servers are introduced.
   const servers = page.locator('.intro__servers .srv');
-  await expect(servers).toHaveText(['Profile', 'Calendar', 'Trips', 'Wallet', 'Bookings']);
+  await expect(servers).toHaveText(['Profile', 'Inbox', 'Calendar', 'Trips', 'Wallet', 'Bookings']);
 
   // One card per flow, each deep-linking into the tour.
   const cards = page.locator('.flow-card');

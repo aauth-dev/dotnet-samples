@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Threading.Tasks;
 using AAuth;
 using AAuth.Crypto;
 using AAuth.Discovery;
@@ -10,8 +13,10 @@ using AAuth.Server.CallChaining;
 using AAuth.Server.Challenge;
 using AAuth.Server.Metadata;
 using AAuth.Server.Verification;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -41,6 +46,15 @@ public static class AAuthApplicationBuilderExtensions
         var jwks = app.ApplicationServices.GetService<JwksClient>();
         var jtiStore = app.ApplicationServices.GetService<IJtiStore>();
         var resolvedOptions = options ?? new AAuthVerificationOptions();
+
+        // Startup footgun guards (diagnostics only — no runtime policy change):
+        // throw on a configured-but-ignored trust policy; warn on implicit-open.
+        TrustConfigDiagnostics.Validate(
+            app.ApplicationServices.GetService<ILoggerFactory>()?.CreateLogger("AAuth.Verification"),
+            resolvedOptions.RequireIssuerVerification,
+            authTrustConfigured: resolvedOptions.TrustedAuthTokenIssuers is not null || resolvedOptions.IsTrustedAuthTokenIssuer is not null,
+            agentTrustConfigured: resolvedOptions.TrustedAgentProviderIssuers is not null || resolvedOptions.IsTrustedAgentProviderIssuer is not null,
+            contextLabel: "UseAAuthVerification");
 
         if (jtiStore is not null)
         {
@@ -91,6 +105,81 @@ public static class AAuthApplicationBuilderExtensions
     }
 
     /// <summary>
+    /// Map a resource <c>authorization_endpoint</c> (§Authorization Endpoint
+    /// Request): a signed <c>POST</c> that the agent calls proactively to request
+    /// access. The request body is <c>{ "scope": "…" }</c> (scope REQUIRED). The
+    /// request MUST be AAuth-verified (place this route behind
+    /// <see cref="UseAAuthVerification"/>); the agent token is read from the
+    /// verified <c>Signature-Key</c>. The <paramref name="handler"/> runs the
+    /// resource's authorization decision — returning, for example, a
+    /// <c>202 + requirement=interaction</c> (via
+    /// <c>HttpContext.InteractionRequiredAAuth</c>) or issuing a token (via
+    /// <c>HttpContext.IssueAAuthAccessAsync</c>) — sharing one code path with the
+    /// reactive endpoint.
+    /// </summary>
+    /// <param name="endpoints">The endpoint route builder.</param>
+    /// <param name="pattern">The route pattern (e.g. <c>/authorize</c>), matching the published <c>authorization_endpoint</c>.</param>
+    /// <param name="handler">The authorization decision, given the verified request and requested scope.</param>
+    public static RouteHandlerBuilder MapAAuthAuthorizationEndpoint(
+        this IEndpointRouteBuilder endpoints,
+        string pattern,
+        Func<HttpContext, AAuthAuthorizationRequest, Task<IResult>> handler)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentException.ThrowIfNullOrEmpty(pattern);
+        ArgumentNullException.ThrowIfNull(handler);
+
+        return endpoints.MapPost(pattern, async (HttpContext context) =>
+        {
+            // Require a verified AAuth signature (the agent token is in Signature-Key).
+            var verification = context.GetAAuthVerification();
+            if (verification is null)
+            {
+                return Results.Json(
+                    new { error = "invalid_request" },
+                    statusCode: StatusCodes.Status401Unauthorized);
+            }
+
+            // Body: { "scope": "a b c" } — scope is REQUIRED. Reject a non-JSON
+            // content type up front: ReadFromJsonAsync would otherwise throw
+            // InvalidOperationException (not JsonException) and surface as a 500.
+            if (!context.Request.HasJsonContentType())
+            {
+                return Results.Json(
+                    new { error = "invalid_request", error_description = "Content-Type must be application/json" },
+                    statusCode: StatusCodes.Status415UnsupportedMediaType);
+            }
+
+            AuthorizationEndpointBody? body;
+            try
+            {
+                body = await context.Request
+                    .ReadFromJsonAsync<AuthorizationEndpointBody>(context.RequestAborted)
+                    .ConfigureAwait(false);
+            }
+            catch (JsonException)
+            {
+                return Results.Json(
+                    new { error = "invalid_request", error_description = "malformed JSON body" },
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            if (body is null || string.IsNullOrWhiteSpace(body.Scope))
+            {
+                return Results.Json(
+                    new { error = "invalid_request", error_description = "scope is required" },
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var request = new AAuthAuthorizationRequest(body.Scope, verification);
+            return await handler(context, request).ConfigureAwait(false);
+        });
+    }
+
+    private sealed record AuthorizationEndpointBody(
+        [property: JsonPropertyName("scope")] string? Scope);
+
+    /// <summary>
     /// Configure the full AAuth resource pipeline in one call: maps well-known endpoints,
     /// adds verification middleware, and adds challenge middleware. Uses the
     /// DI-registered <see cref="AAuthResourceMetadataOptions"/> for configuration.
@@ -121,7 +210,9 @@ public static class AAuthApplicationBuilderExtensions
             ResourceIdentifier = metadataOptions.Issuer,
             RequireIssuerVerification = pipelineOptions.RequireIssuerVerification,
             TrustedAuthTokenIssuers = pipelineOptions.TrustedAuthTokenIssuers,
+            IsTrustedAuthTokenIssuer = pipelineOptions.IsTrustedAuthTokenIssuer,
             TrustedAgentProviderIssuers = pipelineOptions.TrustedAgentProviderIssuers,
+            IsTrustedAgentProviderIssuer = pipelineOptions.IsTrustedAgentProviderIssuer,
         });
 
         // 3. Challenge middleware (only if there's a signing key available)

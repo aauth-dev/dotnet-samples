@@ -18,6 +18,7 @@
         </p>
         <ul class="intro__servers">
             <li><span class="srv srv--profile">Profile</span> your saved travel preferences (identity-based access)</li>
+            <li><span class="srv srv--inbox">Inbox</span> importing trip confirmations (resource-managed, two-party)</li>
             <li><span class="srv srv--calendar">Calendar</span> when you're free (PS-asserted, three-party)</li>
             <li><span class="srv srv--trips">Trips</span> browsing and booking trips (mission-governed)</li>
             <li><span class="srv srv--wallet">Wallet</span> paying for a booking (federated, four-party)</li>
@@ -63,25 +64,28 @@
         new(2, "Identity", "Identity-based access",
             "Aria reads your Profile and the server grants or denies based purely on the request signature — no Person Server, no consent screen.",
             new[] { "Agent + Profile", "2 steps", "hwk / jwks_uri / jkt-jwt" }),
-        new(3, "Autonomous", "PS-Asserted — Direct Grant",
+        new(3, "ResourceManaged", "Resource-Managed — Two-Party",
+            "Aria reads your Inbox to import trip confirmations, but the Inbox manages authorization itself — its own consent page issues an opaque AAuth-Access token, no Person Server in sight.",
+            new[] { "Agent + Inbox", "6 steps", "you approve", "first-party OAuth role" }),
+        new(4, "Autonomous", "PS-Asserted — Direct Grant",
             "Aria reads your Calendar. Because you granted standing consent earlier, the Person Server issues a token immediately — no human in the loop.",
             new[] { "Agent + Calendar + PS", "6 steps", "no prompt" }),
-        new(4, "Deferred", "PS-Asserted — Deferred Consent",
+        new(5, "Deferred", "PS-Asserted — Deferred Consent",
             "Aria wants your Calendar but has no consent yet, so the Person Server pauses and waits for your one-time approval in a new tab.",
             new[] { "Agent + Calendar + PS", "9 steps", "you approve" }),
-        new(5, "CallChain", "Call Chain — Multi-Agent",
+        new(6, "CallChain", "Call Chain — Multi-Agent",
             "Aria delegates to a Concierge service that reads your Calendar on its behalf; you consent once per hop and the final resource sees the full delegation chain.",
             new[] { "Agent + Concierge + Calendar + PS", "7 or 13 steps" }),
-        new(6, "Federated", "Federated — Four-Party",
+        new(7, "Federated", "Federated — Four-Party",
             "Aria charges your Wallet, but your money is held by a separate provider whose Access Server makes the final call on the payment.",
             new[] { "Agent + Wallet + PS + AS", "7–10 steps" }),
-        new(7, "Mission", "Mission — PS-Governed",
+        new(8, "Mission", "Mission — PS-Governed",
             "You give Aria a standing trip-planning mission; the Person Server then governs every later request, only prompting you for actions outside what you approved.",
             new[] { "Agent + Trips + PS", "20 steps", "three prompts" }),
-        new(8, "MissionCallChain", "Mission + Call Chain",
+        new(9, "MissionCallChain", "Mission + Call Chain",
             "One mission governs both a clarification chat for an out-of-mission scope and a silent, mission-forwarded delegated chain down to your Trips.",
             new[] { "Agent + Concierge + Trips + PS", "14 steps", "dual governance" }),
-        new(9, "SubAgent", "Sub-Agents — Parent-Mediated Workers",
+        new(10, "SubAgent", "Sub-Agents — Parent-Mediated Workers",
             "Aria spins up a short-lived worker with its own key + identity under one consent; the worker fetches a resource token, Aria mediates the exchange, and hands the worker-bound token back down to it.",
             new[] { "Parent + Sub-Agent + Resource + PS", "7 steps", "in-process" }),
         new(10, "RichRequest", "Rich Trip Booking — R3 (experimental)",

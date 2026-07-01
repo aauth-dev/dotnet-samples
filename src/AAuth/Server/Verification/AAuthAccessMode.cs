@@ -26,4 +26,15 @@ public enum AAuthAccessMode
     /// agent token it already holds (§Agent Token Required).
     /// </summary>
     AgentTokenRequired,
+
+    /// <summary>
+    /// The resource manages authorization itself (two-party), with no PS or AS
+    /// (§Resource-Managed Authorization). The challenge middleware passes every
+    /// request through — the resource's own endpoints decide whether to require
+    /// interaction (<c>202 + requirement=interaction</c>) or to issue an opaque
+    /// access token via the <c>AAuth-Access</c> header. Use the
+    /// <c>HttpContext</c> resource-managed helpers and
+    /// <see cref="AAuth.Server.IOpaqueTokenStore"/> to drive the flow.
+    /// </summary>
+    ResourceManaged,
 }

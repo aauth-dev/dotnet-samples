@@ -376,11 +376,10 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Verification — fail-closed: empty trusted-issuer set rejects all auth tokens")]
-    public async Task RejectsAuthTokenWhenNoTrustedIssuersConfigured()
+    // Rebuild the resource host with custom verification options (the trust-policy
+    // tests below each need a fresh pipeline).
+    private async Task RestartHostWithAsync(AAuthVerificationOptions options)
     {
-        // Fail-closed default: with issuer verification on but no
-        // TrustedAuthTokenIssuers declared, every PS-asserted token is rejected.
         if (_host is not null) { await _host.StopAsync(); _host.Dispose(); }
 
         var builder = WebApplication.CreateBuilder();
@@ -390,19 +389,68 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         builder.Services.AddSingleton(sp => new MetadataClient(sp.GetRequiredService<HttpClient>()));
         builder.Services.AddSingleton(sp => new JwksClient(sp.GetRequiredService<HttpClient>()));
         var app = builder.Build();
-        app.UseAAuthVerification(new AAuthVerificationOptions
-        {
-            ResourceIdentifier = ResourceId,
-            RequireIssuerVerification = true,
-            // TrustedAuthTokenIssuers intentionally unset.
-        });
+        app.UseAAuthVerification(options);
         app.MapGet("/protected", () => Results.Ok("hello"));
         await app.StartAsync();
         _host = app;
+    }
 
-        var token = BuildAuthToken();
-        var response = await SendSigned(token);
+    [Fact(DisplayName = "§Trust Posture — open by default: unset trust accepts any verifiable PS")]
+    public async Task AcceptsAuthTokenWhenNoTrustedIssuersConfigured()
+    {
+        // Spec default (PS-asserted access): with issuer verification on and no
+        // trust policy, an auth token from any *verifiable* PS is accepted.
+        await RestartHostWithAsync(new AAuthVerificationOptions
+        {
+            ResourceIdentifier = ResourceId,
+            RequireIssuerVerification = true,
+            // TrustedAuthTokenIssuers + IsTrustedAuthTokenIssuer intentionally unset ⇒ open.
+        });
+
+        var response = await SendSigned(BuildAuthToken());
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact(DisplayName = "§Trust Posture — empty trusted-issuer set denies all auth tokens (kill-switch)")]
+    public async Task RejectsAuthTokenWhenEmptyTrustedIssuerSet()
+    {
+        await RestartHostWithAsync(new AAuthVerificationOptions
+        {
+            ResourceIdentifier = ResourceId,
+            RequireIssuerVerification = true,
+            TrustedAuthTokenIssuers = new HashSet<string>(), // empty ⇒ deny-all
+        });
+
+        var response = await SendSigned(BuildAuthToken());
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact(DisplayName = "§Trust Posture — custom policy can reject an otherwise-verifiable PS")]
+    public async Task RejectsAuthTokenWhenPolicyDeclines()
+    {
+        await RestartHostWithAsync(new AAuthVerificationOptions
+        {
+            ResourceIdentifier = ResourceId,
+            RequireIssuerVerification = true,
+            IsTrustedAuthTokenIssuer = iss => iss == "https://other-ps.example",
+        });
+
+        var response = await SendSigned(BuildAuthToken()); // iss = PsIssuer, not matched
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact(DisplayName = "§Trust Posture — custom policy admits a verifiable PS")]
+    public async Task AcceptsAuthTokenWhenPolicyApproves()
+    {
+        await RestartHostWithAsync(new AAuthVerificationOptions
+        {
+            ResourceIdentifier = ResourceId,
+            RequireIssuerVerification = true,
+            IsTrustedAuthTokenIssuer = iss => iss == PsIssuer,
+        });
+
+        var response = await SendSigned(BuildAuthToken());
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     [Fact(DisplayName = "§Verification — accepts direct-auth token without act claim")]

@@ -1,5 +1,3 @@
-using System.Net;
-using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using AAuth;
 using AAuth.Access;
@@ -10,6 +8,7 @@ using AAuth.Discovery;
 using AAuth.Errors;
 using AAuth.Headers;
 using AAuth.HttpSig;
+using AAuth.Person;
 using AAuth.R3;
 using AAuth.R3.Model;
 using AAuth.Server;
@@ -67,8 +66,6 @@ var demoUserClaims = new Dictionary<string, string>(StringComparer.Ordinal)
     ["tenant"] = "demo-tenant",
     ["name"] = "Demo User",
 };
-static bool IsAdminAgent(string agentId) =>
-    agentId.StartsWith("aauth:demo@", StringComparison.Ordinal);
 var psIssuer = builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5100";
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
 var requireConsent = builder.Configuration.GetValue<bool>("MockPersonServer:RequireConsent");
@@ -79,9 +76,7 @@ var requireConsent = builder.Configuration.GetValue<bool>("MockPersonServer:Requ
 // this set per the operator's federation agreements.
 var trustedAccessServers = builder.Configuration
         .GetSection("MockPersonServer:TrustedAccessServers").Get<string[]>()
-    ?? ["http://localhost:5500", "http://localhost:5501"];
-var trustedAsSet = new HashSet<string>(
-    trustedAccessServers.Select(a => a.TrimEnd('/')), StringComparer.OrdinalIgnoreCase);
+    ?? ["http://localhost:5500"];
 
 builder.Services.AddSingleton(psKey);
 builder.Services.AddSingleton(new AAuthVerifier
@@ -89,26 +84,37 @@ builder.Services.AddSingleton(new AAuthVerifier
     MaxAge = TimeSpan.FromSeconds(signatureWindowSeconds),
 });
 builder.Services.AddSingleton(new TokenVerifier());
-builder.Services.AddSingleton<MetadataClient>(sp =>
-    new MetadataClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-metadata")));
-builder.Services.AddSingleton<JwksClient>(sp =>
-    new JwksClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-jwks")));
-builder.Services.AddHttpClient("aauth-metadata");
-builder.Services.AddHttpClient("aauth-jwks");
+// Shared discovery clients (MetadataClient + JwksClient) with a pooled handler;
+// no manual HttpClient wiring.
+builder.Services.AddAAuthDiscovery();
 builder.Services.AddHttpClient("aauth-r3-fetch")
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<ConsentStore>();
-builder.Services.AddSingleton<PendingStore>();
-builder.Services.AddSingleton<FederatedPendingStore>();
+
+// Person Server decision seams. The SDK's MapAAuthPersonServer owns the protocol
+// (verification, mint, federation, the mission three-gate + the clarification
+// round-trip); these supply only the demo's decisions:
+//   * identity + the non-mission consent gate (over ConsentStore);
+//   * the id-keyed pending store, bridged to the (agent,resource,scope) ConsentStore.
+builder.Services.AddSingleton<IIdentityClaimsAsserter>(sp =>
+    new SampleIdentityClaimsAsserter(
+        sp.GetRequiredService<ConsentStore>(), requireConsent, demoRoles, demoGroups, demoUserClaims));
+builder.Services.AddSingleton<IPersonPendingStore>(sp =>
+    new ConsentBridgePersonPendingStore(sp.GetRequiredService<ConsentStore>(), demoRoles, demoGroups));
 
 // Mission governance (§PS Governance Endpoints). AddAAuthGovernance registers
 // the in-memory mission store + log; the PS supplies the policy/user-channel
-// seams (decider / audit sink / interaction relay) and the deterministic
-// consent script that stands in for a real user-consent screen.
+// seams (decider / audit sink / interaction relay), the deterministic consent
+// script that stands in for a real user-consent screen, and the out-of-scope
+// mission-token decision (ScriptMissionTokenConsent — the SDK's clarification
+// protocol calls into it).
 builder.Services.AddAAuthGovernance();
 builder.Services.AddSingleton<MissionConsentScript>();
 builder.Services.AddSingleton<MissionPolicyStore>();
 builder.Services.AddSingleton<MissionPendingStore>();
+builder.Services.AddSingleton<IMissionTokenConsent>(sp =>
+    new ScriptMissionTokenConsent(
+        sp.GetRequiredService<MissionPolicyStore>(), sp.GetRequiredService<MissionConsentScript>()));
 builder.Services.AddSingleton<IPermissionDecider, SamplePermissionDecider>();
 builder.Services.AddSingleton<IAuditSink, SampleAuditSink>();
 builder.Services.AddSingleton<IInteractionRelay, SampleInteractionRelay>();
@@ -117,24 +123,10 @@ builder.Services.AddSingleton(sp =>
         sp.GetRequiredService<MetadataClient>(),
         sp.GetRequiredService<JwksClient>()));
 
-// Four-party federation client. The PS signs the PS->AS token request with its
-// own key via the `jwks_uri` scheme (the AS resolves the PS's public key from
-// `{psIssuer}/.well-known/jwks.json`). The transport handler is the named
-// "aauth-federation" client so tests can route it to an in-process AS.
-builder.Services.AddHttpClient("aauth-federation");
-builder.Services.AddSingleton(sp =>
-{
-    var metadata = sp.GetRequiredService<MetadataClient>();
-    var jwks = sp.GetRequiredService<JwksClient>();
-    var validator = new AuthTokenResponseValidator(metadata, jwks);
-    var transport = sp.GetRequiredService<IHttpMessageHandlerFactory>()
-        .CreateHandler("aauth-federation");
-    var signedClient = new AAuthClientBuilder(psKey)
-        .UseJwksUri($"{psIssuer.TrimEnd('/')}/.well-known/jwks.json", PsKid)
-        .WithInnerHandler(transport)
-        .Build();
-    return new AccessServerClient(signedClient, metadata, validator);
-});
+// Four-party federation client (PS→AS), wired by the SDK: the PS signs the
+// token request with its own key via the `jwks_uri` scheme, and the transport
+// uses the named federation client so tests can route it to an in-process AS.
+builder.Services.AddAAuthFederation(psKey, psIssuer, PsKid);
 
 var app = builder.Build();
 
@@ -157,584 +149,46 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
     SignatureWindow = signatureWindowSeconds,
 });
 
-// PS-specific metadata document.
-app.MapAAuthPersonServerWellKnown(new AAuthPersonServerMetadataOptions
+// Person Server token endpoint + pending polls + PS metadata, in one call. The
+// SDK owns verification, the three-/four-party mint, PS→AS federation, and the
+// mission three-gate + clarification protocol; the decision seams registered
+// above supply the demo's policy. `/admin` is the PS's own unsigned consent
+// surface (§PS Approval Endpoint Authentication — out of scope), so the mapper
+// skips signature verification for it.
+app.MapAAuthPersonServer(new AAuthPersonServerOptions
 {
     Issuer = psIssuer,
-    TokenEndpoint = $"{psIssuer.TrimEnd('/')}/token",
     SigningKeys = new Dictionary<string, AAuthKey> { [PsKid] = psKey },
-    // Mission governance endpoints (§PS Governance Endpoints). Advertised so an
-    // agent's MetadataClient can resolve them from aauth-person.json.
+    DefaultScope = PsScope,
+    TrustedAccessServers = trustedAccessServers,
+    // Governance endpoints (mapped below) advertised in aauth-person.json so the
+    // agent's MissionClient / PermissionClient / AuditClient can resolve them.
     MissionEndpoint = $"{psIssuer.TrimEnd('/')}/mission",
     PermissionEndpoint = $"{psIssuer.TrimEnd('/')}/permission",
     AuditEndpoint = $"{psIssuer.TrimEnd('/')}/audit",
     InteractionEndpoint = $"{psIssuer.TrimEnd('/')}/mission-interaction",
-});
-
-// All other endpoints require an AAuth signature — except the
-// /admin/* helpers, which are demo-only consent toggles and intentionally
-// unsigned. A production PS would expose these only behind operator auth
-// or wouldn't expose them at all.
-app.UseWhen(
-    ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
-        && !ctx.Request.Path.StartsWithSegments("/admin")
-        && !ctx.Request.Path.StartsWithSegments("/interaction"),
-    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
+    UnsignedPathPrefixes = new[] { "/admin" },
+    FederatedPendingDetailsAsync = async (details, cancellationToken) =>
     {
-        RequireIssuerVerification = false,
-    }));
-
-// -----------------------------------------------------------------------
-// POST /token — the exchange endpoint.
-//
-// Flow:
-//   1. AAuthVerificationMiddleware validates the RFC 9421 signature and
-//      exposes the parsed carrier token (the agent's aa-agent+jwt) via
-//      HttpContext.Items.
-//   2. We read `resource_token` from the request body.
-//   3. We mint an aa-auth+jwt whose:
-//        - iss = this PS
-//        - aud = the resource_token's iss (the resource)
-//        - agent = agent identifier from the agent token
-//        - cnf.jwk = the agent's confirmation key (binds PoP)
-//   4. We return { "auth_token": "..." }.
-//
-// This mock verifies the resource_token per §"Resource Token Verification"
-// using the SDK helper TokenVerifier.VerifyResourceTokenAsync (JWKS discovery
-// against the issuing resource). A forged or tampered token is rejected.
-// -----------------------------------------------------------------------
-app.MapPost("/token", async (HttpContext ctx, ConsentStore consent, PendingStore pending) =>
-{
-    var parsed = ctx.GetAAuthParsedKey()!;
-
-    // Only an agent token may exchange — refuse anything else.
-    var tokenType = ctx.GetAAuthTokenType();
-    if (tokenType != AAuthTokenType.AgentToken)
-    {
-        return Results.Json(
-            new { error = "invalid_carrier_token", detail = $"expected {AAuthConstants.TokenTypes.AgentToken}, got {tokenType}" },
-            statusCode: StatusCodes.Status403Forbidden);
-    }
-
-    var agentId = (string?)parsed.Payload?["sub"];
-    if (string.IsNullOrEmpty(agentId))
-    {
-        return Results.Json(new { error = "invalid_carrier_token", detail = "missing sub" },
-            statusCode: StatusCodes.Status403Forbidden);
-    }
-
-    JsonObject? body;
-    try
-    {
-        body = await ctx.Request.ReadFromJsonAsync<JsonObject>();
-    }
-    catch (System.Text.Json.JsonException)
-    {
-        return Results.Json(new { error = "invalid_request", detail = "body is not valid JSON" },
-            statusCode: StatusCodes.Status400BadRequest);
-    }
-
-    var resourceTokenJwt = (string?)body?["resource_token"];
-    if (string.IsNullOrEmpty(resourceTokenJwt))
-    {
-        return Results.Json(new { error = "invalid_request", detail = "missing resource_token" },
-            statusCode: StatusCodes.Status400BadRequest);
-    }
-
-    var upstreamTokenJwt = (string?)body?["upstream_token"];
-    // Four-party (federated) branch. When the resource token's `aud` is NOT
-    // this PS, the resource delegated authorization to an Access Server. The PS
-    // does not mint the auth token itself — it forwards a signed PS->AS request
-    // and returns the AS-issued token. When `aud` IS this PS (the common case),
-    // fall through to the three-party path below where the PS acts as its own
-    // AS (the "collapsed" PS+AS variant).
-    var resourceAudience = PeekJwtAudience(resourceTokenJwt);
-    if (resourceAudience is not null
-        && !string.Equals(resourceAudience.TrimEnd('/'), psIssuer.TrimEnd('/'), StringComparison.OrdinalIgnoreCase))
-    {
-        // Pre-established trust: only federate to a configured Access Server.
-        if (!trustedAsSet.Contains(resourceAudience.TrimEnd('/')))
-        {
-            return Results.Json(
-                new { error = "untrusted_access_server", detail = $"'{resourceAudience}' is not a trusted Access Server." },
-                statusCode: StatusCodes.Status403Forbidden);
-        }
-
-        var federationVerifier = app.Services.GetRequiredService<TokenVerifier>();
-        var federationMetadata = app.Services.GetRequiredService<MetadataClient>();
-        var federationJwks = app.Services.GetRequiredService<JwksClient>();
-
-        // Verify the resource token's agent binding before forwarding it — the
-        // PS confirms the presenting agent is the one bound to the token
-        // (`agent` + `agent_jkt`) and reads the resource URL (`iss`) and scope.
-        // The AS re-verifies independently; this guards the PS from relaying a
-        // token it has no business relaying.
-        string resourceUrl;
-        string federatedScope = PsScope;
-        R3ConsentDisplay? r3Consent = null;
         try
         {
-            var verified = await federationVerifier.VerifyResourceTokenAsync(
-                resourceTokenJwt,
-                expectedAudience: resourceAudience,
-                expectedAgentId: agentId,
-                expectedAgentJkt: parsed.ConfirmationKey!.ComputeJwkThumbprint(),
-                federationMetadata,
-                federationJwks);
-
-            resourceUrl = (string?)verified.Payload["iss"]
-                ?? throw new TokenVerificationException("resource_token missing iss");
-            var scopeClaim = (string?)verified.Payload["scope"];
-            if (!string.IsNullOrWhiteSpace(scopeClaim))
-            {
-                federatedScope = scopeClaim;
-            }
-
-            r3Consent = await FetchR3ConsentDisplayAsync(
-                ctx,
-                R3ClaimReader.ReadResourceDocument(verified.Payload),
-                resourceUrl);
-        }
-        catch (TokenVerificationException ex)
-        {
-            var expired = ex.Message.Contains("expired", StringComparison.OrdinalIgnoreCase);
-            // §Token Endpoint Error Codes: invalid_resource_token / expired_resource_token
-            // are 400 (a bad token in the body), not 401 (401 is reserved for request-signature
-            // failures carrying a Signature-Error header, §Authentication Errors).
-            return Results.Json(
-                new { error = expired ? "expired_resource_token" : "invalid_resource_token", detail = ex.Message },
-                statusCode: StatusCodes.Status400BadRequest);
+            return FederatedPendingDetailsResult.Continue(await FetchR3ConsentDisplayAsync(
+                details.HttpContext,
+                R3ClaimReader.ReadResourceDocument(details.ResourceToken.Payload),
+                details.ResourceUrl,
+                cancellationToken));
         }
         catch (Exception ex) when (ex is R3HashMismatchException or InvalidOperationException or HttpRequestException or TaskCanceledException)
         {
-            return Results.Json(
+            return FederatedPendingDetailsResult.Fail(Results.Json(
                 new { error = "invalid_r3_document", detail = ex.Message },
-                statusCode: StatusCodes.Status400BadRequest);
+                statusCode: StatusCodes.Status400BadRequest));
         }
-
-        var federation = app.Services.GetRequiredService<AccessServerClient>();
-        var fedPending = app.Services.GetRequiredService<FederatedPendingStore>();
-        var entry = fedPending.Add();
-        entry.Agent = agentId;
-        entry.Resource = resourceUrl;
-        entry.Scope = federatedScope;
-        entry.R3Display = r3Consent;
-
-        // Capture everything the background task needs BEFORE it runs — the
-        // HttpContext is gone once we return the response.
-        var agentTokenJwt = parsed.Jwt
-            ?? throw new InvalidOperationException("Agent token JWT unavailable on the verified request.");
-        var agentConfirmationKey = parsed.ConfirmationKey!;
-        var fedRequest = new AccessServerRequest
-        {
-            ResourceToken = resourceTokenJwt,
-            AgentToken = agentTokenJwt,
-            UpstreamToken = upstreamTokenJwt,
-            ExpectedAudience = resourceUrl,
-            ExpectedAgentId = agentId,
-            AgentKey = agentConfirmationKey,
-            RequestedScope = federatedScope,
-            // The AS needs an interactive user login/consent. Capture its
-            // user-facing interaction URL so the PS can relay it to the agent;
-            // FederateAsync keeps polling the AS to completion in the
-            // background while the agent polls the PS pending URL.
-            OnInteractionRequired = (interaction, _) =>
-            {
-                entry.InteractionUrl = interaction.Url;
-                entry.InteractionCode = interaction.Code;
-                entry.FirstAnswer.TrySetResult();
-                return Task.CompletedTask;
-            },
-            // The AS needs identity claims (§Claims Required) for its policy
-            // decision. The PS is the identity authority, so it answers with a
-            // directed pseudonymous `sub` plus whatever requested claims it
-            // holds for the principal. Unknown claims are simply omitted.
-            OnClaimsRequired = (claimsRequirement, _) =>
-            {
-                var claims = new Dictionary<string, JsonNode?>(StringComparer.Ordinal);
-                foreach (var name in claimsRequirement.RequiredClaims)
-                {
-                    if (demoUserClaims.TryGetValue(name, out var value))
-                    {
-                        claims[name] = value;
-                    }
-                }
-                return Task.FromResult(new ClaimsResponse
-                {
-                    Subject = "pairwise-sub",
-                    Claims = claims,
-                });
-            },
-        };
-
-        // Drive the PS->AS federation in the background. The agent's first
-        // answer (relayed 202 interaction, or an immediate terminal result
-        // when the AS does not need interaction) is decided below.
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                var token = await federation.FederateAsync(resourceAudience, fedRequest);
-                entry.AuthToken = token;
-                entry.Status = FederatedPendingStatus.Allowed;
-            }
-            catch (AAuthInteractionDeniedException)
-            {
-                entry.Error = "denied";
-                entry.ErrorStatus = StatusCodes.Status403Forbidden;
-                entry.Status = FederatedPendingStatus.Denied;
-            }
-            catch (AAuthTokenExchangeException ex)
-            {
-                entry.Error = ex.ErrorCode;
-                entry.ErrorStatus = ex.StatusCode;
-                entry.Status = FederatedPendingStatus.Denied;
-            }
-            catch (AAuthPaymentRequiredException ex)
-            {
-                entry.Error = "payment_required";
-                entry.ErrorStatus = StatusCodes.Status402PaymentRequired;
-                entry.ErrorLocation = ex.Location;
-                entry.Status = FederatedPendingStatus.Denied;
-            }
-            catch (Exception ex)
-            {
-                // Includes TokenVerificationException (bad AS token) and
-                // unreachable-AS failures — surface as an upstream error.
-                entry.Error = "federation_failed";
-                entry.ErrorStatus = StatusCodes.Status502BadGateway;
-                app.Logger.LogWarning(ex, "Four-party federation to {AccessServer} failed.", resourceAudience);
-                entry.Status = FederatedPendingStatus.Denied;
-            }
-            finally
-            {
-                entry.FirstAnswer.TrySetResult();
-            }
-        });
-
-        // Wait for the first answer: either the AS asked for interaction
-        // (relay it) or federation finished before any interaction.
-        await entry.FirstAnswer.Task;
-
-        if (entry.InteractionUrl is not null)
-        {
-            // Relay the AS interaction. The user logs in at the AS's
-            // (Keycloak-backed) URL; the agent polls the PS pending URL while
-            // the PS's background task polls the AS to completion.
-            ctx.Response.Headers.Location = $"/federated-pending/{entry.Id}";
-            ctx.Response.Headers["Retry-After"] = "1";
-            ctx.Response.Headers["Cache-Control"] = "no-store";
-            ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                Interaction.Format(entry.InteractionUrl, entry.InteractionCode!);
-            return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
-        }
-
-        // The AS resolved without interaction (e.g. an auto-allow stub AS).
-        if (entry.Status == FederatedPendingStatus.Allowed)
-        {
-            if (entry.R3Display is not null && entry.PersonServerDecision is null)
-            {
-                ctx.Response.Headers.Location = $"/federated-pending/{entry.Id}";
-                ctx.Response.Headers["Retry-After"] = "0";
-                ctx.Response.Headers["Cache-Control"] = "no-store";
-                ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                    Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", entry.Id);
-                return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
-            }
-            return Results.Ok(new { auth_token = entry.AuthToken });
-        }
-
-        if (!string.IsNullOrEmpty(entry.ErrorLocation))
-        {
-            ctx.Response.Headers.Location = entry.ErrorLocation;
-        }
-        return Results.Json(
-            new { error = entry.Error, detail = entry.Error },
-            statusCode: entry.ErrorStatus);
-    }
-
-    // Call-chaining: validate upstream_token if present using UpstreamTokenValidator
-    // (§Upstream Token Verification steps 1-4).
-    JsonObject? upstreamAct = null;
-    if (!string.IsNullOrEmpty(upstreamTokenJwt))
-    {
-        var validator = app.Services.GetRequiredService<UpstreamTokenValidator>();
-        // For this mock PS, trust all issuers. Production would maintain
-        // a set of known ASes whose tokens the PS has previously brokered.
-        var trustedIssuers = new HashSet<string> { psIssuer };
-
-        // §Upstream Token Verification step 3: aud must match the intermediary
-        // resource. Per §Call Chaining Identity, the intermediary self-issues
-        // its agent token (iss = its resource URL). So agent_token.iss IS the
-        // intermediary's resource identifier.
-        var intermediaryResourceUrl = (string?)parsed.Payload?["iss"]
-            ?? throw new InvalidOperationException("Agent token missing 'iss' claim.");
-
-        var result = await validator.ValidateAsync(
-            upstreamTokenJwt,
-            expectedAudience: intermediaryResourceUrl,
-            trustedIssuers);
-
-        if (!result.IsValid)
-        {
-            return Results.Json(new { error = "invalid_upstream_token", detail = result.Error },
-                statusCode: StatusCodes.Status400BadRequest);
-        }
-
-        // Compose the downstream act node (§Delegation Chain): act.agent is the
-        // upstream token's agent (the delegator), nesting the upstream's own chain.
-        upstreamAct = ActChainBuilder.BuildNestedAct(result.Agent!, result.UpstreamAct);
-    }
-
-    // Verify the resource token per §"Resource Token Verification" before we
-    // act on any of its claims. The SDK helper resolves the issuing resource's
-    // JWKS from `{iss}/.well-known/aauth-resource.json` and enforces typ/dwk/
-    // signature/exp/iat/aud (steps 1-4) plus agent + agent_jkt (steps 5-6).
-    // The verified `iss` is the resource URL and becomes the auth token's
-    // `aud`; the verified `scope` is echoed into the issued auth token.
-    var tokenVerifier = app.Services.GetRequiredService<TokenVerifier>();
-    var metadataClient = app.Services.GetRequiredService<MetadataClient>();
-    var jwksClient = app.Services.GetRequiredService<JwksClient>();
-    string audience;
-    string requestedScope = PsScope;
-    MissionClaim? missionClaim = null;
-    try
-    {
-        var verifiedResourceToken = await tokenVerifier.VerifyResourceTokenAsync(
-            resourceTokenJwt,
-            expectedAudience: psIssuer,
-            expectedAgentId: agentId,
-            expectedAgentJkt: parsed.ConfirmationKey!.ComputeJwkThumbprint(),
-            metadataClient,
-            jwksClient);
-
-        audience = (string?)verifiedResourceToken.Payload["iss"]
-            ?? throw new TokenVerificationException("resource_token missing iss");
-        // Echo the requested scope (space-separated set permitted). Fall back
-        // to the PS's base scope when the resource token omits it.
-        var scopeClaim = (string?)verifiedResourceToken.Payload["scope"];
-        if (!string.IsNullOrWhiteSpace(scopeClaim))
-        {
-            requestedScope = scopeClaim;
-        }
-        // §Agent Token Request: the mission context (if any) rides the resource
-        // token's `mission` claim. It governs the token gate below.
-        missionClaim = MissionClaim.FromPayload(verifiedResourceToken.Payload);
-    }
-    catch (TokenVerificationException ex)
-    {
-        // §Token Endpoint Error Codes: a resource token that fails verification is
-        // rejected as a 400 (invalid_resource_token / expired_resource_token are bad
-        // token parameters in the body, not request-signature failures). 401 is
-        // reserved for signature failures carrying a Signature-Error header. The
-        // consent screen and issued auth token derive only from a verified token.
-        var expired = ex.Message.Contains("expired", StringComparison.OrdinalIgnoreCase);
-        return Results.Json(
-            new
-            {
-                error = expired ? "expired_resource_token" : "invalid_resource_token",
-                detail = ex.Message,
-            },
-            statusCode: StatusCodes.Status400BadRequest);
-    }
-
-    // Mission gate (§Agent Token Request, three-gate model). When the resource
-    // token carries a mission claim, the token request is governed by the
-    // mission: silent when the (resource, scope) is within the approved intent
-    // (gate 2a) or already consented earlier in this mission (gate 2b),
-    // otherwise the user is prompted; a terminated mission is rejected outright.
-    // Each outcome is recorded in the mission log so the reason is auditable.
-    if (missionClaim is not null)
-    {
-        var missionStore = app.Services.GetRequiredService<IMissionStore>();
-        var missionLog = app.Services.GetRequiredService<IMissionLog>();
-        var missionPolicy = app.Services.GetRequiredService<MissionPolicyStore>();
-        var missionPending = app.Services.GetRequiredService<MissionPendingStore>();
-        var script = app.Services.GetRequiredService<MissionConsentScript>();
-        var s256 = missionClaim.S256;
-
-        var stored = await missionStore.GetAsync(s256);
-        if (stored is { State: MissionState.Terminated })
-        {
-            return GovernanceEndpoints.MissionTerminated();
-        }
-
-        var inScope = missionPolicy.IsInScope(s256, audience, requestedScope);
-        var priorConsent = !inScope
-            && await missionLog.HasPriorConsentAsync(s256, audience, requestedScope);
-
-        if (inScope || priorConsent)
-        {
-            await missionLog.AppendAsync(new MissionLogEntry(
-                s256, MissionLogEntryKind.Token, DateTimeOffset.UtcNow)
-            {
-                Resource = audience,
-                Scope = requestedScope,
-                Granted = true,
-                Detail = inScope ? "InScope" : "PriorConsent",
-            });
-            var silentToken = IssueAuthToken(
-                agentId, audience, requestedScope, parsed.ConfirmationKey!, upstreamAct, missionClaim);
-            return Results.Ok(new { auth_token = silentToken });
-        }
-
-        // Out of scope -> park the request and prompt the user (§User Interaction).
-        // The agent polls the pending URL while the (scripted) user decides; a
-        // clarification chat runs first when the script requests one.
-        var entry = missionPending.Add(new MissionPendingEntry
-        {
-            Kind = MissionPendingKind.Token,
-            AgentId = agentId,
-            S256 = s256,
-            Approver = missionClaim.Approver,
-            Resource = audience,
-            Scope = requestedScope,
-            ConfirmationKey = parsed.ConfirmationKey!,
-            UpstreamAct = upstreamAct,
-            Question = script.RequireTokenClarification ? script.ClarificationQuestion : null,
-            State = script.RequireTokenClarification
-                ? MissionPendingState.AwaitingClarification
-                : MissionPendingState.AwaitingDecision,
-        });
-
-        ctx.Response.Headers.Location = $"/mission-pending/{entry.Id}";
-        ctx.Response.Headers["Retry-After"] = "0";
-        ctx.Response.Headers["Cache-Control"] = "no-store";
-        if (script.RequireTokenClarification)
-        {
-            ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                $"requirement={ClarificationRequirement.RequirementType}";
-            return Results.Json(
-                new { clarification = script.ClarificationQuestion },
-                statusCode: StatusCodes.Status202Accepted);
-        }
-
-        ctx.Response.Headers[AAuthRequirementHeader.Name] =
-            Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", entry.Id);
-        return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
-    }
-
-    // Consent gate. If the PS is configured to require consent and the
-    // (agent, resource, scope) triple hasn't been approved yet, park the
-    // request and tell the agent to direct its user to the interaction
-    // endpoint while polling the pending URL.
-    if (requireConsent && !consent.IsConsented(agentId, audience, requestedScope))
-    {
-        var entry = pending.Add(agentId, audience, requestedScope, resourceTokenJwt, parsed.ConfirmationKey!, upstreamAct);
-        var location = $"/pending/{entry.Id}";
-        var interactionUrl = $"{psIssuer.TrimEnd('/')}/interaction";
-        ctx.Response.Headers.Location = location;
-        ctx.Response.Headers["Retry-After"] = "0";
-        ctx.Response.Headers["Cache-Control"] = "no-store";
-        ctx.Response.Headers[AAuthRequirementHeader.Name] =
-            Interaction.Format(interactionUrl, entry.Id);
-        return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
-    }
-
-    var authToken = IssueAuthToken(agentId, audience, requestedScope, parsed.ConfirmationKey!, upstreamAct);
-    return Results.Ok(new { auth_token = authToken });
+    },
 });
 
 // -----------------------------------------------------------------------
-// GET /pending/{id} — the agent polls here while the user (allegedly)
-// goes off and approves the request at the interaction endpoint. Signed,
-// just like /token. Returns:
-//   * 202 + same AAuth-Requirement header while pending (no consent yet)
-//   * 200 + { auth_token } once consent has been recorded
-//   * 404 if the pending id doesn't exist (e.g. already resolved + GC'd)
-// -----------------------------------------------------------------------
-app.MapGet("/pending/{id}", (HttpContext ctx, string id, ConsentStore consent, PendingStore pending) =>
-{
-    var entry = pending.Get(id);
-    if (entry is null)
-    {
-        return Results.NotFound(new { error = "unknown_pending", id });
-    }
-
-    // Explicit denial — return 403 denied so the agent can
-    // distinguish "user said no" from "timed out / unknown id".
-    if (entry.Denied)
-    {
-        ctx.Response.Headers["Cache-Control"] = "no-store";
-        return Results.Json(
-            new { error = "denied", detail = "the user denied this request" },
-            statusCode: StatusCodes.Status403Forbidden);
-    }
-
-    if (!consent.IsConsented(entry.Agent, entry.Resource, entry.Scope))
-    {
-        ctx.Response.Headers["Retry-After"] = "1";
-        ctx.Response.Headers["Cache-Control"] = "no-store";
-        ctx.Response.Headers[AAuthRequirementHeader.Name] =
-            Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", id);
-        return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
-    }
-
-    // Consent was recorded — mint the auth token bound to the same agent
-    // confirmation key captured when the pending entry was created. We
-    // intentionally leave the entry in place so a slow poller still gets
-    // a deterministic answer on its next request; a production PS would
-    // expire pending entries on a timer.
-    var authToken = IssueAuthToken(entry.Agent, entry.Resource, entry.Scope, entry.AgentConfirmationKey, entry.UpstreamAct);
-    return Results.Ok(new { auth_token = authToken });
-});
-
-// -----------------------------------------------------------------------
-// GET /federated-pending/{id} — four-party deferred poll. Signed like
-// /token. While the PS's background FederateAsync drives the AS interaction
-// to completion, returns 202 + the relayed AS interaction requirement. Once
-// federation resolves it returns the AS-issued auth token (200) or the
-// relayed AS error (403 denied / 402 / 502).
-// -----------------------------------------------------------------------
-app.MapGet("/federated-pending/{id}", (HttpContext ctx, string id, FederatedPendingStore fedPending) =>
-{
-    var entry = fedPending.Get(id);
-    if (entry is null)
-    {
-        return Results.NotFound(new { error = "unknown_pending", id });
-    }
-
-    switch (entry.Status)
-    {
-        case FederatedPendingStatus.Allowed:
-            if (entry.R3Display is not null && entry.PersonServerDecision is null)
-            {
-                ctx.Response.Headers["Retry-After"] = "1";
-                ctx.Response.Headers["Cache-Control"] = "no-store";
-                ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                    Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", entry.Id);
-                return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
-            }
-            if (entry.PersonServerDecision == false)
-            {
-                ctx.Response.Headers["Cache-Control"] = "no-store";
-                return Results.Json(
-                    new { error = "denied", detail = "the user denied this R3 request" },
-                    statusCode: StatusCodes.Status403Forbidden);
-            }
-            return Results.Ok(new { auth_token = entry.AuthToken });
-        case FederatedPendingStatus.Denied:
-            ctx.Response.Headers["Cache-Control"] = "no-store";
-            if (!string.IsNullOrEmpty(entry.ErrorLocation))
-            {
-                ctx.Response.Headers.Location = entry.ErrorLocation;
-            }
-            return Results.Json(
-                new { error = entry.Error, detail = entry.Error },
-                statusCode: entry.ErrorStatus);
-        case FederatedPendingStatus.Pending:
-        default:
-            ctx.Response.Headers["Retry-After"] = "1";
-            ctx.Response.Headers["Cache-Control"] = "no-store";
-            if (entry.InteractionUrl is not null)
-            {
-                ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                    Interaction.Format(entry.InteractionUrl, entry.InteractionCode!);
-            }
-            return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
-    }
-});
-
+// Mission governance endpoints (§PS Governance Endpoints). All four are
 // -----------------------------------------------------------------------
 // Mission governance endpoints (§PS Governance Endpoints). All four are
 // behind AAuth verification (signed agent-token requests); they sit on
@@ -1054,135 +508,6 @@ app.MapPost("/mission-interaction", async (
     }
 });
 
-// -----------------------------------------------------------------------
-// Mission pending URLs. The agent polls (GET) for the user decision,
-// answers a clarification (POST), or withdraws the request (DELETE). All
-// signed like /token. The pending id is single-use and also the
-// interaction code shown to the user.
-// -----------------------------------------------------------------------
-
-// Out-of-scope token resolution (§User Interaction / §Clarification Chat). The
-// poll either runs a clarification round, resolves to an issued auth token, or
-// reports the user's denial / the agent's withdrawal.
-app.MapGet("/mission-pending/{id}", async (
-    HttpContext ctx, string id, MissionPendingStore pending,
-    IMissionLog log, MissionConsentScript script) =>
-{
-    var entry = pending.Get(id);
-    if (entry is null || entry.Kind != MissionPendingKind.Token)
-    {
-        return Results.NotFound(new { error = "unknown_pending", id });
-    }
-
-    switch (entry.State)
-    {
-        case MissionPendingState.Cancelled:
-            ctx.Response.Headers["Cache-Control"] = "no-store";
-            return Results.Json(new { error = "request_withdrawn" }, statusCode: StatusCodes.Status410Gone);
-
-        case MissionPendingState.AwaitingClarification:
-            ctx.Response.Headers["Retry-After"] = "0";
-            ctx.Response.Headers["Cache-Control"] = "no-store";
-            ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                $"requirement={ClarificationRequirement.RequirementType}";
-            return Results.Json(
-                new { clarification = entry.Question ?? script.ClarificationQuestion },
-                statusCode: StatusCodes.Status202Accepted);
-
-        case MissionPendingState.AwaitingDecision:
-        default:
-            // Interactive mode: hold at 202 until the user decides in the
-            // browser (§User Interaction). Scripted mode resolves immediately.
-            bool approved;
-            if (script.InteractiveBrowser)
-            {
-                if (entry.Decision is null)
-                {
-                    ctx.Response.Headers["Retry-After"] = "1";
-                    ctx.Response.Headers["Cache-Control"] = "no-store";
-                    ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                        Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", entry.Id);
-                    return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
-                }
-                approved = entry.Decision.Value;
-            }
-            else
-            {
-                approved = script.ApproveOutOfScopeToken;
-            }
-            await log.AppendAsync(new MissionLogEntry(
-                entry.S256, MissionLogEntryKind.Token, DateTimeOffset.UtcNow)
-            {
-                Resource = entry.Resource,
-                Scope = entry.Scope,
-                Granted = approved,
-                Detail = "OutOfScope",
-            });
-            pending.Remove(id);
-            if (!approved)
-            {
-                ctx.Response.Headers["Cache-Control"] = "no-store";
-                return Results.Json(
-                    new { error = "denied", detail = "the user denied this request" },
-                    statusCode: StatusCodes.Status403Forbidden);
-            }
-            var token = IssueAuthToken(
-                entry.AgentId, entry.Resource!, entry.Scope!, entry.ConfirmationKey!,
-                entry.UpstreamAct, entry.MissionClaim);
-            return Results.Ok(new { auth_token = token });
-    }
-});
-
-// Clarification answer (`clarification_response`) or updated request
-// (`resource_token`). Either satisfies the chat and readies the user decision.
-app.MapPost("/mission-pending/{id}", async (
-    HttpContext ctx, string id, MissionPendingStore pending, IMissionLog log) =>
-{
-    var entry = pending.Get(id);
-    if (entry is null || entry.Kind != MissionPendingKind.Token)
-    {
-        return Results.NotFound(new { error = "unknown_pending", id });
-    }
-    if (entry.State == MissionPendingState.Cancelled)
-    {
-        return Results.Json(new { error = "request_withdrawn" }, statusCode: StatusCodes.Status410Gone);
-    }
-
-    JsonObject? body;
-    try { body = await ctx.Request.ReadFromJsonAsync<JsonObject>(); }
-    catch (System.Text.Json.JsonException)
-    {
-        return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
-    }
-    var answer = (string?)body?["clarification_response"];
-    await log.AppendAsync(new MissionLogEntry(
-        entry.S256, MissionLogEntryKind.Clarification, DateTimeOffset.UtcNow)
-    {
-        Detail = answer ?? "updated_request",
-    });
-    entry.State = MissionPendingState.AwaitingDecision;
-    return Results.NoContent();
-});
-
-// Withdraw the request (§Agent Response to Clarification — cancel). The DELETE
-// succeeds (204); a later poll of the same URL returns 410 Gone.
-app.MapDelete("/mission-pending/{id}", async (
-    string id, MissionPendingStore pending, IMissionLog log) =>
-{
-    var entry = pending.Get(id);
-    if (entry is null || entry.Kind != MissionPendingKind.Token)
-    {
-        return Results.NotFound(new { error = "unknown_pending", id });
-    }
-    entry.State = MissionPendingState.Cancelled;
-    await log.AppendAsync(new MissionLogEntry(
-        entry.S256, MissionLogEntryKind.Clarification, DateTimeOffset.UtcNow)
-    {
-        Detail = "cancelled",
-    });
-    return Results.NoContent();
-});
-
 // Non-pre-approved permission resolution (§Permission Endpoint). The poll
 // returns the (scripted) user decision.
 app.MapGet("/permission-pending/{id}", async (
@@ -1253,12 +578,12 @@ app.MapPost("/admin/revoke", async (HttpContext ctx, ConsentStore consent) =>
 
 // Demo-only: wipe all consent + pending state back to baseline so an automated
 // test harness can start each spec from a known-empty store (see the E2E suite's
-// resetConsent helper). A production PS would never expose this.
-app.MapPost("/admin/reset", (ConsentStore consent, PendingStore pending, FederatedPendingStore fedPending, MissionPendingStore missionPending, MissionConsentScript script) =>
+// resetConsent helper). A production PS would never expose this. The SDK-owned
+// token pending entries are id-keyed + TTL-evicted, so clearing the demo
+// ConsentStore + mission stores is enough to re-baseline.
+app.MapPost("/admin/reset", (ConsentStore consent, MissionPendingStore missionPending, MissionConsentScript script) =>
 {
     consent.Clear();
-    pending.Clear();
-    fedPending.Clear();
     missionPending.Clear();
     script.Reset();
     return Results.Ok(new { ok = true });
@@ -1354,7 +679,7 @@ app.MapGet("/admin/mission-log/{s256}", async (string s256, IMissionLog log) =>
 // (cookie/passkey/SSO); here we trust the demo environment and just look
 // up the pending entry by its single-use code. The form submits to
 // /interaction/approve or /interaction/deny.
-app.MapGet("/interaction", (string? code, PendingStore pending, MissionPendingStore missionPending, MissionPolicyStore missionPolicy, FederatedPendingStore fedPending) =>
+app.MapGet("/interaction", (string? code, IPersonPendingStore pending, MissionPendingStore missionPending, MissionPolicyStore missionPolicy) =>
 {
     if (string.IsNullOrEmpty(code))
     {
@@ -1492,10 +817,19 @@ app.MapGet("/interaction", (string? code, PendingStore pending, MissionPendingSt
         return Results.Content(missionHtml, contentType: "text/html");
     }
 
-    var federated = fedPending.Get(code);
-    if (federated?.R3Display is not null)
+    var entry = pending.Get(code);
+    if (entry is null)
     {
-        var display = federated.R3Display;
+        return Results.Content(
+            "<!doctype html><meta charset=utf-8><title>Mock PS consent</title>"
+            + "<h1>Unknown or expired code</h1>"
+            + "<p>This consent request is no longer pending. The agent may have already received an auth token, or the code was never issued.</p>",
+            contentType: "text/html",
+            statusCode: StatusCodes.Status404NotFound);
+    }
+
+    if (entry.ConsentDetails is R3ConsentDisplay display)
+    {
         var r3Html =
             "<!doctype html><meta charset=utf-8><title>Approve rich request — Person Server</title>"
             + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
@@ -1513,8 +847,8 @@ app.MapGet("/interaction", (string? code, PendingStore pending, MissionPendingSt
             + "<div class=badge><span class=dot></span>Person Server — R3 consent</div>"
             + "<div class=sub>localhost:5100 — rendering the resource's Rich Resource Request display</div>"
             + "<h1>An agent is requesting rich resource access</h1>"
-            + $"<div class=row><b>Agent:</b> <code>{System.Net.WebUtility.HtmlEncode(federated.Agent ?? string.Empty)}</code></div>"
-            + $"<div class=row><b>Resource:</b> <code>{System.Net.WebUtility.HtmlEncode(federated.Resource ?? string.Empty)}</code></div>"
+            + $"<div class=row><b>Agent:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.AgentId)}</code></div>"
+            + $"<div class=row><b>Resource:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.ResourceUrl)}</code></div>"
             + $"<div class=row><b>R3 hash:</b> <code>{System.Net.WebUtility.HtmlEncode(display.S256)}</code></div>"
             + "<div class=r3>"
             + $"<div class=row><b>Summary:</b> <span>{System.Net.WebUtility.HtmlEncode(display.Summary ?? string.Empty)}</span></div>"
@@ -1534,17 +868,6 @@ app.MapGet("/interaction", (string? code, PendingStore pending, MissionPendingSt
         return Results.Content(r3Html, contentType: "text/html");
     }
 
-    var entry = pending.Get(code);
-    if (entry is null)
-    {
-        return Results.Content(
-            "<!doctype html><meta charset=utf-8><title>Mock PS consent</title>"
-            + "<h1>Unknown or expired code</h1>"
-            + "<p>This consent request is no longer pending. The agent may have already received an auth token, or the code was never issued.</p>",
-            contentType: "text/html",
-            statusCode: StatusCodes.Status404NotFound);
-    }
-
     var html =
         "<!doctype html><meta charset=utf-8><title>Approve agent at the Person Server</title>"
         + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
@@ -1561,8 +884,8 @@ app.MapGet("/interaction", (string? code, PendingStore pending, MissionPendingSt
         + "<div class=sub>localhost:5100 — the server that holds your resources and standing consent</div>"
         + "<h1>An agent is requesting access on your behalf</h1>"
         + "<p>This is the <b>Person Server's</b> consent screen. In a real PS you would be signed in via cookie / passkey / SSO before reaching here.</p>"
-        + $"<div class=row><b>Agent:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.Agent)}</code></div>"
-        + $"<div class=row><b>Resource:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.Resource)}</code></div>"
+        + $"<div class=row><b>Agent:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.AgentId)}</code></div>"
+        + $"<div class=row><b>Resource:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.ResourceUrl)}</code></div>"
         + $"<div class=row><b>Scope:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.Scope)}</code></div>"
         + "<form method=post action=\"/interaction/approve\">"
         + $"<input type=hidden name=code value=\"{System.Net.WebUtility.HtmlEncode(code)}\">"
@@ -1579,14 +902,14 @@ app.MapGet("/interaction", (string? code, PendingStore pending, MissionPendingSt
 // consent for the entry's (agent, resource, scope) triple, and shows a
 // confirmation page. Idempotent: re-submitting a code whose entry is
 // already approved still 200s.
-app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent, PendingStore pending, MissionPendingStore missionPending, FederatedPendingStore fedPending) =>
+app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent, IPersonPendingStore pending, MissionPendingStore missionPending) =>
 {
     var code = (await ctx.Request.ReadFormAsync())["code"].ToString();
     if (string.IsNullOrEmpty(code))
     {
         return Results.BadRequest(new { error = "invalid_request", detail = "missing 'code'" });
     }
-    // Mission token / permission prompt: record the user's approval so the
+    // Mission creation / permission prompt: record the user's approval so the
     // agent's next poll resolves to a granted decision (§Missions).
     var mission = missionPending.Get(code);
     if (mission is not null)
@@ -1604,10 +927,14 @@ app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent
             + "<p>You can close this tab.</p>",
             contentType: "text/html");
     }
-    var federated = fedPending.Get(code);
-    if (federated?.R3Display is not null)
+    var entry = pending.Get(code);
+    if (entry is null)
     {
-        federated.PersonServerDecision = true;
+        return Results.NotFound(new { error = "unknown_code", code });
+    }
+    if (entry.ConsentDetails is R3ConsentDisplay)
+    {
+        entry.ConsentDecision = true;
         return Results.Content(
             "<!doctype html><meta charset=utf-8><title>Approved — Person Server</title>"
             + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
@@ -1616,17 +943,24 @@ app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent
             + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}</style>"
             + "<div class=badge><span class=dot></span>Person Server — R3 consent</div>"
             + "<h1>Approved</h1>"
-            + $"<p>You approved <code>{System.Net.WebUtility.HtmlEncode(federated.Agent ?? string.Empty)}</code>'s rich request for "
-            + $"<code>{System.Net.WebUtility.HtmlEncode(federated.Resource ?? string.Empty)}</code>.</p>"
+            + $"<p>You approved <code>{System.Net.WebUtility.HtmlEncode(entry.AgentId)}</code>'s rich request for "
+            + $"<code>{System.Net.WebUtility.HtmlEncode(entry.ResourceUrl)}</code>.</p>"
             + "<p>You can close this tab — the agent will receive its auth token on its next poll.</p>",
             contentType: "text/html");
     }
-    var entry = pending.Get(code);
-    if (entry is null)
+    // An out-of-scope mission token request (held interactively) resolves by
+    // marking the SDK-owned pending decision allowed with the demo identity; a
+    // plain three-party request records standing consent (the bridge mints).
+    if (entry.MissionGate)
     {
-        return Results.NotFound(new { error = "unknown_code", code });
+        var isAdmin = SampleIdentityClaimsAsserter.IsAdminAgent(entry.AgentId);
+        pending.MarkAllowed(code, "pairwise-sub", tenant: null,
+            roles: isAdmin ? demoRoles : null, groups: isAdmin ? demoGroups : null);
     }
-    consent.Grant(entry.Agent, entry.Resource, entry.Scope);
+    else
+    {
+        consent.Grant(entry.AgentId, entry.ResourceUrl, entry.Scope);
+    }
     return Results.Content(
         "<!doctype html><meta charset=utf-8><title>Approved — Person Server</title>"
         + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
@@ -1635,8 +969,8 @@ app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent
         + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}</style>"
         + "<div class=badge><span class=dot></span>Person Server</div>"
         + "<h1>Approved</h1>"
-        + $"<p>You granted <code>{System.Net.WebUtility.HtmlEncode(entry.Agent)}</code> access to "
-        + $"<code>{System.Net.WebUtility.HtmlEncode(entry.Resource)}</code> with scope "
+        + $"<p>You granted <code>{System.Net.WebUtility.HtmlEncode(entry.AgentId)}</code> access to "
+        + $"<code>{System.Net.WebUtility.HtmlEncode(entry.ResourceUrl)}</code> with scope "
         + $"<code>{System.Net.WebUtility.HtmlEncode(entry.Scope)}</code> at the <b>Person Server</b>.</p>"
         + "<p>You can close this tab — the agent will receive its auth token on its next poll.</p>",
         contentType: "text/html");
@@ -1645,14 +979,14 @@ app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent
 // Deny handler. Marks the pending entry as denied (rather than removing
 // it) so the agent's next poll receives a deterministic
 // `403 denied` instead of an ambiguous `404 unknown_pending`.
-app.MapPost("/interaction/deny", async (HttpContext ctx, PendingStore pending, MissionPendingStore missionPending, FederatedPendingStore fedPending) =>
+app.MapPost("/interaction/deny", async (HttpContext ctx, IPersonPendingStore pending, MissionPendingStore missionPending) =>
 {
     var code = (await ctx.Request.ReadFormAsync())["code"].ToString();
     if (string.IsNullOrEmpty(code))
     {
         return Results.BadRequest(new { error = "invalid_request", detail = "missing 'code'" });
     }
-    // Mission token / permission prompt: record the user's denial so the
+    // Mission creation / permission prompt: record the user's denial so the
     // agent's next poll resolves to a denied decision (§Missions).
     var mission = missionPending.Get(code);
     if (mission is not null)
@@ -1670,10 +1004,14 @@ app.MapPost("/interaction/deny", async (HttpContext ctx, PendingStore pending, M
             + "<p>You can close this tab.</p>",
             contentType: "text/html");
     }
-    var federated = fedPending.Get(code);
-    if (federated?.R3Display is not null)
+    var entry = pending.Get(code);
+    if (entry is null)
     {
-        federated.PersonServerDecision = false;
+        return Results.NotFound(new { error = "unknown_code", code });
+    }
+    if (entry.ConsentDetails is R3ConsentDisplay)
+    {
+        entry.ConsentDecision = false;
         return Results.Content(
             "<!doctype html><meta charset=utf-8><title>Denied — Person Server</title>"
             + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
@@ -1682,16 +1020,11 @@ app.MapPost("/interaction/deny", async (HttpContext ctx, PendingStore pending, M
             + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}</style>"
             + "<div class=badge><span class=dot></span>Person Server — R3 consent</div>"
             + "<h1>Denied</h1>"
-            + $"<p>You denied <code>{System.Net.WebUtility.HtmlEncode(federated.Agent ?? string.Empty)}</code>'s rich request. The agent's next poll will receive <code>403 denied</code>.</p>"
+            + $"<p>You denied <code>{System.Net.WebUtility.HtmlEncode(entry.AgentId)}</code>'s rich request. The agent's next poll will receive <code>403 denied</code>.</p>"
             + "<p>You can close this tab.</p>",
             contentType: "text/html");
     }
-    var entry = pending.Get(code);
-    if (entry is null)
-    {
-        return Results.NotFound(new { error = "unknown_code", code });
-    }
-    pending.Deny(code);
+    pending.MarkDenied(code, "the user denied this request");
     return Results.Content(
         "<!doctype html><meta charset=utf-8><title>Denied — Person Server</title>"
         + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
@@ -1700,7 +1033,7 @@ app.MapPost("/interaction/deny", async (HttpContext ctx, PendingStore pending, M
         + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}</style>"
         + "<div class=badge><span class=dot></span>Person Server</div>"
         + "<h1>Denied</h1>"
-        + $"<p>You denied <code>{System.Net.WebUtility.HtmlEncode(entry.Agent)}</code>'s request at the <b>Person Server</b>. The agent's next poll will receive <code>403 denied</code>.</p>"
+        + $"<p>You denied <code>{System.Net.WebUtility.HtmlEncode(entry.AgentId)}</code>'s request at the <b>Person Server</b>. The agent's next poll will receive <code>403 denied</code>.</p>"
         + "<p>You can close this tab.</p>",
         contentType: "text/html");
 }).DisableAntiforgery();
@@ -1713,8 +1046,14 @@ app.Run();
 async Task<R3ConsentDisplay?> FetchR3ConsentDisplayAsync(
     HttpContext ctx,
     R3ClaimReader.ResourceDocumentClaims? documentClaims,
-    string resourceIssuer)
+    string resourceIssuer,
+    CancellationToken cancellationToken)
 {
+    if (documentClaims is null)
+    {
+        return null;
+    }
+
     var transport = ctx.RequestServices.GetRequiredService<IHttpMessageHandlerFactory>()
         .CreateHandler("aauth-r3-fetch");
     var fetchClient = R3FetchClient.Create(
@@ -1723,12 +1062,11 @@ async Task<R3ConsentDisplay?> FetchR3ConsentDisplayAsync(
         PsKid,
         transport);
 
-    if (documentClaims is null)
-    {
-        return null;
-    }
-
-    var bytes = await fetchClient.FetchAndVerifyAsync(documentClaims.Uri, documentClaims.S256, resourceIssuer, ctx.RequestAborted);
+    var bytes = await fetchClient.FetchAndVerifyAsync(
+        documentClaims.Uri,
+        documentClaims.S256,
+        resourceIssuer,
+        cancellationToken);
     if (IsProposal(bytes))
     {
         var proposal = R3ProposalDocument.FromUtf8Bytes(bytes);
@@ -1753,66 +1091,21 @@ static R3ConsentDisplay? ToConsentDisplay(string uri, string s256, R3Display? di
 
 static bool IsProposal(byte[] bytes)
 {
-    var node = JsonNode.Parse(bytes) as JsonObject;
-    return node?["parameters"] is not null;
+    try
+    {
+        var node = JsonNode.Parse(bytes) as JsonObject;
+        return node?["parameters"] is not null;
+    }
+    catch (System.Text.Json.JsonException ex)
+    {
+        throw new InvalidOperationException("R3 document is not valid JSON.", ex);
+    }
 }
 
 static string OptionalRow(string label, string? value) =>
     string.IsNullOrWhiteSpace(value)
         ? string.Empty
         : $"<div class=row><b>{System.Net.WebUtility.HtmlEncode(label)}:</b> <span>{System.Net.WebUtility.HtmlEncode(value)}</span></div>";
-
-string IssueAuthToken(string agentId, string audience, string scope, IAAuthKey confirmationKey, JsonObject? upstreamAct = null, MissionClaim? mission = null)
-    => new AuthTokenBuilder
-    {
-        Issuer = psIssuer,
-        Audience = audience,
-        Agent = agentId,
-        AgentConfirmationKey = confirmationKey,
-        Key = psKey,
-        KeyId = PsKid,
-        Subject = "pairwise-sub",
-        Scope = scope,
-        Roles = IsAdminAgent(agentId) ? demoRoles : null,
-        Groups = IsAdminAgent(agentId) ? demoGroups : null,
-        Act = upstreamAct,
-        Mission = mission,
-    }.Build();
-
-// Peek the `aud` claim of a (possibly unverified) compact JWT without checking
-// its signature — used only to ROUTE the request (three-party vs four-party).
-// Whichever branch is taken fully verifies the token afterwards, so an attacker
-// gains nothing by lying about `aud` here.
-static string? PeekJwtAudience(string jwt)
-{
-    var parts = jwt.Split('.');
-    if (parts.Length < 2)
-    {
-        return null;
-    }
-    JsonObject? payload;
-    try
-    {
-        payload = JsonNode.Parse(Base64UrlDecode(parts[1])) as JsonObject;
-    }
-    catch (System.Text.Json.JsonException)
-    {
-        return null;
-    }
-    return payload?["aud"] switch
-    {
-        JsonValue v => v.GetValue<string>(),
-        JsonArray { Count: > 0 } a => (string?)a[0],
-        _ => null,
-    };
-}
-
-static string Base64UrlDecode(string segment)
-{
-    var s = segment.Replace('-', '+').Replace('_', '/');
-    s += (s.Length % 4) switch { 2 => "==", 3 => "=", _ => string.Empty };
-    return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(s));
-}
 
 async Task<(string? Agent, string? Resource, string? Scope, IResult? Error)> ReadAdminBodyAsync(HttpContext ctx)
 {
@@ -1836,6 +1129,15 @@ async Task<(string? Agent, string? Resource, string? Scope, IResult? Error)> Rea
     }
     return (agent, resource, scope, null);
 }
+
+sealed record R3ConsentDisplay(
+    string Uri,
+    string S256,
+    string? Summary,
+    string? Implications,
+    string? DataAccessed,
+    string? Irreversible,
+    string? Detail);
 
 // Marker type for `WebApplicationFactory<MockPersonServer.Entry>` in the
 // integration tests. We don't expose `public partial class Program;` here

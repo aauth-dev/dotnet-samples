@@ -174,7 +174,7 @@ var authToken = await exchange.ExchangeAsync(
 
     protected override void OnInitialized()
     {
-        _bookings = Config["AAuth:Bookings"] ?? "http://localhost:5004";
+        _bookings = Config["AAuth:Bookings"] ?? "http://localhost:5005";
         _r3AccessServer = Config["AAuth:RichRequestAccessServer"] ?? "http://localhost:5501";
     }
 

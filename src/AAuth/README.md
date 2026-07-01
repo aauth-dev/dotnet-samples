@@ -72,6 +72,7 @@ resource- and Person-Server-side code, see the
 ## Features
 
 - All four signing modes: `hwk`, `jwks_uri`, `jwt`, `jkt-jwt`
+- Two-party resource-managed access with opaque `AAuth-Access` tokens
 - Full three-party challenge/exchange flow (autonomous and deferred user-consent)
 - Four-party federated access with an Access Server
 - Signature verification middleware for resources

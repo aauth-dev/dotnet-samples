@@ -23,7 +23,7 @@
         {
             <span class="hl-as"><strong>R3 Access Server:</strong> @Options.Value.RichRequestAccessServerUrl</span>
         }
-        @if (!Session.IsIdentityMode)
+        @if (!Session.IsIdentityMode && !Session.IsResourceManagedMode)
         {
             <span class="hl-ps"><strong>Person Server:</strong> @(string.IsNullOrWhiteSpace(Options.Value.PersonServerUrl) ? "(none)" : Options.Value.PersonServerUrl)</span>
         }
@@ -41,14 +41,15 @@
         <select id="flow-select" value="@Session.Mode" @onchange="OnModeChangedAsync" disabled="@_busy">
             <option value="@TourMode.Bootstrap" disabled="@(!Session.HasAgentProvider)">1 · Bootstrap — keygen + AP enrol</option>
             <option value="@TourMode.Identity">2 · Identity-based — no PS, 2 steps</option>
-            <option value="@TourMode.Autonomous" disabled="@(!Session.HasPersonServer)">3 · PS-Asserted (Direct Grant) — no user, 6 steps</option>
-            <option value="@TourMode.Deferred" disabled="@(!Session.HasPersonServer)">4 · PS-Asserted (Deferred) — user approves, 9 steps</option>
-            <option value="@TourMode.CallChain" disabled="@(!Session.HasPersonServer || !Session.HasConcierge)">5 · Call Chain (Multi-Agent) — user approves, 7 or 13 steps</option>
-            <option value="@TourMode.Federated" disabled="@(!Session.HasPersonServer || !Session.HasAccessServer)">6 · Federated (Four-Party) — Access Server, 7–10 steps</option>
-            <option value="@TourMode.Mission" disabled="@(!Session.HasPersonServer)">7 · Mission (PS-Governed) — three prompts, 20 steps</option>
-            <option value="@TourMode.MissionCallChain" disabled="@(!Session.HasPersonServer || !Session.HasConcierge)">8 · Mission + Call Chain — dual governance, 14 steps</option>
-            <option value="@TourMode.SubAgent">9 · Sub-Agents — parent-mediated worker, 7 steps</option>
-            <option value="@TourMode.RichRequest" disabled="@(!Session.HasPersonServer || !Session.HasRichRequestAccessServer)">10 · Rich Trip Booking (R3) — experimental rich requests, 12 steps</option>
+            <option value="@TourMode.ResourceManaged">3 · Resource-Managed (Two-Party) — own consent, 6 steps</option>
+            <option value="@TourMode.Autonomous" disabled="@(!Session.HasPersonServer)">4 · PS-Asserted (Direct Grant) — no user, 6 steps</option>
+            <option value="@TourMode.Deferred" disabled="@(!Session.HasPersonServer)">5 · PS-Asserted (Deferred) — user approves, 9 steps</option>
+            <option value="@TourMode.CallChain" disabled="@(!Session.HasPersonServer || !Session.HasConcierge)">6 · Call Chain (Multi-Agent) — user approves, 7 or 13 steps</option>
+            <option value="@TourMode.Federated" disabled="@(!Session.HasPersonServer || !Session.HasAccessServer)">7 · Federated (Four-Party) — Access Server, 7–10 steps</option>
+            <option value="@TourMode.Mission" disabled="@(!Session.HasPersonServer)">8 · Mission (PS-Governed) — three prompts, 20 steps</option>
+            <option value="@TourMode.MissionCallChain" disabled="@(!Session.HasPersonServer || !Session.HasConcierge)">9 · Mission + Call Chain — dual governance, 14 steps</option>
+            <option value="@TourMode.SubAgent">10 · Sub-Agents — parent-mediated worker, 7 steps</option>
+            <option value="@TourMode.RichRequest" disabled="@(!Session.HasPersonServer || !Session.HasRichRequestAccessServer)">11 · Rich Trip Booking (R3) — experimental rich requests, 12 steps</option>
         </select>
     </label>
     @if (Session.Mode == TourMode.Identity)
@@ -125,6 +126,23 @@
                             <text> durable key signs a naming JWT binding an ephemeral signing key — enables rotation without re-enrolment.</text>
                             break;
                     }
+                </text>
+                break;
+            case TourMode.ResourceManaged:
+                <text>
+                    Aria (your AI travel assistant) wants to read your
+                    <strong>Inbox</strong> to import trip confirmations, but there's no Person
+                    Server in sight — the Inbox manages authorization <strong>itself</strong>,
+                    exactly like the OAuth provider it's replacing.<br /><br />
+                    <strong>Signing mode: Pseudonymous (<code>hwk</code>)</strong> — two parties only,
+                    no token exchange. The agent's first signed <code>GET /messages</code> returns
+                    <code>202</code> with the Inbox's <strong>own</strong> consent URL; the user clicks
+                    <strong>Approve</strong> on the Inbox's page in a new tab; the agent polls a pending
+                    URL until the Inbox issues an <strong>opaque <code>AAuth-Access</code> token</strong>.
+                    On the retry the agent sends <code>Authorization: AAuth &lt;token&gt;</code> and the
+                    signature <strong>covers <code>authorization</code></strong>, binding the token to the
+                    request so a stolen copy is worthless. <strong>One human approval — the access mode
+                    that drops in where you already use OAuth.</strong>
                 </text>
                 break;
             case TourMode.Autonomous:
@@ -275,7 +293,7 @@
                 elapsed <strong>@ElapsedPolling()</strong>
             </div>
             <div class="polling__hint">
-                Waiting for you to complete the @(Session.IsFederatedMode ? "Access Server consent" : Session.IsRichRequestMode ? "R3 approval on the PS consent" : "Approve or Deny on the PS consent")
+                Waiting for you to complete the @(Session.IsFederatedMode ? "Access Server consent" : Session.IsRichRequestMode ? "R3 approval on the PS consent" : Session.IsResourceManagedMode ? "Approve on the Inbox consent" : "Approve or Deny on the PS consent")
                 tab. You can come back here anytime — the poll loop is live.
             </div>
         </div>
@@ -293,8 +311,8 @@
                          Lanes="@ActiveLanes"
                          IsPolling="@Session.IsPolling"
                          PollCount="@Session.PollCount"
-                         LoopGhostStep="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsRichRequestMode || Session.IsCallChainPending || Session.IsMissionMode || Session.IsMissionCallChainMode) ? new SequenceDiagram.GhostStep(Session.PollStepNumber, $"polling /pending/{{id}}…", Actor.Agent, Session.PollLoopTarget) : null)"
-                         LoopAroundStepNumber="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsRichRequestMode || Session.IsCallChainPending || Session.IsMissionMode || Session.IsMissionCallChainMode) ? Session.PollStepNumber : 0)"
+                         LoopGhostStep="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsRichRequestMode || Session.IsCallChainPending || Session.IsMissionMode || Session.IsMissionCallChainMode || Session.IsResourceManagedMode) ? new SequenceDiagram.GhostStep(Session.PollStepNumber, $"polling /pending/{{id}}…", Actor.Agent, Session.PollLoopTarget) : null)"
+                         LoopAroundStepNumber="@((Session.IsDeferredMode || Session.IsFederatedMode || Session.IsRichRequestMode || Session.IsCallChainPending || Session.IsMissionMode || Session.IsMissionCallChainMode || Session.IsResourceManagedMode) ? Session.PollStepNumber : 0)"
                          CompletedLoopLabel="@CompletedLoopLabel()"
                          LoopCompletedKind="@CompletedLoopKind()" />
     </section>
@@ -334,6 +352,14 @@
     {
         new("Agent", "agent", Actor.Agent),
         new("Profile", "resource", Actor.Resource),
+    };
+
+    // Resource-managed (two-party AAuth-Access) flow: agent ↔ Inbox only. No
+    // Person Server lane — the Inbox manages authorization itself.
+    private static readonly SequenceDiagram.LaneDefinition[] ResourceManagedLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Inbox", "resource", Actor.Resource),
     };
 
     // Autonomous + Deferred three-party flows target the Calendar.
@@ -397,6 +423,7 @@
     private SequenceDiagram.LaneDefinition[]? ActiveLanes =>
         Session.IsBootstrapMode ? BootstrapLanes :
         Session.IsSubAgentMode ? SubAgentLanes :
+        Session.IsResourceManagedMode ? ResourceManagedLanes :
         Session.IsIdentityMode ? IdentityLanes :
         Session.IsMissionCallChainMode ? MissionCallChainLanes :
         Session.IsCallChainMode ? CallChainLanes :
@@ -446,7 +473,7 @@
     }
 
     private StepRecord? PollStepRecord =>
-        (Session.IsDeferredMode || Session.IsFederatedMode || Session.IsRichRequestMode || Session.IsCallChainPending)
+        (Session.IsDeferredMode || Session.IsFederatedMode || Session.IsRichRequestMode || Session.IsCallChainPending || Session.IsResourceManagedMode)
             ? Session.Steps.FirstOrDefault(s => s.Number == Session.PollStepNumber)
             : null;
 

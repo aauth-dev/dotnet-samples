@@ -48,8 +48,11 @@ public sealed class AAuthChallengeMiddleware
     /// <inheritdoc cref="RequestDelegate"/>
     public async Task InvokeAsync(HttpContext context)
     {
-        // If identity-only mode, always pass through.
-        if (_options.AccessMode == AAuthAccessMode.IdentityOnly)
+        // Identity-only and resource-managed modes always pass through: in both
+        // the resource decides access itself, with no PS/AS resource-token
+        // challenge. Resource-managed endpoints drive their own
+        // 202-interaction / AAuth-Access flow (§Resource-Managed Authorization).
+        if (_options.AccessMode is AAuthAccessMode.IdentityOnly or AAuthAccessMode.ResourceManaged)
         {
             await _next(context).ConfigureAwait(false);
             return;

@@ -1,8 +1,8 @@
 # Mock Resource Servers
 
-Five small ASP.NET Core resource servers that together demonstrate **every**
+Six small ASP.NET Core resource servers that together demonstrate **every**
 AAuth access mode and signing mode. They replace the former single `WhoAmI`
-sample by splitting one mega-server into four focused, copy-paste-able templates,
+sample by splitting one mega-server into focused, copy-paste-able templates,
 each a short `Program.cs` (well-known + one verification pipeline + a couple of
 endpoints).
 
@@ -21,14 +21,17 @@ traveler's behalf — each protocol concept gets a real-feeling home:
 | [**Calendar**](Calendar/) | 5001 | PS-Asserted (three-party) | the traveler's events | `/events` → `calendar.read`, `/events/write` → `calendar.write` (step-up), `/events/admin` → role `calendar.owner` (RBAC) |
 | [**Trips**](Trips/) | 5002 | three-party + mission-aware | trip planning under a mission | `/trips` → `trips.read` (in-mission, silent), `/trips/book` → `trips.book` (out-of-mission, prompts) |
 | [**Wallet**](Wallet/) | 5003 | Federated (four-party) | the bank, with its own Access Server | `/wallet` → `wallet.read`, `/wallet/charge` → `wallet.charge` (AS role `wallet.payer`) |
-| [**Bookings**](Bookings/) | 5004 | Federated R3 (four-party) | rich trip booking operations | `/search_trip_options`, `/hold_itinerary` → R3 granted, `/book_trip` → R3 conditional proposal |
+| [**Inbox**](Inbox/) | 5004 | Resource-Managed (two-party) | the traveler's inbox / trip confirmations | `/messages` → reactive (`202` + own consent → poll `/pending/{code}` → `AAuth-Access`), `/authorize` → proactive (`{scope}`) |
+| [**Bookings**](Bookings/) | 5005 | Federated R3 (four-party) | rich trip booking operations | `/search_trip_options`, `/hold_itinerary` → R3 granted, `/book_trip` → R3 conditional proposal |
 
-The narrative reads as a journey: *Aria identifies itself (Profile), reads your
-**Calendar**, drafts a **Trip** under a mission you approved, then asks the bank
-before charging your **Wallet** — and the bank's own Access Server decides if
-you're allowed to pay. The experimental **Bookings** server demonstrates Rich
-Resource Requests (R3): MCP operations replace legacy scopes, and `book_trip`
-requires a per-call approval bound to exact itinerary parameters.*
+The narrative reads as a journey: *Aria identifies itself (Profile), imports your
+trip confirmations from your **Inbox** (which manages its own consent — no Person
+or Access Server), reads your **Calendar**, drafts a **Trip** under a mission you
+approved, then asks the bank before charging your **Wallet** — and the bank's own
+Access Server decides if you're allowed to pay. The experimental **Bookings**
+server demonstrates Rich Resource Requests (R3): MCP operations replace legacy
+scopes, and `book_trip` requires a per-call approval bound to exact itinerary
+parameters.*
 
 ## Signing mode ↔ Profile path
 
@@ -52,6 +55,9 @@ the `scheme` values are the unchanged RFC 9421 `Signature-Key` identifiers.
 - **Profile** endpoints return `signingMode` + `scheme` (signing-mode demo).
 - **Calendar / Trips / Wallet** endpoints return `accessMode` + `scheme`
   (access-mode demo: `three-party` / `four-party`).
+- **Inbox** endpoints return `scope` + `messages` (resource-managed /
+  `two-party`: the Inbox issues its own `AAuth-Access` token, so the payload
+  reflects the granted scope rather than a federated mode).
 
 Each payload's field names self-describe which concept it demonstrates. None of
 these response bodies are spec-defined — the spec governs headers and tokens, not
@@ -59,7 +65,7 @@ demo JSON.
 
 ## Running
 
-Run the original four at once:
+Run all six at once:
 
 ```bash
 make resources
@@ -72,7 +78,8 @@ dotnet run --project samples/MockResourceServers/Profile    # :5000
 dotnet run --project samples/MockResourceServers/Calendar   # :5001
 dotnet run --project samples/MockResourceServers/Trips      # :5002
 dotnet run --project samples/MockResourceServers/Wallet     # :5003
-dotnet run --project samples/MockResourceServers/Bookings   # :5004
+dotnet run --project samples/MockResourceServers/Inbox      # :5004
+dotnet run --project samples/MockResourceServers/Bookings   # :5005
 ```
 
 Each serves `/.well-known/aauth-resource.json` and `/.well-known/jwks.json`

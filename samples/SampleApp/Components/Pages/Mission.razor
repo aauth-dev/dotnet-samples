@@ -127,62 +127,58 @@ var cancelBooking = await session.RequestPermissionAsync(
     </div>
     <div class="col-md-6">
         <h5>Resource — protecting the action with a scope</h5>
-        <pre><code class="language-csharp">// Publish the scopes this resource offers so agents (and their
-// Person Servers) can discover them (§Resource Metadata).
-app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
+        <pre><code class="language-csharp">// One DI call publishes the scopes this resource offers so
+// agents (and their Person Servers) can discover them, and
+// wires the verifier + JTI store (§Resource Metadata).
+builder.Services.AddAAuthResource(o =&gt;
 {
-    Issuer = resourceUrl,
-    SigningKeys = new() { [kid] = resourceKey },
-    ScopeDescriptions = new()
+    o.Issuer = resourceUrl;
+    o.SigningKeys["trips-1"] = resourceKey;
+    o.AccessMode = AAuthConstants.AccessModes.AuthToken;
+    o.ScopeDescriptions = new()
     {
         ["trips.read"] = "Browse trip options and availability",
         ["trips.book"] = "Book a trip (reserve and pay)",
-    },
+    };
 });
+builder.Services.AddAAuthAuthentication();
+builder.Services.AddAAuthAuthorization();
 
-// arg 1 = policy name (any id, used by RequireAuthorization); arg 2 = scope value matched against the token. "AAuth.Scope." is just a naming convention.
-builder.Services.AddAAuthScopePolicy("AAuth.Scope.trips.read", "trips.read");
-// ...and the elevated scope used by gate 3.
-builder.Services.AddAAuthScopePolicy(
-    "AAuth.Scope.trips.book", "trips.book");
+var app = builder.Build();
 
-// /protected_endpoint is the `trips.read`-protected ACTION the agent calls
-// in gate 2. The mission-aware challenge copies the {approver, s256}
-// from the signed AAuth-Mission header into the resource token, so
-// the PS governs the exchange under the mission. Presenting only an
-// agent token yields a 401 + resource token (aud = the agent's PS)
-// requesting `trips.read`.
-app.UseWhen(
-    ctx =&gt; ctx.Request.Path.StartsWithSegments("/protected_endpoint"),
-    branch =&gt;
-    {
-        branch.UseAAuthVerification(FullVerification());
-        branch.UseAAuthChallenge(ChallengeForMission("trips.read"));
-    });
+app.MapAAuthWellKnown();
 
-// The endpoint itself just requires the verified `trips.read` scope.
-app.MapGet("/protected_endpoint", (HttpContext ctx) =&gt;
+// One declarative pipeline. Mission-aware: when the agent
+// sends a signed AAuth-Mission header, the issued resource
+// token carries the {approver, s256} so the PS governs the
+// exchange under the mission. Trust only the configured
+// Person Servers (fail-closed).
+app.UseRouting();
+app.UseAAuth(o =&gt;
+    o.TrustedAuthTokenIssuers = trustedPersonServers);
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+// /trips is the `trips.read` ACTION the agent calls in gate 2.
+// Presenting only an agent token yields a 401 + resource token
+// (aud = the agent's PS) requesting `trips.read`; the mission
+// binding rides along so the PS can grant it silently if in intent.
+app.MapGet("/trips", (HttpContext ctx) =&gt;
 {
-    var v = ctx.GetAAuthVerification()!;  // auth token already verified
-    // v.Scopes contains "trips.read" — safe to return the profile.
+    var v = ctx.GetAAuthVerification()!;  // auth token verified
+    // v.Scopes contains "trips.read" — safe to return the trips.
     return Results.Ok(Profile(v));
-}).RequireAuthorization("AAuth.Scope.trips.read");
+}).RequireAAuth(scope: "trips.read", missionAware: true);
 
-// /protected_endpoint/elevated is the ELEVATED action gate 3 calls. Same
-// mission-aware challenge, but it requests `trips.book`. Because
-// the mission's intent does not cover this scope, the PS prompts the user
-// at the exchange step before issuing the auth token (§Scopes, gate 3).
-app.UseWhen(
-    ctx =&gt; ctx.Request.Path.StartsWithSegments("/protected_endpoint/elevated"),
-    branch =&gt;
-    {
-        branch.UseAAuthVerification(FullVerification());
-        branch.UseAAuthChallenge(ChallengeForMission("trips.book"));
-    });
-
-app.MapGet("/protected_endpoint/elevated", (HttpContext ctx) =&gt;
+// /trips/book is the ELEVATED action gate 3 calls — same
+// mission-aware challenge, but it requires `trips.book`. Because
+// the mission's intent does not cover this scope, the PS prompts
+// the user at the exchange step before issuing the auth token
+// (§Scopes, gate 3).
+app.MapGet("/trips/book", (HttpContext ctx) =&gt;
     Results.Ok(Profile(ctx.GetAAuthVerification()!)))
-   .RequireAuthorization("AAuth.Scope.trips.book");</code></pre>
+   .RequireAAuth(scope: "trips.book", missionAware: true);</code></pre>
     </div>
 </div>
 

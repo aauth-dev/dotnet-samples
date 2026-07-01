@@ -242,8 +242,15 @@ public static class R3AccessTokenEndpoint
 
     private static bool IsProposal(byte[] bytes)
     {
-        var node = JsonNode.Parse(bytes) as JsonObject;
-        return node?["parameters"] is not null;
+        try
+        {
+            var node = JsonNode.Parse(bytes) as JsonObject;
+            return node?["parameters"] is not null;
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            throw new InvalidOperationException("R3 document is not valid JSON.", ex);
+        }
     }
 }
 

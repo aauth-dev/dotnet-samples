@@ -2,6 +2,12 @@
 
 `AAuthVerificationMiddleware` performs HTTP signature verification (RFC 9421 PoP) and JWT issuer signature verification in a single pass.
 
+> **Prefer the high-level pipeline for the common case.** `app.UseAAuth(...)` after
+> `app.UseRouting()` runs this verification middleware (and, for auth-token
+> endpoints, the challenge) for every endpoint marked with `.RequireAAuth(...)` /
+> `.RequireAAuthSignature(...)`. Use `UseAAuthVerification` directly only when
+> composing a custom, low-level pipeline.
+
 > For how verification fits into the full authN/authZ pipeline and the
 > minimal-API vs classic-MVC wiring, see
 > [Authentication and Authorization](authn-authz.md).
@@ -10,14 +16,15 @@
 
 ```csharp
 using AAuth;
-using AAuth.Discovery;
-using AAuth.HttpSig;
 using AAuth.Server.Verification;
 
-// Required services
-builder.Services.AddSingleton(new AAuthVerifier());
-builder.Services.AddSingleton(sp => new MetadataClient(httpClient));
-builder.Services.AddSingleton(sp => new JwksClient(httpClient));
+// AddAAuthResource registers the verifier, the discovery clients (pooled
+// handler), and the JTI store — no manual HttpClient/discovery wiring.
+builder.Services.AddAAuthResource(o =>
+{
+    o.Issuer = "https://resource.example";
+    o.SigningKeys["key-1"] = resourceKey;
+});
 
 var app = builder.Build();
 
@@ -48,13 +55,22 @@ public sealed class AAuthVerificationOptions
     // Whether to verify JWT signatures against the issuer's JWKS (default: true)
     public bool RequireIssuerVerification { get; init; } = true;
 
-    // Optional allow-list of trusted agent provider issuers
+    // Optional allow-list of trusted agent provider issuers.
+    // null = accept any verifiable AP; empty = deny all; non-empty = restrict.
     public IReadOnlySet<string>? TrustedAgentProviderIssuers { get; init; }
 
-    // Fail-closed allow-list of trusted auth token issuers (Person Servers).
-    // When issuer verification is on, an auth token is accepted only if its
-    // `iss` is in this set. null/empty = reject ALL PS-asserted tokens.
+    // Optional predicate AND-composed with TrustedAgentProviderIssuers.
+    public Func<string, bool>? IsTrustedAgentProviderIssuer { get; init; }
+
+    // Allow-list of trusted auth token issuers (Person Servers / Access Servers).
+    // null = accept any *verifiable* PS (the spec default — the JWT signature
+    // still verifies against the issuer's JWKS); empty = deny all; non-empty =
+    // restrict to the listed issuers. AND-composed with IsTrustedAuthTokenIssuer.
     public IReadOnlySet<string>? TrustedAuthTokenIssuers { get; init; }
+
+    // Optional predicate AND-composed with TrustedAuthTokenIssuers (each only
+    // narrows). Assign AAuthTrust.Any to trust any verifiable issuer explicitly.
+    public Func<string, bool>? IsTrustedAuthTokenIssuer { get; init; }
 
     // Maximum depth of nested act claims (default: 10)
     public int MaxActDepth { get; init; } = 10;
@@ -78,10 +94,19 @@ public sealed class AAuthVerificationOptions
 | `true` | `null` | Verifies JWT issuer sig + PoP, but skips `aud` check |
 | `false` | any | HTTP signature only — no JWT issuer verification |
 
-> **Auth-token issuer trust is fail-closed.** When `RequireIssuerVerification`
-> is `true`, a PS-asserted (auth) token is accepted only when its `iss` appears
-> in `TrustedAuthTokenIssuers`. If that set is `null` or empty, **every** auth
-> token is rejected with `401`. Declare the Person Servers this resource trusts:
+> **Auth-token issuer trust is open by default, narrowed by policy.** This is a
+> two-layer model. `RequireIssuerVerification` is the crypto gate (unchanged):
+> when `true`, an auth token's `iss` JWKS signature must verify. The trust policy
+> only *narrows* that verifiable floor — "accept any PS" means "any PS whose
+> signature verifies"; the policy never replaces verification.
+>
+> - `TrustedAuthTokenIssuers = null` (unset) ⇒ accept any *verifiable* Person
+>   Server, namespaced by `iss` (the AAuth spec default).
+> - empty set ⇒ deny all PS-asserted tokens (a deliberate kill-switch).
+> - non-empty set ⇒ restrict to the listed issuers.
+> - `IsTrustedAuthTokenIssuer` ⇒ a `Func<string, bool>` predicate AND-composed
+>   with the set (each only narrows). Assign `AAuthTrust.Any` to trust any
+>   verifiable issuer explicitly and suppress the open-trust startup warning.
 >
 > ```csharp
 > app.UseAAuthVerification(new AAuthVerificationOptions
@@ -91,6 +116,20 @@ public sealed class AAuthVerificationOptions
 >     TrustedAuthTokenIssuers = new HashSet<string> { "https://person.example.com" },
 > });
 > ```
+>
+> Two startup guards (diagnostics only — neither changes runtime behavior): when
+> issuer verification is on and no trust policy is configured, a `Warning` is
+> logged because the resource accepts any verifiable PS; and configuring a trust
+> policy while `RequireIssuerVerification == false` throws
+> `InvalidOperationException` (the policy would otherwise be silently ignored).
+>
+> **False positive on signature-only resources.** A resource that uses `UseAAuth`
+> with **only** `RequireAAuthSignature` endpoints (no auth-token / `RequireAAuth`
+> endpoints) and no auth-token trust policy still logs the open-trust `Warning` —
+> the SDK can't tell at startup whether any auth-token endpoint exists, so it warns
+> conservatively. It is benign. Suppress it by assigning any policy — e.g.
+> `o.IsTrustedAuthTokenIssuer = AAuthTrust.Any` — to declare the unused auth-token
+> path intentionally open.
 >
 > Signature-only flows (`hwk` / `jkt-jwt` / `jwks_uri`) carry no `iss`
 > assertion and are unaffected by this allow-list.
@@ -104,55 +143,35 @@ PS-asserted identity claim the handler emits (`NameIdentifier`, `Role`,
 `aauth:sub_iss` (`{iss}|{sub}`) claim is surfaced so resources can match a local
 user record on the full key rather than on `sub` alone.
 
-Use `UseWhen` to give each access mode its own **isolated verification pipeline**.
-This is the pattern the Profile and Calendar samples use: every signing mode has a
-dedicated path-segment branch with its own verification (and, for three-party
-endpoints, its own challenge) options. Each branch is self-contained, so there is no
-single shared verification step with negative path matching:
+Each endpoint declares its access mode on the route — `.RequireAAuth(...)` for
+auth-token (three-party / four-party) endpoints and `.RequireAAuthSignature(...)`
+for signature-only (identity-based) endpoints. A single `UseAAuth` placed after
+`UseRouting` then runs the right verification (and, for auth-token endpoints, the
+challenge) for each matched endpoint from its metadata — no per-path `UseWhen`
+branching. This is the pattern the Profile and Calendar samples use:
 
 ```csharp
-// Pseudonymous (hwk) — signature only, no JWT verification
-app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/pseudonymous"),
-    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
-    {
-        RequireIssuerVerification = false,
-    }));
+app.UseRouting();
 
-// Agent identity (jwks_uri) — verifies key against published JWKS
-app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/identified"),
-    branch => branch.UseAAuthVerification(new AAuthVerificationOptions
-    {
-        RequireIssuerVerification = false,
-    }));
+// One pipeline for every signing mode. Resource-level config is trust only;
+// key and issuer default from the DI-registered metadata.
+app.UseAAuth(o => o.TrustedAuthTokenIssuers = trustedPersonServers);
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+// Pseudonymous (hwk) / agent-identity (jwks_uri) — signature only, no JWT verification.
+app.MapGet("/pseudonymous", handler).RequireAAuthSignature();
+app.MapGet("/identified", handler).RequireAAuthSignature(identified: true);
 
 // Three-party (jwt) — full issuer + audience verification, plus a per-endpoint
-// challenge requesting the scope this branch protects.
-app.UseWhen(
-    ctx => ctx.Request.Path.StartsWithSegments("/events"),
-    branch =>
-    {
-        branch.UseAAuthVerification(new AAuthVerificationOptions
-        {
-            ResourceIdentifier = "https://resource.example",
-            RequireIssuerVerification = true,
-        });
-        branch.UseAAuthChallenge(new ChallengeOptions
-        {
-            AccessMode = AAuthAccessMode.RequireAuthToken,
-            ResourceSigningKey = resourceKey,
-            ResourceKeyId = "key-1",
-            ResourceIdentifier = "https://resource.example",
-            DefaultScopes = "calendar.read",
-        });
-    });
+// challenge requesting the scope this route protects.
+app.MapGet("/events", handler).RequireAAuth(scope: "calendar.read");
+app.MapGet("/events/write", handler).RequireAAuth(scope: "calendar.write");
 ```
 
-Declare more specific segments (for example `/events/write`) before the general
-`/events` branch so segment matching stays unambiguous. After the branches,
-`UseAuthentication`/`UseAuthorization` run globally and per-endpoint policies
-decide what each route requires.
+After routing, `UseAuthentication`/`UseAuthorization` run globally and each route's
+`.RequireAAuth(...)` policy decides what it requires.
 
 See `samples/MockResourceServers/` for the complete working examples.
 

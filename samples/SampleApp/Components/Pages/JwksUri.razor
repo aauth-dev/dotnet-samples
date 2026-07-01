@@ -37,27 +37,31 @@ using var client = new AAuthClientBuilder(key)
 </div>
 <div class="col-md-6">
 <h5>Server Code</h5>
-<pre><code class="language-csharp">builder.Services.AddSingleton(new AAuthVerifier());
-builder.Services.AddSingleton(sp =&gt; new JwksClient(httpClient));
-
-// Authn scheme + the Identified policy: requires a
-// VERIFIED named identity (key resolved via JWKS),
-// not just any signature.
+<pre><code class="language-csharp">// One DI call: verifier, discovery clients, JTI
+// store, and published metadata.
+builder.Services.AddAAuthResource(o =&gt;
+{
+    o.Issuer = "https://resource.example";
+    o.SigningKeys["profile-1"] = resourceKey;
+});
 builder.Services.AddAAuthAuthentication();
 builder.Services.AddAAuthAuthorization();
 
 var app = builder.Build();
 
-// Resolves the agent's key from their jwks_uri.
-app.UseAAuthVerification(new AAuthVerificationOptions
-{
-    RequireIssuerVerification = false,
-});
+// Well-known metadata + JWKS from the DI registration.
+app.MapAAuthWellKnown();
+
+// Signature-only: a single post-routing middleware
+// resolves the agent's key (here via their jwks_uri)
+// — no auth-token challenge, no issuer check.
+app.UseRouting();
+app.UseAAuth();
 
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGet("/identified", (HttpContext ctx) =>
+app.MapGet("/identified", (HttpContext ctx) =&gt;
 {
     var parsed = ctx.GetAAuthParsedKey()!;
     return Results.Ok(new
@@ -68,9 +72,9 @@ app.MapGet("/identified", (HttpContext ctx) =>
         kid = parsed.Kid,
     });
 })
-// Enforce a verified identity — a pseudonymous (hwk)
-// caller has no identity and is rejected here.
-.RequireAuthorization("AAuth.Identified");</code></pre>
+// Require a VERIFIED named identity — a pseudonymous
+// (hwk) caller has no identity and is rejected here.
+.RequireAAuthSignature(identified: true);</code></pre>
 </div>
 </div>
 

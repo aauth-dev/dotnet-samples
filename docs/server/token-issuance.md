@@ -170,9 +170,10 @@ The seven checks (failure throws `TokenVerificationException`):
 
 Map failures to the spec error response — `expired_resource_token` for an expired
 token, otherwise `invalid_resource_token` — and derive the consent screen and the
-issued auth token only from the verified payload. The shipped
-[`samples/MockPersonServer`](../../samples/MockPersonServer/) `/token` handler
-follows exactly this pattern.
+issued auth token only from the verified payload. The SDK host helpers
+`MapAAuthPersonServer` / `MapAAuthAccessServer` run exactly these checks
+internally; the [`samples/MockPersonServer`](../../samples/MockPersonServer/)
+adopts the PS helper rather than hand-rolling them.
 
 ## Mission Claims
 
@@ -238,7 +239,7 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
     Issuer               = psIssuer,
     SigningKeys          = new Dictionary<string, AAuthKey> { [PsKid] = psKey },
     DefaultScope         = "calendar.read",
-    TrustedAccessServers = trustedAccessServers,   // omit ⇒ three-party only
+    TrustedAccessServers = trustedAccessServers,   // null ⇒ federate to verified aud; empty ⇒ three-party only
 });
 ```
 
@@ -252,7 +253,11 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
 | `PendingPathPrefix` | No | `/pending` | The deferred-consent poll path prefix |
 | `DefaultScope` | No | `""` | Scope assumed when the resource token omits one |
 | `InteractionPath` | No | `/interaction` | Path the host maps for the consent page |
-| `TrustedAccessServers` | No | `null` | Access Server URLs the PS will federate to; `null`/empty ⇒ three-party only |
+| `TrustedAccessServers` | No | `null` | Access Server URLs the PS will federate to. `null` ⇒ federate to the AS named in a verified resource token's `aud` (the spec default); empty ⇒ three-party only (four-party disabled); non-empty ⇒ restrict to the listed Access Servers. AND-composed with `IsTrustedAccessServer`. |
+| `IsTrustedAccessServer` | No | `null` | Optional predicate AND-composed with `TrustedAccessServers`; assign `AAuthTrust.Any` to federate to any verifiable AS explicitly. |
+| `InteractionEndpoint` | No | `null` | §Interaction Endpoint URL advertised in metadata (falls back to `InteractionPath`) |
+| `MissionEndpoint` / `PermissionEndpoint` / `AuditEndpoint` | No | `null` | Governance endpoint URLs advertised in `aauth-person.json` (the PS maps the endpoints) |
+| `UnsignedPathPrefixes` | No | `null` | Extra path prefixes the mapper's signature verification skips (e.g. the PS's own unsigned `/admin` consent surface) |
 
 ### The `IIdentityClaimsAsserter` seam
 
@@ -292,21 +297,27 @@ identity and consent decision.
 ### Mission three-gate packaging
 
 When the resource token carries a `mission` claim, `MapAAuthPersonServer` packages
-the mission three-gate token-issuance mechanics around the asserter, using the
-`IMissionStore` / `IMissionLog` primitives registered by
+the mission three-gate token-issuance mechanics, using the `IMissionStore` /
+`IMissionLog` primitives registered by
 [`AddAAuthGovernance()`](mission-governance.md):
 
-1. **Terminated mission** → `403 mission_terminated` (the asserter is never consulted).
-2. **Prior consent on record** for the `(resource, scope)` → silent mint, no prompt.
-3. **Otherwise** → the asserter decides (`Assert` mints + records the grant;
-   `NeedsConsent` parks the `202`).
+1. **Terminated mission** → `403 mission_terminated`.
+2. **Prior consent on record** for the `(resource, scope)` → silent mint, logged
+   `PriorConsent` (identity from the asserter).
+3. **Otherwise** → the `IMissionTokenConsent` seam decides: `Grant` (silent
+   in-scope, logged `InScope`), `Deny` (`403`), `Clarify` (emit the normative
+   `requirement=clarification` round-trip), or `Interact` (park a `202` and hold
+   for a user verdict). A grant after a prompt is logged `OutOfScope`.
 
-The interactive consent/clarification screen remains host-mapped; the helper only
-owns the terminated-rejection and prior-consent-silent-grant mechanics. See
-[Mission Governance (Server)](mission-governance.md) for the full model.
+The SDK owns the **protocol** — the `requirement=clarification` 202, the
+pending-URL `GET`/`POST`/`DELETE` round-trip, and the mission-log entries — while
+`IMissionTokenConsent` owns **how** the decision is made (a consent screen, a
+scripted test, or an LLM reviewer). Identity on a grant always comes from
+`IIdentityClaimsAsserter`. See [Mission Governance (Server)](mission-governance.md)
+for the full model.
 
 ## Further Reading
 
 - [Verification Middleware](verification-middleware.md) — signature verification before token logic
-- [Replay Detection](replay-detection.md) — using `jti` to prevent reuse
+- [Replay Detection](replay-detection.md) — signature-keyed replay (tokens stay reusable; `jti` is for revocation)
 - [Mission Governance (Server)](mission-governance.md) — evaluating mission context at the PS
