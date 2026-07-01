@@ -21,16 +21,14 @@ across line shifts.
 | [`v01/`](v01/) | draft-01 | draft-01 | draft-00 | `c090879` (2026-05-11) |
 | [`v02/`](v02/) | draft-02 | draft-01 (unchanged) | draft-00 (revised) | `feda56b` (2026-06-09) |
 | [`v08/`](v08/) | draft-08 | draft-01 (unchanged) | draft-00 (unchanged) | `dd2b852` (2026-06-25) |
-| [`r3-latest/`](r3-latest/) | draft-08 (unchanged) | draft-01 (unchanged) | editor's draft latest | `68d8497` (2026-06-26) |
 
-> **The SDK code targets `v08/` (draft-08).** The latest R3 reference is the
-> [`r3-latest/`](r3-latest/) editor's-draft overlay, vendored 2026-07-01 because
-> upstream has newer R3 source on `main` without a newer protocol tag. See
+> **The SDK code targets `v02/` (draft-02).** The `v08/` snapshot was vendored
+> 2026-06-25 as the latest upstream reference; migrating the SDK to draft-08 is
+> tracked separately and has not started. See
 > [`SPEC-VERSION.md`](SPEC-VERSION.md).
 
 ## Contents
 
-- [`r3-latest/` — R3 editor's draft overlay](#r3-latest--r3-editors-draft-overlay)
 - [`v08/` — AAuth draft-08 snapshot](#v08--aauth-draft-08-snapshot)
   - [Protocol (drafts 03–08)](#protocol-drafts-0308)
     - [1. Agent-delegation restructure](#1-agent-delegation-restructure)
@@ -55,28 +53,6 @@ across line shifts.
   - [Bootstrap (draft-01, unchanged)](#bootstrap-draft-01-unchanged)
   - [Author's verbatim changelog (protocol)](#authors-verbatim-changelog-protocol)
 - [`v01/` — AAuth draft-01 snapshot (baseline)](#v01--aauth-draft-01-snapshot-baseline)
-
----
-
-## `r3-latest/` — R3 editor's draft overlay
-
-Vendored 2026-07-01 from upstream `main` commit `68d8497`. This is a pinned R3
-editor snapshot, not a new protocol-versioned AAuth snapshot: upstream has no
-protocol tag newer than draft-08 and no R3-specific tag.
-
-Changes from [`v08/draft-hardt-aauth-r3.md`](v08/draft-hardt-aauth-r3.md):
-
-- Added `I-D.hardt-aauth-events` as a draft reference.
-- Updated the AsyncAPI vocabulary text from resources that expose an event-driven
-  interface to resources that emit events.
-- Changed AsyncAPI operation `action` from **REQUIRED** to **OPTIONAL** (`send` or
-  `receive`); agents subscribing to events use `receive`.
-- Added guidance that R3-granted AsyncAPI subscription operations complete
-  subscription registration and event delivery through the AAuth Events protocol.
-
-`draft-hardt-aauth-events.md` is included in this overlay because the latest R3
-draft references it. Protocol, bootstrap, and HTTP Signature Keys remain as
-captured in [`v08/`](v08/).
 
 ---
 

@@ -3,9 +3,7 @@
 These spec files were copied from the [AAuth](https://github.com/dickhardt/AAuth)
 repository for reference while building the .NET samples. They are grouped by the
 AAuth protocol draft version under [`v01/`](v01/), [`v02/`](v02/), and
-[`v08/`](v08/). The [`r3-latest/`](r3-latest/) folder is a pinned R3 editor's-draft
-overlay because upstream has newer R3 source on `main` without a newer protocol tag.
-Each protocol folder is a self-contained snapshot, so each carries its own
+[`v08/`](v08/). Each folder is a self-contained snapshot, so each carries its own
 copy of the HTTP Signature Keys draft at the version that snapshot's protocol
 references.
 
@@ -29,11 +27,9 @@ opaque-token flow (resource-managed, two-party access), added under
 sub-agent (S5) interop demo is deferred, though the parent-mediated code path
 is implemented and conformance-tested.
 
-`v08/` is therefore the protocol version the SDK conforms to, vendored 2026-06-25.
-The latest R3 reference is [`r3-latest/`](r3-latest/), pinned to upstream `main`
-commit `68d8497` and vendored 2026-07-01 for the R3 compliance audit. The earlier
-draft-02 ([`v02/`](v02/)) and draft-01 ([`v01/`](v01/)) snapshots are retained for
-reference.
+`v08/` is therefore both the version the SDK conforms to and the latest upstream
+snapshot, vendored 2026-06-25. The earlier draft-02 ([`v02/`](v02/)) and draft-01
+([`v01/`](v01/)) snapshots are retained for reference.
 
 For a high-fidelity record of what changed between snapshots, see
 [`CHANGELOG.md`](CHANGELOG.md).
@@ -142,31 +138,3 @@ draft-08 bundles six published protocol drafts (03 → 08). The headline deltas:
 - **New `## PS Approval Endpoint Authentication`** section and an implementation-clarity
   pass (draft-06): `AAuth-Requirement`/`AAuth-Access`/`AAuth-Capabilities` grammar,
   JWKS same-`kid` refresh, and structured `cnf.jwk` verification ordering.
-
-## `r3-latest/` — R3 editor's draft overlay
-
-> This is not a new protocol-versioned snapshot. Upstream has no protocol tag newer
-> than `draft-hardt-oauth-aauth-protocol-08` and no R3-specific tag, so this folder
-> pins the latest R3 editor source from `main` while preserving immutable `v08/`.
-
-| Field | Value |
-|---|---|
-| Source repository | <https://github.com/dickhardt/AAuth> |
-| Commit | `68d8497a9d5a49ac0643f896e6763107fd059a36` |
-| Commit date | 2026-06-26 |
-| Source ref | `main` |
-| R3 document version | `draft-hardt-aauth-r3-latest` |
-| R3 document date | 2026-03-24 |
-| Copied on | 2026-07-01 |
-
-- `draft-hardt-aauth-r3.md` — Latest Rich Resource Requests (R3) editor's draft.
-- `draft-hardt-aauth-events.md` — AAuth Events editor's draft, included because the
-  latest R3 source references it from the AsyncAPI vocabulary section.
-
-### Notable R3 changes since `v08/`
-
-- Added a reference to AAuth Events.
-- Updated the AsyncAPI vocabulary: resources that emit events are described by
-  AsyncAPI; `action` is now optional (`send` or `receive`) rather than required.
-- Added subscription guidance: AsyncAPI subscription registration and event delivery
-  use the AAuth Events protocol after R3 grants the subscription operation.
