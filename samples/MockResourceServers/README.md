@@ -1,8 +1,8 @@
 # Mock Resource Servers
 
-Five small ASP.NET Core resource servers that together demonstrate **every**
+Six small ASP.NET Core resource servers that together demonstrate **every**
 AAuth access mode and signing mode. They replace the former single `WhoAmI`
-sample by splitting one mega-server into five focused, copy-paste-able templates,
+sample by splitting one mega-server into six focused, copy-paste-able templates,
 each a short `Program.cs` (well-known + one verification pipeline + a couple of
 endpoints).
 
@@ -22,12 +22,16 @@ traveler's behalf — each protocol concept gets a real-feeling home:
 | [**Trips**](Trips/) | 5002 | three-party + mission-aware | trip planning under a mission | `/trips` → `trips.read` (in-mission, silent), `/trips/book` → `trips.book` (out-of-mission, prompts) |
 | [**Wallet**](Wallet/) | 5003 | Federated (four-party) | the bank, with its own Access Server | `/wallet` → `wallet.read`, `/wallet/charge` → `wallet.charge` (AS role `wallet.payer`) |
 | [**Inbox**](Inbox/) | 5004 | Resource-Managed (two-party) | the traveler's inbox / trip confirmations | `/messages` → reactive (`202` + own consent → poll `/pending/{code}` → `AAuth-Access`), `/authorize` → proactive (`{scope}`) |
+| [**Bookings**](Bookings/) | 5005 | Federated + R3 (four-party) | dining & experiences reservations, via a dedicated R3 Access Server (:5501) | `/search_availability`, `/hold_reservation` → `r3_granted`; `/confirm_reservation` → `r3_conditional` (per-call proposal; charges a deposit) |
 
 The narrative reads as a journey: *Aria identifies itself (Profile), imports your
 trip confirmations from your **Inbox** (which manages its own consent — no Person
 or Access Server), reads your **Calendar**, drafts a **Trip** under a mission you
 approved, then asks the bank before charging your **Wallet** — and the bank's own
-Access Server decides if you're allowed to pay.*
+Access Server decides if you're allowed to pay — then reserves a table or a tour
+through **Bookings**, whose dedicated R3 Access Server grants low-risk operations
+outright but makes **confirming** a reservation (which charges a deposit) a
+per-call approval.*
 
 ## Signing mode ↔ Profile path
 
@@ -54,6 +58,9 @@ the `scheme` values are the unchanged RFC 9421 `Signature-Key` identifiers.
 - **Inbox** endpoints return `scope` + `messages` (resource-managed /
   `two-party`: the Inbox issues its own `AAuth-Access` token, so the payload
   reflects the granted scope rather than a federated mode).
+- **Bookings** endpoints return `tool` + `source` (`r3_granted` or per-call) +
+  `r3_uri`/`r3_s256` (R3 vocabulary demo: the auth token carries granted vs.
+  conditional operations, not scopes).
 
 Each payload's field names self-describe which concept it demonstrates. None of
 these response bodies are spec-defined — the spec governs headers and tokens, not
