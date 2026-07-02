@@ -17,7 +17,7 @@ public sealed record R3ProposalDocument
 
     [JsonPropertyName("operations")]
     [JsonPropertyOrder(3)]
-    public required IReadOnlyList<McpOperation> Operations { get; init; }
+    public required IReadOnlyList<R3Operation> Operations { get; init; }
 
     [JsonPropertyName("parameters")]
     [JsonPropertyOrder(4)]

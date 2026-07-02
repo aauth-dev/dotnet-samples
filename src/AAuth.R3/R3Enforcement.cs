@@ -22,29 +22,32 @@ public sealed class R3Enforcement
 
     public R3EnforcementDecision Evaluate(
         R3ClaimReader.AuthTokenClaims claims,
-        string tool,
+        string operation,
         IReadOnlyDictionary<string, R3Parameter>? parameters = null,
         Func<string, IReadOnlyDictionary<string, R3Parameter>, R3Display?>? displayFactory = null,
         string? approvedProposalS256 = null)
     {
         ArgumentNullException.ThrowIfNull(claims);
-        ArgumentException.ThrowIfNullOrEmpty(tool);
+        ArgumentException.ThrowIfNullOrEmpty(operation);
 
         if (approvedProposalS256 is not null)
         {
             return EvaluateApprovedProposalRetry(
                 claims,
-                tool,
+                operation,
                 parameters is null ? null : R3PresentedParameters.FromJsonParameters(parameters),
                 approvedProposalS256);
         }
 
-        if (claims.Granted.ContainsTool(tool))
+        if (claims.Granted.Contains(operation))
         {
             return R3EnforcementDecision.Granted();
         }
 
-        if (!claims.Conditional?.ContainsTool(tool) ?? true)
+        var conditional = claims.Conditional;
+        var conditionalOp = conditional?.Operations
+            .FirstOrDefault(op => string.Equals(op.Id, operation, StringComparison.Ordinal));
+        if (conditional is null || conditionalOp is null)
         {
             return R3EnforcementDecision.Rejected("operation_not_granted");
         }
@@ -58,10 +61,10 @@ public sealed class R3Enforcement
         var proposal = new R3ProposalDocument
         {
             Version = "v02",
-            Vocabulary = Vocabulary.Mcp,
-            Operations = [new McpOperation { Tool = tool }],
+            Vocabulary = conditional.Vocabulary,
+            Operations = [conditionalOp],
             Parameters = proposalParams,
-            Display = displayFactory?.Invoke(tool, proposalParams),
+            Display = displayFactory?.Invoke(operation, proposalParams),
         };
         var storedProposal = _proposalStore.Add(proposal, _resourceBaseUri, _proposalPathPrefix);
         return R3EnforcementDecision.Conditional(storedProposal.Uri, storedProposal.S256);
@@ -69,28 +72,28 @@ public sealed class R3Enforcement
 
     public R3EnforcementDecision Evaluate(
         R3ClaimReader.AuthTokenClaims claims,
-        string tool,
+        string operation,
         R3PresentedParameters presentedParameters,
         string approvedProposalS256)
     {
         ArgumentNullException.ThrowIfNull(presentedParameters);
         ArgumentException.ThrowIfNullOrEmpty(approvedProposalS256);
-        return EvaluateApprovedProposalRetry(claims, tool, presentedParameters, approvedProposalS256);
+        return EvaluateApprovedProposalRetry(claims, operation, presentedParameters, approvedProposalS256);
     }
 
-    public R3EnforcementDecision Evaluate(JsonObject verifiedAuthTokenPayload, string tool, IReadOnlyDictionary<string, R3Parameter>? parameters = null, string? approvedProposalS256 = null) =>
-        Evaluate(R3ClaimReader.ReadAuthToken(verifiedAuthTokenPayload), tool, parameters, approvedProposalS256: approvedProposalS256);
+    public R3EnforcementDecision Evaluate(JsonObject verifiedAuthTokenPayload, string operation, IReadOnlyDictionary<string, R3Parameter>? parameters = null, string? approvedProposalS256 = null) =>
+        Evaluate(R3ClaimReader.ReadAuthToken(verifiedAuthTokenPayload), operation, parameters, approvedProposalS256: approvedProposalS256);
 
     private R3EnforcementDecision EvaluateApprovedProposalRetry(
         R3ClaimReader.AuthTokenClaims claims,
-        string tool,
+        string operation,
         R3PresentedParameters? presentedParameters,
         string approvedProposalS256)
     {
         ArgumentNullException.ThrowIfNull(claims);
-        ArgumentException.ThrowIfNullOrEmpty(tool);
+        ArgumentException.ThrowIfNullOrEmpty(operation);
 
-        if (!claims.Granted.ContainsTool(tool))
+        if (!claims.Granted.Contains(operation))
         {
             return R3EnforcementDecision.Rejected("operation_not_granted");
         }
@@ -115,7 +118,7 @@ public sealed class R3Enforcement
             return R3EnforcementDecision.Rejected("invalid_proposal");
         }
 
-        if (!expected.Operations.Any(op => string.Equals(op.Tool, tool, StringComparison.Ordinal)))
+        if (!expected.Operations.Any(op => string.Equals(op.Id, operation, StringComparison.Ordinal)))
         {
             return R3EnforcementDecision.Rejected("proposal_tool_mismatch");
         }

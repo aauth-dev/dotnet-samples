@@ -19,11 +19,11 @@ var trustedPersonServers = builder.Configuration
 // AS policy: which operations require per-call approval (r3_conditional) vs are
 // granted outright (r3_granted). Per r3 §Auth Token Extensions the AS — not the
 // resource — decides this, from the document's operations and its own policy. This
-// dedicated Bookings AS treats confirm_reservation (charges a deposit) as conditional;
-// override via R3AccessServer:ConditionalOperations.
+// dedicated Bookings AS treats confirmReservation (charges a deposit) as conditional;
+// override via R3AccessServer:ConditionalOperations. Values are OpenAPI operationIds.
 var conditionalOperations = (builder.Configuration
     .GetSection("R3AccessServer:ConditionalOperations")
-    .Get<string[]>() ?? ["confirm_reservation"])
+    .Get<string[]>() ?? ["confirmReservation"])
     .ToHashSet(StringComparer.Ordinal);
 
 builder.Services.AddSingleton(asKey);
@@ -44,7 +44,7 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
     SigningKeys = new Dictionary<string, AAuthKey> { [AsKid] = asKey },
     TrustedPersonServers = trustedPersonServers,
     // AS policy decides the granted-vs-conditional split (r3 §Auth Token Extensions).
-    IsConditionalOperation = op => conditionalOperations.Contains(op.Tool),
+    IsConditionalOperation = op => conditionalOperations.Contains(op.Id),
     // Diagnostic-only in-memory sink; a production R3 AS should configure a durable IR3AuditSink.
     AuditSink = new InMemoryR3AuditSink(),
 });

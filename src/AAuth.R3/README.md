@@ -12,8 +12,10 @@ of access *means*; tokens carry `r3_uri`, `r3_s256`, `r3_granted`, and
 
 ## What's inside
 
-- R3 models (`R3Document`, `R3OperationSet`, `R3Grant`, `R3Display`, proposal document)
-  for the **MCP** vocabulary, with a general escape hatch for other vocabularies.
+- R3 models (`R3Document`, `R3Operations`, `R3Grant`, `R3Operation`, `R3Display`,
+  proposal document). Operations are **vocabulary-agnostic** — one self-describing
+  `R3Operation` (`R3Operation.Mcp(tool)` / `R3Operation.OpenApi(operationId)` / …)
+  serializes to the vocabulary's single-key shape and round-trips byte-stably.
 - Content addressing (`R3Hash`) — SHA-256 over the verbatim served bytes, base64url
   (no canonicalization).
 - Claim helpers (`R3AuthClaims`, `R3ClaimReader`) that ride the core token builders'
@@ -23,4 +25,5 @@ of access *means*; tokens carry `r3_uri`, `r3_s256`, `r3_granted`, and
 
 ## Status
 
-Preview / MCP-first. See the AAuth samples for a runnable end-to-end R3 flow.
+Preview. The AAuth samples show a runnable end-to-end R3 flow (the **Bookings**
+resource, guarded by a dedicated R3 Access Server, using the **OpenAPI** vocabulary).

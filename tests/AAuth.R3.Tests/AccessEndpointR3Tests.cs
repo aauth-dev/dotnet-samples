@@ -34,9 +34,9 @@ public class AccessEndpointR3Tests
         var claims = R3ClaimReader.ReadAuthToken(verified.Payload);
         Assert.Equal(fixture.R3Uri, claims.Uri);
         Assert.Equal(fixture.R3S256, claims.S256);
-        Assert.True(claims.Granted.ContainsTool("search_trip_options"));
-        Assert.True(claims.Granted.ContainsTool("hold_itinerary"));
-        Assert.True(claims.Conditional!.ContainsTool("book_trip"));
+        Assert.True(claims.Granted.Contains("search_trip_options"));
+        Assert.True(claims.Granted.Contains("hold_itinerary"));
+        Assert.True(claims.Conditional!.Contains("book_trip"));
     }
 
     [Fact]
@@ -164,7 +164,7 @@ public class AccessEndpointR3Tests
         var claims = R3ClaimReader.ReadAuthToken(verified.Payload);
         Assert.Equal(fixture.ProposalUri, claims.Uri);
         Assert.Equal(fixture.ProposalS256, claims.S256);
-        Assert.True(claims.Granted.ContainsTool("book_trip"));
+        Assert.True(claims.Granted.Contains("book_trip"));
         Assert.Null(claims.Conditional);
     }
 
@@ -250,8 +250,8 @@ public class AccessEndpointR3Tests
             var proposal = new R3ProposalDocument
             {
                 Version = "v02",
-                Vocabulary = Vocabulary.Mcp,
-                Operations = [new McpOperation { Tool = "book_trip" }],
+                Vocabulary = Vocabulary.OpenApi,
+                Operations = [R3Operation.OpenApi("book_trip")],
                 Parameters = new Dictionary<string, R3Parameter>
                 {
                     ["itinerary_id"] = R3Parameter.Inline(JsonValue.Create("it-123")!),
@@ -282,7 +282,7 @@ public class AccessEndpointR3Tests
                 TrustedPersonServers = openPersonServerTrust ? null : (trustedPersonServers ?? [R3TestData.PsIssuer]),
                 // AS policy: book_trip requires per-call approval (r3 §Auth Token Extensions —
                 // the AS decides granted vs conditional, not the R3 document).
-                IsConditionalOperation = op => op.Tool == "book_trip",
+                IsConditionalOperation = op => op.Id == "book_trip",
                 AuditSink = auditSink ?? R3NoOpAuditSink.Instance,
                 FetchAndVerifyAsync = (_, uri, s256, _, _) =>
                 {

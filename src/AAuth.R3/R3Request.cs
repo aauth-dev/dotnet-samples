@@ -20,6 +20,8 @@ public static class R3Request
 
     public static R3Operations CreateMcpOperations(params string[] tools) => R3Operations.Mcp(tools);
 
+    public static R3Operations CreateOpenApiOperations(params string[] operationIds) => R3Operations.OpenApi(operationIds);
+
     public static async Task<HttpResponseMessage> PostAuthorizeAsync(
         HttpClient http,
         string authorizationEndpoint,

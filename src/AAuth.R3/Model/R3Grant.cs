@@ -11,23 +11,28 @@ public sealed record R3Grant
 
     [JsonPropertyName("operations")]
     [JsonPropertyOrder(2)]
-    public required IReadOnlyList<McpOperation> Operations { get; init; }
+    public required IReadOnlyList<R3Operation> Operations { get; init; }
 
     public static R3Grant Mcp(params string[] tools) => new()
     {
         Vocabulary = global::AAuth.R3.Model.Vocabulary.Mcp,
-        Operations = tools.Select(tool => new McpOperation { Tool = tool }).ToArray(),
+        Operations = tools.Select(R3Operation.Mcp).ToArray(),
     };
 
-    public bool ContainsTool(string tool) =>
-        string.Equals(Vocabulary, global::AAuth.R3.Model.Vocabulary.Mcp, StringComparison.Ordinal)
-        && Operations.Any(op => string.Equals(op.Tool, tool, StringComparison.Ordinal));
+    public static R3Grant OpenApi(params string[] operationIds) => new()
+    {
+        Vocabulary = global::AAuth.R3.Model.Vocabulary.OpenApi,
+        Operations = operationIds.Select(R3Operation.OpenApi).ToArray(),
+    };
+
+    public bool Contains(string operationId) =>
+        Operations.Any(op => string.Equals(op.Id, operationId, StringComparison.Ordinal));
 
     public void Validate(bool allowEmpty = false)
     {
-        if (!string.Equals(Vocabulary, global::AAuth.R3.Model.Vocabulary.Mcp, StringComparison.Ordinal))
+        if (string.IsNullOrWhiteSpace(Vocabulary))
         {
-            throw new InvalidOperationException("Only the MCP vocabulary is supported (" + global::AAuth.R3.Model.Vocabulary.Mcp + ").");
+            throw new InvalidOperationException("vocabulary must be set.");
         }
         if (Operations is null || (!allowEmpty && Operations.Count == 0))
         {

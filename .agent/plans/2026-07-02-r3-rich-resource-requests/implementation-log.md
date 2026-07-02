@@ -294,6 +294,52 @@ earlier "Bookings diverges" deviation. The other half stands: R3 authz is
 operation-based (match against `r3_granted`/`r3_conditional` in-handler), so Bookings
 still does not use `UseAAuth`/`.RequireAAuth`. Build 0/0; 517 + 573 + 31 tests green.
 
+### [2026-07-02] [Phase 13] Bookings switches to the OpenAPI vocabulary; AAuth.R3 made vocabulary-agnostic — SUPERSEDES CC2/Q2 MCP-first
+
+Owner steer ("just use the openapi vocabulary"). The MCP vocabulary is defined "for
+resources that expose an MCP server" (r3 L107): discovery endpoint = MCP server URL,
+tool names via MCP tool discovery. Bookings is a plain ASP.NET HTTP API and the `/mcp`
+route was only a stand-in tool list — not a conformant MCP server — so advertising
+`urn:aauth:vocabulary:mcp` misrepresented the resource. Switched Bookings to
+`urn:aauth:vocabulary:openapi` (operations `{operationId}`, discovery = the OpenAPI
+spec URL, r3 L124-L140).
+
+To do this honestly, replaced the MCP-typed `McpOperation` with a single
+vocabulary-agnostic `R3Operation` (`{ <field>: <id> }`, self-describing so any
+single-identifier vocabulary — `tool`/`operationId`/`method`/… — round-trips
+byte-stably via a converter; factories `R3Operation.Mcp`/`OpenApi`). Clean cutover, no
+compat shim (guiding principles). `R3Grant.ContainsTool` → `Contains(id)`; enforcement
+builds proposals with the grant's own vocabulary (dropped the hardcoded
+`Vocabulary.Mcp`); `IsConditionalOperation` is now `Func<R3Operation,bool>`. Bookings
+operationIds `searchAvailability`/`holdReservation`/`confirmReservation`; the R3 AS
+conditional policy keys on `confirmReservation`. See Phase 13.
+
+### [2026-07-02] [Phase 13/9] Doc sweep for the OpenAPI switch + new sample READMEs — RESOLVED
+
+Re-ran the docs sweep after the OpenAPI cutover and the earlier `MockAccessServer` →
+`MockAccessServers/Federated` move. Changes:
+- **New** [`samples/MockAccessServers/README.md`](../../../samples/MockAccessServers/README.md)
+  — access-server suite overview (Federated :5500 + R3 :5501), mirroring the
+  MockResourceServers README.
+- **New** [`samples/MockResourceServers/Bookings/README.md`](../../../samples/MockResourceServers/Bookings/README.md)
+  — Bookings resource README (the only resource server that lacked one), documenting
+  the OpenAPI vocabulary, operationIds, per-call proposal, config, and run steps.
+- **Refreshed** the `AAuth.R3` NuGet README: vocabulary-agnostic `R3Operation`
+  (`Mcp`/`OpenApi`), corrected type names (`R3Operations`/`R3Operation`, not the
+  non-existent `R3OperationSet`), dropped "MCP-first", and pointed at the OpenAPI
+  Bookings demo.
+- **Swept stale paths** from the Federated move in live docs: `samples/README.md`
+  (added Bookings + both access-server rows, corrected count, fixed the AS link),
+  `docs/workflows/federated-access.md` (3 links), `Wallet/README.md`, and the
+  Federated README's own title + run command. Indexed the R3 workflow in
+  `docs/README.md`. Historical `.agent/plans/*` references left untouched (append-only).
+- **Workflow doc + MockResourceServers README** updated to OpenAPI wording
+  (operationIds, `/openapi.json` discovery, `operationId` response field).
+
+Net R3 doc surface: workflow doc, MockResourceServers README + Bookings README,
+MockAccessServers README, R3 NuGet README, docs index. Build/tests unaffected
+(docs only); last green state 32 / 517 / 573 stands.
+
 ## Deviations from plan
 
 ### [2026-07-02] [Phase 1] Mirror AAuth's `<Version>` in the R3 csproj — PROCEEDED (default)

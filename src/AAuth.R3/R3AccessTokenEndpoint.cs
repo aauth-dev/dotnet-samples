@@ -193,8 +193,8 @@ public static class R3AccessTokenEndpoint
         // `operations` and its OWN policy. The default policy grants everything
         // (`r3_conditional` is OPTIONAL); a dedicated AS supplies IsConditionalOperation.
         var isConditional = options.IsConditionalOperation ?? (static _ => false);
-        var granted = new List<McpOperation>();
-        var conditional = new List<McpOperation>();
+        var granted = new List<R3Operation>();
+        var conditional = new List<R3Operation>();
         foreach (var operation in document.Operations)
         {
             (isConditional(operation) ? conditional : granted).Add(operation);
@@ -291,7 +291,7 @@ public sealed class R3AccessTokenEndpointOptions
     /// operation from the fetched document; return <c>true</c> ⇒ conditional.
     /// <c>null</c> (default) ⇒ grant every operation (<c>r3_conditional</c> is OPTIONAL).
     /// </summary>
-    public Func<Model.McpOperation, bool>? IsConditionalOperation { get; init; }
+    public Func<Model.R3Operation, bool>? IsConditionalOperation { get; init; }
 
     internal void Validate()
     {

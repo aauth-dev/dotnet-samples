@@ -58,9 +58,10 @@ the `scheme` values are the unchanged RFC 9421 `Signature-Key` identifiers.
 - **Inbox** endpoints return `scope` + `messages` (resource-managed /
   `two-party`: the Inbox issues its own `AAuth-Access` token, so the payload
   reflects the granted scope rather than a federated mode).
-- **Bookings** endpoints return `tool` + `source` (`r3_granted` or per-call) +
+- **Bookings** endpoints return `operationId` + `source` (`r3_granted` or per-call) +
   `r3_uri`/`r3_s256` (R3 vocabulary demo: the auth token carries granted vs.
-  conditional operations, not scopes).
+  conditional operations, not scopes). Bookings advertises the **OpenAPI** vocabulary
+  (`urn:aauth:vocabulary:openapi`) at `/openapi.json`.
 
 Each payload's field names self-describe which concept it demonstrates. None of
 these response bodies are spec-defined — the spec governs headers and tokens, not

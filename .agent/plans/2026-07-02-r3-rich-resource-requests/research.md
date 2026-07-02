@@ -193,6 +193,14 @@ the standard token-exchange path.
 
 ### A.7 Standard vocabularies
 
+> **Update (2026-07):** Bookings adopts the **OpenAPI** vocabulary (Phase 13),
+> reversing the earlier MCP-first steer. Reason: the MCP vocabulary is defined "for
+> resources that expose an MCP server" (r3 L107) whose discovery endpoint is an MCP
+> server URL — Bookings is a plain ASP.NET HTTP API with no MCP server, so OpenAPI
+> (`operationId`, discovery = the OpenAPI spec URL, r3 L124–L140) is the honest fit.
+> The `AAuth.R3` package is made genuinely vocabulary-agnostic via a single
+> self-describing `R3Operation` (`{ <field>: <id> }`) rather than an MCP-typed model.
+
 Seven registered under `urn:aauth:vocabulary:` — `mcp` (`tool`), `openapi`
 (`operationId`), `grpc` (`method`), `graphql` (`operation`+`type`), `asyncapi`
 (`operationId`+`action`), `wsdl` (`operation`+`service?`), `odata`

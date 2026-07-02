@@ -45,8 +45,8 @@ dedicated Bookings AS) aligned with the Aria narrative.
 
 | # | Decision | Default |
 |---|---|---|
-| CC1 | Vocabulary coverage | MCP + OpenAPI first-class + generic escape hatch (Q1) |
-| CC2 | Bookings vocabulary | **MCP-first**; package stays OpenAPI-capable (Q2, revised) |
+| CC1 | Vocabulary coverage | **Vocabulary-agnostic `R3Operation`** (self-describing `{ <field>: <id> }`) covers MCP/OpenAPI/gRPC/… uniformly; factories `R3Operation.Mcp/OpenApi` (Phase 13, 2026-07-02, supersedes Q1) |
+| CC2 | Bookings vocabulary | **OpenAPI** — Bookings is an ASP.NET HTTP API, so it advertises the OpenAPI vocabulary (operations = `operationId`, discovery = OpenAPI doc). Supersedes MCP-first (Phase 13, 2026-07-02) |
 | CC3 | Bookings access mode | Four-party; **two dedicated access servers** under `samples/MockAccessServers/` — `Federated` (Wallet) + `R3` (Bookings) — mirroring `MockResourceServers/` (revised 2026-07-02; supersedes the "reuse single instance" ruling) |
 | CC4 | AS ports | **Federated AS :5500** (Wallet, scope) + **dedicated R3 AS :5501** (Bookings); each single-purpose, always-on, no launch-mode switch (revised 2026-07-02) |
 | CC5 | AS-only-fetch gate shape | Dedicated `MapAAuthR3Document(store, asIssuer)` mapper (Q4) |
@@ -493,12 +493,68 @@ this plan, with severity-graded findings.
 
 ---
 
+## Phase 13 — OpenAPI vocabulary + vocabulary-agnostic operations
+
+> **Added 2026-07-02** (owner steer: "just use the openapi vocabulary"). Supersedes
+> the MCP-first choice (CC2/Q2). Bookings is an ASP.NET HTTP API, but the R3 **MCP
+> vocabulary** is defined "for resources that expose an MCP server" whose discovery
+> endpoint is an MCP server URL and whose tools come from MCP tool discovery
+> (r3 L105-L112, #mcp-vocabulary). We run no MCP server — the `/mcp` route was a
+> stand-in tool list — so advertising MCP misrepresents the resource. The **OpenAPI
+> vocabulary** (r3 L124-L140, #openapi-vocabulary) is the honest fit: operations are
+> `{ "operationId": … }` and the discovery endpoint is the OpenAPI specification URL.
+
+**Goal:** make the `AAuth.R3` package genuinely vocabulary-agnostic and switch the
+Bookings demonstrator to the OpenAPI vocabulary end-to-end.
+
+**Spec:** OpenAPI vocabulary r3 §OpenAPI Vocabulary L124-L140 (#openapi-vocabulary);
+operation entry shape r3 L322; auth-token claims reuse the same op shape r3 L472.
+
+### Files
+
+| File | Action |
+|---|---|
+| `src/AAuth.R3/Model/R3Operation.cs` | **New** — replaces `McpOperation`; self-describing `{ <field>: <id> }` (`Field` = vocabulary member name, `Id` = identifier) via a `JsonConverter`; factories `R3Operation.Mcp(tool)` / `R3Operation.OpenApi(operationId)`; byte-stable single-key emit |
+| `src/AAuth.R3/Model/McpOperation.cs` | **Delete** — clean cutover, no compat shim (guiding principles) |
+| `src/AAuth.R3/Model/Vocabulary.cs` | **Modify** — add `OpenApi = "urn:aauth:vocabulary:openapi"` |
+| `src/AAuth.R3/Model/{R3Document,R3Grant,R3Operations,R3ProposalDocument}.cs` | **Modify** — `Operations` → `IReadOnlyList<R3Operation>`; `R3Grant.ContainsTool` → `Contains(string id)`; add `OpenApi(…)` factories |
+| `src/AAuth.R3/R3Enforcement.cs` | **Modify** — match on operation id; build the proposal with the grant's vocabulary (drop hardcoded `Vocabulary.Mcp`) |
+| `src/AAuth.R3/R3AccessTokenEndpoint.cs` | **Modify** — `IsConditionalOperation` becomes `Func<R3Operation,bool>?`; split builds `R3Operation` grants |
+| `samples/MockResourceServers/Bookings/Program.cs` | **Modify** — advertise `urn:aauth:vocabulary:openapi` → the OpenAPI doc; operationIds `searchAvailability`/`holdReservation`/`confirmReservation`; enforcement matches `operationId` |
+| `samples/MockAccessServers/R3/Program.cs` | **Modify** — `IsConditionalOperation` keyed on `op.Id`; config default `["confirmReservation"]` |
+| `tests/AAuth.R3.Tests/*` | **Modify** — retype helpers/assertions to `R3Operation` + OpenAPI operationIds |
+| `docs/workflows/rich-resource-requests.md`, `samples/MockResourceServers/README.md` | **Modify** — OpenAPI vocabulary, operationIds, discovery = OpenAPI doc |
+| `samples/MockAccessServers/README.md` | **New** — access-server suite overview (Federated + R3) |
+| `samples/MockResourceServers/Bookings/README.md` | **New** — Bookings resource README (matches the sibling convention) |
+| `src/AAuth.R3/README.md`, `samples/README.md`, `docs/README.md`, `docs/workflows/federated-access.md`, `samples/MockResourceServers/Wallet/README.md`, `samples/MockAccessServers/Federated/README.md` | **Modify (doc sweep)** — OpenAPI/vocabulary-agnostic wording; index R3 workflow + Bookings + both access servers; fix stale `MockAccessServer` paths after the Federated move |
+
+**Implementation Decisions**
+
+- **Generic `R3Operation`, single coordinated cutover.** One self-describing op type
+  replaces `McpOperation` (no dual type, no shim). It covers any single-identifier
+  vocabulary (MCP `tool`, OpenAPI `operationId`, gRPC `method`, …) by carrying the
+  member name; JSON stays byte-stable for content addressing.
+- **Bookings = OpenAPI.** camelCase operationIds; discovery endpoint is a real OpenAPI
+  document (ASP.NET `AddOpenApi`/`MapOpenApi` with `.WithName(operationId)`, or a
+  minimal hand-served spec) rather than the `/mcp` stub.
+- **AS policy keyed on operationId** (`confirmReservation` conditional).
+
+**Definition of Done**
+
+- [x] `R3Operation` round-trips MCP and OpenAPI shapes byte-stably (test).
+- [x] Bookings advertises `urn:aauth:vocabulary:openapi` → its OpenAPI doc; no `/mcp` stub.
+- [x] Auth-token `r3_granted`/`r3_conditional` carry `{ "operationId": … }`.
+- [x] R3 AS marks `confirmReservation` conditional via policy on `op.Id`.
+- [x] Build 0/0; R3 + AAuth + Conformance suites green (32 / 517 / 573).
+
+---
+
 ## Out of scope
 
 | Item | Reason |
 |---|---|
 | RFC 8785 / JCS canonical JSON | R3 hashes verbatim bytes (r3 L335); not required |
-| Fully-typed models for all seven vocabularies | Escape hatch suffices for the demo (Q1) |
+| Per-vocabulary *typed* operation models | The generic `R3Operation` (self-describing `field`+`id`) covers every single-identifier vocabulary uniformly; no per-vocabulary type needed (Phase 13) |
 | Vocabulary *discovery* parsing (MCP tool list / OpenAPI / `$metadata` fetch) | Later R3 phase at most |
 | PS-side `r3_granted` minting | Out of spec — PS is display-only (r3 L391, L404) |
 | Single dual-mode access server | Superseded 2026-07-02 — replaced by two single-purpose AS under `MockAccessServers/` (`Federated` + `R3`); see log |

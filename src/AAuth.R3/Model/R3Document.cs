@@ -17,17 +17,25 @@ public sealed record R3Document
 
     [JsonPropertyName("operations")]
     [JsonPropertyOrder(3)]
-    public required IReadOnlyList<McpOperation> Operations { get; init; }
+    public required IReadOnlyList<R3Operation> Operations { get; init; }
 
     [JsonPropertyName("display")]
     [JsonPropertyOrder(4)]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public R3Display? Display { get; init; }
 
-    public static R3Document Mcp(IReadOnlyList<McpOperation> operations, R3Display? display = null) => new()
+    public static R3Document Mcp(IReadOnlyList<R3Operation> operations, R3Display? display = null) => new()
     {
         Version = "v02",
         Vocabulary = global::AAuth.R3.Model.Vocabulary.Mcp,
+        Operations = operations,
+        Display = display,
+    };
+
+    public static R3Document OpenApi(IReadOnlyList<R3Operation> operations, R3Display? display = null) => new()
+    {
+        Version = "v02",
+        Vocabulary = global::AAuth.R3.Model.Vocabulary.OpenApi,
         Operations = operations,
         Display = display,
     };

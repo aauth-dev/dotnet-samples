@@ -38,8 +38,8 @@ public class TokenClaimTests
         var parsed = R3ClaimReader.ReadAuthToken(payload);
 
         Assert.Equal("https://resource.test/r3/doc", parsed.Uri);
-        Assert.True(parsed.Granted.ContainsTool("search_trip_options"));
-        Assert.True(parsed.Conditional!.ContainsTool("book_trip"));
+        Assert.True(parsed.Granted.Contains("search_trip_options"));
+        Assert.True(parsed.Conditional!.Contains("book_trip"));
     }
 
     [Fact]

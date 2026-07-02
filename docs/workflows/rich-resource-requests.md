@@ -6,7 +6,7 @@
 Overview: R3 adds **resource-declared, vocabulary-based** authorization on top of the
 four AAuth access modes. Instead of opaque scope strings, the resource publishes a
 content-addressed **R3 document** describing the operations a class of access covers
-(in a vocabulary the agent already understands — here **MCP** tool names) and the
+(in a vocabulary the agent already understands — here **OpenAPI** operation IDs) and the
 human consequences of granting it. The auth token then carries `r3_granted` (serve
 immediately) and `r3_conditional` (needs per-call approval) instead of, or alongside,
 `scope`. The **Bookings** sample (a dining & experiences reservation provider) is
@@ -43,8 +43,9 @@ sequenceDiagram
 ## What R3 adds to a resource
 
 - **Vocabularies** (`r3_vocabularies` in `/.well-known/aauth-resource.json`) map the
-  resource's operations to a format the agent knows. Bookings advertises the **MCP**
-  vocabulary (`urn:aauth:vocabulary:mcp`); operations are tool names.
+  resource's operations to a format the agent knows. Bookings is an ASP.NET HTTP API,
+  so it advertises the **OpenAPI** vocabulary (`urn:aauth:vocabulary:openapi`) pointing
+  at its OpenAPI document (`/openapi.json`); operations are `operationId`s.
 - **R3 documents** are content-addressed: `r3_s256 = base64url(SHA-256(served bytes))`
   with **no canonicalization** — the resource serializes once and serves those exact
   bytes. Agents never fetch them; only the AS (and PS, for consent display) may, over
@@ -57,11 +58,11 @@ sequenceDiagram
 The **Access Server** — not the resource — decides which operations to grant outright
 and which to make conditional, from the document's `operations` and its own policy
 (r3 §Auth Token Extensions). The dedicated Bookings AS is configured to treat
-`confirm_reservation` as conditional (override via `R3AccessServer:ConditionalOperations`);
+`confirmReservation` as conditional (override via `R3AccessServer:ConditionalOperations`);
 the R3 document itself carries only the spec fields (`operations` + `display`):
 
-- **`r3_granted`** — `search_availability`, `hold_reservation`: served immediately.
-- **`r3_conditional`** — `confirm_reservation`: charges a non-refundable deposit, so it
+- **`r3_granted`** — `searchAvailability`, `holdReservation`: served immediately.
+- **`r3_conditional`** — `confirmReservation`: charges a non-refundable deposit, so it
   requires a **per-call proposal**. On first call the resource returns a resource token
   referencing a single-invocation R3 document that carries the concrete `parameters`
   (venue, date, party size, deposit). The AS re-evaluates those parameters and issues a

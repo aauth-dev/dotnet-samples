@@ -11,12 +11,18 @@ public sealed record R3Operations
 
     [JsonPropertyName("operations")]
     [JsonPropertyOrder(2)]
-    public required IReadOnlyList<McpOperation> Operations { get; init; }
+    public required IReadOnlyList<R3Operation> Operations { get; init; }
 
     public static R3Operations Mcp(params string[] tools) => new()
     {
         Vocabulary = global::AAuth.R3.Model.Vocabulary.Mcp,
-        Operations = tools.Select(tool => new McpOperation { Tool = tool }).ToArray(),
+        Operations = tools.Select(R3Operation.Mcp).ToArray(),
+    };
+
+    public static R3Operations OpenApi(params string[] operationIds) => new()
+    {
+        Vocabulary = global::AAuth.R3.Model.Vocabulary.OpenApi,
+        Operations = operationIds.Select(R3Operation.OpenApi).ToArray(),
     };
 
     public R3Grant ToGrant() => new() { Vocabulary = Vocabulary, Operations = Operations };

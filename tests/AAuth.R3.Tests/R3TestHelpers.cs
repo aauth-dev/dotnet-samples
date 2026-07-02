@@ -59,12 +59,12 @@ internal static class R3TestData
     public static R3Document Document() => new()
     {
         Version = "v02",
-        Vocabulary = Vocabulary.Mcp,
+        Vocabulary = Vocabulary.OpenApi,
         Operations =
         [
-            new McpOperation { Tool = "search_trip_options" },
-            new McpOperation { Tool = "hold_itinerary" },
-            new McpOperation { Tool = "book_trip" },
+            R3Operation.OpenApi("search_trip_options"),
+            R3Operation.OpenApi("hold_itinerary"),
+            R3Operation.OpenApi("book_trip"),
         ],
         Display = new R3Display
         {

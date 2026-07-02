@@ -13,10 +13,10 @@ var builder = WebApplication.CreateBuilder(args);
 var resourceKey = AAuthKey.Generate();
 const string ResourceKid = "bookings-1";
 
-const string SearchAvailability = "search_availability";
-const string HoldReservation = "hold_reservation";
-const string ConfirmReservation = "confirm_reservation";
-string[] SupportedTools = [SearchAvailability, HoldReservation, ConfirmReservation];
+const string SearchAvailability = "searchAvailability";
+const string HoldReservation = "holdReservation";
+const string ConfirmReservation = "confirmReservation";
+string[] SupportedOperations = [SearchAvailability, HoldReservation, ConfirmReservation];
 
 var resourceUrl = (builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5005").TrimEnd('/');
 var accessServerUrl = (builder.Configuration["AAuth:AccessServer"] ?? "http://localhost:5501").TrimEnd('/');
@@ -51,7 +51,7 @@ builder.Services.AddAAuthResource(o =>
     {
         // Bookings is deliberately not mission-aware (advertised for discovery only).
         ["mission_aware"] = missionAware,
-        ["r3_vocabularies"] = new JsonObject { [Vocabulary.Mcp] = $"{resourceUrl}/mcp" },
+        ["r3_vocabularies"] = new JsonObject { [Vocabulary.OpenApi] = $"{resourceUrl}/openapi.json" },
     };
 });
 builder.Services.AddSingleton(new TokenVerifier());
@@ -70,20 +70,29 @@ app.MapGet("/", () => Results.Ok(new
     accessMode = "four-party-r3",
     missionAware,
     authorization_endpoint = $"{resourceUrl}/authorize",
-    r3_vocabularies = new Dictionary<string, string> { [Vocabulary.Mcp] = $"{resourceUrl}/mcp" },
+    r3_vocabularies = new Dictionary<string, string> { [Vocabulary.OpenApi] = $"{resourceUrl}/openapi.json" },
     flows = new[]
     {
-        new { path = "/search_availability", tool = SearchAvailability, grant = "r3_granted" },
-        new { path = "/hold_reservation", tool = HoldReservation, grant = "r3_granted" },
-        new { path = "/confirm_reservation", tool = ConfirmReservation, grant = "r3_conditional + per-call proposal" },
+        new { path = "/search_availability", operationId = SearchAvailability, grant = "r3_granted" },
+        new { path = "/hold_reservation", operationId = HoldReservation, grant = "r3_granted" },
+        new { path = "/confirm_reservation", operationId = ConfirmReservation, grant = "r3_conditional + per-call proposal" },
     },
 }));
 
-app.MapGet("/mcp", () => Results.Json(new
+// OpenAPI discovery document — the OpenAPI vocabulary's discovery endpoint (r3
+// §OpenAPI Vocabulary). A minimal but valid OpenAPI 3.1 spec whose operationIds are
+// the R3 operation identifiers the AS grants and the resource enforces.
+app.MapGet("/openapi.json", () => Results.Json(new JsonObject
 {
-    vocabulary = Vocabulary.Mcp,
-    tools = SupportedTools.Select(tool => new { name = tool }).ToArray(),
-}));
+    ["openapi"] = "3.1.0",
+    ["info"] = new JsonObject { ["title"] = "Aria Reservations", ["version"] = "1.0.0" },
+    ["paths"] = new JsonObject
+    {
+        ["/search_availability"] = OpenApiPath(SearchAvailability, "Search dining & experience availability."),
+        ["/hold_reservation"] = OpenApiPath(HoldReservation, "Place a temporary hold on a reservation."),
+        ["/confirm_reservation"] = OpenApiPath(ConfirmReservation, "Confirm a reservation; may charge a non-refundable deposit."),
+    },
+}, contentType: "application/json"));
 
 app.MapPost("/authorize", async (HttpContext ctx, R3ProposalStore documents) =>
 {
@@ -121,7 +130,7 @@ app.MapPost("/authorize", async (HttpContext ctx, R3ProposalStore documents) =>
         return Results.Json(new { error = "invalid_r3_operations", detail = ex.Message }, statusCode: StatusCodes.Status400BadRequest);
     }
 
-    var stored = StoreR3Document(documents, operations.Operations.Select(op => op.Tool));
+    var stored = StoreR3Document(documents, operations.Operations.Select(op => op.Id));
     var resourceToken = BuildResourceToken(agent.AgentId, agent.ConfirmationKey.ComputeJwkThumbprint(), stored.Uri, stored.S256);
     ctx.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatAuthToken(resourceToken);
     return Results.Ok(new
@@ -152,14 +161,14 @@ app.MapMethods("/search_availability", ["GET", "POST"], async (HttpContext ctx) 
     var auth = await VerifyAuthOrChallengeAsync(ctx, [SearchAvailability, HoldReservation, ConfirmReservation]);
     if (auth.Result is not null) { return auth.Result; }
     var decision = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload);
-    if (!decision.Granted.ContainsTool(SearchAvailability))
+    if (!decision.Granted.Contains(SearchAvailability))
     {
-        return Results.Json(new { error = "r3_denied", detail = "search_availability was not granted" }, statusCode: StatusCodes.Status403Forbidden);
+        return Results.Json(new { error = "r3_denied", detail = "searchAvailability was not granted" }, statusCode: StatusCodes.Status403Forbidden);
     }
     return Results.Ok(new
     {
         accessMode = "four-party-r3",
-        tool = SearchAvailability,
+        operationId = SearchAvailability,
         source = "r3_granted",
         options = new[]
         {
@@ -176,14 +185,14 @@ app.MapMethods("/hold_reservation", ["GET", "POST"], async (HttpContext ctx) =>
     var auth = await VerifyAuthOrChallengeAsync(ctx, [SearchAvailability, HoldReservation, ConfirmReservation]);
     if (auth.Result is not null) { return auth.Result; }
     var claims = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload);
-    if (!claims.Granted.ContainsTool(HoldReservation))
+    if (!claims.Granted.Contains(HoldReservation))
     {
-        return Results.Json(new { error = "r3_denied", detail = "hold_reservation was not granted" }, statusCode: StatusCodes.Status403Forbidden);
+        return Results.Json(new { error = "r3_denied", detail = "holdReservation was not granted" }, statusCode: StatusCodes.Status403Forbidden);
     }
     return Results.Ok(new
     {
         accessMode = "four-party-r3",
-        tool = HoldReservation,
+        operationId = HoldReservation,
         source = "r3_granted",
         hold_id = "hold-aria-001",
         reservation_id = "dining-lumiere-001",
@@ -201,14 +210,14 @@ app.MapPost("/confirm_reservation", async (HttpContext ctx, R3ProposalStore prop
     var claims = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload);
     var parameters = await ReadReservationParametersAsync(ctx);
 
-    if (claims.Granted.ContainsTool(ConfirmReservation))
+    if (claims.Granted.Contains(ConfirmReservation))
     {
         var retry = VerifyApprovedProposalRetry(claims, parameters, proposals);
         if (retry is not null) { return retry; }
         return Results.Ok(new
         {
             accessMode = "four-party-r3",
-            tool = ConfirmReservation,
+            operationId = ConfirmReservation,
             source = "per-call-r3_granted",
             status = "confirmed",
             confirmation = "RSV-ARIA-314159",
@@ -220,16 +229,16 @@ app.MapPost("/confirm_reservation", async (HttpContext ctx, R3ProposalStore prop
         });
     }
 
-    if (!claims.Conditional?.ContainsTool(ConfirmReservation) ?? true)
+    if (!claims.Conditional?.Contains(ConfirmReservation) ?? true)
     {
-        return Results.Json(new { error = "r3_denied", detail = "confirm_reservation was not granted or conditional" }, statusCode: StatusCodes.Status403Forbidden);
+        return Results.Json(new { error = "r3_denied", detail = "confirmReservation was not granted or conditional" }, statusCode: StatusCodes.Status403Forbidden);
     }
 
     var proposal = new R3ProposalDocument
     {
         Version = "v02",
-        Vocabulary = Vocabulary.Mcp,
-        Operations = [new McpOperation { Tool = ConfirmReservation }],
+        Vocabulary = Vocabulary.OpenApi,
+        Operations = [R3Operation.OpenApi(ConfirmReservation)],
         Parameters = parameters,
         Display = ReservationDisplay(parameters),
     };
@@ -239,7 +248,7 @@ app.MapPost("/confirm_reservation", async (HttpContext ctx, R3ProposalStore prop
     return Results.Json(new
     {
         error = "r3_approval_required",
-        tool = ConfirmReservation,
+        operationId = ConfirmReservation,
         r3_uri = stored.Uri,
         r3_s256 = stored.S256,
     }, statusCode: StatusCodes.Status401Unauthorized);
@@ -247,22 +256,22 @@ app.MapPost("/confirm_reservation", async (HttpContext ctx, R3ProposalStore prop
 
 app.Run();
 
-StoredR3Proposal StoreR3Document(R3ProposalStore store, IEnumerable<string> requestedTools)
+StoredR3Proposal StoreR3Document(R3ProposalStore store, IEnumerable<string> requestedOperations)
 {
-    var requested = requestedTools.ToHashSet(StringComparer.Ordinal);
-    var ordered = SupportedTools.Where(requested.Contains).Select(tool => new McpOperation { Tool = tool }).ToArray();
+    var requested = requestedOperations.ToHashSet(StringComparer.Ordinal);
+    var ordered = SupportedOperations.Where(requested.Contains).Select(R3Operation.OpenApi).ToArray();
     var doc = new R3Document
     {
         Version = "v02",
-        Vocabulary = Vocabulary.Mcp,
+        Vocabulary = Vocabulary.OpenApi,
         Operations = ordered,
         Display = new R3Display
         {
             Summary = "Search and temporarily hold reservations. Confirming a reservation may charge a deposit.",
-            Implications = "Search and hold are low risk; confirm_reservation is conditional because it commits a booking and may charge a deposit.",
+            Implications = "Search and hold are low risk; confirmReservation is conditional because it commits a booking and may charge a deposit.",
             DataAccessed = "Reservation availability, venue, date, party size, deposit, and cancellation terms.",
-            Irreversible = ordered.Any(op => string.Equals(op.Tool, ConfirmReservation, StringComparison.Ordinal))
-                ? "Calling confirm_reservation may charge a non-refundable deposit; cancellation and refundability depend on the selected venue's policy."
+            Irreversible = ordered.Any(op => string.Equals(op.Id, ConfirmReservation, StringComparison.Ordinal))
+                ? "Calling confirmReservation may charge a non-refundable deposit; cancellation and refundability depend on the selected venue's policy."
                 : null,
         },
         // The R3 document carries only spec fields (operations + display). The R3
@@ -397,12 +406,12 @@ async Task<SignedAgent> VerifyAgentAsync(HttpContext ctx, R3VerifiedFetcher? kno
 void ValidateRequestedOperations(R3Operations operations)
 {
     operations.Validate();
-    var supported = SupportedTools.ToHashSet(StringComparer.Ordinal);
+    var supported = SupportedOperations.ToHashSet(StringComparer.Ordinal);
     foreach (var operation in operations.Operations)
     {
-        if (!supported.Contains(operation.Tool))
+        if (!supported.Contains(operation.Id))
         {
-            throw new InvalidOperationException($"Unsupported MCP tool '{operation.Tool}'.");
+            throw new InvalidOperationException($"Unsupported operation '{operation.Id}'.");
         }
     }
 }
@@ -412,6 +421,11 @@ bool IsTrustedR3Fetcher(R3VerifiedFetcher fetcher) =>
     && fetcher.JwksUri is not null
     && (trustedFetcherSet.Contains($"{fetcher.JwksUri.Scheme}://{fetcher.JwksUri.Authority}")
         || trustedFetcherSet.Contains(fetcher.JwksUri.Authority));
+
+static JsonObject OpenApiPath(string operationId, string summary) => new()
+{
+    ["post"] = new JsonObject { ["operationId"] = operationId, ["summary"] = summary },
+};
 
 async Task<IReadOnlyDictionary<string, R3Parameter>> ReadReservationParametersAsync(HttpContext ctx)
 {
@@ -460,7 +474,7 @@ IResult? VerifyApprovedProposalRetry(R3ClaimReader.AuthTokenClaims claims, IRead
     {
         return Results.Json(new { error = "invalid_proposal", detail = ex.Message }, statusCode: StatusCodes.Status403Forbidden);
     }
-    if (!expected.Operations.Any(op => string.Equals(op.Tool, ConfirmReservation, StringComparison.Ordinal)))
+    if (!expected.Operations.Any(op => string.Equals(op.Id, ConfirmReservation, StringComparison.Ordinal)))
     {
         return Results.Json(new { error = "proposal_tool_mismatch" }, statusCode: StatusCodes.Status403Forbidden);
     }

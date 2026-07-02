@@ -15,8 +15,26 @@ public class R3ModelTests
         var bytesAgain = roundTrip.ToUtf8Bytes();
 
         Assert.Equal(bytes, bytesAgain);
-        Assert.Equal(Vocabulary.Mcp, roundTrip.Vocabulary);
-        Assert.Contains(roundTrip.Operations, op => op.Tool == "book_trip");
+        Assert.Equal(Vocabulary.OpenApi, roundTrip.Vocabulary);
+        Assert.Contains(roundTrip.Operations, op => op.Id == "book_trip");
+    }
+
+    [Fact]
+    public void Operation_RoundTripsMcpAndOpenApiShapesByteStably()
+    {
+        var mcpBytes = JsonSerializer.SerializeToUtf8Bytes(R3Operation.Mcp("create_event"), R3Json.Options);
+        var openApiBytes = JsonSerializer.SerializeToUtf8Bytes(R3Operation.OpenApi("createEvent"), R3Json.Options);
+
+        Assert.Equal("{\"tool\":\"create_event\"}", System.Text.Encoding.UTF8.GetString(mcpBytes));
+        Assert.Equal("{\"operationId\":\"createEvent\"}", System.Text.Encoding.UTF8.GetString(openApiBytes));
+
+        var mcpBack = JsonSerializer.Deserialize<R3Operation>(mcpBytes, R3Json.Options)!;
+        var openApiBack = JsonSerializer.Deserialize<R3Operation>(openApiBytes, R3Json.Options)!;
+
+        Assert.Equal(R3Operation.McpField, mcpBack.Field);
+        Assert.Equal("create_event", mcpBack.Id);
+        Assert.Equal(R3Operation.OpenApiField, openApiBack.Field);
+        Assert.Equal("createEvent", openApiBack.Id);
     }
 
     [Fact]
@@ -25,7 +43,7 @@ public class R3ModelTests
         var doc = new R3Document
         {
             Vocabulary = Vocabulary.Mcp,
-            Operations = [new McpOperation { Tool = "search_trip_options" }],
+            Operations = [R3Operation.Mcp("search_trip_options")],
             Display = new R3Display { Detail = "missing summary" },
         };
 
@@ -40,7 +58,7 @@ public class R3ModelTests
         {
             Version = "v02",
             Vocabulary = Vocabulary.Mcp,
-            Operations = [new McpOperation { Tool = "book_trip" }],
+            Operations = [R3Operation.Mcp("book_trip")],
             Display = new R3Display
             {
                 Summary = "Book trip",
@@ -68,7 +86,7 @@ public class R3ModelTests
         {
             Version = "v02",
             Vocabulary = Vocabulary.Mcp,
-            Operations = [new McpOperation { Tool = "book_trip" }],
+            Operations = [R3Operation.Mcp("book_trip")],
             Parameters = new Dictionary<string, R3Parameter>
             {
                 ["itinerary_id"] = R3Parameter.Inline(JsonSerializer.SerializeToNode("it-123")!),
@@ -88,8 +106,8 @@ public class R3ModelTests
         {
             Operations =
             [
-                new McpOperation { Tool = "book_trip" },
-                new McpOperation { Tool = "hold_itinerary" },
+                R3Operation.Mcp("book_trip"),
+                R3Operation.Mcp("hold_itinerary"),
             ],
         }).ToUtf8Bytes());
     }

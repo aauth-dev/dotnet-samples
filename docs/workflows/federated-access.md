@@ -172,14 +172,14 @@ it against the AS's JWKS rather than the PS's.
 
 ## Keycloak-Backed Access Server
 
-The reference [Mock Access Server](../../samples/MockAccessServer/README.md)
+The reference [Mock Access Server](../../samples/MockAccessServers/Federated/README.md)
 ships a pluggable `IAccessPolicy`. The `keycloak` provider makes Keycloak the
 policy decision point: the AS adapter performs the AAuth crypto while Keycloak
 handles the interactive user login and the authorization decision (UMA
 `uma-ticket` grant). The realm models the resource scopes (`wallet.read`,
 `wallet.charge`) and a payer role.
 
-See the [Mock Access Server README](../../samples/MockAccessServer/README.md)
+See the [Mock Access Server README](../../samples/MockAccessServers/Federated/README.md)
 for the realm/client/resource/scope/policy setup and the claim mapping.
 
 ## Consent Bubble-Up (interactive AS)
@@ -303,5 +303,5 @@ by configuring the Access Server with `AccessServer:RequireClaims` (e.g.
 ## Further Reading
 
 - [PS-Asserted Access](ps-asserted-access.md)
-- [Mock Access Server](../../samples/MockAccessServer/README.md)
+- [Mock Access Server](../../samples/MockAccessServers/Federated/README.md)
 - [Access Mode Comparison](https://explorer.aauth.dev/access/compare)
