@@ -397,8 +397,15 @@ var authToken = await exchange.ExchangeAsync(
             return null;
         }
 
-        var json = JsonNode.Parse(body) as JsonObject;
-        return (string?)json?["resource_token"] ?? (string?)json?["resourceToken"];
+        try
+        {
+            var json = JsonNode.Parse(body) as JsonObject;
+            return (string?)json?["resource_token"] ?? (string?)json?["resourceToken"];
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static JsonObject BookingParameters() => new()
