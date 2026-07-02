@@ -52,6 +52,7 @@ dedicated Bookings AS) aligned with the Aria narrative.
 | CC5 | AS-only-fetch gate shape | Dedicated `MapAAuthR3Document(store, asIssuer)` mapper (Q4) |
 | CC6 | Proposal store seam | Reuse `IR3DocumentStore` for docs + proposals (Q5) |
 | CC7 | Packaging | **Separate `AAuth.R3` NuGet package** (`src/AAuth.R3/`, preview) depending on `AAuth`; core gets only generic seams (2026-07-02) |
+| CC8 | R3 package version | **Same version as `AAuth`** for now — no separate version input (2026-07-02) |
 
 ---
 
@@ -65,7 +66,7 @@ blocking.
 
 - [x] Every research open question (Q1–Q6) has a recorded ruling in
       `implementation-log.md`.
-- [x] CC1–CC7 confirmed or overridden.
+- [x] CC1–CC8 confirmed or overridden.
 - [x] Branch created; research committed (see the git steps at the end of this plan).
 
 ---
@@ -368,7 +369,50 @@ Run **after** the code surface is frozen. Non-compiled surfaces drift silently.
 
 ---
 
-## Phase 10 — Internal review
+## Phase 10 — CI + packaging / release automation
+
+Wire the new `AAuth.R3` package into the existing CI and release pipelines. Repo-side
+and automatable; the **owner-only nuget.org steps are deferred to Phase 12**.
+
+**Findings (existing pipelines):**
+
+- [.github/workflows/ci.yml](../../../.github/workflows/ci.yml) builds and tests the
+  **whole solution** (`dotnet build/test AAuth.slnx`) and runs a Playwright e2e job
+  (`npm test` in `tests/e2e`). Because `AAuth.R3` (and, once ported, `AAuth.R3.Tests`)
+  are in `AAuth.slnx`, **CI needs no workflow-file change** — new projects/tests are
+  picked up automatically. Verify only that the ported test project is added to the
+  solution and that the e2e harness starts Bookings + the shared AS (a Phase 8
+  dependency), not that `ci.yml` itself changes.
+- [.github/workflows/publish.yml](../../../.github/workflows/publish.yml) packs
+  **only** `src/AAuth/AAuth.csproj` with `-p:PackageVersion=${{ inputs.version }}`,
+  then `dotnet nuget push ./nupkg/*.nupkg` (wildcard) and `gh release create …
+  ./nupkg/*.nupkg`. It authenticates via **OIDC trusted publishing** (`NuGet/login@v1`).
+
+**Files**
+
+| File | Action |
+|---|---|
+| `src/AAuth.R3/AAuth.R3.csproj` | **Modify** (on Phase 1 relocation) — `IsPackable=true`, `PackageId=AAuth.R3`, description/authors/license/repository/README/tags, preview; **no `<Version>`** (the pipeline stamps it, CC8) |
+| [.github/workflows/publish.yml](../../../.github/workflows/publish.yml) | **Modify** — add a second `dotnet pack` for `src/AAuth.R3/AAuth.R3.csproj` with the **same** `-p:PackageVersion=${{ inputs.version }}` into the same `./nupkg`. The existing wildcard `push` and `gh release` steps then cover both nupkgs unchanged |
+
+**Implementation Decisions**
+
+- **Same version as `AAuth`** (CC8): no new version input. Packing `AAuth.R3` with the
+  same global `-p:PackageVersion` stamps both the package and its `AAuth` dependency.
+- Validate via the workflow's **`dry-run=true`** path that (a) two nupkgs are produced
+  and (b) the `AAuth.R3` nuspec's `AAuth` dependency version equals `inputs.version`.
+
+**Definition of Done**
+
+- [ ] `AAuth.R3` is packable (`PackageId=AAuth.R3`) with complete package metadata.
+- [ ] A `dry-run=true` `publish.yml` run produces **both** `AAuth` and `AAuth.R3` nupkgs.
+- [ ] The `AAuth.R3` nupkg depends on `AAuth` at the **same** version.
+- [ ] CI is green with the new projects/tests via solution-wide commands; **no**
+      `ci.yml` edit was required (confirmed).
+
+---
+
+## Phase 11 — Internal review
 
 A fresh subagent validates the implementation against the spec, `research.md`, and
 this plan, with severity-graded findings.
@@ -377,7 +421,36 @@ this plan, with severity-graded findings.
 
 - [ ] Subagent report attached (or logged) with findings triaged.
 - [ ] Every security invariant (research §F) has a passing test.
+- [ ] The release **dry-run** (Phase 10) is green — both nupkgs, correct dependency version.
 - [ ] No open `PROCEEDED` decision left unreviewed in `implementation-log.md`.
+
+---
+
+## Phase 12 — Manual nuget.org tasks (owner) — FINAL
+
+> **The only steps that cannot be automated in-repo** — they require owner action on
+> nuget.org and are deliberately kept **last**. Do them **after** Phases 10–11 land
+> and the dry-run publish is green; nothing else in the plan depends on them. The
+> agent cannot perform these.
+
+**Owner tasks (nuget.org):**
+
+- [ ] **Trusted Publishing policy for `AAuth.R3`.** The publish workflow authenticates
+      via OIDC (`NuGet/login@v1`). Add a Trusted Publishing policy on nuget.org for
+      the **new** package ID `AAuth.R3` (same GitHub repo/workflow/owner as the
+      existing `AAuth` policy). Without it, the OIDC push of `AAuth.R3` is rejected.
+- [ ] **Package ID availability / prefix reservation.** Confirm `AAuth.R3` is
+      available; if the `AAuth` ID-prefix is reserved, extend the reservation to the
+      `AAuth.*` glob (else the first publish establishes ownership).
+- [ ] **First real release.** Run `publish.yml` with `dry-run=false` at the chosen
+      version (same as `AAuth`); confirm both packages list on nuget.org and the
+      GitHub release carries both nupkgs.
+- [ ] Confirm the `AAuth.R3` listing shows **prerelease/preview** (version suffix).
+
+**Definition of Done**
+
+- [ ] Owner has completed the nuget.org trusted-publishing + ID steps above.
+- [ ] A real (`dry-run=false`) publish pushes both `AAuth` and `AAuth.R3`.
 
 ---
 

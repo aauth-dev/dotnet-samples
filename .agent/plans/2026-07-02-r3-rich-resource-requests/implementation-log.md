@@ -130,6 +130,26 @@ hand-built resource token onto the generic `ResourceTokenBuilder.AdditionalClaim
 seam; (3) port `tests/AAuth.R3.Tests` (23 tests); (4) the `book_trip` →
 `confirm_reservation` rename is sample-side (the lib is tool-agnostic).
 
+### [2026-07-02] [Phase 0] CC8 — R3 package version tracks `AAuth` — PROCEEDED (default)
+
+Owner steer ("we could technically use the same version as aauth for r3 for now").
+`AAuth.R3` ships at the **same version** as `AAuth` — no separate version input in
+`publish.yml`. Packing `AAuth.R3` with the same global `-p:PackageVersion` stamps
+both the package and its `AAuth` dependency. Revisit if R3 needs an independent
+release cadence once it stabilizes.
+
+### [2026-07-02] [Phase 0] CI / release pipeline plan — RESOLVED
+
+Reviewed the existing pipelines. **`ci.yml` needs no change**: it builds/tests the
+whole `AAuth.slnx` and runs Playwright e2e via `npm test`, so the new `AAuth.R3` +
+`AAuth.R3.Tests` (and any Bookings e2e specs) are covered once they are in the
+solution / e2e harness. **`publish.yml` needs one change**: a second `dotnet pack`
+for `src/AAuth.R3/AAuth.R3.csproj` (same version) into `./nupkg`; the existing
+wildcard `push` and `gh release` steps then cover both nupkgs. These are Phase 10
+(automatable). The **manual nuget.org steps** (Trusted Publishing policy for the new
+`AAuth.R3` ID, ID/prefix availability, first real publish) cannot be done in-repo and
+are deferred to the **final Phase 12**, per the owner instruction to keep them last.
+
 ## Deviations from plan
 
 _None yet._
