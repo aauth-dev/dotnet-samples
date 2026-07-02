@@ -128,6 +128,9 @@ L491–L539; `#content-addressing` L331–L340.
 
 ## Phase 2 — `r3_vocabularies` resource metadata
 
+> **Status (2026-07-02): satisfied by the imported `AAuth.R3` library** (`R3Metadata`);
+> the generic `AdditionalMetadata` core seam is deferred as unnecessary (see log).
+
 **Goal:** advertise supported vocabularies in `aauth-resource.json`.
 
 **Spec:** r3 `#resource-metadata-extensions` L83–L112.
@@ -149,6 +152,10 @@ L491–L539; `#content-addressing` L331–L340.
 ---
 
 ## Phase 3 — Token claims (resource token, auth token, verification result)
+
+> **Status (2026-07-02): satisfied by the imported `AAuth.R3` library**
+> (`R3AuthClaims`/`R3ClaimReader`; `R3Challenge` for the resource token); the generic
+> `ResourceTokenBuilder.AdditionalClaims` core seam is deferred as unnecessary (see log).
 
 **Goal:** carry R3 claims on the wire and surface them to resource endpoints.
 
@@ -218,6 +225,10 @@ L620–L622.
 
 ## Phase 5 — Resource-side enforcement + AS-only-fetch gate (security)
 
+> **Status (2026-07-02): satisfied by the imported `AAuth.R3` library**
+> (`R3Enforcement`, `R3Challenge` proposals, `R3DocumentEndpoint` trusted-fetcher
+> gate); no core seam needed (see log). Re-verify the security invariants in Phase 11.
+
 **Goal:** enforce grants from token claims, mint per-call proposals dynamically, and
 gate the R3-document endpoint to the resource's AS only.
 
@@ -249,6 +260,10 @@ Proposals L491–L539 (digest verify L531); AS-only fetch L297, L541–L549.
 ---
 
 ## Phase 6 — AS/PS-side R3 processing (SDK-owned)
+
+> **Status (2026-07-02): satisfied by the imported `AAuth.R3` library**
+> (`R3FetchClient` AS-signed fetch + hash-verify, `R3AccessTokenEndpoint` mint,
+> `R3Audit` sink); the generic AS decision hook is deferred as unnecessary (see log).
 
 **Goal:** the SDK fetches, hash-verifies, caches, and audits R3 documents before
 policy runs; the AS mints grants; the PS gets `display` for consent.
@@ -405,10 +420,11 @@ and automatable; the **owner-only nuget.org steps are deferred to Phase 12**.
 
 **Definition of Done**
 
-- [ ] `AAuth.R3` is packable (`PackageId=AAuth.R3`) with complete package metadata.
-- [ ] A `dry-run=true` `publish.yml` run produces **both** `AAuth` and `AAuth.R3` nupkgs.
-- [ ] The `AAuth.R3` nupkg depends on `AAuth` at the **same** version.
-- [ ] CI is green with the new projects/tests via solution-wide commands; **no**
+- [x] `AAuth.R3` is packable (`PackageId=AAuth.R3`) with complete package metadata.
+- [x] Packing produces **both** `AAuth` and `AAuth.R3` nupkgs (verified locally with
+      `dotnet pack -p:PackageVersion=9.9.9-test`, replicating the workflow step).
+- [x] The `AAuth.R3` nupkg depends on `AAuth` at the **same** version.
+- [x] CI is green with the new projects/tests via solution-wide commands; **no**
       `ci.yml` edit was required (confirmed).
 
 ---

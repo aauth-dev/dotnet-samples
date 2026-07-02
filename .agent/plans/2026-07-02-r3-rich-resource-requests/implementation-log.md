@@ -159,6 +159,35 @@ AAuth.R3.Tests 30, AAuth.Tests 517, AAuth.Conformance 571; `dotnet build AAuth.s
 0/0. The test commit is authored to `ana <asmirnova@microsoft.com>` (committer = me)
 per the owner's attribution instruction.
 
+### [2026-07-02] [Phases 2–6] SDK-side R3 delivered by the import — generic core seams DROPPED — RESOLVED
+
+Inspecting the imported library shows it implements the Phase 2–6 functionality
+**entirely sample-side with zero core changes**: `R3Metadata` composes
+`r3_vocabularies`; `R3Challenge` hand-builds the resource token (its own
+`SignCompact`, reusing `ResourceTokenBuilder.TokenType`/`ResourceDwk` constants);
+`R3AuthClaims`/`R3ClaimReader` handle auth-token claims via
+`AuthTokenBuilder.AdditionalClaims`; `R3DocumentEndpoint` gates the R3 doc to a
+trusted-fetcher set; `R3FetchClient` does AS-signed fetch + hash-verify;
+`R3AccessTokenEndpoint` + `R3Audit` mint + audit. All covered by the 30 tests.
+
+Decision: **drop the planned generic core seams** (`ResourceTokenBuilder.AdditionalClaims`,
+metadata `AdditionalMetadata`, AS decision hook). They are unnecessary — R3 needs
+**zero** core changes, which is even better isolation for an Exploratory-Draft feature
+(CC7's intent taken to its conclusion). The one tradeoff (`R3Challenge` duplicates
+~6 lines of JWT signing because core `JwtWriter` is `internal`) is accepted; revisit
+only if R3 is promoted into core. Phases 2/3/5/6 are therefore **satisfied by the
+import**; their generic-seam DoD items are out of scope. Active remaining work:
+Phase 7 (Bookings sample), Phase 8 (integration), Phase 9 (docs), Phase 10 (release,
+done below), Phase 11 (review), Phase 12 (owner nuget.org).
+
+### [2026-07-02] [Phase 10] publish.yml packs AAuth.R3 — RESOLVED
+
+Added a second `dotnet pack` for `src/AAuth.R3/AAuth.R3.csproj` (same
+`-p:PackageVersion`) to the `Pack` step; the existing wildcard push + `gh release`
+cover both nupkgs unchanged. Local dry-run (`-p:PackageVersion=9.9.9-test`) confirms
+both nupkgs build and the `AAuth.R3` nuspec depends on `AAuth` at the **same**
+version. `ci.yml` unchanged (solution-wide build/test covers the new projects).
+
 ## Deviations from plan
 
 ### [2026-07-02] [Phase 1] Mirror AAuth's `<Version>` in the R3 csproj — PROCEEDED (default)
