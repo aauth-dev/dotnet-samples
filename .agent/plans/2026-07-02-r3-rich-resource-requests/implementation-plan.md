@@ -63,10 +63,10 @@ blocking.
 
 **Definition of Done**
 
-- [ ] Every research open question (Q1–Q6) has a recorded ruling in
+- [x] Every research open question (Q1–Q6) has a recorded ruling in
       `implementation-log.md`.
-- [ ] CC1–CC6 confirmed or overridden.
-- [ ] Branch created; research committed (see the git steps at the end of this plan).
+- [x] CC1–CC7 confirmed or overridden.
+- [x] Branch created; research committed (see the git steps at the end of this plan).
 
 ---
 
@@ -82,6 +82,16 @@ L491–L539; `#content-addressing` L331–L340.
 > All `src/AAuth/R3/…` paths below now live in the new **`src/AAuth.R3/`** package
 > project (CC7), not core `src/AAuth`. Add `src/AAuth.R3/AAuth.R3.csproj`
 > (references `AAuth`) to `AAuth.slnx`.
+
+> **Seeded 2026-07-02** from Ana's imported `samples/AAuth.R3/` (log entry
+> `[Phase 1] Seeded R3 primitives`). The `Model/` records, `R3Hash`, `R3AuthClaims`,
+> `R3ClaimReader`, `R3ProposalStore`, etc. already exist and build against our core
+> (full `AAuth.slnx` green). Remaining Phase 1 work: **relocate**
+> `samples/AAuth.R3` → `src/AAuth.R3` as a packable preview package, **reconcile**
+> the hand-built resource-token JWT onto the generic
+> `ResourceTokenBuilder.AdditionalClaims` seam, and **port** Ana's
+> `tests/AAuth.R3.Tests` (23 tests). Many `New` rows below are therefore now
+> **Adapt** (from the imported files).
 
 ### Files
 

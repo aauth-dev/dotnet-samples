@@ -104,6 +104,32 @@ the per-call proposal with venue/time/party-size/deposit as `parameters`). Threa
 into Aria: "found a table and a tour; holding is free, confirming charges a deposit
 → per-call approval." Distinct from Trips (itinerary) and Wallet (bank rail).
 
+### [2026-07-02] [Phase 1] Seeded R3 primitives from Ana's `AAuth.R3` library — PROCEEDED
+
+Imported `samples/AAuth.R3/` verbatim from `nedruk/feat/r3-rich-resource-requests`
+(HEAD `8402061`) as the Phase 1 starting point — 21 files (the `Model/` records,
+`R3Hash`, `R3AuthClaims`, `R3ClaimReader`, `R3Challenge`, `R3Enforcement`,
+`R3FetchClient`, `R3DocumentEndpoint`, `R3ProposalStore`, `R3Metadata`, `R3Request`,
+`R3AccessTokenEndpoint`, `R3Audit`). Added to `AAuth.slnx`; builds cleanly against
+our core (0 warnings/errors) and the full solution build stays green.
+
+The import **confirms the generic-seam approach (CC7)**: her lib needs **no** core
+changes — it hand-builds the resource-token JWT via the public
+`ResourceTokenBuilder.TokenType`/`ResourceDwk` constants and mints auth-token claims
+via the existing `AuthTokenBuilder.AdditionalClaims`. It already covers several
+Phase 1/3/5/6 mechanics: verbatim `R3Hash`, MCP models, both-or-neither
+`r3_uri`/`r3_s256` validation, AS-signed fetch + hash-verify (`R3FetchClient`),
+the AS-only-fetch predicate (`R3DocumentEndpoint`), per-call proposal + digest
+enforcement (`R3Challenge`/`R3Enforcement`), and an R3 audit sink (`R3Audit`).
+
+Provenance: **only** the library was imported — not Ana's Bookings server, AS `Mode=R3`
+switch, GuidedTour, or SampleApp changes (those are Phases 7–8 and are reworked per
+the revised plan: shared AS, reservations narrative). Phase 1 follow-ups: (1) relocate
+`samples/AAuth.R3` → `src/AAuth.R3` as a packable preview package; (2) reconcile the
+hand-built resource token onto the generic `ResourceTokenBuilder.AdditionalClaims`
+seam; (3) port `tests/AAuth.R3.Tests` (23 tests); (4) the `book_trip` →
+`confirm_reservation` rename is sample-side (the lib is tool-agnostic).
+
 ## Deviations from plan
 
 _None yet._

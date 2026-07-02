@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/samples/">
+    <Project Path="samples/AAuth.R3/AAuth.R3.csproj" />
     <Project Path="samples/AgentConsole/AgentConsole.csproj" />
     <Project Path="samples/Concierge/Concierge.csproj" />
     <Project Path="samples/GuidedTour/GuidedTour.csproj" />
