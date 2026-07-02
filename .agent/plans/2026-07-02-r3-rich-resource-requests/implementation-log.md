@@ -215,5 +215,28 @@ follow-up since the models generalize). Revert if OpenAPI is needed in the first
 
 ## Open questions / inputs needed
 
-_None open; Q1–Q6 defaulted above. Revisit CC5/Q4 once the AS-signer URI exposure in
+_Q1–Q6 defaulted above. Revisit CC5/Q4 once the AS-signer URI exposure in
 `AAuthVerificationResult` is confirmed during Phase 5._
+
+### [2026-07-02] [Phase 7] How does the config-free shared AS learn which ops are conditional? — NEEDS INPUT
+
+The shared MockAccessServer must serve Wallet **and** Bookings from one instance with
+no R3-specific launch profile (owner requirement). Mounting R3 unconditionally is easy;
+the open question is the **granted-vs-conditional split** without a per-server config
+(Ana used `ConditionalTools=["book_trip"]`). Options:
+
+- **A — doc-level conditional signal (recommended).** Add an OPTIONAL `conditional`
+  operations list to the preview `R3Document` model (our package extension; not core,
+  not the base-spec wire). Bookings authors `operations:[search,hold,confirm]` +
+  `conditional:[confirm]`; the AS derives the split from the fetched doc. Config-free,
+  keeps the `r3_conditional` auth-token claim exercised (the headline R3 feature).
+  Cost: a non-standard doc field (logged) + small library/test changes.
+- **B — resource step-up, AS grants all.** AS grants every op in the doc (zero policy);
+  Bookings itself always challenges `confirm_reservation` with a per-call proposal
+  (allowed resource step-up) and keys off its proposal store on retry. Simplest and
+  fully config-free, but the `r3_conditional` claim is never populated (weaker demo).
+- **C — keep a built-in default set in the AS.** Not truly config-free / couples the AS
+  to Bookings' tool names. Rejected.
+
+Recommendation: **A** (closest to the agreed "AS derives conditional from the R3
+document"). Awaiting the owner's pick before implementing the AS rework.
