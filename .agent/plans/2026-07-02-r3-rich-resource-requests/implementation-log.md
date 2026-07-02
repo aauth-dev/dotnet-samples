@@ -248,6 +248,31 @@ reuses the **same `IssuerTrust.IsTrusted` decision path as the core Access Serve
 (authority-normalized), so there is a single trust model. Added a `null=open` test
 (broker any verifiable PS); renamed the empty-deny test; 31 R3 tests green.
 
+### [2026-07-02] [Phase 7] Conditional split moved to AS policy — 100% spec-compliant — SUPERSEDES option A (doc-derived)
+
+Owner directive ("make it 100% compliant"). r3 §Auth Token Extensions (L489) is
+explicit: "the AS populates `r3_granted` and `r3_conditional` based on the operations
+defined in the R3 document **and its own policy. The AS decides which operations to
+grant outright and which to make conditional.**" The R3 document's spec model has only
+`operations` (L322) + a **document-level** `display` (L324) — there is **no**
+`conditional` field, and because `display` is document-level it cannot mark one
+operation in a multi-op document as conditional. Option A's resource-authored
+`R3Document.conditional` therefore relocated an AS-policy decision into a non-spec
+document field (the earlier LOW validator finding).
+
+Fix: **removed `R3Document.conditional`** and added an AS-policy input
+`R3AccessTokenEndpointOptions.IsConditionalOperation` (`Func<McpOperation,bool>?`;
+`null` ⇒ grant all, since `r3_conditional` is OPTIONAL). `EvaluateDocumentAsync` splits
+via this policy. The dedicated Bookings R3 AS supplies it from config
+(`R3AccessServer:ConditionalOperations`, default `["confirm_reservation"]`), mirroring
+the `TrustedPersonServers` config pattern — this *is* "the AS's own policy." Bookings'
+R3 document now carries only spec fields (`operations` + `display`, keeping the
+`display.irreversible` human signal). Wire claims unchanged (`r3_granted`/
+`r3_conditional`); doc hashes unaffected (the field was `WhenWritingNull`). Test fixture
+sets `IsConditionalOperation = op => op.Tool == "book_trip"`; `R3TestData.Document()`
+dropped its `Conditional`. Build 0/0; 31 R3 tests green. Supersedes the option-A
+entries above and clears the sole LOW validator finding.
+
 ## Deviations from plan
 
 ### [2026-07-02] [Phase 1] Mirror AAuth's `<Version>` in the R3 csproj — PROCEEDED (default)

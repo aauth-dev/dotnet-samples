@@ -266,9 +266,9 @@ StoredR3Proposal StoreR3Document(R3ProposalStore store, IEnumerable<string> requ
                 ? "Calling confirm_reservation may charge a non-refundable deposit; cancellation and refundability depend on the selected venue's policy."
                 : null,
         },
-        Conditional = ordered.Any(op => string.Equals(op.Tool, ConfirmReservation, StringComparison.Ordinal))
-            ? [new McpOperation { Tool = ConfirmReservation }]
-            : null,
+        // The R3 document carries only spec fields (operations + display). The R3
+        // Access Server — not the resource — decides which operations are conditional
+        // (r3 §Auth Token Extensions); Bookings signals irreversibility via `display`.
     };
     return store.AddBytes(doc.ToUtf8Bytes(), new Uri(resourceUrl), "/r3");
 }

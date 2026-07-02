@@ -280,6 +280,9 @@ public class AccessEndpointR3Tests
                 Issuer = R3TestData.AsIssuer,
                 SigningKeys = new Dictionary<string, AAuthKey> { [R3TestData.AsKid] = asKey },
                 TrustedPersonServers = openPersonServerTrust ? null : (trustedPersonServers ?? [R3TestData.PsIssuer]),
+                // AS policy: book_trip requires per-call approval (r3 §Auth Token Extensions —
+                // the AS decides granted vs conditional, not the R3 document).
+                IsConditionalOperation = op => op.Tool == "book_trip",
                 AuditSink = auditSink ?? R3NoOpAuditSink.Instance,
                 FetchAndVerifyAsync = (_, uri, s256, _, _) =>
                 {

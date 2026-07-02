@@ -54,8 +54,11 @@ sequenceDiagram
 
 ## Granted vs. conditional
 
-The R3 document lists a `conditional` set; the R3 AS derives the split from it (no
-per-server config):
+The **Access Server** — not the resource — decides which operations to grant outright
+and which to make conditional, from the document's `operations` and its own policy
+(r3 §Auth Token Extensions). The dedicated Bookings AS is configured to treat
+`confirm_reservation` as conditional (override via `R3AccessServer:ConditionalOperations`);
+the R3 document itself carries only the spec fields (`operations` + `display`):
 
 - **`r3_granted`** — `search_availability`, `hold_reservation`: served immediately.
 - **`r3_conditional`** — `confirm_reservation`: charges a non-refundable deposit, so it

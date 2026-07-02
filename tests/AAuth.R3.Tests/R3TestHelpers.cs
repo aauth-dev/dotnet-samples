@@ -71,7 +71,6 @@ internal static class R3TestData
             Summary = "Search and hold trip options; booking may charge payment.",
             Irreversible = "Booking a trip may charge the payment method on file.",
         },
-        Conditional = [new McpOperation { Tool = "book_trip" }],
     };
 }
 

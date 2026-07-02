@@ -53,7 +53,7 @@ dedicated Bookings AS) aligned with the Aria narrative.
 | CC6 | Proposal store seam | Reuse `IR3DocumentStore` for docs + proposals (Q5) |
 | CC7 | Packaging | **Separate `AAuth.R3` NuGet package** (`src/AAuth.R3/`, preview) depending on `AAuth`; core gets only generic seams (2026-07-02) |
 | CC8 | R3 package version | **Same version as `AAuth`** for now — no separate version input (2026-07-02) |
-| CC9 | R3 conditional split | **Doc-derived** — `R3Document.conditional` lists the conditional ops; the R3 AS reads it (no per-AS tool config). Option A (2026-07-02) |
+| CC9 | R3 conditional split | **AS-policy** — the R3 AS decides granted vs conditional from the document's `operations` and its own policy (`IsConditionalOperation`; config `R3AccessServer:ConditionalOperations`), per r3 §Auth Token Extensions. Supersedes option A (doc-derived); the non-spec `R3Document.conditional` field was removed (2026-07-02, 100%-compliant revision) |
 
 ---
 
@@ -265,8 +265,8 @@ Proposals L491–L539 (digest verify L531); AS-only fetch L297, L541–L549.
 > **Status (2026-07-02): delivered by the dedicated R3 AS** (`samples/MockAccessServers/R3`)
 > over the imported `AAuth.R3` library (`R3FetchClient` AS-signed fetch + hash-verify,
 > `R3AccessTokenEndpoint` mint, `R3Audit` sink). The granted/conditional split is
-> **doc-derived** (`R3Document.conditional`, option A / CC9) — no generic core hook,
-> no per-AS tool config (see log).
+> **AS-policy** (`IsConditionalOperation`, CC9 revised) — the AS decides, per r3 §Auth
+> Token Extensions; the non-spec `R3Document.conditional` field was removed (see log).
 
 **Goal:** the SDK fetches, hash-verifies, caches, and audits R3 documents before
 policy runs; the AS mints grants; the PS gets `display` for consent.
@@ -292,8 +292,10 @@ AS-only fetch (client side) L297.
   `MockResourceServers/`): `Federated` (:5500, Wallet, scope) and `R3` (:5501,
   Bookings). No dual-personality server, no launch-mode switch, no `r3_uri`-branching
   middleware.
-- The granted-vs-conditional split is **doc-derived** (CC9): `R3Document.conditional`
-  lists the conditional ops and the R3 AS reads it — no per-server `ConditionalTools`.
+- The granted-vs-conditional split is **AS-policy** (CC9 revised): the R3 AS decides
+  from the document's `operations` and its own policy (`IsConditionalOperation`; config
+  `R3AccessServer:ConditionalOperations`), per r3 §Auth Token Extensions — the document
+  carries only spec fields (`operations` + `display`).
 
 **Definition of Done**
 
@@ -326,11 +328,11 @@ provider (dining & experiences), guarded by a dedicated R3 access server.
   **`confirm_reservation`** charges a deposit; distinct from Trips (mission
   itinerary) and Wallet (bank rail). No "trip"/`book_trip` naming (avoids the Trips
   collision; research §D-S7).
-- **Two dedicated, config-free access servers** (revised 2026-07-02; supersedes the
+- **Two dedicated access servers** (revised 2026-07-02; supersedes the
   "reuse single instance" ruling). `MockAccessServers/Federated` (:5500) keeps the
   scope-based Wallet flow untouched; `MockAccessServers/R3` (:5501) guards Bookings
-  and derives the conditional split from `R3Document.conditional` (CC9) — no `Mode=R3`,
-  no `ConditionalTools`.
+  and decides the conditional split by **AS policy** (`IsConditionalOperation`, CC9
+  revised) — no `Mode=R3`, no `R3Document.conditional` field.
 - **High-level DI everywhere** (owner directive): the R3 AS uses `AddAAuthDiscovery`,
   Bookings uses `AddAAuthResource` — no manual `HttpClient` wiring. Bookings still
   hand-rolls its well-known/JWKS (r3_vocabularies + R3 signing not modelled by core

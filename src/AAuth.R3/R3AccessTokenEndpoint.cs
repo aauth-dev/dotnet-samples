@@ -188,23 +188,16 @@ public static class R3AccessTokenEndpoint
         }
 
         var document = R3Document.FromUtf8Bytes(bytes);
-        // Config-free split: the resource declares conditional operations in the
-        // document's `conditional` list; everything else is granted outright.
-        var conditionalTools = (document.Conditional ?? [])
-            .Select(op => op.Tool)
-            .ToHashSet(StringComparer.Ordinal);
+        // Spec (r3 §Auth Token Extensions): the AS — not the resource — decides which
+        // operations to grant outright vs make conditional, from the document's
+        // `operations` and its OWN policy. The default policy grants everything
+        // (`r3_conditional` is OPTIONAL); a dedicated AS supplies IsConditionalOperation.
+        var isConditional = options.IsConditionalOperation ?? (static _ => false);
         var granted = new List<McpOperation>();
         var conditional = new List<McpOperation>();
         foreach (var operation in document.Operations)
         {
-            if (conditionalTools.Contains(operation.Tool))
-            {
-                conditional.Add(operation);
-            }
-            else
-            {
-                granted.Add(operation);
-            }
+            (isConditional(operation) ? conditional : granted).Add(operation);
         }
         return new AuthMintParts(
             r3.Uri,
@@ -289,6 +282,16 @@ public sealed class R3AccessTokenEndpointOptions
     /// </summary>
     public IR3AuditSink AuditSink { get; init; } = R3NoOpAuditSink.Instance;
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+
+    /// <summary>
+    /// AS policy deciding which R3 operations are <c>r3_conditional</c> (require
+    /// per-call approval) rather than <c>r3_granted</c> outright. Per r3 §Auth Token
+    /// Extensions the AS — not the resource — makes this decision "based on the
+    /// operations defined in the R3 document and its own policy." Input: each
+    /// operation from the fetched document; return <c>true</c> ⇒ conditional.
+    /// <c>null</c> (default) ⇒ grant every operation (<c>r3_conditional</c> is OPTIONAL).
+    /// </summary>
+    public Func<Model.McpOperation, bool>? IsConditionalOperation { get; init; }
 
     internal void Validate()
     {
