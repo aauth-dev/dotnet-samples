@@ -47,12 +47,13 @@ dedicated Bookings AS) aligned with the Aria narrative.
 |---|---|---|
 | CC1 | Vocabulary coverage | MCP + OpenAPI first-class + generic escape hatch (Q1) |
 | CC2 | Bookings vocabulary | **MCP-first**; package stays OpenAPI-capable (Q2, revised) |
-| CC3 | Bookings access mode | Four-party, **reusing the single shared MockAccessServer** via a unified R3-aware decision hook (research §E, revised 2026-07-02) |
-| CC4 | AS instance / port | **Reuse MockAccessServer at :5500** — no dedicated R3 AS, no per-sample R3 config (Q3, revised) |
+| CC3 | Bookings access mode | Four-party; **two dedicated access servers** under `samples/MockAccessServers/` — `Federated` (Wallet) + `R3` (Bookings) — mirroring `MockResourceServers/` (revised 2026-07-02; supersedes the "reuse single instance" ruling) |
+| CC4 | AS ports | **Federated AS :5500** (Wallet, scope) + **dedicated R3 AS :5501** (Bookings); each single-purpose, always-on, no launch-mode switch (revised 2026-07-02) |
 | CC5 | AS-only-fetch gate shape | Dedicated `MapAAuthR3Document(store, asIssuer)` mapper (Q4) |
 | CC6 | Proposal store seam | Reuse `IR3DocumentStore` for docs + proposals (Q5) |
 | CC7 | Packaging | **Separate `AAuth.R3` NuGet package** (`src/AAuth.R3/`, preview) depending on `AAuth`; core gets only generic seams (2026-07-02) |
 | CC8 | R3 package version | **Same version as `AAuth`** for now — no separate version input (2026-07-02) |
+| CC9 | R3 conditional split | **Doc-derived** — `R3Document.conditional` lists the conditional ops; the R3 AS reads it (no per-AS tool config). Option A (2026-07-02) |
 
 ---
 
@@ -261,9 +262,11 @@ Proposals L491–L539 (digest verify L531); AS-only fetch L297, L541–L549.
 
 ## Phase 6 — AS/PS-side R3 processing (SDK-owned)
 
-> **Status (2026-07-02): satisfied by the imported `AAuth.R3` library**
-> (`R3FetchClient` AS-signed fetch + hash-verify, `R3AccessTokenEndpoint` mint,
-> `R3Audit` sink); the generic AS decision hook is deferred as unnecessary (see log).
+> **Status (2026-07-02): delivered by the dedicated R3 AS** (`samples/MockAccessServers/R3`)
+> over the imported `AAuth.R3` library (`R3FetchClient` AS-signed fetch + hash-verify,
+> `R3AccessTokenEndpoint` mint, `R3Audit` sink). The granted/conditional split is
+> **doc-derived** (`R3Document.conditional`, option A / CC9) — no generic core hook,
+> no per-AS tool config (see log).
 
 **Goal:** the SDK fetches, hash-verifies, caches, and audits R3 documents before
 policy runs; the AS mints grants; the PS gets `display` for consent.
@@ -285,12 +288,12 @@ AS-only fetch (client side) L297.
 
 - Only the **AS** populates `r3_granted`/`r3_conditional`; the PS is display-only.
 - Fetch/hash-verify/audit live in the R3 package's host path, not the sample policy.
-- The AS is R3-aware via a **generic hook**, so a **single** instance serves both
-  scope-based (Wallet) and R3 (Bookings) resource tokens with **no per-sample
-  config** — it branches on `r3_uri` in the resource token.
-- The granted-vs-conditional split is derived from the **R3 document** (e.g.
-  operations whose `display.irreversible` is set are conditional), not a per-server
-  `ConditionalTools` config list.
+- **Two single-purpose access servers** under `samples/MockAccessServers/` (mirroring
+  `MockResourceServers/`): `Federated` (:5500, Wallet, scope) and `R3` (:5501,
+  Bookings). No dual-personality server, no launch-mode switch, no `r3_uri`-branching
+  middleware.
+- The granted-vs-conditional split is **doc-derived** (CC9): `R3Document.conditional`
+  lists the conditional ops and the R3 AS reads it — no per-server `ConditionalTools`.
 
 **Definition of Done**
 
@@ -301,10 +304,10 @@ AS-only fetch (client side) L297.
 
 ---
 
-## Phase 7 — Bookings resource server (samples), reusing the shared AS
+## Phase 7 — Bookings resource server + dedicated R3 AS (samples)
 
 **Goal:** a runnable R3 demonstrator in the Aria suite — an external **Reservations**
-provider (dining & experiences), served by the existing shared MockAccessServer.
+provider (dining & experiences), guarded by a dedicated R3 access server.
 
 **Spec / research:** research §D-S7, §E (revised 2026-07-02).
 
@@ -313,7 +316,7 @@ provider (dining & experiences), served by the existing shared MockAccessServer.
 | File | Action |
 |---|---|
 | `samples/MockResourceServers/Bookings/` (`Bookings.csproj`, `Program.cs`, `Entry` partial, `README.md`) | **New** — port **5005**; MCP vocabulary; `search_availability`/`hold_reservation` = granted, `confirm_reservation` = conditional (charges a non-refundable deposit); `AddAAuthResource` + `MapAAuthWellKnown` + `UseAAuth` + per-route helpers + `MapAAuthR3Document` |
-| [samples/MockAccessServer/Program.cs](../../../samples/MockAccessServer/Program.cs) | **Modify** — register the Phase 6 R3 decision hook so the **single** instance also serves Bookings' R3 tokens (no `Mode` switch, no per-sample config) |
+| `samples/MockAccessServers/R3/` (`R3.csproj`, `Program.cs`, `Entry`) | **New** — dedicated R3 AS on **:5501** via `MapR3AccessTokenEndpoint` + `AddAAuthDiscovery`. The existing `MockAccessServer` moved to `MockAccessServers/Federated` (sibling, :5500) |
 | [samples/MockResourceServers](../../../samples/MockResourceServers) READMEs | **Modify** — add the Bookings row |
 
 **Implementation Decisions**
@@ -323,20 +326,25 @@ provider (dining & experiences), served by the existing shared MockAccessServer.
   **`confirm_reservation`** charges a deposit; distinct from Trips (mission
   itinerary) and Wallet (bank rail). No "trip"/`book_trip` naming (avoids the Trips
   collision; research §D-S7).
-- **Reuse the shared AS, config-free** (research §E revised). One MockAccessServer
-  instance (:5500) serves Wallet (scope) and Bookings (R3) by branching on the
-  resource token's `r3_uri` via the Phase 6 hook — no `Mode=R3`, no `ConditionalTools`
-  list.
+- **Two dedicated, config-free access servers** (revised 2026-07-02; supersedes the
+  "reuse single instance" ruling). `MockAccessServers/Federated` (:5500) keeps the
+  scope-based Wallet flow untouched; `MockAccessServers/R3` (:5501) guards Bookings
+  and derives the conditional split from `R3Document.conditional` (CC9) — no `Mode=R3`,
+  no `ConditionalTools`.
+- **High-level DI everywhere** (owner directive): the R3 AS uses `AddAAuthDiscovery`,
+  Bookings uses `AddAAuthResource` — no manual `HttpClient` wiring. Bookings still
+  hand-rolls its well-known/JWKS (r3_vocabularies + R3 signing not modelled by core
+  metadata) — logged good-reason.
 - **MCP-first vocabulary** (Q2 revised); the package stays OpenAPI-capable.
 
 **Definition of Done**
 
 - [ ] `confirm_reservation` triggers a per-call proposal; approval + enforced retry
       succeed; a tampered parameter (changed deposit or venue) is rejected.
-- [ ] Bookings serves its R3 document only to the AS (and PS for display).
-- [ ] The single MockAccessServer serves both Wallet and Bookings with **no**
-      R3-specific launch profile or config.
-- [ ] Bookings `Program.cs` carries no manual `HttpClient` and no magic-string policies.
+- [x] Bookings serves its R3 document only to trusted fetchers (its AS + PS); agents rejected.
+- [x] `MockAccessServers/` holds two single-purpose AS (`Federated` :5500, `R3` :5501);
+      neither needs an R3-specific launch mode. Solution builds 0/0; 1118 tests green.
+- [x] R3 samples/AS carry **no** manual `HttpClient` wiring (AddAAuthDiscovery/AddAAuthResource).
 
 ---
 
@@ -351,14 +359,13 @@ in-process integration tests.
 |---|---|
 | [samples/GuidedTour/TourOptions.cs](../../../samples/GuidedTour/TourOptions.cs) + `TourSession.cs` | **Modify** — new `TourMode.RichRequests` after `Federated`; add matching switch arms + URL/highlighter wiring |
 | [samples/SampleApp](../../../samples/SampleApp) `Components/Pages/Bookings.razor` | **New** — conditional per-call approval demo |
-| [Makefile](../../../Makefile) | **Modify** — `BOOKINGS_PROJECT`/`BOOKINGS_URL` (5005); wire `resources` + `demo`. The AS is the existing MockAccessServer — **no new AS target** |
+| [Makefile](../../../Makefile) | **Modify** — `BOOKINGS_PROJECT`/`BOOKINGS_URL` (5005) + `R3AS_PROJECT`/`R3AS_URL` (5501); wire `resources` + `demo`. `Federated` AS path moved under `MockAccessServers/` |
 | `samples/GuidedTour/appsettings.json`, `samples/SampleApp/appsettings.json` | **Modify** — add `BOOKINGS_URL` |
-| `tests/AAuth.Tests/Integration/BookingsFlowTests.cs` | **New** — three in-proc hosts (Bookings + the **shared** MockAccessServer + PS) via `MultiHostHandler`, like `MockPersonServerFederationTests` |
+| `tests/AAuth.Tests/Integration/BookingsFlowTests.cs` | **New** — three in-proc hosts (Bookings + the **R3 AS** + PS) via `MultiHostHandler`, like `MockPersonServerFederationTests` |
 
 **Definition of Done**
 
-- [ ] `make demo` starts Bookings; the shared MockAccessServer serves it (no new AS
-      target); the tour's new mode runs end-to-end.
+- [ ] `make demo` starts Bookings + the R3 AS (:5501); the tour's new mode runs end-to-end.
 - [ ] `BookingsFlowTests` cover granted-serve, conditional-approve-retry, and
       tamper-reject; all integration suites green.
 
@@ -479,7 +486,7 @@ this plan, with severity-graded findings.
 | Fully-typed models for all seven vocabularies | Escape hatch suffices for the demo (Q1) |
 | Vocabulary *discovery* parsing (MCP tool list / OpenAPI / `$metadata` fetch) | Later R3 phase at most |
 | PS-side `r3_granted` minting | Out of spec — PS is display-only (r3 L391, L404) |
-| Dedicated Bookings AS project | Superseded 2026-07-02 — the shared MockAccessServer serves R3 via a generic hook, config-free (research §E revised) |
+| Single dual-mode access server | Superseded 2026-07-02 — replaced by two single-purpose AS under `MockAccessServers/` (`Federated` + `R3`); see log |
 | R3-specific claims/props in the core `AAuth` package | R3 ships as the separate `AAuth.R3` package (CC7); core gets only generic seams |
 | Mission ↔ R3 combined governance flow | Spec undefined; keep orthogonal unless decided |
 

@@ -188,6 +188,54 @@ cover both nupkgs unchanged. Local dry-run (`-p:PackageVersion=9.9.9-test`) conf
 both nupkgs build and the `AAuth.R3` nuspec depends on `AAuth` at the **same**
 version. `ci.yml` unchanged (solution-wide build/test covers the new projects).
 
+### [2026-07-02] [Phase 7] AS structure — two dedicated servers under `MockAccessServers/` — SUPERSEDES CC3/CC4 (reuse-single-instance)
+
+Owner steer ("cleaner to have a folder … one normal and one r3-specific … following
+how we did the resource servers"). Reversed the "reuse one MockAccessServer via a
+config-free hook" ruling. Added `samples/MockAccessServers/` mirroring
+`samples/MockResourceServers/`:
+- `Federated/` — the existing MockAccessServer, **moved + renamed** (namespace
+  `Federated`), scope-based AS for Wallet, :5500. Pure rename (validated); rewired
+  slnx / AAuth.Tests ref / Makefile / e2e / test type refs; 517 AAuth.Tests green.
+- `R3/` — **new** dedicated R3 AS (:5501, namespace `R3AccessServer`) via
+  `MapR3AccessTokenEndpoint`; guards Bookings.
+Two single-purpose, always-on servers — no `Mode=R3` switch, no `r3_uri`-branching
+middleware. Cleaner than the reuse approach; matches the original research §E lean.
+
+### [2026-07-02] [Phase 7] Conditional split — option A (doc-derived) — RESOLVES the open A/B/C question
+
+Chose **option A**: added an optional `conditional` operations list to the preview
+`R3Document`; the R3 AS derives the granted/conditional split from it and the
+`ConditionalTools` AS option was removed. Bookings authors
+`conditional:[confirm_reservation]`. Config-free (no per-AS tool list), keeps the
+`r3_conditional` claim exercised, and the field is `[JsonIgnore(WhenWritingNull)]`
+so it is omitted from the wire/hash when null (existing doc hashes unchanged). Note:
+`conditional` is a **non-spec extension field** — it relocates the grant/conditional
+decision from AS policy to a resource-authored hint (validation flagged this LOW;
+revisit if a spec-literal AS-policy split is wanted).
+
+### [2026-07-02] [Phase 7] High-level DI helpers in R3 samples/AS — RESOLVED
+
+Owner directive (use the 2026-06-27 server-api-surface high-level APIs everywhere in
+R3 samples/AS unless there is a very good reason not to). Fixed a manual-HttpClient
+regression: the R3 AS now uses `AddAAuthDiscovery()` and Bookings uses
+`AddAAuthResource(...)` (which folds in the verifier + shared discovery clients) —
+zero `AddHttpClient`/named-client wiring, matching the `Federated` AS. Behavior-
+preserving; solution builds 0/0, R3 tests 30 green.
+
+### [2026-07-02] [Phase 7] Validation subagent — spec-compliant, no sample regressions — RESOLVED
+
+A read-only validator audited the R3 implementation against v08 R3, checked the diff
+scope, and ran the suites. Results: **no CRITICAL/HIGH/MEDIUM spec violations** (every
+hard invariant — verbatim hashing, both-or-neither `r3_uri`/`r3_s256`, AS-only fetch
+gate, per-call digest verify, atomic audit, hash-verify-before-use — compliant);
+**one LOW** note (the `conditional` extension field, above). Change scope **PASS**:
+only R3-relevant files touched; **zero** changes to other resource servers / PS / AP /
+GuidedTour / SampleApp / Concierge / core `src/AAuth`; the `Federated` move is a pure
+rename. Build 0/0; **1118 tests green** (R3 30, AAuth.Tests 517, Conformance 571);
+e2e harness intact (45 specs, config parses with the moved AS path; R3 not yet in the
+Playwright suite — Phase 8).
+
 ## Deviations from plan
 
 ### [2026-07-02] [Phase 1] Mirror AAuth's `<Version>` in the R3 csproj — PROCEEDED (default)
@@ -213,12 +261,38 @@ The imported library is **MCP-only** (CC2 MCP-first). The Phase 1 DoD item is me
 for MCP + the escape hatch; first-class OpenAPI operation typing is deferred (cheap
 follow-up since the models generalize). Revert if OpenAPI is needed in the first cut.
 
+### [2026-07-02] [Phase 7] Bookings diverges from the full resource convention — PROCEEDED (good reason)
+
+Bookings uses `AddAAuthResource` (verifier + discovery) but **hand-rolls** its
+well-known + JWKS and does **not** use `UseAAuth`/`.RequireAAuth`. Good reasons
+(logged per owner request): (1) the well-known must advertise `r3_vocabularies`
+(+ `mission_aware`), which `AAuthResourceMetadataOptions` does not model (we dropped
+the generic `AdditionalMetadata` seam); (2) R3 enforcement is **operation-based**
+(match the call against `r3_granted`/`r3_conditional` in-handler), which the
+scope-based per-route `.RequireAAuth` filter does not express. The R3-specific
+endpoint helpers (`MapR3Document`, `MapR3AccessTokenEndpoint`, per-call proposal) are
+themselves the high-level API for R3. Revisit (add the `AdditionalMetadata` seam +
+`MapAAuthWellKnown`) if R3 graduates from preview.
+
+### [2026-07-02] [Phase 7] Federated config-section keys unchanged after the rename — PROCEEDED (default)
+
+The moved AS kept its runtime config sections `MockAccessServer:TrustedPersonServers`
+and `AccessServer:*` even though the project/namespace is now `Federated`. These are
+shared with tests (`UseSetting`) and the Makefile env; renaming them is orthogonal
+churn/risk with no functional benefit. Minor naming inconsistency accepted; revisit
+if it confuses.
+
 ## Open questions / inputs needed
 
 _Q1–Q6 defaulted above. Revisit CC5/Q4 once the AS-signer URI exposure in
 `AAuthVerificationResult` is confirmed during Phase 5._
 
-### [2026-07-02] [Phase 7] How does the config-free shared AS learn which ops are conditional? — NEEDS INPUT
+### [2026-07-02] [Phase 7] How does the config-free AS learn which ops are conditional? — RESOLVED (option A + dedicated AS)
+
+> **Resolved 2026-07-02:** chose **option A** (doc-derived `R3Document.conditional`)
+> and, per the later owner steer, a **dedicated R3 AS** under `MockAccessServers/R3`
+> (not a shared dual-mode instance). See the Decisions entries above. The options as
+> originally weighed:
 
 The shared MockAccessServer must serve Wallet **and** Bookings from one instance with
 no R3-specific launch profile (owner requirement). Mounting R3 unconditionally is easy;
