@@ -150,9 +150,39 @@ wildcard `push` and `gh release` steps then cover both nupkgs. These are Phase 1
 `AAuth.R3` ID, ID/prefix availability, first real publish) cannot be done in-repo and
 are deferred to the **final Phase 12**, per the owner instruction to keep them last.
 
+### [2026-07-02] [Phase 1] Relocation + test port complete — RESOLVED
+
+Moved `samples/AAuth.R3` → `src/AAuth.R3` (packable, `PackageId=AAuth.R3`) and ported
+Ana's `tests/AAuth.R3.Tests` — now **30** tests (not 23; she grew it in later
+commits) — repointing the project reference to `src/AAuth.R3`. Full suite green:
+AAuth.R3.Tests 30, AAuth.Tests 517, AAuth.Conformance 571; `dotnet build AAuth.slnx`
+0/0. The test commit is authored to `ana <asmirnova@microsoft.com>` (committer = me)
+per the owner's attribution instruction.
+
 ## Deviations from plan
 
-_None yet._
+### [2026-07-02] [Phase 1] Mirror AAuth's `<Version>` in the R3 csproj — PROCEEDED (default)
+
+Plan CC8/Phase 10 said "no `<Version>` (pipeline stamps it)", but core
+`AAuth.csproj` itself hardcodes `<Version>0.1.0-alpha.1</Version>`. To keep the two
+in lockstep and make the `AAuth` dependency resolve at the same version on a local
+`dotnet pack`, `AAuth.R3.csproj` mirrors `<Version>0.1.0-alpha.1</Version>`. The
+pipeline still overrides both via `-p:PackageVersion` (CC8 intact). Revert if the
+version should be pipeline-only.
+
+### [2026-07-02] [Phase 1] Defer resource-token seam reconciliation to Phase 3 — PROCEEDED (default)
+
+The imported `R3Challenge` hand-builds the resource-token JWT using
+`ResourceTokenBuilder.TokenType`/`ResourceDwk` constants (works, no core change).
+The generic `ResourceTokenBuilder.AdditionalClaims` seam is **created in Phase 3**,
+so routing the R3 resource-token claims through it is done there, not in Phase 1.
+Phase 1 stays a clean relocate + test-port.
+
+### [2026-07-02] [Phase 1] OpenAPI first-class models deferred — PROCEEDED (default)
+
+The imported library is **MCP-only** (CC2 MCP-first). The Phase 1 DoD item is met
+for MCP + the escape hatch; first-class OpenAPI operation typing is deferred (cheap
+follow-up since the models generalize). Revert if OpenAPI is needed in the first cut.
 
 ## Open questions / inputs needed
 

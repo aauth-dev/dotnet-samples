@@ -84,15 +84,14 @@ L491–L539; `#content-addressing` L331–L340.
 > project (CC7), not core `src/AAuth`. Add `src/AAuth.R3/AAuth.R3.csproj`
 > (references `AAuth`) to `AAuth.slnx`.
 
-> **Seeded 2026-07-02** from Ana's imported `samples/AAuth.R3/` (log entry
-> `[Phase 1] Seeded R3 primitives`). The `Model/` records, `R3Hash`, `R3AuthClaims`,
-> `R3ClaimReader`, `R3ProposalStore`, etc. already exist and build against our core
-> (full `AAuth.slnx` green). Remaining Phase 1 work: **relocate**
-> `samples/AAuth.R3` → `src/AAuth.R3` as a packable preview package, **reconcile**
-> the hand-built resource-token JWT onto the generic
-> `ResourceTokenBuilder.AdditionalClaims` seam, and **port** Ana's
-> `tests/AAuth.R3.Tests` (23 tests). Many `New` rows below are therefore now
-> **Adapt** (from the imported files).
+> **Seeded 2026-07-02 — relocated + tests ported.** From Ana's imported library:
+> `Model/` records, `R3Hash`, `R3AuthClaims`, `R3ClaimReader`, `R3ProposalStore`,
+> etc. **Done in Phase 1:** relocated `samples/AAuth.R3` → `src/AAuth.R3` (packable
+> preview, `PackageId=AAuth.R3`, version tracks `AAuth`); ported Ana's
+> `tests/AAuth.R3.Tests` (**30** tests, all green). **Deferred to Phase 3:**
+> reconcile the hand-built resource-token JWT onto the generic
+> `ResourceTokenBuilder.AdditionalClaims` seam (created there). The `New` file rows
+> below are already present as imported files.
 
 ### Files
 
@@ -118,10 +117,12 @@ L491–L539; `#content-addressing` L331–L340.
 
 **Definition of Done**
 
-- [ ] `r3_s256` matches hand-computed hashes for the spec's example documents.
-- [ ] `R3OperationSet` round-trips JSON for MCP + OpenAPI and via the escape hatch.
-- [ ] Store returns byte-identical content for a stored `(uri, s256)`.
-- [ ] `dotnet build AAuth.slnx` green; conformance suite green.
+- [x] `r3_s256` matches hand-computed hashes for the spec's example documents.
+- [x] `R3OperationSet` round-trips JSON for MCP + the escape hatch (OpenAPI
+      first-class deferred — CC2 MCP-first; see log).
+- [x] Store returns byte-identical content for a stored `(uri, s256)`.
+- [x] `dotnet build AAuth.slnx` green; conformance suite green (R3 30, AAuth.Tests
+      517, AAuth.Conformance 571).
 
 ---
 
