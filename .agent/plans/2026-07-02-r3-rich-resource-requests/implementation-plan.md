@@ -350,6 +350,13 @@ provider (dining & experiences), guarded by a dedicated R3 access server.
 
 ## Phase 8 — Integration (GuidedTour, SampleApp, Makefile, e2e)
 
+> **Status (2026-07-02): partial.** ✅ Makefile wires Bookings (:5005) + the R3 AS
+> (:5501) into `resources`/`demo`. ⏳ Remaining: GuidedTour R3 mode, SampleApp R3
+> page, Playwright e2e specs, and a dedicated `BookingsFlowTests` — the interactive
+> demo + e2e surface (the R3 protocol itself is covered by the 31 in-proc
+> `AAuth.R3.Tests`). Ana's GuidedTour/SampleApp R3 work on the fork is the
+> adaptation candidate (attribute to her).
+
 **Goal:** wire Bookings into the tour, the app, the demo orchestration, and the
 in-process integration tests.
 
@@ -372,6 +379,11 @@ in-process integration tests.
 ---
 
 ## Phase 9 — Docs / snippets / samples sweep
+
+> **Status (2026-07-02): partial.** ✅ New `docs/workflows/rich-resource-requests.md`;
+> Bookings row + narrative in `samples/MockResourceServers/README.md`. ⏳ Remaining:
+> `docs/concepts.md` / `docs/glossary.md` / `docs/README.md` / root `README.md` /
+> `samples/README.md` R3 rows, and `docs/reference/*` R3 options.
 
 Run **after** the code surface is frozen. Non-compiled surfaces drift silently.
 
