@@ -5,6 +5,7 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.R3.Model;
 using AAuth.Server.Metadata;
+using AAuth.Server.Verification;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -37,7 +38,7 @@ public static class R3AccessTokenEndpoint
             R3VerifiedFetcher caller;
             try
             {
-                caller = await R3DocumentEndpoint.VerifyFetcherAsync(context, options.IsTrustedPersonServer);
+                caller = await R3DocumentEndpoint.VerifyFetcherAsync(context, options.IsCallerTrustedPersonServer);
             }
             catch (R3UntrustedJwksUriException)
             {
@@ -48,7 +49,7 @@ public static class R3AccessTokenEndpoint
                 return Results.Json(new { error = "invalid_signature", detail = ex.Message }, statusCode: StatusCodes.Status401Unauthorized);
             }
 
-            if (!options.IsTrustedPersonServer(caller))
+            if (!options.IsCallerTrustedPersonServer(caller))
             {
                 return Results.Json(new { error = "untrusted_person_server" }, statusCode: StatusCodes.Status403Forbidden);
             }
@@ -265,7 +266,21 @@ public sealed class R3AccessTokenEndpointOptions
     public required IReadOnlyDictionary<string, AAuthKey> SigningKeys { get; init; }
     public string TokenPath { get; init; } = "/token";
     public string Subject { get; init; } = "pairwise-sub";
+    /// <summary>
+    /// Person Servers this AS brokers for, by authority (or absolute URL). <c>null</c>
+    /// ⇒ broker any *verifiable* PS (the AAuth spec default); empty ⇒ deny-all;
+    /// entries narrow. Composed by AND with <see cref="IsTrustedPersonServer"/>.
+    /// </summary>
     public IReadOnlyCollection<string>? TrustedPersonServers { get; init; }
+
+    /// <summary>
+    /// Optional per-PS trust policy. Input: the caller PS's <c>jwks_uri</c> authority.
+    /// Composed by AND with <see cref="TrustedPersonServers"/> — each only narrows;
+    /// <c>null</c> ⇒ no policy constraint. Both unset ⇒ broker any verifiable PS.
+    /// See <see cref="AAuth.Server.Verification.IssuerTrust"/>.
+    /// </summary>
+    public Func<string, bool>? IsTrustedPersonServer { get; init; }
+
     public Func<HttpContext, string, string, string, CancellationToken, Task<byte[]>>? FetchAndVerifyAsync { get; init; }
     /// <summary>
     /// AS-side R3 token issuance audit sink. Defaults to no-op for sample ergonomics;
@@ -312,20 +327,22 @@ public sealed class R3AccessTokenEndpointOptions
         throw new InvalidOperationException("At least one AS signing key is required.");
     }
 
-    internal bool IsTrustedPersonServer(R3VerifiedFetcher fetcher)
+    // draft-08 PS-AS trust: `TrustedPersonServers` null ⇒ open (broker any *verifiable*
+    // Person Server — the spec default); empty ⇒ deny-all; entries narrow. Composed by
+    // AND with the optional `IsTrustedPersonServer` policy via the shared IssuerTrust
+    // helper (same decision path as the core Access Server).
+    internal bool IsCallerTrustedPersonServer(R3VerifiedFetcher fetcher)
     {
+        // The PS authenticates via the jwks_uri scheme; a jwt-scheme (agent) caller is never a PS.
         if (fetcher.Scheme != AAuthConstants.Schemes.JwksUri || fetcher.JwksUri is null)
         {
             return false;
         }
-        if (TrustedPersonServers is null || TrustedPersonServers.Count == 0)
-        {
-            return false;
-        }
-        var allowed = TrustedPersonServers
-            .Select(ps => Uri.TryCreate(ps, UriKind.Absolute, out var uri) ? $"{uri.Scheme}://{uri.Authority}" : ps)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return allowed.Contains($"{fetcher.JwksUri.Scheme}://{fetcher.JwksUri.Authority}")
-            || allowed.Contains(fetcher.JwksUri.Authority);
+        IReadOnlyCollection<string>? hosts = TrustedPersonServers is null
+            ? null
+            : TrustedPersonServers
+                .Select(ps => Uri.TryCreate(ps, UriKind.Absolute, out var uri) ? uri.Authority : ps)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return IssuerTrust.IsTrusted(hosts, IsTrustedPersonServer, fetcher.JwksUri.Authority);
     }
 }

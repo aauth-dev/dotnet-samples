@@ -106,7 +106,20 @@ public class AccessEndpointR3Tests
     }
 
     [Fact]
-    public async Task TokenEndpoint_RejectsPersonServerWhenAllowListIsMissing()
+    public async Task TokenEndpoint_AcceptsAnyVerifiablePersonServer_WhenTrustListUnset()
+    {
+        // draft-08 PS-AS trust: an unset (null) trust list is OPEN — the AS brokers for
+        // any *verifiable* Person Server. Only an explicit set narrows (empty ⇒ deny-all).
+        var fixture = await R3AccessFixture.CreateAsync(openPersonServerTrust: true);
+        await using var app = fixture.App;
+
+        var response = await fixture.PostTokenAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task TokenEndpoint_RejectsPersonServerWhenAllowListIsEmpty()
     {
         var fixture = await R3AccessFixture.CreateAsync(trustedPersonServers: []);
         await using var app = fixture.App;
@@ -223,6 +236,7 @@ public class AccessEndpointR3Tests
             string? resourceTokenS256Override = null,
             string? resourceTokenUriOverride = null,
             IReadOnlyCollection<string>? trustedPersonServers = null,
+            bool openPersonServerTrust = false,
             IR3AuditSink? auditSink = null)
         {
             var asKey = AAuthKey.Generate();
@@ -265,7 +279,7 @@ public class AccessEndpointR3Tests
             {
                 Issuer = R3TestData.AsIssuer,
                 SigningKeys = new Dictionary<string, AAuthKey> { [R3TestData.AsKid] = asKey },
-                TrustedPersonServers = trustedPersonServers ?? [R3TestData.PsIssuer],
+                TrustedPersonServers = openPersonServerTrust ? null : (trustedPersonServers ?? [R3TestData.PsIssuer]),
                 AuditSink = auditSink ?? R3NoOpAuditSink.Instance,
                 FetchAndVerifyAsync = (_, uri, s256, _, _) =>
                 {

@@ -7,6 +7,11 @@ var asKey = AAuthKey.Generate();
 const string AsKid = "r3-as-1";
 
 var issuer = (builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5501").TrimEnd('/');
+// Person Servers this AS brokers for. draft-08 PS-AS trust (2026-06-29 narrative):
+// an UNSET list is open (broker any *verifiable* PS — the spec default); an explicit
+// list narrows (empty ⇒ deny-all), composed by AND with an optional IsTrustedPersonServer
+// policy. This sample pins the demo PS (:5100) as the documented four-party pattern;
+// set R3AccessServer:TrustedPersonServers to override.
 var trustedPersonServers = builder.Configuration
     .GetSection("R3AccessServer:TrustedPersonServers")
     .Get<string[]>() ?? ["http://localhost:5100"];

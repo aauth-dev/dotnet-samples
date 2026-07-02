@@ -22,7 +22,7 @@ namespace AAuth.Server.Verification;
 /// Callers MUST pass <c>null</c> (never an empty collection) when the option was
 /// unset, and a normalized <paramref name="id"/> matching the set's normalization.
 /// </remarks>
-internal static class IssuerTrust
+public static class IssuerTrust
 {
     /// <summary>
     /// Evaluate whether <paramref name="id"/> is trusted under the allow-list and
