@@ -34,6 +34,21 @@ public class AgentR3RequestTests
         Assert.Equal("resource.jwt", challenge!.ResourceToken);
     }
 
+    [Fact]
+    public void ReadChallenge_UsesFirstAAuthRequirementHeaderValue()
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.Unauthorized);
+        response.Headers.TryAddWithoutValidation("AAuth-Requirement", [
+            "requirement=auth-token; resource-token=\"first.jwt\"",
+            "requirement=auth-token; resource-token=\"second.jwt\"",
+        ]);
+
+        var challenge = R3Request.ReadChallenge(response);
+
+        Assert.NotNull(challenge);
+        Assert.Equal("first.jwt", challenge!.ResourceToken);
+    }
+
     private sealed class CaptureAuthorizeHandler : HttpMessageHandler
     {
         public string Body { get; private set; } = "";

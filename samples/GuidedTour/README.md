@@ -71,7 +71,8 @@ available, switchable at runtime from the topbar **Mode** picker:
   `r3_conditional`, and the final `book_trip` call succeeds only after a
   digest-matched per-call proposal approval. Implemented with the
   `samples/AAuth.R3` preview library, which currently supports the MCP
-  vocabulary only; `src/AAuth` is unchanged.
+  vocabulary only; `src/AAuth` only gained generic Person Server extensibility
+  used by the demo.
 
 When `PersonServerUrl` is empty in `appsettings.json`, the three-party
 options are disabled; the two-party flows — **Identity-based** and

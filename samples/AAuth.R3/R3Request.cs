@@ -37,7 +37,12 @@ public static class R3Request
         {
             return null;
         }
-        var parsed = AAuthRequirementHeader.Parse(values.Single());
+        var header = values.FirstOrDefault();
+        if (header is null)
+        {
+            return null;
+        }
+        var parsed = AAuthRequirementHeader.Parse(header);
         return parsed.ResourceToken is null ? null : new R3ChallengeInfo(parsed.Requirement, parsed.ResourceToken);
     }
 }

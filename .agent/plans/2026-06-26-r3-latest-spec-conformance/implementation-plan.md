@@ -15,7 +15,8 @@ that should be closed before treating the sample as draft-faithful.
 This follow-up keeps the existing architectural decisions from
 [../2026-06-19-r3-guided-tour-scenario/implementation-plan.md](../2026-06-19-r3-guided-tour-scenario/implementation-plan.md):
 
-* `src/AAuth` stays unchanged.
+* No R3-specific models or claims are added to `src/AAuth`; generic Person
+  Server extensibility may live there when needed by the sample.
 * `AAuth.R3` remains an extraction-ready preview library under `samples/`.
 * The implemented vocabulary remains MCP only.
 * Bookings remains the live mock resource for the Rich Trip Booking scenario.

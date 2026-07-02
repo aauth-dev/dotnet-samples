@@ -267,7 +267,8 @@
                     can provide.<br /><br />
                     <strong>Experimental:</strong> Rich Resource Requests (R3) are implemented
                     here with the <code>AAuth.R3</code> preview library under <code>samples/</code>;
-                    the core <code>src/AAuth</code> SDK is unchanged. The agent sends
+                    R3-specific models and claims live there, while <code>src/AAuth</code>
+                    only adds generic Person Server extensibility used by this demo. The agent sends
                     <code>r3_operations</code> for MCP tools
                     (<code>search_trip_options</code>, <code>hold_itinerary</code>,
                     <code>book_trip</code>) to Bookings. The resource returns a token with

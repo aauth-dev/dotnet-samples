@@ -239,7 +239,8 @@ internal static class CodeSnippets
 
     public const string RichRequestDiscover = """
         // R3 is experimental and lives in samples/AAuth.R3 today.
-        // The core src/AAuth SDK is unchanged.
+        // R3-specific models and claims live there; src/AAuth only adds
+        // generic Person Server extensibility used by this demo.
         // Resource metadata includes:
         //   authorization_endpoint
         //   r3_vocabularies["urn:aauth:vocabulary:mcp"]

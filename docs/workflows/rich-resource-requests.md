@@ -2,8 +2,9 @@
 
 > [!WARNING]
 > R3 is experimental. This repository demonstrates it through the
-> extraction-ready `samples/AAuth.R3` preview library; the core `src/AAuth` SDK
-> is unchanged. The preview library currently implements the MCP vocabulary
+> extraction-ready `samples/AAuth.R3` preview library. R3-specific models and
+> claims live there; `src/AAuth` only gained generic Person Server extensibility
+> used by the demo. The preview library currently implements the MCP vocabulary
 > only.
 
 Rich Resource Requests replace opaque scope strings with content-addressed

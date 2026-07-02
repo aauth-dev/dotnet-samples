@@ -90,12 +90,14 @@ public sealed class R3Enforcement
         ArgumentNullException.ThrowIfNull(claims);
         ArgumentException.ThrowIfNullOrEmpty(tool);
 
-        var operationAuthorized =
-            claims.Granted.ContainsTool(tool)
-            || (claims.Conditional?.ContainsTool(tool) ?? false);
-        if (!operationAuthorized)
+        if (!claims.Granted.ContainsTool(tool))
         {
             return R3EnforcementDecision.Rejected("operation_not_granted");
+        }
+
+        if (!string.Equals(claims.S256, approvedProposalS256, StringComparison.Ordinal))
+        {
+            return R3EnforcementDecision.Rejected("proposal_token_mismatch");
         }
 
         if (presentedParameters is null || !_proposalStore.TryGet(approvedProposalS256, out var stored))

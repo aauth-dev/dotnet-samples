@@ -204,15 +204,29 @@ public class ResourceR3Tests
                 ["name"] = "Aria",
             }),
         };
+        var classTokenRetry = enforcement.Evaluate(claims, "book_trip", reorderedInline, approvedProposalS256: conditional.ProposalS256);
+        Assert.Equal(R3EnforcementDecisionKind.Rejected, classTokenRetry.Kind);
+        Assert.Equal("operation_not_granted", classTokenRetry.Error);
+
+        var approvedClaims = new R3ClaimReader.AuthTokenClaims(
+            conditional.ProposalUri!,
+            conditional.ProposalS256!,
+            R3Grant.Mcp("book_trip"),
+            null);
         Assert.Equal(R3EnforcementDecisionKind.Granted,
-            enforcement.Evaluate(claims, "book_trip", reorderedInline, approvedProposalS256: conditional.ProposalS256).Kind);
+            enforcement.Evaluate(approvedClaims, "book_trip", reorderedInline, approvedProposalS256: conditional.ProposalS256).Kind);
+
+        var mismatchedToken = approvedClaims with { S256 = "different-proposal-hash" };
+        var mismatched = enforcement.Evaluate(mismatchedToken, "book_trip", reorderedInline, approvedProposalS256: conditional.ProposalS256);
+        Assert.Equal(R3EnforcementDecisionKind.Rejected, mismatched.Kind);
+        Assert.Equal("proposal_token_mismatch", mismatched.Error);
 
         var tampered = new Dictionary<string, R3Parameter>(parameters)
         {
             ["total_usd"] = R3Parameter.Inline(JsonValue.Create(1300)!),
         };
         Assert.Equal(R3EnforcementDecisionKind.Rejected,
-            enforcement.Evaluate(claims, "book_trip", tampered, approvedProposalS256: conditional.ProposalS256).Kind);
+            enforcement.Evaluate(approvedClaims, "book_trip", tampered, approvedProposalS256: conditional.ProposalS256).Kind);
     }
 
     [Fact]
