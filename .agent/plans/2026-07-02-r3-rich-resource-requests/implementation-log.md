@@ -236,6 +236,18 @@ rename. Build 0/0; **1118 tests green** (R3 30, AAuth.Tests 517, Conformance 571
 e2e harness intact (45 specs, config parses with the moved AS path; R3 not yet in the
 Playwright suite — Phase 8).
 
+### [2026-07-02] [Phase 7] R3 AS Person-Server trust made 100% spec-compliant — RESOLVED
+
+Owner directive (issuer validation must be 100% spec-compliant + the config pattern
+must support it, per the 2026-06-29 ps-asserted-any-issuer-trust narrative). The R3
+AS's PS trust check previously treated **both** null and empty `TrustedPersonServers`
+as reject-all — wrong. Fixed to the canonical model: **null = open** (broker any
+*verifiable* PS — the draft-08 spec default), **empty = deny-all**, entries narrow,
+plus an optional `IsTrustedPersonServer` predicate composed by **AND**. The R3 AS now
+reuses the **same `IssuerTrust.IsTrusted` decision path as the core Access Server**
+(authority-normalized), so there is a single trust model. Added a `null=open` test
+(broker any verifiable PS); renamed the empty-deny test; 31 R3 tests green.
+
 ## Deviations from plan
 
 ### [2026-07-02] [Phase 1] Mirror AAuth's `<Version>` in the R3 csproj — PROCEEDED (default)
@@ -281,6 +293,23 @@ and `AccessServer:*` even though the project/namespace is now `Federated`. These
 shared with tests (`UseSetting`) and the Makefile env; renaming them is orthogonal
 churn/risk with no functional benefit. Minor naming inconsistency accepted; revisit
 if it confuses.
+
+### [2026-07-02] [Phase 7] `IssuerTrust` promoted to public — PROCEEDED (generic core change)
+
+To give the R3 AS the *same* trust decision as the core AS (rather than a divergent
+copy), the generic `AAuth.Server.Verification.IssuerTrust` helper was made `public`
+(was `internal`). This is a **generic, non-R3 core change** — a reusable trust
+primitive for extension packages — not R3-specific knowledge, so it is consistent
+with the CC7 "core gets only generic seams" posture (it slightly relaxes the earlier
+"zero core changes" outcome). Revert to `internal` + duplicate the logic in the R3
+package only if exposing it is unwanted.
+
+### [2026-07-02] [Phase 7] Observed: `Federated` AS has a stale trust comment — NOTED (pre-existing, out of scope)
+
+The moved `Federated` (ex-MockAccessServer) `Program.cs` carries a pre-existing
+comment "An empty set trusts any signed caller," which is stale under the 2026-06-29
+semantics (empty = deny-all; **null/unset** = open). Not changed here (out of scope
+for R3; the move was a pure rename). Flagged for a separate cleanup.
 
 ## Open questions / inputs needed
 
