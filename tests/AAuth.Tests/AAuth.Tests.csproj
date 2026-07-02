@@ -7,7 +7,7 @@
     <ProjectReference Include="..\..\samples\MockResourceServers\Calendar\Calendar.csproj" />
     <ProjectReference Include="..\..\samples\MockResourceServers\Inbox\Inbox.csproj" />
     <ProjectReference Include="..\..\samples\MockPersonServer\MockPersonServer.csproj" />
-    <ProjectReference Include="..\..\samples\MockAccessServer\MockAccessServer.csproj" />
+    <ProjectReference Include="..\..\samples\MockAccessServers\Federated\Federated.csproj" />
   </ItemGroup>
 
   <!--

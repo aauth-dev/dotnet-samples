@@ -99,7 +99,7 @@ export default defineConfig({
       // deferred flow — from the agent's perspective the stub and Keycloak are
       // identical. Set AccessServer__PolicyProvider=keycloak (and the
       // Keycloak__* vars) plus KEYCLOAK_E2E=1 to exercise the Keycloak path.
-      ...dotnetRun('samples/MockAccessServer/MockAccessServer.csproj', {
+      ...dotnetRun('samples/MockAccessServers/Federated/Federated.csproj', {
         AccessServer__PolicyProvider: process.env.AccessServer__PolicyProvider ?? 'stub',
         AccessServer__RequireConsent: process.env.AccessServer__RequireConsent ?? 'true',
       }),

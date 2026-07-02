@@ -19,7 +19,7 @@ SAMPLE_PROJECT := samples/SampleApp/SampleApp.csproj
 CONCIERGE_PROJECT   := samples/Concierge/Concierge.csproj
 LIVE_PROJECT   := samples/LiveWhoAmITest/LiveWhoAmITest.csproj
 MISSION_PROJECT := samples/MissionAgent/MissionAgent.csproj
-AS_PROJECT     := samples/MockAccessServer/MockAccessServer.csproj
+AS_PROJECT     := samples/MockAccessServers/Federated/Federated.csproj
 
 PROFILE_URL  := http://localhost:5000
 CALENDAR_URL := http://localhost:5001
@@ -34,7 +34,7 @@ SAMPLE_URL := http://localhost:5240
 AS_URL     := http://localhost:5500
 KEYCLOAK_URL   := http://localhost:8080
 KEYCLOAK_IMAGE := quay.io/keycloak/keycloak:26.0
-KEYCLOAK_REALM := samples/MockAccessServer/keycloak
+KEYCLOAK_REALM := samples/MockAccessServers/Federated/keycloak
 
 # AgentConsole persists its enrollment under $LocalApplicationData; the MockAgentProvider
 # keeps its agent registry in memory, so the cache goes stale whenever the AP restarts.

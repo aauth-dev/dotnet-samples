@@ -19,7 +19,7 @@ using Xunit;
 namespace AAuth.Tests.Integration;
 
 /// <summary>
-/// Manual PS-to-AS exercise for the shipped <c>samples/MockAccessServer/</c>
+/// Manual PS-to-AS exercise for the shipped <c>samples/MockAccessServers/Federated/</c>
 /// sample (four-party / federated access). These stand in for the real PS
 /// federation client (which arrives in a later phase): the test hand-signs
 /// the PS-to-AS <c>POST /token</c> request with the <c>jwks_uri</c> scheme,
@@ -42,7 +42,7 @@ public class MockAccessServerTests : IDisposable
     private static readonly AAuthKey ApKey = AAuthKey.Generate();
     private static readonly AAuthKey ResourceKey = AAuthKey.Generate();
 
-    private readonly WebApplicationFactory<MockAccessServer.Entry> _factory;
+    private readonly WebApplicationFactory<Federated.Entry> _factory;
 
     public MockAccessServerTests()
     {
@@ -55,9 +55,9 @@ public class MockAccessServerTests : IDisposable
     // suite. (A shared IClassFixture + chained WithWebHostBuilder leaked config
     // between tests under some orderings — the base-config tests intermittently
     // saw another test's RequireClaims.)
-    private static WebApplicationFactory<MockAccessServer.Entry> CreateFactory(
+    private static WebApplicationFactory<Federated.Entry> CreateFactory(
         Action<IWebHostBuilder>? extra = null)
-        => new WebApplicationFactory<MockAccessServer.Entry>().WithWebHostBuilder(b =>
+        => new WebApplicationFactory<Federated.Entry>().WithWebHostBuilder(b =>
         {
             b.UseSetting("AAuth:Issuer", AsIssuer);
             b.UseSetting("MockAccessServer:TrustedPersonServers:0", PsIssuer);
@@ -302,7 +302,7 @@ public class MockAccessServerTests : IDisposable
         return http;
     }
 
-    private static HttpClient BuildPsSignedClient(WebApplicationFactory<MockAccessServer.Entry> factory)
+    private static HttpClient BuildPsSignedClient(WebApplicationFactory<Federated.Entry> factory)
     {
         var http = new AAuthClientBuilder(PsKey)
             .UseJwksUri($"{PsIssuer}/.well-known/jwks.json", PsKid)
