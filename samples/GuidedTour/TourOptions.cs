@@ -23,6 +23,7 @@ public enum TourMode
     Deferred,
     CallChain,
     Federated,
+    RichRequests,
     Mission,
     MissionCallChain,
     SubAgent,
@@ -86,6 +87,9 @@ public sealed class TourOptions
     /// <summary>Base URL of the Aria <b>Wallet</b> resource server (four-party federated).</summary>
     public string WalletUrl { get; set; } = "http://localhost:5003";
 
+    /// <summary>Base URL of the Aria <b>Bookings</b> resource server (Rich Resource Requests, four-party R3).</summary>
+    public string BookingsUrl { get; set; } = "http://localhost:5005";
+
     /// <summary>
     /// Optional MockPersonServer URL. When set, the tour walks one of the
     /// three-party flows (selected by <see cref="Mode"/>); when null/empty
@@ -119,6 +123,15 @@ public sealed class TourOptions
     /// AS mints the <c>aa-auth+jwt</c> (<c>dwk=aauth-access.json</c>).
     /// </summary>
     public string? AccessServerUrl { get; set; }
+
+    /// <summary>
+    /// Optional dedicated R3 Access Server URL for the Rich Resource Requests flow.
+    /// When set (with a Person Server), the RichRequests tour mode becomes selectable:
+    /// the agent calls Bookings (whose resource token has <c>aud</c> = this AS), the
+    /// Person Server federates to the R3 AS, and the AS mints an R3 <c>aa-auth+jwt</c>
+    /// carrying <c>r3_granted</c>/<c>r3_conditional</c>.
+    /// </summary>
+    public string? R3AccessServerUrl { get; set; }
 
     /// <summary>
     /// Which flow to walk by default when the page loads. Defaults to
