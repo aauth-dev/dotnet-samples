@@ -353,12 +353,14 @@ provider (dining & experiences), guarded by a dedicated R3 access server.
 
 ## Phase 8 — Integration (GuidedTour, SampleApp, Makefile, e2e)
 
-> **Status (2026-07-02): partial.** ✅ Makefile wires Bookings (:5005) + the R3 AS
-> (:5501) into `resources`/`demo`. ⏳ Remaining: GuidedTour R3 mode, SampleApp R3
-> page, Playwright e2e specs, and a dedicated `BookingsFlowTests` — the interactive
-> demo + e2e surface (the R3 protocol itself is covered by the 31 in-proc
-> `AAuth.R3.Tests`). Ana's GuidedTour/SampleApp R3 work on the fork is the
-> adaptation candidate (attribute to her).
+> **Status (2026-07-02): mostly done.** ✅ Makefile wires Bookings (:5005) + the R3 AS
+> (:5501) into `resources`/`demo`. ✅ e2e harness wired (Playwright webServer boots
+> Bookings + R3 AS; PS federates to both AS; app configs carry the URLs). ✅ **SampleApp
+> R3 page** (`/bookings`) + nav item + home card + `bookings.spec.ts` — both paths green
+> in Playwright (granted → 200; conditional → per-call proposal challenge). ⏳ Deferred
+> (see log): the **GuidedTour interactive R3 flow** (large bespoke orchestration; the
+> SampleApp already provides the interactive demo) and a standalone in-proc
+> **`BookingsFlowTests`** (superseded by the SampleApp e2e + in-proc `AAuth.R3.Tests`).
 
 **Goal:** wire Bookings into the tour, the app, the demo orchestration, and the
 in-process integration tests.

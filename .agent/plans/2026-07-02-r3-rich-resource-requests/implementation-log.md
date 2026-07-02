@@ -373,6 +373,39 @@ follow chained auth-token challenges (needed for R3 conditional auto-completion)
 root-cause the live second-exchange block, then assert full `confirmReservation` → 200
 completion in e2e.
 
+### [2026-07-02] [Phase 8] GuidedTour interactive R3 flow — DEFERRED (follow-up)
+
+The GuidedTour engine (`TourSession.RunNextAsync`) runs a bespoke, live, per-step HTTP
+orchestration for each flow (the Federated flow alone is ~10 hand-written
+`StepFederated*` methods plus plan/highlighter/lane wiring). A faithful R3 flow would
+add a parallel step set (granted path ≈ the four-party Federated path; plus the
+conditional per-call proposal, which shares the live auto-completion gap above), a
+picker option, a home flow card, actor lanes, and an e2e spec. Given the SampleApp
+already ships a **validated, interactive R3 demonstrator** (`/bookings`, both paths
+green in Playwright), the tour flow is deferred as a single coherent follow-up rather
+than shipped half-built. The GuidedTour home intro deliberately promises "each flow
+below follows Aria across these services," so Bookings is **not** added to the intro
+list until its flow exists (keeping the page coherent). Scaffolding already landed:
+`TourMode.RichRequests` + `BookingsUrl`/`R3AccessServerUrl` options + appsettings.
+
+**Owner pointers captured for the follow-up:** place the flow right after `Federated`
+(four-party neighbour); add the SampleApp-style nav/index entry; update the tour home
+resource-name list to include Bookings; add the e2e spec + update `home.spec.ts`
+(FLOWS array + count) and `actor-bar-visual.spec.ts`.
+
+### [2026-07-02] [Phase 8] Standalone in-proc BookingsFlowTests — DEFERRED (superseded)
+
+Rationale: the Bookings sample's four-party composition (proactive/reactive resource
+token → PS federation → R3 AS mint → granted enforcement) is now **validated
+end-to-end by the SampleApp Playwright spec** against the real Bookings + R3 AS + PS,
+and the R3 **mechanics** (granted/conditional split, per-call proposal digest match,
+tamper reject) are covered by the in-proc `AAuth.R3.Tests` (`ResourceR3Tests`,
+`AccessEndpointR3Tests`). A *true* in-proc four-party `BookingsFlowTests` is also
+blocked by the same seam as the ChallengeHandler follow-up: the R3 AS sample's
+document fetch uses a non-injectable `HttpClient` (`R3FetchClient.Create` default
+handler), so a `TestServer`-hosted AS can't reach the in-proc Bookings. Revisit
+alongside making that fetch handler injectable.
+
 ## Deviations from plan
 
 ### [2026-07-02] [Phase 1] Mirror AAuth's `<Version>` in the R3 csproj — PROCEEDED (default)
