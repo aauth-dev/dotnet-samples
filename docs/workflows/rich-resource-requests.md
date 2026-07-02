@@ -10,7 +10,7 @@ Rich Resource Requests replace opaque scope strings with content-addressed
 operation documents. In the Guided Tour, Aria asks the `Bookings` resource for
 three MCP operations: `search_trip_options`, `hold_itinerary`, and `book_trip`.
 
-Flow #10, **Rich Trip Booking (R3)**, runs against live mock services:
+Flow #11, **Rich Trip Booking (R3)**, runs against live mock services:
 
 1. Agent discovers Bookings metadata, including `authorization_endpoint` and
    `r3_vocabularies["urn:aauth:vocabulary:mcp"]`.
@@ -36,7 +36,7 @@ Run the demo with:
 make demo-tour-r3
 ```
 
-The target launches Bookings on `:5004`, the dedicated R3 AS on `:5501`, the
+The target launches Bookings on `:5005`, the dedicated R3 AS on `:5501`, the
 MockPersonServer on `:5100`, the Agent Provider on `:5301`, and GuidedTour on
 `:5400`.
 

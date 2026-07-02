@@ -203,7 +203,7 @@ demo-tour-r3: ## Start the experimental GuidedTour R3 stack (Bookings :5005 + R3
 	@echo "   R3 Access Server:  $(R3_AS_URL)         (dedicated R3 AS)"
 	@echo ""
 	@echo " Open in your browser:"
-	@echo "   GuidedTour:        $(TOUR_URL)         (flow #10: Rich Trip Booking (R3))"
+	@echo "   GuidedTour:        $(TOUR_URL)         (flow #11: Rich Trip Booking (R3))"
 	@echo "------------------------------------------------------------------"
 	@echo ""
 	@trap 'echo; echo "Stopping..."; kill 0' INT TERM; \

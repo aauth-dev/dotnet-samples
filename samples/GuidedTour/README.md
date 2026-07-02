@@ -19,7 +19,7 @@ into the live walkthrough at `/tour?flow=<Flow>`; the tour's topbar has an
 A swim-lane sequence diagram across up to four actors — **Agent**,
 **Concierge**, **Resource**, **Person Server**, and **Access Server** as needed — with a payload
 inspector on the right that decodes each JWT and shows the canonical
-RFC 9421 signature base for every signed request. Ten flows are
+RFC 9421 signature base for every signed request. Eleven flows are
 available, switchable at runtime from the topbar **Mode** picker:
 
 * **Bootstrap** (2–3 steps) — generate the agent's signing key and build
@@ -63,7 +63,7 @@ available, switchable at runtime from the topbar **Mode** picker:
   call chain** (Agent → Concierge → Calendar) flows **silently** because
   both hops are in the mission's scope. The PS's mission log records the
   whole trail. Requires a Person Server and a Concierge URL.
-* **Rich Trip Booking (R3)** (12 steps; experimental, MCP-only) — Aria sends
+* **Rich Trip Booking (R3)** (scenario 11; 12 steps; experimental, MCP-only) — Aria sends
   `r3_operations` to **Bookings** (:5005) for MCP tools
   `search_trip_options`, `hold_itinerary`, and `book_trip`. Bookings returns a
   content-addressed R3 document (`r3_uri`/`r3_s256`), the PS renders its
