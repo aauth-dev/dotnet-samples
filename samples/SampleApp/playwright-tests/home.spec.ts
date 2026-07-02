@@ -19,6 +19,7 @@ test.describe('Home', () => {
       ['Deferred', 'calendar-deferred'],
       ['JKT-JWT', 'anchored'],
       ['Call Chain', 'call-chain'],
+      ['Rich Resource Requests', 'bookings'],
     ];
 
     for (const [title, href] of expected) {

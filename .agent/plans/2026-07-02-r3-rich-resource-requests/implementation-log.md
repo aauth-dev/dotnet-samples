@@ -340,6 +340,39 @@ Net R3 doc surface: workflow doc, MockResourceServers README + Bookings README,
 MockAccessServers README, R3 NuGet README, docs index. Build/tests unaffected
 (docs only); last green state 32 / 517 / 573 stands.
 
+### [2026-07-02] [Phase 8] SampleApp R3 (Bookings) page + nav + e2e — RESOLVED
+
+Added `samples/SampleApp/Components/Pages/Bookings.razor` (`/bookings`), a nav item
+after Federated (four-party grouping) with a `calendar-check` icon, and a home-page
+card. The page reuses the ordinary four-party self-issued client
+(`AAuthClientBuilder.SelfIssuing(...).WithChallengeHandling()`) — the R3 semantics ride
+the tokens, not the client. Wiring: appsettings `AAuth:Bookings`/`AAuth:R3AccessServer`;
+the e2e MockPersonServer now federates to both `:5500` and `:5501`.
+
+Validated end-to-end via Playwright (`bookings.spec.ts`, sample-app project): **search
+availability** completes the full four-party R3 flow (Bookings 401 → PS federates to
+the R3 AS → AS fetches + hash-verifies the R3 doc → mints `r3_granted` → 200). Both R3
+e2e tests green.
+
+### [2026-07-02] [Phase 8] Per-call proposal AUTO-completion over the live stack — GAP (revisit)
+
+`confirmReservation` is `r3_conditional`: the resource correctly replies
+`401 r3_approval_required` with a per-call proposal (the SampleApp demo + e2e assert
+exactly this — the correct observable). **Auto-completing** the proposal round-trip in
+one agent call requires the agent to follow a *second* auth-token challenge (the
+proposal), which the core `ChallengeHandler` does not do (it follows exactly one). A
+looping variant (cap 3) was prototyped and passed all unit/conformance suites
+(32/517/573), but over the **live** four-party stack the second (proposal) exchange
+did not complete (the agent call blocked; the PS logged only the first PS→AS
+federation) and the cause was not isolated in-session. To keep the demo/e2e reliable
+and avoid an unexplained live block, the loop was **reverted** to the known-good
+single-challenge behavior. The per-call proposal **mechanics are fully verified
+in-proc** (`ResourceR3Tests` digest-match + approved-retry; `AccessEndpointR3Tests`
+proposal mint), so the protocol is correct. **Revisit:** make the `ChallengeHandler`
+follow chained auth-token challenges (needed for R3 conditional auto-completion) and
+root-cause the live second-exchange block, then assert full `confirmReservation` → 200
+completion in e2e.
+
 ## Deviations from plan
 
 ### [2026-07-02] [Phase 1] Mirror AAuth's `<Version>` in the R3 csproj — PROCEEDED (default)
