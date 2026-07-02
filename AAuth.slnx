@@ -19,6 +19,7 @@
   </Folder>
   <Folder Name="/samples/MockAccessServers/">
     <Project Path="samples/MockAccessServers/Federated/Federated.csproj" />
+    <Project Path="samples/MockAccessServers/R3/R3.csproj" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/AAuth/AAuth.csproj" />

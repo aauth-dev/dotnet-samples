@@ -187,11 +187,16 @@ public static class R3AccessTokenEndpoint
         }
 
         var document = R3Document.FromUtf8Bytes(bytes);
+        // Config-free split: the resource declares conditional operations in the
+        // document's `conditional` list; everything else is granted outright.
+        var conditionalTools = (document.Conditional ?? [])
+            .Select(op => op.Tool)
+            .ToHashSet(StringComparer.Ordinal);
         var granted = new List<McpOperation>();
         var conditional = new List<McpOperation>();
         foreach (var operation in document.Operations)
         {
-            if (options.ConditionalTools.Contains(operation.Tool))
+            if (conditionalTools.Contains(operation.Tool))
             {
                 conditional.Add(operation);
             }
@@ -261,7 +266,6 @@ public sealed class R3AccessTokenEndpointOptions
     public string TokenPath { get; init; } = "/token";
     public string Subject { get; init; } = "pairwise-sub";
     public IReadOnlyCollection<string>? TrustedPersonServers { get; init; }
-    public ISet<string> ConditionalTools { get; init; } = new HashSet<string>(StringComparer.Ordinal);
     public Func<HttpContext, string, string, string, CancellationToken, Task<byte[]>>? FetchAndVerifyAsync { get; init; }
     /// <summary>
     /// AS-side R3 token issuance audit sink. Defaults to no-op for sample ergonomics;

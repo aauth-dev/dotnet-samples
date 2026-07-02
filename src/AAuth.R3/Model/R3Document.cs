@@ -24,6 +24,16 @@ public sealed record R3Document
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public R3Display? Display { get; init; }
 
+    /// <summary>
+    /// Operations the resource declares as conditional (per-call approval). The AS
+    /// derives the granted-vs-conditional split from this list, so no per-AS config
+    /// is required. Omitted from the wire (and the content hash) when null.
+    /// </summary>
+    [JsonPropertyName("conditional")]
+    [JsonPropertyOrder(5)]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<McpOperation>? Conditional { get; init; }
+
     public static R3Document Mcp(IReadOnlyList<McpOperation> operations, R3Display? display = null) => new()
     {
         Version = "v02",

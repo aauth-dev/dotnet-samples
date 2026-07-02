@@ -19,7 +19,7 @@ const string ConfirmReservation = "confirm_reservation";
 string[] SupportedTools = [SearchAvailability, HoldReservation, ConfirmReservation];
 
 var resourceUrl = (builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5005").TrimEnd('/');
-var accessServerUrl = (builder.Configuration["AAuth:AccessServer"] ?? "http://localhost:5500").TrimEnd('/');
+var accessServerUrl = (builder.Configuration["AAuth:AccessServer"] ?? "http://localhost:5501").TrimEnd('/');
 var personServerUrl = (builder.Configuration["AAuth:PersonServer"] ?? "http://localhost:5100").TrimEnd('/');
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
 var missionAware = builder.Configuration.GetValue("Bookings:MissionAware", false);
@@ -264,6 +264,9 @@ StoredR3Proposal StoreR3Document(R3ProposalStore store, IEnumerable<string> requ
                 ? "Calling confirm_reservation may charge a non-refundable deposit; cancellation and refundability depend on the selected venue's policy."
                 : null,
         },
+        Conditional = ordered.Any(op => string.Equals(op.Tool, ConfirmReservation, StringComparison.Ordinal))
+            ? [new McpOperation { Tool = ConfirmReservation }]
+            : null,
     };
     return store.AddBytes(doc.ToUtf8Bytes(), new Uri(resourceUrl), "/r3");
 }
