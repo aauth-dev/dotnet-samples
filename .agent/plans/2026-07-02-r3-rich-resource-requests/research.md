@@ -270,6 +270,14 @@ in. These are a **design inventory**, not an ordered task list.
 
 ### S1 — R3 primitives (`src/AAuth/R3/`) — VALID (with caveats)
 
+> **Update (2026-07):** R3 now ships as a **separate `AAuth.R3` NuGet package**
+> (`src/AAuth.R3/`) depending on `AAuth`, not a folder in core (given R3's
+> Exploratory-Draft status). Consequence: core cannot gain R3-specific typed props;
+> instead core gets **generic** seams (`ResourceTokenBuilder.AdditionalClaims`, a
+> metadata `AdditionalMetadata` bag, an AS decision hook) and the package's typed
+> `R3AuthClaims`/`R3OperationSet` API produces the claim dicts. See
+> [implementation-plan.md](implementation-plan.md) CC7.
+
 - **`R3OperationSet { string Vocabulary; IReadOnlyList<R3Operation> Operations }`** —
   one type reused for `r3_operations`, `r3_granted`, `r3_conditional`, and an R3
   document's `operations`, with `ToJsonObject()`/`FromJson()`. The spec makes this
@@ -376,7 +384,11 @@ field is draft-02 naming and out of scope.)
   population is an AS-only role.
 
 ### S7 — Bookings resource server sample — VALID (with a narrative reframe)
-
+> **Update (2026-07):** narrative locked to an external **Reservations** provider
+> (dining & experiences). MCP tools: `search_availability` / `hold_reservation`
+> (granted), `confirm_reservation` (conditional — charges a non-refundable deposit).
+> Vocabulary is **MCP-first** (Q2 revised). The AS is the **shared MockAccessServer**
+> reused config-free (see §E update), not a dedicated one.
 - New `samples/MockResourceServers/Bookings` on **port 5005** (free; Makefile
   L24–L35). Advertises an **OpenAPI** vocabulary (natural ASP.NET fit; MCP optional)
   via `r3_vocabularies`. Operations: `searchBookings` / `getBooking` (read →
@@ -422,6 +434,14 @@ field is draft-02 naming and out of scope.)
 ---
 
 ## Part E — Access-mode decision for Bookings
+
+> **Update (2026-07, supersedes the recommendation below):** stay four-party but
+> **reuse the single shared MockAccessServer** instead of a dedicated AS. The
+> `Mode=R3` / `ConditionalTools` per-sample config is avoided by making the AS
+> **R3-aware via a generic decision hook** that branches on the resource token's
+> `r3_uri`: one instance serves Wallet (scope) and Bookings (R3) with no R3-specific
+> config, and derives granted-vs-conditional from the R3 document. The dedicated-AS
+> recommendation below is retained for history.
 
 **Recommendation: four-party (Bookings has its own AS), with a *dedicated* Bookings
 AS rather than reusing MockAccessServer.** Both validators concur; firm.
@@ -486,8 +506,11 @@ unblocked.
    preference, not a spec requirement.
 2. **Bookings vocabulary.** OpenAPI (**default**, natural ASP.NET fit), MCP, or
    both advertised simultaneously (the spec allows multiple, r3 L112)?
+   **Resolved 2026-07:** MCP-first; the `AAuth.R3` package stays OpenAPI-capable.
 3. **Bookings AS port.** `5501` (AS-role grouping, **default lean**) vs `5006`
    (Bookings cluster) — or reuse MockAccessServer as a lighter fallback?
+   **Resolved 2026-07:** reuse the shared MockAccessServer at **:5500** (no new AS
+   port; config-free via the R3 decision hook).
 4. **AS-only-fetch gate shape.** `.RequireAAuthSignature(pinnedIssuer:)` overload
    vs a dedicated `MapAAuthR3Document(store, asIssuer)` mapper (**default lean:
    dedicated mapper**, since it also owns byte-verbatim serving).
@@ -507,7 +530,7 @@ unblocked.
 | Vocabulary *discovery* parsing (fetch/parse MCP tool list, OpenAPI spec, `$metadata`, introspection) | Resource/agent discovery detail; a later R3 phase at most |
 | Fully-typed models for all seven vocabularies | See Q1; escape hatch suffices for the demo |
 | PS-side `r3_granted` minting | Out of spec — the PS is display-only (r3 L391, L404) |
-| Reusing MockAccessServer for Bookings | Superseded by the dedicated-AS recommendation (Part E); retained only as a fallback |
+| Reusing MockAccessServer for Bookings | **Now the chosen approach** (2026-07 update, §E) — one R3-aware instance, config-free |
 | Mission ↔ R3 combined governance flow | The spec does not define the interplay; keep orthogonal in samples unless a design decision says otherwise |
 
 ---

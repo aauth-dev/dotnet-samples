@@ -57,6 +57,53 @@ would force the PS to improvise the AS role. MockAccessServer is wallet/Keycloak
 shaped and scope-based; a dedicated operation-based AS keeps the teaching suite
 clean (research §E).
 
+### [2026-07-02] [Phase 0] CC7 — R3 ships as a separate `AAuth.R3` package — RESOLVED
+
+Owner steer. R3 is an Exploratory Draft, so it lives in a new **`AAuth.R3`** NuGet
+package (`src/AAuth.R3/`) depending on `AAuth` — not baked into core (our original
+`src/AAuth/R3`) and not left as a sample-only library (Ana's `samples/AAuth.R3`).
+Constraint this creates: core's sealed builders cannot gain R3-specific props, so
+the **only** core changes are **generic** seams — `ResourceTokenBuilder.AdditionalClaims`,
+a metadata `AdditionalMetadata` bag, and an AS resource-token decision hook. The
+package's typed `R3AuthClaims`/`R3OperationSet` API keeps claim-name strings out of
+consumer code (centralized constants inside the package), satisfying the
+no-string-indirection principle at the API surface. Ana's `samples/AAuth.R3` is the
+promotion candidate (she built it "extraction-ready"). Revert to core-`src/AAuth/R3`
+only if R3 stabilizes and we want it first-class in the main package.
+
+### [2026-07-02] [Phase 0] CC3/CC4 — REVISED: reuse the shared AS, config-free — SUPERSEDES the dedicated-AS ruling above
+
+Owner steer ("reusing the same AS is okay, but one instance must work with all
+samples without separate config"). Keep four-party, but **reuse the single
+MockAccessServer** (:5500) rather than a dedicated Bookings AS (:5501). To make one
+instance serve both Wallet and Bookings **without per-sample config**, make the AS
+**R3-aware via a generic decision hook** (Phase 6): the `/token` handler branches on
+whether the incoming resource token carries `r3_uri` — if so, fetch+verify+audit the
+R3 document and mint R3 claims; otherwise run the base scope policy. This avoids
+Ana's `Mode=R3` early-return and her `ConditionalTools` config: the granted-vs-
+conditional split is **derived from the R3 document** (e.g. operations whose
+`display.irreversible` is set are conditional). Net: no new AS port, no R3 launch
+profile. Supersedes the [Q3] and [CC3 dedicated-AS] entries above.
+
+### [2026-07-02] [Phase 0] Q2 — REVISED: MCP-first vocabulary — SUPERSEDES the OpenAPI default
+
+Owner steer. The Bookings sample advertises **MCP** first (Aria is an agent that
+"calls tools"; reuses Ana's working MCP models). The `AAuth.R3` package stays
+**vocabulary-agnostic** so OpenAPI (or a second advertised vocabulary on the same
+server — the spec allows it, r3 L112) is a cheap follow-up. Supersedes the [Q2]
+OpenAPI default above.
+
+### [2026-07-02] [Phase 0] Narrative reframe — Bookings = external Reservations provider — RESOLVED
+
+Owner directive ("let's reframe the narrative"). Bookings is an **external
+Reservations provider** for **dining & experiences** — not trip booking (Trips owns
+that; Ana's `book_trip`/"Rich Trip Booking" collides). MCP tools:
+`search_availability` (read → granted), `hold_reservation` (granted),
+`confirm_reservation` (conditional — charges a non-refundable deposit, so it drives
+the per-call proposal with venue/time/party-size/deposit as `parameters`). Threads
+into Aria: "found a table and a tour; holding is free, confirming charges a deposit
+→ per-call approval." Distinct from Trips (itinerary) and Wallet (bank rail).
+
 ## Deviations from plan
 
 _None yet._

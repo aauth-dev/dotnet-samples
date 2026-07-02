@@ -32,17 +32,26 @@ dedicated Bookings AS) aligned with the Aria narrative.
 - **Security invariants are test targets, not afterthoughts** (research §F): AS-only
   R3-fetch (issuer-pinned), hash-verify-before-use, atomic audit-with-issuance,
   per-call digest verification, operation validation.
+- **R3 ships as a separate package** (revised 2026-07-02). R3 is an Exploratory
+  Draft, so it lives in a new **`AAuth.R3`** NuGet package (`src/AAuth.R3/`) that
+  depends on `AAuth`. The **only** changes to the core `AAuth` package are *generic*
+  extensibility seams (a `ResourceTokenBuilder.AdditionalClaims` bag, a metadata
+  `AdditionalMetadata` bag, an AS resource-token decision hook) — **never**
+  R3-specific knowledge. Consumers opt in by referencing `AAuth.R3`; the package
+  exposes typed helpers so callers never touch raw claim-name strings (the strings
+  are centralized constants inside the package).
 
 ## Cross-cutting decisions (defaults; see log for rulings)
 
 | # | Decision | Default |
 |---|---|---|
 | CC1 | Vocabulary coverage | MCP + OpenAPI first-class + generic escape hatch (Q1) |
-| CC2 | Bookings vocabulary | OpenAPI (Q2) |
-| CC3 | Bookings access mode | Four-party, **dedicated** Bookings AS (research §E) |
-| CC4 | Bookings AS port | `5501` (Q3) |
+| CC2 | Bookings vocabulary | **MCP-first**; package stays OpenAPI-capable (Q2, revised) |
+| CC3 | Bookings access mode | Four-party, **reusing the single shared MockAccessServer** via a unified R3-aware decision hook (research §E, revised 2026-07-02) |
+| CC4 | AS instance / port | **Reuse MockAccessServer at :5500** — no dedicated R3 AS, no per-sample R3 config (Q3, revised) |
 | CC5 | AS-only-fetch gate shape | Dedicated `MapAAuthR3Document(store, asIssuer)` mapper (Q4) |
 | CC6 | Proposal store seam | Reuse `IR3DocumentStore` for docs + proposals (Q5) |
+| CC7 | Packaging | **Separate `AAuth.R3` NuGet package** (`src/AAuth.R3/`, preview) depending on `AAuth`; core gets only generic seams (2026-07-02) |
 
 ---
 
@@ -61,7 +70,7 @@ blocking.
 
 ---
 
-## Phase 1 — R3 primitives (`src/AAuth/R3/`)
+## Phase 1 — R3 primitives (new `AAuth.R3` package)
 
 **Goal:** strongly-typed R3 models, verbatim-bytes hashing, and a byte-persisting
 document store. Isolated and unit-testable; everything else depends on a correct
@@ -69,6 +78,10 @@ hash.
 
 **Spec:** r3 §Vocabularies L101–L232; §R3 Document L285–L340; §Per-Call Proposals
 L491–L539; `#content-addressing` L331–L340.
+
+> All `src/AAuth/R3/…` paths below now live in the new **`src/AAuth.R3/`** package
+> project (CC7), not core `src/AAuth`. Add `src/AAuth.R3/AAuth.R3.csproj`
+> (references `AAuth`) to `AAuth.slnx`.
 
 ### Files
 
@@ -111,9 +124,9 @@ L491–L539; `#content-addressing` L331–L340.
 
 | File | Action |
 |---|---|
-| [src/AAuth/Server/Metadata/WellKnownEndpoints.cs](../../../src/AAuth/Server/Metadata/WellKnownEndpoints.cs) | **Modify** — add `R3Vocabularies` to `AAuthResourceMetadataOptions`; emit in `BuildResourceMetadata` (mirror the `ScopeDescriptions` guarded-map block) |
-| [src/AAuth/DependencyInjection/AAuthResourceOptions.cs](../../../src/AAuth/DependencyInjection/AAuthResourceOptions.cs) | **Modify** — surface `R3Vocabularies` through `AddAAuthResource` |
-| `tests/AAuth.Conformance/R3/R3MetadataTests.cs` | **New** |
+| [src/AAuth/Server/Metadata/WellKnownEndpoints.cs](../../../src/AAuth/Server/Metadata/WellKnownEndpoints.cs) | **Modify (generic seam)** — add an `AdditionalMetadata` bag to `AAuthResourceMetadataOptions`, emitted in `BuildResourceMetadata` (mirror the `ScopeDescriptions` guarded-map block); **no R3 knowledge in core** |
+| `src/AAuth.R3/R3Metadata.cs` | **New (R3 package)** — supplies the `r3_vocabularies` object through the generic seam |
+| `tests/AAuth.R3.Tests/R3MetadataTests.cs` | **New** |
 
 **Definition of Done**
 
@@ -134,18 +147,20 @@ L419–L475; base `sub|scope` rule L1686 / L1724.
 
 | File | Action |
 |---|---|
-| [src/AAuth/Tokens/ResourceTokenBuilder.cs](../../../src/AAuth/Tokens/ResourceTokenBuilder.cs) | **Modify** — add `R3Uri`, `R3S256`; validate both-or-neither |
-| [src/AAuth/Tokens/AuthTokenBuilder.cs](../../../src/AAuth/Tokens/AuthTokenBuilder.cs) | **Modify** — add typed `R3Uri`, `R3S256`, `R3Granted`, `R3Conditional`; **keep** the `sub|scope` guard |
-| [src/AAuth/Server/Verification/AAuthVerificationResult.cs](../../../src/AAuth/Server/Verification/AAuthVerificationResult.cs) | **Modify** — add the four R3 fields as new first-class fields |
-| [src/AAuth/Server/Verification/AAuthVerificationMiddleware.cs](../../../src/AAuth/Server/Verification/AAuthVerificationMiddleware.cs) | **Modify** — populate R3 fields from the auth-token payload |
-| `tests/AAuth.Conformance/R3/R3TokenClaimsTests.cs` | **New** |
+| [src/AAuth/Tokens/ResourceTokenBuilder.cs](../../../src/AAuth/Tokens/ResourceTokenBuilder.cs) | **Modify (generic seam)** — add an `AdditionalClaims` bag (mirrors `AuthTokenBuilder`); **no R3-specific props** |
+| `src/AAuth.R3/R3AuthClaims.cs` | **New (R3 package)** — typed API producing the resource-token (`r3_uri`/`r3_s256`) and auth-token (`+r3_granted`/`r3_conditional`) claim dicts; centralizes claim-name constants; validates both-or-neither |
+| `src/AAuth.R3/R3ClaimReader.cs` | **New (R3 package)** — parse R3 claims from a verified auth-token payload for enforcement |
+| `tests/AAuth.R3.Tests/R3TokenClaimsTests.cs` | **New** |
 
 **Implementation Decisions**
 
-- R3 grant claims are **typed** (`R3OperationSet`), not routed through
-  `AuthTokenBuilder.AdditionalClaims` (mirror `MissionClaim`).
+- Core builders gain only a **generic** `AdditionalClaims` bag; R3 knowledge stays
+  in the package. The package's typed `R3AuthClaims`/`R3Grant`/`R3OperationSet` API
+  means consumers never handle raw claim-name strings.
+- `AAuthVerificationResult` is **unchanged** — the R3 package reads R3 claims from
+  the auth-token payload it already holds (`R3ClaimReader`).
 - An R3 auth token still carries a `scope` (even coarse) or `sub` — `r3_granted`
-  does **not** satisfy the base rule.
+  does **not** satisfy the base rule (keep the `AuthTokenBuilder` guard).
 
 **Definition of Done**
 
@@ -233,16 +248,22 @@ AS-only fetch (client side) L297.
 
 | File | Action |
 |---|---|
-| `src/AAuth/R3/IR3DocumentFetcher.cs` + default impl | **New** — AS-signed GET (`AAuthSigningHandler` + jwks_uri provider), hash-verify, cache by `s256`; no manual `HttpClient` |
-| [src/AAuth/Access/IAccessPolicy.cs](../../../src/AAuth/Access/IAccessPolicy.cs) | **Modify** — `AccessPolicyRequest` gains `R3Uri`/`R3S256`/fetched `R3Document`; `AccessDecision.Allow` gains `R3Granted`/`R3Conditional` |
-| [src/AAuth/Access/AAuthAccessServerEndpoints.cs](../../../src/AAuth/Access/AAuthAccessServerEndpoints.cs) | **Modify** — fetch+verify+audit before policy; mint R3 claims into the auth token |
-| [src/AAuth/Person/IIdentityClaimsAsserter.cs](../../../src/AAuth/Person/IIdentityClaimsAsserter.cs) | **Modify** — expose R3 `display` on the request (**display-only**; no grant minting) |
-| `tests/AAuth.Conformance/R3/R3AccessProcessingTests.cs` | **New** |
+| `src/AAuth.R3/R3DocumentFetcher.cs` | **New (R3 package)** — AS-signed GET (`AAuthSigningHandler` + jwks_uri provider), hash-verify, cache by `s256`; no manual `HttpClient` |
+| [src/AAuth/Access/AAuthAccessServerEndpoints.cs](../../../src/AAuth/Access/AAuthAccessServerEndpoints.cs) | **Modify (generic seam)** — add an optional resource-token decision hook so an extension can handle tokens the base policy does not; **no R3 knowledge in core** |
+| `src/AAuth.R3/R3AccessDecision.cs` (name TBD) | **New (R3 package)** — the hook: when the resource token carries `r3_uri`, fetch+verify+audit, split granted/conditional, mint R3 claims via `R3AuthClaims`; otherwise defer to the base policy |
+| [src/AAuth/Person/IIdentityClaimsAsserter.cs](../../../src/AAuth/Person/IIdentityClaimsAsserter.cs) | **Modify** — expose the fetched R3 `display` on the request (**display-only**; no grant minting) |
+| `tests/AAuth.R3.Tests/R3AccessProcessingTests.cs` | **New** |
 
 **Implementation Decisions**
 
 - Only the **AS** populates `r3_granted`/`r3_conditional`; the PS is display-only.
-- Fetch/hash-verify/audit live in the SDK host path, not the sample policy.
+- Fetch/hash-verify/audit live in the R3 package's host path, not the sample policy.
+- The AS is R3-aware via a **generic hook**, so a **single** instance serves both
+  scope-based (Wallet) and R3 (Bookings) resource tokens with **no per-sample
+  config** — it branches on `r3_uri` in the resource token.
+- The granted-vs-conditional split is derived from the **R3 document** (e.g.
+  operations whose `display.irreversible` is set are conditional), not a per-server
+  `ConditionalTools` config list.
 
 **Definition of Done**
 
@@ -253,33 +274,42 @@ AS-only fetch (client side) L297.
 
 ---
 
-## Phase 7 — Bookings resource server + dedicated Bookings AS (samples)
+## Phase 7 — Bookings resource server (samples), reusing the shared AS
 
-**Goal:** a runnable R3 demonstrator in the Aria suite.
+**Goal:** a runnable R3 demonstrator in the Aria suite — an external **Reservations**
+provider (dining & experiences), served by the existing shared MockAccessServer.
 
-**Spec / research:** research §D-S7, §E.
+**Spec / research:** research §D-S7, §E (revised 2026-07-02).
 
 ### Files
 
 | File | Action |
 |---|---|
-| `samples/MockResourceServers/Bookings/` (`Bookings.csproj`, `Program.cs`, `Entry` partial, `README.md`) | **New** — port **5005**; OpenAPI vocabulary; `searchBookings`/`getBooking`/`createBooking` = granted, `payBooking` = conditional; `AddAAuthResource` + `MapAAuthWellKnown` + `UseAAuth` + per-route helpers + `MapAAuthR3Document` |
-| `samples/MockBookingsAccessServer/` (or reuse pattern of `MockAccessServer`) | **New** — dedicated Bookings AS, port **5501**; own R3 `IAccessPolicy` (operation-based); `Entry` partial |
-| [samples/MockResourceServers](../../../samples/MockResourceServers) READMEs | **Modify** — add Bookings row |
+| `samples/MockResourceServers/Bookings/` (`Bookings.csproj`, `Program.cs`, `Entry` partial, `README.md`) | **New** — port **5005**; MCP vocabulary; `search_availability`/`hold_reservation` = granted, `confirm_reservation` = conditional (charges a non-refundable deposit); `AddAAuthResource` + `MapAAuthWellKnown` + `UseAAuth` + per-route helpers + `MapAAuthR3Document` |
+| [samples/MockAccessServer/Program.cs](../../../samples/MockAccessServer/Program.cs) | **Modify** — register the Phase 6 R3 decision hook so the **single** instance also serves Bookings' R3 tokens (no `Mode` switch, no per-sample config) |
+| [samples/MockResourceServers](../../../samples/MockResourceServers) READMEs | **Modify** — add the Bookings row |
 
 **Implementation Decisions**
 
-- Reframe Bookings as an **external reservations/payments provider** (hotel /
-  restaurant / event + irreversible payment) — **not** "trip" booking (Trips owns
-  that; research §D-S7 correction).
-- Dedicated AS, not MockAccessServer (wallet/Keycloak coupling; research §E).
+- **Reframe (narrative).** Bookings is an **external Reservations provider**
+  (dining & experiences — reserve a table / book a tour) whose irreversible
+  **`confirm_reservation`** charges a deposit; distinct from Trips (mission
+  itinerary) and Wallet (bank rail). No "trip"/`book_trip` naming (avoids the Trips
+  collision; research §D-S7).
+- **Reuse the shared AS, config-free** (research §E revised). One MockAccessServer
+  instance (:5500) serves Wallet (scope) and Bookings (R3) by branching on the
+  resource token's `r3_uri` via the Phase 6 hook — no `Mode=R3`, no `ConditionalTools`
+  list.
+- **MCP-first vocabulary** (Q2 revised); the package stays OpenAPI-capable.
 
 **Definition of Done**
 
-- [ ] `payBooking` triggers a per-call proposal; approval + enforced retry succeed;
-      a tampered parameter is rejected.
-- [ ] Bookings serves its R3 document only to its AS.
-- [ ] Bookings/AS `Program.cs` carry no manual `HttpClient` and no magic-string policies.
+- [ ] `confirm_reservation` triggers a per-call proposal; approval + enforced retry
+      succeed; a tampered parameter (changed deposit or venue) is rejected.
+- [ ] Bookings serves its R3 document only to the AS (and PS for display).
+- [ ] The single MockAccessServer serves both Wallet and Bookings with **no**
+      R3-specific launch profile or config.
+- [ ] Bookings `Program.cs` carries no manual `HttpClient` and no magic-string policies.
 
 ---
 
@@ -294,13 +324,14 @@ in-process integration tests.
 |---|---|
 | [samples/GuidedTour/TourOptions.cs](../../../samples/GuidedTour/TourOptions.cs) + `TourSession.cs` | **Modify** — new `TourMode.RichRequests` after `Federated`; add matching switch arms + URL/highlighter wiring |
 | [samples/SampleApp](../../../samples/SampleApp) `Components/Pages/Bookings.razor` | **New** — conditional per-call approval demo |
-| [Makefile](../../../Makefile) | **Modify** — `BOOKINGS_PROJECT`/`BOOKINGS_URL` (5005) + `BOOKINGS_AS_*` (5501); wire `resources` + `demo` |
+| [Makefile](../../../Makefile) | **Modify** — `BOOKINGS_PROJECT`/`BOOKINGS_URL` (5005); wire `resources` + `demo`. The AS is the existing MockAccessServer — **no new AS target** |
 | `samples/GuidedTour/appsettings.json`, `samples/SampleApp/appsettings.json` | **Modify** — add `BOOKINGS_URL` |
-| `tests/AAuth.Tests/Integration/BookingsFlowTests.cs` | **New** — three in-proc hosts (Bookings + AS + PS) via `MultiHostHandler`, like `MockPersonServerFederationTests` |
+| `tests/AAuth.Tests/Integration/BookingsFlowTests.cs` | **New** — three in-proc hosts (Bookings + the **shared** MockAccessServer + PS) via `MultiHostHandler`, like `MockPersonServerFederationTests` |
 
 **Definition of Done**
 
-- [ ] `make demo` starts Bookings (+ its AS); the tour's new mode runs end-to-end.
+- [ ] `make demo` starts Bookings; the shared MockAccessServer serves it (no new AS
+      target); the tour's new mode runs end-to-end.
 - [ ] `BookingsFlowTests` cover granted-serve, conditional-approve-retry, and
       tamper-reject; all integration suites green.
 
@@ -348,7 +379,8 @@ this plan, with severity-graded findings.
 | Fully-typed models for all seven vocabularies | Escape hatch suffices for the demo (Q1) |
 | Vocabulary *discovery* parsing (MCP tool list / OpenAPI / `$metadata` fetch) | Later R3 phase at most |
 | PS-side `r3_granted` minting | Out of spec — PS is display-only (r3 L391, L404) |
-| Reusing MockAccessServer for Bookings | Superseded by the dedicated-AS decision (research §E) |
+| Dedicated Bookings AS project | Superseded 2026-07-02 — the shared MockAccessServer serves R3 via a generic hook, config-free (research §E revised) |
+| R3-specific claims/props in the core `AAuth` package | R3 ships as the separate `AAuth.R3` package (CC7); core gets only generic seams |
 | Mission ↔ R3 combined governance flow | Spec undefined; keep orthogonal unless decided |
 
 ---
