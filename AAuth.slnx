@@ -23,6 +23,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/AAuth.Conformance/AAuth.Conformance.csproj" />
+    <Project Path="tests/AAuth.R3.Tests/AAuth.R3.Tests.csproj" />
     <Project Path="tests/AAuth.Tests/AAuth.Tests.csproj" />
   </Folder>
 </Solution>
