@@ -32,38 +32,37 @@ var trustedFetcherSet = trustedFetcherAuthorities
     .Select(static origin => origin!)
     .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-// Resource DI via the one-call helper: registers the AAuth verifier and the shared
-// discovery clients (MetadataClient + JwksClient) behind an SDK-owned pooled handler
-// — no manual HttpClient wiring (2026-06-27 server-api-surface). Bookings keeps its
-// own well-known + JWKS + resource-token signing key because R3 metadata
-// (r3_vocabularies) and R3 token signing are R3-specific (logged good-reason).
+// Resource DI via the one-call helper: registers the AAuth verifier, the shared
+// discovery clients (MetadataClient + JwksClient) behind an SDK-owned pooled handler,
+// and the well-known metadata options — no manual HttpClient wiring (2026-06-27
+// server-api-surface). R3's r3_vocabularies (and the mission_aware flag) ride the
+// generic AdditionalMetadata seam, so Bookings uses the high-level MapAAuthWellKnown
+// instead of hand-rolling the well-known + JWKS.
 builder.Services.AddAAuthResource(o =>
 {
     o.Issuer = resourceUrl;
     o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
+    o.SigningKeys[ResourceKid] = resourceKey;
+    o.Name = "Aria Reservations";
+    o.Description = "R3 dining & experiences reservations demo resource.";
+    o.AccessMode = AAuthConstants.AccessModes.AuthToken;
+    o.AuthorizationEndpoint = $"{resourceUrl}/authorize";
+    o.AdditionalMetadata = new Dictionary<string, JsonNode?>
+    {
+        // Bookings is deliberately not mission-aware (advertised for discovery only).
+        ["mission_aware"] = missionAware,
+        ["r3_vocabularies"] = new JsonObject { [Vocabulary.Mcp] = $"{resourceUrl}/mcp" },
+    };
 });
 builder.Services.AddSingleton(new TokenVerifier());
 builder.Services.AddSingleton<R3ProposalStore>();
 
 var app = builder.Build();
 
-// Bookings is deliberately not mission-aware. Do not read or enforce AAuth-Mission here.
-app.MapGet("/.well-known/aauth-resource.json", () => Results.Json(new JsonObject
-{
-    ["issuer"] = resourceUrl,
-    ["jwks_uri"] = $"{resourceUrl}/.well-known/jwks.json",
-    ["access_mode"] = AAuthConstants.AccessModes.AuthToken,
-    ["client_name"] = "Aria Reservations",
-    ["description"] = "R3 dining & experiences reservations demo resource.",
-    ["authorization_endpoint"] = $"{resourceUrl}/authorize",
-    ["mission_aware"] = missionAware,
-    ["r3_vocabularies"] = new JsonObject
-    {
-        [Vocabulary.Mcp] = $"{resourceUrl}/mcp",
-    },
-}, contentType: "application/json"));
-
-app.MapGet("/.well-known/jwks.json", () => Results.Json(BuildJwks(ResourceKid, resourceKey), contentType: "application/json"));
+// Resource well-known (aauth-resource.json + jwks.json) from the DI-registered
+// metadata options — including R3's r3_vocabularies via the AdditionalMetadata seam.
+// Bookings does not read or enforce AAuth-Mission; mission_aware is advertised false.
+app.MapAAuthWellKnown();
 
 app.MapGet("/", () => Results.Ok(new
 {
@@ -413,15 +412,6 @@ bool IsTrustedR3Fetcher(R3VerifiedFetcher fetcher) =>
     && fetcher.JwksUri is not null
     && (trustedFetcherSet.Contains($"{fetcher.JwksUri.Scheme}://{fetcher.JwksUri.Authority}")
         || trustedFetcherSet.Contains(fetcher.JwksUri.Authority));
-
-static JsonObject BuildJwks(string kid, AAuthKey key)
-{
-    var jwk = key.ToPublicJwk();
-    jwk["kid"] = kid;
-    jwk["use"] = "sig";
-    jwk["alg"] = AAuthKey.Algorithm;
-    return new JsonObject { ["keys"] = new JsonArray(jwk) };
-}
 
 async Task<IReadOnlyDictionary<string, R3Parameter>> ReadReservationParametersAsync(HttpContext ctx)
 {

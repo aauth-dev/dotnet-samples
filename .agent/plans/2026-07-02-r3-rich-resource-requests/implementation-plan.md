@@ -140,7 +140,7 @@ L491–L539; `#content-addressing` L331–L340.
 
 | File | Action |
 |---|---|
-| [src/AAuth/Server/Metadata/WellKnownEndpoints.cs](../../../src/AAuth/Server/Metadata/WellKnownEndpoints.cs) | **Modify (generic seam)** — add an `AdditionalMetadata` bag to `AAuthResourceMetadataOptions`, emitted in `BuildResourceMetadata` (mirror the `ScopeDescriptions` guarded-map block); **no R3 knowledge in core** |
+| [src/AAuth/Server/Metadata/WellKnownEndpoints.cs](../../../src/AAuth/Server/Metadata/WellKnownEndpoints.cs) | **Done (2026-07-02, generic seam)** — added `AdditionalMetadata` (`IReadOnlyDictionary<string, JsonNode?>?`) to `AAuthResourceMetadataOptions` + `AAuthResourceOptions`, emitted verbatim in `BuildResourceMetadata` (typed fields win on collision); **no R3 knowledge in core**. Lets Bookings use `MapAAuthWellKnown`; conformance-tested (merge + collision-skip) |
 | `src/AAuth.R3/R3Metadata.cs` | **New (R3 package)** — supplies the `r3_vocabularies` object through the generic seam |
 | `tests/AAuth.R3.Tests/R3MetadataTests.cs` | **New** |
 
@@ -334,9 +334,10 @@ provider (dining & experiences), guarded by a dedicated R3 access server.
   and decides the conditional split by **AS policy** (`IsConditionalOperation`, CC9
   revised) — no `Mode=R3`, no `R3Document.conditional` field.
 - **High-level DI everywhere** (owner directive): the R3 AS uses `AddAAuthDiscovery`,
-  Bookings uses `AddAAuthResource` — no manual `HttpClient` wiring. Bookings still
-  hand-rolls its well-known/JWKS (r3_vocabularies + R3 signing not modelled by core
-  metadata) — logged good-reason.
+  Bookings uses `AddAAuthResource` + `MapAAuthWellKnown` — no manual `HttpClient` or
+  hand-rolled well-known/JWKS. R3's `r3_vocabularies` (+ `mission_aware`) ride the new
+  generic `AdditionalMetadata` seam (2026-07-02). Bookings still enforces per operation
+  in-handler rather than `.RequireAAuth` (R3 authz is operation-based) — logged.
 - **MCP-first vocabulary** (Q2 revised); the package stays OpenAPI-capable.
 
 **Definition of Done**

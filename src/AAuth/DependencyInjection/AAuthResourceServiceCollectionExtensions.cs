@@ -88,6 +88,7 @@ public static class AAuthResourceServiceCollectionExtensions
             SignatureWindow = options.SignatureWindow,
             AccessMode = options.AccessMode,
             AuthorizationEndpoint = options.AuthorizationEndpoint,
+            AdditionalMetadata = options.AdditionalMetadata,
         };
         services.TryAddSingleton(metadataOptions);
 

@@ -273,6 +273,27 @@ sets `IsConditionalOperation = op => op.Tool == "book_trip"`; `R3TestData.Docume
 dropped its `Conditional`. Build 0/0; 31 R3 tests green. Supersedes the option-A
 entries above and clears the sole LOW validator finding.
 
+### [2026-07-02] [Phase 7] AdditionalMetadata seam added; Bookings uses MapAAuthWellKnown — SUPERSEDES "generic seams dropped" (metadata bag) + the well-known half of "Bookings hand-rolls"
+
+Owner directive: prefer the high-level `MapAAuthWellKnown` API and add the generic
+`AdditionalMetadata` seam for extensibility ("the seam allows extensibility"). Re-introduced
+**one** of the three core seams originally dropped when Ana's import proved zero-core-change:
+added `AAuthResourceMetadataOptions.AdditionalMetadata`
+(`IReadOnlyDictionary<string, JsonNode?>?`) + the matching
+`AAuthResourceOptions.AdditionalMetadata`, emitted verbatim in `BuildResourceMetadata`
+after the typed fields (a colliding key is skipped — the typed field wins; core attaches
+no meaning). Two conformance tests (merge + collision-skip); Conformance 573.
+
+Bookings now configures metadata through `AddAAuthResource` (Name, Description,
+AccessMode, AuthorizationEndpoint, SigningKeys, and `AdditionalMetadata` =
+`{ mission_aware, r3_vocabularies }`) and serves discovery via `MapAAuthWellKnown()` —
+dropping its hand-rolled `/.well-known/aauth-resource.json` + `/.well-known/jwks.json`
++ `BuildJwks`. Bonus fix: the hand-rolled doc emitted the legacy `client_name`; the
+core builder emits the draft-08 `name`. This resolves the well-known/JWKS half of the
+earlier "Bookings diverges" deviation. The other half stands: R3 authz is
+operation-based (match against `r3_granted`/`r3_conditional` in-handler), so Bookings
+still does not use `UseAAuth`/`.RequireAAuth`. Build 0/0; 517 + 573 + 31 tests green.
+
 ## Deviations from plan
 
 ### [2026-07-02] [Phase 1] Mirror AAuth's `<Version>` in the R3 csproj — PROCEEDED (default)
