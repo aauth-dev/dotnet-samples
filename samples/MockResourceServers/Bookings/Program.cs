@@ -32,16 +32,18 @@ var trustedFetcherSet = trustedFetcherAuthorities
     .Select(static origin => origin!)
     .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-builder.Services.AddSingleton(resourceKey);
-builder.Services.AddSingleton(new AAuthVerifier { MaxAge = TimeSpan.FromSeconds(signatureWindowSeconds) });
+// Resource DI via the one-call helper: registers the AAuth verifier and the shared
+// discovery clients (MetadataClient + JwksClient) behind an SDK-owned pooled handler
+// — no manual HttpClient wiring (2026-06-27 server-api-surface). Bookings keeps its
+// own well-known + JWKS + resource-token signing key because R3 metadata
+// (r3_vocabularies) and R3 token signing are R3-specific (logged good-reason).
+builder.Services.AddAAuthResource(o =>
+{
+    o.Issuer = resourceUrl;
+    o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
+});
 builder.Services.AddSingleton(new TokenVerifier());
-builder.Services.AddSingleton<MetadataClient>(sp =>
-    new MetadataClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-metadata")));
-builder.Services.AddSingleton<JwksClient>(sp =>
-    new JwksClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-jwks")));
 builder.Services.AddSingleton<R3ProposalStore>();
-builder.Services.AddHttpClient("aauth-metadata");
-builder.Services.AddHttpClient("aauth-jwks");
 
 var app = builder.Build();
 

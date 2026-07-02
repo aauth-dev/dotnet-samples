@@ -1,5 +1,4 @@
 using AAuth.Crypto;
-using AAuth.Discovery;
 using AAuth.R3;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -13,12 +12,9 @@ var trustedPersonServers = builder.Configuration
     .Get<string[]>() ?? ["http://localhost:5100"];
 
 builder.Services.AddSingleton(asKey);
-builder.Services.AddSingleton<MetadataClient>(sp =>
-    new MetadataClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-metadata")));
-builder.Services.AddSingleton<JwksClient>(sp =>
-    new JwksClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("aauth-jwks")));
-builder.Services.AddHttpClient("aauth-metadata");
-builder.Services.AddHttpClient("aauth-jwks");
+// Shared discovery clients (MetadataClient + JwksClient) with an SDK-owned pooled
+// handler; no manual HttpClient wiring (2026-06-27 server-api-surface convention).
+builder.Services.AddAAuthDiscovery();
 
 var app = builder.Build();
 
