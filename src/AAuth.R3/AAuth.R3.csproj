@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <!-- NuGet package metadata. Preview/experimental; tracks the AAuth version (CC8). -->
+    <PackageId>AAuth.R3</PackageId>
+    <Version>0.1.0-alpha.1</Version>
+    <Authors>aauth-dev</Authors>
+    <Description>Experimental AAuth Rich Resource Requests (R3) preview helpers (MCP vocabulary). Depends on AAuth.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/aauth-dev/dotnet-samples</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/aauth-dev/dotnet-samples</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>aauth;r3;rich-resource-requests;mcp;agent;authorization</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="README.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AAuth\AAuth.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>
