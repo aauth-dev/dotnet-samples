@@ -13,13 +13,13 @@ var builder = WebApplication.CreateBuilder(args);
 var resourceKey = AAuthKey.Generate();
 const string ResourceKid = "bookings-1";
 
-const string SearchTripOptions = "search_trip_options";
-const string HoldItinerary = "hold_itinerary";
-const string BookTrip = "book_trip";
-string[] SupportedTools = [SearchTripOptions, HoldItinerary, BookTrip];
+const string SearchAvailability = "search_availability";
+const string HoldReservation = "hold_reservation";
+const string ConfirmReservation = "confirm_reservation";
+string[] SupportedTools = [SearchAvailability, HoldReservation, ConfirmReservation];
 
 var resourceUrl = (builder.Configuration["AAuth:Issuer"] ?? "http://localhost:5005").TrimEnd('/');
-var accessServerUrl = (builder.Configuration["AAuth:AccessServer"] ?? "http://localhost:5501").TrimEnd('/');
+var accessServerUrl = (builder.Configuration["AAuth:AccessServer"] ?? "http://localhost:5500").TrimEnd('/');
 var personServerUrl = (builder.Configuration["AAuth:PersonServer"] ?? "http://localhost:5100").TrimEnd('/');
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
 var missionAware = builder.Configuration.GetValue("Bookings:MissionAware", false);
@@ -51,8 +51,8 @@ app.MapGet("/.well-known/aauth-resource.json", () => Results.Json(new JsonObject
     ["issuer"] = resourceUrl,
     ["jwks_uri"] = $"{resourceUrl}/.well-known/jwks.json",
     ["access_mode"] = AAuthConstants.AccessModes.AuthToken,
-    ["client_name"] = "Aria Bookings",
-    ["description"] = "R3 rich trip booking demo resource.",
+    ["client_name"] = "Aria Reservations",
+    ["description"] = "R3 dining & experiences reservations demo resource.",
     ["authorization_endpoint"] = $"{resourceUrl}/authorize",
     ["mission_aware"] = missionAware,
     ["r3_vocabularies"] = new JsonObject
@@ -65,16 +65,16 @@ app.MapGet("/.well-known/jwks.json", () => Results.Json(BuildJwks(ResourceKid, r
 
 app.MapGet("/", () => Results.Ok(new
 {
-    resource = "Aria Bookings",
+    resource = "Aria Reservations",
     accessMode = "four-party-r3",
     missionAware,
     authorization_endpoint = $"{resourceUrl}/authorize",
     r3_vocabularies = new Dictionary<string, string> { [Vocabulary.Mcp] = $"{resourceUrl}/mcp" },
     flows = new[]
     {
-        new { path = "/search_trip_options", tool = SearchTripOptions, grant = "r3_granted" },
-        new { path = "/hold_itinerary", tool = HoldItinerary, grant = "r3_granted" },
-        new { path = "/book_trip", tool = BookTrip, grant = "r3_conditional + per-call proposal" },
+        new { path = "/search_availability", tool = SearchAvailability, grant = "r3_granted" },
+        new { path = "/hold_reservation", tool = HoldReservation, grant = "r3_granted" },
+        new { path = "/confirm_reservation", tool = ConfirmReservation, grant = "r3_conditional + per-call proposal" },
     },
 }));
 
@@ -146,91 +146,91 @@ app.MapR3Document("/r3/{hash}", ctx =>
     return hash is not null && ctx.RequestServices.GetRequiredService<R3ProposalStore>().TryGet(hash, out var bytes) ? bytes : null;
 }, IsTrustedR3Fetcher);
 
-app.MapMethods("/search_trip_options", ["GET", "POST"], async (HttpContext ctx) =>
+app.MapMethods("/search_availability", ["GET", "POST"], async (HttpContext ctx) =>
 {
-    var auth = await VerifyAuthOrChallengeAsync(ctx, [SearchTripOptions, HoldItinerary, BookTrip]);
+    var auth = await VerifyAuthOrChallengeAsync(ctx, [SearchAvailability, HoldReservation, ConfirmReservation]);
     if (auth.Result is not null) { return auth.Result; }
     var decision = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload);
-    if (!decision.Granted.ContainsTool(SearchTripOptions))
+    if (!decision.Granted.ContainsTool(SearchAvailability))
     {
-        return Results.Json(new { error = "r3_denied", detail = "search_trip_options was not granted" }, statusCode: StatusCodes.Status403Forbidden);
+        return Results.Json(new { error = "r3_denied", detail = "search_availability was not granted" }, statusCode: StatusCodes.Status403Forbidden);
     }
     return Results.Ok(new
     {
         accessMode = "four-party-r3",
-        tool = SearchTripOptions,
+        tool = SearchAvailability,
         source = "r3_granted",
         options = new[]
         {
-            new { itinerary_id = "itinerary-paris-001", destination = "Paris", depart = "2026-07-12", @return = "2026-07-19", total_usd = 1284, cancellation_policy = "Refundable for 24 hours, then airline fare rules apply." },
-            new { itinerary_id = "itinerary-lisbon-002", destination = "Lisbon", depart = "2026-07-13", @return = "2026-07-20", total_usd = 1138, cancellation_policy = "Hotel refundable until 72 hours before arrival." },
+            new { reservation_id = "dining-lumiere-001", venue = "Le Lumière (dinner for 2)", date = "2026-07-14T19:30", party_size = 2, deposit_usd = 40, cancellation_policy = "Deposit refundable up to 48 hours before the reservation." },
+            new { reservation_id = "experience-tour-002", venue = "Old Town Walking Tour", date = "2026-07-15T10:00", party_size = 2, deposit_usd = 25, cancellation_policy = "Non-refundable within 24 hours of the tour." },
         },
         r3_uri = decision.Uri,
         r3_s256 = decision.S256,
     });
 });
 
-app.MapMethods("/hold_itinerary", ["GET", "POST"], async (HttpContext ctx) =>
+app.MapMethods("/hold_reservation", ["GET", "POST"], async (HttpContext ctx) =>
 {
-    var auth = await VerifyAuthOrChallengeAsync(ctx, [SearchTripOptions, HoldItinerary, BookTrip]);
+    var auth = await VerifyAuthOrChallengeAsync(ctx, [SearchAvailability, HoldReservation, ConfirmReservation]);
     if (auth.Result is not null) { return auth.Result; }
     var claims = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload);
-    if (!claims.Granted.ContainsTool(HoldItinerary))
+    if (!claims.Granted.ContainsTool(HoldReservation))
     {
-        return Results.Json(new { error = "r3_denied", detail = "hold_itinerary was not granted" }, statusCode: StatusCodes.Status403Forbidden);
+        return Results.Json(new { error = "r3_denied", detail = "hold_reservation was not granted" }, statusCode: StatusCodes.Status403Forbidden);
     }
     return Results.Ok(new
     {
         accessMode = "four-party-r3",
-        tool = HoldItinerary,
+        tool = HoldReservation,
         source = "r3_granted",
         hold_id = "hold-aria-001",
-        itinerary_id = "itinerary-paris-001",
+        reservation_id = "dining-lumiere-001",
         expires_at = DateTimeOffset.UtcNow.AddMinutes(20),
         r3_uri = claims.Uri,
         r3_s256 = claims.S256,
     });
 });
 
-app.MapPost("/book_trip", async (HttpContext ctx, R3ProposalStore proposals) =>
+app.MapPost("/confirm_reservation", async (HttpContext ctx, R3ProposalStore proposals) =>
 {
-    var auth = await VerifyAuthOrChallengeAsync(ctx, [SearchTripOptions, HoldItinerary, BookTrip]);
+    var auth = await VerifyAuthOrChallengeAsync(ctx, [SearchAvailability, HoldReservation, ConfirmReservation]);
     if (auth.Result is not null) { return auth.Result; }
 
     var claims = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload);
-    var parameters = await ReadBookingParametersAsync(ctx);
+    var parameters = await ReadReservationParametersAsync(ctx);
 
-    if (claims.Granted.ContainsTool(BookTrip))
+    if (claims.Granted.ContainsTool(ConfirmReservation))
     {
         var retry = VerifyApprovedProposalRetry(claims, parameters, proposals);
         if (retry is not null) { return retry; }
         return Results.Ok(new
         {
             accessMode = "four-party-r3",
-            tool = BookTrip,
+            tool = ConfirmReservation,
             source = "per-call-r3_granted",
-            status = "booked",
-            confirmation = "BK-ARIA-314159",
-            itinerary_id = ParameterString(parameters, "itinerary_id"),
-            destination = ParameterString(parameters, "destination"),
-            total_usd = ParameterNumber(parameters, "total_usd"),
+            status = "confirmed",
+            confirmation = "RSV-ARIA-314159",
+            reservation_id = ParameterString(parameters, "reservation_id"),
+            venue = ParameterString(parameters, "venue"),
+            deposit_usd = ParameterNumber(parameters, "deposit_usd"),
             r3_uri = claims.Uri,
             r3_s256 = claims.S256,
         });
     }
 
-    if (!claims.Conditional?.ContainsTool(BookTrip) ?? true)
+    if (!claims.Conditional?.ContainsTool(ConfirmReservation) ?? true)
     {
-        return Results.Json(new { error = "r3_denied", detail = "book_trip was not granted or conditional" }, statusCode: StatusCodes.Status403Forbidden);
+        return Results.Json(new { error = "r3_denied", detail = "confirm_reservation was not granted or conditional" }, statusCode: StatusCodes.Status403Forbidden);
     }
 
     var proposal = new R3ProposalDocument
     {
         Version = "v02",
         Vocabulary = Vocabulary.Mcp,
-        Operations = [new McpOperation { Tool = BookTrip }],
+        Operations = [new McpOperation { Tool = ConfirmReservation }],
         Parameters = parameters,
-        Display = BookingDisplay(parameters),
+        Display = ReservationDisplay(parameters),
     };
     var stored = proposals.Add(proposal, new Uri(resourceUrl), "/r3/proposals");
     var proposalResourceToken = BuildProposalResourceToken(auth.Verified!, stored.Uri, stored.S256);
@@ -238,7 +238,7 @@ app.MapPost("/book_trip", async (HttpContext ctx, R3ProposalStore proposals) =>
     return Results.Json(new
     {
         error = "r3_approval_required",
-        tool = BookTrip,
+        tool = ConfirmReservation,
         r3_uri = stored.Uri,
         r3_s256 = stored.S256,
     }, statusCode: StatusCodes.Status401Unauthorized);
@@ -257,11 +257,11 @@ StoredR3Proposal StoreR3Document(R3ProposalStore store, IEnumerable<string> requ
         Operations = ordered,
         Display = new R3Display
         {
-            Summary = "Search and temporarily hold trip options. Booking a trip may charge your payment method.",
-            Implications = "Search and hold are low risk; book_trip is conditional because it purchases a concrete itinerary.",
-            DataAccessed = "Traveler itinerary preferences, availability, price, and cancellation terms.",
-            Irreversible = ordered.Any(op => string.Equals(op.Tool, BookTrip, StringComparison.Ordinal))
-                ? "Calling book_trip may charge the payment method on file; cancellation and refundability depend on the selected itinerary policy."
+            Summary = "Search and temporarily hold reservations. Confirming a reservation may charge a deposit.",
+            Implications = "Search and hold are low risk; confirm_reservation is conditional because it commits a booking and may charge a deposit.",
+            DataAccessed = "Reservation availability, venue, date, party size, deposit, and cancellation terms.",
+            Irreversible = ordered.Any(op => string.Equals(op.Tool, ConfirmReservation, StringComparison.Ordinal))
+                ? "Calling confirm_reservation may charge a non-refundable deposit; cancellation and refundability depend on the selected venue's policy."
                 : null,
         },
     };
@@ -418,7 +418,7 @@ static JsonObject BuildJwks(string kid, AAuthKey key)
     return new JsonObject { ["keys"] = new JsonArray(jwk) };
 }
 
-async Task<IReadOnlyDictionary<string, R3Parameter>> ReadBookingParametersAsync(HttpContext ctx)
+async Task<IReadOnlyDictionary<string, R3Parameter>> ReadReservationParametersAsync(HttpContext ctx)
 {
     JsonObject body = [];
     if (ctx.Request.ContentLength != 0)
@@ -436,12 +436,12 @@ async Task<IReadOnlyDictionary<string, R3Parameter>> ReadBookingParametersAsync(
     var parameterSource = body["parameters"] as JsonObject ?? body;
     var values = new JsonObject
     {
-        ["itinerary_id"] = parameterSource["itinerary_id"]?.DeepClone() ?? JsonValue.Create("itinerary-paris-001"),
-        ["destination"] = parameterSource["destination"]?.DeepClone() ?? JsonValue.Create("Paris"),
-        ["depart"] = parameterSource["depart"]?.DeepClone() ?? JsonValue.Create("2026-07-12"),
-        ["return"] = parameterSource["return"]?.DeepClone() ?? JsonValue.Create("2026-07-19"),
-        ["total_usd"] = parameterSource["total_usd"]?.DeepClone() ?? JsonValue.Create(1284),
-        ["cancellation_policy"] = parameterSource["cancellation_policy"]?.DeepClone() ?? JsonValue.Create("Refundable for 24 hours, then airline fare rules apply."),
+        ["reservation_id"] = parameterSource["reservation_id"]?.DeepClone() ?? JsonValue.Create("dining-lumiere-001"),
+        ["venue"] = parameterSource["venue"]?.DeepClone() ?? JsonValue.Create("Le Lumière (dinner for 2)"),
+        ["date"] = parameterSource["date"]?.DeepClone() ?? JsonValue.Create("2026-07-14T19:30"),
+        ["party_size"] = parameterSource["party_size"]?.DeepClone() ?? JsonValue.Create(2),
+        ["deposit_usd"] = parameterSource["deposit_usd"]?.DeepClone() ?? JsonValue.Create(40),
+        ["cancellation_policy"] = parameterSource["cancellation_policy"]?.DeepClone() ?? JsonValue.Create("Deposit refundable up to 48 hours before the reservation."),
     };
 
     return values.ToDictionary(
@@ -465,7 +465,7 @@ IResult? VerifyApprovedProposalRetry(R3ClaimReader.AuthTokenClaims claims, IRead
     {
         return Results.Json(new { error = "invalid_proposal", detail = ex.Message }, statusCode: StatusCodes.Status403Forbidden);
     }
-    if (!expected.Operations.Any(op => string.Equals(op.Tool, BookTrip, StringComparison.Ordinal)))
+    if (!expected.Operations.Any(op => string.Equals(op.Tool, ConfirmReservation, StringComparison.Ordinal)))
     {
         return Results.Json(new { error = "proposal_tool_mismatch" }, statusCode: StatusCodes.Status403Forbidden);
     }
@@ -483,13 +483,13 @@ IResult? VerifyApprovedProposalRetry(R3ClaimReader.AuthTokenClaims claims, IRead
         : Results.Json(new { error = "proposal_digest_mismatch" }, statusCode: StatusCodes.Status403Forbidden);
 }
 
-static R3Display BookingDisplay(IReadOnlyDictionary<string, R3Parameter> parameters) => new()
+static R3Display ReservationDisplay(IReadOnlyDictionary<string, R3Parameter> parameters) => new()
 {
-    Summary = $"Approve booking {ParameterString(parameters, "itinerary_id")} to {ParameterString(parameters, "destination")}",
-    Implications = $"This will book travel for {ParameterString(parameters, "depart")} through {ParameterString(parameters, "return")} and may charge the payment method on file.",
-    DataAccessed = "Selected itinerary, destination, travel dates, total price, and cancellation policy.",
-    Irreversible = "Submitting this booking may charge the payment method on file; cancellation and refundability depend on the displayed policy.",
-    Detail = $"Book itinerary `{ParameterString(parameters, "itinerary_id")}` to **{ParameterString(parameters, "destination")}** for **${ParameterNumber(parameters, "total_usd")}**. Cancellation policy: {ParameterString(parameters, "cancellation_policy")}",
+    Summary = $"Approve reservation {ParameterString(parameters, "reservation_id")} at {ParameterString(parameters, "venue")}",
+    Implications = $"This will confirm a reservation on {ParameterString(parameters, "date")} for {ParameterNumber(parameters, "party_size")} guest(s) and may charge a deposit.",
+    DataAccessed = "Selected reservation, venue, date, party size, deposit, and cancellation policy.",
+    Irreversible = "Confirming this reservation may charge a non-refundable deposit; cancellation and refundability depend on the displayed policy.",
+    Detail = $"Confirm reservation `{ParameterString(parameters, "reservation_id")}` at **{ParameterString(parameters, "venue")}** with a **${ParameterNumber(parameters, "deposit_usd")}** deposit. Cancellation policy: {ParameterString(parameters, "cancellation_policy")}",
 };
 
 static string ParameterString(IReadOnlyDictionary<string, R3Parameter> parameters, string name) =>
