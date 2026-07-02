@@ -108,7 +108,7 @@ public sealed class AAuthPersonServerOptions
     /// <summary>
     /// Optional host hook invoked after a four-party resource token is verified
     /// and before its pending entry is returned to the agent. Hosts can attach
-    /// consent-page details or return a protocol error. The SDK stores the
+    /// consent-page details or return a protocol error. The SDK stores the JSON
     /// details opaquely on <see cref="PersonPendingEntry.ConsentDetails"/>.
     /// </summary>
     public Func<FederatedPendingDetailsContext, CancellationToken, Task<FederatedPendingDetailsResult>>?
@@ -140,20 +140,20 @@ public sealed class FederatedPendingDetailsContext
 /// <summary>Result from <see cref="AAuthPersonServerOptions.FederatedPendingDetailsAsync"/>.</summary>
 public sealed class FederatedPendingDetailsResult
 {
-    private FederatedPendingDetailsResult(object? details, IResult? error)
+    private FederatedPendingDetailsResult(JsonNode? details, IResult? error)
     {
         Details = details;
         Error = error;
     }
 
     /// <summary>Host-owned details to attach to the pending entry.</summary>
-    public object? Details { get; }
+    public JsonNode? Details { get; }
 
     /// <summary>Optional immediate error response.</summary>
     public IResult? Error { get; }
 
     /// <summary>Attach details, or none.</summary>
-    public static FederatedPendingDetailsResult Continue(object? details = null) => new(details, null);
+    public static FederatedPendingDetailsResult Continue(JsonNode? details = null) => new(details, null);
 
     /// <summary>Abort the token request with a host-provided response.</summary>
     public static FederatedPendingDetailsResult Fail(IResult error)
@@ -424,18 +424,35 @@ public static class AAuthPersonServerEndpoints
             // Four-party entries resolve via the background federation task.
             if (entry.AgentConfirmationKey is null)
             {
+                if (entry.ConsentDecision == false)
+                {
+                    return Results.Json(
+                        new { error = "denied", detail = "the user denied this request" },
+                        statusCode: StatusCodes.Status403Forbidden);
+                }
+                if (entry.ConsentDetails is not null && entry.ConsentDecision is null)
+                {
+                    return Pending202(ctx, entry, options, interactionUrl);
+                }
+                if (!entry.FederationStarted)
+                {
+                    StartFederation(entry);
+                }
+
+                await entry.FirstAnswer.Task;
+
+                if (entry.Status == PersonPendingStatus.Pending && entry.InteractionUrl is not null)
+                {
+                    ctx.Response.Headers.Location = $"{options.PendingPathPrefix}/{entry.Id}";
+                    ctx.Response.Headers["Retry-After"] = "1";
+                    ctx.Response.Headers["Cache-Control"] = "no-store";
+                    ctx.Response.Headers[AAuthRequirementHeader.Name] =
+                        Interaction.Format(entry.InteractionUrl, entry.InteractionCode!);
+                    return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
+                }
+
                 if (entry.Status == PersonPendingStatus.Allowed && entry.AuthToken is not null)
                 {
-                    if (entry.ConsentDecision == false)
-                    {
-                        return Results.Json(
-                            new { error = "denied", detail = "the user denied this request" },
-                            statusCode: StatusCodes.Status403Forbidden);
-                    }
-                    if (entry.ConsentDetails is not null && entry.ConsentDecision is null)
-                    {
-                        return Pending202(ctx, entry, options, interactionUrl);
-                    }
                     return Results.Ok(new { auth_token = entry.AuthToken });
                 }
                 if (entry.Status == PersonPendingStatus.Denied)
@@ -979,7 +996,7 @@ public static class AAuthPersonServerEndpoints
                     statusCode: StatusCodes.Status400BadRequest);
             }
 
-            object? consentDetails = null;
+            JsonNode? consentDetails = null;
             if (options.FederatedPendingDetailsAsync is not null)
             {
                 var details = await options.FederatedPendingDetailsAsync(new FederatedPendingDetailsContext
@@ -998,89 +1015,24 @@ public static class AAuthPersonServerEndpoints
                 consentDetails = details.Details;
             }
 
-            var federation = app.Services.GetRequiredService<AccessServerClient>();
             var entry = pending.Add(resourceUrl, federatedScope, agentId, agentConfirmationKey: null);
             entry.ConsentDetails = consentDetails;
+            entry.FederatedAccessServerAudience = resourceAudience;
+            entry.FederatedResourceToken = resourceTokenJwt;
 
             var agentTokenJwt = parsed.Jwt
                 ?? throw new InvalidOperationException("Agent token JWT unavailable on the verified request.");
             var agentConfirmationKey = parsed.ConfirmationKey!;
-            var fedRequest = new AccessServerRequest
-            {
-                ResourceToken = resourceTokenJwt,
-                AgentToken = agentTokenJwt,
-                UpstreamToken = upstreamTokenJwt,
-                ExpectedAudience = resourceUrl,
-                ExpectedAgentId = agentId,
-                AgentKey = agentConfirmationKey,
-                RequestedScope = federatedScope,
-                OnInteractionRequired = (interaction, _) =>
-                {
-                    entry.InteractionUrl = interaction.Url;
-                    entry.InteractionCode = interaction.Code;
-                    entry.FirstAnswer.TrySetResult();
-                    return Task.CompletedTask;
-                },
-                // The AS needs identity claims (§Claims Required) for its policy
-                // decision. The PS is the identity authority — answer via the
-                // same asserter, mapping its Assert into the directed claims push.
-                OnClaimsRequired = async (claimsRequirement, ct) =>
-                {
-                    var asserted = await asserter.AssertAsync(new IdentityAssertionRequest
-                    {
-                        ResourceUrl = resourceUrl,
-                        Scope = federatedScope,
-                        AgentId = agentId,
-                        RequiredClaims = claimsRequirement.RequiredClaims,
-                    }, ct);
-                    return new ClaimsResponse
-                    {
-                        Subject = asserted.Subject ?? "pairwise-sub",
-                        Claims = ProjectClaims(asserted, claimsRequirement.RequiredClaims),
-                    };
-                },
-            };
+            entry.FederatedAgentToken = agentTokenJwt;
+            entry.FederatedUpstreamToken = upstreamTokenJwt;
+            entry.FederatedAgentKey = agentConfirmationKey;
 
-            _ = Task.Run(async () =>
+            if (entry.ConsentDetails is not null && entry.ConsentDecision is null)
             {
-                try
-                {
-                    var token = await federation.FederateAsync(resourceAudience, fedRequest);
-                    entry.AuthToken = token;
-                    entry.Status = PersonPendingStatus.Allowed;
-                }
-                catch (AAuthInteractionDeniedException)
-                {
-                    entry.Error = "denied";
-                    entry.ErrorStatus = StatusCodes.Status403Forbidden;
-                    entry.Status = PersonPendingStatus.Denied;
-                }
-                catch (AAuthTokenExchangeException ex)
-                {
-                    entry.Error = ex.ErrorCode;
-                    entry.ErrorStatus = ex.StatusCode;
-                    entry.Status = PersonPendingStatus.Denied;
-                }
-                catch (AAuthPaymentRequiredException ex)
-                {
-                    entry.Error = "payment_required";
-                    entry.ErrorStatus = StatusCodes.Status402PaymentRequired;
-                    entry.ErrorLocation = ex.Location;
-                    entry.Status = PersonPendingStatus.Denied;
-                }
-                catch (Exception ex)
-                {
-                    entry.Error = "federation_failed";
-                    entry.ErrorStatus = StatusCodes.Status502BadGateway;
-                    logger.LogWarning(ex, "Four-party federation to {AccessServer} failed.", resourceAudience);
-                    entry.Status = PersonPendingStatus.Denied;
-                }
-                finally
-                {
-                    entry.FirstAnswer.TrySetResult();
-                }
-            });
+                return Pending202(ctx, entry, options, interactionUrl);
+            }
 
+            StartFederation(entry);
             await entry.FirstAnswer.Task;
 
             if (entry.InteractionUrl is not null)
@@ -1115,6 +1067,100 @@ public static class AAuthPersonServerEndpoints
             return Results.Json(
                 new { error = entry.Error ?? "denied" },
                 statusCode: entry.ErrorStatus ?? StatusCodes.Status403Forbidden);
+        }
+
+        void StartFederation(PersonPendingEntry entry)
+        {
+            lock (entry)
+            {
+                if (entry.FederationStarted)
+                {
+                    return;
+                }
+
+                entry.FederationStarted = true;
+            }
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var accessServer = entry.FederatedAccessServerAudience
+                        ?? throw new InvalidOperationException("pending federation missing Access Server audience.");
+                    var agentKey = entry.FederatedAgentKey
+                        ?? throw new InvalidOperationException("pending federation missing agent key.");
+                    var fedRequest = new AccessServerRequest
+                    {
+                        ResourceToken = entry.FederatedResourceToken
+                            ?? throw new InvalidOperationException("pending federation missing resource token."),
+                        AgentToken = entry.FederatedAgentToken
+                            ?? throw new InvalidOperationException("pending federation missing agent token."),
+                        UpstreamToken = entry.FederatedUpstreamToken,
+                        ExpectedAudience = entry.ResourceUrl,
+                        ExpectedAgentId = entry.AgentId,
+                        AgentKey = agentKey,
+                        RequestedScope = entry.Scope,
+                        OnInteractionRequired = (interaction, _) =>
+                        {
+                            entry.InteractionUrl = interaction.Url;
+                            entry.InteractionCode = interaction.Code;
+                            entry.FirstAnswer.TrySetResult();
+                            return Task.CompletedTask;
+                        },
+                        // The AS needs identity claims (§Claims Required) for its policy
+                        // decision. The PS is the identity authority — answer via the
+                        // same asserter, mapping its Assert into the directed claims push.
+                        OnClaimsRequired = async (claimsRequirement, ct) =>
+                        {
+                            var asserted = await asserter.AssertAsync(new IdentityAssertionRequest
+                            {
+                                ResourceUrl = entry.ResourceUrl,
+                                Scope = entry.Scope,
+                                AgentId = entry.AgentId,
+                                RequiredClaims = claimsRequirement.RequiredClaims,
+                            }, ct);
+                            return new ClaimsResponse
+                            {
+                                Subject = asserted.Subject ?? "pairwise-sub",
+                                Claims = ProjectClaims(asserted, claimsRequirement.RequiredClaims),
+                            };
+                        },
+                    };
+                    var federation = app.Services.GetRequiredService<AccessServerClient>();
+                    var token = await federation.FederateAsync(accessServer, fedRequest);
+                    entry.AuthToken = token;
+                    entry.Status = PersonPendingStatus.Allowed;
+                }
+                catch (AAuthInteractionDeniedException)
+                {
+                    entry.Error = "denied";
+                    entry.ErrorStatus = StatusCodes.Status403Forbidden;
+                    entry.Status = PersonPendingStatus.Denied;
+                }
+                catch (AAuthTokenExchangeException ex)
+                {
+                    entry.Error = ex.ErrorCode;
+                    entry.ErrorStatus = ex.StatusCode;
+                    entry.Status = PersonPendingStatus.Denied;
+                }
+                catch (AAuthPaymentRequiredException ex)
+                {
+                    entry.Error = "payment_required";
+                    entry.ErrorStatus = StatusCodes.Status402PaymentRequired;
+                    entry.ErrorLocation = ex.Location;
+                    entry.Status = PersonPendingStatus.Denied;
+                }
+                catch (Exception ex)
+                {
+                    entry.Error = "federation_failed";
+                    entry.ErrorStatus = StatusCodes.Status502BadGateway;
+                    logger.LogWarning(ex, "Four-party federation to {AccessServer} failed.", entry.FederatedAccessServerAudience);
+                    entry.Status = PersonPendingStatus.Denied;
+                }
+                finally
+                {
+                    entry.FirstAnswer.TrySetResult();
+                }
+            });
         }
     }
 

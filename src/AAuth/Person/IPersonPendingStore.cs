@@ -150,10 +150,10 @@ public sealed class PersonPendingEntry
     public IReadOnlyDictionary<string, JsonNode?>? AdditionalClaims { get; set; }
 
     /// <summary>
-    /// Optional host-owned details rendered by the interaction page before a
+    /// Optional host-owned JSON details rendered by the interaction page before a
     /// pending decision resolves. The SDK stores this opaquely.
     /// </summary>
-    public object? ConsentDetails { get; set; }
+    public JsonNode? ConsentDetails { get; set; }
 
     /// <summary>
     /// Optional host-owned interactive verdict for <see cref="ConsentDetails"/>.
@@ -185,6 +185,26 @@ public sealed class PersonPendingEntry
 
     /// <summary>A <c>Location</c> to surface alongside <see cref="Error"/> (e.g. payment), if any.</summary>
     public string? ErrorLocation { get; set; }
+
+    /// <summary>The Access Server audience for a deferred four-party federation.</summary>
+    public string? FederatedAccessServerAudience { get; set; }
+
+    /// <summary>The verified resource token to submit to the Access Server.</summary>
+    public string? FederatedResourceToken { get; set; }
+
+    /// <summary>The agent token to submit to the Access Server.</summary>
+    public string? FederatedAgentToken { get; set; }
+
+    /// <summary>The optional upstream token to submit to the Access Server.</summary>
+    public string? FederatedUpstreamToken { get; set; }
+
+    /// <summary>
+    /// Runtime-only agent confirmation key used to verify AS auth-token delivery.
+    /// </summary>
+    public IAAuthKey? FederatedAgentKey { get; set; }
+
+    /// <summary>True once the PS has started the PS→AS federation task.</summary>
+    public bool FederationStarted { get; set; }
 
     /// <summary>
     /// Completes when the four-party federation produces its first answer

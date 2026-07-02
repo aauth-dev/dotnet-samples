@@ -172,11 +172,13 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
     {
         try
         {
-            return FederatedPendingDetailsResult.Continue(await FetchR3ConsentDisplayAsync(
+            var display = await FetchR3ConsentDisplayAsync(
                 details.HttpContext,
                 R3ClaimReader.ReadResourceDocument(details.ResourceToken.Payload),
                 details.ResourceUrl,
-                cancellationToken));
+                cancellationToken);
+            return FederatedPendingDetailsResult.Continue(
+                display is null ? null : System.Text.Json.JsonSerializer.SerializeToNode(display));
         }
         catch (Exception ex) when (ex is R3HashMismatchException or InvalidOperationException or HttpRequestException or TaskCanceledException)
         {
@@ -828,7 +830,7 @@ app.MapGet("/interaction", (string? code, IPersonPendingStore pending, MissionPe
             statusCode: StatusCodes.Status404NotFound);
     }
 
-    if (entry.ConsentDetails is R3ConsentDisplay display)
+    if (ReadR3ConsentDisplay(entry.ConsentDetails) is { } display)
     {
         var r3Html =
             "<!doctype html><meta charset=utf-8><title>Approve rich request — Person Server</title>"
@@ -932,7 +934,7 @@ app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent
     {
         return Results.NotFound(new { error = "unknown_code", code });
     }
-    if (entry.ConsentDetails is R3ConsentDisplay)
+    if (ReadR3ConsentDisplay(entry.ConsentDetails) is not null)
     {
         entry.ConsentDecision = true;
         return Results.Content(
@@ -1009,7 +1011,7 @@ app.MapPost("/interaction/deny", async (HttpContext ctx, IPersonPendingStore pen
     {
         return Results.NotFound(new { error = "unknown_code", code });
     }
-    if (entry.ConsentDetails is R3ConsentDisplay)
+    if (ReadR3ConsentDisplay(entry.ConsentDetails) is not null)
     {
         entry.ConsentDecision = false;
         return Results.Content(
@@ -1088,6 +1090,22 @@ static R3ConsentDisplay? ToConsentDisplay(string uri, string s256, R3Display? di
             display.DataAccessed,
             display.Irreversible,
             display.Detail);
+
+static R3ConsentDisplay? ReadR3ConsentDisplay(JsonNode? details)
+{
+    if (details is null)
+    {
+        return null;
+    }
+    try
+    {
+        return System.Text.Json.JsonSerializer.Deserialize<R3ConsentDisplay>(details);
+    }
+    catch (System.Text.Json.JsonException)
+    {
+        return null;
+    }
+}
 
 static bool IsProposal(byte[] bytes)
 {

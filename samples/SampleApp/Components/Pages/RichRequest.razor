@@ -180,7 +180,10 @@ var authToken = await exchange.ExchangeAsync(
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        await JS.InvokeVoidAsync("highlightCode");
+        if (firstRender)
+        {
+            await JS.InvokeVoidAsync("highlightCode");
+        }
     }
 
     private async Task RunFlow()
@@ -363,11 +366,12 @@ var authToken = await exchange.ExchangeAsync(
             $"{_bookings.TrimEnd('/')}/{tool}",
         };
 
+        using var client = new AAuthClientBuilder(_identity.Key)
+            .UseJwt(authToken)
+            .Build();
+
         foreach (var url in candidates)
         {
-            using var client = new AAuthClientBuilder(_identity.Key)
-                .UseJwt(authToken)
-                .Build();
             using var response = await client.PostAsJsonAsync(url, body);
             var raw = await response.Content.ReadAsStringAsync();
             var challengeToken = R3Request.ReadChallenge(response)?.ResourceToken;

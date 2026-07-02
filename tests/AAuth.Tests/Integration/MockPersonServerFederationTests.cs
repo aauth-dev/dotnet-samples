@@ -11,6 +11,8 @@ using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
+using AAuth.R3;
+using AAuth.R3.Model;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -127,7 +129,8 @@ public class MockPersonServerFederationTests
             new JsonObject { ["resource_token"] = resourceToken });
 
         // The PS relays the AS interaction as its own 202.
-        Assert.Equal(HttpStatusCode.Accepted, post.StatusCode);
+        Assert.True(post.StatusCode == HttpStatusCode.Accepted,
+            $"Status={(int)post.StatusCode} {await post.Content.ReadAsStringAsync()}");
         Assert.NotNull(post.Headers.Location);
         // The SDK mapper unifies all deferred polls under a single pending path;
         // the agent follows the Location header to the relayed poll URL.
@@ -147,6 +150,51 @@ public class MockPersonServerFederationTests
         Assert.Equal(AsIssuer, (string?)payload["iss"]);
         Assert.Equal(AuthTokenBuilder.AccessDwk, (string?)payload["dwk"]);
         Assert.Equal(ResourceUrl, (string?)payload["aud"]);
+    }
+
+    [Fact]
+    public async Task Token_WithR3ConsentDetails_DoesNotFederateBeforeUserApproval()
+    {
+        var agentKey = AAuthKey.Generate();
+        var r3Bytes = R3Document.Mcp(
+            [new McpOperation { Tool = "book_trip" }],
+            new R3Display { Summary = "Book a concrete itinerary" }).ToUtf8Bytes();
+        var probe = new FederatedProbe { R3DocumentBytes = r3Bytes };
+        using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read", probe: probe);
+        using var http = BuildSignedAgentClient(factory, agentKey, AgentId);
+
+        var r3Uri = $"{ResourceUrl}/r3/doc";
+        var resourceToken = BuildR3ResourceToken(
+            AgentId,
+            agentKey,
+            audience: AsIssuer,
+            scope: "wallet.read",
+            r3Uri,
+            R3Hash.ComputeS256(r3Bytes));
+
+        using var post = await http.PostAsJsonAsync("/token",
+            new JsonObject { ["resource_token"] = resourceToken });
+
+        Assert.True(post.StatusCode == HttpStatusCode.Accepted,
+            $"Status={(int)post.StatusCode} {await post.Content.ReadAsStringAsync()}");
+        Assert.NotNull(post.Headers.Location);
+        Assert.Equal(0, probe.TokenPostCount);
+
+        using var beforeApprovalPoll = await http.GetAsync(post.Headers.Location!.OriginalString);
+        Assert.True(beforeApprovalPoll.StatusCode == HttpStatusCode.Accepted,
+            $"Status={(int)beforeApprovalPoll.StatusCode} {await beforeApprovalPoll.Content.ReadAsStringAsync()}");
+        Assert.Equal(0, probe.TokenPostCount);
+
+        using var approve = await http.PostAsync("/interaction/approve", new FormUrlEncodedContent(
+        [
+            new KeyValuePair<string, string>("code", post.Headers.Location!.OriginalString.Split('/').Last()),
+        ]));
+        Assert.True(approve.IsSuccessStatusCode,
+            $"Status={(int)approve.StatusCode} {await approve.Content.ReadAsStringAsync()}");
+
+        var authTokenJwt = await PollFederatedPendingAsync(http, post.Headers.Location!.OriginalString);
+        Assert.False(string.IsNullOrEmpty(authTokenJwt));
+        Assert.True(probe.TokenPostCount > 0);
     }
 
     private static async Task<string> PollFederatedPendingAsync(HttpClient http, string pendingUrl)
@@ -172,8 +220,9 @@ public class MockPersonServerFederationTests
     // Helpers
     // ----------------------------------------------------------------
     private static WebApplicationFactory<MockPersonServer.Entry> BuildFactory(
-        AAuthKey agentKey, string agentId, string scope, InteractiveAsState? interactive = null)
+        AAuthKey agentKey, string agentId, string scope, InteractiveAsState? interactive = null, FederatedProbe? probe = null)
     {
+        probe ??= new FederatedProbe();
         return new WebApplicationFactory<MockPersonServer.Entry>().WithWebHostBuilder(b =>
         {
             b.UseSetting("AAuth:Issuer", PsIssuer);
@@ -184,13 +233,15 @@ public class MockPersonServerFederationTests
                 services.RemoveAll<MetadataClient>();
                 services.RemoveAll<JwksClient>();
                 services.AddSingleton(new MetadataClient(
-                    new HttpClient(new FederatedStub(agentKey, agentId, scope, interactive))));
+                    new HttpClient(new FederatedStub(agentKey, agentId, scope, interactive, probe))));
                 services.AddSingleton(new JwksClient(
-                    new HttpClient(new FederatedStub(agentKey, agentId, scope, interactive))));
+                    new HttpClient(new FederatedStub(agentKey, agentId, scope, interactive, probe))));
 
                 // Route the PS→AS federation transport at the same in-process AS.
                 services.AddHttpClient(AAuthFederationServiceCollectionExtensions.FederationHttpClientName)
-                    .ConfigurePrimaryHttpMessageHandler(() => new FederatedStub(agentKey, agentId, scope, interactive));
+                    .ConfigurePrimaryHttpMessageHandler(() => new FederatedStub(agentKey, agentId, scope, interactive, probe));
+                services.AddHttpClient("aauth-r3-fetch")
+                    .ConfigurePrimaryHttpMessageHandler(() => new FederatedStub(agentKey, agentId, scope, interactive, probe));
             });
         });
     }
@@ -225,6 +276,21 @@ public class MockPersonServerFederationTests
             Scope = scope,
         }.Build();
 
+    private static string BuildR3ResourceToken(
+        string agent,
+        AAuthKey agentKey,
+        string audience,
+        string scope,
+        string r3Uri,
+        string r3S256) =>
+        new R3Challenge
+        {
+            ResourceIssuer = ResourceUrl,
+            Audience = audience,
+            Key = ResourceStub.Key,
+            KeyId = ResourceStub.Kid,
+        }.BuildResourceToken(agent, agentKey.ComputeJwkThumbprint(), r3Uri, r3S256, scope);
+
     private static JsonObject DecodePayload(string jwt)
     {
         var segments = jwt.Split('.');
@@ -245,6 +311,12 @@ public class MockPersonServerFederationTests
         public void Complete() => _completed = true;
     }
 
+    private sealed class FederatedProbe
+    {
+        public int TokenPostCount;
+        public byte[]? R3DocumentBytes { get; init; }
+    }
+
     /// <summary>
     /// In-process stub for BOTH the resource (wallet.test) and the Access
     /// Server (as.test): serves their well-known metadata + JWKS for discovery,
@@ -259,13 +331,15 @@ public class MockPersonServerFederationTests
         private readonly string _agentId;
         private readonly string _scope;
         private readonly InteractiveAsState? _interactive;
+        private readonly FederatedProbe _probe;
 
-        public FederatedStub(AAuthKey agentKey, string agentId, string scope, InteractiveAsState? interactive = null)
+        public FederatedStub(AAuthKey agentKey, string agentId, string scope, InteractiveAsState? interactive = null, FederatedProbe? probe = null)
         {
             _agentKey = agentKey;
             _agentId = agentId;
             _scope = scope;
             _interactive = interactive;
+            _probe = probe ?? new FederatedProbe();
         }
 
         protected override Task<HttpResponseMessage> SendAsync(
@@ -276,6 +350,7 @@ public class MockPersonServerFederationTests
 
             if (request.Method == HttpMethod.Post && key == "as.test/token")
             {
+                Interlocked.Increment(ref _probe.TokenPostCount);
                 // Interactive AS: defer with a 202 requirement=interaction.
                 if (_interactive is not null)
                 {
@@ -338,6 +413,14 @@ public class MockPersonServerFederationTests
                 "as.test/.well-known/jwks.json" => Jwks(AsKey, AsKid),
                 _ => null,
             };
+
+            if (request.Method == HttpMethod.Get && key == "wallet.test/r3/doc" && _probe.R3DocumentBytes is not null)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(_probe.R3DocumentBytes),
+                });
+            }
 
             return Task.FromResult(json is null
                 ? new HttpResponseMessage(HttpStatusCode.NotFound)
