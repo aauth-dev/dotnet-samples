@@ -18,6 +18,7 @@ const FLOWS = [
   'Deferred',
   'CallChain',
   'Federated',
+  'RichRequests',
   'Mission',
   'MissionCallChain',
   'SubAgent',
@@ -34,7 +35,7 @@ test('overview introduces Aria and indexes every flow', async ({ page }) => {
 
   // The five Aria servers are introduced.
   const servers = page.locator('.intro__servers .srv');
-  await expect(servers).toHaveText(['Profile', 'Inbox', 'Calendar', 'Trips', 'Wallet']);
+  await expect(servers).toHaveText(['Profile', 'Inbox', 'Calendar', 'Trips', 'Wallet', 'Bookings']);
 
   // One card per flow, each deep-linking into the tour.
   const cards = page.locator('.flow-card');

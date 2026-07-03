@@ -23,6 +23,7 @@ export const TourMode = {
   Deferred: 'Deferred',
   CallChain: 'CallChain',
   Federated: 'Federated',
+  RichRequests: 'RichRequests',
   Mission: 'Mission',
   MissionCallChain: 'MissionCallChain',
   SubAgent: 'SubAgent',
@@ -56,6 +57,11 @@ const PLAN_STEPS: Record<TourMode, number> = {
   // exchange returns 202 (the AS requires consent — its own stub screen or
   // Keycloak) the plan expands to 10 (consent + poll), mirroring deferred.
   Federated: 7,
+  // Rich Resource Requests (R3, four-party): a single, always-full 14-step
+  // linear plan (no branch). The R3 Access Server sets RequireProposalConsent,
+  // so confirm_reservation always needs a per-call consent; the plan shows 14
+  // at selection time and never expands.
+  RichRequests: 14,
   // Mission (PS-governed): 20 steps across three consent cycles — mission
   // creation (4/5), the out-of-mission elevated scope token (12/13), and the
   // out-of-scope cancel_booking permission (18/19).

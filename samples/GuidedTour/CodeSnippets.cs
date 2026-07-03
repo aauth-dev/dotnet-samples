@@ -181,6 +181,42 @@ internal static class CodeSnippets
         // Now signed with the auth_token → 200 OK
         """;
 
+    public const string R3ConfirmConditional = """
+        // Rich Resource Requests (R3): the client is the ordinary four-party
+        // self-issued agent — the R3 detail rides the tokens, not the client.
+        // A CONDITIONAL operation (confirmReservation charges a deposit) can't
+        // be served outright; the resource replies 401 with a per-call PROPOSAL
+        // carrying the concrete parameters, and the R3 Access Server asks the
+        // user to approve that specific booking (202 → consent → poll → mint).
+        using var client = AAuthClientBuilder.SelfIssuing(key)
+            .As(issuer, agentId)
+            .WithKid(keyId)
+            .WithPersonServer(personServer)
+            .WithChallengeHandling(opts =>
+            {
+                opts.OnInteractionRequired = (interaction, ct) =>
+                {
+                    var url = interaction.BuildUserUrl(); // R3 AS consent link
+                    // Surface url to the user, then the SDK polls.
+                    return Task.CompletedTask;
+                };
+            })
+            .Build();
+
+        // The SAME parameters are resent on the approved retry and must match
+        // the proposal's digest (r3 §Per-Call Proposals).
+        var reservation = new
+        {
+            reservation_id = "dining-lumiere-001",
+            venue = "Le Lumière (dinner for 2)",
+            date = "2026-07-14T19:30",
+            party_size = 2,
+            deposit_usd = 40,
+        };
+        var confirm = await client.PostAsJsonAsync(
+            $"{bookings}/confirm_reservation", reservation);
+        """;
+
     public const string ResourceManagedSignedGet = """
         // Two-party resource-managed access (§AAuth-Access Response Header):
         // the resource manages authorization ITSELF — no Person Server, no

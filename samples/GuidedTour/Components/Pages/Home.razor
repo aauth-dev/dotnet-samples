@@ -22,6 +22,7 @@
             <li><span class="srv srv--calendar">Calendar</span> when you're free (PS-asserted, three-party)</li>
             <li><span class="srv srv--trips">Trips</span> browsing and booking trips (mission-governed)</li>
             <li><span class="srv srv--wallet">Wallet</span> paying for a booking (federated, four-party)</li>
+            <li><span class="srv srv--bookings">Bookings</span> reserving dining &amp; experiences (Rich Resource Requests, R3, four-party)</li>
         </ul>
         <p class="intro__role">
             This Guided Tour runs each flow <strong>for real</strong> against live mock servers and
@@ -78,13 +79,16 @@
         new(7, "Federated", "Federated — Four-Party",
             "Aria charges your Wallet, but your money is held by a separate provider whose Access Server makes the final call on the payment.",
             new[] { "Agent + Wallet + PS + AS", "7–10 steps" }),
-        new(8, "Mission", "Mission — PS-Governed",
+        new(8, "RichRequests", "Rich Resource Requests — R3 (Four-Party)",
+            "Aria reserves a table and a tour through Bookings; low-risk searches are granted outright, but confirming a reservation charges a deposit, so its dedicated R3 Access Server asks you to approve that specific booking.",
+            new[] { "Agent + Bookings + PS + R3 AS", "14 steps", "you approve", "R3 / OpenAPI vocab" }),
+        new(9, "Mission", "Mission — PS-Governed",
             "You give Aria a standing trip-planning mission; the Person Server then governs every later request, only prompting you for actions outside what you approved.",
             new[] { "Agent + Trips + PS", "20 steps", "three prompts" }),
-        new(9, "MissionCallChain", "Mission + Call Chain",
+        new(10, "MissionCallChain", "Mission + Call Chain",
             "One mission governs both a clarification chat for an out-of-mission scope and a silent, mission-forwarded delegated chain down to your Trips.",
             new[] { "Agent + Concierge + Trips + PS", "14 steps", "dual governance" }),
-        new(10, "SubAgent", "Sub-Agents — Parent-Mediated Workers",
+        new(11, "SubAgent", "Sub-Agents — Parent-Mediated Workers",
             "Aria spins up a short-lived worker with its own key + identity under one consent; the worker fetches a resource token, Aria mediates the exchange, and hands the worker-bound token back down to it.",
             new[] { "Parent + Sub-Agent + Resource + PS", "7 steps", "in-process" }),
     };
