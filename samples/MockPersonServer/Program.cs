@@ -242,7 +242,8 @@ app.MapPost("/mission", async (
             Proposal = proposal,
         });
         ctx.Response.Headers.Location = $"/mission-create-pending/{pendingMission.Id}";
-        ctx.Response.Headers["Retry-After"] = "0";
+        // Human approval takes seconds — poll at ~1s, not the 100ms floor a 0 clamps to.
+        ctx.Response.Headers["Retry-After"] = "1";
         ctx.Response.Headers["Cache-Control"] = "no-store";
         ctx.Response.Headers[AAuthRequirementHeader.Name] =
             Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", pendingMission.Id);
@@ -361,7 +362,8 @@ app.MapPost("/permission", async (
             Action = request.Action.Name,
         });
         ctx.Response.Headers.Location = $"/permission-pending/{entry.Id}";
-        ctx.Response.Headers["Retry-After"] = "0";
+        // Human approval takes seconds — poll at ~1s, not the 100ms floor a 0 clamps to.
+        ctx.Response.Headers["Retry-After"] = "1";
         ctx.Response.Headers["Cache-Control"] = "no-store";
         // Interactive mode points the user at the PS browser page to decide.
         if (script.InteractiveBrowser)
