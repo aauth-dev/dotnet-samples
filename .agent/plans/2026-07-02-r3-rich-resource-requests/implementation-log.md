@@ -555,6 +555,30 @@ Design decisions (defaults; revert if disagreed):
 
 Purely additive UI/demo — no core or `AAuth.R3` changes. Implementation follows.
 
+### [2026-07-03] [Phase 14] GuidedTour R3 flow — IMPLEMENTED — RESOLVES the deferred GuidedTour follow-up
+
+Implemented per the plan (via a Phase Implementor subagent; independently re-verified). Added a
+single linear 14-step `TourMode.RichRequests` flow to GuidedTour mirroring the SampleApp Bookings
+page: granted `search_availability` (steps 1–6) then conditional `confirm_reservation` per-call
+proposal → 202 consent at the R3 AS → poll → digest-verified retry (steps 7–14). Backend hops
+(PS→AS federation, AS→Bookings R3/proposal fetch + hash-verify + split/eval + mint) render as
+**bundled `SubStep[]`** on steps 5 & 9, `SubStepsLabel = "inside person server + R3 AS"` — per
+the owner directive, never separate agent steps.
+
+Files: `TourSession.cs` (+629: mode props, `RichRequestsPlan`, dispatch, 11 `StepRichRequests*`
+methods, state, `Reset`), `CodeSnippets.cs` (`R3ConfirmConditional`), `Tour.razor` (lanes, picker
+pos 8 + renumber 9/10/11, consent wording, R3 AS topbar), `Home.razor` (Bookings server + card,
+renumber), `wwwroot/app.css` (`.srv--bookings`), `tests/e2e/helpers/tour.ts`
+(`RichRequests`/`PLAN_STEPS=14`), `home.spec.ts`, `actor-bar-visual.spec.ts`, new
+`richrequests.spec.ts` (approve + deny tests).
+
+**Empirical:** `runAll` done-count at the approval park = **10** (step 11 is the R3 AS approval);
+after approve+poll → 12; final `runAll` → 14. Validated: build 0/0; R3 36 / AAuth.Tests 517 /
+Conformance 573; guided-tour e2e green (richrequests approve+deny, home overview 11 flows +
+Bookings server, actor-bar Bookings/:5005). Two minor additive polish items beyond the file list
+(a `.srv--bookings` CSS rule; an R3 arm in the Tour topbar + runAll stop-message) — consistent
+with the Federated model. This closes the last deferred R3 item.
+
 ## Deviations from plan
 
 ### [2026-07-02] [Phase 1] Mirror AAuth's `<Version>` in the R3 csproj — PROCEEDED (default)

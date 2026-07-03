@@ -595,16 +595,16 @@ cutover. This phase is purely additive UI/demo — no core/`AAuth.R3` changes.
 
 **Definition of Done**
 
-- [ ] `IsRichRequestsMode` + `HasR3AccessServer`; `ResourceBaseUrl`/`ResourceDisplayName` → Bookings.
-- [ ] `TotalSteps`=14; `Plan`→`RichRequestsPlan` (14 entries, single); `UserApprovalStepNumber`=11, `PollStepNumber`=12.
-- [ ] `|| IsRichRequestsMode` in the 3 consent/poll guards; R3 branch in `RecordUserApprovalOpenedAsync`; R3 poll-wording arm.
-- [ ] `RunNextAsync` R3 block (14 unconditional cases); 11 new `StepRichRequests*` methods; shared steps reused.
-- [ ] State fields + `Reset()`; `R3SearchUrl`/`R3ConfirmUrl`; `R3ConfirmConditional` snippet.
-- [ ] `RichRequestsLanes` + `ActiveLanes` arm + picker `<option>` (pos 8); trailing picker/home renumbered 9/10/11.
-- [ ] Home.razor Bookings intro `<li>` + RichRequests FlowCard.
-- [ ] tour.ts `TourMode`+`PLAN_STEPS`; home.spec FLOWS (11) + servers list; actor-bar-visual R3 case.
-- [ ] New `richrequests.spec.ts`: lanes, runAll→approve popup→14 done; search 200 (`r3_granted`) + confirm 200 (`per-call-r3_granted`, `confirmed`).
-- [ ] `dotnet build AAuth.slnx` 0/0; GuidedTour + SampleApp e2e green (backends boot together: :5005 + :5501 + :5100).
+- [x] `IsRichRequestsMode` + `HasR3AccessServer`; `ResourceBaseUrl`/`ResourceDisplayName` → Bookings.
+- [x] `TotalSteps`=14; `Plan`→`RichRequestsPlan` (14 entries, single); `UserApprovalStepNumber`=11, `PollStepNumber`=12.
+- [x] `|| IsRichRequestsMode` in the 3 consent/poll guards; R3 branch in `RecordUserApprovalOpenedAsync`; R3 poll-wording arm.
+- [x] `RunNextAsync` R3 block (14 unconditional cases); 11 new `StepRichRequests*` methods; shared steps reused.
+- [x] State fields + `Reset()`; `R3SearchUrl`/`R3ConfirmUrl`; `R3ConfirmConditional` snippet.
+- [x] `RichRequestsLanes` + `ActiveLanes` arm + picker `<option>` (pos 8); trailing picker/home renumbered 9/10/11.
+- [x] Home.razor Bookings intro `<li>` + RichRequests FlowCard.
+- [x] tour.ts `TourMode`+`PLAN_STEPS`; home.spec FLOWS (11) + servers list; actor-bar-visual R3 case.
+- [x] New `richrequests.spec.ts`: lanes, runAll→approve popup→14 done; search 200 (`r3_granted`) + confirm 200 (`per-call-r3_granted`, `confirmed`).
+- [x] `dotnet build AAuth.slnx` 0/0; GuidedTour + SampleApp e2e green (backends boot together: :5005 + :5501 + :5100).
 
 ---
 
