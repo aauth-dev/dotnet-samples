@@ -121,8 +121,9 @@ app.MapPost("/authorize", async (HttpContext ctx, R3ProposalStore documents) =>
     {
         operations = body?["r3_operations"]?.Deserialize<R3Operations>(R3Json.Options)
             ?? throw new InvalidOperationException("missing r3_operations");
-        // Resource-token issuance is gated by the authoritative MCP tool set
-        // published from /mcp.
+        // Resource-token issuance is gated by the authoritative operation set this
+        // resource supports (its OpenAPI operationIds, advertised at /openapi.json):
+        // an unknown operationId is rejected.
         ValidateRequestedOperations(operations);
     }
     catch (Exception ex) when (ex is JsonException or InvalidOperationException)

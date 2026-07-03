@@ -37,6 +37,14 @@ public sealed class R3FetchClient
         return bytes;
     }
 
+    // SSRF posture: the fetch target is pinned to the SAME ORIGIN as the
+    // signature-verified resource issuer (SameOrigin below), so the AS can only
+    // ever fetch from the resource whose token it just verified — not an arbitrary
+    // internal host — and r3_s256 hash verification blocks any content substitution.
+    // The IP-literal private/link-local block is defense-in-depth (loopback allowed
+    // for local dev). A DNS name that resolves to a private IP is deliberately NOT
+    // pre-resolved here: a resolve-then-connect pre-check is TOCTOU-unsound and would
+    // be a one-off vs. the rest of the SDK, which pins by origin + scheme.
     public static Uri ValidateFetchTarget(string r3Uri, string resourceIssuer)
     {
         ArgumentException.ThrowIfNullOrEmpty(r3Uri);

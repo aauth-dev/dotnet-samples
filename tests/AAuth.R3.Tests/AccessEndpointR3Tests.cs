@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
@@ -197,6 +198,41 @@ public class AccessEndpointR3Tests
     }
 
     [Fact]
+    public async Task TokenEndpoint_ConcurrentPendingPolls_MintAndAuditExactlyOnce()
+    {
+        // Concurrent polls of the SAME approval must mint (and audit) exactly once
+        // (§Audit Log Integrity). The yielding sink forces a real async suspension so
+        // an unguarded `??=` would double-mint; the per-entry gate prevents it.
+        var auditSink = new YieldingR3AuditSink();
+        var fixture = await R3AccessFixture.CreateAsync(auditSink: auditSink, requireProposalConsent: true);
+        await using var app = fixture.App;
+
+        var pending = await fixture.PostTokenAsync(fixture.ProposalResourceToken);
+        var location = pending.Headers.Location!.ToString();
+        var code = location.Split('/')[^1];
+        using var browser = app.GetTestClient();
+        browser.BaseAddress = new Uri(R3TestData.AsIssuer);
+        var approve = await browser.PostAsync(
+            "/interaction/consent/approve",
+            new FormUrlEncodedContent(new Dictionary<string, string> { ["code"] = code }));
+        Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
+
+        // Fire several concurrent signed polls of the same approval.
+        var polls = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => fixture.PollPendingAsync(location)));
+
+        var tokens = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var poll in polls)
+        {
+            Assert.Equal(HttpStatusCode.OK, poll.StatusCode);
+            var payload = await poll.Content.ReadFromJsonAsync<JsonObject>();
+            tokens.Add((string)payload!["auth_token"]!);
+        }
+
+        Assert.Single(tokens);              // one token for the whole approval
+        Assert.Single(auditSink.Records);   // one audit record, not one-per-poll
+    }
+
+    [Fact]
     public async Task TokenEndpoint_PendingPoll_RejectsUnsignedCaller()
     {
         // The pending poll rides the signed PS→AS channel: an unsigned GET to the
@@ -335,6 +371,19 @@ public class AccessEndpointR3Tests
         public Task RecordTokenIssuanceAsync(R3TokenIssuanceAuditRecord record, CancellationToken cancellationToken = default)
         {
             throw new InvalidOperationException("audit sink unavailable");
+        }
+    }
+
+    // Records issuance but yields first, forcing a real async suspension so the
+    // mint-once gate is actually exercised under concurrent polls.
+    private sealed class YieldingR3AuditSink : IR3AuditSink
+    {
+        private readonly ConcurrentBag<R3TokenIssuanceAuditRecord> _records = new();
+        public IReadOnlyCollection<R3TokenIssuanceAuditRecord> Records => _records;
+        public async Task RecordTokenIssuanceAsync(R3TokenIssuanceAuditRecord record, CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+            _records.Add(record);
         }
     }
 

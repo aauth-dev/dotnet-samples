@@ -37,7 +37,7 @@ public static class R3AccessTokenEndpoint
 
         var pendingPath = "/" + options.PendingPath.Trim('/');
         var consentPath = "/" + options.ConsentPath.Trim('/');
-        var pendingStore = new R3PendingStore();
+        var pendingStore = new R3PendingStore(options.TimeProvider);
 
         // Mint the R3 auth token + write the audit record atomically. Shared by the
         // /token happy path (granted class docs) and the /pending poll after per-call
@@ -216,7 +216,22 @@ public static class R3AccessTokenEndpoint
             switch (entry.Status)
             {
                 case R3PendingStatus.Allowed:
-                    entry.AuthToken ??= await MintAndAuditAsync(entry.MintParts, entry.AgentId, entry.AgentConfirmationKey, entry.ResourceIssuer, context.RequestAborted);
+                    if (entry.AuthToken is null)
+                    {
+                        // Mint-once gate: concurrent polls of the same approval must not
+                        // mint (and audit) the token more than once (§Audit Log Integrity).
+                        // The outer null-check keeps the common already-minted poll lock-free;
+                        // the inner ??= re-checks under the per-entry gate.
+                        await entry.MintGate.WaitAsync(context.RequestAborted);
+                        try
+                        {
+                            entry.AuthToken ??= await MintAndAuditAsync(entry.MintParts, entry.AgentId, entry.AgentConfirmationKey, entry.ResourceIssuer, context.RequestAborted);
+                        }
+                        finally
+                        {
+                            entry.MintGate.Release();
+                        }
+                    }
                     return Results.Ok(new { auth_token = entry.AuthToken, expires_in = 3600 });
                 case R3PendingStatus.Denied:
                     return Results.Json(new { error = "denied" }, statusCode: StatusCodes.Status403Forbidden);
@@ -361,16 +376,30 @@ public static class R3AccessTokenEndpoint
         public required string AgentId { get; init; }
         public required IAAuthKey AgentConfirmationKey { get; init; }
         public required string ResourceIssuer { get; init; }
+        public required DateTimeOffset CreatedAt { get; init; }
         public R3PendingStatus Status { get; set; } = R3PendingStatus.Pending;
         public string? AuthToken { get; set; }
+
+        // Serializes the mint-once check on the /pending poll so concurrent polls
+        // of the same approval don't mint (and audit) more than one token.
+        public SemaphoreSlim MintGate { get; } = new(1, 1);
     }
 
     internal sealed class R3PendingStore
     {
+        // Bounded lifetime so abandoned consent flows (or a client spamming per-call
+        // proposals) don't grow the store without bound; mirrors the core in-memory
+        // pending stores (InMemoryAccessPendingStore / InMemoryPersonPendingStore).
+        internal static readonly TimeSpan Ttl = TimeSpan.FromMinutes(10);
+
         private readonly ConcurrentDictionary<string, R3PendingEntry> _entries = new(StringComparer.Ordinal);
+        private readonly TimeProvider _timeProvider;
+
+        public R3PendingStore(TimeProvider timeProvider) => _timeProvider = timeProvider;
 
         public R3PendingEntry Add(AuthMintParts mintParts, string agentId, IAAuthKey agentKey, string resourceIssuer)
         {
+            Sweep();
             var entry = new R3PendingEntry
             {
                 Id = Guid.NewGuid().ToString("N"),
@@ -378,12 +407,30 @@ public static class R3AccessTokenEndpoint
                 AgentId = agentId,
                 AgentConfirmationKey = agentKey,
                 ResourceIssuer = resourceIssuer,
+                CreatedAt = _timeProvider.GetUtcNow(),
             };
             _entries[entry.Id] = entry;
             return entry;
         }
 
-        public R3PendingEntry? Get(string id) => _entries.TryGetValue(id, out var entry) ? entry : null;
+        public R3PendingEntry? Get(string id)
+        {
+            Sweep();
+            return _entries.TryGetValue(id, out var entry) ? entry : null;
+        }
+
+        // Drop entries past the TTL so the dictionary does not grow without bound.
+        private void Sweep()
+        {
+            var cutoff = _timeProvider.GetUtcNow() - Ttl;
+            foreach (var kv in _entries)
+            {
+                if (kv.Value.CreatedAt < cutoff)
+                {
+                    _entries.TryRemove(kv.Key, out _);
+                }
+            }
+        }
     }
 
     // Browser consent screen for a per-call proposal. Mirrors the Federated AS's
