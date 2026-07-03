@@ -617,6 +617,58 @@ adversarial (concurrency/resource-bounds/SSRF). No CRITICAL. Triage + actions:
 Validated: build 0/0; R3 38 (+cross-PS test), AAuth.Tests 517, Conformance 573; R3 e2e (sample-app +
 guided-tour) green. The deferred MEDIUMs are logged follow-ups, not blockers for the preview.
 
+### [2026-07-03] [Phase 15] Both deferred MEDIUMs fixed — JTI replay guard + agent-token exchange isolation — RESOLVED
+
+Resolves the two deferred MEDIUMs from the Phase 11 review entry above.
+
+- **JTI/replay guard on the R3 self-verification path — FIXED (granted immediate-mint branch only).**
+  The duplicate-mint+audit risk lives solely on the **granted** path (`POST /token` → synchronous
+  `MintAndAuditAsync` → 200). `R3DocumentEndpoint.TryRecordMintSignatureAsync` records
+  `"{key-thumbprint}|{signature}"` in a DI-resolved `IJtiStore` with expiry `created + verifier.MaxAge`
+  (a verbatim clone of `AAuthVerificationMiddleware` §Freshness and Replay, signature-keyed — *not*
+  carrier-token-keyed); the `/token` handler calls it immediately before the granted mint and returns
+  401 `invalid_signature` on a duplicate. A captured granted `POST /token` replayed verbatim (which
+  would otherwise re-mint + duplicate-audit) is refused; the granted path is a single POST→200 and is
+  never legitimately re-issued, so this is a pure attack-surface guard. **Inert when no store is
+  registered** → existing 38 R3 tests unchanged. Sample R3 AS registers `InMemoryJtiStore`. Regression
+  test `TokenEndpoint_RejectsReplayedSignedRequest_AndMintsAuditsOnce` (capture the signed granted
+  `POST /token` via a `SignedRequestCapture` inner handler, replay verbatim through the raw TestServer
+  transport → 401; first 200; audited once). R3 38 → 39.
+
+  **Two e2e iterations got here (recorded so the constraint isn't re-broken):** the first cut put the
+  guard in `VerifyFetcherAsync` (fires on every self-verified request). Full e2e then timed out the 3
+  R3 *conditional* flows: (i) the idempotent GET `/pending` is polled **sub-second**, so rapid polls
+  share one whole-second `created` with an otherwise-identical covered set ⇒ **byte-identical
+  signatures** the guard false-positived; and (ii) even scoped to `POST /token`, the **proposal**
+  branch is legitimately re-POSTed verbatim by the agent's step-up loop while it polls for consent, so
+  those identical retries were rejected 401 and the flow hung. The guard therefore had to move off the
+  shared verification path entirely and onto the granted immediate-mint branch, which is the only
+  non-idempotent, non-retried caller. `VerifyFetcherAsync` no longer does any replay bookkeeping.
+- **Core-SDK cross-request stale-carrier — FIXED (two-holder split).** `AAuthClientBuilder`'s
+  challenge-handling pipeline no longer shares one `AAuthTokenHolder` between the resource signer, the
+  exchange signer, and the refresh handler. Now: `agentTokenHolder` (seeded with the agent token, kept
+  fresh by `TokenRefreshHandler`) always signs the PS token-exchange and backs the resource request
+  until a carrier exists; `carrierHolder` (initially empty) holds challenge-obtained auth tokens and is
+  passed **only** to `ChallengeHandler`. Resource provider = `carrierHolder.HasToken ? carrier : agent`;
+  exchange provider = `_provider ?? agentTokenHolder`. The per-exchange **re-pin workaround was removed**
+  from `ChallengeHandler` (the exchange is agent-signed by construction now, so the entry-capture +
+  `_holder.Update(agentToken)` are gone; the holder is purely the carrier). This eliminates the leak at
+  the source instead of masking it — a reused `WithChallengeHandling` client can no longer sign a later
+  PS exchange with an earlier step-up's carrier (`invalid_carrier_token`).
+
+**No dedicated builder-level test for the two-holder split (rationale):** the builder's exchange channel
+is constructed over a fresh `HttpClientHandler` (not `_innerHandler`), so the exchange request is not
+interceptable from a unit test without an SDK transport refactor (out of scope). The split is instead
+validated (a) structurally — the exchange provider closes over `agentTokenHolder` only, and
+`carrierHolder` is a distinct object handed only to the challenge handler — and (b) by the full
+unit/conformance suites + **all** e2e (the holder split touches every challenge-handling flow:
+autonomous, deferred, call-chain, mission, federated, sub-agent). No re-pin regression: the direct-
+construction handler tests build their own exchange clients and were never affected by the builder wiring.
+
+Validated: build 0/0; R3 39, AAuth.Tests 517, Conformance 573; **all 49 e2e green** (re-run with the
+replay guard live in the sample R3 AS — the RichRequests granted/conditional flow, `/pending` polls, and
+the non-R3 flows all pass). No commit yet (awaiting owner OK).
+
 ## Deviations from plan
 
 ### [2026-07-02] [Phase 1] Mirror AAuth's `<Version>` in the R3 csproj — PROCEEDED (default)

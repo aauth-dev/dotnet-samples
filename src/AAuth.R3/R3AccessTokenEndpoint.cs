@@ -178,6 +178,18 @@ public static class R3AccessTokenEndpoint
                 return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
             }
 
+            // Replay defence on the granted immediate-mint path ONLY (§Freshness and
+            // Replay). This branch mints + audits synchronously and is never legitimately
+            // re-issued (a granted /token is a single POST → 200), so a verbatim replay
+            // here is an attack and is refused. The proposal branch above is deliberately
+            // excluded: the agent re-drives it while polling (identical sub-second POSTs),
+            // and its per-call mint is already made exactly-once by the /pending gate.
+            // No-op unless an IJtiStore is registered (preserves prior behaviour).
+            if (!await R3DocumentEndpoint.TryRecordMintSignatureAsync(context, caller.KeyThumbprint))
+            {
+                return Results.Json(new { error = "invalid_signature", detail = "replayed request signature" }, statusCode: StatusCodes.Status401Unauthorized);
+            }
+
             var authToken = await MintAndAuditAsync(mintParts, agentId, agentConfirmationKey, resourceIssuer, context.RequestAborted);
             return Results.Ok(new { auth_token = authToken, expires_in = 3600 });
         });

@@ -117,12 +117,72 @@ public static class R3DocumentEndpoint
             publicKey,
             request.Headers.Authorization.FirstOrDefault());
 
+        // Replay defence is NOT applied here: this path is shared by the idempotent GET
+        // callers (document fetch, /pending polls) and by the /token proposal branch,
+        // all of which are legitimately re-issued — rapid sub-second re-polls even share
+        // one whole-second `created` ⇒ byte-identical signatures. Only the state-changing
+        // *granted immediate-mint* branch guards against replay, via
+        // TryRecordMintSignatureAsync (called from the /token handler).
         return new R3VerifiedFetcher(
             parsed.Scheme,
             parsed.JwksUri is null ? null : new Uri(parsed.JwksUri),
             parsed.Kid,
             parsed.Jkt ?? publicKey.ComputeJwkThumbprint(),
             parsed);
+    }
+
+    /// <summary>
+    /// Records the current request's signature for replay defence on a state-changing
+    /// mint (mirrors <c>AAuthVerificationMiddleware</c> §Freshness and Replay). Returns
+    /// <c>false</c> if the same signature was already recorded within the freshness window
+    /// (a verbatim replay). A no-op returning <c>true</c> when no <see cref="AAuth.Server.IJtiStore"/>
+    /// is registered. Call this ONLY on paths that are not legitimately re-issued (the
+    /// granted immediate-mint branch) — never on idempotent/re-polled paths, which would
+    /// false-positive on byte-identical signatures.
+    /// </summary>
+    public static async Task<bool> TryRecordMintSignatureAsync(HttpContext context, string? keyThumbprint)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (context.RequestServices.GetService(typeof(AAuth.Server.IJtiStore)) is not AAuth.Server.IJtiStore jtiStore)
+        {
+            return true;
+        }
+        if (!TrySingleHeader(context.Request, AAuthConstants.Headers.SignatureInput, out var signatureInput)
+            || !TrySingleHeader(context.Request, AAuthConstants.Headers.Signature, out var signature)
+            || ParseSignatureCreated(signatureInput) is not { } createdSeconds)
+        {
+            return true;
+        }
+        var verifier = context.RequestServices.GetService(typeof(AAuthVerifier)) as AAuthVerifier ?? new AAuthVerifier();
+        var replayKey = $"{keyThumbprint}|{signature}";
+        var replayExpiry = DateTimeOffset.FromUnixTimeSeconds(createdSeconds) + verifier.MaxAge;
+        return await jtiStore.TryRecordAsync(replayKey, replayExpiry, context.RequestAborted);
+    }
+
+    // Parse the numeric `created` parameter from a Signature-Input value.
+    // Mirrors AAuthVerificationMiddleware so the R3 self-verification path applies
+    // the same freshness-window bound to replay entries.
+    private static long? ParseSignatureCreated(string signatureInput)
+    {
+        const string Marker = "created=";
+        var idx = signatureInput.IndexOf(Marker, StringComparison.Ordinal);
+        if (idx < 0)
+        {
+            return null;
+        }
+        var start = idx + Marker.Length;
+        var end = start;
+        if (end < signatureInput.Length && signatureInput[end] == '-')
+        {
+            end++;
+        }
+        while (end < signatureInput.Length && char.IsDigit(signatureInput[end]))
+        {
+            end++;
+        }
+        return long.TryParse(signatureInput.AsSpan(start, end - start), out var created)
+            ? created
+            : null;
     }
 
     private static bool TrySingleHeader(HttpRequest request, string headerName, out string value)

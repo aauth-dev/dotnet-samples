@@ -162,14 +162,6 @@ public sealed class ChallengeHandler : DelegatingHandler
         // exactly once (unchanged behavior).
         const int maxAuthTokenChallenges = 3;
 
-        // The token exchange to the PS MUST be signed with the agent token
-        // (§Agent Token Request — the PS rejects a non-agent carrier with 403
-        // invalid_carrier_token). The exchange signer reads the shared holder, so
-        // capture the agent token now and restore it before every exchange: on a
-        // second challenge the holder already carries the first auth token, which
-        // would otherwise sign the exchange and be rejected.
-        var agentToken = _holder.Current;
-
         var response = await SendWithAdaptiveSigningAsync(request, cancellationToken)
             .ConfigureAwait(false);
 
@@ -196,13 +188,9 @@ public sealed class ChallengeHandler : DelegatingHandler
                     ?? throw new InvalidOperationException(
                         "No personServer configured and upstreamTokenProvider returned null.");
 
-            // Re-pin the holder to the agent token so the exchange request is
-            // agent-signed even after a prior iteration installed a carrier token.
-            if (!string.IsNullOrEmpty(agentToken))
-            {
-                _holder.Update(agentToken);
-            }
-
+            // The exchange to the PS is agent-signed by a dedicated agent-token channel
+            // (see AAuthClientBuilder) that is independent of this handler's carrier
+            // holder, so it stays agent-signed across successive step-up challenges.
             var authToken = await _exchange
                 .ExchangeAsync(targetServer, requirement.ResourceToken!,
                     new TokenExchangeRequest

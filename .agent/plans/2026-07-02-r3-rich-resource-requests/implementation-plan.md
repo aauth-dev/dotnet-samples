@@ -608,6 +608,81 @@ cutover. This phase is purely additive UI/demo — no core/`AAuth.R3` changes.
 
 ---
 
+## Phase 15 — Independent-review follow-ups: JTI replay guard + agent-token exchange isolation
+
+**Goal:** fix the two deferred MEDIUM findings from the independent spec review (logged at the
+end of Phase 11's review entry). Both are latent-correctness hardening; neither changes the
+happy-path protocol.
+
+1. **JTI/replay guard on the R3 AS self-verification path.** `R3DocumentEndpoint.VerifyFetcherAsync`
+   verified the caller signature with a bare `AAuthVerifier` (freshness-only, no replay store), so a
+   captured signed `POST /token` replayed verbatim inside the freshness window would **re-mint** an
+   auth token and **duplicate the audit record** on the granted (`r3_granted`) path. The core
+   resource middleware already defends this (`AAuthVerificationMiddleware` §Freshness and Replay);
+   the R3 endpoints self-verify and skipped it.
+2. **Cross-request stale-carrier in the challenge-handling pipeline.** `AAuthClientBuilder` fed the
+   resource signer, the token-exchange signer, and the refresh handler from a **single**
+   `AAuthTokenHolder`. On a reused `WithChallengeHandling` client, a prior step-up's carrier auth
+   token could sign a later PS token-exchange → PS `invalid_carrier_token` (403). A per-exchange
+   re-pin inside `ChallengeHandler` masked the symptom for the single-request case but not for
+   independent reuse.
+
+**Guiding principle (restated):** spec conformance over compatibility. Both fixes are structural;
+validate the core change against the full suite + all e2e (challenge handling touches every flow).
+
+**Design:**
+
+- **Replay guard — granted immediate-mint branch ONLY.** `R3DocumentEndpoint.TryRecordMintSignatureAsync`
+  records `"{key-thumbprint}|{signature}"` in a DI `IJtiStore` (expiry `created + verifier.MaxAge`,
+  mirroring the core middleware, signature-keyed not carrier-keyed); the `/token` handler calls it
+  right before the granted `MintAndAuditAsync` and returns 401 on a duplicate. **Deliberately not on
+  verification, not on the proposal branch, not on the GET paths:** the proposal branch and the
+  `/pending` polls are legitimately re-issued verbatim sub-second (byte-identical signatures) and the
+  proposal mint is already exactly-once via `R3PendingEntry`'s gate — only the granted path both
+  mints synchronously and is never retried. **Inert when no store is registered.** Sample R3 AS
+  registers an `InMemoryJtiStore`.
+- **Two-holder split:** `agentTokenHolder` (seeded with the agent token, kept fresh by
+  `TokenRefreshHandler`) signs the resource request until a carrier exists **and** always signs the
+  PS exchange; `carrierHolder` (initially empty) holds challenge-obtained auth tokens and is passed
+  only to `ChallengeHandler`. Resource signer = `carrierHolder.HasToken ? carrier : agent`. The
+  `ChallengeHandler` entry-capture + re-pin workaround is **removed** (exchange is agent-signed by
+  construction).
+
+### Files
+
+| File | Responsibility |
+|---|---|
+| `src/AAuth/AAuthClientBuilder.cs` | **Modify** — split the single challenge-pipeline holder into `agentTokenHolder` (exchange + refresh) + `carrierHolder` (resource carrier); resource provider prefers the carrier, falls back to the fresh agent token; exchange provider = `_provider ?? agentTokenHolder`; `ChallengeHandler` gets `carrierHolder`, `TokenRefreshHandler` gets `agentTokenHolder` |
+| `src/AAuth/Agent/ChallengeHandler.cs` | **Modify** — remove the entry-capture (`agentToken = _holder.Current`) + per-exchange re-pin; the holder is now purely the carrier (`_holder.Update(authToken)` unchanged) |
+| `src/AAuth.R3/R3DocumentEndpoint.cs` | **Modify** — add `TryRecordMintSignatureAsync` (signature-keyed replay record via a DI `IJtiStore`, store-optional) + `ParseSignatureCreated` helper; `VerifyFetcherAsync` unchanged (no replay bookkeeping) |
+| `src/AAuth.R3/R3AccessTokenEndpoint.cs` | **Modify** — call `TryRecordMintSignatureAsync` immediately before the granted `MintAndAuditAsync`; 401 `invalid_signature` on a duplicate |
+| `samples/MockAccessServers/R3/Program.cs` | **Modify** — register `IJtiStore` → `InMemoryJtiStore` so the guard is live in the demo AS |
+| `tests/AAuth.R3.Tests/AccessEndpointR3Tests.cs` | **Modify** — `CreateAsync(jtiStore:)` param (registered as the interface); `PostTokenThenReplayAsync` + `SignedRequestCapture`; `TokenEndpoint_RejectsReplayedSignedRequest_AndMintsAuditsOnce` |
+
+**Implementation Decisions** (rationale in log):
+
+- Replay guard mirrors `AAuthVerificationMiddleware` (signature-keyed, freshness-window expiry,
+  store-optional) rather than re-routing R3 endpoints through `UseAAuthVerification` — the R3
+  endpoints self-verify (jwks_uri trust predicate + hash-verify), and cloning the middleware's exact
+  replay semantics keeps behaviour consistent without restructuring the endpoint.
+- `ParseSignatureCreated` is a small private copy (the middleware's is `private`); not worth a
+  public-API extraction for one caller.
+- No dedicated builder-level test for the two-holder split: the builder's exchange channel uses a
+  fresh `HttpClientHandler` (not `_innerHandler`), so the exchange is not interceptable in a unit
+  test without an SDK transport refactor (out of scope). The split is validated structurally (the
+  exchange provider closes over `agentTokenHolder` only; `carrierHolder` is a separate object) and
+  by the full unit/conformance suites + all e2e (no regression across any challenge-handling flow).
+
+**Definition of Done**
+
+- [x] Replay guard on the granted immediate-mint branch of `POST /token` (via `TryRecordMintSignatureAsync`, store-optional, signature-keyed, freshness-window expiry) → 401 `invalid_signature` on a verbatim replay; not on verification / proposal / GET paths.
+- [x] Sample R3 AS registers `IJtiStore` → `InMemoryJtiStore`.
+- [x] Replay-rejected test: verbatim-replayed `POST /token` → 401; first succeeds; audited once (R3 38 → 39).
+- [x] `AAuthClientBuilder` two-holder split; `ChallengeHandler` entry-capture + re-pin removed; no leftover `tokenHolder`.
+- [x] Full suites green (R3 39 / AAuth.Tests 517 / Conformance 573) and all e2e green (no regression from the core holder split or the live replay guard).
+
+---
+
 ## Out of scope
 
 | Item | Reason |

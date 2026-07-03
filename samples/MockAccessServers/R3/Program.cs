@@ -30,6 +30,11 @@ builder.Services.AddSingleton(asKey);
 // Shared discovery clients (MetadataClient + JwksClient) with an SDK-owned pooled
 // handler; no manual HttpClient wiring (2026-06-27 server-api-surface convention).
 builder.Services.AddAAuthDiscovery();
+// Replay defence for the AS's own signature verification (§Freshness and Replay):
+// a registered IJtiStore lets the R3 endpoints refuse a verbatim-replayed signed
+// POST /token within the freshness window, so a captured request cannot re-mint an
+// auth token or duplicate an audit entry. In-memory here; use a durable store in prod.
+builder.Services.AddSingleton<AAuth.Server.IJtiStore, AAuth.Server.InMemoryJtiStore>();
 
 var app = builder.Build();
 

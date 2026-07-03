@@ -42,6 +42,27 @@ public class AccessEndpointR3Tests
     }
 
     [Fact]
+    public async Task TokenEndpoint_RejectsReplayedSignedRequest_AndMintsAuditsOnce()
+    {
+        // §Freshness and Replay: with an IJtiStore registered, a captured signed
+        // POST /token replayed verbatim within the freshness window is refused (401),
+        // so it cannot re-mint an auth token or duplicate the audit record. The
+        // legitimate first request still succeeds and audits exactly once.
+        var auditSink = new InMemoryR3AuditSink();
+        var fixture = await R3AccessFixture.CreateAsync(
+            auditSink: auditSink, jtiStore: new AAuth.Server.InMemoryJtiStore());
+        await using var app = fixture.App;
+
+        var (first, replay) = await fixture.PostTokenThenReplayAsync();
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);
+        var error = await replay.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("invalid_signature", (string?)error!["error"]);
+        Assert.Single(auditSink.Records);
+    }
+
+    [Fact]
     public async Task TokenEndpoint_AuditsClassR3TokenIssuance()
     {
         var auditSink = new InMemoryR3AuditSink();
@@ -439,7 +460,8 @@ public class AccessEndpointR3Tests
             bool openPersonServerTrust = false,
             bool requireProposalConsent = false,
             HttpMessageHandler? fetchHandler = null,
-            IR3AuditSink? auditSink = null)
+            IR3AuditSink? auditSink = null,
+            AAuth.Server.IJtiStore? jtiStore = null)
         {
             var asKey = AAuthKey.Generate();
             var psKey = AAuthKey.Generate();
@@ -476,6 +498,11 @@ public class AccessEndpointR3Tests
             builder.WebHost.UseTestServer();
             builder.Services.AddSingleton(new JwksClient(new HttpClient(discovery)));
             builder.Services.AddSingleton(new MetadataClient(new HttpClient(discovery)));
+            if (jtiStore is not null)
+            {
+                // Registered as the interface so R3DocumentEndpoint's replay guard resolves it.
+                builder.Services.AddSingleton(jtiStore);
+            }
             var app = builder.Build();
             // When a fetch handler is supplied, exercise the REAL R3FetchClient signed
             // fetch (routed at the in-proc doc server) instead of the in-memory bypass.
@@ -563,6 +590,74 @@ public class AccessEndpointR3Tests
                 .Build();
             client.BaseAddress = new Uri(R3TestData.AsIssuer);
             return await client.GetAsync(path);
+        }
+
+        // Post a signed /token request, capturing the exact signed bytes, then replay
+        // them verbatim over the raw (unsigned) TestServer transport. Returns both
+        // responses so a test can assert the replayed request is refused.
+        public async Task<(HttpResponseMessage First, HttpResponseMessage Replay)> PostTokenThenReplayAsync(
+            string? resourceToken = null)
+        {
+            var capture = new SignedRequestCapture { InnerHandler = App.GetTestServer().CreateHandler() };
+            using var client = new AAuthClientBuilder(PsKey)
+                .UseJwksUri($"{R3TestData.PsIssuer}/.well-known/jwks.json", R3TestData.PsKid)
+                .WithInnerHandler(capture)
+                .Build();
+            client.BaseAddress = new Uri(R3TestData.AsIssuer);
+            var body = new JsonObject
+            {
+                ["agent_token"] = AgentToken,
+                ["resource_token"] = resourceToken ?? ResourceToken,
+            };
+            var first = await client.PostAsJsonAsync("/token", body);
+
+            var raw = App.GetTestServer().CreateClient();
+            var replay = await raw.SendAsync(capture.BuildReplay());
+            return (first, replay);
+        }
+    }
+
+    // Captures the fully-signed outgoing request (method, uri, request + content
+    // headers, body bytes) so a test can replay it verbatim through a raw client.
+    private sealed class SignedRequestCapture : DelegatingHandler
+    {
+        private HttpMethod _method = HttpMethod.Get;
+        private Uri? _uri;
+        private readonly List<KeyValuePair<string, IEnumerable<string>>> _requestHeaders = new();
+        private readonly List<KeyValuePair<string, IEnumerable<string>>> _contentHeaders = new();
+        private byte[] _body = Array.Empty<byte>();
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            _method = request.Method;
+            _uri = request.RequestUri;
+            _requestHeaders.Clear();
+            _requestHeaders.AddRange(request.Headers);
+            _contentHeaders.Clear();
+            if (request.Content is not null)
+            {
+                _body = await request.Content.ReadAsByteArrayAsync(cancellationToken);
+                _contentHeaders.AddRange(request.Content.Headers);
+            }
+            return await base.SendAsync(request, cancellationToken);
+        }
+
+        public HttpRequestMessage BuildReplay()
+        {
+            var replay = new HttpRequestMessage(_method, _uri)
+            {
+                Content = new ByteArrayContent(_body),
+            };
+            foreach (var (key, values) in _contentHeaders)
+            {
+                replay.Content.Headers.TryAddWithoutValidation(key, values);
+            }
+            foreach (var (key, values) in _requestHeaders)
+            {
+                replay.Headers.TryAddWithoutValidation(key, values);
+            }
+            return replay;
         }
     }
 }
