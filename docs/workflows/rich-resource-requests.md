@@ -33,6 +33,11 @@ sequenceDiagram
     Bookings-->>Agent: 401 + resource token → per-call proposal (r3_uri + parameters)
     Agent->>PS: POST /token (proposal resource token)
     PS->>AS: POST /token
+    AS-->>PS: 202 Accepted + interaction URL (per-call consent required)
+    PS-->>Agent: 202 Accepted + interaction URL
+    Note over Agent,AS: user opens the R3 AS consent screen and approves the proposal
+    Agent->>PS: poll
+    PS->>AS: GET /pending/{id} (signed)
     AS-->>PS: per-call auth token (confirm now in r3_granted)
     PS-->>Agent: auth token
     Agent->>Bookings: POST /confirm_reservation (per-call auth token, same params)
@@ -65,10 +70,13 @@ the R3 document itself carries only the spec fields (`operations` + `display`):
 - **`r3_conditional`** — `confirmReservation`: charges a non-refundable deposit, so it
   requires a **per-call proposal**. On first call the resource returns a resource token
   referencing a single-invocation R3 document that carries the concrete `parameters`
-  (venue, date, party size, deposit). The AS re-evaluates those parameters and issues a
-  per-call auth token; the resource verifies the presented parameters match the approved
-  proposal's digest before serving. An approval for one reservation cannot be replayed
-  against another.
+  (venue, date, party size, deposit). Because the proposal is consequential, the R3 AS
+  requires **human consent** (r3 §Per-Call Proposals, Flow step 2): it replies `202` with
+  an interaction URL, renders the proposal's `display` at its own consent screen, and
+  mints the per-call auth token only after the user approves (the PS polls the signed
+  `/pending` Location meanwhile). The resource then verifies the presented parameters
+  match the approved proposal's digest before serving. An approval for one reservation
+  cannot be replayed against another.
 
 ## Security invariants (enforced + tested)
 

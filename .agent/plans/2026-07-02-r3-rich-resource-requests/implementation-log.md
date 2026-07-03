@@ -463,6 +463,33 @@ prior deferral cited (live per-call auto-completion). The GuidedTour flow remain
 as a coherent follow-up (bespoke `TourSession` step set + picker + home card + actor lanes
 + e2e), but the hard protocol gap is now closed; the follow-up is purely tour-authoring.
 
+### [2026-07-03] [Phase 8] Consent hardening + docs/snippet follow-ups — RESOLVED
+
+Four owner-requested follow-ups on the per-call consent flow:
+
+1. **Docs now match the consent flow.** [rich-resource-requests.md](../../../docs/workflows/rich-resource-requests.md)
+   sequence diagram + "Granted vs conditional" narrative now show the `202` + R3 AS consent
+   screen + signed `/pending` poll before the per-call token is minted (r3 §Per-Call Proposals
+   Flow step 2). [Bookings README](../../../samples/MockResourceServers/Bookings/README.md)
+   conditional row/narrative updated to say **human approval** rather than "after AS approval".
+2. **R3 AS consent banner is now red** (`#b91c1c` + `#fecaca` dot), matching the Federated AS
+   **Access Server** banner / four-party swimlane, so the two AS consent screens are visually
+   consistent.
+3. **`/pending` poll is signature-verified (per spec).** The `GET {pendingPath}/{id}` handler
+   now runs the same `R3DocumentEndpoint.VerifyFetcherAsync` + `IsCallerTrustedPersonServer`
+   check as `/token` — the deferred poll rides the signed PS→AS federation channel (mirrors the
+   core `MapAAuthAccessServer`, which signs `/pending/{id}` and leaves only the browser
+   `/interaction/*` endpoints unsigned). The opaque-id simplification noted earlier is removed.
+   Tests: added a signed `PollPendingAsync` fixture helper (the two consent tests now poll
+   through it) and a `TokenEndpoint_PendingPoll_RejectsUnsignedCaller` negative test (401). R3 35.
+4. **SampleApp agent snippet shows minimal interaction handling.** [Bookings.razor](../../../samples/SampleApp/Components/Pages/Bookings.razor)
+   client snippet now wires `opts.OnInteractionRequired` (surface `interaction.BuildUserUrl()`)
+   instead of a bare `.WithChallengeHandling()`, and the R3 AS snippet includes
+   `RequireProposalConsent = true` — so the displayed code matches what the page actually runs.
+
+Validation: build 0/0; R3 35, AAuth.Tests 517, Conformance 573; Bookings e2e (both specs) green
+with the signed `/pending` poll (202→200).
+
 ## Deviations from plan
 
 ### [2026-07-02] [Phase 1] Mirror AAuth's `<Version>` in the R3 csproj — PROCEEDED (default)

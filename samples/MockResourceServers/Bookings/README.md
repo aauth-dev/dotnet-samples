@@ -29,7 +29,7 @@ OpenAPI `operationId`s.
 | `/authorize` | — | — | Proactive R3 request: the agent posts `r3_operations`; Bookings returns a resource token (`aud` = R3 AS) referencing the R3 document |
 | `/search_availability` | `searchAvailability` | `r3_granted` | Read availability — served immediately |
 | `/hold_reservation` | `holdReservation` | `r3_granted` | Place a temporary hold — served immediately |
-| `/confirm_reservation` | `confirmReservation` | `r3_conditional` | Charges a non-refundable deposit → **per-call proposal**: first call returns `401` + a resource token referencing a single-invocation R3 document carrying the concrete `parameters`; after AS approval the retry (same params) is served |
+| `/confirm_reservation` | `confirmReservation` | `r3_conditional` | Charges a non-refundable deposit → **per-call proposal**: first call returns `401` + a resource token referencing a single-invocation R3 document carrying the concrete `parameters`; the R3 AS requires **human approval** (`202` → consent screen) before minting the per-call token; the retry (same params) is then served |
 | `/r3/{hash}` | — | — | The class R3 document — served **only** to a trusted fetcher (the R3 AS / PS), never to agents |
 | `/r3/proposals/{hash}` | — | — | Per-call proposal documents (same AS-only fetch gate) |
 | `/.well-known/aauth-resource.json` | — | — | Resource metadata (via `MapAAuthWellKnown`), incl. `r3_vocabularies` and `mission_aware` |
@@ -37,8 +37,9 @@ OpenAPI `operationId`s.
 
 `confirm_reservation` is where R3's per-call authorization earns its keep: the AS
 authorizes it *in principle* (`r3_conditional`), but the concrete parameters (venue,
-date, party size, deposit) are re-evaluated per call before a token is issued, and
-the resource verifies the presented parameters match the approved proposal's digest.
+date, party size, deposit) are surfaced to the user for **per-call consent** and
+re-evaluated before a token is issued, and the resource verifies the presented
+parameters match the approved proposal's digest.
 
 ## Configuration
 

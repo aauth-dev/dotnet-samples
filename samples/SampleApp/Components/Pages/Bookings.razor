@@ -44,23 +44,33 @@
 <div class="col-md-6">
 <h5>Agent (Client) Code</h5>
 <pre><code class="language-csharp">// Ordinary four-party self-issued agent — the R3 detail
-// is carried in the tokens, not the client. The 401 from
-// Bookings references an R3 document; the PS federates to
-// the R3 Access Server, which mints r3_granted/r3_conditional.
+// is carried in the tokens, not the client. A conditional
+// operation triggers a per-call proposal that needs your
+// approval, so wire OnInteractionRequired to surface the
+// R3 Access Server's consent link; the SDK then polls.
 using var client = AAuthClientBuilder.SelfIssuing(key)
     .As(issuer, agentId)
     .WithKid(keyId)
     .WithPersonServer(personServer)
-    .WithChallengeHandling()
+    .WithChallengeHandling(opts =&gt;
+    {
+        opts.OnInteractionRequired = (interaction, ct) =&gt;
+        {
+            var url = interaction.BuildUserUrl();
+            // Surface url to the user, then the SDK polls.
+            return Task.CompletedTask;
+        };
+    })
     .Build();
 
 // Granted operation — served immediately (r3_granted).
 var search = await client.GetAsync(
     $"{bookings}/search_availability");
 
-// Conditional operation — the resource challenges with a
-// per-call proposal; the same client resends the exact
-// parameters, which must match the approved proposal.
+// Conditional operation — Bookings challenges with a per-call
+// proposal; the R3 AS asks you to approve it (202 + consent
+// link), then the same client resends the exact parameters
+// and the booking completes.
 var confirm = await client.PostAsJsonAsync(
     $"{bookings}/confirm_reservation", reservation);</code></pre>
 </div>
@@ -78,6 +88,9 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
     // confirmReservation charges a deposit → conditional.
     IsConditionalOperation = op =&gt;
         conditionalOperations.Contains(op.Id),
+    // Require human approval for the per-call proposal:
+    // 202 → consent screen → mint on approval.
+    RequireProposalConsent = true,
     AuditSink = new InMemoryR3AuditSink(),
 });</code></pre>
 </div>
