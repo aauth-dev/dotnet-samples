@@ -4,13 +4,14 @@ using System.Text.Json.Serialization;
 namespace AAuth.R3.Model;
 
 /// <summary>
-/// A single R3 operation entry. Operation entries are single-key JSON objects whose
-/// member name is vocabulary-specific (MCP <c>tool</c>, OpenAPI <c>operationId</c>,
-/// gRPC <c>method</c>, …) and whose value is the operation identifier
-/// (r3 §Standard Vocabularies). This type is vocabulary-agnostic: it carries the
-/// member name (<see cref="Field"/>) alongside the identifier (<see cref="Id"/>) and
-/// serializes back to the exact single-key shape, keeping the document byte-stable
-/// for content addressing.
+/// A single R3 operation entry for a <b>single-identifier</b> vocabulary — a one-member
+/// JSON object whose member name is vocabulary-specific (MCP <c>tool</c>, OpenAPI
+/// <c>operationId</c>, gRPC <c>method</c>, …) and whose value is the operation identifier
+/// (r3 §Standard Vocabularies). It carries the member name (<see cref="Field"/>) alongside
+/// the identifier (<see cref="Id"/>) and serializes back to the exact one-member shape,
+/// keeping the document byte-stable for content addressing. Vocabularies whose entries
+/// carry <b>multiple</b> members (GraphQL <c>{operation,type}</c>, AsyncAPI, WSDL, OData)
+/// are not modeled by this preview type.
 /// </summary>
 [JsonConverter(typeof(R3OperationConverter))]
 public sealed record R3Operation

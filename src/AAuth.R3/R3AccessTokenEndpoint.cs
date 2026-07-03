@@ -170,7 +170,7 @@ public static class R3AccessTokenEndpoint
             // so the PS relays the consent link; mint only after the user approves (below).
             if (mintParts.IssuanceKind == R3TokenIssuanceKind.Proposal && options.RequireProposalConsent)
             {
-                var entry = pendingStore.Add(mintParts, agentId, agentConfirmationKey, resourceIssuer);
+                var entry = pendingStore.Add(mintParts, agentId, agentConfirmationKey, resourceIssuer, caller.JwksUri!.Authority);
                 context.Response.Headers.Location = $"{pendingPath}/{entry.Id}";
                 context.Response.Headers["Retry-After"] = "1";
                 context.Response.Headers["Cache-Control"] = "no-store";
@@ -191,6 +191,7 @@ public static class R3AccessTokenEndpoint
             // the HTTP signature and trusted-PS identity exactly like /token (the
             // deferred poll rides the same authenticated PS→AS channel, §AS Token
             // Endpoint). The browser /interaction/consent endpoints stay unsigned.
+            string pollerPersonServer;
             try
             {
                 var poller = await R3DocumentEndpoint.VerifyFetcherAsync(context, options.IsCallerTrustedPersonServer);
@@ -198,6 +199,7 @@ public static class R3AccessTokenEndpoint
                 {
                     return Results.Json(new { error = "untrusted_person_server" }, statusCode: StatusCodes.Status403Forbidden);
                 }
+                pollerPersonServer = poller.JwksUri!.Authority;
             }
             catch (R3UntrustedJwksUriException)
             {
@@ -212,6 +214,13 @@ public static class R3AccessTokenEndpoint
             if (entry is null)
             {
                 return Results.Json(new { error = "unknown_pending" }, statusCode: StatusCodes.Status404NotFound);
+            }
+            // Same-PS re-pin: only the PS that parked this proposal may poll it — a
+            // different trusted PS must not receive the token or trigger the mint/audit
+            // (cross-PS pending isolation; mirrors the core AS's AuthorizePsCaller).
+            if (!string.Equals(pollerPersonServer, entry.OriginPersonServer, StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.Json(new { error = "untrusted_person_server", detail = "pending entry belongs to a different Person Server" }, statusCode: StatusCodes.Status403Forbidden);
             }
             switch (entry.Status)
             {
@@ -246,6 +255,12 @@ public static class R3AccessTokenEndpoint
 
         // Browser consent screen for a per-call proposal — renders the proposal's
         // `display` and flips the pending entry on Approve/Deny.
+        //
+        // DEMO LIMITATION: like the Federated stub AS, these endpoints do NOT authenticate
+        // a human — approval is gated only by knowledge of the single-use `code`. A
+        // production R3 AS MUST authenticate the user here (an IdP/login session, as the
+        // Federated AS does via Keycloak) so the per-call "human consent" is a real
+        // human-presence control and not something the agent can self-approve.
         app.MapGet(consentPath, (string code) =>
         {
             var entry = pendingStore.Get(code);
@@ -377,6 +392,9 @@ public static class R3AccessTokenEndpoint
         public required IAAuthKey AgentConfirmationKey { get; init; }
         public required string ResourceIssuer { get; init; }
         public required DateTimeOffset CreatedAt { get; init; }
+        // The jwks_uri authority of the PS that parked this entry via /token. Only that
+        // same PS may poll /pending for it (cross-PS pending isolation).
+        public required string OriginPersonServer { get; init; }
         public R3PendingStatus Status { get; set; } = R3PendingStatus.Pending;
         public string? AuthToken { get; set; }
 
@@ -397,7 +415,7 @@ public static class R3AccessTokenEndpoint
 
         public R3PendingStore(TimeProvider timeProvider) => _timeProvider = timeProvider;
 
-        public R3PendingEntry Add(AuthMintParts mintParts, string agentId, IAAuthKey agentKey, string resourceIssuer)
+        public R3PendingEntry Add(AuthMintParts mintParts, string agentId, IAAuthKey agentKey, string resourceIssuer, string originPersonServer)
         {
             Sweep();
             var entry = new R3PendingEntry
@@ -408,6 +426,7 @@ public static class R3AccessTokenEndpoint
                 AgentConfirmationKey = agentKey,
                 ResourceIssuer = resourceIssuer,
                 CreatedAt = _timeProvider.GetUtcNow(),
+                OriginPersonServer = originPersonServer,
             };
             _entries[entry.Id] = entry;
             return entry;

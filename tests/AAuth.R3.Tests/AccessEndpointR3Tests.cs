@@ -233,6 +233,35 @@ public class AccessEndpointR3Tests
     }
 
     [Fact]
+    public async Task TokenEndpoint_PendingPoll_RejectsDifferentTrustedPersonServer()
+    {
+        // Cross-PS isolation: even another *verifiable/trusted* PS cannot poll a pending
+        // entry parked by a different PS (mirrors the core AS's same-PS re-pin). Open trust
+        // makes any verifiable jwks_uri caller "trusted"; the origin re-pin still rejects it.
+        var auditSink = new InMemoryR3AuditSink();
+        var fixture = await R3AccessFixture.CreateAsync(auditSink: auditSink, requireProposalConsent: true, openPersonServerTrust: true);
+        await using var app = fixture.App;
+
+        var pending = await fixture.PostTokenAsync(fixture.ProposalResourceToken); // parked by the PS
+        var location = pending.Headers.Location!.ToString();
+        var code = location.Split('/')[^1];
+        using var browser = app.GetTestClient();
+        browser.BaseAddress = new Uri(R3TestData.AsIssuer);
+        var approve = await browser.PostAsync(
+            "/interaction/consent/approve",
+            new FormUrlEncodedContent(new Dictionary<string, string> { ["code"] = code }));
+        Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
+
+        // Poll as a DIFFERENT verifiable identity (the AP's jwks_uri) — not the PS that
+        // parked the entry.
+        var polled = await fixture.PollPendingAsAsync(
+            location, fixture.ApKey, $"{R3TestData.ApIssuer}/.well-known/jwks.json", R3TestData.ApKid);
+
+        Assert.Equal(HttpStatusCode.Forbidden, polled.StatusCode);
+        Assert.Empty(auditSink.Records); // the wrong PS never triggers a mint/audit
+    }
+
+    [Fact]
     public async Task TokenEndpoint_PendingPoll_RejectsUnsignedCaller()
     {
         // The pending poll rides the signed PS→AS channel: an unsigned GET to the
@@ -518,6 +547,18 @@ public class AccessEndpointR3Tests
         {
             using var client = new AAuthClientBuilder(PsKey)
                 .UseJwksUri($"{R3TestData.PsIssuer}/.well-known/jwks.json", R3TestData.PsKid)
+                .WithInnerHandler(App.GetTestServer().CreateHandler())
+                .Build();
+            client.BaseAddress = new Uri(R3TestData.AsIssuer);
+            return await client.GetAsync(path);
+        }
+
+        // Poll as a specific signing identity/jwks_uri (used to simulate a DIFFERENT
+        // Person Server polling a pending entry it did not park).
+        public async Task<HttpResponseMessage> PollPendingAsAsync(string path, AAuthKey key, string jwksUri, string kid)
+        {
+            using var client = new AAuthClientBuilder(key)
+                .UseJwksUri(jwksUri, kid)
                 .WithInnerHandler(App.GetTestServer().CreateHandler())
                 .Build();
             client.BaseAddress = new Uri(R3TestData.AsIssuer);

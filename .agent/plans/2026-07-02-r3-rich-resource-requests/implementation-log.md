@@ -579,6 +579,44 @@ Bookings server, actor-bar Bookings/:5005). Two minor additive polish items beyo
 (a `.srv--bookings` CSS rule; an R3 arm in the Tour topbar + runAll stop-message) — consistent
 with the Federated model. This closes the last deferred R3 item.
 
+### [2026-07-03] [Phase 11] Independent spec-first review (3 subagents) — findings + fixes — RESOLVED
+
+Ran a fresh independent review (three read-only subagents, spec-conformance primary, severity-graded:
+one over the `AAuth.R3` package, one over the R3 AS endpoint/consent/pending, one over the agent
+step-up + samples/fetch). This was prompted by the PR bot catching issues our earlier passes missed —
+root cause: the only prior independent pass (Phase 7) ran *before* this session's consent gate,
+`/pending`, seam, and tour additions, and this session's gate was functional (build/tests/e2e), not
+adversarial (concurrency/resource-bounds/SSRF). No CRITICAL. Triage + actions:
+
+- **[HIGH] `/pending` not re-pinned to the originating PS** (cross-PS pending theft) — **FIXED.**
+  `R3PendingEntry` now records the parking PS's jwks_uri authority (`OriginPersonServer`) at `/token`,
+  and `/pending` rejects a poll from any *other* trusted PS (mirrors the core AS's `AuthorizePsCaller`).
+  Regression test `TokenEndpoint_PendingPoll_RejectsDifferentTrustedPersonServer` added.
+- **[MEDIUM] `R3ProposalStore` unbounded** (sibling of the just-fixed `R3PendingStore`) — **FIXED.**
+  Added a 10-min TTL sweep via an optional `TimeProvider` ctor (DI-safe; parameterless construction preserved).
+- **[MEDIUM] `R3Operation` "vocabulary-agnostic" comment overclaims** (only single-identifier vocabs;
+  GraphQL/AsyncAPI/WSDL/OData are multi-member) — **FIXED** (comment scoped to single-identifier vocabs).
+- **[LOW] re-pin `null` vs empty-string guard** in ChallengeHandler — **FIXED** (`!string.IsNullOrEmpty`).
+- **[MEDIUM] demo consent screen doesn't enforce human presence** (agent can self-approve via the relayed
+  `code`) — **DOCUMENTED** (code comment): identical to the Federated stub AS; a production R3 AS must
+  authenticate the user at the consent endpoint (IdP/login). Not code-fixable without an IdP.
+- **[MEDIUM] no JTI replay guard on `/token`/`/pending`** (freshness-only; a replay in the 60s window can
+  duplicate a granted-class mint+audit) — **DEFERRED/DOCUMENTED.** The endpoint self-verifies rather than
+  using `UseAAuthVerification`+`IJtiStore`; bounded (trusted-PS caller, 60s, signature-covered). Follow-up:
+  route through the shared verification middleware or plumb an `IJtiStore`.
+- **[MEDIUM] core-SDK cross-request stale-carrier** (ChallengeHandler re-pin captures a stale auth token
+  when a `WithChallengeHandling` client is reused across independent step-ups) — **DEFERRED.** Latent, not a
+  regression, not reachable in shipped samples (fresh client per op). Proper fix = a dedicated agent-token
+  exchange provider (stop `exchangeProvider` falling back to the mutable carrier holder); tracked as follow-up.
+- **[MEDIUM] error `detail = ex.Message` leakage** + LOW items (non-terminal consent, O(n) sweep no cap,
+  `IsProposal`/digest heuristics, `R3Grant.Contains` ignores vocab, dead null-check) — **NOTED**;
+  demo-grade / resource-controlled / parity-with-core, out of scope for the preview.
+- **SSRF/DNS** (re-review): independently judged **SOUND** — same-origin pin to the signature-verified
+  issuer + `r3_s256` hash-verify + `AllowAutoRedirect=false`; no fixable vuln.
+
+Validated: build 0/0; R3 38 (+cross-PS test), AAuth.Tests 517, Conformance 573; R3 e2e (sample-app +
+guided-tour) green. The deferred MEDIUMs are logged follow-ups, not blockers for the preview.
+
 ## Deviations from plan
 
 ### [2026-07-02] [Phase 1] Mirror AAuth's `<Version>` in the R3 csproj — PROCEEDED (default)

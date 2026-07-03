@@ -198,7 +198,7 @@ public sealed class ChallengeHandler : DelegatingHandler
 
             // Re-pin the holder to the agent token so the exchange request is
             // agent-signed even after a prior iteration installed a carrier token.
-            if (agentToken is not null)
+            if (!string.IsNullOrEmpty(agentToken))
             {
                 _holder.Update(agentToken);
             }
