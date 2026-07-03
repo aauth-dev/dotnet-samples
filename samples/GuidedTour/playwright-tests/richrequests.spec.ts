@@ -89,6 +89,14 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
     expect(confirm.status).toBe('confirmed');
     expect(typeof confirm.r3_uri).toBe('string');
     expect(typeof confirm.r3_s256).toBe('string');
+
+    // Step 14 ("Inspect R3 result") — the summary decodes the auth token's
+    // object-shaped r3_granted / r3_conditional claims into their operation ids
+    // (guards against rendering "(none)" when the claim shape is misread).
+    await selectStep(page, 13);
+    const inspector = page.locator('section.payload');
+    await expect(inspector).toContainText('r3_granted: searchAvailability, holdReservation');
+    await expect(inspector).toContainText('r3_conditional: confirmReservation');
   });
 
   test('deny the per-call proposal at the R3 AS aborts the flow', async ({ page, context }) => {

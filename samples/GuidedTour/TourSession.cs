@@ -3849,10 +3849,23 @@ public sealed class TourSession : IAsyncDisposable
         deposit_usd = 40,
     };
 
-    private static string? FormatR3Ops(JsonNode? node) =>
-        node is JsonArray arr
-            ? string.Join(", ", arr.Select(n => (string?)n).Where(s => !string.IsNullOrEmpty(s)))
-            : null;
+    private static string? FormatR3Ops(JsonNode? node)
+    {
+        // The auth-token r3_granted / r3_conditional claim is an R3Grant object:
+        //   { "vocabulary": "…", "operations": [ { "<field>": "<id>" }, … ] }
+        // where each operation is a single-key object (the id under a
+        // vocabulary-specific member name, e.g. operationId). Pull out the ids.
+        if (node is not JsonObject grant || grant["operations"] is not JsonArray ops)
+        {
+            return null;
+        }
+        var ids = ops
+            .OfType<JsonObject>()
+            .Select(op => (string?)op.FirstOrDefault().Value)
+            .Where(id => !string.IsNullOrEmpty(id));
+        var joined = string.Join(", ", ids);
+        return string.IsNullOrEmpty(joined) ? null : joined;
+    }
 
     private async Task StepRichRequestsDiscoverResourceAsync(CancellationToken ct)
     {

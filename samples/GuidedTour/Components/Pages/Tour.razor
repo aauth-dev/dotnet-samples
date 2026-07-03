@@ -203,6 +203,28 @@
                     (<code>make demo-keycloak</code>).
                 </text>
                 break;
+            case TourMode.RichRequests:
+                <text>
+                    Aria (your AI travel assistant) is booking your evening — it searches for a
+                    table and then confirms a reservation through <strong>Bookings</strong>, whose
+                    dedicated <strong>R3 Access Server</strong> decides each operation on its own
+                    policy rather than an opaque scope.<br /><br />
+                    <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — four-party
+                    <strong>Rich Resource Requests (R3)</strong>. Bookings publishes a
+                    content-addressed <strong>R3 document</strong> (in the <strong>OpenAPI</strong>
+                    vocabulary) describing its operations; the auth token then carries
+                    <code>r3_granted</code> and <code>r3_conditional</code> instead of scopes.
+                    <strong>searchAvailability</strong> is <code>r3_granted</code> — served
+                    outright, no prompt. <strong>confirmReservation</strong> charges a deposit, so
+                    the AS makes it <code>r3_conditional</code>: on that call Bookings returns a
+                    <strong>per-call proposal</strong> carrying the concrete reservation (venue,
+                    date, party size, deposit), and the R3 Access Server asks <strong>you</strong>
+                    to approve that specific booking at its own consent screen before it mints a
+                    per-call token. Bookings then re-hashes your presented parameters against the
+                    approved proposal's digest before it commits. <strong>Low-risk reads flow
+                    freely; consequential actions get your per-call consent.</strong>
+                </text>
+                break;
             case TourMode.Mission:
                 <text>
                     You give Aria (your AI travel assistant) a standing mission to
