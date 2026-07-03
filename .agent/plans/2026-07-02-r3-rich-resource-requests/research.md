@@ -543,6 +543,80 @@ unblocked.
 
 ---
 
+## Part H — GuidedTour R3 flow design (sub-research, 2026-07-03)
+
+> Sub-research for the deferred GuidedTour R3 flow (Phase 15). **Method:** one read-only
+> subagent mapped the tour engine + the SampleApp Bookings runtime + the Federated model;
+> its full report is retained at
+> [.copilot-tracking/research/subagents/2026-07-03/guided-tour-r3-flow.md](../../../.copilot-tracking/research/subagents/2026-07-03/guided-tour-r3-flow.md).
+> **Re-verified directly against source** (this doc records only re-verified anchors): the
+> Bookings response shapes ([Bookings/Program.cs](../../../samples/MockResourceServers/Bookings/Program.cs)),
+> the Federated dispatch/`SubStep` pattern ([TourSession.cs](../../../samples/GuidedTour/TourSession.cs),
+> [StepRecord.cs](../../../samples/GuidedTour/StepRecord.cs)), and the consent badge
+> ([R3AccessTokenEndpoint.cs](../../../src/AAuth.R3/R3AccessTokenEndpoint.cs) L412).
+
+**Every SampleApp flow has a mirrored GuidedTour flow.** The GuidedTour reproduces each leg
+of the SDK handshake as an explicit, inspectable step (raw HTTP via `CapturingMessageHandler`),
+whereas the SampleApp lets the SDK auto-drive it. The R3 tour therefore mirrors the SampleApp
+Bookings page ([Bookings.razor](../../../samples/SampleApp/Components/Pages/Bookings.razor)):
+a **granted** op served immediately, then a **conditional** op that requires per-call human
+consent.
+
+**Design decision — bundled backend SubSteps (owner directive).** Backend hops the agent
+cannot observe — PS→R3 AS federation, the AS→resource R3-document fetch + `r3_s256`
+hash-verify + granted/conditional split + mint, and the AS's per-call proposal evaluation —
+are rendered **bundled as `SubStep[]` inside a component box** on the owning agent-observable
+step, exactly like the Federated flow's `SubSteps = new SubStep[] {…}` + `SubStepsLabel`
+(TourSession.cs, StepFederatedExchangeAsync). They are **not** invented as separate
+agent-driven steps. `SubStep(string Label, Actor From, Actor To, bool IsResponse=false)`
+(StepRecord.cs L127); rendered as `<div class="substeps" style="--substeps-label:…">` by
+[SequenceDiagram.razor](../../../samples/GuidedTour/Components/SequenceDiagram.razor) L172–204.
+
+**Flow shape — a single linear 14-step plan (no branch).** Unlike Federated (which branches
+7 vs 10 steps on `_federatedPending` — stub-AS vs interactive login), the R3 flow is always
+14 steps: the R3 AS sets `RequireProposalConsent = true`
+([MockAccessServers/R3/Program.cs](../../../samples/MockAccessServers/R3/Program.cs)), so
+`confirm_reservation` **always** needs consent. There is **no pending flag and no
+ConsentPlan**. Steps 1–6 are the granted path; 7–14 the conditional (per-call proposal →
+202 consent → poll → retry) path:
+
+| # | Step | Backend bundle |
+|---|------|----------------|
+| 1 | Discover Bookings metadata | — |
+| 2 | Signed GET `/search_availability` → 401 (`aud`=R3 AS) | — |
+| 3 | Parse 401 challenge (class `r3_uri`/`r3_s256`) | — |
+| 4 | Discover Person Server (shared step) | — |
+| 5 | Exchange at PS → auth_token (`r3_granted`+`r3_conditional`) | **yes** — PS→AS federate, AS→Bookings fetch R3 doc, hash-verify+split, mint |
+| 6 | Replay `/search_availability` → 200 (`r3_granted`) | — |
+| 7 | Signed POST `/confirm_reservation` → 401 (per-call proposal) | — |
+| 8 | Parse per-call proposal challenge (proposal `r3_uri`/`r3_s256`) | — |
+| 9 | Exchange proposal → 202 (consent required) | **yes** — PS→AS federate, AS→Bookings fetch proposal, evaluate params, 202 |
+| 10 | Direct user to R3 AS consent screen | — |
+| 11 | User consents at the R3 Access Server (shared placeholder) | — |
+| 12 | Poll pending URL → 200 per-call auth_token (shared step) | — |
+| 13 | Replay `/confirm_reservation` → 200 (`confirmed`, digest-verified) | — |
+| 14 | Inspect R3 result (`r3_granted`/`r3_conditional`/`r3_uri`/`r3_s256`) | — |
+
+**Bookings response shapes (re-verified, Bookings/Program.cs):** `search_availability` 200 →
+`{ accessMode:"four-party-r3", operationId:"searchAvailability", source:"r3_granted", options[], r3_uri, r3_s256 }`
+(L169–189); first challenge → `401 { error:"auth_token_required", r3_uri, r3_s256 }` +
+`AAuth-Requirement` resource token (`aud`=R3 AS) (L316–333); `confirm_reservation` first →
+`401 { error:"r3_approval_required", operationId:"confirmReservation", r3_uri, r3_s256 }` +
+`AAuth-Requirement` **proposal** resource token (L237–247); `confirm_reservation` final 200 →
+`{ …, source:"per-call-r3_granted", status:"confirmed", confirmation:"RSV-ARIA-314159", r3_uri, r3_s256 }`
+(L214–224).
+
+**Sub-decisions (owner-defaulted):** (a) `SubStepsLabel = "inside person server + R3 AS"` for
+steps 5/9 (the bundle now spans PS *and* the AS→resource fetch — more precise than Federated's
+"inside person server"); (b) omit `hold_reservation` (the SampleApp shows only search + confirm);
+(c) picker/home position **8**, renumbering Mission/MissionCallChain/SubAgent to 9/10/11;
+(d) `PLAN_STEPS.RichRequests = 14`; the e2e approval park count is validated empirically.
+
+**Open item (empirical):** the `runAll` "done count at the approval park" for the interleaved
+14-step flow — validate when implementing (approval is step 11).
+
+---
+
 ## Appendix — source references
 
 - R3 spec: [aauth-spec/v08/draft-hardt-aauth-r3.md](../../../aauth-spec/v08/draft-hardt-aauth-r3.md)

@@ -551,6 +551,63 @@ operation entry shape r3 L322; auth-token claims reuse the same op shape r3 L472
 
 ---
 
+## Phase 14 — GuidedTour interactive R3 flow
+
+**Goal:** add a `TourMode.RichRequests` flow to `samples/GuidedTour` mirroring the SampleApp
+Bookings page — every SampleApp flow has a mirrored, step-by-step GuidedTour flow. Models the
+existing **Federated** flow structurally (four-party, `Actor.AccessServer` lane, shared
+poll/approve steps). See **research Part H** and the sub-research report at
+`.copilot-tracking/research/subagents/2026-07-03/guided-tour-r3-flow.md`.
+
+**Guiding principle (restated):** spec conformance over compatibility; single coordinated
+cutover. This phase is purely additive UI/demo — no core/`AAuth.R3` changes.
+
+**Design (from research Part H):**
+
+- **Single linear 14-step plan** (no branch): granted `search_availability` (steps 1–6) then
+  conditional `confirm_reservation` per-call proposal → 202 consent → poll → retry (7–14). The
+  R3 AS's `RequireProposalConsent = true` means confirm always needs consent, so there is no
+  `_richRequestsPending` flag and no ConsentPlan.
+- **Bundled backend SubSteps (owner directive):** PS→AS federation, AS→resource R3-fetch +
+  hash-verify + granted/conditional split + mint, and per-call proposal evaluation render as
+  `SubStep[]` inside a component box (steps 5 & 9), `SubStepsLabel = "inside person server + R3 AS"` —
+  never invented as separate agent steps. Mirrors `StepFederatedExchangeAsync`.
+- **Picker/home position 8**, renumbering Mission/MissionCallChain/SubAgent → 9/10/11.
+
+### Files
+
+| File | Responsibility |
+|---|---|
+| `samples/GuidedTour/TourSession.cs` | **Modify** — `IsRichRequestsMode`/`HasR3AccessServer`; `ResourceBaseUrl`/`ResourceDisplayName` → Bookings; `TotalSteps`=14; `Plan`→`RichRequestsPlan`; `UserApprovalStepNumber`=11/`PollStepNumber`=12 (+consts); `|| IsRichRequestsMode` in the 3 consent/poll guards; R3 branch in `RecordUserApprovalOpenedAsync` + `StepPollPendingAsync` wording; `RunNextAsync` `else if (IsRichRequestsMode)` (14 unconditional cases); `RichRequestsPlan[]`; 11 new `StepRichRequests*` methods (reuse `StepFetchPersonMetadataAsync`/`StepUserApprovesPlaceholder`/`StepPollPendingAsync`); `R3SearchUrl`/`R3ConfirmUrl`; state fields + `Reset()` |
+| `samples/GuidedTour/CodeSnippets.cs` | **Modify** — reuse existing snippets; add `R3ConfirmConditional` (+ optional `R3InspectGrants`) |
+| `samples/GuidedTour/Components/Pages/Tour.razor` | **Modify** — `RichRequestsLanes` (Agent/Bookings/PS/R3 AS); `ActiveLanes` arm; picker `<option>` (pos 8) + renumber trailing; optional consent-wording arms |
+| `samples/GuidedTour/Components/Pages/Home.razor` | **Modify** — Bookings intro `<li>`; `RichRequests` FlowCard (Number 8) + renumber trailing |
+| `tests/e2e/helpers/tour.ts` | **Modify** — `TourMode.RichRequests`; `PLAN_STEPS.RichRequests = 14` |
+| `samples/GuidedTour/playwright-tests/home.spec.ts` | **Modify** — `'RichRequests'` in FLOWS (count 11); `'Bookings'` in servers list |
+| `samples/GuidedTour/playwright-tests/actor-bar-visual.spec.ts` | **Modify** — R3 case (Bookings / :5005) |
+| `samples/GuidedTour/playwright-tests/richrequests.spec.ts` | **New** — model on `federated.spec.ts` + `bookings.spec.ts`: four lanes, runAll → park → approve popup (badge "R3 Access Server") → 14 done; assert search 200 (`r3_granted`) + confirm 200 (`per-call-r3_granted`, `confirmed`) |
+
+**Implementation Decisions** (rationale in log):
+
+- Bundled backend SubSteps within a component box (owner directive).
+- Single 14-step linear flow; `SubStepsLabel = "inside person server + R3 AS"`; omit
+  `hold_reservation`; picker position 8 with trailing renumber.
+
+**Definition of Done**
+
+- [ ] `IsRichRequestsMode` + `HasR3AccessServer`; `ResourceBaseUrl`/`ResourceDisplayName` → Bookings.
+- [ ] `TotalSteps`=14; `Plan`→`RichRequestsPlan` (14 entries, single); `UserApprovalStepNumber`=11, `PollStepNumber`=12.
+- [ ] `|| IsRichRequestsMode` in the 3 consent/poll guards; R3 branch in `RecordUserApprovalOpenedAsync`; R3 poll-wording arm.
+- [ ] `RunNextAsync` R3 block (14 unconditional cases); 11 new `StepRichRequests*` methods; shared steps reused.
+- [ ] State fields + `Reset()`; `R3SearchUrl`/`R3ConfirmUrl`; `R3ConfirmConditional` snippet.
+- [ ] `RichRequestsLanes` + `ActiveLanes` arm + picker `<option>` (pos 8); trailing picker/home renumbered 9/10/11.
+- [ ] Home.razor Bookings intro `<li>` + RichRequests FlowCard.
+- [ ] tour.ts `TourMode`+`PLAN_STEPS`; home.spec FLOWS (11) + servers list; actor-bar-visual R3 case.
+- [ ] New `richrequests.spec.ts`: lanes, runAll→approve popup→14 done; search 200 (`r3_granted`) + confirm 200 (`per-call-r3_granted`, `confirmed`).
+- [ ] `dotnet build AAuth.slnx` 0/0; GuidedTour + SampleApp e2e green (backends boot together: :5005 + :5501 + :5100).
+
+---
+
 ## Out of scope
 
 | Item | Reason |

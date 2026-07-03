@@ -525,6 +525,36 @@ entries, and a tour e2e. It needs a full live-stack Playwright validation cycle.
 and that the SampleApp already ships the **validated, interactive** R3 demonstrator (`/bookings`,
 both paths green), it is carried as the single remaining follow-up rather than shipped half-built.
 
+### [2026-07-03] [Phase 14] GuidedTour R3 flow — planned (sub-research + phase added) — PROCEEDED
+
+Owner directive: implement the GuidedTour R3 flow (every SampleApp flow has a mirrored tour
+flow); use a subagent for sub-research; record in research/plan/log; and render backend hops
+the agent can't observe as **bundled SubSteps within a component box** (like other tour flows).
+
+Actions: dispatched one read-only research subagent (report:
+`.copilot-tracking/research/subagents/2026-07-03/guided-tour-r3-flow.md`), re-verified the
+highest-stakes anchors directly against source (Bookings/Program.cs response shapes; the
+Federated dispatch + `SubStep` pattern; the "R3 Access Server" consent badge), added
+**research Part H** (design + method) and **plan Phase 14** (files + DoD).
+
+Design decisions (defaults; revert if disagreed):
+- **Bundled backend SubSteps** (owner directive): PS→AS federation, AS→resource R3-fetch +
+  hash-verify + granted/conditional split + mint, and per-call proposal evaluation are shown
+  as `SubStep[]` in a component box on steps 5 & 9 — not separate agent steps. Mirrors
+  `StepFederatedExchangeAsync`.
+- **Single linear 14-step plan, no branch:** the R3 AS's `RequireProposalConsent = true` means
+  `confirm_reservation` always needs consent, so (unlike Federated's 7-vs-10 `_federatedPending`
+  branch) there is no pending flag and no ConsentPlan. Steps 1–6 granted (`search_availability`),
+  7–14 conditional (per-call proposal → 202 consent → poll → retry).
+- `SubStepsLabel = "inside person server + R3 AS"` (more precise than Federated's "inside
+  person server" since the bundle spans the AS→resource fetch).
+- Omit `hold_reservation` (mirror the SampleApp, which shows only search + confirm).
+- Picker/home **position 8**; renumber Mission/MissionCallChain/SubAgent → 9/10/11.
+- `PLAN_STEPS.RichRequests = 14`; the e2e approval-park done-count is validated empirically
+  (approval is step 11).
+
+Purely additive UI/demo — no core or `AAuth.R3` changes. Implementation follows.
+
 ## Deviations from plan
 
 ### [2026-07-02] [Phase 1] Mirror AAuth's `<Version>` in the R3 csproj — PROCEEDED (default)
