@@ -1,0 +1,272 @@
+@page "/bookings"
+@using System.Net.Http.Json
+@using AAuth.Agent
+@using AAuth.Crypto
+@using AAuth.Headers
+@using AAuth.HttpSig
+@inject IJSRuntime JS
+@rendermode InteractiveServer
+
+<PageTitle>Rich Resource Requests — R3 (Bookings)</PageTitle>
+
+<h2>Rich Resource Requests (R3) — Four-Party</h2>
+
+<details class="alert alert-primary aria-narrative" open>
+    <summary>📖 What Aria is trying to do</summary>
+    Aria (your AI travel assistant) wants to reserve a table and a tour through
+    <strong>Bookings</strong>, an external reservations provider. Instead of opaque
+    scopes, Bookings publishes a content-addressed <strong>R3 document</strong>
+    describing each operation and its consequences. Low-risk operations
+    (<em>search</em>, <em>hold</em>) are granted outright; <em>confirming</em> a
+    reservation charges a non-refundable deposit, so its dedicated
+    <strong>R3 Access Server</strong> makes it a per-call approval.
+</details>
+
+<p>
+    R3 layers <strong>resource-declared, vocabulary-based</strong> authorization on the
+    four-party flow. Bookings advertises the <strong>OpenAPI</strong> vocabulary
+    (<code>urn:aauth:vocabulary:openapi</code>) at <code>/openapi.json</code>; operations
+    are <code>operationId</code>s. The resource token references the R3 document
+    (<code>r3_uri</code> + <code>r3_s256</code>); the auth token the R3 AS mints carries
+    <code>r3_granted</code> (serve now) and <code>r3_conditional</code> (needs per-call
+    approval) — no scopes.
+</p>
+
+<p class="text-muted">
+    The agent code is the ordinary self-issued four-party client — the R3 semantics live
+    in the tokens, not the client. The resource's <code>401</code> carries a resource
+    token whose <code>aud</code> is the <strong>R3 Access Server</strong> (:5501); the
+    Person Server federates to it, and the AS fetches + hash-verifies the R3 document,
+    splits granted vs conditional <em>by its own policy</em>, and mints the auth token.
+</p>
+
+<div class="row">
+<div class="col-md-6">
+<h5>Agent (Client) Code</h5>
+<pre><code class="language-csharp">// Ordinary four-party self-issued agent — the R3 detail
+// is carried in the tokens, not the client. A conditional
+// operation triggers a per-call proposal that needs your
+// approval, so wire OnInteractionRequired to surface the
+// R3 Access Server's consent link; the SDK then polls.
+using var client = AAuthClientBuilder.SelfIssuing(key)
+    .As(issuer, agentId)
+    .WithKid(keyId)
+    .WithPersonServer(personServer)
+    .WithChallengeHandling(opts =&gt;
+    {
+        opts.OnInteractionRequired = (interaction, ct) =&gt;
+        {
+            var url = interaction.BuildUserUrl();
+            // Surface url to the user, then the SDK polls.
+            return Task.CompletedTask;
+        };
+    })
+    .Build();
+
+// Granted operation — served immediately (r3_granted).
+var search = await client.GetAsync(
+    $"{bookings}/search_availability");
+
+// Conditional operation — Bookings challenges with a per-call
+// proposal; the R3 AS asks you to approve it (202 + consent
+// link), then the same client resends the exact parameters
+// and the booking completes.
+var confirm = await client.PostAsJsonAsync(
+    $"{bookings}/confirm_reservation", reservation);</code></pre>
+</div>
+<div class="col-md-6">
+<h5>R3 Access Server Code</h5>
+<pre><code class="language-csharp">// A dedicated R3 AS. It fetches the resource's R3 document
+// (AS-signed), rejects it unless the bytes hash to r3_s256,
+// then splits operations into granted vs conditional by its
+// OWN policy (r3 §Auth Token Extensions — the AS decides).
+app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
+{
+    Issuer = issuer,
+    SigningKeys = signingKeys,
+    TrustedPersonServers = trustedPersonServers,
+    // confirmReservation charges a deposit → conditional.
+    IsConditionalOperation = op =&gt;
+        conditionalOperations.Contains(op.Id),
+    // Require human approval for the per-call proposal:
+    // 202 → consent screen → mint on approval.
+    RequireProposalConsent = true,
+    AuditSink = new InMemoryR3AuditSink(),
+});</code></pre>
+</div>
+</div>
+
+<div class="alert alert-info">
+    Self-issued agent identity. Key ID: <code>@_identity.KeyId</code>
+    @if (!string.IsNullOrEmpty(_r3AccessServer))
+    {
+        <text> &mdash; R3 Access Server: <code>@_r3AccessServer</code></text>
+    }
+</div>
+
+<div class="d-flex gap-2">
+    <button class="btn btn-primary" @onclick="SearchAvailability" disabled="@_loading">
+        @(_loading ? "Working…" : "Search availability (r3_granted)")
+    </button>
+    <button class="btn btn-outline-primary" @onclick="ConfirmReservation" disabled="@_loading">
+        @(_loading ? "Working…" : "Confirm a reservation (r3_conditional)")
+    </button>
+</div>
+<p class="text-muted mt-1">
+    <small>
+        <strong>Search</strong> is authorized outright (<code>r3_granted</code>) and served
+        immediately. <strong>Confirm</strong> is <code>r3_conditional</code>: the resource
+        replies <code>401</code> with a <strong>per-call proposal</strong> (the concrete
+        venue / date / party size / deposit); the R3 Access Server then asks <em>you</em> to
+        approve that specific reservation before the deposit is charged. Approve at the link
+        that appears, and the SDK completes the booking.
+    </small>
+</p>
+
+@if (_waitingForApproval)
+{
+    <div class="mt-3 alert alert-warning">
+        <h5>Per-call approval required</h5>
+        <p>
+            The <strong>R3 Access Server</strong> returned <code>202</code> and is waiting for
+            you to approve this specific reservation (the per-call proposal). Open the link and
+            click <strong>Approve</strong>.
+        </p>
+        <p>
+            <strong>Approval URL:</strong><br />
+            <a href="@_interactionUrl" target="_blank" rel="noopener">@_interactionUrl</a>
+        </p>
+        <p class="text-muted">
+            The SDK is polling in the background&hellip;
+            <span class="spinner-border spinner-border-sm" role="status"></span>
+        </p>
+    </div>
+}
+
+@if (_response is not null)
+{
+    <div class="mt-3">
+        <h5>Response</h5>
+        <div class="alert @(_success ? "alert-success" : "alert-warning")">
+            <strong>@_statusCode</strong> — @_operation
+        </div>
+        <pre><code class="language-json">@_response</code></pre>
+    </div>
+}
+
+@if (_error is not null)
+{
+    <div class="mt-3 alert alert-danger">@_error</div>
+}
+
+@code {
+    [Inject] private SelfIssuedIdentity _identity { get; set; } = default!;
+    [Inject] private IConfiguration Config { get; set; } = default!;
+
+    private bool _loading;
+    private bool _waitingForApproval;
+    private string? _interactionUrl;
+    private string? _response;
+    private string? _error;
+    private string? _statusCode;
+    private string? _operation;
+    private bool _success;
+    private string? _r3AccessServer;
+
+    protected override void OnInitialized()
+    {
+        _r3AccessServer = Config["AAuth:R3AccessServer"];
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await JS.InvokeVoidAsync("highlightCode");
+    }
+
+    private async Task SearchAvailability()
+    {
+        _operation = "searchAvailability";
+        await RunAsync(async (client, bookings) =>
+            await client.GetAsync($"{bookings}/search_availability"));
+    }
+
+    private async Task ConfirmReservation()
+    {
+        _operation = "confirmReservation";
+        // Concrete parameters for the per-call proposal. The same values are
+        // resent on the approved retry and must match the proposal's digest.
+        var reservation = new
+        {
+            reservation_id = "dining-lumiere-001",
+            venue = "Le Lumière (dinner for 2)",
+            date = "2026-07-14T19:30",
+            party_size = 2,
+            deposit_usd = 40,
+        };
+        await RunAsync(async (client, bookings) =>
+            await client.PostAsJsonAsync($"{bookings}/confirm_reservation", reservation));
+    }
+
+    private async Task RunAsync(Func<HttpClient, string, Task<HttpResponseMessage>> call)
+    {
+        _loading = true;
+        _response = null;
+        _error = null;
+        _statusCode = null;
+        _waitingForApproval = false;
+        _interactionUrl = null;
+
+        try
+        {
+            var personServer = Config["AAuth:PersonServer"]!;
+            var bookings = Config["AAuth:Bookings"]!.TrimEnd('/');
+
+            using var client = AAuthClientBuilder.SelfIssuing(_identity.Key)
+                .As(_identity.Issuer, _identity.AgentId)
+                .WithKid(_identity.KeyId)
+                .WithPersonServer(personServer)
+                .WithChallengeHandling(opts =>
+                {
+                    // A conditional operation's per-call proposal comes back as a 202
+                    // interaction (relayed by the PS from the R3 AS). Surface the consent
+                    // link and let the SDK poll until the user approves.
+                    opts.OnInteractionRequired = async (interaction, _) =>
+                    {
+                        _interactionUrl = interaction.BuildUserUrl();
+                        _waitingForApproval = true;
+                        await InvokeAsync(StateHasChanged);
+                    };
+                    opts.PollingTimeout = TimeSpan.FromMinutes(2);
+                    opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
+                })
+                .Build();
+
+            var response = await call(client, bookings);
+            _waitingForApproval = false;
+
+            _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
+            _success = response.IsSuccessStatusCode;
+            var raw = await response.Content.ReadAsStringAsync();
+            try
+            {
+                _response = System.Text.Json.JsonSerializer.Serialize(
+                    System.Text.Json.JsonDocument.Parse(raw),
+                    new System.Text.Json.JsonSerializerOptions
+                    {
+                        WriteIndented = true,
+                        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+                    });
+            }
+            catch { _response = raw; }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _waitingForApproval = false;
+            _loading = false;
+        }
+    }
+}

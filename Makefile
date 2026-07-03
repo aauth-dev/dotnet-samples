@@ -11,6 +11,7 @@ CALENDAR_PROJECT := samples/MockResourceServers/Calendar/Calendar.csproj
 TRIPS_PROJECT    := samples/MockResourceServers/Trips/Trips.csproj
 WALLET_PROJECT   := samples/MockResourceServers/Wallet/Wallet.csproj
 INBOX_PROJECT    := samples/MockResourceServers/Inbox/Inbox.csproj
+BOOKINGS_PROJECT := samples/MockResourceServers/Bookings/Bookings.csproj
 PS_PROJECT     := samples/MockPersonServer/MockPersonServer.csproj
 AP_PROJECT     := samples/MockAgentProvider/MockAgentProvider.csproj
 TOUR_PROJECT   := samples/GuidedTour/GuidedTour.csproj
@@ -19,22 +20,25 @@ SAMPLE_PROJECT := samples/SampleApp/SampleApp.csproj
 CONCIERGE_PROJECT   := samples/Concierge/Concierge.csproj
 LIVE_PROJECT   := samples/LiveWhoAmITest/LiveWhoAmITest.csproj
 MISSION_PROJECT := samples/MissionAgent/MissionAgent.csproj
-AS_PROJECT     := samples/MockAccessServer/MockAccessServer.csproj
+AS_PROJECT     := samples/MockAccessServers/Federated/Federated.csproj
+R3AS_PROJECT   := samples/MockAccessServers/R3/R3.csproj
 
 PROFILE_URL  := http://localhost:5000
 CALENDAR_URL := http://localhost:5001
 TRIPS_URL    := http://localhost:5002
 WALLET_URL   := http://localhost:5003
 INBOX_URL    := http://localhost:5004
+BOOKINGS_URL := http://localhost:5005
 PS_URL     := http://localhost:5100
 AP_URL     := http://localhost:5301
 CONCIERGE_URL   := http://localhost:5200
 TOUR_URL   := http://localhost:5400
 SAMPLE_URL := http://localhost:5240
 AS_URL     := http://localhost:5500
+R3AS_URL   := http://localhost:5501
 KEYCLOAK_URL   := http://localhost:8080
 KEYCLOAK_IMAGE := quay.io/keycloak/keycloak:26.0
-KEYCLOAK_REALM := samples/MockAccessServer/keycloak
+KEYCLOAK_REALM := samples/MockAccessServers/Federated/keycloak
 
 # AgentConsole persists its enrollment under $LocalApplicationData; the MockAgentProvider
 # keeps its agent registry in memory, so the cache goes stale whenever the AP restarts.
@@ -107,7 +111,7 @@ clean: ## dotnet clean + remove bin/ obj/ trees
 # Individual services & apps
 # ----------------------------------------------------------------------------
 
-resources: ## Run all five Aria resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003, Inbox :5004)
+resources: ## Run the Aria resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003, Inbox :5004, Bookings :5005)
 	@echo "Building services (once) before launch..."
 	@$(DOTNET) build $(SOLUTION) -v q
 	@trap 'trap - INT TERM; echo; echo "Stopping..."; kill 0' INT TERM; \
@@ -116,6 +120,7 @@ resources: ## Run all five Aria resource servers (Profile :5000, Calendar :5001,
 	$(DOTNET) run --no-build --project $(TRIPS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(WALLET_PROJECT) & \
 	$(DOTNET) run --no-build --project $(INBOX_PROJECT) & \
+	$(DOTNET) run --no-build --project $(BOOKINGS_PROJECT) & \
 	wait
 
 ps: ## Run the MockPersonServer (port 5100)
@@ -156,10 +161,12 @@ demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. f
 	@echo "   Trips:              $(TRIPS_URL)         (mission-aware resource server)"
 	@echo "   Wallet:             $(WALLET_URL)         (four-party resource server)"
 	@echo "   Inbox:              $(INBOX_URL)         (resource-managed two-party server)"
+	@echo "   Bookings:           $(BOOKINGS_URL)         (R3 reservations resource server)"
 	@echo "   Concierge:       $(CONCIERGE_URL)         (mission concierge)"
 	@echo "   MockPersonServer:   $(PS_URL)         (RequireConsent=true)"
 	@echo "   MockAgentProvider:  $(AP_URL)         (agent registry)"
 	@echo "   MockAccessServer:   $(AS_URL)         (stub, RequireConsent=true)"
+	@echo "   R3 AccessServer:    $(R3AS_URL)         (dedicated R3 AS for Bookings)"
 	@echo ""
 	@echo " Open in your browser:"
 	@echo "   GuidedTour:         $(TOUR_URL)         (step-by-step walkthrough of every flow)"
@@ -169,15 +176,17 @@ demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. f
 	@echo "Building services (once) before launch..."
 	@$(DOTNET) build $(SOLUTION) -v q
 	@trap 'trap - INT TERM; echo; echo "Stopping..."; kill 0' INT TERM; \
-	MockPersonServer__RequireConsent=true $(DOTNET) run --no-build --project $(PS_PROJECT) & \
+	MockPersonServer__RequireConsent=true MockPersonServer__TrustedAccessServers__0=$(AS_URL) MockPersonServer__TrustedAccessServers__1=$(R3AS_URL) $(DOTNET) run --no-build --project $(PS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(PROFILE_PROJECT) & \
 	$(DOTNET) run --no-build --project $(CALENDAR_PROJECT) & \
 	$(DOTNET) run --no-build --project $(TRIPS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(WALLET_PROJECT) & \
 	$(DOTNET) run --no-build --project $(INBOX_PROJECT) & \
+	$(DOTNET) run --no-build --project $(BOOKINGS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(CONCIERGE_PROJECT) & \
 	$(DOTNET) run --no-build --project $(AP_PROJECT) & \
 	AccessServer__PolicyProvider=stub AccessServer__RequireConsent=true $(DOTNET) run --no-build --project $(AS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(R3AS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(TOUR_PROJECT) & \
 	$(DOTNET) run --no-build --project $(SAMPLE_PROJECT) & \
 	wait

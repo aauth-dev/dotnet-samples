@@ -569,17 +569,24 @@ public sealed class AAuthClientBuilder
         var challengeOptions = new ChallengeHandlingOptions();
         _challengeOptionsConfigure?.Invoke(challengeOptions);
 
-        // The token holder starts with the agent token (or empty for lazy acquisition).
-        var tokenHolder = agentToken is not null
+        // Two holders keep the agent token and the exchanged carrier separate. The
+        // agent token (kept fresh by the refresh handler below) is what a resource
+        // request presents until a carrier is obtained AND what the PS token-exchange is
+        // ALWAYS signed with (§Agent Token Request — the PS rejects a non-agent carrier).
+        // The carrier holder holds auth tokens obtained via challenge; it never leaks into
+        // the exchange, so step-up challenges stay agent-signed by construction.
+        var agentTokenHolder = agentToken is not null
             ? new AAuthTokenHolder(agentToken)
             : new AAuthTokenHolder();
+        var carrierHolder = new AAuthTokenHolder();
 
-        // Build the token factory that reads from the holder (so after refresh
-        // or exchange, the signing handler uses the updated token).
-        var holderProvider = new JwtSignatureKeyProvider(() => tokenHolder.Current);
+        // Resource requests present the carrier once one is obtained, else the (fresh)
+        // agent token.
+        var resourceProvider = new JwtSignatureKeyProvider(
+            () => carrierHolder.HasToken ? carrierHolder.Current : agentTokenHolder.Current);
 
         // Outer signing handler (signs requests to resources).
-        var outerSigner = new AAuthSigningHandler(_key, holderProvider)
+        var outerSigner = new AAuthSigningHandler(_key, resourceProvider)
         {
             InnerHandler = _innerHandler ?? new HttpClientHandler(),
             Capabilities = _interactionHandling
@@ -588,8 +595,9 @@ public sealed class AAuthClientBuilder
             OnSignatureBase = _onSignatureBase,
         };
 
-        // Exchange pipeline: separate signing handler pinned to the agent token.
-        var exchangeProvider = _provider ?? holderProvider;
+        // Exchange pipeline: always agent-signed — a key provider (HWK/JWKS-URI/JktJwt)
+        // or the dedicated agent-token channel, never the mutable carrier holder.
+        var exchangeProvider = _provider ?? new JwtSignatureKeyProvider(() => agentTokenHolder.Current);
         var (exchangeHttpClient, metadata) = BuildSignedChannel(exchangeProvider, new HttpClientHandler());
         var exchangeClient = new TokenExchangeClient(exchangeHttpClient, metadata);
 
@@ -604,7 +612,7 @@ public sealed class AAuthClientBuilder
 
         // Challenge handler sits above the outer signer.
         var challengeHandler = new ChallengeHandler(
-            exchangeClient, tokenHolder, personServer,
+            exchangeClient, carrierHolder, personServer,
             challengeOptions.OnInteractionRequired, pollerOptions,
             _upstreamTokenProvider)
         {
@@ -623,7 +631,7 @@ public sealed class AAuthClientBuilder
         if (_tokenRefresher is not null)
         {
             var signingKeyThumbprint = _key.ComputeJwkThumbprint();
-            var refreshHandler = new TokenRefreshHandler(tokenHolder, _tokenRefresher, signingKeyThumbprint, _refreshThreshold)
+            var refreshHandler = new TokenRefreshHandler(agentTokenHolder, _tokenRefresher, signingKeyThumbprint, _refreshThreshold)
             {
                 InnerHandler = challengeHandler,
             };

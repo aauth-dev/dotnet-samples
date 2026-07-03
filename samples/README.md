@@ -1,8 +1,9 @@
 # Samples
 
-Fourteen sample applications demonstrating AAuth flows end-to-end. The five Aria
-resource servers (Profile, Calendar, Trips, Wallet, Inbox) live under
-[MockResourceServers/](MockResourceServers/).
+Sixteen sample applications demonstrating AAuth flows end-to-end. The six Aria
+resource servers (Profile, Calendar, Trips, Wallet, Inbox, Bookings) live under
+[MockResourceServers/](MockResourceServers/); the two access servers (Federated,
+R3) live under [MockAccessServers/](MockAccessServers/).
 
 | Sample | Port | Description |
 |--------|------|-------------|
@@ -11,11 +12,13 @@ resource servers (Profile, Calendar, Trips, Wallet, Inbox) live under
 | [Trips](MockResourceServers/Trips/) | 5002 | Mission-aware resource server — `/trips` (`trips.read`), `/trips/book` (`trips.book`) |
 | [Wallet](MockResourceServers/Wallet/) | 5003 | Federated (four-party) resource server — `/wallet` (`wallet.read`), `/wallet/charge` (`wallet.charge`) |
 | [Inbox](MockResourceServers/Inbox/) | 5004 | Resource-Managed (two-party) resource server — manages authorization itself via its own consent page; issues an opaque `AAuth-Access` token (`GET /messages`, `POST /authorize`) |
+| [Bookings](MockResourceServers/Bookings/) | 5005 | Rich Resource Requests (R3, four-party) resource server — dining & experiences reservations via the **OpenAPI** vocabulary; `searchAvailability`/`holdReservation` → `r3_granted`, `confirmReservation` → `r3_conditional` (per-call proposal) |
 | [Concierge](Concierge/) | 5200 | Intermediate service — call chaining with nested `act` delegation |
 | [MissionAgent](MissionAgent/) | — | CLI agent — drives the optional, orthogonal **agent governance** layer: proposes a mission, asks per-action permission, records audit, and relays interactions through a PS (§Agent Governance) |
 | [MockPersonServer](MockPersonServer/) | 5100 | Reference Person Server — verifies exchanges, mints auth tokens, federates to an Access Server. **Sample only — not part of the AAuth SDK.** |
 | [MockAgentProvider](MockAgentProvider/) | 5301 | Reference Agent Provider — issues agent tokens, hosts JWKS. **Sample only — not part of the AAuth SDK.** |
-| [MockAccessServer](MockAccessServer/) | 5500 | Reference Access Server — the fourth party in federated access; evaluates policy (stub or Keycloak) and mints `aa-auth+jwt` (`dwk=aauth-access.json`). **Sample only — not part of the AAuth SDK.** |
+| [MockAccessServer](MockAccessServers/Federated/) | 5500 | Reference Access Server (Federated) — the fourth party in federated access; evaluates policy (stub or Keycloak) and mints `aa-auth+jwt` (`dwk=aauth-access.json`). **Sample only — not part of the AAuth SDK.** |
+| [R3 Access Server](MockAccessServers/R3/) | 5501 | Dedicated Access Server for Rich Resource Requests — fetches/hash-verifies R3 documents, splits granted vs conditional by policy, mints R3 auth tokens (guards Bookings). **Sample only — not part of the AAuth SDK.** |
 | [GuidedTour](GuidedTour/) | 5400 | Blazor walk-through — visualises every AAuth flow step by step, including the four-party federated flow |
 | [SampleApp](SampleApp/) | 5240 | Golden example — one page per signing mode (hwk, jwks_uri, jkt-jwt, jwt, call chain, federated four-party) plus the resource-managed Inbox |
 | [AgentConsole](AgentConsole/) | — | CLI agent — signs requests, handles challenges, exchanges with a PS |
@@ -29,7 +32,7 @@ The fastest way to run all samples together:
 make demo
 ```
 
-This starts Profile + Calendar + Trips + Wallet + Inbox + Concierge + MockPersonServer + MockAgentProvider + MockAccessServer (stub) + GuidedTour + SampleApp in parallel, prints their URLs, and tears them down on `Ctrl+C`. Then open the **GuidedTour** at <http://localhost:5400> and click **Run all**, or the **SampleApp** at <http://localhost:5240>.
+This starts Profile + Calendar + Trips + Wallet + Inbox + Bookings + Concierge + MockPersonServer + MockAgentProvider + Federated AS (stub) + R3 AS + GuidedTour + SampleApp in parallel, prints their URLs, and tears them down on `Ctrl+C`. Then open the **GuidedTour** at <http://localhost:5400> and click **Run all**, or the **SampleApp** at <http://localhost:5240>.
 
 For the **four-party (federated)** flow with an Access Server, `make demo` already
 includes a stub Access Server (no Docker). For the live Keycloak policy engine,
@@ -42,7 +45,7 @@ make demo-keycloak   # both UIs + real Keycloak policy engine (Docker)
 The Keycloak target boots the Access Server with the Keycloak policy engine; log
 in as `demo`/`demo` (has the `wallet.payer` role) or `guest`/`guest` (read-only). See
 [Federated Access](../docs/workflows/federated-access.md) and the
-[Mock Access Server README](MockAccessServer/README.md).
+[Mock Access Server README](MockAccessServers/Federated/README.md).
 
 For the optional **agent governance** layer — an agent operating under a
 human-approved mission, with the PS as the contextual policy point — use the

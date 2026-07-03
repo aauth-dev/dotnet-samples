@@ -88,6 +88,9 @@ export default defineConfig({
     {
       ...dotnetRun('samples/MockPersonServer/MockPersonServer.csproj', {
         MockPersonServer__RequireConsent: 'true',
+        // Federate to both the Federated AS (Wallet) and the R3 AS (Bookings).
+        MockPersonServer__TrustedAccessServers__0: 'http://localhost:5500',
+        MockPersonServer__TrustedAccessServers__1: 'http://localhost:5501',
       }),
       url: 'http://localhost:5100/.well-known/aauth-person.json',
     },
@@ -99,11 +102,21 @@ export default defineConfig({
       // deferred flow — from the agent's perspective the stub and Keycloak are
       // identical. Set AccessServer__PolicyProvider=keycloak (and the
       // Keycloak__* vars) plus KEYCLOAK_E2E=1 to exercise the Keycloak path.
-      ...dotnetRun('samples/MockAccessServer/MockAccessServer.csproj', {
+      ...dotnetRun('samples/MockAccessServers/Federated/Federated.csproj', {
         AccessServer__PolicyProvider: process.env.AccessServer__PolicyProvider ?? 'stub',
         AccessServer__RequireConsent: process.env.AccessServer__RequireConsent ?? 'true',
       }),
       url: 'http://localhost:5500/.well-known/aauth-access.json',
+    },
+    {
+      // Bookings (R3) resource server for the Rich Resource Requests specs.
+      ...dotnetRun('samples/MockResourceServers/Bookings/Bookings.csproj'),
+      url: 'http://localhost:5005/.well-known/aauth-resource.json',
+    },
+    {
+      // Dedicated R3 Access Server guarding Bookings (four-party R3 flow).
+      ...dotnetRun('samples/MockAccessServers/R3/R3.csproj'),
+      url: 'http://localhost:5501/.well-known/aauth-access.json',
     },
     {
       ...dotnetRun('samples/GuidedTour/GuidedTour.csproj'),

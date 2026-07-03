@@ -43,6 +43,11 @@ public class WellKnownMetadataTests : IAsyncLifetime
             SigningKeys = new Dictionary<string, AAuthKey> { [Kid] = _key },
             ScopeDescriptions = new Dictionary<string, string> { ["whoami"] = "See your basic profile." },
             SignatureWindow = 90,
+            AdditionalMetadata = new Dictionary<string, JsonNode?>
+            {
+                ["r3_vocabularies"] = new JsonObject { ["urn:aauth:vocabulary:mcp"] = $"{Issuer}/mcp" },
+                ["issuer"] = "https://attacker.example", // collision: the typed field MUST win
+            },
         });
         await app.StartAsync();
         _host = app;
@@ -116,6 +121,22 @@ public class WellKnownMetadataTests : IAsyncLifetime
         Assert.Equal("EdDSA", (string?)jwk["alg"]);
         // JWKS MUST NOT include the private 'd' parameter.
         Assert.Null(jwk["d"]);
+    }
+
+    [Fact(DisplayName = "§Discovery — resource metadata merges AdditionalMetadata extension members")]
+    public async Task ResourceMetadata_MergesAdditionalMetadata()
+    {
+        var doc = await Get("/.well-known/aauth-resource.json");
+        var vocabs = doc["r3_vocabularies"] as JsonObject;
+        Assert.NotNull(vocabs);
+        Assert.Equal($"{Issuer}/mcp", (string?)vocabs!["urn:aauth:vocabulary:mcp"]);
+    }
+
+    [Fact(DisplayName = "§Discovery — AdditionalMetadata cannot override a typed field")]
+    public async Task ResourceMetadata_AdditionalMetadataDoesNotOverrideTypedFields()
+    {
+        var doc = await Get("/.well-known/aauth-resource.json");
+        Assert.Equal(Issuer, (string?)doc["issuer"]);
     }
 
     private async Task<JsonObject> Get(string path)

@@ -132,7 +132,7 @@ public class MockAccessServerKeycloakTests
     // -- flow helpers ----------------------------------------------------
 
     private static async Task<string> StartInteractionAsync(
-        WebApplicationFactory<MockAccessServer.Entry> factory, string agentId, string scope)
+        WebApplicationFactory<Federated.Entry> factory, string agentId, string scope)
     {
         var agentKey = AAuthKey.Generate();
         using var signed = BuildPsSignedClient(factory);
@@ -148,7 +148,7 @@ public class MockAccessServerKeycloakTests
     }
 
     private static async Task CompleteCallbackAsync(
-        WebApplicationFactory<MockAccessServer.Entry> factory, string pendingPath)
+        WebApplicationFactory<Federated.Entry> factory, string pendingPath)
     {
         var id = pendingPath["/pending/".Length..];
         using var browser = factory.CreateClient(new WebApplicationFactoryClientOptions
@@ -161,8 +161,8 @@ public class MockAccessServerKeycloakTests
             $"callback Status={(int)callback.StatusCode} {await callback.Content.ReadAsStringAsync()}");
     }
 
-    private static WebApplicationFactory<MockAccessServer.Entry> BuildFactory() =>
-        new WebApplicationFactory<MockAccessServer.Entry>().WithWebHostBuilder(b =>
+    private static WebApplicationFactory<Federated.Entry> BuildFactory() =>
+        new WebApplicationFactory<Federated.Entry>().WithWebHostBuilder(b =>
         {
             b.UseSetting("AAuth:Issuer", AsIssuer);
             b.UseSetting("MockAccessServer:TrustedPersonServers:0", PsIssuer);
@@ -179,7 +179,7 @@ public class MockAccessServerKeycloakTests
             });
         });
 
-    private static HttpClient BuildPsSignedClient(WebApplicationFactory<MockAccessServer.Entry> factory)
+    private static HttpClient BuildPsSignedClient(WebApplicationFactory<Federated.Entry> factory)
     {
         var http = new AAuthClientBuilder(PsKey)
             .UseJwksUri($"{PsIssuer}/.well-known/jwks.json", PsKid)

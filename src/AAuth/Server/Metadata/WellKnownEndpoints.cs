@@ -175,6 +175,19 @@ public static class WellKnownEndpoints
         {
             doc["revocation_endpoint"] = options.RevocationEndpoint;
         }
+        if (options.AdditionalMetadata is { Count: > 0 })
+        {
+            // Generic extension seam: merge caller-supplied members verbatim. Typed
+            // fields already emitted win on key collision; core attaches no meaning.
+            foreach (var (key, value) in options.AdditionalMetadata)
+            {
+                if (string.IsNullOrEmpty(key) || doc.ContainsKey(key))
+                {
+                    continue;
+                }
+                doc[key] = value?.DeepClone();
+            }
+        }
         return doc;
     }
 
@@ -350,6 +363,18 @@ public sealed class AAuthResourceMetadataOptions
 
     /// <summary>Optional revocation endpoint.</summary>
     public string? RevocationEndpoint { get; init; }
+
+    /// <summary>
+    /// Optional extension metadata merged verbatim into
+    /// <c>/.well-known/aauth-resource.json</c> as top-level members. Lets a resource
+    /// advertise fields not modelled by the typed options above (for example an R3
+    /// resource's <c>r3_vocabularies</c> map or a <c>mission_aware</c> flag) while
+    /// still using the high-level <c>MapAAuthResourceWellKnown</c>/<c>MapAAuthWellKnown</c>
+    /// APIs. Each value is deep-cloned on emit. Keys that collide with a field the
+    /// builder already emits are ignored (the typed field wins). Core attaches no
+    /// meaning to these values.
+    /// </summary>
+    public IReadOnlyDictionary<string, JsonNode?>? AdditionalMetadata { get; init; }
 
     /// <summary>Whether this resource publishes signing keys (and thus a <c>jwks_uri</c>).</summary>
     internal bool HasSigningKeys => SigningKeys is { Count: > 0 };

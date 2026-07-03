@@ -167,6 +167,7 @@ public sealed class TourSession : IAsyncDisposable
         Mode is TourMode.ResourceManaged ? _options.InboxUrl.TrimEnd('/') :
         Mode is TourMode.Mission or TourMode.MissionCallChain ? _options.TripsUrl.TrimEnd('/') :
         Mode is TourMode.Federated ? _options.WalletUrl.TrimEnd('/') :
+        Mode is TourMode.RichRequests ? _options.BookingsUrl.TrimEnd('/') :
         _options.CalendarUrl.TrimEnd('/');
 
     /// <summary>The display name of the resource server the current flow targets.</summary>
@@ -175,6 +176,7 @@ public sealed class TourSession : IAsyncDisposable
         Mode is TourMode.ResourceManaged ? "Inbox" :
         Mode is TourMode.Mission or TourMode.MissionCallChain ? "Trips" :
         Mode is TourMode.Federated ? "Wallet" :
+        Mode is TourMode.RichRequests ? "Bookings" :
         "Calendar";
 
     /// <summary>
@@ -255,6 +257,9 @@ public sealed class TourSession : IAsyncDisposable
     /// <summary>True when the current flow is the four-party federated path.</summary>
     public bool IsFederatedMode => HasPersonServer && _mode == TourMode.Federated && HasAccessServer;
 
+    /// <summary>True when the current flow is the Rich Resource Requests (R3, four-party) path.</summary>
+    public bool IsRichRequestsMode => HasPersonServer && _mode == TourMode.RichRequests && HasR3AccessServer;
+
     /// <summary>True when the current flow is the mission-governed (PS-as-policy) path.</summary>
     public bool IsMissionMode => HasPersonServer && _mode == TourMode.Mission;
 
@@ -281,6 +286,9 @@ public sealed class TourSession : IAsyncDisposable
     /// <summary>True when an Access Server URL is configured for the federated flow.</summary>
     public bool HasAccessServer => !string.IsNullOrWhiteSpace(_options.AccessServerUrl);
 
+    /// <summary>True when a dedicated R3 Access Server URL is configured for the Rich Resource Requests flow.</summary>
+    public bool HasR3AccessServer => !string.IsNullOrWhiteSpace(_options.R3AccessServerUrl);
+
     /// <summary>True when an Agent Provider URL is configured for real AP enrolment.</summary>
     public bool HasAgentProvider => !string.IsNullOrWhiteSpace(_options.AgentProviderUrl);
 
@@ -297,6 +305,7 @@ public sealed class TourSession : IAsyncDisposable
             if (IsMissionMode) return 20;
             if (IsCallChainMode) return _callChainPending ? 13 : 7;
             if (IsFederatedMode) return _federatedPending ? 10 : 7;
+            if (IsRichRequestsMode) return 14;         // always full; no pending flag
             return IsDeferredMode ? 9 : 6;
         }
     }
@@ -319,6 +328,7 @@ public sealed class TourSession : IAsyncDisposable
             if (IsMissionMode) return MissionPlan;
             if (IsCallChainMode) return _callChainPending ? CallChainConsentPlan : CallChainPlan;
             if (IsFederatedMode) return _federatedPending ? FederatedConsentPlan : FederatedPlan;
+            if (IsRichRequestsMode) return RichRequestsPlan;
             return IsDeferredMode ? DeferredPlan : AutonomousPlan;
         }
     }
@@ -525,6 +535,30 @@ public sealed class TourSession : IAsyncDisposable
         new(10, "Inspect federated result", "Review the AS-minted auth token: dwk=aauth-access.json, cnf.jwk bound to the agent key.", Actor.Agent, Actor.Agent),
     };
 
+    // Rich Resource Requests (R3) — a single, always-full 14-step linear plan.
+    // Unlike Federated (which branches 7 vs 10 on _federatedPending), R3 never
+    // branches: the dedicated R3 Access Server sets RequireProposalConsent=true,
+    // so confirm_reservation ALWAYS needs a per-call consent. Steps 1–6 are the
+    // granted path (search_availability served outright); steps 7–14 are the
+    // conditional path (per-call proposal → 202 consent → poll → retry).
+    private static readonly TourPlanStep[] RichRequestsPlan =
+    {
+        new(1, "Discover Bookings metadata", "Unsigned GET /bookings/.well-known/aauth-resource.json — advertises r3_vocabularies (OpenAPI).", Actor.Agent, Actor.Resource),
+        new(2, "Signed GET /search_availability → 401", "Agent-token signed; 401 auth_token_required with a resource_token whose aud is the R3 Access Server + r3_uri/r3_s256 (class R3 doc).", Actor.Agent, Actor.Resource),
+        new(3, "Parse 401 challenge (aud = R3 Access Server)", "Decode the resource_token — aud=R3 AS is the four-party tell; r3_uri/r3_s256 reference the class R3 document.", Actor.Agent, Actor.Agent),
+        new(4, "Discover Person Server metadata", "Unsigned GET /.well-known/aauth-person.json for token_endpoint.", Actor.Agent, Actor.PersonServer),
+        new(5, "Exchange at PS → R3 AS federation → auth_token", "Signed POST /token; PS federates (aud≠self), the AS fetches + hash-verifies the R3 doc and splits granted vs conditional, minting aa-auth+jwt (r3_granted + r3_conditional).", Actor.Agent, Actor.PersonServer),
+        new(6, "Replay GET /search_availability → 200 (r3_granted)", "Signed retry; searchAvailability is in r3_granted, so it is served immediately with availability options.", Actor.Agent, Actor.Resource),
+        new(7, "Signed POST /confirm_reservation → 401 (per-call proposal)", "confirmReservation is r3_conditional, so the resource builds a per-call proposal carrying the concrete parameters and challenges with a new resource_token.", Actor.Agent, Actor.Resource),
+        new(8, "Parse the per-call proposal challenge", "Decode the new resource_token — r3_uri/r3_s256 now reference the single-invocation proposal document.", Actor.Agent, Actor.Agent),
+        new(9, "Exchange proposal at PS → R3 AS eval → 202 (consent)", "Signed POST /token with the proposal resource_token; the AS evaluates the params and requires human approval — 202 + interaction URL relayed by the PS.", Actor.Agent, Actor.PersonServer),
+        new(10, "Direct user to R3 Access Server consent", "Agent surfaces {url}?code={code} — the R3 AS's per-call consent screen rendering the proposal display.", Actor.Agent, Actor.Agent),
+        new(11, "User consents at the R3 Access Server", "User opens the R3 AS consent screen (badged 'R3 Access Server'), reviews the reservation, and approves.", Actor.AccessServer, Actor.AccessServer),
+        new(12, "Poll pending URL → 200 per-call auth_token", "Signed GETs to the PS pending URL until the AS verdict resolves; the PS relays the per-call aa-auth+jwt (confirmReservation now in r3_granted).", Actor.Agent, Actor.PersonServer),
+        new(13, "Replay POST /confirm_reservation → 200 (confirmed)", "Signed retry with the per-call token + same params; the resource verifies the digest and confirms the reservation.", Actor.Agent, Actor.Resource),
+        new(14, "Inspect R3 result", "Review: search was granted outright; confirm required a per-call proposal + your consent. Shows r3_uri/r3_s256/r3_granted/r3_conditional.", Actor.Agent, Actor.Agent),
+    };
+
     /// <summary>True when no more steps remain in the current flow.</summary>
     public bool IsComplete => _aborted || Steps.Count >= TotalSteps;
 
@@ -546,6 +580,8 @@ public sealed class TourSession : IAsyncDisposable
             ? (Steps.Count <= MissionHop1PollStep ? MissionHop1ApprovalStep
                 : Steps.Count <= MissionHop2PollStep ? MissionHop2ApprovalStep
                 : MissionHop3ApprovalStep)
+        : IsRichRequestsMode
+            ? RichRequestsApprovalStep
         : IsCallChainPending
             ? (Steps.Count <= CallChainHop1PollStep ? CallChainHop1ApprovalStep : CallChainHop2ApprovalStep)
             : 7;
@@ -561,6 +597,8 @@ public sealed class TourSession : IAsyncDisposable
             ? (Steps.Count <= MissionHop1PollStep ? MissionHop1PollStep
                 : Steps.Count <= MissionHop2PollStep ? MissionHop2PollStep
                 : MissionHop3PollStep)
+        : IsRichRequestsMode
+            ? RichRequestsPollStep
         : IsCallChainPending
             ? (Steps.Count <= CallChainHop1PollStep ? CallChainHop1PollStep : CallChainHop2PollStep)
             : 8;
@@ -597,6 +635,13 @@ public sealed class TourSession : IAsyncDisposable
     private const int MissionChainElevatedApprovalStep = 10;
     private const int MissionChainElevatedPollStep = 11;
 
+    // Rich Resource Requests (R3) consent path step numbers: the per-call
+    // proposal always needs consent (R3 AS RequireProposalConsent=true), so the
+    // user approves at the R3 Access Server (step 11) and the agent polls the PS
+    // pending URL for the per-call auth token (step 12).
+    private const int RichRequestsApprovalStep = 11;
+    private const int RichRequestsPollStep = 12;
+
     /// <summary>
     /// The actor the current poll loop targets: the Person Server for the
     /// three-party / federated / call-chain hop-1 polls, or the Concierge
@@ -614,7 +659,7 @@ public sealed class TourSession : IAsyncDisposable
     /// and the UI should expose the "Approve as user" action button.
     /// </summary>
     public bool AwaitingUserApproval =>
-        (IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode || IsMissionCallChainMode || IsResourceManagedMode)
+        (IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode || IsMissionCallChainMode || IsResourceManagedMode || IsRichRequestsMode)
         && Steps.Count + 1 == UserApprovalStepNumber && !_userApproved;
 
     /// <summary>The user-facing interaction URL captured during step 7 (deferred only).</summary>
@@ -689,6 +734,14 @@ public sealed class TourSession : IAsyncDisposable
         _apEnrolEndpoint = null;
         _callChainResponseBody = null;
         _federatedResponseBody = null;
+        _r3Uri = null;
+        _r3S256 = null;
+        _r3ProposalUri = null;
+        _r3ProposalS256 = null;
+        _r3Granted = null;
+        _r3Conditional = null;
+        _r3SearchResponseBody = null;
+        _r3ConfirmResponseBody = null;
         _userApproved = false;
         _federatedPending = false;
         _callChainPending = false;
@@ -919,6 +972,40 @@ public sealed class TourSession : IAsyncDisposable
                 case 7: StepFederatedInspectResult(); break;
             }
         }
+        else if (IsRichRequestsMode)
+        {
+            // Single, always-full 14-step linear plan (no branch): the granted
+            // path (search_availability, 1–6) then the conditional path
+            // (confirm_reservation per-call proposal → 202 consent → poll →
+            // retry, 7–14). All cases are unconditional — the R3 AS always
+            // requires consent for the per-call proposal.
+            switch (nextStep)
+            {
+                case 1:  await StepRichRequestsDiscoverResourceAsync(ct); break;
+                case 2:  await StepRichRequestsSearchSignedGetAsync(ct); break;
+                case 3:  StepRichRequestsParseChallenge(); break;
+                case 4:  await StepFetchPersonMetadataAsync(ct); break;            // SHARED
+                case 5:  await StepRichRequestsExchangeAsync(ct); break;
+                case 6:  await StepRichRequestsSearchRetryAsync(ct); break;
+                case 7:  await StepRichRequestsConfirmSignedPostAsync(ct); break;
+                case 8:  StepRichRequestsParseProposal(); break;
+                case 9:  await StepRichRequestsProposalExchangeAsync(ct); break;
+                case 10: StepRichRequestsDirectUserToInteraction(); break;
+                case 11: StepUserApprovesPlaceholder(); break;                     // SHARED
+                case 12:
+                    if (_pollingTask is { } r3Poll && !r3Poll.IsCompleted)
+                    {
+                        await r3Poll.ConfigureAwait(false);
+                    }
+                    else if (Steps.Count + 1 == PollStepNumber)
+                    {
+                        await StepPollPendingAsync(ct);                            // SHARED
+                    }
+                    break;
+                case 13: await StepRichRequestsConfirmRetryAsync(ct); break;
+                case 14: StepRichRequestsInspectResult(); break;
+            }
+        }
         else if (IsMissionCallChainMode)
         {
             switch (nextStep)
@@ -1128,7 +1215,7 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public Task RecordUserApprovalOpenedAsync(CancellationToken ct = default)
     {
-        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode || IsMissionCallChainMode || IsResourceManagedMode)) { return Task.CompletedTask; }
+        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode || IsMissionCallChainMode || IsResourceManagedMode || IsRichRequestsMode)) { return Task.CompletedTask; }
         if (Steps.Count + 1 != UserApprovalStepNumber)
         {
             throw new InvalidOperationException(
@@ -1188,6 +1275,34 @@ public sealed class TourSession : IAsyncDisposable
                     $"  GET  {{as}}/interaction/login?code={_interactionCode}\n" +
                     "  \u2192 AS consent screen \u2192 click Approve\n" +
                     $"  POST {{as}}/interaction/approve (AS records verdict)",
+            });
+            return Task.CompletedTask;
+        }
+
+        if (IsRichRequestsMode)
+        {
+            Steps.Add(new StepRecord
+            {
+                Number = Steps.Count + 1,
+                Title = "User consents at the R3 Access Server",
+                From = Actor.AccessServer,
+                To = Actor.AccessServer,
+                Narrative =
+                    "The tour opened the **R3 Access Server's** per-call consent screen in a " +
+                    "new browser tab. The R3 AS rendered the proposal's `display` — the concrete " +
+                    "reservation (venue, date, party size, deposit) it is about to authorize — " +
+                    "badged *R3 Access Server* so the user knows they are approving that single, " +
+                    "consequential booking at the federated authority, not the Person Server. The " +
+                    "user clicked **Approve**, and the AS flipped its pending entry to *allowed*. " +
+                    "All of this happens in the user's browser \u2192 R3 AS channel — neither the " +
+                    "agent nor the Person Server is on this path. The agent discovers the minted " +
+                    "per-call auth token on its next poll of the PS pending URL.",
+                TokenDecoded =
+                    $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
+                    "User performed (browser \u2192 R3 AS):\n" +
+                    $"  GET  {{r3-as}}/interaction/consent?code={_interactionCode}\n" +
+                    "  \u2192 R3 AS per-call consent screen \u2192 click Approve\n" +
+                    $"  POST {{r3-as}}/interaction/consent/approve (AS records verdict)",
             });
             return Task.CompletedTask;
         }
@@ -2347,8 +2462,9 @@ public sealed class TourSession : IAsyncDisposable
             _authToken = (string?)body?["auth_token"];
 
             // Federated consent happens at the Access Server's page, even
-            // though the agent still polls the PS's pending URL.
-            var consentPage = IsFederatedMode ? "Access Server's" : "PS's";
+            // though the agent still polls the PS's pending URL. R3 per-call
+            // consent likewise happens at the dedicated R3 Access Server.
+            var consentPage = IsFederatedMode ? "Access Server's" : IsRichRequestsMode ? "R3 Access Server's" : "PS's";
 
             Steps.Add(new StepRecord
             {
@@ -2705,7 +2821,7 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     public Task StartPendingPollAsync()
     {
-        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode || IsMissionCallChainMode || IsResourceManagedMode) || _pendingUrl is null)
+        if (!(IsDeferredMode || (IsFederatedMode && _federatedPending) || IsCallChainPending || IsMissionMode || IsMissionCallChainMode || IsResourceManagedMode || IsRichRequestsMode) || _pendingUrl is null)
         {
             return Task.CompletedTask;
         }
@@ -3694,6 +3810,522 @@ public sealed class TourSession : IAsyncDisposable
             // The auth token was already decoded at the exchange/poll step;
             // here we only summarize the four-party shape. The resource body
             // was shown at the replay step.
+            TokenDecoded = summary.ToString(),
+        });
+    }
+
+    // -----------------------------------------------------------------
+    // Rich Resource Requests (R3, four-party) step implementations
+    // -----------------------------------------------------------------
+
+    // Class R3 document reference (captured from the search 401 + resource token, steps 2/3).
+    private string? _r3Uri;
+    private string? _r3S256;
+    // Per-call proposal reference (captured from the confirm 401 + proposal token, steps 7/8).
+    private string? _r3ProposalUri;
+    private string? _r3ProposalS256;
+    // Operation lists decoded from the class auth token (step 5) for the inspect summary.
+    private string? _r3Granted;
+    private string? _r3Conditional;
+    // The two 200 bodies (steps 6, 13) surfaced in the inspect summary.
+    private string? _r3SearchResponseBody;
+    private string? _r3ConfirmResponseBody;
+
+    /// <summary>The Bookings granted (r3_granted) operation branch: GET /search_availability.</summary>
+    private string R3SearchUrl => $"{_options.BookingsUrl.TrimEnd('/')}/search_availability";
+
+    /// <summary>The Bookings conditional (r3_conditional) operation branch: POST /confirm_reservation.</summary>
+    private string R3ConfirmUrl => $"{_options.BookingsUrl.TrimEnd('/')}/confirm_reservation";
+
+    // The concrete reservation the agent confirms. Mirrors SampleApp Bookings.razor:
+    // the SAME values are resent on the approved retry (step 13) so the resource can
+    // verify they match the approved proposal's digest (r3 §Per-Call Proposals).
+    private static object BuildConfirmReservationBody() => new
+    {
+        reservation_id = "dining-lumiere-001",
+        venue = "Le Lumière (dinner for 2)",
+        date = "2026-07-14T19:30",
+        party_size = 2,
+        deposit_usd = 40,
+    };
+
+    private static string? FormatR3Ops(JsonNode? node)
+    {
+        // The auth-token r3_granted / r3_conditional claim is an R3Grant object:
+        //   { "vocabulary": "…", "operations": [ { "<field>": "<id>" }, … ] }
+        // where each operation is a single-key object (the id under a
+        // vocabulary-specific member name, e.g. operationId). Pull out the ids.
+        if (node is not JsonObject grant || grant["operations"] is not JsonArray ops)
+        {
+            return null;
+        }
+        var ids = ops
+            .OfType<JsonObject>()
+            .Select(op => (string?)op.FirstOrDefault().Value)
+            .Where(id => !string.IsNullOrEmpty(id));
+        var joined = string.Join(", ", ids);
+        return string.IsNullOrEmpty(joined) ? null : joined;
+    }
+
+    private async Task StepRichRequestsDiscoverResourceAsync(CancellationToken ct)
+    {
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        using var client = new HttpClient(capture);
+        var url = $"{ResourceBaseUrl}/.well-known/aauth-resource.json";
+        await client.GetAsync(url, ct);
+        var ex = capture.Last!;
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Discover Bookings metadata",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "The agent fetches Bookings' well-known metadata. Beyond the ordinary " +
+                "four-party fields, Bookings advertises `r3_vocabularies` — a map of the " +
+                "**Rich Resource Request** vocabularies it speaks (here the **OpenAPI** " +
+                "vocabulary, `urn:aauth:vocabulary:openapi`, whose discovery document is " +
+                "`/openapi.json`). Operations are `operationId`s; nothing yet reveals which " +
+                "are granted outright versus conditional — that is decided by the R3 " +
+                "Access Server and surfaced in the auth token's `r3_granted`/`r3_conditional`.",
+            RequestLine = $"{ex.RequestLine}  →  {url}",
+            RequestHeaders = ex.RequestHeaders,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            CodeSnippet = CodeSnippets.DiscoverResource,
+        });
+    }
+
+    private async Task StepRichRequestsSearchSignedGetAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        var resp = await client.GetAsync(R3SearchUrl, ct);
+        var ex = capture.Last!;
+
+        if (resp.StatusCode == HttpStatusCode.Unauthorized &&
+            resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqHeaders))
+        {
+            var parsed = AAuthRequirementHeader.Parse(reqHeaders.First());
+            _resourceToken = parsed.ResourceToken;
+        }
+
+        // The 401 body carries the class R3 document reference (r3_uri/r3_s256).
+        var body = JsonNode.Parse(ex.ResponseBody);
+        _r3Uri = (string?)body?["r3_uri"];
+        _r3S256 = (string?)body?["r3_s256"];
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Signed GET /search_availability → 401",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "The agent signs a GET to Bookings' `/search_availability` with its " +
+                "agent token (`sig=jwt`). Bookings has no auth token yet, so it stores " +
+                "the R3 document for its operation set, returns `401 auth_token_required`, " +
+                "and issues a resource_token via `AAuth-Requirement`. Two tells make this " +
+                "**four-party R3**: the resource_token's `aud` is the **R3 Access Server** " +
+                "(not the Person Server), and the body carries `r3_uri`/`r3_s256` " +
+                "referencing the content-addressed **class R3 document**.",
+            RequestLine = $"{ex.RequestLine}  →  {R3SearchUrl}",
+            RequestHeaders = ex.RequestHeaders,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            SignatureBase = capturedBase,
+            CodeSnippet = CodeSnippets.SignedGetJwt,
+        });
+    }
+
+    private void StepRichRequestsParseChallenge()
+    {
+        var payload = DecodeJwt(_resourceToken)?.Payload;
+        var aud = payload is not null && JsonNode.Parse(payload) is { } node
+            ? (string?)node["aud"]
+            : null;
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Parse 401 challenge (aud = R3 Access Server)",
+            From = Actor.Agent,
+            To = Actor.Agent,
+            Narrative =
+                "The agent decodes the resource_token. Its `aud` points at the " +
+                $"**R3 Access Server** (`{aud ?? "the R3 AS URL"}`), not the Person Server — " +
+                "the four-party tell. Its `r3_uri`/`r3_s256` reference the **class R3 " +
+                "document** describing every operation Bookings offers and its consequences. " +
+                "The agent does not act on any of this — it simply forwards the resource_token " +
+                "to its Person Server, which notices `aud ≠ self` and federates to the R3 AS.",
+            TokenJwt = _resourceToken,
+            TokenHeader = DecodeJwt(_resourceToken)?.Header,
+            TokenPayload = payload,
+            TokenDecoded = _r3Uri is null ? null : $"r3_uri:  {_r3Uri}\nr3_s256: {_r3S256}",
+            CodeSnippet = CodeSnippets.ParseChallenge,
+        });
+    }
+
+    private async Task StepRichRequestsExchangeAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        // Signed with the AGENT token; the PS authenticates the agent, then
+        // federates to the R3 AS (aud ≠ self) and relays the minted auth token.
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
+        {
+            resource_token = _resourceToken,
+        }, ct);
+
+        var ex = capture.Last!;
+        var body = JsonNode.Parse(ex.ResponseBody);
+        _authToken = (string?)body?["auth_token"];
+
+        // Capture the granted/conditional split for the inspect summary.
+        var authPayload = DecodeJwt(_authToken)?.Payload;
+        if (authPayload is not null && JsonNode.Parse(authPayload) is { } claims)
+        {
+            _r3Granted = FormatR3Ops(claims["r3_granted"]);
+            _r3Conditional = FormatR3Ops(claims["r3_conditional"]);
+        }
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Exchange at PS → R3 AS federation → auth_token",
+            From = Actor.Agent,
+            To = Actor.PersonServer,
+            Narrative =
+                "The agent POSTs the resource_token to its Person Server, exactly as in " +
+                "three-party. The PS peeks the resource_token's `aud`, sees it is the " +
+                "**R3 Access Server** (not itself), and federates: it makes an AS-signed " +
+                "`GET /r3/{hash}` to Bookings to fetch the class R3 document, **rejects it " +
+                "unless the served bytes hash to `r3_s256`**, then splits the operations " +
+                "into `r3_granted` (served now) and `r3_conditional` (needs per-call " +
+                "approval) *by its own policy*, and mints the `aa-auth+jwt`. All of the AS " +
+                "hop happens server-side — the agent just sees a `200`.",
+            RequestLine = $"{ex.RequestLine}  →  {_tokenEndpoint}",
+            RequestHeaders = ex.RequestHeaders,
+            RequestBody = PrettyJson(ex.RequestBody),
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            SignatureBase = capturedBase,
+            TokenJwt = _authToken,
+            TokenHeader = DecodeJwt(_authToken)?.Header,
+            TokenPayload = DecodeJwt(_authToken)?.Payload,
+            CodeSnippet = CodeSnippets.TokenExchangeDirect,
+            SubSteps = new SubStep[]
+            {
+                new("discover aauth-access.json", Actor.PersonServer, Actor.AccessServer),
+                new("signed POST /token (resource+agent)", Actor.PersonServer, Actor.AccessServer),
+                new("AS-signed GET /r3/{hash} (fetch R3 doc)", Actor.AccessServer, Actor.Resource),
+                new("verify r3_s256 + split granted/conditional", Actor.AccessServer, Actor.AccessServer),
+                new("200 + aa-auth+jwt (r3_granted + r3_conditional)", Actor.AccessServer, Actor.PersonServer, IsResponse: true),
+            },
+            SubStepsLabel = "inside person server + R3 AS",
+        });
+    }
+
+    private async Task StepRichRequestsSearchRetryAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _authToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        await client.GetAsync(R3SearchUrl, ct);
+        var ex = capture.Last!;
+        _r3SearchResponseBody = ex.ResponseBody;
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Replay GET /search_availability → 200 (r3_granted)",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "The agent retries `/search_availability`, now presenting the R3 auth token " +
+                "via `sig=jwt`. Bookings verifies the JWT against the **R3 Access Server's** " +
+                "JWKS, reads its `r3_granted` claim, sees `searchAvailability` is in it, and " +
+                "serves the availability options **immediately** (`source=r3_granted`) — no " +
+                "per-call approval needed for a low-risk read.",
+            RequestLine = $"{ex.RequestLine}  →  {R3SearchUrl}",
+            RequestHeaders = ex.RequestHeaders,
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            SignatureBase = capturedBase,
+            CodeSnippet = CodeSnippets.ReplayWithAuthToken,
+        });
+    }
+
+    private async Task StepRichRequestsConfirmSignedPostAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        // Present the SAME class auth token from step 5 (confirmReservation is in
+        // its r3_conditional, not r3_granted), signing the concrete reservation body.
+        var signing = BuildSigningHandler(
+            () => _authToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        var resp = await client.PostAsJsonAsync(R3ConfirmUrl, BuildConfirmReservationBody(), ct);
+        var ex = capture.Last!;
+
+        if (resp.StatusCode == HttpStatusCode.Unauthorized &&
+            resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqHeaders))
+        {
+            var parsed = AAuthRequirementHeader.Parse(reqHeaders.First());
+            // Overwrite the resource token: the exchange in step 9 sends this
+            // per-call PROPOSAL resource_token (its aud is the R3 AS).
+            _resourceToken = parsed.ResourceToken;
+        }
+
+        var body = JsonNode.Parse(ex.ResponseBody);
+        _r3ProposalUri = (string?)body?["r3_uri"];
+        _r3ProposalS256 = (string?)body?["r3_s256"];
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Signed POST /confirm_reservation → 401 (per-call proposal)",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "The agent signs a POST to `/confirm_reservation` with the concrete " +
+                "reservation, still carrying the class auth token. But `confirmReservation` " +
+                "is in `r3_conditional`, not `r3_granted`, so Bookings does **not** serve it. " +
+                "Instead it builds a **per-call proposal** — the R3 document narrowed to this " +
+                "single invocation, carrying the exact `parameters` — stores it, and " +
+                "challenges with `401 r3_approval_required` plus a NEW resource_token whose " +
+                "`aud` is the R3 AS and whose `r3_uri`/`r3_s256` reference the proposal.",
+            RequestLine = $"{ex.RequestLine}  →  {R3ConfirmUrl}",
+            RequestHeaders = ex.RequestHeaders,
+            RequestBody = PrettyJson(ex.RequestBody),
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            SignatureBase = capturedBase,
+            CodeSnippet = CodeSnippets.R3ConfirmConditional,
+        });
+    }
+
+    private void StepRichRequestsParseProposal()
+    {
+        var payload = DecodeJwt(_resourceToken)?.Payload;
+        var aud = payload is not null && JsonNode.Parse(payload) is { } node
+            ? (string?)node["aud"]
+            : null;
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Parse the per-call proposal challenge",
+            From = Actor.Agent,
+            To = Actor.Agent,
+            Narrative =
+                "The agent decodes the NEW resource_token. Its `aud` is still the " +
+                $"**R3 Access Server** (`{aud ?? "the R3 AS URL"}`), but its `r3_uri`/`r3_s256` " +
+                "now reference the **single-invocation proposal document** carrying the " +
+                "concrete reservation parameters — not the broad class document from step 3. " +
+                "The agent forwards it to the PS exactly as before; the difference is entirely " +
+                "in what the R3 AS will evaluate and ask you to approve.",
+            TokenJwt = _resourceToken,
+            TokenHeader = DecodeJwt(_resourceToken)?.Header,
+            TokenPayload = payload,
+            TokenDecoded = _r3ProposalUri is null ? null : $"r3_uri:  {_r3ProposalUri}\nr3_s256: {_r3ProposalS256}",
+            CodeSnippet = CodeSnippets.ParseChallenge,
+        });
+    }
+
+    private async Task StepRichRequestsProposalExchangeAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var signing = BuildSigningHandler(
+            () => _agentToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
+        {
+            resource_token = _resourceToken,
+        }, ct);
+
+        var ex = capture.Last!;
+
+        // The R3 AS sets RequireProposalConsent=true, so the per-call proposal
+        // ALWAYS requires human approval: the AS returns 202 + a consent screen,
+        // relayed by the PS as its own 202 + Location (pending URL) + interaction.
+        var location = resp.Headers.Location?.ToString();
+        if (location is not null)
+        {
+            _pendingUrl = location.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                ? location
+                : $"{_options.PersonServerUrl!.TrimEnd('/')}{location}";
+        }
+
+        if (resp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqVals))
+        {
+            foreach (var raw in reqVals)
+            {
+                if (string.IsNullOrWhiteSpace(raw)) { continue; }
+                try
+                {
+                    var parsed = AAuthRequirementHeader.Parse(raw);
+                    var interaction = AAuth.Headers.Interaction.FromRequirement(parsed);
+                    if (interaction is not null)
+                    {
+                        _interactionUrl = interaction.Url;
+                        _interactionCode = interaction.Code;
+                        break;
+                    }
+                }
+                catch (FormatException) { /* try the next header value */ }
+            }
+        }
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Exchange proposal at PS → R3 AS eval → 202 (consent)",
+            From = Actor.Agent,
+            To = Actor.PersonServer,
+            Narrative =
+                "The agent POSTs the proposal resource_token to its Person Server. The PS " +
+                "sees `aud` is the **R3 Access Server** and federates: it makes an AS-signed " +
+                "`GET /r3/proposals/{hash}` to Bookings to fetch the proposal, hash-verifies " +
+                "it, and evaluates the concrete parameters. Because `confirmReservation` is " +
+                "conditional and the AS requires per-call consent, the AS replies `202` with " +
+                "an interaction URL rendering the proposal's `display`. The PS relays that as " +
+                "its own `202 Accepted` with a `Location` (the pending URL the agent polls) " +
+                "and an `AAuth-Requirement: requirement=interaction` header.",
+            RequestLine = $"{ex.RequestLine}  →  {_tokenEndpoint}",
+            RequestHeaders = ex.RequestHeaders,
+            RequestBody = PrettyJson(ex.RequestBody),
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            SignatureBase = capturedBase,
+            CodeSnippet = CodeSnippets.TokenExchangeDeferred,
+            SubSteps = new SubStep[]
+            {
+                new("discover aauth-access.json", Actor.PersonServer, Actor.AccessServer),
+                new("signed POST /token (proposal resource+agent)", Actor.PersonServer, Actor.AccessServer),
+                new("AS-signed GET /r3/proposals/{hash} (fetch proposal)", Actor.AccessServer, Actor.Resource),
+                new("evaluate parameters → consent required", Actor.AccessServer, Actor.AccessServer),
+                new("202 + interaction URL (R3 AS consent)", Actor.AccessServer, Actor.PersonServer, IsResponse: true),
+            },
+            SubStepsLabel = "inside person server + R3 AS",
+        });
+    }
+
+    private void StepRichRequestsDirectUserToInteraction()
+    {
+        var userUrl = UserInteractionUrl
+            ?? "(no interaction URL captured — is the R3 Access Server running with RequireProposalConsent=true?)";
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Direct user to R3 Access Server consent",
+            From = Actor.Agent,
+            To = Actor.Agent,
+            Narrative =
+                "The agent received the relayed interaction requirement. It constructs the " +
+                "user-facing URL as `{url}?code={code}` — where `{url}` is the **R3 Access " +
+                "Server's** per-call consent endpoint (which renders the proposal's `display`: " +
+                "the venue, date, party size, and deposit) and `{code}` ties the upcoming " +
+                "browser session back to this specific proposal. The user approves at the " +
+                "**R3 Access Server** here — not the Person Server — because the AS owns the " +
+                "per-call policy decision.",
+            TokenDecoded = $"Interaction URL:  {_interactionUrl}\nCode:             {_interactionCode}",
+            CodeSnippet = CodeSnippets.DirectUserToInteraction,
+        });
+    }
+
+    private async Task StepRichRequestsConfirmRetryAsync(CancellationToken ct)
+    {
+        string? capturedBase = null;
+        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        // _authToken is now the per-call token minted by the R3 AS on approval
+        // (confirmReservation moved into r3_granted). Resend the SAME parameters.
+        var signing = BuildSigningHandler(
+            () => _authToken!, capture, (_, b) => capturedBase = b);
+        using var client = new HttpClient(signing);
+
+        await client.PostAsJsonAsync(R3ConfirmUrl, BuildConfirmReservationBody(), ct);
+        var ex = capture.Last!;
+        _r3ConfirmResponseBody = ex.ResponseBody;
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Replay POST /confirm_reservation → 200 (confirmed)",
+            From = Actor.Agent,
+            To = Actor.Resource,
+            Narrative =
+                "The agent retries `/confirm_reservation` with the per-call auth token and " +
+                "the **same** reservation parameters. Bookings verifies the JWT against the " +
+                "R3 AS's JWKS, sees `confirmReservation` is now in `r3_granted`, recovers the " +
+                "approved proposal via `r3_s256`, and **re-hashes the presented parameters to " +
+                "confirm they match the approved proposal's digest** (r3 §Per-Call Proposals). " +
+                "On a match it confirms the reservation (`source=per-call-r3_granted`, " +
+                "`status=confirmed`) and returns the confirmation number.",
+            RequestLine = $"{ex.RequestLine}  →  {R3ConfirmUrl}",
+            RequestHeaders = ex.RequestHeaders,
+            RequestBody = PrettyJson(ex.RequestBody),
+            StatusLine = ex.StatusLine,
+            ResponseHeaders = ex.ResponseHeaders,
+            ResponseBody = PrettyJson(ex.ResponseBody),
+            SignatureBase = capturedBase,
+            CodeSnippet = CodeSnippets.ReplayWithAuthToken,
+        });
+    }
+
+    private void StepRichRequestsInspectResult()
+    {
+        var summary = new System.Text.StringBuilder();
+        summary.AppendLine("═══ Rich Resource Requests (R3, four-party) Summary ═══");
+        summary.AppendLine();
+        summary.AppendLine("  Two operations, two outcomes — decided by the R3 Access Server:");
+        summary.AppendLine();
+        summary.AppendLine($"    r3_granted:     {_r3Granted ?? "(none)"}");
+        summary.AppendLine($"    r3_conditional: {_r3Conditional ?? "(none)"}");
+        summary.AppendLine();
+        summary.AppendLine("  • searchAvailability ∈ r3_granted → served outright (no prompt).");
+        summary.AppendLine("  • confirmReservation ∈ r3_conditional → per-call proposal + your consent.");
+        summary.AppendLine();
+        summary.AppendLine("  Content-addressed R3 references (verbatim-bytes SHA-256):");
+        summary.AppendLine($"    class    r3_uri:  {_r3Uri ?? "(n/a)"}");
+        summary.AppendLine($"    class    r3_s256: {_r3S256 ?? "(n/a)"}");
+        summary.AppendLine($"    proposal r3_uri:  {_r3ProposalUri ?? "(n/a)"}");
+        summary.AppendLine($"    proposal r3_s256: {_r3ProposalS256 ?? "(n/a)"}");
+
+        Steps.Add(new StepRecord
+        {
+            Number = Steps.Count + 1,
+            Title = "Inspect R3 result",
+            From = Actor.Agent,
+            To = Actor.Agent,
+            Narrative =
+                "Rich Resource Requests replace opaque scopes with **resource-declared, " +
+                "content-addressed** authorization. The R3 Access Server fetched and " +
+                "hash-verified Bookings' R3 document, then split its operations by policy: " +
+                "the low-risk `searchAvailability` landed in `r3_granted` and was served " +
+                "immediately, while `confirmReservation` — which charges a deposit — landed " +
+                "in `r3_conditional` and required a **per-call proposal** carrying the exact " +
+                "reservation, plus **your** approval at the R3 AS, before the resource would " +
+                "commit it. The digest binds your approval to those precise parameters.",
             TokenDecoded = summary.ToString(),
         });
     }

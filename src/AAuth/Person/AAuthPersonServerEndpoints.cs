@@ -1036,7 +1036,10 @@ public static class AAuthPersonServerEndpoints
         HttpContext ctx, PersonPendingEntry entry, AAuthPersonServerOptions options, string interactionUrl)
     {
         ctx.Response.Headers.Location = $"{options.PendingPathPrefix}/{entry.Id}";
-        ctx.Response.Headers["Retry-After"] = "0";
+        // Human-consent wait: poll at ~1s (a browser approval takes seconds), not the
+        // 100ms MinPollInterval floor a `Retry-After: 0` would clamp to. Matches the
+        // four-party interaction path and the AS/Concierge/R3 endpoints.
+        ctx.Response.Headers["Retry-After"] = "1";
         ctx.Response.Headers["Cache-Control"] = "no-store";
         ctx.Response.Headers[AAuthRequirementHeader.Name] = Interaction.Format(interactionUrl, entry.Id);
         return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);

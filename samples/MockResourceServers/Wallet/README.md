@@ -46,5 +46,5 @@ dotnet run --project samples/AgentConsole -- http://localhost:5003/wallet/charge
 ```
 
 See [Federated Access](../../../docs/workflows/federated-access.md) and the
-[Mock Access Server README](../../MockAccessServer/README.md) for the policy
+[Mock Access Server README](../../MockAccessServers/Federated/README.md) for the policy
 engine, and [Mock Resource Servers](../README.md) for the suite overview.

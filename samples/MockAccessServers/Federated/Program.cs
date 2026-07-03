@@ -386,7 +386,7 @@ static class ConsentHtml
 
 // Marker type for `WebApplicationFactory<MockAccessServer.Entry>` in the
 // integration tests, matching the MockPersonServer pattern.
-namespace MockAccessServer
+namespace Federated
 {
     /// <summary>Marker type for <c>WebApplicationFactory&lt;T&gt;</c>.</summary>
     public sealed class Entry

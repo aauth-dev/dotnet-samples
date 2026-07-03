@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Nodes;
 using AAuth.Crypto;
 using AAuth.HttpSig;
 using Microsoft.Extensions.DependencyInjection;
@@ -84,4 +85,12 @@ public sealed class AAuthResourceOptions
     /// resource tokens via <c>401</c> challenges instead.
     /// </summary>
     public string? AuthorizationEndpoint { get; set; }
+
+    /// <summary>
+    /// Optional extension metadata merged verbatim into the resource well-known
+    /// document as top-level members (for example an R3 resource's
+    /// <c>r3_vocabularies</c> map or a <c>mission_aware</c> flag). See
+    /// <see cref="Server.Metadata.AAuthResourceMetadataOptions.AdditionalMetadata"/>.
+    /// </summary>
+    public Dictionary<string, JsonNode?>? AdditionalMetadata { get; set; }
 }

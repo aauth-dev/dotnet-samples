@@ -11,6 +11,7 @@ const cases: Array<{ mode: TourMode; server: string; url: string }> = [
   { mode: TourMode.Autonomous, server: 'Calendar', url: 'http://localhost:5001' },
   { mode: TourMode.Mission, server: 'Trips', url: 'http://localhost:5002' },
   { mode: TourMode.Federated, server: 'Wallet', url: 'http://localhost:5003' },
+  { mode: TourMode.RichRequests, server: 'Bookings', url: 'http://localhost:5005' },
 ];
 
 for (const { mode, server, url } of cases) {

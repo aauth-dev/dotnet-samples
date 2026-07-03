@@ -5,23 +5,29 @@
     <Project Path="samples/GuidedTour/GuidedTour.csproj" />
     <Project Path="samples/LiveWhoAmITest/LiveWhoAmITest.csproj" />
     <Project Path="samples/MissionAgent/MissionAgent.csproj" />
-    <Project Path="samples/MockAccessServer/MockAccessServer.csproj" />
     <Project Path="samples/MockAgentProvider/MockAgentProvider.csproj" />
     <Project Path="samples/MockPersonServer/MockPersonServer.csproj" />
     <Project Path="samples/SampleApp/SampleApp.csproj" />
   </Folder>
   <Folder Name="/samples/MockResourceServers/">
+    <Project Path="samples/MockResourceServers/Bookings/Bookings.csproj" />
     <Project Path="samples/MockResourceServers/Calendar/Calendar.csproj" />
     <Project Path="samples/MockResourceServers/Inbox/Inbox.csproj" />
     <Project Path="samples/MockResourceServers/Profile/Profile.csproj" />
     <Project Path="samples/MockResourceServers/Trips/Trips.csproj" />
     <Project Path="samples/MockResourceServers/Wallet/Wallet.csproj" />
   </Folder>
+  <Folder Name="/samples/MockAccessServers/">
+    <Project Path="samples/MockAccessServers/Federated/Federated.csproj" />
+    <Project Path="samples/MockAccessServers/R3/R3.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/AAuth/AAuth.csproj" />
+    <Project Path="src/AAuth.R3/AAuth.R3.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/AAuth.Conformance/AAuth.Conformance.csproj" />
+    <Project Path="tests/AAuth.R3.Tests/AAuth.R3.Tests.csproj" />
     <Project Path="tests/AAuth.Tests/AAuth.Tests.csproj" />
   </Folder>
 </Solution>

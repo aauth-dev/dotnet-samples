@@ -70,7 +70,7 @@ export async function denyInPopup(popup: Page): Promise<void> {
  *
  * In federated mode the surfaced interaction URL is the Access Server's
  * login-start endpoint, which 302-redirects to the Keycloak OIDC login form.
- * The realm ships two demo users (samples/MockAccessServer/keycloak):
+ * The realm ships two demo users (samples/MockAccessServers/Federated/keycloak):
  *   demo / demo   → has the `wallet.payer` role (full access)
  *   guest / guest → no admin role (limited access)
  * After login Keycloak may render a consent/grant screen; approve it if shown.

@@ -19,6 +19,10 @@
         {
             <span class="hl-as"><strong>Access Server:</strong> @Options.Value.AccessServerUrl</span>
         }
+        @if (Session.IsRichRequestsMode)
+        {
+            <span class="hl-as"><strong>R3 Access Server:</strong> @Options.Value.R3AccessServerUrl</span>
+        }
         @if (!Session.IsIdentityMode && !Session.IsResourceManagedMode)
         {
             <span class="hl-ps"><strong>Person Server:</strong> @(string.IsNullOrWhiteSpace(Options.Value.PersonServerUrl) ? "(none)" : Options.Value.PersonServerUrl)</span>
@@ -42,9 +46,10 @@
             <option value="@TourMode.Deferred" disabled="@(!Session.HasPersonServer)">5 · PS-Asserted (Deferred) — user approves, 9 steps</option>
             <option value="@TourMode.CallChain" disabled="@(!Session.HasPersonServer || !Session.HasConcierge)">6 · Call Chain (Multi-Agent) — user approves, 7 or 13 steps</option>
             <option value="@TourMode.Federated" disabled="@(!Session.HasPersonServer || !Session.HasAccessServer)">7 · Federated (Four-Party) — Access Server, 7–10 steps</option>
-            <option value="@TourMode.Mission" disabled="@(!Session.HasPersonServer)">8 · Mission (PS-Governed) — three prompts, 20 steps</option>
-            <option value="@TourMode.MissionCallChain" disabled="@(!Session.HasPersonServer || !Session.HasConcierge)">9 · Mission + Call Chain — dual governance, 14 steps</option>
-            <option value="@TourMode.SubAgent">10 · Sub-Agents — parent-mediated worker, 7 steps</option>
+            <option value="@TourMode.RichRequests" disabled="@(!Session.HasPersonServer || !Session.HasR3AccessServer)">8 · Rich Resource Requests (R3) — R3 Access Server, 14 steps</option>
+            <option value="@TourMode.Mission" disabled="@(!Session.HasPersonServer)">9 · Mission (PS-Governed) — three prompts, 20 steps</option>
+            <option value="@TourMode.MissionCallChain" disabled="@(!Session.HasPersonServer || !Session.HasConcierge)">10 · Mission + Call Chain — dual governance, 14 steps</option>
+            <option value="@TourMode.SubAgent">11 · Sub-Agents — parent-mediated worker, 7 steps</option>
         </select>
     </label>
     @if (Session.Mode == TourMode.Identity)
@@ -63,7 +68,7 @@
         {
             <a class="primary approve" href="@Session.UserInteractionUrl" target="_blank" rel="noopener"
                @onclick="MarkInteractionOpenedAsync" @onclick:preventDefault="false">
-                @(Session.IsFederatedMode ? "Open Access Server consent ↗" : "Open consent page ↗")
+                @(Session.IsFederatedMode ? "Open Access Server consent ↗" : Session.IsRichRequestsMode ? "Open R3 Access Server consent ↗" : "Open consent page ↗")
             </a>
         }
         else
@@ -198,6 +203,28 @@
                     (<code>make demo-keycloak</code>).
                 </text>
                 break;
+            case TourMode.RichRequests:
+                <text>
+                    Aria (your AI travel assistant) is booking your evening — it searches for a
+                    table and then confirms a reservation through <strong>Bookings</strong>, whose
+                    dedicated <strong>R3 Access Server</strong> decides each operation on its own
+                    policy rather than an opaque scope.<br /><br />
+                    <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — four-party
+                    <strong>Rich Resource Requests (R3)</strong>. Bookings publishes a
+                    content-addressed <strong>R3 document</strong> (in the <strong>OpenAPI</strong>
+                    vocabulary) describing its operations; the auth token then carries
+                    <code>r3_granted</code> and <code>r3_conditional</code> instead of scopes.
+                    <strong>searchAvailability</strong> is <code>r3_granted</code> — served
+                    outright, no prompt. <strong>confirmReservation</strong> charges a deposit, so
+                    the AS makes it <code>r3_conditional</code>: on that call Bookings returns a
+                    <strong>per-call proposal</strong> carrying the concrete reservation (venue,
+                    date, party size, deposit), and the R3 Access Server asks <strong>you</strong>
+                    to approve that specific booking at its own consent screen before it mints a
+                    per-call token. Bookings then re-hashes your presented parameters against the
+                    approved proposal's digest before it commits. <strong>Low-risk reads flow
+                    freely; consequential actions get your per-call consent.</strong>
+                </text>
+                break;
             case TourMode.Mission:
                 <text>
                     You give Aria (your AI travel assistant) a standing mission to
@@ -270,7 +297,7 @@
                 elapsed <strong>@ElapsedPolling()</strong>
             </div>
             <div class="polling__hint">
-                Waiting for you to complete the @(Session.IsFederatedMode ? "Access Server consent" : Session.IsResourceManagedMode ? "Approve on the Inbox consent" : "Approve or Deny on the PS consent")
+                Waiting for you to complete the @(Session.IsFederatedMode ? "Access Server consent" : Session.IsRichRequestsMode ? "R3 Access Server consent" : Session.IsResourceManagedMode ? "Approve on the Inbox consent" : "Approve or Deny on the PS consent")
                 tab. You can come back here anytime — the poll loop is live.
             </div>
         </div>
@@ -363,6 +390,17 @@
         new("Access Server", "as", Actor.AccessServer),
     };
 
+    // Rich Resource Requests (R3) four-party flow: agent ↔ Bookings, with the
+    // Person Server federating to a dedicated R3 Access Server (same red `as`
+    // lane the Federated flow uses).
+    private static readonly SequenceDiagram.LaneDefinition[] RichRequestsLanes =
+    {
+        new("Agent", "agent", Actor.Agent),
+        new("Bookings", "resource", Actor.Resource),
+        new("Person Server", "ps", Actor.PersonServer),
+        new("R3 Access Server", "as", Actor.AccessServer),
+    };
+
     private static readonly SequenceDiagram.LaneDefinition[] MissionLanes =
     {
         new("Agent", "agent", Actor.Agent),
@@ -396,6 +434,7 @@
         Session.IsIdentityMode ? IdentityLanes :
         Session.IsMissionCallChainMode ? MissionCallChainLanes :
         Session.IsCallChainMode ? CallChainLanes :
+        Session.IsRichRequestsMode ? RichRequestsLanes :
         Session.IsFederatedMode ? FederatedLanes :
         Session.IsMissionMode ? MissionLanes : ThreePartyLanes;
 
@@ -529,6 +568,8 @@
                     // click the consent link themselves.
                     _error = Session.IsFederatedMode
                         ? "Stopped: the next step requires you to open the Access Server login (Keycloak) and sign in. Click the green link above."
+                        : Session.IsRichRequestsMode
+                        ? "Stopped: the next step requires you to open the R3 Access Server consent screen and approve this reservation. Click the green link above."
                         : "Stopped: the next step requires you to open the PS consent page and click Approve. Click the green link above.";
                     break;
                 }

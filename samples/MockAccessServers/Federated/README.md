@@ -1,4 +1,4 @@
-# Mock Access Server
+# Federated Access Server
 
 A minimal AAuth Access Server (AS) for the four-party (federated) access demo and integration tests.
 
@@ -55,7 +55,7 @@ came from an AS rather than a PS (`aauth-person.json`).
 ## Run
 
 ```bash
-dotnet run --project samples/MockAccessServer
+dotnet run --project samples/MockAccessServers/Federated
 # → http://localhost:5500
 ```
 
