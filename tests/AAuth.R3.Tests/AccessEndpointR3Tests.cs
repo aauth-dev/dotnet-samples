@@ -93,6 +93,76 @@ public class AccessEndpointR3Tests
     }
 
     [Fact]
+    public async Task TokenEndpoint_RequiresConsentForProposal_ThenMintsOnApproval()
+    {
+        // r3 §Per-Call Proposals, Flow step 2: when the AS requires human consent, the
+        // proposal parks as 202 (requirement=interaction) — no token — until the user
+        // approves at the consent screen; only then is the per-call token minted.
+        var auditSink = new InMemoryR3AuditSink();
+        var fixture = await R3AccessFixture.CreateAsync(auditSink: auditSink, requireProposalConsent: true);
+        await using var app = fixture.App;
+
+        var pending = await fixture.PostTokenAsync(fixture.ProposalResourceToken);
+
+        Assert.Equal(HttpStatusCode.Accepted, pending.StatusCode);
+        Assert.NotNull(pending.Headers.Location);
+        Assert.True(pending.Headers.TryGetValues("AAuth-Requirement", out var requirement));
+        Assert.Contains(requirement, v => v.Contains("interaction", StringComparison.Ordinal));
+        Assert.Empty(auditSink.Records); // nothing minted before approval
+
+        var location = pending.Headers.Location!.ToString();
+        var code = location.Split('/')[^1];
+        using var browser = app.GetTestClient();
+        browser.BaseAddress = new Uri(R3TestData.AsIssuer);
+
+        var approve = await browser.PostAsync(
+            "/interaction/consent/approve",
+            new FormUrlEncodedContent(new Dictionary<string, string> { ["code"] = code }));
+        Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
+
+        var granted = await browser.GetAsync(location);
+
+        Assert.Equal(HttpStatusCode.OK, granted.StatusCode);
+        var payload = await ReadAuthPayloadAsync(granted);
+        var verified = new TokenVerifier().VerifyAuthToken(
+            (string)payload["auth_token"]!,
+            fixture.AsKey,
+            R3TestData.ResourceIssuer,
+            fixture.AgentKey,
+            R3TestData.AgentId,
+            expectedDwk: AuthTokenBuilder.AccessDwk);
+        var claims = R3ClaimReader.ReadAuthToken(verified.Payload);
+        Assert.Equal(fixture.ProposalUri, claims.Uri);
+        Assert.True(claims.Granted.Contains("book_trip"));
+        var record = Assert.Single(auditSink.Records);
+        Assert.Equal(R3TokenIssuanceKind.Proposal, record.IssuanceKind);
+    }
+
+    [Fact]
+    public async Task TokenEndpoint_DeniedProposalConsent_ReturnsForbiddenAndMintsNothing()
+    {
+        var auditSink = new InMemoryR3AuditSink();
+        var fixture = await R3AccessFixture.CreateAsync(auditSink: auditSink, requireProposalConsent: true);
+        await using var app = fixture.App;
+
+        var pending = await fixture.PostTokenAsync(fixture.ProposalResourceToken);
+        var location = pending.Headers.Location!.ToString();
+        var code = location.Split('/')[^1];
+        using var browser = app.GetTestClient();
+        browser.BaseAddress = new Uri(R3TestData.AsIssuer);
+
+        var deny = await browser.PostAsync(
+            "/interaction/consent/deny",
+            new FormUrlEncodedContent(new Dictionary<string, string> { ["code"] = code }));
+        Assert.Equal(HttpStatusCode.OK, deny.StatusCode);
+
+        var polled = await browser.GetAsync(location);
+
+        Assert.Equal(HttpStatusCode.Forbidden, polled.StatusCode);
+        Assert.Empty(auditSink.Records);
+    }
+
+    [Fact]
     public async Task TokenEndpoint_RejectsFetchedBytesWhoseHashDoesNotMatchResourceToken()
     {
         var fixture = await R3AccessFixture.CreateAsync(resourceTokenS256Override: "wrong");
@@ -237,6 +307,7 @@ public class AccessEndpointR3Tests
             string? resourceTokenUriOverride = null,
             IReadOnlyCollection<string>? trustedPersonServers = null,
             bool openPersonServerTrust = false,
+            bool requireProposalConsent = false,
             IR3AuditSink? auditSink = null)
         {
             var asKey = AAuthKey.Generate();
@@ -283,6 +354,7 @@ public class AccessEndpointR3Tests
                 // AS policy: book_trip requires per-call approval (r3 §Auth Token Extensions —
                 // the AS decides granted vs conditional, not the R3 document).
                 IsConditionalOperation = op => op.Id == "book_trip",
+                RequireProposalConsent = requireProposalConsent,
                 AuditSink = auditSink ?? R3NoOpAuditSink.Instance,
                 FetchAndVerifyAsync = (_, uri, s256, _, _) =>
                 {

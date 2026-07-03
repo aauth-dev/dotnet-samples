@@ -1,8 +1,10 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json.Nodes;
 using AAuth;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Headers;
 using AAuth.R3.Model;
 using AAuth.Server.Metadata;
 using AAuth.Server.Verification;
@@ -32,6 +34,34 @@ public static class R3AccessTokenEndpoint
             TokenEndpoint = $"{issuer}{tokenPath}",
             SigningKeys = options.SigningKeys,
         });
+
+        var pendingPath = "/" + options.PendingPath.Trim('/');
+        var consentPath = "/" + options.ConsentPath.Trim('/');
+        var pendingStore = new R3PendingStore();
+
+        // Mint the R3 auth token + write the audit record atomically. Shared by the
+        // /token happy path (granted class docs) and the /pending poll after per-call
+        // human consent (r3 §Per-Call Proposals, Flow step 2 + §Audit Log Integrity).
+        async Task<string> MintAndAuditAsync(AuthMintParts parts, string agentId, IAAuthKey agentKey, string resourceIssuer, CancellationToken ct)
+        {
+            var claims = R3AuthClaims.AuthToken(parts.Uri, parts.S256, parts.Granted, parts.Conditional);
+            var token = new AuthTokenBuilder
+            {
+                Issuer = issuer,
+                Audience = resourceIssuer,
+                Agent = agentId,
+                AgentConfirmationKey = agentKey,
+                Key = signingKey,
+                KeyId = signingKid,
+                Dwk = AuthTokenBuilder.AccessDwk,
+                Subject = options.Subject,
+                AdditionalClaims = claims,
+            }.Build();
+            await options.AuditSink.RecordTokenIssuanceAsync(new R3TokenIssuanceAuditRecord(
+                parts.Uri, parts.S256, agentId, resourceIssuer, issuer,
+                options.TimeProvider.GetUtcNow(), parts.IssuanceKind), ct);
+            return token;
+        }
 
         app.MapPost(tokenPath, async (HttpContext context) =>
         {
@@ -134,36 +164,81 @@ public static class R3AccessTokenEndpoint
                 return Results.Json(new { error = "r3_evaluation_failed", detail = ex.Message }, statusCode: StatusCodes.Status400BadRequest);
             }
 
-            var claims = R3AuthClaims.AuthToken(
-                mintParts.Uri,
-                mintParts.S256,
-                mintParts.Granted,
-                mintParts.Conditional);
-
-            var authToken = new AuthTokenBuilder
+            // Per-call proposal + human consent (r3 §Per-Call Proposals, Flow step 2:
+            // "the PS renders `display` for user consent. On approval, the AS issues a
+            // per-call auth token"). Park the decision and return 202 requirement=interaction
+            // so the PS relays the consent link; mint only after the user approves (below).
+            if (mintParts.IssuanceKind == R3TokenIssuanceKind.Proposal && options.RequireProposalConsent)
             {
-                Issuer = issuer,
-                Audience = resourceIssuer,
-                Agent = agentId,
-                AgentConfirmationKey = agentConfirmationKey,
-                Key = signingKey,
-                KeyId = signingKid,
-                Dwk = AuthTokenBuilder.AccessDwk,
-                Subject = options.Subject,
-                AdditionalClaims = claims,
-            }.Build();
+                var entry = pendingStore.Add(mintParts, agentId, agentConfirmationKey, resourceIssuer);
+                context.Response.Headers.Location = $"{pendingPath}/{entry.Id}";
+                context.Response.Headers["Retry-After"] = "1";
+                context.Response.Headers["Cache-Control"] = "no-store";
+                context.Response.Headers[AAuthRequirementHeader.Name] = Interaction.Format($"{issuer}{consentPath}", entry.Id);
+                return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
+            }
 
-            await options.AuditSink.RecordTokenIssuanceAsync(new R3TokenIssuanceAuditRecord(
-                mintParts.Uri,
-                mintParts.S256,
-                agentId,
-                resourceIssuer,
-                issuer,
-                options.TimeProvider.GetUtcNow(),
-                mintParts.IssuanceKind), context.RequestAborted);
-
+            var authToken = await MintAndAuditAsync(mintParts, agentId, agentConfirmationKey, resourceIssuer, context.RequestAborted);
             return Results.Ok(new { auth_token = authToken, expires_in = 3600 });
         });
+
+        // GET /pending/{id} — polled (PS federation client, signed) after the 202
+        // relay. Returns the minted per-call token once the user approves at the
+        // consent screen; 202 while pending; 403 when denied.
+        app.MapGet(pendingPath + "/{id}", async (HttpContext context, string id) =>
+        {
+            var entry = pendingStore.Get(id);
+            if (entry is null)
+            {
+                return Results.Json(new { error = "unknown_pending" }, statusCode: StatusCodes.Status404NotFound);
+            }
+            switch (entry.Status)
+            {
+                case R3PendingStatus.Allowed:
+                    entry.AuthToken ??= await MintAndAuditAsync(entry.MintParts, entry.AgentId, entry.AgentConfirmationKey, entry.ResourceIssuer, context.RequestAborted);
+                    return Results.Ok(new { auth_token = entry.AuthToken, expires_in = 3600 });
+                case R3PendingStatus.Denied:
+                    return Results.Json(new { error = "denied" }, statusCode: StatusCodes.Status403Forbidden);
+                default:
+                    context.Response.Headers.Location = $"{pendingPath}/{id}";
+                    context.Response.Headers["Retry-After"] = "1";
+                    context.Response.Headers["Cache-Control"] = "no-store";
+                    context.Response.Headers[AAuthRequirementHeader.Name] = Interaction.Format($"{issuer}{consentPath}", id);
+                    return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
+            }
+        });
+
+        // Browser consent screen for a per-call proposal — renders the proposal's
+        // `display` and flips the pending entry on Approve/Deny.
+        app.MapGet(consentPath, (string code) =>
+        {
+            var entry = pendingStore.Get(code);
+            return entry is null
+                ? Results.Content(R3ConsentHtml.NotFound(issuer), "text/html", null, StatusCodes.Status404NotFound)
+                : Results.Content(R3ConsentHtml.Prompt(issuer, consentPath, code, entry), "text/html");
+        });
+        app.MapPost(consentPath + "/approve", async (HttpContext context) =>
+        {
+            var code = (await context.Request.ReadFormAsync())["code"].ToString();
+            var entry = pendingStore.Get(code);
+            if (entry is null)
+            {
+                return Results.Content(R3ConsentHtml.NotFound(issuer), "text/html", null, StatusCodes.Status404NotFound);
+            }
+            entry.Status = R3PendingStatus.Allowed;
+            return Results.Content(R3ConsentHtml.Approved(issuer), "text/html");
+        }).DisableAntiforgery();
+        app.MapPost(consentPath + "/deny", async (HttpContext context) =>
+        {
+            var code = (await context.Request.ReadFormAsync())["code"].ToString();
+            var entry = pendingStore.Get(code);
+            if (entry is null)
+            {
+                return Results.Content(R3ConsentHtml.NotFound(issuer), "text/html", null, StatusCodes.Status404NotFound);
+            }
+            entry.Status = R3PendingStatus.Denied;
+            return Results.Content(R3ConsentHtml.Denied(issuer), "text/html");
+        }).DisableAntiforgery();
 
         return app;
     }
@@ -184,7 +259,9 @@ public static class R3AccessTokenEndpoint
                 r3.S256,
                 new R3Grant { Vocabulary = proposal.Vocabulary, Operations = proposal.Operations },
                 null,
-                R3TokenIssuanceKind.Proposal);
+                R3TokenIssuanceKind.Proposal,
+                proposal.Display?.Summary,
+                proposal.Display?.Detail);
         }
 
         var document = R3Document.FromUtf8Bytes(bytes);
@@ -232,12 +309,14 @@ public static class R3AccessTokenEndpoint
     private static T GetServiceOrDefault<T>(HttpContext context, T fallback) where T : class =>
         context.RequestServices.GetService<T>() ?? fallback;
 
-    private sealed record AuthMintParts(
+    internal sealed record AuthMintParts(
         string Uri,
         string S256,
         R3Grant Granted,
         R3Grant? Conditional,
-        R3TokenIssuanceKind IssuanceKind);
+        R3TokenIssuanceKind IssuanceKind,
+        string? DisplaySummary = null,
+        string? DisplayDetail = null);
 
     private static bool IsProposal(byte[] bytes)
     {
@@ -250,6 +329,105 @@ public static class R3AccessTokenEndpoint
         {
             throw new InvalidOperationException("R3 document is not valid JSON.", ex);
         }
+    }
+
+    internal enum R3PendingStatus { Pending, Allowed, Denied }
+
+    internal sealed class R3PendingEntry
+    {
+        public required string Id { get; init; }
+        public required AuthMintParts MintParts { get; init; }
+        public required string AgentId { get; init; }
+        public required IAAuthKey AgentConfirmationKey { get; init; }
+        public required string ResourceIssuer { get; init; }
+        public R3PendingStatus Status { get; set; } = R3PendingStatus.Pending;
+        public string? AuthToken { get; set; }
+    }
+
+    internal sealed class R3PendingStore
+    {
+        private readonly ConcurrentDictionary<string, R3PendingEntry> _entries = new(StringComparer.Ordinal);
+
+        public R3PendingEntry Add(AuthMintParts mintParts, string agentId, IAAuthKey agentKey, string resourceIssuer)
+        {
+            var entry = new R3PendingEntry
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                MintParts = mintParts,
+                AgentId = agentId,
+                AgentConfirmationKey = agentKey,
+                ResourceIssuer = resourceIssuer,
+            };
+            _entries[entry.Id] = entry;
+            return entry;
+        }
+
+        public R3PendingEntry? Get(string id) => _entries.TryGetValue(id, out var entry) ? entry : null;
+    }
+
+    // Browser consent screen for a per-call proposal. Mirrors the Federated AS's
+    // consent screen (same button.approve/button.deny selectors) so the shared demo
+    // tooling works; renders the proposal's `display` for the user's decision.
+    private static class R3ConsentHtml
+    {
+        private const string Style =
+            "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
+            + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#1d4ed8;color:#fff;"
+            + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
+            + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}"
+            + ".sub{color:#777;font-size:.85rem;margin:.35rem 0 1.25rem}"
+            + "h1{font-size:1.25rem}code{background:#f3f4f6;padding:.1rem .3rem;border-radius:.2rem}"
+            + "pre{background:#f3f4f6;padding:.75rem;border-radius:.4rem;white-space:pre-wrap}"
+            + "form{margin-top:1.5rem;display:inline-flex;gap:.75rem}"
+            + "button{padding:.5rem 1rem;font-size:1rem;cursor:pointer;border-radius:.25rem;border:1px solid #999}"
+            + "button.approve{background:#6ee7b7;border-color:#34d399}"
+            + "button.deny{background:#fecaca;border-color:#f87171}</style>";
+
+        private static string Authority(string issuer) =>
+            Uri.TryCreate(issuer, UriKind.Absolute, out var u) ? u.Authority : issuer;
+
+        private static string Banner(string issuer) =>
+            "<div class=badge><span class=dot></span>R3 Access Server</div>"
+            + $"<div class=sub>{Enc(Authority(issuer))} — evaluates the per-call proposal and issues the R3 auth token</div>";
+
+        private static string Page(string issuer, string title, string body) =>
+            "<!doctype html><meta charset=utf-8><title>" + Enc(title) + " — R3 Access Server</title>"
+            + Style + Banner(issuer) + body;
+
+        public static string Prompt(string issuer, string consentPath, string code, R3PendingEntry entry)
+        {
+            var op = entry.MintParts.Granted.Operations.Count > 0 ? entry.MintParts.Granted.Operations[0].Id : "(operation)";
+            var summary = entry.MintParts.DisplaySummary is { Length: > 0 } s ? $"<p>{Enc(s)}</p>" : string.Empty;
+            var detail = entry.MintParts.DisplayDetail is { Length: > 0 } d ? $"<pre>{Enc(d)}</pre>" : string.Empty;
+            return Page(issuer, "Approve this action",
+                "<h1>Approve a per-call action</h1>"
+                + "<p>An agent is requesting your approval for a specific, consequential action — "
+                + "review the details below before approving.</p>"
+                + $"<div><b>Operation:</b> <code>{Enc(op)}</code></div>"
+                + summary + detail
+                + $"<form method=post action=\"{Enc(consentPath)}/approve\">"
+                + $"<input type=hidden name=code value=\"{Enc(code)}\">"
+                + "<button class=approve type=submit>Approve</button></form>"
+                + $"<form method=post action=\"{Enc(consentPath)}/deny\">"
+                + $"<input type=hidden name=code value=\"{Enc(code)}\">"
+                + "<button class=deny type=submit>Deny</button></form>");
+        }
+
+        public static string Approved(string issuer) =>
+            Page(issuer, "Approved",
+                "<h1>Approved</h1><p>The per-call action was approved. You can close this tab — "
+                + "the agent will receive its per-call auth token on its next poll.</p>");
+
+        public static string Denied(string issuer) =>
+            Page(issuer, "Denied",
+                "<h1>Denied</h1><p>The per-call action was denied. The agent's next poll will "
+                + "receive <code>403 denied</code>. You can close this tab.</p>");
+
+        public static string NotFound(string issuer) =>
+            Page(issuer, "Unknown or expired code",
+                "<h1>Unknown or expired code</h1><p>This approval request is no longer pending.</p>");
+
+        private static string Enc(string value) => WebUtility.HtmlEncode(value);
     }
 }
 
@@ -293,6 +471,23 @@ public sealed class R3AccessTokenEndpointOptions
     /// </summary>
     public Func<Model.R3Operation, bool>? IsConditionalOperation { get; init; }
 
+    /// <summary>
+    /// When <see langword="true"/>, a per-call proposal (r3 §Per-Call Proposals) is not
+    /// auto-minted: the AS parks the decision and returns <c>202 requirement=interaction</c>
+    /// (relayed by the PS), rendering the proposal's <c>display</c> at <see cref="ConsentPath"/>
+    /// for the user to approve; the per-call token is minted only after approval, on the
+    /// <see cref="PendingPath"/> poll. Whether a proposal requires human consent or is
+    /// machine-evaluated is deployment policy (r3 §Per-Call Proposals). Default
+    /// <see langword="false"/> (auto-mint) to preserve the non-interactive path.
+    /// </summary>
+    public bool RequireProposalConsent { get; init; }
+
+    /// <summary>Browser consent-screen path for per-call proposals. Default <c>/interaction/consent</c>.</summary>
+    public string ConsentPath { get; init; } = "/interaction/consent";
+
+    /// <summary>Pending-poll path used to relay/mint after per-call consent. Default <c>/pending</c>.</summary>
+    public string PendingPath { get; init; } = "/pending";
+
     internal void Validate()
     {
         if (string.IsNullOrWhiteSpace(Issuer))
@@ -318,6 +513,14 @@ public sealed class R3AccessTokenEndpointOptions
         if (TimeProvider is null)
         {
             throw new InvalidOperationException("TimeProvider must be set.");
+        }
+        if (string.IsNullOrWhiteSpace(ConsentPath))
+        {
+            throw new InvalidOperationException("ConsentPath must be set.");
+        }
+        if (string.IsNullOrWhiteSpace(PendingPath))
+        {
+            throw new InvalidOperationException("PendingPath must be set.");
         }
     }
 

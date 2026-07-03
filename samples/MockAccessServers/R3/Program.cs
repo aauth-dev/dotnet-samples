@@ -45,6 +45,10 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
     TrustedPersonServers = trustedPersonServers,
     // AS policy decides the granted-vs-conditional split (r3 §Auth Token Extensions).
     IsConditionalOperation = op => conditionalOperations.Contains(op.Id),
+    // A conditional operation's per-call proposal requires human approval: the AS
+    // returns 202 + a consent screen rendering the proposal's `display`, relayed by
+    // the PS, and mints the per-call token only on approval (r3 §Per-Call Proposals).
+    RequireProposalConsent = true,
     // Diagnostic-only in-memory sink; a production R3 AS should configure a durable IR3AuditSink.
     AuditSink = new InMemoryR3AuditSink(),
 });

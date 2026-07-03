@@ -103,11 +103,32 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
     <small>
         <strong>Search</strong> is authorized outright (<code>r3_granted</code>) and served
         immediately. <strong>Confirm</strong> is <code>r3_conditional</code>: the resource
-        replies <code>401 r3_approval_required</code> with a <strong>per-call proposal</strong>
-        (the concrete venue / date / party size / deposit) that the AS must re-evaluate before
-        the deposit is charged — that challenge is the expected response here.
+        replies <code>401</code> with a <strong>per-call proposal</strong> (the concrete
+        venue / date / party size / deposit); the R3 Access Server then asks <em>you</em> to
+        approve that specific reservation before the deposit is charged. Approve at the link
+        that appears, and the SDK completes the booking.
     </small>
 </p>
+
+@if (_waitingForApproval)
+{
+    <div class="mt-3 alert alert-warning">
+        <h5>Per-call approval required</h5>
+        <p>
+            The <strong>R3 Access Server</strong> returned <code>202</code> and is waiting for
+            you to approve this specific reservation (the per-call proposal). Open the link and
+            click <strong>Approve</strong>.
+        </p>
+        <p>
+            <strong>Approval URL:</strong><br />
+            <a href="@_interactionUrl" target="_blank" rel="noopener">@_interactionUrl</a>
+        </p>
+        <p class="text-muted">
+            The SDK is polling in the background&hellip;
+            <span class="spinner-border spinner-border-sm" role="status"></span>
+        </p>
+    </div>
+}
 
 @if (_response is not null)
 {
@@ -130,6 +151,8 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
     [Inject] private IConfiguration Config { get; set; } = default!;
 
     private bool _loading;
+    private bool _waitingForApproval;
+    private string? _interactionUrl;
     private string? _response;
     private string? _error;
     private string? _statusCode;
@@ -177,6 +200,8 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
         _response = null;
         _error = null;
         _statusCode = null;
+        _waitingForApproval = false;
+        _interactionUrl = null;
 
         try
         {
@@ -189,12 +214,22 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
                 .WithPersonServer(personServer)
                 .WithChallengeHandling(opts =>
                 {
+                    // A conditional operation's per-call proposal comes back as a 202
+                    // interaction (relayed by the PS from the R3 AS). Surface the consent
+                    // link and let the SDK poll until the user approves.
+                    opts.OnInteractionRequired = async (interaction, _) =>
+                    {
+                        _interactionUrl = interaction.BuildUserUrl();
+                        _waitingForApproval = true;
+                        await InvokeAsync(StateHasChanged);
+                    };
                     opts.PollingTimeout = TimeSpan.FromMinutes(2);
                     opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
                 })
                 .Build();
 
             var response = await call(client, bookings);
+            _waitingForApproval = false;
 
             _statusCode = $"{(int)response.StatusCode} {response.ReasonPhrase}";
             _success = response.IsSuccessStatusCode;
@@ -217,6 +252,7 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
         }
         finally
         {
+            _waitingForApproval = false;
             _loading = false;
         }
     }

@@ -1,6 +1,7 @@
 import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/blazor';
 import { readResponseJson, expectStatus } from '../../../tests/e2e/helpers/json';
+import { approveInPopup } from '../../../tests/e2e/helpers/consent';
 import { Urls } from '../../../tests/e2e/helpers/agents';
 
 /**
@@ -14,8 +15,10 @@ import { Urls } from '../../../tests/e2e/helpers/agents';
  *
  * `searchAvailability` is granted outright (served immediately). `confirmReservation`
  * is conditional: the resource challenges with a per-call proposal carrying the
- * concrete parameters; the same client resends them and the resource verifies they
- * match the approved proposal's digest before serving.
+ * concrete parameters; the R3 Access Server then asks the user to approve that
+ * specific reservation (r3 §Per-Call Proposals, Flow step 2). After approval the same
+ * client resends the parameters and the resource verifies they match the approved
+ * proposal's digest before serving.
  */
 test.describe('Rich Resource Requests (R3)', () => {
   test.describe.configure({ timeout: 120_000 });
@@ -41,23 +44,35 @@ test.describe('Rich Resource Requests (R3)', () => {
     expect(typeof json.r3_s256).toBe('string');
   });
 
-  test('confirming a reservation triggers a per-call proposal challenge (r3_conditional)', async ({ page }) => {
+  test('confirming a reservation requires per-call approval, then succeeds (r3_conditional)', async ({ page, context }) => {
     await page.goto('/bookings');
     await waitForInteractive(page, 'button.btn-primary');
 
-    // Second button = "Confirm a reservation (r3_conditional)".
-    await clickAndConfirm(
-      page,
-      'button.btn-outline-primary',
-      async () => (await page.locator('pre code.language-json, div.alert-danger').count()) > 0,
-    );
-
     // confirmReservation is authorized only in principle (r3_conditional). The
     // resource challenges the concrete call with a per-call proposal carrying the
-    // parameters (r3 §Per-Call Proposals) — surfaced here as r3_approval_required.
+    // parameters (r3 §Per-Call Proposals); the R3 Access Server then asks the user to
+    // approve that specific reservation. The SampleApp surfaces the R3 AS interaction URL.
+    const link = page.locator('a[target="_blank"]', { hasText: /interaction/ });
+    await clickAndConfirm(page, 'button.btn-outline-primary', () => link.isVisible());
+    await expect(link).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('.spinner-border')).toBeVisible();
+
+    // The interaction URL is the R3 Access Server's own per-call consent screen.
+    const [popup] = await Promise.all([
+      context.waitForEvent('page'),
+      link.click(),
+    ]);
+    await expect(popup.locator('.badge')).toContainText('R3 Access Server');
+    await approveInPopup(popup);
+
+    // On approval the AS mints the per-call token; the client resends the exact
+    // parameters and the resource verifies them against the approved proposal digest.
+    await expectStatus(page, 200, 60_000);
     const json = (await readResponseJson(page)) as Record<string, unknown>;
-    expect(json.error).toBe('r3_approval_required');
+    expect(json.accessMode).toBe('four-party-r3');
     expect(json.operationId).toBe('confirmReservation');
+    expect(json.source).toBe('per-call-r3_granted');
+    expect(json.status).toBe('confirmed');
     expect(typeof json.r3_uri).toBe('string');
     expect(typeof json.r3_s256).toBe('string');
   });
