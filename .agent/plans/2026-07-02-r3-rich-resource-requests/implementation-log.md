@@ -406,6 +406,63 @@ document fetch uses a non-injectable `HttpClient` (`R3FetchClient.Create` defaul
 handler), so a `TestServer`-hosted AS can't reach the in-proc Bookings. Revisit
 alongside making that fetch handler injectable.
 
+### [2026-07-03] [Phase 8] Per-call proposal AUTO-completion + human consent — RESOLVED — SUPERSEDES the [Phase 8] "AUTO-completion GAP (revisit)" entry
+
+Owner directive: the SampleApp `confirmReservation` returned `401` to the user, and the
+ask was to add the missing second step — follow the consent link and approve, like the
+other interactive flows — "following the spec guidance to the letter." Chose the
+spec-faithful path (r3 §Per-Call Proposals, Flow step 2: *"the PS renders `display` for
+user consent. On approval, the AS issues a per-call auth token"*): full **per-call human
+consent**, then `200`.
+
+Three coordinated changes:
+
+1. **Agent — `ChallengeHandler` now follows chained auth-token challenges** (cap 3).
+   R3 grants against the class document, then the resource challenges again with the
+   per-call proposal (resource step-up); the handler exchanges + retries each auth-token
+   challenge. Single-challenge flows are unchanged (the loop body runs once).
+   **Root cause of the earlier live block, isolated:** the token exchange to the PS MUST
+   be **agent-signed** (§Agent Token Request — the PS rejects a non-agent carrier with
+   `403 invalid_carrier_token`). The exchange signer reads the shared `AAuthTokenHolder`,
+   and after the first exchange the holder carries the *first auth token*; the second
+   exchange was therefore signed with that auth token and rejected `403`. Fix: capture
+   the agent token at entry and **re-pin the holder to it before every exchange**, then
+   install the returned auth token as the carrier for the resource retry. (This latent
+   hazard also existed for any reused client doing a second challenge; now handled.)
+
+2. **R3 AS — per-call proposal consent gate.** `R3AccessTokenEndpointOptions` gains
+   `RequireProposalConsent` (default `false`), `ConsentPath` (`/interaction/consent`),
+   `PendingPath` (`/pending`). When a **proposal** is presented and consent is required,
+   `/token` returns `202 { status:"pending" }` + `Location: /pending/{id}` +
+   `Retry-After` + `AAuth-Requirement: requirement=interaction; url=…; code=…` (the same
+   202-interaction contract the PS relays and the agent polls). The AS renders the
+   proposal's `display` at a browser consent screen (same `button.approve`/`button.deny`
+   selectors as the Federated AS) and mints the per-call token **only on approval**
+   (polled at `/pending/{id}`); denial ⇒ `403`. Minting + audit are shared by the granted
+   path and the post-consent path (`MintAndAuditAsync`). The dedicated Bookings R3 AS sets
+   `RequireProposalConsent = true`.
+
+3. **SampleApp Bookings page — interaction + poll UX.** `confirmReservation` now wires
+   `OnInteractionRequired` to surface the R3 AS consent link + a spinner (mirroring
+   `Federated.razor`); after approval the SDK polls and the booking completes (`200`
+   `status:"confirmed"`, `source:"per-call-r3_granted"`).
+
+**Validation:** R3 34 (added `TokenEndpoint_RequiresConsentForProposal_ThenMintsOnApproval`
++ a deny test), AAuth.Tests 517, Conformance 573 — all green. `bookings.spec.ts` conditional
+test rewritten to the full popup-approve → `200 confirmed` flow; **full sample-app e2e suite
+green (20 specs)** — federated/deferred/call-chain/mission unaffected by the ChallengeHandler
+change. Live wire verified: R3 AS `/token` → `202`, PS polls `/pending/{id}` `202`→`200` after
+approval. The per-call digest match / tamper-reject mechanics remain covered in-proc
+(`ResourceR3Tests`). **Note:** the R3 AS `/pending` is opaque-id (no signature verify) — an
+accepted demo simplification (the minted token is `cnf`-bound).
+
+### [2026-07-03] [Phase 8] GuidedTour interactive R3 flow — STILL DEFERRED (now partly unblocked)
+
+The ChallengeHandler chained-challenge fix above removes the technical blocker that the
+prior deferral cited (live per-call auto-completion). The GuidedTour flow remains deferred
+as a coherent follow-up (bespoke `TourSession` step set + picker + home card + actor lanes
++ e2e), but the hard protocol gap is now closed; the follow-up is purely tour-authoring.
+
 ## Deviations from plan
 
 ### [2026-07-02] [Phase 1] Mirror AAuth's `<Version>` in the R3 csproj — PROCEEDED (default)

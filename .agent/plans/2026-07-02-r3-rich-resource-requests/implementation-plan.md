@@ -342,7 +342,7 @@ provider (dining & experiences), guarded by a dedicated R3 access server.
 
 **Definition of Done**
 
-- [ ] `confirm_reservation` triggers a per-call proposal; approval + enforced retry
+- [x] `confirm_reservation` triggers a per-call proposal; approval + enforced retry
       succeed; a tampered parameter (changed deposit or venue) is rejected.
 - [x] Bookings serves its R3 document only to trusted fetchers (its AS + PS); agents rejected.
 - [x] `MockAccessServers/` holds two single-purpose AS (`Federated` :5500, `R3` :5501);
