@@ -507,6 +507,24 @@ the complete four-party Bookings composition is already validated end-to-end by 
 Playwright specs (granted + conditional-consent → 200), so an in-proc replica would be redundant
 and fragile. Supersedes the "Standalone in-proc BookingsFlowTests — DEFERRED" entry.
 
+### [2026-07-03] [Phase 8] GuidedTour R3 flow — scope refined; remains the last deferred item
+
+Full implementation map produced (session research: engine = `TourSession.RunNextAsync`; model =
+the `StepFederated*` methods; 33-item wiring checklist across `TourSession.cs`, `Tour.razor`,
+`Home.razor`, `tests/e2e/helpers/tour.ts`, `home.spec.ts`, `actor-bar-visual.spec.ts` + a new tour
+spec). Scaffolding already present: `TourMode.RichRequests`, `BookingsUrl`/`R3AccessServerUrl`
+options + appsettings, `Actor.AccessServer` lane, shared poll/approve steps.
+
+**Refined scope (important):** the R3 tour flow is **not** a clean copy of the Federated flow.
+Federated's consent branch is an interactive login on the *first* exchange; R3's consent is a
+**per-call proposal step-up on the conditional operation**. A faithful R3 tour is therefore a
+bespoke ~12-step sequence — granted op (`search_availability` → `r3_granted` → 200), then the
+conditional op (`confirm_reservation` → 401 per-call proposal → exchange → 202 consent at the
+R3 AS → approve → poll → retry → 200) — with new plan arrays, dispatch, state, lanes, picker/home
+entries, and a tour e2e. It needs a full live-stack Playwright validation cycle. Given its size
+and that the SampleApp already ships the **validated, interactive** R3 demonstrator (`/bookings`,
+both paths green), it is carried as the single remaining follow-up rather than shipped half-built.
+
 ## Deviations from plan
 
 ### [2026-07-02] [Phase 1] Mirror AAuth's `<Version>` in the R3 csproj — PROCEEDED (default)
