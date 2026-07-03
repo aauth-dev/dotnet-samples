@@ -7,6 +7,7 @@ using AAuth.Discovery;
 using AAuth.R3.Model;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -59,6 +60,39 @@ public class AccessEndpointR3Tests
             R3TokenIssuanceKind.Class,
             before,
             after);
+    }
+
+    [Fact]
+    public async Task TokenEndpoint_FetchesDocumentOverInjectedHandler_ThenMints()
+    {
+        // Exercises the REAL R3FetchClient signed fetch + hash-verify path (not the
+        // in-memory FetchAndVerifyAsync bypass): the AS fetches the class document from
+        // an in-proc resource doc server via FetchHttpMessageHandler, hash-verifies it,
+        // and mints — the seam that lets an in-proc AS reach an in-proc resource.
+        var docBuilder = WebApplication.CreateBuilder();
+        docBuilder.WebHost.UseTestServer();
+        await using var docApp = docBuilder.Build();
+        docApp.MapGet("/r3/doc", () => Results.Bytes(R3TestData.Document().ToUtf8Bytes(), "application/json"));
+        await docApp.StartAsync();
+
+        var fixture = await R3AccessFixture.CreateAsync(fetchHandler: docApp.GetTestServer().CreateHandler());
+        await using var app = fixture.App;
+
+        var response = await fixture.PostTokenAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var payload = await ReadAuthPayloadAsync(response);
+        var verified = new TokenVerifier().VerifyAuthToken(
+            (string)payload["auth_token"]!,
+            fixture.AsKey,
+            R3TestData.ResourceIssuer,
+            fixture.AgentKey,
+            R3TestData.AgentId,
+            expectedDwk: AuthTokenBuilder.AccessDwk);
+        var claims = R3ClaimReader.ReadAuthToken(verified.Payload);
+        Assert.Equal(fixture.R3Uri, claims.Uri);
+        Assert.True(claims.Granted.Contains("search_trip_options"));
+        Assert.True(claims.Conditional?.Contains("book_trip") ?? false);
     }
 
     [Fact]
@@ -326,6 +360,7 @@ public class AccessEndpointR3Tests
             IReadOnlyCollection<string>? trustedPersonServers = null,
             bool openPersonServerTrust = false,
             bool requireProposalConsent = false,
+            HttpMessageHandler? fetchHandler = null,
             IR3AuditSink? auditSink = null)
         {
             var asKey = AAuthKey.Generate();
@@ -364,6 +399,15 @@ public class AccessEndpointR3Tests
             builder.Services.AddSingleton(new JwksClient(new HttpClient(discovery)));
             builder.Services.AddSingleton(new MetadataClient(new HttpClient(discovery)));
             var app = builder.Build();
+            // When a fetch handler is supplied, exercise the REAL R3FetchClient signed
+            // fetch (routed at the in-proc doc server) instead of the in-memory bypass.
+            Func<HttpContext, string, string, string, CancellationToken, Task<byte[]>>? fetchOverride =
+                fetchHandler is not null ? null : (_, uri, s256, _, _) =>
+                {
+                    var bytes = uri == r3Uri ? docBytes : uri == proposalUri ? proposalBytes : throw new InvalidOperationException("unknown R3 URI");
+                    R3Hash.Verify(bytes, s256);
+                    return Task.FromResult(bytes);
+                };
             app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
             {
                 Issuer = R3TestData.AsIssuer,
@@ -374,12 +418,8 @@ public class AccessEndpointR3Tests
                 IsConditionalOperation = op => op.Id == "book_trip",
                 RequireProposalConsent = requireProposalConsent,
                 AuditSink = auditSink ?? R3NoOpAuditSink.Instance,
-                FetchAndVerifyAsync = (_, uri, s256, _, _) =>
-                {
-                    var bytes = uri == r3Uri ? docBytes : uri == proposalUri ? proposalBytes : throw new InvalidOperationException("unknown R3 URI");
-                    R3Hash.Verify(bytes, s256);
-                    return Task.FromResult(bytes);
-                },
+                FetchAndVerifyAsync = fetchOverride,
+                FetchHttpMessageHandler = fetchHandler,
             });
             await app.StartAsync();
 

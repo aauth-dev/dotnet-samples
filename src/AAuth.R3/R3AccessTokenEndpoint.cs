@@ -320,7 +320,7 @@ public static class R3AccessTokenEndpoint
         }
 
         var (kid, key) = options.FirstSigningKey();
-        var client = R3FetchClient.Create(key, $"{options.Issuer.TrimEnd('/')}/.well-known/jwks.json", kid);
+        var client = R3FetchClient.Create(key, $"{options.Issuer.TrimEnd('/')}/.well-known/jwks.json", kid, options.FetchHttpMessageHandler);
         return await client.FetchAndVerifyAsync(uri, s256, resourceIssuer, cancellationToken).ConfigureAwait(false);
     }
 
@@ -475,6 +475,14 @@ public sealed class R3AccessTokenEndpointOptions
     public Func<string, bool>? IsTrustedPersonServer { get; init; }
 
     public Func<HttpContext, string, string, string, CancellationToken, Task<byte[]>>? FetchAndVerifyAsync { get; init; }
+
+    /// <summary>
+    /// Optional inner <see cref="HttpMessageHandler"/> for the AS's signed R3-document
+    /// fetch. Defaults to a real network handler; tests (and in-proc compositions) set
+    /// this to a <c>TestServer</c> handler so the AS can fetch the resource's document
+    /// over the loopback pipeline. Ignored when <see cref="FetchAndVerifyAsync"/> is set.
+    /// </summary>
+    public HttpMessageHandler? FetchHttpMessageHandler { get; init; }
     /// <summary>
     /// AS-side R3 token issuance audit sink. Defaults to no-op for sample ergonomics;
     /// production AS deployments should configure a durable sink. If the configured

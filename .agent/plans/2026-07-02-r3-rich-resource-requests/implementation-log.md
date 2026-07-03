@@ -490,6 +490,23 @@ Four owner-requested follow-ups on the per-call consent flow:
 Validation: build 0/0; R3 35, AAuth.Tests 517, Conformance 573; Bookings e2e (both specs) green
 with the signed `/pending` poll (202→200).
 
+### [2026-07-03] [Phase 8] Injectable AS fetch seam — RESOLVES the BookingsFlowTests blocker
+
+The deferred in-proc `BookingsFlowTests` was blocked because the R3 AS's document fetch used
+a non-injectable `HttpClient`, so a TestServer-hosted AS couldn't reach an in-proc resource.
+Added `R3AccessTokenEndpointOptions.FetchHttpMessageHandler` (an optional inner handler for the
+AS's signed R3-document fetch; ignored when `FetchAndVerifyAsync` is set) and wired it through
+`FetchAsync` → `R3FetchClient.Create(..., handler)` (which already accepted a handler). New test
+`TokenEndpoint_FetchesDocumentOverInjectedHandler_ThenMints` drives the AS's **real** R3FetchClient
+signed fetch + `r3_s256` hash-verify + granted mint against an in-proc doc server via the seam —
+coverage the `FetchAndVerifyAsync` bypass previously skipped. R3 36.
+
+Scope note: this removes the blocker and covers the AS-side real fetch in-proc. A full
+multi-app `WebApplicationFactory` orchestration of Bookings + R3 AS + PS + agent is **not** added —
+the complete four-party Bookings composition is already validated end-to-end by the SampleApp
+Playwright specs (granted + conditional-consent → 200), so an in-proc replica would be redundant
+and fragile. Supersedes the "Standalone in-proc BookingsFlowTests — DEFERRED" entry.
+
 ## Deviations from plan
 
 ### [2026-07-02] [Phase 1] Mirror AAuth's `<Version>` in the R3 csproj — PROCEEDED (default)
