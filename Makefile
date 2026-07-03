@@ -176,7 +176,7 @@ demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. f
 	@echo "Building services (once) before launch..."
 	@$(DOTNET) build $(SOLUTION) -v q
 	@trap 'trap - INT TERM; echo; echo "Stopping..."; kill 0' INT TERM; \
-	MockPersonServer__RequireConsent=true $(DOTNET) run --no-build --project $(PS_PROJECT) & \
+	MockPersonServer__RequireConsent=true MockPersonServer__TrustedAccessServers__0=$(AS_URL) MockPersonServer__TrustedAccessServers__1=$(R3AS_URL) $(DOTNET) run --no-build --project $(PS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(PROFILE_PROJECT) & \
 	$(DOTNET) run --no-build --project $(CALENDAR_PROJECT) & \
 	$(DOTNET) run --no-build --project $(TRIPS_PROJECT) & \
