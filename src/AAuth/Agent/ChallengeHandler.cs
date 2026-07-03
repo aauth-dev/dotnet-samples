@@ -152,25 +152,108 @@ public sealed class ChallengeHandler : DelegatingHandler
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        // Step-up authorization (§Auth Token Required): a resource MAY return
+        // `requirement=auth-token` with a new resource token even to a request that
+        // already carries a valid auth token — e.g. when the call needs a higher
+        // authorization level or a different context — and "Agents MUST be prepared
+        // for this step-up authorization at any time." Follow each successive
+        // auth-token challenge (exchange + retry) up to a small cap that bounds a
+        // pathological re-challenge loop. A flow that challenges once runs the body
+        // exactly once (unchanged behavior).
+        const int maxAuthTokenChallenges = 3;
+
+        // The token exchange to the PS MUST be signed with the agent token
+        // (§Agent Token Request — the PS rejects a non-agent carrier with 403
+        // invalid_carrier_token). The exchange signer reads the shared holder, so
+        // capture the agent token now and restore it before every exchange: on a
+        // second challenge the holder already carries the first auth token, which
+        // would otherwise sign the exchange and be rejected.
+        var agentToken = _holder.Current;
+
         var response = await SendWithAdaptiveSigningAsync(request, cancellationToken)
             .ConfigureAwait(false);
 
-        if (response.StatusCode != HttpStatusCode.Unauthorized)
+        for (var attempt = 0; attempt < maxAuthTokenChallenges; attempt++)
         {
-            return response;
+            if (response.StatusCode != HttpStatusCode.Unauthorized)
+            {
+                return response;
+            }
+
+            var requirement = TryFindAuthTokenRequirement(response);
+            if (requirement is null)
+            {
+                return response;
+            }
+
+            // Got an auth-token challenge. Exchange and retry.
+            using var activity = AAuthDiagnostics.Source.StartActivity("AAuth.ChallengeExchange");
+
+            var upstreamToken = _upstreamTokenProvider?.Invoke();
+            var targetServer = upstreamToken is not null
+                ? CallChainingRouter.ResolveDownstreamServer(upstreamToken)
+                : _personServer
+                    ?? throw new InvalidOperationException(
+                        "No personServer configured and upstreamTokenProvider returned null.");
+
+            // Re-pin the holder to the agent token so the exchange request is
+            // agent-signed even after a prior iteration installed a carrier token.
+            if (agentToken is not null)
+            {
+                _holder.Update(agentToken);
+            }
+
+            var authToken = await _exchange
+                .ExchangeAsync(targetServer, requirement.ResourceToken!,
+                    new TokenExchangeRequest
+                    {
+                        OnInteractionRequired = _onInteractionRequired,
+                        PollerOptions = _pollerOptions,
+                        UpstreamToken = upstreamToken,
+                        Capabilities = Capabilities,
+                        Prompt = Prompt,
+                        OnClarificationRequired = OnClarificationRequired,
+                        MaxClarificationRounds = MaxClarificationRounds,
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+            _holder.Update(authToken);
+
+            // Clone the original request to retry — HttpRequestMessage is
+            // single-use, and the signing handler downstream will re-sign with
+            // the new carrier token (read via the holder) when the clone is
+            // sent. Note: the original request body, if any, is forwarded
+            // verbatim; streaming bodies that are not re-readable will fail
+            // here, which is a known limitation.
+            response.Dispose();
+            var retry = await CloneAsync(request, cancellationToken).ConfigureAwait(false);
+            response = await SendWithAdaptiveSigningAsync(retry, cancellationToken).ConfigureAwait(false);
+            // Reassign the response's RequestMessage to the caller-owned
+            // original so diagnostics (EnsureSuccessStatusCode, loggers) keep
+            // working, then dispose the short-lived clone. This avoids both
+            // (a) retaining the cloned ByteArrayContent on the response until
+            // GC and (b) handing callers a response backed by a disposed
+            // request — the trade-off of the previous `using` placement.
+            response.RequestMessage = request;
+            retry.Dispose();
         }
 
+        return response;
+    }
+
+    // Pick the first recognised auth-token challenge from the response's
+    // AAuth-Requirement header(s). The header MAY appear more than once; parse
+    // each value independently. Concatenating with ',' and re-parsing would only
+    // work if AAuthRequirementHeader.Parse spoke full RFC 9651 dictionary grammar,
+    // which it deliberately doesn't.
+    private static AAuthRequirementHeader.ParsedRequirement? TryFindAuthTokenRequirement(
+        HttpResponseMessage response)
+    {
         if (!response.Headers.TryGetValues(AAuthRequirementHeader.Name, out var values))
         {
-            return response;
+            return null;
         }
 
-        AAuthRequirementHeader.ParsedRequirement? requirement = null;
-        // The header MAY appear more than once; parse each value
-        // independently and pick the first auth-token requirement we
-        // recognise. Concatenating with ',' and re-parsing would only work
-        // if AAuthRequirementHeader.Parse spoke full RFC 9651 dictionary
-        // grammar, which it deliberately doesn't.
         foreach (var raw in values)
         {
             if (string.IsNullOrWhiteSpace(raw)) { continue; }
@@ -192,8 +275,7 @@ public sealed class ChallengeHandler : DelegatingHandler
                 if (candidate.Requirement == AAuthRequirementHeader.AuthTokenRequirement
                     && candidate.ResourceToken is not null)
                 {
-                    requirement = candidate;
-                    break;
+                    return candidate;
                 }
             }
             catch (FormatException)
@@ -203,55 +285,7 @@ public sealed class ChallengeHandler : DelegatingHandler
             }
         }
 
-        if (requirement is null)
-        {
-            return response;
-        }
-
-        // Got an auth-token challenge. Exchange and retry.
-        using var activity = AAuthDiagnostics.Source.StartActivity("AAuth.ChallengeExchange");
-
-        var upstreamToken = _upstreamTokenProvider?.Invoke();
-        var targetServer = upstreamToken is not null
-            ? CallChainingRouter.ResolveDownstreamServer(upstreamToken)
-            : _personServer
-                ?? throw new InvalidOperationException(
-                    "No personServer configured and upstreamTokenProvider returned null.");
-
-        var authToken = await _exchange
-            .ExchangeAsync(targetServer, requirement.ResourceToken!,
-                new TokenExchangeRequest
-                {
-                    OnInteractionRequired = _onInteractionRequired,
-                    PollerOptions = _pollerOptions,
-                    UpstreamToken = upstreamToken,
-                    Capabilities = Capabilities,
-                    Prompt = Prompt,
-                    OnClarificationRequired = OnClarificationRequired,
-                    MaxClarificationRounds = MaxClarificationRounds,
-                },
-                cancellationToken)
-            .ConfigureAwait(false);
-        _holder.Update(authToken);
-
-        // Clone the original request to retry — HttpRequestMessage is
-        // single-use, and the signing handler downstream will re-sign with
-        // the new carrier token (read via the holder) when the clone is
-        // sent. Note: the original request body, if any, is forwarded
-        // verbatim; streaming bodies that are not re-readable will fail
-        // here, which is a known limitation.
-        response.Dispose();
-        var retry = await CloneAsync(request, cancellationToken).ConfigureAwait(false);
-        var result = await SendWithAdaptiveSigningAsync(retry, cancellationToken).ConfigureAwait(false);
-        // Reassign the response's RequestMessage to the caller-owned
-        // original so diagnostics (EnsureSuccessStatusCode, loggers) keep
-        // working, then dispose the short-lived clone. This avoids both
-        // (a) retaining the cloned ByteArrayContent on the response until
-        // GC and (b) handing callers a response backed by a disposed
-        // request — the trade-off of the previous `using` placement.
-        result.RequestMessage = request;
-        retry.Dispose();
-        return result;
+        return null;
     }
 
     // Send a request through the inner pipeline, transparently handling the
