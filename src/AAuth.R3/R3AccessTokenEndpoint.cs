@@ -187,6 +187,27 @@ public static class R3AccessTokenEndpoint
         // consent screen; 202 while pending; 403 when denied.
         app.MapGet(pendingPath + "/{id}", async (HttpContext context, string id) =>
         {
+            // The PS polls this Location over its signed federation channel; verify
+            // the HTTP signature and trusted-PS identity exactly like /token (the
+            // deferred poll rides the same authenticated PS→AS channel, §AS Token
+            // Endpoint). The browser /interaction/consent endpoints stay unsigned.
+            try
+            {
+                var poller = await R3DocumentEndpoint.VerifyFetcherAsync(context, options.IsCallerTrustedPersonServer);
+                if (!options.IsCallerTrustedPersonServer(poller))
+                {
+                    return Results.Json(new { error = "untrusted_person_server" }, statusCode: StatusCodes.Status403Forbidden);
+                }
+            }
+            catch (R3UntrustedJwksUriException)
+            {
+                return Results.Json(new { error = "untrusted_person_server" }, statusCode: StatusCodes.Status403Forbidden);
+            }
+            catch (Exception ex) when (ex is R3FetchVerificationException or AAuth.HttpSig.AAuthVerificationException)
+            {
+                return Results.Json(new { error = "invalid_signature", detail = ex.Message }, statusCode: StatusCodes.Status401Unauthorized);
+            }
+
             var entry = pendingStore.Get(id);
             if (entry is null)
             {
@@ -366,15 +387,16 @@ public static class R3AccessTokenEndpoint
     }
 
     // Browser consent screen for a per-call proposal. Mirrors the Federated AS's
-    // consent screen (same button.approve/button.deny selectors) so the shared demo
-    // tooling works; renders the proposal's `display` for the user's decision.
+    // consent screen (red **Access Server** banner + the same button.approve/
+    // button.deny selectors) so the shared demo tooling works; renders the
+    // proposal's `display` for the user's decision.
     private static class R3ConsentHtml
     {
         private const string Style =
             "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
-            + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#1d4ed8;color:#fff;"
+            + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#b91c1c;color:#fff;"
             + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
-            + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}"
+            + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#fecaca}"
             + ".sub{color:#777;font-size:.85rem;margin:.35rem 0 1.25rem}"
             + "h1{font-size:1.25rem}code{background:#f3f4f6;padding:.1rem .3rem;border-radius:.2rem}"
             + "pre{background:#f3f4f6;padding:.75rem;border-radius:.4rem;white-space:pre-wrap}"

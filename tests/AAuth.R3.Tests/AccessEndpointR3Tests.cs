@@ -120,7 +120,7 @@ public class AccessEndpointR3Tests
             new FormUrlEncodedContent(new Dictionary<string, string> { ["code"] = code }));
         Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
 
-        var granted = await browser.GetAsync(location);
+        var granted = await fixture.PollPendingAsync(location);
 
         Assert.Equal(HttpStatusCode.OK, granted.StatusCode);
         var payload = await ReadAuthPayloadAsync(granted);
@@ -156,10 +156,28 @@ public class AccessEndpointR3Tests
             new FormUrlEncodedContent(new Dictionary<string, string> { ["code"] = code }));
         Assert.Equal(HttpStatusCode.OK, deny.StatusCode);
 
-        var polled = await browser.GetAsync(location);
+        var polled = await fixture.PollPendingAsync(location);
 
         Assert.Equal(HttpStatusCode.Forbidden, polled.StatusCode);
         Assert.Empty(auditSink.Records);
+    }
+
+    [Fact]
+    public async Task TokenEndpoint_PendingPoll_RejectsUnsignedCaller()
+    {
+        // The pending poll rides the signed PS→AS channel: an unsigned GET to the
+        // Location is refused (only the browser consent endpoints are unsigned).
+        var fixture = await R3AccessFixture.CreateAsync(requireProposalConsent: true);
+        await using var app = fixture.App;
+
+        var pending = await fixture.PostTokenAsync(fixture.ProposalResourceToken);
+        var location = pending.Headers.Location!.ToString();
+
+        using var unsigned = app.GetTestClient();
+        unsigned.BaseAddress = new Uri(R3TestData.AsIssuer);
+        var polled = await unsigned.GetAsync(location);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, polled.StatusCode);
     }
 
     [Fact]
@@ -403,6 +421,18 @@ public class AccessEndpointR3Tests
                 }
             }
             return await client.PostAsJsonAsync("/token", body);
+        }
+
+        // Poll the AS pending Location the way the PS does: a signed GET over the
+        // trusted-PS federation channel (the endpoint verifies the signature).
+        public async Task<HttpResponseMessage> PollPendingAsync(string path)
+        {
+            using var client = new AAuthClientBuilder(PsKey)
+                .UseJwksUri($"{R3TestData.PsIssuer}/.well-known/jwks.json", R3TestData.PsKid)
+                .WithInnerHandler(App.GetTestServer().CreateHandler())
+                .Build();
+            client.BaseAddress = new Uri(R3TestData.AsIssuer);
+            return await client.GetAsync(path);
         }
     }
 }
