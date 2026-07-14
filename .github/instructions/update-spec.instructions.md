@@ -42,6 +42,7 @@ Each `v<NN>/` snapshot contains:
 | `draft-hardt-oauth-aauth-protocol.md` | AAuth repo | The protocol spec; names the snapshot. |
 | `draft-hardt-aauth-bootstrap.md` | AAuth repo | Informational; often unchanged across drafts. |
 | `draft-hardt-aauth-r3.md` | AAuth repo | Rich Resource Requests; has its own version. |
+| `draft-hardt-aauth-events.md` | AAuth repo | AAuth Events; standalone draft. Include when present upstream. |
 | `interop-demo-profile.md` | AAuth repo | Informational; new since draft-06. Include when present upstream. |
 | `draft-hardt-httpbis-signature-key-<NN>.txt` | IETF archive | Lives in the separate `dickhardt/signature-key` repo; vendor the IETF `.txt` at the version the protocol references. |
 
@@ -75,8 +76,18 @@ TAG=draft-hardt-oauth-aauth-protocol-$NN
 BASE="https://raw.githubusercontent.com/dickhardt/AAuth/$TAG"
 mkdir -p "v$NN"
 for f in draft-hardt-oauth-aauth-protocol.md draft-hardt-aauth-bootstrap.md \
-         draft-hardt-aauth-r3.md interop-demo-profile.md; do
+         draft-hardt-aauth-r3.md; do
   curl -fsSL "$BASE/$f" -o "v$NN/$f"
+done
+
+# Optional standalone/informational docs; include when present upstream.
+for f in draft-hardt-aauth-events.md interop-demo-profile.md; do
+  if curl -fsSL "$BASE/$f" -o "v$NN/$f"; then
+    echo "Downloaded optional $f"
+  else
+    rm -f "v$NN/$f"
+    echo "Optional $f not present upstream; record as absent."
+  fi
 done
 ```
 
@@ -98,6 +109,9 @@ Record "unchanged" docs explicitly so each snapshot stays auditable.
 ```bash
 diff -q v02/draft-hardt-aauth-bootstrap.md v08/draft-hardt-aauth-bootstrap.md
 diff -q v02/draft-hardt-aauth-r3.md        v08/draft-hardt-aauth-r3.md
+if [ -f v02/draft-hardt-aauth-events.md ] && [ -f v08/draft-hardt-aauth-events.md ]; then
+  diff -q v02/draft-hardt-aauth-events.md v08/draft-hardt-aauth-events.md
+fi
 # Protocol structural delta (added/removed sections):
 diff <(grep -nE '^#{1,2} ' v02/draft-hardt-oauth-aauth-protocol.md | sed 's/^[0-9]*://') \
      <(grep -nE '^#{1,2} ' v08/draft-hardt-oauth-aauth-protocol.md | sed 's/^[0-9]*://')
@@ -110,7 +124,8 @@ diff <(grep -nE '^#{1,2} ' v02/draft-hardt-oauth-aauth-protocol.md | sed 's/^[0-
 - Append a `## \`v<NN>/\` — protocol draft-NN` section (sections are in **ascending**
   order). Include a metadata table (source repo, commit SHA, commit date, tagged
   version, document date, IETF draft URL, copied-on date) and a per-file list
-  noting which docs are unchanged from the prior snapshot.
+  noting which docs are unchanged from the prior snapshot, including AAuth Events
+  when present.
 - Add a short "Notable changes since draft-XX" highlight list.
 
 ### 5. Update `CHANGELOG.md`
@@ -120,7 +135,7 @@ diff <(grep -nE '^#{1,2} ' v02/draft-hardt-oauth-aauth-protocol.md | sed 's/^[0-
   per-snapshot sections (newest first).
 - Summarize the delta by theme, then reproduce the **author's verbatim per-draft
   changelog** from the protocol's `# Document History` section for every draft
-  spanned. Note unchanged R3/bootstrap, any new documents, and the
+  spanned. Note unchanged R3/bootstrap/AAuth Events, any new documents, and the
   signature-key version bump.
 - Reference the spec's own kramdown anchors (e.g. `#sub-agents`) rather than line
   numbers where possible — anchors are stable across line shifts.
@@ -142,6 +157,7 @@ permanent home and survives the repo being moved, renamed, or deprecated:
 - Document page (all revisions) — <https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/>
 - Per-revision text — `https://www.ietf.org/archive/id/draft-hardt-oauth-aauth-protocol-<NN>.txt`
 - Per-revision HTML — `https://datatracker.ietf.org/doc/html/draft-hardt-oauth-aauth-protocol-<NN>`
+- AAuth Events editor's copy — <https://github.com/dickhardt/AAuth/blob/main/draft-hardt-aauth-events.md>
 
 If the GitHub repo is unavailable, vendor the Datatracker `.txt` rendering for that
 revision instead of the kramdown `.md`, and note the substitution in the snapshot's
