@@ -254,24 +254,24 @@ L449-L505).
 
 ### Definition of Done
 
-- [ ] AP metadata composition emits one valid `event_endpoint` without
+- [x] AP metadata composition emits one valid `event_endpoint` without
       overriding typed base metadata.
-- [ ] Resource metadata can advertise both existing OpenAPI and Events AsyncAPI
+- [x] Resource metadata can advertise both existing OpenAPI and Events AsyncAPI
       vocabulary entries in one `r3_vocabularies` object.
-- [ ] A cross-package test starts with a caller-owned OpenAPI map, applies the
+- [x] A cross-package test starts with a caller-owned OpenAPI map, applies the
       Events helper, passes the completed map once to
       `R3Metadata.AddVocabularies`, and proves both entries survive; identical
       reapplication is stable and malformed/conflicting values fail.
 - [ ] Tests and sample code never call a whole-object R3 composer after Events
       metadata has already been assigned; composition precedes serialization.
-- [ ] Delivery resolves the endpoint from AP metadata at send time and honors
+- [x] Delivery resolves the endpoint from AP metadata at send time and honors
       the configured metadata cache; it never persists an endpoint copied from
       a subscribe token.
-- [ ] Metadata and endpoint resolution use the Phase 2 hardened client and URL
+- [x] Metadata and endpoint resolution use the Phase 2 hardened client and URL
       policy; no default-redirect path is reachable.
-- [ ] Required AsyncAPI AAuth declarations are accepted; missing/wrong scheme
+- [x] Required AsyncAPI AAuth declarations are accepted; missing/wrong scheme
       and incorrectly secured public/protected operations are reported.
-- [ ] AsyncAPI tests pin that operation direction is outside validator scope and
+- [x] AsyncAPI tests pin that operation direction is outside validator scope and
       that the draft's `action: receive` example is accepted.
 
 ## Phase 4 - Agent Provider issuance and durable event endpoint
@@ -311,24 +311,24 @@ L402-L428).
 
 ### Definition of Done
 
-- [ ] Subscribe-token issuance stores the AP-side resource `aud`, agent `sub`,
+- [x] Subscribe-token issuance stores the AP-side resource `aud`, agent `sub`,
       `eid`, optional `max_uses`, and application `ExpiresAt`.
-- [ ] Subscribe-token issuance retries store collisions with a fresh random
+- [x] Subscribe-token issuance retries store collisions with a fresh random
       `eid` and never returns an identifier already held by the AP.
-- [ ] Unknown/expired subscription returns 404; resource mismatch and wrong
+- [x] Unknown/expired subscription returns 404; resource mismatch and wrong
       agent `aud` return 403; invalid/expired JWT or signature returns 401;
       malformed input returns 400; exhausted uses return 429.
-- [ ] `202` occurs only after the store reports durable acceptance.
+- [x] `202` occurs only after the store reports durable acceptance.
 - [ ] Limited subscriptions return exact `remaining_uses`; unlimited
       subscriptions accept either no response body or `{}` through the client.
-- [ ] Concurrent final-use deliveries produce one durable event and one
+- [x] Concurrent final-use deliveries produce one durable event and one
       successful use; later distinct events return 429.
-- [ ] A delivery rejected at step 8 for wrong agent `aud` returns 403 without
+- [x] A delivery rejected at step 8 for wrong agent `aud` returns 403 without
       incrementing the use count or writing an inbox event.
-- [ ] Exact retries are idempotent under concurrency and do not consume uses.
+- [x] Exact retries are idempotent under concurrency and do not consume uses.
 - [ ] Two same-time events with identical non-`jti` claims are both durably
       accepted; retrying either exact compact token is idempotent.
-- [ ] No package-provided in-memory AP store is registered.
+- [x] No package-provided in-memory AP store is registered.
 
 ## Phase 5 - Resource subscription registration
 
@@ -371,20 +371,20 @@ L588-L599).
 
 ### Definition of Done
 
-- [ ] Public registration needs no credential beyond the subscribe token.
-- [ ] Protected registration rejects expired, unknown, reused, wrong-context,
+- [x] Public registration needs no credential beyond the subscribe token.
+- [x] Protected registration rejects expired, unknown, reused, wrong-context,
       and wrong-agent tickets.
-- [ ] The subscribe token's `aud`, AP signature, times, `cnf`/HTTP key, and
+- [x] The subscribe token's `aud`, AP signature, times, `cnf`/HTTP key, and
       `eid` are enforced before the application handler.
-- [ ] Duplicate `eid` registration returns 409.
+- [x] Duplicate `eid` registration returns 409.
 - [ ] Application-supplied `ExpiresAt` is persisted without a new wire field.
-- [ ] Optional direct JSON registration parameters are size-bounded, covered
+- [x] Optional direct JSON registration parameters are size-bounded, covered
       only by signed `content-type`, and exposed under the signature-unbound type.
 - [ ] Package API documentation, endpoint integration tests, and Bookings prove
       the first-party path never uses altered body parameters to widen the event
       type, channel, agent, or resource authorization held by the ticket and
       verified subscribe token; low-level callback users receive the same warning.
-- [ ] Default 200/400/401/403/404/409 mapping has integration tests; low-level
+- [x] Default 200/400/401/403/404/409 mapping has integration tests; low-level
       verifier users receive typed failures without forced HTTP responses.
 
 ## Phase 6 - Resource event delivery
@@ -467,18 +467,18 @@ L436-L447 and local interpretation C3/C14.
 
 ### Definition of Done
 
-- [ ] Wrong type/DWK/signature/issuer/audience, missing/future `iat`, expired
+- [x] Wrong type/DWK/signature/issuer/audience, missing/future `iat`, expired
       `exp`, and missing/empty `jti` fail.
-- [ ] Multiple distinct event tokens for one unlimited `eid`, including tokens
+- [x] Multiple distinct event tokens for one unlimited `eid`, including tokens
       with otherwise identical same-time claims, can be processed.
-- [ ] An exact compact-token replay is ignored by the default deduplicator.
-- [ ] Payload bytes remain unchanged but are surfaced only as
+- [x] An exact compact-token replay is ignored by the default deduplicator.
+- [x] Payload bytes remain unchanged but are surfaced only as
       `UnauthenticatedEventPayload`; payload business/schema validation remains
       application-owned.
-- [ ] A test substitutes the payload while retaining the event token and proves
+- [x] A test substitutes the payload while retaining the event token and proves
       token verification cannot detect the change and never labels the payload
       authenticated.
-- [ ] No polling, SSE, WebSocket, push, or callback transport enters the package
+- [x] No polling, SSE, WebSocket, push, or callback transport enters the package
       API.
 
 ## Phase 8 - Cross-role conformance and adversarial tests

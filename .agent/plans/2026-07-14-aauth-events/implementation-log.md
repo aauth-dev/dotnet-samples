@@ -287,6 +287,41 @@ deterministic claim failures from triggering JWKS refreshes and reject malformed
 Authorization headers on inbound verification. Fifty-two token/HTTP tests pass
 and the full solution builds without warnings.
 
+### [2026-07-15] [Phase 3] Metadata, discovery, and AsyncAPI - RESOLVED
+
+Added collision-safe AP metadata composition, immutable OpenAPI/AsyncAPI
+vocabulary composition, policy-checked cached event-endpoint resolution, and a
+focused AsyncAPI AAuth validator that deliberately ignores operation direction.
+Cross-package R3 composition, issuer binding, unresolved channel references,
+cache invalidation, endpoint policy, and public/protected declarations are
+covered by discovery tests.
+
+### [2026-07-15] [Phase 4] Agent Provider role contracts - RESOLVED
+
+Added collision-retrying subscribe-token issuance, required durable store
+contracts, defensive subscription/incoming-event models, atomic acceptance
+outcomes, endpoint verification/status mapping, and required-store DI. Review
+removed unbounded in-process ID retention and fixed content-header preservation.
+Twenty-five AP tests cover issuance, mappings, durability failures,
+EdDSA/ES256, cancellation, and concurrent final use.
+
+### [2026-07-15] [Phase 5] Resource registration role - RESOLVED
+
+Added explicit channel/context boundaries, low-level subscribe-token and HTTP
+verification, signature-unbound body projection, public/protected endpoint
+mapping, selected-event subset enforcement, signed registration client, and DI.
+Protected paths preserve escaped PathBase values and reject missing tickets
+before invoking application policy. Fourteen registration tests cover both
+algorithms, binding, tickets, mappings, bodies, cancellation, and DI.
+
+### [2026-07-15] [Phase 7] Agent verification and deduplication - RESOLVED
+
+Added typed event verification outcomes, exact-token SHA-256 idempotency,
+pluggable and bounded/expiring deduplication, defensive unauthenticated payload
+projection, context lookup, and validated DI registration. Sixteen agent tests
+cover both algorithms, context, replay, concurrency, payload substitution,
+typed failures, expiry/capacity, and cancellation.
+
 ## Deviations from Plan
 
 None.
