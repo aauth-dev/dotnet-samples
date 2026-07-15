@@ -610,17 +610,17 @@ spec/security/logic defects before owner review or commit.
 
 ### Definition of Done
 
-- [ ] A fresh subagent reports severity-graded findings for spec conformance,
+- [x] A fresh subagent reports severity-graded findings for spec conformance,
       crypto/key binding, body integrity, SSRF/redirects, atomicity/durability,
       replay/idempotency, metadata composition, error mapping, package
       boundaries, agent payload trust, and sample claims.
-- [ ] Every CRITICAL/HIGH finding is fixed; MEDIUM/LOW findings are fixed or
+- [x] Every CRITICAL/HIGH finding is fixed; MEDIUM/LOW findings are fixed or
       explicitly ruled in `implementation-log.md`.
-- [ ] The reviewer confirms no `src/AAuth/` or `src/AAuth.R3/` production file
+- [x] The reviewer confirms no `src/AAuth/` or `src/AAuth.R3/` production file
       changed.
-- [ ] Targeted Events tests, full solution build/test, and package dry-run pass.
-- [ ] The final diff contains no generated `bin/` or `obj/` artifacts.
-- [ ] Work is flagged ready for owner review before any commit.
+- [x] Targeted Events tests, full solution build/test, and package dry-run pass.
+- [x] The final diff contains no generated `bin/` or `obj/` artifacts.
+- [x] Work is flagged ready for owner review before push/final acceptance.
 
 ## Out of scope
 

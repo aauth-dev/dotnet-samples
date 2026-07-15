@@ -366,6 +366,22 @@ contains its README and only the matching `AAuth` dependency. Final docs review
 confirmed frozen API names, routes, security disclosures, retention/durability
 requirements, and the non-normative polling/ACK boundary.
 
+### [2026-07-15] [Phase 11] Independent internal review - RESOLVED
+
+Three disjoint read-only reviewers covered protocol/crypto, state/concurrency,
+and package/sample/docs. All reported HIGH and MEDIUM findings were fixed:
+bodyless AP delivery (including `Content-Length: 0`), conventional/transient
+agent DI, bounded sample idempotency retention, non-empty selected event types,
+and bounded outbound response reads. Follow-up reviewers reported no remaining
+high-confidence findings.
+
+The definitive Release gate restored, built, ran 1,413 tests
+(AAuth.Tests 517, AAuth.Conformance 573, AAuth.R3.Tests 39, and
+AAuth.Events.Tests 284), and packed all three packages at one version. The
+Events package includes its README, depends only on matching-version `AAuth`,
+and has no `AAuth.R3` dependency. No core/R3 production file or generated
+artifact is in the implementation diff.
+
 ## Deviations from Plan
 
 None.
@@ -385,6 +401,13 @@ The first delivery implementation incorrectly limited
 draft rationale define that `exp` only as the registration credential window.
 The guard was removed and a regression test now permits the application policy
 lifetime to extend beyond the token window.
+
+### [2026-07-15] [Phase 11] Owner review gate follows child-branch commits - RESOLVED
+
+The execution plan originally phrased owner review as preceding any commit.
+The owner explicitly approved implementation-time commits on isolated child
+branches. Final owner review therefore gates push/final acceptance rather than
+the already-approved rollback-unit commits.
 
 ## Open Questions / Inputs Needed
 
