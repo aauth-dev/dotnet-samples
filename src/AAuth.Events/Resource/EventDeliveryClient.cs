@@ -163,9 +163,20 @@ public sealed class EventDeliveryClient
             signer.SignBodyless(request);
 
         using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        var body = response.Content is null
-            ? string.Empty
-            : await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        string body;
+        try
+        {
+            body = await EventsResponseBody.ReadUtf8Async(
+                response.Content,
+                cancellationToken: cancellationToken).ConfigureAwait(false) ?? string.Empty;
+        }
+        catch (EventsResponseBodyTooLargeException ex)
+        {
+            throw new EventDeliveryProtocolException(
+                ex.Message,
+                response.StatusCode,
+                innerException: ex);
+        }
         return ParseResponse(response.StatusCode, body);
     }
 

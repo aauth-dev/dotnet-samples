@@ -49,6 +49,22 @@ public sealed class SubscriptionRegistrationClientTests
         Assert.Equal(new[] { "slot.available" }, result.SelectedEventTypes);
     }
 
+    [Fact]
+    public async Task RegistrationClientRejectsOversizedResponse()
+    {
+        var key = AAuthKey.Generate();
+        using var http = new HttpClient(new CaptureHandler(_ =>
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    new string('x', AAuthEventsConstants.DefaultMaxBodyBytes + 1)),
+            }));
+        var client = new SubscriptionRegistrationClient(http, key);
+
+        await Assert.ThrowsAsync<SubscriptionRegistrationClientException>(() =>
+            client.RegisterAsync(new Uri("https://resource.example/register"), "a.b.c"));
+    }
+
     private sealed class CaptureHandler(Func<HttpRequestMessage, HttpResponseMessage> callback) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(

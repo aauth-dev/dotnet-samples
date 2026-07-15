@@ -128,9 +128,20 @@ public sealed class SubscriptionRegistrationClient
 
         using (response)
         {
-            var text = response.Content is null
-                ? null
-                : await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            string? text;
+            try
+            {
+                text = await EventsResponseBody.ReadUtf8Async(
+                    response.Content,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+            catch (EventsResponseBodyTooLargeException ex)
+            {
+                throw new SubscriptionRegistrationClientException(
+                    ex.Message,
+                    response.StatusCode,
+                    inner: ex);
+            }
             if ((int)response.StatusCode is < 200 or >= 300)
                 throw new SubscriptionRegistrationClientException(
                     $"Registration endpoint returned {(int)response.StatusCode}.",

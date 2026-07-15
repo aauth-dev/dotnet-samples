@@ -155,6 +155,7 @@ public sealed class SubscriptionRegistrationEndpointTests
                 "not-found" => SubscriptionRegistrationResult.NotFound(),
                 "conflict" => SubscriptionRegistrationResult.Conflict(),
                 "widen" => SubscriptionRegistrationResult.Accepted(["other"]),
+                "empty" => SubscriptionRegistrationResult.Accepted([]),
                 _ => SubscriptionRegistrationResult.Accepted(["slot.available"]),
             });
         });
@@ -168,6 +169,7 @@ public sealed class SubscriptionRegistrationEndpointTests
             ("not-found", HttpStatusCode.NotFound),
             ("conflict", HttpStatusCode.Conflict),
             ("widen", HttpStatusCode.BadRequest),
+            ("empty", HttpStatusCode.BadRequest),
         })
         {
             using var response = await fixture.PostAsync(

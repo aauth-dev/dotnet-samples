@@ -277,6 +277,21 @@ public sealed class EventDeliveryTests
             timeoutClient.SendAsync(timeoutPrepared));
     }
 
+    [Fact]
+    public async Task SendRejectsOversizedResponse()
+    {
+        var transport = new ResponseHandler(
+            HttpStatusCode.Accepted,
+            new string('x', AAuthEventsConstants.DefaultMaxBodyBytes + 1));
+        var client = CreateClient(
+            transport, Resolver(), AAuthKey.Generate(), () => Issued);
+        var prepared = client.Prepare(
+            Subscription(Issued.AddMinutes(4)), TimeSpan.FromMinutes(1));
+
+        await Assert.ThrowsAsync<EventDeliveryProtocolException>(() =>
+            client.SendAsync(prepared));
+    }
+
     private async Task<EventDeliveryResult> SendWithResponse(
         HttpStatusCode statusCode, string? body)
     {

@@ -130,6 +130,7 @@ public static class SubscriptionEndpointExtensions
             if (result.Status == SubscriptionRegistrationStatus.Accepted)
             {
                 if (result.SelectedEventTypes is null ||
+                    result.SelectedEventTypes.Count == 0 ||
                     result.SelectedEventTypes.Any(type => !channel.AllowedEventTypes.Contains(type, StringComparer.Ordinal)))
                     return Results.Json(new { error = "invalid_registration", error_description = "Selected event types are not allowed by this channel." },
                         statusCode: StatusCodes.Status400BadRequest);
