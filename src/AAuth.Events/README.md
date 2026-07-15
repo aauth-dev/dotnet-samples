@@ -39,7 +39,7 @@ builder.Services.AddAAuthEventsResource(options =>
 
 var channel = SubscriptionChannel.Protected(
     "waitlist-subscriptions",
-    "/waitlist/subscriptions/{subscriptionTicket}",
+    "/waitlist/subscriptions/{ticket}",
     ["slot.available"],
     resourceAudience: resourceUrl);
 app.MapAAuthProtectedSubscription(channel, registrationHandler);
