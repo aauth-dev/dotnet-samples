@@ -319,7 +319,7 @@ L402-L428).
       agent `aud` return 403; invalid/expired JWT or signature returns 401;
       malformed input returns 400; exhausted uses return 429.
 - [x] `202` occurs only after the store reports durable acceptance.
-- [ ] Limited subscriptions return exact `remaining_uses`; unlimited
+- [x] Limited subscriptions return exact `remaining_uses`; unlimited
       subscriptions accept either no response body or `{}` through the client.
 - [x] Concurrent final-use deliveries produce one durable event and one
       successful use; later distinct events return 429.
@@ -377,7 +377,7 @@ L588-L599).
 - [x] The subscribe token's `aud`, AP signature, times, `cnf`/HTTP key, and
       `eid` are enforced before the application handler.
 - [x] Duplicate `eid` registration returns 409.
-- [ ] Application-supplied `ExpiresAt` is persisted without a new wire field.
+- [x] Application-supplied `ExpiresAt` is persisted without a new wire field.
 - [x] Optional direct JSON registration parameters are size-bounded, covered
       only by signed `content-type`, and exposed under the signature-unbound type.
 - [ ] Package API documentation, endpoint integration tests, and Bookings prove
@@ -420,18 +420,18 @@ L376-L400); remaining-use handling L415-L426.
 
 ### Definition of Done
 
-- [ ] Every event token copies the subscription `eid`, targets stored agent
+- [x] Every event token copies the subscription `eid`, targets stored agent
       `sub`, uses resource `iss`/DWK/key, and carries a fresh random `jti`.
-- [ ] Separate preparations with otherwise identical same-time inputs produce
+- [x] Separate preparations with otherwise identical same-time inputs produce
       different compact tokens; retrying one preparation sends the byte-identical
       compact token and payload.
-- [ ] AP metadata is resolved at delivery time through the hardened resolver.
-- [ ] Payload bytes produce and are bound to the transmitted `Content-Digest`.
-- [ ] 202 with `remaining_uses`, 202 with no body, and 202 with `{}` parse
+- [x] AP metadata is resolved at delivery time through the hardened resolver.
+- [x] Payload bytes produce and are bound to the transmitted `Content-Digest`.
+- [x] 202 with `remaining_uses`, 202 with no body, and 202 with `{}` parse
       correctly.
-- [ ] Resource callers can remove exhausted subscriptions on `remaining_uses:
+- [x] Resource callers can remove exhausted subscriptions on `remaining_uses:
       0`; 429 is a typed exhausted result.
-- [ ] Transport, metadata, verification, timeout, and cancellation failures are
+- [x] Transport, metadata, verification, timeout, and cancellation failures are
       surfaced, not converted to success.
 
 ## Phase 7 - Agent event verification and deduplication

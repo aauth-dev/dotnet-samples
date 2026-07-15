@@ -322,6 +322,18 @@ projection, context lookup, and validated DI registration. Sixteen agent tests
 cover both algorithms, context, replay, concurrency, payload substitution,
 typed failures, expiry/capacity, and cancellation.
 
+### [2026-07-15] [Phase 6] Resource event delivery - RESOLVED
+
+Added immutable resource subscription state, `FromRegistration`, defensive
+prepared deliveries, once-only event `jti`, current AP endpoint resolution,
+exact-token/body retries with fresh HTTP signatures, and typed AP response
+parsing. Review removed an artificial signature-time sequence, restored
+metadata-cache semantics, and corrected C8 so application subscription lifetime
+may extend beyond the subscribe-token registration window. Twenty-four delivery
+tests cover both algorithms, retries, payload immutability, endpoint changes,
+all response variants, malformed responses, transport failures, timeout, and
+cancellation.
+
 ## Deviations from Plan
 
 None.
@@ -333,6 +345,14 @@ never returns a previously stored ID without the durable subscription store.
 The collision-retry requirement is therefore tested at `SubscribeTokenIssuer`
 in Phase 4, where store insertion is authoritative. This changes no wire or
 public token behavior.
+
+### [2026-07-15] [Phase 6] Registration expiry is not subscription expiry - RESOLVED
+
+The first delivery implementation incorrectly limited
+`ResourceSubscription.ExpiresAt` to the subscribe token's `exp`. C8 and the
+draft rationale define that `exp` only as the registration credential window.
+The guard was removed and a regression test now permits the application policy
+lifetime to extend beyond the token window.
 
 ## Open Questions / Inputs Needed
 
