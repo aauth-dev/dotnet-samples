@@ -584,17 +584,17 @@ surfaces after APIs are frozen.
 
 ### Definition of Done
 
-- [ ] Release dry-run builds, tests, and produces `AAuth`, `AAuth.R3`, and
+- [x] Release dry-run builds, tests, and produces `AAuth`, `AAuth.R3`, and
       `AAuth.Events` packages at the same requested version.
-- [ ] Packed `AAuth.Events` has only the intended `AAuth` dependency and includes
+- [x] Packed `AAuth.Events` has only the intended `AAuth` dependency and includes
       its README.
-- [ ] Every README/snippet uses the frozen API names and direct JSON payload.
-- [ ] Docs state that production APs must supply durable storage and document
+- [x] Every README/snippet uses the frozen API names and direct JSON payload.
+- [x] Docs state that production APs must supply durable storage and document
       retention; sample storage is not conformant durability.
-- [ ] Docs disclose C3/C4/C5/C8/C12/C13/C14/C20/C23 and RF1-RF4, including
+- [x] Docs disclose C3/C4/C5/C8/C12/C13/C14/C20/C23 and RF1-RF4, including
       event-token `none`/`jti`, registration-body integrity, agent payload
       trust, and AsyncAPI operation perspective.
-- [ ] No docs imply that the sample polling endpoints are standardized.
+- [x] No docs imply that the sample polling endpoints are standardized.
 
 ## Phase 11 - Internal review
 

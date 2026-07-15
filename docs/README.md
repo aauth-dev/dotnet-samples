@@ -1,6 +1,9 @@
 # AAuth .NET SDK Documentation
 
-This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It covers agent-side signing, server-side verification, all four signing modes, and all resource access workflows.
+This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package) and
+the complementary preview packages `AAuth.R3` and `AAuth.Events`. It covers
+agent-side signing, server-side verification, all four signing modes, resource
+access workflows, rich requests, and asynchronous events.
 
 - [Interactive Protocol Explorer](https://explorer.aauth.dev/)
 - [AAuth Protocol Specification](../aauth-spec/v02/draft-hardt-oauth-aauth-protocol.md)
@@ -34,6 +37,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 - [Call Chaining](workflows/call-chaining.md)
 - [Mission-Governed Access](workflows/mission-governed-access.md)
 - [Rich Resource Requests (R3)](workflows/rich-resource-requests.md) — preview; ships in the separate [`AAuth.R3`](../src/AAuth.R3/) package
+- [AAuth Events](workflows/aauth-events.md) — preview; ships in the separate [`AAuth.Events`](../src/AAuth.Events/) package
 
 ## Server Implementation
 
@@ -227,6 +231,25 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 |------|---------|
 | `AAuthDiagnostics` | Shared `ActivitySource` + tag key constants for OTel tracing |
 
+### `AAuth.Events` — Event tokens, HTTP profiles, and roles
+
+| Type | Purpose |
+|------|---------|
+| `SubscribeTokenBuilder` / `SubscribeTokenClaims` | Build and read AP-issued `aa-subscribe+jwt` registration credentials |
+| `EventTokenBuilder` / `EventTokenClaims` | Build and read resource-issued `aa-event+jwt` envelopes with required local `jti` |
+| `EventsRequestSigner` / `EventsHttpMessageVerifier` | Exact bodyless, registration, and event RFC 9421 profiles |
+| `EventsJwtKeyResolver` | Resolve and bind AP/resource JWT and HTTP-signature keys |
+| `IAAuthAgentProviderEventStore` / `SubscribeTokenIssuer` | Durable AP subscription and event-inbox contracts |
+| `MapAAuthEventEndpoint` | Resource-to-AP event-delivery endpoint |
+| `SubscriptionRegistrationVerifier` | Low-level public/protected registration verification |
+| `MapAAuthPublicSubscription` / `MapAAuthProtectedSubscription` | ASP.NET registration endpoint mappers |
+| `SubscriptionRegistrationClient` | Agent-side subscribe-token registration client |
+| `ResourceSubscription` / `EventDeliveryClient` | Stored resource subscription and prepared event delivery |
+| `EventTokenVerifier` / `IEventDeduplicator` | Agent-side verification, context lookup, and exact-token deduplication |
+| `UnauthenticatedEventPayload` | Explicitly non-authenticated AP-forwarded payload bytes |
+| `AAuthEventsMetadata` / `EventEndpointResolver` | `event_endpoint` and AsyncAPI vocabulary composition/discovery |
+| `AsyncApiAAuthValidator` | Focused validation of AAuth declarations in AsyncAPI 3.0 documents |
+
 ### `Microsoft.Extensions.DependencyInjection` / `Microsoft.AspNetCore.Builder` — ASP.NET Core integration
 
 | Type | Purpose |
@@ -263,4 +286,6 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 - [`SampleApp`](../samples/SampleApp/) — Golden example: one page per signing mode (hwk, jwks_uri, jkt-jwt, jwt) plus the resource-managed Inbox
 - [`GuidedTour`](../samples/GuidedTour/) — Interactive Blazor walkthrough of all flows
 - [`AgentConsole`](../samples/AgentConsole/) — CLI agent demonstrating signing modes
-- [`MockResourceServers`](../samples/MockResourceServers/) — Profile, Calendar, Trips, Wallet, and Inbox resource servers with verification middleware (Inbox demonstrates the two-party resource-managed `AAuth-Access` flow)
+- [`EventAgent`](../samples/EventAgent/) — CLI protected waitlist and AAuth Events verification flow
+- [`MockResourceServers`](../samples/MockResourceServers/) — Profile, Calendar, Trips, Wallet, Inbox, and Bookings resource servers
+- [`MockAgentProvider`](../samples/MockAgentProvider/) — AP enrollment plus the sample-only Events inbox/polling transport

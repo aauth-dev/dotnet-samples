@@ -277,13 +277,16 @@ make test            # run all tests (SDK + conformance)
 make test-unit       # SDK unit + integration tests only
 make test-conformance # spec conformance tests only
 make demo            # start the full stack (resource servers + Concierge + PS + AP + AS + both UIs)
-make resources       # only the five Aria resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003, Inbox :5004)
+make resources       # six resource servers (Profile :5000 through Bookings :5005)
 make ps              # MockPersonServer (port 5100)
 make ps-consent      # MockPersonServer with RequireConsent=true
 make ap              # MockAgentProvider (port 5301)
 make tour            # GuidedTour (port 5400; expects other services running)
 make sampleapp       # SampleApp (port 5240; expects other services running)
 make agent           # AgentConsole against the Profile server (override URL=…)
+make events-stack    # focused Events stack: AP + PS + R3 AS + Bookings
+make agent-events    # EventAgent protected waitlist flow
+make event-agent-reset # clear EventAgent enrollment metadata after an AP restart
 make live            # LiveWhoAmITest against whoami.aauth.dev (needs cloudflared + network)
 make clean           # dotnet clean + remove bin/ obj/
 ```

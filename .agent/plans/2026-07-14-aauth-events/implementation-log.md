@@ -356,6 +356,16 @@ The integrated focused stack completed the full flow successfully. Review
 corrected the Bookings resource URL, trigger grant ordering/lifetime, revoked
 subscription state, and bodyless/empty payload handling.
 
+### [2026-07-15] [Phase 10] Documentation and release dry run - RESOLVED
+
+Added the Events workflow, final package/sample READMEs, root documentation and
+sample indexes, focused Makefile targets, and shared release packing. The
+workflow-equivalent Release gate restored, built, and ran 1,407 tests, then
+packed `AAuth`, `AAuth.R3`, and `AAuth.Events` at one version. The Events nupkg
+contains its README and only the matching `AAuth` dependency. Final docs review
+confirmed frozen API names, routes, security disclosures, retention/durability
+requirements, and the non-normative polling/ACK boundary.
+
 ## Deviations from Plan
 
 None.
