@@ -1,13 +1,12 @@
 # EventAgent
 
-`EventAgent` is a focused console sample for the experimental AAuth Events
-flow. It uses the protected Bookings waitlist, obtains a subscribe token from
-the Mock Agent Provider, registers the ticket URL, triggers a deterministic
-event, then polls and verifies the event before displaying its JSON payload.
+> **Sample only.** This console app demonstrates the protected Bookings
+> waitlist and the AAuth Events envelope-verification boundary.
 
-The sample references only `AAuth` and `AAuth.Events`; it does not reference
-`AAuth.R3`. The Bookings resource uses R3 claims internally, while the agent
-uses the normal AAuth JWT/challenge-handling client.
+EventAgent enrolls at the Mock Agent Provider, requests the protected waitlist,
+acquires a subscribe token through the sample AP route, registers the ticket,
+triggers one event, then uses the sample polling route to retrieve and verify
+the receipt.
 
 ## Run
 
@@ -18,7 +17,7 @@ make events-stack
 make agent-events
 ```
 
-The equivalent direct command is:
+Equivalent direct command:
 
 ```bash
 dotnet run --project samples/EventAgent -- \
@@ -27,7 +26,7 @@ dotnet run --project samples/EventAgent -- \
   --ps http://localhost:5100
 ```
 
-Options:
+Options implemented by `Program.cs`:
 
 ```text
 --ap <url>        Agent Provider (default http://localhost:5301)
@@ -36,31 +35,32 @@ Options:
 --sub <subject>   Agent subject (default aauth:event-agent@ap.example)
 ```
 
-The enrollment key is stored by `FileKeyStore`; the EventAgent metadata cache
-is kept separately under:
-
-```text
-~/.local/share/aauth-event-agent/<sha256-of-subject>.json
-```
-
-To reset enrollment after restarting the in-memory Mock Agent Provider, remove
-that file (and rerun the command):
+The enrollment key is held by `FileKeyStore`. EventAgent writes its enrollment
+metadata cache below the platform `LocalApplicationData` directory
+(`~/.local/share/aauth-event-agent/<sha256-of-subject>.json` on this Linux
+sample). After restarting the in-memory AP, reset it with:
 
 ```bash
-rm ~/.local/share/aauth-event-agent/*.json
+make event-agent-reset
 ```
 
 ## Trust and transport boundary
 
-Event issuer metadata and JWKS are resolved through the Events URL policy. The
-sample's AP acquisition, batch polling, and ACK endpoints are deliberately
-non-normative sample transport: they use enrolled-agent HTTP signatures,
-in-memory AP state, and an explicit ACK. Production agents need a durable
-inbox, durable event-context and deduplication storage, and an authenticated
-AP-to-agent transport.
+The resource registration, event-token verification, local `eid` lookup, and
+exact-token deduplication use `AAuth.Events`. The AP acquisition,
+non-destructive batch polling, and explicit receipt ACK are **non-normative
+sample transport**:
 
-The event token authenticates the envelope, not the optional payload. The
-sample prints a prominent **UNAUTHENTICATED PAYLOAD** warning, displays JSON
-only, performs no consequential action, and ACKs only after successful token
-verification, local `eid` lookup, deduplication, and display. Invalid,
+- acquisition: `POST /agents/{agentId}/event-subscriptions/bookings`;
+- polling: `GET /agents/{agentId}/events?limit=20`;
+- ACK: `POST /agents/{agentId}/events/{receiptId}/ack`.
+
+Polling and ACK are not standardized. Production agents need an authenticated,
+application-owned AP-to-agent transport plus durable event context and
+deduplication state.
+
+The event JWT authenticates the event envelope, not the optional JSON payload.
+EventAgent prints an **UNAUTHENTICATED PAYLOAD** warning, displays JSON only,
+performs no consequential action, and ACKs only after successful envelope
+verification, known local `eid`, deduplication, and display parsing. Invalid,
 unknown-context, duplicate, or display failures are never acknowledged.
