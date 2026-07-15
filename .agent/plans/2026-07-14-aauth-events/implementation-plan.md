@@ -262,7 +262,7 @@ L449-L505).
       Events helper, passes the completed map once to
       `R3Metadata.AddVocabularies`, and proves both entries survive; identical
       reapplication is stable and malformed/conflicting values fail.
-- [ ] Tests and sample code never call a whole-object R3 composer after Events
+- [x] Tests and sample code never call a whole-object R3 composer after Events
       metadata has already been assigned; composition precedes serialization.
 - [x] Delivery resolves the endpoint from AP metadata at send time and honors
       the configured metadata cache; it never persists an endpoint copied from
@@ -380,7 +380,7 @@ L588-L599).
 - [x] Application-supplied `ExpiresAt` is persisted without a new wire field.
 - [x] Optional direct JSON registration parameters are size-bounded, covered
       only by signed `content-type`, and exposed under the signature-unbound type.
-- [ ] Package API documentation, endpoint integration tests, and Bookings prove
+- [x] Package API documentation, endpoint integration tests, and Bookings prove
       the first-party path never uses altered body parameters to widen the event
       type, channel, agent, or resource authorization held by the ticket and
       verified subscribe token; low-level callback users receive the same warning.
@@ -549,20 +549,20 @@ from package guarantees.
 
 ### Definition of Done
 
-- [ ] Bookings publishes both OpenAPI and AsyncAPI R3 vocabulary entries.
-- [ ] Bookings emits exactly one `r3_vocabularies` object; composing Events
+- [x] Bookings publishes both OpenAPI and AsyncAPI R3 vocabulary entries.
+- [x] Bookings emits exactly one `r3_vocabularies` object; composing Events
       metadata does not replace the OpenAPI entry supplied through the R3 path.
-- [ ] Its AsyncAPI document validates through `AsyncApiAAuthValidator`.
-- [ ] The initial authenticated Bookings response returns a short-lived,
+- [x] Its AsyncAPI document validates through `AsyncApiAAuthValidator`.
+- [x] The initial authenticated Bookings response returns a short-lived,
       single-use, agent-bound ticket URL.
-- [ ] EventAgent registers using only the subscribe token at the ticket URL.
-- [ ] Bookings sends a body-bound event to the AP; AP records it; EventAgent
+- [x] EventAgent registers using only the subscribe token at the ticket URL.
+- [x] Bookings sends a body-bound event to the AP; AP records it; EventAgent
       polls, verifies, resolves context, and prints the direct JSON payload with
       an unauthenticated-data warning.
-- [ ] Reusing a ticket or `eid`, changing agent/resource/audience, replaying the
+- [x] Reusing a ticket or `eid`, changing agent/resource/audience, replaying the
       same event token, and exceeding `max_uses` are demonstrated or covered by
       adjacent integration tests.
-- [ ] Sample output labels AP acquisition/polling and in-memory storage as
+- [x] Sample output labels AP acquisition/polling and in-memory storage as
       non-normative/non-production.
 
 ## Phase 10 - Release, samples, snippets, and docs sweep

@@ -344,6 +344,18 @@ The API-freeze gate passes: Events 278, AAuth.Tests 517,
 AAuth.Conformance 573, and AAuth.R3.Tests 39, with no failures or skips; the
 full solution builds with zero warnings.
 
+### [2026-07-15] [Phase 9] Runnable Bookings/AP/EventAgent sample - RESOLVED
+
+Extended Bookings with merged OpenAPI/AsyncAPI metadata, protected waitlist
+tickets, registration, and an authenticated deterministic trigger. Extended
+MockAgentProvider with the normative event endpoint and explicitly
+non-normative in-memory token acquisition, polling, and ACK routes. Added
+EventAgent with durable enrollment, generic challenge handling, registration,
+polling, verification, deduplication, unauthenticated payload display, and ACK.
+The integrated focused stack completed the full flow successfully. Review
+corrected the Bookings resource URL, trigger grant ordering/lifetime, revoked
+subscription state, and bodyless/empty payload handling.
+
 ## Deviations from Plan
 
 None.
