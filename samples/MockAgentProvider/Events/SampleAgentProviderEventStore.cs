@@ -61,8 +61,10 @@ public sealed class SampleAgentProviderEventStore : IAAuthAgentProviderEventStor
                 return Task.FromResult(new EventAcceptanceResult(EventAcceptanceOutcome.WrongAudience));
 
             var now = incomingEvent.ReceiptTime;
-            if (subscription.Status == AgentProviderSubscriptionStatus.Revoked ||
-                subscription.Status == AgentProviderSubscriptionStatus.Expired ||
+            if (subscription.Status == AgentProviderSubscriptionStatus.Revoked)
+                return Task.FromResult(new EventAcceptanceResult(EventAcceptanceOutcome.ExpiredSubscription));
+
+            if (subscription.Status == AgentProviderSubscriptionStatus.Expired ||
                 claims.ExpiresAt <= now ||
                 subscription.ExpiresAt <= now)
             {
