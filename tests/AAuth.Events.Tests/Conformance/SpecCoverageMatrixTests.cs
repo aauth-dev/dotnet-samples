@@ -150,6 +150,9 @@ public sealed class SpecCoverageMatrixTests
         var methods = typeof(SpecCoverageMatrixTests).Assembly
             .GetTypes()
             .SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
+            .Where(method =>
+                method.GetCustomAttributes<FactAttribute>(inherit: false).Any() ||
+                method.GetCustomAttributes<TheoryAttribute>(inherit: false).Any())
             .Select(method => method.Name)
             .ToHashSet(StringComparer.Ordinal);
 

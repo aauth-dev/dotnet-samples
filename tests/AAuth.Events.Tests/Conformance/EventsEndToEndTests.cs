@@ -546,15 +546,19 @@ public sealed class EventsEndToEndTests
                 cancellationToken.ThrowIfCancellationRequested();
                 if (endpoint.Descriptor.IsProtected)
                 {
-                    if (endpoint.Ticket is null || !_fixture.Tickets.Contains(endpoint.Ticket))
+                    if (endpoint.Ticket is null)
                         return ValueTask.FromResult(
                             SubscriptionRegistrationResult.Conflict("ticket already used"));
-                    if (!_fixture.Tickets.Matches(endpoint.Ticket, registration.AgentSubject))
+                    var ticket = _fixture.Tickets.MatchAndConsume(
+                        endpoint.Ticket,
+                        registration.AgentSubject,
+                        _fixture.Now);
+                    if (ticket == TicketConsumption.WrongAgent)
                         return ValueTask.FromResult(
                             SubscriptionRegistrationResult.Forbidden("ticket is bound to another agent"));
-                    if (!_fixture.Tickets.TryConsume(endpoint.Ticket))
+                    if (ticket != TicketConsumption.Consumed)
                         return ValueTask.FromResult(
-                            SubscriptionRegistrationResult.Conflict("ticket already used"));
+                            SubscriptionRegistrationResult.Conflict("ticket already used or expired"));
                 }
 
                 lock (_fixture.SubscriptionGate)
@@ -618,18 +622,34 @@ public sealed class EventsEndToEndTests
             lock (_gate) return _tickets.ContainsKey(ticket);
         }
 
-        public bool Matches(string ticket, string agent)
+        public TicketConsumption MatchAndConsume(
+            string ticket,
+            string agent,
+            DateTimeOffset now)
         {
             lock (_gate)
-                return _tickets.TryGetValue(ticket, out var value) &&
-                    value.Expiry > DateTimeOffset.FromUnixTimeSeconds(1_900_000_000) &&
-                    value.Agent == agent;
+            {
+                if (!_tickets.TryGetValue(ticket, out var value))
+                    return TicketConsumption.NotFound;
+                if (value.Expiry <= now)
+                {
+                    _tickets.Remove(ticket);
+                    return TicketConsumption.Expired;
+                }
+                if (!string.Equals(value.Agent, agent, StringComparison.Ordinal))
+                    return TicketConsumption.WrongAgent;
+                _tickets.Remove(ticket);
+                return TicketConsumption.Consumed;
+            }
         }
+    }
 
-        public bool TryConsume(string ticket)
-        {
-            lock (_gate) return _tickets.Remove(ticket);
-        }
+    private enum TicketConsumption
+    {
+        Consumed,
+        NotFound,
+        Expired,
+        WrongAgent,
     }
 
     private sealed class DurableStore : IAAuthAgentProviderEventStore
