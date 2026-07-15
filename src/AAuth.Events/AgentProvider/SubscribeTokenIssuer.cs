@@ -39,8 +39,6 @@ public sealed class SubscribeTokenIssuer
 {
     private readonly IAAuthAgentProviderEventStore _store;
     private readonly SubscribeTokenIssuerOptions _options;
-    private readonly object _idGate = new();
-    private readonly HashSet<string> _everGeneratedIds = new(StringComparer.Ordinal);
 
     /// <summary>Creates an issuer backed by the required durable AP store.</summary>
     public SubscribeTokenIssuer(
@@ -70,13 +68,7 @@ public sealed class SubscribeTokenIssuer
             cancellationToken.ThrowIfCancellationRequested();
             var eid = _options.EidGenerator();
             if (string.IsNullOrWhiteSpace(eid))
-                throw new InvalidOperationException("The eid generator returned an empty or previously used identifier.");
-            lock (_idGate)
-            {
-                if (!_everGeneratedIds.Add(eid))
-                    throw new InvalidOperationException(
-                        "The eid generator returned an empty or previously used identifier.");
-            }
+                throw new InvalidOperationException("The eid generator returned an empty identifier.");
 
             var artifact = new SubscribeTokenBuilder
             {

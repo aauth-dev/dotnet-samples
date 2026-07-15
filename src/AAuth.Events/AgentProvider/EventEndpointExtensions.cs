@@ -208,21 +208,27 @@ public static class EventEndpointExtensions
             $"{request.Scheme}://{request.Host}{request.PathBase}{request.Path}{request.QueryString}",
             UriKind.Absolute);
         var message = new HttpRequestMessage(new HttpMethod(request.Method), uri);
-        foreach (var header in request.Headers)
-            if (!message.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray()))
-                message.Content ??= new StreamContent(Stream.Null);
-
         if (request.ContentLength is not null ||
             request.Headers.ContainsKey("Transfer-Encoding") ||
             request.Headers.ContainsKey("Content-Type") ||
             request.Headers.ContainsKey("Content-Digest"))
-        {
             message.Content = new StreamContent(request.Body);
-            foreach (var header in request.Headers)
+
+        foreach (var header in request.Headers)
+        {
+            if (header.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase) ||
+                header.Key.Equals("Transfer-Encoding", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (header.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) ||
+                header.Key.Equals("Content-Digest", StringComparison.OrdinalIgnoreCase))
             {
-                if (header.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase) ||
-                    header.Key.Equals("Transfer-Encoding", StringComparison.OrdinalIgnoreCase))
-                    continue;
+                message.Content ??= new StreamContent(Stream.Null);
+                message.Content.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
+                continue;
+            }
+            if (!message.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray()))
+            {
+                message.Content ??= new StreamContent(Stream.Null);
                 message.Content.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
             }
         }
