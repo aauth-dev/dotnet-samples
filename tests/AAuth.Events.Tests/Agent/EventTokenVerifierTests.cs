@@ -5,11 +5,13 @@ using System.Text.Json.Nodes;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.Events.Agent;
+using AAuth.Events.DependencyInjection;
 using AAuth.Events.Discovery;
 using AAuth.Events.Http;
 using AAuth.Events.Tokens;
 using AAuth.Events.Tests.TestSupport;
 using AAuth.Tokens;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AAuth.Events.Tests.Agent;
 
@@ -111,6 +113,104 @@ public sealed class EventTokenVerifierTests
             substituted.Event!.Payload!.GetUtf8Text());
         Assert.False(substituted.Event.Payload.IsAuthenticated);
     }
+
+    [Fact]
+    public void DependencyInjectionResolvesVerifierWithConfiguredAudience()
+    {
+        const string expectedAudience = "aauth:agent@ap.example";
+        var services = new ServiceCollection();
+        services.AddAAuthEventsAgent(
+            expectedAudience,
+            new DelegateEventContextLookup(static (string _) => new object()));
+
+        using var provider = services.BuildServiceProvider();
+        var verifier = provider.GetRequiredService<EventTokenVerifier>();
+
+        Assert.Equal(expectedAudience, verifier.ExpectedAudience);
+        Assert.NotNull(provider.GetRequiredService<EventsJwtKeyResolver>());
+        Assert.NotNull(provider.GetRequiredService<IEventContextLookup>());
+        Assert.NotNull(provider.GetRequiredService<IEventDeduplicator>());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("resource.example")]
+    public void DependencyInjectionRejectsMissingOrInvalidAudience(string? expectedAudience)
+    {
+        var services = new ServiceCollection();
+
+        var error = Assert.Throws<ArgumentException>(() =>
+            services.AddAAuthEventsAgent(
+                expectedAudience!,
+                new DelegateEventContextLookup(static (string _) => new object())));
+
+        Assert.Contains("ExpectedAudience", error.Message);
+    }
+
+    [Fact]
+    public async Task WrongAudienceThrowsTypedVerificationFailure()
+    {
+        var key = AAuthKey.Generate();
+        var token = new EventTokenBuilder
+        {
+            Issuer = "https://resource.example",
+            Audience = "aauth:other-agent@ap.example",
+            Eid = "event-1",
+            KeyId = "resource-1",
+            Key = key,
+            IssuedAt = EventsTestData.Now,
+            Lifetime = TimeSpan.FromMinutes(5),
+        }.Build().Token;
+        var verifier = NewVerifier(key);
+
+        var error = await Assert.ThrowsAsync<EventsVerificationException>(() =>
+            verifier.VerifyAsync(token));
+
+        Assert.Equal(EventsVerificationErrorCode.WrongAudience, error.Error.Code);
+    }
+
+    [Fact]
+    public async Task ExpiredTokenThrowsTypedVerificationFailure()
+    {
+        var key = AAuthKey.Generate();
+        var token = new EventTokenBuilder
+        {
+            Issuer = "https://resource.example",
+            Audience = "aauth:agent@ap.example",
+            Eid = "event-1",
+            KeyId = "resource-1",
+            Key = key,
+            IssuedAt = EventsTestData.Now.AddMinutes(-10),
+            Lifetime = TimeSpan.FromMinutes(5),
+        }.Build().Token;
+        var verifier = NewVerifier(key);
+
+        var error = await Assert.ThrowsAsync<EventsVerificationException>(() =>
+            verifier.VerifyAsync(token));
+
+        Assert.Equal(EventsVerificationErrorCode.ExpiredToken, error.Error.Code);
+    }
+
+    [Fact]
+    public async Task ForgedTokenThrowsTypedSignatureFailure()
+    {
+        var trustedKey = AAuthKey.Generate();
+        var forgedKey = AAuthKey.Generate();
+        var token = EventsTestData.Event(forgedKey).Token;
+        var verifier = NewVerifier(trustedKey);
+
+        var error = await Assert.ThrowsAsync<EventsVerificationException>(() =>
+            verifier.VerifyAsync(token));
+
+        Assert.Equal(EventsVerificationErrorCode.InvalidSignature, error.Error.Code);
+    }
+
+    private static EventTokenVerifier NewVerifier(IAAuthKey key) =>
+        new(
+            CreateResolver(key),
+            "aauth:agent@ap.example",
+            new DelegateEventContextLookup(static (string _) => new object()));
 
     private static EventsJwtKeyResolver CreateResolver(IAAuthKey key)
     {

@@ -77,6 +77,9 @@ public sealed class EventTokenVerifier
     private readonly IEventContextLookup _contextLookup;
     private readonly IEventDeduplicator _deduplicator;
 
+    /// <summary>The audience accepted for verified event tokens.</summary>
+    public string ExpectedAudience => _expectedAudience;
+
     /// <summary>Creates an event verifier with application-owned context lookup.</summary>
     public EventTokenVerifier(
         EventsJwtKeyResolver keyResolver,

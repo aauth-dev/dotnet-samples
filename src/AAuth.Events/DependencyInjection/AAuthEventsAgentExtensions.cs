@@ -1,6 +1,8 @@
 using System;
+using AAuth.Identifiers;
 using AAuth.Events.Agent;
 using AAuth.Events.Discovery;
+using AAuth.Events.Http;
 using AAuth.Tokens;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -66,8 +68,16 @@ public static class AAuthEventsAgentExtensions
             Clock = options.Clock ?? (() => DateTimeOffset.UtcNow),
             ClockSkew = options.ClockSkew,
         });
-        services.AddHttpClient<Events.Http.EventsJwtKeyResolver>();
-        services.AddSingleton<EventTokenVerifier>();
+        services.AddHttpClient<EventsJwtKeyResolver>();
+        services.AddSingleton<EventTokenVerifier>(serviceProvider =>
+        {
+            var configured = serviceProvider.GetRequiredService<AAuthEventsAgentOptions>();
+            return new EventTokenVerifier(
+                serviceProvider.GetRequiredService<EventsJwtKeyResolver>(),
+                configured.ExpectedAudience!,
+                serviceProvider.GetRequiredService<IEventContextLookup>(),
+                serviceProvider.GetRequiredService<IEventDeduplicator>());
+        });
         return services;
     }
 
@@ -92,6 +102,10 @@ public static class AAuthEventsAgentExtensions
         if (string.IsNullOrWhiteSpace(options.ExpectedAudience))
             throw new ArgumentException(
                 "ExpectedAudience is required.", nameof(options.ExpectedAudience));
+        if (!AgentId.TryParse(options.ExpectedAudience, out _, out var audienceError))
+            throw new ArgumentException(
+                $"ExpectedAudience must be a valid AAuth agent identifier: {audienceError}",
+                nameof(options.ExpectedAudience));
         if (options.ContextLookup is null)
             throw new ArgumentException(
                 "ContextLookup is required.", nameof(options.ContextLookup));
