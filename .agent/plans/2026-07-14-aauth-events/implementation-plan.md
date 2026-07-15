@@ -326,7 +326,7 @@ L402-L428).
 - [x] A delivery rejected at step 8 for wrong agent `aud` returns 403 without
       incrementing the use count or writing an inbox event.
 - [x] Exact retries are idempotent under concurrency and do not consume uses.
-- [ ] Two same-time events with identical non-`jti` claims are both durably
+- [x] Two same-time events with identical non-`jti` claims are both durably
       accepted; retrying either exact compact token is idempotent.
 - [x] No package-provided in-memory AP store is registered.
 
@@ -498,21 +498,21 @@ rulings, including state races that isolated unit tests cannot prove.
 
 ### Definition of Done
 
-- [ ] Every MUST/MUST NOT in spec L190-L617 that falls within package scope has
+- [x] Every MUST/MUST NOT in spec L190-L617 that falls within package scope has
       at least one positive or negative test.
-- [ ] Public and protected flows pass end to end with EdDSA and ES256.
-- [ ] Key rotation, cached metadata, changed AP endpoint, redirect attempts, and
+- [x] Public and protected flows pass end to end with EdDSA and ES256.
+- [x] Key rotation, cached metadata, changed AP endpoint, redirect attempts, and
       URL-policy rejections are covered.
-- [ ] Concurrent ticket use, duplicate registration, event retry, final
+- [x] Concurrent ticket use, duplicate registration, event retry, final
       `max_uses`, and durable-store failure are deterministic.
-- [ ] Conformance pairs two same-time events that differ only by `jti` with an
+- [x] Conformance pairs two same-time events that differ only by `jti` with an
       exact retry of each, proving distinct acceptance and retry idempotency.
-- [ ] Adversarial coverage includes registration-body parameter substitution
+- [x] Adversarial coverage includes registration-body parameter substitution
       and AP-side event-payload substitution, asserting the documented
       authorization and trust boundaries rather than false cryptographic
       detection.
-- [ ] The AP never returns success after a failed/cancelled durable operation.
-- [ ] A coverage-to-spec table in test names or test documentation maps each
+- [x] The AP never returns success after a failed/cancelled durable operation.
+- [x] A coverage-to-spec table in test names or test documentation maps each
       scenario to its section and line range.
 
 ## Phase 9 - Runnable Bookings/AP/EventAgent sample

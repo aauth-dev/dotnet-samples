@@ -334,6 +334,16 @@ tests cover both algorithms, retries, payload immutability, endpoint changes,
 all response variants, malformed responses, transport failures, timeout, and
 cancellation.
 
+### [2026-07-15] [Phase 8] Cross-role conformance and API freeze - RESOLVED
+
+Added four role-specific conformance matrices, a true in-process AP/resource/
+agent flow, and an executable spec-coverage matrix for every in-scope
+MUST/MUST NOT in Events L190-L617. Review corrected stored-resource/audience
+validation order and made protected-ticket matching and consumption atomic.
+The API-freeze gate passes: Events 278, AAuth.Tests 517,
+AAuth.Conformance 573, and AAuth.R3.Tests 39, with no failures or skips; the
+full solution builds with zero warnings.
+
 ## Deviations from Plan
 
 None.
