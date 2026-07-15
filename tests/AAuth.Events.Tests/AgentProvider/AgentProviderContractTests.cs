@@ -160,6 +160,59 @@ public sealed class AgentProviderContractTests
     }
 
     [Theory]
+    [InlineData("EdDSA")]
+    [InlineData("ES256")]
+    public async Task EndpointAcceptsBodylessEventDeliveries(string algorithm)
+    {
+        var resourceKey = CreateKey(algorithm);
+        var store = new RecordingStore
+        {
+            ResultFactory = incoming => EventAcceptanceResult.Accepted(incoming),
+        };
+        using var server = CreateServer(resourceKey, store);
+        using var client = server.CreateClient();
+        using var request = SignedBodylessEvent(
+            resourceKey,
+            "eid-bodyless",
+            "event-bodyless");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Empty(store.LastIncoming!.RawPayloadBytes);
+        Assert.Null(store.LastIncoming.ContentType);
+        Assert.Null(store.LastIncoming.ContentDigest);
+        Assert.Equal(1, store.AcceptCalls);
+    }
+
+    [Theory]
+    [InlineData("EdDSA")]
+    [InlineData("ES256")]
+    public async Task EndpointTreatsContentLengthZeroAsBodyless(string algorithm)
+    {
+        var resourceKey = CreateKey(algorithm);
+        var store = new RecordingStore
+        {
+            ResultFactory = incoming => EventAcceptanceResult.Accepted(incoming),
+        };
+        using var server = CreateServer(resourceKey, store);
+        using var client = server.CreateClient();
+        using var request = SignedBodylessEvent(
+            resourceKey,
+            "eid-content-length-zero",
+            "event-content-length-zero");
+        request.Content = new ByteArrayContent([]);
+        request.Content.Headers.ContentLength = 0;
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Empty(store.LastIncoming!.RawPayloadBytes);
+        Assert.Null(store.LastIncoming.ContentType);
+        Assert.Null(store.LastIncoming.ContentDigest);
+    }
+
+    [Theory]
     [InlineData(EventAcceptanceOutcome.Accepted, 202)]
     [InlineData(EventAcceptanceOutcome.AlreadyAccepted, 202)]
     [InlineData(EventAcceptanceOutcome.UnknownSubscription, 404)]
@@ -412,6 +465,18 @@ public sealed class AgentProviderContractTests
         };
         request.Content.Headers.ContentType = new MediaTypeHeaderValue(AAuthEventsConstants.JsonMediaType);
         new EventsRequestSigner(signingKey, () => token, () => EventsTestData.Now).SignEvent(request);
+        return request;
+    }
+
+    private static HttpRequestMessage SignedBodylessEvent(
+        IAAuthKey signingKey,
+        string eid,
+        string jti)
+    {
+        var token = EventToken(signingKey, eid, jti).Token;
+        var request = new HttpRequestMessage(HttpMethod.Post, "http://localhost/events");
+        new EventsRequestSigner(signingKey, () => token, () => EventsTestData.Now)
+            .SignBodyless(request);
         return request;
     }
 

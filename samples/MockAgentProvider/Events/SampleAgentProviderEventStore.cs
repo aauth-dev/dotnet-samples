@@ -9,12 +9,18 @@ namespace MockAgentProvider.Events;
 public sealed class SampleAgentProviderEventStore : IAAuthAgentProviderEventStore
 {
     private readonly object _gate = new();
+    private readonly Func<DateTimeOffset> _clock;
     private readonly Dictionary<string, AgentProviderSubscription> _subscriptions =
         new(StringComparer.Ordinal);
     private readonly Dictionary<string, StoredReceipt> _acceptedByTokenHash =
         new(StringComparer.Ordinal);
     private readonly Dictionary<string, StoredReceipt> _pendingByReceiptId =
         new(StringComparer.Ordinal);
+
+    public SampleAgentProviderEventStore(Func<DateTimeOffset>? clock = null)
+    {
+        _clock = clock ?? (() => DateTimeOffset.UtcNow);
+    }
 
     public Task<bool> TryCreateSubscriptionAsync(
         AgentProviderSubscription subscription,
@@ -47,6 +53,7 @@ public sealed class SampleAgentProviderEventStore : IAAuthAgentProviderEventStor
         cancellationToken.ThrowIfCancellationRequested();
         lock (_gate)
         {
+            SweepExpiredReceipts(incomingEvent.ReceiptTime);
             var tokenHash = incomingEvent.TokenHashHex;
             if (_acceptedByTokenHash.TryGetValue(tokenHash, out var existing))
                 return Task.FromResult(EventAcceptanceResult.AlreadyAccepted(existing.Event, existing.RemainingUses));
@@ -109,6 +116,7 @@ public sealed class SampleAgentProviderEventStore : IAAuthAgentProviderEventStor
         cancellationToken.ThrowIfCancellationRequested();
         lock (_gate)
         {
+            SweepExpiredReceipts(_clock());
             var result = _pendingByReceiptId.Values
                 .Where(receipt => string.Equals(receipt.AgentId, agentId, StringComparison.Ordinal))
                 .OrderBy(receipt => receipt.Event.ReceiptTime)
@@ -133,12 +141,27 @@ public sealed class SampleAgentProviderEventStore : IAAuthAgentProviderEventStor
         cancellationToken.ThrowIfCancellationRequested();
         lock (_gate)
         {
+            SweepExpiredReceipts(_clock());
             if (!_pendingByReceiptId.TryGetValue(receiptId, out var receipt) ||
                 !string.Equals(receipt.AgentId, agentId, StringComparison.Ordinal))
                 return Task.FromResult(false);
 
             _pendingByReceiptId.Remove(receiptId);
             return Task.FromResult(true);
+        }
+    }
+
+    private void SweepExpiredReceipts(DateTimeOffset now)
+    {
+        var expired = _acceptedByTokenHash
+            .Where(pair => pair.Value.Event.Claims.ExpiresAt <= now)
+            .Select(pair => pair.Key)
+            .ToArray();
+        foreach (var tokenHash in expired)
+        {
+            var receipt = _acceptedByTokenHash[tokenHash];
+            _acceptedByTokenHash.Remove(tokenHash);
+            _pendingByReceiptId.Remove(receipt.ReceiptId);
         }
     }
 

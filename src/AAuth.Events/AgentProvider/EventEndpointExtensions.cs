@@ -103,10 +103,13 @@ public static class EventEndpointExtensions
             var resolution = await resolver.ResolveRequestAsync(
                 request, EventsTokenKind.Event, expectedAudience: null, context.RequestAborted)
                 .ConfigureAwait(false);
+            var profile = request.Content is null
+                ? EventsHttpProfile.Bodyless
+                : EventsHttpProfile.EventJson;
             var verified = await verifier.VerifyAsync(
                 request,
                 resolution.HttpSignatureKey,
-                EventsHttpProfile.EventJson,
+                profile,
                 cancellationToken: context.RequestAborted).ConfigureAwait(false);
             var claims = EventTokenClaims.Read(resolution.VerifiedToken);
             var compactToken = SignatureKeyHeader.GetJwt(verified.SignatureKey)
@@ -208,7 +211,7 @@ public static class EventEndpointExtensions
             $"{request.Scheme}://{request.Host}{request.PathBase}{request.Path}{request.QueryString}",
             UriKind.Absolute);
         var message = new HttpRequestMessage(new HttpMethod(request.Method), uri);
-        if (request.ContentLength is not null ||
+        if (request.ContentLength is > 0 ||
             request.Headers.ContainsKey("Transfer-Encoding") ||
             request.Headers.ContainsKey("Content-Type") ||
             request.Headers.ContainsKey("Content-Digest"))

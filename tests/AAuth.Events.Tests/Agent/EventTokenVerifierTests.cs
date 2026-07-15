@@ -5,7 +5,6 @@ using System.Text.Json.Nodes;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.Events.Agent;
-using AAuth.Events.DependencyInjection;
 using AAuth.Events.Discovery;
 using AAuth.Events.Http;
 using AAuth.Events.Tokens;
@@ -125,8 +124,10 @@ public sealed class EventTokenVerifierTests
 
         using var provider = services.BuildServiceProvider();
         var verifier = provider.GetRequiredService<EventTokenVerifier>();
+        var secondVerifier = provider.GetRequiredService<EventTokenVerifier>();
 
         Assert.Equal(expectedAudience, verifier.ExpectedAudience);
+        Assert.NotSame(verifier, secondVerifier);
         Assert.NotNull(provider.GetRequiredService<EventsJwtKeyResolver>());
         Assert.NotNull(provider.GetRequiredService<IEventContextLookup>());
         Assert.NotNull(provider.GetRequiredService<IEventDeduplicator>());

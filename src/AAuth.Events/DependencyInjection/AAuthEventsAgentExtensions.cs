@@ -6,7 +6,7 @@ using AAuth.Events.Http;
 using AAuth.Tokens;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace AAuth.Events.DependencyInjection;
+namespace Microsoft.Extensions.DependencyInjection;
 
 /// <summary>Options for one-call AAuth Events agent registration.</summary>
 public sealed class AAuthEventsAgentOptions
@@ -69,7 +69,7 @@ public static class AAuthEventsAgentExtensions
             ClockSkew = options.ClockSkew,
         });
         services.AddHttpClient<EventsJwtKeyResolver>();
-        services.AddSingleton<EventTokenVerifier>(serviceProvider =>
+        services.AddTransient<EventTokenVerifier>(serviceProvider =>
         {
             var configured = serviceProvider.GetRequiredService<AAuthEventsAgentOptions>();
             return new EventTokenVerifier(
