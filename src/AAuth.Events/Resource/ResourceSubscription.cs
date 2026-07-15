@@ -70,8 +70,8 @@ public sealed class ResourceSubscription
 
     /// <summary>Maps verified registration facts into resource state.</summary>
     /// <remarks>
-    /// The application policy expiry may shorten, but never extend, the
-    /// verified registration lifetime.
+    /// The application policy expiry is independent of the subscribe-token
+    /// registration window and may be later than the verified token expiry.
     /// </remarks>
     public static ResourceSubscription FromRegistration(
         VerifiedSubscriptionRegistration registration,
@@ -83,10 +83,6 @@ public sealed class ResourceSubscription
         if (expiresAt <= registration.IssuedAt)
             throw new ArgumentOutOfRangeException(
                 nameof(expiresAt), "The subscription expiry must be after registration issue time.");
-        if (expiresAt > registration.ExpiresAt)
-            throw new ArgumentOutOfRangeException(
-                nameof(expiresAt), "The subscription expiry cannot extend the verified registration.");
-
         return new ResourceSubscription(
             registration.Eid,
             registration.ApIssuer,

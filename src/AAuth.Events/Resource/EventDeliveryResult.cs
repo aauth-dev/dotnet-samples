@@ -6,7 +6,6 @@ namespace AAuth.Events.Resource;
 public enum EventDeliveryOutcome
 {
     Accepted,
-    AlreadyAccepted,
     Exhausted,
     BadRequest,
     Unauthorized,
@@ -24,8 +23,7 @@ public sealed record EventDeliveryResult(
     string? Error = null)
 {
     /// <summary>Whether the AP durably accepted this delivery.</summary>
-    public bool IsAccepted =>
-        Outcome is EventDeliveryOutcome.Accepted or EventDeliveryOutcome.AlreadyAccepted;
+    public bool IsAccepted => Outcome == EventDeliveryOutcome.Accepted;
 
     /// <summary>Alias for <see cref="IsAccepted"/>.</summary>
     public bool IsSuccess => IsAccepted;
@@ -39,10 +37,6 @@ public sealed record EventDeliveryResult(
     /// <summary>Creates a normal accepted response.</summary>
     public static EventDeliveryResult AcceptedResult(long? remainingUses = null, string? responseBody = null) =>
         new(HttpStatusCode.Accepted, EventDeliveryOutcome.Accepted, remainingUses, responseBody);
-
-    /// <summary>Creates an idempotent accepted response.</summary>
-    public static EventDeliveryResult AlreadyAcceptedResult(long? remainingUses = null, string? responseBody = null) =>
-        new(HttpStatusCode.Accepted, EventDeliveryOutcome.AlreadyAccepted, remainingUses, responseBody);
 
     /// <summary>Creates an exhausted response.</summary>
     public static EventDeliveryResult ExhaustedResult(string? responseBody = null) =>

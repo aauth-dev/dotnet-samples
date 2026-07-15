@@ -16,7 +16,6 @@ public sealed class EventDeliveryClient
     private readonly IAAuthKey _resourceKey;
     private readonly string _resourceKeyId;
     private readonly Func<DateTimeOffset> _clock;
-    private long _signatureSequence;
 
     /// <summary>Creates a delivery client over a caller-owned HTTP client.</summary>
     public EventDeliveryClient(
@@ -143,9 +142,6 @@ public sealed class EventDeliveryClient
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(prepared);
-        // A delivery must observe AP endpoint rotation rather than reuse a
-        // discovery value cached by an earlier attempt.
-        _endpointResolver.Invalidate(GetAgentProviderIssuer(prepared));
         var endpoint = await _endpointResolver.ResolveAsync(
             GetAgentProviderIssuer(prepared), cancellationToken).ConfigureAwait(false);
 
@@ -157,12 +153,10 @@ public sealed class EventDeliveryClient
                 "Content-Type", prepared.ContentType!);
         }
 
-        var signatureTime = _clock().AddSeconds(
-            Interlocked.Increment(ref _signatureSequence) - 1);
         var signer = new EventsRequestSigner(
             _resourceKey,
             () => prepared.CompactToken,
-            () => signatureTime);
+            _clock);
         if (prepared.HasPayload)
             signer.SignEvent(request);
         else
