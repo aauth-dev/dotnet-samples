@@ -80,6 +80,16 @@ public static class SubscriptionEndpointExtensions
         SubscriptionChannel channel,
         IAAuthSubscriptionRegistrationHandler handler)
     {
+        var values = context.Request.RouteValues.ToDictionary(
+            pair => pair.Key, pair => pair.Value?.ToString(), StringComparer.Ordinal);
+        values.TryGetValue(channel.TicketRouteValueName, out var ticket);
+        if (channel.IsProtected && string.IsNullOrWhiteSpace(ticket))
+        {
+            return Results.Json(
+                new { error = "malformed", error_description = "A protected subscription ticket is required." },
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
         var verifier = context.RequestServices.GetService<SubscriptionRegistrationVerifier>();
         if (verifier is null)
             return Results.StatusCode(StatusCodes.Status500InternalServerError);
@@ -96,9 +106,6 @@ public static class SubscriptionEndpointExtensions
         }
         try
         {
-            var values = context.Request.RouteValues.ToDictionary(
-                pair => pair.Key, pair => pair.Value?.ToString(), StringComparer.Ordinal);
-            values.TryGetValue(channel.TicketRouteValueName, out var ticket);
             var endpoint = new SubscriptionEndpointContext(channel, values, ticket);
             SubscriptionRegistrationVerification verification;
             try
@@ -106,7 +113,7 @@ public static class SubscriptionEndpointExtensions
                 verification = await verifier.VerifyAsync(
                     message,
                     channel.ResourceAudience,
-                    context.Request.Path.Value,
+                    wirePath: null,
                     context.RequestAborted).ConfigureAwait(false);
             }
             catch (EventsVerificationException ex)

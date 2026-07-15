@@ -42,8 +42,7 @@ public sealed class SubscriptionRegistrationVerifier
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
-        return VerifyAsync(request, endpoint.Descriptor.ResourceAudience, endpoint.Ticket is null
-            ? null : GetPath(request), cancellationToken);
+        return VerifyAsync(request, endpoint.Descriptor.ResourceAudience, wirePath: null, cancellationToken);
     }
 
     /// <summary>
@@ -63,7 +62,8 @@ public sealed class SubscriptionRegistrationVerifier
         var resolution = await _keyResolver.ResolveRequestAsync(
             request, EventsTokenKind.Subscribe, expectedAudience, cancellationToken).ConfigureAwait(false);
         var http = await _httpVerifier.VerifyAsync(
-            request, resolution.HttpSignatureKey, kind, wirePath, cancellationToken).ConfigureAwait(false);
+            request, resolution.HttpSignatureKey, kind, wirePath ?? EscapedPath(request), cancellationToken)
+            .ConfigureAwait(false);
 
         SubscribeTokenClaims claims;
         try
@@ -116,6 +116,12 @@ public sealed class SubscriptionRegistrationVerifier
         CancellationToken cancellationToken = default) =>
         (await VerifyAsync(request, expectedAudience, wirePath, cancellationToken).ConfigureAwait(false)).Registration;
 
-    private static string? GetPath(HttpRequestMessage request) =>
-        request.RequestUri?.GetComponents(UriComponents.Path, UriFormat.UriEscaped);
+    private static string EscapedPath(HttpRequestMessage request)
+    {
+        var path = request.RequestUri?.GetComponents(UriComponents.Path, UriFormat.UriEscaped);
+        if (string.IsNullOrEmpty(path))
+            return "/";
+        return path[0] == '/' ? path : "/" + path;
+    }
+
 }
