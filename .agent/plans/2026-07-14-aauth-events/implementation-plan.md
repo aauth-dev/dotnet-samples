@@ -200,21 +200,21 @@ L376-L413).
 
 ### Definition of Done
 
-- [ ] Bodyless requests verify only the four base components.
-- [ ] Registration JSON requires signed `content-type` and deliberately does
+- [x] Bodyless requests verify only the four base components.
+- [x] Registration JSON requires signed `content-type` and deliberately does
       not claim signature-bound body integrity; `content-digest` is absent from
       this exact draft profile.
-- [ ] Event JSON requires signed `content-type` and `content-digest`; digest is
+- [x] Event JSON requires signed `content-type` and `content-digest`; digest is
       compared with the exact bounded bytes later passed to storage.
-- [ ] Missing, reordered, duplicated, or unexpected covered components fail.
-- [ ] Event JWT and HTTP signature must verify with the same resource `kid`.
-- [ ] Wrong `cnf.jwk` binding fails registration.
-- [ ] Requests over the configured body limit fail before durable storage or
+- [x] Missing, reordered, duplicated, or unexpected covered components fail.
+- [x] Event JWT and HTTP signature must verify with the same resource `kid`.
+- [x] Wrong `cnf.jwk` binding fails registration.
+- [x] Requests over the configured body limit fail before durable storage or
       application callbacks.
-- [ ] Redirects, disallowed schemes, non-loopback private/link-local IP
+- [x] Redirects, disallowed schemes, non-loopback private/link-local IP
       literals, cross-origin policy rejection, and loopback exceptions are
       covered before a discovery request is sent.
-- [ ] Verification tests include tampered event body/header/path/authority/token,
+- [x] Verification tests include tampered event body/header/path/authority/token,
       stale/future signature time, unknown `kid`, silent key rotation, and
       algorithm mismatch.
 

@@ -81,6 +81,32 @@ public sealed class EventsHttpVerifierSecurityTests
         Assert.Equal(EventsVerificationErrorCode.InvalidSignature, error.Error.Code);
     }
 
+    [Theory]
+    [InlineData(
+        "sig=(\"@method\" \"@authority\" \"@path\");created=1750000000",
+        EventsVerificationErrorCode.MissingCoveredComponent)]
+    [InlineData(
+        "sig=(\"@authority\" \"@method\" \"@path\" \"signature-key\");created=1750000000",
+        EventsVerificationErrorCode.UnexpectedCoveredComponent)]
+    [InlineData(
+        "sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\" \"content-type\");created=1750000000",
+        EventsVerificationErrorCode.UnexpectedCoveredComponent)]
+    public void VerifierRejectsMissingReorderedAndUnexpectedComponents(
+        string signatureInput,
+        EventsVerificationErrorCode expected)
+    {
+        var key = AAuthKey.Generate();
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post, "https://resource.example/events");
+        new EventsRequestSigner(key, () => "carrier", () => Now).SignBodyless(request);
+        request.Headers.Remove("Signature-Input");
+        request.Headers.TryAddWithoutValidation("Signature-Input", signatureInput);
+
+        var error = Assert.Throws<EventsVerificationException>(() =>
+            NewVerifier().VerifyBodyless(request, Public(key)));
+        Assert.Equal(expected, error.Error.Code);
+    }
+
     [Fact]
     public void VerifierRejectsMalformedAuthorizationHeader()
     {

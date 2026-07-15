@@ -277,6 +277,16 @@ ES256 support, 128-bit random `eid`/`jti`, and the required event `jti`
 extension. Seventeen token tests pass, the full solution builds, and the
 production assets contain no `AAuth.R3` dependency.
 
+### [2026-07-15] [Phase 2] Events HTTP security layer - RESOLVED
+
+Added exact bodyless, registration, and event RFC 9421 profiles; bounded raw
+body and RFC 9530 digest verification; typed errors; EdDSA/ES256 subscribe and
+event key resolution; signature-only silent re-key retry; no-redirect
+policy-checked transport; and URL trust rules. Review fixes prevent
+deterministic claim failures from triggering JWKS refreshes and reject malformed
+Authorization headers on inbound verification. Fifty-two token/HTTP tests pass
+and the full solution builds without warnings.
+
 ## Deviations from Plan
 
 None.
