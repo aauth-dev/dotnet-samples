@@ -268,9 +268,26 @@ Bookings adds `POST /waitlist/request`, protected by the existing
 `dotnet test AAuth.slnx` passed before implementation changes: AAuth.Tests 517,
 AAuth.Conformance 573, and AAuth.R3.Tests 39, with no failures or skips.
 
+### [2026-07-15] [Phase 1] Package and token foundation - RESOLVED
+
+Added the `AAuth.Events` preview project and tests, package-local compact JWS
+writer, complete Events constants, strict subscribe/event builders and claim
+readers, required agent confirmation-key binding, AgentId validation, EdDSA and
+ES256 support, 128-bit random `eid`/`jti`, and the required event `jti`
+extension. Seventeen token tests pass, the full solution builds, and the
+production assets contain no `AAuth.R3` dependency.
+
 ## Deviations from Plan
 
 None.
+
+### [2026-07-15] [Phase 1] AP-wide eid uniqueness moved to Phase 4 - PROCEEDED
+
+Phase 1 proves 128-bit CSPRNG/base64url generation but cannot prove that an AP
+never returns a previously stored ID without the durable subscription store.
+The collision-retry requirement is therefore tested at `SubscribeTokenIssuer`
+in Phase 4, where store insertion is authoritative. This changes no wire or
+public token behavior.
 
 ## Open Questions / Inputs Needed
 

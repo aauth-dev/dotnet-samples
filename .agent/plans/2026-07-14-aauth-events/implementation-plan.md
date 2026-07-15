@@ -143,21 +143,20 @@ L340-L374.
 
 ### Definition of Done
 
-- [ ] Subscribe tokens contain exactly the required header/payload claims and
+- [x] Subscribe tokens contain exactly the required header/payload claims and
       optional `max_uses`.
-- [ ] Event tokens contain no `cnf` and no event payload, but include the
+- [x] Event tokens contain no `cnf` and no event payload, but include the
       required local `jti` extension.
-- [ ] EdDSA and ES256 round-trip through the builders and `TokenVerifier`;
+- [x] EdDSA and ES256 round-trip through the builders and `TokenVerifier`;
       both subscribe and event token readers reject `none`, unsupported
       algorithms, missing `kid`, missing claims, invalid times, empty `eid`,
       missing/empty event `jti`, and non-positive `max_uses`.
-- [ ] Two event tokens built with the same resource, agent, `eid`, `iat`, and
+- [x] Two event tokens built with the same resource, agent, `eid`, `iat`, and
       `exp` still have different `jti` values and compact serializations.
-- [ ] Generated `eid` values are base64url, at least 128 random bits, and
-      collision handling never returns a reused ID.
-- [ ] The production package references `AAuth` only; `AAuth.R3` is absent from
+- [x] Generated `eid` values are base64url and contain at least 128 random bits.
+- [x] The production package references `AAuth` only; `AAuth.R3` is absent from
       `src/AAuth.Events/obj/project.assets.json`.
-- [ ] `dotnet test tests/AAuth.Events.Tests/AAuth.Events.Tests.csproj` passes
+- [x] `dotnet test tests/AAuth.Events.Tests/AAuth.Events.Tests.csproj` passes
       for token tests.
 
 ## Phase 2 - Events HTTP signing and verification
@@ -314,6 +313,8 @@ L402-L428).
 
 - [ ] Subscribe-token issuance stores the AP-side resource `aud`, agent `sub`,
       `eid`, optional `max_uses`, and application `ExpiresAt`.
+- [ ] Subscribe-token issuance retries store collisions with a fresh random
+      `eid` and never returns an identifier already held by the AP.
 - [ ] Unknown/expired subscription returns 404; resource mismatch and wrong
       agent `aud` return 403; invalid/expired JWT or signature returns 401;
       malformed input returns 400; exhausted uses return 429.
