@@ -94,13 +94,13 @@ behavior.
 
 ### Definition of Done
 
-- [ ] `implementation-log.md` exists with every C1-C23 and RF1-RF5 ruling
+- [x] `implementation-log.md` exists with every C1-C23 and RF1-RF5 ruling
       recorded as `[YYYY-MM-DD] [Phase 0] ... - RESOLVED`.
-- [ ] Every draft discrepancy identifies the selected behavior and the
+- [x] Every draft discrepancy identifies the selected behavior and the
       spec lines it interprets.
-- [ ] Package public API names and role boundaries are confirmed without adding
+- [x] Package public API names and role boundaries are confirmed without adding
       Events behavior to core or a production `AAuth.R3` dependency.
-- [ ] The owner has approved implementation to begin.
+- [x] The owner has approved implementation to begin.
 
 ## Phase 1 - Package foundation and token primitives
 
