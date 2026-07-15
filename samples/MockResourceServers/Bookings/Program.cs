@@ -187,13 +187,14 @@ app.MapPost("/waitlist/subscriptions/{eid}/trigger", async (
     BookingsEventSubscriptions subscriptions,
     EventDeliveryClient delivery) =>
 {
+    var auth = await VerifyAuthOrChallengeAsync(ctx, [SearchAvailability]);
+    if (auth.Result is not null) return auth.Result;
+
     if (!subscriptions.TryGet(eid, out var stored))
     {
         return Results.Json(new { error = "subscription_not_found" }, statusCode: StatusCodes.Status404NotFound);
     }
 
-    var auth = await VerifyAuthOrChallengeAsync(ctx, [SearchAvailability]);
-    if (auth.Result is not null) return auth.Result;
     var agentId = (string?)auth.Verified!.Payload["agent"];
     if (!string.Equals(agentId, stored.Subscription.AgentSubject, StringComparison.Ordinal))
     {
@@ -218,9 +219,11 @@ app.MapPost("/waitlist/subscriptions/{eid}/trigger", async (
         available = true,
         offer_expires_at = now.AddSeconds(60),
     });
-    var lifetime = stored.ExpiresAt - now;
-    if (lifetime > eventLifetime) lifetime = eventLifetime;
-    if (lifetime <= TimeSpan.Zero)
+    var configuredEventExpiresAt = now.Add(eventLifetime);
+    var eventExpiresAt = stored.ExpiresAt <= configuredEventExpiresAt
+        ? stored.ExpiresAt
+        : configuredEventExpiresAt;
+    if (eventExpiresAt <= now)
     {
         subscriptions.Remove(eid);
         return Results.Json(new { error = "subscription_expired" }, statusCode: StatusCodes.Status404NotFound);
@@ -231,8 +234,9 @@ app.MapPost("/waitlist/subscriptions/{eid}/trigger", async (
         var prepared = delivery.Prepare(
             stored.Subscription,
             payload,
-            lifetime,
-            AAuthEventsConstants.JsonMediaType);
+            eventExpiresAt,
+            AAuthEventsConstants.JsonMediaType,
+            issuedAt: now);
         var outcome = await delivery.SendAsync(prepared, ctx.RequestAborted);
         if (outcome.IsExhausted || outcome.RemainingUses == 0)
             subscriptions.Remove(eid);
