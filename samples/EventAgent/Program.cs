@@ -313,29 +313,59 @@ static async Task ProcessReceiptAsync(
         string.IsNullOrWhiteSpace(receipt.EventToken))
         throw new InvalidOperationException("Receipt is missing receipt_id or event_token.");
 
-    var payloadBytes = receipt.PayloadBase64Url is null
-        ? Array.Empty<byte>()
-        : DecodeBase64Url(receipt.PayloadBase64Url);
-    if (!string.Equals(
-            receipt.ContentType?.Split(';', 2)[0].Trim(),
-            "application/json",
-            StringComparison.OrdinalIgnoreCase))
-        throw new InvalidOperationException("Event payload is not application/json.");
+    var payload = (UnauthenticatedEventPayload?)null;
+    var displayJson = (string?)null;
+    var emptyPayload = false;
+    if (receipt.ContentType is null)
+    {
+        if (receipt.PayloadBase64Url is not null)
+            throw new InvalidOperationException(
+                "Event receipt payload_base64url is present but content_type is null.");
+    }
+    else
+    {
+        var mediaType = receipt.ContentType.Split(';', 2)[0].Trim();
+        if (!string.Equals(mediaType, "application/json", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                $"Event payload content type is unsupported: {receipt.ContentType}.");
 
-    var payload = new UnauthenticatedEventPayload(
-        payloadBytes, receipt.ContentType ?? "application/json");
+        byte[] payloadBytes;
+        if (string.IsNullOrEmpty(receipt.PayloadBase64Url))
+        {
+            emptyPayload = true;
+            payloadBytes = Array.Empty<byte>();
+        }
+        else
+        {
+            payloadBytes = DecodeBase64Url(receipt.PayloadBase64Url);
+        }
+        payload = new UnauthenticatedEventPayload(payloadBytes, receipt.ContentType);
+        if (!emptyPayload)
+            displayJson = ParseDisplayJson(payload.GetUtf8Text());
+    }
+
     var result = await verifier.VerifyAsync(receipt.EventToken, payload);
     if (result.Status is not AgentEventVerificationStatus.Verified ||
         result.Event is null)
         throw new InvalidOperationException(
             $"Event verification was not actionable: {result.Status} ({result.Detail}).");
 
-    var json = ParseDisplayJson(payload.GetUtf8Text());
     var context = (EventContext)result.Event.Context;
     Console.WriteLine($"Verified event: eid={result.Claims.Eid}, jti={result.Claims.Jti}");
     Console.WriteLine($"Context: resource={context.Resource}, subscribe_url={context.SubscribeUrl}");
-    Console.WriteLine("UNAUTHENTICATED PAYLOAD (display only; no consequential action):");
-    Console.WriteLine(json);
+    if (payload is null)
+    {
+        Console.WriteLine("NO PAYLOAD (bodyless event; no consequential action).");
+    }
+    else if (emptyPayload)
+    {
+        Console.WriteLine("EMPTY PAYLOAD (display only; no consequential action).");
+    }
+    else
+    {
+        Console.WriteLine("UNAUTHENTICATED PAYLOAD (display only; no consequential action):");
+        Console.WriteLine(displayJson);
+    }
 
     var ackUrl = new Uri(
         $"{apUrl.TrimEnd('/')}/agents/{agentId}/events/{Uri.EscapeDataString(receipt.ReceiptId)}/ack");
