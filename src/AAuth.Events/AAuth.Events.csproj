@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <PackageId>AAuth.Events</PackageId>
+    <Version>0.1.0-alpha.1</Version>
+    <Authors>aauth-dev</Authors>
+    <Description>Experimental AAuth Events preview helpers for asynchronous subscriptions and event delivery.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/aauth-dev/dotnet-samples</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/aauth-dev/dotnet-samples</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>aauth;events;subscriptions;asyncapi;agent;authorization</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="README.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AAuth\AAuth.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>
