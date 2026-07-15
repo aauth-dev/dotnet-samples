@@ -7,6 +7,7 @@
 - Precedent:
   [src/AAuth.R3](../../../src/AAuth.R3) and
   [.agent/plans/2026-07-02-r3-rich-resource-requests](../2026-07-02-r3-rich-resource-requests)
+- Updated: 2026-07-15 (review follow-up)
 - Status: ready for owner review; no implementation or commit has been made
 
 ## Problem and scope
@@ -37,6 +38,14 @@ Three read-only research threads were collated:
    packaging and planning precedent.
 3. The core SDK's public crypto, JWT, HTTP-signature, discovery, metadata, DI,
    endpoint, test, sample, and release seams.
+
+> **Update (2026-07-15):** The four missed findings in
+> [spec-inconsistency-review.md](spec-inconsistency-review.md) and its
+> cross-package metadata risk were re-verified against the vendored draft,
+> `R3Metadata`, the Bookings metadata setup, and the
+> [AsyncAPI 3.0.0 Operation Object](https://www.asyncapi.com/docs/reference/specification/v3.0.0#operationObject).
+> The resulting decisions are recorded as RF1-RF5 below. A subsequent
+> consistency pass exposed the C14 token-identity ambiguity, resolved by C23.
 
 The highest-risk findings were then re-verified directly against the vendored
 specification and current source. In particular:
@@ -133,6 +142,24 @@ It deliberately has no `cnf` and no event-specific data
 ([Event Token](../../../aauth-spec/v09/draft-hardt-aauth-events.md#event-token),
 L340-L374).
 
+Unlike the subscribe-token header, which explicitly forbids `alg: none` at
+[L212](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L212), the
+event-token header only recommends EdDSA at
+[L348](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L348). This is a
+draft omission, not permission to accept unsigned event tokens. C21 applies to
+both token types: `none` and unsupported algorithms are rejected.
+
+The draft defines no per-event identifier in its event-token claims
+([L351-L359](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L351-L359)).
+Hashing the compact token therefore cannot distinguish a retry from two
+legitimate events whose other claims and whole-second timestamps are equal;
+deterministic signatures can make those compact tokens identical. C23 adds a
+required, fresh, cryptographically random `jti` to each event token and requires
+AP and agent verifiers to reject a missing or empty value. This is a deliberate
+wire extension that makes C14's compact-token hash safe as an idempotency key
+and follows the core builders' fresh-token-ID convention
+([ResourceTokenBuilder.cs](../../../src/AAuth/Tokens/ResourceTokenBuilder.cs#L102-L122)).
+
 The event token is the `Signature-Key` JWT on a POST to the current AP
 `event_endpoint`. The same resource key identified by `kid` verifies the JWT
 and HTTP signature. A payload is the direct, optional AsyncAPI-defined request
@@ -165,6 +192,20 @@ defined by the resource's AsyncAPI schema, not by the event JWT
 ([Agent Verification](../../../aauth-spec/v09/draft-hardt-aauth-events.md#ap-to-agent),
 L436-L447).
 
+That verification authenticates the event envelope, not the payload. The event
+token contains no event data
+([L361](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L361)), and the
+resource-to-AP `Content-Digest`
+([L387](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L387)) is consumed
+at the AP rather than conveyed in an agent-verifiable artifact. An AP can
+therefore replace or inject a payload without invalidating the event token,
+despite the draft saying the agent may use the payload directly
+([L447](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L447)). Agent APIs
+must label the payload unauthenticated; consequential or sensitive details
+should be fetched from the resource API with a current auth token, consistent
+with [Event Content](../../../aauth-spec/v09/draft-hardt-aauth-events.md#event-content)
+L614-L616.
+
 ### Discovery
 
 The R3 vocabulary identifier is `urn:aauth:vocabulary:asyncapi`; supporting
@@ -178,6 +219,16 @@ L449-L505).
 The package only needs constants, metadata composition, and validation of these
 AAuth declarations. Applications remain responsible for full AsyncAPI document
 generation and payload schema validation.
+
+The examples use `action: receive`
+([L537](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L537),
+[L544](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L544)). AsyncAPI 3.0
+defines `action` from the perspective of the application described by the
+document, so a resource-owned producer document would ordinarily use `send`.
+The draft instead frames the document for the agent reader
+([L721](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L721)), making its
+intended application perspective ambiguous. The SDK follows the draft examples
+but does not treat operation direction as an AAuth validity rule.
 
 ### Security and privacy invariants
 
@@ -197,7 +248,8 @@ generation and payload schema validation.
   L608-L617).
 - Body-bearing event deliveries bind the raw payload through
   `Content-Digest`; the AP stores and forwards the verified raw bytes, avoiding a
-  parse/reserialize gap.
+  parse/reserialize gap on the resource-to-AP hop. This does not provide
+  end-to-end payload authentication to the agent.
 - Issuer metadata, JWKS, and delivery destinations are outbound trust inputs.
   The selected policy is HTTPS except loopback HTTP, no redirects, private or
   link-local IP-literal rejection except loopback, and an application trust
@@ -221,6 +273,19 @@ test project are explicit solution members, and the shared release workflow
 packs it with the same version as core
 ([AAuth.slnx](../../../AAuth.slnx#L24-L31),
 [publish.yml](../../../.github/workflows/publish.yml#L35-L41)).
+
+`R3Metadata.AddVocabularies` creates and assigns the complete
+`r3_vocabularies` object rather than merging a nested entry
+([R3Metadata.cs](../../../src/AAuth.R3/R3Metadata.cs#L11-L29)). Bookings
+currently assigns one OpenAPI-only object through `AdditionalMetadata`
+([Program.cs](../../../samples/MockResourceServers/Bookings/Program.cs#L50-L55)).
+When Events is added, both package contributions must be collected in one
+caller-owned vocabulary map before that map is assigned to metadata. The Events
+helper operates on that map rather than an already serialized top-level
+property; `R3Metadata` or core `AdditionalMetadata` performs the single final
+assignment. This avoids order-dependent overwrites while preserving package
+independence. The helper is idempotent for the same AsyncAPI mapping and rejects
+malformed or conflicting mappings.
 
 The Events package should copy these boundary and release patterns, not R3's
 protocol-specific models.
@@ -283,9 +348,10 @@ The package surface divides into:
 
 The AP store contract must make subscription creation collision-safe and event
 acceptance atomic: active-subscription lookup, resource and agent binding,
-expiry, event-token hash idempotency, `max_uses`, use-count update, and durable
-inbox write are one operation. No in-memory implementation is registered by the
-package; test and sample implementations are explicitly non-production.
+expiry, required event `jti`, event-token hash idempotency, `max_uses`, use-count
+update, and durable inbox write are one operation. No in-memory implementation
+is registered by the package; test and sample implementations are explicitly
+non-production.
 
 ## Clarification record
 
@@ -316,6 +382,20 @@ below, normalized to ASCII for this repository.
 | C20 | The event token lists `iat` as required, but AP/agent validation steps omit an `iat` check. Should the package require it and reject future-issued event tokens using configured clock skew? | Yes (Recommended), consistent with subscribe-token and core JWT validation |
 | C21 | Should AAuth Events accept both signing algorithms already supported by core (`EdDSA` and `ES256`), while emitting whichever algorithm the supplied `IAAuthKey` uses? | Yes (Recommended); reject `none` and all unsupported algorithms |
 | C22 | May an AP's `event_endpoint` be on a different HTTPS origin from its `iss`, as the draft does not require same-origin? | Yes (Recommended): allow cross-origin after the configured URL trust policy accepts it |
+| C23 | A consistency pass found one unresolved C14 edge case: event tokens have no `jti`, and `iat`/`exp` use whole seconds, so two legitimate EdDSA events for the same subscription in one second can produce the same compact token and be mistaken for a retry. Which ruling should the plan record? | Add a random `jti` to each event token (Recommended; deliberate draft extension) |
+
+No clarification questions were required for RF1-RF5. C23 was asked during the
+post-edit consistency pass and its response is recorded verbatim above.
+
+## Reviewer-comment resolutions
+
+| ID | Finding | Decision |
+|---|---|---|
+| RF1 | Event-token header omits the subscribe-token `none` prohibition | **Fix:** record the draft asymmetry; C21 still rejects `none` for every Events token |
+| RF2 | Event payload lacks end-to-end integrity at the agent | **Fix:** expose it only as an unauthenticated payload and direct consequential actions to a resource-API re-fetch; do not invent a signed payload wire format |
+| RF3 | Registration JSON is not covered by `Content-Digest` | **Push back on changing the wire profile:** retain C5 and the draft example for interoperability, label the body signature-unbound, and make non-reliance for authorization an explicit application contract rather than claim cryptographic enforcement |
+| RF4 | AsyncAPI examples use `receive` where a resource-owned producer document would use `send` | **Push back on validator enforcement:** follow the draft examples because its agent-reader perspective is ambiguous; record the issue and leave operation direction outside AAuth declaration validation |
+| RF5 | `AAuth.R3` and `AAuth.Events` can overwrite each other's `r3_vocabularies` contribution | **Fix:** compose one caller-owned map before a single metadata assignment, preserve existing entries, reject conflicts, and add a cross-package test |
 
 ## Specification issues to retain in the implementation log
 
@@ -332,6 +412,11 @@ issues:
 | Required event `iat` is omitted from AP and agent validation lists | Claim at [L358](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L358); validation at [L402-L413](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L402-L413) and [L438-L445](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L438-L445) | C20: require and validate with clock skew |
 | AP validation increments `max_uses` at step 7 before step 8 checks agent `aud` | [L412-L413](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L412-L413) | The durable store commits no use increment or inbox write unless all eight checks pass |
 | The resource's stated minimum record `{eid, iss}` omits the agent identifier needed as event-token `aud` | Registration state at [L279](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L279); event `aud` at [L352](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L352) | Persist subscribe-token `sub` in resource subscription state; no wire change |
+| Event-token `alg` omits the subscribe-token prohibition on `none` | Subscribe header at [L212](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L212); event header at [L348](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L348) | RF1/C21: reject `none` for both token types |
+| The event payload is authenticated to the AP but not end to end to the agent | Token excludes event data at [L361](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L361); AP-hop digest at [L387](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L387); direct agent use at [L447](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L447) | RF2: surface an unauthenticated payload and re-fetch consequential data from the resource |
+| Registration JSON is not bound by `Content-Digest` | Registration profile at [L251-L266](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L251-L266); delivery profile at [L382-L399](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L382-L399) | RF3/C5: retain the draft profile, label the body signature-unbound, and document that applications must not rely on it to grant or widen authorization |
+| AsyncAPI operation perspective is ambiguous | Draft `receive` examples at [L537](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L537) and [L544](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L544); agent-reader rationale at [L721](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L721) | RF4: follow the draft examples; do not validate `send` versus `receive` |
+| Event tokens have no per-event identity, so exact-token retry detection can collide with a legitimate event | Event claims omit `jti` at [L351-L359](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L351-L359); AP validation has no idempotency step at [L406-L413](../../../aauth-spec/v09/draft-hardt-aauth-events.md#L406-L413) | C23: require a fresh random `jti`; retain C14's compact-token hash as the AP and agent idempotency key |
 
 These rulings must be copied into `implementation-log.md` as Phase 0
 `RESOLVED` decisions before implementation begins.
