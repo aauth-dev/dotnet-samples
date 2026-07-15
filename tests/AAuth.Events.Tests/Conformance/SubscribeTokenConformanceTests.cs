@@ -376,21 +376,6 @@ public sealed class SubscribeTokenConformanceTests
         }
     }
 
-    [Fact]
-    [Trait("Spec", "Events §Event Token L348-L359; C23")]
-    public void EventIssuanceAddsFreshRandomJtiForTokenIdentity()
-    {
-        var key = AAuthKey.Generate();
-        var first = EventsTestData.Event(key).Token;
-        var second = EventsTestData.Event(key).Token;
-        var firstJti = Decode(first).Payload["jti"]!.GetValue<string>();
-        var secondJti = Decode(second).Payload["jti"]!.GetValue<string>();
-
-        Assert.NotEqual(firstJti, secondJti);
-        Assert.Equal(16, Base64UrlEncoder.DecodeBytes(firstJti).Length);
-        Assert.Equal(16, Base64UrlEncoder.DecodeBytes(secondJti).Length);
-    }
-
     private static IAAuthKey CreateKey(string algorithm) =>
         algorithm == "EdDSA" ? AAuthKey.Generate() : EcdsaAAuthKey.Generate();
 

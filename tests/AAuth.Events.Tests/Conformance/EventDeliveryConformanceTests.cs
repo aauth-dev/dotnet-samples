@@ -10,6 +10,7 @@ using AAuth.Events;
 using AAuth.Events.Discovery;
 using AAuth.Events.Http;
 using AAuth.Events.Resource;
+using AAuth.Events.Tests.TestSupport;
 using AAuth.Events.Tokens;
 using AAuth.HttpSig;
 using AAuth.Tokens;
@@ -74,7 +75,7 @@ public sealed class EventDeliveryConformanceTests
     }
 
     [Fact]
-    [Trait("Spec", "C5")]
+    [Trait("Spec", "Events §AP Validation L402-L413")]
     public async Task ApVerifiesTokenThenHttpThenSubscriptionBeforeDurableMutation()
     {
         var key = AAuthKey.Generate();
@@ -88,7 +89,7 @@ public sealed class EventDeliveryConformanceTests
 
         Console.WriteLine($"RESULT {result.StatusCode} {result.Outcome} {result.ResponseBody} ORDER {string.Join(',', transport.Order)}");
         Assert.True(result.IsAccepted, $"{result.StatusCode} {result.Outcome} {result.ResponseBody}");
-        Assert.Equal(["jwt", "http", "lookup", "commit"], transport.Order);
+        Assert.Equal(["jwt", "http", "lookup", "iss", "aud", "commit"], transport.Order);
         Assert.Equal(1, store.MutationCount);
     }
 
@@ -145,7 +146,7 @@ public sealed class EventDeliveryConformanceTests
             transport, endpoint, wrongAudience, key, Encoding.UTF8.GetBytes("{}"));
 
         Assert.Equal(HttpStatusCode.Forbidden, wrongResourceResponse);
-        Assert.Equal(HttpStatusCode.Unauthorized, wrongAudienceResponse);
+        Assert.Equal(HttpStatusCode.Forbidden, wrongAudienceResponse);
         Assert.Equal(0, store.MutationCount);
     }
 
@@ -260,6 +261,21 @@ public sealed class EventDeliveryConformanceTests
         Assert.NotEqual(first.TokenId, second.TokenId);
         Assert.Equal(2, store.MutationCount);
         Assert.Equal(2, transport.Requests.Select(static request => request.Token).Distinct().Count());
+    }
+
+    [Fact]
+    [Trait("Spec", "Events §Event Token L348-L359; C23")]
+    public void EventIssuanceAddsFreshRandomJtiForTokenIdentity()
+    {
+        var key = AAuthKey.Generate();
+        var first = EventsTestData.Event(key).Token;
+        var second = EventsTestData.Event(key).Token;
+        var firstJti = DecodeToken(first).Payload["jti"]!.GetValue<string>();
+        var secondJti = DecodeToken(second).Payload["jti"]!.GetValue<string>();
+
+        Assert.NotEqual(firstJti, secondJti);
+        Assert.Equal(16, Base64UrlEncoder.DecodeBytes(firstJti).Length);
+        Assert.Equal(16, Base64UrlEncoder.DecodeBytes(secondJti).Length);
     }
 
     [Theory]
@@ -448,6 +464,12 @@ public sealed class EventDeliveryConformanceTests
         return json["alg"]!.GetValue<string>();
     }
 
+    private static (JsonObject Header, JsonObject Payload) DecodeToken(string token) =>
+        (
+            JsonNode.Parse(Base64UrlEncoder.DecodeBytes(token.Split('.')[0]))!.AsObject(),
+            JsonNode.Parse(Base64UrlEncoder.DecodeBytes(token.Split('.')[1]))!.AsObject()
+        );
+
     private sealed class DurableSubscriptionStore
     {
         private readonly object _gate = new();
@@ -469,6 +491,8 @@ public sealed class EventDeliveryConformanceTests
             lock (_gate)
             {
                 _entries[subscription.Eid] = new Entry(
+                    subscription.ResourceAudience,
+                    subscription.AgentSubject,
                     expiresAt ?? subscription.ExpiresAt,
                     subscription.RemainingUses,
                     new HashSet<string>(StringComparer.Ordinal));
@@ -478,6 +502,9 @@ public sealed class EventDeliveryConformanceTests
         public CommitResult Commit(
             string eid,
             string jti,
+            string issuer,
+            string audience,
+            Action<string> recordStep,
             DateTimeOffset now)
         {
             lock (_gate)
@@ -486,6 +513,12 @@ public sealed class EventDeliveryConformanceTests
                     return CommitResult.Unknown;
                 if (entry.ExpiresAt <= now)
                     return CommitResult.Expired;
+                recordStep("iss");
+                if (!string.Equals(issuer, entry.AuthorizedResource, StringComparison.Ordinal))
+                    return CommitResult.WrongResource;
+                recordStep("aud");
+                if (!string.Equals(audience, entry.AuthorizedAgent, StringComparison.Ordinal))
+                    return CommitResult.WrongAudience;
                 if (entry.Seen.Contains(jti))
                     return new CommitResult(CommitKind.Duplicate, entry.Remaining);
                 if (FailCommits)
@@ -501,10 +534,14 @@ public sealed class EventDeliveryConformanceTests
         }
 
         private sealed class Entry(
+            string authorizedResource,
+            string authorizedAgent,
             DateTimeOffset expiresAt,
             long? remaining,
             HashSet<string> seen)
         {
+            public string AuthorizedResource { get; } = authorizedResource;
+            public string AuthorizedAgent { get; } = authorizedAgent;
             public DateTimeOffset ExpiresAt { get; } = expiresAt;
             public long? Remaining { get; set; } = remaining;
             public HashSet<string> Seen { get; } = seen;
@@ -582,11 +619,8 @@ public sealed class EventDeliveryConformanceTests
                     token,
                     _resourcePublicKey,
                     AAuthEventsConstants.EventTokenType,
-                    AAuthEventsConstants.ResourceDwk,
-                    "aauth:agent@ap.example");
+                    AAuthEventsConstants.ResourceDwk);
                 var claims = EventTokenClaims.Read(verified);
-                if (!string.Equals(claims.Issuer, "https://resource.example", StringComparison.Ordinal))
-                    return Json(HttpStatusCode.Forbidden, """{"error":"wrong-resource"}""");
 
                 OrderQueue.Enqueue("http");
                 if (request.Content is null)
@@ -594,11 +628,21 @@ public sealed class EventDeliveryConformanceTests
                 else
                     _httpVerifier.VerifyEvent(request, _resourcePublicKey);
                 OrderQueue.Enqueue("lookup");
-                var committed = _store.Commit(claims.Eid, claims.Jti, _now);
+                var committed = _store.Commit(
+                    claims.Eid,
+                    claims.Jti,
+                    claims.Issuer,
+                    claims.Audience,
+                    OrderQueue.Enqueue,
+                    _now);
                 return committed.Kind switch
                 {
                     CommitKind.Unknown or CommitKind.Expired =>
                         Json(HttpStatusCode.NotFound, """{"error":"subscription"}"""),
+                    CommitKind.WrongResource =>
+                        Json(HttpStatusCode.Forbidden, """{"error":"wrong-resource"}"""),
+                    CommitKind.WrongAudience =>
+                        Json(HttpStatusCode.Forbidden, """{"error":"wrong-audience"}"""),
                     CommitKind.Exhausted =>
                         Json((HttpStatusCode)429, """{"error":"exhausted"}"""),
                     CommitKind.Failed =>
@@ -619,9 +663,9 @@ public sealed class EventDeliveryConformanceTests
 
         private HttpResponseMessage Accepted(long? remaining)
         {
+            OrderQueue.Enqueue("commit");
             if (remaining is null)
                 return Json(HttpStatusCode.Accepted, null);
-            OrderQueue.Enqueue("commit");
             return Json(
                 HttpStatusCode.Accepted,
                 JsonSerializer.Serialize(new { remaining_uses = remaining.Value }));
@@ -763,6 +807,8 @@ public sealed class EventDeliveryConformanceTests
     {
         Unknown,
         Expired,
+        WrongResource,
+        WrongAudience,
         Exhausted,
         Failed,
         Duplicate,
@@ -773,6 +819,8 @@ public sealed class EventDeliveryConformanceTests
     {
         public static CommitResult Unknown { get; } = new(CommitKind.Unknown);
         public static CommitResult Expired { get; } = new(CommitKind.Expired);
+        public static CommitResult WrongResource { get; } = new(CommitKind.WrongResource);
+        public static CommitResult WrongAudience { get; } = new(CommitKind.WrongAudience);
         public static CommitResult Exhausted { get; } = new(CommitKind.Exhausted);
         public static CommitResult Failed { get; } = new(CommitKind.Failed);
     }
