@@ -2,18 +2,40 @@ using System.Collections.Concurrent;
 using System.Linq;
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
+using AAuth.Events.Discovery;
+using AAuth.Events.Http;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
+using MockAgentProvider.Events;
 
 var builder = WebApplication.CreateBuilder(args);
-var app = builder.Build();
 
 // ── Configuration ───────────────────────────────────────────────────────────
-var issuer = app.Configuration["AgentProvider:Issuer"] ?? "http://localhost:5301";
-var keyId = app.Configuration["AgentProvider:KeyId"] ?? "ap-key-1";
+var issuer = builder.Configuration["AgentProvider:Issuer"] ?? "http://localhost:5301";
+var keyId = builder.Configuration["AgentProvider:KeyId"] ?? "ap-key-1";
+var eventEndpointRoute =
+    builder.Configuration["AgentProvider:Events:EventEndpointRoute"] ?? "/events";
+var bookingsResource =
+    builder.Configuration["AgentProvider:Events:BookingsResourceUrl"] ?? "http://localhost:5302";
+var subscriptionLifetimeSeconds = builder.Configuration.GetValue(
+    "AgentProvider:Events:SubscriptionLifetimeSeconds", 3600);
+var subscriptionMaxUses = builder.Configuration.GetValue<long?>(
+    "AgentProvider:Events:SubscriptionMaxUses");
+if (subscriptionLifetimeSeconds <= 0)
+    throw new InvalidOperationException(
+        "AgentProvider:Events:SubscriptionLifetimeSeconds must be positive.");
+if (subscriptionMaxUses is <= 0)
+    throw new InvalidOperationException(
+        "AgentProvider:Events:SubscriptionMaxUses must be positive.");
+if (!eventEndpointRoute.StartsWith('/'))
+    throw new InvalidOperationException(
+        "AgentProvider:Events:EventEndpointRoute must start with '/'.");
+var eventEndpoint = new Uri(
+    new Uri(issuer.TrimEnd('/') + "/", UriKind.Absolute),
+    eventEndpointRoute.TrimStart('/')).AbsoluteUri;
 
 // AP signing key — persisted so restarting keeps issued tokens verifiable.
 var keyStore = new FileKeyStore(Path.Combine(
@@ -24,21 +46,45 @@ var apKey = keyStore.LoadOrCreate(keyId);
 Console.WriteLine($"Mock Agent Provider running at: {issuer}");
 Console.WriteLine($"AP signing key id: {keyId}");
 Console.WriteLine($"AP JWK thumbprint: {apKey.ComputeJwkThumbprint()}");
+Console.WriteLine("[SAMPLE ONLY] Events acquisition/poll/ACK use a non-normative transport.");
+Console.WriteLine("[SAMPLE ONLY] Events inbox storage is in-memory and non-durable; not production.");
 Console.WriteLine();
 
 // ── In-memory agent registry ────────────────────────────────────────────────
 var agents = new ConcurrentDictionary<string, AgentRecord>();
+// Sample-only, non-durable inbox. Production APs must provide durable storage.
+var eventStore = new SampleAgentProviderEventStore();
+var eventPolicy = new DefaultEventsUrlPolicy();
+var eventResolver = new EventsJwtKeyResolver(
+    EventsHttpClientFactory.Create(eventPolicy), eventPolicy);
+builder.Services.AddSingleton<IEventsUrlPolicy>(eventPolicy);
+builder.Services.AddSingleton(eventResolver);
+builder.Services.AddSingleton<AAuthKey>(apKey);
+builder.Services.AddAAuthEventsAgentProvider(
+    eventStore,
+    options =>
+    {
+        options.JwtKeyResolver = eventResolver;
+        options.HttpMessageVerifier = new EventsHttpMessageVerifier();
+    });
+
+var app = builder.Build();
 
 // ── Well-known metadata + JWKS ──────────────────────────────────────────────
-app.MapGet("/.well-known/aauth-agent.json", () => Results.Json(new JsonObject
+app.MapGet("/.well-known/aauth-agent.json", () =>
 {
-    ["issuer"] = issuer,
-    ["jwks_uri"] = $"{issuer}/.well-known/jwks.json",
-    ["enrol_endpoint"] = $"{issuer}/enrol",
-    ["refresh_endpoint"] = $"{issuer}/refresh",
-    ["name"] = "Mock Agent Provider",
-    ["localhost_callback_allowed"] = true,
-}, contentType: "application/json"));
+    var metadata = new JsonObject
+    {
+        ["issuer"] = issuer,
+        ["jwks_uri"] = $"{issuer}/.well-known/jwks.json",
+        ["enrol_endpoint"] = $"{issuer}/enrol",
+        ["refresh_endpoint"] = $"{issuer}/refresh",
+        ["name"] = "Mock Agent Provider",
+        ["localhost_callback_allowed"] = true,
+    };
+    AAuthEventsMetadata.AddEventEndpoint(metadata, eventEndpoint);
+    return Results.Json(metadata, contentType: "application/json");
+});
 
 app.MapGet("/.well-known/jwks.json", () =>
 {
@@ -307,6 +353,19 @@ app.MapGet("/agents", () =>
     return Results.Json(new JsonObject { ["agents"] = list });
 });
 
+// Normative Events AP delivery endpoint (resource-to-AP).
+app.MapAAuthEventEndpoint(eventEndpointRoute);
+// Non-normative sample-only AP-to-agent acquisition, polling, and ACK.
+app.MapSampleAgentEventEndpoints(
+    agents,
+    apKey,
+    keyId,
+    issuer,
+    bookingsResource,
+    TimeSpan.FromSeconds(subscriptionLifetimeSeconds),
+    subscriptionMaxUses,
+    eventStore);
+
 app.Run();
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -324,4 +383,4 @@ string IssueAgentToken(AgentRecord record)
 }
 
 // ── Types ───────────────────────────────────────────────────────────────────
-record AgentRecord(string AgentId, AAuthKey PublicKey, string KeyId, DateTimeOffset RegisteredAt, string? PersonServer);
+internal record AgentRecord(string AgentId, AAuthKey PublicKey, string KeyId, DateTimeOffset RegisteredAt, string? PersonServer);
