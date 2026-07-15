@@ -26,7 +26,7 @@ internal static class EventsTestData
             Audience = "https://resource.example",
             KeyId = "ap-1",
             Key = signingKey,
-            ConfirmationKey = confirmationKey,
+            ConfirmationKey = confirmationKey ?? AAuthKey.Generate(),
             IssuedAt = Now,
             Lifetime = TimeSpan.FromMinutes(5),
             EventId = eid,

@@ -42,32 +42,36 @@ public static class AAuthEventsConstants
     public const string ContentDigestComponent = "content-digest";
 
     public const string EventEndpointMetadata = "event_endpoint";
+    public const string R3VocabulariesMetadata = "r3_vocabularies";
     public const string EventEndpoint = EventEndpointMetadata;
     public const string AsyncApiVocabulary = "urn:aauth:vocabulary:asyncapi";
     public const string AsyncApiVocabularyKey = AsyncApiVocabulary;
+    public const string AsyncApiVersion = "3.0.0";
     public const string SubscribeSecurityScheme = "aauth_subscribe";
     public const string SubscribeSecuritySchemeType = "http";
     public const string SubscribeSecuritySchemeName = "aauth-subscribe";
     public const string AsyncApiSubscribeSecurityScheme = SubscribeSecurityScheme;
+    public const string RemainingUsesProperty = "remaining_uses";
 
     public const string JsonMediaType = "application/json";
     public const string JwtMediaType = "application/jwt";
     public const string SubscribeTokenMediaType = "application/jwt";
     public const string EventTokenMediaType = "application/jwt";
+    public const int DefaultMaxBodyBytes = 1024 * 1024;
 
     /// <summary>The four components covered by every Events HTTP signature.</summary>
     public static IReadOnlyList<string> BaseHttpComponents { get; } =
-        new[] { MethodComponent, AuthorityComponent, PathComponent, SignatureKeyComponent };
+        Array.AsReadOnly(new[] { MethodComponent, AuthorityComponent, PathComponent, SignatureKeyComponent });
     public static IReadOnlyList<string> BaseComponents => BaseHttpComponents;
 
     /// <summary>Components added for a JSON subscription registration body.</summary>
     public static IReadOnlyList<string> RegistrationAdditionalHttpComponents { get; } =
-        new[] { ContentTypeComponent };
+        Array.AsReadOnly(new[] { ContentTypeComponent });
     public static IReadOnlyList<string> RegistrationAdditionalComponents => RegistrationAdditionalHttpComponents;
 
     /// <summary>Components added for a JSON event-delivery body.</summary>
     public static IReadOnlyList<string> EventAdditionalHttpComponents { get; } =
-        new[] { ContentTypeComponent, ContentDigestComponent };
+        Array.AsReadOnly(new[] { ContentTypeComponent, ContentDigestComponent });
     public static IReadOnlyList<string> EventAdditionalComponents => EventAdditionalHttpComponents;
 
     /// <summary>All components covered by a bodyless Events request.</summary>

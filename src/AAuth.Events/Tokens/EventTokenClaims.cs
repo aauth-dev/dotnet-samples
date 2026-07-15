@@ -34,6 +34,7 @@ public sealed record EventTokenClaims(
         var eid = EventsClaimValidation.RequiredString(payload, AAuthEventsConstants.EventIdClaim);
         var jti = EventsClaimValidation.RequiredString(payload, AAuthEventsConstants.TokenIdClaim);
         EventsClaimValidation.RequireUrl(issuer, AAuthEventsConstants.IssuerClaim);
+        EventsClaimValidation.RequireAgentId(audience, AAuthEventsConstants.AudienceClaim);
 
         var iat = EventsClaimValidation.RequiredUnixTime(payload, AAuthEventsConstants.IssuedAtClaim);
         var exp = EventsClaimValidation.RequiredUnixTime(payload, AAuthEventsConstants.ExpiresAtClaim);

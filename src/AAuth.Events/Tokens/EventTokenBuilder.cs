@@ -37,6 +37,7 @@ public sealed class EventTokenBuilder
     {
         SubscribeTokenBuilder.Require(Issuer, nameof(Issuer));
         SubscribeTokenBuilder.Require(Audience, nameof(Audience));
+        SubscribeTokenBuilder.RequireAgentId(Audience, nameof(Audience));
         SubscribeTokenBuilder.Require(Eid, nameof(Eid));
         SubscribeTokenBuilder.Require(KeyId, nameof(KeyId));
         SubscribeTokenBuilder.RequireUrl(Issuer, nameof(Issuer));

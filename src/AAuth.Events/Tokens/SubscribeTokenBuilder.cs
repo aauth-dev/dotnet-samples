@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
 using AAuth.Events.Internal;
+using AAuth.Identifiers;
 using Microsoft.IdentityModel.Tokens;
 
 namespace AAuth.Events.Tokens;
@@ -23,8 +24,8 @@ public sealed class SubscribeTokenBuilder
     public required string KeyId { get; init; }
     /// <summary>AP private signing key.</summary>
     public required IAAuthKey Key { get; init; }
-    /// <summary>Agent HTTP-signature confirmation key; defaults to <see cref="Key"/>.</summary>
-    public IAAuthKey? ConfirmationKey { get; init; }
+    /// <summary>Agent HTTP-signature confirmation key embedded as <c>cnf.jwk</c>.</summary>
+    public required IAAuthKey ConfirmationKey { get; init; }
     /// <summary>Token lifetime.</summary>
     public TimeSpan Lifetime { get; init; } = TimeSpan.FromHours(1);
     /// <summary>Issue time, defaulting to the current UTC time.</summary>
@@ -41,6 +42,7 @@ public sealed class SubscribeTokenBuilder
     {
         Require(Issuer, nameof(Issuer));
         Require(Subject, nameof(Subject));
+        RequireAgentId(Subject, nameof(Subject));
         Require(Audience, nameof(Audience));
         Require(KeyId, nameof(KeyId));
         RequireUrl(Issuer, nameof(Issuer));
@@ -66,10 +68,9 @@ public sealed class SubscribeTokenBuilder
         else
             Require(eid, nameof(EventId));
 
-        var confirmationKey = ConfirmationKey ?? Key;
-        if (confirmationKey is null)
+        if (ConfirmationKey is null)
             throw new InvalidOperationException("ConfirmationKey must be set.");
-        EnsureAlgorithm(confirmationKey);
+        EnsureAlgorithm(ConfirmationKey);
 
         var header = new JsonObject
         {
@@ -85,7 +86,7 @@ public sealed class SubscribeTokenBuilder
             [AAuthEventsConstants.AudienceClaim] = Audience,
             [AAuthEventsConstants.ConfirmationClaim] = new JsonObject
             {
-                [AAuthEventsConstants.JwkClaim] = confirmationKey.ToPublicJwk(),
+                [AAuthEventsConstants.JwkClaim] = ConfirmationKey.ToPublicJwk(),
             },
             [AAuthEventsConstants.EventIdClaim] = eid,
             [AAuthEventsConstants.IssuedAtClaim] = iat,
@@ -131,6 +132,12 @@ public sealed class SubscribeTokenBuilder
             (uri.Scheme != Uri.UriSchemeHttps &&
              !(uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback)))
             throw new InvalidOperationException($"{name} must be an absolute https:// URL (or http://localhost).");
+    }
+
+    internal static void RequireAgentId(string value, string name)
+    {
+        if (!AgentId.TryParse(value, out _, out var error))
+            throw new InvalidOperationException($"{name} must be a valid AAuth agent identifier: {error}");
     }
 }
 

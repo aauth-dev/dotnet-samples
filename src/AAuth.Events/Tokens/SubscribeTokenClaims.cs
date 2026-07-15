@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
 using AAuth.Events;
+using AAuth.Identifiers;
 using AAuth.Tokens;
 
 namespace AAuth.Events.Tokens;
@@ -36,6 +37,7 @@ public sealed record SubscribeTokenClaims(
         var subject = EventsClaimValidation.RequiredString(payload, AAuthEventsConstants.SubjectClaim);
         var audience = EventsClaimValidation.RequiredString(payload, AAuthEventsConstants.AudienceClaim);
         var eid = EventsClaimValidation.RequiredString(payload, AAuthEventsConstants.EventIdClaim);
+        EventsClaimValidation.RequireAgentId(subject, AAuthEventsConstants.SubjectClaim);
         EventsClaimValidation.RequireUrl(issuer, AAuthEventsConstants.IssuerClaim);
         EventsClaimValidation.RequireUrl(audience, AAuthEventsConstants.AudienceClaim);
 
@@ -145,6 +147,12 @@ internal static class EventsClaimValidation
             (uri.Scheme != Uri.UriSchemeHttps &&
              !(uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback)))
             throw Error($"{name} must be an absolute https:// URL (or loopback http:// URL).");
+    }
+
+    public static void RequireAgentId(string value, string name)
+    {
+        if (!AgentId.TryParse(value, out _, out var error))
+            throw Error($"Token claim '{name}' must be a valid AAuth agent identifier: {error}");
     }
 
     public static TokenVerificationException Error(string message) => new(message);
