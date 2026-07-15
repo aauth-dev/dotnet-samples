@@ -76,6 +76,23 @@ public sealed class DiscoveryTests
         Assert.Equal(2, handler.CallCount);
     }
 
+    [Fact]
+    public async Task Resolver_rejects_metadata_with_mismatched_issuer()
+    {
+        var handler = new MutableMetadataHandler(
+            """{"issuer":"https://different.example","event_endpoint":"https://events.example/inbox"}""");
+        var resolver = new EventEndpointResolver(
+            new DefaultEventsUrlPolicy(), handler);
+
+        var error = await Assert.ThrowsAsync<EventsVerificationException>(
+            () => resolver.ResolveAsync("https://ap.example"));
+
+        Assert.Equal(EventsVerificationErrorCode.MetadataFailure, error.Error.Code);
+        Assert.Equal(
+            "https://ap.example/.well-known/aauth-agent.json",
+            handler.LastRequestUri!.AbsoluteUri);
+    }
+
     [Theory]
     [InlineData("http://127.0.0.1:5000/events", true)]
     [InlineData("http://192.168.1.10/events", false)]
@@ -146,11 +163,13 @@ public sealed class DiscoveryTests
 
         public string Json { get; set; }
         public int CallCount { get; private set; }
+        public Uri? LastRequestUri { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             CallCount++;
+            LastRequestUri = request.RequestUri;
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(Json, Encoding.UTF8, "application/json"),
