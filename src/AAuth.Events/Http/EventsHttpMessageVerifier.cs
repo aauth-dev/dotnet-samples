@@ -32,9 +32,9 @@ public sealed record EventsHttpVerificationResult(
 public sealed class EventsHttpMessageVerifier
 {
     /// <summary>Maximum accepted age of a signature.</summary>
-    public TimeSpan MaxAge { get; init; } = TimeSpan.FromMinutes(5);
+    public TimeSpan MaxAge { get; init; } = TimeSpan.FromSeconds(60);
     /// <summary>Allowed future skew for the created parameter.</summary>
-    public TimeSpan FutureSkew { get; init; } = TimeSpan.FromSeconds(30);
+    public TimeSpan FutureSkew { get; init; } = TimeSpan.FromSeconds(5);
     /// <summary>Clock used for freshness checks.</summary>
     public Func<DateTimeOffset> Clock { get; init; } = () => DateTimeOffset.UtcNow;
     /// <summary>Maximum buffered body size.</summary>
@@ -125,36 +125,46 @@ public sealed class EventsHttpMessageVerifier
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(httpSignatureKey);
-        RejectForbidden(request);
-        var expected = Components(profile);
-        var parsed = ParseSignatureInput(SingleHeader(request, "Signature-Input"));
-        if (!SequenceEqual(parsed.Components, expected))
-            throw Error(parsed.Components.Count < expected.Count
-                ? EventsVerificationErrorCode.MissingCoveredComponent
-                : EventsVerificationErrorCode.UnexpectedCoveredComponent,
-                "The covered component sequence does not exactly match the Events profile.");
-        CheckFresh(parsed.Created);
-        var keyHeader = SingleHeader(request, SignatureKeyHeader.Name);
-        var signature = ParseSignature(SingleHeader(request, "Signature"));
-        var baseString = BuildSignatureBase(request, parsed.Components, parsed.Created, keyHeader, wirePath);
-        if (!httpSignatureKey.Verify(Encoding.ASCII.GetBytes(baseString), signature))
-            throw Error(EventsVerificationErrorCode.InvalidSignature, "HTTP signature verification failed.");
-        var body = Array.Empty<byte>();
-        if (profile != EventsHttpProfile.Bodyless)
+        try
         {
-            RequireJson(request);
-            body = profile == EventsHttpProfile.EventJson
-                ? (await EventsRequestBody.ReadAndVerifyAsync(request, MaxBodyBytes, cancellationToken)
-                    .ConfigureAwait(false)).Bytes
-                : await EventsRequestBody.ReadAsync(request, MaxBodyBytes, cancellationToken).ConfigureAwait(false);
-            if (profile == EventsHttpProfile.EventJson &&
-                !request.Content!.Headers.Contains("Content-Digest"))
-                throw Error(EventsVerificationErrorCode.MissingCoveredComponent, "Event profile requires Content-Digest.");
+            RejectForbidden(request);
+            var expected = Components(profile);
+            var parsed = ParseSignatureInput(SingleHeader(request, "Signature-Input"));
+            if (!SequenceEqual(parsed.Components, expected))
+                throw Error(parsed.Components.Count < expected.Count
+                    ? EventsVerificationErrorCode.MissingCoveredComponent
+                    : EventsVerificationErrorCode.UnexpectedCoveredComponent,
+                    "The covered component sequence does not exactly match the Events profile.");
+            CheckFresh(parsed.Created);
+            var keyHeader = SingleHeader(request, SignatureKeyHeader.Name);
+            var signature = ParseSignature(SingleHeader(request, "Signature"));
+            var baseString = BuildSignatureBase(request, parsed.Components, parsed.Created, keyHeader, wirePath);
+            if (!httpSignatureKey.Verify(Encoding.ASCII.GetBytes(baseString), signature))
+                throw Error(EventsVerificationErrorCode.InvalidSignature, "HTTP signature verification failed.");
+            var body = Array.Empty<byte>();
+            if (profile != EventsHttpProfile.Bodyless)
+            {
+                RequireJson(request);
+                body = profile == EventsHttpProfile.EventJson
+                    ? (await EventsRequestBody.ReadAndVerifyAsync(request, MaxBodyBytes, cancellationToken)
+                        .ConfigureAwait(false)).Bytes
+                    : await EventsRequestBody.ReadAsync(request, MaxBodyBytes, cancellationToken)
+                        .ConfigureAwait(false);
+                if (profile == EventsHttpProfile.EventJson &&
+                    !request.Content!.Headers.Contains("Content-Digest"))
+                    throw Error(EventsVerificationErrorCode.MissingCoveredComponent, "Event profile requires Content-Digest.");
+            }
+            else if (request.Content is not null)
+                throw Error(EventsVerificationErrorCode.UnexpectedCoveredComponent,
+                    "Bodyless Events requests must not carry content.");
+            return new EventsHttpVerificationResult(profile, parsed.Created, keyHeader, body);
         }
-        else if (request.Content is not null)
-            throw Error(EventsVerificationErrorCode.UnexpectedCoveredComponent,
-                "Bodyless Events requests must not carry content.");
-        return new EventsHttpVerificationResult(profile, parsed.Created, keyHeader, body);
+        catch (EventsVerificationException) { throw; }
+        catch (FormatException ex)
+        {
+            throw new EventsVerificationException(
+                EventsVerificationErrorCode.MalformedRequest, ex.Message, ex);
+        }
     }
 
     /// <summary>
@@ -318,7 +328,9 @@ public sealed class EventsHttpMessageVerifier
 
     private static void RejectForbidden(HttpRequestMessage request)
     {
-        if (request.Headers.Authorization is not null || request.Headers.Contains("AAuth-Mission"))
+        if (request.Headers.Authorization is not null ||
+            request.Headers.Contains("Authorization") ||
+            request.Headers.Contains("AAuth-Mission"))
             throw Error(EventsVerificationErrorCode.UnexpectedCoveredComponent,
                 "Authorization and AAuth-Mission are not Events profile components.");
     }

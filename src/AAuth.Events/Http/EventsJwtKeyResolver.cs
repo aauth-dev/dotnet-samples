@@ -154,41 +154,55 @@ public sealed class EventsJwtKeyResolver
         if (issuerKey is null)
             throw Failure(EventsVerificationErrorCode.UnknownKey, $"No JWKS key exists for kid '{kid}'.");
         if (issuerKey.Algorithm != alg)
-            throw Failure(EventsVerificationErrorCode.UnsupportedAlgorithm, "JWT alg does not match the JWKS key.");
+        {
+            var rotated = await RefreshChangedKeyAsync(
+                jwksUri, kid, issuerKey, cancellationToken).ConfigureAwait(false);
+            if (rotated is null || rotated.Algorithm != alg)
+                throw Failure(
+                    EventsVerificationErrorCode.UnsupportedAlgorithm,
+                    "JWT alg does not match the JWKS key.");
+            issuerKey = rotated;
+        }
 
         TokenVerifier.VerifiedToken verified;
         try
         {
             verified = _tokenVerifier.Verify(compactToken, issuerKey, expectedType, expectedDwk, expectedAudience);
-            ReadClaims(verified, kind);
         }
-        catch (TokenVerificationException ex)
+        catch (TokenVerificationException ex) when (IsSignatureFailure(ex))
         {
             // A key may have rotated under an unchanged kid. Retry once only
             // when the rate-limited refresh returns different key material.
-            IAAuthKey? refreshed;
-            try
-            {
-                refreshed = await _jwks.ForceRefreshKeyAsync(jwksUri, kid, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception refreshError)
-            {
-                throw Failure(EventsVerificationErrorCode.MetadataFailure, refreshError.Message, refreshError);
-            }
-            if (refreshed is null || refreshed.ComputeJwkThumbprint() == issuerKey.ComputeJwkThumbprint())
+            var refreshed = await RefreshChangedKeyAsync(
+                jwksUri, kid, issuerKey, cancellationToken).ConfigureAwait(false);
+            if (refreshed is null)
                 throw MapTokenFailure(ex);
+            if (refreshed.Algorithm != alg)
+                throw Failure(
+                    EventsVerificationErrorCode.UnsupportedAlgorithm,
+                    "JWT alg does not match the refreshed JWKS key.");
             try
             {
                 verified = _tokenVerifier.Verify(compactToken, refreshed, expectedType, expectedDwk, expectedAudience);
-                ReadClaims(verified, kind);
                 issuerKey = refreshed;
             }
             catch (TokenVerificationException retry)
             {
                 throw MapTokenFailure(retry);
             }
+        }
+        catch (TokenVerificationException ex)
+        {
+            throw MapTokenFailure(ex);
+        }
+
+        try
+        {
+            ReadClaims(verified, kind);
+        }
+        catch (TokenVerificationException ex)
+        {
+            throw MapTokenFailure(ex);
         }
 
         IAAuthKey httpKey = issuerKey;
@@ -213,6 +227,32 @@ public sealed class EventsJwtKeyResolver
         catch (EventsVerificationException) { throw; }
         catch (Exception ex) { throw Failure(EventsVerificationErrorCode.UrlPolicyRejected, ex.Message, ex); }
     }
+
+    private async Task<IAAuthKey?> RefreshChangedKeyAsync(
+        Uri jwksUri,
+        string kid,
+        IAAuthKey current,
+        CancellationToken cancellationToken)
+    {
+        IAAuthKey? refreshed;
+        try
+        {
+            refreshed = await _jwks.ForceRefreshKeyAsync(jwksUri, kid, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            throw Failure(EventsVerificationErrorCode.MetadataFailure, ex.Message, ex);
+        }
+        return refreshed is not null &&
+               refreshed.ComputeJwkThumbprint() != current.ComputeJwkThumbprint()
+            ? refreshed
+            : null;
+    }
+
+    private static bool IsSignatureFailure(TokenVerificationException exception) =>
+        exception.Message.Contains("signature verification failed", StringComparison.OrdinalIgnoreCase);
 
     private static void ReadClaims(TokenVerifier.VerifiedToken verified, EventsTokenKind kind)
     {
