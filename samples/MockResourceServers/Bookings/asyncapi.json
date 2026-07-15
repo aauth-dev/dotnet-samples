@@ -1,0 +1,93 @@
+{
+  "asyncapi": "3.0.0",
+  "info": {
+    "title": "Aria Reservations waitlist events",
+    "version": "1.0.0",
+    "description": "Sample-only protected waitlist registration and slot availability event."
+  },
+  "channels": {
+    "waitlistSubscriptions": {
+      "address": "/waitlist/subscriptions/{subscriptionTicket}",
+      "description": "Protected subscription URL returned by the prior authenticated waitlist request.",
+      "x-aauth-protected-ticket": true,
+      "parameters": {
+        "subscriptionTicket": {
+          "description": "Opaque, short-lived, single-use ticket bound to the requesting agent."
+        }
+      },
+      "messages": {
+        "slotAvailable": {
+          "$ref": "#/components/messages/slotAvailable"
+        }
+      }
+    }
+  },
+  "operations": {
+    "registerWaitlistSubscription": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/waitlistSubscriptions"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/waitlistSubscriptions/messages/slotAvailable"
+        }
+      ]
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "aauth_subscribe": {
+        "type": "http",
+        "scheme": "aauth-subscribe",
+        "description": "The AP-issued subscribe token is carried in Signature-Key."
+      }
+    },
+    "messages": {
+      "slotAvailable": {
+        "name": "slot.available",
+        "title": "Availability slot",
+        "contentType": "application/json",
+        "payload": {
+          "$ref": "#/components/schemas/slotAvailable"
+        }
+      }
+    },
+    "schemas": {
+      "slotAvailable": {
+        "type": "object",
+        "required": [
+          "reservation_id",
+          "venue",
+          "date",
+          "party_size",
+          "available",
+          "offer_expires_at"
+        ],
+        "properties": {
+          "reservation_id": {
+            "type": "string"
+          },
+          "venue": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "party_size": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "offer_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  }
+}
