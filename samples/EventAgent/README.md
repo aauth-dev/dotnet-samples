@@ -11,25 +11,20 @@ uses the normal AAuth JWT/challenge-handling client.
 
 ## Run
 
-Start the parallel sample services first:
+Start the focused stack, then run EventAgent in another terminal:
 
 ```bash
-AgentProvider__Events__BookingsResourceUrl=http://localhost:5005 \
-  dotnet run --project samples/MockAgentProvider
-dotnet run --project samples/MockResourceServers/Bookings
-dotnet run --project samples/MockAccessServers/R3
-MockPersonServer__TrustedAccessServers__0=http://localhost:5501 \
-  dotnet run --project samples/MockPersonServer
+make events-stack
+make agent-events
 ```
 
-Grant the Bookings waitlist scope to the default agent, then run the agent:
+The equivalent direct command is:
 
 ```bash
-curl -X POST http://localhost:5100/admin/consent \
-  -H 'content-type: application/json' \
-  -d '{"agent":"aauth:event-agent@ap.example","resource":"http://localhost:5005","scope":"calendar.read"}'
-
-dotnet run --project samples/EventAgent
+dotnet run --project samples/EventAgent -- \
+  --ap http://localhost:5301 \
+  --bookings http://localhost:5005 \
+  --ps http://localhost:5100
 ```
 
 Options:

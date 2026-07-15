@@ -1,6 +1,6 @@
 # Samples
 
-Sixteen sample applications demonstrating AAuth flows end-to-end. The six Aria
+Seventeen sample applications demonstrating AAuth flows end-to-end. The six Aria
 resource servers (Profile, Calendar, Trips, Wallet, Inbox, Bookings) live under
 [MockResourceServers/](MockResourceServers/); the two access servers (Federated,
 R3) live under [MockAccessServers/](MockAccessServers/).
@@ -15,6 +15,7 @@ R3) live under [MockAccessServers/](MockAccessServers/).
 | [Bookings](MockResourceServers/Bookings/) | 5005 | Rich Resource Requests (R3, four-party) resource server — dining & experiences reservations via the **OpenAPI** vocabulary; `searchAvailability`/`holdReservation` → `r3_granted`, `confirmReservation` → `r3_conditional` (per-call proposal) |
 | [Concierge](Concierge/) | 5200 | Intermediate service — call chaining with nested `act` delegation |
 | [MissionAgent](MissionAgent/) | — | CLI agent — drives the optional, orthogonal **agent governance** layer: proposes a mission, asks per-action permission, records audit, and relays interactions through a PS (§Agent Governance) |
+| [EventAgent](EventAgent/) | — | CLI agent — protected Bookings waitlist registration, event delivery through the AP inbox, verification, deduplication, and explicit non-normative polling/ACK |
 | [MockPersonServer](MockPersonServer/) | 5100 | Reference Person Server — verifies exchanges, mints auth tokens, federates to an Access Server. **Sample only — not part of the AAuth SDK.** |
 | [MockAgentProvider](MockAgentProvider/) | 5301 | Reference Agent Provider — issues agent tokens, hosts JWKS. **Sample only — not part of the AAuth SDK.** |
 | [MockAccessServer](MockAccessServers/Federated/) | 5500 | Reference Access Server (Federated) — the fourth party in federated access; evaluates policy (stub or Keycloak) and mints `aa-auth+jwt` (`dwk=aauth-access.json`). **Sample only — not part of the AAuth SDK.** |
@@ -57,6 +58,15 @@ make agent-mission    # drive it from another terminal
 ```
 
 See the [MissionAgent README](MissionAgent/README.md).
+
+For the experimental **AAuth Events** flow:
+
+```bash
+make events-stack   # AP + PS + R3 AS + Bookings
+make agent-events   # run EventAgent in another terminal
+```
+
+See the [EventAgent README](EventAgent/README.md).
 
 ## Running Individually
 

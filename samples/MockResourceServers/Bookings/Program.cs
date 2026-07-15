@@ -189,6 +189,13 @@ app.MapPost("/waitlist/subscriptions/{eid}/trigger", async (
 {
     var auth = await VerifyAuthOrChallengeAsync(ctx, [SearchAvailability]);
     if (auth.Result is not null) return auth.Result;
+    var claims = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload);
+    if (!claims.Granted.Contains(SearchAvailability))
+    {
+        return Results.Json(
+            new { error = "r3_denied", detail = "searchAvailability was not granted" },
+            statusCode: StatusCodes.Status403Forbidden);
+    }
 
     if (!subscriptions.TryGet(eid, out var stored))
     {

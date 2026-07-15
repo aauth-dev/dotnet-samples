@@ -16,6 +16,7 @@ PS_PROJECT     := samples/MockPersonServer/MockPersonServer.csproj
 AP_PROJECT     := samples/MockAgentProvider/MockAgentProvider.csproj
 TOUR_PROJECT   := samples/GuidedTour/GuidedTour.csproj
 AGENT_PROJECT  := samples/AgentConsole/AgentConsole.csproj
+EVENT_AGENT_PROJECT := samples/EventAgent/EventAgent.csproj
 SAMPLE_PROJECT := samples/SampleApp/SampleApp.csproj
 CONCIERGE_PROJECT   := samples/Concierge/Concierge.csproj
 LIVE_PROJECT   := samples/LiveWhoAmITest/LiveWhoAmITest.csproj
@@ -43,6 +44,7 @@ KEYCLOAK_REALM := samples/MockAccessServers/Federated/keycloak
 # AgentConsole persists its enrollment under $LocalApplicationData; the MockAgentProvider
 # keeps its agent registry in memory, so the cache goes stale whenever the AP restarts.
 AGENT_CACHE_DIR := $(or $(XDG_DATA_HOME),$(HOME)/.local/share)/aauth-agent-console
+EVENT_AGENT_CACHE_DIR := $(or $(XDG_DATA_HOME),$(HOME)/.local/share)/aauth-event-agent
 E2E_DIR := tests/e2e
 
 # Environment that points the MockAccessServer at the live Keycloak policy engine.
@@ -71,6 +73,7 @@ endef
 
 .PHONY: help build restore test test-unit test-conformance format clean \
         resources ps ps-consent ap concierge tour sampleapp agent live \
+        events-stack agent-events event-agent-reset \
         demo demo-mission agent-mission \
         keycloak access-server demo-keycloak \
         agent-federated agent-reset \
@@ -144,6 +147,24 @@ sampleapp: ## Run the SampleApp Blazor app (port 5240)
 agent: ## Run AgentConsole against the Profile server (override URL=… for a different target)
 	$(DOTNET) run --project $(AGENT_PROJECT) -- $(or $(URL),$(PROFILE_URL))
 
+events-stack: ## Run the focused AAuth Events stack (AP + PS + R3 AS + Bookings)
+	@echo "Building the Events stack..."
+	@$(DOTNET) build $(SOLUTION) -v q
+	@echo "Run 'make agent-events' in another terminal."
+	@trap 'trap - INT TERM; echo; echo "Stopping..."; kill 0' INT TERM; \
+	MockPersonServer__TrustedAccessServers__0=$(R3AS_URL) $(DOTNET) run --no-build --project $(PS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(AP_PROJECT) & \
+	$(DOTNET) run --no-build --project $(R3AS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(BOOKINGS_PROJECT) & \
+	wait
+
+agent-events: ## Run EventAgent through the protected Bookings waitlist flow
+	$(DOTNET) run --project $(EVENT_AGENT_PROJECT) -- \
+	  --ap $(AP_URL) --bookings $(BOOKINGS_URL) --ps $(PS_URL)
+
+event-agent-reset: ## Clear EventAgent enrollment metadata after an AP restart
+	@rm -rf "$(EVENT_AGENT_CACHE_DIR)" && echo "Cleared EventAgent cache ($(EVENT_AGENT_CACHE_DIR))."
+
 live: ## Run LiveWhoAmITest against whoami.aauth.dev (needs cloudflared + network)
 	$(DOTNET) run --project $(LIVE_PROJECT)
 
@@ -171,6 +192,7 @@ demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. f
 	@echo " Open in your browser:"
 	@echo "   GuidedTour:         $(TOUR_URL)         (step-by-step walkthrough of every flow)"
 	@echo "   SampleApp:          $(SAMPLE_URL)         (minimal app: /federated, /deferred, /callchain)"
+	@echo "   EventAgent CLI:     run 'make agent-events' in another terminal"
 	@echo "------------------------------------------------------------------"
 	@echo ""
 	@echo "Building services (once) before launch..."

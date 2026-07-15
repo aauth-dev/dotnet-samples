@@ -63,7 +63,7 @@ Settings in `appsettings.json`:
 |-----|---------|-------------|
 | `AgentProvider:Issuer` | `http://localhost:5301` | AP issuer claim in tokens |
 | `AgentProvider:KeyId` | `ap-key-1` | Key identifier for the AP signing key |
-| `AgentProvider:Events:BookingsResourceUrl` | `http://localhost:5302` | Fixed `bookings` resource audience for sample token acquisition |
+| `AgentProvider:Events:BookingsResourceUrl` | `http://localhost:5005` | Fixed `bookings` resource audience for sample token acquisition |
 | `AgentProvider:Events:SubscriptionLifetimeSeconds` | `3600` | Sample subscribe-token lifetime |
 | `AgentProvider:Events:SubscriptionMaxUses` | `3` | Sample event-use limit |
 | `AgentProvider:Events:EventEndpointRoute` | `/events` | AP `event_endpoint` route |

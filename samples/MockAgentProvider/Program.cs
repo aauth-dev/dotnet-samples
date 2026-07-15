@@ -19,7 +19,7 @@ var keyId = builder.Configuration["AgentProvider:KeyId"] ?? "ap-key-1";
 var eventEndpointRoute =
     builder.Configuration["AgentProvider:Events:EventEndpointRoute"] ?? "/events";
 var bookingsResource =
-    builder.Configuration["AgentProvider:Events:BookingsResourceUrl"] ?? "http://localhost:5302";
+    builder.Configuration["AgentProvider:Events:BookingsResourceUrl"] ?? "http://localhost:5005";
 var subscriptionLifetimeSeconds = builder.Configuration.GetValue(
     "AgentProvider:Events:SubscriptionLifetimeSeconds", 3600);
 var subscriptionMaxUses = builder.Configuration.GetValue<long?>(

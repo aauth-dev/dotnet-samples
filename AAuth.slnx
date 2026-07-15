@@ -2,6 +2,7 @@
   <Folder Name="/samples/">
     <Project Path="samples/AgentConsole/AgentConsole.csproj" />
     <Project Path="samples/Concierge/Concierge.csproj" />
+    <Project Path="samples/EventAgent/EventAgent.csproj" />
     <Project Path="samples/GuidedTour/GuidedTour.csproj" />
     <Project Path="samples/LiveWhoAmITest/LiveWhoAmITest.csproj" />
     <Project Path="samples/MissionAgent/MissionAgent.csproj" />
