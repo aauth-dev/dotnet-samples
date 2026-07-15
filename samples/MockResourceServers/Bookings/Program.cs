@@ -3,10 +3,15 @@ using System.Text.Json.Nodes;
 using AAuth;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Events;
+using AAuth.Events.Discovery;
+using AAuth.Events.Http;
+using AAuth.Events.Resource;
 using AAuth.HttpSig;
 using AAuth.R3;
 using AAuth.R3.Model;
 using AAuth.Tokens;
+using Bookings.Events;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,6 +28,23 @@ var accessServerUrl = (builder.Configuration["AAuth:AccessServer"] ?? "http://lo
 var personServerUrl = (builder.Configuration["AAuth:PersonServer"] ?? "http://localhost:5100").TrimEnd('/');
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
 var missionAware = builder.Configuration.GetValue("Bookings:MissionAware", false);
+var eventsSignatureWindowSeconds = builder.Configuration.GetValue<int?>("Events:SignatureWindow") ?? signatureWindowSeconds;
+var eventsFutureSkewSeconds = builder.Configuration.GetValue<int?>("Events:FutureSkew") ?? 5;
+var eventsMaxBodyBytes = builder.Configuration.GetValue<int?>("Events:MaxBodyBytes") ?? AAuthEventsConstants.DefaultMaxBodyBytes;
+var ticketLifetime = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("Events:TicketLifetimeSeconds") ?? 300);
+var subscriptionLifetime = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("Events:SubscriptionLifetimeSeconds") ?? 3600);
+var eventLifetime = TimeSpan.FromSeconds(builder.Configuration.GetValue<int?>("Events:EventLifetimeSeconds") ?? 300);
+var asyncApiPath = Path.Combine(builder.Environment.ContentRootPath, "asyncapi.json");
+var asyncApiDocument = JsonNode.Parse(File.ReadAllText(asyncApiPath)) as JsonObject
+    ?? throw new InvalidOperationException("Bookings asyncapi.json must contain a JSON object.");
+AsyncApiAAuthValidator.EnsureValid(asyncApiDocument);
+var vocabularies = AAuthEventsMetadata.WithAsyncApiVocabulary(
+    new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        [Vocabulary.OpenApi] = $"{resourceUrl}/openapi.json",
+    },
+    $"{resourceUrl}/asyncapi.json");
+var r3Vocabularies = AAuthEventsMetadata.ToVocabulariesJson(vocabularies);
 var trustedFetcherAuthorities = builder.Configuration
     .GetSection("Bookings:TrustedR3Fetchers")
     .Get<string[]>() ?? [accessServerUrl, personServerUrl];
@@ -51,11 +73,28 @@ builder.Services.AddAAuthResource(o =>
     {
         // Bookings is deliberately not mission-aware (advertised for discovery only).
         ["mission_aware"] = missionAware,
-        ["r3_vocabularies"] = new JsonObject { [Vocabulary.OpenApi] = $"{resourceUrl}/openapi.json" },
+        ["r3_vocabularies"] = r3Vocabularies,
     };
 });
+var eventsUrlPolicy = new DefaultEventsUrlPolicy();
+builder.Services.AddAAuthEventsResource(options =>
+{
+    options.SignatureMaxAge = TimeSpan.FromSeconds(eventsSignatureWindowSeconds);
+    options.SignatureFutureSkew = TimeSpan.FromSeconds(eventsFutureSkewSeconds);
+    options.MaxBodyBytes = eventsMaxBodyBytes;
+});
+builder.Services.AddSingleton<IEventsUrlPolicy>(eventsUrlPolicy);
+builder.Services.AddSingleton<EventEndpointResolver>(_ =>
+    new EventEndpointResolver(urlPolicy: eventsUrlPolicy, cacheTtl: TimeSpan.FromMinutes(2)));
+builder.Services.AddSingleton<EventDeliveryClient>(sp =>
+    new EventDeliveryClient(
+        sp.GetRequiredService<EventEndpointResolver>(),
+        resourceKey,
+        ResourceKid,
+        EventsHttpClientFactory.Create(eventsUrlPolicy)));
 builder.Services.AddSingleton(new TokenVerifier());
 builder.Services.AddSingleton<R3ProposalStore>();
+builder.Services.AddSingleton(new BookingsEventSubscriptions(ticketLifetime, subscriptionLifetime));
 
 var app = builder.Build();
 
@@ -70,7 +109,7 @@ app.MapGet("/", () => Results.Ok(new
     accessMode = "four-party-r3",
     missionAware,
     authorization_endpoint = $"{resourceUrl}/authorize",
-    r3_vocabularies = new Dictionary<string, string> { [Vocabulary.OpenApi] = $"{resourceUrl}/openapi.json" },
+    r3_vocabularies = vocabularies,
     flows = new[]
     {
         new { path = "/search_availability", operationId = SearchAvailability, grant = "r3_granted" },
@@ -93,6 +132,132 @@ app.MapGet("/openapi.json", () => Results.Json(new JsonObject
         ["/confirm_reservation"] = OpenApiPath(ConfirmReservation, "Confirm a reservation; may charge a non-refundable deposit."),
     },
 }, contentType: "application/json"));
+
+app.MapGet("/asyncapi.json", () => Results.Json(asyncApiDocument, contentType: AAuthEventsConstants.JsonMediaType));
+
+app.MapPost("/waitlist/request", async (HttpContext ctx, BookingsEventSubscriptions subscriptions) =>
+{
+    var auth = await VerifyAuthOrChallengeAsync(ctx, [SearchAvailability]);
+    if (auth.Result is not null) return auth.Result;
+    var claims = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload);
+    if (!claims.Granted.Contains(SearchAvailability))
+    {
+        return Results.Json(
+            new { error = "r3_denied", detail = "searchAvailability was not granted" },
+            statusCode: StatusCodes.Status403Forbidden);
+    }
+
+    var agentId = (string?)auth.Verified.Payload["agent"];
+    if (string.IsNullOrWhiteSpace(agentId))
+    {
+        return Results.Json(
+            new { error = "invalid_auth_token", detail = "auth token is missing agent identity" },
+            statusCode: StatusCodes.Status401Unauthorized);
+    }
+
+    var ticket = subscriptions.IssueTicket(agentId, "waitlist-subscriptions");
+    return Results.Ok(new
+    {
+        status = "unavailable",
+        waitlist = new
+        {
+            subscribe_url = ticket.SubscribeUrl(resourceUrl),
+            event_types = new[] { BookingsEventSubscriptions.SlotAvailable },
+            offer_window_seconds = (int)ticketLifetime.TotalSeconds,
+        },
+    });
+});
+
+var waitlistChannel = new SubscriptionChannel(
+    "waitlist-subscriptions",
+    "/waitlist/subscriptions/{subscriptionTicket}",
+    true,
+    [BookingsEventSubscriptions.SlotAvailable],
+    resourceUrl,
+    "subscriptionTicket");
+// The Events mapper performs the subscribe-token, ticket, signature, and
+// registration-body verification before invoking the sample's atomic handler.
+app.MapAAuthProtectedSubscription(
+    waitlistChannel,
+    app.Services.GetRequiredService<BookingsEventSubscriptions>());
+
+app.MapPost("/waitlist/subscriptions/{eid}/trigger", async (
+    HttpContext ctx,
+    string eid,
+    BookingsEventSubscriptions subscriptions,
+    EventDeliveryClient delivery) =>
+{
+    var auth = await VerifyAuthOrChallengeAsync(ctx, [SearchAvailability]);
+    if (auth.Result is not null) return auth.Result;
+
+    if (!subscriptions.TryGet(eid, out var stored))
+    {
+        return Results.Json(new { error = "subscription_not_found" }, statusCode: StatusCodes.Status404NotFound);
+    }
+
+    var agentId = (string?)auth.Verified!.Payload["agent"];
+    if (!string.Equals(agentId, stored.Subscription.AgentSubject, StringComparison.Ordinal))
+    {
+        return Results.Json(
+            new { error = "agent_mismatch" },
+            statusCode: StatusCodes.Status403Forbidden);
+    }
+
+    var now = DateTimeOffset.UtcNow;
+    if (stored.ExpiresAt <= now)
+    {
+        subscriptions.Remove(eid);
+        return Results.Json(new { error = "subscription_expired" }, statusCode: StatusCodes.Status404NotFound);
+    }
+
+    var payload = JsonSerializer.SerializeToUtf8Bytes(new
+    {
+        reservation_id = "dining-lumiere-001",
+        venue = "Le Lumière (dinner for 2)",
+        date = "2026-07-14T19:30:00Z",
+        party_size = 2,
+        available = true,
+        offer_expires_at = now.AddSeconds(60),
+    });
+    var configuredEventExpiresAt = now.Add(eventLifetime);
+    var eventExpiresAt = stored.ExpiresAt <= configuredEventExpiresAt
+        ? stored.ExpiresAt
+        : configuredEventExpiresAt;
+    if (eventExpiresAt <= now)
+    {
+        subscriptions.Remove(eid);
+        return Results.Json(new { error = "subscription_expired" }, statusCode: StatusCodes.Status404NotFound);
+    }
+
+    try
+    {
+        var prepared = delivery.Prepare(
+            stored.Subscription,
+            payload,
+            eventExpiresAt,
+            AAuthEventsConstants.JsonMediaType,
+            issuedAt: now);
+        var outcome = await delivery.SendAsync(prepared, ctx.RequestAborted);
+        if (outcome.IsExhausted || outcome.RemainingUses == 0)
+            subscriptions.Remove(eid);
+
+        return Results.Json(
+            new
+            {
+                eid,
+                outcome = outcome.Outcome.ToString().ToLowerInvariant(),
+                remaining_uses = outcome.RemainingUses,
+                status_code = (int)outcome.StatusCode,
+            },
+            statusCode: (int)outcome.StatusCode);
+    }
+    catch (Exception ex) when (ex is HttpRequestException or EventDeliveryProtocolException or EventsVerificationException)
+    {
+        return Results.Json(
+            new { error = "event_delivery_failed", detail = ex.Message },
+            statusCode: StatusCodes.Status502BadGateway);
+    }
+});
 
 app.MapPost("/authorize", async (HttpContext ctx, R3ProposalStore documents) =>
 {
