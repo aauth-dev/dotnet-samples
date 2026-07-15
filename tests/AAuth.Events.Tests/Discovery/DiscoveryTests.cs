@@ -157,6 +157,30 @@ public sealed class DiscoveryTests
         Assert.True(AsyncApiAAuthValidator.Validate(document).IsValid);
     }
 
+    [Fact]
+    public void AsyncApi_validator_rejects_unresolvable_channel_reference()
+    {
+        var document = JsonNode.Parse(
+            """
+            {
+              "asyncapi":"3.0.0",
+              "operations":{
+                "receive":{
+                  "action":"receive",
+                  "channel":{"$ref":"#/channels/missing"},
+                  "security":[{"aauth_subscribe":[]}]
+                }
+              },
+              "components":{"securitySchemes":{"aauth_subscribe":{"type":"http","scheme":"aauth-subscribe"}}}
+            }
+            """)!.AsObject();
+
+        var result = AsyncApiAAuthValidator.Validate(document);
+
+        Assert.Contains(result.Diagnostics, diagnostic =>
+            diagnostic.Code == AsyncApiAAuthDiagnosticCode.MissingChannel);
+    }
+
     private sealed class MutableMetadataHandler : HttpMessageHandler
     {
         public MutableMetadataHandler(string json) => Json = json;

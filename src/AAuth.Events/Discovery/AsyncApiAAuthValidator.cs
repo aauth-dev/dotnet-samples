@@ -152,11 +152,13 @@ public static class AsyncApiAAuthValidator
     {
         if (node is JsonObject inline)
         {
-            if (inline["$ref"] is JsonValue referenceValue &&
-                referenceValue.TryGetValue<string>(out var inlineReference) &&
-                channels is not null &&
-                inlineReference.StartsWith("#/channels/", StringComparison.Ordinal))
+            if (inline["$ref"] is not null)
             {
+                if (inline["$ref"] is not JsonValue referenceValue ||
+                    !referenceValue.TryGetValue<string>(out var inlineReference) ||
+                    channels is null ||
+                    !inlineReference.StartsWith("#/channels/", StringComparison.Ordinal))
+                    return null;
                 return channels[inlineReference["#/channels/".Length..]] as JsonObject;
             }
 
