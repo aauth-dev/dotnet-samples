@@ -10,6 +10,7 @@ public sealed class SampleAgentProviderEventStore : IAAuthAgentProviderEventStor
 {
     private readonly object _gate = new();
     private readonly Func<DateTimeOffset> _clock;
+    private readonly TimeSpan _receiptRetention;
     private readonly Dictionary<string, AgentProviderSubscription> _subscriptions =
         new(StringComparer.Ordinal);
     private readonly Dictionary<string, StoredReceipt> _acceptedByTokenHash =
@@ -17,9 +18,14 @@ public sealed class SampleAgentProviderEventStore : IAAuthAgentProviderEventStor
     private readonly Dictionary<string, StoredReceipt> _pendingByReceiptId =
         new(StringComparer.Ordinal);
 
-    public SampleAgentProviderEventStore(Func<DateTimeOffset>? clock = null)
+    public SampleAgentProviderEventStore(
+        Func<DateTimeOffset>? clock = null,
+        TimeSpan? receiptRetention = null)
     {
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
+        if (receiptRetention is not null && receiptRetention <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(receiptRetention));
+        _receiptRetention = receiptRetention ?? TimeSpan.FromHours(1);
     }
 
     public Task<bool> TryCreateSubscriptionAsync(
@@ -72,7 +78,6 @@ public sealed class SampleAgentProviderEventStore : IAAuthAgentProviderEventStor
                 return Task.FromResult(new EventAcceptanceResult(EventAcceptanceOutcome.ExpiredSubscription));
 
             if (subscription.Status == AgentProviderSubscriptionStatus.Expired ||
-                claims.ExpiresAt <= now ||
                 subscription.ExpiresAt <= now)
             {
                 subscription.Status = AgentProviderSubscriptionStatus.Expired;
@@ -154,7 +159,7 @@ public sealed class SampleAgentProviderEventStore : IAAuthAgentProviderEventStor
     private void SweepExpiredReceipts(DateTimeOffset now)
     {
         var expired = _acceptedByTokenHash
-            .Where(pair => pair.Value.Event.Claims.ExpiresAt <= now)
+            .Where(pair => pair.Value.ReceiptTime + _receiptRetention <= now)
             .Select(pair => pair.Key)
             .ToArray();
         foreach (var tokenHash in expired)
@@ -170,6 +175,7 @@ public sealed class SampleAgentProviderEventStore : IAAuthAgentProviderEventStor
         string AgentId,
         long? RemainingUses)
     {
+        public DateTimeOffset ReceiptTime => Event.ReceiptTime;
         public string ReceiptId => Event.TokenHashHex;
 
         public SamplePendingReceipt ToPublic() =>

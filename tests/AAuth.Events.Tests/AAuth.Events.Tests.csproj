@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <ProjectReference Include="..\..\samples\MockAgentProvider\MockAgentProvider.csproj" />
     <ProjectReference Include="..\..\src\AAuth.Events\AAuth.Events.csproj" />
     <ProjectReference Include="..\..\src\AAuth.R3\AAuth.R3.csproj" />
   </ItemGroup>
