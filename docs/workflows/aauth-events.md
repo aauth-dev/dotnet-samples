@@ -45,15 +45,15 @@ sequenceDiagram
     Bookings-->>Agent: 401 challenge, then unavailable + subscribe_url
     Agent->>AP: POST /agents/{sub}/event-subscriptions/bookings (sample-only)
     AP-->>Agent: subscribe_token, eid, expires_at
-    Agent->>Bookings: POST subscribe_url\nSignature-Key=subscribe JWT + JSON preferences
+    Agent->>Bookings: POST subscribe_url<br/>Signature-Key=subscribe JWT + JSON preferences
     Bookings->>AP: resolve current /.well-known/aauth-agent.json and JWKS
     AP-->>Bookings: signing key
     Bookings-->>Agent: 200 {event_types:["slot.available"]}
     Note over Bookings: consume the protected ticket atomically and store the subscription
     Agent->>Bookings: POST /waitlist/subscriptions/{eid}/trigger (sample)
-    Bookings->>AP: GET current AP metadata, then POST /events\nresource event JWT + direct application/json
+    Bookings->>AP: GET current AP metadata, then POST /events<br/>resource event JWT + direct application/json
     AP->>Resource: resolve resource metadata/JWKS and verify JWT + HTTP signature
-    AP-->>Bookings: 202 (durably recorded; optional remaining_uses)
+    AP-->>Bookings: 202 durably recorded<br/>optional remaining_uses
     Agent->>AP: GET /agents/{sub}/events?limit=20 (sample-only polling)
     AP-->>Agent: pending receipt(s)
     Agent->>Agent: verify event token, local eid, and deduplicate
