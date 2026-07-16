@@ -23,6 +23,8 @@ namespace AAuth.Events.Tests.Conformance;
 
 public sealed class RegistrationConformanceTests
 {
+    private const string ResourceAudience = "https://resource.example";
+
     [Theory]
     [InlineData("EdDSA")]
     [InlineData("ES256")]
@@ -32,7 +34,7 @@ public sealed class RegistrationConformanceTests
     {
         SignatureUnboundRegistrationBody? preferences = null;
         var channel = SubscriptionChannel.Public(
-            "public", "/public", ["slot.available", "slot.cancelled"], "https://resource.example");
+            "public", "/public", ["slot.available", "slot.cancelled"], ResourceAudience);
         using var fixture = new Fixture(channel, (_, _, body, _) =>
         {
             preferences = body;
@@ -65,7 +67,7 @@ public sealed class RegistrationConformanceTests
     public async Task RegistrationCarriesIssuerSubjectAudienceEidAndTimes(string algorithm)
     {
         VerifiedSubscriptionRegistration? received = null;
-        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"]);
+        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (_, registration, _, _) =>
         {
             received = registration;
@@ -101,7 +103,7 @@ public sealed class RegistrationConformanceTests
     public async Task SubscribeTokenIsTheSoleCredentialAndForbiddenHeadersAreRejected()
     {
         var calls = 0;
-        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"]);
+        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (_, _, _, _) =>
         {
             Interlocked.Increment(ref calls);
@@ -125,7 +127,7 @@ public sealed class RegistrationConformanceTests
     {
         string? ticket = null;
         var channel = SubscriptionChannel.Protected(
-            "protected", "/channel/{ticket}", ["slot.available"]);
+            "protected", "/channel/{ticket}", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (endpoint, _, _, _) =>
         {
             ticket = endpoint.Ticket;
@@ -148,7 +150,7 @@ public sealed class RegistrationConformanceTests
     {
         var calls = 0;
         var channel = SubscriptionChannel.Protected(
-            "protected", "/channel/{ticket}", ["slot.available"]);
+            "protected", "/channel/{ticket}", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (_, _, _, _) =>
         {
             Interlocked.Increment(ref calls);
@@ -178,7 +180,7 @@ public sealed class RegistrationConformanceTests
     public async Task ProtectedTicketOutcomesAreResourceControlled(string ticket, int expectedStatus)
     {
         var channel = SubscriptionChannel.Protected(
-            "protected", "/channel/{ticket}", ["slot.available"]);
+            "protected", "/channel/{ticket}", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (endpoint, registration, _, _) =>
         {
             var status = endpoint.Ticket switch
@@ -215,7 +217,7 @@ public sealed class RegistrationConformanceTests
     {
         var calls = 0;
         var channel = SubscriptionChannel.Protected(
-            "protected", "/channel/{ticket}", ["slot.available"]);
+            "protected", "/channel/{ticket}", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (endpoint, registration, _, _) =>
         {
             Interlocked.Increment(ref calls);
@@ -246,7 +248,7 @@ public sealed class RegistrationConformanceTests
     public async Task CnfMustMatchTheAgentHttpSignatureKey()
     {
         var calls = 0;
-        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"]);
+        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (_, _, _, _) =>
         {
             Interlocked.Increment(ref calls);
@@ -298,7 +300,7 @@ public sealed class RegistrationConformanceTests
     public async Task MissingOrUnknownJwtKeyAndEidAreUnauthorizedOrMalformed()
     {
         var calls = 0;
-        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"]);
+        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (_, _, _, _) =>
         {
             Interlocked.Increment(ref calls);
@@ -326,7 +328,7 @@ public sealed class RegistrationConformanceTests
     public async Task DuplicateEidIsRejectedWithConflict()
     {
         var seen = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
-        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"]);
+        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (_, registration, _, _) =>
         {
             return ValueTask.FromResult(
@@ -351,7 +353,7 @@ public sealed class RegistrationConformanceTests
     public async Task ConcurrentRegistrationsConsumeAnEidAtomically()
     {
         var seen = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
-        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"]);
+        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (_, registration, _, _) =>
         {
             var result = seen.TryAdd(registration.Eid, 0)
@@ -376,7 +378,7 @@ public sealed class RegistrationConformanceTests
     public async Task SelectedEventSubsetIsAcceptedButWideningIsRejected()
     {
         var channel = SubscriptionChannel.Public(
-            "public", "/public", ["slot.available", "slot.cancelled"]);
+            "public", "/public", ["slot.available", "slot.cancelled"], ResourceAudience);
         using var fixture = new Fixture(channel, (_, _, preferences, _) =>
         {
             var requested = preferences is null
@@ -410,7 +412,7 @@ public sealed class RegistrationConformanceTests
     public async Task RegistrationBodyIsSignatureUnboundButContentTypeRemainsBound()
     {
         SignatureUnboundRegistrationBody? received = null;
-        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"]);
+        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (_, _, preferences, _) =>
         {
             received = preferences;
@@ -437,7 +439,7 @@ public sealed class RegistrationConformanceTests
     public async Task BodylessProfileRejectsARequestBody()
     {
         var calls = 0;
-        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"]);
+        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (_, _, _, _) =>
         {
             Interlocked.Increment(ref calls);
@@ -463,7 +465,7 @@ public sealed class RegistrationConformanceTests
     public async Task RegistrationRequiresTheExactHttpSignatureComponentSequence(string signatureInput)
     {
         var calls = 0;
-        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"]);
+        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (_, _, _, _) =>
         {
             Interlocked.Increment(ref calls);
@@ -489,7 +491,7 @@ public sealed class RegistrationConformanceTests
     public async Task HandlerResultsMapToTheRegistrationStatusCodes()
     {
         var channel = SubscriptionChannel.Protected(
-            "protected", "/channel/{ticket}", ["slot.available"]);
+            "protected", "/channel/{ticket}", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (endpoint, _, _, _) =>
         {
             return ValueTask.FromResult(endpoint.Ticket switch
@@ -528,7 +530,7 @@ public sealed class RegistrationConformanceTests
     {
         var calls = 0;
         var channel = SubscriptionChannel.Protected(
-            "protected", "/channel/{ticket?}", ["slot.available"]);
+            "protected", "/channel/{ticket?}", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (_, _, _, _) =>
         {
             Interlocked.Increment(ref calls);
@@ -550,7 +552,7 @@ public sealed class RegistrationConformanceTests
     public async Task CancellationIsPropagatedToTheRegistrationHandler()
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"]);
+        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, async (_, _, _, cancellationToken) =>
         {
             entered.SetResult();

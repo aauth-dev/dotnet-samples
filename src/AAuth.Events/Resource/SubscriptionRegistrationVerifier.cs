@@ -51,11 +51,13 @@ public sealed class SubscriptionRegistrationVerifier
     /// </summary>
     public async Task<SubscriptionRegistrationVerification> VerifyAsync(
         HttpRequestMessage request,
-        string? expectedAudience = null,
+        string expectedAudience,
         string? wirePath = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (string.IsNullOrWhiteSpace(expectedAudience))
+            throw new ArgumentException("An expected audience is required.", nameof(expectedAudience));
         var kind = request.Content is null
             ? EventsHttpProfile.Bodyless
             : EventsHttpProfile.RegistrationJson;
@@ -76,8 +78,7 @@ public sealed class SubscriptionRegistrationVerifier
                 EventsVerificationErrorCode.InvalidToken, ex.Message, ex);
         }
 
-        if (expectedAudience is not null &&
-            !string.Equals(claims.Audience, expectedAudience, StringComparison.Ordinal))
+        if (!string.Equals(claims.Audience, expectedAudience, StringComparison.Ordinal))
             throw new EventsVerificationException(
                 EventsVerificationErrorCode.WrongAudience,
                 "Subscribe token audience does not match the registration resource.");
@@ -111,7 +112,7 @@ public sealed class SubscriptionRegistrationVerifier
     /// <summary>Verifies and returns only authorization facts.</summary>
     public async Task<VerifiedSubscriptionRegistration> VerifyFactsAsync(
         HttpRequestMessage request,
-        string? expectedAudience = null,
+        string expectedAudience,
         string? wirePath = null,
         CancellationToken cancellationToken = default) =>
         (await VerifyAsync(request, expectedAudience, wirePath, cancellationToken).ConfigureAwait(false)).Registration;

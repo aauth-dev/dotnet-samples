@@ -65,7 +65,7 @@ public sealed class EventsJwtKeyResolver
     /// <summary>Resolves a subscribe token and returns its <c>cnf.jwk</c> HTTP key.</summary>
     public Task<EventsJwtKeyResolution> ResolveSubscribeAsync(
         string compactToken,
-        string? expectedAudience = null,
+        string expectedAudience,
         CancellationToken cancellationToken = default) =>
         ResolveAsync(compactToken, EventsTokenKind.Subscribe, expectedAudience, cancellationToken);
 
@@ -110,6 +110,8 @@ public sealed class EventsJwtKeyResolver
         string? expectedAudience = null,
         CancellationToken cancellationToken = default)
     {
+        if (kind == EventsTokenKind.Subscribe && string.IsNullOrWhiteSpace(expectedAudience))
+            throw new ArgumentException("An expected audience is required.", nameof(expectedAudience));
         if (string.IsNullOrWhiteSpace(compactToken))
             throw Failure(EventsVerificationErrorCode.InvalidToken, "The compact token is empty.");
         var (header, payload) = DecodeCheap(compactToken);
@@ -128,6 +130,17 @@ public sealed class EventsJwtKeyResolver
         if (kind == EventsTokenKind.Event &&
             payload.ContainsKey(AAuthEventsConstants.ConfirmationClaim))
             throw Failure(EventsVerificationErrorCode.InvalidToken, "Event JWTs must not contain cnf.");
+        if (expectedAudience is not null)
+        {
+            var audience = StringClaim(
+                payload,
+                AAuthEventsConstants.AudienceClaim,
+                "JWT is missing 'aud'.");
+            if (!string.Equals(audience, expectedAudience, StringComparison.Ordinal))
+                throw Failure(
+                    EventsVerificationErrorCode.WrongAudience,
+                    "JWT audience does not match the expected audience.");
+        }
         var issuer = StringClaim(payload, AAuthEventsConstants.IssuerClaim, "JWT is missing 'iss'.");
         var kid = StringClaim(header, AAuthEventsConstants.KeyIdClaim, "JWT header is missing 'kid'.");
         if (!Uri.TryCreate(issuer, UriKind.Absolute, out var issuerUri))

@@ -5,6 +5,7 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.Events.Discovery;
 using AAuth.Events.Http;
+using AAuth.Events.Resource;
 using AAuth.Events.Tests.TestSupport;
 using AAuth.Events.Tokens;
 using AAuth.Tokens;
@@ -37,6 +38,118 @@ public sealed class EventsJwtKeyResolverTests
         Assert.Equal(
             result.JwtIssuerKey.ComputeJwkThumbprint(),
             result.HttpSignatureKey.ComputeJwkThumbprint());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task SubscribeResolutionRequiresExpectedAudienceBeforeDiscovery(string? audience)
+    {
+        var apKey = AAuthKey.Generate();
+        var agentKey = EcdsaAAuthKey.Generate();
+        var handler = DiscoveryHandler.For(ApIssuer, AAuthEventsConstants.AgentDwk, Kid, apKey);
+        var resolver = CreateResolver(handler);
+        var token = new SubscribeTokenBuilder
+        {
+            Issuer = ApIssuer,
+            Subject = "aauth:agent@ap.example",
+            Audience = "https://resource.example",
+            KeyId = Kid,
+            Key = apKey,
+            ConfirmationKey = agentKey,
+            IssuedAt = EventsTestData.Now,
+            Lifetime = TimeSpan.FromMinutes(5),
+            EventId = "eid-1",
+        }.Build().Token;
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            resolver.ResolveSubscribeAsync(token, audience!));
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            resolver.ResolveAsync(token, EventsTokenKind.Subscribe, audience));
+
+        Assert.Equal(0, handler.MetadataRequestCount);
+        Assert.Equal(0, handler.JwksRequestCount);
+    }
+
+    [Fact]
+    public async Task WrongSubscribeAudienceIsRejectedBeforeDiscovery()
+    {
+        var apKey = AAuthKey.Generate();
+        var agentKey = EcdsaAAuthKey.Generate();
+        var handler = new CountingThrowingDiscoveryHandler();
+        var resolver = CreateResolver(handler);
+        var token = new SubscribeTokenBuilder
+        {
+            Issuer = ApIssuer,
+            Subject = "aauth:agent@ap.example",
+            Audience = "https://resource.example",
+            KeyId = Kid,
+            Key = apKey,
+            ConfirmationKey = agentKey,
+            IssuedAt = EventsTestData.Now,
+            Lifetime = TimeSpan.FromMinutes(5),
+            EventId = "eid-1",
+        }.Build().Token;
+
+        var error = await Assert.ThrowsAsync<EventsVerificationException>(() =>
+            resolver.ResolveSubscribeAsync(token, "https://other.example"));
+
+        Assert.Equal(EventsVerificationErrorCode.WrongAudience, error.Error.Code);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task EventResolutionAllowsNullExpectedAudience()
+    {
+        var key = CreateKey("EdDSA");
+        var handler = DiscoveryHandler.For(ResourceIssuer, AAuthEventsConstants.ResourceDwk, Kid, key);
+        var resolver = CreateResolver(handler);
+        var token = BuildEvent(key);
+
+        var result = await resolver.ResolveEventAsync(token);
+
+        Assert.Equal(key.ComputeJwkThumbprint(), result.JwtIssuerKey.ComputeJwkThumbprint());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task RegistrationVerifierRequiresExpectedAudienceBeforeDiscovery(string? audience)
+    {
+        var apKey = AAuthKey.Generate();
+        var agentKey = EcdsaAAuthKey.Generate();
+        var handler = DiscoveryHandler.For(ApIssuer, AAuthEventsConstants.AgentDwk, Kid, apKey);
+        var resolver = CreateResolver(handler);
+        var verifier = new SubscriptionRegistrationVerifier(
+            resolver,
+            new EventsHttpMessageVerifier
+            {
+                Clock = () => EventsTestData.Now,
+                FutureSkew = TimeSpan.Zero,
+            });
+        using var request = JsonRequest();
+        var token = new SubscribeTokenBuilder
+        {
+            Issuer = ApIssuer,
+            Subject = "aauth:agent@ap.example",
+            Audience = "https://resource.example",
+            KeyId = Kid,
+            Key = apKey,
+            ConfirmationKey = agentKey,
+            IssuedAt = EventsTestData.Now,
+            Lifetime = TimeSpan.FromMinutes(5),
+            EventId = "eid-1",
+        }.Build().Token;
+        new EventsRequestSigner(agentKey, () => token, () => EventsTestData.Now)
+            .SignRegistration(request);
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            verifier.VerifyAsync(request, audience!, wirePath: "/waitlist"));
+
+        Assert.Equal(0, handler.MetadataRequestCount);
+        Assert.Equal(0, handler.JwksRequestCount);
     }
 
     [Fact]
@@ -209,7 +322,7 @@ public sealed class EventsJwtKeyResolverTests
         Assert.Equal(EventsVerificationErrorCode.UnsupportedAlgorithm, unsupportedError.Error.Code);
     }
 
-    private static EventsJwtKeyResolver CreateResolver(DiscoveryHandler handler)
+    private static EventsJwtKeyResolver CreateResolver(HttpMessageHandler handler)
     {
         var current = EventsTestData.Now;
         DateTimeOffset Clock()
@@ -298,6 +411,7 @@ public sealed class EventsJwtKeyResolverTests
         }
 
         public int JwksRequestCount { get; private set; }
+        public int MetadataRequestCount { get; private set; }
 
         public static DiscoveryHandler For(
             string issuer,
@@ -320,7 +434,10 @@ public sealed class EventsJwtKeyResolverTests
             cancellationToken.ThrowIfCancellationRequested();
             var url = request.RequestUri?.ToString();
             if (url == _metadataUrl)
+            {
+                MetadataRequestCount++;
                 return Task.FromResult(Json(_metadata));
+            }
             if (url == _jwksUrl)
             {
                 JwksRequestCount++;
@@ -347,5 +464,19 @@ public sealed class EventsJwtKeyResolverTests
                     Encoding.UTF8,
                     AAuthEventsConstants.JsonMediaType),
             };
+    }
+
+    private sealed class CountingThrowingDiscoveryHandler : HttpMessageHandler
+    {
+        public int RequestCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            RequestCount++;
+            throw new InvalidOperationException("Discovery should not be reached for wrong subscribe audiences.");
+        }
     }
 }

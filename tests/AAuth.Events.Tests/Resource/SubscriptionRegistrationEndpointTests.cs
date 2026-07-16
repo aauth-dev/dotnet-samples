@@ -21,6 +21,8 @@ namespace AAuth.Events.Tests.Resource;
 
 public sealed class SubscriptionRegistrationEndpointTests
 {
+    private const string ResourceAudience = "https://resource.example";
+
     [Theory]
     [InlineData("EdDSA")]
     [InlineData("ES256")]
@@ -28,7 +30,7 @@ public sealed class SubscriptionRegistrationEndpointTests
     {
         var calls = 0;
         var channel = SubscriptionChannel.Public(
-            "public", "/public", ["slot.available"], "https://resource.example");
+            "public", "/public", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (endpoint, _, _, _) =>
         {
             calls++;
@@ -47,7 +49,8 @@ public sealed class SubscriptionRegistrationEndpointTests
     [InlineData("ES256")]
     public async Task ProtectedRegistrationAcceptsPathBaseAndEscapedTicket(string algorithm)
     {
-        var channel = SubscriptionChannel.Protected("protected", "/channel/{ticket}", ["slot.available"]);
+        var channel = SubscriptionChannel.Protected(
+            "protected", "/channel/{ticket}", ["slot.available"], ResourceAudience);
         string? ticket = null;
         using var fixture = new Fixture(channel, (endpoint, _, _, _) =>
         {
@@ -67,7 +70,7 @@ public sealed class SubscriptionRegistrationEndpointTests
     {
         var calls = 0;
         var channel = SubscriptionChannel.Public(
-            "public", "/public", ["slot.available"], "https://resource.example");
+            "public", "/public", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (_, _, _, _) =>
         {
             calls++;
@@ -85,7 +88,8 @@ public sealed class SubscriptionRegistrationEndpointTests
     public async Task WrongCnfHttpKeyDoesNotInvokeHandler()
     {
         var calls = 0;
-        var channel = SubscriptionChannel.Protected("protected", "/channel/{ticket}", ["slot.available"]);
+        var channel = SubscriptionChannel.Protected(
+            "protected", "/channel/{ticket}", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (_, _, _, _) =>
         {
             calls++;
@@ -104,7 +108,7 @@ public sealed class SubscriptionRegistrationEndpointTests
     {
         var calls = 0;
         var channel = SubscriptionChannel.Public(
-            "public", "/public", ["slot.available"], "https://resource.example");
+            "public", "/public", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (_, _, _, _) =>
         {
             calls++;
@@ -123,11 +127,29 @@ public sealed class SubscriptionRegistrationEndpointTests
         Assert.Equal(0, calls);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    public void InvalidChannelAudienceFailsImmediately(string? audience)
+    {
+        Assert.Throws<ArgumentException>(() =>
+            SubscriptionChannel.Public("public", "/public", ["slot.available"], audience!));
+        Assert.Throws<ArgumentException>(() =>
+            SubscriptionChannel.Protected("protected", "/channel/{ticket}", ["slot.available"], audience!));
+        Assert.Throws<ArgumentException>(() =>
+            new SubscriptionChannel("public", "/public", false, ["slot.available"], audience!));
+        Assert.Throws<ArgumentException>(() =>
+            new SubscriptionChannel("protected", "/channel/{ticket}", SubscriptionChannelAccess.Protected,
+                ["slot.available"], audience!));
+    }
+
     [Fact]
     public async Task MissingTicketIsBadRequestAndDoesNotInvokeHandler()
     {
         var calls = 0;
-        var channel = SubscriptionChannel.Protected("protected", "/channel/{ticket?}", ["slot.available"]);
+        var channel = SubscriptionChannel.Protected(
+            "protected", "/channel/{ticket?}", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (_, _, _, _) =>
         {
             calls++;
@@ -144,7 +166,8 @@ public sealed class SubscriptionRegistrationEndpointTests
     [Fact]
     public async Task HandlerStatusMappingsAndAllowedSubsetAreExact()
     {
-        var channel = SubscriptionChannel.Protected("protected", "/channel/{ticket}", ["slot.available"]);
+        var channel = SubscriptionChannel.Protected(
+            "protected", "/channel/{ticket}", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (endpoint, _, _, _) =>
         {
             return ValueTask.FromResult(endpoint.Ticket switch
@@ -182,7 +205,8 @@ public sealed class SubscriptionRegistrationEndpointTests
     public async Task BodylessAndJsonPreferencesRemainSeparate()
     {
         SignatureUnboundRegistrationBody? received = null;
-        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"]);
+        var channel = SubscriptionChannel.Public(
+            "public", "/public", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (_, _, preferences, _) =>
         {
             received = preferences;
@@ -210,7 +234,8 @@ public sealed class SubscriptionRegistrationEndpointTests
     public async Task DuplicateEidAndTicketOutcomesAreApplicationControlled()
     {
         var used = new HashSet<string>(StringComparer.Ordinal);
-        var channel = SubscriptionChannel.Protected("protected", "/channel/{ticket}", ["slot.available"]);
+        var channel = SubscriptionChannel.Protected(
+            "protected", "/channel/{ticket}", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, (endpoint, registration, _, _) =>
         {
             if (endpoint.Ticket == "unknown")
@@ -240,7 +265,8 @@ public sealed class SubscriptionRegistrationEndpointTests
     [Fact]
     public async Task CancellationPropagatesAndRegistrationServicesAreWired()
     {
-        var channel = SubscriptionChannel.Public("public", "/public", ["slot.available"]);
+        var channel = SubscriptionChannel.Public(
+            "public", "/public", ["slot.available"], ResourceAudience);
         using var fixture = new Fixture(channel, async (_, _, _, cancellationToken) =>
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);

@@ -24,12 +24,14 @@ public sealed class SubscriptionChannel
         string endpointPattern,
         bool isProtected,
         IEnumerable<string> allowedEventTypes,
-        string? resourceAudience = null,
+        string resourceAudience,
         string ticketRouteValueName = "ticket")
     {
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("A channel name is required.", nameof(name));
         if (string.IsNullOrWhiteSpace(endpointPattern)) throw new ArgumentException("An endpoint pattern is required.", nameof(endpointPattern));
         ArgumentNullException.ThrowIfNull(allowedEventTypes);
+        if (string.IsNullOrWhiteSpace(resourceAudience))
+            throw new ArgumentException("A resource audience is required.", nameof(resourceAudience));
         if (string.IsNullOrWhiteSpace(ticketRouteValueName))
             throw new ArgumentException("A ticket route value name is required.", nameof(ticketRouteValueName));
         var types = allowedEventTypes.Where(static value => !string.IsNullOrWhiteSpace(value))
@@ -49,7 +51,7 @@ public sealed class SubscriptionChannel
         string endpointPattern,
         SubscriptionChannelAccess access,
         IEnumerable<string> allowedEventTypes,
-        string? resourceAudience = null,
+        string resourceAudience,
         string ticketRouteValueName = "ticket")
         : this(name, endpointPattern, access == SubscriptionChannelAccess.Protected,
             allowedEventTypes, resourceAudience, ticketRouteValueName)
@@ -69,19 +71,19 @@ public sealed class SubscriptionChannel
         IsProtected ? SubscriptionChannelAccess.Protected : SubscriptionChannelAccess.Public;
     /// <summary>Event types this channel is allowed to register.</summary>
     public IReadOnlyList<string> AllowedEventTypes { get; }
-    /// <summary>Expected subscribe-token resource audience, when configured.</summary>
-    public string? ResourceAudience { get; }
+    /// <summary>Expected subscribe-token resource audience.</summary>
+    public string ResourceAudience { get; }
     /// <summary>Route-value key containing an opaque protected ticket.</summary>
     public string TicketRouteValueName { get; }
 
     /// <summary>Creates a public channel.</summary>
     public static SubscriptionChannel Public(
-        string name, string endpointPattern, IEnumerable<string> allowedEventTypes, string? resourceAudience = null) =>
+        string name, string endpointPattern, IEnumerable<string> allowedEventTypes, string resourceAudience) =>
         new(name, endpointPattern, false, allowedEventTypes, resourceAudience);
 
     /// <summary>Creates a protected channel.</summary>
     public static SubscriptionChannel Protected(
-        string name, string endpointPattern, IEnumerable<string> allowedEventTypes, string? resourceAudience = null) =>
+        string name, string endpointPattern, IEnumerable<string> allowedEventTypes, string resourceAudience) =>
         new(name, endpointPattern, true, allowedEventTypes, resourceAudience);
 }
 
