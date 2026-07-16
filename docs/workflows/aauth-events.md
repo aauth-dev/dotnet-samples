@@ -25,6 +25,10 @@ The protocol defines AP issuance/inbox, resource registration/delivery, and
 agent event-envelope verification. It does **not** define AP-to-agent
 acquisition, polling, acknowledgements, or a payload schema.
 
+`resourceAudience` is mandatory and canonical. Pass the resource's own
+absolute URL; do not infer it from the request `Host` or from the inbound
+registration URL.
+
 ## Protected subscription and delivery
 
 The following sequence uses the runnable Bookings sample. The acquisition,
@@ -65,6 +69,16 @@ aauth-agent.json`, `iss`, agent `sub`, resource `aud`, confirmation
 `max_uses`. A public channel presents that JWT as the sole `Signature-Key`.
 Use `SubscriptionChannel.Public(...)` and
 `MapAAuthPublicSubscription(...)`.
+
+`TokenLifetime` only sets the JWT registration window (`exp`); the stored
+subscription expiry comes from `SubscriptionLifetime` and is AP policy, not a
+wire claim. `TokenLifetime` defaults to one hour, and `SubscriptionLifetime`
+is required and must be positive.
+
+> **Interop warning.** v09 has no event `jti`. This SDK deliberately requires a
+> fresh, non-empty `jti` on every event token and rejects peers that omit it.
+> There is no missing-`jti` fallback: same-second legitimate events can collide
+> with exact-token retry identity.
 
 A protected channel first authenticates an application-specific request and
 returns an opaque HTTPS, short-lived, single-use ticket URL. The subsequent
@@ -121,10 +135,13 @@ app.MapAAuthEventEndpoint("/events");
 ```
 
 The `IAAuthAgentProviderEventStore` transaction must atomically perform
-subscription lookup, resource/audience/expiry checks, exact-token replay lookup,
-use accounting, and inbox persistence before returning `Accepted`. The AP sees
-event tokens and payload bytes; production APs must document retention,
-confidentiality, and deletion policy.
+subscription lookup/state, exact-token idempotency, use accounting, and inbox
+persistence after the endpoint's resolver/verifier chain has already verified
+event signature freshness and event-token `exp`/`iat` with the configured
+`ClockSkew`. The store does not revalidate event expiry; it only evaluates the
+subscription's persisted expiry/state. The AP sees event tokens and payload
+bytes; production APs must document retention, confidentiality, and deletion
+policy.
 
 Resource delivery resolves the current endpoint rather than copying one from a
 token:
@@ -150,6 +167,9 @@ builder.Services.AddAAuthEventsAgent(
     configure: options => options.Deduplicator = durableDeduplicator);
 ```
 
+`expectedAudience` is required and must be the agent's own identifier; the
+agent verifier rejects missing or mismatched audiences.
+
 ## Delivery, durability, and status
 
 Event tokens use `typ: aa-event+jwt`, `dwk: aauth-resource.json`, resource
@@ -158,6 +178,10 @@ They contain no event payload. Bodyless requests cover `@method`,
 `@authority`, `@path`, and `signature-key`; registration JSON additionally
 covers `content-type`; event JSON additionally covers `content-type` and
 `content-digest`. The event body is the direct raw JSON bytes.
+
+The AP verifies event-token freshness before the store call using the
+configured clock skew. The store then handles subscription state, replay, and
+use accounting; it does not re-check the event token expiry.
 
 `EventDeliveryClient` preserves a prepared token/body for an exact retry.
 The AP's store uses SHA-256 of the exact compact token as its idempotency key:
@@ -217,7 +241,7 @@ The following are deliberate, documented interpretations of the v09 draft:
 | C8 | Subscription lifetime is application policy stored as `ExpiresAt`; no lifetime wire claim is added. |
 | C12/C13 | Use the registration and AP status mappings above where the draft is silent. |
 | C14 | Exact compact-token retries are idempotent and do not consume another use. The AP and agent use a local SHA-256 key of the compact token; C23's fresh `jti` prevents legitimate same-second collisions. |
-| C20 | `iat` is required and future-issued event tokens are rejected using configured clock skew. |
+| C20 | `iat` is required and future-issued event tokens are rejected before the store call using configured clock skew. |
 | C23 | Every event token has a fresh random `jti`; missing/empty `jti` is rejected. This is a deliberate wire extension. |
 | RF1 | Although the event-token prose omits the subscribe-token `none` prohibition, both token types reject `none` and unsupported algorithms. |
 | RF2 | The event envelope is authenticated, not the payload. `UnauthenticatedEventPayload` is display/relevance data only; consequential details must be re-fetched from the resource with normal AAuth. |

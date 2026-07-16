@@ -38,7 +38,8 @@ the event token and the raw payload.
 | `AgentProvider:Issuer` | `http://localhost:5301` | AP issuer and metadata authority. |
 | `AgentProvider:KeyId` | `ap-key-1` | AP signing key id. |
 | `AgentProvider:Events:BookingsResourceUrl` | `http://localhost:5005` | Fixed resource audience for sample acquisition. |
-| `AgentProvider:Events:SubscriptionLifetimeSeconds` | `3600` | Sample subscribe-token lifetime. |
+| `AgentProvider:Events:SubscribeTokenLifetimeSeconds` | `300` | Subscribe JWT `exp`; registration window only. |
+| `AgentProvider:Events:SubscriptionLifetimeSeconds` | `3600` | Stored subscription `ExpiresAt`; AP policy, not a wire claim. |
 | `AgentProvider:Events:SubscriptionMaxUses` | `3` | Sample `max_uses`; omit/`null` for unlimited. |
 | `AgentProvider:Events:EventEndpointRoute` | `/events` | Route advertised as `event_endpoint`. |
 

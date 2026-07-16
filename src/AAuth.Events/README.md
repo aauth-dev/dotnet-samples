@@ -45,6 +45,9 @@ var channel = SubscriptionChannel.Protected(
 app.MapAAuthProtectedSubscription(channel, registrationHandler);
 ```
 
+`resourceAudience` is mandatory and canonical: pass the resource's own absolute
+URL, and do not infer it from the request `Host`.
+
 `registrationHandler` implements:
 
 ```csharp
@@ -59,6 +62,28 @@ The handler must atomically consume protected tickets, bind the ticket to
 `registration.AgentSubject` and the channel, reject duplicate `registration.Eid`,
 and persist an application-selected `ExpiresAt`.
 
+Issue subscribe tokens with separate JWT and subscription lifetimes:
+
+```csharp
+var issuer = new SubscribeTokenIssuer(durableStore, new SubscribeTokenIssuerOptions
+{
+    Issuer = apIssuer,
+    Agent = agentSubject,
+    Resource = resourceUrl,
+    KeyId = apKeyId,
+    Key = apKey,
+    ConfirmationKey = agentConfirmationKey,
+    TokenLifetime = TimeSpan.FromHours(1),
+    SubscriptionLifetime = TimeSpan.FromHours(24),
+});
+SubscribeTokenArtifact artifact = await issuer.IssueAsync(ct);
+```
+
+`TokenLifetime` is the JWT registration window and sets the token `exp`. The
+persisted subscription `ExpiresAt` comes from `SubscriptionLifetime`; no extra
+wire lifetime claim is added. `TokenLifetime` defaults to one hour, and
+`SubscriptionLifetime` is required and must be positive.
+
 Register the AP role only with an application-provided durable store:
 
 ```csharp
@@ -72,9 +97,17 @@ builder.Services.AddAAuthEventsAgentProvider(
 app.MapAAuthEventEndpoint("/events");
 ```
 
-`IAAuthAgentProviderEventStore.AcceptEventAsync(...)` is one transaction:
-subscription/resource/audience/expiry checks, exact-token idempotency, use
-accounting, and inbox persistence must commit together before `202`.
+`IAAuthAgentProviderEventStore.AcceptEventAsync(...)` runs after the endpoint's
+resolver/verifier chain checks event signature freshness and event-token
+`exp`/`iat` with configured skew. The store then owns subscription
+lookup/state, resource/audience binding, exact-token idempotency, use
+accounting, and inbox persistence; it does not revalidate the event token
+expiry.
+
+> **Interop warning.** v09 has no event `jti`. This SDK deliberately requires a
+> fresh, non-empty `jti` on every event token and rejects peers that omit it.
+> There is no missing-`jti` fallback: same-second legitimate events can collide
+> with exact-token retry identity.
 
 For agent verification, supply durable local context and deduplication:
 
@@ -85,6 +118,9 @@ builder.Services.AddAAuthEventsAgent(
         eid => contexts.TryGetValue(eid, out var context) ? context : null),
     configure: options => options.Deduplicator = durableDeduplicator);
 ```
+
+`expectedAudience` is required and must be the agent's own identifier; the
+verifier rejects missing or mismatched audiences.
 
 ## Tokens and HTTP profiles
 

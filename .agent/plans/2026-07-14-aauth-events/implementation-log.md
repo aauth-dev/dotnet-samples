@@ -412,3 +412,153 @@ the already-approved rollback-unit commits.
 ## Open Questions / Inputs Needed
 
 None.
+
+## Post-Code-Review Decisions
+
+> **Appended after code review (2026-07-16):** The entries below evaluate
+> findings 1-3 and deviations A-B in
+> [implementation-review-report.md](implementation-review-report.md).
+> `RESOLVED` means the decision is settled; pending implementation is marked
+> `TODO`. No clarification was required.
+
+### [2026-07-16] [Phase 5] Review gap 1 - resource audience must fail closed - RESOLVED
+
+**Decision: agree.** The draft requires the resource to match the subscribe
+token `aud` to its own URL
+([Subscribe Token](../../../aauth-spec/v09/draft-hardt-aauth-events.md#subscribe-token),
+L221 and L275). A nullable `ResourceAudience` silently disables that check, so
+this is a security and conformance gap. The canonical resource identifier must
+be explicit; deriving it from the request host is unsafe behind proxies or
+aliases.
+
+**TODO (code):** Make a non-empty resource audience mandatory for channel
+descriptors and low-level registration verification. Fail before discovery or
+handler invocation when it is absent. Add tests proving missing configuration
+fails closed and a token for another resource never reaches the handler.
+
+### [2026-07-16] [Phase 4] Review gap 2 - separate issuer lifetimes - RESOLVED
+
+**Decision: agree.** The draft explicitly separates the subscribe-token
+registration window from subscription lifetime
+([Design Rationale](../../../aauth-spec/v09/draft-hardt-aauth-events.md#why-exp-is-the-jwt-validity-period-not-the-subscription-lifetime),
+L681-L687). Reusing one `Lifetime` for JWT `exp` and AP
+`AgentProviderSubscription.ExpiresAt` contradicts C8/D7 and forces an avoidable
+security-versus-usability tradeoff.
+
+**TODO (code):** Replace the ambiguous issuer lifetime with separate positive
+token and subscription lifetime settings. Use the former for JWT `exp` and the
+latter for AP `ExpiresAt`; add a short-token/long-subscription regression test
+and update sample configuration accordingly. Add no wire lifetime claim.
+
+### [2026-07-16] [Phase 9] Review gap 3 - event expiry must not expire a subscription - RESOLVED
+
+**Decision: agree with the gap, but not with duplicating event-expiry rejection
+inside the store.** `claims.ExpiresAt` is the event response window, not
+subscription state ([AP Validation](../../../aauth-spec/v09/draft-hardt-aauth-events.md#event-delivery),
+L411). The endpoint resolver already validates it using configured clock skew;
+a second strict store check produces inconsistent status codes and must never
+transition the subscription to `Expired`.
+
+**TODO (code):** Remove event-token expiry from the sample store's subscription
+expiry branch. Only stored subscription status and
+`subscription.ExpiresAt` may expire the subscription. Add a regression proving
+an event admitted within verifier skew cannot invalidate the subscription and
+a later valid event remains acceptable; events outside skew must still fail
+with 401 before the store call.
+
+### [2026-07-16] [Phase 0] Review deviation A - required event jti - RESOLVED
+
+**Decision: retain the strict `jti` requirement and accept the reported
+interoperability consequence.** The claim is a deliberate draft extension, but
+without a per-event identity two legitimate same-second events can produce the
+same compact token and become indistinguishable from a retry. Accepting missing
+`jti` would reintroduce that ambiguity, so no code fallback will be added.
+
+**TODO (documentation/upstream):** Before release, state prominently that peers
+must include `jti` and propose the claim for the upstream draft. Do not modify
+the vendored specification as part of the SDK fix.
+
+### [2026-07-16] [Phase 7] Review deviation B - exact-token agent deduplication - RESOLVED
+
+**Decision: agree with the reviewer; no action.** Draft deduplication on
+`{iss,eid}` ([Agent Verification](../../../aauth-spec/v09/draft-hardt-aauth-events.md#ap-to-agent),
+L445) would discard every event after the first on an unlimited subscription.
+Hashing the exact compact token, together with the required fresh `jti`,
+distinguishes retries from later events and remains the selected C3/C14
+behavior.
+
+### [2026-07-16] [Phase 0] Post-review implementation clarifications - RESOLVED
+
+The owner resolved the implementation-planning questions as follows:
+
+1. **Question:** How should the `jti` upstream-spec TODO be handled?
+   **Response:** Update the SDK README and draft an upstream issue/proposal for
+   owner review. Do not post it during implementation.
+2. **Question:** What public API shape should separate issuer lifetimes use?
+   **Response:** Replace `Lifetime` with `TokenLifetime` and
+   `SubscriptionLifetime`.
+3. **Question:** What defaults should the new lifetime options have?
+   **Response:** Keep the one-hour default for `TokenLifetime`; require callers
+   to set a positive `SubscriptionLifetime`.
+
+### [2026-07-16] [Phase 5] Post-review gap 1 implementation - RESOLVED
+
+The pending audience action above is complete. Channel descriptors, low-level
+registration verification, and subscribe-token resolution now require a
+non-empty canonical resource audience. Missing or mismatched `aud` fails before
+metadata/JWKS discovery; no request-host inference or compatibility overload
+was added. Regression tests cover invalid configuration, zero-request
+pre-discovery rejection, wrong-resource 403 mapping, and handler non-invocation.
+
+### [2026-07-16] [Phase 4] Post-review gap 2 implementation - RESOLVED
+
+The pending lifetime action above is complete.
+`SubscribeTokenIssuerOptions.Lifetime` was replaced by a one-hour-defaulted
+`TokenLifetime` and a required positive `SubscriptionLifetime`. JWT `exp` and
+AP `AgentProviderSubscription.ExpiresAt` now use those values independently.
+MockAgentProvider demonstrates a 300-second registration token and a
+3,600-second subscription without adding a wire claim.
+
+### [2026-07-16] [Phase 9] Post-review gap 3 implementation - RESOLVED
+
+The pending sample action above is complete. Event-token `exp` no longer
+changes subscription state; the endpoint resolver remains the sole event-expiry
+validator with configured clock skew. Accepted receipts use a separate,
+positive, one-hour-defaulted retention window, so a skew-accepted event remains
+pollable while sample replay state stays bounded. Endpoint-level EdDSA/ES256
+tests cover within-skew acceptance, later events, outside-skew 401, and
+retention expiry.
+
+### [2026-07-16] [Phase 10] Post-review jti interoperability action - RESOLVED
+
+The pending documentation/upstream action above is complete. The package README
+prominently states that v09 omits event `jti`, this SDK requires it, peers
+without it are rejected, and no fallback is provided. A review-only upstream
+proposal is saved as `files/aauth-events-jti-upstream-proposal.md` in the
+session folder. It was not posted, and the vendored specification was not
+modified.
+
+### [2026-07-16] [Phase 11] Follow-up review decisions - RESOLVED
+
+A fresh read-only review found and resolved two coupled issues: wrong-audience
+tokens now fail before outbound discovery, and skew-accepted sample receipts
+are retained independently of event-token `exp`. A subsequent review reported
+no remaining high-confidence findings.
+
+The suggestion to bump the package version or add compatibility shims was not
+adopted. This is an intentionally breaking alpha SDK, compatibility shims are
+prohibited by the approved plan, and the publish workflow supplies the next
+release version explicitly.
+
+### [2026-07-16] [Phase 11] Post-review validation - RESOLVED
+
+The Release build passed. The full test gate passed 1,432 tests:
+AAuth.Events.Tests 303, AAuth.Tests 517, AAuth.Conformance 573, and
+AAuth.R3.Tests 39. The Events package packed as
+`9.9.9-events-postreview`; its README contains the new warnings and lifetime
+API, and its only package dependency is matching-version `AAuth`.
+
+The focused MockAgentProvider/Person Server/R3 AS/Bookings/EventAgent stack
+completed acquisition, protected registration, event delivery, polling,
+verification, and ACK. The upstream proposal remains unposted. No commit was
+created.
