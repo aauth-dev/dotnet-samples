@@ -19,7 +19,9 @@ public sealed class SubscribeTokenIssuerOptions
     /// <summary>Agent HTTP-signature confirmation key.</summary>
     public IAAuthKey ConfirmationKey { get; set; } = null!;
     /// <summary>JWT lifetime.</summary>
-    public TimeSpan Lifetime { get; set; } = TimeSpan.FromHours(1);
+    public TimeSpan TokenLifetime { get; set; } = TimeSpan.FromHours(1);
+    /// <summary>AP-side subscription lifetime.</summary>
+    public required TimeSpan SubscriptionLifetime { get; set; }
     /// <summary>Optional finite event-use limit.</summary>
     public long? MaxUses { get; set; }
     /// <summary>Clock used for token and subscription timestamps.</summary>
@@ -47,6 +49,10 @@ public sealed class SubscribeTokenIssuer
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        if (_options.TokenLifetime <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(options.TokenLifetime), "TokenLifetime must be positive.");
+        if (_options.SubscriptionLifetime <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(options.SubscriptionLifetime), "SubscriptionLifetime must be positive.");
         if (_options.MaxCollisionRetries <= 0)
             throw new ArgumentOutOfRangeException(nameof(options), "MaxCollisionRetries must be positive.");
     }
@@ -62,7 +68,7 @@ public sealed class SubscribeTokenIssuer
     private async Task<SubscribeTokenArtifact> IssueCoreAsync(CancellationToken cancellationToken)
     {
         var issuedAt = _options.Clock();
-        var expiresAt = issuedAt + _options.Lifetime;
+        var subscriptionExpiresAt = issuedAt + _options.SubscriptionLifetime;
         for (var attempt = 0; attempt < _options.MaxCollisionRetries; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -78,7 +84,7 @@ public sealed class SubscribeTokenIssuer
                 KeyId = _options.KeyId,
                 Key = _options.Key,
                 ConfirmationKey = _options.ConfirmationKey,
-                Lifetime = _options.Lifetime,
+                Lifetime = _options.TokenLifetime,
                 IssuedAt = issuedAt,
                 EventId = eid,
                 MaxUses = _options.MaxUses,
@@ -89,7 +95,7 @@ public sealed class SubscribeTokenIssuer
                 _options.Agent,
                 _options.Resource,
                 _options.MaxUses,
-                expiresAt);
+                subscriptionExpiresAt);
             if (await _store.TryCreateSubscriptionAsync(subscription, cancellationToken).ConfigureAwait(false))
                 return artifact;
         }

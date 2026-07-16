@@ -20,10 +20,15 @@ var eventEndpointRoute =
     builder.Configuration["AgentProvider:Events:EventEndpointRoute"] ?? "/events";
 var bookingsResource =
     builder.Configuration["AgentProvider:Events:BookingsResourceUrl"] ?? "http://localhost:5005";
+var subscribeTokenLifetimeSeconds = builder.Configuration.GetValue(
+    "AgentProvider:Events:SubscribeTokenLifetimeSeconds", 300);
 var subscriptionLifetimeSeconds = builder.Configuration.GetValue(
     "AgentProvider:Events:SubscriptionLifetimeSeconds", 3600);
 var subscriptionMaxUses = builder.Configuration.GetValue<long?>(
     "AgentProvider:Events:SubscriptionMaxUses");
+if (subscribeTokenLifetimeSeconds <= 0)
+    throw new InvalidOperationException(
+        "AgentProvider:Events:SubscribeTokenLifetimeSeconds must be positive.");
 if (subscriptionLifetimeSeconds <= 0)
     throw new InvalidOperationException(
         "AgentProvider:Events:SubscriptionLifetimeSeconds must be positive.");
@@ -362,6 +367,7 @@ app.MapSampleAgentEventEndpoints(
     keyId,
     issuer,
     bookingsResource,
+    TimeSpan.FromSeconds(subscribeTokenLifetimeSeconds),
     TimeSpan.FromSeconds(subscriptionLifetimeSeconds),
     subscriptionMaxUses,
     eventStore);

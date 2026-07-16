@@ -22,6 +22,7 @@ internal static class SampleAgentEventEndpoints
         string apKeyId,
         string issuer,
         string bookingsResource,
+        TimeSpan tokenLifetime,
         TimeSpan subscriptionLifetime,
         long? subscriptionMaxUses,
         SampleAgentProviderEventStore store)
@@ -58,7 +59,8 @@ internal static class SampleAgentEventEndpoints
                     KeyId = apKeyId,
                     Key = apKey,
                     ConfirmationKey = agent.PublicKey,
-                    Lifetime = subscriptionLifetime,
+                    TokenLifetime = tokenLifetime,
+                    SubscriptionLifetime = subscriptionLifetime,
                     MaxUses = subscriptionMaxUses,
                     Clock = () => issuedAt,
                 });
@@ -67,7 +69,7 @@ internal static class SampleAgentEventEndpoints
             {
                 subscribe_token = artifact.CompactToken,
                 eid = artifact.Eid,
-                expires_at = issuedAt + subscriptionLifetime,
+                expires_at = issuedAt + tokenLifetime,
             }, cancellationToken: context.RequestAborted);
         });
 

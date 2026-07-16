@@ -316,7 +316,8 @@ public sealed class EventsEndToEndTests
                 Key = _apKey,
                 ConfirmationKey = _agentKey,
                 MaxUses = maxUses,
-                Lifetime = TimeSpan.FromMinutes(5),
+                TokenLifetime = TimeSpan.FromMinutes(5),
+                SubscriptionLifetime = TimeSpan.FromHours(1),
                 Clock = () => Now,
             });
             return await issuer.IssueAsync();

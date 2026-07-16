@@ -76,6 +76,44 @@ public sealed class AgentProviderContractTests
     }
 
     [Fact]
+    public async Task IssuerUsesShortTokenLifetimeAndLongerSubscriptionLifetime()
+    {
+        var now = new DateTimeOffset(2026, 7, 15, 7, 30, 0, TimeSpan.Zero);
+        var signingKey = AAuthKey.Generate();
+        var confirmationKey = AAuthKey.Generate();
+        var store = new RecordingStore();
+        var issuer = new SubscribeTokenIssuer(store, new SubscribeTokenIssuerOptions
+        {
+            Issuer = "https://ap.example",
+            Agent = "aauth:agent@example.com",
+            Resource = "https://resource.example",
+            KeyId = "ap-1",
+            Key = signingKey,
+            ConfirmationKey = confirmationKey,
+            TokenLifetime = TimeSpan.FromMinutes(2),
+            SubscriptionLifetime = TimeSpan.FromMinutes(10),
+            Clock = () => now,
+            EidGenerator = () => "short-lived",
+        });
+
+        var artifact = await issuer.IssueAsync();
+        var claims = SubscribeTokenClaims.Read(new TokenVerifier
+        {
+            Clock = () => now,
+            ClockSkew = TimeSpan.Zero,
+        }.Verify(
+            artifact.Token,
+            signingKey,
+            AAuthEventsConstants.SubscribeTokenType,
+            AAuthEventsConstants.AgentDwk,
+            "https://resource.example"));
+
+        Assert.Equal(now.AddMinutes(2), claims.ExpiresAt);
+        Assert.Equal(now.AddMinutes(10), store.Subscription!.ExpiresAt);
+        Assert.Equal("short-lived", store.Subscription.Eid);
+    }
+
+    [Fact]
     public async Task IssuerHonorsCancellationBeforeDurableCall()
     {
         var store = new RecordingStore();
@@ -86,6 +124,27 @@ public sealed class AgentProviderContractTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             issuer.IssueAsync(cancellation.Token));
 
+        Assert.Equal(0, store.Seen);
+    }
+
+    [Theory]
+    [InlineData("TokenLifetime", 0)]
+    [InlineData("TokenLifetime", -1)]
+    [InlineData("SubscriptionLifetime", 0)]
+    [InlineData("SubscriptionLifetime", -1)]
+    public void IssuerRejectsNonPositiveTokenAndSubscriptionLifetimes(
+        string lifetimeName,
+        int seconds)
+    {
+        var store = new RecordingStore();
+        var options = NewIssuerOptions(EventsTestData.Now, () => "one");
+        var lifetime = TimeSpan.FromSeconds(seconds);
+        if (lifetimeName == "TokenLifetime")
+            options.TokenLifetime = lifetime;
+        else
+            options.SubscriptionLifetime = lifetime;
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => new SubscribeTokenIssuer(store, options));
         Assert.Equal(0, store.Seen);
     }
 
@@ -396,8 +455,18 @@ public sealed class AgentProviderContractTests
         RecordingStore store,
         DateTimeOffset now,
         Func<string> generator,
-        int retries = 8) =>
-        new(store, new SubscribeTokenIssuerOptions
+        int retries = 8,
+        TimeSpan? tokenLifetime = null,
+        TimeSpan? subscriptionLifetime = null) =>
+        new(store, NewIssuerOptions(now, generator, retries, tokenLifetime, subscriptionLifetime));
+
+    private static SubscribeTokenIssuerOptions NewIssuerOptions(
+        DateTimeOffset now,
+        Func<string> generator,
+        int retries = 8,
+        TimeSpan? tokenLifetime = null,
+        TimeSpan? subscriptionLifetime = null) =>
+        new()
         {
             Issuer = "https://ap.example",
             Agent = "aauth:agent@example.com",
@@ -405,11 +474,12 @@ public sealed class AgentProviderContractTests
             KeyId = "ap-1",
             Key = AAuthKey.Generate(),
             ConfirmationKey = AAuthKey.Generate(),
-            Lifetime = TimeSpan.FromMinutes(10),
+            TokenLifetime = tokenLifetime ?? TimeSpan.FromMinutes(5),
+            SubscriptionLifetime = subscriptionLifetime ?? TimeSpan.FromHours(1),
             Clock = () => now,
             EidGenerator = generator,
             MaxCollisionRetries = retries,
-        });
+        };
 
     private static TestServer CreateServer(
         IAAuthKey resourceKey,
