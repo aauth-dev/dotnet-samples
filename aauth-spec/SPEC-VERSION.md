@@ -2,10 +2,10 @@
 
 These spec files were copied from the [AAuth](https://github.com/dickhardt/AAuth)
 repository for reference while building the .NET samples. They are grouped by the
-AAuth protocol draft version under [`v01/`](v01/), [`v02/`](v02/), and
-[`v08/`](v08/). Each folder is a self-contained snapshot, so each carries its own
-copy of the HTTP Signature Keys draft at the version that snapshot's protocol
-references.
+AAuth protocol draft version under [`v01/`](v01/), [`v02/`](v02/),
+[`v08/`](v08/), and [`v09/`](v09/). Each folder is a self-contained snapshot, so
+each carries its own copy of the HTTP Signature Keys draft at the version that
+snapshot's protocol references.
 
 The GitHub repository is the working source we vendor from. The canonical,
 permanent home is the **IETF Datatracker**, which retains every published revision
@@ -13,23 +13,26 @@ permanent home is the **IETF Datatracker**, which retains every published revisi
 deprecated. Use it as the source of record and fallback:
 
 - Datatracker document — <https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/>
-- Per-revision text (example) — <https://www.ietf.org/archive/id/draft-hardt-oauth-aauth-protocol-08.txt>
+- Per-revision text (example) — <https://www.ietf.org/archive/id/draft-hardt-oauth-aauth-protocol-09.txt>
 
 The vendored `.md` files are the upstream kramdown source; if the GitHub repo is
 unavailable, the Datatracker `.txt`/`.html` renderings are the authoritative
 substitute.
 
-The SDK code now targets **draft-08** ([`v08/`](v08/)) — migrated from draft-02 in
-the 2026-06-25 migration (see `.agent/plans/2026-06-25-aauth-v08-spec-migration/`).
-All four resource access modes are implemented, including the `AAuth-Access`
-opaque-token flow (resource-managed, two-party access), added under
+The SDK code continues to target **draft-08** ([`v08/`](v08/)) — migrated from
+draft-02 in the 2026-06-25 migration (see
+`.agent/plans/2026-06-25-aauth-v08-spec-migration/`). All four resource access
+modes are implemented, including the `AAuth-Access` opaque-token flow
+(resource-managed, two-party access), added under
 `.agent/plans/2026-06-25-aauth-access-token-flow/`. The runnable four-party
-sub-agent (S5) interop demo is deferred, though the parent-mediated code path
-is implemented and conformance-tested.
+sub-agent (S5) interop demo is deferred, though the parent-mediated code path is
+implemented and conformance-tested.
 
-`v08/` is therefore both the version the SDK conforms to and the latest upstream
-snapshot, vendored 2026-06-25. The earlier draft-02 ([`v02/`](v02/)) and draft-01
-([`v01/`](v01/)) snapshots are retained for reference.
+`v09/` is the latest upstream snapshot, vendored 2026-07-19 as the immutable
+reference for a separate SDK migration. Until that migration is complete,
+`v08/` remains the version the SDK conforms to. The earlier draft-02
+([`v02/`](v02/)) and draft-01 ([`v01/`](v01/)) snapshots are retained for
+reference.
 
 For a high-fidelity record of what changed between snapshots, see
 [`CHANGELOG.md`](CHANGELOG.md).
@@ -138,3 +141,55 @@ draft-08 bundles six published protocol drafts (03 → 08). The headline deltas:
 - **New `## PS Approval Endpoint Authentication`** section and an implementation-clarity
   pass (draft-06): `AAuth-Requirement`/`AAuth-Access`/`AAuth-Capabilities` grammar,
   JWKS same-`kid` refresh, and structured `cnf.jwk` verification ordering.
+
+## `v09/` — protocol draft-09
+
+> This is the latest upstream reference. The SDK continues to target draft-08
+> until the separate draft-09 migration is complete.
+
+| Field | Value |
+|---|---|
+| Source repository | <https://github.com/dickhardt/AAuth> |
+| Commit | `90089f80eaccccbd22e32e06946e2aa08f7d67fe` |
+| Commit date | 2026-07-05 |
+| Tagged version | `draft-hardt-oauth-aauth-protocol-09` |
+| Source document date | 2026-06-17 |
+| IETF publication date | 2026-07-04 |
+| IETF draft | <https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/09/> |
+| Copied on | 2026-07-19 |
+
+- `draft-hardt-oauth-aauth-protocol.md` — Main AAuth protocol specification
+  (draft-09).
+- `draft-hardt-aauth-bootstrap.md` — Agent bootstrap guidance (draft-01,
+  byte-identical to `v08/`).
+- `draft-hardt-aauth-r3.md` — Rich Resource Requests (R3) specification
+  (draft-00, revised to integrate AAuth Events subscriptions).
+- `interop-demo-profile.md` — Interoperability Demo Profile (informational,
+  byte-identical to `v08/`).
+- `draft-hardt-aauth-events.md` — AAuth Events companion specification
+  (draft-00, **new** in this snapshot). It is present at the pinned protocol tag
+  but did not yet have its own published tag or Datatracker revision when copied.
+- `draft-hardt-httpbis-signature-key-06.txt` — HTTP Signature Keys
+  (Internet-Draft, draft-06; bumped from draft-05 in `v08/`). The published
+  protocol draft-09 resolves its reference to draft-06, so this snapshot keeps
+  that historical dependency even though a newer revision now exists. Downloaded
+  2026-07-19 from
+  <https://www.ietf.org/archive/id/draft-hardt-httpbis-signature-key-06.txt>
+  (Internet-Draft, 2 July 2026 revision).
+
+### Notable changes since draft-08
+
+- Clarification-chat POST bodies now require an `action` discriminator with
+  `clarification_response` or `updated_request`; missing or unknown values are
+  rejected with `400 Bad Request`.
+- AAuth JSON errors now use RFC 9457 problem details with
+  `Content-Type: application/problem+json`; `error` remains the required AAuth
+  extension member and `detail` replaces `error_description`.
+- The protocol adds AAuth Events integration: APs can publish an
+  `event_endpoint`, act as event routers, and recognize the new
+  `aa-subscribe+jwt` and `aa-event+jwt` token types.
+- The new AAuth Events draft defines subscription registration and signed event
+  delivery through an Agent Provider. R3's AsyncAPI vocabulary now links granted
+  subscription operations to that protocol and makes its `action` field optional.
+- HTTP Signature Keys advances from draft-05 to draft-06, adding the `self-jwt`
+  scheme for self-issued JWTs.

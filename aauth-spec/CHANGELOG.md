@@ -6,29 +6,41 @@ High-fidelity record of what changed between the vendored AAuth specification
 snapshots in this repository. Each snapshot is a self-contained folder; see
 [`SPEC-VERSION.md`](SPEC-VERSION.md) for source commits and metadata.
 
-Entries are grouped by snapshot folder, so every document in a release (protocol,
-R3, bootstrap) is listed together and a change to R3 or bootstrap travels with the
-protocol version it shipped in.
+Entries are grouped by snapshot folder, so every document in a release
+(protocol, R3, bootstrap, and companion documents) is listed together and a
+companion change travels with the protocol version it shipped in.
 
 Section and line references in the **`v02/`** entry point into the draft-02 files
 under [`v02/`](v02/) (commit `feda56b`); references in the **`v08/`** entry point
-into the draft-08 files under [`v08/`](v08/) (commit `dd2b852`). Anchors in
-parentheses (e.g. `#sub-agents`) are the spec's own kramdown anchors and are stable
-across line shifts.
+into the draft-08 files under [`v08/`](v08/) (commit `dd2b852`); references in the
+**`v09/`** entry point into the draft-09 files under [`v09/`](v09/) (commit
+`90089f8`). Anchors in parentheses (e.g. `#sub-agents`) are the spec's own
+kramdown anchors and are stable across line shifts.
 
-| Snapshot | Protocol | Bootstrap | R3 | Source commit |
-|---|---|---|---|---|
-| [`v01/`](v01/) | draft-01 | draft-01 | draft-00 | `c090879` (2026-05-11) |
-| [`v02/`](v02/) | draft-02 | draft-01 (unchanged) | draft-00 (revised) | `feda56b` (2026-06-09) |
-| [`v08/`](v08/) | draft-08 | draft-01 (unchanged) | draft-00 (unchanged) | `dd2b852` (2026-06-25) |
+| Snapshot | Protocol | Bootstrap | R3 | Interop profile | Events | Source commit |
+|---|---|---|---|---|---|---|
+| [`v01/`](v01/) | draft-01 | draft-01 | draft-00 | — | — | `c090879` (2026-05-11) |
+| [`v02/`](v02/) | draft-02 | draft-01 (unchanged) | draft-00 (revised) | — | — | `feda56b` (2026-06-09) |
+| [`v08/`](v08/) | draft-08 | draft-01 (unchanged) | draft-00 (unchanged) | new | — | `dd2b852` (2026-06-25) |
+| [`v09/`](v09/) | draft-09 | draft-01 (unchanged) | draft-00 (revised) | unchanged | draft-00 (new) | `90089f8` (2026-07-05) |
 
-> **The SDK code targets `v02/` (draft-02).** The `v08/` snapshot was vendored
-> 2026-06-25 as the latest upstream reference; migrating the SDK to draft-08 is
-> tracked separately and has not started. See
-> [`SPEC-VERSION.md`](SPEC-VERSION.md).
+> **The SDK code targets `v08/` (draft-08).** The `v09/` snapshot was vendored
+> 2026-07-19 as the latest upstream reference; the SDK migration is a separate
+> stage. See [`SPEC-VERSION.md`](SPEC-VERSION.md).
 
 ## Contents
 
+- [`v09/` — AAuth draft-09 snapshot](#v09--aauth-draft-09-snapshot)
+  - [Protocol (draft-09)](#protocol-draft-09)
+    - [1. Clarification response discriminator](#1-clarification-response-discriminator)
+    - [2. RFC 9457 error responses](#2-rfc-9457-error-responses)
+    - [3. AAuth Events integration](#3-aauth-events-integration)
+    - [4. Editorial and implementation-status changes](#4-editorial-and-implementation-status-changes)
+  - [AAuth Events (new companion draft)](#aauth-events-new-companion-draft)
+  - [R3 (revised)](#r3-revised)
+  - [Bootstrap and Interoperability Demo Profile (unchanged)](#bootstrap-and-interoperability-demo-profile-unchanged)
+  - [HTTP Signature Keys (draft-06)](#http-signature-keys-draft-06)
+  - [Author's verbatim changelog (draft-09)](#authors-verbatim-changelog-draft-09)
 - [`v08/` — AAuth draft-08 snapshot](#v08--aauth-draft-08-snapshot)
   - [Protocol (drafts 03–08)](#protocol-drafts-0308)
     - [1. Agent-delegation restructure](#1-agent-delegation-restructure)
@@ -55,6 +67,125 @@ across line shifts.
 - [`v01/` — AAuth draft-01 snapshot (baseline)](#v01--aauth-draft-01-snapshot-baseline)
 
 ---
+
+## `v09/` — AAuth draft-09 snapshot
+
+The latest upstream snapshot, vendored 2026-07-19 for reference. It bundles
+protocol **draft-09** with a revised R3 (**draft-00**), the unchanged bootstrap
+(**draft-01**) and Interoperability Demo Profile, the new AAuth Events companion
+(**draft-00**), and HTTP Signature Keys **draft-06**.
+
+> **The SDK continues to target draft-08.** This snapshot is the immutable input
+> to the separate draft-09 migration.
+
+### Protocol (draft-09)
+
+Published as IETF
+[draft-hardt-oauth-aauth-protocol-09](https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/09/)
+(commit `90089f8`, source frontmatter date 2026-06-17, IETF publication date
+2026-07-04). The author's verbatim draft-09 changelog is reproduced below.
+
+#### 1. Clarification response discriminator
+
+Clarification-chat POSTs to a pending URL are now explicitly typed
+(`#clarification-chat`):
+
+- The body MUST include `action=clarification_response` when answering the
+  user's question, or `action=updated_request` when replacing the resource
+  request.
+- A server MUST reject a missing or unrecognized `action` with
+  `400 Bad Request`.
+- Both wire examples now carry the discriminator, removing the draft-08
+  inference from whether `clarification_response` or `resource_token` happened
+  to be present.
+
+#### 2. RFC 9457 error responses
+
+The token-endpoint-specific JSON format became a common AAuth problem-details
+format (`#error-responses`, `#error-response-format`):
+
+- Error bodies use RFC 9457 `application/problem+json`.
+- The AAuth `error` code remains REQUIRED as an extension member; the standard
+  `detail` member replaces `error_description`.
+- Standard RFC 9457 members MAY be present, but receivers MUST use `error`, not
+  `type`, to determine AAuth behavior.
+- Authorization, interaction, mission-status, token-endpoint, and polling
+  errors now reference or demonstrate the common format. Authentication failures
+  continue to use the HTTP Signature Keys `Signature-Error` header.
+
+#### 3. AAuth Events integration
+
+The protocol now introduces its Events companion at the core integration points:
+
+- The protocol overview names asynchronous event delivery through the AP, and
+  the AP role gains event-router behavior.
+- Agent metadata (`#metadata-documents`) gains optional `event_endpoint`, which
+  is required when an AP supports AAuth Events.
+- IANA considerations register the companion's `aa-subscribe+jwt` and
+  `aa-event+jwt` token types.
+
+#### 4. Editorial and implementation-status changes
+
+- Hand-maintained source references for HTTP Signature Keys and Bootstrap were
+  removed in favor of the references resolved by the publication toolchain; the
+  citations remain.
+- The acknowledgments add Lukas Friman and Sanjay Dalal.
+
+### AAuth Events (new companion draft)
+
+`draft-hardt-aauth-events.md` is a new standards-track companion source at
+draft-00 (source date 2026-06-24). It defines AP metadata, subscribe tokens,
+public and protected registration, event tokens, resource-to-AP delivery,
+AP-to-agent routing, and AsyncAPI discovery. It is included because both the
+protocol and revised R3 reference it.
+
+At copy time the Events source was present at the pinned protocol tag but had no
+dedicated Git tag or published Datatracker revision. The snapshot therefore pins
+the exact companion source from protocol tag
+`draft-hardt-oauth-aauth-protocol-09` rather than a moving branch.
+
+### R3 (revised)
+
+R3 remains draft-00 but its AsyncAPI vocabulary changed:
+
+- `action` is now OPTIONAL rather than REQUIRED; when present it is `send` or
+  `receive`, and event subscriptions use `receive`.
+- A granted AsyncAPI subscription operation now hands off registration and
+  delivery to AAuth Events using a subscription ticket URL and subscribe token.
+
+### Bootstrap and Interoperability Demo Profile (unchanged)
+
+- `draft-hardt-aauth-bootstrap.md` remains draft-01 and is byte-identical to
+  `v08/`.
+- `interop-demo-profile.md` is byte-identical to `v08/`.
+
+### HTTP Signature Keys (draft-06)
+
+Bumped **draft-05 → draft-06**
+([published 2026-07-02](https://datatracker.ietf.org/doc/draft-hardt-httpbis-signature-key/06/)).
+Draft-06 adds the `self-jwt` scheme: a self-issued JWT whose issuer and signer
+are the same party, using the issuer's discovered JWKS key for both the JWT and
+HTTP signature and carrying no `cnf` claim.
+
+The protocol draft-09 publication resolves its Signature Keys reference to
+draft-06. This snapshot intentionally vendors that revision rather than the
+newer draft-07.
+
+### Author's verbatim changelog (draft-09)
+
+Reproduced from the Document History section of
+[`v09/draft-hardt-oauth-aauth-protocol.md`](v09/draft-hardt-oauth-aauth-protocol.md):
+
+> **draft-hardt-oauth-aauth-protocol-09**
+>
+> - Clarification chat: added a required `action` discriminator
+>   (`clarification_response` / `updated_request`) to the agent's POST responses
+>   on the pending URL, so the response type is explicit rather than inferred
+>   from key presence.
+> - Error responses: adopted RFC 9457 problem details — error bodies use
+>   `Content-Type: application/problem+json` with the AAuth error code as a
+>   required `error` extension member; `error_description` replaced by the RFC
+>   9457 `detail` member; added token endpoint and polling error examples.
 
 ## `v08/` — AAuth draft-08 snapshot
 
