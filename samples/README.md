@@ -1,6 +1,6 @@
 # Samples
 
-Sixteen sample applications demonstrating AAuth flows end-to-end. The six Aria
+Seventeen sample applications demonstrating AAuth flows end-to-end. The six Aria
 resource servers (Profile, Calendar, Trips, Wallet, Inbox, Bookings) live under
 [MockResourceServers/](MockResourceServers/); the two access servers (Federated,
 R3) live under [MockAccessServers/](MockAccessServers/).
@@ -15,6 +15,7 @@ R3) live under [MockAccessServers/](MockAccessServers/).
 | [Bookings](MockResourceServers/Bookings/) | 5005 | Rich Resource Requests (R3, four-party) resource server — dining & experiences reservations via the **OpenAPI** vocabulary; `searchAvailability`/`holdReservation` → `r3_granted`, `confirmReservation` → `r3_conditional` (per-call proposal) |
 | [Concierge](Concierge/) | 5200 | Intermediate service — call chaining with nested `act` delegation |
 | [MissionAgent](MissionAgent/) | — | CLI agent — drives the optional, orthogonal **agent governance** layer: proposes a mission, asks per-action permission, records audit, and relays interactions through a PS (§Agent Governance) |
+| [EventAgent](EventAgent/) | — | CLI agent — protected Bookings waitlist registration, event delivery through the AP inbox, verification, deduplication, and explicit non-normative polling/ACK |
 | [MockPersonServer](MockPersonServer/) | 5100 | Reference Person Server — verifies exchanges, mints auth tokens, federates to an Access Server. **Sample only — not part of the AAuth SDK.** |
 | [MockAgentProvider](MockAgentProvider/) | 5301 | Reference Agent Provider — issues agent tokens, hosts JWKS. **Sample only — not part of the AAuth SDK.** |
 | [MockAccessServer](MockAccessServers/Federated/) | 5500 | Reference Access Server (Federated) — the fourth party in federated access; evaluates policy (stub or Keycloak) and mints `aa-auth+jwt` (`dwk=aauth-access.json`). **Sample only — not part of the AAuth SDK.** |
@@ -57,6 +58,15 @@ make agent-mission    # drive it from another terminal
 ```
 
 See the [MissionAgent README](MissionAgent/README.md).
+
+For the experimental **AAuth Events** flow:
+
+```bash
+make events-stack   # AP + PS + R3 AS + Bookings
+make agent-events   # run EventAgent in another terminal
+```
+
+See the [EventAgent README](EventAgent/README.md).
 
 ## Running Individually
 
@@ -267,13 +277,16 @@ make test            # run all tests (SDK + conformance)
 make test-unit       # SDK unit + integration tests only
 make test-conformance # spec conformance tests only
 make demo            # start the full stack (resource servers + Concierge + PS + AP + AS + both UIs)
-make resources       # only the five Aria resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003, Inbox :5004)
+make resources       # six resource servers (Profile :5000 through Bookings :5005)
 make ps              # MockPersonServer (port 5100)
 make ps-consent      # MockPersonServer with RequireConsent=true
 make ap              # MockAgentProvider (port 5301)
 make tour            # GuidedTour (port 5400; expects other services running)
 make sampleapp       # SampleApp (port 5240; expects other services running)
 make agent           # AgentConsole against the Profile server (override URL=…)
+make events-stack    # focused Events stack: AP + PS + R3 AS + Bookings
+make agent-events    # EventAgent protected waitlist flow
+make event-agent-reset # clear EventAgent enrollment metadata after an AP restart
 make live            # LiveWhoAmITest against whoami.aauth.dev (needs cloudflared + network)
 make clean           # dotnet clean + remove bin/ obj/
 ```

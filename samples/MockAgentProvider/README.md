@@ -1,55 +1,65 @@
 # MockAgentProvider
 
-A minimal Agent Provider (AP) sample for development and testing.
+> **Sample only — not part of the AAuth SDK.** The registry and Events inbox
+> are in-memory and are lost when the process stops.
 
-> **Sample only — not part of the AAuth SDK.** This project is illustrative wiring built on top of the SDK. Do not depend on its types or HTTP surface in production code.
+This ASP.NET sample AP listens at `http://localhost:5301` by default. It
+implements bootstrap enrollment/refresh plus the protocol-facing Events
+delivery endpoint. Its agent-to-AP acquisition, polling, and ACK routes are
+**non-normative sample transport**.
 
-## What it does
+## Routes
 
-Implements the AP endpoints from the AAuth bootstrap spec (§7):
+| Method and route | Boundary | Description |
+|---|---|---|
+| `GET /.well-known/aauth-agent.json` | bootstrap + Events discovery | Publishes `issuer`, `jwks_uri`, `enrol_endpoint`, `refresh_endpoint`, and `event_endpoint` (default `/events`). |
+| `GET /.well-known/jwks.json` | bootstrap | AP signing JWKS. |
+| `GET /agents/{agentId}/jwks.json` | bootstrap | Enrolled agent identity JWKS. |
+| `POST /enrol` | bootstrap | JSON `{agent_id, jwk, ps?}`; returns `agent_token`, `key_id`, `jwks_uri`, `expires_in`. |
+| `POST /refresh` | bootstrap | Signed refresh request; the sample requires `Signature-Key`, `Signature-Input`, and `Signature` and does not use a request body. |
+| `GET /agents` | sample diagnostic | Lists enrolled agents. |
+| `POST /events` | **Events-facing** | Verifies resource event JWT/signature and calls the durable-store contract. |
+| `POST /agents/{agentId}/event-subscriptions/bookings` | **sample-only** | Signed bodyless acquisition of a Bookings subscribe token. |
+| `GET /agents/{agentId}/events?limit=20` | **sample-only** | Signed, non-destructive batch polling (`limit` is 1–100; default 20). |
+| `POST /agents/{agentId}/events/{receiptId}/ack` | **sample-only** | Signed bodyless receipt removal; returns `204` or `404`. |
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/.well-known/aauth-agent.json` | GET | AP metadata |
-| `/.well-known/jwks.json` | GET | AP's own signing key (for verifying agent token JWTs) |
-| `/agents/{agentId}/jwks.json` | GET | Per-agent JWKS — the agent's public key for `sig=jwks_uri` identity-based access |
-| `/enrol` | POST | Register an agent — accepts `{agent_id, jwk}`, returns `{agent_token, key_id, jwks_uri}` |
-| `/refresh` | POST | Refresh an agent token — accepts `{agent_token}`, returns fresh token |
-| `/agents` | GET | Dev tool — list registered agents |
+`/events` is mapped with `MapAAuthEventEndpoint` and uses the
+`IAAuthAgentProviderEventStore` contract. The sample implementation performs
+atomic checks under a process lock, but it is not durable. Production APs must
+provide durable subscription/inbox storage and document retention: the AP sees
+the event token and the raw payload.
 
-## Running
+## Configuration
+
+`appsettings.json` contains:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `AgentProvider:Issuer` | `http://localhost:5301` | AP issuer and metadata authority. |
+| `AgentProvider:KeyId` | `ap-key-1` | AP signing key id. |
+| `AgentProvider:Events:BookingsResourceUrl` | `http://localhost:5005` | Fixed resource audience for sample acquisition. |
+| `AgentProvider:Events:SubscribeTokenLifetimeSeconds` | `300` | Subscribe JWT `exp`; registration window only. |
+| `AgentProvider:Events:SubscriptionLifetimeSeconds` | `3600` | Stored subscription `ExpiresAt`; AP policy, not a wire claim. |
+| `AgentProvider:Events:SubscriptionMaxUses` | `3` | Sample `max_uses`; omit/`null` for unlimited. |
+| `AgentProvider:Events:EventEndpointRoute` | `/events` | Route advertised as `event_endpoint`. |
+
+The AP signing key is persisted under `~/.aauth/ap-keys`; the agent registry
+and Events inbox are not persisted.
+
+## Run
 
 ```bash
 dotnet run --project samples/MockAgentProvider
 ```
 
-Defaults to `http://localhost:5301` (HTTP) / `https://localhost:5300` (HTTPS).
-
-## Using with AgentConsole
+For the complete sample flow:
 
 ```bash
-dotnet run --project samples/AgentConsole -- http://localhost:5000/pseudonymous \
-  --ap http://localhost:5301 \
-  --sub "aauth:myagent@ap.example"
+make events-stack
+# in another terminal
+make agent-events
 ```
 
-## Using with GuidedTour
-
-Add to `samples/GuidedTour/appsettings.json`:
-
-```json
-{
-  "GuidedTour": {
-    "AgentProviderUrl": "http://localhost:5301"
-  }
-}
-```
-
-## Configuration
-
-Settings in `appsettings.json`:
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `AgentProvider:Issuer` | `http://localhost:5301` | AP issuer claim in tokens |
-| `AgentProvider:KeyId` | `ap-key-1` | Key identifier for the AP signing key |
+The AP acquisition, polling, and ACK endpoints are examples only. Polling and
+ACK are not standardized by AAuth Events, and neither this in-memory inbox nor
+the sample's transport should be used as a production design.

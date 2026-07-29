@@ -1,71 +1,79 @@
-# Bookings — Rich Resource Requests (R3, four-party)
+# Bookings — R3 and AAuth Events sample
 
-Aria's external **reservations provider** for dining & experiences (reserve a table,
-book a tour). Bookings demonstrates [Rich Resource Requests](../../../docs/workflows/rich-resource-requests.md):
-instead of opaque scopes, it publishes a content-addressed **R3 document** describing
-what a class of access covers and its human consequences, and the auth token carries
-`r3_granted` / `r3_conditional` operations. It is guarded by a **dedicated R3 Access
-Server** (`:5501`).
+Bookings is the sample reservations resource at
+`http://localhost:5005`. It demonstrates R3 authorization and a protected
+AAuth Events waitlist. **Everything in this project is sample-only.**
 
-> **Sample only — not part of the AAuth SDK.**
+## Events routes
 
-Port: `http://localhost:5005`. Federates to the R3 Access Server at
-`http://localhost:5501` (override via `AAuth:AccessServer`); brokers through the
-Person Server at `http://localhost:5100`.
+| Method and route | Status | Purpose |
+|---|---|---|
+| `POST /waitlist/request` | AAuth-protected | Returns `waitlist.subscribe_url`, `event_types: ["slot.available"]`, and `offer_window_seconds`. |
+| `POST /waitlist/subscriptions/{subscriptionTicket}` | Events protected channel | Presents the AP subscribe token as `Signature-Key`; accepts direct JSON preferences and returns `200 {"event_types":["slot.available"]}`. |
+| `POST /waitlist/subscriptions/{eid}/trigger` | AAuth-protected | Sends one deterministic `slot.available` event to the AP's current discovered `event_endpoint`. |
+| `GET /asyncapi.json` | Public discovery | AsyncAPI 3.0.0 document for the waitlist channel. |
+| `/.well-known/aauth-resource.json` | Public discovery | Resource metadata, including the composed `r3_vocabularies` map. |
 
-## Vocabulary
+The `waitlist-subscriptions` channel is a protected
+`SubscriptionChannel` with route value `subscriptionTicket`. Its opaque ticket
+is short-lived, single-use, and bound to the authenticated agent. The
+registration body is direct `application/json`; its event-type preference is
+signature-unbound and cannot widen the channel's single allowed event type.
 
-Bookings is an ASP.NET HTTP API, so it advertises the **OpenAPI** vocabulary
-(`urn:aauth:vocabulary:openapi`) in `r3_vocabularies`, pointing at its OpenAPI
-document at [`/openapi.json`](http://localhost:5005/openapi.json). R3 operations are
-OpenAPI `operationId`s.
-
-## Endpoints
-
-| Path | operationId | Grant | Notes |
-|------|-------------|-------|-------|
-| `/` | _(index)_ | — | Sample metadata |
-| `/openapi.json` | — | — | OpenAPI discovery document (the OpenAPI vocabulary's discovery endpoint) |
-| `/authorize` | — | — | Proactive R3 request: the agent posts `r3_operations`; Bookings returns a resource token (`aud` = R3 AS) referencing the R3 document |
-| `/search_availability` | `searchAvailability` | `r3_granted` | Read availability — served immediately |
-| `/hold_reservation` | `holdReservation` | `r3_granted` | Place a temporary hold — served immediately |
-| `/confirm_reservation` | `confirmReservation` | `r3_conditional` | Charges a non-refundable deposit → **per-call proposal**: first call returns `401` + a resource token referencing a single-invocation R3 document carrying the concrete `parameters`; the R3 AS requires **human approval** (`202` → consent screen) before minting the per-call token; the retry (same params) is then served |
-| `/r3/{hash}` | — | — | The class R3 document — served **only** to a trusted fetcher (the R3 AS / PS), never to agents |
-| `/r3/proposals/{hash}` | — | — | Per-call proposal documents (same AS-only fetch gate) |
-| `/.well-known/aauth-resource.json` | — | — | Resource metadata (via `MapAAuthWellKnown`), incl. `r3_vocabularies` and `mission_aware` |
-| `/.well-known/jwks.json` | — | — | Resource signing JWKS |
-
-`confirm_reservation` is where R3's per-call authorization earns its keep: the AS
-authorizes it *in principle* (`r3_conditional`), but the concrete parameters (venue,
-date, party size, deposit) are surfaced to the user for **per-call consent** and
-re-evaluated before a token is issued, and the resource verifies the presented
-parameters match the approved proposal's digest.
+The resource uses `EventEndpointResolver` and `EventDeliveryClient`; the AP
+endpoint is read from current `/.well-known/aauth-agent.json`, not copied from
+the subscribe token.
 
 ## Configuration
 
-| Key | Default | Purpose |
-| --- | --- | --- |
-| `AAuth:Issuer` | `http://localhost:5005` | Resource issuer / metadata host. |
-| `AAuth:AccessServer` | `http://localhost:5501` | R3 Access Server this resource federates to (resource-token `aud`). |
-| `AAuth:PersonServer` | `http://localhost:5100` | Person Server (added to the trusted R3-fetcher set for `display`). |
-| `AAuth:SignatureWindow` | `60` | Max age (seconds) for inbound RFC 9421 signatures. |
-| `Bookings:MissionAware` | `false` | Advertised in metadata only; Bookings does not read or enforce `AAuth-Mission`. |
-| `Bookings:TrustedR3Fetchers` | `[AccessServer, PersonServer]` | Origins allowed to fetch R3 documents. |
+The defaults are in `appsettings.json`:
 
-## Running
+| Key | Default | Meaning |
+|---|---|---|
+| `AAuth:Issuer` | `http://localhost:5005` | Resource issuer and metadata host. |
+| `AAuth:AccessServer` | `http://localhost:5501` | R3 Access Server. |
+| `AAuth:PersonServer` | `http://localhost:5100` | Person Server. |
+| `AAuth:SignatureWindow` | `60` | Core signature age in seconds. |
+| `Events:SignatureWindow` | `60` | Events registration signature age. |
+| `Events:FutureSkew` | `5` | Allowed future signature skew in seconds. |
+| `Events:MaxBodyBytes` | `1048576` | Events body limit (1 MiB). |
+| `Events:TicketLifetimeSeconds` | `300` | Sample ticket lifetime. |
+| `Events:SubscriptionLifetimeSeconds` | `3600` | Application `ExpiresAt` policy; not a wire claim. |
+| `Events:EventLifetimeSeconds` | `300` | Event-token lifetime, bounded by subscription expiry. |
+
+The event payload is a direct JSON object containing
+`reservation_id`, `venue`, `date`, `party_size`, `available`, and
+`offer_expires_at`. It is authenticated only on the resource-to-AP HTTP hop;
+the event JWT does not authenticate payload bytes to the agent.
+
+## Run
+
+For the focused stack:
+
+```bash
+make events-stack
+# in another terminal
+make agent-events
+```
+
+To run Bookings by itself:
 
 ```bash
 dotnet run --project samples/MockResourceServers/Bookings
 ```
 
-The four-party R3 flow needs the R3 Access Server (`:5501`) and the Person Server
-(`:5100`). All are started together by `make demo`. The end-to-end R3 flow (proactive
-authorize, granted vs conditional, per-call proposal + digest enforcement) is
-exercised by the in-process [`AAuth.R3.Tests`](../../../tests/AAuth.R3.Tests/) suite.
+The focused stack starts the Person Server (`:5100`), Mock Agent Provider
+(`:5301`), R3 Access Server (`:5501`), and Bookings (`:5005`). The full
+four-party R3 stack is also available through `make demo`.
 
-## See also
+## Normative boundary
 
-- [Rich Resource Requests workflow](../../../docs/workflows/rich-resource-requests.md)
-- [Mock Access Servers](../../MockAccessServers/README.md) (the R3 AS at `:5501`)
-- [`AAuth.R3` package](../../../src/AAuth.R3/)
-- [Mock Resource Servers](../README.md) — the suite overview
+The Events package's resource registration, token validation, direct JSON body,
+HTTP signature profiles, current metadata resolution, and resource-to-AP
+delivery are the protocol-facing pieces. The deterministic trigger, this
+sample's in-memory ticket/subscription state, and the AP's polling/ACK
+transport are **non-normative**. No sample storage is durable or production
+conformant; production resources and APs must supply durable atomic storage.
+
+See the [AAuth Events workflow](../../../docs/workflows/aauth-events.md) and
+the [Mock Agent Provider](../../MockAgentProvider/README.md).

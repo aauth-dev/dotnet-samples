@@ -24,6 +24,10 @@ The four parties are:
 
 The SDK supports all four signing modes (`hwk`, `jwks_uri`, `jwt`, `jkt-jwt`), the full three-party challenge/exchange flow (autonomous and deferred user-consent), signature verification middleware, resource & auth token builders, JWKS / metadata discovery, and a Blazor `GuidedTour` walk-through. See the [SDK documentation](docs/) for complete usage guides.
 
+Experimental draft extensions ship as complementary preview packages rather
+than expanding core: [`AAuth.R3`](src/AAuth.R3/) for Rich Resource Requests and
+[`AAuth.Events`](src/AAuth.Events/) for asynchronous subscription and delivery.
+
 ## Access Modes
 
 AAuth supports four resource access modes. Each adds parties and capabilities, and they build on one another — adoption is incremental. Run `make demo` (no Docker) to start every service plus both UIs, then follow the demo column below. For the live-Keycloak federated experience, use `make demo-keycloak`.
@@ -66,6 +70,11 @@ For the live-Keycloak federated experience, run `make demo-keycloak` instead. Se
 [samples/README.md](samples/README.md) for the full list of sample projects and
 configuration options.
 
+For the AAuth Events waitlist flow, run `make events-stack`, then
+`make agent-events` in another terminal. EventAgent demonstrates protected
+registration, AP inbox delivery, verification, deduplication, and explicitly
+non-normative polling/ACK.
+
 ### Dev container (recommended)
 
 Open this repo in VS Code → **Reopen in Container**. The container
@@ -83,6 +92,13 @@ dotnet build AAuth.slnx
 
 ```bash
 dotnet add package AAuth --prerelease
+```
+
+Optional experimental extensions are installed separately:
+
+```bash
+dotnet add package AAuth.R3 --prerelease
+dotnet add package AAuth.Events --prerelease
 ```
 
 The simplest mode is **pseudonymous (HWK)** — the agent signs every request with an inline public key. No Agent Provider, no Person Server, no registration. The resource sees a stable key thumbprint it can use for rate-limiting or access control, but doesn't know the agent's identity.
@@ -247,6 +263,8 @@ Full SDK documentation lives in [`docs/`](docs/):
 - [Glossary & Acronyms](docs/glossary.md) — every acronym and short protocol term used across the repo
 - [Signing Modes](docs/signing-modes/overview.md) — hwk, jwks_uri, jwt, jkt-jwt
 - [Workflows](docs/workflows/identity-based-access.md) — identity-based, PS-asserted, federated
+- [Rich Resource Requests](docs/workflows/rich-resource-requests.md) — optional `AAuth.R3` preview
+- [AAuth Events](docs/workflows/aauth-events.md) — optional `AAuth.Events` preview
 - [Server Guide](docs/server/verification-middleware.md) — verification middleware, token issuance
 - [Configuration Reference](docs/reference/configuration.md)
 
@@ -256,6 +274,7 @@ Full SDK documentation lives in [`docs/`](docs/):
 dotnet test AAuth.slnx                # full suite (unit + conformance)
 dotnet test tests/AAuth.Tests         # SDK unit + integration tests only
 dotnet test tests/AAuth.Conformance   # spec conformance suite only
+dotnet test tests/AAuth.Events.Tests  # AAuth Events unit + conformance tests
 ```
 
 ## Repository Layout
@@ -263,8 +282,10 @@ dotnet test tests/AAuth.Conformance   # spec conformance suite only
 | Path | Description |
 |------|-------------|
 | [src/AAuth/](src/AAuth/) | AAuth SDK library (the NuGet package) |
+| [src/AAuth.R3/](src/AAuth.R3/) | Optional Rich Resource Requests preview package |
+| [src/AAuth.Events/](src/AAuth.Events/) | Optional AAuth Events preview package |
 | [docs/](docs/) | SDK documentation — signing modes, workflows, server guides |
-| [samples/](samples/) | Sample applications — Profile, Calendar, Trips, Wallet, Inbox resource servers, Concierge, AgentConsole, MockPersonServer, MockAgentProvider, GuidedTour, SampleApp |
+| [samples/](samples/) | Sample applications — resource servers, AgentConsole, EventAgent, MockPersonServer, MockAgentProvider, GuidedTour, and SampleApp |
 | [tests/](tests/) | Unit, integration, and spec-conformance tests |
 | [aauth-spec/](aauth-spec/) | Protocol specifications (drafts 01, 02, and 08) from [dickhardt/AAuth](https://github.com/dickhardt/AAuth) |
 
@@ -277,6 +298,7 @@ This SDK targets **draft-08** of the AAuth protocol specification:
 | [draft-hardt-oauth-aauth-protocol](aauth-spec/v08/draft-hardt-oauth-aauth-protocol.md) | 08 |
 | [draft-hardt-aauth-bootstrap](aauth-spec/v08/draft-hardt-aauth-bootstrap.md) | 01 |
 | [draft-hardt-aauth-r3](aauth-spec/v08/draft-hardt-aauth-r3.md) | 00 |
+| [draft-hardt-aauth-events](aauth-spec/v09/draft-hardt-aauth-events.md) | 00 (experimental extension) |
 
 The protocol tracks IETF **draft-08** ([`aauth-spec/v08/`](aauth-spec/v08/), source commit [`dd2b852`](https://github.com/dickhardt/AAuth/commit/dd2b8524eb8a6beb1a6cd922f285cc8bd0464cd8), 2026-06-25). Earlier draft-02 ([`aauth-spec/v02/`](aauth-spec/v02/)) and draft-01 ([`aauth-spec/v01/`](aauth-spec/v01/)) snapshots are retained for reference. All four resource access modes — including the `AAuth-Access` opaque-token flow (resource-managed, two-party access) — are implemented. See [SPEC-VERSION.md](aauth-spec/SPEC-VERSION.md) and [aauth-spec/CHANGELOG.md](aauth-spec/CHANGELOG.md) for details.
 
