@@ -2,7 +2,7 @@
 
 These spec files were copied from the [AAuth](https://github.com/dickhardt/AAuth)
 repository for reference while building the .NET samples. They are grouped by the
-AAuth protocol draft version under [`v01/`](v01/), [`v02/`](v02/), and
+AAuth protocol draft version under [`v01/`](v01/), [`v02/`](v02/),
 [`v08/`](v08/), and [`v09/`](v09/). Each folder is a self-contained snapshot, so
 each carries its own copy of the HTTP Signature Keys draft at the version that
 snapshot's protocol references.
@@ -13,11 +13,17 @@ permanent home is the **IETF Datatracker**, which retains every published revisi
 deprecated. Use it as the source of record and fallback:
 
 - Datatracker document — <https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/>
-- Per-revision text (example) — <https://www.ietf.org/archive/id/draft-hardt-oauth-aauth-protocol-08.txt>
+- Per-revision text (example) — <https://www.ietf.org/archive/id/draft-hardt-oauth-aauth-protocol-09.txt>
 
 The vendored `.md` files are the upstream kramdown source; if the GitHub repo is
 unavailable, the Datatracker `.txt`/`.html` renderings are the authoritative
 substitute.
+
+**Document dates below come from the published Internet-Draft, not the vendored
+kramdown frontmatter.** Upstream leaves the frontmatter `date` field stale — both
+the draft-08 and draft-09 sources still read `2026-06-17`, while the published
+revisions are dated 2026-06-24 and 2026-07-04 respectively. Read the date off the
+Datatracker `.txt` rendering when recording a new snapshot.
 
 The SDK code now targets **draft-08** ([`v08/`](v08/)) — migrated from draft-02 in
 the 2026-06-25 migration (see `.agent/plans/2026-06-25-aauth-v08-spec-migration/`).
@@ -97,7 +103,7 @@ For a high-fidelity record of what changed between snapshots, see
 | Commit | `dd2b8524eb8a6beb1a6cd922f285cc8bd0464cd8` |
 | Commit date | 2026-06-25 |
 | Tagged version | `draft-hardt-oauth-aauth-protocol-08` |
-| Document date | 2026-06-17 |
+| Document date | 2026-06-24 (per the published Internet-Draft) |
 | IETF draft | <https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/08/> |
 | Copied on | 2026-06-25 |
 
@@ -151,8 +157,8 @@ draft-08 bundles six published protocol drafts (03 → 08). The headline deltas:
 | Commit | `90089f80eaccccbd22e32e06946e2aa08f7d67fe` |
 | Commit date | 2026-07-05 |
 | Tagged version | `draft-hardt-oauth-aauth-protocol-09` |
-| Protocol document date | 2026-06-17 |
-| AAuth Events document date | 2026-06-24 |
+| Protocol document date | 2026-07-04 (per the published Internet-Draft) |
+| AAuth Events document date | 2026-06-24 (per the draft's kramdown frontmatter — not yet published as an Internet-Draft) |
 | IETF draft | <https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/09/> |
 | Copied on | 2026-07-14 |
 

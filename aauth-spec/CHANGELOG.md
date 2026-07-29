@@ -81,7 +81,7 @@ Interoperability Demo Profile, and HTTP Signature Keys **draft-06**.
 
 Published as IETF
 [draft-hardt-oauth-aauth-protocol-09](https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/09/)
-(commit `90089f8`, document date 2026-06-17). The delta from draft-08 has three
+(commit `90089f8`, document date 2026-07-04). The delta from draft-08 has three
 themes; the author's verbatim draft-09 changelog is reproduced below.
 
 #### 1. Clarification response discriminator
@@ -208,7 +208,7 @@ bumps the HTTP Signature Keys draft to **draft-05**.
 
 Published as IETF
 [draft-hardt-oauth-aauth-protocol-08](https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/08/)
-(commit `dd2b852`, document date 2026-06-17). draft-08 is the cumulative result of
+(commit `dd2b852`, document date 2026-06-24). draft-08 is the cumulative result of
 six published drafts (03 → 08). Grouped below by theme; the author's verbatim
 per-draft changelog is reproduced at the end. Anchors in parentheses are the
 spec's own kramdown anchors.
