@@ -64,8 +64,21 @@ curl -s "https://api.github.com/repos/dickhardt/AAuth/git/ref/tags/$TAG" | grep 
 curl -s "https://api.github.com/repos/dickhardt/AAuth/contents?ref=$TAG" | grep '"name"'
 ```
 
-Record the commit SHA, commit date, document date (the `date = ` field in the
-spec frontmatter), and the tag name — they all go into `SPEC-VERSION.md`.
+Record the commit SHA, commit date, document date, and the tag name — they all go
+into `SPEC-VERSION.md`.
+
+> **Take the document date from the published Internet-Draft, not the kramdown
+> `date = ` frontmatter.** Upstream routinely leaves the frontmatter stale (both
+> draft-08 and draft-09 ship with `date = 2026-06-17` while the published
+> revisions are dated 2026-06-24 and 2026-07-04). Read it off the `.txt`:
+
+```bash
+curl -s "https://www.ietf.org/archive/id/draft-hardt-oauth-aauth-protocol-$NN.txt" \
+  | sed -n '1,12p' | grep -oE '[0-9]{1,2} [A-Z][a-z]+ 20[0-9]{2}' | head -1
+```
+
+For companion drafts not yet on the Datatracker (currently R3 and AAuth Events),
+the frontmatter is the only available source — use it, and say so in the entry.
 
 ### 2. Download the snapshot
 
