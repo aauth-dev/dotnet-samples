@@ -3,9 +3,9 @@
 These spec files were copied from the [AAuth](https://github.com/dickhardt/AAuth)
 repository for reference while building the .NET samples. They are grouped by the
 AAuth protocol draft version under [`v01/`](v01/), [`v02/`](v02/),
-[`v08/`](v08/), and [`v09/`](v09/). Each folder is a self-contained snapshot, so
-each carries its own copy of the HTTP Signature Keys draft at the version that
-snapshot's protocol references.
+[`v08/`](v08/), [`v09/`](v09/), and [`v10/`](v10/). Each folder is a
+self-contained snapshot, so each carries its own copy of the HTTP Signature Keys
+draft at the version that snapshot's protocol references.
 
 The GitHub repository is the working source we vendor from. The canonical,
 permanent home is the **IETF Datatracker**, which retains every published revision
@@ -28,11 +28,11 @@ modes are implemented, including the `AAuth-Access` opaque-token flow
 sub-agent (S5) interop demo is deferred, though the parent-mediated code path is
 implemented and conformance-tested.
 
-`v09/` is the latest upstream snapshot, vendored 2026-07-19 as the immutable
-reference for a separate SDK migration. Until that migration is complete,
-`v08/` remains the version the SDK conforms to. The earlier draft-02
-([`v02/`](v02/)) and draft-01 ([`v01/`](v01/)) snapshots are retained for
-reference.
+`v10/` is the latest upstream snapshot, vendored 2026-09-08 as an immutable
+reference. The draft-09 SDK migration is planned but not implemented on this
+branch, so `v08/` remains the version the SDK conforms to. The earlier draft-09
+([`v09/`](v09/)), draft-02 ([`v02/`](v02/)), and draft-01
+([`v01/`](v01/)) snapshots are retained for reference.
 
 For a high-fidelity record of what changed between snapshots, see
 [`CHANGELOG.md`](CHANGELOG.md).
@@ -193,3 +193,58 @@ draft-08 bundles six published protocol drafts (03 → 08). The headline deltas:
   subscription operations to that protocol and makes its `action` field optional.
 - HTTP Signature Keys advances from draft-05 to draft-06, adding the `self-jwt`
   scheme for self-issued JWTs.
+
+## `v10/` — protocol draft-10
+
+> This is the latest upstream reference. The SDK continues to target draft-08;
+> draft-09 and draft-10 migrations remain separate implementation work.
+
+| Field | Value |
+|---|---|
+| Source repository | <https://github.com/dickhardt/AAuth> |
+| Commit | `9dee49fbf49074d1460d0a7c0670bf355aef5e1e` |
+| Commit date | 2026-08-06 |
+| Tagged version | `draft-hardt-oauth-aauth-protocol-10` |
+| Source document date | 2026-06-17 |
+| IETF publication date | 2026-08-06 |
+| IETF draft | <https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/10/> |
+| Copied on | 2026-09-08 |
+
+- `draft-hardt-oauth-aauth-protocol.md` — Main AAuth protocol specification
+  (draft-10).
+- `draft-hardt-aauth-bootstrap.md` — Agent bootstrap guidance (draft-02,
+  revised with fully specified algorithm examples and a Datatracker protocol
+  reference).
+- `draft-hardt-aauth-r3.md` — Rich Resource Requests specification (draft-01,
+  revised with account binding, operation-identifier scoping, and the OpenAPI
+  Gateway vocabulary).
+- `interop-demo-profile.md` — Interoperability Demo Profile (informational,
+  byte-identical to `v09/`).
+- `draft-hardt-aauth-events.md` — AAuth Events companion specification
+  (draft-00, revised to use the HTTP Signature Keys `self-jwt` scheme for event
+  delivery and fully specified algorithms).
+- `draft-hardt-httpbis-signature-key-08.txt` — HTTP Signature Keys
+  (Internet-Draft, draft-08; bumped from draft-06 in `v09/`; draft-07 was
+  editorial only). Downloaded 2026-09-08 from
+  <https://www.ietf.org/archive/id/draft-hardt-httpbis-signature-key-08.txt>
+  (Internet-Draft, 5 August 2026 revision).
+
+### Notable changes since draft-09
+
+- AAuth keys now require fully specified `alg` identifiers. `Ed25519` replaces
+  deprecated `EdDSA`; `none`, symmetric algorithms, and key/algorithm mismatches
+  are rejected.
+- Signature verification aligns with HTTP Signature Keys draft-08, including
+  defined scheme, algorithm, key, and issuer errors; signature failures use
+  `401`, while a `403` must not carry signature error or negotiation headers.
+- Revocation identifies tokens by `(iss, jti)`, including agent-token revocation
+  by an AP through the PS's revocation endpoint.
+- Downstream issuers cannot copy directed `sub` values from upstream tokens or
+  place person identifiers in `act`.
+- The authorization request gains optional `account` binding, propagated through
+  resource and auth tokens. R3 carries the same value and adds display guidance.
+- R3 adds operation-identifier scoping and an OpenAPI Gateway vocabulary. Events
+  switches resource-to-AP delivery to `self-jwt`; Bootstrap advances to draft-02.
+- HTTP Signature Keys draft-08 adds `jwks`, assertion caching, fully specified
+  algorithm rules, stricter covered-component and expiry requirements, and new
+  negotiation and error handling.
