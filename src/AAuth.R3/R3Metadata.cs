@@ -10,23 +10,63 @@ public static class R3Metadata
 
     public static JsonObject AddVocabularies(JsonObject metadata, IReadOnlyDictionary<string, string> vocabularies)
     {
+        ArgumentNullException.ThrowIfNull(vocabularies);
+        return AddVocabularies(metadata, vocabularies.ToDictionary(entry => entry.Key,
+            entry => (JsonNode?)JsonValue.Create(entry.Value), StringComparer.Ordinal));
+    }
+
+    public static JsonObject AddVocabularies(JsonObject metadata, IReadOnlyDictionary<string, JsonNode?> vocabularies,
+        R3VocabularySchemas? schemas = null)
+    {
         ArgumentNullException.ThrowIfNull(metadata);
         ArgumentNullException.ThrowIfNull(vocabularies);
         var values = new JsonObject();
         foreach (var (vocabulary, discoveryEndpoint) in vocabularies)
         {
-            if (string.IsNullOrWhiteSpace(vocabulary))
+            (schemas ?? R3VocabularySchemas.Standard).ValidateVocabulary(vocabulary);
+            if (vocabulary == Vocabulary.OpenApiGateway)
             {
-                throw new InvalidOperationException("R3 vocabulary values must be non-empty.");
+                if (discoveryEndpoint is not JsonObject services || services.Count == 0)
+                    throw new InvalidOperationException("Gateway discovery requires a nonempty service map.");
+                foreach (var service in services)
+                {
+                    if (string.IsNullOrWhiteSpace(service.Key))
+                        throw new InvalidOperationException("Gateway service labels must be nonempty.");
+                    ValidateEndpoint(service.Value);
+                }
             }
-            if (string.IsNullOrWhiteSpace(discoveryEndpoint))
-            {
-                throw new InvalidOperationException("R3 vocabulary discovery endpoints must be non-empty.");
-            }
-            values[vocabulary] = discoveryEndpoint;
+            else ValidateEndpoint(discoveryEndpoint);
+            values[vocabulary] = discoveryEndpoint!.DeepClone();
         }
         metadata[VocabulariesProperty] = values;
         return metadata;
+    }
+
+    public static void ValidateOperations(R3Operations request, JsonObject metadata,
+        IEnumerable<R3OperationIdentity> authoritativeOperations, R3VocabularySchemas? schemas = null)
+    {
+        request.Validate(schemas);
+        if (metadata[VocabulariesProperty] is not JsonObject vocabularies || !vocabularies.ContainsKey(request.Vocabulary))
+            throw new InvalidOperationException("Requested vocabulary is not advertised by this resource.");
+        AddVocabularies(new JsonObject(), vocabularies.ToDictionary(entry => entry.Key, entry => entry.Value), schemas);
+        var authoritative = authoritativeOperations.ToArray();
+        foreach (var operation in request.Operations)
+        {
+            if (request.Vocabulary == Vocabulary.OpenApiGateway &&
+                ((JsonObject)vocabularies[request.Vocabulary]!).ContainsKey(operation.Service!) == false)
+                throw new InvalidOperationException("Gateway service is not advertised by this resource.");
+            if (!authoritative.Any(identity => identity.Matches(request.Vocabulary, operation)))
+                throw new InvalidOperationException("Requested operation is not in the authoritative definition.");
+        }
+    }
+
+    private static void ValidateEndpoint(JsonNode? node)
+    {
+        if (node is not JsonValue value || !value.TryGetValue<string>(out var endpoint) ||
+            string.IsNullOrWhiteSpace(endpoint) || endpoint.Any(char.IsWhiteSpace) ||
+            !Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") ||
+            !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Fragment))
+            throw new InvalidOperationException("R3 discovery endpoint must be an absolute HTTP(S) URL.");
     }
 
     public static JsonObject CreateResourceMetadata(

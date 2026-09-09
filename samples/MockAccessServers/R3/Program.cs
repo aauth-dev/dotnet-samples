@@ -1,5 +1,7 @@
 using AAuth.Crypto;
 using AAuth.R3;
+using AAuth.R3.Model;
+using R3AccessServer;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -29,7 +31,7 @@ var conditionalOperations = (builder.Configuration
 builder.Services.AddSingleton(asKey);
 // Shared discovery clients (MetadataClient + JwksClient) with an SDK-owned pooled
 // handler; no manual HttpClient wiring (2026-06-27 server-api-surface convention).
-builder.Services.AddAAuthDiscovery();
+builder.Services.AddAAuthDiscovery(options => options.EgressPolicy = SampleEgress.Policy);
 // Replay defence for the AS's own signature verification (§Freshness and Replay):
 // a registered IJtiStore lets the R3 endpoints refuse a verbatim-replayed signed
 // POST /token within the freshness window, so a captured request cannot re-mint an
@@ -45,17 +47,21 @@ var app = builder.Build();
 // AS stays the scope-based AS for Wallet: one server per concept, mirroring MockResourceServers.
 app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
 {
+    EgressPolicy = SampleEgress.Policy,
     Issuer = issuer,
-    SigningKeys = new Dictionary<string, AAuthKey> { [AsKid] = asKey },
+    SigningKeys = new Dictionary<string, IAAuthKey> { [AsKid] = asKey },
     TrustedPersonServers = trustedPersonServers,
     // AS policy decides the granted-vs-conditional split (r3 §Auth Token Extensions).
-    IsConditionalOperation = op => conditionalOperations.Contains(op.Id),
+    IsConditionalOperation = operation => conditionalOperations.Any(identifier =>
+        operation.Matches(Vocabulary.OpenApi, R3Operation.OpenApi(identifier))),
     // A conditional operation's per-call proposal requires human approval: the AS
     // returns 202 + a consent screen rendering the proposal's `display`, relayed by
     // the PS, and mints the per-call token only on approval (r3 §Per-Call Proposals).
     RequireProposalConsent = true,
-    // Diagnostic-only in-memory sink; a production R3 AS should configure a durable IR3AuditSink.
-    AuditSink = new InMemoryR3AuditSink(),
+    BrowserConsent = new AAuth.Server.BrowserConsentSessions("AAuth.R3.Consent",
+        builder.Configuration.GetValue<bool>("AAuth:EnableIsolatedDemoConsent") ? "isolated-r3-demo" : null),
+    AuditSink = new SqliteR3AuditSink(builder.Configuration["R3AccessServer:AuditPath"] ??
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "aauth-samples", "r3-audit.sqlite")),
 });
 
 app.Run();

@@ -27,5 +27,5 @@ public sealed record R3Operations
 
     public R3Grant ToGrant() => new() { Vocabulary = Vocabulary, Operations = Operations };
 
-    public void Validate() => ToGrant().Validate();
+    public void Validate(R3VocabularySchemas? schemas = null) => ToGrant().Validate(schemas: schemas);
 }

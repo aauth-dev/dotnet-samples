@@ -25,11 +25,14 @@ public static class R3AuthClaims
         string r3Uri,
         string r3S256,
         R3Grant granted,
-        R3Grant? conditional = null)
+        R3Grant? conditional = null,
+        R3VocabularySchemas? schemas = null)
     {
         ValidatePair(r3Uri, r3S256);
-        granted.Validate(allowEmpty: true);
-        conditional?.Validate(allowEmpty: true);
+        granted.Validate(allowEmpty: true, schemas);
+        conditional?.Validate(allowEmpty: true, schemas);
+        if (conditional is not null && conditional.Vocabulary != granted.Vocabulary)
+            throw new InvalidOperationException("R3 granted and conditional vocabularies must match.");
 
         var claims = new Dictionary<string, JsonNode?>(StringComparer.Ordinal)
         {

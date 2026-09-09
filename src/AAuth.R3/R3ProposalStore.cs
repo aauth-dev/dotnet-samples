@@ -16,11 +16,11 @@ public sealed class R3ProposalStore
 
     public R3ProposalStore(TimeProvider? timeProvider = null) => _timeProvider = timeProvider ?? TimeProvider.System;
 
-    public StoredR3Proposal Add(R3ProposalDocument proposal, Uri baseUri, string pathPrefix = "/r3/proposals")
+    public StoredR3Proposal Add(R3ProposalDocument proposal, Uri baseUri, string pathPrefix = "/r3/proposals", R3VocabularySchemas? schemas = null)
     {
         ArgumentNullException.ThrowIfNull(proposal);
         ArgumentNullException.ThrowIfNull(baseUri);
-        return Store(proposal.ToUtf8Bytes(), baseUri, pathPrefix);
+        return Store(proposal.ToUtf8Bytes(schemas: schemas), baseUri, pathPrefix);
     }
 
     public StoredR3Proposal AddBytes(byte[] bytes, Uri baseUri, string pathPrefix = "/r3/proposals")
@@ -36,7 +36,7 @@ public sealed class R3ProposalStore
         var s256 = R3Hash.ComputeS256(bytes);
         _bytesByHash[s256] = (bytes, _timeProvider.GetUtcNow());
         var uri = new Uri(baseUri, $"{pathPrefix.TrimEnd('/')}/{Uri.EscapeDataString(s256)}");
-        return new StoredR3Proposal(uri.ToString(), s256, bytes);
+        return new StoredR3Proposal(uri.ToString(), s256, bytes.ToArray());
     }
 
     public bool TryGet(string s256, out byte[] bytes)

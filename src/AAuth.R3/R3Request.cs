@@ -8,14 +8,26 @@ namespace AAuth.R3;
 /// <summary>Composes and sends R3 operation requests to a resource authorization endpoint.</summary>
 public static class R3Request
 {
-    public static JsonObject CreateBody(R3Operations operations)
+    public static R3Operations ReadOperations(JsonObject body, R3VocabularySchemas? schemas = null)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        var grant = R3ClaimReader.ReadGrant(body["r3_operations"], schemas)
+            ?? throw new InvalidOperationException("r3_operations is required.");
+        grant.Validate(schemas: schemas);
+        return new R3Operations { Vocabulary = grant.Vocabulary, Operations = grant.Operations };
+    }
+
+    public static JsonObject CreateBody(R3Operations operations, string? account = null, R3VocabularySchemas? schemas = null)
     {
         ArgumentNullException.ThrowIfNull(operations);
-        operations.Validate();
-        return new JsonObject
+        operations.Validate(schemas);
+        AAuth.Tokens.AccountBinding.Validate(account);
+        var body = new JsonObject
         {
             ["r3_operations"] = R3ClaimJson.GrantToJson(operations.ToGrant()),
         };
+        if (account is not null) body["account"] = account;
+        return body;
     }
 
     public static R3Operations CreateMcpOperations(params string[] tools) => R3Operations.Mcp(tools);
@@ -26,11 +38,18 @@ public static class R3Request
         HttpClient http,
         string authorizationEndpoint,
         R3Operations operations,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? account = null,
+        R3VocabularySchemas? schemas = null)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentException.ThrowIfNullOrEmpty(authorizationEndpoint);
-        return await http.PostAsJsonAsync(authorizationEndpoint, CreateBody(operations), cancellationToken).ConfigureAwait(false);
+        using var request = new HttpRequestMessage(HttpMethod.Post, authorizationEndpoint)
+        {
+            Content = JsonContent.Create(CreateBody(operations, account, schemas)),
+        };
+        if (account is not null) request.Options.Set(AAuth.Agent.AAuthRequestOptions.Account, account);
+        return await http.SendAsync(request, cancellationToken).ConfigureAwait(false);
     }
 
     public static R3ChallengeInfo? ReadChallenge(HttpResponseMessage response)

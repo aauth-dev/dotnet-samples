@@ -6,6 +6,7 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.Headers;
 using AAuth.R3.Model;
+using AAuth.Server;
 using AAuth.Server.Metadata;
 using AAuth.Server.Verification;
 using AAuth.Tokens;
@@ -25,41 +26,60 @@ public static class R3AccessTokenEndpoint
         options.Validate();
 
         var (signingKid, signingKey) = options.FirstSigningKey();
-        var issuer = options.Issuer.TrimEnd('/');
+        options.EgressPolicy.ValidateIdentifier(options.Issuer);
+        var issuer = options.Issuer;
+        var inventory = app.MapAAuthIssuerRevocation(issuer, AuthTokenBuilder.AccessDwk,
+            signingKey, signingKid, "/revoke", options.EgressPolicy, options.TimeProvider, configure: null);
         var tokenPath = "/" + options.TokenPath.Trim('/');
 
         WellKnownEndpoints.MapAAuthAccessServerWellKnown(app, new AAuthAccessServerMetadataOptions
         {
+            EgressPolicy = options.EgressPolicy,
             Issuer = issuer,
             TokenEndpoint = $"{issuer}{tokenPath}",
             SigningKeys = options.SigningKeys,
+            RevocationEndpoint = $"{issuer}/revoke",
         });
 
         var pendingPath = "/" + options.PendingPath.Trim('/');
         var consentPath = "/" + options.ConsentPath.Trim('/');
         var pendingStore = new R3PendingStore(options.TimeProvider);
+        var browserConsent = options.BrowserConsent ?? new BrowserConsentSessions("AAuth.R3.Consent");
 
         // Mint the R3 auth token + write the audit record atomically. Shared by the
         // /token happy path (granted class docs) and the /pending poll after per-call
         // human consent (r3 §Per-Call Proposals, Flow step 2 + §Audit Log Integrity).
-        async Task<string> MintAndAuditAsync(AuthMintParts parts, string agentId, IAAuthKey agentKey, string resourceIssuer, CancellationToken ct)
+        async Task<string> MintAndAuditAsync(AuthMintParts parts, AgentIssuanceContext issuance, string resourceIssuer, CancellationToken ct)
         {
-            var claims = R3AuthClaims.AuthToken(parts.Uri, parts.S256, parts.Granted, parts.Conditional);
+            var claims = R3AuthClaims.AuthToken(parts.Uri, parts.S256, parts.Granted, parts.Conditional, options.VocabularySchemas);
             var token = new AuthTokenBuilder
             {
+                EgressPolicy = options.EgressPolicy,
                 Issuer = issuer,
                 Audience = resourceIssuer,
-                Agent = agentId,
-                AgentConfirmationKey = agentKey,
+                Account = parts.Account,
+                Agent = issuance.AgentId,
+                AgentConfirmationKey = issuance.ConfirmationKey,
+                AgentTokenExpiresAt = issuance.AgentTokenExpiresAt,
+                AuthorizationExpiresAt = issuance.ExpiresAt,
+                Act = issuance.Act,
+                TimeProvider = options.TimeProvider,
                 Key = signingKey,
                 KeyId = signingKid,
                 Dwk = AuthTokenBuilder.AccessDwk,
                 Subject = options.Subject,
+                Scope = parts.Scope,
                 AdditionalClaims = claims,
             }.Build();
+            var payload = JsonNode.Parse(Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(token.Split('.')[1]))!;
             await options.AuditSink.RecordTokenIssuanceAsync(new R3TokenIssuanceAuditRecord(
-                parts.Uri, parts.S256, agentId, resourceIssuer, issuer,
-                options.TimeProvider.GetUtcNow(), parts.IssuanceKind), ct);
+                parts.Uri, parts.S256, issuance.AgentId, resourceIssuer, issuer,
+                DateTimeOffset.FromUnixTimeSeconds((long)payload["iat"]!), parts.IssuanceKind)
+            {
+                Account = parts.Account,
+                TokenId = (string)payload["jti"]!,
+                TokenS256 = R3Hash.ComputeS256(System.Text.Encoding.ASCII.GetBytes(token)),
+            }, ct);
             return token;
         }
 
@@ -72,16 +92,16 @@ public static class R3AccessTokenEndpoint
             }
             catch (R3UntrustedJwksUriException)
             {
-                return Results.Json(new { error = "untrusted_person_server" }, statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", statusCode: StatusCodes.Status403Forbidden);
             }
             catch (Exception ex) when (ex is R3FetchVerificationException or AAuth.HttpSig.AAuthVerificationException)
             {
-                return Results.Json(new { error = "invalid_signature", detail = ex.Message }, statusCode: StatusCodes.Status401Unauthorized);
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_signature", ex.Message, statusCode: StatusCodes.Status401Unauthorized);
             }
 
             if (!options.IsCallerTrustedPersonServer(caller))
             {
-                return Results.Json(new { error = "untrusted_person_server" }, statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", statusCode: StatusCodes.Status403Forbidden);
             }
 
             JsonObject? body;
@@ -91,41 +111,40 @@ public static class R3AccessTokenEndpoint
             }
             catch (System.Text.Json.JsonException)
             {
-                return Results.Json(new { error = "invalid_request", detail = "body is not valid JSON" }, statusCode: StatusCodes.Status400BadRequest);
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "body is not valid JSON", statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            foreach (var field in new[] { "agent_token", "resource_token", "subagent_token", "upstream_token" })
+            {
+                if (body?[field] is { } credential && (credential is not JsonValue value || !value.TryGetValue<string>(out _)))
+                    return AAuth.Server.AAuthProblemDetails.Create("invalid_request", $"{field} must be a string", statusCode: StatusCodes.Status400BadRequest);
             }
 
             var agentToken = (string?)body?["agent_token"];
             var resourceToken = (string?)body?["resource_token"];
             if (string.IsNullOrWhiteSpace(agentToken) || string.IsNullOrWhiteSpace(resourceToken))
             {
-                return Results.Json(new { error = "invalid_request", detail = "missing agent_token or resource_token" }, statusCode: StatusCodes.Status400BadRequest);
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "missing agent_token or resource_token", statusCode: StatusCodes.Status400BadRequest);
             }
 
-            var tokenVerifier = GetServiceOrDefault(context, new TokenVerifier());
+            var tokenVerifier = GetServiceOrDefault(context, new TokenVerifier { EgressPolicy = options.EgressPolicy });
             var metadata = GetRequired<MetadataClient>(context);
             var jwks = GetRequired<JwksClient>(context);
 
-            string agentId;
-            IAAuthKey agentConfirmationKey;
+            AgentIssuanceContext issuance;
             try
             {
-                var verifiedAgent = await tokenVerifier.VerifyWithJwksAsync(
-                    agentToken,
-                    metadata,
-                    jwks,
-                    AgentTokenBuilder.TokenType,
-                    AgentTokenBuilder.AgentDwk,
-                    expectedAudience: null,
-                    cancellationToken: context.RequestAborted);
-                agentId = (string?)verifiedAgent.Payload["sub"]
-                    ?? throw new TokenVerificationException("agent_token missing sub");
-                var cnfJwk = verifiedAgent.Payload["cnf"]?["jwk"] as JsonObject
-                    ?? throw new TokenVerificationException("agent_token missing cnf.jwk");
-                agentConfirmationKey = KeyFactory.FromJwk(cnfJwk);
+                issuance = await AgentIssuanceContext.VerifyAsync(
+                    agentToken, (string?)body?["subagent_token"], (string?)body?["upstream_token"],
+                    tokenVerifier, metadata, jwks,
+                    upstreamIssuer => string.Equals(upstreamIssuer, issuer, StringComparison.Ordinal)
+                        || string.Equals(upstreamIssuer, caller.Identifier, StringComparison.Ordinal),
+                    context.RequestAborted);
+                await TokenRegistration.RegisterAsync(inventory, issuance.SourceTokens, context.RequestAborted);
             }
             catch (TokenVerificationException ex)
             {
-                return Results.Json(new { error = "invalid_agent_token", detail = ex.Message }, statusCode: StatusCodes.Status401Unauthorized);
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_agent_token", ex.Message, statusCode: StatusCodes.Status401Unauthorized);
             }
 
             TokenVerifier.VerifiedToken verifiedResource;
@@ -135,8 +154,8 @@ public static class R3AccessTokenEndpoint
                 verifiedResource = await tokenVerifier.VerifyResourceTokenAsync(
                     resourceToken,
                     expectedAudience: issuer,
-                    expectedAgentId: agentId,
-                    expectedAgentJkt: agentConfirmationKey.ComputeJwkThumbprint(),
+                    expectedAgentId: issuance.AgentId,
+                    expectedAgentJkt: issuance.ConfirmationKey.ComputeJwkThumbprint(),
                     metadata,
                     jwks,
                     cancellationToken: context.RequestAborted);
@@ -145,23 +164,31 @@ public static class R3AccessTokenEndpoint
             }
             catch (Exception ex) when (ex is TokenVerificationException or InvalidOperationException)
             {
-                return Results.Json(new { error = "invalid_resource_token", detail = ex.Message }, statusCode: StatusCodes.Status400BadRequest);
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_resource_token", ex.Message, statusCode: StatusCodes.Status400BadRequest);
             }
 
             var resourceIssuer = (string?)verifiedResource.Payload["iss"];
             if (string.IsNullOrWhiteSpace(resourceIssuer))
             {
-                return Results.Json(new { error = "invalid_resource_token", detail = "resource_token missing iss" }, statusCode: StatusCodes.Status400BadRequest);
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_resource_token", "resource_token missing iss", statusCode: StatusCodes.Status400BadRequest);
             }
 
             AuthMintParts mintParts;
             try
             {
                 mintParts = await EvaluateDocumentAsync(context, options, r3DocumentClaims, resourceIssuer, context.RequestAborted);
+                var scope = (string?)verifiedResource.Payload["scope"];
+                if (scope is not null)
+                {
+                    var scopes = scope.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (scopes.Length == 0 || scopes.Any(value => options.IsScopeAllowed?.Invoke(resourceIssuer, value) != true))
+                        throw new InvalidOperationException("Resource scopes require independent AS policy approval.");
+                    mintParts = mintParts with { Scope = scope };
+                }
             }
-            catch (Exception ex) when (ex is R3HashMismatchException or InvalidOperationException or HttpRequestException or TaskCanceledException)
+            catch (Exception ex) when (ex is R3HashMismatchException or InvalidOperationException or HttpRequestException or TaskCanceledException or TokenVerificationException or ArgumentException or System.Text.Json.JsonException)
             {
-                return Results.Json(new { error = "r3_evaluation_failed", detail = ex.Message }, statusCode: StatusCodes.Status400BadRequest);
+                return AAuth.Server.AAuthProblemDetails.Create("r3_evaluation_failed", ex.Message, statusCode: StatusCodes.Status400BadRequest);
             }
 
             // Per-call proposal + human consent (r3 §Per-Call Proposals, Flow step 2:
@@ -170,11 +197,12 @@ public static class R3AccessTokenEndpoint
             // so the PS relays the consent link; mint only after the user approves (below).
             if (mintParts.IssuanceKind == R3TokenIssuanceKind.Proposal && options.RequireProposalConsent)
             {
-                var entry = pendingStore.Add(mintParts, agentId, agentConfirmationKey, resourceIssuer, caller.JwksUri!.Authority);
+                var entry = pendingStore.Add(mintParts, issuance, resourceIssuer, caller.Identifier);
+                entry.OwnerKeyThumbprint = caller.KeyThumbprint;
                 context.Response.Headers.Location = $"{pendingPath}/{entry.Id}";
                 context.Response.Headers["Retry-After"] = "1";
                 context.Response.Headers["Cache-Control"] = "no-store";
-                context.Response.Headers[AAuthRequirementHeader.Name] = Interaction.Format($"{issuer}{consentPath}", entry.Id);
+                context.Response.Headers[AAuthRequirementHeader.Name] = Interaction.Format($"{issuer}{consentPath}", entry.Browser.Code, options.EgressPolicy);
                 return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
             }
 
@@ -187,121 +215,154 @@ public static class R3AccessTokenEndpoint
             // No-op unless an IJtiStore is registered (preserves prior behaviour).
             if (!await R3DocumentEndpoint.TryRecordMintSignatureAsync(context, caller.KeyThumbprint))
             {
-                return Results.Json(new { error = "invalid_signature", detail = "replayed request signature" }, statusCode: StatusCodes.Status401Unauthorized);
+                context.Response.Headers[AAuth.Errors.SignatureError.HeaderName] = AAuth.Errors.SignatureError.Format(AAuth.Errors.SignatureErrorCode.InvalidSignature);
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_signature", "replayed request signature", statusCode: StatusCodes.Status401Unauthorized);
             }
 
-            var authToken = await MintAndAuditAsync(mintParts, agentId, agentConfirmationKey, resourceIssuer, context.RequestAborted);
-            return Results.Ok(new { auth_token = authToken, expires_in = 3600 });
+            try
+            {
+                var authToken = await MintAndAuditAsync(mintParts, issuance, resourceIssuer, context.RequestAborted);
+                return await AuthTokenResponse.CreateTrackedAsync(() => authToken, issuance.ExpiresAt,
+                    inventory, issuance.SourceTokens.Select(source => source.Token).ToArray(), options.TimeProvider, context.RequestAborted);
+            }
+            catch (AuthTokenExpiredException) { return AuthTokenResponse.Expired(); }
         });
 
         // GET /pending/{id} — polled (PS federation client, signed) after the 202
         // relay. Returns the minted per-call token once the user approves at the
         // consent screen; 202 while pending; 403 when denied.
-        app.MapGet(pendingPath + "/{id}", async (HttpContext context, string id) =>
+        app.MapMethods(pendingPath + "/{id}", ["GET", "DELETE"], async (HttpContext context, string id) =>
         {
             // The PS polls this Location over its signed federation channel; verify
             // the HTTP signature and trusted-PS identity exactly like /token (the
             // deferred poll rides the same authenticated PS→AS channel, §AS Token
             // Endpoint). The browser /interaction/consent endpoints stay unsigned.
             string pollerPersonServer;
+            string? pollerKey;
             try
             {
                 var poller = await R3DocumentEndpoint.VerifyFetcherAsync(context, options.IsCallerTrustedPersonServer);
                 if (!options.IsCallerTrustedPersonServer(poller))
                 {
-                    return Results.Json(new { error = "untrusted_person_server" }, statusCode: StatusCodes.Status403Forbidden);
+                    return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", statusCode: StatusCodes.Status403Forbidden);
                 }
-                pollerPersonServer = poller.JwksUri!.Authority;
+                pollerPersonServer = poller.Identifier;
+                pollerKey = poller.KeyThumbprint;
             }
             catch (R3UntrustedJwksUriException)
             {
-                return Results.Json(new { error = "untrusted_person_server" }, statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", statusCode: StatusCodes.Status403Forbidden);
             }
             catch (Exception ex) when (ex is R3FetchVerificationException or AAuth.HttpSig.AAuthVerificationException)
             {
-                return Results.Json(new { error = "invalid_signature", detail = ex.Message }, statusCode: StatusCodes.Status401Unauthorized);
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_signature", ex.Message, statusCode: StatusCodes.Status401Unauthorized);
             }
 
             var entry = pendingStore.Get(id);
             if (entry is null)
             {
-                return Results.Json(new { error = "unknown_pending" }, statusCode: StatusCodes.Status404NotFound);
+                return DeferredState.Missing(id);
             }
             // Same-PS re-pin: only the PS that parked this proposal may poll it — a
             // different trusted PS must not receive the token or trigger the mint/audit
             // (cross-PS pending isolation; mirrors the core AS's AuthorizePsCaller).
-            if (!string.Equals(pollerPersonServer, entry.OriginPersonServer, StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(pollerPersonServer, entry.OriginPersonServer, StringComparison.Ordinal)
+                || !string.Equals(pollerKey, entry.OwnerKeyThumbprint, StringComparison.Ordinal))
             {
-                return Results.Json(new { error = "untrusted_person_server", detail = "pending entry belongs to a different Person Server" }, statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", "pending entry belongs to a different Person Server", statusCode: StatusCodes.Status403Forbidden);
             }
-            switch (entry.Status)
+            return await entry.Lifecycle.ExecuteAsync(context, entry.PendingExpiresAt, options.TimeProvider, async () =>
             {
-                case R3PendingStatus.Allowed:
-                    if (entry.AuthToken is null)
-                    {
-                        // Mint-once gate: concurrent polls of the same approval must not
-                        // mint (and audit) the token more than once (§Audit Log Integrity).
-                        // The outer null-check keeps the common already-minted poll lock-free;
-                        // the inner ??= re-checks under the per-entry gate.
-                        await entry.MintGate.WaitAsync(context.RequestAborted);
-                        try
+                if (HttpMethods.IsDelete(context.Request.Method))
+                {
+                    entry.Lifecycle.Cancel();
+                    return Results.NoContent();
+                }
+                switch (entry.Status)
+                {
+                    case R3PendingStatus.Allowed:
+                        if (entry.Issuance.ExpiresAt.ToUnixTimeSeconds() <= options.TimeProvider.GetUtcNow().ToUnixTimeSeconds())
+                            return AuthTokenResponse.Expired();
+                        if (entry.AuthToken is null)
                         {
-                            entry.AuthToken ??= await MintAndAuditAsync(entry.MintParts, entry.AgentId, entry.AgentConfirmationKey, entry.ResourceIssuer, context.RequestAborted);
+                            // Mint-once gate: concurrent polls of the same approval must not
+                            // mint (and audit) the token more than once (§Audit Log Integrity).
+                            // The outer null-check keeps the common already-minted poll lock-free;
+                            // the inner ??= re-checks under the per-entry gate.
+                            await entry.MintGate.WaitAsync(context.RequestAborted);
+                            try
+                            {
+                                entry.AuthToken ??= await MintAndAuditAsync(entry.MintParts, entry.Issuance, entry.ResourceIssuer, context.RequestAborted);
+                            }
+                            catch (AuthTokenExpiredException) { return AuthTokenResponse.Expired(); }
+                            finally
+                            {
+                                entry.MintGate.Release();
+                            }
                         }
-                        finally
-                        {
-                            entry.MintGate.Release();
-                        }
-                    }
-                    return Results.Ok(new { auth_token = entry.AuthToken, expires_in = 3600 });
-                case R3PendingStatus.Denied:
-                    return Results.Json(new { error = "denied" }, statusCode: StatusCodes.Status403Forbidden);
-                default:
-                    context.Response.Headers.Location = $"{pendingPath}/{id}";
-                    context.Response.Headers["Retry-After"] = "1";
-                    context.Response.Headers["Cache-Control"] = "no-store";
-                    context.Response.Headers[AAuthRequirementHeader.Name] = Interaction.Format($"{issuer}{consentPath}", id);
-                    return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
-            }
+                        return await AuthTokenResponse.CreateTrackedAsync(() => entry.AuthToken, entry.Issuance.ExpiresAt,
+                            inventory, entry.Issuance.SourceTokens.Select(source => source.Token).ToArray(), options.TimeProvider, context.RequestAborted);
+                    case R3PendingStatus.Denied:
+                        return AAuth.Server.AAuthProblemDetails.Create("denied", statusCode: StatusCodes.Status403Forbidden);
+                    default:
+                        context.Response.Headers.Location = $"{pendingPath}/{id}";
+                        context.Response.Headers["Retry-After"] = "1";
+                        context.Response.Headers["Cache-Control"] = "no-store";
+                        context.Response.Headers[AAuthRequirementHeader.Name] = Interaction.Format($"{issuer}{consentPath}", entry.Browser.Code, options.EgressPolicy);
+                        return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
+                }
+            });
         });
 
         // Browser consent screen for a per-call proposal — renders the proposal's
         // `display` and flips the pending entry on Approve/Deny.
         //
-        // DEMO LIMITATION: like the Federated stub AS, these endpoints do NOT authenticate
-        // a human — approval is gated only by knowledge of the single-use `code`. A
-        // production R3 AS MUST authenticate the user here (an IdP/login session, as the
-        // Federated AS does via Keycloak) so the per-call "human consent" is a real
-        // human-presence control and not something the agent can self-approve.
-        app.MapGet(consentPath, (string code) =>
+        app.MapMethods(consentPath, ["GET", "POST"], async (HttpContext context) =>
         {
-            var entry = pendingStore.Get(code);
+            var entered = await browserConsent.EnterAsync(context, code => pendingStore.GetByCode(code) is { } candidate
+                ? new BrowserPendingRequest(candidate.Id, candidate.PendingExpiresAt, candidate.Browser, candidate.Lifecycle) : null);
+            if (entered.Error is not null) return entered.Error;
+            var entry = pendingStore.Get(entered.Id!);
             return entry is null
                 ? Results.Content(R3ConsentHtml.NotFound(issuer), "text/html", null, StatusCodes.Status404NotFound)
-                : Results.Content(R3ConsentHtml.Prompt(issuer, consentPath, code, entry), "text/html");
+                : Results.Content(R3ConsentHtml.Prompt(issuer, consentPath, browserConsent.Fields(context, entered.Decision!), entry), "text/html");
         });
         app.MapPost(consentPath + "/approve", async (HttpContext context) =>
         {
-            var code = (await context.Request.ReadFormAsync())["code"].ToString();
-            var entry = pendingStore.Get(code);
+            var decision = await browserConsent.DecideAsync(context);
+            if (decision.Error is not null) return decision.Error;
+            var entry = pendingStore.Get(decision.Decision!.Id);
             if (entry is null)
             {
                 return Results.Content(R3ConsentHtml.NotFound(issuer), "text/html", null, StatusCodes.Status404NotFound);
             }
-            entry.Status = R3PendingStatus.Allowed;
-            return Results.Content(R3ConsentHtml.Approved(issuer), "text/html");
-        }).DisableAntiforgery();
+            return await decision.Decision.ApplyAsync(context, () =>
+            {
+                if (entry.Status != R3PendingStatus.Pending || entry.Lifecycle.Delivered || entry.Lifecycle.Cancelled
+                    || entry.PendingExpiresAt <= options.TimeProvider.GetUtcNow())
+                    return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+                entry.Status = R3PendingStatus.Allowed;
+                return Results.Content(R3ConsentHtml.Approved(issuer), "text/html");
+            });
+        });
         app.MapPost(consentPath + "/deny", async (HttpContext context) =>
         {
-            var code = (await context.Request.ReadFormAsync())["code"].ToString();
-            var entry = pendingStore.Get(code);
+            var decision = await browserConsent.DecideAsync(context);
+            if (decision.Error is not null) return decision.Error;
+            var entry = pendingStore.Get(decision.Decision!.Id);
             if (entry is null)
             {
                 return Results.Content(R3ConsentHtml.NotFound(issuer), "text/html", null, StatusCodes.Status404NotFound);
             }
-            entry.Status = R3PendingStatus.Denied;
-            return Results.Content(R3ConsentHtml.Denied(issuer), "text/html");
-        }).DisableAntiforgery();
+            return await decision.Decision.ApplyAsync(context, () =>
+            {
+                if (entry.Status != R3PendingStatus.Pending || entry.Lifecycle.Delivered || entry.Lifecycle.Cancelled
+                    || entry.PendingExpiresAt <= options.TimeProvider.GetUtcNow())
+                    return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+                entry.Status = R3PendingStatus.Denied;
+                return Results.Content(R3ConsentHtml.Denied(issuer), "text/html");
+            });
+        });
 
         return app;
     }
@@ -316,7 +377,12 @@ public static class R3AccessTokenEndpoint
         var bytes = await FetchAsync(context, options, r3.Uri, r3.S256, resourceIssuer, cancellationToken);
         if (IsProposal(bytes))
         {
-            var proposal = R3ProposalDocument.FromUtf8Bytes(bytes);
+            var proposal = R3ProposalDocument.FromUtf8Bytes(bytes, schemas: options.VocabularySchemas);
+            if (!AccountBinding.Matches(r3.Account, proposal.Account))
+                throw new TokenVerificationException("R3 proposal account differs from resource token.");
+            if (options.IsOperationAllowed?.Invoke(new(proposal.Vocabulary, proposal.Operations[0])) == false ||
+                options.IsProposalAllowed?.Invoke(proposal) == false)
+                throw new InvalidOperationException("R3 proposal denied by access server policy.");
             return new AuthMintParts(
                 r3.Uri,
                 r3.S256,
@@ -324,10 +390,13 @@ public static class R3AccessTokenEndpoint
                 null,
                 R3TokenIssuanceKind.Proposal,
                 proposal.Display?.Summary,
-                proposal.Display?.Detail);
+                proposal.Display?.Detail,
+                proposal.Account);
         }
 
-        var document = R3Document.FromUtf8Bytes(bytes);
+        var document = R3Document.FromUtf8Bytes(bytes, schemas: options.VocabularySchemas);
+        if (!AccountBinding.Matches(r3.Account, document.Account))
+            throw new TokenVerificationException("R3 document account differs from resource token.");
         // Spec (r3 §Auth Token Extensions): the AS — not the resource — decides which
         // operations to grant outright vs make conditional, from the document's
         // `operations` and its OWN policy. The default policy grants everything
@@ -337,14 +406,16 @@ public static class R3AccessTokenEndpoint
         var conditional = new List<R3Operation>();
         foreach (var operation in document.Operations)
         {
-            (isConditional(operation) ? conditional : granted).Add(operation);
+            var identity = new R3OperationIdentity(document.Vocabulary, operation);
+            if (options.IsOperationAllowed?.Invoke(identity) == false) continue;
+            (isConditional(identity) ? conditional : granted).Add(operation);
         }
         return new AuthMintParts(
             r3.Uri,
             r3.S256,
             new R3Grant { Vocabulary = document.Vocabulary, Operations = granted },
             conditional.Count == 0 ? null : new R3Grant { Vocabulary = document.Vocabulary, Operations = conditional },
-            R3TokenIssuanceKind.Class);
+            R3TokenIssuanceKind.Class, Account: document.Account);
     }
 
     private static async Task<byte[]> FetchAsync(
@@ -355,14 +426,22 @@ public static class R3AccessTokenEndpoint
         string resourceIssuer,
         CancellationToken cancellationToken)
     {
-        R3FetchClient.ValidateFetchTarget(uri, resourceIssuer);
+        R3FetchClient.ValidateFetchTarget(uri, resourceIssuer, options.EgressPolicy);
         if (options.FetchAndVerifyAsync is not null)
         {
-            return await options.FetchAndVerifyAsync(context, uri, s256, resourceIssuer, cancellationToken).ConfigureAwait(false);
+            if (options.FetchTransportContract is null || !Enum.IsDefined(options.FetchTransportContract.Value))
+                throw new InvalidOperationException("Custom R3 fetch callbacks require an explicit transport contract.");
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(options.EgressPolicy.RequestTimeout);
+            var bytes = await options.FetchAndVerifyAsync(context, uri, s256, resourceIssuer, deadline.Token).WaitAsync(deadline.Token).ConfigureAwait(false);
+            if (bytes.Length > options.EgressPolicy.MaxResponseBytes) throw new HttpRequestException("R3 response exceeds the configured byte limit.");
+            R3Hash.Verify(bytes, s256);
+            return bytes;
         }
 
         var (kid, key) = options.FirstSigningKey();
-        var client = R3FetchClient.Create(key, $"{options.Issuer.TrimEnd('/')}/.well-known/jwks.json", kid, options.FetchHttpMessageHandler);
+        using var client = R3FetchClient.Create(key, options.Issuer, AAuthConstants.DwkFiles.Access, kid,
+            options.FetchHttpMessageHandler, options.EgressPolicy, options.FetchTransportContract);
         return await client.FetchAndVerifyAsync(uri, s256, resourceIssuer, cancellationToken).ConfigureAwait(false);
     }
 
@@ -379,14 +458,16 @@ public static class R3AccessTokenEndpoint
         R3Grant? Conditional,
         R3TokenIssuanceKind IssuanceKind,
         string? DisplaySummary = null,
-        string? DisplayDetail = null);
+        string? DisplayDetail = null,
+        string? Account = null,
+        string? Scope = null);
 
     private static bool IsProposal(byte[] bytes)
     {
         try
         {
             var node = JsonNode.Parse(bytes) as JsonObject;
-            return node?["parameters"] is not null;
+            return node?.ContainsKey("parameters") == true;
         }
         catch (System.Text.Json.JsonException ex)
         {
@@ -399,9 +480,14 @@ public static class R3AccessTokenEndpoint
     internal sealed class R3PendingEntry
     {
         public required string Id { get; init; }
+        public BrowserInteraction Browser { get; } = new();
+        public DeferredState Lifecycle { get; } = new();
+        public string? OwnerKeyThumbprint { get; set; }
+        public DateTimeOffset PendingExpiresAt => CreatedAt.AddMinutes(10) < Issuance.ExpiresAt
+            ? CreatedAt.AddMinutes(10) : Issuance.ExpiresAt;
         public required AuthMintParts MintParts { get; init; }
-        public required string AgentId { get; init; }
-        public required IAAuthKey AgentConfirmationKey { get; init; }
+        public required AgentIssuanceContext Issuance { get; init; }
+        public string AgentId => Issuance.AgentId;
         public required string ResourceIssuer { get; init; }
         public required DateTimeOffset CreatedAt { get; init; }
         // The jwks_uri authority of the PS that parked this entry via /token. Only that
@@ -427,15 +513,14 @@ public static class R3AccessTokenEndpoint
 
         public R3PendingStore(TimeProvider timeProvider) => _timeProvider = timeProvider;
 
-        public R3PendingEntry Add(AuthMintParts mintParts, string agentId, IAAuthKey agentKey, string resourceIssuer, string originPersonServer)
+        public R3PendingEntry Add(AuthMintParts mintParts, AgentIssuanceContext issuance, string resourceIssuer, string originPersonServer)
         {
             Sweep();
             var entry = new R3PendingEntry
             {
                 Id = Guid.NewGuid().ToString("N"),
                 MintParts = mintParts,
-                AgentId = agentId,
-                AgentConfirmationKey = agentKey,
+                Issuance = issuance,
                 ResourceIssuer = resourceIssuer,
                 CreatedAt = _timeProvider.GetUtcNow(),
                 OriginPersonServer = originPersonServer,
@@ -450,10 +535,17 @@ public static class R3AccessTokenEndpoint
             return _entries.TryGetValue(id, out var entry) ? entry : null;
         }
 
+        public R3PendingEntry? GetByCode(string code)
+        {
+            Sweep();
+            var normalized = InteractionCode.Normalize(code);
+            return _entries.Values.FirstOrDefault(entry => entry.Browser.Code == normalized);
+        }
+
         // Drop entries past the TTL so the dictionary does not grow without bound.
         private void Sweep()
         {
-            var cutoff = _timeProvider.GetUtcNow() - Ttl;
+            var cutoff = _timeProvider.GetUtcNow() - Ttl - TimeSpan.FromHours(1);
             foreach (var kv in _entries)
             {
                 if (kv.Value.CreatedAt < cutoff)
@@ -494,7 +586,7 @@ public static class R3AccessTokenEndpoint
             "<!doctype html><meta charset=utf-8><title>" + Enc(title) + " — R3 Access Server</title>"
             + Style + Banner(issuer) + body;
 
-        public static string Prompt(string issuer, string consentPath, string code, R3PendingEntry entry)
+        public static string Prompt(string issuer, string consentPath, string fields, R3PendingEntry entry)
         {
             var op = entry.MintParts.Granted.Operations.Count > 0 ? entry.MintParts.Granted.Operations[0].Id : "(operation)";
             var summary = entry.MintParts.DisplaySummary is { Length: > 0 } s ? $"<p>{Enc(s)}</p>" : string.Empty;
@@ -506,10 +598,10 @@ public static class R3AccessTokenEndpoint
                 + $"<div><b>Operation:</b> <code>{Enc(op)}</code></div>"
                 + summary + detail
                 + $"<form method=post action=\"{Enc(consentPath)}/approve\">"
-                + $"<input type=hidden name=code value=\"{Enc(code)}\">"
+                + fields
                 + "<button class=approve type=submit>Approve</button></form>"
                 + $"<form method=post action=\"{Enc(consentPath)}/deny\">"
-                + $"<input type=hidden name=code value=\"{Enc(code)}\">"
+                + fields
                 + "<button class=deny type=submit>Deny</button></form>");
         }
 
@@ -533,8 +625,10 @@ public static class R3AccessTokenEndpoint
 
 public sealed class R3AccessTokenEndpointOptions
 {
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; init; } = AAuth.Discovery.AAuthEgressPolicy.Production;
+    public AAuth.Discovery.AAuthTransportContract? FetchTransportContract { get; init; }
     public required string Issuer { get; init; }
-    public required IReadOnlyDictionary<string, AAuthKey> SigningKeys { get; init; }
+    public required IReadOnlyDictionary<string, IAAuthKey> SigningKeys { get; init; }
     public string TokenPath { get; init; } = "/token";
     public string Subject { get; init; } = "pairwise-sub";
     /// <summary>
@@ -562,12 +656,15 @@ public sealed class R3AccessTokenEndpointOptions
     /// </summary>
     public HttpMessageHandler? FetchHttpMessageHandler { get; init; }
     /// <summary>
-    /// AS-side R3 token issuance audit sink. Defaults to no-op for sample ergonomics;
-    /// production AS deployments should configure a durable sink. If the configured
-    /// sink throws, token issuance is not returned to the caller.
+    /// Required audit persistence. Completion must mean the token association is committed;
+    /// failure prevents token release. In-memory implementations are not crash-durable.
     /// </summary>
-    public IR3AuditSink AuditSink { get; init; } = R3NoOpAuditSink.Instance;
+    public required IR3AuditSink AuditSink { get; init; }
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+    public R3VocabularySchemas VocabularySchemas { get; init; } = R3VocabularySchemas.Standard;
+    public Func<R3OperationIdentity, bool>? IsOperationAllowed { get; init; }
+    public Func<R3ProposalDocument, bool>? IsProposalAllowed { get; init; }
+    public Func<string, string, bool>? IsScopeAllowed { get; init; }
 
     /// <summary>
     /// AS policy deciding which R3 operations are <c>r3_conditional</c> (require
@@ -577,7 +674,7 @@ public sealed class R3AccessTokenEndpointOptions
     /// operation from the fetched document; return <c>true</c> ⇒ conditional.
     /// <c>null</c> (default) ⇒ grant every operation (<c>r3_conditional</c> is OPTIONAL).
     /// </summary>
-    public Func<Model.R3Operation, bool>? IsConditionalOperation { get; init; }
+    public Func<R3OperationIdentity, bool>? IsConditionalOperation { get; init; }
 
     /// <summary>
     /// When <see langword="true"/>, a per-call proposal (r3 §Per-Call Proposals) is not
@@ -589,6 +686,7 @@ public sealed class R3AccessTokenEndpointOptions
     /// <see langword="false"/> (auto-mint) to preserve the non-interactive path.
     /// </summary>
     public bool RequireProposalConsent { get; init; }
+    public BrowserConsentSessions? BrowserConsent { get; init; }
 
     /// <summary>Browser consent-screen path for per-call proposals. Default <c>/interaction/consent</c>.</summary>
     public string ConsentPath { get; init; } = "/interaction/consent";
@@ -632,7 +730,7 @@ public sealed class R3AccessTokenEndpointOptions
         }
     }
 
-    internal (string Kid, AAuthKey Key) FirstSigningKey()
+    internal (string Kid, IAAuthKey Key) FirstSigningKey()
     {
         foreach (var pair in SigningKeys)
         {
@@ -648,15 +746,13 @@ public sealed class R3AccessTokenEndpointOptions
     internal bool IsCallerTrustedPersonServer(R3VerifiedFetcher fetcher)
     {
         // The PS authenticates via the jwks_uri scheme; a jwt-scheme (agent) caller is never a PS.
-        if (fetcher.Scheme != AAuthConstants.Schemes.JwksUri || fetcher.JwksUri is null)
+        if (fetcher.Scheme != AAuthConstants.Schemes.JwksUri
+            || !string.Equals(fetcher.ParsedKey.Dwk, AAuthConstants.DwkFiles.Person, StringComparison.Ordinal))
         {
             return false;
         }
-        IReadOnlyCollection<string>? hosts = TrustedPersonServers is null
-            ? null
-            : TrustedPersonServers
-                .Select(ps => Uri.TryCreate(ps, UriKind.Absolute, out var uri) ? uri.Authority : ps)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return IssuerTrust.IsTrusted(hosts, IsTrustedPersonServer, fetcher.JwksUri.Authority);
+        EgressPolicy.ValidateIdentifier(fetcher.Identifier);
+        foreach (var identifier in TrustedPersonServers ?? []) EgressPolicy.ValidateIdentifier(identifier);
+        return IssuerTrust.IsTrusted(TrustedPersonServers, IsTrustedPersonServer, fetcher.Identifier);
     }
 }

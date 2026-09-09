@@ -23,6 +23,8 @@ public class TokenClaimTests
 
         var jwt = new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = "https://as.test",
             Audience = "https://resource.test",
             Agent = R3TestData.AgentId,
@@ -38,8 +40,8 @@ public class TokenClaimTests
         var parsed = R3ClaimReader.ReadAuthToken(payload);
 
         Assert.Equal("https://resource.test/r3/doc", parsed.Uri);
-        Assert.True(parsed.Granted.Contains("search_trip_options"));
-        Assert.True(parsed.Conditional!.Contains("book_trip"));
+        Assert.True(parsed.Granted.Contains(R3OperationIdentity.Mcp("search_trip_options")));
+        Assert.True(parsed.Conditional!.Contains(R3OperationIdentity.Mcp("book_trip")));
     }
 
     [Fact]
@@ -75,8 +77,8 @@ public class TokenClaimTests
                 R3TestData.Metadata(R3TestData.ResourceIssuer, ResourceTokenBuilder.ResourceDwk))
             .AddJson($"{R3TestData.ResourceIssuer}/.well-known/jwks.json",
                 R3TestData.Jwks(R3TestData.ResourceKid, resourceKey));
-        var http = new HttpClient(handler);
-        var verified = await new TokenVerifier().VerifyResourceTokenAsync(
+        var http = new InProcessHttpClient(handler);
+        var verified = await new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifyResourceTokenAsync(
             token,
             R3TestData.AsIssuer,
             R3TestData.AgentId,

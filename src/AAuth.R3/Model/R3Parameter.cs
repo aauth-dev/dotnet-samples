@@ -16,6 +16,16 @@ public sealed record R3Parameter
 
     public string? S256 => TryGetDigestS256(out var s256) ? s256 : null;
 
+    public void Validate()
+    {
+        if (Json is null) throw new InvalidOperationException("R3 parameter value cannot be null.");
+        if (Json is not JsonObject value || !value.ContainsKey("s256")) return;
+        if (!TryGetDigestS256(out _)) throw new InvalidOperationException("R3 digest s256 must be a nonempty string.");
+        foreach (var name in new[] { "excerpt", "media_type" })
+            if (value.ContainsKey(name) && (value[name] is not JsonValue member || !member.TryGetValue<string>(out _)))
+                throw new InvalidOperationException($"R3 digest {name} must be a string when present.");
+    }
+
     public bool TryGetDigestS256([NotNullWhen(true)] out string? s256)
     {
         if (Json is JsonObject obj
@@ -68,6 +78,8 @@ public sealed class R3PresentedParameters
             pair => pair.Key,
             pair => pair.Value.ToArray(),
             StringComparer.Ordinal) ?? new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        if (_digestParameterBytes.Keys.Any(JsonParameters.ContainsKey))
+            throw new ArgumentException("A parameter cannot be presented as both inline JSON and raw digest bytes.");
     }
 
     public IReadOnlyDictionary<string, R3Parameter> JsonParameters { get; }

@@ -13,6 +13,7 @@ namespace AAuth.R3;
 /// <summary>Writes R3 auth-token challenges with resource tokens carrying R3 claims.</summary>
 public sealed class R3Challenge
 {
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; init; } = AAuth.Discovery.AAuthEgressPolicy.Production;
     public required string ResourceIssuer { get; init; }
     public required string Audience { get; init; }
     public required IAAuthKey Key { get; init; }
@@ -25,10 +26,14 @@ public sealed class R3Challenge
         string agentJkt,
         string r3Uri,
         string r3S256,
-        string? scope = null)
+        string? scope = null,
+        string? account = null)
     {
+        AccountBinding.Validate(account);
         ArgumentException.ThrowIfNullOrEmpty(agent);
         ArgumentException.ThrowIfNullOrEmpty(agentJkt);
+        EgressPolicy.ValidateIdentifier(ResourceIssuer);
+        EgressPolicy.ValidateIdentifier(Audience);
         R3AuthClaims.ResourceDocument(r3Uri, r3S256);
 
         if (Key is null)
@@ -68,6 +73,7 @@ public sealed class R3Challenge
         {
             payload["scope"] = scope;
         }
+        if (account is not null) payload["account"] = account;
         return SignCompact(header, payload, Key);
     }
 
@@ -84,14 +90,14 @@ public sealed class R3Challenge
         var cnf = payload["cnf"]?["jwk"] as JsonObject
             ?? throw new InvalidOperationException("auth token missing cnf.jwk");
         var agentJkt = KeyFactory.FromJwk(cnf).ComputeJwkThumbprint();
-        return BuildResourceToken(agent, agentJkt, r3Uri, r3S256, scope);
+        return BuildResourceToken(agent, agentJkt, r3Uri, r3S256, scope, verifiedAuthToken.Account);
     }
 
-    public IResult Challenge(HttpContext context, string agent, string agentJkt, string r3Uri, string r3S256, string? scope = null)
+    public IResult Challenge(HttpContext context, string agent, string agentJkt, string r3Uri, string r3S256, string? scope = null, string? account = null)
     {
-        var token = BuildResourceToken(agent, agentJkt, r3Uri, r3S256, scope);
+        var token = BuildResourceToken(agent, agentJkt, r3Uri, r3S256, scope, account);
         context.Response.Headers[AAuthRequirementHeader.Name] = AAuthRequirementHeader.FormatAuthToken(token);
-        return Results.Json(new { error = "auth_token_required" }, statusCode: StatusCodes.Status401Unauthorized);
+        return AAuth.Server.AAuthProblemDetails.Create("auth_token_required", statusCode: StatusCodes.Status401Unauthorized);
     }
 
     internal static string SignCompact(JsonObject header, JsonObject payload, IAAuthKey key)

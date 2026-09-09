@@ -15,7 +15,12 @@ public sealed record R3TokenIssuanceAuditRecord(
     string ResourceIssuer,
     string AccessServerIssuer,
     DateTimeOffset IssuedAt,
-    R3TokenIssuanceKind IssuanceKind);
+    R3TokenIssuanceKind IssuanceKind)
+{
+    public string? Account { get; init; }
+    public required string TokenId { get; init; }
+    public required string TokenS256 { get; init; }
+}
 
 /// <summary>AS-side sink for durable R3 token-issuance audit records.</summary>
 public interface IR3AuditSink
@@ -24,26 +29,7 @@ public interface IR3AuditSink
     Task RecordTokenIssuanceAsync(R3TokenIssuanceAuditRecord record, CancellationToken cancellationToken = default);
 }
 
-/// <summary>
-/// No-op audit sink for tests and samples. Production AS deployments should configure
-/// a durable <see cref="IR3AuditSink"/>; token issuance fails if that configured sink throws.
-/// </summary>
-public sealed class R3NoOpAuditSink : IR3AuditSink
-{
-    public static R3NoOpAuditSink Instance { get; } = new();
-
-    private R3NoOpAuditSink()
-    {
-    }
-
-    public Task RecordTokenIssuanceAsync(R3TokenIssuanceAuditRecord record, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(record);
-        return Task.CompletedTask;
-    }
-}
-
-/// <summary>Simple in-memory R3 audit sink for tests and mock-server diagnostics.</summary>
+/// <summary>Explicitly non-durable R3 audit sink for tests and diagnostics.</summary>
 public sealed class InMemoryR3AuditSink : IR3AuditSink
 {
     private readonly object gate = new();

@@ -19,6 +19,30 @@ namespace AAuth.R3.Tests;
 public class ResourceR3Tests
 {
     [Fact]
+    public void ProposalAccount_CannotBeReusedAcrossAccountsOrAccountlessRequests()
+    {
+        var claims = new R3ClaimReader.AuthTokenClaims("https://resource.test/r3/doc", "hash",
+            R3Grant.Mcp("search"), R3Grant.Mcp("book")) { Account = "personal" };
+        var store = new R3ProposalStore();
+        var enforcement = new R3Enforcement(store, new Uri(R3TestData.ResourceIssuer));
+        var parameters = new Dictionary<string, R3Parameter> { ["id"] = R3Parameter.Inline(JsonValue.Create("reservation")!) };
+        Assert.Equal("account_mismatch", enforcement.Evaluate(claims, R3OperationIdentity.Mcp("search"), expectedAccount: "work").Error);
+        Assert.Equal("account_mismatch", enforcement.Evaluate(claims, R3OperationIdentity.Mcp("search")).Error);
+        var proposal = enforcement.Evaluate(claims, R3OperationIdentity.Mcp("book"), parameters, expectedAccount: "personal");
+        Assert.Equal(R3EnforcementDecisionKind.Conditional, proposal.Kind);
+        Assert.True(store.TryGet(proposal.ProposalS256!, out var bytes));
+        Assert.Equal("personal", R3ProposalDocument.FromUtf8Bytes(bytes).Account);
+        var approved = new R3ClaimReader.AuthTokenClaims(proposal.ProposalUri!, proposal.ProposalS256!, R3Grant.Mcp("book"), null)
+            { Account = "personal" };
+        Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(approved, R3OperationIdentity.Mcp("book"), parameters,
+            approvedProposalS256: approved.S256, expectedAccount: "personal").Kind);
+        Assert.Equal("account_mismatch", enforcement.Evaluate(approved, R3OperationIdentity.Mcp("book"), parameters,
+            approvedProposalS256: approved.S256, expectedAccount: "work").Error);
+        Assert.Equal("proposal_account_mismatch", enforcement.Evaluate(approved with { Account = "work" }, R3OperationIdentity.Mcp("book"), parameters,
+            approvedProposalS256: approved.S256, expectedAccount: "work").Error);
+    }
+
+    [Fact]
     public void Metadata_AddsR3Vocabularies()
     {
         var doc = R3Metadata.CreateResourceMetadata(
@@ -39,31 +63,40 @@ public class ResourceR3Tests
         var untrustedKey = AAuthKey.Generate();
         var bytes = R3TestData.Document().ToUtf8Bytes();
         var discovery = new StaticJsonHandler()
+            .AddJson("https://as.test/.well-known/aauth-access.json", R3TestData.Metadata("https://as.test", "aauth-access.json"))
+            .AddJson("https://ps.test/.well-known/aauth-access.json", R3TestData.Metadata("https://ps.test", "aauth-access.json"))
+            .AddJson("https://agent.test/.well-known/aauth-access.json", R3TestData.Metadata("https://agent.test", "aauth-access.json"))
+            .AddJson("https://agent.test/.well-known/jwks.json", R3TestData.Jwks("agent-1", agentKey))
+            .AddJson("https://other.test/.well-known/aauth-access.json", R3TestData.Metadata("https://other.test", "aauth-access.json"))
+            .AddJson("https://other.test/.well-known/jwks.json", R3TestData.Jwks("other-1", untrustedKey))
             .AddJson("https://as.test/.well-known/jwks.json", R3TestData.Jwks("as-1", asKey))
             .AddJson("https://ps.test/.well-known/jwks.json", R3TestData.Jwks("ps-1", psKey))
             .AddJson("http://ps.test/.well-known/jwks.json", R3TestData.Jwks("ps-1", psKey));
 
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddSingleton(new JwksClient(new HttpClient(discovery)));
+        builder.Services.AddSingleton(new JwksClient(new InProcessHttpClient(discovery)));
+        builder.Services.AddSingleton(new MetadataClient(new InProcessHttpClient(discovery)));
         var app = builder.Build();
         app.MapR3Document("/r3/doc", _ => bytes, fetcher =>
-            fetcher.JwksUri is not null
-            && ($"{fetcher.JwksUri.Scheme}://{fetcher.JwksUri.Authority}" == "https://as.test"
-                || $"{fetcher.JwksUri.Scheme}://{fetcher.JwksUri.Authority}" == "https://ps.test"
-                || $"{fetcher.JwksUri.Scheme}://{fetcher.JwksUri.Authority}" == "http://ps.test"));
+            fetcher.Identifier is "https://as.test" or "https://ps.test" or "http://ps.test");
         await app.StartAsync();
         try
         {
             Assert.Equal(HttpStatusCode.OK, (await SignedGet(app, asKey, "https://as.test/.well-known/jwks.json", "as-1")).StatusCode);
             Assert.Equal(HttpStatusCode.OK, (await SignedGet(app, psKey, "https://ps.test/.well-known/jwks.json", "ps-1")).StatusCode);
-            Assert.Equal(HttpStatusCode.Forbidden, (await SignedGet(app, psKey, "http://ps.test/.well-known/jwks.json", "ps-1")).StatusCode);
+            Assert.Equal(HttpStatusCode.Unauthorized, (await SignedGet(app, psKey, "http://ps.test/.well-known/jwks.json", "ps-1")).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await SignedGet(app, agentKey, "https://agent.test/.well-known/jwks.json", "agent-1")).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await SignedGet(app, untrustedKey, "https://other.test/.well-known/jwks.json", "other-1")).StatusCode);
 
             using var unsigned = app.GetTestClient();
             unsigned.BaseAddress = new Uri(R3TestData.ResourceIssuer);
-            Assert.Equal(HttpStatusCode.Unauthorized, (await unsigned.GetAsync("/r3/doc")).StatusCode);
+            var response = await unsigned.GetAsync("/r3/doc");
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+            var error = await response.Content.ReadFromJsonAsync<JsonObject>();
+            Assert.Equal("invalid_signature", (string?)error!["error"]);
+            Assert.Equal("error=invalid_request", response.Headers.GetValues("Signature-Error").Single());
         }
         finally
         {
@@ -76,11 +109,13 @@ public class ResourceR3Tests
     {
         var asKey = AAuthKey.Generate();
         var discovery = new StaticJsonHandler()
+            .AddJson("https://as.test/.well-known/aauth-access.json", R3TestData.Metadata("https://as.test", "aauth-access.json"))
             .AddJson("https://as.test/.well-known/jwks.json", R3TestData.Jwks("as-1", asKey));
 
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddSingleton(new JwksClient(new HttpClient(discovery)));
+        builder.Services.AddSingleton(new JwksClient(new InProcessHttpClient(discovery)));
+        builder.Services.AddSingleton(new MetadataClient(new InProcessHttpClient(discovery)));
         var app = builder.Build();
         app.MapGet("/verify", async (HttpContext context) =>
         {
@@ -98,8 +133,8 @@ public class ResourceR3Tests
         try
         {
             using var client = new AAuthClientBuilder(asKey)
-                .UseJwksUri("https://as.test/.well-known/jwks.json", "as-1")
-                .WithInnerHandler(app.GetTestServer().CreateHandler())
+                .UseJwksUri("https://as.test", "aauth-access.json", "as-1")
+                .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(app.GetTestServer().CreateHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
                 .Build();
             client.BaseAddress = new Uri(R3TestData.ResourceIssuer);
 
@@ -123,14 +158,14 @@ public class ResourceR3Tests
 
         var loopback = R3FetchClient.ValidateFetchTarget(
             "http://localhost:5004/r3/doc",
-            "http://localhost:5004");
+            "http://localhost:5004", TestEgress.Policy);
         Assert.Equal("localhost", loopback.Host);
 
         Assert.Throws<InvalidOperationException>(() =>
             R3FetchClient.ValidateFetchTarget("https://evil.test/r3/doc", R3TestData.ResourceIssuer));
-        Assert.Throws<InvalidOperationException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             R3FetchClient.ValidateFetchTarget("https://192.168.1.10/r3/doc", "https://192.168.1.10"));
-        Assert.Throws<InvalidOperationException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             R3FetchClient.ValidateFetchTarget("http://resource.test/r3/doc", "http://resource.test"));
     }
 
@@ -141,17 +176,20 @@ public class ResourceR3Tests
         var bytes = R3TestData.Document().ToUtf8Bytes();
         var s256 = R3Hash.ComputeS256(bytes);
         var discovery = new StaticJsonHandler()
+            .AddJson("https://as.test/.well-known/aauth-access.json", R3TestData.Metadata("https://as.test", "aauth-access.json"))
             .AddJson("https://as.test/.well-known/jwks.json", R3TestData.Jwks("as-1", asKey));
 
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddSingleton(new JwksClient(new HttpClient(discovery)));
+        builder.Services.AddSingleton(new JwksClient(new InProcessHttpClient(discovery)));
+        builder.Services.AddSingleton(new MetadataClient(new InProcessHttpClient(discovery)));
         var app = builder.Build();
-        app.MapR3Document("/r3/doc", _ => bytes, fetcher => fetcher.JwksUri?.Authority == "as.test");
+        app.MapR3Document("/r3/doc", _ => bytes, fetcher => fetcher.Identifier == "https://as.test");
         await app.StartAsync();
         try
         {
-            var client = R3FetchClient.Create(asKey, "https://as.test/.well-known/jwks.json", "as-1", app.GetTestServer().CreateHandler());
+            var client = R3FetchClient.Create(asKey, "https://as.test", "aauth-access.json", "as-1",
+                app.GetTestServer().CreateHandler(), transportContract: AAuthTransportContract.InProcessOnly);
 
             var fetched = await client.FetchAndVerifyAsync($"{R3TestData.ResourceIssuer}/r3/doc", s256, R3TestData.ResourceIssuer);
 
@@ -187,11 +225,11 @@ public class ResourceR3Tests
         };
 
         Assert.Equal(R3EnforcementDecisionKind.Granted,
-            enforcement.Evaluate(claims, "search_trip_options").Kind);
+            enforcement.Evaluate(claims, R3OperationIdentity.Mcp("search_trip_options")).Kind);
         Assert.Equal(R3EnforcementDecisionKind.Rejected,
-            enforcement.Evaluate(claims, "cancel_trip").Kind);
+            enforcement.Evaluate(claims, R3OperationIdentity.Mcp("cancel_trip")).Kind);
 
-        var conditional = enforcement.Evaluate(claims, "book_trip", parameters, (tool, _) =>
+        var conditional = enforcement.Evaluate(claims, R3OperationIdentity.Mcp("book_trip"), parameters, (tool, _) =>
             new R3Display { Summary = $"Approve {tool}", Detail = "Concrete itinerary." });
         Assert.Equal(R3EnforcementDecisionKind.Conditional, conditional.Kind);
         Assert.True(store.TryGet(conditional.ProposalS256!, out _));
@@ -204,7 +242,7 @@ public class ResourceR3Tests
                 ["name"] = "Aria",
             }),
         };
-        var classTokenRetry = enforcement.Evaluate(claims, "book_trip", reorderedInline, approvedProposalS256: conditional.ProposalS256);
+        var classTokenRetry = enforcement.Evaluate(claims, R3OperationIdentity.Mcp("book_trip"), reorderedInline, approvedProposalS256: conditional.ProposalS256);
         Assert.Equal(R3EnforcementDecisionKind.Rejected, classTokenRetry.Kind);
         Assert.Equal("operation_not_granted", classTokenRetry.Error);
 
@@ -214,10 +252,10 @@ public class ResourceR3Tests
             R3Grant.Mcp("book_trip"),
             null);
         Assert.Equal(R3EnforcementDecisionKind.Granted,
-            enforcement.Evaluate(approvedClaims, "book_trip", reorderedInline, approvedProposalS256: conditional.ProposalS256).Kind);
+            enforcement.Evaluate(approvedClaims, R3OperationIdentity.Mcp("book_trip"), reorderedInline, approvedProposalS256: conditional.ProposalS256).Kind);
 
         var mismatchedToken = approvedClaims with { S256 = "different-proposal-hash" };
-        var mismatched = enforcement.Evaluate(mismatchedToken, "book_trip", reorderedInline, approvedProposalS256: conditional.ProposalS256);
+        var mismatched = enforcement.Evaluate(mismatchedToken, R3OperationIdentity.Mcp("book_trip"), reorderedInline, approvedProposalS256: conditional.ProposalS256);
         Assert.Equal(R3EnforcementDecisionKind.Rejected, mismatched.Kind);
         Assert.Equal("proposal_token_mismatch", mismatched.Error);
 
@@ -226,7 +264,7 @@ public class ResourceR3Tests
             ["total_usd"] = R3Parameter.Inline(JsonValue.Create(1300)!),
         };
         Assert.Equal(R3EnforcementDecisionKind.Rejected,
-            enforcement.Evaluate(approvedClaims, "book_trip", tampered, approvedProposalS256: conditional.ProposalS256).Kind);
+            enforcement.Evaluate(approvedClaims, R3OperationIdentity.Mcp("book_trip"), tampered, approvedProposalS256: conditional.ProposalS256).Kind);
     }
 
     [Fact]
@@ -249,7 +287,7 @@ public class ResourceR3Tests
                 mediaType: "text/plain"),
         };
 
-        var conditional = enforcement.Evaluate(initialClaims, "book_trip", parameters);
+        var conditional = enforcement.Evaluate(initialClaims, R3OperationIdentity.Mcp("book_trip"), parameters);
         var approvedClaims = new R3ClaimReader.AuthTokenClaims(
             conditional.ProposalUri!,
             conditional.ProposalS256!,
@@ -266,7 +304,7 @@ public class ResourceR3Tests
             });
 
         Assert.Equal(R3EnforcementDecisionKind.Granted,
-            enforcement.Evaluate(approvedClaims, "book_trip", presented, approvedClaims.S256).Kind);
+            enforcement.Evaluate(approvedClaims, R3OperationIdentity.Mcp("book_trip"), presented, approvedClaims.S256).Kind);
 
         var tampered = new R3PresentedParameters(
             presented.JsonParameters,
@@ -274,7 +312,7 @@ public class ResourceR3Tests
             {
                 ["cancellation_policy"] = Encoding.UTF8.GetBytes("Non-refundable after purchase."),
             });
-        var rejected = enforcement.Evaluate(approvedClaims, "book_trip", tampered, approvedClaims.S256);
+        var rejected = enforcement.Evaluate(approvedClaims, R3OperationIdentity.Mcp("book_trip"), tampered, approvedClaims.S256);
         Assert.Equal(R3EnforcementDecisionKind.Rejected, rejected.Kind);
         Assert.Equal("proposal_digest_mismatch", rejected.Error);
     }
@@ -310,6 +348,13 @@ public class ResourceR3Tests
             agentKey.ComputeJwkThumbprint()).ExecuteAsync(context);
 
         Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+        Assert.Equal("application/problem+json", context.Response.ContentType);
+        context.Response.Body.Position = 0;
+        var body = (JsonObject)(await JsonNode.ParseAsync(context.Response.Body))!;
+        Assert.Equal("r3_approval_required", (string?)body["error"]);
+        Assert.Equal(decision.ProposalUri, (string?)body["r3_uri"]);
+        Assert.Equal(decision.ProposalS256, (string?)body["r3_s256"]);
+        Assert.False(body.ContainsKey("detail"));
         var header = Assert.Single(context.Response.Headers[AAuthRequirementHeader.Name]);
         var parsed = AAuthRequirementHeader.Parse(header!);
         Assert.Equal(AAuthRequirementHeader.AuthTokenRequirement, parsed.Requirement);
@@ -323,8 +368,8 @@ public class ResourceR3Tests
     private static async Task<HttpResponseMessage> SignedGet(WebApplication app, AAuthKey key, string jwksUri, string kid)
     {
         using var client = new AAuthClientBuilder(key)
-            .UseJwksUri(jwksUri, kid)
-            .WithInnerHandler(app.GetTestServer().CreateHandler())
+            .UseJwksUri(new Uri(jwksUri).GetLeftPart(UriPartial.Authority), "aauth-access.json", kid)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(app.GetTestServer().CreateHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
         client.BaseAddress = new Uri(R3TestData.ResourceIssuer);
         return await client.GetAsync("/r3/doc");
