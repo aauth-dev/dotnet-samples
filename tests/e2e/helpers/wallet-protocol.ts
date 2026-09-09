@@ -1,0 +1,127 @@
+import { Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { clickAndConfirm, waitForInteractive } from './blazor';
+import { approveInPopup, keycloakLogin } from './consent';
+
+async function finishExchange(page: Page, target: number, cancel = false) {
+  const root = page.locator('.wallet-walkthrough');
+  let previousConsent: string | null = null;
+  for (let turn = 0; turn < 8; turn++) {
+    let state = 'pending';
+    await expect.poll(async () => {
+      if (await page.getByRole('alert').count()) return state = 'error';
+      if (await root.getAttribute('data-step') === String(target)) return state = 'done';
+      if (await page.getByTestId('wallet-cancelled').count()) return state = 'cancelled';
+      if (await page.locator('#wallet-answer').isVisible()) return state = 'question';
+      const link = page.locator('.wallet-consent');
+      if (await link.isVisible() && await link.getAttribute('href') !== previousConsent) return state = 'consent';
+      return state = 'pending';
+    }, { timeout: 60_000 }).not.toBe('pending');
+    if (state === 'done' || state === 'cancelled') return;
+    if (state === 'error') throw new Error(await page.getByRole('alert').innerText());
+    if (state === 'question') {
+      await expect(page.getByRole('heading', { name: 'Access Server clarification' })).toBeVisible();
+      await page.getByRole('button', { name: cancel ? 'Cancel request' : 'Send answer', exact: true }).click();
+      await expect(page.locator('#wallet-answer')).toHaveCount(0);
+    } else {
+      const link = page.locator('.wallet-consent');
+      previousConsent = await link.getAttribute('href');
+      const [popup] = await Promise.all([page.context().waitForEvent('page'), link.click()]);
+      if (process.env.KEYCLOAK_E2E === '1' && previousConsent?.includes(':5500/')) {
+        await keycloakLogin(popup);
+      } else {
+        await approveInPopup(popup);
+      }
+      await popup.close();
+    }
+  }
+  throw new Error('Wallet exchange did not complete within eight user decisions.');
+}
+
+export function walletProtocolTests() {
+  test.describe('Wallet protocol capabilities', () => {
+    test.describe.configure({ timeout: 180_000 });
+    for (const flow of ['Clarification', 'DirectAs', 'Revocation']) {
+      test(`${flow} executes real requests and rejects unauthorized reuse`, async ({ page }, testInfo) => {
+        await page.goto('/');
+        await page.locator('a[href="/wallet-protocol"], a[href="wallet-protocol"]').first().click();
+        await waitForInteractive(page, '.wallet-next');
+        await page.locator('#wallet-flow').selectOption(flow);
+        const root = page.locator('.wallet-walkthrough');
+        await expect(root).toHaveAttribute('data-flow', flow);
+        for (const step of [1, 2]) {
+          await clickAndConfirm(page, '.wallet-next', async () => await root.getAttribute('data-step') === String(step));
+          await expect(root).toHaveAttribute('data-step', String(step));
+        }
+        await page.locator('.wallet-next').click();
+        await finishExchange(page, 3);
+        const total = flow === 'Clarification' ? 5 : flow === 'DirectAs' ? 6 : 8;
+        for (let step = 4; step <= total; step++) {
+          await page.locator('.wallet-next').click();
+          if (step === 8) await finishExchange(page, 8);
+          await expect.poll(async () => await page.getByRole('alert').count()
+            ? await page.getByRole('alert').innerText() : await root.getAttribute('data-step'), { timeout: 45_000 }).toBe(String(step));
+          await expect(page.getByRole('alert')).toHaveCount(0);
+        }
+        await expect(page.getByRole('list', { name: 'Protocol steps' }).locator('li')).toHaveCount(total);
+        await expect(page.getByRole('table', { name: 'Sequence diagram' }).locator('tbody tr')).toHaveCount(total);
+        await expect(page.locator('.wallet-code')).toHaveAttribute('data-flow', flow);
+        await expect(page.locator('.wallet-next')).toBeDisabled();
+        if (flow === 'Clarification') {
+          await expect(root).toContainText('clarification_response');
+          await expect(root).toContainText('wallet.review');
+          await expect(page.locator('.wallet-exchange[data-status="403"]')).toHaveCount(1);
+        } else if (flow === 'DirectAs') {
+          const result = JSON.parse(await page.getByTestId('wallet-result').innerText());
+          expect(result.upstream.issuer).toBe('http://localhost:5500');
+          expect(result.upstream.mission).toBeNull();
+          expect(result.downstream.iss).toBe('http://localhost:5500');
+          expect(result.downstream.agent).toBe('aauth:concierge@localhost:5200');
+          expect(result.exchanges.map((entry: { status: number }) => entry.status)).toEqual([401, 200]);
+          expect(result.downstream.act.agent).toBeTruthy();
+          await expect(root).toContainText('HTTP 401');
+        } else {
+          await expect(root).toContainText('untrusted_revoker');
+          await expect(root).toContainText('HTTP 401');
+          await expect(root).toContainText('http://localhost:5500');
+          const revocations = page.locator('.wallet-exchange').filter({ hasText: 'POST http://localhost:5100/local/wallet/revoke' });
+          await expect(revocations).toHaveCount(2);
+          await expect(revocations.first()).toHaveAttribute('data-status', '200');
+          await expect(revocations.last()).toHaveAttribute('data-status', '200');
+        }
+        for (const width of [1280, 390]) {
+          await page.setViewportSize({ width, height: 844 });
+          await root.scrollIntoViewIfNeeded();
+          expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+          const images = root.locator('img');
+          for (let index = 0; index < await images.count(); index++)
+            expect(await images.nth(index).evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+          await page.screenshot({ path: testInfo.outputPath(`wallet-${flow}-${width}.png`) });
+        }
+        await page.getByRole('button', { name: 'Reset wallet flow' }).click();
+        await expect(root).toHaveAttribute('data-step', '0');
+        await expect(page.locator('.wallet-exchange')).toHaveCount(0);
+        await page.locator('.wallet-next').click();
+        await expect(root).toHaveAttribute('data-step', '1');
+      });
+    }
+
+    test('AS clarification cancellation withdraws the pending exchange and can restart', async ({ page }) => {
+      await page.goto('/wallet-protocol');
+      await waitForInteractive(page, '.wallet-next');
+      const root = page.locator('.wallet-walkthrough');
+      for (const step of [1, 2]) {
+        await page.locator('.wallet-next').click();
+        await expect(root).toHaveAttribute('data-step', String(step));
+      }
+      await page.locator('.wallet-next').click();
+      await finishExchange(page, 3, true);
+      await expect(page.getByTestId('wallet-cancelled')).toBeVisible();
+      await expect(root).toContainText('DELETE');
+      await expect(page.locator('.wallet-next')).toBeDisabled();
+      await page.getByRole('button', { name: 'Reset wallet flow' }).click();
+      await expect(root).toHaveAttribute('data-step', '0');
+      await expect(page.locator('.wallet-next')).toBeEnabled();
+    });
+  });
+}

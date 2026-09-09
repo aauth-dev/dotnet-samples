@@ -80,10 +80,8 @@ public sealed class TourSession : IAsyncDisposable
     // Sub-agent flow state (§Sub-Agents). The worker gets its own key +
     // identity; later steps reference these to bind the resource token to
     // the worker, drive the parent-mediated exchange, and nest the act claim.
-    private AAuthKey? _saWorkerKey;
-    private string? _saWorkerToken;
-    private string? _saResourceToken;
-    private string? _saAuthToken;
+    private FederatedWorkerScenario? _workerScenario;
+    public string? WorkerConsentUrl { get; private set; }
 
     // Background polling state (deferred mode, poll step). Mutated from
     // the polling task; the UI listens to StateChanged and re-renders.
@@ -149,7 +147,6 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     private SigningMode EffectiveSigningMode =>
         Mode is TourMode.Identity ? SigningMode :
-        Mode is TourMode.ResourceManaged ? SigningMode.Hwk :
         SigningMode.Jwt;
 
     /// <summary>Kept for backwards compatibility — always true now that the picker is always rendered.</summary>
@@ -189,7 +186,7 @@ public sealed class TourSession : IAsyncDisposable
     {
         SigningMode.Hwk => $"{_options.ProfileUrl.TrimEnd('/')}/pseudonymous",
         SigningMode.JktJwt => $"{_options.ProfileUrl.TrimEnd('/')}/anchored",
-        SigningMode.JwksUri => $"{_options.ProfileUrl.TrimEnd('/')}/identified",
+        SigningMode.Jwks => $"{_options.ProfileUrl.TrimEnd('/')}/identified",
         _ => $"{_options.CalendarUrl.TrimEnd('/')}/events",
     };
 
@@ -242,9 +239,8 @@ public sealed class TourSession : IAsyncDisposable
 
     /// <summary>
     /// True when the current flow is the sub-agent (parent-mediated worker) path.
-    /// This flow runs entirely in-process (no live mock servers) — a parent agent
-    /// obtains an auth token on a sub-agent's behalf — so it does not require a
-    /// configured Person Server.
+    /// Uses live PS, AS and Wallet endpoints with distinct original, parent and
+    /// worker keys; the parent mediates the combined upstream authorization.
     /// </summary>
     public bool IsSubAgentMode => _mode == TourMode.SubAgent;
 
@@ -343,7 +339,7 @@ public sealed class TourSession : IAsyncDisposable
     {
         new(1, "Generate Ed25519 keypair", "Agent mints a fresh signing key.", Actor.Agent, Actor.Agent),
         new(2, "Discover Agent Provider", "GET /.well-known/aauth-agent.json to learn the AP's enrol endpoint.", Actor.Agent, Actor.AgentProvider),
-        new(3, "Enrol with Agent Provider", "POST /enrol with {agent_id, jwk}; AP issues aa-agent+jwt.", Actor.Agent, Actor.AgentProvider),
+        new(3, "Enrol with Agent Provider", "Signed hwk enrollment proves key ownership; AP assigns identity and issues aa-agent+jwt.", Actor.Agent, Actor.AgentProvider),
     };
 
     private static readonly TourPlanStep[] IdentityPlan =
@@ -364,27 +360,20 @@ public sealed class TourSession : IAsyncDisposable
     private static readonly TourPlanStep[] ResourceManagedPlan =
     {
         new(1, "Discover Inbox metadata", "Unsigned GET /.well-known/aauth-resource.json — access_mode=aauth-access-token + authorization_endpoint.", Actor.Agent, Actor.Resource),
-        new(2, "Signed GET /messages → 202", "HWK-signed request; the Inbox manages authorization itself and returns 202 + AAuth-Requirement: interaction + Location.", Actor.Agent, Actor.Resource),
+        new(2, "Signed GET /messages → 202", "GuidedTour locally self-issues an agent JWT with its published identity/key; the Inbox returns 202 + interaction. No external AP enrollment or PS/AS exchange.", Actor.Agent, Actor.Resource),
         new(3, "Direct user to Inbox consent", "Agent surfaces the {url}?code={code} link to the Inbox's OWN consent page.", Actor.Agent, Actor.Agent),
-        new(4, "User approves at the Inbox", "User opens the Inbox consent page in a new tab and clicks Approve; the Inbox records consent.", Actor.Resource, Actor.Resource),
+        new(4, "Authenticated Inbox consent", "Browser signs in, consumes the correlation code once, and submits a CSRF-protected decision. The following signed poll confirms the verdict.", Actor.Resource, Actor.Resource),
         new(5, "Poll pending URL → 200 AAuth-Access", "Signed GETs to /pending/{code} until the Inbox issues the opaque AAuth-Access token.", Actor.Agent, Actor.Resource),
-        new(6, "Replay GET /messages with AAuth-Access", "HWK-signed retry sets Authorization: AAuth <token68>; the signature covers `authorization` → 200 + messages.", Actor.Agent, Actor.Resource),
+        new(6, "Replay GET /messages with AAuth-Access", "JWT-signed retry sets Authorization: AAuth <token68>; the signature covers `authorization` → 200 + messages.", Actor.Agent, Actor.Resource),
     };
 
-    // The sub-agent (parent-mediated worker) flow (§Sub-Agents). An orchestrating
-    // PARENT spawns a short-lived SUB-AGENT under one user consent. The sub-agent
-    // has its own key + identity (individually auditable/revocable) but never
-    // calls the PS directly — the parent obtains an auth token on its behalf. This
-    // flow runs entirely IN-PROCESS with the real SDK builders (no live servers),
-    // so every wire artifact — the parent_agent claim, the subagent_token request,
-    // the sub-agent-bound cnf, and the nested act — is visible directly.
     private static readonly TourPlanStep[] SubAgentPlan =
     {
         new(1, "Parent obtains its identity", "The orchestrator enrols with its Agent Provider and gets an aa-agent+jwt (its key + identifier) — an ordinary top-level agent.", Actor.Parent, Actor.Parent),
         new(2, "Sub-agent obtains its identity (parent_agent)", "The worker gets its OWN key + identifier; the AP stamps the token with parent_agent naming the parent and a '+' local part.", Actor.SubAgent, Actor.SubAgent),
-        new(3, "Worker obtains a resource token", "The sub-agent calls the resource and gets a resource_token bound to ITS key (agent_jkt), then hands it to the parent out-of-band.", Actor.SubAgent, Actor.Resource),
-        new(4, "Parent exchanges with subagent_token", "The parent signs POST /token with its OWN key, including resource_token + subagent_token; the PS verifies parent_agent names the signer.", Actor.Parent, Actor.PersonServer),
-        new(5, "PS returns the auth token to the parent", "The PS mints an auth_token bound to the SUB-AGENT (agent + cnf, act nesting { sub: worker, act: { sub: parent } }) and returns it to the PARENT — the response to the exchange the parent signed.", Actor.PersonServer, Actor.Parent),
+        new(3, "Original caller obtains an upstream PS grant", "The original caller obtains consent at the intermediary resource with a distinct key and directed identity.", Actor.Agent, Actor.PersonServer),
+        new(4, "Worker obtains a Wallet resource token", "The actual Wallet endpoint returns a worker-bound challenge whose audience is the AS.", Actor.SubAgent, Actor.Resource),
+        new(5, "PS returns the AS auth token to the parent", "PS consent and AS policy authorize the worker; act records parent then original caller, with no person identifiers.", Actor.AccessServer, Actor.Parent),
         new(6, "Parent hands the token to the worker", "Out-of-band, the parent passes the worker-bound auth_token down to the sub-agent, which can now call the resource with its own-key proof-of-possession.", Actor.Parent, Actor.SubAgent),
         new(7, "Sub-agent calls the resource with the token", "The worker signs the request with its OWN key and presents the auth_token; the resource verifies against cnf.jwk and audits the nested act. The parent never touches this call.", Actor.SubAgent, Actor.Resource),
     };
@@ -407,7 +396,7 @@ public sealed class TourSession : IAsyncDisposable
         new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint + jwks_uri.", Actor.Agent, Actor.PersonServer),
         new(5, "Exchange → 202 Accepted", "PS lacks consent; returns 202 + Location + interaction URL + single-use code.", Actor.Agent, Actor.PersonServer),
         new(6, "Direct user to interaction URL", "Agent surfaces the {url}?code={code} link for the user to visit.", Actor.Agent, Actor.Agent),
-        new(7, "User approves at the PS", "User opens the PS consent page in a new tab and clicks Approve; PS records consent.", Actor.PersonServer, Actor.PersonServer),
+        new(7, "Authenticated PS consent", "Browser signs in, consumes the code once, and submits a session-bound decision. Opening the page does not approve the request.", Actor.PersonServer, Actor.PersonServer),
         new(8, "Poll pending URL → 200 auth_token", "Signed GETs to /pending/{id} until the PS mints the auth_token.", Actor.Agent, Actor.PersonServer),
         new(9, "Replay GET /events with auth_token", "Signed retry carries the auth_token in Signature-Key → 200 + claims.", Actor.Agent, Actor.Resource),
     };
@@ -494,7 +483,7 @@ public sealed class TourSession : IAsyncDisposable
         new(5, "Poll → 200 mission approval blob", "Signed GETs to the mission-pending URL until the PS returns the verbatim approval blob + AAuth-Mission header (s256).", Actor.Agent, Actor.PersonServer),
         new(6, "Signed GET /trips/book → 401", "Signed request for the ELEVATED trips.book advertises AAuth-Mission; the resource copies the mission into a resource_token and challenges with 401.", Actor.Agent, Actor.Resource),
         new(7, "Exchange → 202 clarification (PS asks)", "Signed POST /token; the elevated scope is out of mission, so before any decision the PS opens a clarification chat — 202 + requirement=clarification + the question.", Actor.Agent, Actor.PersonServer),
-        new(8, "Answer the clarification → 204", "The agent POSTs {clarification_response} to the mission-pending URL; the PS records the answer and readies the user's decision.", Actor.Agent, Actor.PersonServer),
+        new(8, "Answer the clarification → 204", "The agent POSTs action=clarification_response and its answer to the owned pending URL; the PS records it before re-consent.", Actor.Agent, Actor.PersonServer),
         new(9, "Direct user to scope approval", "Agent relays the interaction URL for the user to approve the now-clarified out-of-mission elevated scope.", Actor.Agent, Actor.Agent),
         new(10, "User approves the elevated scope at the PS", "User approves trips.book at the PS; the consent accrues to the mission.", Actor.PersonServer, Actor.PersonServer),
         new(11, "Poll → 200 auth_token (elevated)", "Signed GETs to the mission-pending URL until the PS returns the elevated auth_token.", Actor.Agent, Actor.PersonServer),
@@ -757,10 +746,9 @@ public sealed class TourSession : IAsyncDisposable
         _missionPendingId = null;
         _clarificationQuestion = null;
         _missionChainResponseBody = null;
-        _saWorkerKey = null;
-        _saWorkerToken = null;
-        _saResourceToken = null;
-        _saAuthToken = null;
+        _workerScenario?.Dispose();
+        _workerScenario = null;
+        WorkerConsentUrl = null;
     }
 
     /// <summary>
@@ -773,18 +761,18 @@ public sealed class TourSession : IAsyncDisposable
         HttpMessageHandler inner,
         Action<HttpRequestMessage, string>? onSignatureBase = null)
     {
-        var builder = new AAuthClientBuilder(_agentKey!)
-            .WithInnerHandler(inner);
+        var builder = new AAuthClientBuilder(_agentKey!).WithEgressPolicy(SampleEgress.Policy)
+            .WithInnerHandler(inner, AAuth.Discovery.AAuthTransportContract.EnforcesEgressPolicy);
 
         switch (EffectiveSigningMode)
         {
             case SigningMode.Hwk:
                 builder.UseHwk();
                 break;
-            case SigningMode.JwksUri:
+            case SigningMode.Jwks:
                 // Spec: In AP-enrolled flows, _assignedKeyId is the AP's published kid (opaque).
                 // In self-hosted flows (this tour), the server's own kid is used as fallback.
-                builder.UseJwksUri(
+                builder.UseJwks(
                     _agentJwksUri ?? $"{_selfIdentity.Issuer.TrimEnd('/')}/.well-known/jwks.json",
                     _assignedKeyId ?? _selfIdentity.KeyId);
                 break;
@@ -793,14 +781,14 @@ public sealed class TourSession : IAsyncDisposable
                 // the self-issued naming JWT (draft-05 §3.4 — durable jwk in the
                 // header, iss = its own thumbprint URN).
                 _ephemeralKey ??= AAuthKey.Generate();
-                builder = new AAuthClientBuilder(_ephemeralKey)
-                    .WithInnerHandler(inner);
+                builder = new AAuthClientBuilder(_ephemeralKey).WithEgressPolicy(SampleEgress.Policy)
+                    .WithInnerHandler(inner, AAuth.Discovery.AAuthTransportContract.EnforcesEgressPolicy);
                 if (onSignatureBase is not null)
                     builder.OnSignatureBase(onSignatureBase);
                 builder.UseJktJwt(() => NamingJwtBuilder.Build(_agentKey!, _ephemeralKey));
                 return builder.BuildHandler();
             default:
-                builder.WithTokenRefresh(async (ctx, ct) => tokenFactory());
+                builder.UseJwt(tokenFactory);
                 break;
         }
 
@@ -854,19 +842,9 @@ public sealed class TourSession : IAsyncDisposable
             return;
         }
 
-        // ── Sub-agent flow (in-process; no live servers) ─────────────────
         if (IsSubAgentMode)
         {
-            switch (Steps.Count + 1)
-            {
-                case 1: SubAgentStepIssueParent(); return;
-                case 2: SubAgentStepIssueSubAgent(); return;
-                case 3: SubAgentStepWorkerResourceToken(); return;
-                case 4: SubAgentStepParentExchange(); return;
-                case 5: SubAgentStepMintAuthToken(); return;
-                case 6: SubAgentStepHandoffToWorker(); return;
-                case 7: SubAgentStepWorkerCallsResource(); return;
-            }
+            await RunLiveWorkerStepAsync(ct);
             return;
         }
 
@@ -1156,11 +1134,12 @@ public sealed class TourSession : IAsyncDisposable
         {
             // Self-issue: the tour server is a hosted service with a stable
             // URL, so it acts as its own AP (spec §Self-Hosted Agents).
-            var personServer = IsIdentityMode || string.IsNullOrWhiteSpace(_options.PersonServerUrl)
+            var personServer = IsIdentityMode || IsResourceManagedMode || string.IsNullOrWhiteSpace(_options.PersonServerUrl)
                 ? null
                 : _options.PersonServerUrl;
             _agentToken = new AgentTokenBuilder
             {
+                EgressPolicy = SampleEgress.Policy,
                 Issuer = _selfIdentity.Issuer,
                 Subject = _options.AgentId,
                 KeyId = _selfIdentity.KeyId,
@@ -1173,10 +1152,10 @@ public sealed class TourSession : IAsyncDisposable
             // immediately rather than 202 deferred.
             if (IsAutonomousMode && !string.IsNullOrWhiteSpace(_options.PersonServerUrl))
             {
-                using var adminClient = new HttpClient();
+                using var adminClient = new SampleHttpClient();
                 await adminClient.PostAsJsonAsync(
                     $"{_options.PersonServerUrl.TrimEnd('/')}/admin/consent",
-                    new { agent = _options.AgentId, resource = _options.CalendarUrl.TrimEnd('/') },
+                    new { agent = _options.AgentId, resource = _options.CalendarUrl.TrimEnd('/'), key = _agentKey.ComputeJwkThumbprint() },
                     ct);
             }
         }
@@ -1193,11 +1172,12 @@ public sealed class TourSession : IAsyncDisposable
     /// </summary>
     private void RefreshAgentToken()
     {
-        var personServer = IsIdentityMode || string.IsNullOrWhiteSpace(_options.PersonServerUrl)
+        var personServer = IsIdentityMode || IsResourceManagedMode || string.IsNullOrWhiteSpace(_options.PersonServerUrl)
             ? null
             : _options.PersonServerUrl;
         _agentToken = new AgentTokenBuilder
         {
+            EgressPolicy = SampleEgress.Policy,
             Issuer = _selfIdentity.Issuer,
             Subject = _options.AgentId,
             KeyId = _selfIdentity.KeyId,
@@ -1230,22 +1210,23 @@ public sealed class TourSession : IAsyncDisposable
             Steps.Add(new StepRecord
             {
                 Number = Steps.Count + 1,
-                Title = "User approves at the Inbox",
+                Title = "Inbox browser session opened; decision pending",
                 From = Actor.Resource,
                 To = Actor.Resource,
                 Narrative =
                     "The tour opened the Inbox's **own consent page** in a new browser " +
                     "tab. There is no Person Server here — the Inbox manages " +
                     "authorization itself, just like a classic OAuth provider. The user " +
-                    "clicked **Approve** and the Inbox recorded consent on its pending " +
-                    "entry via `POST /consent/approve`. All of this happens in the " +
+                    "must sign in and submit **Approve** or **Deny** using a session and CSRF token " +
+                    "via `POST /consent/approve`. Opening the code does not authorize access. This happens in the " +
                     "user's browser → Inbox channel; the agent is not on this path and " +
                     "discovers the result on its next poll of the pending URL.",
                 TokenDecoded =
                     $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
                     "User performed (browser → Inbox):\n" +
                     $"  GET  /consent?code={_interactionCode}\n" +
-                    $"  POST /consent/approve  (form: code={_interactionCode})",
+                    "  Sign in; consume code once; GET /consent?session=...\n" +
+                    "  POST /consent/approve  (session + CSRF, no code)",
             });
             return Task.CompletedTask;
         }
@@ -1255,15 +1236,15 @@ public sealed class TourSession : IAsyncDisposable
             Steps.Add(new StepRecord
             {
                 Number = Steps.Count + 1,
-                Title = "User consents at the Access Server",
+                Title = "AS browser session opened; decision pending",
                 From = Actor.AccessServer,
                 To = Actor.AccessServer,
                 Narrative =
                     "The tour opened the Access Server's interaction URL in a new browser " +
                     "tab. The AS rendered its **own consent screen** — clearly badged " +
                     "*Access Server* so the user knows they are approving at the federated " +
-                    "authority, not the Person Server. The user clicked **Approve**, and the " +
-                    "AS recorded the verdict on its pending entry. (With a Keycloak-backed " +
+                    "authority, not the Person Server. The user must sign in and submit a session-bound, " +
+                    "CSRF-protected decision. Opening this link does not approve access. (With a Keycloak-backed " +
                     "AS this same URL redirects to Keycloak's login instead — from the " +
                     "agent's perspective the two are identical; only the interaction URL's " +
                     "destination differs.) All of this happens in the user's browser → AS " +
@@ -1273,8 +1254,8 @@ public sealed class TourSession : IAsyncDisposable
                     $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
                     "User performed (browser \u2192 AS):\n" +
                     $"  GET  {{as}}/interaction/login?code={_interactionCode}\n" +
-                    "  \u2192 AS consent screen \u2192 click Approve\n" +
-                    $"  POST {{as}}/interaction/approve (AS records verdict)",
+                    "  Sign in; consume code once; open decision session\n" +
+                    $"  POST {{as}}/interaction/approve (session + CSRF; stub only)",
             });
             return Task.CompletedTask;
         }
@@ -1284,7 +1265,7 @@ public sealed class TourSession : IAsyncDisposable
             Steps.Add(new StepRecord
             {
                 Number = Steps.Count + 1,
-                Title = "User consents at the R3 Access Server",
+                Title = "R3 browser session opened; decision pending",
                 From = Actor.AccessServer,
                 To = Actor.AccessServer,
                 Narrative =
@@ -1293,7 +1274,7 @@ public sealed class TourSession : IAsyncDisposable
                     "reservation (venue, date, party size, deposit) it is about to authorize — " +
                     "badged *R3 Access Server* so the user knows they are approving that single, " +
                     "consequential booking at the federated authority, not the Person Server. The " +
-                    "user clicked **Approve**, and the AS flipped its pending entry to *allowed*. " +
+                    "user must sign in and submit a CSRF-protected decision from the bound session. " +
                     "All of this happens in the user's browser \u2192 R3 AS channel — neither the " +
                     "agent nor the Person Server is on this path. The agent discovers the minted " +
                     "per-call auth token on its next poll of the PS pending URL.",
@@ -1301,8 +1282,8 @@ public sealed class TourSession : IAsyncDisposable
                     $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
                     "User performed (browser \u2192 R3 AS):\n" +
                     $"  GET  {{r3-as}}/interaction/consent?code={_interactionCode}\n" +
-                    "  \u2192 R3 AS per-call consent screen \u2192 click Approve\n" +
-                    $"  POST {{r3-as}}/interaction/consent/approve (AS records verdict)",
+                    "  Sign in; consume code once; review the per-call proposal\n" +
+                    $"  POST {{r3-as}}/interaction/consent/approve (session + CSRF)",
             });
             return Task.CompletedTask;
         }
@@ -1341,7 +1322,8 @@ public sealed class TourSession : IAsyncDisposable
                     $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
                     "User performed (browser → PS):\n" +
                     $"  GET  /interaction?code={_interactionCode}\n" +
-                    $"  POST /interaction/approve  (form: code={_interactionCode})",
+                    "  Sign in; consume code once; open decision session\n" +
+                    "  POST /interaction/approve  (session + CSRF, no code)",
             });
             return Task.CompletedTask;
         }
@@ -1392,7 +1374,8 @@ public sealed class TourSession : IAsyncDisposable
                     $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
                     "User performed (browser → PS):\n" +
                     $"  GET  /interaction?code={_interactionCode}\n" +
-                    $"  POST /interaction/approve  (form: code={_interactionCode})",
+                    "  Sign in; consume code once; open decision session\n" +
+                    "  POST /interaction/approve  (session + CSRF, no code)",
             });
             return Task.CompletedTask;
         }
@@ -1410,8 +1393,8 @@ public sealed class TourSession : IAsyncDisposable
             Narrative =
                 "The tour opened the PS's interaction URL in a new browser tab. " +
                 "The Person Server rendered its consent screen (the agent + resource + " +
-                "scope of this request), the user clicked **Approve**, and the PS " +
-                "recorded consent in its store via `POST /interaction/approve`. " +
+                "scope of this request). The user must sign in and submit a CSRF-protected " +
+                "decision via `POST /interaction/approve`; the code is correlation only. " +
                 "All of that happens in the user's browser → PS channel — the agent " +
                 "is not on this path. The agent will discover the result on its next " +
                 "poll of the pending URL." +
@@ -1425,7 +1408,8 @@ public sealed class TourSession : IAsyncDisposable
                 $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
                 "User performed (browser → PS):\n" +
                 $"  GET  /interaction?code={_interactionCode}\n" +
-                $"  POST /interaction/approve  (form: code={_interactionCode})",
+                "  Sign in; consume code once; open decision session\n" +
+                "  POST /interaction/approve  (session + CSRF, no code)",
         });
         return Task.CompletedTask;
     }
@@ -1442,7 +1426,7 @@ public sealed class TourSession : IAsyncDisposable
         // itself, so there is no Person Server consent store to prime.
         if (IsResourceManagedMode) { return; }
         if (string.IsNullOrWhiteSpace(_options.PersonServerUrl)) { return; }
-        using var client = new HttpClient();
+        using var client = new SampleHttpClient();
 
         // Call-chain mode is a genuine multi-hop deferred demo: BOTH hops
         // (Agent → Concierge, and the Concierge's chained Concierge →
@@ -1526,6 +1510,7 @@ public sealed class TourSession : IAsyncDisposable
                 agent = _options.AgentId,
                 resource = _options.CalendarUrl.TrimEnd('/'),
                 scope = "calendar.read",
+                key = _selfIdentity.Key.ComputeJwkThumbprint(),
             }, ct);
         }
         catch
@@ -1570,6 +1555,7 @@ public sealed class TourSession : IAsyncDisposable
 
         _agentToken = new AgentTokenBuilder
         {
+            EgressPolicy = SampleEgress.Policy,
             Issuer = "https://ap.example",
             Subject = _options.AgentId,
             KeyId = "tour",
@@ -1604,8 +1590,8 @@ public sealed class TourSession : IAsyncDisposable
         var apBase = _options.AgentProviderUrl!.TrimEnd('/');
         var metadataUrl = $"{apBase}/.well-known/aauth-agent.json";
 
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
-        using var client = new HttpClient(capture);
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        using var client = new SampleHttpClient(capture);
         await client.GetAsync(metadataUrl, ct);
         var ex = capture.Last!;
 
@@ -1638,13 +1624,17 @@ public sealed class TourSession : IAsyncDisposable
 
         var requestBody = new JsonObject
         {
-            ["agent_id"] = _options.AgentId,
             ["jwk"] = _agentKey!.ToPublicJwk(),
         };
 
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
-        using var client = new HttpClient(capture);
-        using var response = await client.PostAsJsonAsync(enrolUrl, requestBody, ct);
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        using var client = new SampleHttpClient(capture);
+        using var request = new HttpRequestMessage(HttpMethod.Post, enrolUrl) { Content = JsonContent.Create(requestBody) };
+        request.Options.Set(AAuthSigningHandler.AdditionalComponentsKey, ["content-type", "content-digest"]);
+        using var signer = new AAuthSigningHandler(_agentKey, new HwkSignatureKeyProvider(_agentKey));
+        await signer.SignAsync(request, ct);
+        using var response = await client.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
         var ex = capture.Last!;
 
         var body = JsonNode.Parse(ex.ResponseBody);
@@ -1659,8 +1649,8 @@ public sealed class TourSession : IAsyncDisposable
             From = Actor.Agent,
             To = Actor.AgentProvider,
             Narrative =
-                "The agent registers with the AP by POSTing its `agent_id` and public " +
-                "`jwk`. The AP issues a signed `aa-agent+jwt` binding the agent's " +
+                "The agent proves possession of its key with a body-bound signed enrollment request. " +
+                "The AP assigns an identity and issues a signed `aa-agent+jwt` binding the agent's " +
                 "identity to its key.",
             RequestLine = $"{ex.RequestLine}  →  {enrolUrl}",
             RequestHeaders = ex.RequestHeaders,
@@ -1675,18 +1665,6 @@ public sealed class TourSession : IAsyncDisposable
         });
     }
 
-    // -----------------------------------------------------------------
-    // Sub-agent flow (§Sub-Agents) — parent-mediated workers.
-    //
-    // Runs entirely IN-PROCESS with the real SDK builders + AgentId: an
-    // orchestrating PARENT spawns a short-lived SUB-AGENT under one user
-    // consent. The worker has its own key + identity but never calls the
-    // Person Server directly — the parent obtains an auth token on its
-    // behalf. No live servers are involved, so every wire artifact (the
-    // parent_agent claim, the subagent_token request, the worker-bound
-    // cnf, and the nested act) is built and shown directly.
-    // -----------------------------------------------------------------
-
     private (string ParentId, string WorkerId, string ApUrl, string PersonServer, string ResourceUrl) SubAgentNames()
     {
         var apUrl = _selfIdentity.Issuer.TrimEnd('/');
@@ -1698,268 +1676,68 @@ public sealed class TourSession : IAsyncDisposable
             personServer, _options.CalendarUrl.TrimEnd('/'));
     }
 
-    private void SubAgentStepIssueParent()
+    private async Task RunLiveWorkerStepAsync(CancellationToken ct)
     {
-        var (parentId, _, apUrl, personServer, _) = SubAgentNames();
-        var parentKey = AAuthKey.Generate();    // the parent's own keypair
-        var parentToken = new AgentTokenBuilder
+        _workerScenario ??= new FederatedWorkerScenario(_selfIdentity.Key, _selfIdentity.KeyId,
+            _selfIdentity.Issuer, _options.PersonServerUrl!, _options.WalletUrl)
         {
-            Issuer = apUrl,
-            Subject = parentId,
-            KeyId = _selfIdentity.KeyId,
-            Key = _selfIdentity.Key,            // the AP signs
-            ConfirmationKey = parentKey,        // bound to the parent's key
-            PersonServer = personServer,
-        }.Build();
-
+            OnInteraction = (interaction, _) =>
+            {
+                WorkerConsentUrl = interaction.BuildUserUrl();
+                StateChanged?.Invoke();
+                return Task.CompletedTask;
+            },
+        };
+        var flow = _workerScenario;
+        var step = Steps.Count + 1;
+        string title;
+        string narrative;
+        string snippet;
+        string? token = null;
+        var from = Actor.Parent;
+        var to = Actor.PersonServer;
+        switch (step)
+        {
+            case 1:
+                flow.IssueParent(); token = flow.ParentToken;
+                title = "Parent obtains its identity"; narrative = "The provider issues Aria an agent token bound to Aria's distinct key.";
+                snippet = SubAgentParentTokenSnippet; to = Actor.Parent; break;
+            case 2:
+                flow.IssueWorker(); token = flow.WorkerToken;
+                title = "Sub-agent obtains its identity (parent_agent)"; narrative = "The worker has its own key; parent_agent names Aria.";
+                snippet = SubAgentWorkerTokenSnippet; from = to = Actor.SubAgent; break;
+            case 3:
+                await flow.ObtainUpstreamAsync(ct); token = flow.UpstreamToken;
+                title = "Original caller obtains an upstream PS grant"; narrative = "The PS consents to the original caller at the intermediary. Its cnf is not the parent's key.";
+                snippet = "await originalExchange.ExchangeAsync(personServer, intermediaryResourceToken, consentOptions);"; from = Actor.Agent; break;
+            case 4:
+                await flow.ObtainResourceAsync(ct); token = flow.ResourceToken;
+                title = "Worker obtains a Wallet resource token"; narrative = "Wallet returns a signed 401 challenge bound to the worker, with aud naming the Access Server.";
+                snippet = "await workerClient.GetAsync(wallet + \"/wallet\");"; from = Actor.SubAgent; to = Actor.Resource; break;
+            case 5:
+                await flow.ExchangeAsync(ct); token = flow.AuthToken;
+                title = "PS returns the AS auth token to the parent";
+                narrative = "The parent forwards child and upstream tokens. PS consent gates federation; the AS binds cnf to the worker and records parent then original caller in act.";
+                snippet = "await exchange.ExchangeAsync(ps, resourceToken, new TokenExchangeRequest { SubagentToken = workerToken, UpstreamToken = upstreamToken, OnInteractionRequired = ShowConsentAsync });";
+                from = Actor.AccessServer; to = Actor.Parent; break;
+            case 6:
+                title = "Parent hands the token to the worker"; narrative = "The parent passes only the verified grant to the worker. Private keys remain local.";
+                snippet = "AgentAuthTokenValidator.Validate(authToken, resourceToken, parentKey, parentToken, workerToken, upstreamToken);";
+                token = flow.AuthToken; to = Actor.SubAgent; break;
+            case 7:
+                await flow.CallWalletAsync(ct);
+                title = "Sub-agent calls the resource with the token"; narrative = "The actual Wallet endpoint accepts the worker (200) and rejects the parent's different key (401).";
+                snippet = "await workerClient.GetAsync(wallet + \"/wallet\");"; from = Actor.SubAgent; to = Actor.Resource; break;
+            default: return;
+        }
+        WorkerConsentUrl = null;
         Steps.Add(new StepRecord
         {
-            Number = Steps.Count + 1,
-            Title = "Parent obtains its identity",
-            From = Actor.Parent,
-            To = Actor.Parent,
-            Narrative =
-                "The orchestrating **parent** agent (Aria) enrols with its Agent " +
-                "Provider and receives an `aa-agent+jwt` binding its identifier " +
-                "(`sub`) to its own key (`cnf.jwk`). This is an ordinary top-level " +
-                "agent — note there is **no** `parent_agent` claim.",
-            TokenJwt = parentToken,
-            TokenHeader = DecodeJwt(parentToken)?.Header,
-            TokenPayload = DecodeJwt(parentToken)?.Payload,
-            CodeSnippet = SubAgentParentTokenSnippet,
-            CodeSnippetRole = "split: parent-side keygen + Agent Provider-side signing (labeled inline)",
-        });
-    }
-
-    private void SubAgentStepIssueSubAgent()
-    {
-        var (parentId, workerId, apUrl, personServer, _) = SubAgentNames();
-        _saWorkerKey = AAuthKey.Generate();     // the worker's OWN keypair
-        _saWorkerToken = new AgentTokenBuilder
-        {
-            Issuer = apUrl,
-            Subject = workerId,
-            KeyId = _selfIdentity.KeyId,
-            Key = _selfIdentity.Key,            // the AP signs
-            ConfirmationKey = _saWorkerKey,     // bound to the WORKER's own key
-            ParentAgent = parentId,             // §Sub-Agents — names the parent
-            PersonServer = personServer,
-        }.Build();
-
-        var parsed = AgentId.Parse(workerId);
-        Steps.Add(new StepRecord
-        {
-            Number = Steps.Count + 1,
-            Title = "Sub-agent obtains its identity (parent_agent)",
-            From = Actor.SubAgent,
-            To = Actor.SubAgent,
-            Narrative =
-                "The parent spins up the **worker as a separate process** (a sandbox " +
-                "or container) — that isolation is what makes per-worker audit and " +
-                "revocation meaningful. The worker generates its **own** keypair and " +
-                "the **private key never leaves it**, so not even the parent can " +
-                "impersonate it. The **Agent Provider** — not the parent — then issues " +
-                "(signs) the worker's `aa-agent+jwt`, binding the worker's **public** " +
-                "key and stamping the authoritative `parent_agent` claim. How the token " +
-                "is requested is platform-dependent (the parent typically brokers it); " +
-                "the `+worker1` local part is a readability hint only.",
-            TokenJwt = _saWorkerToken,
-            TokenHeader = DecodeJwt(_saWorkerToken)?.Header,
-            TokenPayload = DecodeJwt(_saWorkerToken)?.Payload,
-            TokenDecoded =
-                $"AgentId.Parse(\"{workerId}\")\n" +
-                $"  .IsSubAgent  = {parsed.IsSubAgent}\n" +
-                $"  .ParentAgent = {parsed.ParentAgent}",
-            CodeSnippet = SubAgentWorkerTokenSnippet,
-            CodeSnippetRole = "split: worker-side keygen + Agent Provider-side signing (labeled inline)",
-        });
-    }
-
-    private void SubAgentStepWorkerResourceToken()
-    {
-        var (_, workerId, _, personServer, resourceUrl) = SubAgentNames();
-        var resourceKey = AAuthKey.Generate();  // the resource's own issuer key
-        _saResourceToken = new ResourceTokenBuilder
-        {
-            Issuer = resourceUrl,
-            Audience = personServer,
-            Agent = workerId,
-            AgentJkt = _saWorkerKey!.ComputeJwkThumbprint(),  // bound to the WORKER
-            Key = resourceKey,
-            KeyId = "calendar-1",
-            Scope = "calendar.read",
-        }.Build();
-
-        Steps.Add(new StepRecord
-        {
-            Number = Steps.Count + 1,
-            Title = "Worker obtains a resource token",
-            From = Actor.SubAgent,
-            To = Actor.Resource,
-            Narrative =
-                "The **sub-agent** calls the resource directly, signing with **its " +
-                "own** key. The resource issues an `aa-resource+jwt` whose `agent_jkt` " +
-                "is bound to the worker's key thumbprint. The worker then hands this " +
-                "token to its parent **out-of-band** (e.g. IPC) — it never contacts " +
-                "the Person Server itself.",
-            RequestLine = $"GET {resourceUrl}/events   (signed by the sub-agent)",
-            StatusLine = "200 OK",
-            TokenJwt = _saResourceToken,
-            TokenHeader = DecodeJwt(_saResourceToken)?.Header,
-            TokenPayload = DecodeJwt(_saResourceToken)?.Payload,
-            CodeSnippet = SubAgentResourceTokenSnippet,
-            CodeSnippetRole = "the resource server runs this",
-        });
-    }
-
-    private void SubAgentStepParentExchange()
-    {
-        var (_, _, _, personServer, _) = SubAgentNames();
-        var requestBody = new JsonObject
-        {
-            ["resource_token"] = _saResourceToken,
-            ["subagent_token"] = _saWorkerToken,
-        }.ToJsonString(new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        });
-
-        Steps.Add(new StepRecord
-        {
-            Number = Steps.Count + 1,
-            Title = "Parent exchanges with subagent_token",
-            From = Actor.Parent,
-            To = Actor.PersonServer,
-            Narrative =
-                "The **parent** — not the worker — drives the token exchange at the " +
-                "Person Server. It signs `POST /token` with **its own** key and " +
-                "includes both the worker's `resource_token` and the worker's agent " +
-                "token as `subagent_token`. The PS verifies the worker token's " +
-                "`parent_agent` names the request signer, enforces single-level depth, " +
-                "and binds the issued token's proof-of-possession to the **worker** " +
-                "(the step-6 `agent_jkt` override).",
-            RequestLine = $"POST {personServer}/token   (signed by the parent)",
-            RequestBody = requestBody,
-            CodeSnippet = SubAgentExchangeSnippet,
-            CodeSnippetRole = "the parent agent runs this (client-side)",
-        });
-    }
-
-    private void SubAgentStepMintAuthToken()
-    {
-        var (parentId, workerId, _, personServer, resourceUrl) = SubAgentNames();
-        var psKey = AAuthKey.Generate();        // the Person Server's issuer key
-        var authToken = new AuthTokenBuilder
-        {
-            Issuer = personServer,
-            Audience = resourceUrl,
-            Agent = workerId,
-            AgentConfirmationKey = _saWorkerKey!,   // PoP binds to the WORKER
-            Key = psKey,
-            KeyId = "ps-1",
-            Subject = "user:alice",
-            Scope = "calendar.read",
-            Act = ActChainBuilder.BuildNestedAct(parentId),   // records the parent (act.agent)
-        }.Build();
-        _saAuthToken = authToken;
-
-        // Confirm the issued token's cnf binds to the WORKER, not the parent.
-        var rawPayload = JsonNode.Parse(
-            System.Text.Encoding.UTF8.GetString(
-                Base64UrlEncoder.DecodeBytes(authToken.Split('.')[1])));
-        var cnfJwk = rawPayload?["cnf"]?["jwk"] as JsonObject;
-        var boundToWorker = cnfJwk is not null
-            && AAuthKey.FromJwk(cnfJwk).ComputeJwkThumbprint() == _saWorkerKey!.ComputeJwkThumbprint();
-
-        Steps.Add(new StepRecord
-        {
-            Number = Steps.Count + 1,
-            Title = "PS returns the auth token to the parent",
-            From = Actor.PersonServer,
-            To = Actor.Parent,
-            IsResponse = true,
-            Narrative =
-                "The Person Server mints an `aa-auth+jwt` and returns it to the " +
-                "**parent** — this is the HTTP response to the exchange the parent " +
-                "signed in the previous step. Crucially, the token is **bound to the " +
-                "sub-agent**: `agent` is the worker and `cnf.jwk` is the worker's key, " +
-                "and the `act` claim nests `{ sub: worker, act: { sub: parent } }`. So " +
-                "the parent receives a token it **cannot use itself** — only the worker " +
-                "holds the matching key.",
-            TokenJwt = authToken,
-            TokenHeader = DecodeJwt(authToken)?.Header,
-            TokenPayload = DecodeJwt(authToken)?.Payload,
-            TokenDecoded = boundToWorker
-                ? "✓ cnf.jwk thumbprint matches the sub-agent's key —\n  proof-of-possession binds to the WORKER, not the parent."
-                : "cnf.jwk does NOT match the sub-agent's key.",
-            CodeSnippet = SubAgentAuthTokenSnippet,
-            CodeSnippetRole = "the Person Server runs this",
-        });
-    }
-
-    private void SubAgentStepHandoffToWorker()
-    {
-        Steps.Add(new StepRecord
-        {
-            Number = Steps.Count + 1,
-            Title = "Parent hands the token to the worker",
-            From = Actor.Parent,
-            To = Actor.SubAgent,
-            Narrative =
-                "The exchange response went to the **parent** (it signed the request), " +
-                "so the parent now holds the worker-bound `auth_token`. It passes the " +
-                "token **down to the sub-agent out-of-band** (e.g. IPC) — the reverse " +
-                "of how the worker handed its `resource_token` up. The worker can now " +
-                "call the resource **itself**, proving possession with **its own key** " +
-                "(the `cnf` the PS bound), while the nested `act` still lets the resource " +
-                "audit the full worker → parent chain.",
-            RequestLine = "(out-of-band handoff — not an HTTP call)",
-            TokenJwt = _saAuthToken,
-            TokenDecoded =
-                "The parent cannot use this token: its proof-of-possession is bound to\n" +
-                "the sub-agent's key, so only the worker can present it to the resource.",
-            CodeSnippet = SubAgentHandoffSnippet,
-            CodeSnippetRole = "the parent agent runs this (client-side)",
-        });
-    }
-
-    private void SubAgentStepWorkerCallsResource()
-    {
-        var (parentId, workerId, _, _, resourceUrl) = SubAgentNames();
-        // Show the token being PRESENTED (not re-issued): a short prefix is
-        // enough to identify it as the same auth token from step 5 without
-        // re-decoding it here.
-        var tokenPreview = string.IsNullOrEmpty(_saAuthToken)
-            ? "<auth_token>"
-            : _saAuthToken[..Math.Min(24, _saAuthToken.Length)] + "…";
-        Steps.Add(new StepRecord
-        {
-            Number = Steps.Count + 1,
-            Title = "Sub-agent calls the resource with the token",
-            From = Actor.SubAgent,
-            To = Actor.Resource,
-            Narrative =
-                "Now holding the auth token, the **sub-agent** calls the resource " +
-                "**itself** — signing the request with **its own key** (the `cnf` the " +
-                "PS bound) and presenting the `auth_token` from step 5. The resource " +
-                "verifies the HTTP signature against the token's `cnf.jwk`, confirms " +
-                "`agent` is the worker, and reads the nested `act` to audit the full " +
-                "worker → parent chain. The parent never touches this call.",
-            RequestLine = $"GET {resourceUrl}/events   (signed by the sub-agent's key)",
-            RequestHeaders =
-                $"Authorization: AAuth {tokenPreview}\n" +
-                "Signature-Input: sig=(\"@method\" \"@target-uri\" \"authorization\");keyid=\"worker\"\n" +
-                "Signature: sig=:<worker-key signature>:",
-            StatusLine = "200 OK",
-            ResponseBody =
-                "// The resource accepted the call. It bound access to the\n" +
-                "// sub-agent (not the parent) and logged the delegation chain:\n" +
-                $"//   agent = {workerId}\n" +
-                $"//   act   = {{ sub: {workerId}, act: {{ sub: {parentId} }} }}\n" +
-                "{\n  \"events\": [ /* the worker's requested data */ ]\n}",
-            CodeSnippet = SubAgentResourceCallSnippet,
-            CodeSnippetRole = "the sub-agent runs this (client-side)",
+            Number = step, Title = title, Narrative = narrative, From = from, To = to,
+            TokenJwt = token, TokenHeader = token is null ? null : DecodeJwt(token)?.Header,
+            TokenPayload = token is null ? null : DecodeJwt(token)?.Payload, CodeSnippet = snippet,
+            StatusLine = step == 4 ? "401 Unauthorized" : step >= 3 ? "200 OK" : null,
+            ResponseBody = step == 7 ? flow.ResourceResponse : null,
         });
     }
 
@@ -1980,6 +1758,7 @@ public sealed class TourSession : IAsyncDisposable
         // The AP holds these; agents it issues tokens for never do.
         var parentToken = new AgentTokenBuilder
         {
+            EgressPolicy = SampleEgress.Policy,
             Issuer          = apUrl,                  // the Agent Provider
             Subject         = "aauth:aria@host",      // the parent's identifier
             KeyId           = apKeyId,                // the AP signs…
@@ -2007,6 +1786,7 @@ public sealed class TourSession : IAsyncDisposable
         // the worker). It stamps `parent_agent` to mark this a sub-agent.
         var workerToken = new AgentTokenBuilder
         {
+            EgressPolicy = SampleEgress.Policy,
             Issuer          = apUrl,                  // the Agent Provider (issuer)
             Subject         = "aauth:aria+worker1@host", // parent + "+" + worker id
             KeyId           = apKeyId,                // the AP's published key id
@@ -2022,92 +1802,14 @@ public sealed class TourSession : IAsyncDisposable
         _ = id.ParentAgent;   // "aauth:aria@host"
         """;
 
-    private const string SubAgentResourceTokenSnippet = """
-        // The SUB-AGENT calls the resource itself, signing with its own
-        // key. The resource issues a token bound to the worker (agent_jkt),
-        // which the worker then hands to its parent out-of-band.
-        var resourceToken = new ResourceTokenBuilder
-        {
-            Issuer   = resourceUrl,
-            Audience = personServer,
-            Agent    = "aauth:aria+worker1@host",
-            AgentJkt = workerKey.ComputeJwkThumbprint(),  // bound to the WORKER
-            Key      = resourceKey,                       // the resource signs
-            KeyId    = "calendar-1",
-            Scope    = "calendar.read",
-        }.Build();                                         // → aa-resource+jwt
-        """;
-
-    private const string SubAgentExchangeSnippet = """
-        // The PARENT mediates the exchange. It signs POST /token with its
-        // OWN key and presents the worker's resource_token together with
-        // the worker's agent token as `subagent_token`.
-        var exchange = new TokenExchangeClient(parentSignedClient, metadata);
-
-        var authToken = await exchange.ExchangeAsync(
-            personServer,
-            resourceToken,                       // obtained by the sub-agent
-            new TokenExchangeRequest
-            {
-                SubagentToken = workerToken,     // §Sub-Agents — the worker's token
-            });
-        """;
-
-    private const string SubAgentAuthTokenSnippet = """
-        // The Person Server mints the auth token bound to the SUB-AGENT —
-        // even though the parent signed. `act` nests the full chain so the
-        // resource can audit who acted for whom.
-        var authToken = new AuthTokenBuilder
-        {
-            Issuer               = personServer,
-            Audience             = resourceUrl,
-            Agent                = "aauth:aria+worker1@host",
-            AgentConfirmationKey = workerKey,    // PoP binds to the WORKER
-            Key                  = psKey,        // the PS signs
-            KeyId                = "ps-1",
-            Subject              = "user:alice",
-            Scope                = "calendar.read",
-            UpstreamAct = new JsonObject { ["sub"] = "aauth:aria@host" },
-        }.Build();
-        // payload.act = { sub: "aauth:aria+worker1@host",
-        //                 act: { sub: "aauth:aria@host" } }
-        // The PS returns this in the HTTP response to the PARENT's exchange.
-        """;
-
-    private const string SubAgentHandoffSnippet = """
-        // The exchange response came back to the PARENT (it signed the
-        // request), so the parent holds the worker-bound auth token. It
-        // hands the token DOWN to the sub-agent out-of-band — the reverse
-        // of how the worker passed its resource_token up.
-        worker.Deliver(authToken);   // e.g. IPC / in-memory channel
-
-        // Only the worker can use it: the token's `cnf` binds proof-of-
-        // possession to the worker's key, so the worker — not the parent —
-        // signs the downstream resource call with `workerKey`.
-        """;
-
-    private const string SubAgentResourceCallSnippet = """
-        // Runs ON THE WORKER. It now holds the auth token and calls the
-        // resource itself, signing the HTTP request with its OWN key
-        // (workerKey — the cnf the PS bound). The parent is not involved.
-        var client = new AAuthClientBuilder(workerKey)   // the worker's key
-            .WithAuthToken(authToken)                    // present the issued token
-            .Build();
-
-        var events = await client.GetAsync($"{resourceUrl}/events");
-        // The resource verifies the signature against the token's cnf.jwk,
-        // sees agent = the sub-agent, and reads act = { sub: worker,
-        // act: { sub: parent } } for its audit log. → 200 OK
-        """;
-
     // -----------------------------------------------------------------
     // Protocol flow step implementations
     // -----------------------------------------------------------------
 
     private async Task StepFetchResourceMetadataAsync(CancellationToken ct)
     {
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
-        using var client = new HttpClient(capture);
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        using var client = new SampleHttpClient(capture);
         var url = $"{ResourceBaseUrl}/.well-known/aauth-resource.json";
         await client.GetAsync(url, ct);
         var ex = capture.Last!;
@@ -2132,10 +1834,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepSignedGetAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         var resp = await client.GetAsync(EffectiveResourceUrl, ct);
         var ex = capture.Last!;
@@ -2155,7 +1857,7 @@ public sealed class TourSession : IAsyncDisposable
             Title = EffectiveSigningMode switch
             {
                 SigningMode.Hwk => "Signed GET (pseudonymous — hwk)",
-                SigningMode.JwksUri => "Signed GET (agent identity — jwks_uri)",
+                SigningMode.Jwks => "Signed GET (direct key URL - jwks)",
                 SigningMode.JktJwt => "Signed GET (key rotation — jkt-jwt)",
                 _ => "Signed GET (agent token — jwt)",
             },
@@ -2165,16 +1867,15 @@ public sealed class TourSession : IAsyncDisposable
             {
                 SigningMode.Hwk =>
                     "The agent signs the request per RFC 9421. The Signature-Key header " +
-                    "carries `sig=hwk` with the key's JWK thumbprint and the full public " +
-                    "key inline (base64url-encoded JWK). The resource extracts the key " +
+                    "carries `sig=hwk` with standard kty, crv, x and alg parameters " +
+                    "(plus y for EC keys). The resource extracts the public key " +
                     "directly — no pre-registration needed. Use for: accountable " +
                     "pseudonymous access, rate-limiting by key.",
-                SigningMode.JwksUri =>
+                SigningMode.Jwks =>
                     "The agent signs the request per RFC 9421. The Signature-Key header " +
-                    "carries `sig=jwks_uri` with a JWKS endpoint + kid. The resource " +
-                    "fetches the agent's public key from that URI and learns the agent's " +
-                    "full cryptographic identity. Use for: access control by agent identity, " +
-                    "replacing API keys.",
+                    "carries `sig=jwks` with url and kid. The resource fetches the " +
+                    "public key directly. The exact URL identifies the signer. " +
+                    "This is a generic Signature Keys demonstration, not AAuth agent access.",
                 SigningMode.JktJwt =>
                     "The agent signs the request per RFC 9421. The Signature-Key header " +
                     "carries `sig=jkt-jwt` with a naming JWT and the durable key's JWK " +
@@ -2199,7 +1900,7 @@ public sealed class TourSession : IAsyncDisposable
             CodeSnippet = EffectiveSigningMode switch
             {
                 SigningMode.Hwk => CodeSnippets.SignedGetHwk,
-                SigningMode.JwksUri => CodeSnippets.SignedGetJwksUri,
+                SigningMode.Jwks => CodeSnippets.SignedGetJwksUri,
                 SigningMode.JktJwt => CodeSnippets.SignedGetJktJwt,
                 _ => CodeSnippets.SignedGetJwt,
             },
@@ -2231,8 +1932,8 @@ public sealed class TourSession : IAsyncDisposable
 
     private async Task StepFetchPersonMetadataAsync(CancellationToken ct)
     {
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
-        using var client = new HttpClient(capture);
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        using var client = new SampleHttpClient(capture);
         var url = $"{_options.PersonServerUrl!.TrimEnd('/')}/.well-known/aauth-person.json";
         await client.GetAsync(url, ct);
         var ex = capture.Last!;
@@ -2263,12 +1964,12 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepTokenExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         // The exchange request is always signed with the AGENT token, never the
         // post-exchange auth token. The PS authenticates the agent identity.
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
         {
@@ -2309,10 +2010,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepRetryWithAuthTokenAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _authToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         await client.GetAsync(EffectiveResourceUrl, ct);
         var ex = capture.Last!;
@@ -2348,10 +2049,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepDeferredExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
         {
@@ -2379,9 +2080,10 @@ public sealed class TourSession : IAsyncDisposable
                     try
                     {
                         var parsed = AAuthRequirementHeader.Parse(raw);
-                        var interaction = AAuth.Headers.Interaction.FromRequirement(parsed);
+                        var interaction = AAuth.Headers.Interaction.FromRequirement(parsed, SampleEgress.Policy);
                         if (interaction is not null)
                         {
+                            await SampleEgress.Policy.ValidateDestinationAsync(interaction.Url);
                             _interactionUrl = interaction.Url;
                             _interactionCode = interaction.Code;
                             break;
@@ -2499,8 +2201,8 @@ public sealed class TourSession : IAsyncDisposable
 
     private async Task StepResourceManagedDiscoverAsync(CancellationToken ct)
     {
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
-        using var client = new HttpClient(capture);
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        using var client = new SampleHttpClient(capture);
         var url = $"{ResourceBaseUrl}/.well-known/aauth-resource.json";
         await client.GetAsync(url, ct);
         var ex = capture.Last!;
@@ -2527,11 +2229,12 @@ public sealed class TourSession : IAsyncDisposable
 
     private async Task StepResourceManagedSignedGetAsync(CancellationToken ct)
     {
+        await EnsureAgentReadyAsync(ct);
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         var url = $"{ResourceBaseUrl}/messages";
         using var resp = await client.GetAsync(url, ct);
@@ -2558,9 +2261,10 @@ public sealed class TourSession : IAsyncDisposable
                     try
                     {
                         var parsed = AAuthRequirementHeader.Parse(raw);
-                        var interaction = AAuth.Headers.Interaction.FromRequirement(parsed);
+                        var interaction = AAuth.Headers.Interaction.FromRequirement(parsed, SampleEgress.Policy);
                         if (interaction is not null)
                         {
+                            await SampleEgress.Policy.ValidateDestinationAsync(interaction.Url);
                             _interactionUrl = interaction.Url;
                             _interactionCode = interaction.Code;
                             break;
@@ -2578,8 +2282,10 @@ public sealed class TourSession : IAsyncDisposable
             From = Actor.Agent,
             To = Actor.Resource,
             Narrative =
-                "The agent signs the request per RFC 9421 with `sig=hwk` (pseudonymous — " +
-                "the key thumbprint travels inline, no agent identity disclosed). The " +
+                "Setup: GuidedTour acts as its own AP and locally issues an `aa-agent+jwt` " +
+                "with its published issuer/key. No external AP enrollment occurs. " +
+                "The agent signs the request per RFC 9421 with `sig=jwt`, presenting " +
+                "its agent token and proving possession of the cnf.jwk key. The " +
                 "Inbox has no opaque token for this key yet, so instead of `401` + a " +
                 "resource_token (the three-party challenge) it returns `202 Accepted` " +
                 "with a `Location` pointing at the pending URL the agent will poll, plus " +
@@ -2617,8 +2323,8 @@ public sealed class TourSession : IAsyncDisposable
                 To = Actor.Resource,
                 Narrative =
                     "While the user clicks through the Inbox's consent page, the agent " +
-                    "polls the pending URL with a signed `GET` (still `sig=hwk` — same " +
-                    "key, no token yet). Each request honors the Inbox's `Retry-After` " +
+                    "polls the pending URL with a signed `GET` (still `sig=jwt` - same " +
+                    "key and agent token, no opaque access credential yet). Each request honors the Inbox's `Retry-After` " +
                     "cadence. Once consent is recorded the Inbox responds with `200 OK` " +
                     "and the `AAuth-Access` header carrying an **opaque token68** — bound " +
                     "to the polling key's thumbprint, so it is useless as a standalone " +
@@ -2642,10 +2348,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepResourceManagedRetryAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         var url = $"{ResourceBaseUrl}/messages";
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
@@ -2726,7 +2432,7 @@ public sealed class TourSession : IAsyncDisposable
                 "No pending URL captured — the prior step did not record a 202 response.");
         }
 
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         string? capturedBase = null;
         var signing = BuildSigningHandler(tokenFactory, capture, (_, b) => capturedBase = b);
         // This HttpClient is constructed directly (not via AAuthClientBuilder), so it
@@ -2734,7 +2440,7 @@ public sealed class TourSession : IAsyncDisposable
         // is well under 100s. If you raise PreferWaitSeconds beyond the HttpClient.Timeout,
         // set Timeout greater than PreferWaitSeconds (or Timeout.InfiniteTimeSpan) or the
         // in-flight long-poll aborts with a TaskCanceledException.
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
         var pollerOptions = new DeferredPollerOptions
         {
             // Generous budget: in deferred mode the user has to flip to
@@ -2756,6 +2462,21 @@ public sealed class TourSession : IAsyncDisposable
             OnPoll = _ =>
             {
                 PollCount++;
+                if (capture.Last?.ResponseHeaders is { } responseHeaders && IsFederatedMode)
+                {
+                    foreach (var line in responseHeaders.Split('\n'))
+                    {
+                        if (!line.StartsWith("AAuth-Requirement:", StringComparison.OrdinalIgnoreCase)) continue;
+                        var requirement = AAuthRequirementHeader.Parse(line[(line.IndexOf(':') + 1)..].Trim());
+                        var interaction = Interaction.FromRequirement(requirement, SampleEgress.Policy);
+                        if (interaction is not null && interaction.BuildUserUrl() != UserInteractionUrl)
+                        {
+                            WorkerConsentUrl = interaction.BuildUserUrl();
+                            _interactionUrl = interaction.Url;
+                            _interactionCode = interaction.Code;
+                        }
+                    }
+                }
                 StateChanged?.Invoke();
             },
         };
@@ -2792,7 +2513,7 @@ public sealed class TourSession : IAsyncDisposable
             // the SDK's DeferredPoller raises it as a typed PollingErrorException.
             // Record the terminal "denied" step and abort the flow.
             RecordDeniedStep(
-                capture.Last!, capturedBase, "{\"error\":\"denied\"}", from, to);
+                capture.Last!, capturedBase, capture.Last!.ResponseBody, from, to);
             _aborted = true;
         }
         catch (TimeoutException tex)
@@ -2806,6 +2527,7 @@ public sealed class TourSession : IAsyncDisposable
         {
             terminal?.Dispose();
             IsPolling = false;
+            WorkerConsentUrl = null;
             StateChanged?.Invoke();
         }
     }
@@ -2982,7 +2704,7 @@ public sealed class TourSession : IAsyncDisposable
         // The interaction URL is `{ps}/interaction`; deny lives at
         // `{ps}/interaction/deny`. Strip any trailing slash and append.
         var denyUrl = _interactionUrl.TrimEnd('/') + "/deny";
-        using var client = new HttpClient();
+        using var client = new SampleHttpClient();
         using var content = new FormUrlEncodedContent(
             new Dictionary<string, string> { ["code"] = _interactionCode });
         using var resp = await client.PostAsync(denyUrl, content, ct);
@@ -3020,8 +2742,8 @@ public sealed class TourSession : IAsyncDisposable
 
     private async Task StepCallChainDiscoverConciergeAsync(CancellationToken ct)
     {
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
-        using var client = new HttpClient(capture);
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        using var client = new SampleHttpClient(capture);
         var url = $"{CallChainTargetUrl}/.well-known/aauth-resource.json";
         await client.GetAsync(url, ct);
         var ex = capture.Last!;
@@ -3047,10 +2769,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepCallChainSignedGetAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         var resp = await client.GetAsync(CallChainTargetUrl, ct);
         var ex = capture.Last!;
@@ -3107,10 +2829,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepCallChainExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
         {
@@ -3143,9 +2865,10 @@ public sealed class TourSession : IAsyncDisposable
                     try
                     {
                         var parsed = AAuthRequirementHeader.Parse(raw);
-                        var interaction = AAuth.Headers.Interaction.FromRequirement(parsed);
+                        var interaction = AAuth.Headers.Interaction.FromRequirement(parsed, SampleEgress.Policy);
                         if (interaction is not null)
                         {
+                            await SampleEgress.Policy.ValidateDestinationAsync(interaction.Url);
                             _interactionUrl = interaction.Url;
                             _interactionCode = interaction.Code;
                             break;
@@ -3220,10 +2943,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepCallChainRetryHop2Async(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _authToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         using var resp = await client.GetAsync(CallChainTargetUrl, ct);
         var ex = capture.Last!;
@@ -3251,9 +2974,10 @@ public sealed class TourSession : IAsyncDisposable
                     try
                     {
                         var parsed = AAuthRequirementHeader.Parse(raw);
-                        var interaction = AAuth.Headers.Interaction.FromRequirement(parsed);
+                        var interaction = AAuth.Headers.Interaction.FromRequirement(parsed, SampleEgress.Policy);
                         if (interaction is not null)
                         {
+                            await SampleEgress.Policy.ValidateDestinationAsync(interaction.Url);
                             _interactionUrl = interaction.Url;
                             _interactionCode = interaction.Code;
                             break;
@@ -3343,10 +3067,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepCallChainRetryAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _authToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         await client.GetAsync(CallChainTargetUrl, ct);
         var ex = capture.Last!;
@@ -3487,8 +3211,8 @@ public sealed class TourSession : IAsyncDisposable
 
     private async Task StepFederatedDiscoverResourceAsync(CancellationToken ct)
     {
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
-        using var client = new HttpClient(capture);
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        using var client = new SampleHttpClient(capture);
         var url = $"{ResourceBaseUrl}/.well-known/aauth-resource.json";
         await client.GetAsync(url, ct);
         var ex = capture.Last!;
@@ -3515,10 +3239,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepFederatedSignedGetAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         var resp = await client.GetAsync(FederatedTargetUrl, ct);
         var ex = capture.Last!;
@@ -3580,12 +3304,12 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepFederatedExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         // The exchange is signed with the AGENT token; the PS authenticates the
         // agent, then federates to the AS (aud ≠ self) and relays the result.
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
         {
@@ -3619,9 +3343,10 @@ public sealed class TourSession : IAsyncDisposable
                     try
                     {
                         var parsed = AAuthRequirementHeader.Parse(raw);
-                        var interaction = AAuth.Headers.Interaction.FromRequirement(parsed);
+                        var interaction = AAuth.Headers.Interaction.FromRequirement(parsed, SampleEgress.Policy);
                         if (interaction is not null)
                         {
+                            await SampleEgress.Policy.ValidateDestinationAsync(interaction.Url);
                             _interactionUrl = interaction.Url;
                             _interactionCode = interaction.Code;
                             break;
@@ -3640,12 +3365,12 @@ public sealed class TourSession : IAsyncDisposable
                 Narrative =
                     "The agent POSTs the resource_token to its Person Server. The PS " +
                     "sees the resource_token's `aud` is an **Access Server** (not " +
-                    "itself) and federates: signed `POST {as}/token`. This AS's policy " +
-                    "needs the user to consent, so the AS replies `202` with an " +
-                    "interaction URL. The PS relays that back to the agent as its own " +
+                    "itself). The PS evaluates consent independently before signed `POST {as}/token`. Either authority may " +
+                    "need the user to consent, producing `202` with an " +
+                    "interaction URL. The PS returns its own " +
                     "`202 Accepted` with a `Location` (the PS pending URL the agent will " +
                     "poll) and an `AAuth-Requirement: requirement=interaction` header " +
-                    "carrying the AS's user-facing consent URL + single-use code.",
+                    "carrying the current authority's consent URL + single-use code. Polling can surface AS approval after PS consent.",
                 RequestLine = $"{ex.RequestLine}  →  {_tokenEndpoint}",
                 RequestHeaders = ex.RequestHeaders,
                 RequestBody = PrettyJson(ex.RequestBody),
@@ -3712,18 +3437,18 @@ public sealed class TourSession : IAsyncDisposable
         Steps.Add(new StepRecord
         {
             Number = Steps.Count + 1,
-            Title = "Direct user to Access Server consent",
+            Title = "Direct user to PS and AS consent",
             From = Actor.Agent,
             To = Actor.Agent,
             Narrative =
                 "The agent received the relayed interaction requirement. It constructs " +
                 "the user-facing URL as `{url}?code={code}` — where `{url}` is the " +
-                "**Access Server's** interaction endpoint (its own consent screen, or a " +
+                "current authority's interaction endpoint (PS consent, or AS policy approval / a " +
                 "redirect to Keycloak) and `{code}` ties the upcoming browser session " +
                 "back to this specific federated request. The agent surfaces this link to " +
                 "its user (browser redirect, QR code, etc.). Note the user approves at the " +
-                "**Access Server** here — not at the Person Server — because the AS owns the " +
-                "policy decision.",
+                "PS first when its consent is missing; the AS may then request its own " +
+                "independent policy approval. Neither verdict substitutes for the other.",
             TokenDecoded = $"Interaction URL:  {_interactionUrl}\nCode:             {_interactionCode}",
             CodeSnippet = CodeSnippets.DirectUserToInteraction,
         });
@@ -3732,10 +3457,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepFederatedRetryAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _authToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         await client.GetAsync(FederatedTargetUrl, ct);
         var ex = capture.Last!;
@@ -3830,12 +3555,51 @@ public sealed class TourSession : IAsyncDisposable
     // The two 200 bodies (steps 6, 13) surfaced in the inspect summary.
     private string? _r3SearchResponseBody;
     private string? _r3ConfirmResponseBody;
+    private string? _r3ClassAuthToken;
+    private string? _previousR3AuthToken;
+    public string? BookingsAccount { get; private set; }
+    public string? AccountProbeResult { get; private set; }
+    public bool CanCheckPreviousAccount => _previousR3AuthToken is not null;
+    public sealed record BookingAccount(string Id, string Name);
+    public BookingAccount[] BookingsAccounts { get; private set; } = [];
+
+    public async Task LoadBookingsAccountsAsync()
+    {
+        using var client = new SampleHttpClient();
+        BookingsAccounts = await client.GetFromJsonAsync<BookingAccount[]>(_options.BookingsUrl.TrimEnd('/') + "/accounts") ?? [];
+    }
+
+    public void SelectBookingsAccount(string? account)
+    {
+        account = string.IsNullOrEmpty(account) ? null : account;
+        if (account is not null && !BookingsAccounts.Any(candidate => candidate.Id == account))
+            throw new InvalidOperationException("Unknown Bookings account.");
+        if (account == BookingsAccount) return;
+        _previousR3AuthToken = _r3ClassAuthToken ?? _previousR3AuthToken;
+        _r3ClassAuthToken = null;
+        ResetTimeline();
+        BookingsAccount = account;
+        AccountProbeResult = null;
+    }
+
+    public async Task CheckPreviousAccountAsync()
+    {
+        if (_previousR3AuthToken is null) throw new InvalidOperationException("No previous account grant.");
+        using var client = new SampleHttpClient(BuildSigningHandler(() => _previousR3AuthToken,
+            AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy)));
+        using var response = await client.GetAsync(R3SearchUrl);
+        AccountProbeResult = $"{(int)response.StatusCode} {response.ReasonPhrase}: previous account grant "
+            + (response.StatusCode == HttpStatusCode.Unauthorized ? "rejected" : "unexpected result")
+            + "\n" + await response.Content.ReadAsStringAsync();
+    }
+
+    private string BookingsAccountQuery => BookingsAccount is null ? "" : "?account=" + Uri.EscapeDataString(BookingsAccount);
 
     /// <summary>The Bookings granted (r3_granted) operation branch: GET /search_availability.</summary>
-    private string R3SearchUrl => $"{_options.BookingsUrl.TrimEnd('/')}/search_availability";
+    private string R3SearchUrl => $"{_options.BookingsUrl.TrimEnd('/')}/search_availability{BookingsAccountQuery}";
 
     /// <summary>The Bookings conditional (r3_conditional) operation branch: POST /confirm_reservation.</summary>
-    private string R3ConfirmUrl => $"{_options.BookingsUrl.TrimEnd('/')}/confirm_reservation";
+    private string R3ConfirmUrl => $"{_options.BookingsUrl.TrimEnd('/')}/confirm_reservation{BookingsAccountQuery}";
 
     // The concrete reservation the agent confirms. Mirrors SampleApp Bookings.razor:
     // the SAME values are resent on the approved retry (step 13) so the resource can
@@ -3847,6 +3611,7 @@ public sealed class TourSession : IAsyncDisposable
         date = "2026-07-14T19:30",
         party_size = 2,
         deposit_usd = 40,
+        cancellation_policy = "Deposit refundable up to 48 hours before the reservation.",
     };
 
     private static string? FormatR3Ops(JsonNode? node)
@@ -3869,8 +3634,8 @@ public sealed class TourSession : IAsyncDisposable
 
     private async Task StepRichRequestsDiscoverResourceAsync(CancellationToken ct)
     {
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
-        using var client = new HttpClient(capture);
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        using var client = new SampleHttpClient(capture);
         var url = $"{ResourceBaseUrl}/.well-known/aauth-resource.json";
         await client.GetAsync(url, ct);
         var ex = capture.Last!;
@@ -3900,10 +3665,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepRichRequestsSearchSignedGetAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         var resp = await client.GetAsync(R3SearchUrl, ct);
         var ex = capture.Last!;
@@ -3940,7 +3705,7 @@ public sealed class TourSession : IAsyncDisposable
             ResponseHeaders = ex.ResponseHeaders,
             ResponseBody = PrettyJson(ex.ResponseBody),
             SignatureBase = capturedBase,
-            CodeSnippet = CodeSnippets.SignedGetJwt,
+            CodeSnippet = CodeSnippets.R3AccountRequest,
         });
     }
 
@@ -3966,7 +3731,7 @@ public sealed class TourSession : IAsyncDisposable
             TokenJwt = _resourceToken,
             TokenHeader = DecodeJwt(_resourceToken)?.Header,
             TokenPayload = payload,
-            TokenDecoded = _r3Uri is null ? null : $"r3_uri:  {_r3Uri}\nr3_s256: {_r3S256}",
+            TokenDecoded = _r3Uri is null ? null : $"account: {BookingsAccount ?? "(absent)"}\nr3_uri:  {_r3Uri}\nr3_s256: {_r3S256}",
             CodeSnippet = CodeSnippets.ParseChallenge,
         });
     }
@@ -3974,21 +3739,28 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepRichRequestsExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         // Signed with the AGENT token; the PS authenticates the agent, then
         // federates to the R3 AS (aud ≠ self) and relays the minted auth token.
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
-        using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
-        {
-            resource_token = _resourceToken,
-        }, ct);
-
+        using var discovery = new SampleHttpClient();
+        _authToken = await new TokenExchangeClient(client, new AAuth.Discovery.MetadataClient(discovery)).ExchangeAsync(
+            _options.PersonServerUrl!, _resourceToken!, new TokenExchangeRequest
+            {
+                Account = BookingsAccount,
+                OnInteractionRequired = (interaction, _) =>
+                {
+                    WorkerConsentUrl = interaction.BuildUserUrl();
+                    StateChanged?.Invoke();
+                    return Task.CompletedTask;
+                },
+            }, ct);
+        _r3ClassAuthToken = _authToken;
+        WorkerConsentUrl = null;
         var ex = capture.Last!;
-        var body = JsonNode.Parse(ex.ResponseBody);
-        _authToken = (string?)body?["auth_token"];
 
         // Capture the granted/conditional split for the inspect summary.
         var authPayload = DecodeJwt(_authToken)?.Payload;
@@ -4006,7 +3778,7 @@ public sealed class TourSession : IAsyncDisposable
             To = Actor.PersonServer,
             Narrative =
                 "The agent POSTs the resource_token to its Person Server, exactly as in " +
-                "three-party. The PS peeks the resource_token's `aud`, sees it is the " +
+                "three-party. The PS evaluates consent before federation, independently of AS claims. It sees the audience is the " +
                 "**R3 Access Server** (not itself), and federates: it makes an AS-signed " +
                 "`GET /r3/{hash}` to Bookings to fetch the class R3 document, **rejects it " +
                 "unless the served bytes hash to `r3_s256`**, then splits the operations " +
@@ -4039,10 +3811,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepRichRequestsSearchRetryAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _authToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         await client.GetAsync(R3SearchUrl, ct);
         var ex = capture.Last!;
@@ -4073,12 +3845,12 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepRichRequestsConfirmSignedPostAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         // Present the SAME class auth token from step 5 (confirmReservation is in
         // its r3_conditional, not r3_granted), signing the concrete reservation body.
         var signing = BuildSigningHandler(
             () => _authToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         var resp = await client.PostAsJsonAsync(R3ConfirmUrl, BuildConfirmReservationBody(), ct);
         var ex = capture.Last!;
@@ -4143,7 +3915,7 @@ public sealed class TourSession : IAsyncDisposable
             TokenJwt = _resourceToken,
             TokenHeader = DecodeJwt(_resourceToken)?.Header,
             TokenPayload = payload,
-            TokenDecoded = _r3ProposalUri is null ? null : $"r3_uri:  {_r3ProposalUri}\nr3_s256: {_r3ProposalS256}",
+            TokenDecoded = _r3ProposalUri is null ? null : $"account: {BookingsAccount ?? "(absent)"}\nr3_uri:  {_r3ProposalUri}\nr3_s256: {_r3ProposalS256}",
             CodeSnippet = CodeSnippets.ParseChallenge,
         });
     }
@@ -4151,10 +3923,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepRichRequestsProposalExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
         {
@@ -4182,9 +3954,10 @@ public sealed class TourSession : IAsyncDisposable
                 try
                 {
                     var parsed = AAuthRequirementHeader.Parse(raw);
-                    var interaction = AAuth.Headers.Interaction.FromRequirement(parsed);
+                    var interaction = AAuth.Headers.Interaction.FromRequirement(parsed, SampleEgress.Policy);
                     if (interaction is not null)
                     {
+                        await SampleEgress.Policy.ValidateDestinationAsync(interaction.Url);
                         _interactionUrl = interaction.Url;
                         _interactionCode = interaction.Code;
                         break;
@@ -4256,12 +4029,12 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepRichRequestsConfirmRetryAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         // _authToken is now the per-call token minted by the R3 AS on approval
         // (confirmReservation moved into r3_granted). Resend the SAME parameters.
         var signing = BuildSigningHandler(
             () => _authToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         await client.PostAsJsonAsync(R3ConfirmUrl, BuildConfirmReservationBody(), ct);
         var ex = capture.Last!;
@@ -4296,6 +4069,7 @@ public sealed class TourSession : IAsyncDisposable
     {
         var summary = new System.Text.StringBuilder();
         summary.AppendLine("═══ Rich Resource Requests (R3, four-party) Summary ═══");
+        summary.AppendLine($"  Account: {BookingsAccount ?? "(absent)"}. Resource token, auth token and R3 documents carry the same value.");
         summary.AppendLine();
         summary.AppendLine("  Two operations, two outcomes — decided by the R3 Access Server:");
         summary.AppendLine();
@@ -4336,8 +4110,8 @@ public sealed class TourSession : IAsyncDisposable
 
     private async Task StepMissionDiscoverPersonAsync(CancellationToken ct)
     {
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
-        using var client = new HttpClient(capture);
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        using var client = new SampleHttpClient(capture);
         var url = $"{_options.PersonServerUrl!.TrimEnd('/')}/.well-known/aauth-person.json";
         await client.GetAsync(url, ct);
         var ex = capture.Last!;
@@ -4374,10 +4148,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepMissionProposeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         // The proposal: a durable mission description + the tools the agent
         // wants pre-approved. add_to_calendar is in the proposal (so gate 3 is
@@ -4395,7 +4169,7 @@ public sealed class TourSession : IAsyncDisposable
         }, ct);
 
         var ex = capture.Last!;
-        CaptureInteractionFrom(resp, _missionEndpoint!);
+        await CaptureInteractionFromAsync(resp, _missionEndpoint!, ct);
 
         Steps.Add(new StepRecord
         {
@@ -4475,10 +4249,10 @@ public sealed class TourSession : IAsyncDisposable
         // the token.
         RefreshAgentToken();
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         using var req = new HttpRequestMessage(HttpMethod.Get, MissionResourceUrl);
         // The agent advertises the mission it is acting under so the resource
@@ -4535,10 +4309,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepMissionExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
         {
@@ -4581,10 +4355,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepMissionReplayAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _authToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         await client.GetAsync(MissionResourceUrl, ct);
         var ex = capture.Last!;
@@ -4617,10 +4391,10 @@ public sealed class TourSession : IAsyncDisposable
         // reuse would also pass — replay is keyed on the signature, not the token.
         RefreshAgentToken();
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         using var req = new HttpRequestMessage(HttpMethod.Get, MissionElevatedResourceUrl);
         if (_missionApprover is not null && _missionS256 is not null)
@@ -4675,10 +4449,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepMissionElevatedExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
         {
@@ -4689,7 +4463,7 @@ public sealed class TourSession : IAsyncDisposable
         if (resp.StatusCode == HttpStatusCode.Accepted)
         {
             _userApproved = false; // a fresh user approval is required for this gate
-            CaptureInteractionFrom(resp, _tokenEndpoint!);
+            await CaptureInteractionFromAsync(resp, _tokenEndpoint!, ct);
         }
 
         Steps.Add(new StepRecord
@@ -4752,10 +4526,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepMissionElevatedReplayAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _authToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         await client.GetAsync(MissionElevatedResourceUrl, ct);
         var ex = capture.Last!;
@@ -4809,10 +4583,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepMissionPermissionPromptAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         using var resp = await client.PostAsJsonAsync(_permissionEndpoint!, new
         {
@@ -4824,7 +4598,7 @@ public sealed class TourSession : IAsyncDisposable
         if (resp.StatusCode == HttpStatusCode.Accepted)
         {
             _userApproved = false; // a fresh user approval is required for this gate
-            CaptureInteractionFrom(resp, _permissionEndpoint!);
+            await CaptureInteractionFromAsync(resp, _permissionEndpoint!, ct);
         }
 
         Steps.Add(new StepRecord
@@ -4923,10 +4697,10 @@ public sealed class TourSession : IAsyncDisposable
     private async Task StepMissionChainClarificationExchangeAsync(CancellationToken ct)
     {
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         using var resp = await client.PostAsJsonAsync(_tokenEndpoint!, new
         {
@@ -4993,27 +4767,21 @@ public sealed class TourSession : IAsyncDisposable
             "Booking the trip needs permission to reserve and pay.";
 
         string? capturedBase = null;
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var signing = BuildSigningHandler(
             () => _agentToken!, capture, (_, b) => capturedBase = b);
-        using var client = new HttpClient(signing);
+        using var client = new SampleHttpClient(signing);
 
         using var resp = await client.PostAsJsonAsync(_pendingUrl!, new
         {
+            action = "clarification_response",
             clarification_response = answer,
         }, ct);
 
         var ex = capture.Last!;
 
-        // The clarification is satisfied (204 No Content); the PS readies the
-        // user's decision. Now the agent can surface the interaction URL — the
-        // mission-pending id doubles as the single-use interaction code, and the
-        // PS's interaction page lives at {ps}/interaction.
-        if (_missionPendingId is not null)
-        {
-            _interactionUrl = $"{_options.PersonServerUrl!.TrimEnd('/')}/interaction";
-            _interactionCode = _missionPendingId;
-        }
+        using var pending = await client.GetAsync(_pendingUrl!, ct);
+        await CaptureInteractionFromAsync(pending, _pendingUrl!, ct);
 
         Steps.Add(new StepRecord
         {
@@ -5026,8 +4794,8 @@ public sealed class TourSession : IAsyncDisposable
                 "`POST {mission-pending}` carrying `{ clarification_response }`. The PS " +
                 "records the answer in the mission log and transitions the parked request " +
                 "to *awaiting the user's decision* — it returns `204 No Content`. The " +
-                "agent now constructs the interaction URL (the mission-pending id is the " +
-                "single-use code) and is ready to direct the user to approve the scope.",
+                "agent then GETs the same pending URL and reads the new correlation code " +
+                "from its 202 AAuth-Requirement header before directing the user to consent.",
             RequestLine = $"{ex.RequestLine}  →  {_pendingUrl}",
             RequestHeaders = ex.RequestHeaders,
             RequestBody = PrettyJson(ex.RequestBody),
@@ -5035,7 +4803,7 @@ public sealed class TourSession : IAsyncDisposable
             StatusLine = ex.StatusLine,
             ResponseHeaders = ex.ResponseHeaders,
             ResponseBody = ex.ResponseBody,
-            TokenDecoded = $"Agent answered:\n  {answer}",
+            TokenDecoded = $"Agent answered:\n  {answer}\nThen GET {_pendingUrl} -> {(int)pending.StatusCode}\nInteraction code: {_interactionCode}",
             CodeSnippet = CodeSnippets.MissionChainAnswer,
         });
     }
@@ -5047,9 +4815,9 @@ public sealed class TourSession : IAsyncDisposable
         RefreshAgentToken();
 
         // ── Hop A: challenge the Concierge's mission endpoint ─────────────
-        var challengeCapture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var challengeCapture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var challengeSigning = BuildSigningHandler(() => _agentToken!, challengeCapture);
-        using (var challengeClient = new HttpClient(challengeSigning))
+        using (var challengeClient = new SampleHttpClient(challengeSigning))
         {
             using var challengeReq = new HttpRequestMessage(HttpMethod.Get, MissionChainTargetUrl);
             if (_missionApprover is not null && _missionS256 is not null)
@@ -5078,9 +4846,9 @@ public sealed class TourSession : IAsyncDisposable
         // The mission claim travels in the resource_token and (Concierge,
         // concierge) is in mission scope, so the PS mints the auth_token
         // SILENTLY — no prompt.
-        var exchangeCapture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var exchangeCapture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var exchangeSigning = BuildSigningHandler(() => _agentToken!, exchangeCapture);
-        using (var exchangeClient = new HttpClient(exchangeSigning))
+        using (var exchangeClient = new SampleHttpClient(exchangeSigning))
         {
             using var exchangeResp = await exchangeClient.PostAsJsonAsync(_tokenEndpoint!, new
             {
@@ -5094,10 +4862,10 @@ public sealed class TourSession : IAsyncDisposable
         // The Concierge validates it, forwards the mission downstream to
         // Trips's mission-aware path, and returns the combined chain result.
         string? capturedBase = null;
-        var retryCapture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
+        var retryCapture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         var retrySigning = BuildSigningHandler(
             () => _authToken!, retryCapture, (_, b) => capturedBase = b);
-        using var retryClient = new HttpClient(retrySigning);
+        using var retryClient = new SampleHttpClient(retrySigning);
         await retryClient.GetAsync(MissionChainTargetUrl, ct);
         var ex = retryCapture.Last!;
         _missionChainResponseBody = ex.ResponseBody;
@@ -5145,8 +4913,8 @@ public sealed class TourSession : IAsyncDisposable
         // The mission log is a DEMO-ONLY admin endpoint on the Mock Person
         // Server — an unauthenticated read of the auditable trail the mission
         // accrued. A real PS would gate this behind the user's own session.
-        var capture = new CapturingMessageHandler { InnerHandler = new HttpClientHandler() };
-        using var client = new HttpClient(capture);
+        var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        using var client = new SampleHttpClient(capture);
         var url = $"{_options.PersonServerUrl!.TrimEnd('/')}/admin/mission-log/{_missionS256}";
         await client.GetAsync(url, ct);
         var ex = capture.Last!;
@@ -5180,7 +4948,7 @@ public sealed class TourSession : IAsyncDisposable
     /// poll steps can drive the deferred cycle. Shared by the mission-create
     /// (step 2) and permission-prompt (step 10) gates.
     /// </summary>
-    private void CaptureInteractionFrom(HttpResponseMessage resp, string baseUrl)
+    private async Task CaptureInteractionFromAsync(HttpResponseMessage resp, string baseUrl, CancellationToken ct)
     {
         var location = resp.Headers.Location?.ToString();
         if (location is not null)
@@ -5198,9 +4966,10 @@ public sealed class TourSession : IAsyncDisposable
                 try
                 {
                     var parsed = AAuthRequirementHeader.Parse(raw);
-                    var interaction = AAuth.Headers.Interaction.FromRequirement(parsed);
+                    var interaction = AAuth.Headers.Interaction.FromRequirement(parsed, SampleEgress.Policy);
                     if (interaction is not null)
                     {
+                        await SampleEgress.Policy.ValidateDestinationAsync(interaction.Url, ct);
                         _interactionUrl = interaction.Url;
                         _interactionCode = interaction.Code;
                         break;

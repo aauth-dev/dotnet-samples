@@ -71,19 +71,20 @@ public sealed class MissionConsentScript
     private readonly HashSet<string> _inScope = new(StringComparer.Ordinal);
 
     /// <summary>Declare a (resource, scope) as within the approved mission intent.</summary>
-    public void SeedInScope(string resource, string scope) => _inScope.Add(ScopeKey(resource, scope));
+    public void SeedInScope(string resource, string scope, string? account = null) => _inScope.Add(ScopeKey(resource, scope, account));
 
     /// <summary>Snapshot the seeded in-scope set (captured per mission at approval).</summary>
     public IReadOnlySet<string> InScopeSnapshot() => new HashSet<string>(_inScope, StringComparer.Ordinal);
 
     /// <summary>Canonical (resource, scope) key used for in-scope and prior-consent lookups.</summary>
-    public static string ScopeKey(string resource, string scope) => $"{resource.TrimEnd('/')}|{scope}";
+    public static string ScopeKey(string resource, string scope, string? account = null) =>
+        System.Text.Json.JsonSerializer.Serialize(new[] { resource.TrimEnd('/'), scope, account });
 
     /// <summary>Render a (resource, scope) key as a human-readable "resource → scope" pair for consent screens.</summary>
     public static string FormatScopePair(string key)
     {
-        var i = key.IndexOf('|');
-        return i < 0 ? key : $"{key[..i]} → {key[(i + 1)..]}";
+        var values = System.Text.Json.JsonSerializer.Deserialize<string?[]>(key)!;
+        return $"{values[0]} → {values[1]}" + (values[2] is null ? "" : $" (account: {values[2]})");
     }
 
     /// <summary>Reset every decision to its permissive default and clear the in-scope set.</summary>
@@ -136,9 +137,9 @@ public sealed class MissionPolicyStore
         => _byS256.TryGetValue(s256, out var policy) && policy.Tools.Contains(action);
 
     /// <summary>Whether (<paramref name="resource"/>, <paramref name="scope"/>) is within the mission's intent.</summary>
-    public bool IsInScope(string s256, string resource, string scope)
+    public bool IsInScope(string s256, string resource, string scope, string? account = null)
         => _byS256.TryGetValue(s256, out var policy)
-            && policy.InScope.Contains(MissionConsentScript.ScopeKey(resource, scope));
+            && policy.InScope.Contains(MissionConsentScript.ScopeKey(resource, scope, account));
 
     /// <summary>Forget a mission's policy (e.g. on termination).</summary>
     public void Remove(string s256) => _byS256.TryRemove(s256, out _);
@@ -257,6 +258,32 @@ public sealed class MissionPendingEntry
 {
     /// <summary>Opaque single-use pending id (also the interaction code).</summary>
     public string Id { get; } = Guid.NewGuid().ToString("N");
+    public AAuth.Server.BrowserInteraction Browser { get; } = new();
+    public AAuth.Server.DeferredState Lifecycle { get; } = new();
+    public DateTimeOffset ExpiresAt { get; } = DateTimeOffset.UtcNow.AddMinutes(10);
+    public string? OwnerIssuer { get; init; }
+    public string? OwnerKeyThumbprint { get; init; }
+
+    public bool MatchesOwner(Microsoft.AspNetCore.Http.HttpContext context)
+    {
+        var verified = AAuth.Server.Verification.AAuthHttpContextExtensions.GetAAuthVerification(context);
+        return verified is { IssuerVerified: true, TokenType: AAuth.AAuthTokenType.AgentToken }
+            && OwnerIssuer is not null && OwnerKeyThumbprint is not null
+            && verified.Issuer == OwnerIssuer && verified.Agent == AgentId && verified.Jkt == OwnerKeyThumbprint;
+    }
+
+    public bool Decide(bool allow)
+    {
+        Lifecycle.Gate.Wait();
+        try
+        {
+            if (Decision is not null || Lifecycle.Delivered || Lifecycle.Cancelled || Lifecycle.InvalidCode
+                || ExpiresAt <= DateTimeOffset.UtcNow) return false;
+            Decision = allow;
+            return true;
+        }
+        finally { Lifecycle.Gate.Release(); }
+    }
 
     /// <summary>Whether this is a token or permission request.</summary>
     public required MissionPendingKind Kind { get; init; }
@@ -313,13 +340,22 @@ public sealed class MissionPendingStore
     /// <summary>Park <paramref name="entry"/> and return it.</summary>
     public MissionPendingEntry Add(MissionPendingEntry entry)
     {
+        foreach (var pair in _entries)
+            if (pair.Value.ExpiresAt.AddHours(1) <= DateTimeOffset.UtcNow) _entries.TryRemove(pair.Key, out _);
         _entries[entry.Id] = entry;
         return entry;
     }
 
     /// <summary>Look up a pending entry by id.</summary>
     public MissionPendingEntry? Get(string id)
-        => _entries.TryGetValue(id, out var entry) ? entry : null;
+    {
+        foreach (var pair in _entries)
+            if (pair.Value.ExpiresAt.AddHours(1) <= DateTimeOffset.UtcNow) _entries.TryRemove(pair.Key, out _);
+        return _entries.TryGetValue(id, out var entry) ? entry : null;
+    }
+
+    public MissionPendingEntry? GetByCode(string code)
+        => _entries.Values.FirstOrDefault(entry => entry.Browser.Code == AAuth.Headers.InteractionCode.Normalize(code));
 
     /// <summary>Remove a resolved pending entry.</summary>
     public void Remove(string id) => _entries.TryRemove(id, out _);

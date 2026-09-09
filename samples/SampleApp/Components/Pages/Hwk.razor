@@ -28,7 +28,7 @@
 <h5>Client Code</h5>
 <pre><code class="language-csharp">var key = AAuthKey.Generate();
 
-using var client = new AAuthClientBuilder(key)
+using var client = new AAuthClientBuilder(key).WithEgressPolicy(SampleEgress.Policy)
     .UseHwk()
     .Build();</code></pre>
 </div>
@@ -38,6 +38,7 @@ using var client = new AAuthClientBuilder(key)
 // store, and published metadata.
 builder.Services.AddAAuthResource(o =&gt;
 {
+    o.EgressPolicy = SampleEgress.Policy;
     o.Issuer = "https://resource.example";
     o.SigningKeys["profile-1"] = resourceKey;
 });
@@ -69,7 +70,7 @@ app.MapGet("/pseudonymous", (HttpContext ctx) =&gt;
     });
 })
 // Require a verified signature (any agent key).
-.RequireAAuthSignature();</code></pre>
+.RequireGenericSignature();</code></pre>
 </div>
 </div>
 
@@ -119,7 +120,7 @@ app.MapGet("/pseudonymous", (HttpContext ctx) =&gt;
             var key = AAuthKey.Generate();
 
             // Build the signed client — hwk mode, no enrollment
-            using var client = new AAuthClientBuilder(key)
+            using var client = new AAuthClientBuilder(key).WithEgressPolicy(SampleEgress.Policy)
                 .UseHwk()
                 .Build();
 

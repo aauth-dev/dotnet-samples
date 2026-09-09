@@ -1,0 +1,75 @@
+@namespace AAuth.Samples.Capabilities
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.Extensions.Configuration
+@using System.Text.Json
+@inject IConfiguration Configuration
+@implements IDisposable
+
+<section class="document-view" aria-label="Document release walkthrough" data-step="@_session.Step">
+    <header><h1>Document Release</h1><output>@_session.Step / 4 complete</output></header>
+    <ol aria-label="Protocol steps">
+        @for (var index = 0; index < DocumentDemoSession.Steps.Length; index++)
+        {
+            <li aria-current="@(index == _session.Step ? "step" : null)">@DocumentDemoSession.Steps[index]</li>
+        }
+    </ol>
+    <table aria-label="Sequence diagram">
+        <thead><tr><th>From</th><th></th><th>To</th><th>Request</th></tr></thead>
+        <tbody>
+            @foreach (var row in Sequence)
+            {
+                <tr><td>@row.From</td><td><img src="_content/EventSupport/arrow-right.svg" width="18" height="18" alt="to" /></td><td>@row.To</td><td>@row.Request</td></tr>
+            }
+        </tbody>
+    </table>
+    <div class="document-actions">
+        <button class="document-next" @onclick="Next" disabled="@(!_interactive || _busy || _session.Denied || _session.Step == 4)">
+            <img src="_content/EventSupport/arrow-right.svg" width="18" height="18" alt="" />
+            @(_busy ? "Awaiting authorization" : _session.Step == 4 ? "Completed" : DocumentDemoSession.Steps[_session.Step])
+        </button>
+        <button @onclick="Reset" disabled="@_busy" title="Reset document flow" aria-label="Reset document flow"><img src="_content/EventSupport/rotate-ccw.svg" width="18" height="18" alt="" /></button>
+    </div>
+    @if (_session.ConsentUrl is { } consent) { <a class="document-consent" href="@consent" target="_blank" rel="noopener">Review document authorization</a> }
+    @if (_session.Denied) { <p data-testid="document-denied">Document release declined. No authorization issued.</p> }
+    @if (_error is not null) { <p role="alert">@_error</p> }
+    @if (_session.Result is { } result) { <pre data-testid="document-result">@result</pre> }
+    <section aria-label="Recorded exchanges">
+        @foreach (var exchange in _session.Exchanges)
+        {
+            <details open class="document-exchange" data-status="@exchange.Status"><summary>@exchange.Method @exchange.Url HTTP @exchange.Status</summary>
+                <pre>@JsonSerializer.Serialize(exchange, WalletDemoSession.Pretty)</pre></details>
+        }
+    </section>
+</section>
+
+@code {
+    private static readonly (string From, string To, string Request)[] Sequence =
+    [
+        ("Agent", "Resource", "Document challenge"), ("Agent", "PS", "Signed token request"),
+        ("Browser", "PS", "Authenticated interstitial"), ("Browser", "Resource", "Release permission"),
+        ("Resource", "PS", "Per-flow callback"), ("Browser", "PS", "Person consent"), ("Agent", "Resource", "Authorized download"),
+    ];
+    private DocumentDemoSession _session = null!;
+    private readonly CancellationTokenSource _cancellation = new();
+    private bool _busy;
+    private bool _interactive;
+    private string? _error;
+    protected override void OnInitialized() => Create();
+    protected override void OnAfterRender(bool firstRender) { if (firstRender) { _interactive = true; StateHasChanged(); } }
+    private void Create()
+    {
+        _session = new(Configuration["AAuth:AgentProvider"] ?? "http://localhost:5301",
+            Configuration["AAuth:PersonServer"] ?? "http://localhost:5100", Configuration["AAuth:Documents"] ?? "http://localhost:5007");
+        _session.Changed = () => InvokeAsync(StateHasChanged);
+    }
+    private async Task Next()
+    {
+        _busy = true; _error = null;
+        try { await _session.NextAsync(_cancellation.Token); }
+        catch (Exception exception) when (exception is not OperationCanceledException) { _error = exception.Message; }
+        finally { _busy = false; }
+    }
+    private void Reset() { _session.Dispose(); Create(); _error = null; }
+    public void Dispose() { _cancellation.Cancel(); _cancellation.Dispose(); _session.Dispose(); }
+}

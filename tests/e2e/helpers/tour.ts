@@ -32,7 +32,7 @@ export type TourMode = (typeof TourMode)[keyof typeof TourMode];
 
 export const SigningMode = {
   Hwk: 'Hwk',
-  JwksUri: 'JwksUri',
+  Jwks: 'Jwks',
   JktJwt: 'JktJwt',
 } as const;
 export type SigningMode = (typeof SigningMode)[keyof typeof SigningMode];

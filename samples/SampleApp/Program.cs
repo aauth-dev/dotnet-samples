@@ -40,12 +40,19 @@ if (!app.Environment.IsDevelopment())
 // Publish agent metadata + JWKS so verifiers can discover our signing key.
 app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 {
+    EgressPolicy = SampleEgress.Policy,
     Issuer = sampleAppUrl,
     Name = "SampleApp Demo",
-    SigningKeys = new Dictionary<string, AAuthKey> { [SelfIssuedKid] = selfIssuedKey },
+    SigningKeys = new Dictionary<string, IAAuthKey> { [SelfIssuedKid] = selfIssuedKey },
 });
 
 app.UseAntiforgery();
+app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
+{
+    EgressPolicy = SampleEgress.Policy, Issuer = sampleAppUrl,
+    SigningKeys = new Dictionary<string, IAAuthKey> { [SelfIssuedKid] = selfIssuedKey },
+    ScopeDescriptions = FederatedWorkerScenario.ScopeDescriptions,
+});
 
 app.MapStaticAssets();
 app.MapRazorComponents<App>()

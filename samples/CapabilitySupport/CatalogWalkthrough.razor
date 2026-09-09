@@ -1,0 +1,85 @@
+@namespace AAuth.Samples.Capabilities
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.Extensions.Configuration
+@using System.Text.Json
+@inject IConfiguration Configuration
+@implements IDisposable
+
+<section class="catalog-view" aria-label="Catalog gateway walkthrough" data-step="@_session.Step">
+    <header><h1>Travel Catalog Gateway</h1><output>@_session.Step / 5 complete</output></header>
+    <label for="catalog-service">Catalog service</label>
+    <select id="catalog-service" @bind="_session.Service" disabled="@(_busy || _session.Step > 0)">
+        <option value="destinations">Destinations</option><option value="experiences">Experiences</option>
+    </select>
+    <div class="catalog-layout">
+        <ol aria-label="Protocol steps">
+            @for (var index = 0; index < CatalogDemoSession.Steps.Length; index++)
+            {
+                <li aria-current="@(index == _session.Step ? "step" : null)">@CatalogDemoSession.Steps[index]</li>
+            }
+        </ol>
+        <table aria-label="Sequence diagram">
+            <thead><tr><th>Step</th><th>From</th><th></th><th>To</th></tr></thead>
+            <tbody>
+                @for (var index = 0; index < 5; index++)
+                {
+                    <tr data-sequence-step="@(index + 1)"><td>@(index + 1)</td><td>Agent</td>
+                        <td><img src="_content/EventSupport/arrow-right.svg" width="18" height="18" alt="to" /></td>
+                        <td>@(index is 1 or 4 ? "PS / R3 AS / Catalog" : "Catalog")</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    <div class="catalog-actions">
+        <button class="catalog-next" @onclick="Next" disabled="@(!_interactive || _busy || _session.Step == 5)">
+            <img src="_content/EventSupport/arrow-right.svg" width="18" height="18" alt="" />
+            @(_busy ? "Awaiting response" : _session.Step == 5 ? "Completed" : CatalogDemoSession.Steps[_session.Step])
+        </button>
+        <button @onclick="Reset" disabled="@_busy" aria-label="Reset catalog flow" title="Reset catalog flow">
+            <img src="_content/EventSupport/rotate-ccw.svg" width="18" height="18" alt="" />
+        </button>
+    </div>
+    @if (_session.ConsentUrl is { } consent) { <a class="catalog-consent" href="@consent" target="_blank" rel="noopener">Review catalog authorization</a> }
+    @if (_error is not null) { <p role="alert">@_error</p> }
+    @if (_session.Result is { } result) { <pre data-testid="catalog-result">@result</pre> }
+    <section aria-label="Recorded exchanges">
+        @foreach (var exchange in _session.Exchanges)
+        {
+            <details open class="catalog-exchange" data-status="@exchange.Status"><summary>@exchange.Method @exchange.Url HTTP @exchange.Status</summary>
+                <pre>@JsonSerializer.Serialize(exchange, WalletDemoSession.Pretty)</pre></details>
+        }
+    </section>
+    <details open class="catalog-code"><summary>C# service-qualified enforcement</summary><pre><code>@Example</code></pre></details>
+</section>
+
+@code {
+    public const string Example = """
+        public static R3EnforcementDecision AuthorizeCatalog(R3Enforcement enforcement,
+            JsonObject verifiedAuthToken, string service)
+            => enforcement.Evaluate(verifiedAuthToken,
+                new R3OperationIdentity(Vocabulary.OpenApiGateway, R3Operation.OpenApiGateway(service, "list")));
+        """;
+    private CatalogDemoSession _session = null!;
+    private readonly CancellationTokenSource _cancellation = new();
+    private bool _busy;
+    private bool _interactive;
+    private string? _error;
+    protected override void OnInitialized() => Create();
+    protected override void OnAfterRender(bool firstRender) { if (firstRender) { _interactive = true; StateHasChanged(); } }
+    private void Create(string service = "destinations")
+    {
+        _session = new(Configuration["AAuth:AgentProvider"] ?? "http://localhost:5301",
+            Configuration["AAuth:PersonServer"] ?? "http://localhost:5100", Configuration["AAuth:Catalog"] ?? "http://localhost:5006") { Service = service };
+        _session.Changed = () => InvokeAsync(StateHasChanged);
+    }
+    private async Task Next()
+    {
+        _busy = true; _error = null;
+        try { await _session.NextAsync(_cancellation.Token); }
+        catch (Exception exception) when (exception is not OperationCanceledException) { _error = exception.Message; }
+        finally { _busy = false; }
+    }
+    private void Reset() { var service = _session.Service; _session.Dispose(); Create(service); _error = null; }
+    public void Dispose() { _cancellation.Cancel(); _cancellation.Dispose(); _session.Dispose(); }
+}

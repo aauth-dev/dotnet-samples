@@ -11,7 +11,7 @@ using AAuth.Discovery;
 using AAuth.HttpSig;
 
 const string Usage = "Usage: AgentConsole <url> --ap <agent-provider-url> [--sub <agent-id>] " +
-    "[--ps <person-server-url>] [--signing-mode jwt|hwk|jwks_uri|jkt-jwt] " +
+    "[--ps <person-server-url>] [--signing-mode jwt|hwk|jwks|jkt-jwt] " +
     "[--resource-managed] [--prefer-wait <seconds>] [--upstream-token <jwt>]";
 
 if (args.Length < 1 || args[0] is "--help" or "-h")
@@ -79,26 +79,18 @@ for (int i = 1; i < args.Length; i++)
     }
 }
 
-// Default: jwt for three-party (with PS), hwk for identity-based (no PS).
-signingMode ??= personServer is not null ? "jwt" : "hwk";
+signingMode ??= "jwt";
 
-if (signingMode is not ("jwt" or "hwk" or "jwks_uri" or "jkt-jwt"))
+if (signingMode is not ("jwt" or "hwk" or "jwks" or "jkt-jwt"))
 {
-    Console.Error.WriteLine($"Unknown signing mode: {signingMode}. Must be jwt, hwk, jwks_uri, or jkt-jwt.");
+    Console.Error.WriteLine($"Unknown signature scheme: {signingMode}. Must be jwt, hwk, jwks, or jkt-jwt.");
     return 1;
 }
 
-if (personServer is not null && signingMode is not "jwt")
+if ((personServer is not null || resourceManaged) && signingMode is not "jwt")
 {
-    Console.Error.WriteLine("Three-party flows (--ps) require --signing-mode jwt.");
-    Console.Error.WriteLine("Pseudonymous modes (hwk, jwks_uri, jkt-jwt) are for identity-based access only.");
-    return 1;
-}
-
-if (personServer is null && signingMode is "jwt")
-{
-    Console.Error.WriteLine("Agent Token mode (jwt) requires a Person Server (--ps).");
-    Console.Error.WriteLine("For identity-based access without a PS, use --signing-mode hwk, jwks_uri, or jkt-jwt.");
+    Console.Error.WriteLine("AAuth resource-managed and PS flows require --signing-mode jwt.");
+    Console.Error.WriteLine("Other schemes are generic Signature Keys demonstrations, not AAuth resource access modes.");
     return 1;
 }
 
@@ -143,43 +135,46 @@ if (File.Exists(enrollCacheFile))
 }
 else
 {
-    // Bootstrap with the Agent Provider: discover endpoints from metadata
-    var apBase = apUrl.TrimEnd('/');
-    Console.WriteLine($"Discovering Agent Provider metadata at: {apBase}");
-    var discoveryClient = new MetadataClient(new HttpClient());
-    var metaUrl = MetadataClient.BuildUrl(apBase, "aauth-agent.json");
-    var apMeta = await discoveryClient.FetchAsync(metaUrl);
-    var enrolEndpoint = (string?)apMeta["enrol_endpoint"] ?? $"{apBase}/enrol";
-    refreshEndpoint = (string?)apMeta["refresh_endpoint"] ?? $"{apBase}/refresh";
-    Console.WriteLine($"Enrolling at: {enrolEndpoint}");
-
-    var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-    var result = await apClient.EnrolAsync(apBase, subject, enrolEndpoint, personServer);
-    key = result.Key;
-    localKeyHandle = result.LocalKeyHandle;
-    agentTokenKid = result.AgentTokenKid;
-    agentJwksUri = result.JwksUri;
-    Console.WriteLine($"Enrolled successfully. Local key handle: {localKeyHandle}");
-
-    // Persist only metadata — key lives in the keystore, token is short-lived
-    Directory.CreateDirectory(Path.GetDirectoryName(enrollCacheFile)!);
-    File.WriteAllText(enrollCacheFile, JsonSerializer.Serialize(new
-    {
-        key_id = localKeyHandle,
-        agent_token_kid = agentTokenKid,
-        jwks_uri = agentJwksUri,
-        refresh_endpoint = refreshEndpoint,
-    }));
+    key = AAuthKey.Generate();
 }
+
+// Bootstrap with the Agent Provider: discover endpoints from metadata
+var apBase = apUrl.TrimEnd('/');
+Console.WriteLine($"Discovering Agent Provider metadata at: {apBase}");
+using var apHttp = new SampleHttpClient();
+using var discoveryClient = new MetadataClient(apHttp);
+var metaUrl = MetadataClient.BuildUrl(apBase, "aauth-agent.json", SampleEgress.Policy);
+var apMeta = await discoveryClient.FetchAsync(metaUrl);
+var enrolEndpoint = (string?)apMeta["enrol_endpoint"] ?? $"{apBase}/enrol";
+refreshEndpoint = (string?)apMeta["refresh_endpoint"] ?? $"{apBase}/refresh";
+Console.WriteLine($"Enrolling at: {enrolEndpoint}");
+
+var apClient = new AgentProviderClient(apHttp, keyStore);
+var result = await apClient.EnrolWithKeyAsync(apBase, null, enrolEndpoint, (AAuthKey)key, personServer);
+key = result.Key;
+localKeyHandle = result.LocalKeyHandle;
+agentTokenKid = result.AgentTokenKid;
+agentJwksUri = result.JwksUri;
+Console.WriteLine($"Enrolled successfully. Local key handle: {localKeyHandle}");
+
+// Persist only metadata — key lives in the keystore, token is short-lived
+Directory.CreateDirectory(Path.GetDirectoryName(enrollCacheFile)!);
+File.WriteAllText(enrollCacheFile, JsonSerializer.Serialize(new
+{
+    key_id = localKeyHandle,
+    agent_token_kid = agentTokenKid,
+    jwks_uri = agentJwksUri,
+    refresh_endpoint = refreshEndpoint,
+}));
 
 Console.WriteLine($"Using key handle: {localKeyHandle}");
 Console.WriteLine($"Public JWK thumbprint: {key.ComputeJwkThumbprint()}");
 Console.WriteLine();
 
-Console.WriteLine($"Signing mode: {signingMode}");
+Console.WriteLine($"Signature scheme: {signingMode}");
 
 // Build the HTTP client using the fluent AAuthClientBuilder.
-var builder = new AAuthClientBuilder(key);
+var builder = new AAuthClientBuilder(key).WithEgressPolicy(SampleEgress.Policy);
 
 // Configure signing mode
 switch (signingMode)
@@ -187,7 +182,7 @@ switch (signingMode)
     case "hwk":
         builder.UseHwk();
         break;
-    case "jwks_uri":
+    case "jwks":
         var jwksUrl = agentJwksUri ?? $"{apUrl.TrimEnd('/')}/agents/{subject}/jwks.json";
         // Per spec, the receiver looks up the key in the JWKS by `kid`.
         // The AP chooses the kid and returns it as `key_id` at enrollment.
@@ -195,35 +190,26 @@ switch (signingMode)
         // has no way to know what kid the AP published the key under.
         if (agentTokenKid is null)
             throw new InvalidOperationException(
-                "Cannot use jwks_uri signing mode: the AP did not return a key_id at enrollment. " +
-                "Re-enrol with an AP that supports jwks_uri identity.");
-        builder.UseJwksUri(jwksUrl, agentTokenKid);
+                "Cannot use direct jwks: the AP did not return a key_id at enrollment.");
+        builder.UseJwks(jwksUrl, agentTokenKid);
         break;
     case "jkt-jwt":
         // Two-key refresh: do initial refresh to get ephemeral key + naming JWT.
         // The durable key signs the naming JWT; the ephemeral key signs HTTP requests.
-        var twoKeyClient = new AgentProviderClient(new HttpClient(), keyStore);
-        var twoKeyResult = twoKeyClient.RefreshTwoKeyAsync(
-            refreshEndpoint, localKeyHandle).GetAwaiter().GetResult();
+        var twoKeyResult = await apClient.RefreshTwoKeyAsync(refreshEndpoint, localKeyHandle);
         // Rebuild the builder with the ephemeral key (not the durable key)
-        builder = new AAuthClientBuilder(twoKeyResult.EphemeralKey);
+        builder = new AAuthClientBuilder(twoKeyResult.EphemeralKey).WithEgressPolicy(SampleEgress.Policy);
         // TODO: In a long-running client, the naming JWT (5-min expiry) and ephemeral key
         // must be regenerated on refresh. For this single-request demo, the initial pair suffices.
         var currentNamingJwt = NamingJwtBuilder.Build(key, twoKeyResult.EphemeralKey);
         builder.UseJktJwt(() => currentNamingJwt);
-        // Three-party challenge handling uses the refreshed agent token
-        if (personServer is not null)
-        {
-            builder.WithTokenRefresh(AgentProviderTokenRefresher.Create(refreshEndpoint, localKeyHandle)
-                .WithKeyStore(keyStore)
-                .WithRefreshMode(RefreshMode.TwoKey)
-                .Build());
-        }
         break;
     default: // "jwt"
-        builder.WithTokenRefresh(AgentProviderTokenRefresher.Create(refreshEndpoint, localKeyHandle)
+        builder = AAuthClientBuilder.Enrolled(key)
+            .WithEgressPolicy(SampleEgress.Policy)
+            .RefreshingFrom(refreshEndpoint, localKeyHandle)
             .WithKeyStore(keyStore)
-            .Build());
+            .ToBuilder();
         break;
 }
 
@@ -299,7 +285,7 @@ if (url.AbsolutePath is "/" or "")
         {
             "hwk" => new Uri(url, "/pseudonymous"),
             "jkt-jwt" => new Uri(url, "/anchored"),
-            "jwks_uri" => new Uri(url, "/identified"),
+            "jwks" => new Uri(url, "/identified"),
             _ => new Uri(url, "/events"), // jwt → three-party baseline endpoint
         };
 }

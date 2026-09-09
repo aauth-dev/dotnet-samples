@@ -1,0 +1,1 @@
+{"key_id":"GtR1WdoAqH-5aKu4b4SMQ7nT--gfWslLzUJxE2FzQbM","agent_token_kid":"3754cbeb08c249e8bdde24e3f8acb52c","jwks_uri":"http://localhost:5301/agents/aauth%3Aagent-b420e9f196d5d65029a7f38d435fe30cf94ee8a64282b694fad2549dd6153f5b%40localhost/jwks.json","refresh_endpoint":"http://localhost:5301/refresh"}

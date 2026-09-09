@@ -52,15 +52,21 @@ public sealed class EnrollmentService
             _keyStore = keyStore;
 
             // Discover AP metadata
-            var metadataClient = new MetadataClient(new HttpClient());
-            var metaUrl = MetadataClient.BuildUrl(apBase, "aauth-agent.json");
+            using var http = new SampleHttpClient();
+            using var metadataClient = new MetadataClient(http);
+            var metaUrl = MetadataClient.BuildUrl(apBase, "aauth-agent.json", SampleEgress.Policy);
             var apMeta = await metadataClient.FetchAsync(metaUrl);
             var enrolEndpoint = (string?)apMeta["enrol_endpoint"] ?? $"{apBase}/enrol";
             _refreshEndpoint = (string?)apMeta["refresh_endpoint"] ?? $"{apBase}/refresh";
 
             // Enrol with the AP (key generated inside the store)
-            var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-            var result = await apClient.EnrolAsync(apBase, agentId, enrolEndpoint, personServer);
+            var durableKey = keyStore.LoadOrCreate("sample-app");
+            var enrollment = AAuth.AAuthClientBuilder.Bootstrap(enrolEndpoint)
+                .WithEgressPolicy(SampleEgress.Policy)
+                .WithKey(durableKey)
+                .WithKeyStore(keyStore);
+            if (!string.IsNullOrEmpty(personServer)) enrollment.WithPersonServer(personServer);
+            var result = await enrollment.EnrolAsync();
 
             // Deliberately discard result.AgentToken — we only keep the local key handle.
             // At runtime the SDK acquires a fresh token via the refresh endpoint

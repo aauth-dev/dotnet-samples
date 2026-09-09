@@ -42,7 +42,9 @@ var trustedAccessServers = new HashSet<string> { accessServerUrl };
 // published metadata — no manual HttpClient/discovery wiring.
 builder.Services.AddAAuthResource(o =>
 {
+    o.EgressPolicy = SampleEgress.Policy;
     o.Issuer = resourceUrl;
+    o.RevocationEndpoint = $"{resourceUrl}/revoke";
     o.SigningKeys[ResourceKid] = resourceKey;
     o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
     o.SignatureWindow = signatureWindowSeconds;
@@ -51,6 +53,7 @@ builder.Services.AddAAuthResource(o =>
     {
         [ScopeRead] = "See your balance and saved cards",
         [ScopeCharge] = "Charge your wallet to pay for travel",
+        ["wallet.review"] = "Review the wallet after explaining the travel purpose",
     };
 });
 builder.Services.AddAAuthAuthentication();
@@ -60,6 +63,14 @@ var app = builder.Build();
 
 // Well-known metadata + JWKS from the DI-registered resource metadata.
 app.MapAAuthWellKnown();
+AAuth.Server.RevocationEndpoint.MapAAuthRevocationEndpoint(app,
+    app.Services.GetRequiredService<AAuth.Server.IJtiStore>(), options =>
+    {
+        options.AllowTokenIssuer = true;
+        var personServers = builder.Configuration.GetSection("AAuth:TrustedPersonServers").Get<string[]>() ?? ["http://localhost:5100"];
+        options.IsTrustedPersonServer = (caller, token) => personServers.Contains(caller, StringComparer.Ordinal)
+            && token.Issuer == accessServerUrl;
+    });
 
 // One declarative pipeline. Four-party: the resource token's `aud` is the AS
 // (PersonServerAudience), routing the PS to federate; the AS is the trusted
@@ -128,6 +139,13 @@ app.MapGet("/wallet/charge", (HttpContext ctx) =>
         act = parsed.Payload?["act"],
     });
 }).RequireAAuth(scope: ScopeCharge);
+
+app.MapGet("/wallet/review", (HttpContext context) => Results.Ok(new
+{
+    access = "review", agent = context.GetAAuthVerification()!.Agent,
+    iss = context.GetAAuthVerification()!.Issuer, scope = "wallet.review",
+    review = "Wallet is available for the approved travel review.",
+})).RequireAAuth(scope: "wallet.review");
 
 app.Run();
 

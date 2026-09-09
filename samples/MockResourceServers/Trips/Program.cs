@@ -41,7 +41,9 @@ var trustedPersonServers = new HashSet<string>(
 // published metadata — no manual HttpClient/discovery wiring.
 builder.Services.AddAAuthResource(o =>
 {
+    o.EgressPolicy = SampleEgress.Policy;
     o.Issuer = resourceUrl;
+    o.RevocationEndpoint = $"{resourceUrl}/revoke";
     o.SigningKeys[ResourceKid] = resourceKey;
     o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
     o.SignatureWindow = signatureWindowSeconds;
@@ -61,6 +63,12 @@ var app = builder.Build();
 
 // Well-known metadata + JWKS from the DI-registered resource metadata.
 app.MapAAuthWellKnown();
+AAuth.Server.RevocationEndpoint.MapAAuthRevocationEndpoint(app,
+    app.Services.GetRequiredService<AAuth.Server.IJtiStore>(), options =>
+    {
+        options.AllowTokenIssuer = true;
+        options.TrustedPersonServers = trustedPersonServers;
+    });
 
 // One declarative pipeline. Mission-aware: when the agent sends a signed
 // AAuth-Mission header, the issued resource token carries the mission object so

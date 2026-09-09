@@ -37,11 +37,10 @@
 
 <p class="text-muted">
     <small>
-        <strong>Self-contained demo.</strong> Unlike the other pages, this one runs the
-        token lifecycle <em>in-process</em> with the real SDK builders and verifier — no mock
-        servers required — so you can see every wire artifact (the <code>parent_agent</code>
-        claim, the <code>subagent_token</code> request shape, the sub-agent-bound
-        <code>cnf</code>, and the nested <code>act</code>) directly.
+        <strong>Live four-party combined flow.</strong> The original caller obtains an
+        upstream PS grant. Aria mediates for its worker through the Person Server and
+        Wallet Access Server, then the worker calls Wallet with the AS-issued token.
+        Original caller, parent and worker use distinct signing keys.
     </small>
 </p>
 
@@ -76,6 +75,7 @@ string personServer = "http://localhost:5100";     // your Person Server</code><
 // spawn this worker — no parent SECRET is involved.
 var subAgentToken = new AgentTokenBuilder
 {
+    EgressPolicy = SampleEgress.Policy,
     Issuer          = agentProvider,   // the AP
     Subject         = subId,           // "aauth:aria+worker1@host"
     KeyId           = apKid,           // AP signs…
@@ -105,22 +105,38 @@ var authToken = await exchange.ExchangeAsync(
     new TokenExchangeRequest
     {
         SubagentToken = subAgentToken,  // the worker's token (built on the left)
+        UpstreamToken = upstreamToken, // the original caller's verified PS grant
+        OnInteractionRequired = ShowConsentAsync,
     });
 
 // The PS RETURNS this token to the parent. Its `agent` + `cnf` are the
 // SUB-AGENT's, so the parent can't use it — it hands it down to the
-// worker. `act` = { sub: subagent, act: { sub: parent } }.</code></pre>
+// worker. `act` = { agent: parent, act: { agent: original } }.</code></pre>
 </div>
 </div>
 
 <div class="alert alert-info">
-    Runs entirely in-process with the real <code>AAuth.Tokens</code> builders and
-    <code>AgentId</code> — no mock servers needed.
+    PS consent gates claims and delivery. The AS binds the grant to the worker.
+    The final Wallet call verifies that the parent's different key cannot use it.
 </div>
 
-<button class="btn btn-primary" @onclick="RunDemo" disabled="@_loading">
+<button class="btn btn-primary" @onclick="RunLiveDemo" disabled="@_loading">
     @(_loading ? "Running..." : "Run the parent-mediated sub-agent flow")
 </button>
+
+@if (_interactionUrl is not null && _loading)
+{
+    <div class="alert alert-warning mt-3">
+        <h5>Consent Required</h5>
+        <a href="@_interactionUrl" target="_blank" rel="noopener">Open authenticated consent</a>
+    </div>
+}
+
+@if (_resourceResponse is not null)
+{
+    <h5>Wallet Response</h5>
+    <pre><code class="language-json">@_resourceResponse</code></pre>
+}
 
 @if (_steps.Count > 0)
 {
@@ -182,160 +198,51 @@ var authToken = await exchange.ExchangeAsync(
     private string? _authClaims;
     private bool _cnfBound;
     private string? _error;
+    private string? _interactionUrl;
+    private string? _resourceResponse;
+
+    private async Task RunLiveDemo()
+    {
+        _loading = true;
+        _steps.Clear();
+        _error = _subAgentClaims = _authClaims = _resourceResponse = _interactionUrl = null;
+        using var flow = new FederatedWorkerScenario(_identity.Key, _identity.KeyId, _identity.Issuer,
+            Config["AAuth:PersonServer"] ?? "http://localhost:5100", Config["AAuth:Wallet"] ?? "http://localhost:5003");
+        flow.OnInteraction = async (interaction, _) =>
+        {
+            _interactionUrl = interaction.BuildUserUrl();
+            await InvokeAsync(StateHasChanged);
+        };
+        try
+        {
+            flow.IssueParent();
+            _steps.Add(new("Parent enrolled", "Aria receives its own key-bound identity.", flow.ParentId));
+            flow.IssueWorker();
+            _subAgentClaims = Pretty(FederatedWorkerScenario.Payload(flow.WorkerToken!));
+            _steps.Add(new("Sub-agent issued", "The worker has a distinct key and parent_agent relationship.", flow.WorkerId));
+            await flow.ObtainUpstreamAsync();
+            _steps.Add(new("Original caller authorized", "The PS authorized the original caller at the intermediary.", "Upstream cnf belongs to the original caller, not Aria."));
+            await flow.ObtainResourceAsync();
+            _steps.Add(new("Worker obtained a Wallet challenge", "Wallet binds the resource token to the worker.", "resource_token.aud names the Wallet Access Server."));
+            await flow.ExchangeAsync();
+            _authClaims = Pretty(FederatedWorkerScenario.Payload(flow.AuthToken!));
+            _cnfBound = true;
+            _steps.Add(new("PS returns the AS auth token to the parent", "PS consent and AS policy passed.", "agent = worker; act.agent = parent; act.act.agent = original."));
+            _steps.Add(new("Parent hands the token to the worker", "Only the worker can present this grant.", "No private key is forwarded to the PS or AS."));
+            await flow.CallWalletAsync();
+            _resourceResponse = flow.ResourceResponse;
+            _steps.Add(new("Sub-agent calls the resource with the token", "Wallet accepted the worker and rejected the parent's key.", "Actual signed HTTP responses: worker 200, parent 401."));
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _loading = false; }
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         await JS.InvokeVoidAsync("highlightCode");
     }
 
-    private void RunDemo()
-    {
-        _loading = true;
-        _steps.Clear();
-        _subAgentClaims = null;
-        _authClaims = null;
-        _error = null;
-
-        try
-        {
-            // Identities. The AP (this self-hosted app) issues per-instance
-            // identities; the parent and sub-agent each get their own key.
-            var apKey = _identity.Key;
-            var apKid = _identity.KeyId;
-            var apUrl = _identity.Issuer;
-            var personServer = Config["AAuth:PersonServer"] ?? "http://localhost:5100";
-            var resourceUrl = Config["AAuth:Calendar"] ?? "http://localhost:5001";
-
-            var parentKey = AAuthKey.Generate();
-            var subAgentKey = AAuthKey.Generate();
-
-            var parentId = $"aauth:aria@{Host(apUrl)}";
-            var subId = $"aauth:aria+worker1@{Host(apUrl)}";
-
-            // 1. The AP issues the parent its identity.
-            var parentToken = new AgentTokenBuilder
-            {
-                Issuer = apUrl,
-                Subject = parentId,
-                KeyId = apKid,
-                Key = apKey,
-                ConfirmationKey = parentKey,
-                PersonServer = personServer,
-            }.Build();
-            _steps.Add(new Step("Parent enrolled",
-                "Aria, your assistant, first proves who it is to the system.",
-                $"The AP issued the orchestrator its identity ({parentId})."));
-
-            // 2. The AP issues the sub-agent its own identity with parent_agent.
-            var subAgentToken = new AgentTokenBuilder
-            {
-                Issuer = apUrl,
-                Subject = subId,
-                KeyId = apKid,
-                Key = apKey,
-                ConfirmationKey = subAgentKey,
-                ParentAgent = parentId,
-                PersonServer = personServer,
-            }.Build();
-
-            var subParsed = AgentId.Parse(subId);
-            _steps.Add(new Step("Sub-agent issued",
-                "Aria creates a short-lived helper that has its own identity but is clearly " +
-                "marked as working for Aria.",
-                $"The worker has its own key + identity. AgentId.IsSubAgent = {subParsed.IsSubAgent}; " +
-                $"derived parent = {subParsed.ParentAgent}."));
-            _subAgentClaims = Pretty(DecodePayload(subAgentToken));
-
-            // 3. The sub-agent obtains a resource token bound to ITS key. The
-            // resource binds agent_jkt to whoever signed the request (the worker).
-            var resourceKey = AAuthKey.Generate();
-            var resourceToken = new ResourceTokenBuilder
-            {
-                Issuer = resourceUrl,
-                Audience = personServer,
-                Agent = subId,
-                AgentJkt = subAgentKey.ComputeJwkThumbprint(),
-                Key = resourceKey,
-                KeyId = "calendar-1",
-                Scope = "calendar.read",
-            }.Build();
-            _steps.Add(new Step("Worker obtained a resource token",
-                "The helper fetches what it needs from the resource under its own name, then " +
-                "passes the result back to Aria.",
-                "The resource bound agent_jkt to the worker's key, then the worker handed " +
-                "the token to its parent out-of-band (e.g. IPC)."));
-
-            // 4. The parent mediates the exchange at the PS, presenting the
-            // sub-agent token as subagent_token (the request the SDK POSTs).
-            var exchangeBody = new JsonObject
-            {
-                ["resource_token"] = "<resource_token from step 3>",
-                ["subagent_token"] = "<sub-agent agent token from step 2>",
-            };
-            _steps.Add(new Step("Parent exchanges at the Person Server",
-                "Aria — not the helper — takes that result to your Person Server and signs for " +
-                "it on the helper's behalf. The helper never contacts your Person Server directly.",
-                "The parent signs with its OWN key and includes subagent_token. The PS " +
-                "verifies the worker token, checks parent_agent names the signer, and " +
-                "binds the resource-token PoP to the worker's key (step 6 override)."));
-
-            // 5. The auth token the PS mints, parent-mediated: bound to the
-            // sub-agent's key, with act recording the parent as the immediate
-            // upstream agent ({ agent: parent }). The sub-agent is the top-level
-            // `agent` and is not repeated inside `act`.
-            var psKey = AAuthKey.Generate();
-            var authToken = new AuthTokenBuilder
-            {
-                Issuer = personServer,
-                Audience = resourceUrl,
-                Agent = subId,
-                AgentConfirmationKey = subAgentKey,
-                Key = psKey,
-                KeyId = "ps-1",
-                Subject = "user:alice",
-                Scope = "calendar.read",
-                Act = ActChainBuilder.BuildNestedAct(parentId),
-            }.Build();
-
-            var authPayload = DecodePayload(authToken);
-            _authClaims = Pretty(authPayload);
-
-            // Confirm the auth token's cnf binds to the SUB-AGENT, not the parent.
-            var cnfJwk = authPayload["cnf"]?["jwk"] as JsonObject;
-            _cnfBound = cnfJwk is not null
-                && AAuthKey.FromJwk(cnfJwk).ComputeJwkThumbprint() == subAgentKey.ComputeJwkThumbprint();
-            _steps.Add(new Step("PS returns the auth token to the parent",
-                "Your Person Server grants access and returns the token to Aria — the " +
-                "response to the request Aria signed. Aria can't use it itself.",
-                "agent + cnf are the sub-agent's, so PoP binds to the worker; the parent " +
-                "receives a token it cannot present. act = { sub: worker, act: { sub: parent } } " +
-                "records the full delegation chain for audit."));
-
-            // 6. The parent hands the worker-bound token down to the sub-agent.
-            _steps.Add(new Step("Parent hands the token to the worker",
-                "Aria passes the token down to the helper — the only party whose key can use it.",
-                "Out-of-band handoff (e.g. IPC), the reverse of the resource-token handoff in " +
-                "step 3. The worker then signs the resource call with its OWN key (the cnf the " +
-                "PS bound), while the nested act still lets the resource audit worker → parent."));
-
-            // 7. The sub-agent calls the resource itself with the auth token.
-            _steps.Add(new Step("Sub-agent calls the resource with the token",
-                "The helper itself makes the final call to the resource — Aria is no longer involved.",
-                "The worker signs the request with its OWN key and presents the auth_token. The " +
-                "resource verifies the signature against the token's cnf.jwk, sees agent = the " +
-                "sub-agent, and reads act = { sub: worker, act: { sub: parent } } for its audit log."));
-        }
-        catch (Exception ex)
-        {
-            _error = ex.Message;
-        }
-        finally
-        {
-            _loading = false;
-        }
-    }
-
-    private static string Host(string url)
+     private static string Host(string url)
         => Uri.TryCreate(url, UriKind.Absolute, out var u) ? u.Authority : url;
 
     private static JsonObject DecodePayload(string jwt)

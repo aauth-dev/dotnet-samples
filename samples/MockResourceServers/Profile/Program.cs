@@ -37,7 +37,9 @@ var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:Signatu
 // published metadata — no manual HttpClient/discovery wiring.
 builder.Services.AddAAuthResource(o =>
 {
+    o.EgressPolicy = SampleEgress.Policy;
     o.Issuer = resourceUrl;
+    o.RevocationEndpoint = $"{resourceUrl}/revoke";
     o.SigningKeys[ResourceKid] = resourceKey;
     o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
     o.SignatureWindow = signatureWindowSeconds;
@@ -50,6 +52,8 @@ var app = builder.Build();
 
 // Well-known metadata + JWKS from the DI-registered resource metadata.
 app.MapAAuthWellKnown();
+AAuth.Server.RevocationEndpoint.MapAAuthRevocationEndpoint(app,
+    app.Services.GetRequiredService<AAuth.Server.IJtiStore>(), options => options.AllowTokenIssuer = true);
 
 // Identity-based access: every endpoint declares .RequireAAuthSignature(); this
 // single post-routing middleware verifies the agent's HTTP signature only (no
@@ -68,7 +72,7 @@ app.MapGet("/", () => Results.Ok(new
     flows = new[]
     {
         new { path = "/pseudonymous", scheme = "hwk", auth = "signature only" },
-        new { path = "/identified", scheme = "jwks_uri", auth = "AAuth.Identified" },
+        new { path = "/identified", scheme = "jwks", auth = "AAuth.Identified" },
         new { path = "/anchored", scheme = "jkt-jwt", auth = "signature only" },
     },
 }));
@@ -87,7 +91,7 @@ app.MapGet("/pseudonymous", (HttpContext ctx) =>
         jkt = parsed.Jkt,
         note = "Resource sees key thumbprint only — agent identity unknown.",
     });
-}).RequireAAuthSignature();
+}).RequireGenericSignature();
 
 // GET /identified — scheme=jwks_uri. Agent-identity access: the resource fetches
 // the agent's public key from its published JWKS URI and learns a named,
@@ -95,16 +99,20 @@ app.MapGet("/pseudonymous", (HttpContext ctx) =>
 app.MapGet("/identified", (HttpContext ctx) =>
 {
     var parsed = ctx.GetAAuthParsedKey()!;
+    var verified = ctx.GetAAuthVerification()!;
 
     return Results.Ok(new
     {
         signingMode = "agent-identity",
-        scheme = "jwks_uri",
+        scheme = parsed.Scheme,
+        identifier = parsed.Scheme == "jwt" ? verified.Agent : parsed.Identifier,
         jwks_uri = parsed.JwksUri,
         kid = parsed.Kid,
-        note = "Resource verified agent's key via JWKS URI — full cryptographic identity.",
+        note = parsed.Scheme == "jwt"
+            ? "Verified agent JWT and confirmation-key HTTP proof; no PS/AS authorization exchange."
+            : "Generic Signature Keys identity from admitted key discovery; not an AAuth resource access mode.",
     });
-}).RequireAAuthSignature(identified: true);
+}).RequireGenericSignature(identified: true);
 
 // GET /anchored — scheme=jkt-jwt. Key-rotation access: a naming JWT (signed by
 // the agent's durable enrollment key) names an ephemeral signing key. The
@@ -126,7 +134,7 @@ app.MapGet("/anchored", (HttpContext ctx) =>
         jkt = parsed.Jkt,
         note = "Ephemeral key anchored to a durable enrollment key via naming JWT — agent known by durable key thumbprint.",
     });
-}).RequireAAuthSignature();
+}).RequireGenericSignature();
 
 app.Run();
 

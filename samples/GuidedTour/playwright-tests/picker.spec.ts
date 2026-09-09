@@ -14,7 +14,7 @@ test('flow picker offers all eleven flows and reacts to selection', async ({ pag
   await expect(flow.locator('option')).toHaveCount(11);
   await expect(flow.locator('option')).toContainText([
     'Bootstrap',
-    'Identity-based',
+    'Generic Signature Keys',
     'Resource-Managed',
     'PS-Asserted (Direct Grant)',
     'PS-Asserted (Deferred)',

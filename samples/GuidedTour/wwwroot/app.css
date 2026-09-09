@@ -153,7 +153,8 @@ button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef44
   border-radius: 6px;
   padding: 0.4rem 0.6rem;
   font-size: 0.95rem;
-  min-width: 22rem;
+    min-width: min(22rem, 100%);
+    max-width: 100%;
 }
 .flow-picker select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .flow-picker__desc {
@@ -188,13 +189,23 @@ button.deny:hover:not(:disabled) { filter: brightness(1.05); border-color: #ef44
 
 .layout {
     display: grid;
-    grid-template-columns: 240px 1fr 1fr;
+    grid-template-columns: 240px minmax(0, 1fr) minmax(0, 1fr);
     gap: 1px;
     background: var(--border);
     flex: 1;
     min-height: 0;
 }
 .layout > * { background: var(--bg); padding: 1rem; overflow: auto; }
+
+@media (max-width: 760px) {
+    body { height: auto; min-height: 100%; }
+    .topbar, .flow-picker, .polling { flex-shrink: 0; }
+    .topbar .config { min-width: 0; overflow-wrap: anywhere; }
+    .flow-picker__label { min-width: 0; }
+    .flow-picker select { width: 100%; }
+    .layout { grid-template-columns: minmax(0, 1fr); flex: none; }
+    .layout > * { min-width: 0; }
+}
 
 /* step list */
 .step-list { list-style: none; margin: 0; padding: 0; }

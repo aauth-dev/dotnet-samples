@@ -1,4 +1,5 @@
 import { test, expect } from '../../../tests/e2e/helpers/fixtures';
+import { approvePersonConsent } from '../../../tests/e2e/helpers/consent';
 import {
   openTour,
   selectFlow,
@@ -9,7 +10,7 @@ import {
   doneSteps,
   TourMode,
 } from '../../../tests/e2e/helpers/tour';
-import { approveInPopup, denyInPopup } from '../../../tests/e2e/helpers/consent';
+import { approveInPopup, denyInPopup, authenticateConsent } from '../../../tests/e2e/helpers/consent';
 
 /**
  * Rich Resource Requests (R3, four-party) — Guided Tour.
@@ -32,9 +33,58 @@ import { approveInPopup, denyInPopup } from '../../../tests/e2e/helpers/consent'
 test.describe('Rich Resource Requests (Guided Tour)', () => {
   test.describe.configure({ timeout: 180_000 });
 
+  test('account switch keeps the agent but rejects the previous grant and stale consent', async ({ page, context }, testInfo) => {
+    await openTour(page);
+    await selectFlow(page, TourMode.RichRequests);
+    await page.locator('#bookings-account').selectOption('personal');
+    for (let step = 1; step <= 4; step++) {
+      await page.locator('button.primary').click();
+      await expect(doneSteps(page)).toHaveCount(step);
+    }
+    await page.locator('button.primary').click();
+    await approvePersonConsent(page, 'a.worker-consent');
+    await expect(doneSteps(page)).toHaveCount(5);
+    await page.locator('button.primary').click();
+    await expect(doneSteps(page)).toHaveCount(6);
+    await selectStep(page, 5);
+    const personal = await readResponseJson(page) as Record<string, unknown>;
+    expect(personal.account).toBe('personal');
+
+    await page.locator('#bookings-account').selectOption('work');
+    await expect(doneSteps(page)).toHaveCount(0);
+    await page.getByRole('button', { name: 'Check previous account grant', exact: true }).click();
+    await expect(page.locator('.account-probe')).toContainText('401 Unauthorized: previous account grant rejected');
+    for (let step = 1; step <= 4; step++) {
+      await page.locator('button.primary').click();
+      await expect(doneSteps(page)).toHaveCount(step);
+    }
+    await page.locator('button.primary').click();
+    const link = page.locator('a.worker-consent');
+    await expect(link).toBeVisible();
+    const [popup] = await Promise.all([context.waitForEvent('page'), link.click()]);
+    await authenticateConsent(popup);
+    await expect(popup.locator('body')).toContainText('work');
+    await denyInPopup(popup);
+    await popup.close();
+    await expect(page.locator('header.topbar .error')).toContainText(/denied/i);
+    await expect(doneSteps(page)).toHaveCount(4);
+    await page.locator('button.primary').click();
+    await approvePersonConsent(page, 'a.worker-consent');
+    await expect(doneSteps(page)).toHaveCount(5);
+    await page.locator('button.primary').click();
+    await expect(doneSteps(page)).toHaveCount(6);
+    await selectStep(page, 5);
+    const work = await readResponseJson(page) as Record<string, unknown>;
+    expect(work.account).toBe('work');
+    expect(work.subject).toBe(personal.subject);
+    expect(work.agent).toBe(personal.agent);
+    await page.screenshot({ path: testInfo.outputPath('accounts-desktop.png') });
+  });
+
   test('approve the per-call proposal at the R3 AS resolves both operations', async ({ page, context }) => {
     await openTour(page);
     await selectFlow(page, TourMode.RichRequests);
+    await page.locator('#bookings-account').selectOption('personal');
 
     // Four-party R3 shows a distinct Bookings resource lane and a dedicated
     // R3 Access Server lane (rendered on the same red `as` lane as Federated).
@@ -46,7 +96,8 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
     // Run all: the granted path (search 1–6) and the confirm challenge +
     // proposal exchange (7–9) run, then the flow parks on the user-approval
     // step (10 done) with the R3 AS interaction link shown.
-    await runAll(page);
+    await page.getByRole('button', { name: 'Run all' }).click();
+    await approvePersonConsent(page, 'a.worker-consent');
     const link = page.locator('a.primary.approve');
     await expect(link).toBeVisible();
     await expect(doneSteps(page)).toHaveCount(10);
@@ -58,7 +109,9 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
       link.click(),
     ]);
     // The R3 AS consent screen is unmistakably badged "R3 Access Server".
+    await authenticateConsent(popup);
     await expect(popup.locator('.badge')).toContainText('R3 Access Server');
+    await expect(popup.locator('body')).toContainText('Personal reservations');
     await approveInPopup(popup);
 
     // The poll loop resolves and records the per-call auth_token step (12 done).
@@ -75,6 +128,7 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
     expect(search.accessMode).toBe('four-party-r3');
     expect(search.operationId).toBe('searchAvailability');
     expect(search.source).toBe('r3_granted');
+    expect(search.account).toBe('personal');
     expect(typeof search.r3_uri).toBe('string');
     expect(typeof search.r3_s256).toBe('string');
 
@@ -87,6 +141,7 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
     expect(confirm.operationId).toBe('confirmReservation');
     expect(confirm.source).toBe('per-call-r3_granted');
     expect(confirm.status).toBe('confirmed');
+    expect(confirm.account).toBe('personal');
     expect(typeof confirm.r3_uri).toBe('string');
     expect(typeof confirm.r3_s256).toBe('string');
 
@@ -95,7 +150,10 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
     // (guards against rendering "(none)" when the claim shape is misread).
     await selectStep(page, 13);
     const inspector = page.locator('section.payload');
-    await expect(inspector).toContainText('r3_granted: searchAvailability, holdReservation');
+    await expect(inspector).toContainText('searchAvailabilityPost');
+    await expect(inspector).toContainText('holdReservationPost');
+    await expect(inspector).toContainText('searchAvailability');
+    await expect(inspector).toContainText('holdReservation');
     await expect(inspector).toContainText('r3_conditional: confirmReservation');
   });
 
@@ -103,7 +161,8 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
     await openTour(page);
     await selectFlow(page, TourMode.RichRequests);
 
-    await runAll(page);
+    await page.getByRole('button', { name: 'Run all' }).click();
+    await approvePersonConsent(page, 'a.worker-consent');
     const link = page.locator('a.primary.approve');
     await expect(link).toBeVisible();
 
@@ -111,6 +170,7 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
       context.waitForEvent('page'),
       link.click(),
     ]);
+    await authenticateConsent(popup);
     await expect(popup.locator('.badge')).toContainText('R3 Access Server');
     await denyInPopup(popup);
 

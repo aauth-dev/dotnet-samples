@@ -33,6 +33,10 @@
     </section>
 
     <section class="flow-index" aria-label="Flow index">
+        <a href="/events">Bookings Events: subscription and notification walkthrough</a>
+        <a href="/wallet-protocol">Wallet Protocol: AS clarification, direct chaining and revocation</a>
+        <a href="/documents">Document Release</a>
+        <a href="/catalog-gateway">Travel Catalog: service-qualified OpenAPI gateway</a>
         @foreach (var f in Flows)
         {
             <a class="flow-card" href="@($"tour?flow={f.Mode}")">
@@ -61,9 +65,9 @@
         new(1, "Bootstrap", "Bootstrap — keygen + AP enrol",
             "Before Aria can help with anything, it generates its own keypair and enrols with an Agent Provider to get a signed agent token.",
             new[] { "Agent ↔ Agent Provider", "no PS" }),
-        new(2, "Identity", "Identity-based access",
-            "Aria reads your Profile and the server grants or denies based purely on the request signature — no Person Server, no consent screen.",
-            new[] { "Agent + Profile", "2 steps", "hwk / jwks_uri / jkt-jwt" }),
+        new(2, "Identity", "Generic Signature Keys",
+            "Profile demonstrates pseudonymous and direct-key signatures. These are separate from the four AAuth resource access modes.",
+            new[] { "Agent + Profile", "2 steps", "hwk / jwks / jkt-jwt" }),
         new(3, "ResourceManaged", "Resource-Managed — Two-Party",
             "Aria reads your Inbox to import trip confirmations, but the Inbox manages authorization itself — its own consent page issues an opaque AAuth-Access token, no Person Server in sight.",
             new[] { "Agent + Inbox", "6 steps", "you approve", "first-party OAuth role" }),
@@ -90,6 +94,6 @@
             new[] { "Agent + Concierge + Trips + PS", "14 steps", "dual governance" }),
         new(11, "SubAgent", "Sub-Agents — Parent-Mediated Workers",
             "Aria spins up a short-lived worker with its own key + identity under one consent; the worker fetches a resource token, Aria mediates the exchange, and hands the worker-bound token back down to it.",
-            new[] { "Parent + Sub-Agent + Resource + PS", "7 steps", "in-process" }),
+            new[] { "Original + Parent + Worker + PS + AS", "7 steps", "live federation" }),
     };
 }

@@ -3,6 +3,7 @@
 @using AAuth.Crypto
 @using AAuth.HttpSig
 @inject IJSRuntime JS
+@inject EnrollmentService Enrollment
 @rendermode InteractiveServer
 
 <PageTitle>Inbox — Resource-Managed</PageTitle>
@@ -20,7 +21,11 @@
 </details>
 
 <p>
-    Two parties only (agent + resource). The first call returns
+    Authorization has two parties (agent + Inbox), with no PS/AS token exchange.
+    On first use, SampleApp separately enrolls its persisted durable key with the
+    Agent Provider using a signed request. It retains the local key handle and
+    obtains an <code>aa-agent+jwt</code> from the AP's signed refresh endpoint
+    before calling the Inbox. The first resource call returns
     <code>202</code> with an interaction requirement pointing at the Inbox's own
     consent page; once you approve, the Inbox issues an <code>AAuth-Access</code>
     token that the SDK captures and replays as
@@ -30,10 +35,15 @@
 <div class="row">
 <div class="col-md-6">
 <h5>Client Code</h5>
-<pre><code class="language-csharp">var key = AAuthKey.Generate();
+<pre><code class="language-csharp">// The injected EnrollmentService discovers AP metadata, signs enrollment
+// with a persisted durable key, and retains the key handle and refresh URL.
+await Enrollment.EnsureEnrolledAsync();
+var inbox = Config["AAuth:Inbox"]!.TrimEnd('/');
 
-using var client = new AAuthClientBuilder(key)
-    .UseHwk()
+using var client = AAuthClientBuilder.Enrolled(Enrollment.Key)
+    .WithEgressPolicy(SampleEgress.Policy)
+    .RefreshingFrom(Enrollment.RefreshEndpoint, Enrollment.LocalKeyHandle)
+    .WithKeyStore(Enrollment.KeyStore)
     .WithResourceManagedAccess()
     .WithInteractionHandling(o =&gt;
     {
@@ -56,6 +66,7 @@ var resp = await client.GetAsync($"{inbox}/messages");</code></pre>
 // metadata (access_mode + authorization_endpoint).
 builder.Services.AddAAuthResource(o =&gt;
 {
+    o.EgressPolicy = SampleEgress.Policy;
     o.Issuer = "https://resource.example";
     o.SigningKeys["inbox-1"] = resourceKey;
     o.AccessMode = AAuthConstants.AccessModes.AAuthAccessToken;
@@ -77,8 +88,8 @@ var store = app.Services.GetRequiredService&lt;IOpaqueTokenStore&gt;();
 
 app.MapAAuthWellKnown();
 
-// Two-party (no PS/AS): verify the HTTP signature only —
-// there is no auth-token issuer to verify.
+// Verify the agent JWT issuer, expiry and cnf key, then the HTTP signature.
+// Authorization belongs to the Inbox; no PS/AS auth-token exchange occurs.
 app.UseRouting();
 app.UseAAuth();
 
@@ -113,7 +124,8 @@ app.MapAAuthInteractionPoll().RequireAAuthSignature();</code></pre>
 {
     <div class="mt-3 alert alert-info">
         <strong>The Inbox needs your approval.</strong>
-        Open its consent page, click <em>Approve</em>, then return here —
+        <ConsentProgress ConsentPath="/consent" DecisionPath="/consent" />
+        Sign in at its consent page, submit <em>Approve</em> or <em>Deny</em>, then return here —
         the SDK is polling and will continue automatically.
         <div class="mt-2">
             <a class="btn btn-success btn-sm" href="@_consentUrl" target="_blank" rel="noopener" id="consent-link">
@@ -167,11 +179,13 @@ app.MapAAuthInteractionPoll().RequireAAuthSignature();</code></pre>
 
         try
         {
-            var key = AAuthKey.Generate();
+            await Enrollment.EnsureEnrolledAsync();
             var inbox = Config["AAuth:Inbox"]!.TrimEnd('/');
 
-            using var client = new AAuthClientBuilder(key)
-                .UseHwk()
+            using var client = AAuthClientBuilder.Enrolled(Enrollment.Key)
+                .WithEgressPolicy(SampleEgress.Policy)
+                .RefreshingFrom(Enrollment.RefreshEndpoint, Enrollment.LocalKeyHandle)
+                .WithKeyStore(Enrollment.KeyStore)
                 .WithResourceManagedAccess()
                 .WithInteractionHandling(o =>
                 {
@@ -191,7 +205,7 @@ app.MapAAuthInteractionPoll().RequireAAuthSignature();</code></pre>
             first.Dispose();
 
             // 2. Replay the captured token to read the inbox.
-            var response = await client.GetAsync($"{inbox}/messages");
+            using var response = await client.GetAsync($"{inbox}/messages");
             _status = $"{(int)response.StatusCode} {response.ReasonPhrase}";
             _success = response.IsSuccessStatusCode;
             var raw = await response.Content.ReadAsStringAsync();

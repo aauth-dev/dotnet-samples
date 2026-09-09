@@ -1,0 +1,125 @@
+@namespace AAuth.Samples.Capabilities
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.Extensions.Configuration
+@using System.Text.Json
+@inject IConfiguration Configuration
+@implements IDisposable
+
+<section class="wallet-walkthrough" aria-label="Wallet protocol walkthrough" data-step="@_session.Step" data-flow="@_session.Flow">
+    <header><h1>Wallet Protocol</h1><output aria-live="polite">@_session.Step / @_session.Steps.Length complete</output></header>
+    <label for="wallet-flow">Flow</label>
+    <select id="wallet-flow" @bind="_session.Flow" disabled="@(_busy || _session.Step > 0)">
+        <option value="Clarification">AS clarification</option>
+        <option value="DirectAs">Direct AS chaining</option>
+        <option value="Revocation">Issuer-qualified revocation</option>
+    </select>
+    <div class="wallet-layout">
+        <ol aria-label="Protocol steps">
+            @for (var index = 0; index < _session.Steps.Length; index++)
+            {
+                <li class="@(index < _session.Step ? "complete" : index == _session.Step ? "current" : "")"
+                    aria-current="@(index == _session.Step ? "step" : null)">@_session.Steps[index]</li>
+            }
+        </ol>
+        <table aria-label="Sequence diagram">
+            <thead><tr><th>Step</th><th>From</th><th></th><th>To</th></tr></thead>
+            <tbody>
+                @for (var index = 0; index < _session.Steps.Length; index++)
+                {
+                    var route = Route(index);
+                    <tr class="@(index == _session.Step ? "current" : "")" data-sequence-step="@(index + 1)">
+                        <td>@(index + 1)</td><td>@route.From</td><td><img src="_content/EventSupport/arrow-right.svg" width="18" height="18" alt="to" /></td><td>@route.To</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    <div class="wallet-actions">
+        <button class="wallet-next" disabled="@(!_interactive || _busy || _session.Cancelled || _session.Step == _session.Steps.Length)" @onclick="Next">
+            <img src="_content/EventSupport/arrow-right.svg" width="18" height="18" alt="" />
+            @(_busy ? "Awaiting response" : _session.Step == _session.Steps.Length ? "Completed" : _session.Steps[_session.Step])
+        </button>
+        <button disabled="@_busy" @onclick="Reset" aria-label="Reset wallet flow" title="Reset wallet flow">
+            <img src="_content/EventSupport/rotate-ccw.svg" width="18" height="18" alt="" />
+        </button>
+    </div>
+    @if (_session.Question is { } question)
+    {
+        <section class="wallet-question" aria-label="AS clarification">
+            <h2>Access Server clarification</h2><p>@question</p>
+            <label for="wallet-answer">Justification</label>
+            <textarea id="wallet-answer" @bind="_answer"></textarea>
+            <button @onclick="() => _session.Answer(_answer)" disabled="@string.IsNullOrWhiteSpace(_answer)">Send answer</button>
+            <button @onclick="_session.Cancel">Cancel request</button>
+        </section>
+    }
+    @if (_session.ConsentUrl is { } consent)
+    {
+        <aside role="status"><a class="wallet-consent" href="@consent" target="_blank" rel="noopener">Review authorization</a></aside>
+    }
+    @if (_error is not null) { <p role="alert">@_error</p> }
+    @if (_session.Cancelled) { <p role="status" data-testid="wallet-cancelled">Request cancelled. No auth token was issued.</p> }
+    @if (_session.Result is { } result)
+    {
+        <section aria-label="Step result"><h2>Step @_session.Step result</h2><pre data-testid="wallet-result">@result</pre></section>
+    }
+    <section aria-label="Recorded exchanges">
+        @foreach (var exchange in _session.Exchanges)
+        {
+            <details class="wallet-exchange" data-status="@exchange.Status" open>
+                <summary>@exchange.Method @exchange.Url <strong>HTTP @exchange.Status</strong></summary>
+                <pre>@JsonSerializer.Serialize(exchange, WalletDemoSession.Pretty)</pre>
+            </details>
+        }
+    </section>
+    <details class="wallet-code" open data-flow="@_session.Flow" data-step="@_session.Step">
+        <summary>C# @_session.Flow</summary><pre><code>@WalletScenarioCode.For(_session.Flow)</code></pre>
+    </details>
+</section>
+
+@code {
+    private WalletDemoSession _session = null!;
+    private readonly CancellationTokenSource _cancellation = new();
+    private bool _busy;
+    private bool _interactive;
+    private string _answer = "Compare the available travel budget.";
+    private string? _error;
+    protected override void OnInitialized() => Create();
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (!firstRender) return;
+        _interactive = true;
+        StateHasChanged();
+    }
+    private void Create(WalletFlow flow = WalletFlow.Clarification)
+    {
+        _session = new(Configuration["AAuth:AgentProvider"] ?? "http://localhost:5301",
+            Configuration["AAuth:PersonServer"] ?? "http://localhost:5100",
+            Configuration["AAuth:Wallet"] ?? "http://localhost:5003",
+            Configuration["AAuth:Concierge"] ?? "http://localhost:5200") { Flow = flow };
+        _session.Changed = () => InvokeAsync(StateHasChanged);
+    }
+    private async Task Next()
+    {
+        _busy = true; _error = null;
+        try { await _session.NextAsync(_cancellation.Token); }
+        catch (Exception exception) when (exception is not OperationCanceledException) { _error = exception.Message; }
+        finally { _busy = false; }
+    }
+    private void Reset()
+    {
+        var flow = _session.Flow;
+        _session.Dispose(); Create(flow); _error = null;
+    }
+    private (string From, string To) Route(int index) => index switch
+    {
+        0 => ("Agent", "AP enrollment"),
+        2 => ("Agent / PS", "AS / user"),
+        3 or 5 when _session.Flow == WalletFlow.DirectAs => ("Concierge", "AS / Wallet"),
+        5 when _session.Flow == WalletFlow.Revocation => ("Agent / PS", "Wallet /revoke"),
+        7 => ("Agent / PS", "AS / user / Wallet"),
+        _ => ("Agent", _session.Flow == WalletFlow.DirectAs && index == 1 ? "Concierge" : "Wallet"),
+    };
+    public void Dispose() { _cancellation.Cancel(); _cancellation.Dispose(); _session.Dispose(); }
+}

@@ -1,0 +1,92 @@
+using System.Net;
+using System.Text.Json.Nodes;
+using AAuth.Agent;
+using AAuth.Crypto;
+using AAuth.Discovery;
+using AAuth.Headers;
+
+namespace AAuth.Samples.Capabilities;
+
+public sealed class CatalogDemoSession(string provider, string person, string resource) : IDisposable
+{
+    private readonly AAuthKey _key = AAuthKey.Generate();
+    private readonly HttpClient _http = AAuthHttpTransport.CreateClient(SampleEgress.Policy);
+    private string? _agentToken;
+    private string? _authToken;
+    public int Step { get; private set; }
+    public string Service { get; set; } = "destinations";
+    public string OtherService => Service == "destinations" ? "experiences" : "destinations";
+    public string? ConsentUrl { get; private set; }
+    public string? Result { get; private set; }
+    public Func<Task>? Changed { get; set; }
+    public List<ScenarioExchange> Exchanges { get; } = [];
+    public static string[] Steps { get; } = ["Discover catalog services", "Authorize selected service", "Read selected catalog",
+        "Reject a sibling-service grant", "Authorize sibling and recover"];
+
+    public async Task NextAsync(CancellationToken cancellationToken)
+    {
+        switch (Step)
+        {
+            case 0:
+                using (var metadata = new MetadataClient(_http))
+                {
+                    var document = await metadata.FetchAsync(metadata.GetUrl(resource, "aauth-resource.json"), cancellationToken);
+                    var services = document["r3_vocabularies"]!["urn:aauth:vocabulary:openapi-gateway"]!.AsObject();
+                    var definitions = new JsonObject();
+                    foreach (var service in services)
+                    {
+                        using var request = new HttpRequestMessage(HttpMethod.Get, (string)service.Value!);
+                        using var response = await AAuthHttpTransport.SendAsync(_http, request, cancellationToken);
+                        response.EnsureSuccessStatusCode();
+                        definitions[service.Key] = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+                    }
+                    Result = new JsonObject { ["metadata"] = document, ["definitions"] = definitions }.ToJsonString(WalletDemoSession.Pretty);
+                }
+                var enrolled = await AAuthClientBuilder.Bootstrap(provider + "/enrol").WithKey(_key)
+                    .WithKeyStore(new InMemoryKeyStore()).WithPersonServer(person).WithEgressPolicy(SampleEgress.Policy).EnrolAsync(cancellationToken);
+                _agentToken = enrolled.AgentToken;
+                break;
+            case 1: _authToken = await AuthorizeAsync(Service, cancellationToken); break;
+            case 2: await ReadAsync(Service, HttpStatusCode.OK, cancellationToken); break;
+            case 3: await ReadAsync(OtherService, HttpStatusCode.Forbidden, cancellationToken); break;
+            case 4:
+                _authToken = await AuthorizeAsync(OtherService, cancellationToken);
+                await ReadAsync(OtherService, HttpStatusCode.OK, cancellationToken); break;
+            default: return;
+        }
+        Step++;
+    }
+
+    private async Task<string> AuthorizeAsync(string service, CancellationToken cancellationToken)
+    {
+        using var signed = Signed(_agentToken!);
+        using var challenge = await signed.GetAsync(resource + "/catalog/" + service, cancellationToken);
+        if (challenge.StatusCode != HttpStatusCode.Unauthorized) throw new InvalidOperationException("Expected catalog challenge.");
+        var token = AAuthRequirementHeader.Parse(challenge.Headers.GetValues("AAuth-Requirement").First()).ResourceToken!;
+        using var metadata = new MetadataClient(_http);
+        var grant = await new TokenExchangeClient(signed, metadata).ExchangeAsync(person, token, new TokenExchangeRequest
+        {
+            OnInteractionRequired = async (interaction, _) =>
+            {
+                ConsentUrl = interaction.BuildUserUrl();
+                if (Changed is not null) await Changed();
+            },
+        }, cancellationToken);
+        ConsentUrl = null;
+        Result = ScenarioWireHandler.Claims(grant).ToJsonString(WalletDemoSession.Pretty);
+        return grant;
+    }
+
+    private async Task ReadAsync(string service, HttpStatusCode expected, CancellationToken cancellationToken)
+    {
+        using var signed = Signed(_authToken!);
+        using var response = await signed.GetAsync(resource + "/catalog/" + service, cancellationToken);
+        Result = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (response.StatusCode != expected) throw new InvalidOperationException($"Expected HTTP {(int)expected}, got {(int)response.StatusCode}: {Result}");
+    }
+
+    private HttpClient Signed(string token) => new AAuthClientBuilder(_key).UseJwt(token).WithEgressPolicy(SampleEgress.Policy)
+        .WithInnerHandler(new ScenarioWireHandler(exchange => Exchanges.Add(exchange))
+        { InnerHandler = AAuthHttpTransport.CreateHandler(SampleEgress.Policy) }, AAuthTransportContract.EnforcesEgressPolicy).Build();
+    public void Dispose() => _http.Dispose();
+}

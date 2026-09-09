@@ -1,6 +1,6 @@
 import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { openTour, selectFlow, runAll, doneSteps, TourMode } from '../../../tests/e2e/helpers/tour';
-import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
+import { Urls } from '../../../tests/e2e/helpers/agents';
 
 /**
  * Bootstrap — keygen + Agent Provider enrolment, 3 steps (AP configured). There
@@ -31,7 +31,7 @@ test('bootstrap enrols and mints an agent token', async ({ page }) => {
   const payload = JSON.parse(
     payloadText.slice(payloadText.indexOf('{'), payloadText.lastIndexOf('}') + 1),
   ) as Record<string, unknown>;
-  expect(payload.sub).toBe(Agents.tour);
+  expect(payload.sub).toMatch(/^aauth:agent-[a-f0-9]{64}@localhost$/);
   expect(payload.iss).toBe(Urls.agentProvider);
   expect(payload.cnf).toBeTruthy(); // proof-of-possession confirmation key
 });

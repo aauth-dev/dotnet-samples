@@ -81,10 +81,10 @@ builder.Services.AddSingleton(new AAuthVerifier
 {
     MaxAge = TimeSpan.FromSeconds(signatureWindowSeconds),
 });
-builder.Services.AddSingleton(new TokenVerifier());
+builder.Services.AddSingleton(new TokenVerifier { EgressPolicy = SampleEgress.Policy });
 // Shared discovery clients (MetadataClient + JwksClient) with a pooled handler;
 // no manual HttpClient wiring.
-builder.Services.AddAAuthDiscovery();
+builder.Services.AddAAuthDiscovery(options => options.EgressPolicy = SampleEgress.Policy);
 builder.Services.AddSingleton<ConsentStore>();
 
 // Person Server decision seams. The SDK's MapAAuthPersonServer owns the protocol
@@ -134,9 +134,10 @@ var app = builder.Build();
 // JWKS (reused from the shared resource helper — same shape).
 app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 {
+    EgressPolicy = SampleEgress.Policy,
     Issuer = psIssuer,
     Name = "Mock Person Server",
-    SigningKeys = new Dictionary<string, AAuthKey> { [PsKid] = psKey },
+    SigningKeys = new Dictionary<string, IAAuthKey> { [PsKid] = psKey },
     ScopeDescriptions = new Dictionary<string, string>
     {
         [PsScope] = "Issue AAuth auth tokens for the Calendar",
@@ -151,10 +152,13 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 // above supply the demo's policy. `/admin` is the PS's own unsigned consent
 // surface (§PS Approval Endpoint Authentication — out of scope), so the mapper
 // skips signature verification for it.
+var browserConsent = new AAuth.Server.BrowserConsentSessions("AAuth.Person.Consent",
+    builder.Configuration.GetValue<bool>("AAuth:EnableIsolatedDemoConsent") ? "isolated-person-demo" : null);
 app.MapAAuthPersonServer(new AAuthPersonServerOptions
 {
+    EgressPolicy = SampleEgress.Policy,
     Issuer = psIssuer,
-    SigningKeys = new Dictionary<string, AAuthKey> { [PsKid] = psKey },
+    SigningKeys = new Dictionary<string, IAAuthKey> { [PsKid] = psKey },
     DefaultScope = PsScope,
     TrustedAccessServers = trustedAccessServers,
     // Governance endpoints (mapped below) advertised in aauth-person.json so the
@@ -164,6 +168,36 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
     AuditEndpoint = $"{psIssuer.TrimEnd('/')}/audit",
     InteractionEndpoint = $"{psIssuer.TrimEnd('/')}/mission-interaction",
     UnsignedPathPrefixes = new[] { "/admin" },
+    ResourceInteractionSessions = browserConsent,
+});
+
+app.MapPost("/local/wallet/revoke", async (HttpContext context, MetadataClient metadata, JwksClient jwks, TokenVerifier verifier) =>
+{
+    var owner = context.GetAAuthVerification();
+    if (owner is not { TokenType: AAuthTokenType.AgentToken, IssuerVerified: true, Agent: not null })
+        return AAuthProblemDetails.Create("invalid_carrier_token", statusCode: 403);
+    var body = await context.Request.ReadFromJsonAsync<JsonObject>();
+    if (body?["auth_token"] is not JsonValue value || !value.TryGetValue<string>(out var token))
+        return AAuthProblemDetails.Create("invalid_request", statusCode: 400);
+    var wallet = builder.Configuration["AAuth:Wallet"] ?? "http://localhost:5003";
+    TokenVerifier.VerifiedToken verified;
+    try
+    {
+        var key = SignatureKeyParser.Parse(context.Request.Headers["Signature-Key"].ToString()).ConfirmationKey;
+        verified = await verifier.VerifyAuthTokenWithJwksAsync(token, metadata, jwks, wallet,
+            key, owner.Agent, cancellationToken: context.RequestAborted);
+        if (!trustedAccessServers.Contains(verified.Issuer, StringComparer.Ordinal))
+            return AAuthProblemDetails.Create("denied", statusCode: 403);
+    }
+    catch (TokenVerificationException)
+    {
+        return AAuthProblemDetails.Create("denied", statusCode: 403);
+    }
+    using var signed = new AAuthClientBuilder(psKey).UseJwksUri(psIssuer, AuthTokenBuilder.PersonDwk, PsKid)
+        .WithEgressPolicy(SampleEgress.Policy).Build();
+    var tokenKey = new TokenKey(verified.Issuer, (string)verified.Payload["jti"]!);
+    var status = await new RevocationClient(signed).RevokeAsync(new Uri(wallet + "/revoke"), tokenKey, context.RequestAborted);
+    return Results.Json(new { iss = tokenKey.Issuer, jti = tokenKey.TokenId, resource = wallet, status = (int)status }, statusCode: (int)status);
 });
 
 // -----------------------------------------------------------------------
@@ -189,12 +223,12 @@ app.MapPost("/mission", async (
     var parsed = ctx.GetAAuthParsedKey()!;
     if (ctx.GetAAuthTokenType() != AAuthTokenType.AgentToken)
     {
-        return Results.Json(new { error = "invalid_carrier_token" }, statusCode: StatusCodes.Status403Forbidden);
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_carrier_token", statusCode: StatusCodes.Status403Forbidden);
     }
     var agentId = (string?)parsed.Payload?["sub"];
     if (string.IsNullOrEmpty(agentId))
     {
-        return Results.Json(new { error = "invalid_carrier_token", detail = "missing sub" }, statusCode: StatusCodes.Status403Forbidden);
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_carrier_token", "missing sub", statusCode: StatusCodes.Status403Forbidden);
     }
 
     JsonObject? body;
@@ -204,11 +238,11 @@ app.MapPost("/mission", async (
     }
     catch (System.Text.Json.JsonException)
     {
-        return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
     }
     if (body is null)
     {
-        return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
     }
 
     MissionProposal proposal;
@@ -218,12 +252,12 @@ app.MapPost("/mission", async (
     }
     catch (FormatException)
     {
-        return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
     }
 
     if (!script.ApproveMissionProposal)
     {
-        return Results.Json(new { error = "denied" }, statusCode: StatusCodes.Status403Forbidden);
+        return AAuth.Server.AAuthProblemDetails.Create("denied", statusCode: StatusCodes.Status403Forbidden);
     }
 
     // Interactive mode (§Mission Creation): mission approval is the most
@@ -237,6 +271,8 @@ app.MapPost("/mission", async (
         {
             Kind = MissionPendingKind.Mission,
             AgentId = agentId,
+            OwnerIssuer = ctx.GetAAuthVerification()!.Issuer,
+            OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt,
             S256 = string.Empty,            // computed from the blob once approved
             Approver = psIssuer,
             Proposal = proposal,
@@ -246,7 +282,7 @@ app.MapPost("/mission", async (
         ctx.Response.Headers["Retry-After"] = "1";
         ctx.Response.Headers["Cache-Control"] = "no-store";
         ctx.Response.Headers[AAuthRequirementHeader.Name] =
-            Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", pendingMission.Id);
+            Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", pendingMission.Browser.Code, SampleEgress.Policy);
         return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
     }
 
@@ -266,44 +302,51 @@ app.MapPost("/mission", async (
 // here while the user approves or declines the proposed mission in the browser.
 // On approval the PS builds and stores the verbatim approval blob and returns it
 // with the AAuth-Mission header — exactly what the synchronous path returns.
-app.MapGet("/mission-create-pending/{id}", async (
+app.MapMethods("/mission-create-pending/{id}", ["GET", "DELETE"], async (
     HttpContext ctx, string id, MissionPendingStore pending,
     IMissionStore missions, MissionPolicyStore policy, MissionConsentScript script) =>
 {
     var entry = pending.Get(id);
-    if (entry is null || entry.Kind != MissionPendingKind.Mission)
+    if (entry is null) return AAuth.Server.DeferredState.Missing(id);
+    if (entry is null || entry.Kind != MissionPendingKind.Mission || !entry.MatchesOwner(ctx))
     {
-        return Results.NotFound(new { error = "unknown_pending", id });
+        return AAuth.Server.AAuthProblemDetails.Create("unknown_pending", statusCode: StatusCodes.Status404NotFound,
+            extensions: new Dictionary<string, object?> { ["id"] = id });
     }
 
-    // Hold at 202 until the user decides on the browser consent screen.
-    if (entry.Decision is null)
+    return await entry.Lifecycle.ExecuteAsync(ctx, entry.ExpiresAt, TimeProvider.System, async () =>
     {
-        ctx.Response.Headers["Retry-After"] = "1";
-        ctx.Response.Headers["Cache-Control"] = "no-store";
-        ctx.Response.Headers[AAuthRequirementHeader.Name] =
-            Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", entry.Id);
-        return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
-    }
+        if (HttpMethods.IsDelete(ctx.Request.Method))
+        {
+            entry.Lifecycle.Cancel();
+            return Results.NoContent();
+        }
+        // Hold at 202 until the user decides on the browser consent screen.
+        if (entry.Decision is null)
+        {
+            ctx.Response.Headers["Retry-After"] = "1";
+            ctx.Response.Headers["Cache-Control"] = "no-store";
+            ctx.Response.Headers[AAuthRequirementHeader.Name] =
+                Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", entry.Browser.Code, SampleEgress.Policy);
+            return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
+        }
 
-    pending.Remove(id);
-    if (!entry.Decision.Value)
-    {
-        ctx.Response.Headers["Cache-Control"] = "no-store";
-        return Results.Json(
-            new { error = "denied", detail = "the user declined this mission" },
-            statusCode: StatusCodes.Status403Forbidden);
-    }
+        if (!entry.Decision.Value)
+        {
+            ctx.Response.Headers["Cache-Control"] = "no-store";
+            return AAuth.Server.AAuthProblemDetails.Create("denied", "the user declined this mission", statusCode: StatusCodes.Status403Forbidden);
+        }
 
-    var proposal = entry.Proposal!;
-    // The demo approves every proposed tool; a real PS would let the user prune them.
-    var approvedTools = proposal.Tools;
-    var (blob, s256) = MissionApprovalBuilder.Build(psIssuer, entry.AgentId, proposal, approvedTools, DateTimeOffset.UtcNow);
-    await missions.SaveAsync(new StoredMission(s256, psIssuer, entry.AgentId, blob));
-    policy.Record(s256, proposal.Description, approvedTools, script.InScopeSnapshot());
-    ctx.Response.Headers[AAuthMissionHeader.Name] =
-        AAuthMissionHeader.FormatStructured(psIssuer, s256);
-    return Results.Bytes(blob, "application/json");
+        var proposal = entry.Proposal!;
+        // The demo approves every proposed tool; a real PS would let the user prune them.
+        var approvedTools = proposal.Tools;
+        var (blob, s256) = MissionApprovalBuilder.Build(psIssuer, entry.AgentId, proposal, approvedTools, DateTimeOffset.UtcNow);
+        await missions.SaveAsync(new StoredMission(s256, psIssuer, entry.AgentId, blob));
+        policy.Record(s256, proposal.Description, approvedTools, script.InScopeSnapshot());
+        ctx.Response.Headers[AAuthMissionHeader.Name] =
+            AAuthMissionHeader.FormatStructured(psIssuer, s256);
+        return Results.Bytes(blob, "application/json");
+    });
 });
 
 // permission_endpoint (§Permission Endpoint): the agent asks whether an action
@@ -323,17 +366,17 @@ app.MapPost("/permission", async (
     var body = await ctx.Request.ReadFromJsonAsync<JsonObject>();
     if (body is null)
     {
-        return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
     }
 
     PermissionRequest request;
     try
     {
-        request = GovernanceEndpoints.ParsePermission(body);
+        request = GovernanceEndpoints.ParsePermission(body, SampleEgress.Policy);
     }
     catch (FormatException)
     {
-        return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
     }
 
     StoredMission? stored = null;
@@ -341,10 +384,10 @@ app.MapPost("/permission", async (
     if (request.Mission is not null)
     {
         stored = await missions.GetAsync(request.Mission.S256);
-        if (stored is { State: MissionState.Terminated })
-        {
-            return GovernanceEndpoints.MissionTerminated();
-        }
+    }
+    if (GovernanceEndpoints.Authorize(ctx, request.Mission, stored) is { } denied) return denied;
+    if (request.Mission is not null)
+    {
         history = await log.ReadAsync(request.Mission.S256);
     }
 
@@ -357,6 +400,8 @@ app.MapPost("/permission", async (
         {
             Kind = MissionPendingKind.Permission,
             AgentId = agentId,
+            OwnerIssuer = ctx.GetAAuthVerification()!.Issuer,
+            OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt,
             S256 = request.Mission.S256,
             Approver = request.Mission.Approver,
             Action = request.Action.Name,
@@ -369,7 +414,7 @@ app.MapPost("/permission", async (
         if (script.InteractiveBrowser)
         {
             ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", entry.Id);
+                Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", entry.Browser.Code, SampleEgress.Policy);
         }
         return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
     }
@@ -402,24 +447,21 @@ app.MapPost("/audit", async (
     var body = await ctx.Request.ReadFromJsonAsync<JsonObject>();
     if (body is null)
     {
-        return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
     }
 
     AuditRecord record;
     try
     {
-        record = GovernanceEndpoints.ParseAudit(body);
+        record = GovernanceEndpoints.ParseAudit(body, SampleEgress.Policy);
     }
     catch (FormatException)
     {
-        return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
     }
 
     var stored = await missions.GetAsync(record.Mission.S256);
-    if (stored is { State: MissionState.Terminated })
-    {
-        return GovernanceEndpoints.MissionTerminated();
-    }
+    if (GovernanceEndpoints.Authorize(ctx, record.Mission, stored) is { } denied) return denied;
 
     await sink.RecordAsync(record);
     return Results.StatusCode(StatusCodes.Status201Created);
@@ -437,27 +479,21 @@ app.MapPost("/mission-interaction", async (
     var body = await ctx.Request.ReadFromJsonAsync<JsonObject>();
     if (body is null)
     {
-        return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
     }
 
     InteractionRequest request;
     try
     {
-        request = GovernanceEndpoints.ParseInteraction(body);
+        request = GovernanceEndpoints.ParseInteraction(body, SampleEgress.Policy);
     }
     catch (FormatException)
     {
-        return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
     }
 
-    if (request.Mission is not null)
-    {
-        var stored = await missions.GetAsync(request.Mission.S256);
-        if (stored is { State: MissionState.Terminated })
-        {
-            return GovernanceEndpoints.MissionTerminated();
-        }
-    }
+    var stored = request.Mission is null ? null : await missions.GetAsync(request.Mission.S256);
+    if (GovernanceEndpoints.Authorize(ctx, request.Mission, stored) is { } denied) return denied;
 
     var result = await relay.RelayAsync(request);
 
@@ -491,45 +527,56 @@ app.MapPost("/mission-interaction", async (
 
 // Non-pre-approved permission resolution (§Permission Endpoint). The poll
 // returns the (scripted) user decision.
-app.MapGet("/permission-pending/{id}", async (
+app.MapMethods("/permission-pending/{id}", ["GET", "DELETE"], async (
     HttpContext ctx, string id, MissionPendingStore pending,
-    IMissionLog log, MissionConsentScript script) =>
+    IMissionLog log, MissionConsentScript script, IMissionStore missions) =>
 {
     var entry = pending.Get(id);
-    if (entry is null || entry.Kind != MissionPendingKind.Permission)
+    if (entry is null) return AAuth.Server.DeferredState.Missing(id);
+    if (entry is null || entry.Kind != MissionPendingKind.Permission || !entry.MatchesOwner(ctx))
     {
-        return Results.NotFound(new { error = "unknown_pending", id });
+        return AAuth.Server.AAuthProblemDetails.Create("unknown_pending", statusCode: StatusCodes.Status404NotFound,
+            extensions: new Dictionary<string, object?> { ["id"] = id });
     }
-    // Interactive mode: hold at 202 until the user decides in the browser.
-    bool granted;
-    if (script.InteractiveBrowser)
+    return await entry.Lifecycle.ExecuteAsync(ctx, entry.ExpiresAt, TimeProvider.System, async () =>
     {
-        if (entry.Decision is null)
+        if (HttpMethods.IsDelete(ctx.Request.Method))
         {
-            ctx.Response.Headers["Retry-After"] = "1";
-            ctx.Response.Headers["Cache-Control"] = "no-store";
-            ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", entry.Id);
-            return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
+            entry.Lifecycle.Cancel();
+            return Results.NoContent();
         }
-        granted = entry.Decision.Value;
-    }
-    else
-    {
-        granted = script.ApprovePermission;
-    }
-    await log.AppendAsync(new MissionLogEntry(
-        entry.S256, MissionLogEntryKind.Permission, DateTimeOffset.UtcNow)
-    {
-        Action = entry.Action,
-        Granted = granted,
-        Detail = "OutOfScope",
-    });
-    pending.Remove(id);
-    return Results.Json(new
-    {
-        permission = granted ? "granted" : "denied",
-        reason = granted ? "OutOfScope" : "the user denied this action.",
+        // Interactive mode: hold at 202 until the user decides in the browser.
+        var mission = await missions.GetAsync(entry.S256, ctx.RequestAborted);
+        if (GovernanceEndpoints.Authorize(ctx, entry.MissionClaim, mission) is { } denied) return denied;
+        bool granted;
+        if (script.InteractiveBrowser)
+        {
+            if (entry.Decision is null)
+            {
+                ctx.Response.Headers["Retry-After"] = "1";
+                ctx.Response.Headers["Cache-Control"] = "no-store";
+                ctx.Response.Headers[AAuthRequirementHeader.Name] =
+                    Interaction.Format($"{psIssuer.TrimEnd('/')}/interaction", entry.Browser.Code, SampleEgress.Policy);
+                return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
+            }
+            granted = entry.Decision.Value;
+        }
+        else
+        {
+            granted = script.ApprovePermission;
+        }
+        await log.AppendAsync(new MissionLogEntry(
+            entry.S256, MissionLogEntryKind.Permission, DateTimeOffset.UtcNow)
+        {
+            Action = entry.Action,
+            Granted = granted,
+            Detail = "OutOfScope",
+        });
+        return Results.Json(new
+        {
+            permission = granted ? "granted" : "denied",
+            reason = granted ? "OutOfScope" : "the user denied this action.",
+        });
     });
 });
 
@@ -543,17 +590,17 @@ app.MapGet("/permission-pending/{id}", async (
 // -----------------------------------------------------------------------
 app.MapPost("/admin/consent", async (HttpContext ctx, ConsentStore consent) =>
 {
-    var (agent, resource, scope, err) = await ReadAdminBodyAsync(ctx);
+    var (agent, resource, scope, account, key, err) = await ReadAdminBodyAsync(ctx);
     if (err is not null) { return err; }
-    consent.Grant(agent!, resource!, scope!);
+    consent.Grant(agent!, resource!, scope!, account, key);
     return Results.Ok(new { ok = true, agent, resource, scope });
 });
 
 app.MapPost("/admin/revoke", async (HttpContext ctx, ConsentStore consent) =>
 {
-    var (agent, resource, scope, err) = await ReadAdminBodyAsync(ctx);
+    var (agent, resource, scope, account, key, err) = await ReadAdminBodyAsync(ctx);
     if (err is not null) { return err; }
-    consent.Revoke(agent!, resource!, scope!);
+    consent.Revoke(agent!, resource!, scope!, account, key);
     return Results.Ok(new { ok = true, agent, resource, scope });
 });
 
@@ -582,7 +629,7 @@ app.MapPost("/admin/mission-script", async (HttpContext ctx, MissionConsentScrip
     try { body = await ctx.Request.ReadFromJsonAsync<JsonObject>(); }
     catch (System.Text.Json.JsonException)
     {
-        return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
     }
     body ??= [];
 
@@ -603,7 +650,9 @@ app.MapPost("/admin/mission-script", async (HttpContext ctx, MissionConsentScrip
             var scope = (string?)item["scope"];
             if (!string.IsNullOrEmpty(resource) && !string.IsNullOrEmpty(scope))
             {
-                script.SeedInScope(resource, scope);
+                if (!AccountBinding.TryRead(item, out var account))
+                    return AAuthProblemDetails.Create("invalid_request", "invalid in-scope account", statusCode: 400);
+                script.SeedInScope(resource, scope, account);
             }
         }
     }
@@ -619,12 +668,12 @@ app.MapPost("/admin/mission-terminate", async (HttpContext ctx, IMissionStore mi
     try { body = await ctx.Request.ReadFromJsonAsync<JsonObject>(); }
     catch (System.Text.Json.JsonException)
     {
-        return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
     }
     var s256 = (string?)body?["s256"];
     if (string.IsNullOrEmpty(s256))
     {
-        return Results.Json(new { error = "invalid_request", detail = "missing s256" }, statusCode: StatusCodes.Status400BadRequest);
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "missing s256", statusCode: StatusCodes.Status400BadRequest);
     }
     await missions.SetStateAsync(s256, MissionState.Terminated);
     policy.Remove(s256);
@@ -660,8 +709,21 @@ app.MapGet("/admin/mission-log/{s256}", async (string s256, IMissionLog log) =>
 // (cookie/passkey/SSO); here we trust the demo environment and just look
 // up the pending entry by its single-use code. The form submits to
 // /interaction/approve or /interaction/deny.
-app.MapGet("/interaction", (string? code, IPersonPendingStore pending, MissionPendingStore missionPending, MissionPolicyStore missionPolicy) =>
+app.MapMethods("/interaction", ["GET", "POST"], async (HttpContext ctx, IPersonPendingStore pending, MissionPendingStore missionPending, MissionPolicyStore missionPolicy) =>
 {
+    var entered = await browserConsent.EnterAsync(ctx, supplied =>
+    {
+        if (missionPending.GetByCode(supplied) is { } missionEntry)
+            return new AAuth.Server.BrowserPendingRequest(missionEntry.Id, missionEntry.ExpiresAt, missionEntry.Browser, missionEntry.Lifecycle);
+        if (pending.GetByCode(supplied) is { AwaitingResourceInteraction: false } personEntry)
+            return new AAuth.Server.BrowserPendingRequest(personEntry.Id, personEntry.PendingExpiresAt, personEntry.Browser, personEntry.Lifecycle);
+        return null;
+    });
+    if (entered.Error is not null) return entered.Error;
+    var code = entered.Id;
+    if (pending.Get(code!) is { AwaitingResourceInteraction: true })
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+    var decisionFields = browserConsent.Fields(ctx, entered.Decision!);
     if (string.IsNullOrEmpty(code))
     {
         return Results.Content(
@@ -788,11 +850,11 @@ app.MapGet("/interaction", (string? code, IPersonPendingStore pending, MissionPe
             + what
             + defn
             + "<form method=post action=\"/interaction/approve\">"
-            + $"<input type=hidden name=code value=\"{System.Net.WebUtility.HtmlEncode(code)}\">"
+            + decisionFields
             + "<button class=approve type=submit>Approve</button>"
             + "</form>"
             + "<form method=post action=\"/interaction/deny\">"
-            + $"<input type=hidden name=code value=\"{System.Net.WebUtility.HtmlEncode(code)}\">"
+            + decisionFields
             + "<button class=deny type=submit>Deny</button>"
             + "</form>";
         return Results.Content(missionHtml, contentType: "text/html");
@@ -824,16 +886,17 @@ app.MapGet("/interaction", (string? code, IPersonPendingStore pending, MissionPe
         + "<div class=badge><span class=dot></span>Person Server</div>"
         + "<div class=sub>localhost:5100 — the server that holds your resources and standing consent</div>"
         + "<h1>An agent is requesting access on your behalf</h1>"
-        + "<p>This is the <b>Person Server's</b> consent screen. In a real PS you would be signed in via cookie / passkey / SSO before reaching here.</p>"
+        + "<p>Signed in as the isolated demo user at the <b>Person Server</b>.</p>"
         + $"<div class=row><b>Agent:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.AgentId)}</code></div>"
         + $"<div class=row><b>Resource:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.ResourceUrl)}</code></div>"
         + $"<div class=row><b>Scope:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.Scope)}</code></div>"
+        + (entry.Account is null ? "" : $"<div class=row><b>Account:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.Account)}</code></div>")
         + "<form method=post action=\"/interaction/approve\">"
-        + $"<input type=hidden name=code value=\"{System.Net.WebUtility.HtmlEncode(code)}\">"
+        + decisionFields
         + "<button class=approve type=submit>Approve</button>"
         + "</form>"
         + "<form method=post action=\"/interaction/deny\">"
-        + $"<input type=hidden name=code value=\"{System.Net.WebUtility.HtmlEncode(code)}\">"
+        + decisionFields
         + "<button class=deny type=submit>Deny</button>"
         + "</form>";
     return Results.Content(html, contentType: "text/html");
@@ -843,137 +906,174 @@ app.MapGet("/interaction", (string? code, IPersonPendingStore pending, MissionPe
 // consent for the entry's (agent, resource, scope) triple, and shows a
 // confirmation page. Idempotent: re-submitting a code whose entry is
 // already approved still 200s.
-app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent, IPersonPendingStore pending, MissionPendingStore missionPending) =>
+app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent, IPersonPendingStore pending, MissionPendingStore missionPending, IIdentityClaimsAsserter asserter) =>
 {
-    var code = (await ctx.Request.ReadFormAsync())["code"].ToString();
+    var decision = await browserConsent.DecideAsync(ctx);
+    if (decision.Error is not null) return decision.Error;
+    var code = decision.Decision!.Id;
     if (string.IsNullOrEmpty(code))
     {
-        return Results.BadRequest(new { error = "invalid_request", detail = "missing 'code'" });
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "missing 'code'", statusCode: StatusCodes.Status400BadRequest);
     }
     // Mission creation / permission prompt: record the user's approval so the
     // agent's next poll resolves to a granted decision (§Missions).
     var mission = missionPending.Get(code);
     if (mission is not null)
     {
-        mission.Decision = true;
-        return Results.Content(
-            "<!doctype html><meta charset=utf-8><title>Approved — Person Server</title>"
-            + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
-            + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#7c3aed;color:#fff;"
-            + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
-            + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#ddd6fe}</style>"
-            + "<div class=badge><span class=dot></span>Person Server — mission governance</div>"
-            + "<h1>Approved</h1>"
-            + $"<p>You approved <code>{System.Net.WebUtility.HtmlEncode(mission.AgentId)}</code>'s mission request. The agent will proceed on its next poll.</p>"
-            + "<p>You can close this tab.</p>",
-            contentType: "text/html");
+        return await decision.Decision.ApplyAsync(ctx, () =>
+        {
+            if (mission.Decision is not null) return AAuth.Server.AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+            mission.Decision = true;
+            return Results.Content(
+                "<!doctype html><meta charset=utf-8><title>Approved — Person Server</title>"
+                + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
+                + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#7c3aed;color:#fff;"
+                + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
+                + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#ddd6fe}</style>"
+                + "<div class=badge><span class=dot></span>Person Server — mission governance</div>"
+                + "<h1>Approved</h1>"
+                + $"<p>You approved <code>{System.Net.WebUtility.HtmlEncode(mission.AgentId)}</code>'s mission request. The agent will proceed on its next poll.</p>"
+                + "<p>You can close this tab.</p>",
+                contentType: "text/html");
+        });
     }
     var entry = pending.Get(code);
     if (entry is null)
     {
-        return Results.NotFound(new { error = "unknown_code", code });
+        return AAuth.Server.AAuthProblemDetails.Create("unknown_code", statusCode: StatusCodes.Status404NotFound,
+            extensions: new Dictionary<string, object?> { ["code"] = code });
     }
-    // An out-of-scope mission token request (held interactively) resolves by
-    // marking the SDK-owned pending decision allowed with the demo identity; a
-    // plain three-party request records standing consent (the bridge mints).
-    if (entry.MissionGate)
+    return await decision.Decision.ApplyAsync(ctx, async () =>
     {
-        var isAdmin = SampleIdentityClaimsAsserter.IsAdminAgent(entry.AgentId);
-        pending.MarkAllowed(code, "pairwise-sub", tenant: null,
-            roles: isAdmin ? demoRoles : null, groups: isAdmin ? demoGroups : null);
-    }
-    else
-    {
-        consent.Grant(entry.AgentId, entry.ResourceUrl, entry.Scope);
-    }
-    return Results.Content(
-        "<!doctype html><meta charset=utf-8><title>Approved — Person Server</title>"
-        + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
-        + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#1d4ed8;color:#fff;"
-        + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
-        + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}</style>"
-        + "<div class=badge><span class=dot></span>Person Server</div>"
-        + "<h1>Approved</h1>"
-        + $"<p>You granted <code>{System.Net.WebUtility.HtmlEncode(entry.AgentId)}</code> access to "
-        + $"<code>{System.Net.WebUtility.HtmlEncode(entry.ResourceUrl)}</code> with scope "
-        + $"<code>{System.Net.WebUtility.HtmlEncode(entry.Scope)}</code> at the <b>Person Server</b>.</p>"
-        + "<p>You can close this tab — the agent will receive its auth token on its next poll.</p>",
-        contentType: "text/html");
-}).DisableAntiforgery();
+        if (entry.AwaitingResourceInteraction || entry.Status != PersonPendingStatus.Pending || entry.PendingExpiresAt <= DateTimeOffset.UtcNow)
+            return AAuth.Server.AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+        // An out-of-scope mission token request (held interactively) resolves by
+        // marking the SDK-owned pending decision allowed with the demo identity; a
+        // plain three-party request records standing consent (the bridge mints).
+        if (!entry.MissionGate)
+        {
+            consent.Grant(entry.ConsentAgentId, entry.ResourceUrl, entry.Scope, entry.Account, entry.ResourceKeyThumbprint);
+        }
+        var asserted = await asserter.AssertAsync(new IdentityAssertionRequest
+        {
+            ResourceUrl = entry.ResourceUrl, Scope = entry.Scope, AgentId = entry.ConsentAgentId,
+            Account = entry.Account, AgentKeyThumbprint = entry.ResourceKeyThumbprint,
+            Mission = entry.Mission, RequiredClaims = entry.RequiredIdentityClaims,
+            ResourceContext = entry.ResourceContext, InteractionId = entry.Id,
+        }, ctx.RequestAborted);
+        if (asserted.Kind != IdentityAssertionKind.Assert)
+            return AAuth.Server.AAuthProblemDetails.Create("denied", statusCode: 403);
+        ctx.RequestAborted.ThrowIfCancellationRequested();
+        entry.Subject = asserted.Subject!;
+        entry.Tenant = asserted.Tenant;
+        entry.Roles = asserted.Roles;
+        entry.Groups = asserted.Groups;
+        entry.AdditionalClaims = asserted.AdditionalClaims;
+        if (entry.FederationConsent is { } consentCompletion) consentCompletion.TrySetResult(asserted);
+        else entry.Status = PersonPendingStatus.Allowed;
+        return Results.Content(
+            "<!doctype html><meta charset=utf-8><title>Approved — Person Server</title>"
+            + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
+            + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#1d4ed8;color:#fff;"
+            + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
+            + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}</style>"
+            + "<div class=badge><span class=dot></span>Person Server</div>"
+            + "<h1>Approved</h1>"
+            + $"<p>You granted <code>{System.Net.WebUtility.HtmlEncode(entry.AgentId)}</code> access to "
+            + $"<code>{System.Net.WebUtility.HtmlEncode(entry.ResourceUrl)}</code> with scope "
+            + $"<code>{System.Net.WebUtility.HtmlEncode(entry.Scope)}</code> at the <b>Person Server</b>.</p>"
+            + "<p>You can close this tab — the agent will receive its auth token on its next poll.</p>",
+            contentType: "text/html");
+    });
+});
 
 // Deny handler. Marks the pending entry as denied (rather than removing
 // it) so the agent's next poll receives a deterministic
 // `403 denied` instead of an ambiguous `404 unknown_pending`.
 app.MapPost("/interaction/deny", async (HttpContext ctx, IPersonPendingStore pending, MissionPendingStore missionPending) =>
 {
-    var code = (await ctx.Request.ReadFormAsync())["code"].ToString();
+    var decision = await browserConsent.DecideAsync(ctx);
+    if (decision.Error is not null) return decision.Error;
+    var code = decision.Decision!.Id;
     if (string.IsNullOrEmpty(code))
     {
-        return Results.BadRequest(new { error = "invalid_request", detail = "missing 'code'" });
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "missing 'code'", statusCode: StatusCodes.Status400BadRequest);
     }
     // Mission creation / permission prompt: record the user's denial so the
     // agent's next poll resolves to a denied decision (§Missions).
     var mission = missionPending.Get(code);
     if (mission is not null)
     {
-        mission.Decision = false;
-        return Results.Content(
-            "<!doctype html><meta charset=utf-8><title>Denied — Person Server</title>"
-            + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
-            + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#7c3aed;color:#fff;"
-            + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
-            + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#ddd6fe}</style>"
-            + "<div class=badge><span class=dot></span>Person Server — mission governance</div>"
-            + "<h1>Denied</h1>"
-            + $"<p>You denied <code>{System.Net.WebUtility.HtmlEncode(mission.AgentId)}</code>'s mission request. The agent's next poll will receive <code>403 denied</code>.</p>"
-            + "<p>You can close this tab.</p>",
-            contentType: "text/html");
+        return await decision.Decision.ApplyAsync(ctx, () =>
+        {
+            if (mission.Decision is not null) return AAuth.Server.AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+            mission.Decision = false;
+            return Results.Content(
+                "<!doctype html><meta charset=utf-8><title>Denied — Person Server</title>"
+                + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
+                + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#7c3aed;color:#fff;"
+                + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
+                + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#ddd6fe}</style>"
+                + "<div class=badge><span class=dot></span>Person Server — mission governance</div>"
+                + "<h1>Denied</h1>"
+                + $"<p>You denied <code>{System.Net.WebUtility.HtmlEncode(mission.AgentId)}</code>'s mission request. The agent's next poll will receive <code>403 denied</code>.</p>"
+                + "<p>You can close this tab.</p>",
+                contentType: "text/html");
+        });
     }
     var entry = pending.Get(code);
     if (entry is null)
     {
-        return Results.NotFound(new { error = "unknown_code", code });
+        return AAuth.Server.AAuthProblemDetails.Create("unknown_code", statusCode: StatusCodes.Status404NotFound,
+            extensions: new Dictionary<string, object?> { ["code"] = code });
     }
-    pending.MarkDenied(code, "the user denied this request");
-    return Results.Content(
-        "<!doctype html><meta charset=utf-8><title>Denied — Person Server</title>"
-        + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
-        + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#1d4ed8;color:#fff;"
-        + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
-        + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}</style>"
-        + "<div class=badge><span class=dot></span>Person Server</div>"
-        + "<h1>Denied</h1>"
-        + $"<p>You denied <code>{System.Net.WebUtility.HtmlEncode(entry.AgentId)}</code>'s request at the <b>Person Server</b>. The agent's next poll will receive <code>403 denied</code>.</p>"
-        + "<p>You can close this tab.</p>",
-        contentType: "text/html");
-}).DisableAntiforgery();
+    return await decision.Decision.ApplyAsync(ctx, () =>
+    {
+        if (entry.AwaitingResourceInteraction || entry.Status is PersonPendingStatus.Allowed or PersonPendingStatus.Denied or PersonPendingStatus.Withdrawn
+            || entry.PendingExpiresAt <= DateTimeOffset.UtcNow)
+            return AAuth.Server.AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+        entry.Status = PersonPendingStatus.Denied;
+        entry.DenyReason = "the user denied this request";
+        entry.FederationConsent?.TrySetResult(IdentityAssertion.Deny(entry.DenyReason));
+        return Results.Content(
+            "<!doctype html><meta charset=utf-8><title>Denied — Person Server</title>"
+            + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
+            + ".badge{display:inline-flex;align-items:center;gap:.5rem;background:#1d4ed8;color:#fff;"
+            + "padding:.4rem .8rem;border-radius:.4rem;font-weight:600;letter-spacing:.02em}"
+            + ".badge .dot{width:.6rem;height:.6rem;border-radius:50%;background:#bfdbfe}</style>"
+            + "<div class=badge><span class=dot></span>Person Server</div>"
+            + "<h1>Denied</h1>"
+            + $"<p>You denied <code>{System.Net.WebUtility.HtmlEncode(entry.AgentId)}</code>'s request at the <b>Person Server</b>. The agent's next poll will receive <code>403 denied</code>.</p>"
+            + "<p>You can close this tab.</p>",
+            contentType: "text/html");
+    });
+});
 
 app.Run();
 
 // -----------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------
-async Task<(string? Agent, string? Resource, string? Scope, IResult? Error)> ReadAdminBodyAsync(HttpContext ctx)
+async Task<(string? Agent, string? Resource, string? Scope, string? Account, string? Key, IResult? Error)> ReadAdminBodyAsync(HttpContext ctx)
 {
     JsonObject? body;
     try { body = await ctx.Request.ReadFromJsonAsync<JsonObject>(); }
     catch (System.Text.Json.JsonException)
     {
-        return (null, null, null, Results.Json(
-            new { error = "invalid_request", detail = "body is not valid JSON" },
-            statusCode: StatusCodes.Status400BadRequest));
+        return (null, null, null, null, null, AAuth.Server.AAuthProblemDetails.Create("invalid_request", "body is not valid JSON", statusCode: StatusCodes.Status400BadRequest));
     }
 
     var agent = (string?)body?["agent"];
     var resource = (string?)body?["resource"];
     var scope = (string?)body?["scope"] ?? PsScope;
+    if (body is null || !AccountBinding.TryRead(body, out var account))
+        return (null, null, null, null, null, AAuthProblemDetails.Create("invalid_request", "invalid account", statusCode: 400));
+    var key = (string?)body["key"];
     if (string.IsNullOrEmpty(agent) || string.IsNullOrEmpty(resource))
     {
-        return (null, null, null, Results.Json(
-            new { error = "invalid_request", detail = "missing 'agent' or 'resource'" },
-            statusCode: StatusCodes.Status400BadRequest));
+        return (null, null, null, null, null, AAuth.Server.AAuthProblemDetails.Create("invalid_request", "missing 'agent' or 'resource'", statusCode: StatusCodes.Status400BadRequest));
     }
-    return (agent, resource, scope, null);
+    return (agent, resource, scope, account, key, null);
 }
 
 // Marker type for `WebApplicationFactory<MockPersonServer.Entry>` in the

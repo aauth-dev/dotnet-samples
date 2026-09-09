@@ -37,7 +37,7 @@ var result = await apClient.RefreshTwoKeyAsync(
 var namingJwt = NamingJwtBuilder.Build(durableKey, result.EphemeralKey);
 
 // Ephemeral key signs HTTP requests
-using var client = new AAuthClientBuilder(result.EphemeralKey)
+using var client = new AAuthClientBuilder(result.EphemeralKey).WithEgressPolicy(SampleEgress.Policy)
     .UseJktJwt(() => namingJwt)
     .Build();</code></pre>
 </div>
@@ -167,7 +167,8 @@ else
         _error = null;
         try
         {
-            var apClient = new AgentProviderClient(new HttpClient(), _enrollment.KeyStore);
+            using var http = new SampleHttpClient();
+            var apClient = new AgentProviderClient(http, _enrollment.KeyStore);
 
             // Spec: two-key refresh generates an ephemeral key, builds a self-issued
             // naming JWT signed by the durable key, and sends the refresh signed by
@@ -178,7 +179,7 @@ else
             _ephemeralKey = result.EphemeralKey;
             _ephemeralThumbprint = ((AAuthKey)_ephemeralKey).ComputeJwkThumbprint();
 
-            // Build the naming JWT for resource requests (draft-05 §3.4): the
+            // Build the naming JWT for generic resource requests (Signature Keys draft-08 section 3.5): the
             // durable key signs it, embeds its own public key in the header, and
             // binds the ephemeral key via cnf.jwk.
             _namingJwt = NamingJwtBuilder.Build(_enrollment.Key, _ephemeralKey);
@@ -203,7 +204,7 @@ else
         {
             // Ephemeral key signs the HTTP request; naming JWT proves delegation from durable key.
             var namingJwt = _namingJwt!;
-            using var client = new AAuthClientBuilder(_ephemeralKey!)
+            using var client = new AAuthClientBuilder(_ephemeralKey!).WithEgressPolicy(SampleEgress.Policy)
                 .UseJktJwt(() => namingJwt)
                 .Build();
 
