@@ -12,6 +12,8 @@ TRIPS_PROJECT    := samples/MockResourceServers/Trips/Trips.csproj
 WALLET_PROJECT   := samples/MockResourceServers/Wallet/Wallet.csproj
 INBOX_PROJECT    := samples/MockResourceServers/Inbox/Inbox.csproj
 BOOKINGS_PROJECT := samples/MockResourceServers/Bookings/Bookings.csproj
+CATALOG_PROJECT := samples/MockResourceServers/Catalog/Catalog.csproj
+DOCUMENTS_PROJECT := samples/MockResourceServers/Documents/Documents.csproj
 PS_PROJECT     := samples/MockPersonServer/MockPersonServer.csproj
 AP_PROJECT     := samples/MockAgentProvider/MockAgentProvider.csproj
 TOUR_PROJECT   := samples/GuidedTour/GuidedTour.csproj
@@ -22,6 +24,7 @@ LIVE_PROJECT   := samples/LiveWhoAmITest/LiveWhoAmITest.csproj
 MISSION_PROJECT := samples/MissionAgent/MissionAgent.csproj
 AS_PROJECT     := samples/MockAccessServers/Federated/Federated.csproj
 R3AS_PROJECT   := samples/MockAccessServers/R3/R3.csproj
+EVENT_AGENT_PROJECT := samples/EventAgent/EventAgent.csproj
 
 PROFILE_URL  := http://localhost:5000
 CALENDAR_URL := http://localhost:5001
@@ -29,6 +32,8 @@ TRIPS_URL    := http://localhost:5002
 WALLET_URL   := http://localhost:5003
 INBOX_URL    := http://localhost:5004
 BOOKINGS_URL := http://localhost:5005
+CATALOG_URL := http://localhost:5006
+DOCUMENTS_URL := http://localhost:5007
 PS_URL     := http://localhost:5100
 AP_URL     := http://localhost:5301
 CONCIERGE_URL   := http://localhost:5200
@@ -69,7 +74,9 @@ endef
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build restore test test-unit test-conformance format clean \
+demo demo-mission demo-keycloak ps-consent resources: export AAuth__EnableIsolatedDemoConsent=true
+
+.PHONY: help build restore test test-unit test-conformance test-events agent-events format clean \
         resources ps ps-consent ap concierge tour sampleapp agent live \
         demo demo-mission agent-mission \
         keycloak access-server demo-keycloak \
@@ -100,6 +107,12 @@ test-unit: ## Run SDK unit + integration tests only
 test-conformance: ## Run spec conformance tests only
 	$(DOTNET) test tests/AAuth.Conformance/AAuth.Conformance.csproj
 
+test-events: ## Run Events token, HTTP and persistence tests
+	$(DOTNET) test tests/AAuth.Events.Tests/AAuth.Events.Tests.csproj
+
+agent-events: ## Run the single-shot Events agent (ARGS=--protected for account-bound consent)
+	$(DOTNET) run --project $(EVENT_AGENT_PROJECT) -- $(ARGS)
+
 format: ## Apply dotnet format to the solution
 	$(DOTNET) format $(SOLUTION)
 
@@ -111,7 +124,7 @@ clean: ## dotnet clean + remove bin/ obj/ trees
 # Individual services & apps
 # ----------------------------------------------------------------------------
 
-resources: ## Run the Aria resource servers (Profile :5000, Calendar :5001, Trips :5002, Wallet :5003, Inbox :5004, Bookings :5005)
+resources: ## Run the Aria resource servers (Profile :5000 through Documents :5007)
 	@echo "Building services (once) before launch..."
 	@$(DOTNET) build $(SOLUTION) -v q
 	@trap 'trap - INT TERM; echo; echo "Stopping..."; kill 0' INT TERM; \
@@ -121,6 +134,8 @@ resources: ## Run the Aria resource servers (Profile :5000, Calendar :5001, Trip
 	$(DOTNET) run --no-build --project $(WALLET_PROJECT) & \
 	$(DOTNET) run --no-build --project $(INBOX_PROJECT) & \
 	$(DOTNET) run --no-build --project $(BOOKINGS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(CATALOG_PROJECT) & \
+	$(DOTNET) run --no-build --project $(DOCUMENTS_PROJECT) & \
 	wait
 
 ps: ## Run the MockPersonServer (port 5100)
@@ -162,6 +177,8 @@ demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. f
 	@echo "   Wallet:             $(WALLET_URL)         (four-party resource server)"
 	@echo "   Inbox:              $(INBOX_URL)         (resource-managed two-party server)"
 	@echo "   Bookings:           $(BOOKINGS_URL)         (R3 reservations resource server)"
+	@echo "   Travel Catalog:     $(CATALOG_URL)         (service-qualified R3 gateway)"
+	@echo "   Document Release:   $(DOCUMENTS_URL)         (resource permission before PS consent)"
 	@echo "   Concierge:       $(CONCIERGE_URL)         (mission concierge)"
 	@echo "   MockPersonServer:   $(PS_URL)         (RequireConsent=true)"
 	@echo "   MockAgentProvider:  $(AP_URL)         (agent registry)"
@@ -183,6 +200,8 @@ demo: ## Start the full stack + stub Access Server + both UIs (all flows incl. f
 	$(DOTNET) run --no-build --project $(WALLET_PROJECT) & \
 	$(DOTNET) run --no-build --project $(INBOX_PROJECT) & \
 	$(DOTNET) run --no-build --project $(BOOKINGS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(CATALOG_PROJECT) & \
+	$(DOTNET) run --no-build --project $(DOCUMENTS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(CONCIERGE_PROJECT) & \
 	$(DOTNET) run --no-build --project $(AP_PROJECT) & \
 	AccessServer__PolicyProvider=stub AccessServer__RequireConsent=true $(DOTNET) run --no-build --project $(AS_PROJECT) & \
@@ -240,8 +259,13 @@ demo-keycloak: ## Four-party federated demo (both UIs) with the live Keycloak po
 	$(DOTNET) run --no-build --project $(CALENDAR_PROJECT) & \
 	$(DOTNET) run --no-build --project $(TRIPS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(WALLET_PROJECT) & \
+	$(DOTNET) run --no-build --project $(INBOX_PROJECT) & \
+	$(DOTNET) run --no-build --project $(BOOKINGS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(CATALOG_PROJECT) & \
+	$(DOTNET) run --no-build --project $(DOCUMENTS_PROJECT) & \
+	$(DOTNET) run --no-build --project $(R3AS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(CONCIERGE_PROJECT) & \
-	MockPersonServer__RequireConsent=true $(DOTNET) run --no-build --project $(PS_PROJECT) & \
+	MockPersonServer__RequireConsent=true MockPersonServer__TrustedAccessServers__0=$(AS_URL) MockPersonServer__TrustedAccessServers__1=$(R3AS_URL) $(DOTNET) run --no-build --project $(PS_PROJECT) & \
 	$(DOTNET) run --no-build --project $(AP_PROJECT) & \
 	$(KEYCLOAK_AS_ENV) \
 	$(DOTNET) run --no-build --project $(AS_PROJECT) & \

@@ -1,0 +1,29 @@
+.events-view { max-width: 1100px; margin: 0 auto; padding: 24px; color: inherit; letter-spacing: 0; }
+.events-heading { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 24px; }
+.events-heading h1 { font-size: 28px; margin: 0; }
+.events-count { margin-left: auto; font-variant-numeric: tabular-nums; }
+.events-options { display: flex; flex-wrap: wrap; gap: 24px; align-items: end; padding: 16px 0; border-top: 1px solid #88949b; border-bottom: 1px solid #88949b; }
+.events-options fieldset { border: 0; padding: 0; margin: 0; }
+.events-options legend { font-size: 16px; margin-bottom: 8px; }
+.events-options label { display: block; margin: 4px 0; }
+.events-options select { display: block; max-width: 100%; padding: 6px; }
+.events-sequence { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 30px; padding: 24px 0 24px 24px; }
+.events-sequence li { padding: 8px; border-bottom: 2px solid #88949b; overflow-wrap: anywhere; }
+.events-sequence .current { border-color: #d68b22; font-weight: 700; }
+.events-sequence .complete { border-color: #278e74; }
+.events-actions { display: flex; gap: 12px; padding-bottom: 20px; }
+.events-actions button { min-height: 42px; border: 1px solid #88949b; border-radius: 4px; padding: 8px 12px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: #f3f6f5; color: #18332b; }
+.events-actions .events-next { width: 280px; max-width: calc(100% - 58px); }
+.events-actions button:disabled { opacity: .6; }
+.events-consent { border-left: 4px solid #d68b22; padding: 12px 16px; margin-bottom: 16px; }
+.events-view h2 { font-size: 20px; }
+.events-error { color: #d5484e; overflow-wrap: anywhere; }
+.events-evidence details, .events-code { border-top: 1px solid #88949b; padding: 14px 0; }
+.events-evidence summary { overflow-wrap: anywhere; }
+.events-evidence strong { white-space: nowrap; }
+.events-view pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; max-height: 480px; overflow: auto; padding: 12px 0; }
+.events-receipt { border-top: 2px solid #278e74; padding-top: 16px; }
+.events-receipt dl { display: grid; grid-template-columns: 95px minmax(0, 1fr); gap: 6px; }
+.events-receipt dd { overflow-wrap: anywhere; margin: 0; }
+.events-limits { margin-top: 20px; font-size: 13px; opacity: .85; }
+@media (max-width: 600px) { .events-view { padding: 16px; } .events-sequence { grid-template-columns: minmax(0, 1fr); gap: 4px; } .events-heading h1 { font-size: 24px; } .events-count { margin-left: 0; } }

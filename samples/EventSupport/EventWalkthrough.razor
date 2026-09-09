@@ -1,0 +1,128 @@
+@namespace AAuth.Samples.Events
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.Extensions.Configuration
+@inject IConfiguration Configuration
+@implements IDisposable
+
+<section class="events-view" aria-label="Events walkthrough" data-step="@_session.Step" data-channel="@(_session.Protected ? "protected" : "public")">
+    <header class="events-heading">
+        <img src="_content/EventSupport/bell.svg" alt="" width="28" height="28" />
+        <h1>Bookings Events</h1>
+        <span class="events-count" aria-live="polite">@_session.Step / 6 complete</span>
+    </header>
+    <div class="events-options">
+        <fieldset disabled="@(!_interactive || _busy || _session.Step > 0)">
+            <legend>Subscription channel</legend>
+            <label><input type="radio" name="events-channel" checked="@_session.Protected" @onchange="() => _session.Protected = true" /> Protected reservations</label>
+            <label><input type="radio" name="events-channel" checked="@(!_session.Protected)" @onchange="() => _session.Protected = false" /> Public availability</label>
+        </fieldset>
+        <label for="events-account">Account
+            <select id="events-account" @bind="_session.Account" disabled="@(_busy || _session.Step > 0 || !_session.Protected)">
+                <option value="personal">Personal reservations</option>
+                <option value="work">Work reservations</option>
+            </select>
+        </label>
+    </div>
+    <ol class="events-sequence" aria-label="Protocol steps">
+        @for (var index = 0; index < EventDemoSession.Steps.Length; index++)
+        {
+            <li class="@(index < _session.Step ? "complete" : index == _session.Step ? "current" : "")"
+                aria-current="@(index == _session.Step ? "step" : null)">@EventDemoSession.Steps[index]</li>
+        }
+    </ol>
+    <div class="events-actions">
+        <button type="button" class="events-next" disabled="@(!_interactive || _busy || _session.Step == 6)" @onclick="Next">
+            <img src="_content/EventSupport/arrow-right.svg" width="18" height="18" alt="" />
+            @(_busy ? "Awaiting response" : _session.Step == 6 ? "Completed" : EventDemoSession.Steps[_session.Step])
+        </button>
+        <button type="button" disabled="@_busy" @onclick="Reset" title="Start a new subscription" aria-label="Start a new subscription">
+            <img src="_content/EventSupport/rotate-ccw.svg" width="18" height="18" alt="" />
+        </button>
+    </div>
+    @if (_session.ConsentUrl is { } consent)
+    {
+        <aside class="events-consent" role="status">
+            <h2>Person Server consent</h2>
+            <a href="@consent" target="_blank" rel="noopener">Review account authorization</a>
+        </aside>
+    }
+    @if (_error is not null)
+    {
+        <p class="events-error" role="alert">@_error</p>
+    }
+    @if (_session.Payload is not null)
+    {
+        <section class="events-receipt" aria-label="Verified event">
+            <h2>Verified notification</h2>
+            <dl><dt>Context</dt><dd>@_session.Context</dd><dt>Event ID</dt><dd>@_session.Eid</dd><dt>Duplicate</dt><dd>Ignored by issuer and event ID</dd></dl>
+            <pre data-testid="event-payload">@_session.Payload</pre>
+        </section>
+    }
+    <section class="events-evidence" aria-label="Recorded exchanges">
+        @foreach (var evidence in _session.Evidence)
+        {
+            <details open="@(evidence.Step == _session.Step)">
+                <summary>@evidence.Step. @evidence.Exchange <strong>HTTP @evidence.StatusCode</strong></summary>
+                <pre>@evidence.Json</pre>
+            </details>
+        }
+    </section>
+    <details class="events-code">
+        <summary>C# protocol snippets</summary>
+        <pre><code>@EventDemoCode.Example</code></pre>
+    </details>
+    <footer class="events-limits">
+        <p>Single-shot sample: <code>max_uses: 1</code>. AP token acquisition, authenticated polling, acknowledgement and the notification trigger are local sample APIs, not standard endpoints.</p>
+        <p>Unlimited AP subscriptions are supported. The draft's agent deduplication rule uses <code>eid</code> and issuer, so recurring notifications under the same subscription are ignored. No per-event <code>jti</code> requirement is added.</p>
+    </footer>
+</section>
+
+@code {
+    private EventDemoSession _session = null!;
+    private readonly CancellationTokenSource _cancellation = new();
+    private bool _busy;
+    private bool _interactive;
+    private string? _error;
+
+    protected override void OnInitialized() => CreateSession();
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (!firstRender) return;
+        _interactive = true;
+        StateHasChanged();
+    }
+
+    private void CreateSession()
+    {
+        var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aauth", "event-ui", Guid.NewGuid().ToString("N"));
+        _session = new EventDemoSession(directory,
+            Configuration["AAuth:AgentProvider"] ?? "http://localhost:5301",
+            Configuration["AAuth:Bookings"] ?? "http://localhost:5005",
+            Configuration["AAuth:PersonServer"] ?? "http://localhost:5100");
+        _session.Changed = () => InvokeAsync(StateHasChanged);
+    }
+
+    private async Task Next()
+    {
+        _busy = true; _error = null;
+        try { await _session.NextAsync(_cancellation.Token); }
+        catch (Exception exception) when (exception is not OperationCanceledException) { _error = exception.Message; }
+        finally { _busy = false; }
+    }
+
+    private void Reset()
+    {
+        _session.Dispose();
+        CreateSession();
+        _error = null;
+    }
+
+    public void Dispose()
+    {
+        _cancellation.Cancel();
+        _cancellation.Dispose();
+        _session.Dispose();
+    }
+}

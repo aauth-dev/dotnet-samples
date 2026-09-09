@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../../src/AAuth.Events/AAuth.Events.csproj" />
+    <ProjectReference Include="../../samples/EventSupport/EventSupport.csproj" />
+  </ItemGroup>
+</Project>

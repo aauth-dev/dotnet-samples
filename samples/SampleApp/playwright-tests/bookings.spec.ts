@@ -1,8 +1,9 @@
 import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/blazor';
 import { readResponseJson, expectStatus } from '../../../tests/e2e/helpers/json';
-import { approveInPopup } from '../../../tests/e2e/helpers/consent';
+import { approveInPopup, denyInPopup, authenticateConsent } from '../../../tests/e2e/helpers/consent';
 import { Urls } from '../../../tests/e2e/helpers/agents';
+import { approvePersonConsent } from '../../../tests/e2e/helpers/consent';
 
 /**
  * Rich Resource Requests (R3) — four-party, Bookings resource.
@@ -23,17 +24,61 @@ import { Urls } from '../../../tests/e2e/helpers/agents';
 test.describe('Rich Resource Requests (R3)', () => {
   test.describe.configure({ timeout: 120_000 });
 
+  test('account switch rejects the previous grant and needs fresh consent', async ({ page, context }, testInfo) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/bookings');
+    await waitForInteractive(page, 'button.btn-primary');
+    await expect(async () => {
+      await page.locator('#bookings-account').selectOption('personal');
+      await expect(page.locator('#bookings-account')).toHaveAttribute('data-account', 'personal', { timeout: 2_000 });
+    }).toPass({ timeout: 20_000 });
+    await clickAndConfirm(page, 'button.btn-primary', async () =>
+      (await page.locator('a[target="_blank"][href*="/interaction"], div.alert-danger').count()) > 0);
+    await approvePersonConsent(page, 'a[target="_blank"][href*="/interaction"]');
+    await expectStatus(page, 200, 60_000);
+    const personal = await readResponseJson(page) as Record<string, unknown>;
+    expect(personal.account).toBe('personal');
+
+    await page.locator('#bookings-account').selectOption('work');
+    await page.getByRole('button', { name: 'Check previous account grant', exact: true }).click();
+    await expectStatus(page, 401);
+    await expect(page.locator('div.alert-danger')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Search availability (r3_granted)', exact: true }).click();
+    const link = page.locator('a[target="_blank"][href*="/interaction"]');
+    await expect(link).toBeVisible();
+    const [denial] = await Promise.all([context.waitForEvent('page'), link.click()]);
+    await authenticateConsent(denial);
+    await expect(denial.locator('body')).toContainText('work');
+    await denyInPopup(denial);
+    await denial.close();
+    await expect(page.locator('div.alert-danger')).toContainText(/denied/i);
+
+    await page.getByRole('button', { name: 'Search availability (r3_granted)', exact: true }).click();
+    await approvePersonConsent(page, 'a[target="_blank"][href*="/interaction"]');
+    await expectStatus(page, 200, 60_000);
+    const work = await readResponseJson(page) as Record<string, unknown>;
+    expect(work.account).toBe('work');
+    expect(work.subject).toBe(personal.subject);
+    expect(work.agent).toBe(personal.agent);
+    await page.locator('#bookings-account').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath('accounts-mobile.png') });
+  });
+
   test('search availability is served immediately (r3_granted)', async ({ page }) => {
     await page.goto('/bookings');
     await expect(page.locator('h2')).toContainText('Rich Resource Requests');
+    await expect(page.locator('pre code.language-csharp').last()).toContainText('operation.Matches(Vocabulary.OpenApi');
+    await expect(page.locator('pre code.language-csharp').last()).toContainText('new SqliteR3AuditSink(auditPath)');
     await waitForInteractive(page, 'button.btn-primary');
 
     await clickAndConfirm(
       page,
       'button.btn-primary',
-      async () => (await page.locator('pre code.language-json, div.alert-danger').count()) > 0,
+      async () => (await page.locator('a[target="_blank"][href*="/interaction"], pre code.language-json, div.alert-danger').count()) > 0,
     );
+    await approvePersonConsent(page, 'a[target="_blank"][href*="/interaction"]');
 
+    await expect(page.locator('div.alert-danger')).toHaveText([]);
     await expectStatus(page, 200, 60_000);
     const json = (await readResponseJson(page)) as Record<string, unknown>;
     expect(json.accessMode).toBe('four-party-r3');
@@ -47,22 +92,32 @@ test.describe('Rich Resource Requests (R3)', () => {
   test('confirming a reservation requires per-call approval, then succeeds (r3_conditional)', async ({ page, context }) => {
     await page.goto('/bookings');
     await waitForInteractive(page, 'button.btn-primary');
+    await expect(async () => {
+      await page.locator('#bookings-account').selectOption('personal');
+      await expect(page.locator('#bookings-account')).toHaveAttribute('data-account', 'personal', { timeout: 2_000 });
+    }).toPass({ timeout: 20_000 });
 
     // confirmReservation is authorized only in principle (r3_conditional). The
     // resource challenges the concrete call with a per-call proposal carrying the
     // parameters (r3 §Per-Call Proposals); the R3 Access Server then asks the user to
     // approve that specific reservation. The SampleApp surfaces the R3 AS interaction URL.
     const link = page.locator('a[target="_blank"]', { hasText: /interaction/ });
-    await clickAndConfirm(page, 'button.btn-outline-primary', () => link.isVisible());
+    await clickAndConfirm(page, 'button.btn-outline-primary', async () =>
+      await link.isVisible() || await page.locator('div.alert-danger').isVisible());
+    await expect(page.locator('div.alert-danger')).toHaveText([]);
     await expect(link).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('.spinner-border')).toBeVisible();
+    await approvePersonConsent(page, 'a[target="_blank"][href*="/interaction"]');
+    await expect(link).toHaveAttribute('href', /localhost:5501/);
 
     // The interaction URL is the R3 Access Server's own per-call consent screen.
     const [popup] = await Promise.all([
       context.waitForEvent('page'),
       link.click(),
     ]);
+    await authenticateConsent(popup);
     await expect(popup.locator('.badge')).toContainText('R3 Access Server');
+    await expect(popup.locator('body')).toContainText('Personal reservations');
     await approveInPopup(popup);
 
     // On approval the AS mints the per-call token; the client resends the exact
@@ -73,6 +128,7 @@ test.describe('Rich Resource Requests (R3)', () => {
     expect(json.operationId).toBe('confirmReservation');
     expect(json.source).toBe('per-call-r3_granted');
     expect(json.status).toBe('confirmed');
+    expect(json.account).toBe('personal');
     expect(typeof json.r3_uri).toBe('string');
     expect(typeof json.r3_s256).toBe('string');
   });

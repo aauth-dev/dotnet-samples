@@ -1,0 +1,2 @@
+Lucide icons are distributed under the ISC license.
+Source: https://github.com/lucide-icons/lucide (lucide-static 0.468.0).
