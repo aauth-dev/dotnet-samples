@@ -8,7 +8,7 @@ namespace AAuth.Errors;
 /// </summary>
 /// <remarks>
 /// The PS returns a non-2xx response whose JSON body carries an
-/// <c>error</c> code (REQUIRED) and an optional <c>error_description</c>.
+/// <c>error</c> code (REQUIRED) and an optional <c>detail</c>.
 /// This typed exception surfaces those fields so callers (UIs, retry
 /// policies, tests) can branch on the error code without re-parsing the
 /// body. Responses that are not parseable AAuth error objects fall back to
@@ -23,8 +23,8 @@ public sealed class AAuthTokenExchangeException : Exception
     /// <summary>The wire <c>error</c> code (e.g. <c>invalid_resource_token</c>).</summary>
     public string ErrorCode { get; }
 
-    /// <summary>The optional human-readable <c>error_description</c>, if present.</summary>
-    public string? ErrorDescription { get; }
+    /// <summary>The optional human-readable <c>detail</c>, if present.</summary>
+    public string? Detail { get; }
 
     /// <summary>The HTTP status code from the token endpoint response.</summary>
     public int StatusCode { get; }
@@ -38,11 +38,11 @@ public sealed class AAuthTokenExchangeException : Exception
 
     /// <summary>Create a token-exchange exception.</summary>
     public AAuthTokenExchangeException(
-        string errorCode, string? errorDescription, int statusCode, bool isTerminal)
-        : base(BuildMessage(errorCode, errorDescription, statusCode))
+        string errorCode, string? detail, int statusCode, bool isTerminal)
+        : base(BuildMessage(errorCode, detail, statusCode))
     {
         ErrorCode = errorCode;
-        ErrorDescription = errorDescription;
+        Detail = detail;
         StatusCode = statusCode;
         IsTerminal = isTerminal;
     }
@@ -63,8 +63,8 @@ public sealed class AAuthTokenExchangeException : Exception
     public static bool IsTerminalCode(string? errorCode)
         => !string.Equals(errorCode, "server_error", StringComparison.Ordinal);
 
-    private static string BuildMessage(string errorCode, string? errorDescription, int statusCode)
-        => errorDescription is { Length: > 0 }
-            ? $"Token exchange failed: {errorCode} (HTTP {statusCode}) — {errorDescription}"
+    private static string BuildMessage(string errorCode, string? detail, int statusCode)
+        => detail is { Length: > 0 }
+            ? $"Token exchange failed: {errorCode} (HTTP {statusCode}) — {detail}"
             : $"Token exchange failed: {errorCode} (HTTP {statusCode})";
 }

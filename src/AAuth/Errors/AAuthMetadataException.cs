@@ -26,6 +26,11 @@ public sealed class AAuthMetadataException : Exception
     /// <summary>The issuer expected from the fetch URL (scheme + host).</summary>
     public string? ExpectedIssuer { get; }
 
+    public SignatureErrorCode Code => string.IsNullOrEmpty(ClaimedIssuer)
+        ? SignatureErrorCode.IssuerMissing : SignatureErrorCode.IssuerMismatch;
+
+    public string ErrorCode => Code == SignatureErrorCode.IssuerMissing ? "issuer_missing" : "issuer_mismatch";
+
     /// <summary>Create a metadata-verification exception.</summary>
     public AAuthMetadataException(Uri documentUrl, string? claimedIssuer, string? expectedIssuer)
         : base(BuildMessage(documentUrl, claimedIssuer, expectedIssuer))

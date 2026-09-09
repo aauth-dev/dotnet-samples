@@ -34,7 +34,7 @@ public class TokenErrorTests
     {
         var resp = new TokenErrorResponse(TokenErrorCode.InvalidAgentToken, "bad token");
         Assert.Equal("invalid_agent_token", resp.ErrorCode);
-        Assert.Equal("bad token", resp.ErrorDescription);
+        Assert.Equal("bad token", resp.Detail);
     }
 
     [Fact(DisplayName = "§Token Endpoint Errors — null code returns false")]

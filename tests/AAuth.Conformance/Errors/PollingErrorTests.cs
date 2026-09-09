@@ -36,7 +36,7 @@ public class PollingErrorTests
             };
         });
 
-        var client = new HttpClient(handler);
+        var client = new InProcessHttpClient(handler);
         var poller = new DeferredPoller(client, new DeferredPollerOptions
         {
             MaxTotalWait = TimeSpan.FromSeconds(30),
@@ -66,7 +66,7 @@ public class PollingErrorTests
             return resp;
         });
 
-        var client = new HttpClient(handler);
+        var client = new InProcessHttpClient(handler);
         var poller = new DeferredPoller(client, new DeferredPollerOptions
         {
             MaxTotalWait = TimeSpan.FromSeconds(5),
@@ -90,7 +90,7 @@ public class PollingErrorTests
             return resp;
         });
 
-        var client = new HttpClient(handler);
+        var client = new InProcessHttpClient(handler);
         var poller = new DeferredPoller(client);
 
         var ex = await Assert.ThrowsAsync<PollingErrorException>(
@@ -109,7 +109,7 @@ public class PollingErrorTests
             return resp;
         });
 
-        var client = new HttpClient(handler);
+        var client = new InProcessHttpClient(handler);
         var poller = new DeferredPoller(client);
 
         var ex = await Assert.ThrowsAsync<PollingErrorException>(
