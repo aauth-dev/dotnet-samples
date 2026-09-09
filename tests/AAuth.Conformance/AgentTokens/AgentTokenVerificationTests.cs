@@ -26,6 +26,7 @@ public class AgentTokenVerificationTests
 
     private static string GoodToken(AAuthKey key) => new AgentTokenBuilder
     {
+        EgressPolicy = TestEgress.Policy,
         Issuer = Iss,
         Subject = Sub,
         KeyId = Kid,
@@ -40,7 +41,7 @@ public class AgentTokenVerificationTests
     {
         var key = AAuthKey.Generate();
         var jwt = GoodToken(key);
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
 
         var verified = verifier.VerifySelfIssuedAgentToken(jwt, key);
 
@@ -59,7 +60,7 @@ public class AgentTokenVerificationTests
         var jwt = $"{Base64UrlEncoder.Encode(header)}.{Base64UrlEncoder.Encode(payload)}.AAAA";
 
         Assert.Throws<TokenVerificationException>(() =>
-            new TokenVerifier().VerifySelfIssuedAgentToken(jwt, key));
+            new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifySelfIssuedAgentToken(jwt, key));
     }
 
     /// <summary>
@@ -72,6 +73,7 @@ public class AgentTokenVerificationTests
         var issued = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
         var jwt = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = Iss,
             Subject = Sub,
             KeyId = Kid,
@@ -80,7 +82,7 @@ public class AgentTokenVerificationTests
             Lifetime = TimeSpan.FromSeconds(1),
         }.Build();
 
-        var verifier = new TokenVerifier { Clock = () => issued.AddHours(1) };
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, Clock = () => issued.AddHours(1) };
         Assert.Throws<TokenVerificationException>(() =>
             verifier.VerifySelfIssuedAgentToken(jwt, key));
     }
@@ -94,7 +96,7 @@ public class AgentTokenVerificationTests
         var key = AAuthKey.Generate();
         var jwt = GoodToken(key);
         Assert.Throws<TokenVerificationException>(() =>
-            new TokenVerifier().Verify(jwt, key, "aa-resource+jwt", "aauth-agent.json"));
+            new TokenVerifier { EgressPolicy = TestEgress.Policy }.Verify(jwt, key, "aa-resource+jwt", "aauth-agent.json"));
     }
 
     /// <summary>
@@ -106,7 +108,7 @@ public class AgentTokenVerificationTests
         var key = AAuthKey.Generate();
         var jwt = GoodToken(key);
         Assert.Throws<TokenVerificationException>(() =>
-            new TokenVerifier().Verify(jwt, key, AgentTokenBuilder.TokenType, "aauth-person.json"));
+            new TokenVerifier { EgressPolicy = TestEgress.Policy }.Verify(jwt, key, AgentTokenBuilder.TokenType, "aauth-person.json"));
     }
 
     /// <summary>
@@ -120,7 +122,7 @@ public class AgentTokenVerificationTests
         var jwt = GoodToken(a);
 
         Assert.Throws<TokenVerificationException>(() =>
-            new TokenVerifier().VerifySelfIssuedAgentToken(jwt, b));
+            new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifySelfIssuedAgentToken(jwt, b));
     }
 
     /// <summary>
@@ -130,10 +132,10 @@ public class AgentTokenVerificationTests
     public void Rejects_MalformedPayload()
     {
         var key = AAuthKey.Generate();
-        var header = "{\"alg\":\"EdDSA\",\"typ\":\"aa-agent+jwt\",\"kid\":\"k\"}";
+        var header = "{\"alg\":\"Ed25519\",\"typ\":\"aa-agent+jwt\",\"kid\":\"k\"}";
         var jwt = $"{Base64UrlEncoder.Encode(header)}.{Base64UrlEncoder.Encode("not-json")}.AAAA";
 
         Assert.Throws<TokenVerificationException>(() =>
-            new TokenVerifier().VerifySelfIssuedAgentToken(jwt, key));
+            new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifySelfIssuedAgentToken(jwt, key));
     }
 }

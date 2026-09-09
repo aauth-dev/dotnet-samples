@@ -25,6 +25,7 @@ public interface IOpaqueTokenStore
 /// <summary>Metadata associated with an opaque access token.</summary>
 public sealed class OpaqueTokenInfo
 {
+    public string? Account { get; init; }
     /// <summary>The agent's JWK thumbprint (binding).</summary>
     public required string AgentJkt { get; init; }
 
@@ -49,6 +50,7 @@ public sealed class InMemoryOpaqueTokenStore : IOpaqueTokenStore
     public Task<string> IssueAsync(OpaqueTokenInfo info, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(info);
+        AAuth.Tokens.AccountBinding.Validate(info.Account);
         var token = Guid.NewGuid().ToString("N");
         _tokens[token] = info;
         return Task.FromResult(token);

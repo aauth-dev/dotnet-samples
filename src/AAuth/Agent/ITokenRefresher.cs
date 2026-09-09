@@ -9,6 +9,7 @@ namespace AAuth.Agent;
 /// </summary>
 public sealed record TokenRefreshContext
 {
+    public string? Account { get; init; }
     /// <summary>The current (expiring) agent token.</summary>
     public required string CurrentToken { get; init; }
 

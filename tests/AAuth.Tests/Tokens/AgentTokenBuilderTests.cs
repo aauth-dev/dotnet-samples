@@ -35,6 +35,7 @@ public class AgentTokenBuilderTests
     {
         var builder = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = iss,
             Subject = sub,
             KeyId = kid,
@@ -53,6 +54,7 @@ public class AgentTokenBuilderTests
     {
         var builder = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = iss,
             Subject = "aauth:alice@ap.example",
             KeyId = "k1",
@@ -67,6 +69,7 @@ public class AgentTokenBuilderTests
     {
         var builder = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:alice@ap.example",
             KeyId = "k1",
@@ -83,6 +86,7 @@ public class AgentTokenBuilderTests
         var key = NewKey();
         var jwt = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:alice@ap.example",
             KeyId = "k1",
@@ -91,7 +95,7 @@ public class AgentTokenBuilderTests
 
         var (header, _, _, _) = Decode(jwt);
 
-        Assert.Equal("EdDSA", (string?)header["alg"]);
+        Assert.Equal("Ed25519", (string?)header["alg"]);
         Assert.Equal("aa-agent+jwt", (string?)header["typ"]);
         Assert.Equal("k1", (string?)header["kid"]);
     }
@@ -103,6 +107,7 @@ public class AgentTokenBuilderTests
         var iat = DateTimeOffset.FromUnixTimeSeconds(1_730_000_000);
         var jwt = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:alice@ap.example",
             KeyId = "k1",
@@ -132,6 +137,7 @@ public class AgentTokenBuilderTests
     {
         var jwt = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:alice@ap.example",
             KeyId = "k1",
@@ -148,6 +154,7 @@ public class AgentTokenBuilderTests
     {
         var jwt = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://vendor.example",
             Subject = "aauth:planner.7f3c+search1@vendor.example",
             KeyId = "k1",
@@ -164,6 +171,7 @@ public class AgentTokenBuilderTests
     {
         var builder = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://vendor.example",
             Subject = "aauth:planner+oops@vendor.example",
             KeyId = "k1",
@@ -182,6 +190,7 @@ public class AgentTokenBuilderTests
     {
         var builder = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = subject,
             KeyId = "k1",
@@ -197,6 +206,7 @@ public class AgentTokenBuilderTests
     {
         var builder = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://vendor.example",
             Subject = "aauth:planner.7f3c+search1+deep@vendor.example",
             KeyId = "k1",
@@ -212,6 +222,7 @@ public class AgentTokenBuilderTests
     {
         var builder = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://vendor.example",
             Subject = "aauth:other+search1@vendor.example",
             KeyId = "k1",
@@ -228,6 +239,7 @@ public class AgentTokenBuilderTests
         var key = NewKey();
         var jwt = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:alice@ap.example",
             KeyId = "k1",
@@ -248,6 +260,7 @@ public class AgentTokenBuilderTests
         var publicOnly = AAuthKey.FromJwk(AAuthKey.Generate().ToPublicJwk());
         var builder = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:alice@ap.example",
             KeyId = "k1",
@@ -262,6 +275,7 @@ public class AgentTokenBuilderTests
     {
         var builder = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:alice@ap.example",
             KeyId = "k1",
@@ -277,6 +291,7 @@ public class AgentTokenBuilderTests
     {
         var jwt = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:alice@ap.example",
             KeyId = "k1",

@@ -44,13 +44,13 @@ public class AgentTokenStructureTests
     // -- Header --
 
     /// <summary>
-    /// "Header: alg: Signing algorithm. EdDSA is RECOMMENDED."
+    /// "Header: alg: Signing algorithm. Ed25519 is RECOMMENDED."
     /// </summary>
-    [Fact(DisplayName = "§Agent Token Structure — header.alg SHOULD be EdDSA")]
-    public void HeaderAlg_IsEdDsa()
+    [Fact(DisplayName = "§Agent Token Structure — header.alg SHOULD be Ed25519")]
+    public void HeaderAlg_IsEd25519()
     {
         var (header, _) = Decode(Builder(NewKey()).Build());
-        Assert.Equal("EdDSA", (string?)header["alg"]);
+        Assert.Equal("Ed25519", (string?)header["alg"]);
     }
 
     /// <summary>
@@ -180,6 +180,7 @@ public class AgentTokenStructureTests
     {
         var jwt = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = Iss,
             Subject = Sub,
             KeyId = Kid,

@@ -20,7 +20,8 @@ namespace AAuth.Person;
 /// <remarks>
 /// In a three-party (PS-asserted) exchange the asserter supplies the identity
 /// and consent decision directly. In a four-party (federated) exchange the
-/// same asserter answers the AS's §Claims Required push: the host maps an
+/// same asserter gates federation independently of AS claims negotiation and
+/// answers the AS's §Claims Required push: the host maps an
 /// <see cref="IdentityAssertion.Assert"/> into the directed <c>sub</c> + claims
 /// pushed to the AS. The host packages the mission three-gate model around the
 /// asserter (terminated rejection and prior-consent silent grant use the
@@ -37,6 +38,8 @@ public interface IIdentityClaimsAsserter
 /// <summary>The verified context an <see cref="IIdentityClaimsAsserter"/> decides on.</summary>
 public sealed class IdentityAssertionRequest
 {
+    public string? Account { get; init; }
+    public string? AgentKeyThumbprint { get; init; }
     /// <summary>The resource URL the auth token will be audienced to (the resource token's <c>iss</c>).</summary>
     public required string ResourceUrl { get; init; }
 
@@ -82,6 +85,8 @@ public sealed class IdentityAssertionRequest
 
     /// <summary>The pending-entry id when the request resumes a parked consent.</summary>
     public string? InteractionId { get; init; }
+    public JsonObject? ResourceContext { get; init; }
+    public UpstreamTokenValidationResult? UpstreamAuthorization { get; init; }
 }
 
 /// <summary>The kinds of decision an <see cref="IIdentityClaimsAsserter"/> can return.</summary>

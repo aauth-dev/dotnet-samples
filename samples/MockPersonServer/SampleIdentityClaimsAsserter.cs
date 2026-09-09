@@ -10,15 +10,17 @@ namespace MockPersonServer;
 /// <summary>
 /// The MockPS identity/consent decision — the SDK's <see cref="IIdentityClaimsAsserter"/>
 /// seam. Supplies the demo principal's directed identity (and, for a non-mission
-/// three-party request, the <see cref="ConsentStore"/> gate). The mission
+/// request in either issuance mode, the <see cref="ConsentStore"/> gate). The mission
 /// out-of-scope decision is a separate concern owned by
 /// <see cref="ScriptMissionTokenConsent"/>; here a mission request only asserts
-/// identity. A production PS resolves the signed-in user's directory entry.
+/// identity after the SDK's shared mission gate. A production PS resolves the signed-in user's directory entry.
 /// </summary>
 public sealed class SampleIdentityClaimsAsserter : IIdentityClaimsAsserter
 {
-    private const string Subject = "pairwise-sub";
     private const string DemoTenant = "demo-tenant";
+    public static string DirectedSubject(string resource) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes("isolated-demo-person\0" + resource))).ToLowerInvariant();
 
     private readonly ConsentStore _consent;
     private readonly bool _requireConsent;
@@ -50,6 +52,10 @@ public sealed class SampleIdentityClaimsAsserter : IIdentityClaimsAsserter
         var isAdmin = IsAdminAgent(request.AgentId);
         var roles = isAdmin ? _demoRoles : null;
         var groups = isAdmin ? _demoGroups : null;
+        var subject = DirectedSubject(request.ResourceUrl);
+        if (request.Mission is null && _requireConsent
+            && !_consent.IsConsented(request.AgentId, request.ResourceUrl, request.Scope, request.Account, request.AgentKeyThumbprint))
+            return Task.FromResult(IdentityAssertion.NeedsConsent());
 
         // Four-party §Claims Required push: the AS asked for specific claim names.
         // Assert the demo principal's claims; the host projects the requested subset.
@@ -61,21 +67,21 @@ public sealed class SampleIdentityClaimsAsserter : IIdentityClaimsAsserter
                 additional[name] = value;
             }
             return Task.FromResult(IdentityAssertion.Assert(
-                Subject, tenant: DemoTenant, roles: roles, groups: groups, additionalClaims: additional));
+                subject, tenant: DemoTenant, roles: roles, groups: groups, additionalClaims: additional));
         }
 
         // Mission request: identity only — the mission gate decision is the
         // ScriptMissionTokenConsent seam's job. No PS consent gate here.
         if (request.Mission is not null)
         {
-            return Task.FromResult(IdentityAssertion.Assert(Subject, roles: roles, groups: groups));
+            return Task.FromResult(IdentityAssertion.Assert(subject, roles: roles, groups: groups));
         }
 
         // Non-mission three-party: gate on the demo ConsentStore (driven by the
         // unchanged /admin/consent + /interaction browser surfaces).
-        if (!_requireConsent || _consent.IsConsented(request.AgentId, request.ResourceUrl, request.Scope))
+        if (!_requireConsent || _consent.IsConsented(request.AgentId, request.ResourceUrl, request.Scope, request.Account, request.AgentKeyThumbprint))
         {
-            return Task.FromResult(IdentityAssertion.Assert(Subject, roles: roles, groups: groups));
+            return Task.FromResult(IdentityAssertion.Assert(subject, roles: roles, groups: groups));
         }
         return Task.FromResult(IdentityAssertion.NeedsConsent());
     }

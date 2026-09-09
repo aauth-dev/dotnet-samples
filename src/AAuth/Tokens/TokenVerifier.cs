@@ -20,6 +20,7 @@ namespace AAuth.Tokens;
 /// </summary>
 public sealed class TokenVerifier
 {
+    public AAuthEgressPolicy EgressPolicy { get; init; } = AAuthEgressPolicy.Production;
     /// <summary>Clock injection point.</summary>
     public Func<DateTimeOffset> Clock { get; init; } = () => DateTimeOffset.UtcNow;
 
@@ -36,11 +37,24 @@ public sealed class TokenVerifier
         string Issuer,
         string TokenType)
     {
+        public DateTimeOffset ExpiresAt { get; } = ReadExpiration(Payload);
+
+        private static DateTimeOffset ReadExpiration(JsonObject payload)
+        {
+            if (!TryGetUnixTime(payload, "exp", out var expiration))
+                throw new TokenVerificationException("Token is missing a valid 'exp'.");
+            try { return DateTimeOffset.FromUnixTimeSeconds(expiration); }
+            catch (ArgumentOutOfRangeException ex) { throw new TokenVerificationException("Token 'exp' is out of range.", ex); }
+        }
+
         /// <summary>
         /// The <c>mission</c> claim ({approver, s256}) when present, otherwise
         /// <see langword="null"/> (§Resource Token, §Auth Token).
         /// </summary>
-        public MissionClaim? Mission => MissionClaim.FromPayload(Payload);
+        public AAuthEgressPolicy EgressPolicy { get; init; } = AAuthEgressPolicy.Production;
+        public MissionClaim? Mission => MissionClaim.FromPayload(Payload, EgressPolicy);
+        public string? Account => AccountBinding.TryRead(Payload, out var account)
+            ? account : throw new TokenVerificationException("Token account must be a non-empty string without control characters.");
     }
 
     /// <summary>
@@ -66,6 +80,17 @@ public sealed class TokenVerifier
 
         var header = DecodeJsonSegment(segments[0], "header");
         var payload = DecodeJsonSegment(segments[1], "payload");
+        if (!AccountBinding.TryRead(payload, out _))
+            throw new TokenVerificationException("Token account must be a non-empty string without control characters.");
+        foreach (var name in new[] { "alg", "typ", "kid" })
+            if (header.ContainsKey(name) && (header[name] is not JsonValue value || !value.TryGetValue<string>(out _)))
+                throw new TokenVerificationException($"JWT header '{name}' must be a string.");
+        foreach (var name in new[] { "iss", "dwk", "sub", "agent", "jti", "scope", "parent_agent", "ps" })
+            if (payload.ContainsKey(name) && (payload[name] is not JsonValue value || !value.TryGetValue<string>(out _)))
+                throw new TokenVerificationException($"JWT claim '{name}' must be a string.");
+        foreach (var name in new[] { "act", "cnf", "mission" })
+            if (payload.ContainsKey(name) && payload[name] is not JsonObject)
+                throw new TokenVerificationException($"JWT claim '{name}' must be an object.");
 
         var alg = (string?)header["alg"];
         if (alg != issuerKey.Algorithm)
@@ -113,7 +138,7 @@ public sealed class TokenVerifier
         {
             if (exp + skew < nowUnix)
             {
-                throw new TokenVerificationException($"Token expired at {exp} (now={nowUnix}).");
+                throw new TokenVerificationException(AAuth.Errors.SignatureErrorCode.ExpiredJwt, $"Token expired at {exp} (now={nowUnix}).");
             }
         }
         else
@@ -142,12 +167,18 @@ public sealed class TokenVerifier
 
         var iss = (string?)payload["iss"]
             ?? throw new TokenVerificationException("Token is missing 'iss'.");
-        if (!AAuthUrl.IsHttpsOrLoopback(iss))
+        if (!AAuthUrl.IsHttpsOrLoopback(iss, EgressPolicy))
         {
             throw new TokenVerificationException("Token 'iss' must be an absolute https:// URL (or http://localhost).");
         }
 
-        return new VerifiedToken(header, payload, iss, typ);
+        if (typ == AgentTokenBuilder.TokenType)
+        {
+            try { SignatureKeyParser.Confirmation(payload); }
+            catch (AAuthVerificationException exception)
+            { throw new TokenVerificationException(exception.Code, exception.Message, exception); }
+        }
+        return new VerifiedToken(header, payload, iss, typ) { EgressPolicy = EgressPolicy };
     }
 
     /// <summary>
@@ -173,7 +204,8 @@ public sealed class TokenVerifier
         IAAuthKey httpSignatureKey,
         string expectedAgentId,
         string? expectedDwk = null,
-        string? expectedMaxScope = null)
+        string? expectedMaxScope = null,
+        AccountExpectation? accountExpectation = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(jwt);
         ArgumentNullException.ThrowIfNull(issuerKey);
@@ -204,6 +236,8 @@ public sealed class TokenVerifier
         }
 
         var verified = Verify(jwt, issuerKey, AuthTokenBuilder.TokenType, actualDwk, expectedAudience);
+        if (accountExpectation is not null && !AccountBinding.Matches(accountExpectation.Account, verified.Account))
+            throw new TokenVerificationException("Auth token account does not match the resource's expected account.");
 
         // §Auth Token Verification step 6: agent matches signing context.
         var agent = (string?)verified.Payload["agent"];
@@ -240,6 +274,8 @@ public sealed class TokenVerifier
         // is the top-level `agent` claim). Verify it is a valid agent identifier and
         // the chain is well-formed within the depth limit.
         var act = verified.Payload["act"] as JsonObject;
+        if (verified.Payload.ContainsKey("act") && act is null)
+            throw new TokenVerificationException("invalid_act_chain: 'act' must be an object.");
         if (act is not null)
         {
             var actAgent = (string?)act["agent"];
@@ -251,7 +287,7 @@ public sealed class TokenVerifier
             if (!ActChainBuilder.ValidateChain(act, MaxActDepth))
             {
                 throw new TokenVerificationException(
-                    "Auth token 'act' chain is malformed (missing 'agent' or exceeds max depth).");
+                    "invalid_act_chain: auth token 'act' must contain only valid agent identities within the depth limit.");
             }
         }
 
@@ -293,7 +329,8 @@ public sealed class TokenVerifier
         IAAuthKey httpSignatureKey,
         string expectedAgentId,
         string? expectedMaxScope = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        AccountExpectation? accountExpectation = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(jwt);
         ArgumentNullException.ThrowIfNull(metadata);
@@ -308,8 +345,8 @@ public sealed class TokenVerifier
 
         // Cheap local checks first.
         var alg = (string?)header["alg"];
-        if (alg is null || (alg != AAuthKey.Algorithm && alg != EcdsaAAuthKey.Alg))
-            throw new TokenVerificationException($"Unsupported 'alg' '{alg}'. Supported: {AAuthKey.Algorithm}, {EcdsaAAuthKey.Alg}.");
+        if (alg is null || (alg != AAuthKey.Ed25519Algorithm && alg != EcdsaAAuthKey.Alg))
+            throw new TokenVerificationException($"Unsupported 'alg' '{alg}'. Supported: {AAuthKey.Ed25519Algorithm}, {EcdsaAAuthKey.Alg}.");
         var typ = (string?)header["typ"];
         if (typ != AuthTokenBuilder.TokenType)
             throw new TokenVerificationException($"Unexpected 'typ' (expected '{AuthTokenBuilder.TokenType}', got '{typ}').");
@@ -320,13 +357,13 @@ public sealed class TokenVerifier
 
         var iss = (string?)payload["iss"]
             ?? throw new TokenVerificationException("Token is missing 'iss'.");
-        if (!AAuthUrl.IsHttpsOrLoopback(iss))
+        if (!metadata.Policy.IsValidIdentifier(iss))
             throw new TokenVerificationException("Token 'iss' must be an absolute https:// URL (or http://localhost).");
 
         var kid = (string?)header["kid"]
             ?? throw new TokenVerificationException("Token header is missing 'kid'.");
 
-        var metadataUrl = MetadataClient.BuildUrl(iss, dwk);
+        var metadataUrl = metadata.GetUrl(iss, dwk);
         JsonObject metadataDoc;
         try
         {
@@ -341,31 +378,30 @@ public sealed class TokenVerifier
             ?? throw new TokenVerificationException($"Issuer metadata at {metadataUrl} is missing 'jwks_uri'.");
         if (!Uri.TryCreate(jwksUriRaw, UriKind.Absolute, out var jwksUri))
             throw new TokenVerificationException($"Issuer metadata 'jwks_uri' is not an absolute URL: {jwksUriRaw}");
-        if (!AAuthUrl.IsHttpsOrLoopback(jwksUriRaw))
-            throw new TokenVerificationException(
-                $"Issuer metadata 'jwks_uri' must be an absolute https:// URL (or http://localhost): {jwksUriRaw}");
+        metadata.Policy.ValidateJwksUrl(jwksUriRaw, iss);
 
-        var issuerKey = await jwks.ResolveKeyAsync(jwksUri, kid, cancellationToken).ConfigureAwait(false)
+        var issuerKey = await jwks.ResolveKeyAsync(jwksUri, kid, iss, cancellationToken).ConfigureAwait(false)
             ?? throw new TokenVerificationException($"No key with kid '{kid}' at {jwksUri}.");
 
         try
         {
             return VerifyAuthToken(jwt, issuerKey, expectedAudience, httpSignatureKey, expectedAgentId,
-                expectedDwk: dwk, expectedMaxScope: expectedMaxScope);
+                expectedDwk: dwk, expectedMaxScope: expectedMaxScope, accountExpectation: accountExpectation);
         }
         catch (TokenVerificationException)
         {
             // Silent re-keying ([@!I-D.hardt-httpbis-signature-key]): force one
             // rate-limited JWKS refresh and retry only if the key material rotated
             // under the same kid; otherwise re-throw the original failure.
-            var refreshed = await jwks.ForceRefreshKeyAsync(jwksUri, kid, cancellationToken).ConfigureAwait(false);
-            if (refreshed is null
-                || refreshed.ComputeJwkThumbprint() == issuerKey.ComputeJwkThumbprint())
+            var refreshed = await jwks.ForceRefreshKeyAsync(jwksUri, kid, iss, cancellationToken).ConfigureAwait(false);
+            if (refreshed is null)
+                throw new TokenVerificationException(AAuth.Errors.SignatureErrorCode.UnknownKey, $"No key with kid '{kid}' after JWKS refresh.");
+            if (refreshed.ComputeJwkThumbprint() == issuerKey.ComputeJwkThumbprint())
             {
                 throw;
             }
             return VerifyAuthToken(jwt, refreshed, expectedAudience, httpSignatureKey, expectedAgentId,
-                expectedDwk: dwk, expectedMaxScope: expectedMaxScope);
+                expectedDwk: dwk, expectedMaxScope: expectedMaxScope, accountExpectation: accountExpectation);
         }
     }
 
@@ -412,10 +448,10 @@ public sealed class TokenVerifier
             throw new TokenVerificationException("Token header is missing 'alg'.");
         }
         // Validate supported algorithms.
-        if (alg != AAuthKey.Algorithm && alg != EcdsaAAuthKey.Alg)
+        if (alg != AAuthKey.Ed25519Algorithm && alg != EcdsaAAuthKey.Alg)
         {
             throw new TokenVerificationException(
-                $"Unsupported 'alg' '{alg}'. Supported: {AAuthKey.Algorithm}, {EcdsaAAuthKey.Alg}.");
+                $"Unsupported 'alg' '{alg}'. Supported: {AAuthKey.Ed25519Algorithm}, {EcdsaAAuthKey.Alg}.");
         }
         var typ = (string?)header["typ"];
         if (typ != expectedType)
@@ -432,14 +468,14 @@ public sealed class TokenVerifier
 
         var iss = (string?)payload["iss"]
             ?? throw new TokenVerificationException("Token is missing 'iss'.");
-        if (!AAuthUrl.IsHttpsOrLoopback(iss))
+        if (!metadata.Policy.IsValidIdentifier(iss))
         {
             throw new TokenVerificationException("Token 'iss' must be an absolute https:// URL (or http://localhost).");
         }
         var kid = (string?)header["kid"]
             ?? throw new TokenVerificationException("Token header is missing 'kid'.");
 
-        var metadataUrl = MetadataClient.BuildUrl(iss, expectedDwk);
+        var metadataUrl = metadata.GetUrl(iss, expectedDwk);
         JsonObject metadataDoc;
         try
         {
@@ -456,13 +492,9 @@ public sealed class TokenVerifier
         {
             throw new TokenVerificationException($"Issuer metadata 'jwks_uri' is not an absolute URL: {jwksUriRaw}");
         }
-        if (!AAuthUrl.IsHttpsOrLoopback(jwksUriRaw))
-        {
-            throw new TokenVerificationException(
-                $"Issuer metadata 'jwks_uri' must be an absolute https:// URL (or http://localhost): {jwksUriRaw}");
-        }
+        metadata.Policy.ValidateJwksUrl(jwksUriRaw, iss);
 
-        var issuerKey = await jwks.ResolveKeyAsync(jwksUri, kid, cancellationToken).ConfigureAwait(false)
+        var issuerKey = await jwks.ResolveKeyAsync(jwksUri, kid, iss, cancellationToken).ConfigureAwait(false)
             ?? throw new TokenVerificationException($"No key with kid '{kid}' at {jwksUri}.");
 
         try
@@ -475,9 +507,10 @@ public sealed class TokenVerifier
             // have rotated key material under an unchanged kid, leaving a stale
             // cached key. Force one rate-limited JWKS refresh and retry only if the
             // key material actually changed; otherwise re-throw the original failure.
-            var refreshed = await jwks.ForceRefreshKeyAsync(jwksUri, kid, cancellationToken).ConfigureAwait(false);
-            if (refreshed is null
-                || refreshed.ComputeJwkThumbprint() == issuerKey.ComputeJwkThumbprint())
+            var refreshed = await jwks.ForceRefreshKeyAsync(jwksUri, kid, iss, cancellationToken).ConfigureAwait(false);
+            if (refreshed is null)
+                throw new TokenVerificationException(AAuth.Errors.SignatureErrorCode.UnknownKey, $"No key with kid '{kid}' after JWKS refresh.");
+            if (refreshed.ComputeJwkThumbprint() == issuerKey.ComputeJwkThumbprint())
             {
                 throw;
             }
@@ -572,10 +605,9 @@ public sealed class TokenVerifier
         }
 
         // Step 7: optional mission.approver constraint.
-        if (expectedApprover is not null)
+        if (expectedApprover is not null && verified.Payload["mission"] is JsonObject mission)
         {
-            var mission = verified.Payload["mission"] as JsonObject;
-            var approver = (string?)mission?["approver"];
+            var approver = (string?)mission["approver"];
             if (approver != expectedApprover)
             {
                 throw new TokenVerificationException(
@@ -643,9 +675,20 @@ public sealed class TokenVerifier
 /// <summary>Thrown when AAuth JWT verification fails for any reason.</summary>
 public sealed class TokenVerificationException : Exception
 {
+    public AAuth.Errors.SignatureErrorCode Code { get; }
+    public TokenVerificationException(AAuth.Errors.SignatureErrorCode code, string message, Exception? inner = null)
+        : base(message, inner) => Code = code;
+
     /// <summary>Create an exception with a message.</summary>
-    public TokenVerificationException(string message) : base(message) { }
+    public TokenVerificationException(string message) : this(AAuth.Errors.SignatureErrorCode.InvalidJwt, message) { }
 
     /// <summary>Create an exception with a message and inner exception.</summary>
-    public TokenVerificationException(string message, Exception inner) : base(message, inner) { }
+    public TokenVerificationException(string message, Exception inner) : this(inner switch
+    {
+        TokenVerificationException token => token.Code,
+        AAuthVerificationException signature => signature.Code,
+        JwkValidationException key => key.Code,
+        AAuth.Errors.AAuthMetadataException metadata => metadata.Code,
+        _ => AAuth.Errors.SignatureErrorCode.InvalidJwt,
+    }, message, inner) { }
 }

@@ -24,6 +24,8 @@ public class DualDwkTests
         var agentKey = AAuthKey.Generate();
         var jwt = new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = Iss,
             Audience = Aud,
             Agent = Agent,
@@ -40,7 +42,7 @@ public class DualDwkTests
     public void Accepts_PersonDwk()
     {
         var (jwt, psKey, agentKey) = BuildWithDwk(AuthTokenBuilder.PersonDwk);
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         // Dual-dwk mode: expectedDwk=null
         var result = verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, Agent, expectedDwk: null);
         Assert.Equal("aauth-person.json", (string?)result.Payload["dwk"]);
@@ -50,7 +52,7 @@ public class DualDwkTests
     public void Accepts_AccessDwk()
     {
         var (jwt, psKey, agentKey) = BuildWithDwk(AuthTokenBuilder.AccessDwk);
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         var result = verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, Agent, expectedDwk: null);
         Assert.Equal("aauth-access.json", (string?)result.Payload["dwk"]);
     }
@@ -63,7 +65,7 @@ public class DualDwkTests
         var agentKey = AAuthKey.Generate();
         var iat = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var exp = iat + 3600;
-        var headerObj = new JsonObject { ["alg"] = "EdDSA", ["typ"] = "aa-auth+jwt", ["kid"] = Kid };
+        var headerObj = new JsonObject { ["alg"] = "Ed25519", ["typ"] = "aa-auth+jwt", ["kid"] = Kid };
         var payloadObj = new JsonObject
         {
             ["iss"] = Iss, ["dwk"] = "aauth-resource.json", ["aud"] = Aud,
@@ -72,7 +74,7 @@ public class DualDwkTests
         };
         var jwt = JwtWriter.SignCompact(headerObj, payloadObj, psKey);
 
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         Assert.Throws<TokenVerificationException>(() =>
             verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, Agent, expectedDwk: null));
     }
@@ -84,7 +86,7 @@ public class DualDwkTests
         var agentKey = AAuthKey.Generate();
         var iat = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var exp = iat + 3600;
-        var headerObj = new JsonObject { ["alg"] = "EdDSA", ["typ"] = "aa-auth+jwt", ["kid"] = Kid };
+        var headerObj = new JsonObject { ["alg"] = "Ed25519", ["typ"] = "aa-auth+jwt", ["kid"] = Kid };
         var payloadObj = new JsonObject
         {
             ["iss"] = Iss, ["dwk"] = "aauth-agent.json", ["aud"] = Aud,
@@ -93,7 +95,7 @@ public class DualDwkTests
         };
         var jwt = JwtWriter.SignCompact(headerObj, payloadObj, psKey);
 
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         Assert.Throws<TokenVerificationException>(() =>
             verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, Agent, expectedDwk: null));
     }

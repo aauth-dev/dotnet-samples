@@ -22,6 +22,8 @@ public class ResourceTokenStructureTests
         var key = AAuthKey.Generate();
         var jwt = new ResourceTokenBuilder
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             Issuer = Iss,
             Audience = Aud,
             Agent = Agent,
@@ -43,11 +45,11 @@ public class ResourceTokenStructureTests
         Assert.Equal("aa-resource+jwt", (string?)header["typ"]);
     }
 
-    [Fact(DisplayName = "§Resource Token Structure — header.alg MUST be EdDSA")]
-    public void HeaderAlg_IsEdDsa()
+    [Fact(DisplayName = "§Resource Token Structure — header.alg MUST be Ed25519")]
+    public void HeaderAlg_IsEd25519()
     {
         var (_, header, _) = Build();
-        Assert.Equal("EdDSA", (string?)header["alg"]);
+        Assert.Equal("Ed25519", (string?)header["alg"]);
     }
 
     [Fact(DisplayName = "§Resource Token Structure — payload.dwk MUST equal 'aauth-resource.json'")]
@@ -100,6 +102,8 @@ public class ResourceTokenStructureTests
         var key = AAuthKey.Generate();
         var b = new ResourceTokenBuilder
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             Issuer = Iss,
             Audience = Aud,
             Agent = Agent,
@@ -117,6 +121,8 @@ public class ResourceTokenStructureTests
         var key = AAuthKey.Generate();
         var b = new ResourceTokenBuilder
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             Issuer = "http://insecure.example",
             Audience = Aud,
             Agent = Agent,

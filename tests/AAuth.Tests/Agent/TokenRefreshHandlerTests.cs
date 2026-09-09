@@ -15,12 +15,47 @@ namespace AAuth.Tests.Agent;
 
 public class TokenRefreshHandlerTests
 {
+    [Theory]
+    [InlineData("personal", true)]
+    [InlineData("work", false)]
+    [InlineData(null, false)]
+    public async Task Refresh_PreservesExactAccount(string? replacementAccount, bool accepted)
+    {
+        string Token(string? account, int seconds) => new AuthTokenBuilder
+        {
+            Issuer = "https://ps.example", Audience = "https://resource.example", Agent = "aauth:test@example.com",
+            AgentConfirmationKey = _key, Key = _key, KeyId = "ps-1", Subject = "person",
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10), Lifetime = TimeSpan.FromSeconds(seconds), Account = account,
+        }.Build();
+        var original = Token("personal", 20);
+        var replacement = Token(replacementAccount, 120);
+        var holder = new AAuthTokenHolder(original);
+        var refresher = new CallbackRefresher((context, _) =>
+        {
+            Assert.Equal("personal", context.Account);
+            return Task.FromResult(replacement);
+        });
+        using var client = new InProcessHttpClient(new TokenRefreshHandler(holder, refresher, _key.ComputeJwkThumbprint())
+            { InnerHandler = new OkHandler() });
+        if (accepted)
+        {
+            using var response = await client.GetAsync("https://resource.example/data");
+            Assert.Equal(replacement, holder.Current);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<TokenVerificationException>(() => client.GetAsync("https://resource.example/data"));
+            Assert.Equal(original, holder.Current);
+        }
+    }
+
     private readonly AAuthKey _key = AAuthKey.Generate();
 
     private string BuildAgentToken(TimeSpan lifetime)
     {
         return new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:test@example.com",
             KeyId = "k1",
@@ -41,7 +76,7 @@ public class TokenRefreshHandlerTests
         {
             InnerHandler = new OkHandler(),
         };
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
 
         await client.GetAsync("https://resource.example/api");
         Assert.Equal(0, refresher.CallCount);
@@ -60,7 +95,7 @@ public class TokenRefreshHandlerTests
         {
             InnerHandler = new OkHandler(),
         };
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
 
         await client.GetAsync("https://resource.example/api");
         Assert.Equal(1, refresher.CallCount);
@@ -83,7 +118,7 @@ public class TokenRefreshHandlerTests
         {
             InnerHandler = new OkHandler(),
         };
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
 
         await client.GetAsync("https://resource.example/api");
         Assert.NotNull(captured);
@@ -105,7 +140,7 @@ public class TokenRefreshHandlerTests
         {
             InnerHandler = new OkHandler(),
         };
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
 
         var tasks = new Task[5];
         for (int i = 0; i < 5; i++)

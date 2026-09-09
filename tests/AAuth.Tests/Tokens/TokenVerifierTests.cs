@@ -20,13 +20,14 @@ public class TokenVerifierTests
         var key = AAuthKey.Generate();
         var jwt = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:demo@ap.example",
             KeyId = "demo",
             Key = key,
         }.Build();
 
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         var verified = verifier.VerifySelfIssuedAgentToken(jwt, key);
 
         Assert.Equal("aa-agent+jwt", verified.TokenType);
@@ -40,6 +41,7 @@ public class TokenVerifierTests
         var issued = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
         var jwt = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:x@ap.example",
             KeyId = "k",
@@ -48,7 +50,7 @@ public class TokenVerifierTests
             Lifetime = TimeSpan.FromMinutes(1),
         }.Build();
 
-        var verifier = new TokenVerifier { Clock = () => issued.AddHours(1) };
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, Clock = () => issued.AddHours(1) };
         Assert.Throws<TokenVerificationException>(() =>
             verifier.VerifySelfIssuedAgentToken(jwt, key));
     }
@@ -59,13 +61,14 @@ public class TokenVerifierTests
         var key = AAuthKey.Generate();
         var jwt = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:x@ap.example",
             KeyId = "k",
             Key = key,
         }.Build();
 
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         Assert.Throws<TokenVerificationException>(() =>
             verifier.Verify(jwt, key, "aa-resource+jwt", "aauth-resource.json"));
     }
@@ -77,6 +80,8 @@ public class TokenVerifierTests
         var rkey = AAuthKey.Generate();
         var jwt = new ResourceTokenBuilder
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://resource.example",
             Audience = "https://ps.example",
             Agent = "aauth:a@ap.example",
@@ -85,7 +90,7 @@ public class TokenVerifierTests
             KeyId = "r",
         }.Build();
 
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         Assert.Throws<TokenVerificationException>(() =>
             verifier.Verify(jwt, rkey, "aa-resource+jwt", "aauth-resource.json", "https://other.example"));
     }
@@ -97,13 +102,14 @@ public class TokenVerifierTests
         var other = AAuthKey.Generate();
         var jwt = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:x@ap.example",
             KeyId = "k",
             Key = key,
         }.Build();
 
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         Assert.Throws<TokenVerificationException>(() =>
             verifier.VerifySelfIssuedAgentToken(jwt, other));
     }
@@ -121,8 +127,8 @@ public class TokenVerifierTests
     {
         // Two handlers because MetadataClient and JwksClient each own one.
         return (
-            new MetadataClient(new HttpClient(new ResourceJwksHandler(resKey, ResKid, ResIss))),
-            new JwksClient(new HttpClient(new ResourceJwksHandler(resKey, ResKid, ResIss))));
+            new MetadataClient(new InProcessHttpClient(new ResourceJwksHandler(resKey, ResKid, ResIss))),
+            new JwksClient(new InProcessHttpClient(new ResourceJwksHandler(resKey, ResKid, ResIss))));
     }
 
     private static string BuildResourceToken(
@@ -134,6 +140,8 @@ public class TokenVerifierTests
         TimeSpan? lifetime = null)
         => new ResourceTokenBuilder
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             Issuer = ResIss,
             Audience = audience,
             Agent = agent,
@@ -153,7 +161,7 @@ public class TokenVerifierTests
         var jwt = BuildResourceToken(resKey, agentKey);
         var (meta, jwks) = Discovery(resKey);
 
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         var verified = await verifier.VerifyResourceTokenAsync(
             jwt, PsAud, AgentId, agentKey.ComputeJwkThumbprint(), meta, jwks);
 
@@ -172,7 +180,7 @@ public class TokenVerifierTests
         var jwt = BuildResourceToken(forgedKey, agentKey);
         var (meta, jwks) = Discovery(publishedKey);
 
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
                 jwt, PsAud, AgentId, agentKey.ComputeJwkThumbprint(), meta, jwks));
@@ -187,7 +195,7 @@ public class TokenVerifierTests
         var jwt = BuildResourceToken(resKey, agentKey, issuedAt: issued, lifetime: TimeSpan.FromMinutes(1));
         var (meta, jwks) = Discovery(resKey);
 
-        var verifier = new TokenVerifier { Clock = () => issued.AddHours(1) };
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, Clock = () => issued.AddHours(1) };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
                 jwt, PsAud, AgentId, agentKey.ComputeJwkThumbprint(), meta, jwks));
@@ -201,7 +209,7 @@ public class TokenVerifierTests
         var jwt = BuildResourceToken(resKey, agentKey, audience: PsAud);
         var (meta, jwks) = Discovery(resKey);
 
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
                 jwt, "https://other-ps.example", AgentId, agentKey.ComputeJwkThumbprint(), meta, jwks));
@@ -215,7 +223,7 @@ public class TokenVerifierTests
         var jwt = BuildResourceToken(resKey, agentKey, agent: AgentId);
         var (meta, jwks) = Discovery(resKey);
 
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
                 jwt, PsAud, "aauth:someone-else@ap.example", agentKey.ComputeJwkThumbprint(), meta, jwks));
@@ -231,7 +239,7 @@ public class TokenVerifierTests
         var jwt = BuildResourceToken(resKey, boundAgentKey);
         var (meta, jwks) = Discovery(resKey);
 
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
                 jwt, PsAud, AgentId, otherAgentKey.ComputeJwkThumbprint(), meta, jwks));
@@ -246,6 +254,7 @@ public class TokenVerifierTests
         var agentKey = AAuthKey.Generate();
         var notAResourceToken = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = ResIss,
             Subject = AgentId,
             KeyId = ResKid,
@@ -253,7 +262,7 @@ public class TokenVerifierTests
         }.Build();
         var (meta, jwks) = Discovery(resKey);
 
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
                 notAResourceToken, PsAud, AgentId, agentKey.ComputeJwkThumbprint(), meta, jwks));
@@ -280,7 +289,7 @@ public class TokenVerifierTests
             var jwk = key.ToPublicJwk();
             jwk["kid"] = kid;
             jwk["use"] = "sig";
-            jwk["alg"] = AAuthKey.Algorithm;
+            jwk["alg"] = AAuthKey.Ed25519Algorithm;
             _jwksJson = new JsonObject
             {
                 ["keys"] = new JsonArray(jwk),

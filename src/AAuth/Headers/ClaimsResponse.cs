@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Text.Json.Nodes;
+using AAuth.Tokens;
 
 namespace AAuth.Headers;
 
@@ -33,6 +34,8 @@ public sealed record ClaimsResponse
         var body = new JsonObject { ["sub"] = Subject };
         foreach (var (name, value) in Claims)
         {
+            if (!AuthTokenBuilder.IsIdentityClaimAllowed(name))
+                throw new System.InvalidOperationException($"Claim '{name}' is protocol-owned.");
             if (name == "sub")
             {
                 continue;
