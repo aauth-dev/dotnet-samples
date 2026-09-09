@@ -1,4 +1,7 @@
-# Rich Resource Requests (R3)
+---
+title: Rich Resource Requests (R3)
+description: Qualified operation grants, per-call approval, reader policy, and durable issuance audit.
+---
 
 > Preview — R3 is an IETF Exploratory Draft (`draft-hardt-aauth-r3`). It ships in the
 > separate [`AAuth.R3`](../../src/AAuth.R3/) preview package, not the core `AAuth` package.
@@ -53,8 +56,8 @@ sequenceDiagram
   at its OpenAPI document (`/openapi.json`); operations are `operationId`s.
 - **R3 documents** are content-addressed: `r3_s256 = base64url(SHA-256(served bytes))`
   with **no canonicalization** — the resource serializes once and serves those exact
-  bytes. Agents never fetch them; only the AS (and PS, for consent display) may, over
-  an HTTP Message Signature.
+  bytes. Agents never fetch them. The designated AS may fetch with an HTTP Message
+  Signature; a PS evaluator requires explicit resource policy.
 - **Token claims** — the resource token carries `r3_uri` + `r3_s256`; the auth token
   adds `r3_granted` and (optionally) `r3_conditional`.
 
@@ -80,20 +83,68 @@ the R3 document itself carries only the spec fields (`operations` + `display`):
 
 ## Security invariants (enforced + tested)
 
-- **AS-only document fetch** — Bookings serves `r3_uri` only to a trusted fetcher (its
-  R3 AS, and the PS for `display`); agent-signed requests are rejected.
+- Designated-AS document access is the default. Bookings explicitly opts its demo
+  PS into `Bookings:PersonServerEvaluators` for consent display. AS and PS callers
+  must use their respective access/person metadata role; agents are rejected.
+  This is the recorded Q4 interpretation of conflicting draft readership clauses.
 - **Hash-verify before use** — the AS rejects a document whose bytes do not match
   `r3_s256`.
-- **Atomic audit-with-issuance** — the AS records `r3_uri`/`r3_s256`/agent/timestamp
-  before returning a token; if the audit sink fails, no token is issued.
+- Audit persistence is mandatory. The sample commits the token's `jti` and SHA-256
+  with `r3_uri`, `r3_s256`, agent, account, and issuance time in one SQLite
+  transaction before returning it. Audit failure prevents release.
 - **Per-call digest match** — the resource rejects a retry whose parameters differ from
   the approved proposal.
+
+Every Bookings route supports granted, conditional, and rejected outcomes;
+confirmation is conditional only because of the demo AS policy. GET search/hold
+use `searchAvailability` and `holdReservation`; POST variants use
+`searchAvailabilityPost` and `holdReservationPost`. All identifiers come from the
+same published OpenAPI definition. Per-call parameters bind the HTTP method,
+query/body inputs, and selected account. Confirmation requires the reservation
+ID, venue, date, party size, deposit, and cancellation policy.
+
+## Vocabulary and API contracts
+
+All eight standard vocabularies have validated operation shapes. Gateway discovery
+is a service-label map, and Gateway operation identity is the pair of `service`
+and `operationId`. `R3OperationIdentity` also includes the vocabulary and every
+optional member; bare-ID matching is not supported. Third-party schemas are
+explicitly supplied through a consumer-local `R3VocabularySchemas` instance.
+
+```csharp
+var identity = R3OperationIdentity.OpenApi("confirmReservation");
+var grantedClaims = R3ClaimReader.ReadAuthToken(claims);
+IReadOnlyDictionary<string, R3Parameter> presentedParameters =
+  new Dictionary<string, R3Parameter>();
+var result = enforcement.Evaluate(grantedClaims, identity, presentedParameters,
+    approvedProposalS256: proposalHash, expectedAccount: account);
+```
+
+An approved proposal retry must supply its proposal hash and matching parameters.
+For digest parameters, use `R3PresentedParameters` with the actual value bytes.
+The resource recovers the exact proposal bytes and rechecks their hash. Callers
+must distinguish class grants from proposal grants before serving a request, as
+the Bookings sample does using its stored document.
+
+The sample's `R3AccessServer:AuditPath` selects the SQLite file. Its default is
+`aauth-samples/r3-audit.sqlite` beneath local application data. Audit survives
+restart; pending consent, signing keys, and Bookings documents/proposals do not.
+`InMemoryR3AuditSink` is a test-only, non-durable choice. A network fetch callback
+must declare and uphold its transport admission contract; returned bytes are
+still size-limited and hash-verified by the SDK.
+
+Bookings uses AsyncAPI `receive` grants to issue protected subscription tickets.
+The [Events workflow](events.md) exercises registration, self-jwt delivery,
+durable AP acceptance and independent agent receipt verification. The separate
+[Catalog Gateway](catalog-gateway.md) demonstrates service-qualified operations
+with colliding operation IDs. Native MCP, gRPC, GraphQL, WSDL and OData hosting
+is not implied by the SDK's typed vocabulary support.
 
 ## Person-Server trust (spec default)
 
 The R3 AS brokers for Person Servers using the same trust model as the core Access
 Server: an **unset** `TrustedPersonServers` list is **open** (broker any *verifiable*
-PS — the draft-08 default), an explicit list **narrows** (empty ⇒ deny-all), composed
+PS), an explicit list **narrows** (empty ⇒ deny-all), composed
 by AND with an optional `IsTrustedPersonServer` policy. The Bookings demo AS pins the
 demo PS (:5100) as the documented four-party pattern.
 

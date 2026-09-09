@@ -1,4 +1,7 @@
-# PS-Asserted Access (Three-Party)
+---
+title: PS-Asserted Access (Three-Party)
+description: Exchange a verified resource challenge through the agent's Person Server.
+---
 
 > [Live demo](https://explorer.aauth.dev/access/ps-asserted) | [Access Mode Comparison](https://explorer.aauth.dev/access/compare)
 
@@ -55,16 +58,15 @@ using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth;
 
-var keyStore = FileKeyStore.Default();
+IKeyStore keyStore = FileKeyStore.Default();
 var localKeyHandle = configuration["AAuth:LocalKeyHandle"]!;
 var key = await keyStore.LoadAsync(localKeyHandle)
     ?? throw new InvalidOperationException("Key not found. Run enrollment first.");
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
-using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
-        .WithKeyStore(keyStore)
-        .Build())
+using var client = AAuthClientBuilder.Enrolled(key)
+    .RefreshingFrom(apRefreshEndpoint, localKeyHandle)
+    .WithKeyStore(keyStore)
     .WithChallengeHandling(personServer: "https://ps.example")
     .Build();
 
@@ -84,7 +86,7 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
 
-var keyStore = FileKeyStore.Default();
+IKeyStore keyStore = FileKeyStore.Default();
 var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!);
 var agentToken = "..."; // acquired via AP refresh endpoint
 var tokenHolder = new AAuthTokenHolder(agentToken);
@@ -110,7 +112,6 @@ var response = await client.GetAsync("https://resource.example/data");
 ```
 
 </details>
-```
 
 ## DI Registration
 
@@ -118,18 +119,18 @@ var response = await client.GetAsync("https://resource.example/data");
 using AAuth.Agent;
 using AAuth.Crypto;
 
-var keyStore = FileKeyStore.Default();
+IKeyStore keyStore = FileKeyStore.Default();
 var localKeyHandle = configuration["AAuth:LocalKeyHandle"]!;
 var key = await keyStore.LoadAsync(localKeyHandle);
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
+using var refresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
+    .WithKeyStore(keyStore).Build();
 
 builder.Services.AddAAuthAgent("ps-asserted", options =>
 {
     options.Key = key!;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
-        .WithKeyStore(keyStore)
-        .Build();
+    options.TokenRefresher = refresher;
 });
 ```
 

@@ -1,4 +1,7 @@
-# Getting Started
+---
+title: Getting Started
+description: Enroll an agent and make signed AAuth requests with the .NET SDK.
+---
 
 ## Prerequisites
 
@@ -43,27 +46,32 @@ var thumbprint = key.ComputeJwkThumbprint(); // JWK thumbprint (S256)
 
 ## Make Your First Signed Request
 
-The simplest mode is pseudonymous (HWK) — no Agent Provider needed:
+Enroll with your configured AP, retain the durable key locally, and use the
+issued agent JWT for resource access. The example endpoints are deployment
+placeholders; `make demo` uses the explicit [loopback policy](../samples/README.md#network-admission).
 
 ```csharp
 using AAuth.Crypto;
 using AAuth;
 
-var key = AAuthKey.Generate();
-
-using var client = new AAuthClientBuilder(key)
-    .UseHwk()
+var keyStore = FileKeyStore.Default();
+var key = keyStore.LoadOrCreate("my-agent");
+var enrollment = await AAuthClientBuilder.Bootstrap("https://ap.example/enrol")
+    .WithKey(key).WithKeyStore(keyStore).EnrolAsync();
+using var client = AAuthClientBuilder.Enrolled(key)
+    .RefreshingFrom("https://ap.example/refresh", enrollment.LocalKeyHandle!)
+    .WithKeyStore(keyStore)
     .Build();
 
 var response = await client.GetAsync("https://resource.example/data");
 // Request is signed with HTTP Message Signatures (RFC 9421)
-// Resource sees: Signature-Key: sig=hwk;jkt="<thumbprint>";jwk="<public-key>"
+// Signature-Key: sig=jwt;jwt="<aa-agent+jwt>"
 ```
 
 ### Alternative: One-liner with static factory
 
 ```csharp
-using var client = AAuthSigningHandler.CreateClient(key, new HwkSignatureKeyProvider(key));
+using var client = AAuthSigningHandler.CreateClient(key, new JwtSignatureKeyProvider(() => agentToken));
 ```
 
 ### Alternative: DI / IHttpClientFactory
@@ -73,7 +81,7 @@ using var client = AAuthSigningHandler.CreateClient(key, new HwkSignatureKeyProv
 builder.Services.AddAAuthAgent("agent", options =>
 {
     options.Key = key;
-    options.PersonServer = "https://ps.example"; // omit for signing-only
+    options.AgentToken = agentToken;
 });
 
 // Inject via IHttpClientFactory
@@ -85,10 +93,12 @@ public class MyService(IHttpClientFactory factory)
 
 ## What Just Happened?
 
-- `AAuthKey.Generate()` created an Ed25519 keypair.
-- `AAuthClientBuilder` configured the HWK signing mode and produced an `HttpClient`.
+- `FileKeyStore.LoadOrCreate()` retained the agent's software key locally.
+- Signed enrollment bound its public key to an AP-assigned identity.
+- The enrolled builder refreshes the agent JWT and produces an `HttpClient`.
 - `AAuthSigningHandler` signs the request per RFC 9421 covering `@method`, `@authority`, `@path`, and `signature-key`.
-- The resource verifies the signature using the inline public key from `Signature-Key`.
+- The resource verifies the AP assertion and the matching HTTP proof. Generic
+    [HWK](signing-modes/pseudonymous-hwk.md) examples use a different explicit profile.
 
 ## Understanding the Protocol Participants
 
@@ -124,7 +134,9 @@ AAuth uses a minimal set of cryptographic primitives:
 | **JWK Thumbprint (S256)** | Compact key identifier — a SHA-256 hash of the canonical public key | `key.ComputeJwkThumbprint()` |
 | **JWT (Ed25519-signed)** | All AAuth tokens (`aa-agent+jwt`, `aa-resource+jwt`, `aa-auth+jwt`) | `AgentTokenBuilder`, `ResourceTokenBuilder`, `AuthTokenBuilder` |
 
-The spec requires EdDSA (Ed25519) and prohibits the `none` algorithm. Every request is signed per RFC 9421 (HTTP Message Signatures) — there are no bearer tokens anywhere in the protocol.
+Ed25519 is required; the SDK also supports ES256. Fully specified algorithms are
+required in JWKs and JWT headers; polymorphic `EdDSA`, `none` and symmetric keys
+are rejected. HTTP signatures follow RFC 9421 and do not add an `alg` parameter.
 
 ## Supported Flows
 
@@ -132,8 +144,8 @@ AAuth supports four resource access modes. Each adds parties and capabilities:
 
 | Flow | Parties | When to Use | Signing Mode | See it run |
 |------|---------|-------------|--------------|------------|
-| **[Identity-Based](workflows/identity-based-access.md)** | Agent + Resource | API-key replacement, simple access control by identity | `hwk`, `jkt-jwt`, or `jwks_uri` | GuidedTour **Identity-based**; SampleApp `/pseudonymous`, `/anchored`, `/identified` |
-| **[Resource-Managed](workflows/resource-managed-access.md)** (two-party) | Agent + Resource | Resource handles its own auth (interaction, existing OAuth) | Any (`hwk`, `jwks_uri`, `jwt`, or `jkt-jwt`) | GuidedTour **Resource-Managed (Two-Party)**; SampleApp `/inbox` |
+| **[Identity-Based](workflows/identity-based-access.md)** | Agent + Resource | Resource authorizes verified agent identity | `jwt` | Profile `/identified` accepts agent JWT; generic Profile demos are separate |
+| **[Resource-Managed](workflows/resource-managed-access.md)** (two-party) | Agent + Resource | Resource handles its own authorization | `jwt` plus opaque AAuth-Access | GuidedTour **Resource-Managed (Two-Party)**; SampleApp `/inbox` |
 | **[PS-Asserted](workflows/ps-asserted-access.md)** (three-party) | Agent + Resource + PS | User consent required, resource delegates auth to PS | `jwt` | GuidedTour **PS-Asserted (Direct Grant)** & **(Deferred)**; SampleApp `/calendar`, `/calendar-deferred` |
 | **[Federated](workflows/federated-access.md)** (four-party) | Agent + Resource + PS + AS | Cross-domain policy, resource has its own Access Server | `jwt` | GuidedTour **Federated (Four-Party)**; SampleApp `/wallet` (live Keycloak: `make demo-keycloak`) |
 
@@ -215,15 +227,15 @@ The PS:
 
 **5. Consent: immediate vs deferred**
 
-- **Immediate**: User is online and grants consent in real time. PS returns the auth token directly.
-- **Deferred**: User is not available. PS returns `202 Accepted` with `requirement=interaction` and a `pending` URL. The agent polls until the user consents (SDK handles this via `InteractionHandlingOptions`).
+- **Immediate**: Existing consent or policy already permits the request; the PS returns the auth token directly.
+- **Deferred**: A decision is needed. The PS returns `202 Accepted`, a `Location` pending URL and the requirement. `TokenExchangeRequest` callbacks surface interaction or clarification while the exchange polls. The browser code correlates the request; authenticated identity and CSRF protection authorize the decision.
 
 **6. Person Server → Agent (auth token)**
 
 The PS issues an `auth_token` (`aa-auth+jwt`) containing:
 - `iss`: PS URL
 - `aud`: Resource URL
-- `sub`: User identifier (stable, PS-scoped)
+- `sub`: Optional directed person identifier, scoped to the receiving party
 - `cnf.jwk`: Agent's public key (proof-of-possession binding)
 - `scope`: Granted scope
 - Optional identity claims: `email`, `tenant`, `groups`, `roles`
@@ -269,7 +281,7 @@ var app = builder.Build();
 app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 {
     Issuer = issuer,
-    SigningKeys = new Dictionary<string, AAuthKey> { [Kid] = key },
+    SigningKeys = new Dictionary<string, IAAuthKey> { [Kid] = key },
 });
 
 // Build a signed HTTP client with automatic token refresh and challenge handling
@@ -383,9 +395,8 @@ using AAuth;
 var keyStore = FileKeyStore.Default(); // ~/.aauth/keys/ (or plug in HSM/Key Vault)
 
 var enrol = await AAuthClientBuilder
-    .Bootstrap(
-        enrollEndpoint: "https://ap.example/enrol",
-        agentId: "aauth:myagent@example.com")
+    .Bootstrap(enrollEndpoint: "https://ap.example/enrol")
+    .WithKey(keyStore.LoadOrCreate("myagent"))
     .WithPersonServer("https://ps.example")
     .WithKeyStore(keyStore)
     .EnrolAsync();
@@ -407,7 +418,7 @@ using AAuth;
 var keyStore = FileKeyStore.Default();
 var localKeyHandle = configuration["AAuth:LocalKeyHandle"]!;
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
-var key = await keyStore.LoadAsync(localKeyHandle)
+var key = keyStore.Load(localKeyHandle)
     ?? throw new InvalidOperationException($"Key '{localKeyHandle}' not found. Run enrollment first.");
 
 // The SDK acquires the agent token lazily on first request
@@ -424,18 +435,19 @@ Console.WriteLine(await response.Content.ReadAsStringAsync());
 
 > **Shortcut — `From(EnrollResult)`**: If you still have the enrollment result object
 > (e.g. in a CLI that enrols and immediately calls a resource), use the convenience factory
-> to auto-configure the signing mode:
+> to use its already-issued agent JWT:
 >
 > ```csharp
-> using var client = AAuthClientBuilder.Enrolled(enrol.Key)
->     .RefreshingFrom(enrol.ApRefreshEndpoint, enrol.LocalKeyHandle)
->     .WithKeyStore(keyStore)
+> using var client = AAuthClientBuilder.From(enrol)
 >     .WithChallengeHandling("https://ps.example")
 >     .Build();
 > ```
 >
-> `From()` sets up `UseJwksUri` when the enrollment includes a `JwksUri` and `AgentTokenKid`,
-> falling back to the default `jwt` mode otherwise.
+> `From()` always selects `jwt` from `enrol.AgentToken`, regardless of JWKS metadata.
+> It does not enroll or refresh. Use `Enrolled(...).RefreshingFrom(...).WithKeyStore(...)`
+> for automatic AP renewal. A later explicit scheme selector disables configured
+> refresh; a later `WithTokenRefresh` selects a refreshed JWT carrier. Flow options
+> do not change the scheme or add an authorization party.
 
 <details>
 <summary>Step-by-Step (Advanced)</summary>
@@ -447,10 +459,11 @@ using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
 
-var apClient = new AgentProviderClient(new HttpClient(), new InMemoryKeyStore());
+using var apHttp = AAuthHttpTransport.CreateClient();
+var apClient = new AgentProviderClient(apHttp, new InMemoryKeyStore());
 var enrol = await apClient.EnrolAsync(
     apIssuer: "https://ap.example",
-    agentId: "aauth:myagent@example.com",
+    agentId: null,
     enrollEndpoint: "https://ap.example/enrol",
     personServer: "https://ps.example");
 
@@ -486,7 +499,8 @@ This shows the internal handler pipeline for educational purposes. Use `WithToke
 
 ```csharp
 // Acquire a fresh agent token via the AP refresh endpoint
-var apClient = new AgentProviderClient(new HttpClient(), keyStore);
+using var apHttp = AAuth.Discovery.AAuthHttpTransport.CreateClient();
+var apClient = new AgentProviderClient(apHttp, keyStore);
 var agentToken = await apClient.RefreshAsync("https://ap.example/refresh", keyId);
 
 // Carrier-token holder — shared between signer and challenge handler.

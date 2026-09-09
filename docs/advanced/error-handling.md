@@ -1,4 +1,7 @@
-# Error Handling
+---
+title: Error Handling
+description: Handle AAuth problem details, signature errors, and deferred consent failures.
+---
 
 > [Error Codes](https://explorer.aauth.dev/foundations/errors)
 
@@ -38,20 +41,22 @@ var header = SignatureError.Format(SignatureErrorCode.InvalidSignature);
 // → "invalid_signature"
 
 // With details
-var header = SignatureError.Format(
+var detailedHeader = SignatureError.Format(
     SignatureErrorCode.InvalidInput,
     requiredInput: new[] { "@method", "@authority", "@path" });
 // → "invalid_input;required_input=\"@method\" \"@authority\" \"@path\""
 
 // Parsing (agent-side)
-if (SignatureError.TryParse(response.Headers["Signature-Error"], out var code))
+var receivedHeader = response.Headers.TryGetValues("Signature-Error", out var values)
+    ? values.Single() : null;
+if (SignatureError.TryParse(receivedHeader, out var code))
 {
     Console.WriteLine($"Signature rejected: {code}");
 }
 
 // Extract the components a resource demands on an invalid_input error
 string[] required = SignatureError.ParseRequiredInput(
-    response.Headers["Signature-Error"]);
+    receivedHeader);
 // → ["content-digest"]   (empty array when no required_input is present)
 ```
 
@@ -71,6 +76,22 @@ is exposed for callers implementing this handshake manually.
 ## Token Errors (PS/AS → Agent)
 
 When a Person Server or Access Server rejects a token exchange request.
+
+Error bodies use `Content-Type: application/problem+json`. The `error` string is
+required and determines client behavior. The optional `detail` string describes
+this occurrence. RFC 9457 members such as `type`, `title`, `status`, and `instance`
+may also appear, but clients must not classify AAuth errors by `type`. Signature
+failures remain identified by the `Signature-Error` header, not the body.
+
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/problem+json
+
+{
+    "error": "expired_resource_token",
+    "detail": "Resource token has expired; obtain a new token and retry."
+}
+```
 
 ### TokenErrorCode
 
@@ -94,16 +115,17 @@ public enum TokenErrorCode
 ### TokenErrorResponse
 
 ```csharp
-public sealed record TokenErrorResponse(TokenErrorCode Error, string? ErrorDescription = null)
+public sealed record TokenErrorResponse(TokenErrorCode Error, string? Detail = null)
 {
     public string ErrorCode { get; }  // wire format: "invalid_request", "expired_agent_token", etc.
 }
 ```
 
-The `TokenExchangeClient` throws when it receives an error response from the PS.
+`TokenExchangeClient` and `AccessServerClient` throw when a token endpoint returns
+an error response.
 
 When the PS returns a non-success status with a structured AAuth error body
-(`{ "error": ..., "error_description": ... }`), the exchange throws a typed
+(`{ "error": ..., "detail": ... }`), the exchange throws a typed
 `AAuthTokenExchangeException` carrying the parsed fields. Responses that are not
 parseable AAuth error objects fall back to a plain `HttpRequestException`.
 
@@ -111,7 +133,7 @@ parseable AAuth error objects fall back to a plain `HttpRequestException`.
 public sealed class AAuthTokenExchangeException : Exception
 {
     public string ErrorCode { get; }          // e.g. "invalid_resource_token"
-    public string? ErrorDescription { get; }  // optional human-readable text
+    public string? Detail { get; }           // optional human-readable text
     public int StatusCode { get; }            // HTTP status from the token endpoint
     public bool IsTerminal { get; }           // false only for "server_error" (retryable)
 }
@@ -125,6 +147,7 @@ try
 catch (AAuthTokenExchangeException ex)
 {
     Console.WriteLine($"Token exchange failed: {ex.ErrorCode} (HTTP {ex.StatusCode})");
+    Console.WriteLine(ex.Detail);
     if (!ex.IsTerminal)
     {
         // Transient (server_error) — a later retry may succeed.
@@ -138,15 +161,17 @@ catch (HttpRequestException ex)
 }
 ```
 
-If you're calling the PS manually, parse the body yourself with
-`TokenErrorResponse`:
+When calling the PS manually, parse the wire members explicitly.
+`TokenErrorResponse` models known error codes; it is not a JSON wire DTO.
 
 ```csharp
 var response = await signedClient.PostAsync(psTokenEndpoint, content);
 if (!response.IsSuccessStatusCode)
 {
-    var error = await response.Content.ReadFromJsonAsync<TokenErrorResponse>();
-    Console.WriteLine($"Token exchange failed: {error?.ErrorCode} — {error?.ErrorDescription}");
+    var problem = await response.Content.ReadFromJsonAsync<System.Text.Json.Nodes.JsonObject>();
+    var error = (string?)problem?["error"];
+    var detail = (string?)problem?["detail"];
+    Console.WriteLine($"Token exchange failed: {error}: {detail}");
 }
 ```
 
@@ -274,8 +299,8 @@ catch (AAuthMissionTerminatedException ex)
 }
 ```
 
-On the PS side, emit the canonical body with
-`GovernanceEndpoints.MissionTerminated()` — see
+On the PS side, emit the canonical `application/problem+json` body with
+`GovernanceEndpoints.MissionTerminated()`. See
 [Mission Governance (Server)](../server/mission-governance.md#terminating-a-mission).
 
 ## Clarification Exceptions
@@ -317,10 +342,18 @@ public sealed class AAuthClarificationLimitException : Exception
 context.Response.Headers[SignatureError.HeaderName] =
     SignatureError.Format(SignatureErrorCode.InvalidSignature);
 context.Response.StatusCode = 401;
+```
 
-// Token exchange error response
-return Results.Json(
-    new { error = "expired_resource_token", error_description = "Resource token has expired" },
+For a token endpoint error, use the shared helper. It preserves headers already
+set by the endpoint and emits only errors; success and deferred `202` responses
+continue to use their original media types. Endpoint-specific extension members
+can be supplied through `extensions`.
+
+```csharp
+using AAuth.Server;
+
+return AAuthProblemDetails.Create(
+    "expired_resource_token", "Resource token has expired",
     statusCode: 400);
 ```
 

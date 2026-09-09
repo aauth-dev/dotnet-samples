@@ -1,4 +1,7 @@
-# AAuth SDK for .NET
+---
+title: AAuth SDK for .NET
+description: Proof-of-possession agent authorization, token verification and server integration.
+---
 
 The [AAuth protocol](https://aauth.dev) SDK for .NET — agent-to-resource authorization with cryptographic proof-of-possession. Every HTTP request carries an RFC 9421 signature; there are no bearer tokens.
 
@@ -12,21 +15,24 @@ dotnet add package AAuth --prerelease
 
 ## Quick Start
 
-The simplest mode is **pseudonymous (HWK)** — the agent signs every request with an inline public key. No Agent Provider, no Person Server, no registration.
+Use an AP-issued agent JWT with the matching locally held key. The provider
+assigns the enrolled identity; replace the HTTPS endpoints with your deployment.
 
 ```csharp
 using AAuth.Crypto;
 using AAuth;
 
-var key = AAuthKey.Generate(); // Ed25519 keypair
-
-using var client = new AAuthClientBuilder(key)
-    .UseHwk() // Pseudonymous mode: inline public key in Signature-Key header
+var keyStore = FileKeyStore.Default();
+var key = keyStore.LoadOrCreate("my-agent");
+var enrollment = await AAuthClientBuilder.Bootstrap("https://ap.example/enrol")
+    .WithKey(key).WithKeyStore(keyStore).EnrolAsync();
+using var client = AAuthClientBuilder.Enrolled(key)
+    .RefreshingFrom("https://ap.example/refresh", enrollment.LocalKeyHandle!)
+    .WithKeyStore(keyStore)
     .Build();
 
 var response = await client.GetAsync("https://resource.example/data");
-// Request is signed per RFC 9421 — the resource verifies the signature
-// using the public key from the Signature-Key: sig=hwk;jkt="...";jwk="..." header
+// Signature-Key: sig=jwt;jwt="<aa-agent+jwt>"
 ```
 
 ## Access Modes
@@ -35,8 +41,8 @@ AAuth supports four resource access modes. Each adds parties and capabilities, a
 
 | Mode | Parties | When to Use | Signing |
 |------|---------|-------------|---------|
-| **Identity-Based** | Agent + Resource | Replacing API keys with cryptographic identity | `hwk` / `jwks_uri` |
-| **Resource-Managed** (two-party) | Agent + Resource | Resource manages authorization itself (interaction, OAuth/OIDC, internal policy) | Any |
+| **Identity-Based** | Agent + Resource | Resource authorizes verified agent identity | `jwt` |
+| **Resource-Managed** (two-party) | Agent + Resource | Resource manages authorization itself | `jwt` plus opaque AAuth-Access |
 | **PS-Asserted** (three-party) | Agent + Resource + PS | Resource accepts identity claims (`sub`, `email`, `tenant`, `groups`, `roles`) from any Person Server | `jwt` |
 | **Federated** (four-party) | Agent + Resource + PS + AS | Cross-domain access with the resource's own Access Server enforcing policy | `jwt` |
 
@@ -71,7 +77,14 @@ resource- and Person-Server-side code, see the
 
 ## Features
 
-- All four signing modes: `hwk`, `jwks_uri`, `jwt`, `jkt-jwt`
+Targets AAuth protocol draft-10 and HTTP Signature Keys draft-08. Companion
+packages provide R3 draft-01 and revised Events draft-00. Fully specified
+Ed25519/ES256 keys and JWT headers are supported; old wire aliases are rejected.
+X.509/cached carriers, third-party login hosting and platform attestation are
+not implemented. Production persistence, user admission and transport policies
+remain host responsibilities. Local test success is not universal external interop.
+
+- Six Signature-Key schemes: `hwk`, `jkt-jwt`, `jwks_uri`, `jwks`, `jwt`, `self-jwt`; AAuth agent resource requests use `jwt`
 - Two-party resource-managed access with opaque `AAuth-Access` tokens
 - Full three-party challenge/exchange flow (autonomous and deferred user-consent)
 - Four-party federated access with an Access Server

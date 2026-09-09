@@ -1,3 +1,7 @@
+---
+description: Federated and R3 access-server samples with explicit policy and consent.
+---
+
 # Mock Access Servers
 
 The **Access Server (AS)** is the fourth party in AAuth's four-party (federated)
@@ -32,7 +36,7 @@ The dedicated Access Server for [Rich Resource Requests](../../docs/workflows/ri
 On `POST /token` (via `MapR3AccessTokenEndpoint`) it:
 
 1. Verifies the PS caller against its Person-Server trust list (unset ⇒ open, an
-   explicit list narrows; empty ⇒ deny-all — the draft-08 default).
+   explicit list narrows; empty denies all).
 2. Verifies the agent and resource tokens.
 3. Fetches the resource's R3 document **AS-signed**, and rejects it unless the bytes
    hash to the token's `r3_s256`.

@@ -1,9 +1,14 @@
-# AAuth .NET SDK Documentation
+---
+title: AAuth .NET SDK Documentation
+description: Agent signing, server verification, companion packages and runnable workflows.
+---
 
-This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It covers agent-side signing, server-side verification, all four signing modes, and all resource access workflows.
+The AAuth .NET SDK (`AAuth` NuGet package) supports agent-side JWT signing,
+server-side verification, six Signature-Key schemes and four resource access
+modes. Generic signing demonstrations are separate from AAuth resource access.
 
 - [Interactive Protocol Explorer](https://explorer.aauth.dev/)
-- [AAuth Protocol Specification](../aauth-spec/v02/draft-hardt-oauth-aauth-protocol.md)
+- [AAuth Protocol Specification](../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md)
 
 ## Getting Started
 
@@ -34,6 +39,10 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 - [Call Chaining](workflows/call-chaining.md)
 - [Mission-Governed Access](workflows/mission-governed-access.md)
 - [Rich Resource Requests (R3)](workflows/rich-resource-requests.md) — preview; ships in the separate [`AAuth.R3`](../src/AAuth.R3/) package
+- [Events](workflows/events.md) - subscribe tokens, durable AP inbox delivery and verified agent receipts in `AAuth.Events`
+- [Wallet Protocol](workflows/wallet-protocol.md) - AS clarification, direct-AS chaining and issuer-qualified revocation
+- [Catalog Gateway](workflows/catalog-gateway.md) - service-qualified R3 grants, sibling rejection and recovery
+- [Document Release](workflows/document-release.md) - resource permission before PS consent, with signed download or denial
 
 ## Server Implementation
 
@@ -137,7 +146,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `AgentTokenBuilder` | Builds `aa-agent+jwt` (agent identity + DWK) |
 | `ResourceTokenBuilder` | Builds `aa-resource+jwt` (401 challenge payload) |
 | `AuthTokenBuilder` | Builds `aa-auth+jwt` (person delegation proof) |
-| `TokenVerifier` | EdDSA JWT verification with claim checks and JWKS resolution |
+| `TokenVerifier` | Ed25519 JWT verification with claim checks and JWKS resolution |
 | `MissionClaim` | The `mission` claim (`approver` + `s256`) carried in tokens |
 
 ### `AAuth.Discovery` — Metadata and JWKS
@@ -216,7 +225,7 @@ This is the documentation for the AAuth .NET SDK (`AAuth` NuGet package). It cov
 | `AddAAuthResourceManaged` | High-level resource-managed (two-party) setup: opaque-token store + interaction store + poll endpoint |
 | `HttpContext.RequireAAuthInteraction` | Opt an endpoint into a consent interaction (`202` + `AAuth-Requirement`) |
 | `MapAAuthInteractionPoll` | SDK-owned poll endpoint that issues the `AAuth-Access` token on approval |
-| `IInteractionPendingStore` / `InMemoryInteractionPendingStore` | Interaction park store; the consent page records approval via `Approve(code)` |
+| `IInteractionPendingStore` / `InMemoryInteractionPendingStore` | Owner/key/account-bound pending state; decisions use authenticated browser sessions, not the correlation code alone |
 | `AAuthInteractionCode` | Single-use interaction code (Crockford base32) |
 | `IOpaqueTokenStore` / `InMemoryOpaqueTokenStore` | Opaque access-token store (mint/validate); read a request's token via `ResolveAAuthAccessAsync` |
 | `HttpContext.IssueAAuthAccessAsync` / `InteractionRequiredAAuth`, `MapAAuthAuthorizationEndpoint` | Low-level building blocks `AddAAuthResourceManaged` wires for you |

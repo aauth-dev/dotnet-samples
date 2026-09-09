@@ -1,3 +1,7 @@
+---
+description: Travel intermediary demonstrating authenticated downstream delegation and interaction chaining.
+---
+
 # Concierge
 
 Multi-agent call-chaining sample. The **Concierge** is the service Aria asks to
@@ -11,7 +15,7 @@ delegation), exactly like a travel concierge booking through other providers.
 - Proper 401 challenge with resource token when receiving agent tokens
 - Token exchange with `upstream_token` for nested `act` delegation
 - `UseJwt(string)` to present a pre-acquired auth token downstream
-- Full issuer verification (`RequireIssuerVerification = true`)
+- Mandatory JWT issuer verification
 
 ## Flow
 
@@ -57,7 +61,7 @@ The final response includes:
 ## Running
 
 ```bash
-make demo-sample   # starts all 5 services
+make demo   # starts the complete sample stack
 ```
 
 Or standalone (requires Calendar, PS, and AP already running):

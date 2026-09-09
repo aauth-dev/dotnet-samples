@@ -1,8 +1,12 @@
+---
+description: Eight focused travel resources demonstrating AAuth access and explicit generic signing.
+---
+
 # Mock Resource Servers
 
-Six small ASP.NET Core resource servers that together demonstrate **every**
-AAuth access mode and signing mode. They replace the former single `WhoAmI`
-sample by splitting one mega-server into six focused, copy-paste-able templates,
+Eight small ASP.NET Core resource servers demonstrate the four AAuth access
+modes and explicitly generic signing examples. They replace the former `WhoAmI`
+sample with focused templates,
 each a short `Program.cs` (well-known + one verification pipeline + a couple of
 endpoints).
 
@@ -23,6 +27,8 @@ traveler's behalf — each protocol concept gets a real-feeling home:
 | [**Wallet**](Wallet/) | 5003 | Federated (four-party) | the bank, with its own Access Server | `/wallet` → `wallet.read`, `/wallet/charge` → `wallet.charge` (AS role `wallet.payer`) |
 | [**Inbox**](Inbox/) | 5004 | Resource-Managed (two-party) | the traveler's inbox / trip confirmations | `/messages` → reactive (`202` + own consent → poll `/pending/{code}` → `AAuth-Access`), `/authorize` → proactive (`{scope}`) |
 | [**Bookings**](Bookings/) | 5005 | Federated + R3 (four-party) | dining & experiences reservations, via a dedicated R3 Access Server (:5501) | `/search_availability`, `/hold_reservation` → `r3_granted`; `/confirm_reservation` → `r3_conditional` (per-call proposal; charges a deposit) |
+| [Catalog](Catalog/README.md) | 5006 | Federated + R3 gateway | Destination and experience catalogs | Service-qualified `list`; sibling-service grant rejected |
+| [Documents](Documents/README.md) | 5007 | PS-asserted with resource permission | Work travel document | `/document` requires `documents.read`, account `work` and completed release permission |
 
 The narrative reads as a journey: *Aria identifies itself (Profile), imports your
 trip confirmations from your **Inbox** (which manages its own consent — no Person
@@ -35,14 +41,14 @@ per-call approval.*
 
 ## Signing mode ↔ Profile path
 
-The Profile server's three paths are three **signing modes** of one access mode
-(identity). The path names describe what the resource *concludes* (the outcome);
-the `scheme` values are the unchanged RFC 9421 `Signature-Key` identifiers.
+Profile's generic paths demonstrate Signature Keys separately from AAuth access
+modes. Its identified endpoint also accepts agent JWTs. The path names describe
+what the resource concludes; they do not authorize replacing JWT in an AAuth flow.
 
 | Profile path | `Signature-Key` scheme | What the resource learns | `signingMode` |
 |--------------|------------------------|--------------------------|---------------|
 | `/pseudonymous` | `hwk` | a key thumbprint only — caller is a pseudonym | `pseudonymous` |
-| `/identified` | `jwks_uri` | a named, verifiable agent identity (via JWKS) | `agent-identity` |
+| `/identified` | `jwt` or explicit generic `jwks` | verified agent JWT identity or discovered-key identity | `agent-identity` |
 | `/anchored` | `jkt-jwt` | an ephemeral key anchored to a durable enrollment key | `pseudonymous` |
 
 > Per the spec, `jkt-jwt` yields **pseudonymous** access (the resource learns
@@ -69,7 +75,7 @@ demo JSON.
 
 ## Running
 
-Run all five at once:
+Run all eight resources at once:
 
 ```bash
 make resources
@@ -83,6 +89,9 @@ dotnet run --project samples/MockResourceServers/Calendar   # :5001
 dotnet run --project samples/MockResourceServers/Trips      # :5002
 dotnet run --project samples/MockResourceServers/Wallet     # :5003
 dotnet run --project samples/MockResourceServers/Inbox      # :5004
+dotnet run --project samples/MockResourceServers/Bookings   # :5005
+dotnet run --project samples/MockResourceServers/Catalog    # :5006
+dotnet run --project samples/MockResourceServers/Documents  # :5007
 ```
 
 Each serves `/.well-known/aauth-resource.json` and `/.well-known/jwks.json`

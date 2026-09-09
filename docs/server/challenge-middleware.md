@@ -1,4 +1,7 @@
-# Challenge Middleware
+---
+title: Challenge Middleware
+description: Issue resource-token challenges with explicit audience and mission context.
+---
 
 `AAuthChallengeMiddleware` automatically issues 401 challenges with resource tokens when an agent presents only an agent token but the resource requires an auth token.
 
@@ -56,7 +59,7 @@ public sealed class ChallengeOptions
     public AAuthAccessMode AccessMode { get; init; } = AAuthAccessMode.RequireAuthToken;
 
     // Resource signing key for minting resource tokens
-    public AAuthKey? ResourceSigningKey { get; init; }
+    public IAAuthKey? ResourceSigningKey { get; init; }
 
     // Key identifier for the resource signing key (kid in the resource token header)
     public string? ResourceKeyId { get; init; }
@@ -113,7 +116,6 @@ claim threads through the tokens, and
 app.UseAAuthVerification(new AAuthVerificationOptions
 {
     ResourceIdentifier = "https://resource.example",
-    RequireIssuerVerification = true,
 });
 
 app.UseAAuthChallenge(new ChallengeOptions

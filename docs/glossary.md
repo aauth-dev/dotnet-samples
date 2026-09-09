@@ -1,4 +1,7 @@
-# Glossary & Acronyms
+---
+title: Glossary and Acronyms
+description: Current AAuth roles, token purposes, cryptography and sample terminology.
+---
 
 A single reference for the acronyms, abbreviations, and short protocol terms
 used across this repository (samples, SDK, docs). AAuth-specific and
@@ -6,8 +9,8 @@ cryptographic terms come first; general tech terms are at the bottom.
 
 Canonical expansions follow the AAuth specification drafts under
 [`aauth-spec/`](../aauth-spec/) (the Terminology sections of
-[the protocol draft](../aauth-spec/v02/draft-hardt-oauth-aauth-protocol.md) and
-[the bootstrap draft](../aauth-spec/v02/draft-hardt-aauth-bootstrap.md)).
+[the protocol draft](../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md) and
+[the bootstrap draft](../aauth-spec/v10/draft-hardt-aauth-bootstrap.md)).
 
 > **Keep this current.** When you introduce a new acronym anywhere in the repo,
 > add it here. Treat this file as the source of truth for expansions.
@@ -42,7 +45,7 @@ Canonical expansions follow the AAuth specification drafts under
 | **dwk** | Discovery Well-Known | The well-known metadata document name for key discovery (e.g. `aauth-agent.json`); keys are fetched from `{iss}/.well-known/{dwk}`. |
 | **kid** | key ID | Selects one key from a JWKS. |
 | **typ** | type | JWT header value naming the token type (`aa-agent+jwt`, etc.). |
-| **alg** | algorithm | JWT header value naming the signing algorithm (e.g. `EdDSA`). |
+| **alg** | algorithm | JWT header value naming the signing algorithm (e.g. `Ed25519`). |
 | **ps** | _(agent-token claim)_ | The Person Server URL bound to the agent. |
 | **scope** | _(claim)_ | The authorization requested/granted (e.g. `calendar.read`, `wallet.charge`). |
 | **s256** | SHA-256 (content hash) | Identifies a mission (or R3 document) by the hash of its content. |
@@ -74,7 +77,7 @@ Canonical expansions follow the AAuth specification drafts under
 | **RFC 7517** | JSON Web Key | The JWK format. |
 | **RFC 8693** | OAuth 2.0 Token Exchange | Delegation / token-exchange semantics referenced by call chaining. |
 | **PoP** | Proof-of-Possession | Proving control of the private key bound to a token (`cnf.jwk`). |
-| **EdDSA** | Edwards-Curve Digital Signature Algorithm | Default signing algorithm (Ed25519). |
+| **Ed25519** | Edwards-Curve Digital Signature Algorithm | Default signing algorithm (Ed25519). |
 | **ECDSA / EC** | Elliptic Curve Digital Signature Algorithm | P-256 signing, supported for interop. |
 | **SHA-256** | Secure Hash Algorithm, 256-bit | Hash used for thumbprints and `s256` content hashes. |
 | **base64url** | _(encoding)_ | URL-safe base64 without padding, used throughout JOSE. |

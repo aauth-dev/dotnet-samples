@@ -1,4 +1,7 @@
-# Dependency Injection
+---
+title: Dependency Injection
+description: Register agent provisioning, verification and policy services with explicit ownership.
+---
 
 Register AAuth services in ASP.NET Core and hosted applications using the built-in DI extensions.
 
@@ -38,7 +41,7 @@ var key = AAuthKey.Generate(); // or load from persistent storage
 builder.Services.AddAAuthAgent("signing-only", options =>
 {
     options.Key = key;
-    // No TokenRefresher set → the agent signs with HWK (pseudonymous) by default.
+    options.SignatureKeyProvider = new HwkSignatureKeyProvider(key);
 });
 ```
 
@@ -65,7 +68,7 @@ builder.Services.AddAAuthAgent("self-issued", options =>
 app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 {
     Issuer = issuer,
-    SigningKeys = new Dictionary<string, AAuthKey> { [Kid] = key },
+    SigningKeys = new Dictionary<string, IAAuthKey> { [Kid] = key },
 });
 ```
 
@@ -74,32 +77,30 @@ app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 Load the key by local handle from the store and configure token refresh:
 
 ```csharp
-var keyStore = FileKeyStore.Default();
+IKeyStore keyStore = FileKeyStore.Default();
 var localKeyHandle = configuration["AAuth:LocalKeyHandle"]!;
 var key = await keyStore.LoadAsync(localKeyHandle)
     ?? throw new InvalidOperationException($"Key '{localKeyHandle}' not found.");
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
-builder.Services.AddAAuthAgent("identity", options =>
-{
-    options.Key = key;
-    options.PersonServer = "https://ps.example";
-    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
+builder.Services.AddHttpClient("identity")
+    .ConfigurePrimaryHttpMessageHandler(() => AAuthClientBuilder.Enrolled(key)
+        .RefreshingFrom(apRefreshEndpoint, localKeyHandle)
         .WithKeyStore(keyStore)
-        .Build();
-});
+        .WithChallengeHandling("https://ps.example")
+        .BuildHandler());
 ```
 
-If your AP issues longer-lived tokens and you manage refresh externally, you can still configure the refresher accordingly:
+The factory owns each pipeline and its internally created refresh transport.
+For an already-held token with externally managed renewal, use the explicit
+options API:
 
 ```csharp
 builder.Services.AddAAuthAgent("identity", options =>
 {
     options.Key = key;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
-        .WithKeyStore(keyStore)
-        .Build();
+    options.AgentToken = heldAgentToken;
 });
 ```
 
@@ -108,13 +109,13 @@ builder.Services.AddAAuthAgent("identity", options =>
 When the Person Server requires user approval, provide interaction callbacks:
 
 ```csharp
+using var refresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
+    .WithKeyStore(keyStore).Build();
 builder.Services.AddAAuthAgent("interactive", options =>
 {
     options.Key = key;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
-        .WithKeyStore(keyStore)
-        .Build();
+    options.TokenRefresher = refresher;
     // A resource returning 202 + requirement=interaction surfaces here.
     options.OnResourceInteraction = async (url, code, ct) =>
     {
@@ -130,13 +131,13 @@ builder.Services.AddAAuthAgent("interactive", options =>
 For long-lived agents, enable automatic token refresh before expiry:
 
 ```csharp
+using var refresher = AgentProviderTokenRefresher.Create("https://ap.example/refresh", localKeyHandle)
+    .WithKeyStore(keyStore).Build();
 builder.Services.AddAAuthAgent("refreshing", options =>
 {
     options.Key = key;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = AgentProviderTokenRefresher.Create("https://ap.example/refresh", localKeyHandle)
-        .WithKeyStore(keyStore)
-        .Build();
+    options.TokenRefresher = refresher;
 });
 ```
 
@@ -302,13 +303,13 @@ builder.Services.AddAAuthAuthentication();
 builder.Services.AddAAuthAuthorization();
 
 // Outbound: sign requests to downstream resources
+using var refresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
+    .WithKeyStore(keyStore).Build();
 builder.Services.AddAAuthAgent("downstream", options =>
 {
     options.Key = agentKey;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, localKeyHandle)
-        .WithKeyStore(keyStore)
-        .Build();
+    options.TokenRefresher = refresher;
 });
 
 var app = builder.Build();
@@ -340,21 +341,29 @@ app.Run();
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `Key` | `IAAuthKey` | required | Agent signing key (must have private component) |
+| `AgentToken` | `string?` | `null` | Already-held agent JWT; no implicit provisioning |
+| `SignatureKeyProvider` | `ISignatureKeyProvider?` | `null` | Explicit generic signing; incompatible with agent credentials or PS/resource-managed flows |
 | `PersonServer` | `string?` | `null` | PS URL; with `TokenRefresher`, enables 401 challenge handling |
 | `OnInteractionRequired` | `Func<Interaction, CancellationToken, Task>?` | `null` | PS interaction during token exchange (deferred consent) |
 | `OnResourceInteraction` | `Func<string, string, CancellationToken, Task>?` | `null` | Resource `202` + `requirement=interaction` (URL + code) |
 | `OnApprovalPending` | `Func<CancellationToken, Task>?` | `null` | Resource `202` + `requirement=approval` |
-| `TokenRefresher` | `ITokenRefresher?` | `null` | Auto-refresh before token expiry (JWT identity); omit for HWK signing |
+| `TokenRefresher` | `ITokenRefresher?` | `null` | Caller-owned source of refreshed agent JWTs; omission never selects HWK implicitly |
 | `PollingTimeout` | `TimeSpan` | 5 minutes | Max deferred polling time |
 | `EnableResourceManagedAccess` | `bool` | `false` | Capture + replay the opaque `AAuth-Access` token (resource-managed, two-party) |
 | `AAuthAccessStore` | `IAAuthAccessStore?` | `null` | Per-origin token store for the resource-managed flow (default in-memory) |
 
 ### AAuthResourceOptions
 
+Registration requires an agent token/refresher or an explicit generic provider.
+Keep an injected disposable refresher alive until all borrowing clients stop;
+the `using` examples belong to the enclosing host lifetime, not a short-lived
+registration helper. Prefer the enrolled `BuildHandler` factory above for owned
+refresh transport. Keys and stores remain caller-owned.
+
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `Issuer` | `string` | required | Resource HTTPS URL (metadata + audience) |
-| `SigningKeys` | `Dictionary<string, AAuthKey>` | empty | Keys for signing resource tokens |
+| `SigningKeys` | `Dictionary<string, IAAuthKey>` | empty | Keys for signing resource tokens |
 | `Name` | `string?` | `null` | Human-readable name in metadata (`name`) |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | `null` | Scope descriptions in metadata |
 | `SignatureWindow` | `int?` | `null` | Advertised signature validity (seconds) |
@@ -375,22 +384,22 @@ For intermediary services that act as both resource and agent, `AAuthClientBuild
 
 ```csharp
 // From HttpContext (reads UpstreamAuthTokenFeature set by middleware)
-var client = new AAuthClientBuilder(key)
-    .UseJwt(() => tokenHolder.Token)
+using var contextClient = new AAuthClientBuilder(key)
+    .UseJwt(() => tokenHolder.Current)
     .WithTokenRefresh(refresher)
     .WithCallChaining(httpContext)
     .Build();
 
 // From a raw upstream token string
-var client = new AAuthClientBuilder(key)
-    .UseJwt(() => tokenHolder.Token)
+using var fixedUpstreamClient = new AAuthClientBuilder(key)
+    .UseJwt(() => tokenHolder.Current)
     .WithTokenRefresh(refresher)
     .WithCallChaining(upstreamAuthToken)
     .Build();
 
 // From a dynamic provider
-var client = new AAuthClientBuilder(key)
-    .UseJwt(() => tokenHolder.Token)
+using var dynamicUpstreamClient = new AAuthClientBuilder(key)
+    .UseJwt(() => tokenHolder.Current)
     .WithTokenRefresh(refresher)
     .WithCallChaining(() => GetUpstreamToken())
     .Build();
@@ -423,14 +432,16 @@ There is also a factory overload — `AddAAuthGovernanceClient(sp => /* AAuthGov
 DI, call `BuildGovernance()` on a configured builder:
 
 ```csharp
-var governance = new AAuthClientBuilder(agentKey)
+using var governance = new AAuthClientBuilder(agentKey)
     .UseJwt(agentToken)
     .WithPersonServer("https://ps.example")
     .BuildGovernance(); // AAuthGovernanceClient
 ```
 
-`BuildGovernance()` requires an explicit signing mode **and** a configured Person
-Server (`WithPersonServer`), and throws `InvalidOperationException` otherwise. See
+`BuildGovernance()` requires a token/signing configuration and an explicit Person
+Server (`WithPersonServer`). It also supports `SelfIssuing` and `Enrolled`:
+the returned facade owns its signed/discovery clients and must be disposed.
+Constructor/`Create` callers retain ownership of injected clients. See
 [Mission Governance Clients](../advanced/mission-governance-clients.md).
 
 ### Person Server side: the governance seams
@@ -444,9 +455,9 @@ a real PS overrides them.
 ```csharp
 builder.Services.AddAAuthGovernance(); // InMemoryMissionStore + InMemoryMissionLog
 
-builder.Services.AddSingleton<IPermissionDecider, MyPermissionDecider>();
-builder.Services.AddSingleton<IAuditSink, MyAuditSink>();
-builder.Services.AddSingleton<IInteractionRelay, MyInteractionRelay>();
+builder.Services.AddSingleton<IPermissionDecider>(permissionDecider);
+builder.Services.AddSingleton<IAuditSink>(missionAuditSink);
+builder.Services.AddSingleton<IInteractionRelay>(interactionRelay);
 ```
 
 The user channel can also be supplied as a lambda instead of a full class, via
@@ -477,7 +488,7 @@ var app = builder.Build();
 app.MapAAuthPersonServer(new AAuthPersonServerOptions
 {
     Issuer               = psIssuer,
-    SigningKeys          = new Dictionary<string, AAuthKey> { [PsKid] = psKey },
+    SigningKeys          = new Dictionary<string, IAAuthKey> { [PsKid] = psKey },
     TrustedAccessServers = trustedAccessServers,        // null ⇒ federate to verified aud; empty ⇒ three-party only
 });
 ```

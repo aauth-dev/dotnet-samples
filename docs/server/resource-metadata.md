@@ -1,4 +1,7 @@
-# Resource Metadata
+---
+title: Resource Metadata
+description: Publish AAuth resource metadata and discover admitted issuer keys.
+---
 
 > [Discovery](https://explorer.aauth.dev/foundations/discovery)
 
@@ -46,7 +49,7 @@ var app = builder.Build();
 app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 {
     Issuer = "https://resource.example",
-    SigningKeys = new Dictionary<string, AAuthKey> { ["key-1"] = signingKey },
+    SigningKeys = new Dictionary<string, IAAuthKey> { ["key-1"] = signingKey },
     Name = "My Resource API",
     DocumentationUri = "https://docs.resource.example",
     ScopeDescriptions = new Dictionary<string, string>

@@ -1,9 +1,13 @@
-# Profile — Identity-Based resource server
+---
+description: Agent-JWT identity access and explicitly generic Signature Keys demonstrations.
+---
 
-Aria's identity service. The **Profile** server decides access from the HTTP
-signature alone — there is **no Person Server** and **no scope**. Every endpoint
-is "signature only"; the three paths differ only in *how* the agent presents its
-key (the RFC 9421 `Signature-Key` scheme).
+# Profile Identity Resource
+
+Aria's identity service has no Person Server or authorization scope. Its
+identified endpoint verifies agent JWT identity or explicit generic direct JWKS.
+The other paths are generic HWK and naming-JWT demonstrations, not alternative
+AAuth resource access modes. A naming JWT still requires JWT verification.
 
 > **Sample only — not part of the AAuth SDK.**
 
@@ -15,7 +19,7 @@ Port: `http://localhost:5000` (override with `--AAuth:Issuer`).
 |------|------------------------|--------------------------|---------------|--------|
 | `/` | _(index)_ | — | — | none |
 | `/pseudonymous` | `hwk` | a key thumbprint (`jkt`) only — identity unknown | `pseudonymous` | none |
-| `/identified` | `jwks_uri` | a named, verifiable agent identity (key via JWKS) | `agent-identity` | `AAuth.Identified` |
+| `/identified` | `jwt` or generic `jwks` | verified agent JWT identity or discovered-key identity | `agent-identity` | `AAuth.Identified` |
 | `/anchored` | `jkt-jwt` | the durable key's thumbprint, via a self-issued naming JWT that delegates to an ephemeral key | `pseudonymous` | none |
 
 The path name describes the **outcome** the resource concludes; the `scheme` is
@@ -23,7 +27,7 @@ the unchanged protocol identifier. Per the spec, `jkt-jwt` is a key-rotation
 variant of presenting a hardware-backed key, so it yields **pseudonymous**
 access — the `/anchored` path reports `signingMode = "pseudonymous"`.
 
-Verification is **self-anchored** (draft-hardt-httpbis-signature-key-05 §3.4):
+Naming-JWT verification is self-anchored (Signature Keys draft-08 section 3.5):
 the durable public key is carried in the naming JWT's header `jwk`, the issuer
 is that key's own thumbprint URN (`urn:jkt:sha-256:<thumbprint>`), and the
 resource computes the thumbprint from the header `jwk`, checks it equals `iss`,
@@ -51,9 +55,9 @@ when the URL has no path:
 dotnet run --project samples/AgentConsole -- http://localhost:5000 \
   --ap http://localhost:5301 --signing-mode hwk
 
-# Agent identity (jwks_uri) → /identified
+# Generic direct JWKS identity -> /identified
 dotnet run --project samples/AgentConsole -- http://localhost:5000 \
-  --ap http://localhost:5301 --signing-mode jwks_uri
+  --ap http://localhost:5301 --signing-mode jwks
 
 # Key rotation (jkt-jwt) → /anchored
 dotnet run --project samples/AgentConsole -- http://localhost:5000 \

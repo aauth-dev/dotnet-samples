@@ -1,4 +1,7 @@
-# AAuth SDK for .NET
+---
+title: AAuth SDK for .NET
+description: AAuth SDK for .NET, companion packages and runnable protocol demonstrations.
+---
 
 [![CI](https://github.com/aauth-dev/dotnet-samples/actions/workflows/ci.yml/badge.svg)](https://github.com/aauth-dev/dotnet-samples/actions/workflows/ci.yml)
 [![NuGet](https://img.shields.io/nuget/vpre/AAuth)](https://www.nuget.org/packages/AAuth)
@@ -11,7 +14,7 @@ The [AAuth protocol](https://aauth.dev) SDK for .NET — agent-to-resource autho
 
 ## What is AAuth?
 
-AAuth is a four-party authorization protocol for AI agents. Every HTTP request carries a cryptographic signature — there are no bearer tokens. See the [protocol spec](aauth-spec/v08/draft-hardt-oauth-aauth-protocol.md) for full details.
+AAuth is a four-party authorization protocol for AI agents. Every HTTP request carries a cryptographic signature; protocol tokens are proof-of-possession bound. See the [protocol spec](aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md) for full details.
 
 The four parties are:
 
@@ -22,7 +25,13 @@ The four parties are:
 
 > **Agent Provider (AP)** is a supporting role that issues `aa-agent+jwt` tokens binding an agent's signing key to its identity.
 
-The SDK supports all four signing modes (`hwk`, `jwks_uri`, `jwt`, `jkt-jwt`), the full three-party challenge/exchange flow (autonomous and deferred user-consent), signature verification middleware, resource & auth token builders, JWKS / metadata discovery, and a Blazor `GuidedTour` walk-through. See the [SDK documentation](docs/) for complete usage guides.
+The SDK supports six Signature-Key schemes (`hwk`, `jkt-jwt`, `jwks_uri`, `jwks`, `jwt`, `self-jwt`). AAuth agent requests use `jwt` across all four resource access modes; the other schemes serve server signing, AP ceremonies, Events or explicit generic demonstrations. The SDK includes challenge/exchange flows, verification middleware, token builders, admitted discovery and a Blazor `GuidedTour`. See the [SDK documentation](docs/) for usage guides.
+
+The [AAuth.Events companion](src/AAuth.Events/README.md) adds subscribe tokens,
+`self-jwt` event delivery, durable provider contracts and agent verification.
+Run its six-step flow in either app at `/events`, or use `make agent-events`
+after starting the stack. See [Events](docs/workflows/events.md) for transport,
+persistence and draft limitations.
 
 ## Access Modes
 
@@ -30,8 +39,8 @@ AAuth supports four resource access modes. Each adds parties and capabilities, a
 
 | Mode | Parties | When to Use | Signing | See it in the demos |
 |------|---------|-------------|---------|---------------------|
-| **Identity-Based** | Agent + Resource | Replacing API keys with cryptographic identity | `hwk` / `jwks_uri` | GuidedTour → [**Identity-based**](http://localhost:5400/tour?flow=Identity); SampleApp → [`/pseudonymous`](http://localhost:5240/pseudonymous) and [`/identified`](http://localhost:5240/identified) |
-| **Resource-Managed** (two-party) | Agent + Resource | Resource manages authorization itself (interaction, OAuth/OIDC, internal policy) without an external PS or AS | Any | GuidedTour → [**Resource-Managed (Two-Party)**](http://localhost:5400/tour?flow=ResourceManaged); SampleApp → [`/inbox`](http://localhost:5240/inbox) |
+| **Identity-Based** | Agent + Resource | Resource authorizes verified agent identity | `jwt` | Profile `/identified` accepts agent JWT; generic signing demonstrations are separate |
+| **Resource-Managed** (two-party) | Agent + Resource | Resource manages authorization without an external PS or AS | `jwt` plus opaque AAuth-Access | GuidedTour → [**Resource-Managed (Two-Party)**](http://localhost:5400/tour?flow=ResourceManaged); SampleApp → [`/inbox`](http://localhost:5240/inbox) |
 | **PS-Asserted** (three-party) | Agent + Resource + PS | Resource accepts identity claims (`sub`, `email`, `tenant`, `groups`, `roles`) from any Person Server | `jwt` | GuidedTour → [**PS-Asserted (Direct Grant)**](http://localhost:5400/tour?flow=Autonomous) and [**PS-Asserted (Deferred)**](http://localhost:5400/tour?flow=Deferred); SampleApp → [`/calendar`](http://localhost:5240/calendar) and [`/calendar-deferred`](http://localhost:5240/calendar-deferred) |
 | **Federated** (four-party) | Agent + Resource + PS + AS | Cross-domain access with the resource's own Access Server enforcing policy | `jwt` | GuidedTour → [**Federated (Four-Party)**](http://localhost:5400/tour?flow=Federated); SampleApp → [`/wallet`](http://localhost:5240/wallet). Live Keycloak consent: `make demo-keycloak` |
 
@@ -58,7 +67,10 @@ Step-by-step walk-through showing every HTTP exchange, header, and token claim a
 
 ### Sample App — http://localhost:5240
 
-Self-contained Blazor app with one page per AAuth flow (HWK, JWKS URI, resource-managed Inbox, JWT direct grant, deferred user consent, call-chain multi-agent delegation, four-party federated).
+Self-contained Blazor app with AAuth authorization flows and separately labeled
+generic signing demonstrations. Both apps include
+[Wallet Protocol](docs/workflows/wallet-protocol.md),
+[Catalog Gateway](docs/workflows/catalog-gateway.md), account-bound Bookings and Events.
 
 ![Sample App](samples/SampleApp/sample-app.png)
 
@@ -85,22 +97,30 @@ dotnet build AAuth.slnx
 dotnet add package AAuth --prerelease
 ```
 
-The simplest mode is **pseudonymous (HWK)** — the agent signs every request with an inline public key. No Agent Provider, no Person Server, no registration. The resource sees a stable key thumbprint it can use for rate-limiting or access control, but doesn't know the agent's identity.
+An enrolled agent uses an AP-issued agent JWT and proves possession of its
+locally held key. Replace the example HTTPS endpoints with your configured
+provider and resource. For the runnable loopback configuration, use the
+[sample setup](samples/README.md#network-admission).
 
 ```csharp
 using AAuth.Crypto;
 using AAuth;
 
-var key = AAuthKey.Generate(); // Ed25519 keypair
-
-using var client = new AAuthClientBuilder(key)
-    .UseHwk() // Pseudonymous mode: inline public key in Signature-Key header
+var keyStore = FileKeyStore.Default();
+var key = keyStore.LoadOrCreate("my-agent");
+var enrollment = await AAuthClientBuilder.Bootstrap("https://ap.example/enrol")
+    .WithKey(key).WithKeyStore(keyStore).EnrolAsync();
+using var client = AAuthClientBuilder.Enrolled(key)
+    .RefreshingFrom("https://ap.example/refresh", enrollment.LocalKeyHandle!)
+    .WithKeyStore(keyStore)
     .Build();
 
 var response = await client.GetAsync("https://resource.example/data");
-// Request is signed per RFC 9421 — the resource verifies the signature
-// using the public key from the Signature-Key: sig=hwk;jkt="...";jwk="..." header
+// Signature-Key: sig=jwt;jwt="<aa-agent+jwt>"
 ```
+
+Generic [HWK signing](docs/signing-modes/pseudonymous-hwk.md) remains available
+for explicitly generic Signature Keys endpoints; it is not an AAuth access mode.
 
 ### Three-Party Flow (Agent → Resource → Person Server)
 
@@ -224,7 +244,7 @@ var app = builder.Build();
 app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 {
     Issuer = issuer,
-    SigningKeys = new Dictionary<string, AAuthKey> { [Kid] = key },
+    SigningKeys = new Dictionary<string, IAAuthKey> { [Kid] = key },
 });
 
 // Build signed client with automatic token refresh and challenge handling
@@ -245,7 +265,7 @@ Full SDK documentation lives in [`docs/`](docs/):
 - [Getting Started](docs/getting-started.md) — install, generate a key, three-party flow deep dive, enrollment models
 - [Concepts](docs/concepts.md) — the four participants and how the SDK maps to them
 - [Glossary & Acronyms](docs/glossary.md) — every acronym and short protocol term used across the repo
-- [Signing Modes](docs/signing-modes/overview.md) — hwk, jwks_uri, jwt, jkt-jwt
+- [Signing Modes](docs/signing-modes/overview.md) - six carriers, distinct from four AAuth access modes
 - [Workflows](docs/workflows/identity-based-access.md) — identity-based, PS-asserted, federated
 - [Server Guide](docs/server/verification-middleware.md) — verification middleware, token issuance
 - [Configuration Reference](docs/reference/configuration.md)
@@ -264,21 +284,37 @@ dotnet test tests/AAuth.Conformance   # spec conformance suite only
 |------|-------------|
 | [src/AAuth/](src/AAuth/) | AAuth SDK library (the NuGet package) |
 | [docs/](docs/) | SDK documentation — signing modes, workflows, server guides |
-| [samples/](samples/) | Sample applications — Profile, Calendar, Trips, Wallet, Inbox resource servers, Concierge, AgentConsole, MockPersonServer, MockAgentProvider, GuidedTour, SampleApp |
+| [samples/](samples/) | Seven focused resources including Bookings and Catalog, PS/AS/AP hosts, console agents, GuidedTour and SampleApp |
 | [tests/](tests/) | Unit, integration, and spec-conformance tests |
-| [aauth-spec/](aauth-spec/) | Protocol specifications (drafts 01, 02, and 08) from [dickhardt/AAuth](https://github.com/dickhardt/AAuth) |
+| [aauth-spec/](aauth-spec/) | Immutable protocol snapshots 01, 02, 08, 09 and 10 with pinned companion drafts |
 
 ## Spec Compatibility
 
-This SDK targets **draft-08** of the AAuth protocol specification:
+This SDK targets **draft-10** of the AAuth protocol specification:
 
 | Spec | Draft |
 |------|-------|
-| [draft-hardt-oauth-aauth-protocol](aauth-spec/v08/draft-hardt-oauth-aauth-protocol.md) | 08 |
-| [draft-hardt-aauth-bootstrap](aauth-spec/v08/draft-hardt-aauth-bootstrap.md) | 01 |
-| [draft-hardt-aauth-r3](aauth-spec/v08/draft-hardt-aauth-r3.md) | 00 |
+| [AAuth protocol](aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md) | 10 |
+| [Bootstrap](aauth-spec/v10/draft-hardt-aauth-bootstrap.md) | 02, informational |
+| [Rich Resource Requests](aauth-spec/v10/draft-hardt-aauth-r3.md) | 01 |
+| [Events](aauth-spec/v10/draft-hardt-aauth-events.md) | 00, revised |
+| [HTTP Signature Keys](aauth-spec/v10/draft-hardt-httpbis-signature-key-08.txt) | 08 |
 
-The protocol tracks IETF **draft-08** ([`aauth-spec/v08/`](aauth-spec/v08/), source commit [`dd2b852`](https://github.com/dickhardt/AAuth/commit/dd2b8524eb8a6beb1a6cd922f285cc8bd0464cd8), 2026-06-25). Earlier draft-02 ([`aauth-spec/v02/`](aauth-spec/v02/)) and draft-01 ([`aauth-spec/v01/`](aauth-spec/v01/)) snapshots are retained for reference. All four resource access modes — including the `AAuth-Access` opaque-token flow (resource-managed, two-party access) — are implemented. See [SPEC-VERSION.md](aauth-spec/SPEC-VERSION.md) and [aauth-spec/CHANGELOG.md](aauth-spec/CHANGELOG.md) for details.
+The pinned source is commit `9dee49fbf49074d1460d0a7c0670bf355aef5e1e`,
+published 2026-08-06. All four access modes, account binding, AS clarification,
+issuer-qualified revocation and parent-mediated four-party delegation are
+implemented. Optional X.509/cached carriers and third-party login hosting are
+not implemented. Platform attestation, production stores/policies and native
+push transports remain deployment responsibilities. Events uses single-shot
+sample delivery with literal issuer/eid deduplication; recurring-event ambiguity
+is not hidden by the supported-carrier claim.
+
+Local Release and both policy-mode browser gates pass. External whoami identity
+access succeeds, but its scoped endpoint returned `person-token` rather than the
+pinned `auth-token` challenge; full external authorization interop is not claimed.
+See [SPEC-VERSION](aauth-spec/SPEC-VERSION.md),
+[snapshot history](aauth-spec/CHANGELOG.md), and the
+[conformance dispositions](.agent/plans/2026-09-08-aauth-v10-spec-migration/conformance-ledger.md).
 
 ## Contributing
 

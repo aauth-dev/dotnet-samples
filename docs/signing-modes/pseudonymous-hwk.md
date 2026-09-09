@@ -1,8 +1,15 @@
-# Pseudonymous Access (sig=hwk)
+---
+description: Generic inline public-key signatures using the hwk scheme.
+---
+
+# Pseudonymous Signatures (sig=hwk)
 
 ## Overview
 
-The agent proves it holds a specific key without disclosing its identity. The full public key is sent inline (base64url-encoded JWK) along with the JWK thumbprint. See [live demo](https://explorer.aauth.dev/signing/pseudonymous).
+The signer proves possession of a key without asserting an issuer identity.
+Public JWK members are carried as structured string parameters. This is a
+generic Signature Keys scheme, not an AAuth resource-access credential.
+AAuth agents present an agent or auth token using `jwt`.
 
 ## When to Use
 
@@ -41,15 +48,15 @@ using var client = new HttpClient(handler);
 
 ## What the Resource Sees
 
-- `Signature-Key: sig=hwk;jkt="<thumbprint>";jwk="<base64url-encoded-public-JWK>"`
+- `Signature-Key: sig=hwk;kty="OKP";crv="Ed25519";x="<public-key>";alg="Ed25519"`
 - The agent sends its full public key inline — the resource extracts it directly
 - Useful for rate-limiting: same thumbprint = same key = same client
 
 ## Verification
 
-The resource extracts the inline public key from the `Signature-Key` header's `jwk`
-parameter (base64url-decoded JWK). No pre-registration or key lookup is required —
-the key is self-contained in each request.
+The verifier reconstructs the public JWK from `kty`, `crv`, `x` and `alg`, plus
+`y` for ES256. `kid`, private material and the former `jkt`/`jwk` encoding are
+rejected. Thumbprints are computed using RFC 7638 and do not include `alg`.
 
 ## Further Reading
 

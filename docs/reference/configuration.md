@@ -1,4 +1,7 @@
-# Configuration Reference
+---
+title: Configuration Reference
+description: Configure AAuth verification, token issuance, and deferred exchanges.
+---
 
 All configurable options across the AAuth .NET SDK, grouped by component.
 
@@ -22,11 +25,10 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 | `TrustedAuthTokenIssuers` | `IReadOnlySet<string>?` | `null` | Allow-list of trusted auth token (PS/AS) issuers. `null` ⇒ accept any *verifiable* auth-token issuer (the spec default — the JWT signature still verifies against the issuer's JWKS); empty ⇒ deny all; non-empty ⇒ restrict to the listed issuers. AND-composed with `IsTrustedAuthTokenIssuer`. |
 | `IsTrustedAuthTokenIssuer` | `Func<string, bool>?` | `null` | Optional predicate AND-composed with `TrustedAuthTokenIssuers` (each only narrows). Assign `AAuthTrust.Any` to trust any verifiable issuer explicitly and suppress the open-trust startup warning. |
 | `PersonServerAudience` | `string?` | `null` | Resource-token audience for the challenge. Set to an Access Server URL for four-party (federated) resources; when `null` the audience is the agent token's `ps` claim (three-party). |
-| `RequireIssuerVerification` | `bool` | `true` | Verify the auth-token issuer's JWKS signature. |
 | `TrustedAgentProviderIssuers` | `IReadOnlySet<string>?` | `null` | Allow-list of trusted Agent Provider issuers (for `aa-agent+jwt`). `null` ⇒ accept any verifiable Agent Provider; empty ⇒ deny all; non-empty ⇒ restrict. AND-composed with `IsTrustedAgentProviderIssuer`. |
 | `IsTrustedAgentProviderIssuer` | `Func<string, bool>?` | `null` | Optional predicate AND-composed with `TrustedAgentProviderIssuers`. Assign `AAuthTrust.Any` to trust any verifiable Agent Provider explicitly. |
 | `ResourceIdentifier` | `string?` | DI metadata issuer | Override the resource identifier used for `aud` checks and challenges. |
-| `ResourceSigningKey` | `AAuthKey?` | DI metadata first key | Override the challenge signing key. |
+| `ResourceSigningKey` | `IAAuthKey?` | DI metadata first key | Override the challenge signing key. |
 | `ResourceKeyId` | `string?` | DI metadata first kid | Override the challenge key id. |
 
 > `AAuthVerificationOptions` and `ChallengeOptions` are the low-level building
@@ -39,7 +41,10 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `ResourceIdentifier` | `string?` | `null` | Resource's own identifier for `aud` checks. When `null`, audience validation is skipped. |
-| `RequireIssuerVerification` | `bool` | `true` | When `true`, verifies JWT signatures against the issuer's published JWKS via metadata discovery. The crypto gate is orthogonal to the trust lists below — they only narrow which verified issuers are honored. |
+| `AcceptedSchemes` | `IReadOnlyList<string>` | `["jwt"]` | Schemes accepted by this verification role; generic signing is an explicit opt-in. |
+| `SignatureLabel` | `string` | `"sig"` | Matching dictionary member selected from all three signature fields. |
+| `RequiredComponents` | `IReadOnlyCollection<string>` | `[]` | Additional required covered components. |
+| `GenericSignatureKeys` | `bool` | `false` | Use generic Signature Keys failure status policy instead of AAuth's 401 profile. |
 | `TrustedAgentProviderIssuers` | `IReadOnlySet<string>?` | `null` | Optional allow-list of trusted AP issuers. `null` ⇒ any verifiable AP; empty ⇒ deny all; non-empty ⇒ restrict. AND-composed with `IsTrustedAgentProviderIssuer`. |
 | `IsTrustedAgentProviderIssuer` | `Func<string, bool>?` | `null` | Optional predicate AND-composed with `TrustedAgentProviderIssuers`; assign `AAuthTrust.Any` for explicit open trust. |
 | `TrustedAuthTokenIssuers` | `IReadOnlySet<string>?` | `null` | Allow-list of trusted auth token (PS/AS) issuers. `null` ⇒ accept any *verifiable* PS (the spec default); empty ⇒ deny all PS-asserted tokens; non-empty ⇒ restrict to the listed issuers. AND-composed with `IsTrustedAuthTokenIssuer`. |
@@ -49,7 +54,7 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 | `MaxFutureSkew` | `TimeSpan` | 5 seconds | Maximum allowed skew into the future for HTTP signature timestamps |
 | `Clock` | `Func<DateTimeOffset>?` | `null` (UtcNow) | Clock source for all time-dependent checks. Inject for deterministic testing. |
 
-> **Two startup guards (diagnostics only — neither changes runtime behavior):**
+> Startup diagnostics do not change runtime trust policy:
 >
 > - **Open-trust warning** — when issuer verification is on and no auth-token
 >   trust policy is configured (no set, no predicate, no `AAuthTrust.Any`), the
@@ -62,19 +67,15 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 >     logs this warning — the SDK can't know at startup that no auth-token endpoint
 >     exists. It is benign; silence it by assigning
 >     `IsTrustedAuthTokenIssuer = AAuthTrust.Any`.
-> - **Contradiction throw** — configuring a trust policy
->   (`TrustedAuthTokenIssuers` / `IsTrustedAuthTokenIssuer` /
->   `TrustedAgentProviderIssuers` / `IsTrustedAgentProviderIssuer`) while
->   `RequireIssuerVerification == false` throws `InvalidOperationException` at
->   `UseAAuth` / `UseAAuthVerification` construction, because the policy would
->   otherwise be silently ignored.
+> JWT issuer verification cannot be disabled. Trust policies narrow the set of
+> verified issuers; they never replace signature verification.
 
 ### AAuthResourceOptions (via AddAAuthResource)
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `Issuer` | `string` | — (required) | HTTPS issuer URL for this resource |
-| `SigningKeys` | `Dictionary<string, AAuthKey>` | `{}` | Key-id → signing key map |
+| `SigningKeys` | `Dictionary<string, IAAuthKey>` | `{}` | Key-id to signing key map |
 | `Name` | `string?` | `null` | Human-readable resource name (`name`) |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | `null` | Scope → description map for metadata |
 | `SignatureWindow` | `int?` | `null` | Advertised signature validity (seconds) |
@@ -86,7 +87,7 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `Issuer` | `string` | — (required) | HTTPS URL of this PS (`iss` of minted auth tokens) |
-| `SigningKeys` | `IReadOnlyDictionary<string, AAuthKey>` | — (required) | Key-id → signing key map (published at the PS JWKS) |
+| `SigningKeys` | `IReadOnlyDictionary<string, IAAuthKey>` | Required | Key-id to signing key map (published at the PS JWKS) |
 | `TokenPath` | `string` | `/token` | Token endpoint path |
 | `PendingPathPrefix` | `string` | `/pending` | Deferred-consent poll path prefix |
 | `DefaultScope` | `string` | `""` | Scope assumed when the resource token omits one |
@@ -113,7 +114,10 @@ a `mission` claim). See
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `Lifetime` | `TimeSpan` | 1 hour | Token validity duration |
+| `AgentTokenExpiresAt` | `DateTimeOffset` | Required | Expiry from the verified source agent token |
+| `AuthorizationExpiresAt` | `DateTimeOffset?` | None | Additional verified parent/upstream ceiling |
+| `TimeProvider` | `TimeProvider` | System | Issuance and expiration clock |
+| `Lifetime` | `TimeSpan` | 1 hour | Positive requested lifetime, at most one hour, capped by verified ceilings |
 | `Dwk` | `string` | `"aauth-person.json"` | Discovery well-known path |
 | `IssuedAt` | `DateTimeOffset?` | Now | Override issuance timestamp |
 | `TokenId` | `string?` | Auto (UUID) | Custom jti value |

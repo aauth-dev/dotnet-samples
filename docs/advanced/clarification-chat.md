@@ -1,4 +1,7 @@
-# Clarification Chat
+---
+title: Clarification Chat
+description: Answer, narrow or cancel authenticated PS and AS clarification requests.
+---
 
 > [Clarification Chat](https://explorer.aauth.dev/missions/clarification)
 
@@ -114,7 +117,7 @@ var request = new TokenExchangeRequest
     OnClarificationRequired = async (requirement, ct) =>
     {
         // requirement.Clarification is untrusted — sanitize before display.
-        string question = Sanitize(requirement.Clarification);
+        string question = WebUtility.HtmlEncode(requirement.Clarification);
 
         if (requirement.Options is { Count: > 0 } options)
         {
@@ -145,7 +148,7 @@ var session = await governance.ProposeMissionAsync(
     {
         MaxClarificationRounds = 3,
         OnClarificationRequired = async (requirement, ct) =>
-            ClarificationResponse.Respond(await AskUser(Sanitize(requirement.Clarification))),
+            ClarificationResponse.Respond(await AskUser(WebUtility.HtmlEncode(requirement.Clarification))),
     });
 ```
 
@@ -162,7 +165,8 @@ agent's `clarification_response` / updated `resource_token` / `DELETE` on the
 pending URL, record each round in the mission log, and re-consult the seam:
 
 ```csharp
-public sealed class LlmMissionConsent : IMissionTokenConsent
+public sealed class LlmMissionConsent(
+    Func<MissionTokenConsentContext, CancellationToken, Task<bool>> isJustified) : IMissionTokenConsent
 {
     public async Task<MissionTokenConsentDecision> ReviewAsync(
         MissionTokenConsentContext ctx, CancellationToken ct = default)
@@ -172,7 +176,7 @@ public sealed class LlmMissionConsent : IMissionTokenConsent
             return MissionTokenConsentDecision.Clarify("Why does this mission need this scope?");
 
         // The agent answered — let the policy (here, an LLM) decide.
-        return await _reviewer.IsJustified(ctx, ctx.ClarificationHistory)
+        return await isJustified(ctx, ct)
             ? MissionTokenConsentDecision.Grant()
             : MissionTokenConsentDecision.Deny("not justified by the mission");
     }
@@ -184,6 +188,17 @@ question is formed and the answer judged (a consent screen, a scripted test, or
 an LLM reviewer). See [Mission Governance (Server)](../server/mission-governance.md).
 
 ## Further reading
+
+`AskUser` and `AskUserToPick` are application callbacks returning the person's
+answer, not SDK APIs. The example HTML-encodes text; a Markdown renderer must
+also sanitize links and output. The injected policy evaluator must use the
+authenticated mission and consent context, not treat an agent answer as approval.
+
+AS clarification follows the same explicit `action=clarification_response` or
+`action=updated_request` dispatch. The PS relays the AS pending requirement,
+retains the original verified owner/key/account/expiry, forwards the answer,
+and resumes AS policy. Cancellation is signed DELETE. Try both outcomes in
+[Wallet Protocol](../workflows/wallet-protocol.md).
 
 - [Mission Governance Clients](mission-governance-clients.md) — where governance clarification fits
 - [Mission Call Chain sample](../../samples/SampleApp/Components/Pages/MissionCallChain.razor) — a clarification round during an out-of-mission elevated-scope exchange, followed by a mission-forwarded call chain

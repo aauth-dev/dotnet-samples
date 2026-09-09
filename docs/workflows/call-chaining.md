@@ -1,4 +1,7 @@
-# Call Chaining
+---
+title: Call Chaining
+description: Preserve authorization context across multi-hop agent calls.
+---
 
 Call chaining enables multi-hop delegation where a resource acts as an agent to downstream resources, preserving the full authorization chain via nested `act` claims.
 
@@ -55,16 +58,15 @@ using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth;
 
-var keyStore = FileKeyStore.Default();
+IKeyStore keyStore = FileKeyStore.Default();
 var localKeyHandle = configuration["AAuth:LocalKeyHandle"]!;
 var key = await keyStore.LoadAsync(localKeyHandle)
     ?? throw new InvalidOperationException("Key not found.");
 var refreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
-using var client = new AAuthClientBuilder(key)
-    .WithTokenRefresh(AgentProviderTokenRefresher.Create(refreshEndpoint, localKeyHandle)
-        .WithKeyStore(keyStore)
-        .Build())
+using var client = AAuthClientBuilder.Enrolled(key)
+    .RefreshingFrom(refreshEndpoint, localKeyHandle)
+    .WithKeyStore(keyStore)
     .WithChallengeHandling(personServer)
     .Build();
 
@@ -89,7 +91,6 @@ app.UseWhen(
         new AAuthVerificationOptions
         {
             ResourceIdentifier = conciergeUrl,
-            RequireIssuerVerification = true,
         },
         new ChallengeOptions
         {
@@ -128,7 +129,6 @@ For full control over the exchange, use the building blocks directly:
 app.UseAAuthVerification(new AAuthVerificationOptions
 {
     ResourceIdentifier = conciergeUrl,
-    RequireIssuerVerification = true,
 });
 
 app.MapGet("/", async (HttpContext ctx) =>
@@ -167,7 +167,8 @@ app.MapGet("/", async (HttpContext ctx) =>
         .UseJwt(chained)
         .Build();
     var result = await downstream.GetAsync(calendarUrl); // e.g. http://localhost:5001/events
-    // ...
+    return Results.Json(await result.Content.ReadFromJsonAsync<JsonNode>(),
+        statusCode: (int)result.StatusCode);
 });
 ```
 
@@ -177,12 +178,12 @@ When an intermediary already holds a token (from exchange), use `UseJwt` to pres
 
 ```csharp
 // UseJwt(string) — static token
-using var client = new AAuthClientBuilder(key)
+using var fixedTokenClient = new AAuthClientBuilder(key)
     .UseJwt(chainedAuthToken)
     .Build();
 
 // UseJwt(Func<string>) — dynamic token
-using var client = new AAuthClientBuilder(key)
+using var dynamicTokenClient = new AAuthClientBuilder(key)
     .UseJwt(() => GetLatestToken())
     .Build();
 ```
@@ -225,6 +226,8 @@ omitted entirely for direct authorization):
 ```csharp
 var token = new AuthTokenBuilder
 {
+    AgentTokenExpiresAt = verifiedAgent.ExpiresAt,
+    AuthorizationExpiresAt = verifiedUpstream.ExpiresAt,
     Issuer = psIssuer,
     Audience = downstreamResource,
     Agent = resourceBAgent,
@@ -255,7 +258,7 @@ dotnet run --project samples/AgentConsole -- http://localhost:5200 \
 
 ## Verification at the Final Resource
 
-The final resource (Calendar) validates the chained auth token using standard middleware with `RequireIssuerVerification = true`. The middleware verifies:
+The final resource (Calendar) validates the chained auth token using standard middleware. JWT issuer verification is mandatory. The middleware verifies:
 
 - JWT signature against the PS's JWKS
 - `aud` matches the resource's identifier
@@ -299,12 +302,14 @@ var result = await validator.ValidateAsync(
     trustedIssuers);
 
 if (!result.IsValid)
-    return Results.BadRequest(new { error = "invalid_upstream_token", detail = result.Error });
+    return AAuth.Server.AAuthProblemDetails.Create("invalid_upstream_token", result.Error);
 
 // Compose the downstream act node from the upstream token's agent + its own chain.
 var downstreamAct = ActChainBuilder.BuildNestedAct(result.Agent!, result.UpstreamAct);
 var authToken = new AuthTokenBuilder
 {
+    AgentTokenExpiresAt = verifiedAgent.ExpiresAt,
+    AuthorizationExpiresAt = result.ExpiresAt,
     Issuer = psIssuer,
     Audience = downstreamResource,
     Agent = intermediaryAgentId,
@@ -342,7 +347,7 @@ var result = await deliveryValidator.ValidateAsync(
     requestedScope: "data.read");      // scope narrowing check
 
 if (!result.IsValid)
-    return Results.BadRequest(new { error = "delivery_verification_failed" });
+    return AAuth.Server.AAuthProblemDetails.Create("delivery_verification_failed");
 ```
 
 ## Act Chain Utilities

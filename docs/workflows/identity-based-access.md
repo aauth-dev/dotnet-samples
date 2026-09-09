@@ -1,3 +1,7 @@
+---
+description: Agent-token authenticated identity-based AAuth resource access.
+---
+
 # Identity-Based Access
 
 > [Live demo](https://explorer.aauth.dev/access/identity-based) | [Access Mode Comparison](https://explorer.aauth.dev/access/compare)
@@ -12,25 +16,26 @@ Simplest access mode. The resource verifies the agent's signature and applies it
 sequenceDiagram
     participant Agent
     participant Resource
-    Agent->>Resource: GET /data (signed, Signature-Key: sig=hwk, sig=jkt-jwt, or sig=jwks_uri)
-    Resource->>Resource: Verify signature
+    Agent->>Resource: GET /data (Signature-Key: sig=jwt with agent token)
+    Resource->>Resource: Verify issuer JWT, then HTTP signature
     Resource-->>Agent: 200 OK (or 403 Forbidden)
 ```
 
-Valid Signing Modes: `hwk` or `jkt-jwt` (pseudonymous) or `jwks_uri` (agent identity). NOT `jwt` — that requires a Person Server.
+The required scheme is `jwt`. An agent token does not require a Person Server.
+Generic pseudonymous and direct-key examples are separate Signature Keys uses.
 
 ## Code Example
 
-### Pseudonymous (`hwk`)
+### Agent Token (`jwt`)
 
 ```csharp
 using AAuth.Crypto;
 using AAuth;
 
-var key = AAuthKey.Generate();
-
-using var client = new AAuthClientBuilder(key)
-    .UseHwk()
+// The host publishes this issuer and key in its agent metadata/JWKS.
+using var client = AAuthClientBuilder.SelfIssuing(publishedKey)
+    .As("https://agent.example", "aauth:agent@agent.example")
+    .WithKid(publishedKeyId)
     .Build();
 
 var response = await client.GetAsync("https://resource.example/data");
@@ -39,17 +44,17 @@ var response = await client.GetAsync("https://resource.example/data");
 // 401 if signature invalid (Signature-Error header explains why)
 ```
 
-### Agent Identity (`jwks_uri`)
+### Generic Server Identity (`jwks_uri`)
 
 ```csharp
 using var client = new AAuthClientBuilder(key)
-    .UseJwksUri("https://ap.example/.well-known/jwks.json", "key-1")
+    .UseJwksUri("https://server.example", "server-configuration", "key-1")
     .Build();
 ```
 
 ## DI Registration
 
-### Pseudonymous (HWK)
+### Agent identity (JWT)
 
 ```csharp
 using AAuth.Agent;
@@ -58,23 +63,26 @@ using AAuth.Crypto;
 IKeyStore keyStore = FileKeyStore.Default();
 var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!);
 
-builder.Services.AddAAuthAgent("identity-hwk", options =>
+builder.Services.AddAAuthAgent("identity", options =>
 {
     options.Key = key!;
+    options.AgentToken = heldAgentToken; // issued for this key; renew externally or set TokenRefresher
 });
 ```
 
-### Agent Identity (jwks_uri)
+### Generic server identity (jwks_uri)
 
 ```csharp
 builder.Services.AddAAuthAgent("identity-jwks", options =>
 {
     options.Key = key!;
-    // No PersonServer → identity-only mode (no challenge handling)
+    options.SignatureKeyProvider = new JwksUriSignatureKeyProvider(
+        "https://server.example", "server-configuration", "key-1");
+    // Generic signing, not an AAuth resource access mode.
 });
 ```
 
-Inject via `IHttpClientFactory.CreateClient("identity-hwk")`. See [Dependency Injection](../reference/dependency-injection.md) for full reference.
+Inject via `IHttpClientFactory.CreateClient("identity")`. See [Dependency Injection](../reference/dependency-injection.md) for full reference.
 
 ## Error Scenarios
 
@@ -82,7 +90,7 @@ Inject via `IHttpClientFactory.CreateClient("identity-hwk")`. See [Dependency In
 |--------|----------------|-------|
 | 401 | `invalid_signature` | Signature doesn't verify |
 | 401 | `unknown_key` | For jwks_uri: kid not found in JWKS |
-| 401 | `unsupported_algorithm` | Key uses wrong algorithm (only EdDSA supported) |
+| 401 | `unsupported_algorithm` | Missing or unsupported fully specified alg; Ed25519 and ES256 are accepted |
 | 403 | *(none)* | Signature valid but policy denies access |
 
 ## Further Reading

@@ -1,4 +1,7 @@
-# Token Issuance
+---
+title: Token Issuance
+description: Issue bounded AAuth resource, agent, and authorization tokens.
+---
 
 > [Token Types](https://explorer.aauth.dev/foundations/tokens) | [Token Lifecycle](https://explorer.aauth.dev/tokens/lifecycle)
 
@@ -18,7 +21,7 @@ var resourceToken = new ResourceTokenBuilder
     Issuer = "https://resource.example",
     Audience = "https://as.example",          // where agent exchanges this
     Agent = "aauth:myapp@ap.example",         // agent identifier
-    AgentJkt = keyInfo.Jkt!,                  // from parsed signature key
+    AgentJkt = agentConfirmationKey.ComputeJwkThumbprint(), // verified HTTP key
     Key = resourceSigningKey,                 // Ed25519 key
     KeyId = "resource-key-1",
     Scope = "read write",                     // requested scope
@@ -50,8 +53,13 @@ return context.ChallengeAAuth(resourceToken);
 Issued by a Person Server or Access Server to grant access. Bound to the agent's confirmation key.
 
 ```csharp
+var verifiedAgent = await tokenVerifier.VerifyWithJwksAsync(
+    agentToken, metadata, jwks,
+    AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk,
+    expectedAudience: null);
 var authToken = new AuthTokenBuilder
 {
+    AgentTokenExpiresAt = verifiedAgent.ExpiresAt,
     Issuer = "https://ps.example",
     Audience = "https://resource.example",    // resource that will accept this
     Agent = "aauth:myapp@ap.example",
@@ -72,24 +80,44 @@ var authToken = new AuthTokenBuilder
 | `Issuer` | Yes | — | PS or AS URL (becomes `iss`) |
 | `Audience` | Yes | — | Resource URL (becomes `aud`) |
 | `Agent` | Yes | — | Agent identifier |
-| `AgentConfirmationKey` | Yes | — | Agent's public key (bound via `cnf.jkt`) |
+| `AgentConfirmationKey` | Yes | — | Agent's public key (bound via `cnf.jwk`) |
+| `AgentTokenExpiresAt` | Yes | None | Expiry from the verified agent token; no unbounded default |
+| `AuthorizationExpiresAt` | No | None | Additional verified parent/upstream ceiling |
 | `Key` | Yes | — | PS/AS signing key |
 | `KeyId` | Yes | — | Key ID (JWT header `kid`) |
 | `Dwk` | No | `"aauth-person.json"` | Discovery well-known path (`PersonDwk` or `AccessDwk`) |
 | `Scope` | No | — | Granted scope |
 | `Subject` | No | — | Person identifier |
-| `Lifetime` | No | 1 hour | Token validity |
+| `Lifetime` | No | 1 hour | Positive requested lifetime, at most one hour; capped by verified expiry |
+| `TimeProvider` | No | System | Clock used to reject expired contexts and determine issuance time |
 | `IssuedAt` | No | Now | Override issuance time |
 | `TokenId` | No | Auto | Custom `jti` |
+
+The builder rejects expired source contexts, nonpositive lifetimes, and lifetimes
+over one hour. `IssuedAt` does not bypass the current-clock expiry check. For
+sub-agent issuance, use the verified child's expiry and confirmation key; pass
+the earlier verified parent/upstream expiry as `AuthorizationExpiresAt`.
+
+PS, AS, and R3 pending state retains the original verified ceilings. A fresh poll
+carrier does not extend them. Consent that finishes after expiry cannot mint a
+new token. Success responses calculate `expires_in` from the issued token's
+remaining Unix seconds, including after deferred delivery.
+
+`AdditionalClaims` accepts identity extensions such as `email`, but rejects
+`iss`, `dwk`, `aud`, `jti`, `agent`, `cnf`, `iat`, `exp`, `nbf`, `sub`, `scope`,
+`act`, `mission`, `account`, `tenant`, `roles`, and `groups`, even when their typed
+properties are unset. Set supported identity fields through the named builder
+properties. AS claims requests and pushes cannot supply protocol-owned fields;
+`sub`, `tenant`, `roles`, and `groups` use the typed identity projection path.
 
 ### Person Server vs Access Server
 
 ```csharp
 // Person Server issues:
-Dwk = AuthTokenBuilder.PersonDwk  // "aauth-person.json"
+var personDwk = AuthTokenBuilder.PersonDwk;  // "aauth-person.json"
 
 // Access Server issues:
-Dwk = AuthTokenBuilder.AccessDwk  // "aauth-access.json"
+var accessDwk = AuthTokenBuilder.AccessDwk;  // "aauth-access.json"
 ```
 
 The `Dwk` determines which `.well-known` document an agent fetches to find the issuer's public key for verification.
@@ -188,7 +216,7 @@ namespace AAuth.Tokens;
 public sealed record MissionClaim(string Approver, string S256)
 {
     public JsonObject ToJsonObject();
-    public static MissionClaim? FromPayload(JsonObject? payload);
+    public static MissionClaim? FromPayload(JsonObject? payload, AAuth.Discovery.AAuthEgressPolicy? policy = null);
 }
 ```
 
@@ -237,7 +265,7 @@ var app = builder.Build();
 app.MapAAuthPersonServer(new AAuthPersonServerOptions
 {
     Issuer               = psIssuer,
-    SigningKeys          = new Dictionary<string, AAuthKey> { [PsKid] = psKey },
+    SigningKeys          = new Dictionary<string, IAAuthKey> { [PsKid] = psKey },
     DefaultScope         = "calendar.read",
     TrustedAccessServers = trustedAccessServers,   // null ⇒ federate to verified aud; empty ⇒ three-party only
 });

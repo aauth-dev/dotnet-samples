@@ -1,10 +1,20 @@
-# AAuth Guided Tour
+---
+title: AAuth Guided Tour
+description: Interactive walkthroughs of AAuth signing, enrollment, authorization and Events.
+---
+
+## Overview
 
 A Blazor Server walk-through of the AAuth protocol flows, aimed at folks
 learning the spec for the first time. It runs the same SDK code that
 `samples/AgentConsole` does, but pauses between each step so you can see
 the signature base, the JWTs, and the request/response payloads at every
 hop.
+
+The separate [Document Release](../../docs/workflows/document-release.md) page
+at `/documents` executes resource permission before PS consent, followed by a
+signed download or terminal denial. Its shared session and Playwright cases are
+also used by SampleApp.
 
 ## What you'll see
 
@@ -19,8 +29,8 @@ into the live walkthrough at `/tour?flow=<Flow>`; the tour's topbar has an
 A swim-lane sequence diagram across up to four actors — **Agent**,
 **Concierge**, **Resource**, **Person Server** — with a payload
 inspector on the right that decodes each JWT and shows the canonical
-RFC 9421 signature base for every signed request. Ten flows are
-available, switchable at runtime from the topbar **Mode** picker:
+RFC 9421 signature base for captured signed requests. Core flows are
+switchable at runtime from the topbar **Mode** picker:
 
 * **Bootstrap** (2–3 steps) — generate the agent's signing key and build
   (or obtain) an agent token. Default.
@@ -47,7 +57,7 @@ available, switchable at runtime from the topbar **Mode** picker:
   swimlane is shown. With a Keycloak AS policy the AS returns `202
   requirement=interaction`; the PS relays it and the agent surfaces the
   Keycloak login URL. Requires an Access Server URL (`AccessServerUrl`);
-  run it with `make demo-tour-keycloak` (Keycloak) or `make demo-tour`
+  run it with `make demo-keycloak` (Keycloak) or `make demo`
   (stub AS, no Docker).
 * **Mission (PS-Governed)** (20 steps; three prompts) — the optional,
   orthogonal **agent governance** layer (§Agent Governance). The agent
@@ -73,8 +83,21 @@ Server. You can also set the default in `appsettings.json`:
 "GuidedTour": { "Mode": "Deferred" }
 ```
 
-The Identity flow also exposes a **Signing Mode** picker (`hwk` or
-`jwks_uri`); three-party flows always use `jwt` per spec.
+The Generic Signature Keys flow exposes HWK, direct `jwks` and naming-JWT
+demonstrations. AAuth resource flows use `jwt`, including Inbox's two-party flow.
+
+Additional overview/navigation entries run shared scenarios:
+
+- `/wallet-protocol`: AS clarification with answer/cancel, direct-AS chaining,
+   and issuer-qualified revocation/recovery. [Steps and sequence](../../docs/workflows/wallet-protocol.md)
+- `/catalog-gateway`: five steps covering service selection, colliding `list`
+   operations, sibling rejection and recovery. [Catalog guide](../../docs/workflows/catalog-gateway.md)
+- `/events`: six steps for public/protected subscriptions, self-jwt delivery and
+   durable verified agent receipts. [Events guide](../../docs/workflows/events.md)
+
+Bookings includes personal/work accounts and conditional proposals; Sub-agent
+uses distinct parent/worker keys and a four-party AS grant. Their app-local
+Playwright specs use the existing shared harness, as do the additional pages.
 
 Each Aria resource server serves its flow from isolated, per-mode endpoints.
 **Profile** (:5000) handles Identity-based access: `GET /pseudonymous` and
@@ -101,8 +124,8 @@ When `AgentProviderUrl` is set, the tour enrols with a real AP:
 1. Generate Ed25519 keypair.
 2. Discover Agent Provider — `GET /.well-known/aauth-agent.json` to learn
    the AP's `enrol_endpoint`.
-3. Enrol with Agent Provider — `POST /enrol` with `{agent_id, jwk}`; AP
-   issues `aa-agent+jwt`.
+3. Enrol with Agent Provider: body-bound `hwk` signed `POST /enrol` with `{jwk}`;
+   the AP assigns an identity and issues `aa-agent+jwt`.
 
 ### Identity-based (2 steps)
 
@@ -193,7 +216,7 @@ to produce a nested `act` claim.
 > [!TIP]
 > The PS-Asserted (Deferred) flow only fires when the Person Server is
 > configured with `MockPersonServer:RequireConsent=true`. `make demo` from
-> the repo root launches all five services with consent gating enabled.
+> the repo root launches the complete sample stack with consent gating enabled.
 
 ## Run it
 

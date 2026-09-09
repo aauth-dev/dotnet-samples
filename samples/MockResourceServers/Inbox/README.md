@@ -1,3 +1,7 @@
+---
+description: Agent-JWT resource-managed Inbox consent and key-bound opaque credentials.
+---
+
 # Inbox — Resource-Managed (Two-Party) Resource Server
 
 Aria's email service, on **`:5004`**. The **Inbox** demonstrates the
@@ -10,7 +14,7 @@ its HTTP-message signature — on subsequent calls.
 > This is the AAuth mode for resources that authorize requests themselves — the
 > role a first-party OAuth deployment plays when a service runs its own
 > authorization server alongside its API
-> ([draft-hardt-oauth-aauth-protocol §Resource-Managed Access](../../../aauth-spec/v08/draft-hardt-oauth-aauth-protocol.md)):
+> ([draft-hardt-oauth-aauth-protocol §Resource-Managed Access](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#resource-managed-authorization)):
 > the opaque token models a resource's existing OAuth access token, wrapped so it
 > is useless without a valid AAuth signature.
 
@@ -68,7 +72,7 @@ dotnet run --project samples/MockResourceServers/Inbox    # :5004
 Or as part of the full stack:
 
 ```bash
-make resources   # all five Aria resource servers
+make resources   # all seven Aria resource servers
 make demo        # full stack + both UIs
 ```
 
