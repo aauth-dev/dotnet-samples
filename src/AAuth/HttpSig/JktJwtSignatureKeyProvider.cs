@@ -13,17 +13,19 @@ namespace AAuth.HttpSig;
 public sealed class JktJwtSignatureKeyProvider : ISignatureKeyProvider
 {
     private readonly Func<string> _namingJwtFactory;
+    private readonly string _label;
 
     /// <summary>Create the provider.</summary>
     /// <param name="namingJwtFactory">Supplies the current <c>jkt-s256+jwt</c> delegation JWT (regenerated per request as needed).</param>
-    public JktJwtSignatureKeyProvider(Func<string> namingJwtFactory)
+    public JktJwtSignatureKeyProvider(Func<string> namingJwtFactory, string label = "sig")
     {
         ArgumentNullException.ThrowIfNull(namingJwtFactory);
         _namingJwtFactory = namingJwtFactory;
+        _label = SignatureKeyHeader.Label(label);
     }
 
     public string GetSignatureKeyHeader()
     {
-        return SignatureKeyHeader.FormatJktJwt(_namingJwtFactory());
+        return SignatureKeyHeader.FormatJktJwt(_namingJwtFactory(), _label);
     }
 }

@@ -3,18 +3,15 @@ using System;
 namespace AAuth.HttpSig;
 
 /// <summary>
-/// Produces <c>Signature-Key: sig=jwks_uri;uri="...";kid="..."</c> — the Agent Identity signing mode.
-/// The verifier fetches the JWKS from the URI and resolves the key by kid.
+/// Identifies a server and its metadata document for JWKS discovery.
 /// </summary>
 public sealed class JwksUriSignatureKeyProvider : ISignatureKeyProvider
 {
     private readonly string _header;
 
-    public JwksUriSignatureKeyProvider(string uri, string kid)
+    public JwksUriSignatureKeyProvider(string id, string dwk, string kid, string label = "sig")
     {
-        ArgumentException.ThrowIfNullOrEmpty(uri);
-        ArgumentException.ThrowIfNullOrEmpty(kid);
-        _header = SignatureKeyHeader.FormatJwksUri(uri, kid);
+        _header = SignatureKeyHeader.FormatJwksUri(id, dwk, kid, label);
     }
 
     public string GetSignatureKeyHeader() => _header;

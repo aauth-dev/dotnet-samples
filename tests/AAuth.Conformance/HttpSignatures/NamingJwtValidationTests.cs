@@ -42,9 +42,9 @@ public class NamingJwtValidationTests : IAsyncLifetime
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
         builder.Services.AddSingleton(new AAuthVerifier { Clock = () => FixedClock });
-        builder.Services.AddSingleton<IJtiStore, InMemoryJtiStore>();
+        builder.Services.AddSingleton<IJtiStore>(new InMemoryJtiStore(new FixedTimeProvider()));
         var app = builder.Build();
-        app.UseAAuthVerification(AAuthVerificationOptions.SignatureOnly(() => FixedClock));
+        app.UseAAuthVerification(AAuthVerificationOptions.Generic(() => FixedClock));
         app.MapGet("/jkt-jwt", () => Results.Ok("ok"));
         await app.StartAsync();
         _host = app;
@@ -56,6 +56,11 @@ public class NamingJwtValidationTests : IAsyncLifetime
     }
 
     private HttpClient Client => _host!.GetTestClient();
+
+    private sealed class FixedTimeProvider : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => FixedClock;
+    }
 
     [Fact(DisplayName = "§jkt-jwt — valid naming JWT with future exp succeeds")]
     public async Task ValidNamingJwt_Succeeds()
@@ -120,7 +125,7 @@ public class NamingJwtValidationTests : IAsyncLifetime
         var attackerDurable = AAuthKey.Generate();
         var header = new JsonObject
         {
-            ["alg"] = AAuthKey.Algorithm,
+            ["alg"] = AAuthKey.Ed25519Algorithm,
             ["typ"] = AAuthConstants.TokenTypes.JktS256Jwt,
             ["jwk"] = attackerDurable.ToPublicJwk(),
         };
@@ -145,7 +150,7 @@ public class NamingJwtValidationTests : IAsyncLifetime
         // key — the §3.4 signature check (step 8) against the header jwk fails.
         var header = new JsonObject
         {
-            ["alg"] = AAuthKey.Algorithm,
+            ["alg"] = AAuthKey.Ed25519Algorithm,
             ["typ"] = AAuthConstants.TokenTypes.JktS256Jwt,
             ["jwk"] = _durableKey.ToPublicJwk(),
         };
@@ -168,7 +173,7 @@ public class NamingJwtValidationTests : IAsyncLifetime
     {
         var header = new JsonObject
         {
-            ["alg"] = AAuthKey.Algorithm,
+            ["alg"] = AAuthKey.Ed25519Algorithm,
             ["typ"] = "naming+jwt", // retired/unsupported typ
             ["jwk"] = _durableKey.ToPublicJwk(),
         };
@@ -193,7 +198,7 @@ public class NamingJwtValidationTests : IAsyncLifetime
         // draft-hardt-httpbis-signature-key-04 §3.4 self-issued naming JWT.
         var header = new JsonObject
         {
-            ["alg"] = AAuthKey.Algorithm,
+            ["alg"] = AAuthKey.Ed25519Algorithm,
             ["typ"] = AAuthConstants.TokenTypes.JktS256Jwt,
             ["jwk"] = _durableKey.ToPublicJwk(),
         };
@@ -201,7 +206,7 @@ public class NamingJwtValidationTests : IAsyncLifetime
         var payload = new JsonObject
         {
             ["iss"] = AAuthConstants.JktThumbprintUrnPrefix + _durableKey.ComputeJwkThumbprint(),
-            ["iat"] = FixedClock.ToUnixTimeSeconds(),
+            ["iat"] = FixedClock.AddMinutes(-5).ToUnixTimeSeconds(),
             ["exp"] = exp.ToUnixTimeSeconds(),
             ["jti"] = jti ?? Guid.NewGuid().ToString("N"),
             ["cnf"] = new JsonObject
@@ -224,7 +229,7 @@ public class NamingJwtValidationTests : IAsyncLifetime
         {
             InnerHandler = capture,
         };
-        using var signingClient = new HttpClient(signingHandler);
+        using var signingClient = new InProcessHttpClient(signingHandler);
         await signingClient.SendAsync(new HttpRequestMessage(HttpMethod.Get, "http://localhost/jkt-jwt"));
         var signed = capture.Captured!;
 

@@ -47,7 +47,7 @@ public class AAuthClientBuilderTests
     public void UseJwksUri_BuildsClient()
     {
         using var client = new AAuthClientBuilder(_key)
-            .UseJwksUri("https://ap.example/.well-known/jwks.json", "key-1")
+            .UseJwksUri("https://ap.example", "aauth-agent.json", "key-1")
             .Build();
 
         Assert.NotNull(client);
@@ -91,7 +91,7 @@ public class AAuthClientBuilderTests
         var recorded = false;
         using var client = new AAuthClientBuilder(_key)
             .UseHwk()
-            .WithInnerHandler(new StubHandler())
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(new StubHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .OnSignatureBase((_, _) => recorded = true)
             .Build();
 
@@ -175,7 +175,7 @@ public class AAuthClientBuilderTests
         using var client = new AAuthClientBuilder(_key)
             .UseJwt(() => "token")
             .WithCallChaining(() => "upstream-token")
-            .WithInnerHandler(new StubHandler())
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(new StubHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         Assert.NotNull(client);
@@ -187,7 +187,7 @@ public class AAuthClientBuilderTests
         using var client = new AAuthClientBuilder(_key)
             .UseJwt(() => "token")
             .WithCallChaining("upstream-token")
-            .WithInnerHandler(new StubHandler())
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(new StubHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         Assert.NotNull(client);
@@ -203,7 +203,7 @@ public class AAuthClientBuilderTests
         using var client = new AAuthClientBuilder(_key)
             .UseJwt(() => "token")
             .WithCallChaining(context)
-            .WithInnerHandler(new StubHandler())
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(new StubHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         Assert.NotNull(client);
@@ -223,7 +223,7 @@ public class AAuthClientBuilderTests
         using var client = new AAuthClientBuilder(_key)
             .UseJwt(() => "token")
             .WithCallChaining(() => "upstream-token")
-            .WithInnerHandler(innerHandler)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(innerHandler, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         await client.GetAsync("http://localhost/test");
@@ -236,7 +236,7 @@ public class AAuthClientBuilderTests
     public async Task WithCallChaining_Integration_401Exchange()
     {
         // Build a fake upstream token with an iss claim
-        var header = new System.Text.Json.Nodes.JsonObject { ["alg"] = "EdDSA", ["typ"] = "aa-auth+jwt", ["kid"] = "k1" };
+        var header = new System.Text.Json.Nodes.JsonObject { ["alg"] = "Ed25519", ["typ"] = "aa-auth+jwt", ["kid"] = "k1" };
         var payload = new System.Text.Json.Nodes.JsonObject
         {
             ["iss"] = "http://localhost:9999",
@@ -263,7 +263,7 @@ public class AAuthClientBuilderTests
         using var client = new AAuthClientBuilder(_key)
             .UseJwt(() => "agent-token")
             .WithCallChaining(() => upstreamToken)
-            .WithInnerHandler(innerHandler)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(innerHandler, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         await client.GetAsync("http://localhost:6000/data");

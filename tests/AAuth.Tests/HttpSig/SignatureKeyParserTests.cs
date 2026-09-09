@@ -14,6 +14,7 @@ public class SignatureKeyParserTests
         var key = AAuthKey.Generate();
         var jwt = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:demo@ap.example",
             KeyId = "demo",
@@ -45,7 +46,7 @@ public class SignatureKeyParserTests
     public void Parse_RejectsMissingCnf()
     {
         // Hand-build a JWT with no cnf claim — payload is just iss/sub.
-        var header = "{\"alg\":\"EdDSA\",\"typ\":\"aa-agent+jwt\"}";
+        var header = "{\"alg\":\"Ed25519\",\"typ\":\"aa-agent+jwt\"}";
         var payload = "{\"iss\":\"https://x\",\"sub\":\"y\"}";
         var encodedHeader = Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Encode(header);
         var encodedPayload = Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Encode(payload);

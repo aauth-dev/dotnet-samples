@@ -26,7 +26,7 @@ public class SelfIssuingBuilderTests
         var stub = new StubHandler();
         using var client = AAuthClientBuilder.SelfIssuing(_key)
             .As(Issuer, Subject)
-            .WithInnerHandler(stub)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(stub, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         await client.GetAsync("http://localhost:9999/test");
@@ -43,7 +43,7 @@ public class SelfIssuingBuilderTests
         var stub = new StubHandler();
         using var client = AAuthClientBuilder.SelfIssuing(_key)
             .As(Issuer, Subject)
-            .WithInnerHandler(stub)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(stub, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         await client.GetAsync("http://localhost:9999/test");
@@ -66,7 +66,7 @@ public class SelfIssuingBuilderTests
         using var client = AAuthClientBuilder.SelfIssuing(_key)
             .As(Issuer, Subject)
             .WithPersonServer(PersonServer)
-            .WithInnerHandler(stub)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(stub, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         await client.GetAsync("http://localhost:9999/test");
@@ -86,7 +86,7 @@ public class SelfIssuingBuilderTests
         using var client = AAuthClientBuilder.SelfIssuing(_key)
             .As(Issuer, Subject)
             .WithKid("custom-kid-1")
-            .WithInnerHandler(stub)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(stub, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         await client.GetAsync("http://localhost:9999/test");
@@ -104,7 +104,7 @@ public class SelfIssuingBuilderTests
         var stub = new StubHandler();
         using var client = AAuthClientBuilder.SelfIssuing(_key)
             .As(Issuer, Subject)
-            .WithInnerHandler(stub)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(stub, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         await client.GetAsync("http://localhost:9999/test");
@@ -164,7 +164,7 @@ public class SelfIssuingBuilderTests
         using var client = AAuthClientBuilder.SelfIssuing(_key)
             .As(Issuer, Subject)
             .WithChallengeHandling(PersonServer)
-            .WithInnerHandler(stub)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(stub, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         await client.GetAsync("http://localhost:9999/test");
@@ -179,7 +179,7 @@ public class SelfIssuingBuilderTests
         var stub = new StubHandler();
         using var client = AAuthClientBuilder.SelfIssuing(_key)
             .As(Issuer, Subject)
-            .WithInnerHandler(stub)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(stub, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         await client.GetAsync("http://localhost:9999/test");
@@ -209,7 +209,7 @@ public class SelfIssuingBuilderTests
             .As(Issuer, Subject)
             .WithPersonServer(PersonServer)
             .WithChallengeHandling("http://localhost:6000")
-            .WithInnerHandler(new StubHandler())
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(new StubHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         Assert.NotNull(client);
@@ -220,11 +220,11 @@ public class SelfIssuingBuilderTests
     {
         var stub = new StubHandler();
         var refresher = new SelfIssuedTokenRefresher(
-            _key, Issuer, Subject, _key.ComputeJwkThumbprint());
+            _key, Issuer, Subject, _key.ComputeJwkThumbprint(), egressPolicy: TestEgress.Policy);
 
         using var client = new AAuthClientBuilder(_key)
             .WithTokenRefresh(refresher)
-            .WithInnerHandler(stub)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(stub, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         await client.GetAsync("http://localhost:9999/test");

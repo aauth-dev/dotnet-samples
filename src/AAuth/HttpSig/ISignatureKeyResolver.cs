@@ -14,6 +14,11 @@ public sealed class SignatureKeyResolution
 
     /// <summary>The parsed scheme info (for downstream inspection).</summary>
     public required SignatureKeyParser.ParsedSignatureKeyInfo Info { get; init; }
+    public AAuth.Tokens.TokenVerifier.VerifiedToken? VerifiedToken { get; init; }
+    public IAAuthKey? IssuerKey { get; init; }
+    public string? VerifiedIdentifier { get; init; }
+    public string? KeyId { get; init; }
+    public string? DurableThumbprint { get; init; }
 }
 
 /// <summary>

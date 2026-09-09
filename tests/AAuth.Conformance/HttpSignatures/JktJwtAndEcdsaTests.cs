@@ -97,7 +97,7 @@ public class JktJwtAndEcdsaTests
         var jwk = ed.ToPublicJwk();
         var key = KeyFactory.FromJwk(jwk);
         Assert.IsType<AAuthKey>(key);
-        Assert.Equal("EdDSA", key.Algorithm);
+        Assert.Equal("Ed25519", key.Algorithm);
     }
 
     [Fact(DisplayName = "§KeyFactory — dispatches P-256")]
@@ -114,7 +114,7 @@ public class JktJwtAndEcdsaTests
     public void KeyFactoryRejectsUnsupported()
     {
         var jwk = new JsonObject { ["kty"] = "RSA", ["n"] = "abc", ["e"] = "AQAB" };
-        Assert.Throws<ArgumentException>(() => KeyFactory.FromJwk(jwk));
+        Assert.Throws<JwkValidationException>(() => KeyFactory.FromJwk(jwk));
     }
 
     [Fact(DisplayName = "§KeyFactory — TryFromJwk returns null for unsupported")]
@@ -146,11 +146,11 @@ public class JktJwtAndEcdsaTests
         };
 
         var handler = new MockHandler(jwksDoc.ToJsonString());
-        var client = new JwksClient(new HttpClient(handler));
+        var client = new JwksClient(new InProcessHttpClient(handler));
 
         var resolvedEd = await client.ResolveKeyAsync(new Uri("http://localhost/.well-known/jwks.json"), "ed-1");
         Assert.NotNull(resolvedEd);
-        Assert.Equal("EdDSA", resolvedEd!.Algorithm);
+        Assert.Equal("Ed25519", resolvedEd!.Algorithm);
 
         var resolvedEc = await client.ResolveKeyAsync(new Uri("http://localhost/.well-known/jwks.json"), "ec-1");
         Assert.NotNull(resolvedEc);
@@ -186,7 +186,7 @@ public class JktJwtAndEcdsaTests
 
         var jwt = SignJwt(header, payload, apKey);
 
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         var result = verifier.Verify(jwt, apKey, AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk);
         Assert.Equal("http://localhost:5555", result.Issuer);
     }
@@ -215,7 +215,7 @@ public class JktJwtAndEcdsaTests
         };
 
         var jwt = SignJwt(header, payload, apKey);
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         Assert.Throws<TokenVerificationException>(() =>
             verifier.Verify(jwt, wrongKey, AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk));
     }
@@ -259,7 +259,7 @@ public class JktJwtAndEcdsaTests
         var info = SignatureKeyParser.ParseAny(SignatureKeyHeader.FormatJktJwt(namingJwt));
         Assert.Equal("jkt-jwt", info.Scheme);
         // The reported pseudonym is the durable key's thumbprint (§7.1).
-        Assert.Equal(durableKey.ComputeJwkThumbprint(), info.Jkt);
+        Assert.Null(info.Jkt);
 
         var resolution = await resolver.ResolveAsync(info);
         // Resolution returns the ephemeral key that signs the HTTP request.
@@ -304,8 +304,8 @@ public class JktJwtAndEcdsaTests
         Assert.Contains("does not match", ex.Message);
     }
 
-    [Fact(DisplayName = "§jkt-jwt — resolver returns key even when naming JWT is expired (exp enforced by middleware)")]
-    public async Task JktJwtExpiredNamingJwt_ResolverStillReturnsKey()
+    [Fact(DisplayName = "Expired naming JWT is rejected before its delegated key is returned")]
+    public async Task JktJwtExpiredNamingJwt_ResolverRejects()
     {
         var durableKey = AAuthKey.Generate();
         var ephemeralKey = AAuthKey.Generate();
@@ -315,10 +315,8 @@ public class JktJwtAndEcdsaTests
         var namingJwt = BuildNamingJwt(durableKey, ephemeralKey, exp: DateTimeOffset.UtcNow.AddMinutes(-10));
         var info = SignatureKeyParser.ParseAny(SignatureKeyHeader.FormatJktJwt(namingJwt));
 
-        // Resolver self-anchors and returns the ephemeral key; exp is validated
-        // by the middleware, not the resolver.
-        var resolution = await resolver.ResolveAsync(info);
-        Assert.NotNull(resolution.PublicKey);
+        var error = await Assert.ThrowsAsync<AAuthVerificationException>(() => resolver.ResolveAsync(info));
+        Assert.Equal(AAuth.Errors.SignatureErrorCode.ExpiredJwt, error.Code);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────

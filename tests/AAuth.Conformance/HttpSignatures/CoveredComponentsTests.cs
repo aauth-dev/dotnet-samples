@@ -31,7 +31,7 @@ public class CoveredComponentsTests
     {
         var capture = new CaptureHandler();
         var pipeline = new AAuthSigningHandler(key, () => token, () => clock) { InnerHandler = capture };
-        using var client = new HttpClient(pipeline);
+        using var client = new InProcessHttpClient(pipeline);
         await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://r.example/path"));
         return capture.Captured!;
     }

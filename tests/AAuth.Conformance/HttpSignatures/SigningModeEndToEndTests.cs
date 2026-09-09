@@ -38,7 +38,7 @@ public class SigningModeEndToEndTests
         {
             InnerHandler = capture
         };
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, url));
         return capture.Captured!;
     }
@@ -59,6 +59,7 @@ public class SigningModeEndToEndTests
         var apKey = AAuthKey.Generate();
         var token = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:agent@ap.example",
             Key = apKey,
@@ -78,7 +79,8 @@ public class SigningModeEndToEndTests
         // Parse and verify
         var info = SignatureKeyParser.ParseAny(sigKeyHeader);
         Assert.Equal("jwt", info.Scheme);
-        Assert.NotNull(info.ConfirmationKey);
+        Assert.Null(info.ConfirmationKey);
+        new TokenVerifier { EgressPolicy = TestEgress.Policy }.Verify(token, apKey, AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk);
 
         var verifier = CreateVerifier();
         verifier.Verify(
@@ -88,7 +90,7 @@ public class SigningModeEndToEndTests
             signatureKey: sigKeyHeader,
             signatureInput: sigInput,
             signatureHeader: sig,
-            publicKey: info.ConfirmationKey!);
+            publicKey: signingKey);
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -133,7 +135,7 @@ public class SigningModeEndToEndTests
     {
         var key = AAuthKey.Generate();
         var provider = new JwksUriSignatureKeyProvider(
-            "https://agent.example/.well-known/jwks.json", "agent-key-1");
+            "https://agent.example", "aauth-agent.json", "agent-key-1");
         var request = await SignRequest(key, provider);
 
         var sigKeyHeader = request.Headers.GetValues("Signature-Key").Single();
@@ -142,7 +144,7 @@ public class SigningModeEndToEndTests
 
         var info = SignatureKeyParser.ParseAny(sigKeyHeader);
         Assert.Equal("jwks_uri", info.Scheme);
-        Assert.Equal("https://agent.example/.well-known/jwks.json", info.JwksUri);
+        Assert.Equal("https://agent.example", info.Identifier);
         Assert.Equal("agent-key-1", info.Kid);
 
         // Verify with the key (simulating resolution from JWKS endpoint)
@@ -185,13 +187,13 @@ public class SigningModeEndToEndTests
         var info = SignatureKeyParser.ParseAny(sigKeyHeader);
         Assert.Equal("jkt-jwt", info.Scheme);
         // The reported pseudonym is the durable key's thumbprint (§7.1).
-        Assert.Equal(durableKey.ComputeJwkThumbprint(), info.Jkt);
-        Assert.NotNull(info.ConfirmationKey);
+        var naming = NamingTokenVerifier.Verify(info.Jwt!, DateTimeOffset.UtcNow, TimeSpan.Zero);
+        Assert.Equal(durableKey.ComputeJwkThumbprint(), naming.DurableKey.ComputeJwkThumbprint());
 
         // The naming JWT's cnf.jwk should be the ephemeral key
         Assert.Equal(
             ephemeralKey.ComputeJwkThumbprint(),
-            info.ConfirmationKey!.ComputeJwkThumbprint());
+            naming.ConfirmationKey.ComputeJwkThumbprint());
 
         // The single-parameter wire format carries only the jwt.
         Assert.StartsWith("sig=jkt-jwt;jwt=\"", sigKeyHeader);
@@ -206,7 +208,7 @@ public class SigningModeEndToEndTests
             signatureKey: sigKeyHeader,
             signatureInput: sigInput,
             signatureHeader: sig,
-            publicKey: info.ConfirmationKey!);
+            publicKey: naming.ConfirmationKey);
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -220,6 +222,7 @@ public class SigningModeEndToEndTests
         var apKey = AAuthKey.Generate();
         var token = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:agent@ap.example",
             Key = apKey,
@@ -230,7 +233,8 @@ public class SigningModeEndToEndTests
         var header = SignatureKeyHeader.FormatJwt(token);
         var info = SignatureKeyParser.ParseAny(header);
 
-        var resolver = new DefaultSignatureKeyResolver();
+        var http = new InProcessHttpClient(new IssuerDiscoveryFixture("https://ap.example", apKey, "ap-key-1"));
+        var resolver = new DefaultSignatureKeyResolver(new JwksClient(http), new MetadataClient(http));
         var result = await resolver.ResolveAsync(info);
 
         Assert.Equal(signingKey.ComputeJwkThumbprint(), result.PublicKey.ComputeJwkThumbprint());
@@ -278,7 +282,7 @@ public class SigningModeEndToEndTests
         // self-anchored verification (§3.4 step 7) must reject this.
         var jwtHeader = new System.Text.Json.Nodes.JsonObject
         {
-            ["alg"] = AAuthKey.Algorithm,
+            ["alg"] = AAuthKey.Ed25519Algorithm,
             ["typ"] = AAuthConstants.TokenTypes.JktS256Jwt,
             ["jwk"] = attackerKey.ToPublicJwk(),
         };
@@ -307,33 +311,32 @@ public class SigningModeEndToEndTests
         var info = new SignatureKeyParser.ParsedSignatureKeyInfo
         {
             Scheme = "jwks_uri",
-            JwksUri = "http://evil.example/jwks",
+            Identifier = "http://evil.example",
+            Dwk = "config",
             Kid = "k1",
         };
 
-        var resolver = new DefaultSignatureKeyResolver(jwksClient: new JwksClient(new HttpClient()));
+        var http = new InProcessHttpClient(new IssuerDiscoveryFixture("https://allowed.example", AAuthKey.Generate(), "key"));
+        var resolver = new DefaultSignatureKeyResolver(new JwksClient(http), new MetadataClient(http));
         var ex = await Assert.ThrowsAsync<AAuthVerificationException>(
             () => resolver.ResolveAsync(info));
-        Assert.Contains("must use https", ex.Message);
+        Assert.Equal(AAuth.Errors.SignatureErrorCode.InvalidKey, ex.Code);
     }
 
     [Fact(DisplayName = "§Verification — DefaultSignatureKeyResolver allows loopback jwks_uri for dev")]
     public async Task Resolver_JwksUri_AllowsLoopback()
     {
-        // This test verifies that loopback URIs are permitted (dev mode),
-        // even though the actual JWKS fetch will fail (no server running).
         var info = new SignatureKeyParser.ParsedSignatureKeyInfo
         {
             Scheme = "jwks_uri",
-            JwksUri = "http://localhost:59999/.well-known/jwks.json",
+            Identifier = "http://localhost:59999",
+            Dwk = "config",
             Kid = "k1",
         };
 
-        // We expect it to get past the scheme check and fail on the HTTP fetch
-        var resolver = new DefaultSignatureKeyResolver(jwksClient: new JwksClient(new HttpClient()));
+        using var http = AAuthHttpTransport.CreateClient(AAuthEgressPolicy.ForDevelopmentLoopback("http://localhost:59999"));
+        var resolver = new DefaultSignatureKeyResolver(new JwksClient(http), new MetadataClient(http));
         var ex = await Assert.ThrowsAsync<HttpRequestException>(
             () => resolver.ResolveAsync(info));
-        // The fact that it threw HttpRequestException (not AAuthVerificationException
-        // about https) confirms the loopback allowance works.
     }
 }

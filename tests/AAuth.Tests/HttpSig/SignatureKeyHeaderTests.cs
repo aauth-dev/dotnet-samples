@@ -56,15 +56,15 @@ public class SignatureKeyHeaderTests
     [Fact]
     public void Parse_Malformed_Throws()
     {
-        Assert.Throws<FormatException>(() => SignatureKeyHeader.Parse("bogus"));
-        Assert.Throws<FormatException>(() => SignatureKeyHeader.Parse("sig=jwt;jwt=\"unterminated"));
+        Assert.Throws<AAuthVerificationException>(() => SignatureKeyHeader.Parse("bogus"));
+        Assert.Throws<AAuthVerificationException>(() => SignatureKeyHeader.Parse("sig=jwt;jwt=\"unterminated"));
     }
 
     [Fact]
     public void Parse_InvalidEscapeInQuotedValue_Throws()
     {
         // RFC 8941 §3.3.3: only \" and \\ are legal escapes inside an sf-string.
-        Assert.Throws<FormatException>(() => SignatureKeyHeader.Parse("sig=jwt;jwt=\"a\\nb\""));
+        Assert.Throws<AAuthVerificationException>(() => SignatureKeyHeader.Parse("sig=jwt;jwt=\"a\\nb\""));
     }
 
     [Fact]

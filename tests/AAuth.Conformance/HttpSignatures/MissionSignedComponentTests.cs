@@ -38,7 +38,7 @@ public class MissionSignedComponentTests
     {
         var capture = new CaptureHandler();
         var pipeline = new AAuthSigningHandler(key, () => token, () => clock) { InnerHandler = capture };
-        using var client = new HttpClient(pipeline);
+        using var client = new InProcessHttpClient(pipeline);
         var request = new HttpRequestMessage(HttpMethod.Get, "https://r.example/path");
         if (missionHeader is not null)
         {
@@ -122,7 +122,7 @@ public class MissionSignedComponentTests
 
         var capture = new CaptureHandler();
         var pipeline = new AAuthSigningHandler(key, () => "a.b.c", () => clock) { InnerHandler = capture };
-        using var client = new HttpClient(pipeline);
+        using var client = new InProcessHttpClient(pipeline);
         var request = new HttpRequestMessage(HttpMethod.Get, "https://r.example/path");
         request.Headers.TryAddWithoutValidation(AAuthMissionHeader.Name, mission);
         // Explicitly also request aauth-mission as an additional component.

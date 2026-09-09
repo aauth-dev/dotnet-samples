@@ -16,10 +16,33 @@ public class AAuthClientBuilderChallengeTests
 {
     private readonly AAuthKey _key = AAuthKey.Generate();
 
+    [Fact]
+    public async Task ChallengeFactoryRemainsLiveAndCancelledRequestsDoNotReadIt()
+    {
+        var first = BuildAgentToken();
+        var second = new AgentTokenBuilder { Issuer = "https://other.example", Subject = "aauth:other@example.com",
+            Key = _key, KeyId = "k2", ConfirmationKey = _key }.Build();
+        var current = first;
+        var calls = 0;
+        var handler = new StubHandler();
+        using var client = new AAuthClientBuilder(_key).UseJwt(() => { calls++; return current; })
+            .WithChallengeHandling("https://ps.example")
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(handler, AAuth.Discovery.AAuthTransportContract.InProcessOnly).Build();
+        await client.GetAsync("https://resource.example/api");
+        Assert.Equal(first, SignatureKeyParser.ParseAny(string.Join(",", handler.LastRequest!.Headers.GetValues("Signature-Key"))).Jwt);
+        current = second;
+        await client.GetAsync("https://resource.example/api");
+        Assert.Equal(second, SignatureKeyParser.ParseAny(string.Join(",", handler.LastRequest!.Headers.GetValues("Signature-Key"))).Jwt);
+        var beforeCancel = calls;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.GetAsync("https://resource.example/api", new CancellationToken(true)));
+        Assert.Equal(beforeCancel, calls);
+    }
+
     private string BuildAgentToken(string? personServer = "https://ps.example")
     {
         return new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:test@example.com",
             KeyId = "k1",
@@ -35,7 +58,7 @@ public class AAuthClientBuilderChallengeTests
         using var client = new AAuthClientBuilder(_key)
             .UseJwt(token)
             .WithChallengeHandling()
-            .WithInnerHandler(new StubHandler())
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(new StubHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         Assert.NotNull(client);
@@ -48,7 +71,7 @@ public class AAuthClientBuilderChallengeTests
         using var client = new AAuthClientBuilder(_key)
             .UseJwt(token)
             .WithChallengeHandling("https://ps.example")
-            .WithInnerHandler(new StubHandler())
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(new StubHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         Assert.NotNull(client);
@@ -61,7 +84,7 @@ public class AAuthClientBuilderChallengeTests
         var builder = new AAuthClientBuilder(_key)
             .UseJwt(token)
             .WithChallengeHandling()
-            .WithInnerHandler(new StubHandler());
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(new StubHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly);
 
         var ex = Assert.Throws<InvalidOperationException>(() => builder.Build());
         Assert.Contains("ps", ex.Message);
@@ -77,7 +100,7 @@ public class AAuthClientBuilderChallengeTests
             {
                 opts.PollingTimeout = TimeSpan.FromMinutes(2);
             })
-            .WithInnerHandler(new StubHandler())
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(new StubHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         Assert.NotNull(client);
@@ -89,7 +112,7 @@ public class AAuthClientBuilderChallengeTests
         var builder = new AAuthClientBuilder(_key)
             .UseHwk()
             .WithChallengeHandling("https://ps.example")
-            .WithInnerHandler(new StubHandler());
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(new StubHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly);
 
         Assert.Throws<InvalidOperationException>(() => builder.Build());
     }
@@ -103,7 +126,7 @@ public class AAuthClientBuilderChallengeTests
             .UseJwt(token)
             .WithChallengeHandling("https://ps.example")
             .WithTokenRefresh(refresher)
-            .WithInnerHandler(new StubHandler())
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(new StubHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         Assert.NotNull(client);
@@ -117,7 +140,7 @@ public class AAuthClientBuilderChallengeTests
             .UseJwt(token)
             .WithChallengeHandling("https://ps.example")
             .WithTokenRefresh(async (ctx, ct) => ctx.CurrentToken)
-            .WithInnerHandler(new StubHandler())
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(new StubHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         Assert.NotNull(client);
@@ -142,7 +165,7 @@ public class AAuthClientBuilderChallengeTests
         using var client = new AAuthClientBuilder(_key)
             .UseJwt(token)
             .WithChallengeHandling("https://ps.example")
-            .WithInnerHandler(handler)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(handler, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         await client.GetAsync("https://resource.example/api");
@@ -158,7 +181,7 @@ public class AAuthClientBuilderChallengeTests
         using var client = new AAuthClientBuilder(_key)
             .UseJwt(token)
             .WithChallengeHandling("https://ps.example")
-            .WithInnerHandler(handler)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(handler, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         await client.GetAsync("https://resource.example/api");

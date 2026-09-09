@@ -37,7 +37,7 @@ public class AAuthAccessSignedComponentTests
     {
         var capture = new CaptureHandler();
         var pipeline = new AAuthSigningHandler(key, () => "a.b.c", () => clock) { InnerHandler = capture };
-        using var client = new HttpClient(pipeline);
+        using var client = new InProcessHttpClient(pipeline);
         var request = new HttpRequestMessage(HttpMethod.Get, "https://r.example/path");
         if (opaqueToken is not null)
         {

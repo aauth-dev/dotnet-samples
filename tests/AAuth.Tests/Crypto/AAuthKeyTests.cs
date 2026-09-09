@@ -89,6 +89,7 @@ public class AAuthKeyTests
         // {"kty":"OKP","crv":"Ed25519","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}
         var jwk = JsonNode.Parse("""
             {
+                            "alg": "Ed25519",
               "kty": "OKP",
               "crv": "Ed25519",
               "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
@@ -107,7 +108,7 @@ public class AAuthKeyTests
             ["kty"] = "EC",
             ["crv"] = "P-256",
         };
-        Assert.Throws<ArgumentException>(() => AAuthKey.FromJwk(jwk));
+        Assert.Throws<JwkValidationException>(() => AAuthKey.FromJwk(jwk));
     }
 
     [Fact]

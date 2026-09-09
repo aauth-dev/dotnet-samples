@@ -8,7 +8,7 @@ import { readResponseJson, expectStatus } from '../../../tests/e2e/helpers/json'
  */
 test('jwks-uri enrols then sends a signed request', async ({ page }) => {
   await page.goto('/identified');
-  await expect(page.locator('h2')).toHaveText('JWKS URI — Agent Identity');
+  await expect(page.locator('h2')).toHaveText('Direct JWKS - Generic Signatures');
   await waitForInteractive(page, 'button');
 
   // Step 1 — enrol (button only present when not yet enrolled this circuit).
@@ -29,11 +29,12 @@ test('jwks-uri enrols then sends a signed request', async ({ page }) => {
   await expectStatus(page, 200);
   const json = (await readResponseJson(page)) as Record<string, unknown>;
   expect(json.signingMode).toBe('agent-identity');
-  expect(json.scheme).toBe('jwks_uri');
+  expect(json.scheme).toBe('jwks');
   // Agent identity is established by a published JWKS — both the URI and the
   // key id the resource resolved must be present and well-formed.
   expect(json.kid).toBeTruthy();
   expect(typeof json.kid).toBe('string');
   expect(String(json.jwks_uri)).toMatch(/^https?:\/\/.+\/.+/);
-  expect(json.note).toContain('JWKS URI');
+  expect(json.note).toContain('Generic Signature Keys');
+  expect(json.note).toContain('not an AAuth resource access mode');
 });

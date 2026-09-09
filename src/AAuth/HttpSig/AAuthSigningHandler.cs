@@ -53,6 +53,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         = new("AAuth.AdditionalSignatureComponents");
 
     private readonly IAAuthKey _key;
+    internal static readonly HttpRequestOptionsKey<IAAuthKey> SigningKeyContext = new("AAuth.LocalSigningKey");
     private readonly ISignatureKeyProvider _signatureKeyProvider;
     private readonly Func<DateTimeOffset> _clock;
 
@@ -64,6 +65,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     /// production signing path.
     /// </summary>
     public Action<HttpRequestMessage, string>? OnSignatureBase { get; init; }
+    public string Label { get; init; } = "sig";
 
     /// <summary>
     /// Optional capabilities to declare on outbound requests via the
@@ -104,7 +106,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     /// </param>
     /// <param name="clock">Optional clock for deterministic tests.</param>
     public AAuthSigningHandler(
-        AAuthKey key,
+        IAAuthKey key,
         Func<string> tokenFactory,
         Func<DateTimeOffset>? clock = null)
         : this(key, new JwtSignatureKeyProvider(tokenFactory), clock)
@@ -115,9 +117,14 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        await SignAsync(request, cancellationToken).ConfigureAwait(false);
+        return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task SignAsync(HttpRequestMessage request, CancellationToken cancellationToken = default)
+    {
         await EnsureRequiredContentDigestAsync(request, cancellationToken).ConfigureAwait(false);
         Sign(request);
-        return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
     }
 
     // When a resource requires `content-digest` as an additional covered
@@ -174,10 +181,12 @@ public sealed class AAuthSigningHandler : DelegatingHandler
             throw new InvalidOperationException("Request must have a RequestUri.");
         }
 
-        var signatureKey = _signatureKeyProvider.GetSignatureKeyHeader();
+        var signatureKey = _signatureKeyProvider is JwtSignatureKeyProvider jwtProvider
+            ? jwtProvider.GetSignatureKeyHeader(request) : _signatureKeyProvider.GetSignatureKeyHeader();
+        request.Options.Set(SigningKeyContext, _key);
         var created = _clock().ToUnixTimeSeconds();
 
-        var method = request.Method.Method.ToUpperInvariant();
+        var method = request.Method.Method;
         // RFC 9421 §2.2.3 / RFC 3986 §3.2.2: @authority MUST be lowercase.
         // Uri.Authority preserves the original host casing, so normalize.
         var authority = request.RequestUri.Authority.ToLowerInvariant();
@@ -232,6 +241,8 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         sb.Append("\"@signature-params\": ").Append(paramsLine);
 
         var signatureBase = sb.ToString();
+        if (signatureBase.Any(character => character > 0x7f))
+            throw new InvalidOperationException("Signature base must be ASCII.");
         OnSignatureBase?.Invoke(request, signatureBase);
 
         var signature = _key.Sign(Encoding.ASCII.GetBytes(signatureBase));
@@ -241,8 +252,8 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         request.Headers.Remove(AAuthConstants.Headers.Signature);
 
         request.Headers.TryAddWithoutValidation(AAuthConstants.Headers.SignatureKey, signatureKey);
-        request.Headers.TryAddWithoutValidation(AAuthConstants.Headers.SignatureInput, $"{SignatureLabel}={paramsLine}");
-        request.Headers.TryAddWithoutValidation(AAuthConstants.Headers.Signature, $"{SignatureLabel}=:{Convert.ToBase64String(signature)}:");
+        request.Headers.TryAddWithoutValidation(AAuthConstants.Headers.SignatureInput, $"{SignatureKeyHeader.Label(Label)}={paramsLine}");
+        request.Headers.TryAddWithoutValidation(AAuthConstants.Headers.Signature, $"{Label}=:{Convert.ToBase64String(signature)}:");
 
         // Emit capabilities header if configured
         if (Capabilities is { Count: > 0 })
@@ -256,6 +267,8 @@ public sealed class AAuthSigningHandler : DelegatingHandler
 
     private static void AppendComponent(StringBuilder sb, string name, string value)
     {
+        value = AAuthVerifier.NormalizeField(value);
+        if (value.Contains('\r') || value.Contains('\n')) throw new InvalidOperationException("Invalid signature component value.");
         sb.Append('"').Append(name).Append("\": ").Append(value).Append('\n');
     }
 

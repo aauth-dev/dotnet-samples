@@ -4,25 +4,26 @@ using System.Linq;
 using System.Text;
 using AAuth.Crypto;
 using Microsoft.IdentityModel.Tokens;
+using AAuth.Errors;
+using StructuredFieldValues;
 
 namespace AAuth.HttpSig;
 
 /// <summary>
-/// Hand-rolled RFC 9421 signature verifier for the fixed AAuth covered
-/// components. Mirrors <see cref="AAuthSigningHandler"/>: it reconstructs
-/// the exact signature base the signer would have produced, checks the
-/// <c>created</c> freshness window, and verifies the Ed25519 signature.
+/// Verifies selected RFC 9421 request signatures using typed structured fields,
+/// scheme-resolved keys and the AAuth required component profile.
 /// </summary>
-/// <remarks>
-/// Informed by NSign's parser (component ordering, structured-field
-/// framing, quoted-string handling) but has no runtime dependency on it.
-/// AAuth covers only <c>@method</c>, <c>@authority</c>, <c>@path</c>,
-/// <c>signature-key</c> — no <c>@query</c>, no Content-Digest binding, no
-/// extension components. Verifying that fixed set is small enough that
-/// pulling in NSign's full pipeline costs more than it saves.
-/// </remarks>
 public sealed class AAuthVerifier
 {
+    public IReadOnlyDictionary<string, StructuredFieldType> StructuredFieldTypes { get; init; } =
+        new Dictionary<string, StructuredFieldType>(StringComparer.Ordinal)
+        {
+            ["signature-key"] = StructuredFieldType.Dictionary,
+            ["signature-input"] = StructuredFieldType.Dictionary,
+            ["signature"] = StructuredFieldType.Dictionary,
+            ["content-digest"] = StructuredFieldType.Dictionary,
+            ["repr-digest"] = StructuredFieldType.Dictionary,
+        };
     /// <summary>
     /// Default freshness window for the RFC 9421 <c>created</c> parameter.
     /// Matches the AAuth spec's default of 60 seconds; resources may
@@ -44,7 +45,7 @@ public sealed class AAuthVerifier
     /// <summary>
     /// Verify an inbound AAuth-signed HTTP request.
     /// </summary>
-    /// <param name="method">HTTP method, will be uppercased.</param>
+    /// <param name="method">Case-sensitive HTTP method.</param>
     /// <param name="authority">Host[:port] of the request target, will be lowercased.</param>
     /// <param name="path">Path component of the request target (already percent-encoded as on the wire).</param>
     /// <param name="signatureKey">Verbatim <c>Signature-Key</c> header value.</param>
@@ -54,7 +55,7 @@ public sealed class AAuthVerifier
     /// <param name="authorization">Verbatim <c>Authorization</c> header value, or null if absent.</param>
     /// <param name="mission">Verbatim <c>AAuth-Mission</c> header value, or null if absent.</param>
     /// <exception cref="AAuthVerificationException">If any check fails.</exception>
-    public void Verify(
+    public string Verify(
         string method,
         string authority,
         string path,
@@ -63,225 +64,150 @@ public sealed class AAuthVerifier
         string signatureHeader,
         IAAuthKey publicKey,
         string? authorization = null,
-        string? mission = null)
+        string? mission = null,
+        string label = "sig",
+        IReadOnlyDictionary<string, string>? fields = null,
+        IReadOnlyCollection<string>? requiredComponents = null,
+        string? keyId = null,
+        IReadOnlyDictionary<string, string[]>? fieldValues = null,
+        string? requestScheme = null,
+        string? query = null,
+        string? requestTarget = null)
     {
-        ArgumentException.ThrowIfNullOrEmpty(method);
-        ArgumentException.ThrowIfNullOrEmpty(authority);
-        ArgumentException.ThrowIfNullOrEmpty(path);
-        ArgumentException.ThrowIfNullOrEmpty(signatureKey);
-        ArgumentException.ThrowIfNullOrEmpty(signatureInput);
-        ArgumentException.ThrowIfNullOrEmpty(signatureHeader);
         ArgumentNullException.ThrowIfNull(publicKey);
-
-        // Parse the labelled signature parameters from `Signature-Input`.
-        // RFC 9421 allows multiple labelled signatures in a dictionary; AAuth
-        // emits exactly one with the fixed label `sig`. Anything else is
-        // rejected for now — multi-signer support is a future extension.
-        var (paramsLine, components, created) = ParseSignatureInput(signatureInput);
-
-        // Validate the covered-component list matches AAuth's expected shape.
-        // Base (in order): @method, @authority, @path, signature-key.
-        var baseMatch = components.Count >= 4
-            && components.Take(4).SequenceEqual(AAuthSigningHandler.CoveredComponents, StringComparer.Ordinal);
-        if (!baseMatch)
-        {
-            throw new AAuthVerificationException(
-                "Signature-Input covered components do not match AAuth's required set " +
-                $"({string.Join(' ', AAuthSigningHandler.CoveredComponents)}).");
-        }
-
-        // After the base set, the only permitted optional components are
-        // `authorization` (§AAuth-Access) then `aauth-mission` (§Authorization
-        // Endpoint Request, mission context), in that order. Any other trailing
-        // component or ordering is rejected.
-        var hasAuthzComponent = false;
-        var hasMissionComponent = false;
-        var index = 4;
-        if (index < components.Count && components[index] == "authorization")
-        {
-            hasAuthzComponent = true;
-            index++;
-        }
-        if (index < components.Count && components[index] == "aauth-mission")
-        {
-            hasMissionComponent = true;
-            index++;
-        }
-        if (index != components.Count)
-        {
-            throw new AAuthVerificationException(
-                "Signature-Input covered components do not match AAuth's required set " +
-                $"({string.Join(' ', AAuthSigningHandler.CoveredComponents)}).");
-        }
-
-        // §HTTP Signatures Profile: if Authorization header is present,
-        // the signature MUST cover it.
-        if (authorization is not null && !hasAuthzComponent)
-        {
-            throw new AAuthVerificationException(
-                "Authorization header is present but 'authorization' is not in the covered components.");
-        }
-
-        // §Authorization Endpoint Request: if the AAuth-Mission header is
-        // present, the signature MUST cover `aauth-mission`.
-        if (mission is not null && !hasMissionComponent)
-        {
-            throw new AAuthVerificationException(
-                "AAuth-Mission header is present but 'aauth-mission' is not in the covered components.");
-        }
-
-        // Freshness check on `created` (RFC 9421 §3.2.1). Asymmetric: allow
-        // up to MaxAge in the past (the spec's `signature_window`) and only a
-        // small MaxFutureSkew window for NTP drift. The previous symmetric
-        // tolerance widened the legitimate replay window by 2x.
-        var now = Clock().ToUnixTimeSeconds();
-        var diff = now - created;
-        if (diff > (long)MaxAge.TotalSeconds || diff < -(long)MaxFutureSkew.TotalSeconds)
-        {
-            throw new AAuthVerificationException(
-                $"Signature created={created} is outside the freshness window " +
-                $"(MaxAge={(long)MaxAge.TotalSeconds}s, MaxFutureSkew={(long)MaxFutureSkew.TotalSeconds}s, current={now}).");
-        }
-
-        // Pull the signature bytes out of the Signature header.
-        var signatureBytes = ParseSignature(signatureHeader);
-
-        // Reconstruct the signature base bit-for-bit the same way
-        // AAuthSigningHandler.Sign produces it.
+        var input = ValidateInput(signatureInput, label, authorization, mission, requiredComponents);
+        SignatureKeyHeader.Parse(signatureKey, label);
+        if (input.Parameters.TryGetValue("keyid", out var keyIdValue)
+            && (keyIdValue is not string suppliedId || suppliedId != (keyId ?? publicKey.ComputeJwkThumbprint())))
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidKey, "Signature keyid conflicts with Signature-Key.");
+        var signature = StructuredFields.Member(signatureHeader, label);
+        if (signature.Value is not ReadOnlyMemory<byte> signatureBytes)
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidRequest, "Signature must be a byte sequence.");
         var sb = new StringBuilder();
-        AppendComponent(sb, "@method", method.ToUpperInvariant());
-        AppendComponent(sb, "@authority", authority.ToLowerInvariant());
-        AppendComponent(sb, "@path", path);
-        AppendComponent(sb, "signature-key", signatureKey);
-        if (hasAuthzComponent)
+        foreach (var component in (IReadOnlyList<ParsedItem>)input.Value)
         {
-            AppendComponent(sb, "authorization", authorization!);
+            var name = (string)component.Value;
+            if (name.StartsWith('@') && component.Parameters.Count > 0)
+                throw new AAuthVerificationException(SignatureErrorCode.InvalidInput, "Unsupported derived component parameters.");
+            var normalizedAuthority = authority.ToLowerInvariant();
+            if (requestScheme is not null && Uri.TryCreate(requestScheme + "://" + authority, UriKind.Absolute, out var target))
+                normalizedAuthority = target.Authority.ToLowerInvariant();
+            var value = name switch
+            {
+                "@method" => method,
+                "@authority" => normalizedAuthority,
+                "@path" => string.IsNullOrEmpty(path) ? "/" : path,
+                "@scheme" => requestScheme?.ToLowerInvariant(),
+                "@query" => query is null ? null : query.Length == 0 ? "?" : query,
+                "@request-target" => requestTarget,
+                "@target-uri" => requestScheme is null ? null : requestScheme.ToLowerInvariant() + "://" + normalizedAuthority + path + query,
+                "signature-key" => signatureKey,
+                "authorization" => authorization,
+                "aauth-mission" => mission,
+                _ when name.StartsWith('@') => null,
+                _ => fields is not null && fields.TryGetValue(name, out var field) ? field : null,
+            };
+            if (value is null)
+                throw new AAuthVerificationException(SignatureErrorCode.InvalidInput, $"Covered component '{name}' is unavailable.");
+            value = name.StartsWith('@') ? value : CanonicalField(component, value,
+                fieldValues is not null && fieldValues.TryGetValue(name, out var values) ? values : null);
+            if (value.Any(character => character is '\r' or '\n' || character > 0x7f))
+                throw new AAuthVerificationException(SignatureErrorCode.InvalidInput, "Invalid characters in signature base component.");
+            sb.Append(StructuredFields.Item(component)).Append(": ").Append(value).Append('\n');
         }
-        if (hasMissionComponent)
-        {
-            AppendComponent(sb, "aauth-mission", mission!);
-        }
-        sb.Append("\"@signature-params\": ").Append(paramsLine);
-
-        if (!publicKey.Verify(Encoding.ASCII.GetBytes(sb.ToString()), signatureBytes))
-        {
-            throw new AAuthVerificationException("HTTP signature verification failed.");
-        }
+        sb.Append("\"@signature-params\": ").Append(StructuredFields.Item(input));
+        var signatureBase = Encoding.ASCII.GetBytes(sb.ToString());
+        if (!publicKey.Verify(signatureBase, signatureBytes.ToArray()))
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidSignature, "HTTP signature verification failed.");
+        return publicKey.ComputeJwkThumbprint() + "|" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(signatureBase));
     }
 
-    private static void AppendComponent(StringBuilder sb, string name, string value)
+    internal ParsedItem ValidateInput(string signatureInput, string label, string? authorization = null,
+        string? mission = null, IReadOnlyCollection<string>? requiredComponents = null)
     {
-        sb.Append('"').Append(name).Append("\": ").Append(value).Append('\n');
+        var input = StructuredFields.Member(signatureInput, label);
+        if (input.Value is not IReadOnlyList<ParsedItem> components || components.Count == 0)
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidInput, "Signature-Input requires an inner list.");
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        var identifiers = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var component in components)
+        {
+            if (component.Value is not string name || name != name.ToLowerInvariant() || name.Length == 0
+                || !identifiers.Add(name + StructuredFields.Parameters(component.Parameters.OrderBy(parameter => parameter.Key, StringComparer.Ordinal)
+                    .ToDictionary(parameter => parameter.Key, parameter => parameter.Value))))
+                throw new AAuthVerificationException(SignatureErrorCode.InvalidInput, "Invalid or duplicate covered component.");
+            if (!component.Parameters.ContainsKey("key") && !component.Parameters.ContainsKey("tr")) names.Add(name);
+        }
+        var required = AAuthSigningHandler.CoveredComponents.Concat(requiredComponents ?? []).ToHashSet(StringComparer.Ordinal);
+        if (authorization is not null) required.Add("authorization");
+        if (mission is not null) required.Add("aauth-mission");
+        if (!required.IsSubsetOf(names))
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidInput, "Required covered components are missing.");
+        if (!input.Parameters.TryGetValue("created", out var createdValue) || createdValue is not long created)
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidSignature, "Signature-Input requires integer created.");
+        var now = Clock().ToUnixTimeSeconds();
+        if (created < now - (long)MaxAge.TotalSeconds || created > now + (long)MaxFutureSkew.TotalSeconds)
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidSignature, "Signature is outside freshness window.");
+        if (input.Parameters.TryGetValue("expires", out var expiresValue)
+            && (expiresValue is not long expires || expires < now || expires < created))
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidSignature, "Signature expires is invalid or in the past.");
+        foreach (var name in new[] { "keyid", "nonce", "tag" })
+            if (input.Parameters.TryGetValue(name, out var value) && value is not string)
+                throw new AAuthVerificationException(SignatureErrorCode.InvalidInput, $"Signature {name} must be a string.");
+        return input;
     }
 
-    /// <summary>Parse <c>sig=("@method" ...);created=NNN</c>.</summary>
-    private static (string ParamsLine, IReadOnlyList<string> Components, long Created) ParseSignatureInput(string input)
+    private string CanonicalField(ParsedItem component, string value, string[]? fieldValues)
     {
-        var trimmed = input.Trim();
-        const string prefix = AAuthSigningHandler.SignatureLabel + "=";
-        if (!trimmed.StartsWith(prefix, StringComparison.Ordinal))
+        var parameters = component.Parameters;
+        if (parameters.Keys.Any(name => name is not ("sf" or "key" or "bs")))
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidInput, "Unsupported covered-component parameter.");
+        if (parameters.TryGetValue("sf", out var structured) && structured is not true
+            || parameters.TryGetValue("bs", out var binary) && binary is not true)
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidInput, "Component flags must be Boolean true.");
+        if (parameters.ContainsKey("bs") && (parameters.ContainsKey("sf") || parameters.ContainsKey("key")))
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidInput, "bs cannot be combined with sf or key.");
+        if (parameters.ContainsKey("bs"))
+            return string.Join(", ", (fieldValues ?? [value]).Select(field => ":" + Convert.ToBase64String(Encoding.Latin1.GetBytes(NormalizeField(field))) + ":"));
+        value = fieldValues is null ? NormalizeField(value) : string.Join(", ", fieldValues.Select(NormalizeField));
+        var knownType = StructuredFieldTypes.TryGetValue((string)component.Value, out var fieldType);
+        if (parameters.TryGetValue("key", out var selected))
         {
-            throw new AAuthVerificationException(
-                $"Signature-Input does not start with '{AAuthSigningHandler.SignatureLabel}='.");
+            if (!knownType || fieldType != StructuredFieldType.Dictionary || selected is not string member)
+                throw new AAuthVerificationException(SignatureErrorCode.InvalidInput, "Component key must be a string.");
+            value = StructuredFields.Item(StructuredFields.Member(value, member));
         }
-
-        var paramsLine = trimmed[prefix.Length..];
-
-        if (paramsLine.Length == 0 || paramsLine[0] != '(')
+        else if (parameters.ContainsKey("sf"))
         {
-            throw new AAuthVerificationException("Signature-Input must begin with a component list '('.");
+            if (!knownType) throw new AAuthVerificationException(SignatureErrorCode.InvalidInput, "Unknown structured field type.");
+            if (fieldType == StructuredFieldType.Dictionary && SfvParser.ParseDictionary(value, out var dictionary) is null)
+                value = string.Join(", ", dictionary.Select(member => member.Key
+                    + (member.Value.Value is true ? StructuredFields.Parameters(member.Value.Parameters) : "=" + StructuredFields.Item(member.Value))));
+            else if (fieldType == StructuredFieldType.List && SfvParser.ParseList(value, out var list) is null)
+                value = string.Join(", ", list.Select(StructuredFields.Item));
+            else if (fieldType == StructuredFieldType.Item && SfvParser.ParseItem(value, out var item) is null)
+                value = StructuredFields.Item(item);
+            else throw new AAuthVerificationException(SignatureErrorCode.InvalidInput, "Invalid structured covered field.");
         }
-
-        var closeIdx = paramsLine.IndexOf(')');
-        if (closeIdx < 0)
-        {
-            throw new AAuthVerificationException("Signature-Input component list is unterminated.");
-        }
-
-        var inner = paramsLine[1..closeIdx];
-        var components = new List<string>();
-        int i = 0;
-        while (i < inner.Length)
-        {
-            while (i < inner.Length && inner[i] == ' ') { i++; }
-            if (i >= inner.Length) { break; }
-            if (inner[i] != '"')
-            {
-                throw new AAuthVerificationException("Component identifiers must be quoted strings.");
-            }
-            i++;
-            var start = i;
-            while (i < inner.Length && inner[i] != '"') { i++; }
-            if (i >= inner.Length)
-            {
-                throw new AAuthVerificationException("Unterminated component identifier.");
-            }
-            components.Add(inner[start..i]);
-            i++;
-        }
-
-        // Parse `;created=NNN` (the only parameter AAuth uses today).
-        long created = -1;
-        var tail = paramsLine[(closeIdx + 1)..];
-        foreach (var rawPart in tail.Split(';'))
-        {
-            var part = rawPart.Trim();
-            if (part.Length == 0) { continue; }
-            var eq = part.IndexOf('=');
-            if (eq < 0)
-            {
-                throw new AAuthVerificationException($"Malformed parameter '{part}'.");
-            }
-            var name = part[..eq].Trim();
-            var value = part[(eq + 1)..].Trim();
-            if (name == "created")
-            {
-                if (!long.TryParse(value, out created))
-                {
-                    throw new AAuthVerificationException($"Malformed created value '{value}'.");
-                }
-            }
-            // Other parameters (alg, keyid, nonce, expires...) are not
-            // covered by AAuth's profile yet; ignore them silently.
-        }
-
-        if (created < 0)
-        {
-            throw new AAuthVerificationException("Signature-Input is missing the 'created' parameter.");
-        }
-
-        return (paramsLine, components, created);
+        return value;
     }
 
-    /// <summary>Parse <c>sig=:base64:</c> and return the raw signature bytes.</summary>
-    private static byte[] ParseSignature(string signatureHeader)
-    {
-        var trimmed = signatureHeader.Trim();
-        const string prefix = AAuthSigningHandler.SignatureLabel + "=:";
-        if (!trimmed.StartsWith(prefix, StringComparison.Ordinal) || !trimmed.EndsWith(':'))
-        {
-            throw new AAuthVerificationException(
-                $"Signature header must be of the form '{AAuthSigningHandler.SignatureLabel}=:<base64>:'.");
-        }
+    internal static string NormalizeField(string value) =>
+        System.Text.RegularExpressions.Regex.Replace(value.Trim(' ', '\t'), "\\r\\n[ \\t]+", " ");
 
-        var b64 = trimmed[prefix.Length..^1];
-        try
-        {
-            return Convert.FromBase64String(b64);
-        }
-        catch (FormatException ex)
-        {
-            throw new AAuthVerificationException("Signature header contains malformed base64.", ex);
-        }
-    }
 }
 
 /// <summary>Thrown when an inbound AAuth signature fails verification.</summary>
 public sealed class AAuthVerificationException : Exception
 {
+    public AAuth.Errors.SignatureErrorCode Code { get; }
+
+    public AAuthVerificationException(AAuth.Errors.SignatureErrorCode code, string message, Exception? inner = null)
+        : base(message, inner) => Code = code;
+
     /// <summary>Create an exception with a message.</summary>
-    public AAuthVerificationException(string message) : base(message) { }
+    public AAuthVerificationException(string message) : this(AAuth.Errors.SignatureErrorCode.InvalidSignature, message) { }
 
     /// <summary>Create an exception with a message and inner exception.</summary>
-    public AAuthVerificationException(string message, Exception inner) : base(message, inner) { }
+    public AAuthVerificationException(string message, Exception inner) : this(AAuth.Errors.SignatureErrorCode.InvalidSignature, message, inner) { }
 }

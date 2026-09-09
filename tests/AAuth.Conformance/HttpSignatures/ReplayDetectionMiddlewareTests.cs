@@ -39,8 +39,9 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
     private static readonly DateTimeOffset FixedClock = DateTimeOffset.UtcNow;
 
     private readonly AAuthKey _psKey = AAuthKey.Generate();
-    private readonly AAuthKey _agentKey = AAuthKey.Generate();
+    private readonly EcdsaAAuthKey _agentKey = EcdsaAAuthKey.Generate();
     private readonly InMemoryJtiStore _jtiStore = new();
+    private int _sideEffects;
 
     private IHost? _host;
 
@@ -51,16 +52,19 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
         builder.Services.AddSingleton(new AAuthVerifier { Clock = () => FixedClock });
         // Registering an IJtiStore turns on replay detection in the middleware.
         builder.Services.AddSingleton<IJtiStore>(_jtiStore);
+        var discovery = new InProcessHttpClient(new IssuerDiscoveryFixture(PsIssuer, _psKey, "ps-key-1"));
+        builder.Services.AddSingleton(new AAuth.Discovery.MetadataClient(discovery));
+        builder.Services.AddSingleton(new AAuth.Discovery.JwksClient(discovery));
 
         var app = builder.Build();
         app.UseAAuthVerification(new AAuthVerificationOptions
         {
+            EgressPolicy = TestEgress.Policy,
             ResourceIdentifier = ResourceId,
             // PoP signature + replay are what we exercise here; the auth token's
             // issuer trust chain is covered elsewhere.
-            RequireIssuerVerification = false,
         });
-        app.MapGet("/protected", () => Results.Ok("hello"));
+        app.MapGet("/protected", () => { _sideEffects++; return Results.Ok("hello"); });
         await app.StartAsync();
         _host = app;
     }
@@ -109,7 +113,8 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
         // Revocation is keyed on the token's own jti (not the replay tuple).
         const string Jti = "revoked-jti-1";
         var token = BuildAuthToken(Jti);
-        await _jtiStore.RevokeAsync(Jti);
+        Assert.Equal(HttpStatusCode.OK, (await Send(await SignRequest(token, FixedClock.AddSeconds(-2)))).StatusCode);
+        await _jtiStore.RevokeAsync(new TokenKey(PsIssuer, Jti));
 
         var response = await Send(await SignRequest(token, FixedClock.AddSeconds(-1)));
 
@@ -119,11 +124,36 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
             response.Headers.GetValues(SignatureError.HeaderName).First());
     }
 
+    [Fact]
+    public async Task Es256AlternateSignature_RejectedAsReplay()
+    {
+        var signed = await SignRequest(BuildAuthToken(), FixedClock.AddSeconds(-1));
+        Assert.Equal(HttpStatusCode.OK, (await Send(signed)).StatusCode);
+        var signature = Convert.FromBase64String(signed.Headers.GetValues("Signature").Single().Split(':')[1]);
+        var order = Org.BouncyCastle.Asn1.X9.ECNamedCurveTable.GetByName("P-256").N;
+        var scalar = new Org.BouncyCastle.Math.BigInteger(1, signature, 32, 32);
+        var alternate = order.Subtract(scalar).ToByteArrayUnsigned();
+        signature.AsSpan(32).Clear();
+        alternate.CopyTo(signature.AsSpan(64 - alternate.Length));
+        signed.Headers.Remove("Signature");
+        signed.Headers.TryAddWithoutValidation("Signature", "sig=:" + Convert.ToBase64String(signature) + ":");
+        new AAuthVerifier { Clock = () => FixedClock }.Verify("GET", "localhost:5000", "/protected",
+            signed.Headers.GetValues("Signature-Key").Single(), signed.Headers.GetValues("Signature-Input").Single(),
+            signed.Headers.GetValues("Signature").Single(), _agentKey);
+
+        var replay = await Send(signed);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);
+        Assert.Equal(1, _sideEffects);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────
 
     private string BuildAuthToken(string? jti = null)
         => new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = PsIssuer,
             Audience = ResourceId,
             Agent = AgentId,
@@ -146,7 +176,7 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
         {
             InnerHandler = capture,
         };
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "http://localhost:5000/protected"));
         return capture.Captured!;
     }
