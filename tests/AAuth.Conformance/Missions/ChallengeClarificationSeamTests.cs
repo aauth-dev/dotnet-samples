@@ -37,8 +37,8 @@ public class ChallengeClarificationSeamTests
         Func<Interaction, CancellationToken, Task>? onInteraction = null)
     {
         var holder = new AAuthTokenHolder("initial-agent-token");
-        var metaClient = new MetadataClient(new HttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(exchangeHandler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
 
         return new ChallengeHandler(
             exchangeClient, holder,
@@ -63,10 +63,8 @@ public class ChallengeClarificationSeamTests
             return Task.FromResult(ClarificationResponse.Respond("Needed to compare available trip options."));
         });
 
-        using var client = new HttpClient(challenge) { BaseAddress = new Uri(ResourceUrl) };
-        using var response = await client.GetAsync("/data");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var client = new InProcessHttpClient(challenge) { BaseAddress = new Uri(ResourceUrl) };
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.GetAsync("/data"));
         Assert.NotNull(seen);
         Assert.Equal("Why does this mission need this access?", seen!.Clarification);
         Assert.Equal("Needed to compare available trip options.", exchangeHandler.LastClarificationResponse);
@@ -82,10 +80,8 @@ public class ChallengeClarificationSeamTests
             (_, _) => Task.FromResult(ClarificationResponse.Respond("Needed to compare available trip options.")),
             (interaction, _) => { surfaced = interaction; return Task.CompletedTask; });
 
-        using var client = new HttpClient(challenge) { BaseAddress = new Uri(ResourceUrl) };
-        using var response = await client.GetAsync("/data");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var client = new InProcessHttpClient(challenge) { BaseAddress = new Uri(ResourceUrl) };
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.GetAsync("/data"));
         // The clarification was answered AND the follow-on user-interaction gate
         // was surfaced (a bare poll would have swallowed it).
         Assert.Equal("Needed to compare available trip options.", exchangeHandler.LastClarificationResponse);
@@ -99,10 +95,8 @@ public class ChallengeClarificationSeamTests
         var challenge = BuildChallengeHandler(exchangeHandler, (_, _) =>
             Task.FromResult(ClarificationResponse.Respond("ok")));
 
-        using var client = new HttpClient(challenge) { BaseAddress = new Uri(ResourceUrl) };
-        using var response = await client.GetAsync("/data");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var client = new InProcessHttpClient(challenge) { BaseAddress = new Uri(ResourceUrl) };
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.GetAsync("/data"));
         Assert.Contains("clarification", exchangeHandler.DeclaredCapabilities);
     }
 
@@ -113,7 +107,7 @@ public class ChallengeClarificationSeamTests
         var challenge = BuildChallengeHandler(exchangeHandler, (_, _) =>
             Task.FromResult(ClarificationResponse.Cancel()));
 
-        using var client = new HttpClient(challenge) { BaseAddress = new Uri(ResourceUrl) };
+        using var client = new InProcessHttpClient(challenge) { BaseAddress = new Uri(ResourceUrl) };
 
         await Assert.ThrowsAsync<AAuthClarificationCancelledException>(
             () => client.GetAsync("/data"));
@@ -133,7 +127,7 @@ public class ChallengeClarificationSeamTests
                 var challenge = new HttpResponseMessage(HttpStatusCode.Unauthorized);
                 challenge.Headers.TryAddWithoutValidation(
                     AAuthRequirementHeader.Name,
-                    AAuthRequirementHeader.FormatAuthToken("fake-resource-token"));
+                    AAuthRequirementHeader.FormatAuthToken(TestTokens.Resource));
                 return Task.FromResult(challenge);
             }
 

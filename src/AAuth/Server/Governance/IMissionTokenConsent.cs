@@ -97,6 +97,11 @@ public sealed record MissionTokenConsentDecision
 /// </summary>
 public sealed record MissionTokenConsentContext
 {
+    public string? Account { get; init; }
+    public string? AgentKeyThumbprint { get; init; }
+    public string? ConsentAgentId { get; init; }
+    public UpstreamTokenValidationResult? UpstreamAuthorization { get; init; }
+    public StoredMission? ValidatedApproval { get; internal init; }
     /// <summary>The verified agent identifier.</summary>
     public required string AgentId { get; init; }
 
@@ -105,6 +110,7 @@ public sealed record MissionTokenConsentContext
 
     /// <summary>The requested scope.</summary>
     public required string Scope { get; init; }
+    public System.Text.Json.Nodes.JsonObject? ResourceContext { get; init; }
 
     /// <summary>The mission governing the request.</summary>
     public required MissionClaim Mission { get; init; }

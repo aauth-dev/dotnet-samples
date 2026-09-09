@@ -29,7 +29,7 @@ public static class AAuthInteractionEndpointExtensions
         var options = endpoints.ServiceProvider.GetRequiredService<AAuthResourceManagedOptions>();
         pattern ??= $"{options.PollPath.TrimEnd('/')}/{{code}}";
 
-        return endpoints.MapGet(pattern, async (
+        return endpoints.MapMethods(pattern, ["GET", "DELETE"], async (
             HttpContext ctx,
             string code,
             IInteractionPendingStore pending,
@@ -38,7 +38,8 @@ public static class AAuthInteractionEndpointExtensions
             var entry = pending.Get(code);
             if (entry is null)
             {
-                return Results.NotFound(new { error = "unknown_pending" });
+                return AAuthProblemDetails.Create(AAuth.Headers.InteractionCode.IsValid(code) ? "expired" : "unknown_pending",
+                    statusCode: AAuth.Headers.InteractionCode.IsValid(code) ? 410 : 404);
             }
 
             // §Resource-Managed Authorization (spec, #aauth-access): the issued
@@ -49,39 +50,47 @@ public static class AAuthInteractionEndpointExtensions
             var pollerJkt = ctx.GetAAuthVerification()?.Jkt;
             if (string.IsNullOrEmpty(pollerJkt))
             {
-                return Results.Json(
-                    new { error = "invalid_request", detail = "poll requires a verified AAuth signature" },
-                    statusCode: StatusCodes.Status401Unauthorized);
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "poll requires a verified AAuth signature", statusCode: StatusCodes.Status401Unauthorized);
             }
-            if (!string.Equals(pollerJkt, entry.AgentJkt, StringComparison.Ordinal))
+            if (!string.Equals(pollerJkt, entry.AgentJkt, StringComparison.Ordinal)
+                || !string.Equals(entry.OwnerIssuer, ctx.GetAAuthVerification()?.Issuer, StringComparison.Ordinal)
+                || !string.Equals(entry.OwnerAgent, ctx.GetAAuthVerification()?.Agent, StringComparison.Ordinal))
             {
-                return Results.Json(
-                    new { error = "denied", detail = "interaction belongs to a different agent" },
-                    statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.Create("denied", "interaction belongs to a different agent", statusCode: StatusCodes.Status403Forbidden);
             }
 
-            if (!entry.Approved)
+            return await entry.Lifecycle.ExecuteAsync(ctx, entry.Expiry, TimeProvider.System, async () =>
             {
-                ctx.Response.Headers.RetryAfter = "1";
-                ctx.Response.Headers.CacheControl = "no-store";
-                return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
-            }
+                if (HttpMethods.IsDelete(ctx.Request.Method))
+                {
+                    entry.Lifecycle.Cancel();
+                    return Results.NoContent();
+                }
+                if (entry.Denied) return AAuthProblemDetails.Create("denied", statusCode: 403);
+                if (!entry.Approved)
+                {
+                    ctx.Response.Headers.RetryAfter = "1";
+                    ctx.Response.Headers.CacheControl = "no-store";
+                    return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
+                }
 
-            // Atomically claim the approved interaction (single-use): only one
-            // concurrent poll wins and issues a token; a loser sees it already gone.
-            if (!pending.TryConsume(code, out var consumed))
-            {
-                return Results.NotFound(new { error = "unknown_pending" });
-            }
+                // Atomically claim the approved interaction (single-use): only one
+                // concurrent poll wins and issues a token; a loser sees it already gone.
+                if (!pending.TryConsume(code, out var consumed))
+                {
+                    return AAuth.Server.AAuthProblemDetails.Create("expired", statusCode: StatusCodes.Status410Gone);
+                }
 
-            var grant = new OpaqueTokenInfo
-            {
-                AgentJkt = pollerJkt,
-                Scope = consumed.Scope,
-                Expiration = DateTimeOffset.UtcNow.Add(options.TokenTtl),
-            };
-            await ctx.IssueAAuthAccessAsync(tokens, grant, ctx.RequestAborted).ConfigureAwait(false);
-            return Results.Ok(new { status = "complete" });
+                var grant = new OpaqueTokenInfo
+                {
+                    AgentJkt = pollerJkt,
+                    Scope = consumed.Scope,
+                    Account = consumed.Account,
+                    Expiration = DateTimeOffset.UtcNow.Add(options.TokenTtl),
+                };
+                await ctx.IssueAAuthAccessAsync(tokens, grant, ctx.RequestAborted).ConfigureAwait(false);
+                return Results.Ok(new { status = "complete" });
+            });
         });
     }
 }

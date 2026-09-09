@@ -11,6 +11,7 @@ import {
 } from '../../../tests/e2e/helpers/tour';
 import { approveInPopup, denyInPopup } from '../../../tests/e2e/helpers/consent';
 import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
+import { directedSubject } from '../../../tests/e2e/helpers/consent';
 
 /**
  * PS-Asserted (Deferred) — three-party flow requiring human approval, 9 steps.
@@ -61,7 +62,7 @@ test.describe('Deferred (Guided Tour)', () => {
     expect(json.accessMode).toBe('three-party');
     expect(json.scheme).toBe('jwt');
     expect(json.agent).toBe(Agents.tour);
-    expect(json.sub).toBe('pairwise-sub');
+    expect(json.sub).toBe(directedSubject(Urls.calendar));
     expect(json.scope).toEqual(['calendar.read']);
     expect(json.iss).toBe(Urls.personServer);
     // Direct authorization (deferred consent) — no act chain.

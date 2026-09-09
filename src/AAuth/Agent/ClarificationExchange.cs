@@ -150,7 +150,7 @@ public sealed class ClarificationExchange
     {
         ArgumentException.ThrowIfNullOrEmpty(markdown);
         EnterRound();
-        var body = new JsonObject { ["clarification_response"] = markdown };
+        var body = new JsonObject { ["action"] = "clarification_response", ["clarification_response"] = markdown };
         await PostAsync(body, cancellationToken).ConfigureAwait(false);
     }
 
@@ -160,7 +160,7 @@ public sealed class ClarificationExchange
     {
         ArgumentException.ThrowIfNullOrEmpty(resourceToken);
         EnterRound();
-        var body = new JsonObject { ["resource_token"] = resourceToken };
+        var body = new JsonObject { ["action"] = "updated_request", ["resource_token"] = resourceToken };
         if (!string.IsNullOrEmpty(justification))
         {
             body["justification"] = justification;
@@ -172,7 +172,8 @@ public sealed class ClarificationExchange
     public async Task CancelAsync(CancellationToken cancellationToken = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Delete, _pendingUrl);
-        using var response = await _signedClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using var response = await AAuth.Discovery.AAuthHttpTransport.SendAsync(_signedClient, request, cancellationToken).ConfigureAwait(false);
+        await CheckMissionStateAsync(response, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
     }
 
@@ -191,7 +192,15 @@ public sealed class ClarificationExchange
         {
             Content = JsonContent.Create(body),
         };
-        using var response = await _signedClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using var response = await AAuth.Discovery.AAuthHttpTransport.SendAsync(_signedClient, request, cancellationToken).ConfigureAwait(false);
+        await CheckMissionStateAsync(response, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
+    }
+
+    private static async Task CheckMissionStateAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        if (response.StatusCode != System.Net.HttpStatusCode.Forbidden) return;
+        var state = await DeferredExchange.TryReadMissionTerminatedAsync(response, cancellationToken).ConfigureAwait(false);
+        if (state.Terminated) throw new AAuth.Errors.AAuthMissionTerminatedException(state.MissionStatus);
     }
 }

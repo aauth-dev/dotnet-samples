@@ -33,15 +33,14 @@ public class InteractionPendingStoreTests
 
         // Single-use: a second consume finds nothing.
         Assert.False(store.TryConsume(entry.Code, out _));
-        Assert.Null(store.Get(entry.Code));
+        Assert.Same(entry, store.Get(entry.Code));
     }
 
     [Fact]
-    public void Get_ExpiredEntry_ReturnsNull()
+    public void Park_NonPositiveLifetime_IsRejected()
     {
         var store = new InMemoryInteractionPendingStore();
-        var entry = store.Park("inbox.read", "jkt-1", TimeSpan.FromMilliseconds(-1));
-        Assert.Null(store.Get(entry.Code));
+        Assert.Throws<ArgumentOutOfRangeException>(() => store.Park("inbox.read", "jkt-1", TimeSpan.FromMilliseconds(-1)));
     }
 
     [Fact]

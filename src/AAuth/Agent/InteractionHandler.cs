@@ -22,6 +22,10 @@ namespace AAuth.Agent;
 /// </remarks>
 public sealed class InteractionHandler : DelegatingHandler
 {
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; init; } = AAuth.Discovery.AAuthEgressPolicy.Production;
+    public AAuth.Discovery.AAuthTransportContract? TransportContract { get; init; }
+    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+    internal Func<TimeSpan, CancellationToken, Task>? DelayAsync { get; init; }
     private const string ApprovalRequirement = "approval";
     private static readonly TimeSpan BackoffIncrement = TimeSpan.FromSeconds(5);
 
@@ -54,73 +58,93 @@ public sealed class InteractionHandler : DelegatingHandler
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        var response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        if (TransportContract is null) throw new InvalidOperationException("Interaction handlers require an explicit inner transport contract.");
+        var response = await AAuth.Discovery.AAuthHttpTransport.SendBoundedAsync(EgressPolicy, request,
+            token => base.SendAsync(request, token), cancellationToken).ConfigureAwait(false);
 
         if (response.StatusCode != HttpStatusCode.Accepted)
             return response;
 
-        // Check for requirement header
-        if (!response.Headers.TryGetValues(AAuthRequirementHeader.Name, out var values))
-            return response;
-
-        string? requirementType = null;
-        Interaction? interaction = null;
-
-        foreach (var raw in values)
+        using var timeout = new CancellationTokenSource(_pollingTimeout, TimeProvider);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        try
         {
-            if (string.IsNullOrWhiteSpace(raw)) continue;
-            try
+            return await HandleDeferredAsync(request, response, deadline.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && timeout.IsCancellationRequested)
+        {
+            response.Dispose();
+            throw new TimeoutException("Interaction polling exceeded its total wait budget.", exception);
+        }
+        catch
+        {
+            response.Dispose();
+            throw;
+        }
+    }
+
+    private async Task<HttpResponseMessage> HandleDeferredAsync(HttpRequestMessage request,
+        HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        var transportContract = TransportContract
+            ?? throw new InvalidOperationException("Interaction handlers require an explicit inner transport contract.");
+        var started = TimeProvider.GetTimestamp();
+        string? handledInteraction = null;
+        var approvalNotified = false;
+        async Task<bool> DispatchAsync(HttpResponseMessage current)
+        {
+            if (!current.Headers.TryGetValues(AAuthRequirementHeader.Name, out var values)) return true;
+            foreach (var raw in values)
             {
-                var parsed = AAuthRequirementHeader.Parse(raw);
+                AAuthRequirementHeader.ParsedRequirement parsed;
+                try { parsed = AAuthRequirementHeader.Parse(raw); }
+                catch (FormatException) { continue; }
                 if (parsed.Requirement == Interaction.RequirementType)
                 {
-                    interaction = Interaction.FromRequirement(parsed);
-                    requirementType = Interaction.RequirementType;
-                    break;
+                    var interaction = Interaction.FromRequirement(parsed, EgressPolicy);
+                    if (interaction is null) throw new HttpRequestException("Invalid interaction requirement.");
+                    var userUrl = interaction.BuildUserUrl();
+                    if (userUrl == handledInteraction) return true;
+                    if (_onInteractionRequired is null)
+                        throw new AAuthInteractionDeniedException(
+                            "Server requires user interaction but no OnInteractionRequired callback is configured.");
+                    await AAuth.Discovery.AAuthHttpTransport.AdmitInteractionAsync(EgressPolicy, transportContract,
+                        interaction.Url, cancellationToken).ConfigureAwait(false);
+                    await _onInteractionRequired(userUrl, interaction.Code, cancellationToken).WaitAsync(cancellationToken).ConfigureAwait(false);
+                    handledInteraction = userUrl;
+                    return true;
                 }
                 if (parsed.Requirement == ApprovalRequirement)
                 {
-                    requirementType = ApprovalRequirement;
-                    break;
+                    if (!approvalNotified && _onApprovalPending is not null)
+                        await _onApprovalPending(cancellationToken).WaitAsync(cancellationToken).ConfigureAwait(false);
+                    approvalNotified = true;
+                    return true;
                 }
             }
-            catch (FormatException)
-            {
-                // Skip malformed values
-            }
+            return false;
         }
 
-        if (requirementType is null)
-            return response;
-
-        // Must have a Location header for polling
         var locationUri = response.Headers.Location;
         if (locationUri is null)
-            return response;
+        {
+            response.Dispose();
+            throw new HttpRequestException("Deferred response is missing the Location header.");
+        }
 
         if (!locationUri.IsAbsoluteUri && request.RequestUri is not null)
             locationUri = new Uri(request.RequestUri, locationUri);
 
-        // Invoke the appropriate callback
-        if (requirementType == Interaction.RequirementType && interaction is not null)
+        locationUri = EgressPolicy.ValidatePendingLocation(request.RequestUri!, locationUri);
+
+        try
         {
-            if (_onInteractionRequired is not null)
-            {
-                var userUrl = interaction.BuildUserUrl();
-                await _onInteractionRequired(userUrl, interaction.Code, cancellationToken).ConfigureAwait(false);
-            }
-            else
-            {
-                throw new AAuthInteractionDeniedException(
-                    "Server requires user interaction but no OnInteractionRequired callback is configured.");
-            }
+            if (!await DispatchAsync(response).ConfigureAwait(false)) return response;
         }
-        else if (requirementType == ApprovalRequirement)
+        catch
         {
-            if (_onApprovalPending is not null)
-            {
-                await _onApprovalPending(cancellationToken).ConfigureAwait(false);
-            }
+            response.Dispose();
+            throw;
         }
 
         // Get initial Retry-After from the 202 response
@@ -128,7 +152,6 @@ public sealed class InteractionHandler : DelegatingHandler
         response.Dispose();
 
         // Poll loop
-        var deadline = DateTimeOffset.UtcNow + _pollingTimeout;
         var backoff = TimeSpan.Zero;
         var delay = initialDelay;
 
@@ -136,7 +159,8 @@ public sealed class InteractionHandler : DelegatingHandler
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (DateTimeOffset.UtcNow + delay > deadline)
+            var remaining = _pollingTimeout - TimeProvider.GetElapsedTime(started);
+            if (remaining <= TimeSpan.Zero)
             {
                 throw new TimeoutException(
                     $"Interaction/approval polling exceeded {_pollingTimeout.TotalSeconds:0}s timeout.");
@@ -145,22 +169,34 @@ public sealed class InteractionHandler : DelegatingHandler
             // Enforce minimum poll interval
             if (delay < _minPollInterval)
                 delay = _minPollInterval;
+            if (delay > remaining) delay = remaining;
 
             if (delay > TimeSpan.Zero)
-                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            {
+                if (DelayAsync is { } delayAsync)
+                    await delayAsync(delay, cancellationToken).ConfigureAwait(false);
+                else
+                    await Task.Delay(delay, TimeProvider, cancellationToken).ConfigureAwait(false);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            if (TimeProvider.GetElapsedTime(started) >= _pollingTimeout)
+                throw new TimeoutException("Interaction polling exceeded its total wait budget.");
 
             using var pollRequest = new HttpRequestMessage(HttpMethod.Get, locationUri);
+            if (AAuthRequestOptions.GetAccount(request) is { } account)
+                pollRequest.Options.Set(AAuthRequestOptions.Account, account);
             if (_preferWaitSeconds is { } waitSec)
                 pollRequest.Headers.TryAddWithoutValidation("Prefer", $"wait={waitSec}");
 
-            var pollResponse = await base.SendAsync(pollRequest, cancellationToken).ConfigureAwait(false);
+            var pollResponse = await AAuth.Discovery.AAuthHttpTransport.SendBoundedAsync(EgressPolicy, pollRequest,
+                token => base.SendAsync(pollRequest, token), cancellationToken).ConfigureAwait(false);
 
-            _onPoll?.Invoke(pollResponse);
+            try { _onPoll?.Invoke(pollResponse); }
+            catch { pollResponse.Dispose(); throw; }
 
-            if (pollResponse.StatusCode == (HttpStatusCode)429)
+            if (pollResponse.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
             {
-                // Linear backoff: +5s per 429
-                backoff += BackoffIncrement;
+                if (pollResponse.StatusCode == HttpStatusCode.TooManyRequests) backoff += BackoffIncrement;
                 delay = (GetRetryAfter(pollResponse.Headers.RetryAfter) ?? _defaultPollInterval) + backoff;
                 pollResponse.Dispose();
                 continue;
@@ -171,20 +207,30 @@ public sealed class InteractionHandler : DelegatingHandler
                 return pollResponse;
             }
 
-            // Still 202, keep polling
+            try
+            {
+                if (pollResponse.Headers.Location is { } nextLocation)
+                    locationUri = EgressPolicy.ValidatePendingLocation(locationUri, nextLocation);
+                if (!await DispatchAsync(pollResponse).ConfigureAwait(false)) return pollResponse;
+            }
+            catch
+            {
+                pollResponse.Dispose();
+                throw;
+            }
             delay = GetRetryAfter(pollResponse.Headers.RetryAfter) ?? _defaultPollInterval;
             delay += backoff;
             pollResponse.Dispose();
         }
     }
 
-    private static TimeSpan? GetRetryAfter(RetryConditionHeaderValue? retryAfter)
+    private TimeSpan? GetRetryAfter(RetryConditionHeaderValue? retryAfter)
     {
         if (retryAfter is null) return null;
         if (retryAfter.Delta is { } delta) return delta;
         if (retryAfter.Date is { } date)
         {
-            var remaining = date - DateTimeOffset.UtcNow;
+            var remaining = date - TimeProvider.GetUtcNow();
             return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
         }
         return null;

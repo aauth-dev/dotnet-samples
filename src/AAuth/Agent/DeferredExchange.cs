@@ -34,10 +34,8 @@ internal sealed class DeferredExchangeOptions
     public DeferredPollerOptions? PollerOptions { get; init; }
 
     /// <summary>
-    /// When <see langword="true"/>, any non-clarification <c>202</c> requires an
-    /// interaction callback (token exchange cannot complete consent without one).
-    /// When <see langword="false"/>, the callback is only required if the PS
-    /// returns an explicit interaction requirement (governance default).
+    /// Use a token-endpoint error when an explicit interaction requirement
+    /// cannot be handled. Approval and bare deferred responses need no callback.
     /// </summary>
     public bool RequireInteractionCallback { get; init; }
 
@@ -77,28 +75,24 @@ internal sealed class DeferredExchange
     /// to be https-or-loopback.
     /// </summary>
     internal async Task<Uri> ResolveEndpointAsync(
-        string personServer, string field, CancellationToken cancellationToken)
+        string personServer, string field, CancellationToken cancellationToken,
+        string metadataFile = AAuthConstants.DwkFiles.Person)
     {
-        var metadataUrl = MetadataClient.BuildUrl(personServer, AAuthConstants.DwkFiles.Person);
+        var metadataUrl = _metadata.GetUrl(personServer, metadataFile);
         var doc = await _metadata.FetchAsync(metadataUrl, cancellationToken).ConfigureAwait(false);
         var endpoint = (string?)doc[field]
             ?? throw new InvalidOperationException(
-                $"Person Server metadata at {metadataUrl} is missing '{field}'.");
+                $"Server metadata at {metadataUrl} is missing '{field}'.");
 
         // Pin the endpoint to the configured PS origin and require https (or
         // loopback) so a compromised metadata document can't divert the signed
         // request off-host (SSRF) or downgrade it to plain http.
-        if (!AAuthUrl.IsHttpsOrLoopback(endpoint)
-            || !Uri.TryCreate(endpoint, UriKind.Absolute, out var endpointUri))
-        {
-            throw new InvalidOperationException(
-                $"Person Server '{field}' must be an absolute https:// URL (or http://localhost): {endpoint}");
-        }
+        var endpointUri = _metadata.Policy.ValidateUrl(endpoint, endpoint: true);
         if (!Uri.TryCreate(personServer, UriKind.Absolute, out var psUri)
             || !string.Equals(
                 endpointUri.GetLeftPart(UriPartial.Authority),
                 psUri.GetLeftPart(UriPartial.Authority),
-                StringComparison.OrdinalIgnoreCase))
+                StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
                 $"Person Server '{field}' must share an origin with {personServer}: {endpoint}");
@@ -113,7 +107,8 @@ internal sealed class DeferredExchange
     /// parsing the terminal response and MUST dispose it.
     /// </summary>
     internal async Task<HttpResponseMessage> PostAsync(
-        Uri endpoint, JsonObject body, DeferredExchangeOptions options, CancellationToken cancellationToken)
+        Uri endpoint, JsonObject body, DeferredExchangeOptions options, CancellationToken cancellationToken,
+        Action<HttpRequestMessage>? onSignedRequest = null)
     {
         ArgumentNullException.ThrowIfNull(options);
 
@@ -126,10 +121,20 @@ internal sealed class DeferredExchange
             request.Headers.TryAddWithoutValidation("Prefer", $"wait={preferWait}");
         }
 
-        var response = await _signedClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        var response = await AAuthHttpTransport.SendAsync(_signedClient, request, cancellationToken).ConfigureAwait(false);
+        onSignedRequest?.Invoke(request);
         ClarificationExchange? clarificationExchange = null;
         var ownsResponse = true;
         Uri? lastPendingUrl = null;
+        string? handledInteraction = null;
+        var pollingOptions = ComposePollerOptions(options.PollerOptions, () => handledInteraction);
+        var poller = new DeferredPoller(_signedClient, pollingOptions);
+        using var timeout = response.StatusCode == HttpStatusCode.Accepted
+            ? new CancellationTokenSource(pollingOptions.MaxTotalWait, pollingOptions.TimeProvider) : null;
+        var callerToken = cancellationToken;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(callerToken, timeout?.Token ?? CancellationToken.None);
+        cancellationToken = deadline.Token;
+        if (response.StatusCode == HttpStatusCode.Accepted) poller.Start();
         try
         {
             while (response.StatusCode == HttpStatusCode.Accepted)
@@ -140,6 +145,7 @@ internal sealed class DeferredExchange
                 var pendingUrl = ResolveLocation(response, endpoint, lastPendingUrl);
                 lastPendingUrl = pendingUrl;
                 var requirement = ExtractRequirement(response);
+                var retryAfter = response.Headers.RetryAfter;
 
                 // §Clarification Chat: the PS is asking the agent a question
                 // during review. Surface it, apply the decision, resume polling.
@@ -157,7 +163,7 @@ internal sealed class DeferredExchange
 
                     clarificationExchange ??= new ClarificationExchange(
                         _signedClient, pendingUrl, options.MaxClarificationRounds);
-                    var decision = await options.OnClarificationRequired(clarification!, cancellationToken)
+                    var decision = await options.OnClarificationRequired(clarification!, cancellationToken).WaitAsync(cancellationToken)
                         .ConfigureAwait(false);
                     await clarificationExchange.ApplyAsync(decision, cancellationToken).ConfigureAwait(false);
 
@@ -167,15 +173,13 @@ internal sealed class DeferredExchange
                     // OnInteractionRequired; otherwise a bare poll would wait it
                     // out silently and never prompt the user.
                     response = await PollAsync(
-                        pendingUrl, options.PollerOptions, cancellationToken, stopOnInteraction: true)
+                        poller, pendingUrl, retryAfter, cancellationToken)
                         .ConfigureAwait(false);
                     continue;
                 }
 
-                // §User Interaction: token exchange requires an interaction
-                // callback for any deferred response; governance only when an
-                // interaction requirement is present.
-                if (options.RequireInteractionCallback && options.OnInteractionRequired is null)
+                if (requirement?.Requirement == Interaction.RequirementType
+                    && options.RequireInteractionCallback && options.OnInteractionRequired is null)
                 {
                     var status = (int)response.StatusCode;
                     response.Dispose();
@@ -192,7 +196,7 @@ internal sealed class DeferredExchange
                         isTerminal: true);
                 }
 
-                var interaction = requirement is null ? null : Interaction.FromRequirement(requirement);
+                var interaction = requirement is null ? null : Interaction.FromRequirement(requirement, _metadata.Policy);
                 response.Dispose();
                 if (interaction is not null)
                 {
@@ -201,10 +205,12 @@ internal sealed class DeferredExchange
                         throw new HttpRequestException(
                             "PS returned requirement=interaction but no OnInteractionRequired callback was provided.");
                     }
-                    await options.OnInteractionRequired(interaction, cancellationToken).ConfigureAwait(false);
+                    await AAuthHttpTransport.AdmitInteractionAsync(_signedClient, interaction.Url, cancellationToken).ConfigureAwait(false);
+                    await options.OnInteractionRequired(interaction, cancellationToken).WaitAsync(cancellationToken).ConfigureAwait(false);
+                    handledInteraction = interaction.BuildUserUrl();
                 }
 
-                response = await PollAsync(pendingUrl, options.PollerOptions, cancellationToken).ConfigureAwait(false);
+                response = await PollAsync(poller, pendingUrl, retryAfter, cancellationToken).ConfigureAwait(false);
 
                 // Token exchange classifies a polled 403 denied here (only
                 // after an interaction poll, matching the original placement).
@@ -227,6 +233,10 @@ internal sealed class DeferredExchange
             ownsResponse = false;
             return response;
         }
+        catch (OperationCanceledException exception) when (!callerToken.IsCancellationRequested && timeout?.IsCancellationRequested == true)
+        {
+            throw new AAuthInteractionTimeoutException("Deferred exchange exceeded its total wait budget.", exception);
+        }
         finally
         {
             if (ownsResponse)
@@ -237,15 +247,13 @@ internal sealed class DeferredExchange
     }
 
     private async Task<HttpResponseMessage> PollAsync(
-        Uri pendingUrl, DeferredPollerOptions? pollerOptions, CancellationToken cancellationToken,
-        bool stopOnInteraction = false)
+        DeferredPoller poller, Uri pendingUrl, System.Net.Http.Headers.RetryConditionHeaderValue? retryAfter,
+        CancellationToken cancellationToken)
     {
-        var composed = ComposePollerOptions(pollerOptions, stopOnInteraction);
         try
         {
             using var pollActivity = AAuthDiagnostics.Source.StartActivity("AAuth.DeferredPoll");
-            return await new DeferredPoller(_signedClient, composed)
-                .PollAsync(pendingUrl, cancellationToken).ConfigureAwait(false);
+            return await poller.ResumeAsync(pendingUrl, retryAfter, cancellationToken).ConfigureAwait(false);
         }
         catch (PollingErrorException ex) when (ex.ErrorCode == PollingErrorCode.Denied)
         {
@@ -263,13 +271,8 @@ internal sealed class DeferredExchange
         }
     }
 
-    // Stop polling on a clarification 202 so the exchange loop can handle it,
-    // preserving any caller-supplied StopWhenAccepted predicate. When
-    // <paramref name="stopOnInteraction"/> is set (immediately after a
-    // clarification round) the poll also stops on an interaction 202 so the loop
-    // can surface it via OnInteractionRequired.
     private static DeferredPollerOptions ComposePollerOptions(
-        DeferredPollerOptions? baseOptions, bool stopOnInteraction = false)
+        DeferredPollerOptions? baseOptions, Func<string?> handledInteraction)
     {
         var userStop = baseOptions?.StopWhenAccepted;
         bool Stop(HttpResponseMessage resp)
@@ -277,8 +280,14 @@ internal sealed class DeferredExchange
             if (userStop is not null && userStop(resp)) { return true; }
             var requirement = ExtractRequirement(resp);
             if (requirement?.Requirement == ClarificationRequirement.RequirementType) { return true; }
-            return stopOnInteraction
-                && requirement?.Requirement == Interaction.RequirementType;
+            if (requirement?.Requirement == Interaction.RequirementType)
+            {
+                var url = requirement.Parameters.GetValueOrDefault("url");
+                var code = requirement.Parameters.GetValueOrDefault("code");
+                if (url is not null && code is not null && new Interaction(url, code).BuildUserUrl() != handledInteraction())
+                    return true;
+            }
+            return false;
         }
 
         return baseOptions is null
@@ -291,7 +300,9 @@ internal sealed class DeferredExchange
         try
         {
             var json = JsonNode.Parse(body) as JsonObject;
-            if ((string?)json?["error"] == AAuthMissionTerminatedException.ErrorCode)
+            if (json?["error"] is JsonValue errorValue
+                && errorValue.TryGetValue<string>(out var error)
+                && error == AAuthMissionTerminatedException.ErrorCode)
             {
                 return (true, (string?)json?["mission_status"]);
             }
@@ -303,7 +314,7 @@ internal sealed class DeferredExchange
         return (false, null);
     }
 
-    private static async Task<(bool Terminated, string? MissionStatus)> TryReadMissionTerminatedAsync(
+    internal static async Task<(bool Terminated, string? MissionStatus)> TryReadMissionTerminatedAsync(
         HttpResponseMessage response, CancellationToken cancellationToken)
     {
         var body = await BufferBodyAsync(response, cancellationToken).ConfigureAwait(false);
@@ -357,7 +368,7 @@ internal sealed class DeferredExchange
         return null;
     }
 
-    private static Uri ResolveLocation(HttpResponseMessage response, Uri @base, Uri? fallback = null)
+    private Uri ResolveLocation(HttpResponseMessage response, Uri @base, Uri? fallback = null)
     {
         var location = response.Headers.Location;
         if (location is null)
@@ -366,7 +377,7 @@ internal sealed class DeferredExchange
                 ?? throw new HttpRequestException(
                     "Deferred PS response is missing the Location header — cannot poll.");
         }
-        return location.IsAbsoluteUri ? location : new Uri(@base, location);
+        return _metadata.Policy.ValidatePendingLocation(@base, location);
     }
 
     internal static void AddIfPresent(JsonObject body, string name, string? value)

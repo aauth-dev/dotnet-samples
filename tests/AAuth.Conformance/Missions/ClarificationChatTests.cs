@@ -23,8 +23,8 @@ public class ClarificationChatTests
 
     private static TokenExchangeClient BuildClient(HttpMessageHandler handler)
     {
-        var http = new HttpClient(handler) { BaseAddress = new Uri(Ps) };
-        var metadata = new MetadataClient(new HttpClient(handler));
+        var http = new InProcessHttpClient(handler) { BaseAddress = new Uri(Ps) };
+        var metadata = new MetadataClient(new InProcessHttpClient(handler));
         return new TokenExchangeClient(http, metadata);
     }
 
@@ -63,16 +63,14 @@ public class ClarificationChatTests
         var client = BuildClient(handler);
 
         ClarificationRequirement? seen = null;
-        var token = await client.ExchangeAsync(Ps, "fake-resource-token", new TokenExchangeRequest
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
         {
             OnClarificationRequired = (clarification, _) =>
             {
                 seen = clarification;
                 return Task.FromResult(ClarificationResponse.Respond("I need to create a calendar invite."));
             },
-        });
-
-        Assert.Equal("fake-auth-token", token);
+        }));
         Assert.NotNull(seen);
         Assert.Equal("Why do you need write access?", seen!.Clarification);
         Assert.Equal("I need to create a calendar invite.", handler.LastClarificationResponse);
@@ -84,14 +82,12 @@ public class ClarificationChatTests
         var handler = new ClarificationHandler();
         var client = BuildClient(handler);
 
-        var token = await client.ExchangeAsync(Ps, "fake-resource-token", new TokenExchangeRequest
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
         {
             OnClarificationRequired = (_, _) =>
-                Task.FromResult(ClarificationResponse.Update("reduced-resource-token", "Reduced to read-only.")),
-        });
-
-        Assert.Equal("fake-auth-token", token);
-        Assert.Equal("reduced-resource-token", handler.LastUpdatedResourceToken);
+                Task.FromResult(ClarificationResponse.Update(TestTokens.UpdatedResource, "Reduced to read-only.")),
+            }));
+        Assert.Equal(TestTokens.UpdatedResource, handler.LastUpdatedResourceToken);
         Assert.Equal("Reduced to read-only.", handler.LastUpdatedJustification);
     }
 
@@ -102,7 +98,7 @@ public class ClarificationChatTests
         var client = BuildClient(handler);
 
         await Assert.ThrowsAsync<AAuthClarificationCancelledException>(() =>
-            client.ExchangeAsync(Ps, "fake-resource-token", new TokenExchangeRequest
+            client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
             {
                 OnClarificationRequired = (_, _) => Task.FromResult(ClarificationResponse.Cancel()),
             }));
@@ -117,7 +113,7 @@ public class ClarificationChatTests
         var client = BuildClient(handler);
 
         await Assert.ThrowsAsync<HttpRequestException>(() =>
-            client.ExchangeAsync(Ps, "fake-resource-token", new TokenExchangeRequest()));
+            client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest()));
     }
 
     [Fact(DisplayName = "§Clarification Limits — exceeding the round limit throws")]
@@ -128,7 +124,7 @@ public class ClarificationChatTests
         var client = BuildClient(handler);
 
         await Assert.ThrowsAsync<AAuthClarificationLimitException>(() =>
-            client.ExchangeAsync(Ps, "fake-resource-token", new TokenExchangeRequest
+            client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
             {
                 MaxClarificationRounds = 2,
                 OnClarificationRequired = (_, _) =>
@@ -142,11 +138,11 @@ public class ClarificationChatTests
         var handler = new ClarificationHandler();
         var client = BuildClient(handler);
 
-        await client.ExchangeAsync(Ps, "fake-resource-token", new TokenExchangeRequest
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
         {
             OnClarificationRequired = (_, _) =>
                 Task.FromResult(ClarificationResponse.Respond("ok")),
-        });
+            }));
 
         Assert.Contains("clarification", handler.DeclaredCapabilities);
     }

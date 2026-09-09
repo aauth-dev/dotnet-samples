@@ -1,4 +1,7 @@
 using System.Collections.Concurrent;
+using System.Text.Json.Nodes;
+using AAuth.Server;
+using Microsoft.IdentityModel.Tokens;
 
 namespace Concierge;
 
@@ -27,7 +30,13 @@ public sealed class PendingStore
         string InteractionCode,
         string DownstreamBase,
         string DownstreamPath,
-        string PendingPrefix);
+        string PendingPrefix)
+    {
+        public DateTimeOffset ExpiresAt { get; } = DateTimeOffset.FromUnixTimeSeconds(
+            JsonNode.Parse(Base64UrlEncoder.DecodeBytes(UpstreamToken.Split('.')[1]))!["exp"]!.GetValue<long>());
+        public DeferredState Lifecycle { get; } = new();
+        public bool Matches(string? upstreamToken) => string.Equals(UpstreamToken, upstreamToken, StringComparison.Ordinal);
+    }
 
     private readonly ConcurrentDictionary<string, Entry> _entries = new();
 
@@ -49,6 +58,8 @@ public sealed class PendingStore
         string downstreamPath = "/events",
         string pendingPrefix = "/pending")
     {
+        foreach (var pair in _entries)
+            if (pair.Value.ExpiresAt.AddHours(1) <= DateTimeOffset.UtcNow) _entries.TryRemove(pair.Key, out _);
         var id = Guid.NewGuid().ToString("N");
         var entry = new Entry(
             id, upstreamToken, interactionUrl, interactionCode, downstreamBase, downstreamPath, pendingPrefix);
