@@ -14,15 +14,35 @@ namespace AAuth;
 public sealed class BootstrapBuilder
 {
     private readonly string _enrollEndpoint;
-    private readonly string _agentId;
+    private readonly string? _agentId;
+    private AAuthKey? _key;
     private string? _personServer;
     private IKeyStore? _keyStore;
     private IPlatformAttestor? _attestor;
+    private Discovery.AAuthEgressPolicy _egressPolicy = Discovery.AAuthEgressPolicy.Production;
 
-    internal BootstrapBuilder(string enrollEndpoint, string agentId)
+    /// <summary>Set the network admission policy for enrollment.</summary>
+    public BootstrapBuilder WithEgressPolicy(Discovery.AAuthEgressPolicy policy)
+    {
+        _egressPolicy = policy ?? throw new ArgumentNullException(nameof(policy));
+        return this;
+    }
+
+    /// <summary>Admit only the specified development loopback origins.</summary>
+    public BootstrapBuilder WithDevelopmentLoopback(params string[] origins) =>
+        WithEgressPolicy(Discovery.AAuthEgressPolicy.ForDevelopmentLoopback(origins));
+
+    internal BootstrapBuilder(string enrollEndpoint, string? agentId)
     {
         _enrollEndpoint = enrollEndpoint;
         _agentId = agentId;
+    }
+
+    /// <summary>Reuse a durable key for authenticated, idempotent enrollment.</summary>
+    public BootstrapBuilder WithKey(AAuthKey key)
+    {
+        _key = key ?? throw new ArgumentNullException(nameof(key));
+        return this;
     }
 
     /// <summary>Set the Person Server URL to associate with this agent during enrollment.</summary>
@@ -57,13 +77,14 @@ public sealed class BootstrapBuilder
         System.Threading.CancellationToken cancellationToken = default)
     {
         var keyStore = _keyStore ?? new InMemoryKeyStore();
-        var apClient = new AgentProviderClient(new System.Net.Http.HttpClient(), keyStore, _attestor);
+        using var http = Discovery.AAuthHttpTransport.CreateClient(_egressPolicy);
+        var apClient = new AgentProviderClient(http, keyStore, _attestor);
 
         // Extract AP issuer from the enrollment endpoint (base URL)
         var enrollUri = new Uri(_enrollEndpoint);
         var apIssuer = $"{enrollUri.Scheme}://{enrollUri.Authority}";
 
-        return await apClient.EnrolAsync(
-            apIssuer, _agentId, _enrollEndpoint, _personServer, cancellationToken);
+        return await apClient.EnrolWithKeyAsync(
+            apIssuer, _agentId, _enrollEndpoint, _key ?? AAuthKey.Generate(), _personServer, cancellationToken);
     }
 }

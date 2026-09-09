@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using AAuth.Headers;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
@@ -44,6 +45,7 @@ public interface IInteractiveAccessPolicy
 /// <summary>The verified context an <see cref="IAccessPolicy"/> decides on.</summary>
 public sealed class AccessPolicyRequest
 {
+    public string? Account => AAuth.Tokens.AccountBinding.Read(ResourceContext);
     /// <summary>The resource URL the auth token will be audienced to (<c>aud</c>).</summary>
     public required string ResourceUrl { get; init; }
 
@@ -61,6 +63,10 @@ public sealed class AccessPolicyRequest
 
     /// <summary>The pending-entry id when the request resumes an interaction.</summary>
     public string? InteractionId { get; init; }
+    public IReadOnlyList<string> ClarificationHistory { get; init; } = [];
+    public JsonObject? ResourceContext { get; init; }
+    public string? PersonServerIssuer { get; init; }
+    public AAuth.Tokens.UpstreamTokenValidationResult? UpstreamAuthorization { get; init; }
 }
 
 /// <summary>The kinds of decision an <see cref="IAccessPolicy"/> can return.</summary>
@@ -80,6 +86,7 @@ public enum AccessDecisionKind
 
     /// <summary>Payment is required (§Payment Required → <c>402</c>).</summary>
     NeedsPayment,
+    NeedsClarification,
 }
 
 /// <summary>
@@ -111,6 +118,7 @@ public sealed class AccessDecision
 
     /// <summary>The decision kind.</summary>
     public AccessDecisionKind Kind { get; }
+    public ClarificationRequirement? Clarification { get; private init; }
 
     /// <summary>Human-readable denial reason (<see cref="AccessDecisionKind.Deny"/>).</summary>
     public string? Reason { get; }
@@ -170,4 +178,15 @@ public sealed class AccessDecision
     /// <summary>Require payment, advertising a payment URL in the <c>Location</c> header.</summary>
     public static AccessDecision NeedsPayment(string paymentUrl)
         => new(AccessDecisionKind.NeedsPayment, paymentUrl: paymentUrl);
+
+    public static AccessDecision NeedsClarification(string question, int? timeoutSeconds = null,
+        IReadOnlyList<string>? options = null)
+    {
+        System.ArgumentException.ThrowIfNullOrWhiteSpace(question);
+        if (timeoutSeconds is <= 0) throw new System.ArgumentOutOfRangeException(nameof(timeoutSeconds));
+        return new(AccessDecisionKind.NeedsClarification)
+        {
+            Clarification = new ClarificationRequirement(question, timeoutSeconds, options),
+        };
+    }
 }

@@ -11,6 +11,7 @@ using AAuth.Agent;
 using AAuth.Agent.Governance;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Errors;
 using AAuth.Tokens;
 using Microsoft.IdentityModel.Tokens;
 using Xunit;
@@ -33,8 +34,8 @@ public class GovernanceFacadeTests
 
     private static AAuthGovernanceClient BuildFacade(HttpMessageHandler handler)
         => new(
-            new HttpClient(handler) { BaseAddress = new Uri(Ps) },
-            new MetadataClient(new HttpClient(handler)),
+            new InProcessHttpClient(handler) { BaseAddress = new Uri(Ps) },
+            new MetadataClient(new InProcessHttpClient(handler)),
             Ps);
 
     [Fact(DisplayName = "§PS Governance Endpoints — facade exposes all four governance clients")]
@@ -52,7 +53,7 @@ public class GovernanceFacadeTests
     public void Facade_Ctor_NullSignedClient_Throws()
     {
         Assert.Throws<ArgumentNullException>(() =>
-            new AAuthGovernanceClient(null!, new MetadataClient(new HttpClient()), Ps));
+            new AAuthGovernanceClient(null!, new MetadataClient(), Ps));
     }
 
     [Fact(DisplayName = "§PS Governance Endpoints — facade clients share one signed channel and work end-to-end")]
@@ -78,13 +79,13 @@ public class GovernanceFacadeTests
         Assert.Equal("Yes, go ahead.", answer);
     }
 
-    [Fact(DisplayName = "§PS Governance Endpoints — BuildGovernance wires a facade from a signing mode")]
+    [Fact(DisplayName = "§PS Governance Endpoints - BuildGovernance wires an agent-JWT facade")]
     public void BuildGovernance_WithSigningMode_ReturnsWiredFacade()
     {
-        var facade = new AAuthClientBuilder(AAuthKey.Generate())
-            .UseHwk()
+        using var facade = AAuthClientBuilder.SelfIssuing(AAuthKey.Generate())
+            .As("https://agent.example", "aauth:assistant@agent.example")
             .WithPersonServer(Ps)
-            .WithInnerHandler(new FacadeHandler())
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(new FacadeHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .BuildGovernance();
 
         Assert.NotNull(facade.Mission);
@@ -93,24 +94,89 @@ public class GovernanceFacadeTests
         Assert.NotNull(facade.Interaction);
     }
 
-    [Fact(DisplayName = "§PS Governance Endpoints — BuildGovernance requires an explicit signing mode")]
+    [Fact(DisplayName = "§PS Governance Endpoints - BuildGovernance requires an agent JWT source")]
     public void BuildGovernance_NoSigningMode_Throws()
     {
         var builder = new AAuthClientBuilder(AAuthKey.Generate());
 
         var ex = Assert.Throws<InvalidOperationException>(() => builder.BuildGovernance());
-        Assert.Contains("signing mode", ex.Message);
+        Assert.Contains("agent JWT source", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("completion")]
+    [InlineData("/permission")]
+    [InlineData("/audit")]
+    [InlineData("/interaction")]
+    [InlineData("callback")]
+    [InlineData("clarification-terminal")]
+    public async Task Session_TerminationPreventsFurtherActions(string source)
+    {
+        var handler = new FacadeHandler();
+        using var facade = BuildFacade(handler);
+        var session = await facade.ProposeMissionAsync(new MissionProposal("Lifecycle"));
+        if (source == "completion")
+            Assert.True(await session.ProposeCompletionAsync("Done"));
+        else
+        {
+            handler.TerminalPath = source;
+            await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() => source switch
+            {
+                "/permission" => session.RequestPermissionAsync(new MissionAction("SendEmail")),
+                "/audit" => session.RecordAuditAsync(new MissionAction("WebSearch")),
+                "callback" => session.AskQuestionAsync("Continue?", options: new GovernanceOptions
+                {
+                    OnInteractionRequired = (_, _) => throw new AAuthMissionTerminatedException("terminated"),
+                }),
+                "clarification-terminal" => session.AskQuestionAsync("Continue?", options: new GovernanceOptions
+                {
+                    OnClarificationRequired = (_, _) => Task.FromResult(ClarificationResponse.Respond("Continue")),
+                }),
+                _ => session.AskQuestionAsync("Continue?"),
+            });
+        }
+        Assert.Equal(MissionState.Terminated, session.Mission.State);
+        var calls = handler.Calls;
+        await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() => session.RequestPermissionAsync(new MissionAction("WebSearch")));
+        await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() => session.RecordAuditAsync(new MissionAction("WebSearch")));
+        await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() => session.AskQuestionAsync("Again?"));
+        await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() => session.RelayInteractionAsync(Ps + "/consent", "CODE"));
+        await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() => session.RelayPaymentAsync(Ps + "/pay", "CODE"));
+        await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() => session.ProposeCompletionAsync("Again"));
+        Assert.Equal(calls, handler.Calls);
     }
 
     /// <summary>Minimal PS mock serving the governance endpoints for the facade.</summary>
     private sealed class FacadeHandler : HttpMessageHandler
     {
         public bool AuditCalled { get; private set; }
+        public string? TerminalPath { get; set; }
+        public int Calls { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken ct)
         {
+            Calls++;
             var path = request.RequestUri!.AbsolutePath;
+
+            if (TerminalPath == "clarification-terminal")
+            {
+                if (request.Method == HttpMethod.Post && path == "/pending")
+                    return Json(HttpStatusCode.Forbidden, new JsonObject { ["error"] = "mission_terminated", ["mission_status"] = "terminated" });
+                var pending = Json(HttpStatusCode.Accepted, new JsonObject { ["status"] = "pending", ["clarification"] = "Continue?" });
+                pending.Headers.Location = new Uri(Ps + "/pending");
+                pending.Headers.TryAddWithoutValidation("AAuth-Requirement", "requirement=clarification");
+                return pending;
+            }
+            if (path == TerminalPath)
+                return Json(HttpStatusCode.Forbidden, new JsonObject { ["error"] = "mission_terminated", ["mission_status"] = "terminated" });
+            if (TerminalPath == "callback" && path == "/interaction")
+            {
+                var pending = Json(HttpStatusCode.Accepted, new JsonObject { ["status"] = "pending" });
+                pending.Headers.Location = new Uri(Ps + "/pending");
+                pending.Headers.TryAddWithoutValidation("AAuth-Requirement", $"requirement=interaction; url=\"{Ps}/consent\"; code=\"CODE\"");
+                return pending;
+            }
 
             if (path == "/.well-known/aauth-person.json")
             {

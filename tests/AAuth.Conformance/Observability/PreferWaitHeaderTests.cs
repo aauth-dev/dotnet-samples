@@ -57,7 +57,7 @@ public class PreferWaitHeaderTests
             };
         });
 
-        var client = new HttpClient(stub) { BaseAddress = new Uri("https://ps.example/") };
+        var client = new InProcessHttpClient(stub) { BaseAddress = new Uri("https://ps.example/") };
         var poller = new DeferredPoller(client, new DeferredPollerOptions
         {
             PreferWaitSeconds = preferValue,
@@ -87,7 +87,7 @@ public class PreferWaitHeaderTests
             };
         });
 
-        var client = new HttpClient(stub) { BaseAddress = new Uri("https://ps.example/") };
+        var client = new InProcessHttpClient(stub) { BaseAddress = new Uri("https://ps.example/") };
         var poller = new DeferredPoller(client, new DeferredPollerOptions());
 
         await poller.PollAsync(new Uri("https://ps.example/pending/123"));
@@ -121,7 +121,7 @@ public class PreferWaitHeaderTests
             };
         });
 
-        var client = new HttpClient(stub) { BaseAddress = new Uri("https://ps.example/") };
+        var client = new InProcessHttpClient(stub) { BaseAddress = new Uri("https://ps.example/") };
         var poller = new DeferredPoller(client, new DeferredPollerOptions
         {
             PreferWaitSeconds = 15,
@@ -155,7 +155,7 @@ public class PreferWaitHeaderTests
             };
         });
 
-        var client = new HttpClient(stub) { BaseAddress = new Uri("https://ps.example/") };
+        var client = new InProcessHttpClient(stub) { BaseAddress = new Uri("https://ps.example/") };
         var poller = new DeferredPoller(client, new DeferredPollerOptions
         {
             PreferWaitSeconds = 0,

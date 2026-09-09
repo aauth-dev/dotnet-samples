@@ -30,8 +30,8 @@ public class GovernanceClientBuilderTests
 
     private static AAuthGovernanceClient BuildBound(SessionHandler handler)
         => AAuthGovernanceClient.Create(
-            new HttpClient(handler) { BaseAddress = new Uri(Ps) },
-            new MetadataClient(new HttpClient(handler)),
+            new InProcessHttpClient(handler) { BaseAddress = new Uri(Ps) },
+            new MetadataClient(new InProcessHttpClient(handler)),
             personServer: Ps);
 
     [Fact(DisplayName = "§Mission Creation — Create factory binds the Person Server")]
@@ -44,10 +44,10 @@ public class GovernanceClientBuilderTests
     [Fact(DisplayName = "§Mission Creation — BuildGovernance binds WithPersonServer URL")]
     public void BuildGovernance_BindsPersonServer()
     {
-        var client = new AAuthClientBuilder(AAuthKey.Generate())
-            .UseHwk()
+        using var client = AAuthClientBuilder.SelfIssuing(AAuthKey.Generate())
+            .As("https://agent.example", "aauth:assistant@agent.example")
             .WithPersonServer(Ps)
-            .WithInnerHandler(new SessionHandler())
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(new SessionHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .BuildGovernance();
 
         Assert.Equal(Ps, client.PersonServer);
@@ -57,8 +57,8 @@ public class GovernanceClientBuilderTests
     public void Ctor_MissingPersonServer_Throws()
     {
         Assert.Throws<ArgumentException>(() => new AAuthGovernanceClient(
-            new HttpClient(new SessionHandler()) { BaseAddress = new Uri(Ps) },
-            new MetadataClient(new HttpClient(new SessionHandler())),
+            new InProcessHttpClient(new SessionHandler()) { BaseAddress = new Uri(Ps) },
+            new MetadataClient(new InProcessHttpClient(new SessionHandler())),
             personServer: ""));
     }
 

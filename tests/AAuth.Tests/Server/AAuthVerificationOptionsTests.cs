@@ -9,28 +9,28 @@ public class AAuthVerificationOptionsTests
     [Fact]
     public void Default_RequiresIssuerVerification()
     {
-        Assert.True(new AAuthVerificationOptions().RequireIssuerVerification);
+        Assert.Equal(["jwt"], new AAuthVerificationOptions().AcceptedSchemes);
     }
 
     [Fact]
     public void SignatureOnly_DisablesIssuerVerification()
     {
-        var options = AAuthVerificationOptions.SignatureOnly();
-        Assert.False(options.RequireIssuerVerification);
+        var options = AAuthVerificationOptions.Generic();
+        Assert.Contains("hwk", options.AcceptedSchemes);
         Assert.Null(options.Clock);
     }
 
     [Fact]
     public void SignatureOnly_ReturnsFreshInstances()
     {
-        Assert.NotSame(AAuthVerificationOptions.SignatureOnly(), AAuthVerificationOptions.SignatureOnly());
+        Assert.NotSame(AAuthVerificationOptions.Generic(), AAuthVerificationOptions.Generic());
     }
 
     [Fact]
     public void SignatureOnly_ForwardsClock()
     {
         var clock = () => DateTimeOffset.UnixEpoch;
-        var options = AAuthVerificationOptions.SignatureOnly(clock);
+        var options = AAuthVerificationOptions.Generic(clock);
         Assert.Same(clock, options.Clock);
     }
 }

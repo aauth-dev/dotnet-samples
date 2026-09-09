@@ -13,6 +13,7 @@ namespace AAuth;
 /// </summary>
 public sealed class AAuthResourceOptions
 {
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
     /// <summary>HTTPS issuer URL for this resource (used in metadata and token audience).</summary>
     public string Issuer { get; set; } = null!;
 
@@ -20,7 +21,7 @@ public sealed class AAuthResourceOptions
     /// Signing keys keyed by <c>kid</c>. These are served via the JWKS endpoint
     /// and used to sign resource tokens / challenges.
     /// </summary>
-    public Dictionary<string, AAuthKey> SigningKeys { get; set; } = new();
+    public Dictionary<string, IAAuthKey> SigningKeys { get; set; } = new();
 
     /// <summary>Maximum allowed age of inbound signatures. Default: 60 seconds.</summary>
     public TimeSpan MaxSignatureAge { get; set; } = TimeSpan.FromSeconds(60);
@@ -85,6 +86,7 @@ public sealed class AAuthResourceOptions
     /// resource tokens via <c>401</c> challenges instead.
     /// </summary>
     public string? AuthorizationEndpoint { get; set; }
+    public string? RevocationEndpoint { get; set; }
 
     /// <summary>
     /// Optional extension metadata merged verbatim into the resource well-known

@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Server.Governance;
+using AAuth.Server.Verification;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
@@ -39,6 +40,17 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
         builder.Services.AddRouting();
 
         var app = builder.Build();
+        app.Use(async (context, next) =>
+        {
+            if (!context.Request.Headers.ContainsKey("Test-No-Identity"))
+                context.Features.Set(new AAuthVerificationResult
+                {
+                    Level = AAuthLevel.Identified, Scheme = "jwt", IssuerVerified = true,
+                    TokenType = AAuthTokenType.AgentToken,
+                    Agent = context.Request.Headers["Test-Agent"].FirstOrDefault() ?? "aauth:assistant@agent.example",
+                });
+            await next();
+        });
         app.MapAAuthGovernance();
 
         // Seed an active mission with one pre-approved tool ("WebSearch").
@@ -72,6 +84,7 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
 
         var response = await client.PostAsync("https://localhost/permission", JsonContent(body));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
         var json = await ReadJson(response);
         Assert.Equal("granted", (string?)json?["permission"]);
     }
@@ -96,6 +109,11 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
 
         var response = await client.PostAsync("https://localhost/permission", JsonContent(body));
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        var json = await ReadJson(response);
+        Assert.Equal("invalid_request", (string?)json!["error"]);
+        Assert.False(json.ContainsKey("detail"));
+        Assert.False(json.ContainsKey("error_description"));
     }
 
     [Fact(DisplayName = "§Audit Endpoint — a valid record is acknowledged with 201 Created")]
@@ -137,11 +155,77 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
 
         var response = await client.PostAsync("https://localhost/permission", JsonContent(body));
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
         var json = await ReadJson(response);
         Assert.Equal("mission_terminated", (string?)json?["error"]);
+        Assert.Equal("terminated", (string?)json?["mission_status"]);
+        Assert.False(json!.ContainsKey("detail"));
+        Assert.False(response.Headers.Contains("Signature-Error"));
 
         // Restore active state so test ordering does not affect other cases.
         await store.SetStateAsync(_missionS256, MissionState.Active);
+    }
+
+    [Theory]
+    [InlineData("permission")]
+    [InlineData("audit")]
+    [InlineData("mission-interaction")]
+    public async Task UnknownMission_IsRejectedBeforePolicy(string endpoint)
+    {
+        using var client = Client();
+        var body = new JsonObject
+        {
+            ["mission"] = new JsonObject
+            {
+                ["approver"] = Approver,
+                ["s256"] = Mission.ComputeS256(Encoding.UTF8.GetBytes("unknown mission")),
+            },
+            ["action"] = "WebSearch",
+            ["type"] = "question",
+            ["question"] = "Refundable?",
+        };
+
+        using var response = await client.PostAsync("https://localhost/" + endpoint, JsonContent(body));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("invalid_mission", (string?)(await ReadJson(response))?["error"]);
+        Assert.False(response.Headers.Contains("Signature-Error"));
+    }
+
+    [Theory]
+    [InlineData("permission", "foreign")]
+    [InlineData("audit", "foreign")]
+    [InlineData("mission-interaction", "foreign")]
+    [InlineData("permission", "approver")]
+    [InlineData("audit", "approver")]
+    [InlineData("mission-interaction", "approver")]
+    [InlineData("permission", "anonymous")]
+    [InlineData("audit", "anonymous")]
+    [InlineData("mission-interaction", "anonymous")]
+    [InlineData("permission", "terminated")]
+    [InlineData("audit", "terminated")]
+    [InlineData("mission-interaction", "terminated")]
+    public async Task MissionAuthorization_RejectsInvalidContext(string endpoint, string scenario)
+    {
+        using var client = Client();
+        if (scenario == "foreign") client.DefaultRequestHeaders.Add("Test-Agent", "aauth:foreign@agent.example");
+        if (scenario == "anonymous") client.DefaultRequestHeaders.Add("Test-No-Identity", "true");
+        if (scenario == "terminated")
+            await _host!.Services.GetRequiredService<IMissionStore>().SetStateAsync(_missionS256, MissionState.Terminated);
+        var reference = MissionClaim();
+        if (scenario == "approver") reference["approver"] = "https://foreign.example";
+        var body = new JsonObject
+        {
+            ["mission"] = reference, ["action"] = "WebSearch", ["type"] = "question", ["question"] = "Refundable?",
+        };
+        using var response = await client.PostAsync("https://localhost/" + endpoint, JsonContent(body));
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var expected = scenario == "terminated" ? "mission_terminated"
+            : scenario == "anonymous" ? "invalid_carrier_token" : "invalid_mission";
+        Assert.Equal(expected, (string?)(await ReadJson(response))?["error"]);
+        Assert.False(response.Headers.Contains("Signature-Error"));
+        Assert.Empty(await _host!.Services.GetRequiredService<IMissionLog>().ReadAsync(_missionS256));
     }
 
     private static (byte[] Blob, string S256) BuildMission(string agent, params string[] approvedTools)

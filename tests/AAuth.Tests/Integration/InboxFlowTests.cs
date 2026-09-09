@@ -7,6 +7,10 @@ using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using AAuth;
 using AAuth.Crypto;
+using AAuth.Discovery;
+using AAuth.Tokens;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
 
@@ -23,9 +27,10 @@ namespace AAuth.Tests.Integration;
 /// </summary>
 public class InboxFlowTests : IAsyncLifetime
 {
-    private const string Base = "http://localhost";
+    private const string Base = "http://localhost:5004";
 
     private readonly AAuthKey _agentKey = AAuthKey.Generate();
+    private readonly AAuthKey _issuerKey = AAuthKey.Generate();
     private WebApplicationFactory<Inbox.Entry>? _inbox;
 
     public Task InitializeAsync()
@@ -33,6 +38,15 @@ public class InboxFlowTests : IAsyncLifetime
         _inbox = new WebApplicationFactory<Inbox.Entry>().WithWebHostBuilder(b =>
         {
             b.UseSetting("AAuth:Issuer", Base);
+            b.UseIsolatedDemoConsent();
+            b.ConfigureServices(services =>
+            {
+                var http = new InProcessHttpClient(new DiscoveryHandler(_issuerKey));
+                services.RemoveAll<MetadataClient>();
+                services.RemoveAll<JwksClient>();
+                services.AddSingleton(new MetadataClient(http));
+                services.AddSingleton(new JwksClient(http));
+            });
         });
         _inbox.CreateClient();
         return Task.CompletedTask;
@@ -50,22 +64,25 @@ public class InboxFlowTests : IAsyncLifetime
     {
         var approver = _inbox!.CreateClient(); // plain browser-style client
         return new AAuthClientBuilder(_agentKey)
-            .UseHwk()
+            .UseJwt(new AgentTokenBuilder
+            {
+                EgressPolicy = TestEgress.Policy,
+                Issuer = "https://ap.test", Subject = "aauth:inbox@ap.test", Key = _issuerKey,
+                ConfirmationKey = _agentKey, KeyId = "ap-key",
+            }.Build())
             .WithResourceManagedAccess()
             .WithInteractionHandling(opts =>
             {
                 opts.OnInteractionRequired = async (url, code, ct) =>
                 {
-                    // Simulate the user approving at the Inbox consent page.
-                    var form = new FormUrlEncodedContent(
-                        new[] { new KeyValuePair<string, string>("code", code) });
-                    var resp = await approver.PostAsync("/consent/approve", form, ct);
+                    using var resp = await TestConsentBrowser.DecideAsync(approver,
+                        "/consent?code=" + code, "/consent/approve");
                     resp.EnsureSuccessStatusCode();
                 };
                 opts.DefaultPollInterval = TimeSpan.FromMilliseconds(50);
                 opts.MinPollInterval = TimeSpan.FromMilliseconds(10);
             })
-            .WithInnerHandler(_inbox.Server.CreateHandler())
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(_inbox.Server.CreateHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
     }
 
@@ -126,5 +143,18 @@ public class InboxFlowTests : IAsyncLifetime
 
         Assert.Equal("aauth-access-token", (string?)doc!["access_mode"]);
         Assert.Equal($"{Base}/authorize", (string?)doc["authorization_endpoint"]);
+    }
+
+    private sealed class DiscoveryHandler(IAAuthKey key) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var jwk = key.ToPublicJwk();
+            jwk["kid"] = "ap-key";
+            var body = request.RequestUri!.AbsolutePath == "/keys"
+                ? new JsonObject { ["keys"] = new JsonArray(jwk) }
+                : new JsonObject { ["issuer"] = "https://ap.test", ["jwks_uri"] = "https://ap.test/keys" };
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(body) });
+        }
     }
 }

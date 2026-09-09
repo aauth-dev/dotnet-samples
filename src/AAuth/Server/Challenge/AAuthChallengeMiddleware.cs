@@ -1,12 +1,17 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Crypto;
+using AAuth.Discovery;
 using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server.Verification;
+using AAuth.Server.Metadata;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AAuth.Server.Challenge;
 
@@ -129,7 +134,7 @@ public sealed class AAuthChallengeMiddleware
         await _next(context).ConfigureAwait(false);
     }
 
-    private Task IssueChallenge(
+    private async Task IssueChallenge(
         HttpContext context,
         VerificationResult? result,
         SignatureKeyParser.ParsedSignatureKeyInfo? parsedInfo)
@@ -162,7 +167,7 @@ public sealed class AAuthChallengeMiddleware
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             context.Response.Headers[AAuthConstants.Headers.AAuthError] =
                 "Auth token required but no Person Server audience could be resolved.";
-            return Task.CompletedTask;
+            return;
         }
 
         // Validate that required options are present for challenge issuance.
@@ -190,13 +195,26 @@ public sealed class AAuthChallengeMiddleware
         if (_options.MissionAware
             && AAuthMissionHeader.TryParseStructured(
                 context.Request.Headers[AAuthMissionHeader.Name],
-                out var missionApprover, out var missionS256))
+                out var missionApprover, out var missionS256, _options.EgressPolicy))
         {
             mission = new MissionClaim(missionApprover!, missionS256!);
         }
 
+        var definitions = _options.ScopeDescriptions
+            ?? context.RequestServices?.GetService<AAuthResourceMetadataOptions>()?.ScopeDescriptions;
+        IReadOnlyCollection<string>? identityScopes = null;
+        var requestedScopes = (_options.DefaultScopes ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (requestedScopes.Any(scope => definitions?.ContainsKey(scope) != true)
+            && (string?)parsedInfo?.Payload?["ps"] is { } personServer)
+        {
+            var metadata = context.RequestServices!.GetRequiredService<MetadataClient>();
+            var person = await metadata.FetchAsync(metadata.GetUrl(personServer, AAuthConstants.DwkFiles.Person), context.RequestAborted);
+            identityScopes = (person["scopes_supported"] as System.Text.Json.Nodes.JsonArray)?
+                .Select(scope => scope?.GetValue<string>() ?? "").ToArray();
+        }
         var resourceToken = new ResourceTokenBuilder
         {
+            EgressPolicy = _options.EgressPolicy,
             Issuer = _options.ResourceIdentifier,
             Audience = audience,
             Agent = agent,
@@ -204,12 +222,14 @@ public sealed class AAuthChallengeMiddleware
             Key = _options.ResourceSigningKey,
             KeyId = _options.ResourceKeyId,
             Scope = _options.DefaultScopes,
+            Account = _options.RequestedAccount?.Invoke(context),
+            ScopeDescriptions = definitions,
+            PersonServerScopesSupported = identityScopes,
             Mission = mission,
         }.Build();
 
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
         context.Response.Headers[AAuthRequirementHeader.Name] =
             AAuthRequirementHeader.FormatAuthToken(resourceToken);
-        return Task.CompletedTask;
     }
 }

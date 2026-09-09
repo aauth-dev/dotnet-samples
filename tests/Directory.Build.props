@@ -23,6 +23,11 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Using Include="AAuth.Testing" />
+    <Compile Include="$(MSBuildThisFileDirectory)TestEgress.cs" Link="TestEgress.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)TestConsentBrowser.cs" Link="TestConsentBrowser.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)TestScopeDefinitions.cs" Link="TestScopeDefinitions.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)TestTokens.cs" Link="TestTokens.cs" />
   </ItemGroup>
 
 </Project>

@@ -8,6 +8,10 @@
     <ProjectReference Include="..\..\samples\MockResourceServers\Inbox\Inbox.csproj" />
     <ProjectReference Include="..\..\samples\MockPersonServer\MockPersonServer.csproj" />
     <ProjectReference Include="..\..\samples\MockAccessServers\Federated\Federated.csproj" />
+    <ProjectReference Include="../../samples/MockAccessServers/R3/R3.csproj" />
+    <ProjectReference Include="..\..\samples\GuidedTour\GuidedTour.csproj" />
+    <ProjectReference Include="..\..\samples\SampleApp\SampleApp.csproj" />
+    <ProjectReference Include="../../samples/Concierge/Concierge.csproj" />
   </ItemGroup>
 
   <!--
@@ -19,6 +23,8 @@
   -->
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0" />
+    <Reference Include="Microsoft.CodeAnalysis" HintPath="$(MSBuildSDKsPath)/../Roslyn/bincore/Microsoft.CodeAnalysis.dll" />
+    <Reference Include="Microsoft.CodeAnalysis.CSharp" HintPath="$(MSBuildSDKsPath)/../Roslyn/bincore/Microsoft.CodeAnalysis.CSharp.dll" />
   </ItemGroup>
 
 </Project>

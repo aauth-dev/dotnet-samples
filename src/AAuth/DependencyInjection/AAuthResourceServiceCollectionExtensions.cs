@@ -47,7 +47,7 @@ public static class AAuthResourceServiceCollectionExtensions
         // Register the shared discovery clients (MetadataClient + JwksClient) with
         // a pooled handler. Folded in so consumers wire no HttpClient/factory
         // plumbing; both stay overridable singletons (TryAdd) for tests.
-        services.AddAAuthDiscovery();
+        services.AddAAuthDiscovery(discovery => discovery.EgressPolicy = options.EgressPolicy);
 
         // Register ISignatureKeyResolver.
         if (options.KeyResolver is not null)
@@ -59,7 +59,8 @@ public static class AAuthResourceServiceCollectionExtensions
             services.TryAddSingleton<ISignatureKeyResolver>(sp =>
             {
                 var jwksClient = sp.GetRequiredService<JwksClient>();
-                return new DefaultSignatureKeyResolver(jwksClient);
+                return new DefaultSignatureKeyResolver(jwksClient, sp.GetRequiredService<MetadataClient>(),
+                    tokenVerifiers: sp.GetServices<ISignatureTokenVerifier>());
             });
         }
 
@@ -80,6 +81,7 @@ public static class AAuthResourceServiceCollectionExtensions
         // Register the well-known metadata options for UseAAuthVerification / MapAAuthWellKnown.
         var metadataOptions = new AAuthResourceMetadataOptions
         {
+            EgressPolicy = options.EgressPolicy,
             Issuer = options.Issuer,
             SigningKeys = options.SigningKeys,
             Name = options.Name,
@@ -88,6 +90,7 @@ public static class AAuthResourceServiceCollectionExtensions
             SignatureWindow = options.SignatureWindow,
             AccessMode = options.AccessMode,
             AuthorizationEndpoint = options.AuthorizationEndpoint,
+            RevocationEndpoint = options.RevocationEndpoint,
             AdditionalMetadata = options.AdditionalMetadata,
         };
         services.TryAddSingleton(metadataOptions);

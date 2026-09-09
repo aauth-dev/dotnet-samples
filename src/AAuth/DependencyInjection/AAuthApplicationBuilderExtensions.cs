@@ -41,17 +41,20 @@ public static class AAuthApplicationBuilderExtensions
         var verifier = app.ApplicationServices.GetRequiredService<AAuthVerifier>();
         var resolver = app.ApplicationServices.GetService<ISignatureKeyResolver>()
             ?? new DefaultSignatureKeyResolver(
-                app.ApplicationServices.GetService<JwksClient>());
+                app.ApplicationServices.GetService<JwksClient>(), app.ApplicationServices.GetService<MetadataClient>(),
+                tokenVerifiers: app.ApplicationServices.GetServices<ISignatureTokenVerifier>());
         var metadata = app.ApplicationServices.GetService<MetadataClient>();
         var jwks = app.ApplicationServices.GetService<JwksClient>();
         var jtiStore = app.ApplicationServices.GetService<IJtiStore>();
-        var resolvedOptions = options ?? new AAuthVerificationOptions();
+        var resolvedOptions = options ?? new AAuthVerificationOptions
+        {
+            EgressPolicy = metadata?.Policy ?? AAuthEgressPolicy.Production,
+        };
 
         // Startup footgun guards (diagnostics only — no runtime policy change):
         // throw on a configured-but-ignored trust policy; warn on implicit-open.
         TrustConfigDiagnostics.Validate(
             app.ApplicationServices.GetService<ILoggerFactory>()?.CreateLogger("AAuth.Verification"),
-            resolvedOptions.RequireIssuerVerification,
             authTrustConfigured: resolvedOptions.TrustedAuthTokenIssuers is not null || resolvedOptions.IsTrustedAuthTokenIssuer is not null,
             agentTrustConfigured: resolvedOptions.TrustedAgentProviderIssuers is not null || resolvedOptions.IsTrustedAgentProviderIssuer is not null,
             contextLabel: "UseAAuthVerification");
@@ -135,9 +138,7 @@ public static class AAuthApplicationBuilderExtensions
             var verification = context.GetAAuthVerification();
             if (verification is null)
             {
-                return Results.Json(
-                    new { error = "invalid_request" },
-                    statusCode: StatusCodes.Status401Unauthorized);
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status401Unauthorized);
             }
 
             // Body: { "scope": "a b c" } — scope is REQUIRED. Reject a non-JSON
@@ -145,9 +146,7 @@ public static class AAuthApplicationBuilderExtensions
             // InvalidOperationException (not JsonException) and surface as a 500.
             if (!context.Request.HasJsonContentType())
             {
-                return Results.Json(
-                    new { error = "invalid_request", error_description = "Content-Type must be application/json" },
-                    statusCode: StatusCodes.Status415UnsupportedMediaType);
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "Content-Type must be application/json", statusCode: StatusCodes.Status415UnsupportedMediaType);
             }
 
             AuthorizationEndpointBody? body;
@@ -159,25 +158,27 @@ public static class AAuthApplicationBuilderExtensions
             }
             catch (JsonException)
             {
-                return Results.Json(
-                    new { error = "invalid_request", error_description = "malformed JSON body" },
-                    statusCode: StatusCodes.Status400BadRequest);
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "malformed JSON body", statusCode: StatusCodes.Status400BadRequest);
             }
 
             if (body is null || string.IsNullOrWhiteSpace(body.Scope))
             {
-                return Results.Json(
-                    new { error = "invalid_request", error_description = "scope is required" },
-                    statusCode: StatusCodes.Status400BadRequest);
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "scope is required", statusCode: StatusCodes.Status400BadRequest);
             }
 
-            var request = new AAuthAuthorizationRequest(body.Scope, verification);
+            if (body.Account.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.String))
+                return AAuthProblemDetails.Create("invalid_request", "account must be a string when present", statusCode: 400);
+            var account = body.Account.ValueKind == JsonValueKind.String ? body.Account.GetString() : null;
+            if (!AAuth.Tokens.AccountBinding.IsValid(account))
+                return AAuthProblemDetails.Create("invalid_request", "account must be non-empty and contain no control characters", statusCode: 400);
+            var request = new AAuthAuthorizationRequest(body.Scope, verification) { Account = account };
             return await handler(context, request).ConfigureAwait(false);
         });
     }
 
     private sealed record AuthorizationEndpointBody(
-        [property: JsonPropertyName("scope")] string? Scope);
+        [property: JsonPropertyName("scope")] string? Scope,
+        [property: JsonPropertyName("account")] JsonElement Account = default);
 
     /// <summary>
     /// Configure the full AAuth resource pipeline in one call: maps well-known endpoints,
@@ -207,8 +208,9 @@ public static class AAuthApplicationBuilderExtensions
         // 2. Verification middleware
         app.UseAAuthVerification(new AAuthVerificationOptions
         {
+            EgressPolicy = metadataOptions.EgressPolicy,
             ResourceIdentifier = metadataOptions.Issuer,
-            RequireIssuerVerification = pipelineOptions.RequireIssuerVerification,
+            ExpectedAccount = pipelineOptions.AccountSelector,
             TrustedAuthTokenIssuers = pipelineOptions.TrustedAuthTokenIssuers,
             IsTrustedAuthTokenIssuer = pipelineOptions.IsTrustedAuthTokenIssuer,
             TrustedAgentProviderIssuers = pipelineOptions.TrustedAgentProviderIssuers,
@@ -220,7 +222,7 @@ public static class AAuthApplicationBuilderExtensions
         {
             // Use the first signing key for challenges
             string? kid = null;
-            AAuth.Crypto.AAuthKey? key = null;
+            AAuth.Crypto.IAAuthKey? key = null;
             foreach (var kvp in signingKeys)
             {
                 kid = kvp.Key;
@@ -230,9 +232,11 @@ public static class AAuthApplicationBuilderExtensions
 
             app.UseAAuthChallenge(new ChallengeOptions
             {
+                EgressPolicy = metadataOptions.EgressPolicy,
                 ResourceSigningKey = key,
                 ResourceKeyId = kid,
                 ResourceIdentifier = metadataOptions.Issuer,
+                RequestedAccount = pipelineOptions.AccountSelector,
                 AccessMode = pipelineOptions.AccessMode,
                 DefaultScopes = pipelineOptions.DefaultScopes,
             });

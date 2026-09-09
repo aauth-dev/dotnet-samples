@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -79,9 +80,16 @@ public sealed class AccessServerClient
         ArgumentException.ThrowIfNullOrEmpty(request.ExpectedAgentId);
         ArgumentNullException.ThrowIfNull(request.AgentKey);
 
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(TimeSpan.FromMinutes(10));
+        cancellationToken = budget.Token;
+        Uri? activePendingUrl = null;
+        if (request.AuthorizationExpiresAt.ToUnixTimeSeconds() <= DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+            throw new TokenVerificationException("The verified authorization context has expired.");
+
         using var activity = AAuthDiagnostics.Source.StartActivity("AAuth.AccessServerFederation");
 
-        var metadataUrl = MetadataClient.BuildUrl(accessServer, AAuthConstants.DwkFiles.Access);
+        var metadataUrl = _metadata.GetUrl(accessServer, AAuthConstants.DwkFiles.Access);
         var doc = await _metadata.FetchAsync(metadataUrl, cancellationToken).ConfigureAwait(false);
         var tokenEndpoint = (string?)doc["token_endpoint"]
             ?? throw new InvalidOperationException(
@@ -93,17 +101,12 @@ public sealed class AccessServerClient
         // https-or-loopback policy used elsewhere, and pin the endpoint to the
         // same origin as the configured AS so a metadata compromise can't
         // divert the signed request off-host.
-        if (!AAuthUrl.IsHttpsOrLoopback(tokenEndpoint)
-            || !Uri.TryCreate(tokenEndpoint, UriKind.Absolute, out var tokenEndpointUri))
-        {
-            throw new InvalidOperationException(
-                $"Access Server 'token_endpoint' must be an absolute https:// URL (or http://localhost): {tokenEndpoint}");
-        }
+        var tokenEndpointUri = _metadata.Policy.ValidateUrl(tokenEndpoint, endpoint: true);
         if (!Uri.TryCreate(accessServer, UriKind.Absolute, out var asUri)
             || !string.Equals(
                 tokenEndpointUri.GetLeftPart(UriPartial.Authority),
                 asUri.GetLeftPart(UriPartial.Authority),
-                StringComparison.OrdinalIgnoreCase))
+                StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
                 $"Access Server 'token_endpoint' must share an origin with {accessServer}: {tokenEndpoint}");
@@ -118,6 +121,10 @@ public sealed class AccessServerClient
         {
             body["upstream_token"] = request.UpstreamToken;
         }
+        if (!string.IsNullOrEmpty(request.SubagentToken))
+        {
+            body["subagent_token"] = request.SubagentToken;
+        }
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, tokenEndpointUri)
         {
@@ -128,7 +135,7 @@ public sealed class AccessServerClient
             httpRequest.Headers.TryAddWithoutValidation("Prefer", $"wait={preferWait}");
         }
 
-        var response = await _signedClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
+        var response = await AAuthHttpTransport.SendAsync(_signedClient, httpRequest, cancellationToken).ConfigureAwait(false);
 
         try
         {
@@ -150,6 +157,7 @@ public sealed class AccessServerClient
             // Bounded to guard against a misbehaving AS that never resolves.
             const int maxCompositionSteps = 16;
             var compositionSteps = 0;
+            Interaction? deliveredInteraction = null;
             while (response.StatusCode == HttpStatusCode.Accepted)
             {
                 if (++compositionSteps > maxCompositionSteps)
@@ -160,12 +168,28 @@ public sealed class AccessServerClient
                 }
 
                 var requirement = ExtractRequirementType(response);
+                activePendingUrl = ResolveSameOriginLocation(response, tokenEndpointUri, asUri);
 
                 // requirement=claims (§Claims Required) is a spec-mandated
                 // active identity-claims PUSH: read the requested claim names,
                 // ask the caller to supply them (incl. a directed `sub`), POST
                 // them signed to the Location, then resume polling the same URL.
-                if (string.Equals(requirement, ClaimsRequirement.RequirementType, StringComparison.Ordinal))
+                if (requirement == ClarificationRequirement.RequirementType)
+                {
+                    if (request.OnClarificationRequired is null)
+                        throw new NotSupportedException("AS clarification requires OnClarificationRequired.");
+                    var clarificationBody = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken);
+                    var clarification = ClarificationRequirement.FromResponse(
+                        AAuthRequirementHeader.Parse("requirement=clarification"), clarificationBody)!;
+                    response.Dispose();
+                    using var roundBudget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    roundBudget.CancelAfter(TimeSpan.FromSeconds(clarification.TimeoutSeconds ?? 300));
+                    var answer = await request.OnClarificationRequired(clarification, roundBudget.Token)
+                        .WaitAsync(roundBudget.Token).ConfigureAwait(false);
+                    await new ClarificationExchange(_signedClient, activePendingUrl).ApplyAsync(answer, roundBudget.Token);
+                    response = await PollDeferredAsync(activePendingUrl, request.PollerOptions, deliveredInteraction, cancellationToken);
+                }
+                else if (string.Equals(requirement, ClaimsRequirement.RequirementType, StringComparison.Ordinal))
                 {
                     if (request.OnClaimsRequired is null)
                     {
@@ -176,6 +200,8 @@ public sealed class AccessServerClient
                     }
 
                     var claimsRequirement = await ExtractClaimsRequirementAsync(response, cancellationToken).ConfigureAwait(false);
+                    if (claimsRequirement.RequiredClaims.Any(name => !AuthTokenBuilder.IsIdentityClaimAllowed(name)))
+                        throw new TokenVerificationException("Requested identity claims contain protocol-owned names.");
                     var claimsPendingUrl = ResolveSameOriginLocation(response, tokenEndpointUri, asUri);
                     response.Dispose();
 
@@ -192,13 +218,13 @@ public sealed class AccessServerClient
                     }
 
                     var pushResponse = await PushClaimsAsync(claimsPendingUrl, claimsResponse.ToJson(), cancellationToken).ConfigureAwait(false);
-                    if (pushResponse.StatusCode == HttpStatusCode.Accepted)
+                    if (pushResponse.StatusCode == HttpStatusCode.Accepted && !IsActionable(pushResponse, deliveredInteraction))
                     {
                         // Still pending after the push — poll the same URL.
                         // Mechanisms compose, so stop polling if the next 202
                         // is itself a requirement=claims (handled next loop).
                         pushResponse.Dispose();
-                        response = await PollDeferredAsync(claimsPendingUrl, request.PollerOptions, cancellationToken).ConfigureAwait(false);
+                        response = await PollDeferredAsync(claimsPendingUrl, request.PollerOptions, deliveredInteraction, cancellationToken).ConfigureAwait(false);
                     }
                     else
                     {
@@ -217,23 +243,21 @@ public sealed class AccessServerClient
                 }
                 else
                 {
-                    if (request.OnInteractionRequired is null)
-                    {
-                        throw new HttpRequestException(
-                            $"Access Server returned {(int)response.StatusCode} (deferred response) but no OnInteractionRequired callback was provided.");
-                    }
-
                     var interaction = ExtractInteraction(response);
                     if (interaction is not null)
                     {
+                        if (request.OnInteractionRequired is null)
+                            throw new HttpRequestException("AS interaction requires OnInteractionRequired.");
+                        await AAuthHttpTransport.AdmitInteractionAsync(_signedClient, interaction.Url, cancellationToken).ConfigureAwait(false);
                         await request.OnInteractionRequired(interaction, cancellationToken).ConfigureAwait(false);
+                        deliveredInteraction = interaction;
                     }
 
                     var pendingUrl = ResolveLocation(response, tokenEndpointUri);
                     response.Dispose();
                     // Poll the same Location; stop early if the AS escalates to
                     // requirement=claims so the next loop can push the claims.
-                    response = await PollDeferredAsync(pendingUrl, request.PollerOptions, cancellationToken).ConfigureAwait(false);
+                    response = await PollDeferredAsync(pendingUrl, request.PollerOptions, deliveredInteraction, cancellationToken).ConfigureAwait(false);
 
                     if (response.StatusCode == HttpStatusCode.Forbidden
                         && await IsDeniedAsync(response, cancellationToken).ConfigureAwait(false))
@@ -257,7 +281,8 @@ public sealed class AccessServerClient
                 agentKey: request.AgentKey,
                 expectedActContext: request.ExpectedActContext,
                 requestedScope: request.RequestedScope,
-                ct: cancellationToken).ConfigureAwait(false);
+                ct: cancellationToken,
+                expectedAccount: request.Account).ConfigureAwait(false);
 
             if (!delivery.IsValid)
             {
@@ -265,7 +290,26 @@ public sealed class AccessServerClient
                     $"Auth token delivery verification failed: {delivery.Error}");
             }
 
+            if (!JsonNode.DeepEquals(request.ExpectedMission?.ToJsonObject(), delivery.Verified!.Payload["mission"]))
+                throw new TokenVerificationException("Auth token delivery mission differs from the resource request.");
+
+            if (delivery.Verified!.ExpiresAt > request.AuthorizationExpiresAt
+                || delivery.Verified.ExpiresAt.ToUnixTimeSeconds() <= DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+            {
+                throw new TokenVerificationException("Auth token delivery exceeds the verified authorization lifetime.");
+            }
+
             return authToken;
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or TimeoutException or AAuthInteractionTimeoutException)
+        {
+            if (activePendingUrl is not null)
+            {
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                try { await new ClarificationExchange(_signedClient, activePendingUrl).CancelAsync(cleanup.Token); }
+                catch (Exception cleanupError) when (cleanupError is HttpRequestException or OperationCanceledException) { }
+            }
+            throw;
         }
         finally
         {
@@ -288,7 +332,7 @@ public sealed class AccessServerClient
         return null;
     }
 
-    private static Interaction? ExtractInteraction(HttpResponseMessage response)
+    private Interaction? ExtractInteraction(HttpResponseMessage response)
     {
         if (!response.Headers.TryGetValues(AAuthRequirementHeader.Name, out var values))
         {
@@ -300,7 +344,7 @@ public sealed class AccessServerClient
             AAuthRequirementHeader.ParsedRequirement parsed;
             try { parsed = AAuthRequirementHeader.Parse(raw); }
             catch (FormatException) { continue; }
-            var interaction = Interaction.FromRequirement(parsed);
+            var interaction = Interaction.FromRequirement(parsed, _metadata.Policy);
             if (interaction is not null) { return interaction; }
         }
         return null;
@@ -359,22 +403,21 @@ public sealed class AccessServerClient
         {
             Content = JsonContent.Create(claims),
         };
-        return await _signedClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        return await AAuthHttpTransport.SendAsync(_signedClient, request, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Poll a pending <c>Location</c> to its terminal verdict, but stop early
-    /// and return the <c>202</c> response if the AS escalates to
-    /// <c>requirement=claims</c> mid-poll. Mechanisms compose onto one
-    /// <c>Location</c> (§Trust Establishment), so the caller re-dispatches the
-    /// returned claims requirement on the next loop iteration.
+    /// and return a <c>202</c> carrying claims, clarification, or a new
+    /// interaction. The caller dispatches that requirement on the next loop
+    /// iteration; repeated copies of the current interaction keep polling.
     /// </summary>
     private async Task<HttpResponseMessage> PollDeferredAsync(
-        Uri pendingUrl, DeferredPollerOptions? baseOptions, CancellationToken cancellationToken)
+        Uri pendingUrl, DeferredPollerOptions? baseOptions, Interaction? deliveredInteraction, CancellationToken cancellationToken)
     {
         var options = (baseOptions ?? new DeferredPollerOptions()) with
         {
-            StopWhenAccepted = IsClaimsRequirementResponse,
+            StopWhenAccepted = response => IsActionable(response, deliveredInteraction),
         };
         try
         {
@@ -398,18 +441,17 @@ public sealed class AccessServerClient
         }
     }
 
-    private static bool IsClaimsRequirementResponse(HttpResponseMessage response)
-        => string.Equals(
-            ExtractRequirementType(response),
-            ClaimsRequirement.RequirementType,
-            StringComparison.Ordinal);
+    private bool IsActionable(HttpResponseMessage response, Interaction? deliveredInteraction)
+        => ExtractRequirementType(response) is ClaimsRequirement.RequirementType or ClarificationRequirement.RequirementType
+            || (ExtractInteraction(response) is { } interaction
+                && (interaction.Url != deliveredInteraction?.Url || interaction.Code != deliveredInteraction?.Code));
 
-    private static Uri ResolveLocation(HttpResponseMessage response, Uri @base)
+    private Uri ResolveLocation(HttpResponseMessage response, Uri @base)
     {
         var location = response.Headers.Location
             ?? throw new HttpRequestException(
                 "Deferred Access Server response is missing the Location header — cannot poll.");
-        return location.IsAbsoluteUri ? location : new Uri(@base, location);
+        return _metadata.Policy.ValidatePendingLocation(@base, location);
     }
 
     /// <summary>
@@ -418,13 +460,13 @@ public sealed class AccessServerClient
     /// (e.g. from a tampered response) must not be allowed to exfiltrate it to
     /// another host.
     /// </summary>
-    private static Uri ResolveSameOriginLocation(HttpResponseMessage response, Uri @base, Uri origin)
+    private Uri ResolveSameOriginLocation(HttpResponseMessage response, Uri @base, Uri origin)
     {
         var pendingUrl = ResolveLocation(response, @base);
         if (!string.Equals(
                 pendingUrl.GetLeftPart(UriPartial.Authority),
                 origin.GetLeftPart(UriPartial.Authority),
-                StringComparison.OrdinalIgnoreCase))
+                StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
                 $"Access Server claims Location must share an origin with {origin.GetLeftPart(UriPartial.Authority)}: {pendingUrl}");
@@ -456,7 +498,8 @@ public sealed class AccessServerClient
         try
         {
             var json = JsonNode.Parse(body) as JsonObject;
-            return (string?)json?["error"] == "denied";
+            return json?["error"] is JsonValue value
+                && value.TryGetValue<string>(out var error) && error == "denied";
         }
         catch (System.Text.Json.JsonException)
         {
@@ -471,19 +514,19 @@ public sealed class AccessServerClient
         if (!response.IsSuccessStatusCode)
         {
             // The token endpoint signals failure with a JSON body carrying a
-            // required 'error' code and optional 'error_description'
+            // required 'error' code and optional 'detail'
             // (§Token Endpoint Error Response Format). Surface those as a typed
             // exception; non-AAuth bodies fall back to HttpRequestException.
-            var errorCode = TryReadErrorCode(responseBody, out var errorDescription);
+            var errorCode = TryReadErrorCode(responseBody, out var detail);
             if (errorCode is not null)
             {
                 throw new AAuthTokenExchangeException(
-                    errorCode, errorDescription, (int)response.StatusCode,
+                    errorCode, detail, (int)response.StatusCode,
                     AAuthTokenExchangeException.IsTerminalCode(errorCode));
             }
 
             throw new HttpRequestException(
-                $"Access Server federation failed: {(int)response.StatusCode} {response.ReasonPhrase}\n{responseBody}");
+                $"Access Server federation failed with HTTP status {(int)response.StatusCode}.", null, response.StatusCode);
         }
 
         var json = JsonNode.Parse(responseBody) as JsonObject
@@ -492,9 +535,9 @@ public sealed class AccessServerClient
             ?? throw new InvalidOperationException("Access Server response did not include 'auth_token'.");
     }
 
-    private static string? TryReadErrorCode(string body, out string? errorDescription)
+    private static string? TryReadErrorCode(string body, out string? detail)
     {
-        errorDescription = null;
+        detail = null;
         if (string.IsNullOrWhiteSpace(body))
         {
             return null;
@@ -506,12 +549,14 @@ public sealed class AccessServerClient
         {
             return null;
         }
-        var error = (string?)json["error"];
-        if (string.IsNullOrEmpty(error))
+        if (json["error"] is not JsonValue errorValue
+            || !errorValue.TryGetValue<string>(out var error)
+            || string.IsNullOrWhiteSpace(error))
         {
             return null;
         }
-        errorDescription = (string?)json["error_description"];
+        if (json["detail"] is JsonValue detailValue)
+            detailValue.TryGetValue<string>(out detail);
         return error;
     }
 }

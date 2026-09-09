@@ -19,16 +19,16 @@ namespace AAuth.Agent;
 public interface IAAuthAccessStore
 {
     /// <summary>Get the latest token for <paramref name="origin"/>, if any.</summary>
-    bool TryGet(string origin, out string token);
+    bool TryGet(string origin, out string token, string? account = null, string? signingKeyThumbprint = null);
 
     /// <summary>
     /// Store the latest token for <paramref name="origin"/>, replacing any
     /// previous value (rolling refresh, last-writer-wins).
     /// </summary>
-    void Set(string origin, string token);
+    void Set(string origin, string token, string? account = null, string? signingKeyThumbprint = null);
 
     /// <summary>Remove any stored token for <paramref name="origin"/>.</summary>
-    void Remove(string origin);
+    void Remove(string origin, string? account = null, string? signingKeyThumbprint = null);
 }
 
 /// <summary>
@@ -37,13 +37,14 @@ public interface IAAuthAccessStore
 /// </summary>
 public sealed class InMemoryAAuthAccessStore : IAAuthAccessStore
 {
-    private readonly ConcurrentDictionary<string, string> _tokens = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<(string Origin, string? Account, string? SigningKeyThumbprint), string> _tokens = new();
 
     /// <inheritdoc/>
-    public bool TryGet(string origin, out string token)
+    public bool TryGet(string origin, out string token, string? account = null, string? signingKeyThumbprint = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(origin);
-        if (_tokens.TryGetValue(origin, out var value))
+        AAuth.Tokens.AccountBinding.Validate(account);
+        if (_tokens.TryGetValue((origin, account, signingKeyThumbprint), out var value))
         {
             token = value;
             return true;
@@ -54,19 +55,20 @@ public sealed class InMemoryAAuthAccessStore : IAAuthAccessStore
     }
 
     /// <inheritdoc/>
-    public void Set(string origin, string token)
+    public void Set(string origin, string token, string? account = null, string? signingKeyThumbprint = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(origin);
         ArgumentException.ThrowIfNullOrEmpty(token);
         // Last-writer-wins: concurrent in-flight responses may each carry a new
         // value; the most recently observed one simply replaces the prior one.
-        _tokens[origin] = token;
+        AAuth.Tokens.AccountBinding.Validate(account);
+        _tokens[(origin, account, signingKeyThumbprint)] = token;
     }
 
     /// <inheritdoc/>
-    public void Remove(string origin)
+    public void Remove(string origin, string? account = null, string? signingKeyThumbprint = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(origin);
-        _tokens.TryRemove(origin, out _);
+        _tokens.TryRemove((origin, account, signingKeyThumbprint), out _);
     }
 }

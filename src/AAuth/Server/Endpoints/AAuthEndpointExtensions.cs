@@ -61,8 +61,8 @@ public static class AAuthEndpointExtensions
     }
 
     /// <summary>
-    /// Verify the agent's signature only — identity-based or resource-managed
-    /// access, with no auth-token challenge. When <paramref name="identified"/> is
+    /// Verify an agent or auth token and its HTTP signature, with no auth-token
+    /// challenge. When <paramref name="identified"/> is
     /// true, also require at least the Identified level (an agent token).
     /// </summary>
     public static RouteHandlerBuilder RequireAAuthSignature(
@@ -79,6 +79,17 @@ public static class AAuthEndpointExtensions
                 .RequireClaim(AAuthAuthenticationHandler.LevelClaimType,
                     AAuthLevel.Identified.ToString(), AAuthLevel.Authorized.ToString()));
         }
+        return builder;
+    }
+
+    public static RouteHandlerBuilder RequireGenericSignature(this RouteHandlerBuilder builder, bool identified = false)
+    {
+        builder.RequireAAuthSignature(identified);
+        builder.WithMetadata(new AAuthEndpointRequirement
+        {
+            Mode = AAuthAccessMode.IdentityOnly,
+            AcceptedSchemes = ["jwt", "hwk", "jkt-jwt", "jwks_uri", "jwks", "self-jwt"],
+        });
         return builder;
     }
 
@@ -105,14 +116,14 @@ public static class AAuthEndpointExtensions
         // ignored trust policy; warn when auth-token endpoints are implicitly open.
         TrustConfigDiagnostics.Validate(
             app.ApplicationServices.GetService<ILoggerFactory>()?.CreateLogger("AAuth"),
-            opts.RequireIssuerVerification,
             authTrustConfigured: opts.TrustedAuthTokenIssuers is not null || opts.IsTrustedAuthTokenIssuer is not null,
             agentTrustConfigured: opts.TrustedAgentProviderIssuers is not null || opts.IsTrustedAgentProviderIssuer is not null,
             contextLabel: "UseAAuth");
 
         var verifier = app.ApplicationServices.GetRequiredService<AAuthVerifier>();
         var resolver = app.ApplicationServices.GetService<ISignatureKeyResolver>()
-            ?? new DefaultSignatureKeyResolver(app.ApplicationServices.GetService<JwksClient>());
+            ?? new DefaultSignatureKeyResolver(app.ApplicationServices.GetService<JwksClient>(), app.ApplicationServices.GetService<MetadataClient>(),
+                tokenVerifiers: app.ApplicationServices.GetServices<ISignatureTokenVerifier>());
         var metadataClient = app.ApplicationServices.GetService<MetadataClient>();
         var jwks = app.ApplicationServices.GetService<JwksClient>();
         var jtiStore = app.ApplicationServices.GetService<IJtiStore>();
@@ -168,18 +179,28 @@ public static class AAuthEndpointExtensions
             var verifyOptions = req.Mode == AAuthAccessMode.RequireAuthToken
                 ? new AAuthVerificationOptions
                 {
+                    EgressPolicy = resourceMetadata?.EgressPolicy ?? metadataClient?.Policy ?? AAuth.Discovery.AAuthEgressPolicy.Production,
                     ResourceIdentifier = resourceIdentifier,
-                    RequireIssuerVerification = opts.RequireIssuerVerification,
                     TrustedAuthTokenIssuers = opts.TrustedAuthTokenIssuers,
                     IsTrustedAuthTokenIssuer = opts.IsTrustedAuthTokenIssuer,
                     TrustedAgentProviderIssuers = opts.TrustedAgentProviderIssuers,
                     IsTrustedAgentProviderIssuer = opts.IsTrustedAgentProviderIssuer,
                 }
-                : AAuthVerificationOptions.SignatureOnly();
+                : new AAuthVerificationOptions
+                {
+                    EgressPolicy = resourceMetadata?.EgressPolicy ?? metadataClient?.Policy ?? AAuth.Discovery.AAuthEgressPolicy.Production,
+                    AcceptedSchemes = req.AcceptedSchemes,
+                    ResourceIdentifier = resourceIdentifier,
+                    TrustedAgentProviderIssuers = opts.TrustedAgentProviderIssuers,
+                    IsTrustedAgentProviderIssuer = opts.IsTrustedAgentProviderIssuer,
+                    TrustedAuthTokenIssuers = opts.TrustedAuthTokenIssuers,
+                    IsTrustedAuthTokenIssuer = opts.IsTrustedAuthTokenIssuer,
+                };
 
             RequestDelegate afterVerify = req.Mode == AAuthAccessMode.RequireAuthToken
                 ? ctx => new AAuthChallengeMiddleware(next, new ChallengeOptions
                 {
+                    EgressPolicy = resourceMetadata?.EgressPolicy ?? metadataClient?.Policy ?? AAuth.Discovery.AAuthEgressPolicy.Production,
                     AccessMode = AAuthAccessMode.RequireAuthToken,
                     ResourceSigningKey = signingKey,
                     ResourceKeyId = signingKid,

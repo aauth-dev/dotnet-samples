@@ -44,11 +44,12 @@ public sealed class InMemoryMissionLog : IMissionLog
     }
 
     /// <inheritdoc/>
-    public Task<bool> HasPriorConsentAsync(string s256, string resource, string scope, CancellationToken ct = default)
+    public Task<bool> HasPriorConsentAsync(string s256, string resource, string scope, CancellationToken ct = default,
+        string? account = null, string? agentId = null, string? agentKeyThumbprint = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(s256);
         ArgumentException.ThrowIfNullOrEmpty(resource);
-        ArgumentException.ThrowIfNullOrEmpty(scope);
+        ArgumentNullException.ThrowIfNull(scope);
         lock (_gate)
         {
             if (!_entries.TryGetValue(s256, out var list))
@@ -59,6 +60,9 @@ public sealed class InMemoryMissionLog : IMissionLog
             {
                 if (entry.Kind == MissionLogEntryKind.Token
                     && entry.Granted == true
+                    && AAuth.Tokens.AccountBinding.Matches(entry.Account, account)
+                    && string.Equals(entry.AgentId, agentId, StringComparison.Ordinal)
+                    && string.Equals(entry.AgentKeyThumbprint, agentKeyThumbprint, StringComparison.Ordinal)
                     && string.Equals(entry.Resource, resource, StringComparison.Ordinal)
                     && string.Equals(entry.Scope, scope, StringComparison.Ordinal))
                 {

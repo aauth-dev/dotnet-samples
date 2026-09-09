@@ -39,6 +39,7 @@ public sealed class ChallengeHandler : DelegatingHandler
     private readonly Func<Interaction, CancellationToken, Task>? _onInteractionRequired;
     private readonly DeferredPollerOptions? _pollerOptions;
     private readonly Func<string?>? _upstreamTokenProvider;
+    internal Func<string>? PersonServerProvider { get; init; }
 
     // Per-origin cache of additional signature components a resource has been
     // observed to require (learned from an `invalid_input` + `required_input`
@@ -162,6 +163,11 @@ public sealed class ChallengeHandler : DelegatingHandler
         // exactly once (unchanged behavior).
         const int maxAuthTokenChallenges = 3;
 
+        if (!request.Options.TryGetValue(MissionForwardingHandler.UpstreamAuthorization, out var upstreamToken))
+        {
+            upstreamToken = _upstreamTokenProvider?.Invoke();
+            request.Options.Set(MissionForwardingHandler.UpstreamAuthorization, upstreamToken);
+        }
         var response = await SendWithAdaptiveSigningAsync(request, cancellationToken)
             .ConfigureAwait(false);
 
@@ -181,10 +187,9 @@ public sealed class ChallengeHandler : DelegatingHandler
             // Got an auth-token challenge. Exchange and retry.
             using var activity = AAuthDiagnostics.Source.StartActivity("AAuth.ChallengeExchange");
 
-            var upstreamToken = _upstreamTokenProvider?.Invoke();
             var targetServer = upstreamToken is not null
-                ? CallChainingRouter.ResolveDownstreamServer(upstreamToken)
-                : _personServer
+                ? CallChainingRouter.ResolveDownstreamServer(upstreamToken, _exchange.EgressPolicy)
+                : PersonServerProvider?.Invoke() ?? _personServer
                     ?? throw new InvalidOperationException(
                         "No personServer configured and upstreamTokenProvider returned null.");
 
@@ -195,6 +200,7 @@ public sealed class ChallengeHandler : DelegatingHandler
                 .ExchangeAsync(targetServer, requirement.ResourceToken!,
                     new TokenExchangeRequest
                     {
+                        Account = AAuthRequestOptions.GetAccount(request),
                         OnInteractionRequired = _onInteractionRequired,
                         PollerOptions = _pollerOptions,
                         UpstreamToken = upstreamToken,
@@ -205,7 +211,7 @@ public sealed class ChallengeHandler : DelegatingHandler
                     },
                     cancellationToken)
                 .ConfigureAwait(false);
-            _holder.Update(authToken);
+            _holder.UpdateFromExchange(authToken, request);
 
             // Clone the original request to retry — HttpRequestMessage is
             // single-use, and the signing handler downstream will re-sign with
@@ -216,6 +222,8 @@ public sealed class ChallengeHandler : DelegatingHandler
             response.Dispose();
             var retry = await CloneAsync(request, cancellationToken).ConfigureAwait(false);
             response = await SendWithAdaptiveSigningAsync(retry, cancellationToken).ConfigureAwait(false);
+            if (retry.Options.TryGetValue(AAuthRequestOptions.PresentedToken, out var presentedToken))
+                request.Options.Set(AAuthRequestOptions.PresentedToken, presentedToken);
             // Reassign the response's RequestMessage to the caller-owned
             // original so diagnostics (EnsureSuccessStatusCode, loggers) keep
             // working, then dispose the short-lived clone. This avoids both

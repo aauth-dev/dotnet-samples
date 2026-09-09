@@ -20,6 +20,7 @@ public class ChallengeHandlerTests
 {
     private const string PsUrl = "http://localhost:5555";
     private const string ResourceUrl = "http://localhost:6000";
+    private static readonly string ResourceToken = BuildTokenWithPayload(new JsonObject { ["iss"] = ResourceUrl, ["aud"] = PsUrl });
     private static readonly HttpRequestOptionsKey<string> CustomOptionKey = new("Test.CallerState");
 
     // ── Upstream token routing ──────────────────────────────────────────────
@@ -44,8 +45,8 @@ public class ChallengeHandlerTests
         });
 
         var holder = new AAuthTokenHolder("initial-token");
-        var metaClient = new MetadataClient(new HttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(exchangeHandler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
 
         var challengeHandler = new ChallengeHandler(
             exchangeClient, holder,
@@ -57,8 +58,8 @@ public class ChallengeHandlerTests
             InnerHandler = new MockResourceHandler(),
         };
 
-        using var client = new HttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
-        await client.GetAsync("/data");
+        using var client = new InProcessHttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.GetAsync("/data"));
 
         Assert.Equal(approverUrl, capturedTokenEndpoint);
     }
@@ -81,8 +82,8 @@ public class ChallengeHandlerTests
         });
 
         var holder = new AAuthTokenHolder("initial-token");
-        var metaClient = new MetadataClient(new HttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(exchangeHandler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
 
         var challengeHandler = new ChallengeHandler(
             exchangeClient, holder,
@@ -94,8 +95,8 @@ public class ChallengeHandlerTests
             InnerHandler = new MockResourceHandler(),
         };
 
-        using var client = new HttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
-        await client.GetAsync("/data");
+        using var client = new InProcessHttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.GetAsync("/data"));
 
         Assert.Equal(PsUrl, capturedTokenEndpoint);
     }
@@ -110,8 +111,8 @@ public class ChallengeHandlerTests
         });
 
         var holder = new AAuthTokenHolder("initial-token");
-        var metaClient = new MetadataClient(new HttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(exchangeHandler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
 
         var challengeHandler = new ChallengeHandler(
             exchangeClient, holder,
@@ -123,8 +124,8 @@ public class ChallengeHandlerTests
             InnerHandler = new MockResourceHandler(),
         };
 
-        using var client = new HttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
-        await client.GetAsync("/data");
+        using var client = new InProcessHttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.GetAsync("/data"));
 
         Assert.Equal(PsUrl, capturedTokenEndpoint);
     }
@@ -147,8 +148,8 @@ public class ChallengeHandlerTests
         });
 
         var holder = new AAuthTokenHolder("initial-token");
-        var metaClient = new MetadataClient(new HttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(exchangeHandler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
 
         var challengeHandler = new ChallengeHandler(
             exchangeClient, holder,
@@ -160,8 +161,8 @@ public class ChallengeHandlerTests
             InnerHandler = new MockResourceHandler(),
         };
 
-        using var client = new HttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
-        await client.GetAsync("/data");
+        using var client = new InProcessHttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.GetAsync("/data"));
 
         Assert.Equal("http://localhost:7777", capturedTokenEndpoint);
     }
@@ -170,8 +171,8 @@ public class ChallengeHandlerTests
     public void ThrowsWhenBothNull()
     {
         var exchangeHandler = new CapturingExchangeHandler(_ => { });
-        var metaClient = new MetadataClient(new HttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(exchangeHandler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
         var holder = new AAuthTokenHolder("token");
 
         Assert.Throws<ArgumentException>(() => new ChallengeHandler(
@@ -192,8 +193,8 @@ public class ChallengeHandlerTests
         });
 
         var holder = new AAuthTokenHolder("initial-token");
-        var metaClient = new MetadataClient(new HttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(exchangeHandler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
 
         // Use original constructor signature (non-nullable personServer)
         var challengeHandler = new ChallengeHandler(exchangeClient, holder, PsUrl)
@@ -201,8 +202,8 @@ public class ChallengeHandlerTests
             InnerHandler = new MockResourceHandler(),
         };
 
-        using var client = new HttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
-        await client.GetAsync("/data");
+        using var client = new InProcessHttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.GetAsync("/data"));
 
         Assert.Equal(PsUrl, capturedTokenEndpoint);
     }
@@ -219,15 +220,15 @@ public class ChallengeHandlerTests
                 capturedPrefer = string.Join(",", values);
         });
 
-        var metaClient = new MetadataClient(new HttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(exchangeHandler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
 
-        await exchangeClient.ExchangeAsync(
-            PsUrl, "fake-resource-token",
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => exchangeClient.ExchangeAsync(
+            PsUrl, ResourceToken,
             new TokenExchangeRequest
             {
                 PollerOptions = new DeferredPollerOptions { PreferWaitSeconds = 45 },
-            });
+            }));
 
         Assert.Equal("wait=45", capturedPrefer);
     }
@@ -242,12 +243,12 @@ public class ChallengeHandlerTests
                 capturedPrefer = string.Join(",", values);
         });
 
-        var metaClient = new MetadataClient(new HttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(exchangeHandler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
 
-        await exchangeClient.ExchangeAsync(
-            PsUrl, "fake-resource-token",
-            new TokenExchangeRequest());
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => exchangeClient.ExchangeAsync(
+            PsUrl, ResourceToken,
+            new TokenExchangeRequest()));
 
         Assert.Null(capturedPrefer);
     }
@@ -325,15 +326,15 @@ public class ChallengeHandlerTests
         HttpStatusCode status, string errorCode, bool expectedTerminal)
     {
         var exchangeHandler = new ErrorExchangeHandler(status,
-            $"{{\"error\":\"{errorCode}\",\"error_description\":\"boom\"}}");
-        var metaClient = new MetadataClient(new HttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(exchangeHandler), metaClient);
+            $"{{\"error\":\"{errorCode}\",\"detail\":\"boom\",\"type\":\"https://example.test/denied\"}}");
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
 
         var ex = await Assert.ThrowsAsync<AAuth.Errors.AAuthTokenExchangeException>(
-            () => exchangeClient.ExchangeAsync(PsUrl, "fake-resource-token"));
+            () => exchangeClient.ExchangeAsync(PsUrl, ResourceToken));
 
         Assert.Equal(errorCode, ex.ErrorCode);
-        Assert.Equal("boom", ex.ErrorDescription);
+        Assert.Equal("boom", ex.Detail);
         Assert.Equal((int)status, ex.StatusCode);
         Assert.Equal(expectedTerminal, ex.IsTerminal);
     }
@@ -343,11 +344,11 @@ public class ChallengeHandlerTests
     {
         var exchangeHandler = new ErrorExchangeHandler(
             HttpStatusCode.BadGateway, "<html>nginx 502</html>");
-        var metaClient = new MetadataClient(new HttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(exchangeHandler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
 
         await Assert.ThrowsAsync<HttpRequestException>(
-            () => exchangeClient.ExchangeAsync(PsUrl, "fake-resource-token"));
+            () => exchangeClient.ExchangeAsync(PsUrl, ResourceToken));
     }
 
     [Fact(DisplayName = "TokenExchangeClient — JSON body without 'error' member falls back to HttpRequestException")]
@@ -355,11 +356,40 @@ public class ChallengeHandlerTests
     {
         var exchangeHandler = new ErrorExchangeHandler(
             HttpStatusCode.BadRequest, "{\"detail\":\"something\"}");
-        var metaClient = new MetadataClient(new HttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(exchangeHandler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
 
         await Assert.ThrowsAsync<HttpRequestException>(
-            () => exchangeClient.ExchangeAsync(PsUrl, "fake-resource-token"));
+            () => exchangeClient.ExchangeAsync(PsUrl, ResourceToken));
+    }
+
+    [Theory]
+    [InlineData("{\"error\":\"server_error\",\"error_description\":\"legacy\"}")]
+    [InlineData("{\"error\":\"server_error\",\"detail\":123,\"type\":\"denied\"}")]
+    public async Task Exchange_OnlyUsesStringDetail(string body)
+    {
+        var handler = new ErrorExchangeHandler(HttpStatusCode.BadRequest, body);
+        using var http = new InProcessHttpClient(handler);
+        var client = new TokenExchangeClient(http, new MetadataClient(http));
+        var error = await Assert.ThrowsAsync<AAuth.Errors.AAuthTokenExchangeException>(
+            () => client.ExchangeAsync(PsUrl, ResourceToken));
+        Assert.Equal("server_error", error.ErrorCode);
+        Assert.False(error.IsTerminal);
+        Assert.Null(error.Detail);
+    }
+
+    [Theory]
+    [InlineData("{\"type\":\"denied\",\"detail\":\"no error\"}")]
+    [InlineData("{\"error\":42}")]
+    [InlineData("{\"error\":{}}")]
+    [InlineData("{\"error\":\"\"}")]
+    public async Task Exchange_InvalidErrorMember_FallsBack(string body)
+    {
+        var handler = new ErrorExchangeHandler(HttpStatusCode.Forbidden, body);
+        using var http = new InProcessHttpClient(handler);
+        var client = new TokenExchangeClient(http, new MetadataClient(http));
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => client.ExchangeAsync(PsUrl, ResourceToken));
     }
 
     private static async Task<JsonObject?> CaptureExchangeBodyAsync(
@@ -377,17 +407,17 @@ public class ChallengeHandlerTests
             }
         });
 
-        var metaClient = new MetadataClient(new HttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(exchangeHandler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
 
-        await exchangeClient.ExchangeAsync(
-            PsUrl, "fake-resource-token",
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => exchangeClient.ExchangeAsync(
+            PsUrl, ResourceToken,
             new TokenExchangeRequest
             {
                 OnInteractionRequired = onInteractionRequired,
                 Capabilities = capabilities,
                 Prompt = prompt,
-            });
+            }));
 
         return capturedBody;
     }
@@ -569,8 +599,8 @@ public class ChallengeHandlerTests
         IReadOnlyDictionary<string, IReadOnlyList<string>>? seed = null)
     {
         var exchangeHandler = new CapturingExchangeHandler(_ => { });
-        var metaClient = new MetadataClient(new HttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(exchangeHandler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
         holder = new AAuthTokenHolder("initial-token");
 
         var challengeHandler = new ChallengeHandler(
@@ -580,7 +610,7 @@ public class ChallengeHandlerTests
             AdditionalSignatureComponents = seed,
         };
 
-        return new HttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
+        return new InProcessHttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
     }
 
     private static HttpResponseMessage InvalidInput(params string[] required)
@@ -599,7 +629,7 @@ public class ChallengeHandlerTests
 
     private static string BuildTokenWithPayload(JsonObject payload)
     {
-        var header = new JsonObject { ["alg"] = "EdDSA", ["typ"] = "aa-auth+jwt", ["kid"] = "k1" };
+        var header = new JsonObject { ["alg"] = "Ed25519", ["typ"] = "aa-auth+jwt", ["kid"] = "k1" };
         var h = Base64UrlEncoder.Encode(Encoding.UTF8.GetBytes(header.ToJsonString()));
         var p = Base64UrlEncoder.Encode(Encoding.UTF8.GetBytes(payload.ToJsonString()));
         return $"{h}.{p}.fake-sig";
@@ -649,7 +679,7 @@ public class ChallengeHandlerTests
                 var response = new HttpResponseMessage(HttpStatusCode.Unauthorized);
                 response.Headers.TryAddWithoutValidation(
                     AAuthRequirementHeader.Name,
-                    AAuthRequirementHeader.FormatAuthToken("fake-resource-token"));
+                    AAuthRequirementHeader.FormatAuthToken(ResourceToken));
                 return Task.FromResult(response);
             }
 
@@ -730,7 +760,7 @@ public class ChallengeHandlerTests
 
             return Task.FromResult(new HttpResponseMessage(_status)
             {
-                Content = new StringContent(_body, Encoding.UTF8, "application/json"),
+                Content = new StringContent(_body, Encoding.UTF8, "application/problem+json"),
             });
         }
     }

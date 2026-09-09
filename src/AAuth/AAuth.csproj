@@ -29,6 +29,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.18.0" />
+    <PackageReference Include="StructuredFieldValues" Version="0.7.7" />
     <!--
       BouncyCastle provides the Ed25519 primitives consumed by AAuthKey
       (signer/verifier and key parameter types). Native EdDSA is not

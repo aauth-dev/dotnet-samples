@@ -31,8 +31,8 @@ public class GovernanceClientTests
         new("http://localhost:5555", "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk");
 
     private static (HttpClient signed, MetadataClient metadata) Build(HttpMessageHandler handler)
-        => (new HttpClient(handler) { BaseAddress = new Uri(Ps) },
-            new MetadataClient(new HttpClient(handler)));
+        => (new InProcessHttpClient(handler) { BaseAddress = new Uri(Ps) },
+            new MetadataClient(new InProcessHttpClient(handler)));
 
     // ---- §Person Server Metadata ----
 
@@ -85,6 +85,20 @@ public class GovernanceClientTests
         var (signed, metadata) = Build(handler);
         var client = new MissionClient(signed, metadata, Ps);
 
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.ProposeAsync(new MissionProposal("# Plan a trip")));
+    }
+
+    [Theory]
+    [InlineData(null, Ps)]
+    [InlineData("https://foreign.example", Ps)]
+    [InlineData(Ps, "https://foreign.example")]
+    [InlineData("https://foreign.example", "https://foreign.example")]
+    public async Task MissionClient_ApproverMustMatchHeaderBodyAndBoundPersonServer(string? header, string body)
+    {
+        var handler = new GovernanceHandler { HeaderApprover = header, BodyApprover = body };
+        var (signed, metadata) = Build(handler);
+        var client = new MissionClient(signed, metadata, Ps);
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             client.ProposeAsync(new MissionProposal("# Plan a trip")));
     }
@@ -163,6 +177,24 @@ public class GovernanceClientTests
         var result = await client.RequestAsync(new MissionAction("WebSearch"), mission);
 
         Assert.True(result.IsGranted);
+        Assert.False(handler.PermissionCalled);
+    }
+
+    [Theory]
+    [InlineData("WebSearch")]
+    [InlineData("SendEmail")]
+    public async Task PermissionClient_TerminatedMissionNeverGrants(string action)
+    {
+        var handler = new GovernanceHandler();
+        var (signed, metadata) = Build(handler);
+        var client = new PermissionClient(signed, metadata, Ps);
+        var mission = new Mission
+        {
+            Approver = Ps, Agent = "aauth:assistant@agent.example", ApprovedAt = DateTimeOffset.UtcNow,
+            Description = "Ended", S256 = TestMission.S256, State = MissionState.Terminated,
+            ApprovedTools = new[] { new MissionTool("WebSearch") },
+        };
+        await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() => client.RequestAsync(new MissionAction(action), mission));
         Assert.False(handler.PermissionCalled);
     }
 
@@ -253,6 +285,8 @@ public class GovernanceClientTests
         public bool PermissionDenied { get; init; }
         public bool MissionTerminated { get; init; }
         public bool TamperMissionHeaderS256 { get; init; }
+        public string? HeaderApprover { get; init; } = Ps;
+        public string BodyApprover { get; init; } = Ps;
         public bool MissionNeedsClarification { get; init; }
         public HttpStatusCode AuditStatus { get; init; } = HttpStatusCode.Created;
 
@@ -324,7 +358,7 @@ public class GovernanceClientTests
                     // whose s256 is SHA-256 over the exact body bytes (§Mission Approval).
                     var blob = new JsonObject
                     {
-                        ["approver"] = Ps,
+                        ["approver"] = BodyApprover,
                         ["agent"] = "aauth:assistant@agent.example",
                         ["approved_at"] = "2026-04-07T14:30:00Z",
                         ["description"] = "# Plan a trip",
@@ -344,7 +378,8 @@ public class GovernanceClientTests
                     resp.Content.Headers.ContentType =
                         new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
                     resp.Headers.TryAddWithoutValidation(
-                        "AAuth-Mission", $"approver=\"{Ps}\"; s256=\"{headerS256}\"");
+                        "AAuth-Mission", HeaderApprover is null ? $"s256=\"{headerS256}\""
+                            : $"approver=\"{HeaderApprover}\"; s256=\"{headerS256}\"");
                     return resp;
                 }
 

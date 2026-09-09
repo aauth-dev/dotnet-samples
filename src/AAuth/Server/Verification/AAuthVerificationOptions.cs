@@ -10,6 +10,11 @@ namespace AAuth.Server.Verification;
 /// </summary>
 public sealed class AAuthVerificationOptions
 {
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
+    public IReadOnlyList<string> AcceptedSchemes { get; init; } = ["jwt"];
+    public string SignatureLabel { get; init; } = "sig";
+    public IReadOnlyCollection<string> RequiredComponents { get; init; } = [];
+    public bool GenericSignatureKeys { get; init; }
     /// <summary>
     /// Optional allow-list of trusted Agent Provider issuers (for <c>aa-agent+jwt</c>).
     /// When <c>null</c>, any issuer whose JWKS is resolvable is accepted; an empty
@@ -54,29 +59,18 @@ public sealed class AAuthVerificationOptions
     /// When null, audience is not validated by the middleware (caller must check).
     /// </summary>
     public string? ResourceIdentifier { get; init; }
+    public Func<Microsoft.AspNetCore.Http.HttpContext, string?>? ExpectedAccount { get; init; }
 
     /// <summary>
-    /// When true, the middleware verifies the JWT issuer's signature via JWKS discovery.
-    /// Default: <c>true</c>.
-    /// </summary>
-    public bool RequireIssuerVerification { get; init; } = true;
-
-    /// <summary>
-    /// Create options for <b>two-party / signature-only</b> verification: HTTP
-    /// Message Signature proof-of-possession with <b>no</b> JWT issuer
-    /// verification. This is the correct configuration for identity-based and
-    /// resource-managed (<c>AAuth-Access</c>) access, where the agent signs with
-    /// <c>hwk</c> / <c>jwks_uri</c> / <c>jkt-jwt</c> and presents no PS/AS-issued
-    /// auth token whose issuer could be verified. The binding that matters in
-    /// these flows is the HTTP signature itself (and, for resource-managed, that
-    /// <c>authorization</c> is covered) — not an issuer signature.
+    /// Enable implemented generic Signature Keys schemes. JWT assertions still
+    /// require issuer verification. AAuth-only endpoints use the default jwt policy.
     /// </summary>
     /// <param name="clock">Optional clock for signature-freshness checks (testing).</param>
-    /// <returns>A fresh options instance with <see cref="RequireIssuerVerification"/> set to <c>false</c>.</returns>
-    public static AAuthVerificationOptions SignatureOnly(Func<DateTimeOffset>? clock = null)
+    /// <returns>A fresh generic-scheme policy.</returns>
+    public static AAuthVerificationOptions Generic(Func<DateTimeOffset>? clock = null)
         => new()
         {
-            RequireIssuerVerification = false,
+            AcceptedSchemes = ["jwt", "hwk", "jkt-jwt", "jwks_uri", "jwks", "self-jwt"],
             Clock = clock,
         };
 

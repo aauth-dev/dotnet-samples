@@ -33,6 +33,9 @@ public enum MissionLogEntryKind
 /// <param name="Timestamp">When the entry was recorded.</param>
 public sealed record MissionLogEntry(string S256, MissionLogEntryKind Kind, DateTimeOffset Timestamp)
 {
+    public string? Account { get; init; }
+    public string? AgentId { get; init; }
+    public string? AgentKeyThumbprint { get; init; }
     /// <summary>The resource involved (for token entries) — used for prior-consent lookups.</summary>
     public string? Resource { get; init; }
 
@@ -69,5 +72,6 @@ public interface IMissionLog
     /// signal the PS uses to resolve a repeat request silently (§Agent Token
     /// Request — prior-consent gate).
     /// </summary>
-    Task<bool> HasPriorConsentAsync(string s256, string resource, string scope, CancellationToken ct = default);
+    Task<bool> HasPriorConsentAsync(string s256, string resource, string scope, CancellationToken ct = default,
+        string? account = null, string? agentId = null, string? agentKeyThumbprint = null);
 }

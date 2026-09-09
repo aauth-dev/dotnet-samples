@@ -72,9 +72,7 @@ public static class AAuthHttpContextExtensions
     {
         context.Response.Headers[AAuthConstants.Headers.AAuthRequirement] =
             AAuthRequirementHeader.FormatAuthToken(resourceToken);
-        return Results.Json(
-            new { error = "auth_token_required" },
-            statusCode: StatusCodes.Status401Unauthorized);
+        return AAuth.Server.AAuthProblemDetails.Create("auth_token_required", statusCode: StatusCodes.Status401Unauthorized);
     }
 
     /// <summary>
@@ -114,9 +112,11 @@ public static class AAuthHttpContextExtensions
     public static async Task<OpaqueTokenInfo?> ResolveAAuthAccessAsync(
         this HttpContext context,
         IOpaqueTokenStore store,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? expectedAccount = null)
     {
         System.ArgumentNullException.ThrowIfNull(store);
+        context.Items.Remove(AAuthAccessInfoItemKey);
 
         // Require a verified AAuth signature: the binding of the opaque token to
         // the request is only meaningful when the signature (covering
@@ -139,6 +139,9 @@ public static class AAuthHttpContextExtensions
         }
 
         var info = await store.ValidateAsync(token68, cancellationToken).ConfigureAwait(false);
+        if (info is not null && (!AAuth.Tokens.AccountBinding.Matches(expectedAccount, info.Account)
+            || !string.Equals(info.AgentJkt, context.GetAAuthVerification()!.Jkt, StringComparison.Ordinal)))
+            return null;
         if (info is not null)
         {
             context.Items[AAuthAccessInfoItemKey] = info;
@@ -196,10 +199,11 @@ public static class AAuthHttpContextExtensions
         this HttpContext context,
         string interactionUrl,
         string code,
-        string pendingLocation)
+        string pendingLocation,
+        AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
         context.Response.Headers[AAuthConstants.Headers.AAuthRequirement] =
-            Interaction.Format(interactionUrl, code);
+            Interaction.Format(interactionUrl, code, policy);
         context.Response.Headers.Location = pendingLocation;
         context.Response.Headers.CacheControl = "no-store";
         return Results.Json(

@@ -30,6 +30,10 @@ public sealed class AccessServerRequest
     /// </summary>
     public required string AgentToken { get; init; }
 
+    public string? SubagentToken { get; init; }
+
+    public required DateTimeOffset AuthorizationExpiresAt { get; init; }
+
     /// <summary>
     /// Optional upstream auth token for call-chaining scenarios. When provided,
     /// included as <c>upstream_token</c> in the POST body so the AS can
@@ -58,15 +62,19 @@ public sealed class AccessServerRequest
     /// <summary>
     /// Optional act context for chain consistency (Auth Token Delivery step 6).
     /// For direct authorization leave <see langword="null"/>; for call chaining
-    /// pass the upstream act that was submitted with the request.
+    /// pass the complete expected act, including its immediate delegator.
     /// </summary>
     public JsonObject? ExpectedActContext { get; init; }
+    public MissionClaim? ExpectedMission { get; set; }
+    public string? Account { get; init; }
 
     /// <summary>
     /// Optional requested scope from the resource token (Auth Token Delivery
     /// step 7). When provided, verifies the auth token's scope is not broader.
     /// </summary>
-    public string? RequestedScope { get; init; }
+    public string? RequestedScope { get; set; }
+
+    public Func<ClarificationRequirement, CancellationToken, Task<ClarificationResponse>>? OnClarificationRequired { get; init; }
 
     /// <summary>
     /// Invoked when the AS returns <c>202</c> with an interaction requirement,
