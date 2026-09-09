@@ -1,5 +1,6 @@
 using System;
 using System.Text.Json.Nodes;
+using AAuth.Identifiers;
 
 namespace AAuth.Tokens;
 
@@ -26,6 +27,9 @@ public static class ActChainBuilder
     public static JsonObject BuildNestedAct(string upstreamAgentId, JsonObject? upstreamChain = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(upstreamAgentId);
+        if (!AgentId.TryParse(upstreamAgentId, out _, out _)
+            || (upstreamChain is not null && !ValidateChain(upstreamChain, 9)))
+            throw new ArgumentException("Delegation must contain only valid agent identities within the depth limit.");
 
         var node = new JsonObject { ["agent"] = upstreamAgentId };
         if (upstreamChain is not null)
@@ -52,9 +56,13 @@ public static class ActChainBuilder
             if (++depth > maxDepth)
                 return false;
 
-            if (string.IsNullOrEmpty((string?)current["agent"]))
+            if (current["agent"] is not JsonValue agentValue || !agentValue.TryGetValue<string>(out var agent)
+                || !AgentId.TryParse(agent, out _, out _))
                 return false;
 
+            foreach (var member in current)
+                if (member.Key is not ("agent" or "act")) return false;
+            if (current.ContainsKey("act") && current["act"] is not JsonObject) return false;
             current = current["act"] as JsonObject;
         }
 

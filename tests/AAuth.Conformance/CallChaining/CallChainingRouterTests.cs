@@ -32,7 +32,7 @@ public class CallChainingRouterTests
             ["mission"] = new JsonObject { ["approver"] = "https://mission-ps.example" },
         });
 
-        var result = CallChainingRouter.ResolveDownstreamServer(token);
+        var result = CallChainingRouter.ResolveDownstreamServer(token, TestEgress.Policy);
 
         Assert.Equal("https://mission-ps.example", result);
     }
@@ -48,7 +48,7 @@ public class CallChainingRouterTests
             ["act"] = new JsonObject { ["agent"] = "agent-1" },
         });
 
-        var result = CallChainingRouter.ResolveDownstreamServer(token);
+        var result = CallChainingRouter.ResolveDownstreamServer(token, TestEgress.Policy);
 
         Assert.Equal("https://ps.example", result);
     }
@@ -64,7 +64,7 @@ public class CallChainingRouterTests
             ["act"] = new JsonObject { ["agent"] = "agent-1" },
         });
 
-        var result = CallChainingRouter.ResolveDownstreamServer(token);
+        var result = CallChainingRouter.ResolveDownstreamServer(token, TestEgress.Policy);
 
         Assert.Equal("https://as.resource.example", result);
     }
@@ -82,7 +82,7 @@ public class CallChainingRouterTests
         });
 
         var ex = Assert.Throws<InvalidOperationException>(
-            () => CallChainingRouter.ResolveDownstreamServer(token));
+            () => CallChainingRouter.ResolveDownstreamServer(token, TestEgress.Policy));
         Assert.Contains("mission.approver", ex.Message);
     }
 
@@ -99,7 +99,7 @@ public class CallChainingRouterTests
         });
 
         var ex = Assert.Throws<InvalidOperationException>(
-            () => CallChainingRouter.ResolveDownstreamServer(token));
+            () => CallChainingRouter.ResolveDownstreamServer(token, TestEgress.Policy));
         Assert.Contains("mission.approver", ex.Message);
         Assert.Contains("empty", ex.Message);
     }
@@ -117,7 +117,7 @@ public class CallChainingRouterTests
         });
 
         var ex = Assert.Throws<InvalidOperationException>(
-            () => CallChainingRouter.ResolveDownstreamServer(token));
+            () => CallChainingRouter.ResolveDownstreamServer(token, TestEgress.Policy));
         Assert.Contains("mission.approver", ex.Message);
     }
 
@@ -132,7 +132,7 @@ public class CallChainingRouterTests
         });
 
         var ex = Assert.Throws<InvalidOperationException>(
-            () => CallChainingRouter.ResolveDownstreamServer(token));
+            () => CallChainingRouter.ResolveDownstreamServer(token, TestEgress.Policy));
         Assert.Contains("iss", ex.Message);
     }
 
@@ -140,7 +140,7 @@ public class CallChainingRouterTests
     public void MalformedJwt_Throws()
     {
         Assert.Throws<InvalidOperationException>(
-            () => CallChainingRouter.ResolveDownstreamServer("not.a.valid.jwt.at.all"));
+            () => CallChainingRouter.ResolveDownstreamServer("not.a.valid.jwt.at.all", TestEgress.Policy));
     }
 
     [Fact(DisplayName = "§Routing — loopback iss (dev scenario) → accepted")]
@@ -154,7 +154,7 @@ public class CallChainingRouterTests
             ["act"] = new JsonObject { ["agent"] = "agent-1" },
         });
 
-        var result = CallChainingRouter.ResolveDownstreamServer(token);
+        var result = CallChainingRouter.ResolveDownstreamServer(token, TestEgress.Policy);
 
         Assert.Equal("http://localhost:5000", result);
     }
@@ -171,7 +171,7 @@ public class CallChainingRouterTests
             ["mission"] = new JsonObject { ["approver"] = "http://127.0.0.1:8080" },
         });
 
-        var result = CallChainingRouter.ResolveDownstreamServer(token);
+        var result = CallChainingRouter.ResolveDownstreamServer(token, TestEgress.Policy);
 
         Assert.Equal("http://127.0.0.1:8080", result);
     }
@@ -188,7 +188,7 @@ public class CallChainingRouterTests
         });
 
         var ex = Assert.Throws<InvalidOperationException>(
-            () => CallChainingRouter.ResolveDownstreamServer(token));
+            () => CallChainingRouter.ResolveDownstreamServer(token, TestEgress.Policy));
         Assert.Contains("iss", ex.Message);
     }
 
@@ -196,7 +196,7 @@ public class CallChainingRouterTests
     public void NullToken_Throws()
     {
         Assert.Throws<ArgumentException>(
-            () => CallChainingRouter.ResolveDownstreamServer(""));
+            () => CallChainingRouter.ResolveDownstreamServer("", TestEgress.Policy));
     }
 
     [Fact(DisplayName = "§Routing — mission object present without approver key → falls through to iss")]
@@ -211,7 +211,7 @@ public class CallChainingRouterTests
             ["mission"] = new JsonObject { ["s256"] = "abc123" },
         });
 
-        var result = CallChainingRouter.ResolveDownstreamServer(token);
+        var result = CallChainingRouter.ResolveDownstreamServer(token, TestEgress.Policy);
 
         Assert.Equal("https://ps.example", result);
     }
@@ -222,7 +222,7 @@ public class CallChainingRouterTests
     {
         var header = new JsonObject
         {
-            ["alg"] = "EdDSA",
+            ["alg"] = "Ed25519",
             ["typ"] = "aa-auth+jwt",
             ["kid"] = "test-1",
         };

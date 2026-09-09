@@ -3,6 +3,7 @@ import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/
 import { readResponseJson, expectStatus } from '../../../tests/e2e/helpers/json';
 import { keycloakLogin } from '../../../tests/e2e/helpers/consent';
 import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
+import { approvePersonConsent } from '../../../tests/e2e/helpers/consent';
 
 /**
  * Federated (four-party) — interactive Keycloak path.
@@ -32,6 +33,8 @@ test.describe('Federated (interactive Keycloak)', () => {
     await clickAndConfirm(page, 'button.btn-primary', () => link.isVisible());
     await expect(link).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('.spinner-border')).toBeVisible();
+    await approvePersonConsent(page, 'a[target="_blank"][href*="/interaction"]');
+    await expect(link).toHaveAttribute('href', /localhost:5500/);
 
     // The interaction URL is the AS login-start → Keycloak OIDC login.
     const [popup] = await Promise.all([

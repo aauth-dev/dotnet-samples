@@ -42,7 +42,11 @@
         in the upstream token, each hop follows §Call Chaining's
         “no&nbsp;mission, <code>iss</code> is a PS” path. If a mission were present,
         <code>WithCallChaining</code> would auto-forward the <code>AAuth-Mission</code>
-        header and route to the mission's PS — no code change here.
+        header and route to the mission's PS. A no-mission AS-issued upstream
+        instead routes directly through <code>aauth-access.json</code>, with the
+        intermediary's agent token in <code>Signature-Key</code> and
+        <code>upstream_token</code> in the body. Cached downstream grants are
+        reused only for the same upstream authorization, mission, account and key.
     </small>
 </p>
 
@@ -53,7 +57,7 @@
 // 202) flows through the challenge pipeline; hop 2 (the
 // Concierge's CHAINED resource 202) flows through the
 // interaction pipeline. Both surface a consent URL.
-using var client = AAuthClientBuilder.SelfIssuing(key)
+using var client = AAuthClientBuilder.SelfIssuing(key).WithEgressPolicy(SampleEgress.Policy)
     .As(issuer, agentId)
     .WithKid(keyId)
     .WithPersonServer(personServer)
@@ -269,7 +273,7 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
             // Self-issued token refresh + interaction relay. A 202 from the PS
             // (hop 1) or the Concierge's chained 202 (hop 2) both surface a
             // consent URL here; the SDK then polls and resumes.
-            using var client = AAuthClientBuilder.SelfIssuing(_identity.Key)
+            using var client = AAuthClientBuilder.SelfIssuing(_identity.Key).WithEgressPolicy(SampleEgress.Policy)
                 .As(_identity.Issuer, _identity.AgentId)
                 .WithKid(_identity.KeyId)
                 .WithPersonServer(personServer)

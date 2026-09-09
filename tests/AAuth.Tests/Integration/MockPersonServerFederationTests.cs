@@ -184,13 +184,14 @@ public class MockPersonServerFederationTests
                 services.RemoveAll<MetadataClient>();
                 services.RemoveAll<JwksClient>();
                 services.AddSingleton(new MetadataClient(
-                    new HttpClient(new FederatedStub(agentKey, agentId, scope, interactive))));
+                    new InProcessHttpClient(new FederatedStub(agentKey, agentId, scope, interactive))));
                 services.AddSingleton(new JwksClient(
-                    new HttpClient(new FederatedStub(agentKey, agentId, scope, interactive))));
+                    new InProcessHttpClient(new FederatedStub(agentKey, agentId, scope, interactive))));
 
                 // Route the PS→AS federation transport at the same in-process AS.
                 services.AddHttpClient(AAuthFederationServiceCollectionExtensions.FederationHttpClientName)
                     .ConfigurePrimaryHttpMessageHandler(() => new FederatedStub(agentKey, agentId, scope, interactive));
+                services.Configure<AAuthFederationOptions>(options => options.TransportContract = AAuthTransportContract.InProcessOnly);
             });
         });
     }
@@ -200,6 +201,7 @@ public class MockPersonServerFederationTests
     {
         var agentToken = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = agentId,
             KeyId = "demo",
@@ -210,12 +212,14 @@ public class MockPersonServerFederationTests
         {
             InnerHandler = factory.Server.CreateHandler(),
         };
-        return new HttpClient(signing) { BaseAddress = new Uri(PsIssuer) };
+        return new InProcessHttpClient(signing) { BaseAddress = new Uri(PsIssuer) };
     }
 
     private static string BuildResourceToken(string agent, AAuthKey agentKey, string audience, string scope)
         => new ResourceTokenBuilder
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             Issuer = ResourceUrl,
             Audience = audience,
             Agent = agent,
@@ -259,6 +263,7 @@ public class MockPersonServerFederationTests
         private readonly string _agentId;
         private readonly string _scope;
         private readonly InteractiveAsState? _interactive;
+        private DateTimeOffset _agentTokenExpiresAt;
 
         public FederatedStub(AAuthKey agentKey, string agentId, string scope, InteractiveAsState? interactive = null)
         {
@@ -268,7 +273,7 @@ public class MockPersonServerFederationTests
             _interactive = interactive;
         }
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var uri = request.RequestUri!;
@@ -276,6 +281,9 @@ public class MockPersonServerFederationTests
 
             if (request.Method == HttpMethod.Post && key == "as.test/token")
             {
+                var body = await request.Content!.ReadFromJsonAsync<JsonObject>(cancellationToken: cancellationToken);
+                _agentTokenExpiresAt = new TokenVerifier { EgressPolicy = TestEgress.Policy }.Verify((string)body!["agent_token"]!, _agentKey,
+                    AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk).ExpiresAt;
                 // Interactive AS: defer with a 202 requirement=interaction.
                 if (_interactive is not null)
                 {
@@ -290,25 +298,25 @@ public class MockPersonServerFederationTests
                     deferred.Headers.TryAddWithoutValidation(
                         "AAuth-Requirement",
                         AAuth.Headers.Interaction.Format($"{AsIssuer}/interaction/login", "abc"));
-                    return Task.FromResult(deferred);
+                    return deferred;
                 }
 
-                return Task.FromResult(Json(new JsonObject
+                return Json(new JsonObject
                 {
                     ["auth_token"] = MintAuthToken(),
-                    ["expires_in"] = 3600,
-                }));
+                    ["expires_in"] = _agentTokenExpiresAt.ToUnixTimeSeconds() - DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                });
             }
 
             if (request.Method == HttpMethod.Get && key == "as.test/pending/abc")
             {
                 if (_interactive!.IsCompleted)
                 {
-                    return Task.FromResult(Json(new JsonObject
+                    return Json(new JsonObject
                     {
                         ["auth_token"] = MintAuthToken(),
-                        ["expires_in"] = 3600,
-                    }));
+                        ["expires_in"] = _agentTokenExpiresAt.ToUnixTimeSeconds() - DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    });
                 }
 
                 var pending = new HttpResponseMessage(HttpStatusCode.Accepted)
@@ -318,11 +326,17 @@ public class MockPersonServerFederationTests
                         Encoding.UTF8, "application/json"),
                 };
                 pending.Headers.TryAddWithoutValidation("Retry-After", "0");
-                return Task.FromResult(pending);
+                return pending;
             }
 
             string? json = key switch
             {
+                "ap.example/.well-known/aauth-agent.json" => new JsonObject
+                {
+                    ["issuer"] = "https://ap.example",
+                    ["jwks_uri"] = "https://ap.example/.well-known/jwks.json",
+                }.ToJsonString(),
+                "ap.example/.well-known/jwks.json" => Jwks(_agentKey, "demo"),
                 "wallet.test/.well-known/aauth-resource.json" => new JsonObject
                 {
                     ["issuer"] = ResourceUrl,
@@ -339,16 +353,18 @@ public class MockPersonServerFederationTests
                 _ => null,
             };
 
-            return Task.FromResult(json is null
+            return json is null
                 ? new HttpResponseMessage(HttpStatusCode.NotFound)
                 : new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(json, Encoding.UTF8, "application/json"),
-                });
+                };
         }
 
         private string MintAuthToken() => new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = _agentTokenExpiresAt,
             Issuer = AsIssuer,
             Audience = ResourceUrl,
             Agent = _agentId,
@@ -371,7 +387,7 @@ public class MockPersonServerFederationTests
             var jwk = key.ToPublicJwk();
             jwk["kid"] = kid;
             jwk["use"] = "sig";
-            jwk["alg"] = AAuthKey.Algorithm;
+            jwk["alg"] = AAuthKey.Ed25519Algorithm;
             return new JsonObject { ["keys"] = new JsonArray(jwk) }.ToJsonString();
         }
     }

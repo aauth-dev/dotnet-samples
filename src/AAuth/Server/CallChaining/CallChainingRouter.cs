@@ -12,6 +12,13 @@ namespace AAuth.Server.CallChaining;
 /// </summary>
 public static class CallChainingRouter
 {
+    internal static string ResolveMetadataFile(string upstreamAuthToken)
+    {
+        var payload = AAuth.Tokens.TokenVerifier.DecodeJsonSegment(upstreamAuthToken.Split('.')[1], "payload");
+        return payload["mission"] is null && (string?)payload["dwk"] == AAuthConstants.DwkFiles.Access
+            ? AAuthConstants.DwkFiles.Access : AAuthConstants.DwkFiles.Person;
+    }
+
     /// <summary>
     /// Resolve the downstream PS/AS server URL from the upstream auth token.
     /// </summary>
@@ -34,7 +41,7 @@ public static class CallChainingRouter
     /// Thrown when the token is malformed, <c>mission.approver</c> is invalid,
     /// or <c>iss</c> is missing/invalid.
     /// </exception>
-    public static string ResolveDownstreamServer(string upstreamAuthToken)
+    public static string ResolveDownstreamServer(string upstreamAuthToken, AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(upstreamAuthToken);
 
@@ -68,7 +75,7 @@ public static class CallChainingRouter
 
             if (!string.IsNullOrEmpty(approver))
             {
-                if (!AAuthUrl.IsHttpsOrLoopback(approver))
+                if (!AAuthUrl.IsHttpsOrLoopback(approver, policy))
                     throw new InvalidOperationException(
                         $"upstream_token 'mission.approver' must be an absolute https:// URL " +
                         $"(or http://localhost): {approver}");
@@ -82,7 +89,7 @@ public static class CallChainingRouter
         var iss = (string?)payload["iss"]
             ?? throw new InvalidOperationException("upstream_token is missing 'iss' claim.");
 
-        if (!AAuthUrl.IsHttpsOrLoopback(iss))
+        if (!AAuthUrl.IsHttpsOrLoopback(iss, policy))
             throw new InvalidOperationException(
                 $"upstream_token 'iss' must be an absolute https:// URL (or http://localhost): {iss}");
 

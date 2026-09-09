@@ -41,20 +41,20 @@ public class CallChainingTests
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
 
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5555") };
-        var metadataClient = new MetadataClient(new HttpClient(new MockMetadataHandler()));
+        var httpClient = new InProcessHttpClient(handler) { BaseAddress = new Uri("http://localhost:5555") };
+        var metadataClient = new MetadataClient(new InProcessHttpClient(new MockMetadataHandler()));
         var exchangeClient = new TokenExchangeClient(httpClient, metadataClient);
 
         var resourceToken = BuildResourceToken();
         var upstreamToken = BuildAuthToken(psKey, agentKey, "agent-1", "http://localhost:5555");
 
-        await exchangeClient.ExchangeAsync(
+        await Assert.ThrowsAsync<TokenVerificationException>(() => exchangeClient.ExchangeAsync(
             "http://localhost:5555",
             resourceToken,
             new TokenExchangeRequest
             {
                 UpstreamToken = upstreamToken,
-            });
+            }));
 
         Assert.NotNull(capturedBody);
         Assert.Equal(resourceToken, (string?)capturedBody!["resource_token"]);
@@ -70,13 +70,13 @@ public class CallChainingTests
             capturedBody = JsonNode.Parse(req)?.AsObject();
         });
 
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5555") };
-        var metadataClient = new MetadataClient(new HttpClient(new MockMetadataHandler()));
+        var httpClient = new InProcessHttpClient(handler) { BaseAddress = new Uri("http://localhost:5555") };
+        var metadataClient = new MetadataClient(new InProcessHttpClient(new MockMetadataHandler()));
         var exchangeClient = new TokenExchangeClient(httpClient, metadataClient);
 
-        await exchangeClient.ExchangeAsync(
+        await Assert.ThrowsAsync<TokenVerificationException>(() => exchangeClient.ExchangeAsync(
             "http://localhost:5555",
-            BuildResourceToken());
+            BuildResourceToken()));
 
         Assert.NotNull(capturedBody);
         Assert.Null(capturedBody!["upstream_token"]);
@@ -93,11 +93,13 @@ public class CallChainingTests
         // Complete act node (§Delegation Chain): act.agent names the immediate upstream
         // (delegator), nesting the upstream's own chain under act.act.
         var act = ActChainBuilder.BuildNestedAct(
-            "resource-as-agent",
-            new JsonObject { ["agent"] = "upstream-agent" });
+            "aauth:resource@example",
+            new JsonObject { ["agent"] = "aauth:upstream@example" });
 
         var token = new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = "http://localhost:5555",
             Audience = "http://localhost:6000",
             Agent = "resource-as-agent",
@@ -113,12 +115,12 @@ public class CallChainingTests
         var payload = DecodePayload(token);
         var decodedAct = payload["act"] as JsonObject;
         Assert.NotNull(decodedAct);
-        Assert.Equal("resource-as-agent", (string?)decodedAct!["agent"]);
+        Assert.Equal("aauth:resource@example", (string?)decodedAct!["agent"]);
 
         // Nested act from upstream.
         var nestedAct = decodedAct["act"] as JsonObject;
         Assert.NotNull(nestedAct);
-        Assert.Equal("upstream-agent", (string?)nestedAct!["agent"]);
+        Assert.Equal("aauth:upstream@example", (string?)nestedAct!["agent"]);
     }
 
     [Fact(DisplayName = "§CallChaining — AuthTokenBuilder without Act omits act (direct authorization)")]
@@ -129,6 +131,8 @@ public class CallChainingTests
 
         var token = new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = "http://localhost:5555",
             Audience = "http://localhost:6000",
             Agent = "my-agent",
@@ -157,6 +161,8 @@ public class CallChainingTests
 
         var token = new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = "http://localhost:5555",
             Audience = "http://localhost:7000",
             Agent = "aauth:final@example",
@@ -169,7 +175,7 @@ public class CallChainingTests
         }.Build();
 
         // Verify: TokenVerifier validates act chain depth.
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         var result = verifier.VerifyAuthToken(
             token, psKey, "http://localhost:7000", agentKey,
             expectedAgentId: "aauth:final@example");
@@ -199,6 +205,8 @@ public class CallChainingTests
 
         var token = new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = "http://localhost:5555",
             Audience = "http://localhost:7000",
             Agent = "surface-agent",
@@ -210,7 +218,7 @@ public class CallChainingTests
             Act = deepAct,
         }.Build();
 
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         Assert.Throws<TokenVerificationException>(() =>
             verifier.VerifyAuthToken(token, psKey, "http://localhost:7000", agentKey,
                 expectedAgentId: "surface-agent"));
@@ -227,7 +235,7 @@ public class CallChainingTests
         // Build auth token with mission.approver.
         var token = BuildAuthTokenWithMission(psKey, agentKey, "http://localhost:8888");
 
-        var server = CallChainingHandler.ResolveDownstreamServer(token);
+        var server = CallChainingRouter.ResolveDownstreamServer(token, TestEgress.Policy);
         Assert.Equal("http://localhost:8888", server);
     }
 
@@ -239,7 +247,7 @@ public class CallChainingTests
 
         var token = BuildAuthToken(psKey, agentKey, "agent-1", "http://localhost:5555");
 
-        var server = CallChainingHandler.ResolveDownstreamServer(token);
+        var server = CallChainingRouter.ResolveDownstreamServer(token, TestEgress.Policy);
         Assert.Equal("http://localhost:5555", server);
     }
 
@@ -247,7 +255,7 @@ public class CallChainingTests
     public void RejectsNonHttpsIss()
     {
         // Manually build a token with http (non-localhost) iss.
-        var header = new JsonObject { ["alg"] = "EdDSA", ["typ"] = "aa-auth+jwt", ["kid"] = "k1" };
+        var header = new JsonObject { ["alg"] = "Ed25519", ["typ"] = "aa-auth+jwt", ["kid"] = "k1" };
         var payload = new JsonObject
         {
             ["iss"] = "http://external-server.com",
@@ -271,6 +279,8 @@ public class CallChainingTests
 
         var token = new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = "http://localhost:5555",
             Audience = "http://localhost:6000",
             Agent = "ec-agent",
@@ -285,7 +295,7 @@ public class CallChainingTests
         Assert.Equal("ES256", (string?)header["alg"]);
 
         // Verify with the EC key.
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         var result = verifier.Verify(token, ecKey, AuthTokenBuilder.TokenType, AuthTokenBuilder.PersonDwk);
         Assert.Equal("http://localhost:5555", result.Issuer);
     }
@@ -298,6 +308,8 @@ public class CallChainingTests
         var agentKey = AAuthKey.Generate();
         return new ResourceTokenBuilder
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             Issuer = "http://localhost:6000",
             Audience = "http://localhost:5555",
             Agent = "agent-1",
@@ -312,6 +324,8 @@ public class CallChainingTests
     {
         return new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = issuer,
             Audience = "http://localhost:6000",
             Agent = agent,
@@ -328,7 +342,7 @@ public class CallChainingTests
         // Build manually since AuthTokenBuilder doesn't have mission support yet.
         var header = new JsonObject
         {
-            ["alg"] = "EdDSA",
+            ["alg"] = "Ed25519",
             ["typ"] = "aa-auth+jwt",
             ["kid"] = "ps-1",
         };

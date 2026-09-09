@@ -57,8 +57,8 @@ public class CallChainingHandlerTests
             return resp;
         });
 
-        var metaClient = new MetadataClient(new HttpClient(handler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(handler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(handler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(handler), metaClient);
         var options = CreateOptions();
         var chainHandler = new CallChainingHandler(exchangeClient, options);
 
@@ -76,7 +76,7 @@ public class CallChainingHandlerTests
         try
         {
             await chainHandler.ExchangeForDownstreamAsync(
-                upstreamToken, "resource-token",
+                upstreamToken, TestTokens.Resource,
                 onInteractionRequired: (interaction, ct) =>
                 {
                     callbackInvoked = true;
@@ -124,18 +124,16 @@ public class CallChainingHandlerTests
             };
         });
 
-        var metaClient = new MetadataClient(new HttpClient(handler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(handler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(handler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(handler), metaClient);
         var options = CreateOptions();
         var chainHandler = new CallChainingHandler(exchangeClient, options);
 
         var upstreamToken = BuildTokenWithIss("http://localhost:7777");
 
-        var result = await chainHandler.ExchangeForDownstreamAsync(
-            upstreamToken, "resource-token",
-            pollerOptions: new DeferredPollerOptions { PreferWaitSeconds = 30 });
-
-        Assert.Equal("chained-auth-token", result);
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => chainHandler.ExchangeForDownstreamAsync(
+            upstreamToken, TestTokens.Resource,
+            pollerOptions: new DeferredPollerOptions { PreferWaitSeconds = 30 }));
         Assert.Equal("wait=30", capturedPrefer);
     }
 
@@ -165,18 +163,16 @@ public class CallChainingHandlerTests
             };
         });
 
-        var metaClient = new MetadataClient(new HttpClient(handler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(handler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(handler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(handler), metaClient);
         var options = CreateOptions();
         var chainHandler = new CallChainingHandler(exchangeClient, options);
 
         var upstreamToken = BuildTokenWithIss("http://localhost:7777");
 
         // Call without optional params (backward compatible)
-        var result = await chainHandler.ExchangeForDownstreamAsync(
-            upstreamToken, "resource-token");
-
-        Assert.Equal("chained-token", result);
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => chainHandler.ExchangeForDownstreamAsync(
+            upstreamToken, TestTokens.Resource));
     }
 
     [Fact(DisplayName = "ExchangeForDownstreamAsync — delegates routing to CallChainingRouter")]
@@ -207,15 +203,15 @@ public class CallChainingHandlerTests
             };
         });
 
-        var metaClient = new MetadataClient(new HttpClient(handler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(handler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(handler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(handler), metaClient);
         var options = CreateOptions();
         var chainHandler = new CallChainingHandler(exchangeClient, options);
 
         // Token with mission.approver → should route to approver
         var upstreamToken = BuildTokenWithMissionApprover("http://localhost:8888");
 
-        await chainHandler.ExchangeForDownstreamAsync(upstreamToken, "resource-token");
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => chainHandler.ExchangeForDownstreamAsync(upstreamToken, TestTokens.Resource));
 
         Assert.Equal("http://localhost:8888", capturedOrigin);
     }
@@ -259,7 +255,7 @@ public class CallChainingHandlerTests
 
     private static string BuildToken(JsonObject payload)
     {
-        var header = new JsonObject { ["alg"] = "EdDSA", ["typ"] = "aa-auth+jwt", ["kid"] = "k1" };
+        var header = new JsonObject { ["alg"] = "Ed25519", ["typ"] = "aa-auth+jwt", ["kid"] = "k1" };
         var h = Base64UrlEncoder.Encode(Encoding.UTF8.GetBytes(header.ToJsonString()));
         var p = Base64UrlEncoder.Encode(Encoding.UTF8.GetBytes(payload.ToJsonString()));
         return $"{h}.{p}.fake-sig";

@@ -11,6 +11,7 @@ import {
 } from '../../../tests/e2e/helpers/tour';
 import { approveInPopup } from '../../../tests/e2e/helpers/consent';
 import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
+import { directedSubject } from '../../../tests/e2e/helpers/consent';
 
 /**
  * Call Chain — multi-agent delegation Agent → Concierge → Calendar with two
@@ -94,7 +95,7 @@ test.describe('Call Chain (Guided Tour)', () => {
     expect(downstream.accessMode).toBe('three-party');
     expect(downstream.scheme).toBe('jwt');
     expect(downstream.agent).toBe('aauth:concierge@localhost:5200');
-    expect(downstream.sub).toBe('pairwise-sub');
+    expect(downstream.sub).toBe(directedSubject(Urls.calendar));
     expect(downstream.scope).toEqual(['calendar.read']);
     expect(downstream.iss).toBe(Urls.personServer);
 

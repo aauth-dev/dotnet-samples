@@ -86,6 +86,9 @@ test.describe('Mission + Call Chain (Guided Tour)', () => {
     await selectStep(page, 7);
     await expectResponse(page, 204);
     await expect(page.locator('section.payload')).toContainText('reserve and pay');
+    await expect(page.locator('section.payload')).toContainText(/Then GET .* -> 202/);
+    await expect(page.locator('section.payload')).toContainText(/Interaction code: [0123456789ABCDEFGHJKMNPQRSTVWXYZ]{26}/);
+    await expect(page.locator('section.payload')).toContainText('signedClient.GetAsync(missionPendingUrl)');
 
     // Step 12 ("Replay GET /trips/book → 200"): the elevated result.
     await selectStep(page, 11);

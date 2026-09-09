@@ -42,6 +42,7 @@ public sealed class KeycloakAccessPolicy : IAccessPolicy, IInteractiveAccessPoli
 {
     private readonly HttpClient _http;
     private readonly KeycloakOptions _options;
+    private readonly WalletPolicyRules? _walletRules;
 
     // Per-interaction state for the claim-gathering re-decide. A production
     // adapter would persist these with a TTL; the demo keys them by the AS
@@ -49,10 +50,11 @@ public sealed class KeycloakAccessPolicy : IAccessPolicy, IInteractiveAccessPoli
     private readonly ConcurrentDictionary<string, string> _userTokens = new();
     private readonly ConcurrentDictionary<string, string> _tickets = new();
 
-    public KeycloakAccessPolicy(HttpClient http, KeycloakOptions options)
+    public KeycloakAccessPolicy(HttpClient http, KeycloakOptions options, WalletPolicyRules? walletRules = null)
     {
         _http = http;
         _options = options;
+        _walletRules = walletRules;
     }
 
     /// <summary>
@@ -66,6 +68,7 @@ public sealed class KeycloakAccessPolicy : IAccessPolicy, IInteractiveAccessPoli
     public async Task<AccessDecision> EvaluateAsync(
         AccessPolicyRequest request, CancellationToken cancellationToken = default)
     {
+        if (_walletRules?.Evaluate(request) is { } walletDecision) return walletDecision;
         if (request.InteractionId is { } interactionId
             && _tickets.TryGetValue(interactionId, out var ticket)
             && _userTokens.TryGetValue(interactionId, out var userToken))
@@ -134,7 +137,7 @@ public sealed class KeycloakAccessPolicy : IAccessPolicy, IInteractiveAccessPoli
         if (!response.IsSuccessStatusCode)
         {
             throw new HttpRequestException(
-                $"Keycloak code exchange failed ({(int)response.StatusCode}): {json}");
+                $"Keycloak code exchange failed ({(int)response.StatusCode}).");
         }
 
         var token = (string?)(JsonNode.Parse(json) as JsonObject)?["access_token"];
@@ -164,7 +167,8 @@ public sealed class KeycloakAccessPolicy : IAccessPolicy, IInteractiveAccessPoli
         }
         else
         {
-            fields["permission"] = $"{_options.ResourceName}#{request.Scope}";
+            var policyScope = request.Scope == WalletPolicyRules.ReviewScope ? "wallet.read" : request.Scope;
+            fields["permission"] = $"{_options.ResourceName}#{policyScope}";
         }
 
         // Push the PS-asserted claims so Keycloak ABAC/JS/claim-gathering
@@ -207,7 +211,7 @@ public sealed class KeycloakAccessPolicy : IAccessPolicy, IInteractiveAccessPoli
         if (!response.IsSuccessStatusCode)
         {
             throw new HttpRequestException(
-                $"Keycloak decision request failed ({(int)response.StatusCode}): {json}");
+                $"Keycloak decision request failed ({(int)response.StatusCode}).");
         }
 
         var result = (bool?)(JsonNode.Parse(json) as JsonObject)?["result"] ?? false;

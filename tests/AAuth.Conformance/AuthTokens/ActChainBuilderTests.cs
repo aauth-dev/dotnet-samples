@@ -73,7 +73,7 @@ public class ActChainBuilderTests
         JsonObject? current = null;
         for (int i = 11; i >= 1; i--)
         {
-            var level = new JsonObject { ["agent"] = $"agent-{i}" };
+            var level = new JsonObject { ["agent"] = $"aauth:agent-{i}@example" };
             if (current is not null)
                 level["act"] = current;
             current = level;
@@ -107,7 +107,7 @@ public class ActChainBuilderTests
         JsonObject? current = null;
         for (int i = 10; i >= 1; i--)
         {
-            var level = new JsonObject { ["agent"] = $"agent-{i}" };
+            var level = new JsonObject { ["agent"] = $"aauth:agent-{i}@example" };
             if (current is not null)
                 level["act"] = current;
             current = level;

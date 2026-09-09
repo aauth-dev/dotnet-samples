@@ -78,7 +78,7 @@ public class ActChainReaderTests
 
         var ex = Assert.Throws<InvalidOperationException>(
             () => ActChainReader.GetDelegationChain(payload, maxDepth: 10));
-        Assert.Contains("exceeds maximum", ex.Message);
+        Assert.Contains("depth limit", ex.Message);
     }
 
     [Fact(DisplayName = "§Call Chaining — GetDelegationChain: missing agent throws")]
@@ -140,14 +140,14 @@ public class ActChainReaderTests
         Assert.Equal(0, ActChainReader.GetChainDepth(new JsonObject()));
         Assert.Equal(1, ActChainReader.GetChainDepth(new JsonObject
         {
-            ["act"] = new JsonObject { ["agent"] = "a" },
+            ["act"] = new JsonObject { ["agent"] = "aauth:first@example" },
         }));
         Assert.Equal(2, ActChainReader.GetChainDepth(new JsonObject
         {
             ["act"] = new JsonObject
             {
-                ["agent"] = "a",
-                ["act"] = new JsonObject { ["agent"] = "b" },
+                ["agent"] = "aauth:first@example",
+                ["act"] = new JsonObject { ["agent"] = "aauth:second@example" },
             },
         }));
     }
@@ -172,7 +172,7 @@ public class ActChainReaderTests
         JsonObject? current = null;
         for (int i = depth; i >= 1; i--)
         {
-            var level = new JsonObject { ["agent"] = $"agent-{i}" };
+            var level = new JsonObject { ["agent"] = $"aauth:agent-{i}@example" };
             if (current is not null)
                 level["act"] = current;
             current = level;

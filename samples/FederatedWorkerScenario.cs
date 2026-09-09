@@ -1,0 +1,102 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json.Nodes;
+using AAuth.Agent;
+using AAuth.Crypto;
+using AAuth.Discovery;
+using AAuth.Headers;
+using AAuth.Tokens;
+
+namespace AAuth.Samples;
+
+public sealed class FederatedWorkerScenario(IAAuthKey providerKey, string providerKid, string provider,
+    string personServer, string wallet) : IDisposable
+{
+    public static IReadOnlyDictionary<string, string> ScopeDescriptions { get; } =
+        new Dictionary<string, string> { ["delegation.invoke"] = "Delegate a wallet lookup to the parent and worker" };
+    private readonly AAuthKey _originalKey = AAuthKey.Generate();
+    private readonly AAuthKey _parentKey = AAuthKey.Generate();
+    private readonly AAuthKey _workerKey = AAuthKey.Generate();
+    private readonly HttpClient _discovery = AAuthHttpTransport.CreateClient(SampleEgress.Policy);
+    public string ParentId => $"aauth:aria@{new Uri(provider).Authority}";
+    public string WorkerId => $"aauth:aria+worker1@{new Uri(provider).Authority}";
+    public string? ParentToken { get; private set; }
+    public string? WorkerToken { get; private set; }
+    public string? UpstreamToken { get; private set; }
+    public string? ResourceToken { get; private set; }
+    public string? AuthToken { get; private set; }
+    public string? ResourceResponse { get; private set; }
+    public string? InteractionUrl { get; private set; }
+    public Func<Interaction, CancellationToken, Task>? OnInteraction { get; set; }
+
+    public void IssueParent() => ParentToken = Agent(ParentId, _parentKey);
+    public void IssueWorker() => WorkerToken = Agent(WorkerId, _workerKey, ParentId);
+
+    public async Task ObtainUpstreamAsync(CancellationToken ct = default)
+    {
+        var originalId = $"aauth:original@{new Uri(provider).Authority}";
+        var originalToken = Agent(originalId, _originalKey);
+        var resource = new ResourceTokenBuilder
+        {
+            EgressPolicy = SampleEgress.Policy, Issuer = provider, Audience = personServer,
+            Agent = originalId, AgentJkt = _originalKey.ComputeJwkThumbprint(), Key = providerKey, KeyId = providerKid,
+            Scope = "delegation.invoke", ScopeDescriptions = ScopeDescriptions,
+        }.Build();
+        using var client = new AAuthClientBuilder(_originalKey).UseJwt(originalToken).WithEgressPolicy(SampleEgress.Policy).Build();
+        UpstreamToken = await new TokenExchangeClient(client, new MetadataClient(_discovery)).ExchangeAsync(personServer,
+            resource, new TokenExchangeRequest { OnInteractionRequired = InteractAsync }, ct);
+    }
+
+    public async Task ObtainResourceAsync(CancellationToken ct = default)
+    {
+        using var client = new AAuthClientBuilder(_workerKey).UseJwt(WorkerToken!).WithEgressPolicy(SampleEgress.Policy).Build();
+        using var response = await client.GetAsync(wallet.TrimEnd('/') + "/wallet", ct);
+        if (response.StatusCode != HttpStatusCode.Unauthorized)
+            throw new InvalidOperationException("Worker expected a Wallet authorization challenge.");
+        ResourceToken = AAuthRequirementHeader.Parse(response.Headers.GetValues(AAuthRequirementHeader.Name).Single()).ResourceToken
+            ?? throw new InvalidOperationException("Wallet challenge is missing its resource token.");
+    }
+
+    public async Task ExchangeAsync(CancellationToken ct = default)
+    {
+        using var client = new AAuthClientBuilder(_parentKey).UseJwt(ParentToken!).WithEgressPolicy(SampleEgress.Policy).Build();
+        AuthToken = await new TokenExchangeClient(client, new MetadataClient(_discovery)).ExchangeAsync(personServer, ResourceToken!,
+            new TokenExchangeRequest { SubagentToken = WorkerToken, UpstreamToken = UpstreamToken, OnInteractionRequired = InteractAsync }, ct);
+        AgentAuthTokenValidator.Validate(AuthToken, ResourceToken!, _parentKey, ParentToken!, WorkerToken, UpstreamToken);
+        var payload = Payload(AuthToken);
+        if ((string?)payload["dwk"] != AuthTokenBuilder.AccessDwk)
+            throw new InvalidOperationException("The four-party grant must be issued by the AS.");
+        if (payload["sub"] is not null && (string?)payload["sub"] == (string?)Payload(UpstreamToken!)["sub"])
+            throw new InvalidOperationException("Downstream grant copied the upstream directed identity.");
+    }
+
+    public async Task CallWalletAsync(CancellationToken ct = default)
+    {
+        using var worker = new AAuthClientBuilder(_workerKey).UseJwt(AuthToken!).WithEgressPolicy(SampleEgress.Policy).Build();
+        using var response = await worker.GetAsync(wallet.TrimEnd('/') + "/wallet", ct);
+        ResourceResponse = await response.Content.ReadAsStringAsync(ct);
+        response.EnsureSuccessStatusCode();
+        using var parent = new AAuthClientBuilder(_parentKey).UseJwt(AuthToken!).WithEgressPolicy(SampleEgress.Policy).Build();
+        using var rejected = await parent.GetAsync(wallet.TrimEnd('/') + "/wallet", ct);
+        if (rejected.StatusCode != HttpStatusCode.Unauthorized)
+            throw new InvalidOperationException("Wallet must reject the parent presenting the worker's token.");
+    }
+
+    private async Task InteractAsync(Interaction interaction, CancellationToken ct)
+    {
+        InteractionUrl = interaction.BuildUserUrl();
+        if (OnInteraction is null) throw new InvalidOperationException("Interactive consent requires a browser callback.");
+        await OnInteraction(interaction, ct);
+    }
+
+    private string Agent(string id, IAAuthKey key, string? parent = null) => new AgentTokenBuilder
+    {
+        EgressPolicy = SampleEgress.Policy, Issuer = provider, Subject = id, Key = providerKey, KeyId = providerKid,
+        ConfirmationKey = key, ParentAgent = parent, PersonServer = personServer, Lifetime = TimeSpan.FromMinutes(10),
+    }.Build();
+
+    public static JsonObject Payload(string jwt) => JsonNode.Parse(
+        Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(jwt.Split('.')[1]))!.AsObject();
+
+    public void Dispose() => _discovery.Dispose();
+}

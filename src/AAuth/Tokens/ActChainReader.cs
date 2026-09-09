@@ -25,6 +25,9 @@ public static class ActChainReader
         var chain = new List<string>();
         var current = payload["act"] as JsonObject;
 
+        if (payload.ContainsKey("act") && (current is null || !ActChainBuilder.ValidateChain(current, maxDepth)))
+            throw new InvalidOperationException("Act chain must contain only valid agent identities within the depth limit.");
+
         while (current is not null)
         {
             if (chain.Count >= maxDepth)
@@ -47,6 +50,8 @@ public static class ActChainReader
     {
         ArgumentNullException.ThrowIfNull(payload);
         var act = payload["act"] as JsonObject;
+        if (payload.ContainsKey("act") && (act is null || !ActChainBuilder.ValidateChain(act)))
+            throw new InvalidOperationException("Act chain must contain only valid agent identities within the depth limit.");
         return (string?)act?["agent"];
     }
 
@@ -55,6 +60,8 @@ public static class ActChainReader
     public static string? GetOriginalActor(JsonObject payload, int maxDepth = 10)
     {
         ArgumentNullException.ThrowIfNull(payload);
+
+        GetDelegationChain(payload, maxDepth);
 
         var current = payload["act"] as JsonObject;
         if (current is null) return null;
@@ -79,6 +86,8 @@ public static class ActChainReader
     public static int GetChainDepth(JsonObject payload, int maxDepth = 10)
     {
         ArgumentNullException.ThrowIfNull(payload);
+
+        GetDelegationChain(payload, maxDepth);
 
         var current = payload["act"] as JsonObject;
         int depth = 0;
