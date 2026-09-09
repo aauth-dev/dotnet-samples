@@ -22,6 +22,11 @@ The published protocol is
 (2026-08-06). Companion source files come from the same pinned snapshot;
 HTTP Signature Keys is the published draft-08 text.
 
+Implementation-file citations in the original findings describe the recorded
+research baseline, not code replaced during migration. Read that baseline in
+git when checking a historical implementation claim. Dated updates identify
+current observations; canonical vendored spec-line citations remain unchanged.
+
 The moving upstream editor's copy is not the conformance baseline. Source-line
 citations below refer to the vendored files; stable section anchors are recorded
 where available. Publication metadata is separate from stale source-frontmatter
@@ -407,6 +412,15 @@ checking itself exists and must remain mandatory on actual proposal retries
 
 ### F25 - R3 auditing can silently be disabled
 
+> Update (2026-09): Phase 9 removes the no-op audit default and requires an
+> explicit sink. NuGet availability for Microsoft.Data.Sqlite 10.0.11 was verified
+> from its flat-container nuspec before installation. The sample uses a FULL-sync
+> SQLite transaction for token identity/hash plus audit metadata; endpoint,
+> rollback, concurrent-write and reopen tests pass. Pending consent remains
+> volatile and is not presented as crash-durable. See the Phase 9 implementation
+> log for the release boundary and recovery semantics. The finding below records
+> the pre-implementation state.
+
 P2, R; pre-existing. [R616] (Audit Log Integrity) requires audit entries
 atomically with issuance. [R3AccessTokenEndpoint L60](../../../src/AAuth.R3/R3AccessTokenEndpoint.cs#L60)
 awaits audit before returning a token, and pending mint-once protection exists.
@@ -462,6 +476,19 @@ expiry, cache-miss recovery, and advertisement semantics; a stub is not support.
 
 ### F29 - AAuth access modes and generic signing modes are conflated
 
+> **Update (2026-09-09):** Phase 11 resolves the runtime/API ruling: retain
+> agent-JWT resource-managed access per [P2420]/[P2422] (#keying-material).
+> GuidedTour self-issues locally; SampleApp signs AP enrollment then refreshes
+> lazily. Generic Profile signing is a separate demonstration, not that access
+> mode. The complete baseline-to-current inventory and ownership/default choices
+> are in [api-surface-map.md](api-surface-map.md). The earlier seed observations
+> below remain historical evidence, not the current API status.
+
+> **Update (2026-09):** The paragraph below records the pre-implementation
+> baseline. Phase 3 changed the Inbox examples to agent JWTs. The owner has
+> reopened credential provenance, the pseudonymous example's intended role and
+> API ergonomics for explicit review in the new Phase 11; details follow below.
+
 P2 documentation/sample behavior, D. [P2420] and [P2422] (`#keying-material`)
 require agent/auth JWTs for AAuth resource access and restrict pseudonymous
 schemes to other contexts. [Identity workflow L15](../../../docs/workflows/identity-based-access.md#L15)
@@ -470,6 +497,58 @@ teaches `hwk`, `jkt-jwt`, or `jwks_uri` as identity-based AAuth access.
 pseudonymous resource access. Generic signature demonstrations can remain,
 but their routes, names, policies, and diagrams must not imply they implement
 one of the four AAuth access modes. This is not just a spec-link update.
+
+#### Resource-managed sample revisit and API map
+
+The diff against implementation baseline `ba768f1` confirms that the Inbox
+examples previously used `UseHwk`. Phase 3 switched the GuidedTour snippet to
+`UseJwt(agentToken)` and the SampleApp runtime to explicit enrollment and an
+AgentProviderTokenRefresher. These were implementation changes, not pre-existing
+setup the user overlooked. The policy rationale is [P2420]/[P2422]
+(`#keying-material`): an agent token is the minimum AAuth resource credential.
+Resource-managed authorization still occurs at the resource; provisioning an
+agent identity does not require PS/AS authorization exchange. Generic
+pseudonymous HTTP signing and that AAuth access mode are distinct concepts.
+
+Current provenance, directly checked on 2026-09-08:
+
+- [GuidedTour EnsureAgentReadyAsync L1149](../../../samples/GuidedTour/TourSession.cs#L1149)
+	self-issues with AgentTokenBuilder at
+	[L1163](../../../samples/GuidedTour/TourSession.cs#L1163), using the tour's own
+	published identity/key. The resource-managed step calls this helper at
+	[L2544](../../../samples/GuidedTour/TourSession.cs#L2544); no external AP
+	enrollment is performed by that helper for this flow.
+- [SampleApp EnrollmentService L37](../../../samples/SampleApp/EnrollmentService.cs#L37)
+	ensures enrollment and intentionally discards the returned agent token.
+	[Inbox L175](../../../samples/SampleApp/Components/Pages/Inbox.razor#L175)
+	wires AgentProviderTokenRefresher manually. Its
+	[RefreshAsync L77](../../../src/AAuth/Agent/AgentProviderTokenRefresher.cs#L77)
+	obtains the runtime agent token from the AP. The displayed snippet omits this
+	setup and uses an unexplained `refresher` variable.
+- [GuidedTour snippet L220](../../../samples/GuidedTour/CodeSnippets.cs#L220)
+	assumes `agentToken` is already available. The Inbox server snippet still says
+	"verify the HTTP signature only" despite the new agent-token verification
+	policy. Successful browser tests do not establish instructional consistency.
+
+This is a seed inventory, not a completed rescan of the migration's public API.
+The phase-level inventory covers later features as they are implemented.
+
+| Concept | Current public surface | Observed alignment concern |
+|---|---|---|
+| Enrolled agent token acquisition | [EnrolledBuilder L43](../../../src/AAuth/EnrolledBuilder.cs#L43): RefreshingFrom/WithKeyStore | Existing fluent style can hide required refresher plumbing without hiding that an AP call occurs |
+| Resource-managed access and interaction | [EnrolledBuilder L99](../../../src/AAuth/EnrolledBuilder.cs#L99) forwards WithInteractionHandling to the main builder | No direct WithResourceManagedAccess forwarding; interaction-first chaining can reach the main builder, but natural flow-option composition needs review |
+| Low-level refresh | [AgentProviderTokenRefresher L54](../../../src/AAuth/Agent/AgentProviderTokenRefresher.cs#L54) constructor and Create builder | Inbox manually constructs HttpClient and refresher; ownership and repeat-call lifecycle need coverage |
+| Enrollment-result defaults | [AAuthClientBuilder L59](../../../src/AAuth/AAuthClientBuilder.cs#L59): From(EnrollResult) | Selects direct jwks when key URL/kid exist; comment says jwks_uri; default ignores intended AAuth agent-token use case |
+| JWT carrier vs token purpose | [AAuthClientBuilder L176](../../../src/AAuth/AAuthClientBuilder.cs#L176): UseJwt(string agentToken) | Also used with auth tokens; parameter/comment terminology should not conflate scheme and token type |
+| Server discovery vs direct key URL | [AAuthClientBuilder L189](../../../src/AAuth/AAuthClientBuilder.cs#L189): UseJwksUri, UseJwks | Distinct contracts per [S964]/[S975] and [S1021]; names, defaults and snippets must preserve that distinction |
+| Self-issued agent vs self-jwt | [SelfIssuingBuilder](../../../src/AAuth/SelfIssuingBuilder.cs) and [UseSelfJwt L201](../../../src/AAuth/AAuthClientBuilder.cs#L201) | Agent provisioning still produces an agent JWT with cnf; self-jwt is a different carrier with no cnf per [E368] |
+
+The owner requested the convenience/builder style, not restoration of invalid
+wire formats. Phase 11 resolves setup presentation and retains separately
+labeled generic pseudonymous examples. Enrolled and self-issued flow options
+compose directly; From uses the issued JWT, and explicit scheme/refresh
+precedence is tested. Mandatory trust, account, expiry and consent context remain
+required. Final verification evidence is recorded in the implementation log.
 
 ### F30 - Documentation, fixtures, and snippets preserve obsolete contracts
 

@@ -26,9 +26,13 @@ are the spec's own kramdown anchors and are stable across line shifts.
 | [`v09/`](v09/) | draft-09 | draft-01 (unchanged) | draft-00 (revised) | unchanged | draft-00 (new) | `90089f8` (2026-07-05) |
 | [`v10/`](v10/) | draft-10 | draft-02 (revised) | draft-01 (revised) | unchanged | draft-00 (revised) | `9dee49f` (2026-08-06) |
 
-> **The SDK code targets `v08/` (draft-08).** The `v10/` snapshot was vendored
-> 2026-09-08 as the latest upstream reference; draft-09 and draft-10 migrations
-> are separate stages. See [`SPEC-VERSION.md`](SPEC-VERSION.md).
+> The SDK code targets `v10/` (draft-10) after the separately verified 2026-09-09
+> migration. The snapshot was vendored 2026-09-08 and remains byte-unchanged.
+> All four access modes and local four-party sub-agent scenarios are implemented;
+> optional exclusions and incomplete external authorization interop remain explicit.
+> See [SPEC-VERSION](SPEC-VERSION.md) and the
+> [migration evidence](../.agent/plans/2026-09-08-aauth-v10-spec-migration/implementation-log.md).
+> Historical per-snapshot entries below describe their original publication state.
 
 ## Contents
 

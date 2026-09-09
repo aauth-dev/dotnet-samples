@@ -19,20 +19,23 @@ The vendored `.md` files are the upstream kramdown source; if the GitHub repo is
 unavailable, the Datatracker `.txt`/`.html` renderings are the authoritative
 substitute.
 
-The SDK code continues to target **draft-08** ([`v08/`](v08/)) — migrated from
-draft-02 in the 2026-06-25 migration (see
-`.agent/plans/2026-06-25-aauth-v08-spec-migration/`). All four resource access
-modes are implemented, including the `AAuth-Access` opaque-token flow
-(resource-managed, two-party access), added under
-`.agent/plans/2026-06-25-aauth-access-token-flow/`. The runnable four-party
-sub-agent (S5) interop demo is deferred, though the parent-mediated code path is
-implemented and conformance-tested.
+The SDK now targets **draft-10** ([`v10/`](v10/)), following the separately
+verified migration on 2026-09-09. This includes all four access modes, the
+resource-managed opaque credential, accounts, AS clarification, issuer-qualified
+revocation, and real four-party parent/worker scenarios in both primary apps.
+Signature Keys draft-08, R3 draft-01 and revised Events draft-00 are included;
+Bootstrap draft-02 remains informational. No snapshot bytes changed during migration.
 
-`v10/` is the latest upstream snapshot, vendored 2026-09-08 as an immutable
-reference. The draft-09 SDK migration is planned but not implemented on this
-branch, so `v08/` remains the version the SDK conforms to. The earlier draft-09
-([`v09/`](v09/)), draft-02 ([`v02/`](v02/)), and draft-01
-([`v01/`](v01/)) snapshots are retained for reference.
+`v10/` remains the latest vendored upstream reference. Earlier snapshots are
+historical, not compatibility fallbacks. X.509/cached carriers and third-party
+login hosting are unsupported; platform/native transports and production
+persistence/policy are deployment responsibilities. External whoami identity
+access passed, but scoped access returned `person-token`; external authorization
+and the full external mission/sub-agent profile remain unverified. See the
+[migration log](../.agent/plans/2026-09-08-aauth-v10-spec-migration/implementation-log.md)
+and [conformance ledger](../.agent/plans/2026-09-08-aauth-v10-spec-migration/conformance-ledger.md)
+for executed gates and explicit limitations. Historical snapshot entries below
+retain their original context.
 
 For a high-fidelity record of what changed between snapshots, see
 [`CHANGELOG.md`](CHANGELOG.md).
