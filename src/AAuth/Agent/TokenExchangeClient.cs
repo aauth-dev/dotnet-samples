@@ -186,7 +186,7 @@ public sealed class TokenExchangeClient
             if (signingKey is null || signedAgentToken is null)
                 throw new TokenVerificationException("Token exchange requires a locally signed agent-token request context.");
             AgentAuthTokenValidator.Validate(authToken, effectiveResourceToken, signingKey, signedAgentToken,
-                options.SubagentToken, upstreamToken);
+                options.SubagentToken, upstreamToken, EgressPolicy);
             return authToken;
         }
         finally

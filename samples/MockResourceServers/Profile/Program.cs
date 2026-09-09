@@ -2,17 +2,18 @@ using AAuth.Crypto;
 using AAuth.Server.Verification;
 
 // ---------------------------------------------------------------------------
-// Profile — Aria's identity-based resource server (Identity-Based access mode).
+// Profile: Aria's Generic Signature Keys demonstration resource.
 //
 // The Profile service is where Aria (the AI travel assistant) reads who the
-// caller is, with NO Person Server involved. The resource decides access from
-// the signature alone, so every endpoint here is "signature only" (no JWT
-// issuer verification, no scope). The three endpoints differ only in HOW the
-// agent presents its key — i.e. the RFC 9421 Signature-Key *scheme*:
+// caller is, with no PS/AS authorization exchange. Routes explicitly admit
+// generic signing schemes without an auth-token or scope requirement.
+// JWT issuer verification still applies when an agent JWT is presented;
+// naming JWTs verify their durable-key delegation. The endpoints illustrate
+// different Signature-Key schemes:
 //
 //   PATH            SCHEME      WHAT THE RESOURCE LEARNS
 //   /pseudonymous   hwk         a key thumbprint only — caller is a pseudonym
-//   /identified     jwks_uri    a named, verifiable agent identity (via JWKS)
+//   /identified     jwks/jwks_uri/jwt  a verified key-discovery or agent identity
 //   /anchored       jkt-jwt     a durable key's thumbprint, via a self-issued
 //                               naming JWT delegating to an ephemeral key
 //                               (self-anchored, draft-05 §3.4)
@@ -55,9 +56,9 @@ app.MapAAuthWellKnown();
 AAuth.Server.RevocationEndpoint.MapAAuthRevocationEndpoint(app,
     app.Services.GetRequiredService<AAuth.Server.IJtiStore>(), options => options.AllowTokenIssuer = true);
 
-// Identity-based access: every endpoint declares .RequireAAuthSignature(); this
-// single post-routing middleware verifies the agent's HTTP signature only (no
-// auth-token challenge, no JWT issuer check).
+// Each protected endpoint declares RequireGenericSignature admission.
+// The pipeline verifies HTTP proof and any JWT assertion without starting
+// a PS/AS authorization exchange.
 app.UseRouting();
 app.UseAAuth();
 
@@ -93,9 +94,9 @@ app.MapGet("/pseudonymous", (HttpContext ctx) =>
     });
 }).RequireGenericSignature();
 
-// GET /identified — scheme=jwks_uri. Agent-identity access: the resource fetches
-// the agent's public key from its published JWKS URI and learns a named,
-// verifiable identity. Requires the Identified policy.
+// GET /identified: admitted key discovery or a verified agent JWT.
+// Generic discovery identifies the verified server/key URL; an agent JWT
+// additionally attests the agent identifier and its confirmation key.
 app.MapGet("/identified", (HttpContext ctx) =>
 {
     var parsed = ctx.GetAAuthParsedKey()!;

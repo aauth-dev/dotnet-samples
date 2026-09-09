@@ -181,7 +181,20 @@ var verified = await verifier.VerifyResourceTokenAsync(
     expectedAgentJkt: confirmationKey.ComputeJwkThumbprint(),
     metadata: metadataClient,                   // resolves {iss}/.well-known/aauth-resource.json
     jwks: jwksClient,                           // resolves the resource's signing key
-    expectedApprover: null);                    // optional: mission.approver constraint
+    expectedApprover: psIssuer);
+```
+
+At a PS, `expectedApprover` is the local PS identifier. At an AS, it is the
+authenticated PS caller's identifier, never a value taken from the request body
+or the resource token. The AS also validates retained upstream context before
+document fetch, policy evaluation, consent, or issuance:
+
+```csharp
+var verified = await verifier.VerifyResourceTokenAsync(
+    resourceTokenString, asIssuer, issuance.AgentId,
+    issuance.ConfirmationKey.ComputeJwkThumbprint(), metadataClient, jwksClient,
+    expectedApprover: authenticatedPsIdentifier);
+issuance.ValidateResourceContext(verified.Payload, authenticatedPsIdentifier);
 ```
 
 The seven checks (failure throws `TokenVerificationException`):
@@ -194,7 +207,7 @@ The seven checks (failure throws `TokenVerificationException`):
 | 4 | `aud` | Equals `expectedAudience` |
 | 5 | `agent` | Equals `expectedAgentId` from the verified HTTP signature |
 | 6 | `agent_jkt` | Equals the presenting agent's key thumbprint (PoP binding) |
-| 7 | `mission.approver` | When `expectedApprover` is set, must match |
+| 7 | `mission.approver` | If mission is present, must match the local PS or authenticated PS caller at the AS |
 
 Map failures to the spec error response — `expired_resource_token` for an expired
 token, otherwise `invalid_resource_token` — and derive the consent screen and the
@@ -226,8 +239,10 @@ the PS even when the resource is not the approver. Enable it with
 `ChallengeOptions.MissionAware` — see
 [Challenge Middleware](challenge-middleware.md#mission-aware-resources). The PS
 echoes the same claim into the auth token it mints. When verifying a presented
-resource token the recipient MAY constrain `mission.approver` via
-`expectedApprover` (check 7 above).
+resource token, the PS/AS recipient must supply `expectedApprover` (check 7
+above). An absent mission does not require a new mission; a present mission
+cannot name another PS. Immediate and deferred issuance retain the verified
+mission unchanged, including R3 AS responses validated by the PS.
 
 For the full PS-side evaluation of mission context, see
 [Mission Governance (Server)](mission-governance.md).

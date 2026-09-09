@@ -18,8 +18,8 @@ public sealed class FederatedWorkerScenario(IAAuthKey providerKey, string provid
     private readonly AAuthKey _parentKey = AAuthKey.Generate();
     private readonly AAuthKey _workerKey = AAuthKey.Generate();
     private readonly HttpClient _discovery = AAuthHttpTransport.CreateClient(SampleEgress.Policy);
-    public string ParentId => $"aauth:aria@{new Uri(provider).Authority}";
-    public string WorkerId => $"aauth:aria+worker1@{new Uri(provider).Authority}";
+    public string ParentId => $"aauth:aria@{new Uri(provider).Host}";
+    public string WorkerId => $"aauth:aria+worker1@{new Uri(provider).Host}";
     public string? ParentToken { get; private set; }
     public string? WorkerToken { get; private set; }
     public string? UpstreamToken { get; private set; }
@@ -34,7 +34,7 @@ public sealed class FederatedWorkerScenario(IAAuthKey providerKey, string provid
 
     public async Task ObtainUpstreamAsync(CancellationToken ct = default)
     {
-        var originalId = $"aauth:original@{new Uri(provider).Authority}";
+        var originalId = $"aauth:original@{new Uri(provider).Host}";
         var originalToken = Agent(originalId, _originalKey);
         var resource = new ResourceTokenBuilder
         {
@@ -62,7 +62,7 @@ public sealed class FederatedWorkerScenario(IAAuthKey providerKey, string provid
         using var client = new AAuthClientBuilder(_parentKey).UseJwt(ParentToken!).WithEgressPolicy(SampleEgress.Policy).Build();
         AuthToken = await new TokenExchangeClient(client, new MetadataClient(_discovery)).ExchangeAsync(personServer, ResourceToken!,
             new TokenExchangeRequest { SubagentToken = WorkerToken, UpstreamToken = UpstreamToken, OnInteractionRequired = InteractAsync }, ct);
-        AgentAuthTokenValidator.Validate(AuthToken, ResourceToken!, _parentKey, ParentToken!, WorkerToken, UpstreamToken);
+        AgentAuthTokenValidator.Validate(AuthToken, ResourceToken!, _parentKey, ParentToken!, WorkerToken, UpstreamToken, SampleEgress.Policy);
         var payload = Payload(AuthToken);
         if ((string?)payload["dwk"] != AuthTokenBuilder.AccessDwk)
             throw new InvalidOperationException("The four-party grant must be issued by the AS.");

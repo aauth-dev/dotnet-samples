@@ -469,7 +469,7 @@ var enrol = await apClient.EnrolAsync(
 
 // enrol.Key            — your Ed25519 signing key (in keystore)
 // enrol.LocalKeyHandle — agent-local IKeyStore handle (defaults to JWK thumbprint); persist this
-// enrol.AgentTokenKid  — AP-internal JWT `kid` (opaque; diagnostic only)
+// enrol.AgentTokenKid  - per-agent JWKS key selector for explicit generic jwks signing
 // enrol.AgentToken     — initial aa-agent+jwt (short-lived, do not persist)
 ```
 
@@ -509,16 +509,20 @@ var holder = new AAuthTokenHolder(agentToken);
 var signingHandler = new AAuthSigningHandler(
     key, new JwtSignatureKeyProvider(() => holder.Current))
 {
-    InnerHandler = new HttpClientHandler(),
+    InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(),
 };
 
-var exchangeHttp = new HttpClient(
+using var exchangeHttp = AAuth.Discovery.AAuthHttpTransport.AttachPolicy(new HttpClient(
     new AAuthSigningHandler(key, new JwtSignatureKeyProvider(() => agentToken))
-    { InnerHandler = new HttpClientHandler() });
+    { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler() }),
+    AAuth.Discovery.AAuthEgressPolicy.Production, AAuth.Discovery.AAuthTransportContract.EnforcesEgressPolicy);
 
-var exchange = new TokenExchangeClient(exchangeHttp, new MetadataClient(new HttpClient()));
+using var metadata = new MetadataClient();
+using var jwks = new JwksClient();
+var verifier = new TokenVerifier();
+var exchange = new TokenExchangeClient(exchangeHttp, metadata);
 
-var pipeline = new ChallengeHandler(exchange, holder, "https://ps.example")
+var pipeline = new ChallengeHandler(exchange, holder, verifier, metadata, jwks, "https://ps.example")
 {
     InnerHandler = signingHandler,
 };
@@ -531,7 +535,7 @@ using var client = new HttpClient(pipeline);
 ### What Happens Under the Hood
 
 1. Agent sends a signed GET → Resource replies **401** with `AAuth-Requirement: requirement=auth-token` and a `resource_token`.
-2. `ChallengeHandler` extracts the resource token, POSTs it to the Person Server's token endpoint.
+2. `ChallengeHandler` verifies the resource token and original request binding before POSTing it to the Person Server's token endpoint.
 3. The PS validates the agent token, confirms user consent (or defers), and returns an `auth_token`.
 4. `AAuthTokenHolder` is updated; the handler retries the original request signed with the auth token.
 5. Subsequent requests reuse the auth token until it expires.

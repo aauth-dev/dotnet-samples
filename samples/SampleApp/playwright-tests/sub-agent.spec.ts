@@ -41,8 +41,8 @@ test('sub-agent flow shows parent_agent, sub-agent-bound cnf, and nested act', a
   const authClaims = page.locator('pre code.language-json').nth(2);
   await expect(authClaims).toContainText('"agent": "aauth:aria+worker1@');
   await expect(authClaims).toContainText('"act"');
-  await expect(authClaims).toContainText('aauth:original@localhost:5240');
+  await expect(authClaims).toContainText('aauth:original@localhost');
   await expect(authClaims).toContainText('aauth-access.json');
-  await expect(page.locator('pre code.language-json').first()).toContainText('aauth:aria+worker1@localhost:5240');
+  await expect(page.locator('pre code.language-json').first()).toContainText('aauth:aria+worker1@localhost');
   await expect(page.getByText('Actual signed HTTP responses: worker 200, parent 401.')).toBeVisible();
 });

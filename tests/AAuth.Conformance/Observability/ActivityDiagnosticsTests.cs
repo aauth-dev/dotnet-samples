@@ -226,7 +226,8 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
         var exchange = new TokenExchangeClient(httpClient, metadata);
         var holder = new AAuthTokenHolder(agentToken);
 
-        var challengeHandler = new ChallengeHandler(exchange, holder, "http://localhost:9998")
+        var challengeHandler = new ChallengeHandler(exchange, holder, new AAuth.Tokens.TokenVerifier { EgressPolicy = TestEgress.Policy },
+            metadata, new JwksClient(httpClient), "http://localhost:9998")
         {
             InnerHandler = stubHandler,
         };

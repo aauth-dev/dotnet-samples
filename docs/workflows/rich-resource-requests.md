@@ -92,6 +92,10 @@ the R3 document itself carries only the spec fields (`operations` + `display`):
 - Audit persistence is mandatory. The sample commits the token's `jti` and SHA-256
   with `r3_uri`, `r3_s256`, agent, account, and issuance time in one SQLite
   transaction before returning it. Audit failure prevents release.
+- Published document/proposal bytes remain available for the resource process
+  lifetime. The bounded store refuses new distinct content when full instead of
+  evicting content referenced by issued grants. Restart durability remains a
+  deployment responsibility, separate from the sample's SQLite issuance audit.
 - **Per-call digest match** — the resource rejects a retry whose parameters differ from
   the approved proposal.
 

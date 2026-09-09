@@ -66,13 +66,13 @@ test.describe('Call Chain (deferred)', () => {
 
     // Concierge: the intermediary's own identity.
     const concierge = json.concierge as Record<string, unknown>;
-    expect(concierge.identity).toBe('aauth:concierge@localhost:5200');
+    expect(concierge.identity).toBe('aauth:concierge@localhost');
 
     // Downstream: Calendar's three-party identity with the nested act chain.
     const downstream = json.downstream as Record<string, unknown>;
     expect(downstream.accessMode).toBe('three-party');
     expect(downstream.scheme).toBe('jwt');
-    expect(downstream.agent).toBe('aauth:concierge@localhost:5200');
+    expect(downstream.agent).toBe('aauth:concierge@localhost');
     expect(downstream.iss).toBe(Urls.personServer);
     expect(downstream.scope).toEqual(['calendar.read']);
 

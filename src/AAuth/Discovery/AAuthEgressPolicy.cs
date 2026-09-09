@@ -66,6 +66,10 @@ public sealed class AAuthEgressPolicy
 
     public static AAuthEgressPolicy ForDevelopmentLoopback(params string[] origins) => new(origins);
 
+    internal bool IsDevelopmentIdentifier(string identifier) => _loopbackOrigins.Contains(identifier);
+    internal bool IsDevelopmentAgentDomain(string domain) => _loopbackOrigins.Any(origin =>
+        new Uri(origin).Host == domain);
+
     public bool IsValidIdentifier(string? identifier)
     {
         if (identifier is null) return false;

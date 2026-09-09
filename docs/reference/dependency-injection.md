@@ -338,6 +338,12 @@ app.Run();
 
 ### AAuthAgentOptions
 
+`AddAAuthAgent` requires an agent token/refresher or an explicit generic provider.
+Keep an injected disposable refresher alive until all borrowing clients stop;
+the `using` examples belong to the enclosing host lifetime, not a short-lived
+registration helper. Prefer the enrolled `BuildHandler` factory above for owned
+refresh transport. Keys and stores remain caller-owned.
+
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `Key` | `IAAuthKey` | required | Agent signing key (must have private component) |
@@ -354,11 +360,8 @@ app.Run();
 
 ### AAuthResourceOptions
 
-Registration requires an agent token/refresher or an explicit generic provider.
-Keep an injected disposable refresher alive until all borrowing clients stop;
-the `using` examples belong to the enclosing host lifetime, not a short-lived
-registration helper. Prefer the enrolled `BuildHandler` factory above for owned
-refresh transport. Keys and stores remain caller-owned.
+`AddAAuthResource` registers inbound verification and resource-token issuance.
+It requires the resource issuer and signing keys, but does not require agent credentials.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|

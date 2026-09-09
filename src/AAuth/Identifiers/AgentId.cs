@@ -47,15 +47,15 @@ public readonly struct AgentId : IEquatable<AgentId>
     }
 
     /// <summary>Parse and validate an agent identifier. Throws on invalid input.</summary>
-    public static AgentId Parse(string input)
+    public static AgentId Parse(string input, AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
-        if (!TryParse(input, out var id, out var error))
+        if (!TryParse(input, out var id, out var error, policy))
             throw new FormatException(error);
         return id;
     }
 
     /// <summary>Try to parse and validate an agent identifier.</summary>
-    public static bool TryParse(string? input, out AgentId result, out string? error)
+    public static bool TryParse(string? input, out AgentId result, out string? error, AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
         result = default;
         error = null;
@@ -120,6 +120,15 @@ public readonly struct AgentId : IEquatable<AgentId>
                 error = "Agent identifier domain must be lowercase.";
                 return false;
             }
+        }
+
+        var domainText = domain.ToString();
+        var effectivePolicy = policy ?? AAuth.Discovery.AAuthEgressPolicy.Production;
+        if (!AAuth.Discovery.AAuthEgressPolicy.Production.IsValidIdentifier("https://" + domainText)
+            && !effectivePolicy.IsDevelopmentAgentDomain(domainText))
+        {
+            error = "Agent identifier domain must be a valid server identifier domain.";
+            return false;
         }
 
         result = new AgentId(input);

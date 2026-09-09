@@ -19,7 +19,7 @@ var issuer = app.Configuration["AgentProvider:Issuer"] ?? "http://localhost:5301
 var keyId = app.Configuration["AgentProvider:KeyId"] ?? "ap-key-1";
 
 // AP signing key — persisted so restarting keeps issued tokens verifiable.
-var keyStore = new FileKeyStore(Path.Combine(
+var keyStore = new FileKeyStore(app.Configuration["AgentProvider:KeyDirectory"] ?? Path.Combine(
     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
     ".aauth", "ap-keys"));
 var apKey = keyStore.LoadOrCreate(keyId);
@@ -79,7 +79,7 @@ app.MapGet("/agents/{agentId}/jwks.json", (string agentId) =>
     var agentJwk = record.PublicKey.ToPublicJwk();
     agentJwk["kid"] = record.KeyId;
     agentJwk["use"] = "sig";
-    agentJwk["alg"] = AAuthKey.Ed25519Algorithm;
+    agentJwk["alg"] = record.PublicKey.Algorithm;
 
     return Results.Json(new JsonObject { ["keys"] = new JsonArray { agentJwk } }, contentType: "application/json");
 });
@@ -225,4 +225,9 @@ string IssueAgentToken(SampleAgentRecord record)
         ConfirmationKey = record.PublicKey,
         PersonServer = record.PersonServer,
     }.Build();
+}
+
+namespace MockAgentProvider
+{
+    public sealed class Entry { }
 }

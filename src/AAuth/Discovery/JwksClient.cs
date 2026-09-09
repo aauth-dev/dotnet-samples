@@ -111,21 +111,30 @@ public sealed class JwksClient : IDisposable
         using var request = new HttpRequestMessage(HttpMethod.Get, jwksUri);
         using var response = await AAuthHttpTransport.SendAsync(_http, request, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
-        var doc = await response.Content.ReadFromJsonAsync<JsonNode>(cancellationToken).ConfigureAwait(false) as JsonObject
-            ?? throw new AAuth.HttpSig.AAuthVerificationException(AAuth.Errors.SignatureErrorCode.InvalidKey, $"JWKS at {jwksUri} is not a JSON object.");
-
-        var keys = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-        if (doc["keys"] is JsonArray array)
+        try
         {
+            var doc = await response.Content.ReadFromJsonAsync<JsonNode>(cancellationToken).ConfigureAwait(false) as JsonObject
+                ?? throw new AAuth.HttpSig.AAuthVerificationException(AAuth.Errors.SignatureErrorCode.InvalidKey, $"JWKS at {jwksUri} is not a JSON object.");
+
+            var keys = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+            if (doc["keys"] is not JsonArray array)
+                throw new AAuth.HttpSig.AAuthVerificationException(AAuth.Errors.SignatureErrorCode.InvalidKey, "JWKS keys must be an array.");
             foreach (var node in array)
             {
-                if (node is not JsonObject jwk) { continue; }
-                if (jwk["kid"] is not JsonValue kidValue || !kidValue.TryGetValue<string>(out var kid)) { continue; }
+                if (node is not JsonObject jwk)
+                    throw new AAuth.HttpSig.AAuthVerificationException(AAuth.Errors.SignatureErrorCode.InvalidKey, "JWKS entries must be objects.");
+                if (!jwk.TryGetPropertyValue("kid", out var kidNode)) continue;
+                if (kidNode is not JsonValue kidValue || !kidValue.TryGetValue<string>(out var kid))
+                    throw new AAuth.HttpSig.AAuthVerificationException(AAuth.Errors.SignatureErrorCode.InvalidKey, "JWK kid must be a string.");
                 keys[kid] = jwk;
             }
-        }
 
-        return _cache.Response(keys, response);
+            return _cache.Response(keys, response);
+        }
+        catch (Exception exception) when (exception is System.Text.Json.JsonException or ArgumentException)
+        {
+            throw new AAuth.HttpSig.AAuthVerificationException(AAuth.Errors.SignatureErrorCode.InvalidKey, "JWKS is not a valid key document.", exception);
+        }
     }
 
     /// <summary>Discard cached keys without clearing attempt floors or failure backoff.</summary>

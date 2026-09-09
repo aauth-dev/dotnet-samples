@@ -6,6 +6,51 @@ namespace AAuth.R3.Tests;
 
 public class R3VocabularyTests
 {
+    [Fact]
+    public void ExplicitNullParameterRoundTripsAndBindsExactRetry()
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes("{\"vocabulary\":\"urn:aauth:vocabulary:mcp\",\"operations\":[{\"tool\":\"update\"}],\"parameters\":{\"description\":null}}");
+        var document = R3ProposalDocument.FromUtf8Bytes(bytes);
+        var parameter = document.Parameters["description"];
+        Assert.NotNull(parameter);
+        Assert.Null(parameter.Json);
+        Assert.False(parameter.IsDigest);
+        Assert.Null(parameter.DeepClone().Json);
+        Assert.Null(R3Parameter.Inline(null).Json);
+        Assert.Equal(parameter, R3Parameter.Inline(null));
+        Assert.NotEqual(parameter, R3Parameter.Digest("hash"));
+        Assert.Throws<ArgumentException>(() => new R3PresentedParameters(new Dictionary<string, R3Parameter> { ["description"] = null! }));
+        Assert.Throws<InvalidOperationException>(() => (document with { Parameters = new Dictionary<string, R3Parameter> { ["description"] = null! } }).Validate());
+        Assert.Throws<InvalidOperationException>(() => (document with { Parameters = new Dictionary<string, R3Parameter> { [""] = parameter } }).Validate());
+        Assert.Equal("null", JsonSerializer.Serialize(parameter));
+        Assert.NotNull(R3ProposalDocument.FromUtf8Bytes(document.ToUtf8Bytes()).Parameters["description"]);
+        var store = new R3ProposalStore();
+        var enforcement = new R3Enforcement(store, new Uri("https://resource.test"));
+        var identity = R3OperationIdentity.Mcp("update");
+        var claims = new R3ClaimReader.AuthTokenClaims("https://resource.test/r3/doc", "hash", R3Grant.Mcp(), R3Grant.Mcp("update"));
+        var conditional = enforcement.Evaluate(claims, identity, document.Parameters);
+        Assert.Equal(R3EnforcementDecisionKind.Conditional, conditional.Kind);
+        var approved = new R3ClaimReader.AuthTokenClaims(conditional.ProposalUri!, conditional.ProposalS256!, claims.Conditional!, null);
+        Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(approved, identity, document.Parameters, approvedProposalS256: approved.S256).Kind);
+        Assert.Equal("proposal_digest_mismatch", enforcement.Evaluate(approved, identity,
+            new Dictionary<string, R3Parameter>(), approvedProposalS256: approved.S256).Error);
+        Assert.Equal("proposal_digest_mismatch", enforcement.Evaluate(approved, identity,
+            new Dictionary<string, R3Parameter> { ["description"] = R3Parameter.Inline(JsonValue.Create("not-null")!) }, approvedProposalS256: approved.S256).Error);
+        Assert.Equal("proposal_digest_mismatch", enforcement.Evaluate(approved, identity,
+            new Dictionary<string, R3Parameter> { ["description"] = R3Parameter.Digest(R3Hash.ComputeS256("null"u8)) }, approvedProposalS256: approved.S256).Error);
+    }
+
+    [Theory]
+    [InlineData("{\"description\":null,\"description\":null}")]
+    [InlineData("{\"description\":{\"s256\":\"hash\",\"s256\":\"hash\"}}")]
+    [InlineData("{\"description\":[{\"text\":null,\"text\":1}]}")]
+    public void DuplicateParameterMembersRejectStructurally(string parameters)
+    {
+        var json = "{\"vocabulary\":\"urn:aauth:vocabulary:mcp\",\"operations\":[{\"tool\":\"update\"}],\"parameters\":" + parameters + "}";
+        Assert.Throws<JsonException>(() => R3ProposalDocument.FromUtf8Bytes(System.Text.Encoding.UTF8.GetBytes(json)));
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<R3Parameter>(parameters));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -70,7 +115,6 @@ public class R3VocabularyTests
     }
 
     [Theory]
-    [InlineData("null")]
     [InlineData("{\"s256\":null}")]
     [InlineData("{\"s256\":[]}")]
     [InlineData("{\"s256\":\"hash\",\"excerpt\":[]}")]

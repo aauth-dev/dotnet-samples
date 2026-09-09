@@ -24,6 +24,123 @@ namespace AAuth.Conformance.Person;
 
 public class DeferredFederationTests
 {
+    public static IEnumerable<object[]> MalformedBodyCredentials =>
+        from sample in TestTokens.InvalidCredentials
+        from person in new[] { false, true }
+        where !person || (string)sample[0] != "agent_token"
+        select sample.Concat(new object[] { person }).ToArray();
+
+    [Theory]
+    [MemberData(nameof(MalformedBodyCredentials))]
+    public async Task TokenBodyFailuresAreNotAuthenticationFailures(string field, string variant, string error, bool person)
+    {
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert("person"));
+        await using var fixture = await Fixture.CreateAsync("immediate", asserter);
+        var token = field == "resource_token" ? fixture.ResourceToken("read")
+            : field == "upstream_token" ? fixture.UpstreamToken() : fixture.AgentToken;
+        var key = field == "resource_token" ? fixture.ResourceKey
+            : field == "upstream_token" ? fixture.AsKey : fixture.ApKey;
+        var body = new JsonObject { ["agent_token"] = fixture.AgentToken, ["resource_token"] = fixture.ResourceToken("read") };
+        body[field] = TestTokens.MalformedCredential(token, key, variant);
+        using var response = await (person ? fixture.Agent : fixture.Ps).PostAsJsonAsync("/token", body);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType!.MediaType);
+        Assert.Equal(error, (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.False(response.Headers.Contains("Signature-Error"));
+        Assert.Null(fixture.Policy.Last);
+        Assert.Null(fixture.Store.Last);
+        Assert.Equal(0, asserter.Calls);
+        if (variant is not ("signature" or "expired" or "recently-expired"))
+            Assert.All(fixture.DiscoveryTransport.Paths, path => Assert.StartsWith(person ? "https://ap.test/" : "https://ps.test/", path));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CarrierSignatureFailureRemainsUnauthorized(bool person)
+    {
+        await using var fixture = await Fixture.CreateAsync("immediate");
+        var builder = new AAuthClientBuilder(AAuthKey.Generate()).WithEgressPolicy(TestEgress.Policy);
+        if (person) builder.UseJwt(fixture.AgentToken);
+        else builder.UseJwksUri(Fixture.PsIssuer, AAuthConstants.DwkFiles.Person, "key");
+        using var client = builder.WithInnerHandler((person ? fixture.PersonApp : fixture.AccessApp).GetTestServer().CreateHandler(),
+            AAuthTransportContract.InProcessOnly).Build();
+        using var response = await client.PostAsJsonAsync((person ? Fixture.PsIssuer : "https://as.test") + "/token",
+            new { agent_token = fixture.AgentToken, resource_token = fixture.ResourceToken("read") });
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.True(response.Headers.Contains("Signature-Error"));
+        Assert.Null(fixture.Policy.Last);
+    }
+
+    [Theory]
+    [InlineData(false, "null")]
+    [InlineData(true, "null")]
+    [InlineData(false, "[]")]
+    [InlineData(true, "[]")]
+    [InlineData(false, "{\"resource_token\":\"bad\",\"resource_token\":\"bad\"}")]
+    [InlineData(true, "{\"resource_token\":\"bad\",\"resource_token\":\"bad\"}")]
+    [InlineData(false, "{\"sub\":\"person\",\"sub\":\"other\"}")]
+    [InlineData(true, "{\"sub\":\"person\",\"sub\":\"other\"}")]
+    public async Task PendingRejectsMalformedJsonWithoutMutation(bool person, string json)
+    {
+        await using var fixture = await Fixture.CreateAsync("update");
+        var client = person ? fixture.Agent : fixture.Ps;
+        using var initial = await client.PostAsJsonAsync("/token", new { agent_token = fixture.AgentToken, resource_token = fixture.ResourceToken() });
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        var policy = fixture.Policy.Last;
+        using var response = await client.PostAsync(initial.Headers.Location, new StringContent(json, System.Text.Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("invalid_request", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.Same(policy, fixture.Policy.Last);
+        Assert.Equal("read write", fixture.AsEntry.Scope);
+        Assert.Equal(0, fixture.AsEntry.ClarificationRounds);
+    }
+
+    public static IEnumerable<object[]> MalformedReplacements =>
+        from sample in TestTokens.InvalidCredentials
+        where (string)sample[0] == "resource_token"
+        from person in new[] { false, true }
+        select new object[] { sample[1], sample[2], person };
+
+    [Theory]
+    [MemberData(nameof(MalformedReplacements))]
+    public async Task PendingRejectsMalformedReplacementWithoutMutation(string variant, string error, bool person)
+    {
+        await using var fixture = await Fixture.CreateAsync("update");
+        var client = person ? fixture.Agent : fixture.Ps;
+        using var initial = await client.PostAsJsonAsync("/token", new { agent_token = fixture.AgentToken, resource_token = fixture.ResourceToken() });
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        var policy = fixture.Policy.Last;
+        using var response = await client.PostAsJsonAsync(initial.Headers.Location, new JsonObject
+        {
+            ["action"] = "updated_request",
+            ["resource_token"] = TestTokens.MalformedCredential(fixture.ResourceToken("read"), fixture.ResourceKey, variant),
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(error, (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.Same(policy, fixture.Policy.Last);
+        Assert.Equal("read write", fixture.AsEntry.Scope);
+        Assert.Equal(0, fixture.AsEntry.ClarificationRounds);
+    }
+
+    [Theory]
+    [InlineData("x.%.x")]
+    [InlineData("e30.W10.eA")]
+    [InlineData("e30.eyJhdWQiOnt9fQ.eA")]
+    [InlineData("e30.eyJhdWQiOiJodHRwczovL2FzLnRlc3QiLCJhdWQiOiJodHRwczovL3BzLnRlc3QifQ.eA")]
+    [InlineData("eyJhbGciOiJFZDI1NTE5IiwiYWxnIjoiRWQyNTUxOSJ9.e30.eA")]
+    public async Task PersonAudiencePeekRejectsMalformedJwt(string token)
+    {
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert("person"));
+        await using var fixture = await Fixture.CreateAsync("immediate", asserter);
+        using var response = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = token });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("invalid_resource_token", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.False(response.Headers.Contains("Signature-Error"));
+        Assert.Equal(0, asserter.Calls);
+        Assert.Null(fixture.Policy.Last);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -255,7 +372,7 @@ public class DeferredFederationTests
             var token = new AgentTokenBuilder
             {
                 Issuer = changed == "issuer" ? "https://other-resource.test" : "https://ap.test",
-                Subject = changed == "subject" ? "aauth:other@ap.test" : "aauth:demo@ap.test",
+                Subject = changed == "subject" ? "aauth:other@ap.test" : changed == "issuer" ? "aauth:demo@other-resource.test" : "aauth:demo@ap.test",
                 Key = changed == "issuer" ? fixture.ResourceKey : fixture.ApKey, KeyId = "key", ConfirmationKey = key,
             }.Build();
             using var foreign = changed == "ps" ? fixture.PsClient(Fixture.PsIssuer, "second")

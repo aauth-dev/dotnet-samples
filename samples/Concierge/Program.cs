@@ -35,7 +35,7 @@ var missionDownstreamUrl = builder.Configuration["AAuth:MissionDownstream"] ?? "
 var psUrl = builder.Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
 var walletUrl = builder.Configuration["AAuth:Wallet"] ?? "http://localhost:5003";
 var accessServerUrl = builder.Configuration["AAuth:AccessServer"] ?? "http://localhost:5500";
-var agentId = builder.Configuration["AAuth:AgentId"] ?? "aauth:concierge@localhost:5200";
+var agentId = builder.Configuration["AAuth:AgentId"] ?? "aauth:concierge@localhost";
 
 builder.Services.AddSingleton(conciergeKey);
 builder.Services.AddSingleton(new TokenVerifier { EgressPolicy = SampleEgress.Policy });

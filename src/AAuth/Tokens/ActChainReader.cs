@@ -18,14 +18,14 @@ public static class ActChainReader
     /// <param name="maxDepth">Maximum traversal depth (default 10).</param>
     /// <returns>List of <c>act.agent</c> values from outer to inner.</returns>
     /// <exception cref="InvalidOperationException">Thrown if depth exceeds <paramref name="maxDepth"/> or act.agent is missing.</exception>
-    public static IReadOnlyList<string> GetDelegationChain(JsonObject payload, int maxDepth = 10)
+    public static IReadOnlyList<string> GetDelegationChain(JsonObject payload, int maxDepth = 10, AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
         ArgumentNullException.ThrowIfNull(payload);
 
         var chain = new List<string>();
         var current = payload["act"] as JsonObject;
 
-        if (payload.ContainsKey("act") && (current is null || !ActChainBuilder.ValidateChain(current, maxDepth)))
+        if (payload.ContainsKey("act") && (current is null || !ActChainBuilder.ValidateChain(current, maxDepth, policy)))
             throw new InvalidOperationException("Act chain must contain only valid agent identities within the depth limit.");
 
         while (current is not null)
@@ -46,22 +46,22 @@ public static class ActChainReader
 
     /// <summary>Get the immediate actor (<c>act.agent</c>) — the upstream delegator.</summary>
     /// <returns>The immediate upstream agent's identifier, or null if no <c>act</c> claim.</returns>
-    public static string? GetImmediateActor(JsonObject payload)
+    public static string? GetImmediateActor(JsonObject payload, AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
         ArgumentNullException.ThrowIfNull(payload);
         var act = payload["act"] as JsonObject;
-        if (payload.ContainsKey("act") && (act is null || !ActChainBuilder.ValidateChain(act)))
+        if (payload.ContainsKey("act") && (act is null || !ActChainBuilder.ValidateChain(act, policy: policy)))
             throw new InvalidOperationException("Act chain must contain only valid agent identities within the depth limit.");
         return (string?)act?["agent"];
     }
 
     /// <summary>Get the original requester (innermost <c>act.agent</c>).</summary>
     /// <returns>The original actor's identifier, or null if no <c>act</c> claim.</returns>
-    public static string? GetOriginalActor(JsonObject payload, int maxDepth = 10)
+    public static string? GetOriginalActor(JsonObject payload, int maxDepth = 10, AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
         ArgumentNullException.ThrowIfNull(payload);
 
-        GetDelegationChain(payload, maxDepth);
+        GetDelegationChain(payload, maxDepth, policy);
 
         var current = payload["act"] as JsonObject;
         if (current is null) return null;
@@ -83,11 +83,11 @@ public static class ActChainReader
 
     /// <summary>Get the chain depth (1 = direct, 2+ = chained).</summary>
     /// <returns>The number of nested <c>act</c> levels, or 0 if no <c>act</c> claim.</returns>
-    public static int GetChainDepth(JsonObject payload, int maxDepth = 10)
+    public static int GetChainDepth(JsonObject payload, int maxDepth = 10, AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
         ArgumentNullException.ThrowIfNull(payload);
 
-        GetDelegationChain(payload, maxDepth);
+        GetDelegationChain(payload, maxDepth, policy);
 
         var current = payload["act"] as JsonObject;
         int depth = 0;

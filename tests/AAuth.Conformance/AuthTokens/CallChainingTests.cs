@@ -283,7 +283,7 @@ public class CallChainingTests
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = "http://localhost:5555",
             Audience = "http://localhost:6000",
-            Agent = "ec-agent",
+            Agent = "aauth:ec-agent@ap.example",
             AgentConfirmationKey = agentKey,
             Key = ecKey,
             KeyId = "ec-1",

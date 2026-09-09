@@ -123,7 +123,7 @@ public sealed class AgentTokenBuilder
             // The agent token's sub MUST be a valid agent identifier; fail fast
             // rather than emitting a token with a malformed sub (and silently
             // skipping the '+' rule because TryParse returned false).
-            if (!AgentId.TryParse(Subject, out var topLevel, out var subjectError))
+            if (!AgentId.TryParse(Subject, out var topLevel, out var subjectError, EgressPolicy))
             {
                 throw new InvalidOperationException(
                     $"Subject is not a valid agent identifier: {subjectError}");
@@ -136,7 +136,7 @@ public sealed class AgentTokenBuilder
         }
         else
         {
-            if (!AgentId.TryParse(ParentAgent, out var parent, out var parentError))
+            if (!AgentId.TryParse(ParentAgent, out var parent, out var parentError, EgressPolicy))
             {
                 throw new InvalidOperationException($"parent_agent is not a valid agent identifier: {parentError}");
             }
@@ -145,7 +145,7 @@ public sealed class AgentTokenBuilder
                 throw new InvalidOperationException(
                     "Single-level depth: an AP MUST NOT issue a sub-agent token whose parent is itself a sub-agent.");
             }
-            if (!AgentId.TryParse(Subject, out var sub, out _) || !sub.IsSubAgent)
+            if (!AgentId.TryParse(Subject, out var sub, out _, EgressPolicy) || !sub.IsSubAgent)
             {
                 throw new InvalidOperationException(
                     "A sub-agent's local part MUST be its parent's local part followed by '+' and a non-empty discriminator.");

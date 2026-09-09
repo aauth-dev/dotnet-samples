@@ -233,10 +233,17 @@ Standard `DelegatingHandler` — no configurable options. Requires an `ISignatur
 
 | Provider | Constructor Parameters |
 |----------|----------------------|
-| `HwkSignatureKeyProvider` | `IAAuthKey key` |
-| `JwksUriSignatureKeyProvider` | `string uri, string kid` |
-| `JwtSignatureKeyProvider` | `Func<string> tokenFactory` |
-| `JktJwtSignatureKeyProvider` | `IAAuthKey ephemeralKey, Func<string> namingJwtFactory` |
+| `HwkSignatureKeyProvider` | `IAAuthKey key, string label = "sig"` |
+| `JwksUriSignatureKeyProvider` | `string id, string dwk, string kid, string label = "sig"` |
+| `JwksSignatureKeyProvider` | `string url, string kid, string label = "sig"` |
+| `JwtSignatureKeyProvider` | `Func<string> tokenFactory, string label = "sig"` |
+| `JktJwtSignatureKeyProvider` | `Func<string> namingJwtFactory, string label = "sig"` |
+
+`JwksUriSignatureKeyProvider` discovers role metadata from `id` and `dwk`;
+it does not accept a direct JWKS URL. `JktJwtSignatureKeyProvider` supplies the
+naming JWT only. Its `AAuthSigningHandler` must use the ephemeral key named by
+that JWT, while the durable key signs the naming JWT itself. `label` selects
+the matching dictionary member across all three signature fields.
 
 ## Dependency Injection Options
 
@@ -249,8 +256,17 @@ Standard `DelegatingHandler` — no configurable options. Requires an `ISignatur
 | `OnInteractionRequired` | `Func<Interaction, CancellationToken, Task>?` | No | PS interaction during token exchange (deferred consent) |
 | `OnResourceInteraction` | `Func<string, string, CancellationToken, Task>?` | No | Resource `202` + `requirement=interaction` (URL + code) |
 | `OnApprovalPending` | `Func<CancellationToken, Task>?` | No | Resource `202` + `requirement=approval` |
-| `TokenRefresher` | `ITokenRefresher?` | No | Auto-refresh before token expiry (JWT identity); omit for HWK |
+| `AgentToken` | `string?` | One credential source | Already-held agent JWT; no implicit enrollment |
+| `SignatureKeyProvider` | `ISignatureKeyProvider?` | Explicit generic source | Generic signing only; cannot combine with agent credentials or AAuth authorization flows |
+| `TokenRefresher` | `ITokenRefresher?` | One credential source | Auto-refresh before token expiry; can renew an already-held agent token |
 | `PollingTimeout` | `TimeSpan` | No | Max deferred polling time (default 5 minutes) |
+
+`AddAAuthAgent` requires `AgentToken`, `TokenRefresher`, or an explicit generic
+`SignatureKeyProvider`. Omitting credentials does not select HWK. A generic
+provider cannot be combined with PS challenge handling or resource-managed
+AAuth authorization. The MockAgentProvider sample also accepts
+`AgentProvider:KeyDirectory` for isolated persisted AP signing keys; its default
+remains `~/.aauth/ap-keys`.
 
 ### AAuthResourceOptions (AddAAuthResource)
 

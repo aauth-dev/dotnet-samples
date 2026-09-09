@@ -325,18 +325,19 @@ public static class AAuthPersonServerEndpoints
             }
             catch (TokenVerificationException ex)
             {
-                return AAuthProblemDetails.Create("invalid_agent_token", ex.Message, statusCode: StatusCodes.Status400BadRequest);
+                return AAuthProblemDetails.TokenFailure(ex);
             }
 
             JsonObject? body;
             try
             {
-                body = await ctx.Request.ReadFromJsonAsync<JsonObject>();
+                body = await TokenRequestBody.ReadAsync(ctx.Request, tokenVerifier);
             }
             catch (System.Text.Json.JsonException)
             {
                 return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "body is not valid JSON", statusCode: StatusCodes.Status400BadRequest);
             }
+            catch (TokenVerificationException ex) { return AAuthProblemDetails.TokenFailure(ex); }
 
             var resourceTokenJwt = (string?)body?["resource_token"];
             if (string.IsNullOrEmpty(resourceTokenJwt))
@@ -351,7 +352,7 @@ public static class AAuthPersonServerEndpoints
             // OIDC string; `capabilities` is the request-body equivalent of the
             // AAuth-Capabilities header. Both are tolerant — unknown values flow to
             // the asserter, which MAY honor or ignore them.
-            var prompt = (string?)body?["prompt"];
+            var prompt = StringMember(body, "prompt");
             var capabilities = ParseStringArray(body?["capabilities"] as JsonArray);
 
             // §Single-Level Depth: a PS MUST reject a token request signed by an
@@ -365,7 +366,12 @@ public static class AAuthPersonServerEndpoints
             // Route on the resource token's `aud` (peeked, not trusted; both
             // branches fully verify the token afterwards). `aud == this PS` →
             // three-party collapsed mint; `aud == an AS` → four-party federation.
-            var resourceAudience = PeekJwtAudience(resourceTokenJwt);
+            string? resourceAudience;
+            try { resourceAudience = PeekJwtAudience(resourceTokenJwt, tokenVerifier); }
+            catch (TokenVerificationException ex)
+            {
+                return AAuthProblemDetails.Create("invalid_resource_token", ex.Message, statusCode: StatusCodes.Status400BadRequest);
+            }
             if (resourceAudience is not null
                 && !string.Equals(resourceAudience, issuer, StringComparison.Ordinal))
             {
@@ -471,11 +477,12 @@ public static class AAuthPersonServerEndpoints
                 }
 
                 JsonObject? body;
-                try { body = await ctx.Request.ReadFromJsonAsync<JsonObject>(); }
+                try { body = await TokenRequestBody.ReadAsync(ctx.Request, tokenVerifier); }
                 catch (System.Text.Json.JsonException)
                 {
                     return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
                 }
+                catch (TokenVerificationException ex) { return AAuthProblemDetails.TokenFailure(ex); }
 
                 var action = StringMember(body, "action");
                 var answer = StringMember(body, "clarification_response");
@@ -530,9 +537,9 @@ public static class AAuthPersonServerEndpoints
                         entry.MissionGate = replacementMission is not null && (entry.AgentConfirmationKey is not null
                             || entry.FederationMissionConsent is { Task.IsCompleted: false });
                     }
-                    catch (Exception ex) when (ex is TokenVerificationException or FormatException or InvalidOperationException or ArgumentException)
+                    catch (TokenVerificationException ex)
                     {
-                        return AAuthProblemDetails.Create("invalid_resource_token", ex.Message, statusCode: StatusCodes.Status400BadRequest);
+                        return AAuthProblemDetails.TokenFailure(ex, TokenCredential.Resource);
                     }
                 }
                 entry.ClarificationRounds++;
@@ -831,6 +838,8 @@ public static class AAuthPersonServerEndpoints
                 {
                     return AAuth.Server.AAuthProblemDetails.Create("invalid_upstream_token", result.Error, statusCode: StatusCodes.Status400BadRequest);
                 }
+                if (result.ExpiresAt!.Value.ToUnixTimeSeconds() <= options.TimeProvider.GetUtcNow().ToUnixTimeSeconds())
+                    return AAuthProblemDetails.Create("invalid_upstream_token", "Upstream token has expired.");
 
                 // Four-party PS mission gate (§Call Chaining, draft-08 L1765): a PS
                 // MUST require a mission to remain in the loop for four-party upstream
@@ -850,7 +859,7 @@ public static class AAuthPersonServerEndpoints
                 // Compose the downstream act node (§Delegation Chain): act.agent is
                 // the upstream token's agent (the delegator), nesting the upstream's
                 // own chain as act.act. `upstreamAct` now holds this complete node.
-                upstreamAct = ActChainBuilder.BuildNestedAct(result.Agent!, result.UpstreamAct);
+                upstreamAct = ActChainBuilder.BuildNestedAct(result.Agent!, result.UpstreamAct, options.EgressPolicy);
                 upstreamAuthorization = result;
                 sourceRegistrations.Add(TokenRegistration.FromVerified(result.Verified!));
                 if (result.ExpiresAt!.Value < authorizationExpiresAt)
@@ -876,6 +885,8 @@ public static class AAuthPersonServerEndpoints
                     var verifiedSub = await tokenVerifier.VerifyWithJwksAsync(
                         subagentTokenJwt, metadataClient, jwksClient,
                         AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk, expectedAudience: null);
+                    if (verifiedSub.ExpiresAt.ToUnixTimeSeconds() <= options.TimeProvider.GetUtcNow().ToUnixTimeSeconds())
+                        throw new TokenVerificationException(AAuth.Errors.SignatureErrorCode.ExpiredJwt, "Sub-agent token has expired.");
                     sourceRegistrations.Add(TokenRegistration.FromVerified(verifiedSub));
                     subagentId = (string?)verifiedSub.Payload["sub"]
                         ?? throw new TokenVerificationException("subagent_token missing sub");
@@ -890,7 +901,7 @@ public static class AAuthPersonServerEndpoints
                 }
                 catch (TokenVerificationException ex)
                 {
-                    return AAuth.Server.AAuthProblemDetails.Create("invalid_agent_token", ex.Message, statusCode: StatusCodes.Status400BadRequest);
+                    return AAuthProblemDetails.TokenFailure(ex, TokenCredential.Subagent);
                 }
 
                 // The signing agent (parent) MUST be named by subagent_token.parent_agent.
@@ -906,7 +917,7 @@ public static class AAuthPersonServerEndpoints
                 // signer that mediates). When the parent presented an upstream_token,
                 // `upstreamAct` already records the parent as its top node; otherwise
                 // build a single-node act naming the parent.
-                boundUpstreamAct = ActChainBuilder.BuildNestedAct(agentId, upstreamAct);
+                boundUpstreamAct = ActChainBuilder.BuildNestedAct(agentId, upstreamAct, options.EgressPolicy);
             }
 
             // Verify the resource token (§Resource Token Verification). `iss`
@@ -947,7 +958,7 @@ public static class AAuthPersonServerEndpoints
             }
             catch (TokenVerificationException ex)
             {
-                var expired = ex.Message.Contains("expired", StringComparison.OrdinalIgnoreCase);
+                var expired = ex.Code == AAuth.Errors.SignatureErrorCode.ExpiredJwt;
                 // §Token Endpoint Error Codes: invalid_resource_token / expired_resource_token
                 // are 400 (a bad token parameter in the body), not 401 — 401 is reserved for
                 // request-signature failures carrying a Signature-Error header (§Authentication
@@ -1131,11 +1142,10 @@ public static class AAuthPersonServerEndpoints
                         || trustedAccessServers.Contains(upstreamIssuer)
                         || (options.IsTrustedAccessServer?.Invoke(upstreamIssuer) ?? false),
                     ctx.RequestAborted);
-                sourceTokens = await TokenRegistration.RegisterAsync(inventory, issuance.SourceTokens, ctx.RequestAborted);
             }
             catch (TokenVerificationException ex)
             {
-                return AAuthProblemDetails.Create("invalid_agent_token", ex.Message, statusCode: StatusCodes.Status400BadRequest);
+                return AAuthProblemDetails.TokenFailure(ex);
             }
             string resourceUrl;
             JsonObject federatedContext;
@@ -1163,13 +1173,16 @@ public static class AAuthPersonServerEndpoints
             }
             catch (TokenVerificationException ex)
             {
-                var expired = ex.Message.Contains("expired", StringComparison.OrdinalIgnoreCase);
+                var expired = ex.Code == AAuth.Errors.SignatureErrorCode.ExpiredJwt;
                 // §Token Endpoint Error Codes: invalid_resource_token / expired_resource_token
                 // are 400 (a bad token parameter in the body), not 401 — 401 is reserved for
                 // request-signature failures carrying a Signature-Error header (§Authentication
                 // Errors). The request itself was correctly signed; the resource_token is invalid.
                 return AAuth.Server.AAuthProblemDetails.Create(expired ? "expired_resource_token" : "invalid_resource_token", ex.Message, statusCode: StatusCodes.Status400BadRequest);
             }
+
+            try { sourceTokens = await TokenRegistration.RegisterAsync(inventory, issuance.SourceTokens, ctx.RequestAborted); }
+            catch (TokenVerificationException ex) { return AAuthProblemDetails.TokenFailure(ex); }
 
             if (federatedMission is not null)
             {
@@ -1649,36 +1662,8 @@ public static class AAuthPersonServerEndpoints
     // Peek the `aud` claim of a (possibly unverified) compact JWT without
     // checking its signature — used only to ROUTE the request (three- vs
     // four-party). Both branches fully verify the token afterwards.
-    private static string? PeekJwtAudience(string jwt)
-    {
-        var parts = jwt.Split('.');
-        if (parts.Length < 2)
-        {
-            return null;
-        }
-        JsonObject? payload;
-        try
-        {
-            payload = JsonNode.Parse(Base64UrlDecode(parts[1])) as JsonObject;
-        }
-        catch (System.Text.Json.JsonException)
-        {
-            return null;
-        }
-        return payload?["aud"] switch
-        {
-            JsonValue v => v.GetValue<string>(),
-            JsonArray { Count: > 0 } a => (string?)a[0],
-            _ => null,
-        };
-    }
-
-    private static string Base64UrlDecode(string segment)
-    {
-        var s = segment.Replace('-', '+').Replace('_', '/');
-        s += (s.Length % 4) switch { 2 => "==", 3 => "=", _ => string.Empty };
-        return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(s));
-    }
+    private static string? PeekJwtAudience(string jwt, TokenVerifier verifier) =>
+        (string?)verifier.ReadStructure(jwt, ResourceTokenBuilder.TokenType).Payload["aud"];
 
     // Parse a JSON array of strings (e.g. the `capabilities` body parameter) into
     // a list, skipping non-string entries. Returns null when absent/empty so the

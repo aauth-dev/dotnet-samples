@@ -16,6 +16,26 @@ namespace AAuth.Tests.Agent;
 public class TokenRefreshHandlerTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CancellationDuringRefreshDoesNotPublishToken(bool initialAcquisition)
+    {
+        var original = BuildAgentToken(TimeSpan.FromSeconds(20));
+        var replacement = BuildAgentToken(TimeSpan.FromHours(1));
+        var holder = initialAcquisition ? new AAuthTokenHolder() : new AAuthTokenHolder(original);
+        using var cancellation = new CancellationTokenSource();
+        var refresher = new CallbackRefresher((_, _) =>
+        {
+            cancellation.Cancel();
+            return Task.FromResult(replacement);
+        });
+        using var client = new InProcessHttpClient(new TokenRefreshHandler(holder, refresher, _key.ComputeJwkThumbprint())
+            { InnerHandler = new OkHandler() });
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.GetAsync("https://resource.example", cancellation.Token));
+        Assert.Equal(initialAcquisition ? string.Empty : original, holder.Current);
+    }
+
+    [Theory]
     [InlineData("personal", true)]
     [InlineData("work", false)]
     [InlineData(null, false)]

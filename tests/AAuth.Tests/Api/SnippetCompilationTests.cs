@@ -10,6 +10,83 @@ namespace AAuth.Tests.Api;
 public sealed class SnippetCompilationTests
 {
     [Fact]
+    public void Documentation_EnrollmentKeyAndResourceRegistrationAreDistinct()
+    {
+        var gettingStarted = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs/getting-started.md"));
+        Assert.DoesNotContain("AP-internal JWT", gettingStarted);
+        Assert.Contains("per-agent JWKS", gettingStarted);
+        var provider = File.ReadAllText(Path.Combine(RepositoryRoot(), "src/AAuth/Agent/AgentProviderClient.cs"));
+        Assert.DoesNotContain("AP-internal JWT", provider);
+        Assert.Contains("not the AP's token-signing", provider);
+        var dependencyInjection = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs/reference/dependency-injection.md"));
+        var resource = dependencyInjection.Split("### AAuthResourceOptions", StringSplitOptions.None)[1]
+            .Split("### AAuthDiscoveryOptions", StringSplitOptions.None)[0];
+        Assert.DoesNotContain("Registration requires an agent token", resource);
+        Assert.Contains("does not require agent credentials", resource);
+    }
+
+    [Fact]
+    public void Documentation_ProviderTableConstructorsCompile()
+    {
+        var text = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs/reference/configuration.md"));
+        var section = text.Split("### ISignatureKeyProvider Implementations", StringSplitOptions.None)[1]
+            .Split("## Dependency Injection Options", StringSplitOptions.None)[0];
+        var rows = Regex.Matches(section, @"\| `(?<provider>\w+SignatureKeyProvider)` \| `(?<parameters>[^`]+)` \|");
+        Assert.Equal(5, rows.Count);
+        foreach (Match row in rows)
+        {
+            var parameters = row.Groups["parameters"].Value;
+            var arguments = string.Join(", ", SyntaxFactory.ParseParameterList("(" + parameters + ")").Parameters
+                .Select(parameter => parameter.Identifier.ValueText + ": " + parameter.Identifier.ValueText));
+            Compile(row.Groups["provider"].Value,
+                $"public static void Example({parameters}) {{ _ = new {row.Groups["provider"].Value}({arguments}); }}", member: true);
+        }
+        Assert.DoesNotContain("omit for HWK", text);
+        Assert.Contains("Omitting credentials does not select HWK", text);
+    }
+
+    [Fact]
+    public void Documentation_ManualNamingJwtSignerSelectsEphemeralKey()
+    {
+        var snippet = DocumentationInventory.Read().Single(snippet => snippet.File == "docs/signing-modes/overview.md"
+            && snippet.Code.Contains("ISignatureKeyProvider provider"));
+        var declarations = CSharpSyntaxTree.ParseText(snippet.Code).GetRoot().DescendantNodes()
+            .OfType<VariableDeclaratorSyntax>().ToDictionary(declaration => declaration.Identifier.ValueText);
+        var selection = Assert.IsType<ConditionalExpressionSyntax>(declarations["signingKey"].Initializer!.Value);
+        Assert.Equal("mode == \"jkt-jwt\"", selection.Condition.ToString());
+        Assert.Equal("ephemeralKey", selection.WhenTrue.ToString());
+        Assert.Equal("key", selection.WhenFalse.ToString());
+        var handler = Assert.IsType<ObjectCreationExpressionSyntax>(declarations["handler"].Initializer!.Value);
+        Assert.Equal("signingKey", handler.ArgumentList!.Arguments[0].Expression.ToString());
+        Compile(snippet.Key, snippet.Code);
+    }
+
+    [Fact]
+    public void Documentation_ResourceRecipientsAndGenericRoutesUseCorrectContext()
+    {
+        var snippets = DocumentationInventory.Read();
+        var issuance = snippets.Where(snippet => snippet.File == "docs/server/token-issuance.md").Select(snippet => snippet.Code).ToArray();
+        Assert.Contains(issuance, code => code.Contains("expectedApprover: psIssuer"));
+        Assert.Contains(issuance, code => code.Contains("expectedApprover: authenticatedPsIdentifier")
+            && code.Contains("issuance.ValidateResourceContext(verified.Payload, authenticatedPsIdentifier)"));
+        Assert.DoesNotContain(issuance, code => code.Contains("expectedApprover: null"));
+        var routes = snippets.Single(snippet => snippet.File == "docs/server/verification-middleware.md"
+            && snippet.Code.Contains("MapGet(\"/pseudonymous\""));
+        Assert.Contains("MapGet(\"/pseudonymous\", handler).RequireGenericSignature()", routes.Code);
+        Assert.Contains("MapGet(\"/identified\", handler).RequireGenericSignature(identified: true)", routes.Code);
+        var verifier = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(RepositoryRoot(), "src/AAuth/Tokens/TokenVerifier.cs")))
+            .GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>().Single(method => method.Identifier.ValueText == "VerifyResourceTokenAsync");
+        var documentation = verifier.GetLeadingTrivia().ToFullString();
+        Assert.DoesNotContain("without a mission constraint pass", documentation);
+        Assert.Contains("When a mission is present, a verifying recipient must supply", documentation);
+        var profile = File.ReadAllText(Path.Combine(RepositoryRoot(), "samples/MockResourceServers/Profile/Program.cs"));
+        Assert.DoesNotContain("RequireAAuthSignature", profile);
+        Assert.DoesNotContain("no JWT issuer check", profile);
+        Assert.DoesNotContain("no JWT\n// issuer verification", profile);
+        Assert.Contains("JWT issuer verification still applies", profile);
+    }
+
+    [Fact]
     public void Documentation_FrozenSurface()
     {
         var results = new List<(DocumentationSnippet Snippet, string Status)>();
@@ -29,7 +106,7 @@ public sealed class SnippetCompilationTests
         foreach (var file in DocumentationInventory.Files().Order())
         {
             var hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(Path.Combine(RepositoryRoot(), file))));
-            appendix.AppendLine($"| [{file}](../../../{file}) | `{hash}` | {results.Count(result => result.Snippet.File == file)} | Frozen source; links/patterns; blocks below; capability matrix for runtime/browser evidence | ");
+            appendix.AppendLine($"| [{file}](../../../{file}) | `{hash}` | {results.Count(result => result.Snippet.File == file)} | Frozen source; links/patterns; blocks below; capability matrix for runtime/browser evidence |");
         }
         appendix.AppendLine("\n| Source Block | Format | SHA-256 | Result | Source and Behavior Evidence |\n|---|---|---|---|---|");
         foreach (var (snippet, status) in results)
@@ -226,6 +303,24 @@ public sealed class SnippetCompilationTests
     [Fact]
     public void Catalog_ExactDisplayedSnippetCompiles()
         => Compile("Catalog", AAuth.Samples.Capabilities.CatalogWalkthrough.Example, member: true);
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public void Documents_ExactDisplayedStepCompiles(int step)
+        => Compile("Documents step " + step, AAuth.Samples.Capabilities.DocumentWalkthrough.Examples[step - 1], member: true);
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    [InlineData(6)]
+    public void Events_ExactDisplayedStepCompiles(int step)
+        => Compile("Events step " + step, AAuth.Samples.Events.EventDemoCode.Steps[step - 1], member: true);
 
     private static void Compile(string name, string snippet, bool member = false, string context = "")
     {

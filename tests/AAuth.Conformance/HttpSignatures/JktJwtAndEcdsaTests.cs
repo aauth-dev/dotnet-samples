@@ -177,7 +177,7 @@ public class JktJwtAndEcdsaTests
         {
             ["iss"] = "http://localhost:5555",
             ["dwk"] = AgentTokenBuilder.AgentDwk,
-            ["sub"] = "agent-1",
+            ["sub"] = "aauth:agent-1@ap.example",
             ["iat"] = now.ToUnixTimeSeconds(),
             ["exp"] = now.AddMinutes(10).ToUnixTimeSeconds(),
             ["jti"] = Guid.NewGuid().ToString("N"),
@@ -208,16 +208,17 @@ public class JktJwtAndEcdsaTests
         {
             ["iss"] = "http://localhost:5555",
             ["dwk"] = AgentTokenBuilder.AgentDwk,
-            ["sub"] = "agent-1",
+            ["sub"] = "aauth:agent-1@ap.example",
             ["iat"] = now.ToUnixTimeSeconds(),
             ["exp"] = now.AddMinutes(10).ToUnixTimeSeconds(),
             ["jti"] = Guid.NewGuid().ToString("N"),
+            ["cnf"] = new JsonObject { ["jwk"] = apKey.ToPublicJwk() },
         };
 
         var jwt = SignJwt(header, payload, apKey);
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
-        Assert.Throws<TokenVerificationException>(() =>
-            verifier.Verify(jwt, wrongKey, AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk));
+        Assert.Contains("signature verification failed", Assert.Throws<TokenVerificationException>(() =>
+            verifier.Verify(jwt, wrongKey, AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk)).Message);
     }
 
     // ── HTTP Signature with P-256 Tests ────────────────────────────────────

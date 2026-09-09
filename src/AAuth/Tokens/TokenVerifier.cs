@@ -73,24 +73,7 @@ public sealed class TokenVerifier
         ArgumentException.ThrowIfNullOrEmpty(expectedDwk);
 
         var segments = jwt.Split('.');
-        if (segments.Length != 3)
-        {
-            throw new TokenVerificationException("JWT is not a compact JWS.");
-        }
-
-        var header = DecodeJsonSegment(segments[0], "header");
-        var payload = DecodeJsonSegment(segments[1], "payload");
-        if (!AccountBinding.TryRead(payload, out _))
-            throw new TokenVerificationException("Token account must be a non-empty string without control characters.");
-        foreach (var name in new[] { "alg", "typ", "kid" })
-            if (header.ContainsKey(name) && (header[name] is not JsonValue value || !value.TryGetValue<string>(out _)))
-                throw new TokenVerificationException($"JWT header '{name}' must be a string.");
-        foreach (var name in new[] { "iss", "dwk", "sub", "agent", "jti", "scope", "parent_agent", "ps" })
-            if (payload.ContainsKey(name) && (payload[name] is not JsonValue value || !value.TryGetValue<string>(out _)))
-                throw new TokenVerificationException($"JWT claim '{name}' must be a string.");
-        foreach (var name in new[] { "act", "cnf", "mission" })
-            if (payload.ContainsKey(name) && payload[name] is not JsonObject)
-                throw new TokenVerificationException($"JWT claim '{name}' must be an object.");
+        var (header, payload) = ReadStructure(jwt, expectedType);
 
         var alg = (string?)header["alg"];
         if (alg != issuerKey.Algorithm)
@@ -118,7 +101,7 @@ public sealed class TokenVerifier
         {
             signature = Base64UrlEncoder.DecodeBytes(segments[2]);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is FormatException or ArgumentException)
         {
             throw new TokenVerificationException("JWT signature is not valid base64url.", ex);
         }
@@ -226,6 +209,7 @@ public sealed class TokenVerifier
             if (segments.Length != 3)
                 throw new TokenVerificationException("JWT is not a compact JWS.");
             var peekPayload = DecodeJsonSegment(segments[1], "payload");
+            ValidateStructure(DecodeJsonSegment(segments[0], "header"), peekPayload, AuthTokenBuilder.TokenType, EgressPolicy, MaxActDepth);
             actualDwk = (string?)peekPayload["dwk"]
                 ?? throw new TokenVerificationException("Token is missing 'dwk'.");
             if (actualDwk != AuthTokenBuilder.PersonDwk && actualDwk != AuthTokenBuilder.AccessDwk)
@@ -279,12 +263,12 @@ public sealed class TokenVerifier
         if (act is not null)
         {
             var actAgent = (string?)act["agent"];
-            if (string.IsNullOrEmpty(actAgent) || !AgentId.TryParse(actAgent, out _, out _))
+            if (string.IsNullOrEmpty(actAgent) || !AgentId.TryParse(actAgent, out _, out _, EgressPolicy))
             {
                 throw new TokenVerificationException(
                     "Auth token 'act.agent' is missing or not a valid AAuth agent identifier.");
             }
-            if (!ActChainBuilder.ValidateChain(act, MaxActDepth))
+            if (!ActChainBuilder.ValidateChain(act, MaxActDepth, EgressPolicy))
             {
                 throw new TokenVerificationException(
                     "invalid_act_chain: auth token 'act' must contain only valid agent identities within the depth limit.");
@@ -336,14 +320,7 @@ public sealed class TokenVerifier
         ArgumentNullException.ThrowIfNull(metadata);
         ArgumentNullException.ThrowIfNull(jwks);
 
-        var segments = jwt.Split('.');
-        if (segments.Length != 3)
-            throw new TokenVerificationException("JWT is not a compact JWS.");
-
-        var header = DecodeJsonSegment(segments[0], "header");
-        var payload = DecodeJsonSegment(segments[1], "payload");
-
-        // Cheap local checks first.
+        var (header, payload) = ReadStructure(jwt, AuthTokenBuilder.TokenType);
         var alg = (string?)header["alg"];
         if (alg is null || (alg != AAuthKey.Ed25519Algorithm && alg != EcdsaAAuthKey.Alg))
             throw new TokenVerificationException($"Unsupported 'alg' '{alg}'. Supported: {AAuthKey.Ed25519Algorithm}, {EcdsaAAuthKey.Alg}.");
@@ -433,15 +410,7 @@ public sealed class TokenVerifier
         ArgumentNullException.ThrowIfNull(metadata);
         ArgumentNullException.ThrowIfNull(jwks);
 
-        var segments = jwt.Split('.');
-        if (segments.Length != 3)
-        {
-            throw new TokenVerificationException("JWT is not a compact JWS.");
-        }
-
-        var header = DecodeJsonSegment(segments[0], "header");
-        var payload = DecodeJsonSegment(segments[1], "payload");
-
+        var (header, payload) = ReadStructure(jwt, expectedType);
         var alg = (string?)header["alg"];
         if (alg is null)
         {
@@ -542,8 +511,11 @@ public sealed class TokenVerifier
     /// <param name="metadata">Metadata client for issuer discovery.</param>
     /// <param name="jwks">JWKS client for key resolution.</param>
     /// <param name="expectedApprover">
-    /// When set, the token's <c>mission.approver</c> must match (step 7). Optional —
-    /// resources/PSs without a mission constraint pass <c>null</c>.
+    /// When a mission is present, a verifying recipient must supply the PS
+    /// identifier for the <c>mission.approver</c> check (step 7): the PS's own
+    /// identifier for PS-local issuance, or the authenticated sending PS at an AS.
+    /// Pass <c>null</c> only when no mission is present, or when the caller is
+    /// performing challenge verification as an agent rather than recipient verification.
     /// </param>
     /// <param name="subagentAgentJkt">
     /// For a parent-mediated sub-agent authorization (§Sub-Agents): the JWK
@@ -623,7 +595,7 @@ public sealed class TokenVerifier
     // deferred to key decoding (which classifies them as invalid key material).
     internal static bool IsStructurallyCompleteJwk(JsonObject jwk)
     {
-        var kty = (string?)jwk["kty"];
+        var kty = SignatureKeyParser.Text(jwk, "kty");
         if (string.IsNullOrEmpty(kty))
         {
             return false;
@@ -637,6 +609,103 @@ public sealed class TokenVerifier
         };
     }
 
+    internal static void ValidateStructure(JsonObject header, JsonObject payload, string? tokenType, AAuthEgressPolicy policy, int maxActDepth = 10)
+    {
+        foreach (var name in new[] { "alg", "typ", "kid" }) RequireText(header, name);
+        RequireText(payload, "iss");
+        RequireText(payload, "dwk");
+        var builtin = tokenType is AgentTokenBuilder.TokenType or ResourceTokenBuilder.TokenType or AuthTokenBuilder.TokenType;
+        foreach (var name in new[] { "exp", "iat" })
+        {
+            if (name == "iat" && !builtin && !payload.ContainsKey(name)) continue;
+            if (!TryGetUnixTime(payload, name, out var seconds)
+                || seconds < DateTimeOffset.MinValue.ToUnixTimeSeconds()
+                || seconds > DateTimeOffset.MaxValue.ToUnixTimeSeconds())
+                throw new TokenVerificationException($"JWT requires a valid integer '{name}' timestamp.");
+        }
+        if (builtin || payload.ContainsKey("jti")) RequireText(payload, "jti");
+        if (!builtin) return;
+        if (tokenType == AuthTokenBuilder.TokenType
+            && payload["exp"]!.GetValue<long>() - payload["iat"]!.GetValue<long>() > 3600)
+            throw new TokenVerificationException("Auth token lifetime must not exceed one hour.");
+        if (!policy.IsValidIdentifier(SignatureKeyParser.Text(payload, "iss")))
+            throw new TokenVerificationException("JWT 'iss' must be a valid server identifier.");
+        if (!AccountBinding.TryRead(payload, out _))
+            throw new TokenVerificationException("Token account must be a non-empty string without control characters.");
+        foreach (var name in new[] { "aud", "sub", "agent", "agent_jkt", "scope", "parent_agent", "ps" })
+            if (payload.ContainsKey(name)) RequireText(payload, name, allowEmpty: name == "scope" && tokenType == ResourceTokenBuilder.TokenType);
+        foreach (var name in new[] { "act", "cnf", "mission", "interaction" })
+            if (payload.ContainsKey(name) && payload[name] is not JsonObject)
+                throw new TokenVerificationException($"JWT claim '{name}' must be an object.");
+        if (payload["act"] is JsonObject act && !ActChainBuilder.ValidateChain(act, maxActDepth, policy))
+            throw new TokenVerificationException("invalid_act_chain: JWT requires a valid delegation chain.");
+        if (payload["mission"] is JsonObject mission)
+        {
+            RequireText(mission, "approver");
+            RequireText(mission, "s256");
+            if (MissionClaim.FromPayload(payload, policy) is null)
+                throw new TokenVerificationException("JWT requires a valid mission reference.");
+        }
+        if (tokenType == AgentTokenBuilder.TokenType)
+        {
+            var subject = RequireText(payload, "sub");
+            ValidateAgent(subject, "sub", policy);
+            var issuer = RequireText(payload, "iss");
+            if (!policy.IsDevelopmentIdentifier(issuer) && "https://" + AgentId.Parse(subject, policy).Domain != issuer)
+                throw new TokenVerificationException("JWT 'sub' domain must match its agent provider.");
+            if (payload.ContainsKey("ps") && !policy.IsValidIdentifier(RequireText(payload, "ps")))
+                throw new TokenVerificationException("JWT 'ps' must be a valid server identifier.");
+            if (payload.ContainsKey("parent_agent")) ValidateAgent(RequireText(payload, "parent_agent"), "parent_agent", policy);
+        }
+        else
+        {
+            if (!policy.IsValidIdentifier(RequireText(payload, "aud")))
+                throw new TokenVerificationException("JWT 'aud' must be a valid server identifier.");
+            ValidateAgent(RequireText(payload, "agent"), "agent", policy);
+        }
+        if (tokenType == ResourceTokenBuilder.TokenType)
+        {
+            RequireText(payload, "agent_jkt");
+            if (!payload.ContainsKey("scope"))
+            {
+                var uri = RequireText(payload, "r3_uri");
+                var hash = RequireText(payload, "r3_s256");
+                try
+                {
+                    policy.ValidateUrl(uri);
+                    var bytes = Base64UrlEncoder.DecodeBytes(hash);
+                    if (bytes.Length != 32 || Base64UrlEncoder.Encode(bytes) != hash)
+                        throw new TokenVerificationException("Resource token R3 hash must be an unpadded SHA-256 digest.");
+                }
+                catch (Exception exception) when (exception is System.Net.Http.HttpRequestException or FormatException or ArgumentException)
+                { throw new TokenVerificationException("Resource token requires scope or a valid R3 reference.", exception); }
+            }
+            if (payload["interaction"] is JsonObject interaction)
+            {
+                RequireText(interaction, "url");
+                RequireText(interaction, "code");
+            }
+        }
+        else if (payload["cnf"] is not JsonObject confirmation || confirmation["jwk"] is not JsonObject)
+            throw new TokenVerificationException("JWT requires 'cnf.jwk'.");
+        if (tokenType == AuthTokenBuilder.TokenType && !payload.ContainsKey("sub") && !payload.ContainsKey("scope"))
+            throw new TokenVerificationException("Auth token must contain at least one of 'sub' or 'scope'.");
+    }
+
+    private static string RequireText(JsonObject document, string name, bool allowEmpty = false)
+    {
+        var text = SignatureKeyParser.Text(document, name);
+        if (text is null || !allowEmpty && string.IsNullOrWhiteSpace(text))
+            throw new TokenVerificationException($"JWT '{name}' must be {(allowEmpty ? "a string" : "a non-empty string")}.");
+        return text;
+    }
+
+    private static void ValidateAgent(string value, string claim, AAuthEgressPolicy policy)
+    {
+        if (!AgentId.TryParse(value, out _, out _, policy))
+            throw new TokenVerificationException($"JWT '{claim}' must be a valid agent identifier.");
+    }
+
     private static bool TryGetUnixTime(JsonObject payload, string claim, out long value)
     {
         value = 0;
@@ -648,22 +717,39 @@ public sealed class TokenVerifier
         return false;
     }
 
-    internal static JsonObject DecodeJsonSegment(string segment, string label)
+    internal (JsonObject Header, JsonObject Payload) ReadStructure(string jwt, string tokenType)
     {
-        byte[] bytes;
+        var segments = jwt.Split('.');
+        if (segments.Length != 3)
+            throw new TokenVerificationException("JWT is not a compact JWS.");
+        var header = DecodeJsonSegment(segments[0], "header");
+        var payload = DecodeJsonSegment(segments[1], "payload");
+        ValidateStructure(header, payload, tokenType, EgressPolicy, MaxActDepth);
+        DecodeSegment(segments[2], "signature");
+        return (header, payload);
+    }
+
+    private static byte[] DecodeSegment(string segment, string label)
+    {
         try
         {
-            bytes = Base64UrlEncoder.DecodeBytes(segment);
+            var bytes = Base64UrlEncoder.DecodeBytes(segment);
+            if (bytes.Length == 0 || Base64UrlEncoder.Encode(bytes) != segment)
+                throw new FormatException();
+            return bytes;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is FormatException or ArgumentException)
         {
             throw new TokenVerificationException($"JWT {label} is not valid base64url.", ex);
         }
+    }
 
+    internal static JsonObject DecodeJsonSegment(string segment, string label)
+    {
+        var bytes = DecodeSegment(segment, label);
         try
         {
-            return JsonNode.Parse(bytes) as JsonObject
-                ?? throw new TokenVerificationException($"JWT {label} is not a JSON object.");
+            return SignatureKeyParser.ParseJsonObject(bytes);
         }
         catch (JsonException ex)
         {
@@ -672,9 +758,12 @@ public sealed class TokenVerifier
     }
 }
 
+public enum TokenCredential { Agent, Resource, Subagent, Upstream }
+
 /// <summary>Thrown when AAuth JWT verification fails for any reason.</summary>
 public sealed class TokenVerificationException : Exception
 {
+    public TokenCredential? Credential { get; init; }
     public AAuth.Errors.SignatureErrorCode Code { get; }
     public TokenVerificationException(AAuth.Errors.SignatureErrorCode code, string message, Exception? inner = null)
         : base(message, inner) => Code = code;

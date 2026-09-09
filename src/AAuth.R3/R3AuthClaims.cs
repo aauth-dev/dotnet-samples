@@ -49,16 +49,14 @@ public static class R3AuthClaims
 
     public static void ValidateResourcePair(JsonObject payload)
     {
-        var uri = (string?)payload[UriClaim];
-        var s256 = (string?)payload[S256Claim];
-        if ((uri is null) != (s256 is null))
+        ArgumentNullException.ThrowIfNull(payload);
+        if (!payload.ContainsKey(UriClaim) && !payload.ContainsKey(S256Claim)) return;
+        if (payload[UriClaim] is not JsonValue uriValue || !uriValue.TryGetValue<string>(out var uri)
+            || payload[S256Claim] is not JsonValue hashValue || !hashValue.TryGetValue<string>(out var s256))
         {
-            throw new InvalidOperationException("r3_uri and r3_s256 must be present together.");
+            throw new InvalidOperationException("r3_uri and r3_s256 must be present together as strings.");
         }
-        if (uri is not null)
-        {
-            ValidatePair(uri, s256!);
-        }
+        ValidatePair(uri, s256);
     }
 
     private static void ValidatePair(string r3Uri, string r3S256)

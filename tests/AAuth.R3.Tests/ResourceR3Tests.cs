@@ -19,6 +19,57 @@ namespace AAuth.R3.Tests;
 public class ResourceR3Tests
 {
     [Fact]
+    public void ProposalAndDocumentRemainAvailableWhileIssuedGrantIsValid()
+    {
+        var clock = new RetentionClock();
+        var store = new R3ProposalStore();
+        var document = store.AddBytes(R3TestData.Document().ToUtf8Bytes(), new Uri(R3TestData.ResourceIssuer));
+        var enforcement = new R3Enforcement(store, new Uri(R3TestData.ResourceIssuer));
+        var claims = new R3ClaimReader.AuthTokenClaims(document.Uri, document.S256, R3Grant.Mcp(), R3Grant.Mcp("book"));
+        var parameters = new Dictionary<string, R3Parameter> { ["id"] = R3Parameter.Inline(JsonValue.Create("reservation")!) };
+        var proposal = enforcement.Evaluate(claims, R3OperationIdentity.Mcp("book"), parameters);
+        var issued = clock.Now;
+        var issuerKey = AAuthKey.Generate();
+        var agentKey = AAuthKey.Generate();
+        var token = new AAuth.Tokens.AuthTokenBuilder
+        {
+            Issuer = R3TestData.AsIssuer, Audience = R3TestData.ResourceIssuer,
+            Agent = R3TestData.AgentId, AgentConfirmationKey = agentKey,
+            Scope = "book",
+            Key = issuerKey, KeyId = "issuer", Dwk = AAuth.Tokens.AuthTokenBuilder.AccessDwk,
+            IssuedAt = issued, AgentTokenExpiresAt = issued.AddHours(1),
+            AdditionalClaims = R3AuthClaims.AuthToken(proposal.ProposalUri!, proposal.ProposalS256!, R3Grant.Mcp("book")),
+        }.Build();
+        clock.Now = issued.AddMinutes(11);
+        var verified = new AAuth.Tokens.TokenVerifier { Clock = () => clock.Now }.VerifyAuthToken(
+            token, issuerKey, R3TestData.ResourceIssuer, agentKey, R3TestData.AgentId);
+        var approved = R3ClaimReader.ReadAuthToken(verified.Payload);
+        Assert.True(store.TryGet(document.S256, out var documentBytes));
+        R3Hash.Verify(documentBytes, document.S256);
+        Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(approved, R3OperationIdentity.Mcp("book"), parameters,
+            approvedProposalS256: approved.S256).Kind);
+    }
+
+    [Fact]
+    public void ContentCapacityRejectsNewEntriesWithoutEvictingPublishedReferences()
+    {
+        var store = new R3ProposalStore(maxEntries: 1);
+        var bytes = R3TestData.Document().ToUtf8Bytes();
+        var stored = store.AddBytes(bytes, new Uri(R3TestData.ResourceIssuer));
+        Assert.Equal(stored.S256, store.AddBytes(bytes, new Uri(R3TestData.ResourceIssuer)).S256);
+        Assert.Throws<InvalidOperationException>(() => store.AddBytes("{}"u8.ToArray(), new Uri(R3TestData.ResourceIssuer)));
+        Assert.True(store.TryGet(stored.S256, out var retrieved));
+        Assert.Equal(bytes, retrieved);
+        Assert.Throws<ArgumentOutOfRangeException>(() => new R3ProposalStore(0));
+    }
+
+    private sealed class RetentionClock : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = DateTimeOffset.UtcNow;
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
+    [Fact]
     public void ProposalAccount_CannotBeReusedAcrossAccountsOrAccountlessRequests()
     {
         var claims = new R3ClaimReader.AuthTokenClaims("https://resource.test/r3/doc", "hash",

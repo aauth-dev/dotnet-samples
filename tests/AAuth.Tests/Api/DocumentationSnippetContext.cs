@@ -61,6 +61,8 @@ internal static class DocumentationSnippetContext
         private string conciergeUrl = "https://concierge.example", concierge = "https://concierge.example", calendarUrl = "https://calendar.example";
         private string intermediaryUrl = "https://concierge.example", intermediaryResourceUrl = "https://concierge.example", downstreamUrl = "https://calendar.example/events";
         private string psIssuer = "https://ps.example", ps = "https://ps.example", asIssuer = "https://as.example", asUrl = "https://as.example";
+        private string authenticatedPsIdentifier = "https://ps.example";
+        private AgentIssuanceContext issuance = null!;
         private string apUrl = "https://ap.example", agentProvider = "https://ap.example", psTokenEndpoint = "https://ps.example/token";
         private string jwksUrl = "https://ap.example/jwks", kid = "key", ResourceKid = "key", PsKid = "key", AsKid = "key", apKid = "key", apKeyId = "key", conciergeKid = "key";
         private string identifier = "aauth:agent@ap.example", agentIdentifier = "aauth:agent@ap.example", resourceBAgent = "aauth:agent@concierge.example";

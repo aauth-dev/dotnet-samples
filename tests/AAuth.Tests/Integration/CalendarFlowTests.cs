@@ -272,7 +272,8 @@ public class CalendarFlowTests : IAsyncLifetime
         {
             InnerHandler = RoutingHandler(),
         };
-        var challenge = new ChallengeHandler(exchange, holder, PsIssuer)
+        var challenge = new ChallengeHandler(exchange, holder, new TokenVerifier { EgressPolicy = TestEgress.Policy },
+            new MetadataClient(new InProcessHttpClient(RoutingHandler())), new JwksClient(new InProcessHttpClient(RoutingHandler())), PsIssuer)
         {
             InnerHandler = resourceSigning,
         };
@@ -530,7 +531,8 @@ public class CalendarFlowTests : IAsyncLifetime
         {
             InnerHandler = RoutingHandler(),
         };
-        var challenge = new ChallengeHandler(exchange, holder, PsIssuer, approveAsUser, pollerOptions)
+        var challenge = new ChallengeHandler(exchange, holder, new TokenVerifier { EgressPolicy = TestEgress.Policy },
+            metadata, new JwksClient(new InProcessHttpClient(RoutingHandler())), PsIssuer, approveAsUser, pollerOptions)
         {
             InnerHandler = resourceSigning,
         };
@@ -651,7 +653,8 @@ public class CalendarFlowTests : IAsyncLifetime
         {
             InnerHandler = RoutingHandler(),
         };
-        var challenge = new ChallengeHandler(exchange, holder, PsIssuer, denyAsUser, pollerOptions)
+        var challenge = new ChallengeHandler(exchange, holder, new TokenVerifier { EgressPolicy = TestEgress.Policy },
+            metadata, new JwksClient(new InProcessHttpClient(RoutingHandler())), PsIssuer, denyAsUser, pollerOptions)
         {
             InnerHandler = resourceSigning,
         };
@@ -695,7 +698,8 @@ public class CalendarFlowTests : IAsyncLifetime
             var exchangeHttp = new InProcessHttpClient(exchangeSigning);
             var metadata = new MetadataClient(new InProcessHttpClient(RoutingHandler()));
             var exchange = new TokenExchangeClient(exchangeHttp, metadata);
-            resourceInner = new ChallengeHandler(exchange, holder, personServer)
+            resourceInner = new ChallengeHandler(exchange, holder, new TokenVerifier { EgressPolicy = TestEgress.Policy },
+                metadata, new JwksClient(new InProcessHttpClient(RoutingHandler())), personServer)
             {
                 InnerHandler = resourceInner,
             };

@@ -6,6 +6,19 @@ public static class AAuthProblemDetails
 {
     public const string ContentType = "application/problem+json";
 
+    public static IResult TokenFailure(Tokens.TokenVerificationException exception,
+        Tokens.TokenCredential credential = Tokens.TokenCredential.Agent)
+    {
+        var expired = exception.Code == Errors.SignatureErrorCode.ExpiredJwt;
+        var error = (exception.Credential ?? credential) switch
+        {
+            Tokens.TokenCredential.Resource => expired ? "expired_resource_token" : "invalid_resource_token",
+            Tokens.TokenCredential.Upstream => "invalid_upstream_token",
+            _ => expired ? "expired_agent_token" : "invalid_agent_token",
+        };
+        return Create(error, exception.Message);
+    }
+
     public static IResult Create(
         string error,
         string? detail = null,

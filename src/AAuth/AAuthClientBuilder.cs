@@ -175,7 +175,6 @@ public sealed class AAuthClientBuilder
         ArgumentNullException.ThrowIfNull(tokenFactory);
         ClearTokenRefresh();
         _tokenFactory = tokenFactory;
-        _agentToken = tokenFactory();
         _provider = new JwtSignatureKeyProvider(tokenFactory);
         return this;
     }
@@ -700,6 +699,8 @@ public sealed class AAuthClientBuilder
         owned.Add(exchangeHttpClient);
         owned.Add(metadata);
         var exchangeClient = new TokenExchangeClient(exchangeHttpClient, metadata);
+        var jwks = new JwksClient(policy: _egressPolicy);
+        owned.Add(jwks);
 
         var pollerOptions = new DeferredPollerOptions
         {
@@ -712,7 +713,7 @@ public sealed class AAuthClientBuilder
 
         // Challenge handler sits above the outer signer.
         var challengeHandler = new ChallengeHandler(
-            exchangeClient, carrierHolder, personServer,
+            exchangeClient, carrierHolder, new Tokens.TokenVerifier { EgressPolicy = _egressPolicy }, metadata, jwks, personServer,
             challengeOptions.OnInteractionRequired, pollerOptions,
             _upstreamTokenProvider)
         {
@@ -831,8 +832,15 @@ public sealed class AAuthClientBuilder
         };
         partial = refreshHandler;
 
+        HttpMessageHandler topHandler = refreshHandler;
+        if (_tokenFactory is not null)
+        {
+            topHandler = new AgentTokenSourceHandler(_tokenFactory, holder, _agentToken) { InnerHandler = topHandler };
+            partial = topHandler;
+        }
+
         if (!_interactionHandling)
-            return refreshHandler;
+            return topHandler;
 
         var opts = new InteractionHandlingOptions();
         _interactionOptionsConfigure?.Invoke(opts);
@@ -847,7 +855,7 @@ public sealed class AAuthClientBuilder
         {
             EgressPolicy = _egressPolicy,
             TransportContract = _transportContract ?? AAuthTransportContract.EnforcesEgressPolicy,
-            InnerHandler = refreshHandler,
+            InnerHandler = topHandler,
         };
     }
 

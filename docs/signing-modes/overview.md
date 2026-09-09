@@ -84,9 +84,11 @@ ISignatureKeyProvider provider = mode switch
     "jwks"     => new JwksSignatureKeyProvider(jwksUrl, kid),
     "jwt"      => new JwtSignatureKeyProvider(() => agentToken),
     "jkt-jwt"  => new JktJwtSignatureKeyProvider(() => namingJwt),
+    _ => throw new ArgumentException("Unknown signature scheme."),
 };
 
-var handler = new AAuthSigningHandler(key, provider);
+var signingKey = mode == "jkt-jwt" ? ephemeralKey : key;
+var handler = new AAuthSigningHandler(signingKey, provider);
 ```
 
 </details>

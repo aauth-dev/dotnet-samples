@@ -27,7 +27,7 @@ builder.Services.AddHttpClient();
 var selfIssuedKey = AAuthKey.Generate();
 const string SelfIssuedKid = "sample-app-1";
 var sampleAppUrl = builder.Configuration["AAuth:SelfIssuer"] ?? "http://localhost:5240";
-var sampleAppAgentId = builder.Configuration["AAuth:SelfAgentId"] ?? "aauth:sample-app@localhost:5240";
+var sampleAppAgentId = builder.Configuration["AAuth:SelfAgentId"] ?? "aauth:sample-app@localhost";
 builder.Services.AddSingleton(new SelfIssuedIdentity(selfIssuedKey, SelfIssuedKid, sampleAppUrl, sampleAppAgentId));
 
 var app = builder.Build();

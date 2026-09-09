@@ -127,12 +127,8 @@ public sealed class ResourceTokenBuilder
             ["agent_jkt"] = AgentJkt,
             ["iat"] = iat.ToUnixTimeSeconds(),
             ["exp"] = exp.ToUnixTimeSeconds(),
+            ["scope"] = Scope ?? string.Empty,
         };
-
-        if (!string.IsNullOrEmpty(Scope))
-        {
-            payload["scope"] = Scope;
-        }
 
         if (Account is not null) payload["account"] = Account;
 

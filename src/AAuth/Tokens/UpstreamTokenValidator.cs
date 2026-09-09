@@ -21,6 +21,7 @@ public sealed record UpstreamTokenValidationResult
 
     /// <summary>Error description when invalid.</summary>
     public string? Error { get; init; }
+    public AAuth.Errors.SignatureErrorCode FailureCode { get; init; } = AAuth.Errors.SignatureErrorCode.InvalidJwt;
 
     /// <summary>The upstream token's own <c>act</c> claim (its delegation chain),
     /// or <see langword="null"/> if the upstream token was a direct authorization.
@@ -118,7 +119,7 @@ public sealed class UpstreamTokenValidator
             verified = await VerifyWithoutPoPAsync(upstreamToken, expectedAudience, ct);
             var originalKey = SignatureKeyParser.Confirmation(verified.Payload);
             var originalAgent = (string?)verified.Payload["agent"];
-            if (!AgentId.TryParse(originalAgent, out _, out _))
+            if (!AgentId.TryParse(originalAgent, out _, out _, _verifier.EgressPolicy))
                 throw new TokenVerificationException("invalid_upstream_token: missing or invalid 'agent'.");
             verified = await _verifier.VerifyAuthTokenWithJwksAsync(upstreamToken, _metadata, _jwks,
                 expectedAudience, originalKey, originalAgent!, cancellationToken: ct);
@@ -129,6 +130,8 @@ public sealed class UpstreamTokenValidator
             {
                 IsValid = false,
                 Error = ex.Message,
+                FailureCode = ex is TokenVerificationException token ? token.Code
+                    : ex is AAuthVerificationException signature ? signature.Code : AAuth.Errors.SignatureErrorCode.InvalidJwt,
             };
         }
 
@@ -177,7 +180,7 @@ public sealed class UpstreamTokenValidator
         // depth is within limits. The presenter is the top-level `agent`; `act.agent`
         // identifies the upstream delegator and is intentionally different — so there
         // is no self-reference check.
-        if (act is not null && !ActChainBuilder.ValidateChain(act, _verifier.MaxActDepth))
+        if (act is not null && !ActChainBuilder.ValidateChain(act, _verifier.MaxActDepth, _verifier.EgressPolicy))
         {
             return new UpstreamTokenValidationResult
             {
@@ -209,11 +212,7 @@ public sealed class UpstreamTokenValidator
         string jwt, string expectedAudience, CancellationToken ct)
     {
         // Decode to find issuer and dwk for key resolution.
-        var segments = jwt.Split('.');
-        if (segments.Length != 3)
-            throw new TokenVerificationException("JWT is not a compact JWS.");
-
-        var payload = TokenVerifier.DecodeJsonSegment(segments[1], "payload");
+        var (_, payload) = _verifier.ReadStructure(jwt, AuthTokenBuilder.TokenType);
         var dwk = (string?)payload["dwk"]
             ?? throw new TokenVerificationException("Token is missing 'dwk'.");
         return await _verifier.VerifyWithJwksAsync(jwt, _metadata, _jwks,

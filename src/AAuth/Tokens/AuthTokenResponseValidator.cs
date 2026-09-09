@@ -114,7 +114,7 @@ public sealed class AuthTokenResponseValidator
             // delegation context, verify the nested act chain matches it. act is
             // OPTIONAL (§Delegation Chain); act.agent is the immediate upstream
             // agent and its own chain is nested as act.act.
-            if (!ActChainsMatch(verified.Payload["act"] as JsonObject, expectedActContext))
+            if (!ActChainsMatch(verified.Payload["act"] as JsonObject, expectedActContext, _verifier.EgressPolicy))
             {
                 return new AuthTokenDeliveryResult
                 {
@@ -143,13 +143,13 @@ public sealed class AuthTokenResponseValidator
     /// Compare two act chain objects for structural equivalence.
     /// Checks that <c>agent</c> values match at each nesting level.
     /// </summary>
-    public static bool ActChainsMatch(JsonObject? actual, JsonObject? expected)
+    public static bool ActChainsMatch(JsonObject? actual, JsonObject? expected, AAuthEgressPolicy? policy = null)
     {
         if (actual is null && expected is null)
             return true;
         if (actual is null || expected is null)
             return false;
-        if (!ActChainBuilder.ValidateChain(actual) || !ActChainBuilder.ValidateChain(expected))
+        if (!ActChainBuilder.ValidateChain(actual, policy: policy) || !ActChainBuilder.ValidateChain(expected, policy: policy))
             return false;
 
         var actualAgent = (string?)actual["agent"];
@@ -159,6 +159,6 @@ public sealed class AuthTokenResponseValidator
 
         var actualNested = actual["act"] as JsonObject;
         var expectedNested = expected["act"] as JsonObject;
-        return ActChainsMatch(actualNested, expectedNested);
+        return ActChainsMatch(actualNested, expectedNested, policy);
     }
 }

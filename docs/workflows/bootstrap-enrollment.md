@@ -33,6 +33,13 @@ assigned identity and kid. Use a persisted key, not a newly generated key on eac
 restart. FileKeyStore stores software key material locally; it does not provide
 hardware-backed or non-exportable key guarantees.
 
+The bootstrap convenience APIs `BootstrapBuilder.WithKey`,
+`AgentProviderClient.EnrolWithKeyAsync`, and `EnrollResult.Key` currently use the
+concrete Ed25519 `AAuthKey`. They do not provide fluent ES256 enrollment.
+This limitation does not apply to `IKeyStore`, signing/verification, or
+`AAuthClientBuilder.Enrolled` single-key refresh, which accept `IAAuthKey`.
+The sample AP accepts signed ES256 enrollment requests through its HTTP endpoint.
+
 > **The agent and the AP never share a keystore.** The agent holds the **private** durable key locally in its own `IKeyStore`. The AP holds only the **public** key, indexed in its enrollment database by JWK thumbprint. At refresh time the AP identifies the agent from the HTTP signature — never from any string the agent sends.
 
 The agent token is short-lived (typically 1 hour, max 24 hours per spec) and refreshed automatically by the SDK at runtime using the durable key.

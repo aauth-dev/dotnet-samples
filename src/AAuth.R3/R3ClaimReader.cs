@@ -24,17 +24,14 @@ public static class R3ClaimReader
     public static ResourceDocumentClaims? ReadResourceDocument(JsonObject payload)
     {
         ArgumentNullException.ThrowIfNull(payload);
+        R3AuthClaims.ValidateResourcePair(payload);
         var uri = (string?)payload[R3AuthClaims.UriClaim];
         var s256 = (string?)payload[R3AuthClaims.S256Claim];
         if (uri is null && s256 is null)
         {
             return null;
         }
-        if (string.IsNullOrWhiteSpace(uri) || string.IsNullOrWhiteSpace(s256))
-        {
-            throw new InvalidOperationException("r3_uri and r3_s256 must be present together.");
-        }
-        return new ResourceDocumentClaims(uri, s256) { Account = AAuth.Tokens.AccountBinding.Read(payload) };
+        return new ResourceDocumentClaims(uri!, s256!) { Account = AAuth.Tokens.AccountBinding.Read(payload) };
     }
 
     public static AuthTokenClaims ReadAuthToken(JsonObject payload, R3VocabularySchemas? schemas = null)

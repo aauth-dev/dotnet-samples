@@ -24,6 +24,21 @@ public class Phase14DiscoveryTests
     [InlineData("aauth-agent.json", "[]", false)]
     [InlineData("aauth-agent.json", "null", true)]
     [InlineData("aauth-agent.json", "[]", true)]
+    [InlineData("aauth-agent.json", "{\"issuer\":\"{issuer}\",\"jwks_uri\":123}", false)]
+    [InlineData("aauth-agent.json", "{\"issuer\":\"{issuer}\",\"jwks_uri\":[]}", false)]
+    [InlineData("aauth-agent.json", "{\"issuer\":\"{issuer}\",\"jwks_uri\":{}}", false)]
+    [InlineData("aauth-agent.json", "{\"issuer\":\"{issuer}\",\"jwks_uri\":\"{issuer}/keys\",\"token_endpoint\":123}", false)]
+    [InlineData("aauth-agent.json", "{}", true)]
+    [InlineData("aauth-agent.json", "{\"keys\":null}", true)]
+    [InlineData("aauth-agent.json", "{\"keys\":{}}", true)]
+    [InlineData("aauth-agent.json", "{\"keys\":[null]}", true)]
+    [InlineData("aauth-agent.json", "{\"keys\":[123]}", true)]
+    [InlineData("aauth-agent.json", "{\"keys\":[{\"kid\":123}]}", true)]
+    [InlineData("aauth-agent.json", "{", false)]
+    [InlineData("aauth-agent.json", "{", true)]
+    [InlineData("aauth-agent.json", "{\"issuer\":\"{issuer}\",\"issuer\":\"{issuer}\",\"jwks_uri\":\"{issuer}/keys\"}", false)]
+    [InlineData("aauth-agent.json", "{\"keys\":[],\"keys\":[]}", true)]
+    [InlineData("aauth-agent.json", "{\"keys\":[{\"kid\":\"issuer\",\"kid\":\"issuer\"}]}", true)]
     public async Task MalformedDiscoveryFailsBeforeHttpSignature(string dwk, string document, bool badJwks)
     {
         var builder = WebApplication.CreateBuilder();
@@ -34,7 +49,7 @@ public class Phase14DiscoveryTests
         app.MapGet("/.well-known/aauth-agent.json", () =>
         {
             fetched++;
-            return Results.Text(badJwks ? "{\"issuer\":\"" + issuer + "\",\"jwks_uri\":\"" + issuer + "/keys\"}" : document, "application/json");
+            return Results.Text(badJwks ? "{\"issuer\":\"" + issuer + "\",\"jwks_uri\":\"" + issuer + "/keys\"}" : document.Replace("{issuer}", issuer), "application/json");
         });
         app.MapGet("/keys", () => Results.Text(document, "application/json"));
         app.MapGet("/protected", async context =>

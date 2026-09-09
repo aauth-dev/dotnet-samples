@@ -94,15 +94,20 @@ var tokenHolder = new AAuthTokenHolder(agentToken);
 var signingHandler = new AAuthSigningHandler(key!,
     new JwtSignatureKeyProvider(() => tokenHolder.Current))
 {
-    InnerHandler = new HttpClientHandler()
+    InnerHandler = AAuthHttpTransport.CreateHandler()
 };
 
-var signedClient = new HttpClient(signingHandler);
-var metadata = new MetadataClient(new HttpClient());
+using var signedClient = AAuthHttpTransport.AttachPolicy(new HttpClient(
+    new AAuthSigningHandler(key!, new JwtSignatureKeyProvider(() => agentToken))
+    { InnerHandler = AAuthHttpTransport.CreateHandler() }),
+    AAuthEgressPolicy.Production, AAuthTransportContract.EnforcesEgressPolicy);
+using var metadata = new MetadataClient();
+using var jwks = new JwksClient();
+var verifier = new AAuth.Tokens.TokenVerifier();
 var exchange = new TokenExchangeClient(signedClient, metadata);
 
 var challengeHandler = new ChallengeHandler(
-    exchange, tokenHolder, "https://ps.example")
+    exchange, tokenHolder, verifier, metadata, jwks, "https://ps.example")
 {
     InnerHandler = signingHandler
 };

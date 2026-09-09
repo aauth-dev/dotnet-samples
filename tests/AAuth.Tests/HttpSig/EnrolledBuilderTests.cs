@@ -3,11 +3,75 @@ using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.HttpSig;
 using Xunit;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text.Json.Nodes;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace AAuth.Tests.HttpSig;
 
 public class EnrolledBuilderTests
 {
+    [Fact]
+    public void BootstrapEnrollmentHasConcreteKeyBoundaryButEnrolledRefreshDoesNot()
+    {
+        Assert.Equal(typeof(AAuthKey), typeof(BootstrapBuilder).GetMethod("WithKey")!.GetParameters()[0].ParameterType);
+        Assert.Equal(typeof(AAuthKey), typeof(AgentProviderClient).GetMethod("EnrolWithKeyAsync")!.GetParameters()[3].ParameterType);
+        Assert.Equal(typeof(AAuthKey), typeof(EnrollResult).GetProperty("Key")!.PropertyType);
+        using var client = AAuthClientBuilder.Enrolled(EcdsaAAuthKey.Generate())
+            .RefreshingFrom("https://ap.example/refresh", "local-handle").Build();
+        Assert.NotNull(client);
+    }
+
+    [Fact]
+    public async Task ActualAgentProviderPublishesEnrolledEs256KeyAfterRestart()
+    {
+        var directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ap-es256-" + Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(directory);
+        var key = EcdsaAAuthKey.Generate();
+        string? jwksUri = null;
+        string? keyId = null;
+        try
+        {
+            for (var restart = 0; restart < 2; restart++)
+            {
+                using var host = new WebApplicationFactory<MockAgentProvider.Entry>().WithWebHostBuilder(builder =>
+                {
+                    builder.UseSetting("AgentProvider:Issuer", "http://localhost:5301");
+                    builder.UseSetting("AgentProvider:KeyDirectory", System.IO.Path.Combine(directory, "keys"));
+                    builder.UseSetting("AgentProvider:Database", System.IO.Path.Combine(directory, "agents.db"));
+                    builder.UseSetting("Events:Database", System.IO.Path.Combine(directory, "events.db"));
+                });
+                using var client = host.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("http://localhost:5301") });
+                if (restart == 0)
+                {
+                    using var request = new HttpRequestMessage(HttpMethod.Post, "http://localhost:5301/enrol")
+                    {
+                        Content = JsonContent.Create(new { jwk = key.ToPublicJwk() }),
+                    };
+                    request.Options.Set(AAuthSigningHandler.AdditionalComponentsKey, new[] { "content-type", "content-digest" });
+                    using var signer = new AAuthSigningHandler(key, new HwkSignatureKeyProvider(key));
+                    await signer.SignAsync(request);
+                    using var enrolled = await client.SendAsync(request);
+                    Assert.Equal(HttpStatusCode.OK, enrolled.StatusCode);
+                    var enrollment = (await enrolled.Content.ReadFromJsonAsync<JsonObject>())!;
+                    jwksUri = (string)enrollment["jwks_uri"]!;
+                    keyId = (string)enrollment["key_id"]!;
+                }
+                var document = (await client.GetFromJsonAsync<JsonObject>(jwksUri))!;
+                var published = Assert.Single(document["keys"]!.AsArray())!.AsObject();
+                Assert.Equal("ES256", (string?)published["alg"]);
+                Assert.Equal(keyId, (string?)published["kid"]);
+                var resolved = KeyFactory.FromPublicJwk(published);
+                Assert.Equal(key.ComputeJwkThumbprint(), resolved.ComputeJwkThumbprint());
+                Assert.True(resolved.Verify("published-key-proof"u8.ToArray(), key.Sign("published-key-proof"u8.ToArray())));
+            }
+        }
+        finally { System.IO.Directory.Delete(directory, true); }
+    }
+
     private readonly AAuthKey _key = AAuthKey.Generate();
     private const string RefreshEndpoint = "http://localhost:5200/refresh";
     private const string LocalKeyHandle = "my-agent-key";

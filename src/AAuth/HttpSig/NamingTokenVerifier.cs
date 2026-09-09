@@ -42,6 +42,7 @@ public static class NamingTokenVerifier
         if (payload.ContainsKey("iat") || requireIssuedAt)
         {
             if (payload["iat"] is not JsonValue issuance || !issuance.TryGetValue<long>(out var issued)
+                || issued < DateTimeOffset.MinValue.ToUnixTimeSeconds() || issued > DateTimeOffset.MaxValue.ToUnixTimeSeconds()
                 || issued > (now + skew).ToUnixTimeSeconds() || issued >= expires)
                 throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires a valid, nonfuture iat before exp.");
         }

@@ -8,7 +8,8 @@ namespace AAuth.Tokens;
 public static class AgentAuthTokenValidator
 {
     public static void Validate(string authToken, string resourceToken, IAAuthKey signingKey,
-        string agentToken, string? subagentToken = null, string? upstreamToken = null)
+        string agentToken, string? subagentToken = null, string? upstreamToken = null,
+        AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
         var resource = Payload(resourceToken);
         var parent = Payload(agentToken);
@@ -20,14 +21,14 @@ public static class AgentAuthTokenValidator
         {
             var upstream = Payload(upstreamToken);
             expectedAct = ActChainBuilder.BuildNestedAct((string?)upstream["agent"]
-                ?? throw new TokenVerificationException("Upstream agent missing."), upstream["act"] as JsonObject);
+                ?? throw new TokenVerificationException("Upstream agent missing."), upstream["act"] as JsonObject, policy);
         }
         if (subagentToken is not null)
         {
             if ((string?)bound["parent_agent"] != (string?)parent["sub"])
                 throw new TokenVerificationException("Child token does not name the requesting parent.");
             expectedAct = ActChainBuilder.BuildNestedAct((string?)parent["sub"]
-                ?? throw new TokenVerificationException("Parent identity missing."), expectedAct);
+                ?? throw new TokenVerificationException("Parent identity missing."), expectedAct, policy);
         }
         var auth = Payload(authToken);
         if (!AccountBinding.TryRead(resource, out var resourceAccount)
@@ -40,7 +41,7 @@ public static class AgentAuthTokenValidator
             || (string?)auth["agent"] != expectedAgent || (string?)resource["agent"] != expectedAgent
             || SignatureKeyParser.Confirmation(auth).ComputeJwkThumbprint() != expectedKey.ComputeJwkThumbprint()
             || (string?)resource["agent_jkt"] != expectedKey.ComputeJwkThumbprint()
-            || !AuthTokenResponseValidator.ActChainsMatch(auth["act"] as JsonObject, expectedAct)
+            || !AuthTokenResponseValidator.ActChainsMatch(auth["act"] as JsonObject, expectedAct, policy)
             || (auth.ContainsKey("act") && auth["act"] is not JsonObject))
             throw new TokenVerificationException("Auth token response issuer, audience, agent, key or actor context mismatch.");
         var requested = new System.Collections.Generic.HashSet<string>(((string?)resource["scope"] ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries));

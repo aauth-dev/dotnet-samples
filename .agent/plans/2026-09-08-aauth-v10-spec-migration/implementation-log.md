@@ -6,6 +6,129 @@ description: Decisions and validation results for the AAuth v10 migration.
 
 ## Decisions Taken
 
+### [2026-09-09] [Phase 14] Resource challenge verification repair - PROCEEDED
+
+The cross-origin regression reproduced a PS discovery attempt from
+`ChallengeHandler.SendAsync` before JWT verification. The initial failing run
+attempted DNS for `ps.example`; the issuer gate then passed the same test.
+Protocol resource challenge verification requires JWT verification and resource
+binding before exchange (v10 `Resource Challenge Verification`, L868-L873).
+The handler now takes the shared verifier, metadata and JWKS dependencies from
+the builder or manual host and rejects issuer, signature, agent/key, expiry,
+account and mission mismatches before PS calls or consent. It uses the token
+recorded by the signer, not the mutable holder. Adaptive retries copy the
+signing context back. Four-party audiences remain supported; PS-AS trust stays
+in the existing exchange path. Focused Release evidence is recorded in
+`/tmp/aauth-phase14-review-challenges/`; full gates remain pending.
+
+Preserve the preexisting discovery crypto-factory and R3 retention changes.
+No commits, branch changes or nested delegates are used in this repair worker.
+This does not override the owner's independent-review requirement: Phases 14
+and 15 remain open until fresh review. Existing Markdown metadata is preserved;
+no frontmatter is added to previously unadorned files.
+
+### [2026-09-09] [Phase 14] Focused R3, AP, documentation and walkthrough repairs - RESOLVED (focused checks)
+
+R3 wrong-approver repro returned 200 on immediate issuance and 202 on deferred
+issuance. Both now reject with `invalid_resource_token` before document fetch,
+operation policy or audit. [R3AccessTokenEndpoint L162](../../../src/AAuth.R3/R3AccessTokenEndpoint.cs#L162)
+binds to the authenticated PS and validates upstream context; L61 and the retained
+mint record carry verified mission to both delivery paths. All 94 endpoint tests
+pass, including real `AccessServerClient` PS delivery validation of immediate and
+deferred R3 tokens and dropped/changed upstream mission rejection. Evidence:
+`/tmp/aauth-phase14-review-r3/`. Canonical protocol resource verification step 7
+is [L859](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L859).
+
+The actual MockAgentProvider host reproduced `Ed25519` publication for an enrolled
+ES256 key. [Program L82](../../../samples/MockAgentProvider/Program.cs#L82) now
+publishes the key's real algorithm. The regression enrolls over the actual HTTP
+route, validates the published key and proof, restarts the actual host over the
+same registry, and reads the key before reenrollment. Eleven enrollment tests
+pass in `/tmp/aauth-phase14-review-ap/`. A preexisting legacy AP key initially
+blocked host startup; `AgentProvider:KeyDirectory` isolates test keys without
+changing user files. The shared crypto factory and R3 retention edits remain.
+
+Documentation repairs cover mandatory PS-local/AS-authenticated approver context,
+ephemeral HTTP signing for naming JWTs, actual provider constructor parameters and
+labels, explicit DI credentials without HWK fallback, and generic Profile route
+admission. All four semantic/compilation checks pass in
+`/tmp/aauth-phase14-review-docs/`; constructor table declarations are compiled,
+and the naming-JWT signing-key selection is checked structurally, not by hashes.
+Manual challenge examples now inject verification dependencies and use separate
+agent-token exchange channels. The focused challenge suite passes 70/70 in
+`/tmp/aauth-phase14-review-challenges/` with zero PS calls/consent on rejection.
+
+Documents now has four exact SDK step templates and AP setup, verification,
+browser-carried callback, signed pending polling and download rows. Events has
+six exact SDK step templates and a participant/message sequence with explicit
+public/protected branches. Local decisions have no network arrows. Ten exact
+templates compile; shared browser helpers require numbered step/diagram/snippet
+association, cleared state after reset, full second execution, and desktop/mobile
+screenshots. Fresh browser results, final Release gates and inventory refresh
+are still pending; no full-gate or Phase 14/15 completion is implied.
+
+### [2026-09-09] [Phase 14] Focused review repair final gates - RESOLVED (review remains open)
+
+All three runtime issues were reproduced before repair: cross-origin challenge
+caused PS discovery; wrong R3 mission approver yielded 200/202; actual AP per-agent
+JWKS advertised Ed25519 for an enrolled ES256 key. Related verification/signing/
+configuration/generic-route docs and both shared instructional surfaces are fixed.
+Canonical anchors are protocol resource challenge verification L868-L873,
+resource recipient approver L859, Signature Keys ephemeral HTTP key L794, and
+[AP publication L82](../../../samples/MockAgentProvider/Program.cs#L82).
+The earlier focused entries retain the repro, repair decisions and test paths.
+
+Fresh final Release: 2234/2234, zero failures/skips (1059 core, 878 conformance,
+222 R3, 75 Events). This adds 33 cases to the previous 2201: eleven challenge
+cases, eight R3 cases, one actual-AP restart case, three semantic docs cases and
+ten exact walkthrough templates. No tests were removed. Artifacts:
+`/tmp/aauth-phase14-review-final-tests.log` and
+`/tmp/aauth-phase14-review-final-trx/`. Full Release build and `make build`
+both report zero warnings/errors in
+`/tmp/aauth-phase14-review-final-release-build.log` and
+`/tmp/aauth-phase14-review-final-make-build.log`.
+
+Fresh full stub browser gate: 71 passed (40 tour, 31 app), one existing
+Keycloak-only skip. Fresh full live Keycloak gate: 72 passed (40 tour, 32 app),
+zero skipped. Both have retries=0, zero unexpected/flaky results, isolated HOME,
+and fresh application services. Reports:
+`/tmp/aauth-phase14-review-stub.json` and
+`/tmp/aauth-phase14-review-live.json`; matching directories hold screenshots and
+failure-retention artifacts. Existing 72 browser cases were strengthened rather
+than padded with duplicate test names: all eight Documents/Events cases now
+perform two complete executions, assert cleared reset state, numbered steps,
+diagram/snippet associations and viewport fit at 1280/390 pixels. Documents
+captures include AP setup and signed pending polls; browser-local decisions have
+no invented network arrows. Events captures include public/protected participant
+paths and readable arrows in both app themes. Representative diagram and code
+screenshots from both apps were visually inspected.
+
+Focused browser repros caught test assumptions about a fresh login on every
+execution and a transient resource code URL. Retained authentication legitimately
+skips login and immediately redirects to a browser session. The helper now waits
+for either authenticated state or login and verifies callback parameters on the
+actual navigation request. The repaired four Documents cases pass before the
+full gates. The initial obsolete run was interrupted, not counted as a pass.
+An incorrectly placed terminal-logger flag caused one `make` invocation failure;
+plain `make build` and the final repeated build passed. No runtime bypass was
+added to accommodate either harness issue.
+
+API map regenerated after code edits and checked without writing: 198 changed
+public-source files, +790/-152 declarations, zero unmapped. Docs map regenerated
+after the final templates: 169 files, 629 blocks, including 272 exact C# blocks;
+the final Release run passes frozen-source freshness without update mode. The
+provider table and ephemeral signer have semantic regression checks, not just
+new hashes. TypeScript typecheck and scoped whitespace checks pass.
+
+No commits, branch changes, nested delegates, backend additions, specification
+edits or plan completion checkboxes were made. Preexisting crypto-factory and
+R3 retention changes are preserved. This worker's execution constraints do not
+constitute an owner ban on independent review. Phases 14 and 15 remain open:
+fresh independent review and its final alignment disposition are still required.
+External interop, production identity/transport/store deployments and the five
+external/platform template integrations were not newly executed; local Keycloak
+is not evidence of those guarantees.
+
 ### [2026-09-09] [Phase 14] Focused final repairs - PROCEEDED
 
 The owner authorized six reviewed repairs, without delegates, commits, or branch
@@ -2427,6 +2550,512 @@ preserved changes were not reformatted. No auth implementation/test blocker
 remains in these seven findings. Independent review of the final diff and the
 subsequent Phase 15 alignment remain open; no Phase 14/15 checkbox was changed.
 External interoperability and arbitrary production providers were not certified.
+
+### [2026-09-09] [Phase 14] Focused repair continuation and local proof - RESOLVED (runtime slice)
+
+Resumed at clean HEAD 26732fe without delegates, commits or branch changes.
+The initial focused Release run passed 10 discovery/replay tests; the API/signing
+baseline passed 41. The editor test adapter found no tests, so filtered dotnet
+test runs supplied executable evidence. The ES256 alternate-signature repair
+and its crypto-valid regression were already committed in 75980b2: the verifier
+uses the verified canonical base plus key thumbprint. No duplicate runtime fix
+was applied. Additional same-key label-selection and distinct covered-value
+regressions pass within 56 wire/adversarial cases. This implements the optional
+cache under protocol #freshness-and-replay,
+[L2507](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L2507),
+without treating an unsigned selection label as a new request identity.
+
+Discovery root-object and dot-segment checks were already committed in 50a205d.
+Ten new field/shape cases exposed seven failures: malformed metadata endpoints
+were ignored, and malformed JWKS structure became unknown_key. Metadata URL
+fields and JWKS keys/member/kid shapes now fail at the discovery client before
+caching; JSON parse failures are also typed invalid_key. Unselected unsupported
+key algorithms remain usable alongside supported selected keys. All 16 HTTP
+discovery cases pass, preserving protocol #verification
+[L2479](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L2479)
+and #jwks-discovery
+[L2515](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L2515).
+Evidence: /tmp/aauth-phase14-discovery-red.log and
+/tmp/aauth-phase14-discovery-green.log, with matching TRX directories.
+
+The per-request AgentTokenSourceHandler and current-PS provider were already
+committed, but UseJwt(Func<string>) still captured the first token at selection.
+A failing test proves eager capture; the repair removes that snapshot so Build
+uses current claims, while the source handler continues updating per request.
+The existing source/account/key/mission-bound carrier selection is preserved.
+All 34 factory/composition tests pass. This is an API correctness repair, not a
+new protocol mandate. Evidence: /tmp/aauth-phase14-factory-red.log and
+/tmp/aauth-phase14-factory-green.log.
+
+The fourth current signing/API regression surface located in committed tests is
+multi-line field combination and structured-field component semantics. Those
+cases pass in the 56-case wire/adversarial run. The top handoff did not enumerate
+all six original reviewer findings, and the available indexed session history
+did not recover that report. This entry does not invent its missing wording or
+claim a one-to-one disposition of an unseen fourth finding. Independent review
+must reconcile that original report with the final diff.
+
+R3ProposalStore still evicted both dynamic documents and proposals at ten minutes.
+A failing clock-advanced test lost the document at eleven minutes. It now keeps
+published content for the process lifetime with a positive configurable distinct
+hash capacity (default 1024); exhaustion rejects new content without evicting
+published references. The unused clock constructor parameter is removed without
+a compatibility overload. The strengthened regression verifies a real unexpired
+auth token at eleven minutes and successfully enforces its retained proposal.
+Twelve resource/byte-isolation cases pass, including capacity rejection. The
+first strengthened test omitted required sub/scope; corrected the fixture with
+scope and reran the same slice. This follows R3 #content-addressing
+[L393](../../../aauth-spec/v10/draft-hardt-aauth-r3.md#L393) and proposal recovery
+[L590](../../../aauth-spec/v10/draft-hardt-aauth-r3.md#L590), not an invented
+normative TTL. Restart durability and production retention remain explicit
+deployment limits. Evidence: /tmp/aauth-phase14-retention-red.log and
+/tmp/aauth-phase14-retention-verified.log.
+
+Empty grants and proposal-parameter object validation were already implemented.
+New reader/enforcement tests retain valid conditional-only and empty grants;
+unlisted operations remain denied under R3 #grant-enforcement
+[L624](../../../aauth-spec/v10/draft-hardt-aauth-r3.md#L624). Two failing cases
+showed explicit null reference claims were silently treated as absent. The
+shared URI/hash pair validator now rejects present null or wrong types, and the
+reader reuses it. Sixteen claim/proposal-shape cases pass. Required paired
+references are specified at R3
+[L403](../../../aauth-spec/v10/draft-hardt-aauth-r3.md#L403).
+Evidence: /tmp/aauth-phase14-r3-shapes-red.log and
+/tmp/aauth-phase14-r3-shapes-green.log.
+
+Full Release, documentation inventory and fresh browser gates follow separately.
+Phases 14 and 15 remain unchecked; worker non-delegation does not prohibit the
+owner's separate independent read-only reviewers. No new frontmatter or vendored
+snapshot change is introduced by this continuation.
+
+### [2026-09-09] [Phase 14] Fourth finding recovered and duplicate-field repair - RESOLVED
+
+Supersedes the preceding uncertainty about the fourth signing/API finding.
+The committed EventHttpTests.UnsupportedSchemeRetainsEndpointNegotiation has
+four cases: event and subscription endpoints, each with unknown and HWK schemes.
+EventsProtocol.VerifyRequestAsync selects endpoint-specific AcceptedSchemes on
+the shared verifier and preserves its negotiation response. Both runtime and
+tests are in b460277. They explain the committed Events increase from 71 to 75;
+this continuation does not duplicate that repair. Event delivery uses self-jwt
+under Events #event-delivery
+[L389](../../../aauth-spec/v10/draft-hardt-aauth-events.md#L389), while
+subscription registration uses jwt at
+[L256](../../../aauth-spec/v10/draft-hardt-aauth-events.md#L256). Protocol
+#verification [L2478](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L2478)
+requires the endpoint's accepted schemes on unsupported_scheme rejection.
+
+Five additional malformed-JSON cases exposed three actual HTTP 500s: duplicate
+metadata issuer, JWKS keys, and JWK kid properties throw ArgumentException during
+lazy JsonObject dictionary materialization, after the original parse-only catch.
+The discovery-client typed error boundary now includes document validation;
+these failures return 401 invalid_key before cache admission or authentication.
+All 21 discovery cases pass. Syntax errors remain typed, issuer mismatch retains
+its dedicated error, transport failures remain transport failures, and request
+cancellation is not swallowed. Evidence:
+/tmp/aauth-phase14-discovery-duplicates-red.log and
+/tmp/aauth-phase14-discovery-final.log, with matching TRX directories.
+
+The first full gate passed 2196 Release tests (1034 core, 873 conformance,
+214 R3, 75 Events), not the initially reported 2192 which omitted the four
+committed Events cases. Build had zero warnings/errors; Make gates and explicit
+R3/Events suites passed. API inventory is 197 changed public-source files,
++780/-150 declarations, zero unmapped. All 80 documentation checks passed and
+the inventory remains 169 files/617 blocks, including 261 exact C# compilations.
+The historical 2160 baseline predates twelve committed partial-repair tests;
+these are preserved, not new tests authored by this continuation.
+
+Fresh isolated browser gates before the duplicate-field follow-up passed 16
+affected cases, 71 full stub cases plus one live-only skip, and all 72 full live
+Keycloak cases. Every run used CI=1, retries=0, isolated HOME/XDG_DATA_HOME,
+test-owned fresh services and retained traces. Reports:
+/tmp/aauth-phase14-affected.json, /tmp/aauth-phase14-stub.json and
+/tmp/aauth-phase14-live.json. Desktop R3 and mobile Documents screenshots were
+inspected; no overlap or clipped document layout was observed. Keycloak reused
+the cached 26.0 image and preexisting stopped aauth-phase12-keycloak container.
+Its first readiness connection reset during startup; the imported realm was
+then reachable without configuration changes or downloads. Replacement final
+gates follow because discovery runtime changed after these passes.
+
+### [2026-09-09] [Phase 14] Focused final repair gates - RESOLVED (independent review pending)
+
+All six reviewed areas now have current code/test dispositions: canonical-base
+replay was already repaired; discovery root checks needed field and duplicate
+property fixes; live token-factory updates needed stale selection-snapshot
+removal; Events endpoint negotiation was already repaired; R3 retention needed
+replacement of the ten-minute eviction policy; empty grants/proposal parameter
+validation were already present, with additional strict reference-pair handling
+now implemented. This continuation added 29 cases to the actual committed
+2172-test baseline. The historical 2160 baseline plus twelve committed partial
+cases plus these 29 equals the final 2201. No test was removed to meet the gate.
+
+Final Release build passes with zero warnings/errors. Full Release tests pass
+2201/2201, zero failures/skips: core 1034, conformance 878, R3 214 and Events 75.
+The final Make build/unit/conformance/Events gates also pass with zero build
+warnings/errors. Explicit R3 (214), Events (75), and recovered Events negotiation
+(4) checks pass. Evidence: /tmp/aauth-phase14-final-build.log,
+/tmp/aauth-phase14-final-tests.log, /tmp/aauth-phase14-final-trx/ (four distinct
+reports), /tmp/aauth-phase14-final-make.log, /tmp/aauth-phase14-r3-gate.log,
+/tmp/aauth-phase14-events-gate.log and /tmp/aauth-phase14-negotiation.log.
+
+The replacement full browsers run on the final discovery code: stub 71 passed
+plus one expected live-only skip; live Keycloak 72 passed with zero skips.
+Both have zero unexpected/flaky results, CI=1, retries=0, isolated HOME and
+XDG_DATA_HOME, and fresh test-owned services. Reports:
+/tmp/aauth-phase14-stub-final.json and /tmp/aauth-phase14-live-final.json;
+matching log and results directories retain traces/screenshots. The earlier
+16-case affected run remains supplementary evidence. Keycloak was returned to
+its preexisting stopped state; no test sample services remain running.
+
+All 80 documentation checks passed after supported regeneration; the final
+Release run verifies the map without update mode. Coverage remains 169 files,
+617 blocks and 261 exact C# compilations. The supported API tool regenerated
+and then verified 197 changed public-source files, +780/-150 declarations and
+zero unmapped files. Besides the intentional R3ProposalStore constructor change,
+the map now includes already-committed replay return/result members missing from
+the earlier generated snapshot. Evidence: /tmp/aauth-phase14-docs-update.log and
+/tmp/aauth-phase14-api-final.log. No new frontmatter was added.
+
+Citation correction: the preceding reference-pair entry's L403 points to a blank
+line. The actual paired-claims MUST is R3 Resource Token Extensions
+[L402](../../../aauth-spec/v10/draft-hardt-aauth-r3.md#L402), verified directly.
+All other recorded normative lines in this continuation were reprinted against
+the immutable sources. Vendored files and HEAD 26732fe remain unchanged.
+
+Scoped diff whitespace checks pass outside the generated documentation map.
+Its unchanged generator emits a trailing space on every file row; two refreshed
+rows therefore produce diff-check warnings. They are retained in the generator's
+canonical output rather than hand-editing freshness evidence or reformatting all
+169 rows. No runtime, build, snippet or local browser gate remains unrun.
+
+Independent reviewers and their final architecture/capability dispositions
+remain pending. Phases 14 and 15 stay unchecked. External full authorization,
+mission and sub-agent interoperability remain unverified as recorded by Phase
+13; no external compatibility fallback was introduced. R3 content storage is
+bounded and process-lifetime, not restart-durable production persistence. No
+delegation, commit, branch change, package upgrade or snapshot edit occurred.
+
+### [2026-09-09] [Phase 14] Final confirmed review repairs - RESOLVED (focused gates; full gates pending)
+
+The continuation starts from 2234 passing tests, 198 public-source files and
+629 documentation blocks. All preceding worktree changes are preserved. No
+delegation, commit, branch change, package change or vendored-source edit is
+authorized. Independent review and Phase 15 remain open.
+
+Raw independently signed regressions reproduced missing agent kid/sub/jti/iat
+acceptance and numeric auth aud throwing InvalidOperationException. The shared
+TokenVerifier structural checker now runs before direct verification, both JWKS
+entry points and resolver discovery. Required claims reject absence, JSON null,
+blank identity strings and wrong JSON types. Time claims require representable
+integer timestamps; auth lifetime is capped at one hour. Nested act and mission
+fields cannot escape through JSON casts. Middleware returns typed invalid_jwt
+401 without exception data, trusted features or identity tags; an unexpected
+resolver programming exception still propagates.
+
+Profile decisions directly reviewed against immutable v10:
+
+- Agent required claims: Protocol Agent Token Structure, L585-L591; optional
+	ps and parent_agent validation: Agent Token Verification, L618-L619. The
+	subject domain is bound to the issuing AP under Agent Identifiers, L546 and
+	AP metadata L2613. Parent identifiers must be valid; no additional parent/AP
+	domain equality is invented. Verifiers do not infer parentage from '+', per
+	L548; the existing issuer-side naming checks remain intact.
+- Production server/agent domains remain strict. Only explicitly configured
+	development loopback origins admit host-only localhost/IP agent identifiers
+	and exempt the AP-domain binding. No blanket localhost bypass was added.
+- Resource claims: Resource Token Structure, L827-L835. Core scope is now always
+	a string on issuance, including the explicit empty requested set previously
+	represented by omission; absent/null scope is rejected on verification unless
+	the supported R3 URI/hash replacement is present. R3 Resource Token Extensions,
+	L413-L417, permits absent scope and requires the reference pair. Core checks
+	reference shape only; R3 retains document/hash/policy enforcement. Empty-set
+	scope handling and this cross-profile structural boundary are explicit review
+	assumptions, not a claim of independent approval.
+- Auth required/conditional claims and lifetime: Auth Token Structure,
+	L1699-L1714. Generic registered JWT types do not inherit built-in iat/jti
+	presence requirements. The actual ISignatureTokenVerifier hook is exercised
+	both accepting and denying a custom token without those optional fields.
+- Optional defined fields reject explicit null when their present value must
+	have a specified type (ps, parent_agent, mission, act, cnf, sub/scope). Unknown
+	generic-profile claims remain the companion verifier's responsibility.
+
+Six collocated non-PS role requests returned 200 before repair. Core AS token
+and pending routes now require jwks_uri, aauth-person.json and the matching
+verified server identifier before trust/policy evaluation. This follows Protocol
+PS-to-AS Token Request L1505 and role-specific discovery, and matches the existing
+R3 PS-role restriction without importing R3 endpoint abstractions into core AS.
+Nine distinct/shared-key/spoofed-role cases cover token, poll, claims push,
+absence of policy side effects and legitimate PS recovery. Direct agent-JWT
+chaining remains separate and its pending-owner tests still pass.
+
+The initial fixture corrections exposed the preserved per-issuer JWKS attempt
+floor. A zero interval is prohibited; the final role fixture advances its
+injected discovery clock by one minute instead. Earlier fixture API assumptions
+(AAuthKey disposal/export), parsing empty signature-error bodies and policy
+claims already derived from agents were corrected, not hidden by runtime changes.
+
+Named constructor compilation reproduced CS1739 for jwtFactory. The table now
+uses namingJwtFactory, and all five provider rows compile named arguments.
+TokenVerifier XML conditions null approver guidance on mission absence or agent
+challenge verification; recipient mission binding follows Protocol L859.
+Profile source comments now describe RequireGenericSignature admission, no PS/AS
+exchange, and continuing JWT issuer verification.
+
+The first full Release run found 23 affected failures (17 conformance, five
+Events, one core). Fixtures used invalid identities, cross-provider subjects or
+an auth-token typ for a self-jwt cache test. They now use spec-valid, independently
+signed identities and a custom cache-test typ; owner/revocation/ES256/cache checks
+still reach their intended paths. Explicit loopback policy fixed the Events
+host-only identifiers. Focused repaired slices pass 48 conformance, 18 Events
+HTTP and 13 core tests. Initial/focused logs remain under /tmp/aauth-phase14-:
+full-first.log, raw-values.log, ps-role-red.log, ps-role.log,
+named-docs-red.log, named-docs.log, payload-complete-red.log,
+payload-complete.log and fixture-repairs.log. Final full gates follow separately.
+
+| Requirement | Matching Verification Evidence | Focused Result |
+|---|---|---|
+| Required agent/resource/auth payload and headers | TestTokens.InvalidRequiredClaims; TokenVerifierTests.RawBuiltInMandatoryClaimsRejectBeforeDiscovery; SignatureV10AdversarialTests.RawMandatoryClaimsNeverCreateTrustedContext | Matching raw-token matrix across direct/JWKS/middleware; no builder validation dependency |
+| Malformed optional fields, nested fields and NumericDate | RawMalformedValuesHaveTypedErrorsWithoutTrustedContext | Typed errors, no trusted features/activity data |
+| Production and explicit-development identifiers | LoopbackAgentClaimsRequireExplicitDevelopmentPolicy; raw subject/parent/PS mutations | Production rejection and exact development admission |
+| Generic JWT policy and exception boundaries | RegisteredCustomTypeWithoutOptionalIatOrJtiInvokesItsPolicy; UnexpectedResolverDefectsAreNotAuthenticationFailures | Actual hook allow/deny; implementation bugs not masked |
+| PS role and pending ownership | MockAccessServerTests.CollocatedRolesCannotActAsPersonServer | Full AS test file 26/26 |
+| Named constructor and recipient/Profile source guidance | Documentation_ProviderTableConstructorsCompile; Documentation_ResourceRecipientsAndGenericRoutesUseCorrectContext | 2/2 after both red tests reproduced |
+
+### [2026-09-09] [Phase 14] Final remaining repair gates - RESOLVED (independent review pending)
+
+Final Release build: zero warnings and zero errors. Full Release tests:
+2596/2596, zero failures/skips, comprising 1421 core, 878 conformance, 222 R3
+and 75 Events. This continuation adds 362 tests to the 2234 baseline; no test
+was removed. The final full run includes explicit suite results for R3 and
+Events and non-writing documentation freshness. Separate complete R3 validation
+also passes 222/222. The earlier full run after the complete resource-payload
+check found two additional R3 fixture failures: abc123/wrong were not valid
+SHA-256 encodings. Valid-shaped hashes now preserve the positive verification
+case and the negative fetched-content mismatch case, whose assertion remains
+r3_evaluation_failed. Earlier failures remain retained, not counted as passes.
+
+Exact payload citation completion: agent exp is Protocol L592 and core resource
+scope is L836, following the earlier required-payload ranges. The auth lifetime
+MUST is L1708. All high-stakes cited lines were reprinted from the unchanged
+vendored sources. The empty resource scope, R3 replacement boundary and explicit
+development exemptions recorded above remain visible assumptions for independent
+review; no compatibility mode or fallback was introduced.
+
+Fresh full stub browsers: 71 passed, one existing Keycloak-only skip. Fresh full
+live Keycloak: 72 passed (40 GuidedTour, 32 SampleApp), zero skipped. Both reports
+have zero unexpected/flaky results, retries=0 in both projects, CI=1, isolated
+HOME/XDG_DATA_HOME and independently fresh application services. The initial
+make demo services were stopped to prevent stale-service reuse. The existing
+aauth-phase14-review-keycloak container was started for the live gate and restored
+to its original stopped state afterward. No test sample processes remain.
+
+Supported generators refreshed and then verified API/docs inventories: 198
+changed public-source files, +790/-152 declarations, zero unmapped; 169 docs
+files, 629 blocks, including 272 exactly compiled C# blocks. All 92 snippet and
+source-semantic tests pass. Five provider constructor rows now compile named
+arguments. TypeScript and scoped diff whitespace checks pass. The full solution
+freshness gate runs without AAUTH_UPDATE_DOCS_INVENTORY.
+
+Current retained evidence (prefix /tmp/aauth-phase14-final-remaining-):
+
+- build.log and tests.log: final Release build and four-suite summary
+- final-trx/: final four project TRX reports
+- before-r3-fixtures.log: failed full run before the two R3 fixture corrections
+- r3.log: explicit complete R3 result
+- docs-update.log, api-write.log, api-check.log, typescript.log: generators/checks
+- browser.sh: exact stub/live runner, isolated state, retries disabled
+- stub.json and live.json: authoritative fresh full browser counts
+- stub.log, live.log and corresponding -results directories: service logs/traces
+
+All four requested repair groups are implemented and locally verified. Fresh
+independent review is still required for architectural/profile assumptions and
+final capability disposition; Phase 14 is not done and Phase 15 remains open.
+External live AAuth interoperability, production deployments and the previously
+listed external/platform templates were not executed by these local gates.
+No delegate, commit, branch change, snapshot edit or package change occurred.
+
+### [2026-09-09] [Phase 14] Final duplicate, actor, factory and null repairs - RESOLVED (focused checks)
+
+The owner authorized focused repairs without compatibility behavior, delegation,
+commits or branch changes. Existing required-claim and role-verification repairs
+remain intact. Independent review and the final release gates remain pending.
+
+- Duplicate raw JWT members reproduced untyped ArgumentException failures from
+	lazy JsonObject materialization. SignatureKeyParser and TokenVerifier now share
+	JsonDocument enumeration before creating nodes. The chosen local policy rejects
+	duplicate names recursively, including equal values; only decoding exceptions
+	are translated to invalid_jwt. Five independently signed raw regressions pass,
+	including naming/carrier parsing and HTTP 401 with no trusted context.
+- Agent identifiers now validate domains through the server-identifier policy.
+	Protocol Agent Identifiers, L546 (#agent-identifiers), requires the domain to
+	conform to server identifiers without a scheme. BuildNestedAct, ValidateChain,
+	all ActChainReader methods, AgentId.Parse/TryParse, ActChainsMatch and the
+	agent-side response validator accept the explicit policy. Verifiers, issuance,
+	response binding and Events forward it. Development origins admit only their
+	host, not host:port actor suffixes. Cross-provider and ACE actors pass; URI
+	suffixes, Unicode domain input, empty/blank and unconfigured loopback fail.
+	Focused core validation passed 249 tests; delegation conformance passed 141.
+- Refresh-only clients now install the same AgentTokenSourceHandler used by
+	challenge clients. Factories remain live, are not called during configuration,
+	and unchanged source values cannot replace a freshly renewed holder value.
+	Eight actual-request matrix cases pass (fixed/factory, challenge/no challenge,
+	near/far expiry), including exact expiration, context claims, signing key,
+	network counts, pre-cancellation and transport disposal.
+- Explicit JSON null is represented by a non-null R3Parameter with Json = null.
+	HandleNull, Inline and DeepClone retain that value; missing/null containers,
+	blank names and null wrapper entries remain invalid. Proposal and parameter
+	readers reject duplicate names structurally. The former null rejection row is
+	reclassified as positive literal-null coverage, not retained as a compatibility
+	rejection. Complete R3 validation passed 226 tests; the actual endpoint policy
+	sees the null wrapper and exact retry rejects missing/non-null/digest substitutes.
+- Getting-started and AgentProviderClient distinguish the per-agent JWKS key
+	selector from the AP token-signing header kid. The DI resource options section
+	no longer claims agent credentials are required; ownership guidance belongs to
+	AddAAuthAgent. A focused semantic regression guards both distinctions.
+
+Evidence logs are /tmp/phase14-duplicates.log, phase14-actors-expanded.log,
+phase14-actors-conformance.log, phase14-refresh.log, phase14-r3-full.log and
+phase14-r3-policy.log. Initial failing reproductions are retained separately.
+Public API/docs maps will be regenerated after the remaining checks. Phase 14
+and Phase 15 remain open; these are implementation repairs, not an independent pass.
+
+### [2026-09-09] [Phase 14] Follow-through and source clarification - RESOLVED (browser gates pending)
+
+Reverified source text directly: Protocol L546 (#agent-identifiers) requires
+server-domain syntax; L2530 excludes port/path/query/fragment and L2533 requires
+ACE (#server-identifiers). Signature Keys section 5.4.11, L2088-L2089, classifies
+malformed jwt/jkt-jwt as invalid_jwt. R3 L562 (#proposal-document) defines
+concrete parameters and the separate digest representation. Duplicate rejection
+is the SDK's explicit strict JSON policy, not a claim that the drafts mandate
+rejecting rather than selecting identical duplicate values.
+
+The post-fix full Release run exposed eight self-issued builder failures from
+one old fixture (`aauth:my-svc@localhost:5000`). The fixture now uses host-only
+localhost while keeping the issuer's port and explicit policy. All 16 affected
+tests pass. Full Release subsequently passed 2630 tests (1451 core, 878
+conformance, 226 R3, 75 Events), zero failures/skips. Build: zero warnings/errors.
+The failed run is retained as phase14-release-tests.log; passing evidence is
+phase14-release-tests-final.log and /tmp/phase14-final-trx.
+
+A focused HTTPS-origin edge check then reproduced allowlist admission of an
+actor port. AgentId now checks production domain syntax separately from exact
+development host admission. All 30 actor/self-issued checks pass; final complete
+gates will be repeated after this last change. Cancellation during both initial
+and threshold refresh now checks the cancellation token after callback return,
+before holder publication; all 19 refresh lifecycle checks pass. Cache tests
+prove refreshed source, key, account and mission bindings remain independent.
+
+Optional API inspection found a narrower limit than a broad ES256 prohibition:
+BootstrapBuilder.WithKey, AgentProviderClient.EnrolWithKeyAsync and EnrollResult.Key
+use AAuthKey; IKeyStore and single-key enrolled refresh use IAAuthKey. The guide
+now states that boundary, and a reflection/build regression plus the existing
+actual AP ES256 restart/publication test cover the distinction. No API upgrade
+was introduced for the optional bootstrap convenience gap.
+
+Supported inventory generators pass: 200 changed public-source files,
++800/-162 declarations, zero unmapped; 93 snippet/source-semantic tests pass.
+The API map passes non-writing freshness and browser TypeScript passes. Fresh
+stub/live browser gates are in progress with CI=1, isolated home directories
+and retries=0. Phase 14/15 remain open; no independent pass has occurred.
+
+### [2026-09-09] [Phase 14] Final focused repair gates - RESOLVED (independent pass pending)
+
+All five requested repair groups have implementation and focused regression
+evidence. Final Release build has zero warnings/errors. Final Release tests pass
+2637/2637: 1458 core, 878 conformance, 226 R3 and 75 Events, with no failures or
+skips. This is a net increase of 41 over the owner's 2596 baseline. Existing
+role/required-claim coverage remains intact. The former literal-null rejection
+case is reclassified as positive explicit-null coverage; no compatibility path
+was added. Ten independent raw compact JWT tests include an otherwise valid
+ES256 naming token before duplicate injection, nested cnf.jwk ambiguity, and
+zero discovery or trusted-context side effects after rejection.
+
+Full browser execution exposed sample assumptions missed by the first unit
+gate: configured SampleApp/GuidedTour/Concierge agent IDs and worker-generated
+IDs used issuer authorities including ports. They now use host-only domains;
+server identifiers retain their explicit development ports. The worker response
+validator and displayed handoff snippet pass SampleEgress.Policy. Two actual
+app-assembly worker tests cover parent/child construction. Shared browser
+constants and expected actor values now match. The consent helper maps each
+known development agent to its explicit issuer URL instead of reconstructing
+an origin from an agent domain; key-qualified consent remains enforced.
+
+The failed browser evidence is retained, not counted as success:
+
+- /tmp/phase14-stub.json: interrupted pre-repair services, 20 expected,
+	25 unexpected and 27 skipped; the known invalid sample identity caused
+	flow failures before later tests were reached.
+- /tmp/phase14-final-stub.json: 61 passed, 10 failed, one skipped after runtime
+	repairs but before shared browser constants/consent mapping were corrected.
+- /tmp/phase14-final-live.json: 61 passed, 11 failed, no skips. Ten failures
+	matched the same stale helper assumptions; one live clarification wait timed
+	out. That timeout was not independently attributed to a specific defect and
+	remains retained evidence, not erased by the subsequent passing full run.
+
+Final fresh full browser gates, each with CI=1, isolated HOME/XDG_DATA_HOME,
+new application services, and retries=0 in both projects:
+
+- /tmp/phase14-verified-stub.json: 71 passed, one existing Keycloak-only skip,
+	zero unexpected/flaky results or global errors.
+- /tmp/phase14-verified-live.json: 72 passed, zero skipped/unexpected/flaky
+	results or global errors. The live clarification case passes in this full run.
+
+Both apps' call chaining, worker, mission, account, R3, Documents, Events and
+Keycloak workflows are included. Browser traces/results and service logs share
+the corresponding /tmp/phase14-verified-stub and -live prefixes. Application
+services are stopped. The existing aauth-phase14-review-keycloak container was
+restored to its original stopped state.
+
+Final supported inventories: 200 changed public-source files, +800/-162
+declarations, zero unmapped; 169 documentation files and 629 blocks, including
+272 exact compiled C# blocks. All 93 snippet/source-semantic cases pass, along
+with links, TypeScript, non-writing API/docs freshness and whitespace checks.
+The whitespace check uses core.whitespace=cr-at-eol to preserve the pre-existing
+CRLF SampleApp source/settings files; no unrelated line-ending normalization
+was performed. Final Release logs are /tmp/phase14-release-build-final.log and
+/tmp/phase14-release-tests-verified.log; final TRX names begin phase14-verified
+under /tmp/phase14-final-trx.
+
+Residuals: no confirmed requested repair remains open. Fresh independent
+adversarial review has not occurred; Phase 14 and Phase 15 remain open. The
+documented concrete Ed25519 bootstrap convenience limit remains, while ES256
+signing/verification, raw AP enrollment and single-key refresh retain their
+existing scope. External live AAuth interoperability, production deployment
+and platform-attestation templates were not executed by these local gates.
+No delegate, commit, branch change, package change, new Markdown frontmatter
+or vendored snapshot modification occurred.
+
+### [2026-09-09] [Phase 14] Remaining body parsing and classification repairs - PROCEEDED
+
+Continue from the recorded 2637-test checkpoint without reverting existing work.
+The newly authorized parent may commit and push only after final gates and fresh
+review. This worker has no commit/push authorization and performs no delegation,
+commit, push or branch operation. Phase 14/15 remain open.
+
+Finding 1: PS audience peeking decoded base64 outside a FormatException boundary;
+PS/core AS also cast body credentials without checking JSON types. Shared
+TokenRequestBody parsing now rejects non-string credentials and duplicate JSON
+members, with guarded JWT structure checks before body-token discovery. Initial,
+pending replacement and claims-push paths use that reader. Audience routing uses
+the same strict JWT parser; routing never establishes trusted claims. The first
+five focused PS regressions pass; shared parser tests pass 217/217 and existing
+federation tests pass 90/90 before the larger adversarial tables.
+
+Finding 2: authenticated core/R3 AS body-token failures incorrectly returned 401.
+Typed credential context and SignatureErrorCode preserve expiry without matching
+messages. Agent/sub-agent failures use invalid_agent_token or expired_agent_token;
+resource failures use invalid_resource_token or expired_resource_token; upstream
+failures retain invalid_upstream_token. All are 400. Carrier authentication
+remains 401 with Signature-Error. Canonical requirements are protocol
+[L2298](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L2298)
+(#error-responses) and
+[L2316](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L2316)
+(#token-endpoint-error-codes).
+
+Findings 3/4 remain in progress: correct cached issuer JWKS discovery in the
+signing-mode matrix, nullable resource metadata signing keys, IAAuthKey dictionary
+types, and conditional signing-key requirements. Add source-semantic API-table
+regressions, regenerate maps, and repeat Release/docs/full zero-retry stub/live
+browser gates. No gate beyond the focused results above is claimed yet.
 
 ## Deviations from Plan
 

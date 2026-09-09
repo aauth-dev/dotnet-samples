@@ -126,7 +126,7 @@ See [Dependency Injection](../reference/dependency-injection.md) for full option
 
 ```csharp
 var challengeHandler = new ChallengeHandler(
-    exchange, tokenHolder, "https://ps.example",
+    exchange, tokenHolder, verifier, metadata, jwks, "https://ps.example",
     onInteractionRequired: async (interaction, ct) =>
     {
         await new ConsoleInteractionPresenter().PresentAsync(interaction, ct);

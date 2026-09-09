@@ -69,7 +69,7 @@ public class GovernancePendingSignatureTests
         using var attacker = difference == "unsigned" ? app.GetTestServer().CreateClient()
             : Client(difference == "key" ? AAuthKey.Generate() : ownerKey,
                 difference == "issuer" ? "https://foreign.example" : "https://agent.example",
-                difference == "agent" ? "aauth:other@agent.example" : "aauth:owner@agent.example");
+                difference == "agent" ? "aauth:other@agent.example" : difference == "issuer" ? "aauth:owner@foreign.example" : "aauth:owner@agent.example");
         using var attack = new HttpRequestMessage(new HttpMethod(method), pending);
         using var rejected = await attacker.SendAsync(attack);
         Assert.Equal(difference == "unsigned" ? HttpStatusCode.Unauthorized : HttpStatusCode.NotFound, rejected.StatusCode);

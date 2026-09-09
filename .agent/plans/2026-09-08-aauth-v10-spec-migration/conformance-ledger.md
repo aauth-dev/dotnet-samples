@@ -87,6 +87,23 @@ not be mistaken for a current runtime contract.
 These focused regressions supplement the protocol rows; they do not mark the
 independent Phase 14 review complete.
 
+### Final Focused Input and State Repairs
+
+Final implementation checkpoint: 2637 Release tests and a clean Release build;
+93 snippet/source-semantic cases; 71 full stub browser passes plus one live-only
+skip, and 72 full live Keycloak passes, retries=0. Host-only sample identities,
+explicit development issuer mappings and both real worker scenarios are included.
+Earlier failed reports, including an unattributed live clarification timeout,
+remain in the append-only log. Independent Phase 14 review remains pending.
+
+| Source and disposition | Repair and executable evidence |
+|---|---|
+| [Signature Keys invalid_jwt L2086](../../../aauth-spec/v10/draft-hardt-httpbis-signature-key-08.txt#L2086), section 5.4.11 | Local strict policy rejects all duplicate raw JWT names, including equal values and nested objects/arrays. `DuplicateRawMembersRejectBeforeDiscovery` independently signs raw compact input; direct/JWKS verification, naming/carrier parsing and HTTP middleware return typed invalid_jwt with zero discovery calls or trusted context. |
+| [Agent identifiers L546](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L546), #agent-identifiers; [server identifiers L2529](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L2529), #server-identifiers | `InvalidActorDomainsRejectAtEveryDepth` and `ActorDomainsUseExplicitPolicyWithoutSameProviderRequirement` cover immediate/nested actors, URI suffixes, blank/Unicode domains, ACE and distinct APs. HTTP/HTTPS development origins never admit actor ports. Builder, reader, token verifier and issuance/response contexts use the same explicit policy. |
+| SDK source/refresh lifetime and binding contract, not a new normative wire requirement | `RefreshPipelinePreservesCurrentToken` covers eight fixed/factory and challenge/no-challenge cases; `CancellationDuringRefreshDoesNotPublishToken` rejects post-cancellation publication. `CachedCarrierTracksRefreshedSourceAndRequestBindings` checks source, key, account and mission cache isolation. |
+| [R3 proposal parameters L562](../../../aauth-spec/v10/draft-hardt-aauth-r3.md#L562), #proposal-document | Explicit null is a concrete inline JSON value, distinct from missing parameter, null container and digest representation. `ExplicitNullParameterRoundTripsAndBindsExactRetry` and `TokenEndpoint_ProposalParametersRequireObject` prove policy receives null, deferred minting works, and exact retry rejects missing/non-null/digest substitutions. Duplicate object names reject before node materialization. |
+| Optional provisioning boundary | `BootstrapEnrollmentHasConcreteKeyBoundaryButEnrolledRefreshDoesNot` records the existing concrete Ed25519 bootstrap convenience limit. Actual AP ES256 enrollment/publication remains covered by `ActualAgentProviderPublishesEnrolledEs256KeyAfterRestart`; no broad fluent ES256 enrollment claim is made. |
+
 | Requirement | Repair and executable evidence |
 |---|---|
 | [Resource verification L859](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L859) | Initial and replacement AS resource tokens bind approver to the authenticated PS; collapsed/local PS verification also supplies its issuer. MissionApproverMustBeAuthenticatedPs and CollapsedPersonServerRejectsForeignApproverBeforeConsent reject before policy |
@@ -208,8 +225,75 @@ The current [docs surface map](docs-surface-map.md) records exact file/block
 hashes, validation classes and source/test links. It supersedes the earlier
 representative 21-template limit for documentation inventory, without relabeling
 external/platform templates or dynamic displays as compiled signed requests.
-The API appendix remains current at 196 files, +761/-149 declarations, zero
-unmapped files. No production runtime API changed in this documentation phase.
+That Phase 13 checkpoint recorded 196 files, +761/-149 declarations and zero
+unmapped files. It is historical, not the current Phase 14 API count: the review
+repairs change challenge verification dependencies and sample instructional
+surfaces. The generated API/docs maps and current repair checkpoint below govern
+the updated worktree; freshness must be checked after the final edits.
+
+### Phase 14 focused review repair checkpoint
+
+Resource challenge verification now precedes exchange and binds the original
+origin, presented token, signing key, account and mission. The 70-test focused
+challenge gate passes, including invalid-signature/cross-origin rejection without
+PS calls or consent, mutable-holder isolation, routing and Calendar consent.
+Canonical challenge ordering: [L868](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L868).
+
+R3 AS issuance now checks mission approver against the authenticated PS and
+validates upstream mission retention before document/policy/audit work. Verified
+mission survives immediate and deferred AS delivery through the real PS federation
+client. The endpoint suite passes 94/94. The actual AP endpoint publishes ES256
+correctly before and after registry restart; enrollment suite passes 11/11.
+
+Four documentation checks cover constructor tables, actual signing-key selection,
+mandatory recipient context and generic routes; ten exact Documents/Events step
+templates compile. Both shared browser helpers cover step/diagram/snippet
+association and full reset/reexecution. The repaired Release gate passes 2234
+tests (1059 core, 878 conformance, 222 R3, 75 Events), with zero failures/skips.
+Release and make builds have zero warnings/errors. Fresh stub browsers pass
+71 with the existing live-only skip; fresh live Keycloak passes all 72, with
+zero retries, failures or flaky results in either mode. Desktop/mobile captures
+cover both apps, diagrams and associated snippets. Current API inventory is
+198 files, +790/-152 declarations and zero unmapped; docs inventory is 169 files,
+629 blocks, including 272 exact C# blocks. Final non-writing freshness checks
+are recorded in the implementation log. Phases 14 and 15 remain open for fresh
+independent review; local Keycloak does not establish external interop.
+
+### Phase 14 final mandatory-claim and PS-role repair coverage
+
+The append-only implementation log records the final confirmed-review repair
+matrix and exact profile assumptions. Independently signed malformed JWTs cover
+the required agent/resource/auth claims at direct verification and JWKS entry
+points, with matching agent/auth middleware cases before trusted context. The
+central checker covers typed values, optional PS/parent identifiers, nested
+mission/actor fields, NumericDate bounds and auth lifetime. Required absence and
+explicit null both fail. Generic JWT iat/jti presence stays optional and the
+registered verifier hook is exercised, not bypassed by a builder-only assertion.
+
+Core AS token/pending gates now require the verified person-server metadata role
+before issuer trust or access policy. Distinct/shared collocated role keys and
+wrong-key PS-role spoofing are covered across issuance, poll and claims push,
+including no policy side effects and legitimate recovery. Direct agent-JWT
+chaining remains covered separately. Named provider parameters are compiled;
+mission-recipient XML and Profile generic-admission comments are source-checked.
+The 2234/198/629 checkpoint above is historical. Final verified checkpoint:
+
+| Gate | Final Result |
+|---|---|
+| Release solution build | Zero warnings/errors |
+| Release solution tests | 2596 passed: 1421 core, 878 conformance, 222 R3, 75 Events; zero failures/skips; +362 from 2234 |
+| Full fresh stub browsers | 71 passed, one existing live-only skip; zero retries/unexpected/flaky |
+| Full fresh live Keycloak browsers | 72 passed: 40 tour, 32 app; zero skips/retries/unexpected/flaky |
+| Snippets and source semantics | 92 passed; named constructor arguments and recipient/Profile guidance checked |
+| API inventory | 198 changed public-source files; +790/-152 declarations; zero unmapped; non-writing freshness passes |
+| Documentation inventory | 169 files, 629 blocks, 272 exact C# compilations; final non-writing freshness passes |
+| Browser TypeScript and scoped whitespace | Pass |
+
+The latest reports and reproducible runner use the prefix
+/tmp/aauth-phase14-final-remaining-; tests.log, final-trx/, stub.json and
+live.json contain the authoritative final counts. The implementation log retains
+failed runs, fixture repairs and spec/profile decisions. Independent review and
+Phase 15 remain pending; local Keycloak is not external AAuth interoperability.
 
 ### Phase 12 adversarial repair evidence
 
@@ -242,7 +326,7 @@ settings and zero retries in /tmp/aauth-phase12-repairs-keycloak.json. Original
 failures, HTTP regressions and final full-suite gates are retained in the
 append-only implementation log. Catalog and parent/worker attribution are unchanged.
 
-### Baseline and final gates
+### Historical Phase 12 gates
 
 Final repair gate: 2069/2069 Release tests (965 core, 827 conformance, 206 R3,
 71 Events), zero failures/skips; Release build zero warnings/errors; 21 exact

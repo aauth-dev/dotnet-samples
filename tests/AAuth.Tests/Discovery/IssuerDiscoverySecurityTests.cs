@@ -127,9 +127,11 @@ public class IssuerDiscoverySecurityTests
                     var segments = jwt.Split('.');
                     if (path == "self-jwt")
                     {
+                        var header = TokenVerifier.DecodeJsonSegment(segments[0], "header");
+                        header["typ"] = "cache-test+jwt";
                         var payload = TokenVerifier.DecodeJsonSegment(segments[1], "payload");
                         payload.Remove("cnf");
-                        var input = segments[0] + "." + Base64UrlEncoder.Encode(payload.ToJsonString());
+                        var input = Base64UrlEncoder.Encode(header.ToJsonString()) + "." + Base64UrlEncoder.Encode(payload.ToJsonString());
                         jwt = input + "." + Base64UrlEncoder.Encode(Handler.Key.Sign(Encoding.ASCII.GetBytes(input)));
                         segments = jwt.Split('.');
                     }
@@ -151,7 +153,7 @@ public class IssuerDiscoverySecurityTests
     private sealed class SelfVerifier : ISignatureTokenVerifier
     {
         public string Scheme => "self-jwt";
-        public string TokenType => AuthTokenBuilder.TokenType;
+        public string TokenType => "cache-test+jwt";
         public Task<TokenVerifier.VerifiedToken> VerifyAsync(string jwt, IAAuthKey issuerKey,
             TokenVerifier verifier, CancellationToken cancellationToken) =>
             Task.FromResult(verifier.Verify(jwt, issuerKey, TokenType, AuthTokenBuilder.AccessDwk));

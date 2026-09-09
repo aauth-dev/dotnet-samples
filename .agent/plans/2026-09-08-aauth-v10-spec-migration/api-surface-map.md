@@ -8,9 +8,9 @@ Phase 11, 2026-09-09. Implementation baseline: `ba768f1`. This is the complete m
 not a claim that the trailing Phase 12 security review or Phase 13 docs sweep
 has finished. The generated appendix includes tracked and untracked SDK source.
 
-Current status (Phase 13, 2026-09-09): Phase 12 security closure and Phase 13
+Historical status (Phase 13, 2026-09-09): Phase 12 security closure and Phase 13
 documentation alignment are complete; the paragraphs reporting Phase 11 totals
-below retain that checkpoint's history. API freshness remains 196 changed files,
+below retain that checkpoint's history. API freshness then covered 196 changed files,
 +761/-149 declarations and zero unmapped files. The current
 [docs inventory](docs-surface-map.md) replaces representative snippet coverage
 with every discovered display block and explicit validation classes. Final
@@ -25,7 +25,32 @@ passed; browsers are 72 live and 71 stub plus one live-only skip. Details are in
 [implementation log](implementation-log.md); this update does not complete the
 independent review.
 
+Current Phase 14 repair checkpoint (2026-09-09): 198 changed public-source files,
++790/-152 declarations, zero unmapped files. `ChallengeHandler` now takes the
+shared verifier, metadata and JWKS clients; the builder owns its discovery
+dependencies while manual hosts retain ownership. Verification precedes any
+exchange and uses the original signed request context. R3 issuance retains
+verified mission and checks the authenticated PS approver. The sample AP exposes
+an entry marker for actual-host testing and a configurable isolated key directory.
+Documents/Events provide ten exact compiled step templates. Full Release passes
+2234 tests; fresh browsers pass 72 live and 71 stub plus one live-only skip,
+all with zero retries. This supersedes earlier counts, not independent review.
+
 ## Reading the map
+
+Final Phase 14 focused repair delta (2026-09-09): 200 changed public-source files,
++800/-162 declarations, zero unmapped files. `AgentId.Parse/TryParse`, the actor
+builder/reader helpers, `ActChainsMatch`, and `AgentAuthTokenValidator.Validate`
+accept an optional explicit egress policy; production remains the default.
+Agent domains remain host-only even under HTTPS loopback origin admission.
+`R3Parameter.Json` and `Inline` accept nullable JSON values through a non-null
+parameter wrapper. Factory-backed refresh-only clients retain live sources and
+check cancellation before publishing renewed state. These ownership and null
+semantics are covered by the focused tests in the append-only implementation log.
+Bootstrap enrollment still exposes concrete Ed25519 keys; the documented limit
+does not apply to algorithm-neutral single-key refresh or signing/verification.
+No compatibility alias, new enrollment abstraction, or independent-review closure
+is implied by this source inventory.
 
 Each concept row applies to every explicitly listed file/member in its appendix
 group. The appendix records exact old/new declarations, including defaults and
@@ -133,7 +158,7 @@ to the worker. Replacement resource tokens cannot discard an upstream mission.
 | Spec concept | Existing entry point | New low-level contract | Chosen convenience | Ownership/defaults | Callers/snippets | Validation |
 |---|---|---|---|---|---|---|
 | Eight vocabularies, operation subsets and typed identity | R3Document, R3Operation, R3Operations, R3Request | R3OperationIdentity, R3VocabularySchemas, qualifiers, proposal/readership models | Existing R3Operation factories and document object initializers | Vocabulary-specific validation and directional coverage remain mandatory; no generic wildcard wrapper | Bookings HTTP, GraphQL, gRPC, MCP etc. fixtures; R3 docs | All R3 vocabulary, projection and subset tests |
-| R3 discovery, proposals, audit and authorization | R3FetchClient, R3DocumentEndpoint, R3AccessTokenEndpoint, R3Enforcement | R3DocumentReaderPolicy, required agent/account/expiry, durable proposal state, audit headers/options | Existing endpoint/fetch/request APIs | Explicit signed PS readership; exact bytes/hash, proposal ownership, admission, failure-before-release audit | Bookings/R3 AS; both apps; representative request snippets | Full R3 suite, real HTTP two-account and tamper regressions; bookings/richrequests browsers |
+| R3 discovery, proposals, audit and authorization | R3FetchClient, R3DocumentEndpoint, R3AccessTokenEndpoint, R3Enforcement | R3DocumentReaderPolicy, required agent/account/expiry, bounded process-lifetime proposal storage, audit headers/options | Existing endpoint/fetch/request APIs; R3ProposalStore(maxEntries: 1024) | Explicit signed PS readership; exact bytes/hash, no eviction of published references, no restart durability, proposal ownership, admission, failure-before-release audit | Bookings/R3 AS; both apps; representative request snippets | Full R3 suite, real HTTP two-account and tamper regressions, unexpired-grant retention and capacity tests; bookings/richrequests browsers |
 
 ## Events
 
@@ -191,7 +216,7 @@ failures, repairs, provenance and mobile screenshot evidence.
 
 ## Complete declaration delta
 
-Baseline `ba768f1`; 197 changed public-source files, 777 added/replacement declarations, 149 removed/replaced declarations.
+Baseline `ba768f1`; 200 changed public-source files, 800 added/replacement declarations, 162 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -381,6 +406,46 @@ Public owners: `AAuth.Samples.Events.BookingsEvents`, `AAuth.Samples.Events`.
 Concept/decision: [sample-runtime](#sample-runtime). Source: [EventDemoCode.cs](../../../samples/EventSupport/EventDemoCode.cs).
 
 ```diff
++ AAuth.Samples.Events.EventDemoCode: public const string Delivery = """
+        public static async Task TriggerSampleEventAsync(EventsProtocol protocol, string resource,
+            string eid, IAAuthKey agentKey, string agentToken, string? account, CancellationToken cancellationToken)
+        {
+            using var response = await protocol.SendAsync(HttpMethod.Post,
+                new Uri(resource + "/local/events/" + eid + "/notify"
+                    + (account is null ? "" : "?account=" + Uri.EscapeDataString(account))), agentKey, agentToken,
+                selfIssued: false, cancellationToken: cancellationToken);
+            response.EnsureSuccessStatusCode();
+        }
+
+        public static async Task DeliverResourceEventAsync(EventsProtocol protocol, string resource,
+            string provider, string agent, string eid, IAAuthKey resourceKey, string resourceKid,
+            byte[] payload, CancellationToken cancellationToken)
+        {
+            var token = new EventTokenBuilder
+            {
+                Issuer = resource, Audience = agent, Eid = eid, Key = resourceKey,
+                KeyId = resourceKid, Verifier = protocol.TokenVerifier,
+            }.Build();
+            var endpoint = await protocol.ResolveEventEndpointAsync(provider, cancellationToken);
+            using var response = await protocol.SendAsync(HttpMethod.Post, endpoint,
+                resourceKey, token, selfIssued: true, body: payload, cancellationToken: cancellationToken);
+            response.EnsureSuccessStatusCode();
+        }
+        """ ;
++ AAuth.Samples.Events.EventDemoCode: public const string Discover = """
+        public static async Task<JsonObject> DiscoverChannelsAsync(HttpClient http,
+            EventsProtocol protocol, string resource, string provider, CancellationToken cancellationToken)
+        {
+            using var metadata = new MetadataClient(http);
+            var resourceMetadata = await metadata.FetchAsync(
+                new Uri(resource + "/.well-known/aauth-resource.json"), cancellationToken);
+            var documentUrl = resourceMetadata["r3_vocabularies"]!["urn:aauth:vocabulary:asyncapi"]!.GetValue<string>();
+            var channels = await http.GetFromJsonAsync<JsonObject>(
+                new Uri(new Uri(resource), documentUrl), cancellationToken);
+            var eventEndpoint = await protocol.ResolveEventEndpointAsync(provider, cancellationToken);
+            return channels!;
+        }
+        """ ;
 + AAuth.Samples.Events.EventDemoCode: public const string Example = """
         builder.Services.AddAAuthEvents();
         var app = builder.Build();
@@ -412,6 +477,77 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [EventDemoCode.cs](
         var receiver = new EventReceiver(protocol, agentStore, agent);
         var firstReceipt = await receiver.ReceiveAsync(eventToken, payloadBytes);
         """ ;
++ AAuth.Samples.Events.EventDemoCode: public const string Receipt = """
+        public static async Task VerifyInboxAsync(EventsProtocol protocol, IAgentEventStore store,
+            string provider, string agent, string eid, IAAuthKey key, string agentToken,
+            CancellationToken cancellationToken)
+        {
+            using var response = await protocol.SendAsync(HttpMethod.Get,
+                new Uri(provider + "/local/events/inbox"), key, agentToken,
+                selfIssued: false, cancellationToken: cancellationToken);
+            response.EnsureSuccessStatusCode();
+            var pending = (await response.Content.ReadFromJsonAsync<PendingEvent[]>(cancellationToken))!;
+            var item = pending.Single(delivery => delivery.Event.Eid == eid);
+            var receiver = new EventReceiver(protocol, store, agent);
+            await receiver.ReceiveAsync(item.Event.Token, item.Event.Body, cancellationToken);
+            var duplicate = await receiver.ReceiveAsync(item.Event.Token, item.Event.Body, cancellationToken);
+            if (duplicate) throw new InvalidOperationException("Duplicate event was not suppressed.");
+            using var acknowledged = await protocol.SendAsync(HttpMethod.Post,
+                new Uri(provider + "/local/events/inbox/" + item.Receipt + "/ack"), key, agentToken,
+                selfIssued: false, cancellationToken: cancellationToken);
+            acknowledged.EnsureSuccessStatusCode();
+        }
+        """ ;
++ AAuth.Samples.Events.EventDemoCode: public const string Registration = """
+        public static async Task RegisterSubscriptionAsync(EventsProtocol protocol,
+            Uri subscriptionUrl, IAAuthKey key, string subscribeToken, CancellationToken cancellationToken)
+        {
+            using var response = await protocol.SendAsync(HttpMethod.Post, subscriptionUrl,
+                key, subscribeToken, selfIssued: false,
+                body: "{\"event_types\":[\"reservation.available\"]}"u8.ToArray(),
+                cancellationToken: cancellationToken);
+            response.EnsureSuccessStatusCode();
+        }
+        """ ;
++ AAuth.Samples.Events.EventDemoCode: public const string SubscribeToken = """
+        public static async Task<JsonObject> AcquireSubscribeTokenAsync(EventsProtocol protocol,
+            IAgentEventStore store, IAAuthKey key, string agentToken, string agent,
+            string provider, string resource, string context, CancellationToken cancellationToken)
+        {
+            var body = System.Text.Encoding.UTF8.GetBytes(new JsonObject
+                { ["resource"] = resource, ["max_uses"] = 1 }.ToJsonString());
+            using var response = await protocol.SendAsync(HttpMethod.Post,
+                new Uri(provider + "/local/events/subscribe"), key, agentToken,
+                selfIssued: false, body: body, cancellationToken: cancellationToken);
+            response.EnsureSuccessStatusCode();
+            var result = (await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken))!;
+            store.Remember(new(result["eid"]!.GetValue<string>(), resource, agent, context));
+            return result;
+        }
+        """ ;
++ AAuth.Samples.Events.EventDemoCode: public const string SubscriptionUrl = """
+        public static async Task<(string Agent, string AgentToken, string SubscriptionUrl)> ObtainSubscriptionUrlAsync(AAuthKey key,
+            string provider, string person, string resource, string account, bool protectedChannel,
+            string publicSubscriptionUrl, AAuthEgressPolicy policy,
+            Func<Interaction, CancellationToken, Task> showConsent, CancellationToken cancellationToken)
+        {
+            var enrolled = await AAuthClientBuilder.Bootstrap(provider + "/enrol")
+                .WithKey(key).WithKeyStore(new InMemoryKeyStore()).WithPersonServer(person)
+                .WithEgressPolicy(policy).EnrolAsync(cancellationToken);
+            if (!protectedChannel) return (enrolled.AgentId!, enrolled.AgentToken!, publicSubscriptionUrl);
+            using var agent = new AAuthClientBuilder(key).UseJwt(enrolled.AgentToken!)
+                .WithEgressPolicy(policy).WithChallengeHandling(person,
+                    options => options.OnInteractionRequired = showConsent).Build();
+            using var request = new HttpRequestMessage(HttpMethod.Get,
+                resource + "/search_availability?account=" + Uri.EscapeDataString(account));
+            request.Options.Set(AAuthRequestOptions.Account, account);
+            using var response = await agent.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            var result = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken);
+            return (enrolled.AgentId!, enrolled.AgentToken!, result!["notifications"]!["subscribe_url"]!.GetValue<string>());
+        }
+        """ ;
++ AAuth.Samples.Events.EventDemoCode: public static readonly string [  ] Steps = [ Discover , SubscriptionUrl , SubscribeToken , Registration , Delivery , Receipt ] ;
 + AAuth.Samples.Events: public static class EventDemoCode
 ```
 
@@ -639,6 +775,16 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [SqliteR3AuditSink.
 ```
 
 Public owners: `R3AccessServer.SqliteR3AuditSink`, `R3AccessServer`.
+
+### samples/MockAgentProvider/Program.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [Program.cs](../../../samples/MockAgentProvider/Program.cs).
+
+```diff
++ MockAgentProvider: public sealed class Entry
+```
+
+Public owners: `MockAgentProvider`.
 
 ### samples/MockPersonServer/ConsentBridgePersonPendingStore.cs
 
@@ -946,6 +1092,14 @@ Concept/decision: [r3](#r3). Source: [R3Grant.cs](../../../src/AAuth.R3/Model/R3
 
 Public owners: `AAuth.R3.Model.R3Grant`, `AAuth.R3.Model`.
 
+### src/AAuth.R3/Model/R3Json.cs
+
+Concept/decision: [r3](#r3). Source: [R3Json.cs](../../../src/AAuth.R3/Model/R3Json.cs).
+
+Public signatures unchanged (2); behavior reviewed under r3.
+
+Public owners: `AAuth.R3.Model.R3Json`, `AAuth.R3.Model`.
+
 ### src/AAuth.R3/Model/R3Operation.cs
 
 Concept/decision: [r3](#r3). Source: [R3Operation.cs](../../../src/AAuth.R3/Model/R3Operation.cs).
@@ -998,6 +1152,10 @@ Public owners: `AAuth.R3.Model.R3Operations`, `AAuth.R3.Model`.
 Concept/decision: [r3](#r3). Source: [R3Parameter.cs](../../../src/AAuth.R3/Model/R3Parameter.cs).
 
 ```diff
+- AAuth.R3.Model.R3Parameter: public required JsonNode Json { get ; init ; }
+- AAuth.R3.Model.R3Parameter: public static R3Parameter Inline ( JsonNode value )
++ AAuth.R3.Model.R3Parameter: public required JsonNode ? Json { get ; init ; }
++ AAuth.R3.Model.R3Parameter: public static R3Parameter Inline ( JsonNode ? value )
 + AAuth.R3.Model.R3Parameter: public void Validate ( )
 ```
 
@@ -1204,7 +1362,9 @@ Public owners: `AAuth.R3.R3Metadata`, `AAuth.R3`.
 Concept/decision: [r3](#r3). Source: [R3ProposalStore.cs](../../../src/AAuth.R3/R3ProposalStore.cs).
 
 ```diff
+- AAuth.R3.R3ProposalStore: public R3ProposalStore ( TimeProvider ? timeProvider = null )
 - AAuth.R3.R3ProposalStore: public StoredR3Proposal Add ( R3ProposalDocument proposal , Uri baseUri , string pathPrefix = "/r3/proposals" )
++ AAuth.R3.R3ProposalStore: public R3ProposalStore ( int maxEntries = 1024 )
 + AAuth.R3.R3ProposalStore: public StoredR3Proposal Add ( R3ProposalDocument proposal , Uri baseUri , string pathPrefix = "/r3/proposals" , R3VocabularySchemas ? schemas = null )
 ```
 
@@ -1415,7 +1575,12 @@ Public owners: `AAuth.Agent.AgentProviderTokenRefresher.RefresherBuilder`, `AAut
 
 Concept/decision: [agent-clients](#agent-clients). Source: [ChallengeHandler.cs](../../../src/AAuth/Agent/ChallengeHandler.cs).
 
-Public signatures unchanged (9); behavior reviewed under agent-clients.
+```diff
+- AAuth.Agent.ChallengeHandler: public ChallengeHandler ( TokenExchangeClient exchange , AAuthTokenHolder holder , string ? personServer , Func < Interaction , CancellationToken , Task > ? onInteractionRequired , DeferredPollerOptions ? pollerOptions , Func < string ? > ? upstreamTokenProvider )
+- AAuth.Agent.ChallengeHandler: public ChallengeHandler ( TokenExchangeClient exchange , AAuthTokenHolder holder , string personServer , Func < Interaction , CancellationToken , Task > ? onInteractionRequired = null , DeferredPollerOptions ? pollerOptions = null )
++ AAuth.Agent.ChallengeHandler: public ChallengeHandler ( TokenExchangeClient exchange , AAuthTokenHolder holder , TokenVerifier verifier , MetadataClient metadata , JwksClient jwks , string ? personServer , Func < Interaction , CancellationToken , Task > ? onInteractionRequired , DeferredPollerOptions ? pollerOptions , Func < string ? > ? upstreamTokenProvider )
++ AAuth.Agent.ChallengeHandler: public ChallengeHandler ( TokenExchangeClient exchange , AAuthTokenHolder holder , TokenVerifier verifier , MetadataClient metadata , JwksClient jwks , string personServer , Func < Interaction , CancellationToken , Task > ? onInteractionRequired = null , DeferredPollerOptions ? pollerOptions = null )
+```
 
 Public owners: `AAuth.Agent.ChallengeHandler`, `AAuth.Agent`.
 
@@ -1952,7 +2117,7 @@ Concept/decision: [signatures](#signatures). Source: [AAuthVerifier.cs](../../..
 + AAuth.HttpSig.AAuthVerificationException: public AAuth . Errors . SignatureErrorCode Code { get ; }
 + AAuth.HttpSig.AAuthVerificationException: public AAuthVerificationException ( AAuth . Errors . SignatureErrorCode code , string message , Exception ? inner = null )
 + AAuth.HttpSig.AAuthVerifier: public IReadOnlyDictionary < string , StructuredFieldType > StructuredFieldTypes { get ; init ; } = new Dictionary < string , StructuredFieldType > ( StringComparer . Ordinal ) { [ "signature-key" ] = StructuredFieldType . Dictionary , [ "signature-input" ] = StructuredFieldType . Dictionary , [ "signature" ] = StructuredFieldType . Dictionary , [ "content-digest" ] = StructuredFieldType . Dictionary , [ "repr-digest" ] = StructuredFieldType . Dictionary , }
-+ AAuth.HttpSig.AAuthVerifier: public void Verify ( string method , string authority , string path , string signatureKey , string signatureInput , string signatureHeader , IAAuthKey publicKey , string ? authorization = null , string ? mission = null , string label = "sig" , IReadOnlyDictionary < string , string > ? fields = null , IReadOnlyCollection < string > ? requiredComponents = null , string ? keyId = null , IReadOnlyDictionary < string , string [  ] > ? fieldValues = null , string ? requestScheme = null , string ? query = null , string ? requestTarget = null )
++ AAuth.HttpSig.AAuthVerifier: public string Verify ( string method , string authority , string path , string signatureKey , string signatureInput , string signatureHeader , IAAuthKey publicKey , string ? authorization = null , string ? mission = null , string label = "sig" , IReadOnlyDictionary < string , string > ? fields = null , IReadOnlyCollection < string > ? requiredComponents = null , string ? keyId = null , IReadOnlyDictionary < string , string [  ] > ? fieldValues = null , string ? requestScheme = null , string ? query = null , string ? requestTarget = null )
 ```
 
 Public owners: `AAuth.HttpSig.AAuthVerificationException`, `AAuth.HttpSig.AAuthVerifier`, `AAuth.HttpSig`.
@@ -2130,6 +2295,19 @@ Concept/decision: [signatures](#signatures). Source: [StructuredFieldType.cs](..
 ```
 
 Public owners: `AAuth.HttpSig.StructuredFieldType`, `AAuth.HttpSig`.
+
+### src/AAuth/Identifiers/AgentId.cs
+
+Concept/decision: [discovery](#discovery). Source: [AgentId.cs](../../../src/AAuth/Identifiers/AgentId.cs).
+
+```diff
+- AAuth.Identifiers.AgentId: public static AgentId Parse ( string input )
+- AAuth.Identifiers.AgentId: public static bool TryParse ( string ? input , out AgentId result , out string ? error )
++ AAuth.Identifiers.AgentId: public static AgentId Parse ( string input , AAuth . Discovery . AAuthEgressPolicy ? policy = null )
++ AAuth.Identifiers.AgentId: public static bool TryParse ( string ? input , out AgentId result , out string ? error , AAuth . Discovery . AAuthEgressPolicy ? policy = null )
+```
+
+Public owners: `AAuth.Identifiers.AgentId`, `AAuth.Identifiers`.
 
 ### src/AAuth/Identifiers/ServerId.cs
 
@@ -2735,8 +2913,10 @@ Public owners: `AAuth.Server.Verification.AAuthVerificationOptions`, `AAuth.Serv
 Concept/decision: [signatures](#signatures). Source: [AAuthVerificationResult.cs](../../../src/AAuth/Server/Verification/AAuthVerificationResult.cs).
 
 ```diff
++ AAuth.Server.Verification.AAuthVerificationResult: public DateTimeOffset ? ReplayExpiresAt { get ; init ; }
 + AAuth.Server.Verification.AAuthVerificationResult: public bool AccountVerified { get ; init ; }
 + AAuth.Server.Verification.AAuthVerificationResult: public string ? Account { get ; init ; }
++ AAuth.Server.Verification.AAuthVerificationResult: public string ? ReplayIdentity { get ; init ; }
 ```
 
 Public owners: `AAuth.Server.Verification.AAuthVerificationResult`, `AAuth.Server.Verification`.
@@ -2773,7 +2953,12 @@ Public owners: `AAuth.Tokens.AccountBinding`, `AAuth.Tokens.AccountExpectation`,
 
 Concept/decision: [tokens](#tokens). Source: [ActChainBuilder.cs](../../../src/AAuth/Tokens/ActChainBuilder.cs).
 
-Public signatures unchanged (3); behavior reviewed under tokens.
+```diff
+- AAuth.Tokens.ActChainBuilder: public static JsonObject BuildNestedAct ( string upstreamAgentId , JsonObject ? upstreamChain = null )
+- AAuth.Tokens.ActChainBuilder: public static bool ValidateChain ( JsonObject act , int maxDepth = 10 )
++ AAuth.Tokens.ActChainBuilder: public static JsonObject BuildNestedAct ( string upstreamAgentId , JsonObject ? upstreamChain = null , AAuth . Discovery . AAuthEgressPolicy ? policy = null )
++ AAuth.Tokens.ActChainBuilder: public static bool ValidateChain ( JsonObject act , int maxDepth = 10 , AAuth . Discovery . AAuthEgressPolicy ? policy = null )
+```
 
 Public owners: `AAuth.Tokens.ActChainBuilder`, `AAuth.Tokens`.
 
@@ -2781,7 +2966,16 @@ Public owners: `AAuth.Tokens.ActChainBuilder`, `AAuth.Tokens`.
 
 Concept/decision: [tokens](#tokens). Source: [ActChainReader.cs](../../../src/AAuth/Tokens/ActChainReader.cs).
 
-Public signatures unchanged (5); behavior reviewed under tokens.
+```diff
+- AAuth.Tokens.ActChainReader: public static IReadOnlyList < string > GetDelegationChain ( JsonObject payload , int maxDepth = 10 )
+- AAuth.Tokens.ActChainReader: public static int GetChainDepth ( JsonObject payload , int maxDepth = 10 )
+- AAuth.Tokens.ActChainReader: public static string ? GetImmediateActor ( JsonObject payload )
+- AAuth.Tokens.ActChainReader: public static string ? GetOriginalActor ( JsonObject payload , int maxDepth = 10 )
++ AAuth.Tokens.ActChainReader: public static IReadOnlyList < string > GetDelegationChain ( JsonObject payload , int maxDepth = 10 , AAuth . Discovery . AAuthEgressPolicy ? policy = null )
++ AAuth.Tokens.ActChainReader: public static int GetChainDepth ( JsonObject payload , int maxDepth = 10 , AAuth . Discovery . AAuthEgressPolicy ? policy = null )
++ AAuth.Tokens.ActChainReader: public static string ? GetImmediateActor ( JsonObject payload , AAuth . Discovery . AAuthEgressPolicy ? policy = null )
++ AAuth.Tokens.ActChainReader: public static string ? GetOriginalActor ( JsonObject payload , int maxDepth = 10 , AAuth . Discovery . AAuthEgressPolicy ? policy = null )
+```
 
 Public owners: `AAuth.Tokens.ActChainReader`, `AAuth.Tokens`.
 
@@ -2790,7 +2984,7 @@ Public owners: `AAuth.Tokens.ActChainReader`, `AAuth.Tokens`.
 Concept/decision: [tokens](#tokens). Source: [AgentAuthTokenValidator.cs](../../../src/AAuth/Tokens/AgentAuthTokenValidator.cs).
 
 ```diff
-+ AAuth.Tokens.AgentAuthTokenValidator: public static void Validate ( string authToken , string resourceToken , IAAuthKey signingKey , string agentToken , string ? subagentToken = null , string ? upstreamToken = null )
++ AAuth.Tokens.AgentAuthTokenValidator: public static void Validate ( string authToken , string resourceToken , IAAuthKey signingKey , string agentToken , string ? subagentToken = null , string ? upstreamToken = null , AAuth . Discovery . AAuthEgressPolicy ? policy = null )
 + AAuth.Tokens: public static class AgentAuthTokenValidator
 ```
 
@@ -2863,7 +3057,7 @@ Concept/decision: [tokens](#tokens). Source: [AuthTokenResponseValidator.cs](../
 ```diff
 - AAuth.Tokens.AuthTokenResponseValidator: public async Task < AuthTokenDeliveryResult > ValidateAsync ( string authToken , string expectedIssuer , string expectedAudience , string expectedAgentId , IAAuthKey agentKey , JsonObject ? expectedActContext = null , string ? requestedScope = null , CancellationToken ct = default )
 + AAuth.Tokens.AuthTokenResponseValidator: public async Task < AuthTokenDeliveryResult > ValidateAsync ( string authToken , string expectedIssuer , string expectedAudience , string expectedAgentId , IAAuthKey agentKey , JsonObject ? expectedActContext = null , string ? requestedScope = null , CancellationToken ct = default , string ? expectedAccount = null )
-+ AAuth.Tokens.AuthTokenResponseValidator: public static bool ActChainsMatch ( JsonObject ? actual , JsonObject ? expected )
++ AAuth.Tokens.AuthTokenResponseValidator: public static bool ActChainsMatch ( JsonObject ? actual , JsonObject ? expected , AAuthEgressPolicy ? policy = null )
 ```
 
 Public owners: `AAuth.Tokens.AuthTokenDeliveryResult`, `AAuth.Tokens.AuthTokenResponseValidator`, `AAuth.Tokens`.

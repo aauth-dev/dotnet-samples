@@ -68,7 +68,8 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
         var builtin = info.Scheme == "jwt" && typ is AgentTokenBuilder.TokenType or AuthTokenBuilder.TokenType;
         if (!builtin && companion is null)
             throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "Unexpected JWT typ for this signing scheme.");
-        NamingTokenVerifier.ValidateTime(info.Payload!, _tokenVerifier.Clock(), _tokenVerifier.ClockSkew, requireIssuedAt: false);
+        TokenVerifier.ValidateStructure(info.Header!, info.Payload!, typ, _tokenVerifier.EgressPolicy, _tokenVerifier.MaxActDepth);
+        NamingTokenVerifier.ValidateTime(info.Payload!, _tokenVerifier.Clock(), _tokenVerifier.ClockSkew, requireIssuedAt: builtin);
         var issuer = SignatureKeyParser.Text(info.Payload, "iss")
             ?? throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires iss.");
         var dwk = SignatureKeyParser.Text(info.Payload, "dwk")

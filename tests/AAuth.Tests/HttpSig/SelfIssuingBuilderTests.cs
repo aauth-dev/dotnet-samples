@@ -17,7 +17,7 @@ public class SelfIssuingBuilderTests
 {
     private readonly AAuthKey _key = AAuthKey.Generate();
     private const string Issuer = "http://localhost:5000";
-    private const string Subject = "aauth:my-svc@localhost:5000";
+    private const string Subject = "aauth:my-svc@localhost";
     private const string PersonServer = "http://localhost:5100";
 
     [Fact]

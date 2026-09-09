@@ -1046,6 +1046,27 @@ negative requirements, optional-capability boundaries, samples and docs.
 
 Phase rule: no compatibility exception or spec interpretation is implicit.
 
+### Implementation Decisions
+
+- [x] 2026-09-09: Repair confirmed review findings using independently signed
+  malformed-token tests and shared structural validation before trusted contexts.
+  Apply required payload claims to built-in AAuth profiles, not arbitrary JWT
+  types; registered companion verifiers retain their policy hook. Require the
+  verified PS metadata role before core AS exchange or pending policy evaluation.
+  Preserve previous repairs; no delegation, commits, or branch changes. Repeat
+  Release, documentation inventories, and zero-retry stub/live browser gates.
+  Independent review remains pending; these repairs do not close Phase 14.
+
+- [x] 2026-09-09: Reject duplicate JWT members structurally; use policy-aware
+  host-only agent-domain validation throughout actor contexts; preserve live
+  factories in refresh-only clients and cancellation before token publication;
+  support explicit R3 JSON null values without treating missing values as null.
+  Correct per-agent JWKS/DI documentation and sample identities/consent mappings.
+  Final implementation evidence: 2637 Release tests, clean build, 93 snippet
+  checks, full fresh browsers (71 stub plus one live-only skip; 72 live),
+  retries=0. Retain failed gate history and the optional bootstrap convenience
+  limitation. This is not an independent pass; all Phase 14 DoD boxes stay open.
+
 ### Definition of Done
 
 - [ ] Every review finding has a recorded disposition and supporting evidence.

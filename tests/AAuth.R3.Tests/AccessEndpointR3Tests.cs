@@ -18,8 +18,145 @@ namespace AAuth.R3.Tests;
 public class AccessEndpointR3Tests
 {
     [Theory]
+    [MemberData(nameof(TestTokens.InvalidCredentials), MemberType = typeof(TestTokens))]
+    public async Task BodyCredentialFailuresPrecedeFetchPolicyAndAudit(string field, string variant, string error)
+    {
+        var audit = new InMemoryR3AuditSink();
+        var fetches = 0;
+        var policies = 0;
+        var fixture = await R3AccessFixture.CreateAsync(auditSink: audit, onFetch: () => fetches++, onPolicy: () => policies++);
+        await using var app = fixture.App;
+        var token = field == "resource_token" ? fixture.ResourceToken : field == "upstream_token" ? new AuthTokenBuilder
+        {
+            Issuer = R3TestData.PsIssuer, Audience = R3TestData.ApIssuer,
+            Agent = R3TestData.AgentId, AgentConfirmationKey = fixture.AgentKey,
+            Key = fixture.PsKey, KeyId = R3TestData.PsKid,
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5), Scope = "read",
+        }.Build() : fixture.AgentToken;
+        var key = field == "resource_token" ? fixture.ResourceKey : field == "upstream_token" ? fixture.PsKey : fixture.ApKey;
+        using var response = await fixture.PostTokenAsync(extra: new JsonObject
+        { [field] = TestTokens.MalformedCredential(token, key, variant) });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType!.MediaType);
+        Assert.Equal(error, (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.False(response.Headers.Contains("Signature-Error"));
+        Assert.Equal(0, fetches);
+        Assert.Equal(0, policies);
+        Assert.Empty(audit.Records);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PersonServerFederationAcceptsRealR3MissionToken(bool deferred)
+    {
+        var audit = new InMemoryR3AuditSink();
+        var fixture = await R3AccessFixture.CreateAsync(requireProposalConsent: deferred, auditSink: audit);
+        await using var app = fixture.App;
+        var mission = new MissionClaim(R3TestData.PsIssuer, R3Hash.ComputeS256("mission"u8));
+        var resourceToken = WithResourceMission(deferred ? fixture.ProposalResourceToken : fixture.ResourceToken, mission, fixture.ResourceKey);
+        using var discovery = new InProcessHttpClient(app.GetTestServer().CreateHandler());
+        using var metadata = new MetadataClient(discovery);
+        using var jwks = new JwksClient(discovery);
+        using var signed = new AAuthClientBuilder(fixture.PsKey)
+            .UseJwksUri(R3TestData.PsIssuer, AAuthConstants.DwkFiles.Person, R3TestData.PsKid)
+            .WithEgressPolicy(TestEgress.Policy)
+            .WithInnerHandler(app.GetTestServer().CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
+        var federation = new AAuth.Access.AccessServerClient(signed, metadata, new AuthTokenResponseValidator(metadata, jwks));
+        var token = await federation.FederateAsync(R3TestData.AsIssuer, new AAuth.Access.AccessServerRequest
+        {
+            ResourceToken = resourceToken, AgentToken = fixture.AgentToken,
+            AgentKey = fixture.AgentKey, ExpectedAudience = R3TestData.ResourceIssuer,
+            ExpectedAgentId = R3TestData.AgentId, ExpectedMission = mission,
+            AuthorizationExpiresAt = new TokenVerifier().Verify(fixture.AgentToken, fixture.ApKey,
+                AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk).ExpiresAt,
+            PollerOptions = new AAuth.Agent.DeferredPollerOptions { MinPollInterval = TimeSpan.Zero, DefaultPollInterval = TimeSpan.FromMilliseconds(1) },
+            OnInteractionRequired = async (interaction, _) =>
+            {
+                using var browser = app.GetTestClient();
+                browser.BaseAddress = new Uri(R3TestData.AsIssuer);
+                using var approved = await TestConsentBrowser.DecideAsync(browser,
+                    interaction.Url + "?code=" + interaction.Code, "/interaction/consent/approve");
+                Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
+            },
+        });
+
+        var verified = new TokenVerifier().VerifyAuthToken(token, fixture.AsKey, R3TestData.ResourceIssuer,
+            fixture.AgentKey, R3TestData.AgentId);
+        Assert.Equal(mission, verified.Mission);
+        Assert.Single(audit.Records);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ResourceMissionCannotBeDroppedOrChangedFromUpstream(bool deferred, bool changed)
+    {
+        var audit = new InMemoryR3AuditSink();
+        var fetches = 0;
+        var policies = 0;
+        var fixture = await R3AccessFixture.CreateAsync(requireProposalConsent: deferred, auditSink: audit,
+            onFetch: () => fetches++, onPolicy: () => policies++);
+        await using var app = fixture.App;
+        var token = deferred ? fixture.ProposalResourceToken : fixture.ResourceToken;
+        if (changed) token = WithResourceMission(token,
+            new MissionClaim(R3TestData.PsIssuer, R3Hash.ComputeS256("changed"u8)), fixture.ResourceKey);
+        var upstream = new AuthTokenBuilder
+        {
+            Issuer = R3TestData.PsIssuer, Audience = R3TestData.ApIssuer,
+            Agent = "aauth:upstream@ap.test", AgentConfirmationKey = fixture.AgentKey,
+            Key = fixture.PsKey, KeyId = R3TestData.PsKid,
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5), Scope = "read",
+            Mission = new MissionClaim(R3TestData.PsIssuer, R3Hash.ComputeS256("original"u8)),
+        }.Build();
+
+        using var response = await fixture.PostTokenAsync(token, new JsonObject { ["upstream_token"] = upstream });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("invalid_resource_token", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.Equal(0, fetches);
+        Assert.Equal(0, policies);
+        Assert.Empty(audit.Records);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResourceMissionRejectsWrongApproverBeforeDocumentPolicyOrAudit(bool deferred)
+    {
+        var audit = new InMemoryR3AuditSink();
+        var fetches = 0;
+        var policies = 0;
+        var fixture = await R3AccessFixture.CreateAsync(requireProposalConsent: deferred, auditSink: audit,
+            onFetch: () => fetches++, onPolicy: () => policies++);
+        await using var app = fixture.App;
+        var token = WithResourceMission(deferred ? fixture.ProposalResourceToken : fixture.ResourceToken,
+            new MissionClaim("https://wrong-ps.test", R3Hash.ComputeS256("mission"u8)), fixture.ResourceKey);
+
+        using var response = await fixture.PostTokenAsync(token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("invalid_resource_token", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.Equal(0, fetches);
+        Assert.Equal(0, policies);
+        Assert.Empty(audit.Records);
+    }
+
+    private static string WithResourceMission(string token, MissionClaim mission, IAAuthKey key)
+    {
+        var segments = token.Split('.');
+        var payload = JsonNode.Parse(Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Decode(segments[1]))!.AsObject();
+        payload["mission"] = mission.ToJsonObject();
+        var input = segments[0] + "." + Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Encode(payload.ToJsonString());
+        return input + "." + Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Encode(key.Sign(System.Text.Encoding.ASCII.GetBytes(input)));
+    }
+
+    [Theory]
     [InlineData("{}", true)]
     [InlineData("{\"id\":1}", true)]
+    [InlineData("{\"description\":null}", true)]
     [InlineData("null", false)]
     [InlineData("[]", false)]
     [InlineData("123", false)]
@@ -33,11 +170,24 @@ public class AccessEndpointR3Tests
             ["parameters"] = JsonNode.Parse(parameters),
         };
         var audit = new InMemoryR3AuditSink();
+        var policyCalls = 0;
         var fixture = await R3AccessFixture.CreateAsync(requireProposalConsent: true, auditSink: audit,
-            proposalBytesOverride: System.Text.Encoding.UTF8.GetBytes(document.ToJsonString()));
+            proposalBytesOverride: System.Text.Encoding.UTF8.GetBytes(document.ToJsonString()),
+            isProposalAllowed: proposal =>
+            {
+                policyCalls++;
+                if (parameters == "{\"description\":null}")
+                {
+                    Assert.True(proposal.Parameters.ContainsKey("description"));
+                    Assert.NotNull(proposal.Parameters["description"]);
+                    Assert.Null(proposal.Parameters["description"].Json);
+                }
+                return true;
+            });
         await using var app = fixture.App;
         using var response = await fixture.PostTokenAsync(fixture.ProposalResourceToken);
         Assert.Equal(accepted ? HttpStatusCode.Accepted : HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(accepted ? 1 : 0, policyCalls);
         Assert.Empty(audit.Records);
         if (!accepted)
         {
@@ -791,7 +941,7 @@ public class AccessEndpointR3Tests
     [Fact]
     public async Task TokenEndpoint_RejectsFetchedBytesWhoseHashDoesNotMatchResourceToken()
     {
-        var fixture = await R3AccessFixture.CreateAsync(resourceTokenS256Override: "wrong");
+        var fixture = await R3AccessFixture.CreateAsync(resourceTokenS256Override: Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Encode(new byte[32]));
         await using var app = fixture.App;
 
         var response = await fixture.PostTokenAsync();
@@ -958,7 +1108,10 @@ public class AccessEndpointR3Tests
             Func<DateTimeOffset>? discoveryClock = null,
             byte[]? documentBytesOverride = null,
             byte[]? proposalBytesOverride = null,
-            R3VocabularySchemas? vocabularySchemas = null)
+            R3VocabularySchemas? vocabularySchemas = null,
+            Action? onFetch = null,
+            Action? onPolicy = null,
+            Func<R3ProposalDocument, bool>? isProposalAllowed = null)
         {
             var asKey = AAuthKey.Generate();
             var psKey = AAuthKey.Generate();
@@ -1017,6 +1170,7 @@ public class AccessEndpointR3Tests
             Func<HttpContext, string, string, string, CancellationToken, Task<byte[]>>? fetchOverride =
                 fetchHandler is not null ? null : (_, uri, s256, _, _) =>
                 {
+                    onFetch?.Invoke();
                     var bytes = uri == r3Uri ? docBytes : uri == proposalUri ? proposalBytes : throw new InvalidOperationException("unknown R3 URI");
                     return Task.FromResult(bytes);
                 };
@@ -1034,6 +1188,8 @@ public class AccessEndpointR3Tests
                 AuditSink = auditSink ?? new InMemoryR3AuditSink(),
                 VocabularySchemas = vocabularySchemas ?? R3VocabularySchemas.Standard,
                 IsScopeAllowed = isScopeAllowed,
+                IsOperationAllowed = _ => { onPolicy?.Invoke(); return true; },
+                IsProposalAllowed = isProposalAllowed,
                 FetchAndVerifyAsync = fetchOverride,
                 FetchTransportContract = AAuth.Discovery.AAuthTransportContract.InProcessOnly,
                 FetchHttpMessageHandler = fetchHandler,

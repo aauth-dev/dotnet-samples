@@ -76,7 +76,7 @@ export function walletProtocolTests() {
           expect(result.upstream.issuer).toBe('http://localhost:5500');
           expect(result.upstream.mission).toBeNull();
           expect(result.downstream.iss).toBe('http://localhost:5500');
-          expect(result.downstream.agent).toBe('aauth:concierge@localhost:5200');
+          expect(result.downstream.agent).toBe('aauth:concierge@localhost');
           expect(result.exchanges.map((entry: { status: number }) => entry.status)).toEqual([401, 200]);
           expect(result.downstream.act.agent).toBeTruthy();
           await expect(root).toContainText('HTTP 401');

@@ -166,8 +166,8 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 // Identity-level routes still validate any presented JWT assertion.
-app.MapGet("/pseudonymous", handler).RequireAAuthSignature();
-app.MapGet("/identified", handler).RequireAAuthSignature(identified: true);
+app.MapGet("/pseudonymous", handler).RequireGenericSignature();
+app.MapGet("/identified", handler).RequireGenericSignature(identified: true);
 
 // Three-party (jwt) — full issuer + audience verification, plus a per-endpoint
 // challenge requesting the scope this route protects.

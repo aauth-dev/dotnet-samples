@@ -67,8 +67,9 @@ public sealed record R3ProposalDocument
 
     public static R3ProposalDocument FromUtf8Bytes(ReadOnlySpan<byte> bytes, JsonSerializerOptions? options = null, R3VocabularySchemas? schemas = null)
     {
-        AAuth.Tokens.AccountBinding.Read(System.Text.Json.Nodes.JsonNode.Parse(bytes) as System.Text.Json.Nodes.JsonObject);
         using var json = JsonDocument.Parse(bytes.ToArray());
+        R3Json.ValidateUniqueMembers(json.RootElement);
+        AAuth.Tokens.AccountBinding.Read(System.Text.Json.Nodes.JsonNode.Parse(bytes) as System.Text.Json.Nodes.JsonObject);
         var doc = json.RootElement.Deserialize<R3ProposalDocument>((schemas ?? R3VocabularySchemas.Standard).ReadOptions(json.RootElement, options))
             ?? throw new InvalidOperationException("R3 proposal JSON did not deserialize to an object.");
         doc.Validate(schemas);

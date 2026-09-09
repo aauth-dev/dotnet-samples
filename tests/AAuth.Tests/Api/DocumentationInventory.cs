@@ -89,6 +89,7 @@ internal static class DocumentationInventory
                 var code = expression is LiteralExpressionSyntax literal ? literal.Token.ValueText : expression.ToString();
                 var language = expression is InterpolatedStringExpressionSyntax ? "interpolated"
                     : file.EndsWith("CodeSnippets.cs") || file.EndsWith("WalletScenarioCode.cs")
+                        || file.EndsWith("EventDemoCode.cs") || name.EndsWith("Example", StringComparison.Ordinal)
                         || name.Contains("Code") || name.Contains("Snippet") || name is "Example"
                         || expression.Parent is AssignmentExpressionSyntax assignment && assignment.Left.ToString() is "snippet" or "CodeSnippet"
                         ? "csharp" : "string";

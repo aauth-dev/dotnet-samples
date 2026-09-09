@@ -100,11 +100,6 @@ public sealed class AgentProviderClient
         var agentToken = (string?)body["agent_token"]
             ?? throw new InvalidOperationException("AP enrollment response missing 'agent_token'.");
 
-        // The AP may return an opaque "key_id" — this is the AP-internal JWT
-        // `kid` it uses inside the issued agent token. Receivers treat it as
-        // opaque (spec § "Agent Identifier Strategies") and the agent never
-        // needs to send it back at refresh time. We expose it on the result
-        // for diagnostics only; the local keystore key remains the thumbprint.
         var agentTokenKid = (string?)body["key_id"];
 
         // Persist the key under the local handle (thumbprint).
@@ -274,6 +269,7 @@ public sealed class EnrollResult
     /// Used as the <c>kid</c> parameter for <see cref="AAuthClientBuilder.UseJwks"/>
     /// in an explicit generic direct-JWKS demonstration. The receiver selects the
     /// verification key from the AP's per-agent JWKS by this value.
+    /// This is not the AP's token-signing JWT header <c>kid</c>.
     /// For other signing modes (<c>hwk</c>, <c>jwt</c>, <c>jkt-jwt</c>), this
     /// value is informational only.
     /// </summary>

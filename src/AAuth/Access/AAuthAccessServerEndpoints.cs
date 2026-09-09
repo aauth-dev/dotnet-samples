@@ -207,6 +207,15 @@ public static class AAuthAccessServerEndpoints
         var policy = app.Services.GetRequiredService<IAccessPolicy>();
         var pending = app.Services.GetRequiredService<IAccessPendingStore>();
 
+        bool IsVerifiedPersonServer(HttpContext context)
+        {
+            var parsed = context.GetAAuthParsedKey();
+            return parsed?.Scheme == AAuthConstants.Schemes.JwksUri
+                && parsed.Dwk == AAuthConstants.DwkFiles.Person
+                && options.EgressPolicy.IsValidIdentifier(parsed.Identifier)
+                && string.Equals(parsed.Identifier, context.GetAAuthVerification()?.Issuer, StringComparison.Ordinal);
+        }
+
         // Re-pin a pending poll/push caller: it MUST present the jwks_uri
         // scheme, its host MUST be trusted (when a trust set is configured),
         // and it MUST be the same Person Server that parked the entry. Returns
@@ -229,13 +238,12 @@ public static class AAuthAccessServerEndpoints
                 return AAuth.Server.AAuthProblemDetails.Create("invalid_carrier", "expected jwks_uri scheme", statusCode: StatusCodes.Status401Unauthorized);
             }
 
-            if (string.IsNullOrEmpty(parsedKey.Identifier)
-                || !Uri.TryCreate(parsedKey.Identifier, UriKind.Absolute, out var callerUri))
+            if (!IsVerifiedPersonServer(c))
             {
-                return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", "missing or invalid jwks_uri", statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", "A verified Person Server metadata role is required.", statusCode: StatusCodes.Status403Forbidden);
             }
 
-            if (!IssuerTrust.IsTrusted(trustedPsHostsOrNull, options.IsTrustedPersonServer, parsedKey.Identifier))
+            if (!IssuerTrust.IsTrusted(trustedPsHostsOrNull, options.IsTrustedPersonServer, parsedKey.Identifier!))
             {
                 return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", $"jwks_uri '{parsedKey.JwksUri}' is not a trusted Person Server", statusCode: StatusCodes.Status403Forbidden);
             }
@@ -299,16 +307,11 @@ public static class AAuthAccessServerEndpoints
             if (!direct)
             {
                 var jwksUri = parsed.Identifier;
-                // Reject a missing/invalid jwks_uri BEFORE the trust gate: an empty
-                // authority would otherwise pass an open-by-default trust policy and
-                // proceed with an unauthenticated PS identity. Mirrors the pending
-                // poll/push gate (AuthorizePsCaller).
-                if (string.IsNullOrEmpty(jwksUri)
-                    || !Uri.TryCreate(jwksUri, UriKind.Absolute, out var psUri))
+                if (!IsVerifiedPersonServer(ctx))
                 {
-                    return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", "missing or invalid jwks_uri", statusCode: StatusCodes.Status403Forbidden);
+                    return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", "A verified Person Server metadata role is required.", statusCode: StatusCodes.Status403Forbidden);
                 }
-                if (!IssuerTrust.IsTrusted(trustedPsHostsOrNull, options.IsTrustedPersonServer, jwksUri))
+                if (!IssuerTrust.IsTrusted(trustedPsHostsOrNull, options.IsTrustedPersonServer, jwksUri!))
                 {
                     return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", $"jwks_uri '{jwksUri}' is not a trusted Person Server", statusCode: StatusCodes.Status403Forbidden);
                 }
@@ -321,12 +324,13 @@ public static class AAuthAccessServerEndpoints
             JsonObject? body;
             try
             {
-                body = await ctx.Request.ReadFromJsonAsync<JsonObject>();
+                body = await TokenRequestBody.ReadAsync(ctx.Request, tokenVerifier);
             }
             catch (System.Text.Json.JsonException)
             {
                 return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "body is not valid JSON", statusCode: StatusCodes.Status400BadRequest);
             }
+            catch (TokenVerificationException ex) { return AAuthProblemDetails.TokenFailure(ex); }
 
             if (direct && body?["agent_token"] is not null)
                 return AAuthProblemDetails.Create("invalid_request", "Direct chaining takes its agent token only from Signature-Key.", statusCode: 400);
@@ -358,11 +362,10 @@ public static class AAuthAccessServerEndpoints
                 if (direct && (issuance.Upstream?.Issuer != issuer
                     || issuance.Upstream.IssuerDwk != AuthTokenBuilder.AccessDwk || issuance.Upstream.Mission is not null))
                     throw new TokenVerificationException("Direct AS chaining requires this AS's no-mission upstream authorization.");
-                sourceTokens = await TokenRegistration.RegisterAsync(inventory, issuance.SourceTokens, ctx.RequestAborted);
             }
             catch (TokenVerificationException ex)
             {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_agent_token", ex.Message, statusCode: direct ? StatusCodes.Status400BadRequest : StatusCodes.Status401Unauthorized);
+                return AAuthProblemDetails.TokenFailure(ex);
             }
 
             var agentId = issuance.AgentId;
@@ -397,13 +400,16 @@ public static class AAuthAccessServerEndpoints
             }
             catch (TokenVerificationException ex)
             {
-                var expired = ex.Message.Contains("expired", StringComparison.OrdinalIgnoreCase);
+                var expired = ex.Code == AAuth.Errors.SignatureErrorCode.ExpiredJwt;
                 // §Token Endpoint Error Codes: invalid_resource_token / expired_resource_token
                 // are 400 (a bad token parameter in the body), not 401 — 401 is reserved for
                 // request-signature failures carrying a Signature-Error header (§Authentication
                 // Errors). The request itself was correctly signed; the resource_token is invalid.
                 return AAuth.Server.AAuthProblemDetails.Create(expired ? "expired_resource_token" : "invalid_resource_token", ex.Message, statusCode: StatusCodes.Status400BadRequest);
             }
+
+            try { sourceTokens = await TokenRegistration.RegisterAsync(inventory, issuance.SourceTokens, ctx.RequestAborted); }
+            catch (TokenVerificationException ex) { return AAuthProblemDetails.TokenFailure(ex); }
 
             var policyClaims = options.DeriveAgentClaims?.Invoke(agentId);
             AccessDecision decision;
@@ -593,12 +599,13 @@ public static class AAuthAccessServerEndpoints
                 JsonObject? pushed;
                 try
                 {
-                    pushed = await ctx.Request.ReadFromJsonAsync<JsonObject>();
+                    pushed = await TokenRequestBody.ReadAsync(ctx.Request, tokenVerifier);
                 }
                 catch (System.Text.Json.JsonException)
                 {
                     return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "body is not valid JSON", statusCode: StatusCodes.Status400BadRequest);
                 }
+                catch (TokenVerificationException ex) { return AAuthProblemDetails.TokenFailure(ex); }
 
                 if (entry.Status == AccessPendingStatus.AwaitingClarification || pushed?.ContainsKey("action") == true)
                 {
@@ -633,9 +640,9 @@ public static class AAuthAccessServerEndpoints
                             entry.Scope = (string?)replacement.Payload["scope"] ?? options.DefaultScope;
                             entry.ResourceContext = (JsonObject)replacement.Payload.DeepClone();
                         }
-                        catch (Exception ex) when (ex is TokenVerificationException or FormatException or InvalidOperationException or ArgumentException)
+                        catch (TokenVerificationException ex)
                         {
-                            return AAuthProblemDetails.Create("invalid_resource_token", ex.Message, statusCode: StatusCodes.Status400BadRequest);
+                            return AAuthProblemDetails.TokenFailure(ex, TokenCredential.Resource);
                         }
                     }
                     entry.ClarificationRounds++;

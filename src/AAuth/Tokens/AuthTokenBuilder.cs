@@ -134,7 +134,7 @@ public sealed class AuthTokenBuilder
         Require(Agent, nameof(Agent));
         Require(KeyId, nameof(KeyId));
         AccountBinding.Validate(Account);
-        if (Act is not null && !ActChainBuilder.ValidateChain(Act, int.MaxValue))
+        if (Act is not null && !ActChainBuilder.ValidateChain(Act, int.MaxValue, EgressPolicy))
             throw new InvalidOperationException("Act must contain only valid agent identities, never person identifiers.");
         // `required` is a compile-time hint; reflection / default! callers
         // can still pass null. Fail explicitly so the diagnostic points at

@@ -10,6 +10,39 @@ namespace AAuth.Tests.Tokens;
 public class AccountBindingTests
 {
     [Fact]
+    public void CachedCarrierTracksRefreshedSourceAndRequestBindings()
+    {
+        var key = AAuthKey.Generate();
+        string AgentToken() => new AgentTokenBuilder
+        {
+            Issuer = "https://ap.example", Subject = "aauth:agent@ap.example", Key = key, KeyId = "agent-key",
+        }.Build();
+        var original = AgentToken();
+        var refreshed = AgentToken();
+        var auth = new AuthTokenBuilder
+        {
+            Issuer = "https://ps.example", Audience = "https://resource.example", Agent = "aauth:agent@ap.example",
+            Key = key, KeyId = "ps-key", AgentConfirmationKey = key, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10),
+            Subject = "person", Account = "personal",
+        }.Build();
+        var holder = new AAuth.Agent.AAuthTokenHolder();
+        using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "https://resource.example/data");
+        request.Options.Set(AAuth.Agent.AAuthRequestOptions.Account, "personal");
+        request.Headers.TryAddWithoutValidation("AAuth-Mission", "mission-a");
+        Assert.Equal(original, holder.SelectForRequest(request, original, key.ComputeJwkThumbprint()));
+        holder.UpdateFromExchange(auth, request);
+        Assert.Equal(auth, holder.SelectForRequest(request, original, key.ComputeJwkThumbprint()));
+        Assert.Equal(refreshed, holder.SelectForRequest(request, refreshed, key.ComputeJwkThumbprint()));
+        Assert.Equal(original, holder.SelectForRequest(request, original, "other-key"));
+        request.Options.Set(AAuth.Agent.AAuthRequestOptions.Account, "work");
+        Assert.Equal(original, holder.SelectForRequest(request, original, key.ComputeJwkThumbprint()));
+        request.Options.Set(AAuth.Agent.AAuthRequestOptions.Account, "personal");
+        request.Headers.Remove("AAuth-Mission");
+        request.Headers.TryAddWithoutValidation("AAuth-Mission", "mission-b");
+        Assert.Equal(original, holder.SelectForRequest(request, original, key.ComputeJwkThumbprint()));
+    }
+
+    [Fact]
     public void MissionIntent_AccountlessEntryIsNotAWildcard()
     {
         var script = new MockPersonServer.MissionConsentScript();

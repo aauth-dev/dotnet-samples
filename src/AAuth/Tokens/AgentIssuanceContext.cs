@@ -37,9 +37,23 @@ public sealed record AgentIssuanceContext
         TokenVerifier verifier, MetadataClient metadata, JwksClient jwks,
         Func<string, bool> isTrustedUpstreamIssuer, CancellationToken cancellationToken = default)
     {
-        var parent = await verifier.VerifyWithJwksAsync(agentToken, metadata, jwks,
-            AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk, expectedAudience: null,
-            cancellationToken: cancellationToken);
+        async Task<TokenVerifier.VerifiedToken> VerifyAgentAsync(string token, TokenCredential credential)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(token)) throw new TokenVerificationException("Agent token is empty.");
+                var verified = await verifier.VerifyWithJwksAsync(token, metadata, jwks,
+                    AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk, expectedAudience: null,
+                    cancellationToken: cancellationToken);
+                if (verified.ExpiresAt.ToUnixTimeSeconds() <= verifier.Clock().ToUnixTimeSeconds())
+                    throw new TokenVerificationException(AAuth.Errors.SignatureErrorCode.ExpiredJwt, "Agent token has expired.");
+                return verified;
+            }
+            catch (TokenVerificationException exception)
+            { throw new TokenVerificationException(exception.Message, exception) { Credential = credential }; }
+        }
+
+        var parent = await VerifyAgentAsync(agentToken, TokenCredential.Agent);
         if (parent.Payload["parent_agent"] is not null)
             throw new TokenVerificationException("A sub-agent cannot request authorization directly.");
         var parentId = (string?)parent.Payload["sub"]
@@ -49,30 +63,35 @@ public sealed record AgentIssuanceContext
         var ceiling = parent.ExpiresAt;
         JsonObject? act = null;
         UpstreamTokenValidationResult? upstreamContext = null;
-        if (!string.IsNullOrEmpty(upstreamToken))
+        if (upstreamToken is not null)
         {
+            if (string.IsNullOrWhiteSpace(upstreamToken))
+                throw new TokenVerificationException("Upstream token is empty.") { Credential = TokenCredential.Upstream };
             var upstream = await new UpstreamTokenValidator(metadata, jwks, verifier).ValidateAsync(
                 upstreamToken, parent.Issuer, isTrustedUpstreamIssuer, cancellationToken);
             if (!upstream.IsValid || upstream.ExpiresAt is not { } upstreamExpiry)
-                throw new TokenVerificationException(upstream.Error ?? "Invalid upstream token.");
+                throw new TokenVerificationException(upstream.FailureCode, upstream.Error ?? "Invalid upstream token.")
+                { Credential = TokenCredential.Upstream };
+            if (upstreamExpiry.ToUnixTimeSeconds() <= verifier.Clock().ToUnixTimeSeconds())
+                throw new TokenVerificationException(AAuth.Errors.SignatureErrorCode.ExpiredJwt, "Upstream token has expired.")
+                { Credential = TokenCredential.Upstream };
             if (upstreamExpiry < ceiling) ceiling = upstreamExpiry;
             upstreamContext = upstream;
             sources.Add(TokenRegistration.FromVerified(upstream.Verified!));
-            act = ActChainBuilder.BuildNestedAct(upstream.Agent!, upstream.UpstreamAct);
+            act = ActChainBuilder.BuildNestedAct(upstream.Agent!, upstream.UpstreamAct, verifier.EgressPolicy);
         }
-        if (!string.IsNullOrEmpty(subagentToken))
+        if (subagentToken is not null)
         {
-            bound = await verifier.VerifyWithJwksAsync(subagentToken, metadata, jwks,
-                AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk, expectedAudience: null,
-                cancellationToken: cancellationToken);
+            bound = await VerifyAgentAsync(subagentToken, TokenCredential.Subagent);
             if (!string.Equals((string?)bound.Payload["parent_agent"], parentId, StringComparison.Ordinal))
-                throw new TokenVerificationException("subagent_token.parent_agent does not name the requesting parent.");
+                throw new TokenVerificationException("subagent_token.parent_agent does not name the requesting parent.")
+                { Credential = TokenCredential.Subagent };
             sources.Add(TokenRegistration.FromVerified(bound));
-            act = ActChainBuilder.BuildNestedAct(parentId, act);
+            act = ActChainBuilder.BuildNestedAct(parentId, act, verifier.EgressPolicy);
         }
         if (bound.ExpiresAt < ceiling) ceiling = bound.ExpiresAt;
         if (ceiling.ToUnixTimeSeconds() <= verifier.Clock().ToUnixTimeSeconds())
-            throw new TokenVerificationException("The verified authorization context has expired.");
+            throw new TokenVerificationException(AAuth.Errors.SignatureErrorCode.ExpiredJwt, "The verified authorization context has expired.");
         var confirmation = bound.Payload["cnf"]?["jwk"] as JsonObject
             ?? throw new TokenVerificationException("agent_token missing cnf.jwk");
         return new AgentIssuanceContext

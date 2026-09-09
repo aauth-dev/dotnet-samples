@@ -25,7 +25,7 @@ public class SignatureV10WireTests
         IAAuthKey issuerKey = ecdsa ? AAuthKey.Generate() : EcdsaAAuthKey.Generate();
         var jwk = key.ToPublicJwk();
         var issuer = "https://issuer.example";
-        var payload = new JsonObject { ["iss"] = issuer, ["dwk"] = "aauth-agent.json", ["sub"] = "aauth:wire@example.com",
+        var payload = new JsonObject { ["iss"] = issuer, ["dwk"] = "aauth-agent.json", ["sub"] = "aauth:wire@issuer.example", ["jti"] = "token-id",
             ["iat"] = Now.ToUnixTimeSeconds(), ["exp"] = Now.AddMinutes(5).ToUnixTimeSeconds() };
         var header = new JsonObject { ["typ"] = AgentTokenBuilder.TokenType, ["kid"] = "issuer-key", ["alg"] = issuerKey.Algorithm };
         var wire = "";
@@ -102,11 +102,13 @@ public class SignatureV10WireTests
         return input + "." + Base64UrlEncoder.Encode(key.Sign(Encoding.ASCII.GetBytes(input)));
     }
 
-    [Fact]
-    public void TwoRealSignaturesBindTheCompleteKeyDictionary()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TwoRealSignaturesBindTheCompleteKeyDictionary(bool sameKey)
     {
         IAAuthKey first = AAuthKey.Generate();
-        IAAuthKey second = EcdsaAAuthKey.Generate();
+        IAAuthKey second = sameKey ? first : EcdsaAAuthKey.Generate();
         var carrier = SignatureKeyHeader.FormatHwk(first, "first") + ", " + SignatureKeyHeader.FormatHwk(second, "second");
         var parameters = "(\"@method\" \"@authority\" \"@path\" \"signature-key\");created=1800000000";
         var signatureBase = $"\"@method\": GET\n\"@authority\": resource.example\n\"@path\": /wire\n\"signature-key\": {carrier}\n\"@signature-params\": {parameters}";
@@ -114,10 +116,38 @@ public class SignatureV10WireTests
             + ":, second=:" + Convert.ToBase64String(second.Sign(Encoding.ASCII.GetBytes(signatureBase))) + ":";
         var inputs = "first=" + parameters + ", second=" + parameters;
         var verifier = new AAuthVerifier { Clock = () => Now };
-        verifier.Verify("GET", "resource.example", "/wire", carrier, inputs, signatures, first, label: "first");
-        verifier.Verify("GET", "resource.example", "/wire", carrier, inputs, signatures, second, label: "second");
+        var firstIdentity = verifier.Verify("GET", "resource.example", "/wire", carrier, inputs, signatures, first, label: "first");
+        var secondIdentity = verifier.Verify("GET", "resource.example", "/wire", carrier, inputs, signatures, second, label: "second");
+        var store = new AAuth.Server.InMemoryJtiStore();
+        Assert.True(await store.TryRecordRequestAsync(firstIdentity, DateTimeOffset.UtcNow.AddMinutes(1)));
+        Assert.Equal(!sameKey, await store.TryRecordRequestAsync(secondIdentity, DateTimeOffset.UtcNow.AddMinutes(1)));
         Assert.Throws<AAuthVerificationException>(() => verifier.Verify("GET", "resource.example", "/wire",
             carrier.Replace("second=hwk", "second=unknown"), inputs, signatures, first, label: "first"));
+    }
+
+    [Theory]
+    [InlineData("content-digest", "sha-256=:AQID:", "sha-256=:BAUG:")]
+    [InlineData("authorization", "AAuth first", "AAuth second")]
+    [InlineData("signature-key", "first", "second")]
+    [InlineData("nonce", "first", "second")]
+    public void ReplayIdentityDistinguishesCoveredValuesAndParameters(string component, string firstValue, string secondValue)
+    {
+        var key = EcdsaAAuthKey.Generate();
+        Assert.NotEqual(Identity(firstValue), Identity(secondValue));
+
+        string Identity(string value)
+        {
+            var carrier = SignatureKeyHeader.FormatHwk(key) + (component == "signature-key" ? ", " + value + "=unknown" : "");
+            var extra = component is "nonce" or "signature-key" ? "" : " \"" + component + "\"";
+            var parameters = "(\"@method\" \"@authority\" \"@path\" \"signature-key\"" + extra + ");created=1800000000"
+                + (component == "nonce" ? ";nonce=\"" + value + "\"" : "");
+            var signatureBase = $"\"@method\": GET\n\"@authority\": resource.example\n\"@path\": /wire\n\"signature-key\": {carrier}\n"
+                + (extra.Length > 0 ? $"\"{component}\": {value}\n" : "") + "\"@signature-params\": " + parameters;
+            return new AAuthVerifier { Clock = () => Now }.Verify("GET", "resource.example", "/wire", carrier,
+                "sig=" + parameters, "sig=:" + Convert.ToBase64String(key.Sign(Encoding.ASCII.GetBytes(signatureBase))) + ":", key,
+                authorization: component == "authorization" ? value : null,
+                fields: new Dictionary<string, string> { [component] = value });
+        }
     }
 
     private sealed class EventVerifier : ISignatureTokenVerifier

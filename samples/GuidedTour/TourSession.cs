@@ -1722,7 +1722,7 @@ public sealed class TourSession : IAsyncDisposable
                 from = Actor.AccessServer; to = Actor.Parent; break;
             case 6:
                 title = "Parent hands the token to the worker"; narrative = "The parent passes only the verified grant to the worker. Private keys remain local.";
-                snippet = "AgentAuthTokenValidator.Validate(authToken, resourceToken, parentKey, parentToken, workerToken, upstreamToken);";
+                snippet = "AgentAuthTokenValidator.Validate(authToken, resourceToken, parentKey, parentToken, workerToken, upstreamToken, SampleEgress.Policy);";
                 token = flow.AuthToken; to = Actor.SubAgent; break;
             case 7:
                 await flow.CallWalletAsync(ct);

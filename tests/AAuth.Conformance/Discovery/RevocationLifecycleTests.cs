@@ -293,7 +293,7 @@ public class RevocationLifecycleTests
             _agentKeys[key.ComputeJwkThumbprint()] = key;
             return new AgentTokenBuilder
             {
-                EgressPolicy = TestEgress.Policy, Issuer = issuer, Subject = Agent, Key = _keys[issuer], KeyId = "key",
+                EgressPolicy = TestEgress.Policy, Issuer = issuer, Subject = "aauth:demo@" + new Uri(issuer).Host, Key = _keys[issuer], KeyId = "key",
                 ConfirmationKey = key, TokenId = tokenId, PersonServer = Person,
             }.Build();
         }
@@ -323,7 +323,7 @@ public class RevocationLifecycleTests
             var request = new ResourceTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy, Issuer = resource, Audience = federated ? Access : Person,
-                Agent = Agent, AgentJkt = AgentKey(agentToken).ComputeJwkThumbprint(), Key = _keys[resource], KeyId = "key",
+                Agent = (string)Decode(agentToken)["sub"]!, AgentJkt = AgentKey(agentToken).ComputeJwkThumbprint(), Key = _keys[resource], KeyId = "key",
             }.Build();
             using var client = AgentClient(agentToken);
             return await client.PostAsJsonAsync(Person + "/token", new { resource_token = request, upstream_token = upstream });

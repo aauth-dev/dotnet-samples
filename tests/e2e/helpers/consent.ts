@@ -1,5 +1,5 @@
 import { APIRequestContext, Page, expect } from '@playwright/test';
-import { Urls } from './agents';
+import { Agents, Urls } from './agents';
 import { createHash } from 'node:crypto';
 
 export function directedSubject(resource: string): string {
@@ -41,7 +41,13 @@ export async function grantConsent(
   scope?: string,
 ): Promise<void> {
   const data: Record<string, string> = { agent, resource: resource.replace(/\/$/, '') };
-  const issuer = 'http://' + agent.slice(agent.lastIndexOf('@') + 1);
+  const issuers: Record<string, string> = {
+    [Agents.sampleApp]: 'http://localhost:5240',
+    [Agents.tour]: 'http://localhost:5400',
+    'aauth:concierge@localhost': Urls.concierge,
+  };
+  const issuer = issuers[agent];
+  if (!issuer) throw new Error(`No explicit development issuer for ${agent}`);
   const keys = await (await request.get(`${issuer}/.well-known/jwks.json`)).json();
   const key = keys.keys[0];
   const canonical = key.kty === 'EC'

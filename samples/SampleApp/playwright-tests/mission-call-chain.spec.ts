@@ -105,7 +105,7 @@ test.describe('Mission Call Chain (SampleApp)', () => {
     expect(chain.downstream.accessMode).toBe('three-party');
     expect(chain.downstream.scope).toEqual(['trips.read']);
     // The downstream Trips hop saw the Concierge as the immediate actor.
-    expect(chain.downstream.agent).toBe('aauth:concierge@localhost:5200');
+    expect(chain.downstream.agent).toBe('aauth:concierge@localhost');
     // The mission was forwarded: the downstream auth token carries the mission.
     expect(chain.downstream.mission).toBeTruthy();
 

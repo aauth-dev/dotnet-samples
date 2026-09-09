@@ -10,8 +10,10 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Tokens;
+using AAuth.Access;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Xunit;
@@ -41,6 +43,7 @@ public class MockAccessServerTests : IDisposable
     private static readonly AAuthKey PsKey = AAuthKey.Generate();
     private static readonly AAuthKey ApKey = AAuthKey.Generate();
     private static readonly AAuthKey ResourceKey = AAuthKey.Generate();
+    private static readonly AAuthKey AccessRoleKey = AAuthKey.Generate();
 
     private readonly WebApplicationFactory<Federated.Entry> _factory;
 
@@ -67,6 +70,78 @@ public class MockAccessServerTests : IDisposable
         });
 
     public void Dispose() => _factory.Dispose();
+
+    [Theory]
+    [InlineData("aauth-agent.json", false, false)]
+    [InlineData("aauth-resource.json", false, false)]
+    [InlineData("aauth-access.json", false, false)]
+    [InlineData("aauth-agent.json", true, false)]
+    [InlineData("aauth-resource.json", true, false)]
+    [InlineData("aauth-access.json", true, false)]
+    [InlineData("aauth-agent.json", false, true)]
+    [InlineData("aauth-resource.json", false, true)]
+    [InlineData("aauth-access.json", false, true)]
+    public async Task CollocatedRolesCannotActAsPersonServer(string role, bool sharedKey, bool spoofPersonRole)
+    {
+        var policy = new ClaimTrackingPolicy();
+        var discoveryTime = DateTimeOffset.UtcNow;
+        using var factory = CreateFactory(builder => builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IAccessPolicy>();
+            services.AddSingleton<IAccessPolicy>(policy);
+            services.RemoveAll<MetadataClient>();
+            services.RemoveAll<JwksClient>();
+            services.AddSingleton(new MetadataClient(new InProcessHttpClient(new StubDiscoveryHandler(sharedKey))));
+            services.AddSingleton(new JwksClient(new InProcessHttpClient(new StubDiscoveryHandler(sharedKey)), clock: () => discoveryTime));
+        }));
+        var roleKey = sharedKey ? PsKey : role switch
+        {
+            "aauth-agent.json" => ApKey, "aauth-resource.json" => ResourceKey, _ => AccessRoleKey,
+        };
+        using var attacker = new AAuthClientBuilder(roleKey)
+            .UseJwksUri(PsIssuer, spoofPersonRole ? AuthTokenBuilder.PersonDwk : role, PsKid)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(factory.Server.CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
+        attacker.BaseAddress = new Uri(AsIssuer);
+        var agentKey = AAuthKey.Generate();
+        var body = new JsonObject { ["agent_token"] = BuildAgentToken(agentKey), ["resource_token"] = BuildResourceToken(agentKey, AsIssuer) };
+        var expectedStatus = spoofPersonRole ? HttpStatusCode.Unauthorized : HttpStatusCode.Forbidden;
+        using var tokenAttack = await attacker.PostAsJsonAsync("/token", body);
+        Assert.Equal(expectedStatus, tokenAttack.StatusCode);
+        Assert.Empty(policy.Requests);
+        Assert.DoesNotContain("auth_token", await tokenAttack.Content.ReadAsStringAsync());
+
+        discoveryTime = discoveryTime.AddMinutes(1);
+        using var person = BuildPsSignedClient(factory);
+        using var parked = await person.PostAsJsonAsync("/token", body);
+        Assert.Equal(HttpStatusCode.Accepted, parked.StatusCode);
+        Assert.Single(policy.Requests);
+        Assert.Equal(PsIssuer, policy.Requests[0].PersonServerIssuer);
+        using var pollAttack = await attacker.GetAsync(parked.Headers.Location);
+        Assert.Equal(expectedStatus, pollAttack.StatusCode);
+        using var claimsAttack = await attacker.PostAsJsonAsync(parked.Headers.Location, new JsonObject
+        {
+            ["sub"] = "attacker", ["email"] = "attacker@example.test",
+        });
+        Assert.Equal(expectedStatus, claimsAttack.StatusCode);
+        Assert.Single(policy.Requests);
+        using var completion = await person.PostAsJsonAsync(parked.Headers.Location, new JsonObject
+        {
+            ["sub"] = "legitimate", ["email"] = "legitimate@example.test",
+        });
+        Assert.Equal(HttpStatusCode.OK, completion.StatusCode);
+        Assert.Equal(2, policy.Requests.Count);
+        Assert.Equal("legitimate", (string?)policy.Requests[1].Claims?["sub"]);
+    }
+
+    private sealed class ClaimTrackingPolicy : IAccessPolicy
+    {
+        public List<AccessPolicyRequest> Requests { get; } = [];
+        public Task<AccessDecision> EvaluateAsync(AccessPolicyRequest request, CancellationToken cancellationToken = default)
+        {
+            Requests.Add(request);
+            return Task.FromResult(request.Claims?["email"] is null ? AccessDecision.NeedsClaims(["email"]) : AccessDecision.Allow());
+        }
+    }
 
     [Fact]
     public async Task WrongSignerSchemeReturns401Negotiation()
@@ -456,7 +531,7 @@ public class MockAccessServerTests : IDisposable
         services.AddSingleton(new JwksClient(new InProcessHttpClient(new StubDiscoveryHandler())));
     }
 
-    private sealed class StubDiscoveryHandler : HttpMessageHandler
+    private sealed class StubDiscoveryHandler(bool sharedRoleKeys = false) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
@@ -466,6 +541,12 @@ public class MockAccessServerTests : IDisposable
             string? json = key switch
             {
                 "ps.test/.well-known/aauth-person.json" => Metadata(PsIssuer),
+                "ps.test/.well-known/aauth-agent.json" => Metadata(PsIssuer, "/agent-keys"),
+                "ps.test/.well-known/aauth-resource.json" => Metadata(PsIssuer, "/resource-keys"),
+                "ps.test/.well-known/aauth-access.json" => Metadata(PsIssuer, "/access-keys"),
+                "ps.test/agent-keys" => Jwks(sharedRoleKeys ? PsKey : ApKey, PsKid),
+                "ps.test/resource-keys" => Jwks(sharedRoleKeys ? PsKey : ResourceKey, PsKid),
+                "ps.test/access-keys" => Jwks(sharedRoleKeys ? PsKey : AccessRoleKey, PsKid),
                 "other-ps.test/.well-known/aauth-person.json" => Metadata("https://other-ps.test"),
                 "ps.test/.well-known/jwks.json" => Jwks(PsKey, PsKid),
                 "other-ps.test/.well-known/jwks.json" => Jwks(PsKey, PsKid),
@@ -485,10 +566,10 @@ public class MockAccessServerTests : IDisposable
             });
         }
 
-        private static string Metadata(string issuer) => new JsonObject
+        private static string Metadata(string issuer, string path = "/.well-known/jwks.json") => new JsonObject
         {
             ["issuer"] = issuer,
-            ["jwks_uri"] = $"{issuer}/.well-known/jwks.json",
+            ["jwks_uri"] = issuer + path,
         }.ToJsonString();
 
         private static string Jwks(AAuthKey key, string kid)

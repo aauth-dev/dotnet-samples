@@ -37,8 +37,8 @@ test('sub-agent flow binds parent_agent, the worker cnf, and a nested act', asyn
   // marker naming the parent, and the subject is the "+"-delimited sub-agent id.
   await selectStep(page, 1);
   const workerToken = await decodedPayload(page);
-  expect(workerToken.parent_agent).toBe('aauth:aria@localhost:5400');
-  expect(workerToken.sub).toBe('aauth:aria+worker1@localhost:5400');
+  expect(workerToken.parent_agent).toBe('aauth:aria@localhost');
+  expect(workerToken.sub).toBe('aauth:aria+worker1@localhost');
   expect(workerToken.cnf).toBeTruthy();
 
   // Step 5 — the PS returns an auth token bound to the SUB-AGENT (agent + cnf).
@@ -46,11 +46,11 @@ test('sub-agent flow binds parent_agent, the worker cnf, and a nested act', asyn
   // mediated. The parent's grant was direct, so there is no deeper nesting.
   await selectStep(page, 4);
   const authToken = await decodedPayload(page);
-  expect(authToken.agent).toBe('aauth:aria+worker1@localhost:5400');
+  expect(authToken.agent).toBe('aauth:aria+worker1@localhost');
   expect(authToken.cnf).toBeTruthy();
   const act = authToken.act as Record<string, unknown>;
-  expect(act.agent).toBe('aauth:aria@localhost:5400');
-  expect((act.act as Record<string, unknown>).agent).toBe('aauth:original@localhost:5400');
+  expect(act.agent).toBe('aauth:aria@localhost');
+  expect((act.act as Record<string, unknown>).agent).toBe('aauth:original@localhost');
   expect(authToken.iss).toBe('http://localhost:5500');
   expect(authToken.dwk).toBe('aauth-access.json');
 
@@ -59,5 +59,5 @@ test('sub-agent flow binds parent_agent, the worker cnf, and a nested act', asyn
   await expect(page.locator('section.payload article.inspector h2')).toHaveText(
     /Sub-agent calls the resource with the token/,
   );
-  await expect(page.locator('section.payload article.inspector')).toContainText('aauth:aria+worker1@localhost:5400');
+  await expect(page.locator('section.payload article.inspector')).toContainText('aauth:aria+worker1@localhost');
 });

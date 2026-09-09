@@ -10,6 +10,33 @@ namespace AAuth.R3.Tests;
 
 public class TokenClaimTests
 {
+    [Theory]
+    [InlineData("r3_uri", "null")]
+    [InlineData("r3_s256", "null")]
+    [InlineData("r3_uri", "123")]
+    [InlineData("r3_s256", "[]")]
+    public void ResourceClaims_RejectPresentMalformedValues(string field, string json)
+    {
+        var payload = new JsonObject { [field] = JsonNode.Parse(json) };
+        Assert.Throws<InvalidOperationException>(() => R3ClaimReader.ReadResourceDocument(payload));
+        Assert.Throws<InvalidOperationException>(() => R3AuthClaims.ValidateResourcePair(payload));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void EmptyGrantedClaimsRoundTripWithoutAuthorizingUnlistedOperations(bool conditional)
+    {
+        var payload = new JsonObject(R3AuthClaims.AuthToken("https://resource.test/r3/doc", "hash",
+            R3Grant.Mcp(), conditional ? R3Grant.Mcp("book") : null));
+        var claims = R3ClaimReader.ReadAuthToken(payload);
+        Assert.Empty(claims.Granted.Operations);
+        var enforcement = new R3Enforcement(new R3ProposalStore(), new Uri(R3TestData.ResourceIssuer));
+        Assert.Equal(R3EnforcementDecisionKind.Rejected, enforcement.Evaluate(claims, R3OperationIdentity.Mcp("unlisted")).Kind);
+        Assert.Equal(conditional ? R3EnforcementDecisionKind.Conditional : R3EnforcementDecisionKind.Rejected,
+            enforcement.Evaluate(claims, R3OperationIdentity.Mcp("book"), new Dictionary<string, R3Parameter>()).Kind);
+    }
+
     [Fact]
     public void AuthClaims_RoundTripThroughAdditionalClaims()
     {
@@ -63,7 +90,7 @@ public class TokenClaimTests
         var resourceKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
         var r3Uri = "https://resource.test/r3/doc";
-        var r3S256 = "abc123";
+        var r3S256 = Base64UrlEncoder.Encode(new byte[32]);
         var token = new R3Challenge
         {
             ResourceIssuer = R3TestData.ResourceIssuer,

@@ -578,7 +578,7 @@ R3Display ReservationDisplay(IReadOnlyDictionary<string, R3Parameter> parameters
 static string ParameterString(IReadOnlyDictionary<string, R3Parameter> parameters, string name) =>
     parameters.TryGetValue(name, out var parameter) && parameter.Json is JsonValue value && value.TryGetValue<string>(out var text)
         ? text
-        : parameter?.Json.ToJsonString() ?? string.Empty;
+        : parameter?.Json?.ToJsonString() ?? string.Empty;
 
 static decimal ParameterNumber(IReadOnlyDictionary<string, R3Parameter> parameters, string name) =>
     parameters.TryGetValue(name, out var parameter) && parameter.Json is JsonValue value && value.TryGetValue<decimal>(out var number)

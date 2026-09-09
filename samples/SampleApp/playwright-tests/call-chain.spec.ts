@@ -21,7 +21,7 @@ test.describe.configure({ timeout: 180_000 });
 test.beforeEach(async ({ request }) => {
   // Pre-grant BOTH hops; the page must reset these so each hop still prompts.
   await grantConsent(request, Agents.sampleApp, Urls.concierge, 'concierge');
-  await grantConsent(request, 'aauth:concierge@localhost:5200', Urls.calendar);
+  await grantConsent(request, 'aauth:concierge@localhost', Urls.calendar);
 });
 
 test('the page resets standing consent so both hops still prompt', async ({ page, context }) => {
@@ -69,14 +69,14 @@ test('the page resets standing consent so both hops still prompt', async ({ page
 
   // Concierge: the intermediary's own identity.
   const concierge = json.concierge as Record<string, unknown>;
-  expect(concierge.identity).toBe('aauth:concierge@localhost:5200');
+  expect(concierge.identity).toBe('aauth:concierge@localhost');
 
   // Downstream: Calendar's three-party identity with the nested act chain.
   const downstream = json.downstream as Record<string, unknown>;
   expect(downstream.accessMode).toBe('three-party');
   expect(downstream.scheme).toBe('jwt');
   // The resource sees the Concierge as the immediate actor.
-  expect(downstream.agent).toBe('aauth:concierge@localhost:5200');
+  expect(downstream.agent).toBe('aauth:concierge@localhost');
   expect(downstream.iss).toBe(Urls.personServer);
   expect(downstream.scope).toEqual(['calendar.read']);
 

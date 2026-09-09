@@ -43,7 +43,7 @@ public static class EventsTokens
             throw new TokenVerificationException("Events require a current iat and a future exp.");
         if (subscribe)
         {
-            if (!AgentId.TryParse(RequireText(payload, "sub"), out var agent, out _)
+            if (!AgentId.TryParse(RequireText(payload, "sub"), out var agent, out _, verifier.EgressPolicy)
                 || !verifier.EgressPolicy.IsValidIdentifier(actualAudience))
                 throw new TokenVerificationException("Invalid subscribe identity or resource audience.");
             if (!verifier.EgressPolicy.IsValidIdentifier(token.Issuer)
@@ -59,7 +59,7 @@ public static class EventsTokens
                 || !maximum.TryGetValue<long>(out var uses) || uses <= 0))
                 throw new TokenVerificationException("max_uses must be a positive integer when present.");
         }
-        else if (payload.ContainsKey("cnf") || !AgentId.TryParse(actualAudience, out _, out _))
+        else if (payload.ContainsKey("cnf") || !AgentId.TryParse(actualAudience, out _, out _, verifier.EgressPolicy))
             throw new TokenVerificationException("Event tokens forbid cnf and require an agent audience.");
         return token;
     }

@@ -11,15 +11,17 @@
     <ol aria-label="Protocol steps">
         @for (var index = 0; index < DocumentDemoSession.Steps.Length; index++)
         {
-            <li aria-current="@(index == _session.Step ? "step" : null)">@DocumentDemoSession.Steps[index]</li>
+            <li data-protocol-step="@(index + 1)" aria-current="@(index == _session.Step ? "step" : null)">@DocumentDemoSession.Steps[index]</li>
         }
     </ol>
     <table aria-label="Sequence diagram">
-        <thead><tr><th>From</th><th></th><th>To</th><th>Request</th></tr></thead>
+        <thead><tr><th>Step</th><th>Participants</th><th>Message or local action</th></tr></thead>
         <tbody>
             @foreach (var row in Sequence)
             {
-                <tr><td>@row.From</td><td><img src="_content/EventSupport/arrow-right.svg" width="18" height="18" alt="to" /></td><td>@row.To</td><td>@row.Request</td></tr>
+                <tr data-sequence-step="@row.Step" data-kind="@row.Kind"><td>@row.Step</td><td>@row.From
+                    @if (row.To is not null) { <img src="_content/EventSupport/arrow-right.svg" width="18" height="18" alt="to" /> @row.To }
+                    </td><td>@row.Request</td></tr>
             }
         </tbody>
     </table>
@@ -41,15 +43,92 @@
                 <pre>@JsonSerializer.Serialize(exchange, WalletDemoSession.Pretty)</pre></details>
         }
     </section>
+    @for (var index = 0; index < Examples.Length; index++)
+    {
+        <details class="document-code" data-code-step="@(index + 1)" open="@(index == Math.Min(_session.Step, 3))">
+            <summary>@(index + 1). @DocumentDemoSession.Steps[index] (C#)</summary>
+            <pre><code>@Examples[index]</code></pre>
+        </details>
+    }
 </section>
 
 @code {
-    private static readonly (string From, string To, string Request)[] Sequence =
+    private static readonly (int Step, string Kind, string From, string? To, string Request)[] Sequence =
     [
-        ("Agent", "Resource", "Document challenge"), ("Agent", "PS", "Signed token request"),
-        ("Browser", "PS", "Authenticated interstitial"), ("Browser", "Resource", "Release permission"),
-        ("Resource", "PS", "Per-flow callback"), ("Browser", "PS", "Person consent"), ("Agent", "Resource", "Authorized download"),
+        (1, "setup", "Agent", "AP", "Signed enrollment; receive agent JWT"),
+        (2, "network", "Agent", "Resource", "Signed GET /document; receive 401 resource token"),
+        (2, "network", "Agent", "Resource", "Discover resource metadata and JWKS"),
+        (2, "local", "Agent", null, "Verify resource JWT and original request binding"),
+        (3, "network", "Agent", "PS", "Signed POST /token; receive 202 and pending Location"),
+        (3, "network", "Browser", "PS", "Authenticated resource-permission interstitial"),
+        (3, "local", "Browser", null, "Choose whether to continue to the resource"),
+        (3, "network", "Browser", "Resource", "Authenticated document release decision"),
+        (3, "network", "Browser", "PS", "Follow resource redirect to per-flow callback"),
+        (3, "network", "Browser", "PS", "Person consent decision"),
+        (3, "network", "Agent", "PS", "Signed GET pending Location; receive auth token or denial"),
+        (4, "network", "Agent", "Resource", "Auth-JWT-signed GET /document; receive released document"),
     ];
+    public static readonly string[] Examples = [EnrollExample, ChallengeExample, AuthorizeExample, DownloadExample];
+    public const string EnrollExample = """
+        public static async Task<EnrollResult> EnrollDocumentAgentAsync(
+            AAuthKey key, IKeyStore keyStore, string provider, string person,
+            AAuthEgressPolicy policy, CancellationToken cancellationToken)
+            => await AAuthClientBuilder.Bootstrap(provider + "/enrol")
+                .WithKey(key).WithKeyStore(keyStore).WithPersonServer(person)
+                .WithEgressPolicy(policy).EnrolAsync(cancellationToken);
+        """;
+    public const string ChallengeExample = """
+        public static async Task<string> RequestDocumentAsync(string agentToken,
+            string resource, string person, string agentId, IAAuthKey key,
+            TokenVerifier verifier, MetadataClient metadata, JwksClient jwks,
+            AAuthEgressPolicy policy, CancellationToken cancellationToken)
+        {
+            using var agent = new AAuthClientBuilder(key).UseJwt(agentToken)
+                .WithEgressPolicy(policy).Build();
+            using var request = new HttpRequestMessage(HttpMethod.Get, resource + "/document");
+            request.Options.Set(AAuthRequestOptions.Account, "work");
+            using var response = await agent.SendAsync(request, cancellationToken);
+            if (response.StatusCode != HttpStatusCode.Unauthorized)
+                throw new InvalidOperationException("Expected document challenge.");
+            var token = AAuthRequirementHeader.Parse(response.Headers
+                .GetValues(AAuthRequirementHeader.Name).Single()).ResourceToken!;
+            var verified = await verifier.VerifyResourceTokenAsync(token, person, agentId,
+                key.ComputeJwkThumbprint(), metadata, jwks, expectedApprover: person,
+                cancellationToken: cancellationToken);
+            if (verified.Issuer != resource || verified.Account != "work")
+                throw new TokenVerificationException("Document request context mismatch.");
+            return token;
+        }
+        """;
+    public const string AuthorizeExample = """
+        public static async Task<string> AuthorizeDocumentAsync(IAAuthKey key, string agentToken,
+            MetadataClient metadata, string person, string resourceToken,
+            Func<Interaction, CancellationToken, Task> showConsent,
+            AAuthEgressPolicy policy, CancellationToken cancellationToken)
+        {
+            using var agent = new AAuthClientBuilder(key).UseJwt(agentToken)
+                .WithEgressPolicy(policy).Build();
+            return await new TokenExchangeClient(agent, metadata).ExchangeAsync(person,
+                resourceToken, new TokenExchangeRequest
+                {
+                    Account = "work",
+                    OnInteractionRequired = showConsent,
+                    PollerOptions = new DeferredPollerOptions { MaxTotalWait = TimeSpan.FromMinutes(5) },
+                }, cancellationToken);
+            }
+        """;
+    public const string DownloadExample = """
+        public static async Task<string> DownloadDocumentAsync(IAAuthKey key,
+            string authToken, string resource, AAuthEgressPolicy policy,
+            CancellationToken cancellationToken)
+        {
+            using var authorized = new AAuthClientBuilder(key).UseJwt(authToken)
+                .WithEgressPolicy(policy).Build();
+            using var response = await authorized.GetAsync(resource + "/document", cancellationToken);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadAsStringAsync(cancellationToken);
+        }
+        """;
     private DocumentDemoSession _session = null!;
     private readonly CancellationTokenSource _cancellation = new();
     private bool _busy;

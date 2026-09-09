@@ -58,8 +58,14 @@ before release. `InMemoryR3AuditSink` is explicitly non-durable and intended for
 tests. The R3 sample uses Microsoft.Data.Sqlite 10.0.11 with a transaction joining
 issuance and audit rows; bearer token text is not persisted. A post-commit delivery
 failure may leave an audited but undelivered token, never an unaudited release.
-Pending browser consent and the resource's ten-minute document/proposal store
-remain volatile. Restart requires a new authorization request.
+Pending browser consent remains volatile. `R3ProposalStore` retains exact document
+and proposal bytes for its process lifetime, including after consent completes;
+an unexpired grant must not lose its approved proposal after ten minutes.
+Its `maxEntries` capacity defaults to 1024 distinct hashes. Duplicate content
+reuses its entry; new content at capacity fails before a reference is published,
+without evicting existing references. The store is not restart-durable. Restart
+requires a new authorization request; production document and audit retention
+requires durable hosting beyond this in-memory sample store.
 
 `IsConditionalOperation` and `IsOperationAllowed` receive a qualified identity.
 `IsProposalAllowed` can evaluate concrete parameters. Resource scopes, when

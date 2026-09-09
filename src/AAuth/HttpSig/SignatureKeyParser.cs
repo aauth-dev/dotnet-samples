@@ -111,13 +111,36 @@ public static class SignatureKeyParser
     internal static string? Text(JsonObject? document, string name) =>
         document?[name] is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
 
+    internal static JsonObject ParseJsonObject(byte[] bytes)
+    {
+        using var document = JsonDocument.Parse(bytes);
+        if (document.RootElement.ValueKind != JsonValueKind.Object) throw new JsonException("JWT segment must be an object.");
+        ValidateUniqueMembers(document.RootElement);
+        return JsonNode.Parse(bytes)!.AsObject();
+    }
+
+    private static void ValidateUniqueMembers(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in element.EnumerateObject())
+            {
+                if (!names.Add(property.Name)) throw new JsonException("Duplicate JWT JSON member.");
+                ValidateUniqueMembers(property.Value);
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+            foreach (var item in element.EnumerateArray()) ValidateUniqueMembers(item);
+    }
+
     private static JsonObject DecodeJsonSegment(string segment)
     {
         try
         {
             var bytes = Base64UrlEncoder.DecodeBytes(segment);
             if (Base64UrlEncoder.Encode(bytes) != segment) throw new FormatException();
-            return JsonNode.Parse(bytes) as JsonObject ?? throw new JsonException();
+            return ParseJsonObject(bytes);
         }
         catch (Exception exception) when (exception is JsonException or FormatException or ArgumentException)
         { throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "Invalid JWT JSON segment.", exception); }

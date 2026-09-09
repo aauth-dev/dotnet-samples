@@ -28,9 +28,21 @@
         @for (var index = 0; index < EventDemoSession.Steps.Length; index++)
         {
             <li class="@(index < _session.Step ? "complete" : index == _session.Step ? "current" : "")"
+                data-protocol-step="@(index + 1)"
                 aria-current="@(index == _session.Step ? "step" : null)">@EventDemoSession.Steps[index]</li>
         }
     </ol>
+    <table class="events-diagram" aria-label="Sequence diagram">
+        <thead><tr><th>Step</th><th>Participants</th><th>Message or local action</th></tr></thead>
+        <tbody>
+            @foreach (var row in Sequence.Where(row => row.Protected is null || row.Protected == _session.Protected))
+            {
+                <tr data-sequence-step="@row.Step" data-kind="@row.Kind"><td>@row.Step</td><td>@row.From
+                    @if (row.To is not null) { <img src="_content/EventSupport/arrow-right.svg" width="18" height="18" alt="to" /> @row.To }
+                    </td><td>@row.Message</td></tr>
+            }
+        </tbody>
+    </table>
     <div class="events-actions">
         <button type="button" class="events-next" disabled="@(!_interactive || _busy || _session.Step == 6)" @onclick="Next">
             <img src="_content/EventSupport/arrow-right.svg" width="18" height="18" alt="" />
@@ -68,10 +80,13 @@
             </details>
         }
     </section>
-    <details class="events-code">
-        <summary>C# protocol snippets</summary>
-        <pre><code>@EventDemoCode.Example</code></pre>
-    </details>
+    @for (var index = 0; index < EventDemoCode.Steps.Length; index++)
+    {
+        <details class="events-code" data-code-step="@(index + 1)" open="@(index == Math.Min(_session.Step, 5))">
+            <summary>@(index + 1). @EventDemoSession.Steps[index] (C#)</summary>
+            <pre><code>@EventDemoCode.Steps[index]</code></pre>
+        </details>
+    }
     <footer class="events-limits">
         <p>Single-shot sample: <code>max_uses: 1</code>. AP token acquisition, authenticated polling, acknowledgement and the notification trigger are local sample APIs, not standard endpoints.</p>
         <p>Unlimited AP subscriptions are supported. The draft's agent deduplication rule uses <code>eid</code> and issuer, so recurring notifications under the same subscription are ignored. No per-event <code>jti</code> requirement is added.</p>
@@ -79,6 +94,25 @@
 </section>
 
 @code {
+    private static readonly (int Step, string Kind, string From, string? To, string Message, bool? Protected)[] Sequence =
+    [
+        (1, "network", "Agent", "Resource", "GET metadata and AsyncAPI channels", null),
+        (1, "network", "Agent", "AP", "GET event endpoint metadata", null),
+        (2, "setup", "Agent", "AP", "Signed enrollment; receive agent JWT", null),
+        (2, "local", "Agent", null, "Select public channel URL", false),
+        (2, "network", "Agent", "Resource", "Signed search; receive authorization challenge", true),
+        (2, "network", "Agent", "PS", "Verified resource-token exchange and signed pending polling", true),
+        (2, "network", "Browser", "PS", "Authenticated account consent", true),
+        (2, "network", "Agent", "Resource", "Authorized search; receive protected subscription ticket", true),
+        (3, "network", "Agent", "AP", "Signed POST local subscribe-token endpoint", null),
+        (3, "local", "Agent", null, "Persist event ID, issuer, and account context", null),
+        (4, "network", "Agent", "Resource", "Register with aa-subscribe+jwt", null),
+        (5, "network", "Agent", "Resource", "Signed local notification trigger", null),
+        (5, "network", "Resource", "AP", "Event payload signed with self-jwt", null),
+        (6, "network", "Agent", "AP", "Signed local inbox polling", null),
+        (6, "local", "Agent", null, "Verify event and persist receipt; ignore duplicate issuer/event ID", null),
+        (6, "network", "Agent", "AP", "Signed local acknowledgement", null),
+    ];
     private EventDemoSession _session = null!;
     private readonly CancellationTokenSource _cancellation = new();
     private bool _busy;
