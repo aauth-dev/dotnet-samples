@@ -15,28 +15,40 @@ namespace AAuth.Discovery;
 /// <c>aauth-access.json</c>).
 /// </summary>
 /// <remarks>
-/// In-memory cache with a configurable TTL. Resource servers and agents
-/// share this client to avoid repeated network round-trips to discover
-/// counterparties. No revocation, no negative caching — keep it simple
-/// until a real cache strategy is needed.
+/// Bounded per-URI cache with single-flight fetches, failure backoff, a one-minute
+/// attempt floor, and a hard maximum age. Cached documents are cloned on return.
 /// </remarks>
-public sealed class MetadataClient
+public sealed class MetadataClient : IDisposable
 {
     private readonly HttpClient _http;
-    private readonly TimeSpan _cacheTtl;
-    private readonly Func<DateTimeOffset> _clock;
-    private readonly ConcurrentDictionary<Uri, CacheEntry> _cache = new();
+    private readonly bool _ownsHttp;
+    private readonly DiscoveryCache<JsonObject> _cache;
+    public AAuthEgressPolicy Policy { get; }
 
     /// <summary>Create a metadata client.</summary>
     /// <param name="http">HttpClient used for fetches; left undisposed.</param>
     /// <param name="cacheTtl">Cache TTL. Default 5 minutes.</param>
     /// <param name="clock">Clock injection point.</param>
-    public MetadataClient(HttpClient http, TimeSpan? cacheTtl = null, Func<DateTimeOffset>? clock = null)
+    public MetadataClient(HttpClient? http = null, TimeSpan? cacheTtl = null, Func<DateTimeOffset>? clock = null,
+        AAuthEgressPolicy? policy = null, AAuthTransportContract? transportContract = null,
+        int maxCacheEntries = 1024, TimeSpan? maxCacheAge = null)
     {
-        ArgumentNullException.ThrowIfNull(http);
+        _cache = new(cacheTtl ?? TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(1),
+            clock ?? (() => DateTimeOffset.UtcNow), maxCacheEntries, maxCacheAge);
+        _ownsHttp = http is null;
+        http ??= AAuthHttpTransport.CreateClient(policy);
+        if (transportContract is { } contract)
+            AAuthHttpTransport.AttachPolicy(http, policy ?? AAuthEgressPolicy.Production, contract);
+        Policy = AAuthHttpTransport.GetPolicy(http);
+        if (policy is not null && !ReferenceEquals(policy, Policy))
+            throw new InvalidOperationException("Discovery policy must match the injected client's registered policy.");
         _http = http;
-        _cacheTtl = cacheTtl ?? TimeSpan.FromMinutes(5);
-        _clock = clock ?? (() => DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>Dispose the internally created transport; injected clients remain caller-owned.</summary>
+    public void Dispose()
+    {
+        if (_ownsHttp) _http.Dispose();
     }
 
     /// <summary>
@@ -44,17 +56,18 @@ public sealed class MetadataClient
     /// </summary>
     /// <param name="issuer">Issuer URL (e.g. <c>https://resource.example</c>).</param>
     /// <param name="dwk">Well-known suffix (e.g. <c>aauth-resource.json</c>).</param>
-    public static Uri BuildUrl(string issuer, string dwk)
+    public static Uri BuildUrl(string issuer, string dwk, AAuthEgressPolicy? policy = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(issuer);
         ArgumentException.ThrowIfNullOrEmpty(dwk);
-        if (!Uri.TryCreate(issuer, UriKind.Absolute, out var baseUri))
-        {
-            throw new ArgumentException("Issuer must be an absolute URL.", nameof(issuer));
-        }
-        var trimmed = baseUri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
-        return new Uri($"{trimmed}/.well-known/{dwk}");
+        (policy ?? AAuthEgressPolicy.Production).ValidateIdentifier(issuer);
+        if (dwk is "." or ".." || dwk.Any(character => !char.IsAsciiLetterOrDigit(character)
+            && character is not ('.' or '-' or '_')))
+            throw new ArgumentException("Invalid well-known document name.", nameof(dwk));
+        return new Uri($"{issuer}/.well-known/{dwk}");
     }
+
+    public Uri GetUrl(string issuer, string dwk) => BuildUrl(issuer, dwk, Policy);
 
     /// <summary>Fetch metadata, returning a cached document when fresh.</summary>
     /// <remarks>
@@ -64,28 +77,39 @@ public sealed class MetadataClient
     public async Task<JsonObject> FetchAsync(Uri url, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(url);
-        var now = _clock();
-        if (_cache.TryGetValue(url, out var entry) && now < entry.Expiry)
-        {
-            return CloneObject(entry.Document);
-        }
+        Policy.ValidateUrl(url.OriginalString);
+        var separator = url.OriginalString.IndexOf("/.well-known/", StringComparison.Ordinal);
+        if (separator < 0) throw new ArgumentException("Metadata URL must use the well-known discovery path.", nameof(url));
+        var expectedIssuer = url.OriginalString[..separator];
+        if (GetUrl(expectedIssuer, url.OriginalString[(separator + 13)..]).OriginalString != url.OriginalString)
+            throw new ArgumentException("Invalid exact metadata URL.", nameof(url));
+        var document = await _cache.GetAsync(url.OriginalString, _ => false,
+            () => FetchDocumentAsync(url, expectedIssuer), cancellationToken).ConfigureAwait(false);
+        return CloneObject(document);
+    }
 
-        using var response = await _http.GetAsync(url, cancellationToken).ConfigureAwait(false);
+    private async Task<DiscoveryResponse<JsonObject>> FetchDocumentAsync(Uri url, string expectedIssuer)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        using var response = await AAuthHttpTransport.SendAsync(_http, request).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
-        var doc = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException($"Metadata at {url} is not a JSON object.");
+        var doc = await response.Content.ReadFromJsonAsync<JsonNode>().ConfigureAwait(false) as JsonObject
+            ?? throw new AAuth.HttpSig.AAuthVerificationException(SignatureErrorCode.InvalidKey, $"Metadata at {url} is not a JSON object.");
 
         // §Metadata Documents (draft-02): the document's `issuer` MUST match the
         // URL it was fetched from (the URL minus the `/.well-known/{dwk}` suffix).
         // Reject on mismatch — only verified documents are ever cached.
-        VerifyIssuer(url, doc);
-
-        _cache[url] = new CacheEntry(doc, now + _cacheTtl);
-        return CloneObject(doc);
+        VerifyIssuer(url, expectedIssuer, doc);
+        if (doc["jwks_uri"] is JsonValue jwks && jwks.TryGetValue<string>(out var jwksUrl))
+            Policy.ValidateJwksUrl(jwksUrl, expectedIssuer);
+        foreach (var field in new[] { "token_endpoint", "authorization_endpoint", "mission_endpoint", "callback_endpoint", "interaction_endpoint", "revocation_endpoint", "event_endpoint" })
+            if (doc[field] is JsonValue endpoint && endpoint.TryGetValue<string>(out var endpointUrl))
+                Policy.ValidateUrl(endpointUrl, endpoint: true);
+        return _cache.Response(doc, response);
     }
 
     /// <summary>Discard any cached entry for <paramref name="url"/>.</summary>
-    public void Invalidate(Uri url) => _cache.TryRemove(url, out _);
+    public void Invalidate(Uri url) => _cache.Invalidate(url.OriginalString);
 
     // §Metadata Documents (draft-02): verify the document's `issuer` matches the
     // origin it was retrieved from, preventing host-poisoned metadata (an attacker
@@ -93,10 +117,8 @@ public sealed class MetadataClient
     // permissive verifier would then trust for the impersonated issuer). AAuth
     // server identifiers are scheme + host only (§Server Identifiers), so the
     // expected issuer is the fetch URL's authority and the well-known path drops out.
-    private static void VerifyIssuer(Uri url, JsonObject doc)
+    private void VerifyIssuer(Uri url, string expectedIssuer, JsonObject doc)
     {
-        var expectedIssuer = url.GetLeftPart(UriPartial.Authority);
-
         string? claimedIssuer = null;
         if (doc.TryGetPropertyValue("issuer", out var node)
             && node is JsonValue value
@@ -110,10 +132,10 @@ public sealed class MetadataClient
         {
             throw new AAuthMetadataException(url, claimedIssuer, expectedIssuer);
         }
+        Policy.ValidateIdentifier(claimedIssuer);
     }
 
     private static JsonObject CloneObject(JsonObject source) =>
         (JsonObject)source.DeepClone();
 
-    private sealed record CacheEntry(JsonObject Document, DateTimeOffset Expiry);
 }

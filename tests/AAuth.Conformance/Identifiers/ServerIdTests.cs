@@ -56,14 +56,16 @@ public class ServerIdTests
     [Fact(DisplayName = "§Server Identifiers — loopback+port accepted for dev")]
     public void Accepts_LoopbackWithPort()
     {
-        Assert.True(ServerId.TryParse("http://localhost:5100", out var id, out _));
+        Assert.False(ServerId.TryParse("http://localhost:5100", out _, out _));
+        Assert.True(ServerId.TryParse("http://localhost:5100", out var id, out _, TestEgress.Policy));
         Assert.Equal("http://localhost:5100", id.Value);
     }
 
     [Fact(DisplayName = "§Server Identifiers — loopback 127.0.0.1+port accepted")]
     public void Accepts_Loopback127WithPort()
     {
-        Assert.True(ServerId.TryParse("http://127.0.0.1:8080", out var id, out _));
+        Assert.False(ServerId.TryParse("http://127.0.0.1:8080", out _, out _));
+        Assert.True(ServerId.TryParse("http://127.0.0.1:8080", out var id, out _, TestEgress.Policy));
         Assert.Equal("http://127.0.0.1:8080", id.Value);
     }
 

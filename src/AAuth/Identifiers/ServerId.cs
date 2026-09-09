@@ -4,10 +4,8 @@ using System.Globalization;
 namespace AAuth.Identifiers;
 
 /// <summary>
-/// Validates and normalises an AAuth server identifier per §Server Identifiers.
-/// Rules: MUST use https, host-only (no port, path, query, or fragment),
-/// no trailing slash, lowercase, IDN → ACE form. Loopback (localhost,
-/// 127.0.0.1, ::1) may include port for dev use.
+/// Validates an exact AAuth server identifier without normalization.
+/// Loopback exceptions require an explicit development policy.
 /// </summary>
 public readonly struct ServerId : IEquatable<ServerId>
 {
@@ -15,102 +13,31 @@ public readonly struct ServerId : IEquatable<ServerId>
 
     private ServerId(string value) => _value = value;
 
-    /// <summary>The normalised identifier value.</summary>
+    /// <summary>The original validated identifier value.</summary>
     public string Value => _value;
 
     /// <summary>Parse and validate a server identifier string. Throws on invalid input.</summary>
-    public static ServerId Parse(string input)
+    public static ServerId Parse(string input, AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
-        if (!TryParse(input, out var id, out var error))
+        if (!TryParse(input, out var id, out var error, policy))
             throw new FormatException(error);
         return id;
     }
 
     /// <summary>Try to parse and validate a server identifier string.</summary>
-    public static bool TryParse(string? input, out ServerId result, out string? error)
+    public static bool TryParse(string? input, out ServerId result, out string? error,
+        AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
         result = default;
         error = null;
 
-        if (string.IsNullOrWhiteSpace(input))
+        if (!(policy ?? AAuth.Discovery.AAuthEgressPolicy.Production).IsValidIdentifier(input))
         {
-            error = "Server identifier must not be empty.";
+            error = "Server identifier requires lowercase https and an ASCII host, without port, path, query, fragment, or trailing slash; loopback requires explicit configuration.";
             return false;
         }
 
-        if (!Uri.TryCreate(input, UriKind.Absolute, out var uri))
-        {
-            error = $"Server identifier is not a valid absolute URI: '{input}'.";
-            return false;
-        }
-
-        if (uri.Scheme != Uri.UriSchemeHttps)
-        {
-            // Loopback exemption: allow http for localhost/127.0.0.1/::1
-            if (!(uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback))
-            {
-                error = "Server identifier MUST use the https scheme.";
-                return false;
-            }
-        }
-
-        // No path, query, or fragment.
-        if (uri.AbsolutePath != "/" || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
-        {
-            error = "Server identifier MUST NOT contain path, query, or fragment.";
-            return false;
-        }
-
-        // Trailing slash: the canonical form has no trailing slash.
-        if (input.EndsWith('/'))
-        {
-            error = "Server identifier MUST NOT include a trailing slash.";
-            return false;
-        }
-
-        // Port: not allowed for non-loopback.
-        if (!uri.IsDefaultPort && !uri.IsLoopback)
-        {
-            error = "Server identifier MUST NOT contain a port (non-loopback).";
-            return false;
-        }
-
-        // Lowercase enforcement.
-        var host = uri.Host; // Uri.Host is already lowercased by System.Uri
-        var scheme = uri.Scheme; // already lowercase
-
-        // IDN → ACE (A-label) form.
-        var idn = new IdnMapping();
-        string aceHost;
-        try
-        {
-            aceHost = idn.GetAscii(host);
-        }
-        catch (ArgumentException)
-        {
-            error = "Server identifier domain is not valid for IDN conversion.";
-            return false;
-        }
-
-        // Reconstruct the canonical form.
-        string canonical;
-        if (!uri.IsDefaultPort && uri.IsLoopback)
-        {
-            canonical = $"{scheme}://{aceHost}:{uri.Port}";
-        }
-        else
-        {
-            canonical = $"{scheme}://{aceHost}";
-        }
-
-        // Lowercase check on original input (spec: MUST be lowercase).
-        if (input != canonical && input.ToLowerInvariant() != input)
-        {
-            error = "Server identifier MUST be lowercase.";
-            return false;
-        }
-
-        result = new ServerId(canonical);
+        result = new ServerId(input!);
         return true;
     }
 

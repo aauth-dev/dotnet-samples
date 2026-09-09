@@ -26,7 +26,7 @@ public class ResourceAccessModeMetadataTests
         var doc = await FetchMetadata(new AAuthResourceMetadataOptions
         {
             Issuer = Issuer,
-            SigningKeys = new Dictionary<string, AAuthKey> { ["k1"] = AAuthKey.Generate() },
+            SigningKeys = new Dictionary<string, IAAuthKey> { ["k1"] = AAuthKey.Generate() },
             AccessMode = AAuthConstants.AccessModes.AuthToken,
         });
 
@@ -54,7 +54,7 @@ public class ResourceAccessModeMetadataTests
         var doc = await FetchMetadata(new AAuthResourceMetadataOptions
         {
             Issuer = Issuer,
-            SigningKeys = new Dictionary<string, AAuthKey> { ["k1"] = AAuthKey.Generate() },
+            SigningKeys = new Dictionary<string, IAAuthKey> { ["k1"] = AAuthKey.Generate() },
         });
 
         Assert.False(doc.ContainsKey("access_mode"));

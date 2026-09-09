@@ -16,17 +16,16 @@ namespace AAuth.Discovery;
 /// </summary>
 /// <remarks>
 /// Implements the AAuth spec recommendation that JWKS fetches be rate-limited
-/// (no more than once per minute per <c>jwks_uri</c>) and cached. A miss on
+/// (no more than once per minute per issuer and per direct JWKS URL) and cached. A miss on
 /// <c>kid</c> triggers a refresh only if the last fetch is older than the
 /// rate-limit window.
 /// </remarks>
-public sealed class JwksClient
+public sealed class JwksClient : IDisposable
 {
     private readonly HttpClient _http;
-    private readonly TimeSpan _cacheTtl;
-    private readonly TimeSpan _minRefreshInterval;
-    private readonly Func<DateTimeOffset> _clock;
-    private readonly ConcurrentDictionary<Uri, CacheEntry> _cache = new();
+    private readonly bool _ownsHttp;
+    private readonly DiscoveryCache<Dictionary<string, JsonObject>> _cache;
+    public AAuthEgressPolicy Policy { get; }
 
     /// <summary>Create a JWKS client.</summary>
     /// <param name="http">HttpClient used for fetches.</param>
@@ -34,38 +33,43 @@ public sealed class JwksClient
     /// <param name="minRefreshInterval">Minimum interval between refresh fetches. Default 1 minute.</param>
     /// <param name="clock">Clock injection point.</param>
     public JwksClient(
-        HttpClient http,
+        HttpClient? http = null,
         TimeSpan? cacheTtl = null,
         TimeSpan? minRefreshInterval = null,
-        Func<DateTimeOffset>? clock = null)
+        Func<DateTimeOffset>? clock = null,
+        int maxCacheEntries = 1024,
+        TimeSpan? maxCacheAge = null,
+        AAuthEgressPolicy? policy = null,
+        AAuthTransportContract? transportContract = null)
     {
-        ArgumentNullException.ThrowIfNull(http);
+        _cache = new(cacheTtl ?? TimeSpan.FromHours(1), minRefreshInterval ?? TimeSpan.FromMinutes(1),
+            clock ?? (() => DateTimeOffset.UtcNow), maxCacheEntries, maxCacheAge);
+        _ownsHttp = http is null;
+        http ??= AAuthHttpTransport.CreateClient(policy);
+        if (transportContract is { } contract)
+            AAuthHttpTransport.AttachPolicy(http, policy ?? AAuthEgressPolicy.Production, contract);
+        Policy = AAuthHttpTransport.GetPolicy(http);
+        if (policy is not null && !ReferenceEquals(policy, Policy))
+            throw new InvalidOperationException("Discovery policy must match the injected client's registered policy.");
         _http = http;
-        _cacheTtl = cacheTtl ?? TimeSpan.FromHours(1);
-        _minRefreshInterval = minRefreshInterval ?? TimeSpan.FromMinutes(1);
-        _clock = clock ?? (() => DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>Dispose internally created HTTP resources; injected clients remain caller-owned.</summary>
+    public void Dispose()
+    {
+        if (_ownsHttp) _http.Dispose();
     }
 
     /// <summary>Resolve a key by <c>kid</c> from the JWKS at <paramref name="jwksUri"/>.</summary>
     /// <returns>The public key, or null if no key matches.</returns>
-    public async Task<IAAuthKey?> ResolveKeyAsync(Uri jwksUri, string kid, CancellationToken cancellationToken = default)
+    public Task<IAAuthKey?> ResolveKeyAsync(Uri jwksUri, string kid, CancellationToken cancellationToken = default) =>
+        ResolveAsync(jwksUri, kid, null, false, cancellationToken);
+
+    /// <summary>Resolve discovered keys with the exact issuer validated by metadata discovery, preserving its attempt floor across URL changes.</summary>
+    public Task<IAAuthKey?> ResolveKeyAsync(Uri jwksUri, string kid, string issuer, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(jwksUri);
-        ArgumentException.ThrowIfNullOrEmpty(kid);
-
-        var now = _clock();
-        var entry = _cache.GetValueOrDefault(jwksUri);
-        if (entry is null || now > entry.Expiry)
-        {
-            entry = await FetchAsync(jwksUri, cancellationToken).ConfigureAwait(false);
-        }
-        else if (!entry.Keys.ContainsKey(kid) && now - entry.FetchedAt > _minRefreshInterval)
-        {
-            // Unknown kid + we haven't refreshed too recently: try once more.
-            entry = await FetchAsync(jwksUri, cancellationToken).ConfigureAwait(false);
-        }
-
-        return entry.Keys.TryGetValue(kid, out var key) ? key : null;
+        ArgumentException.ThrowIfNullOrEmpty(issuer);
+        return ResolveAsync(jwksUri, kid, issuer, false, cancellationToken);
     }
 
     /// <summary>
@@ -78,57 +82,52 @@ public sealed class JwksClient
     /// hammer the <c>jwks_uri</c>.
     /// </summary>
     /// <returns>The freshly-resolved key, or <see langword="null"/> if absent.</returns>
-    public async Task<IAAuthKey?> ForceRefreshKeyAsync(
-        Uri jwksUri, string kid, CancellationToken cancellationToken = default)
+    public Task<IAAuthKey?> ForceRefreshKeyAsync(
+        Uri jwksUri, string kid, CancellationToken cancellationToken = default) =>
+        ResolveAsync(jwksUri, kid, null, true, cancellationToken);
+
+    /// <summary>Refresh discovered keys subject to both the exact metadata-validated issuer's floor and the URL floor.</summary>
+    public Task<IAAuthKey?> ForceRefreshKeyAsync(
+        Uri jwksUri, string kid, string issuer, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(issuer);
+        return ResolveAsync(jwksUri, kid, issuer, true, cancellationToken);
+    }
+
+    private async Task<IAAuthKey?> ResolveAsync(Uri jwksUri, string kid, string? issuer, bool force,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(jwksUri);
         ArgumentException.ThrowIfNullOrEmpty(kid);
-
-        var now = _clock();
-        var entry = _cache.GetValueOrDefault(jwksUri);
-        if (entry is not null && now - entry.FetchedAt <= _minRefreshInterval)
-        {
-            // Within the rate-limit window — do not refetch; return what we have.
-            return entry.Keys.TryGetValue(kid, out var cached) ? cached : null;
-        }
-
-        entry = await FetchAsync(jwksUri, cancellationToken).ConfigureAwait(false);
-        return entry.Keys.TryGetValue(kid, out var key) ? key : null;
+        if (issuer is null) Policy.ValidateUrl(jwksUri.OriginalString);
+        else Policy.ValidateJwksUrl(jwksUri.OriginalString, issuer);
+        var keys = await _cache.GetAsync(jwksUri.AbsoluteUri, keys => force || !keys.ContainsKey(kid),
+            () => FetchAsync(jwksUri, CancellationToken.None), cancellationToken, issuer).ConfigureAwait(false);
+        return keys.TryGetValue(kid, out var key) ? KeyFactory.FromPublicJwk(key) : null;
     }
 
-    private async Task<CacheEntry> FetchAsync(Uri jwksUri, CancellationToken cancellationToken)
+    private async Task<DiscoveryResponse<Dictionary<string, JsonObject>>> FetchAsync(Uri jwksUri, CancellationToken cancellationToken)
     {
-        using var response = await _http.GetAsync(jwksUri, cancellationToken).ConfigureAwait(false);
+        using var request = new HttpRequestMessage(HttpMethod.Get, jwksUri);
+        using var response = await AAuthHttpTransport.SendAsync(_http, request, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
-        var doc = await response.Content.ReadFromJsonAsync<JsonObject>(cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException($"JWKS at {jwksUri} is not a JSON object.");
+        var doc = await response.Content.ReadFromJsonAsync<JsonNode>(cancellationToken).ConfigureAwait(false) as JsonObject
+            ?? throw new AAuth.HttpSig.AAuthVerificationException(AAuth.Errors.SignatureErrorCode.InvalidKey, $"JWKS at {jwksUri} is not a JSON object.");
 
-        var now = _clock();
-        var keys = new Dictionary<string, IAAuthKey>(StringComparer.Ordinal);
+        var keys = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         if (doc["keys"] is JsonArray array)
         {
             foreach (var node in array)
             {
                 if (node is not JsonObject jwk) { continue; }
-                if ((string?)jwk["kid"] is not { } kid) { continue; }
-
-                var key = KeyFactory.TryFromJwk(jwk);
-                if (key is null) { continue; }
-
-                keys[kid] = key;
+                if (jwk["kid"] is not JsonValue kidValue || !kidValue.TryGetValue<string>(out var kid)) { continue; }
+                keys[kid] = jwk;
             }
         }
 
-        var entry = new CacheEntry(keys, now, now + _cacheTtl);
-        _cache[jwksUri] = entry;
-        return entry;
+        return _cache.Response(keys, response);
     }
 
-    /// <summary>Clear all cached JWKS entries, forcing the next resolve to fetch fresh.</summary>
-    public void ClearCache() => _cache.Clear();
-
-    private sealed record CacheEntry(
-        IReadOnlyDictionary<string, IAAuthKey> Keys,
-        DateTimeOffset FetchedAt,
-        DateTimeOffset Expiry);
+    /// <summary>Discard cached keys without clearing attempt floors or failure backoff.</summary>
+    public void ClearCache() => _cache.Invalidate();
 }

@@ -40,7 +40,7 @@ public class WellKnownMetadataTests : IAsyncLifetime
             Issuer = Issuer,
             Name = "Conformance Demo",
             DocumentationUri = $"{Issuer}/docs",
-            SigningKeys = new Dictionary<string, AAuthKey> { [Kid] = _key },
+            SigningKeys = new Dictionary<string, IAAuthKey> { [Kid] = _key },
             ScopeDescriptions = new Dictionary<string, string> { ["whoami"] = "See your basic profile." },
             SignatureWindow = 90,
             AdditionalMetadata = new Dictionary<string, JsonNode?>
@@ -118,7 +118,7 @@ public class WellKnownMetadataTests : IAsyncLifetime
         Assert.Equal("Ed25519", (string?)jwk["crv"]);
         Assert.Equal(Kid, (string?)jwk["kid"]);
         Assert.Equal("sig", (string?)jwk["use"]);
-        Assert.Equal("EdDSA", (string?)jwk["alg"]);
+        Assert.Equal("Ed25519", (string?)jwk["alg"]);
         // JWKS MUST NOT include the private 'd' parameter.
         Assert.Null(jwk["d"]);
     }

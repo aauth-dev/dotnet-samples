@@ -54,7 +54,7 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
             Name = "Test Agent",
             Description = "**Test Agent** drafts email on your behalf.",
             DocumentationUri = $"{AgentIssuer}/docs",
-            SigningKeys = new Dictionary<string, AAuthKey> { [AgentKid] = _agentKey },
+            SigningKeys = new Dictionary<string, IAAuthKey> { [AgentKid] = _agentKey },
             CallbackEndpoint = $"{AgentIssuer}/callback",
         });
         await a.StartAsync();
@@ -69,7 +69,7 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
             Issuer = PsIssuer,
             TokenEndpoint = $"{PsIssuer}/token",
             Description = "**Test PS** — manage which agents act for you.",
-            SigningKeys = new Dictionary<string, AAuthKey> { [PsKid] = _psKey },
+            SigningKeys = new Dictionary<string, IAAuthKey> { [PsKid] = _psKey },
             MissionEndpoint = $"{PsIssuer}/mission",
             ScopesSupported = new[] { "whoami", "data.read" },
         });
@@ -84,7 +84,7 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
         {
             Issuer = AsIssuer,
             TokenEndpoint = $"{AsIssuer}/token",
-            SigningKeys = new Dictionary<string, AAuthKey> { [AsKid] = _asKey },
+            SigningKeys = new Dictionary<string, IAAuthKey> { [AsKid] = _asKey },
             RevocationEndpoint = $"{AsIssuer}/revoke",
         });
         await s.StartAsync();
@@ -97,12 +97,12 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
         c.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
         {
             Issuer = AgentIssuer,
-            SigningKeys = new Dictionary<string, AAuthKey> { [ResourceKid] = _resourceKey },
+            SigningKeys = new Dictionary<string, IAAuthKey> { [ResourceKid] = _resourceKey },
         });
         c.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
         {
             Issuer = AgentIssuer,
-            SigningKeys = new Dictionary<string, AAuthKey> { [AgentKid] = _agentKey },
+            SigningKeys = new Dictionary<string, IAAuthKey> { [AgentKid] = _agentKey },
         });
         await c.StartAsync();
         _combinedHost = c;
@@ -307,7 +307,7 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
             new AAuthAgentMetadataOptions
             {
                 Issuer = "",
-                SigningKeys = new Dictionary<string, AAuthKey> { ["k"] = AAuthKey.Generate() },
+                SigningKeys = new Dictionary<string, IAAuthKey> { ["k"] = AAuthKey.Generate() },
             }.Validate());
     }
 
@@ -319,7 +319,7 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
             {
                 Issuer = "https://ps.example",
                 TokenEndpoint = "",
-                SigningKeys = new Dictionary<string, AAuthKey> { ["k"] = AAuthKey.Generate() },
+                SigningKeys = new Dictionary<string, IAAuthKey> { ["k"] = AAuthKey.Generate() },
             }.Validate());
     }
 
@@ -331,7 +331,7 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
             {
                 Issuer = "https://as.example",
                 TokenEndpoint = "",
-                SigningKeys = new Dictionary<string, AAuthKey> { ["k"] = AAuthKey.Generate() },
+                SigningKeys = new Dictionary<string, IAAuthKey> { ["k"] = AAuthKey.Generate() },
             }.Validate());
     }
 
