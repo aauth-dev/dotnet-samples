@@ -81,9 +81,10 @@ public sealed class AAuthResourceOptions
     public string? AccessMode { get; set; }
 
     /// <summary>
-    /// Optional <c>authorization_endpoint</c> URL published in resource metadata
-    /// (the proactive authorization flow). When absent, the resource issues
-    /// resource tokens via <c>401</c> challenges instead.
+    /// Optional resource-owned <c>authorization_endpoint</c> URL for proactive
+    /// authorization, published in resource metadata. This does not select the
+    /// PS/AS resource-token recipient; use <see cref="Server.AAuthChallengeOptions.PersonServerAudience"/>.
+    /// When absent, the resource issues challenges for authorization instead.
     /// </summary>
     public string? AuthorizationEndpoint { get; set; }
     public string? RevocationEndpoint { get; set; }

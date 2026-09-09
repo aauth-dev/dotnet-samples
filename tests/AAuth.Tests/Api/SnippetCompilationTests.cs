@@ -9,6 +9,82 @@ namespace AAuth.Tests.Api;
 
 public sealed class SnippetCompilationTests
 {
+    [Theory]
+    [InlineData("docs/reference/configuration.md", 100)]
+    [InlineData("docs/reference/dependency-injection.md", 20)]
+    [InlineData("docs/server/token-issuance.md", 13)]
+    public void Documentation_ReferenceTablesMatchSource(string file, int minimumRows)
+    {
+        Assert.True(DocumentationApiExcerpts.ValidateTables(file) >= minimumRows);
+    }
+
+    [Fact]
+    public void Documentation_ReplaySeparatesSignaturesFromTokenRevocation()
+    {
+        var overview = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs/signing-modes/overview.md"));
+        foreach (var concept in new[] { "freshness", "replay cache" })
+        {
+            var row = overview.Split('\n').Single(line => line.StartsWith('|') && line.Contains(concept, StringComparison.OrdinalIgnoreCase));
+            var cells = row.Split('|');
+            Assert.Equal("—", cells[2].Trim());
+            Assert.All(cells.Skip(3).Take(3), cell => Assert.Equal("✓", cell.Trim()));
+        }
+        Assert.DoesNotMatch(@"(?i)\|[^\r\n|]*replay[^\r\n|]*jti", overview);
+        Assert.Matches(@"(?is)revocation.{0,80}issuer.{0,20}`jti`", overview);
+        Assert.Matches(@"(?is)token.{0,40}reusable.{0,30}fresh", overview);
+    }
+
+    [Theory]
+    [InlineData("docs/reference/configuration.md")]
+    [InlineData("docs/reference/dependency-injection.md")]
+    [InlineData("docs/server/resource-metadata.md")]
+    public void Documentation_ProactiveEndpointIsNotTokenRecipient(string file)
+    {
+        var text = File.ReadAllText(Path.Combine(RepositoryRoot(), file));
+        var rows = text.Split('\n').Where(line => line.StartsWith("| `AuthorizationEndpoint` |", StringComparison.Ordinal)).ToArray();
+        Assert.NotEmpty(rows);
+        foreach (var row in rows)
+        {
+            Assert.Matches(@"(?i)resource.{0,20}proactive", row);
+            Assert.Contains("PersonServerAudience", row);
+            Assert.DoesNotMatch(@"(?i)(AS authorization URL|Access Server's authorization)", row);
+        }
+        Assert.DoesNotMatch(@"(?i)(AuthorizationEndpoint\s*=|""authorization_endpoint""\s*:)\s*""https://as\.example", text);
+    }
+
+    [Fact]
+    public void Documentation_TokenBuildersUseAlgorithmAgileKeys()
+    {
+        var text = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs/server/token-issuance.md"));
+        var overview = text.Split("## Overview", StringSplitOptions.None)[1].Split("## Resource Tokens", StringSplitOptions.None)[0];
+        Assert.Contains("IAAuthKey", overview);
+        Assert.Contains("Ed25519", overview);
+        Assert.Contains("ES256", overview);
+        foreach (var builder in new[] { typeof(AAuth.Tokens.AgentTokenBuilder), typeof(AAuth.Tokens.AuthTokenBuilder), typeof(AAuth.Tokens.ResourceTokenBuilder) })
+            Assert.Equal(typeof(AAuth.Crypto.IAAuthKey), builder.GetProperty("Key")!.PropertyType);
+        Assert.DoesNotMatch(@"(?i)each produces[^\r\n]*signed with Ed25519", overview);
+    }
+
+    [Fact]
+    public void Documentation_AgentTokenDiscoveryAndResourceKeysMatchSource()
+    {
+        var overview = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs/signing-modes/overview.md"));
+        var row = overview.Split('\n').Single(line => line.StartsWith("| Remote key discovery (JWKS) |"));
+        Assert.Equal("✓ (cached)", row.Split('|')[5].Trim());
+        Assert.Contains("embedded `cnf.jwk`", overview);
+        var verifier = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(RepositoryRoot(), "src/AAuth/Tokens/TokenVerifier.cs")))
+            .GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>().Single(method => method.Identifier.ValueText == "VerifyWithJwksAsync");
+        Assert.Contains("metadata.FetchAsync", verifier.ToString());
+        Assert.Contains("jwks.ResolveKeyAsync", verifier.ToString());
+        var options = new AAuth.AAuthResourceOptions { Issuer = "https://resource.test" };
+        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        Microsoft.Extensions.DependencyInjection.AAuthResourceServiceCollectionExtensions.AddAAuthResource(services, configured => configured.Issuer = options.Issuer);
+        Assert.Empty(options.SigningKeys);
+        var dependencyInjection = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs/reference/dependency-injection.md"));
+        Assert.Contains("verification-only resource can leave `SigningKeys` empty", dependencyInjection);
+        Assert.DoesNotContain("requires the resource issuer and signing keys", dependencyInjection);
+    }
+
     [Fact]
     public void Documentation_EnrollmentKeyAndResourceRegistrationAreDistinct()
     {

@@ -725,7 +725,9 @@ public sealed class TokenVerifier
         var header = DecodeJsonSegment(segments[0], "header");
         var payload = DecodeJsonSegment(segments[1], "payload");
         ValidateStructure(header, payload, tokenType, EgressPolicy, MaxActDepth);
-        DecodeSegment(segments[2], "signature");
+        var signature = DecodeSegment(segments[2], "signature");
+        if ((string?)header["alg"] is AAuthKey.Ed25519Algorithm or EcdsaAAuthKey.Alg && signature.Length != 64)
+            throw new TokenVerificationException("JWT signature must contain 64 bytes for Ed25519 or ES256.");
         return (header, payload);
     }
 

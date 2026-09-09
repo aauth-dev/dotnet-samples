@@ -18,6 +18,31 @@ namespace AAuth.R3.Tests;
 public class AccessEndpointR3Tests
 {
     [Theory]
+    [InlineData("null")]
+    [InlineData("[]")]
+    [InlineData("{\"agent_token\":\"bad\",\"agent_token\":\"bad\"}")]
+    [InlineData("{\"nested\":{\"claim\":1,\"claim\":2}}")]
+    [InlineData("{")]
+    public async Task RawBodyIsRejectedBeforeR3Effects(string json)
+    {
+        var audit = new InMemoryR3AuditSink();
+        var fetches = 0;
+        var policies = 0;
+        var fixture = await R3AccessFixture.CreateAsync(auditSink: audit, onFetch: () => fetches++, onPolicy: () => policies++);
+        await using var app = fixture.App;
+        using var client = new AAuthClientBuilder(fixture.PsKey)
+            .UseJwksUri(R3TestData.PsIssuer, AAuthConstants.DwkFiles.Person, R3TestData.PsKid)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(app.GetTestServer().CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
+        using var response = await client.PostAsync(R3TestData.AsIssuer + "/token", new StringContent(json, System.Text.Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("invalid_request", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.False(response.Headers.Contains("Signature-Error"));
+        Assert.Equal(0, fetches);
+        Assert.Equal(0, policies);
+        Assert.Empty(audit.Records);
+    }
+
+    [Theory]
     [MemberData(nameof(TestTokens.InvalidCredentials), MemberType = typeof(TestTokens))]
     public async Task BodyCredentialFailuresPrecedeFetchPolicyAndAudit(string field, string variant, string error)
     {

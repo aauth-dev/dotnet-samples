@@ -359,7 +359,7 @@ public sealed class AAuthResourceMetadataOptions
     /// <summary>Optional signature-window override (<c>signature_window</c>, seconds).</summary>
     public int? SignatureWindow { get; init; }
 
-    /// <summary>Optional authorization endpoint (§2, resource-initiated flow).</summary>
+    /// <summary>Optional resource-owned proactive authorization endpoint, not the PS/AS resource-token recipient.</summary>
     public string? AuthorizationEndpoint { get; init; }
 
     /// <summary>Optional revocation endpoint.</summary>

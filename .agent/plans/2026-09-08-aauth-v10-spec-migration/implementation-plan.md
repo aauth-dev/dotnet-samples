@@ -1067,6 +1067,31 @@ Phase rule: no compatibility exception or spec interpretation is implicit.
   retries=0. Retain failed gate history and the optional bootstrap convenience
   limitation. This is not an independent pass; all Phase 14 DoD boxes stay open.
 
+- [x] 2026-09-09: Complete the remaining guarded body/JWT parsing and typed
+  credential-error repairs from the 2637-test checkpoint. PS/core AS/R3 AS
+  reject malformed credentials before policy, audit, or document fetch; pending
+  replacement and claims paths reject invalid shapes without changing state.
+  Correct cached issuer discovery and conditional IAAuthKey resource-key docs;
+  compare every property/constructor-parameter table row in both reference pages
+  against source. Release passes 2859 tests, snippets/source checks pass 96,
+  fresh full stub passes 71 plus one live-only skip, and live passes 72, all
+  with zero retries. Only the parent is authorized to commit/push after final
+  gates and fresh review; this worker performs neither. Independent review and
+  all Phase 14 DoD checkboxes remain open.
+
+- [x] 2026-09-09: Repair the 2859-checkpoint claims regression with strict raw
+  JSON parsing shared across contexts and credential validation only for token
+  requests or matching clarification updated_request actions. Trusted pending
+  status controls dispatch; policy-requested action and credential-like names
+  remain ordinary claims. Preserve reserved-name and invalid-shape guards.
+  Correct adjacent replay, proactive endpoint and IAAuthKey documentation/XML;
+  extend the source table checker to token-issuance PS options. Focused HTTP
+  tests pass 286; snippets/source/link tests pass 103. Full Release passes 2911
+  tests with a clean build; fresh browsers pass 71 stub plus one live-only skip
+  and 72 live, all with zero retries or unexpected/flaky results. API and docs
+  inventories are current. Parent-only commit/push authorization does not close
+  independent review; no delegation or branch changes are authorized.
+
 ### Definition of Done
 
 - [ ] Every review finding has a recorded disposition and supporting evidence.

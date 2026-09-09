@@ -52,6 +52,17 @@ does not apply to algorithm-neutral single-key refresh or signing/verification.
 No compatibility alias, new enrollment abstraction, or independent-review closure
 is implied by this source inventory.
 
+Remaining-repair checkpoint (2026-09-09): 201 changed public-source files,
++810/-162 declarations, zero unmapped files. `TokenRequestBody.ReadAsync`
+returns structurally checked but unverified JSON; only subsequent verification
+can establish trusted claims. `TokenCredential`, the exception's optional
+credential context, `UpstreamTokenValidationResult.FailureCode`, and
+`AAuthProblemDetails.TokenFailure` preserve typed token/expiry classification
+without treating body parameters as failed request authentication. Existing
+success bodies and trust boundaries are unchanged. Tests cover every credential
+field, raw duplicate JSON, pending replacement/claims non-mutation, and carrier
+401 headers. Release passes 2859 tests; independent review remains open.
+
 Each concept row applies to every explicitly listed file/member in its appendix
 group. The appendix records exact old/new declarations, including defaults and
 mandatory inputs, rather than relying on the earlier phase handoff lists.
@@ -216,7 +227,7 @@ failures, repairs, provenance and mobile screenshot evidence.
 
 ## Complete declaration delta
 
-Baseline `ba768f1`; 200 changed public-source files, 800 added/replacement declarations, 162 removed/replaced declarations.
+Baseline `ba768f1`; 201 changed public-source files, 810 added/replacement declarations, 162 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -2431,6 +2442,7 @@ Concept/decision: [server-contracts](#server-contracts). Source: [AAuthProblemDe
 ```diff
 + AAuth.Server.AAuthProblemDetails: public const string ContentType = "application/problem+json" ;
 + AAuth.Server.AAuthProblemDetails: public static IResult Create ( string error , string ? detail = null , int statusCode = StatusCodes . Status400BadRequest , IDictionary < string , object ? > ? extensions = null )
++ AAuth.Server.AAuthProblemDetails: public static IResult TokenFailure ( Tokens . TokenVerificationException exception , Tokens . TokenCredential credential = Tokens . TokenCredential . Agent )
 + AAuth.Server.AAuthProblemDetails: public static Task WriteAsync ( HttpContext context , string error , string ? detail = null , int statusCode = StatusCodes . Status400BadRequest , IDictionary < string , object ? > ? extensions = null )
 + AAuth.Server: public static class AAuthProblemDetails
 ```
@@ -2857,6 +2869,17 @@ Concept/decision: [revocation](#revocation). Source: [TokenRegistration.cs](../.
 
 Public owners: `AAuth.Server.TokenRegistration`, `AAuth.Server`.
 
+### src/AAuth/Server/TokenRequestBody.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [TokenRequestBody.cs](../../../src/AAuth/Server/TokenRequestBody.cs).
+
+```diff
++ AAuth.Server.TokenRequestBody: public static async Task < JsonObject > ReadAsync ( HttpRequest request , TokenVerifier verifier )
++ AAuth.Server: public static class TokenRequestBody
+```
+
+Public owners: `AAuth.Server.TokenRequestBody`, `AAuth.Server`.
+
 ### src/AAuth/Server/Verification/AAuthAuthenticationHandler.cs
 
 Concept/decision: [signatures](#signatures). Source: [AAuthAuthenticationHandler.cs](../../../src/AAuth/Server/Verification/AAuthAuthenticationHandler.cs).
@@ -3097,7 +3120,12 @@ Concept/decision: [tokens](#tokens). Source: [TokenVerifier.cs](../../../src/AAu
 ```diff
 - AAuth.Tokens.TokenVerifier: public VerifiedToken VerifyAuthToken ( string jwt , IAAuthKey issuerKey , string expectedAudience , IAAuthKey httpSignatureKey , string expectedAgentId , string ? expectedDwk = null , string ? expectedMaxScope = null )
 - AAuth.Tokens.TokenVerifier: public async Task < VerifiedToken > VerifyAuthTokenWithJwksAsync ( string jwt , MetadataClient metadata , JwksClient jwks , string expectedAudience , IAAuthKey httpSignatureKey , string expectedAgentId , string ? expectedMaxScope = null , CancellationToken cancellationToken = default )
++ AAuth.Tokens.TokenCredential: Agent
++ AAuth.Tokens.TokenCredential: Resource
++ AAuth.Tokens.TokenCredential: Subagent
++ AAuth.Tokens.TokenCredential: Upstream
 + AAuth.Tokens.TokenVerificationException: public AAuth . Errors . SignatureErrorCode Code { get ; }
++ AAuth.Tokens.TokenVerificationException: public TokenCredential ? Credential { get ; init ; }
 + AAuth.Tokens.TokenVerificationException: public TokenVerificationException ( AAuth . Errors . SignatureErrorCode code , string message , Exception ? inner = null )
 + AAuth.Tokens.TokenVerifier.VerifiedToken: public AAuthEgressPolicy EgressPolicy { get ; init ; } = AAuthEgressPolicy . Production
 + AAuth.Tokens.TokenVerifier.VerifiedToken: public DateTimeOffset ExpiresAt { get ; } = ReadExpiration ( Payload )
@@ -3105,15 +3133,17 @@ Concept/decision: [tokens](#tokens). Source: [TokenVerifier.cs](../../../src/AAu
 + AAuth.Tokens.TokenVerifier: public AAuthEgressPolicy EgressPolicy { get ; init ; } = AAuthEgressPolicy . Production
 + AAuth.Tokens.TokenVerifier: public VerifiedToken VerifyAuthToken ( string jwt , IAAuthKey issuerKey , string expectedAudience , IAAuthKey httpSignatureKey , string expectedAgentId , string ? expectedDwk = null , string ? expectedMaxScope = null , AccountExpectation ? accountExpectation = null )
 + AAuth.Tokens.TokenVerifier: public async Task < VerifiedToken > VerifyAuthTokenWithJwksAsync ( string jwt , MetadataClient metadata , JwksClient jwks , string expectedAudience , IAAuthKey httpSignatureKey , string expectedAgentId , string ? expectedMaxScope = null , CancellationToken cancellationToken = default , AccountExpectation ? accountExpectation = null )
++ AAuth.Tokens: public enum TokenCredential
 ```
 
-Public owners: `AAuth.Tokens.TokenVerificationException`, `AAuth.Tokens.TokenVerifier.VerifiedToken`, `AAuth.Tokens.TokenVerifier`, `AAuth.Tokens`.
+Public owners: `AAuth.Tokens.TokenCredential`, `AAuth.Tokens.TokenVerificationException`, `AAuth.Tokens.TokenVerifier.VerifiedToken`, `AAuth.Tokens.TokenVerifier`, `AAuth.Tokens`.
 
 ### src/AAuth/Tokens/UpstreamTokenValidator.cs
 
 Concept/decision: [tokens](#tokens). Source: [UpstreamTokenValidator.cs](../../../src/AAuth/Tokens/UpstreamTokenValidator.cs).
 
 ```diff
++ AAuth.Tokens.UpstreamTokenValidationResult: public AAuth . Errors . SignatureErrorCode FailureCode { get ; init ; } = AAuth . Errors . SignatureErrorCode . InvalidJwt
 + AAuth.Tokens.UpstreamTokenValidationResult: public DateTimeOffset ? ExpiresAt { get ; init ; }
 + AAuth.Tokens.UpstreamTokenValidationResult: public MissionClaim ? Mission { get ; init ; }
 + AAuth.Tokens.UpstreamTokenValidationResult: public TokenVerifier . VerifiedToken ? Verified { get ; init ; }

@@ -190,14 +190,17 @@ builder.Services.AddAAuthResource(options =>
 
 ### Custom Authorization Endpoint
 
-Override the authorization endpoint for advanced scenarios (e.g., custom access server):
+Advertise the resource's proactive authorization endpoint for agents to start
+authorization without first receiving a resource challenge. This does not select
+an Access Server: configure `PersonServerAudience` on the challenge options to
+set the resource token's PS/AS recipient.
 
 ```csharp
 builder.Services.AddAAuthResource(options =>
 {
     options.Issuer = "https://my-resource.example";
     options.SigningKeys = new() { ["key-1"] = resourceKey };
-    options.AuthorizationEndpoint = "https://as.example/authorize";
+    options.AuthorizationEndpoint = "https://my-resource.example/authorize";
 });
 ```
 
@@ -361,7 +364,9 @@ refresh transport. Keys and stores remain caller-owned.
 ### AAuthResourceOptions
 
 `AddAAuthResource` registers inbound verification and resource-token issuance.
-It requires the resource issuer and signing keys, but does not require agent credentials.
+It requires the resource issuer but does not require agent credentials.
+Signing keys are required when issuing resource tokens or making signed calls;
+a verification-only resource can leave `SigningKeys` empty.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -370,7 +375,7 @@ It requires the resource issuer and signing keys, but does not require agent cre
 | `Name` | `string?` | `null` | Human-readable name in metadata (`name`) |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | `null` | Scope descriptions in metadata |
 | `SignatureWindow` | `int?` | `null` | Advertised signature validity (seconds) |
-| `AuthorizationEndpoint` | `string?` | `null` | AS authorization URL |
+| `AuthorizationEndpoint` | `string?` | `null` | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient selected by `PersonServerAudience` |
 | `RevocationEndpoint` | `string?` | `null` | Revocation endpoint URL |
 | `EnableResourceManagedAccess` | `bool` | `false` | Register a default `IOpaqueTokenStore` for the resource-managed (two-party) flow |
 

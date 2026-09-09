@@ -596,32 +596,35 @@ public static class AAuthAccessServerEndpoints
 
             return await entry.Lifecycle.ExecuteAsync(ctx, entry.PendingExpiresAt, options.TimeProvider, async () =>
             {
-                JsonObject? pushed;
+                JsonObject pushed;
                 try
                 {
-                    pushed = await TokenRequestBody.ReadAsync(ctx.Request, tokenVerifier);
+                    pushed = await TokenRequestBody.ReadJsonAsync(ctx.Request);
                 }
                 catch (System.Text.Json.JsonException)
                 {
                     return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "body is not valid JSON", statusCode: StatusCodes.Status400BadRequest);
                 }
-                catch (TokenVerificationException ex) { return AAuthProblemDetails.TokenFailure(ex); }
-
-                if (entry.Status == AccessPendingStatus.AwaitingClarification || pushed?.ContainsKey("action") == true)
+                if (entry.Status == AccessPendingStatus.AwaitingClarification)
                 {
                     var action = StringMember(pushed, "action");
                     var answer = StringMember(pushed, "clarification_response");
                     var replacementJwt = StringMember(pushed, "resource_token");
-                    if (entry.Status != AccessPendingStatus.AwaitingClarification
-                        || action is not ("clarification_response" or "updated_request")
+                    if (action is not ("clarification_response" or "updated_request")
                         || (action == "clarification_response" && (string.IsNullOrWhiteSpace(answer) || pushed!.ContainsKey("resource_token")))
-                        || (action == "updated_request" && (string.IsNullOrWhiteSpace(replacementJwt) || pushed!.ContainsKey("clarification_response")))
+                        || (action == "updated_request" && (replacementJwt is null || pushed!.ContainsKey("clarification_response")))
                         || (pushed!.ContainsKey("justification") && StringMember(pushed, "justification") is null))
                         return AAuthProblemDetails.Create("invalid_request", "Expected matching clarification action and payload.", statusCode: StatusCodes.Status400BadRequest);
                     if (entry.ClarificationRounds >= AAuth.Agent.ClarificationExchange.DefaultMaxRounds)
                         return AAuthProblemDetails.Create("denied", "Clarification round limit reached.", statusCode: StatusCodes.Status403Forbidden);
                     if (action == "updated_request")
                     {
+                        try { TokenRequestBody.ValidateCredentials(pushed, tokenVerifier); }
+                        catch (System.Text.Json.JsonException)
+                        {
+                            return AAuthProblemDetails.Create("invalid_request", "body is not a valid token request", statusCode: StatusCodes.Status400BadRequest);
+                        }
+                        catch (TokenVerificationException ex) { return AAuthProblemDetails.TokenFailure(ex); }
                         try
                         {
                             var replacement = await tokenVerifier.VerifyResourceTokenAsync(replacementJwt!, issuer, entry.AgentId,
@@ -666,6 +669,13 @@ public static class AAuthAccessServerEndpoints
 
                 if (pushed!.Any(claim => !AuthTokenBuilder.IsIdentityClaimAllowed(claim.Key)))
                     return AAuthProblemDetails.Create("invalid_request", "Pushed claims contain protocol-owned names.", statusCode: StatusCodes.Status400BadRequest);
+
+                if (pushed.ContainsKey("tenant") && StringMember(pushed, "tenant") is null)
+                    return AAuthProblemDetails.Create("invalid_request", "tenant must be a string.");
+                foreach (var name in new[] { "roles", "groups" })
+                    if (pushed.ContainsKey(name) && (pushed[name] is not JsonArray values
+                        || values.Any(value => value is not JsonValue item || !item.TryGetValue<string>(out _))))
+                        return AAuthProblemDetails.Create("invalid_request", $"{name} must be an array of strings.");
 
                 entry.SuppliedSubject = directedSub;
                 entry.SuppliedClaims = pushed;

@@ -63,5 +63,46 @@ internal static class DocumentationApiExcerpts
         }
     }
 
-    private static string Normalize(TypeSyntax type) => type.WithoutTrivia().ToString().Replace(" ", "").Replace("System.", "").Replace("AAuth.Crypto.", "");
+    internal static int ValidateTables(string file)
+    {
+        string? typeName = null;
+        var tableKind = "";
+        var checkedRows = 0;
+        var failures = new List<string>();
+        foreach (var line in File.ReadLines(Path.Combine(DocumentationInventory.Root, file)))
+        {
+            if (line.StartsWith("## ", StringComparison.Ordinal)) { typeName = null; tableKind = ""; }
+            if (line.StartsWith("### ", StringComparison.Ordinal))
+            {
+                typeName = line[4..].Split(' ')[0];
+                tableKind = "";
+            }
+            if (line.StartsWith("| Property | Type |", StringComparison.Ordinal)) tableKind = "property";
+            if (line.StartsWith("| Parameter | Type |", StringComparison.Ordinal)) tableKind = "parameter";
+            if (!line.StartsWith('|')) { tableKind = ""; continue; }
+            if (tableKind.Length == 0 || !line.StartsWith("| `", StringComparison.Ordinal)) continue;
+            var cells = line.Split('|').Select(cell => cell.Trim().Trim('`')).ToArray();
+            var implementation = Declarations.Value.OfType<TypeDeclarationSyntax>().FirstOrDefault(type => type.Identifier.ValueText == typeName);
+            var types = tableKind == "property"
+                ? implementation?.Members.OfType<PropertyDeclarationSyntax>().Where(property => property.Identifier.ValueText == cells[1]).Select(property => property.Type)
+                : implementation?.Members.OfType<ConstructorDeclarationSyntax>().SelectMany(constructor => constructor.ParameterList.Parameters)
+                    .Where(parameter => parameter.Identifier.ValueText == cells[1]).Select(parameter => parameter.Type!);
+            var candidates = types?.Select(Normalize).ToArray() ?? [];
+            var documented = Normalize(SyntaxFactory.ParseTypeName(cells[2]));
+            if (!candidates.Contains(documented))
+                failures.Add($"{file}: {typeName}.{cells[1]} documents {cells[2]}; source: {string.Join(", ", candidates)}");
+            checkedRows++;
+        }
+        Assert.True(failures.Count == 0, string.Join("\n", failures));
+        return checkedRows;
+    }
+
+    private sealed class UnqualifiedTypes : CSharpSyntaxRewriter
+    {
+        public override SyntaxNode? VisitQualifiedName(QualifiedNameSyntax node) => Visit(node.Right);
+        public override SyntaxNode? VisitAliasQualifiedName(AliasQualifiedNameSyntax node) => Visit(node.Name);
+    }
+
+    private static string Normalize(TypeSyntax type) => string.Concat(new UnqualifiedTypes().Visit(type)!
+        .DescendantTokens().Select(token => token.Text));
 }

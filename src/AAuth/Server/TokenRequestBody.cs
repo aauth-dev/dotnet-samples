@@ -1,7 +1,6 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Http;
@@ -12,8 +11,20 @@ public static class TokenRequestBody
 {
     public static async Task<JsonObject> ReadAsync(HttpRequest request, TokenVerifier verifier)
     {
+        var body = await ReadJsonAsync(request);
+        ValidateCredentials(body, verifier);
+        return body;
+    }
+
+    internal static async Task<JsonObject> ReadJsonAsync(HttpRequest request)
+    {
+        if (!request.HasJsonContentType()) throw new JsonException("Expected a JSON request body.");
         var json = await request.ReadFromJsonAsync<JsonElement>(request.HttpContext.RequestAborted);
-        var body = SignatureKeyParser.ParseJsonObject(Encoding.UTF8.GetBytes(json.GetRawText()));
+        return SignatureKeyParser.ParseJsonObject(Encoding.UTF8.GetBytes(json.GetRawText()));
+    }
+
+    internal static void ValidateCredentials(JsonObject body, TokenVerifier verifier)
+    {
         foreach (var (field, credential, type) in new[]
         {
             ("agent_token", TokenCredential.Agent, AgentTokenBuilder.TokenType),
@@ -29,6 +40,5 @@ public static class TokenRequestBody
             catch (TokenVerificationException exception)
             { throw new TokenVerificationException(exception.Message, exception) { Credential = credential }; }
         }
-        return body;
     }
 }

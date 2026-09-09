@@ -7,11 +7,16 @@ description: Issue bounded AAuth resource, agent, and authorization tokens.
 
 ## Overview
 
-The SDK provides builders for all three AAuth JWT token types. Each produces a compact JWT (`header.payload.signature`) signed with Ed25519.
+The SDK provides builders for all three AAuth JWT token types. Each produces a
+compact JWT (`header.payload.signature`) signed by the configured `IAAuthKey`.
+Built-in keys support Ed25519 (`AAuthKey`) and ES256 (`EcdsaAAuthKey`); the key's
+algorithm determines `alg`. Ed25519 examples are not a universal algorithm
+requirement. Choose a supported algorithm that the recipient accepts.
 
 ## Resource Tokens (`aa-resource+jwt`)
 
-Issued by a resource to challenge the agent. Contains the audience (Access Server URL) and the agent's key thumbprint.
+Issued by a resource to challenge the agent. Contains the recipient PS URL
+(three-party) or AS URL (federated), and the agent's key thumbprint.
 
 ```csharp
 using AAuth.Tokens;
@@ -19,10 +24,10 @@ using AAuth.Tokens;
 var resourceToken = new ResourceTokenBuilder
 {
     Issuer = "https://resource.example",
-    Audience = "https://as.example",          // where agent exchanges this
+    Audience = "https://as.example",          // recipient AS reached through the PS
     Agent = "aauth:myapp@ap.example",         // agent identifier
     AgentJkt = agentConfirmationKey.ComputeJwkThumbprint(), // verified HTTP key
-    Key = resourceSigningKey,                 // Ed25519 key
+    Key = resourceSigningKey,
     KeyId = "resource-key-1",
     Scope = "read write",                     // requested scope
     Lifetime = TimeSpan.FromMinutes(5),       // default: 5 min
@@ -288,19 +293,21 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
 
 ### AAuthPersonServerOptions Properties
 
-| Property | Required | Default | Description |
-|----------|:--------:|---------|-------------|
-| `Issuer` | Yes | — | HTTPS URL of this PS (`iss` of minted auth tokens) |
-| `SigningKeys` | Yes | — | `kid → AAuthKey` map published at the PS JWKS |
-| `TokenPath` | No | `/token` | The token endpoint path |
-| `PendingPathPrefix` | No | `/pending` | The deferred-consent poll path prefix |
-| `DefaultScope` | No | `""` | Scope assumed when the resource token omits one |
-| `InteractionPath` | No | `/interaction` | Path the host maps for the consent page |
-| `TrustedAccessServers` | No | `null` | Access Server URLs the PS will federate to. `null` ⇒ federate to the AS named in a verified resource token's `aud` (the spec default); empty ⇒ three-party only (four-party disabled); non-empty ⇒ restrict to the listed Access Servers. AND-composed with `IsTrustedAccessServer`. |
-| `IsTrustedAccessServer` | No | `null` | Optional predicate AND-composed with `TrustedAccessServers`; assign `AAuthTrust.Any` to federate to any verifiable AS explicitly. |
-| `InteractionEndpoint` | No | `null` | §Interaction Endpoint URL advertised in metadata (falls back to `InteractionPath`) |
-| `MissionEndpoint` / `PermissionEndpoint` / `AuditEndpoint` | No | `null` | Governance endpoint URLs advertised in `aauth-person.json` (the PS maps the endpoints) |
-| `UnsignedPathPrefixes` | No | `null` | Extra path prefixes the mapper's signature verification skips (e.g. the PS's own unsigned `/admin` consent surface) |
+| Property | Type | Required | Default | Description |
+|----------|------|:--------:|---------|-------------|
+| `Issuer` | `string` | Yes | — | HTTPS URL of this PS (`iss` of minted auth tokens) |
+| `SigningKeys` | `IReadOnlyDictionary<string, IAAuthKey>` | Yes | — | Key-id to signing key map published at the PS JWKS; supports Ed25519 and ES256 keys |
+| `TokenPath` | `string` | No | `/token` | The token endpoint path |
+| `PendingPathPrefix` | `string` | No | `/pending` | The deferred-consent poll path prefix |
+| `DefaultScope` | `string` | No | `""` | Scope assumed when the resource token omits one |
+| `InteractionPath` | `string` | No | `/interaction` | Path the host maps for the consent page |
+| `TrustedAccessServers` | `IReadOnlyCollection<string>?` | No | `null` | Access Server URLs the PS will federate to. `null` ⇒ federate to the AS named in a verified resource token's `aud` (the spec default); empty ⇒ three-party only (four-party disabled); non-empty ⇒ restrict to the listed Access Servers. AND-composed with `IsTrustedAccessServer`. |
+| `IsTrustedAccessServer` | `Func<string, bool>?` | No | `null` | Optional predicate AND-composed with `TrustedAccessServers`; assign `AAuthTrust.Any` to federate to any verifiable AS explicitly. |
+| `InteractionEndpoint` | `string?` | No | `null` | §Interaction Endpoint URL advertised in metadata (falls back to `InteractionPath`) |
+| `MissionEndpoint` | `string?` | No | `null` | Mission endpoint URL advertised in `aauth-person.json` (the PS maps the endpoint) |
+| `PermissionEndpoint` | `string?` | No | `null` | Permission endpoint URL advertised in `aauth-person.json` (the PS maps the endpoint) |
+| `AuditEndpoint` | `string?` | No | `null` | Audit endpoint URL advertised in `aauth-person.json` (the PS maps the endpoint) |
+| `UnsignedPathPrefixes` | `IReadOnlyCollection<string>?` | No | `null` | Extra path prefixes the mapper's signature verification skips (e.g. the PS's own unsigned `/admin` consent surface) |
 
 ### The `IIdentityClaimsAsserter` seam
 

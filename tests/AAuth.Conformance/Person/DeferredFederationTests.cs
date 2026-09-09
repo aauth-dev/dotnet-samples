@@ -24,6 +24,89 @@ namespace AAuth.Conformance.Person;
 
 public class DeferredFederationTests
 {
+    public static IEnumerable<object[]> CredentialNamedClaims =>
+        from claimName in new[] { "agent_token", "resource_token", "subagent_token", "upstream_token", "action" }
+        from json in new[] { "\"employee-123\"", "{\"department\":\"engineering\"}", "[\"staff\",123]", "123", "\"updated_request\"", "\"clarification_response\"" }
+        select new object[] { claimName, json };
+
+    [Theory]
+    [MemberData(nameof(CredentialNamedClaims))]
+    public async Task ClaimsPushPreservesRequestedCredentialNamedIdentity(string claimName, string json)
+    {
+        await using var fixture = await Fixture.CreateAsync("claims", requiredClaims: ["sub", claimName]);
+        using var initial = await fixture.Ps.PostAsJsonAsync("/token", new { agent_token = fixture.AgentToken, resource_token = fixture.ResourceToken("read") });
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        Assert.Contains(claimName, fixture.AsEntry.RequiredClaims!);
+        var discoveryCalls = fixture.DiscoveryTransport.Paths.Count;
+        var claimValue = JsonNode.Parse(json);
+        using var response = await fixture.Ps.PostAsJsonAsync(initial.Headers.Location,
+            new JsonObject { ["sub"] = "person", [claimName] = claimValue?.DeepClone() });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var payload = Payload((await response.Content.ReadFromJsonAsync<JsonObject>())!["auth_token"]!.GetValue<string>());
+        Assert.Equal("person", (string?)payload["sub"]);
+        Assert.True(JsonNode.DeepEquals(claimValue, payload[claimName]));
+        Assert.True(JsonNode.DeepEquals(claimValue, fixture.Policy.Last!.Claims![claimName]));
+        Assert.Equal(discoveryCalls, fixture.DiscoveryTransport.Paths.Count);
+        Assert.Equal(0, fixture.AsEntry.ClarificationRounds);
+        Assert.Equal("read", fixture.AsEntry.Scope);
+    }
+
+    [Theory]
+    [InlineData("tenant", "{}")]
+    [InlineData("tenant", "[]")]
+    [InlineData("roles", "{}")]
+    [InlineData("roles", "[null]")]
+    [InlineData("roles", "[123]")]
+    [InlineData("groups", "false")]
+    [InlineData("groups", "[{}]")]
+    [InlineData("groups", "null")]
+    [InlineData("sub", "{}")]
+    [InlineData("iss", "\"https://other.test\"")]
+    [InlineData("aud", "\"https://other.test\"")]
+    [InlineData("scope", "\"admin\"")]
+    [InlineData("cnf", "{}")]
+    [InlineData("exp", "123")]
+    public async Task ClaimsPushRejectsMalformedIdentityBeforePolicyOrMutation(string field, string json)
+    {
+        await using var fixture = await Fixture.CreateAsync("claims");
+        using var initial = await fixture.Ps.PostAsJsonAsync("/token", new { agent_token = fixture.AgentToken, resource_token = fixture.ResourceToken("read") });
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        var policy = fixture.Policy.Last;
+        var body = new JsonObject { ["sub"] = "person", [field] = JsonNode.Parse(json) };
+        using var response = await fixture.Ps.PostAsJsonAsync(initial.Headers.Location, body);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("invalid_request", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.Same(policy, fixture.Policy.Last);
+        Assert.Null(fixture.AsEntry.SuppliedSubject);
+        Assert.Null(fixture.AsEntry.SuppliedClaims);
+        Assert.Equal(AccessPendingStatus.Pending, fixture.AsEntry.Status);
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("[]")]
+    [InlineData("{\"sub\":\"person\",\"sub\":\"other\"}")]
+    [InlineData("{\"sub\":\"person\",\"agent_token\":\"employee-123\",\"agent_token\":\"employee-456\"}")]
+    [InlineData("{\"sub\":\"person\",\"action\":\"updated_request\",\"action\":\"clarification_response\"}")]
+    [InlineData("{\"sub\":\"person\",\"agent_token\":{\"department\":1,\"department\":2}}")]
+    [InlineData("{\"sub\":\"person\",\"agent_token\":[{\"department\":1,\"department\":2}]}")]
+    public async Task ClaimsPushRejectsMalformedRawJsonWithoutMutation(string json)
+    {
+        await using var fixture = await Fixture.CreateAsync("claims", requiredClaims: ["sub", "agent_token", "action"]);
+        using var initial = await fixture.Ps.PostAsJsonAsync("/token", new { agent_token = fixture.AgentToken, resource_token = fixture.ResourceToken("read") });
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        var policy = fixture.Policy.Last;
+        var discoveryCalls = fixture.DiscoveryTransport.Paths.Count;
+        using var response = await fixture.Ps.PostAsync(initial.Headers.Location, new StringContent(json, System.Text.Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("invalid_request", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.Same(policy, fixture.Policy.Last);
+        Assert.Null(fixture.AsEntry.SuppliedSubject);
+        Assert.Null(fixture.AsEntry.SuppliedClaims);
+        Assert.Equal(AccessPendingStatus.Pending, fixture.AsEntry.Status);
+        Assert.Equal(discoveryCalls, fixture.DiscoveryTransport.Paths.Count);
+    }
+
     public static IEnumerable<object[]> MalformedBodyCredentials =>
         from sample in TestTokens.InvalidCredentials
         from person in new[] { false, true }
@@ -897,10 +980,14 @@ public class DeferredFederationTests
     }
 
     [Theory]
-    [InlineData(null)]
-    [InlineData("unknown")]
-    [InlineData("updated_request")]
-    public async Task AsClarificationRequiresMatchingAction(string? action)
+    [InlineData("{}")]
+    [InlineData("{\"clarification_response\":\"answer\"}")]
+    [InlineData("{\"action\":null,\"clarification_response\":\"answer\"}")]
+    [InlineData("{\"action\":\"unknown\",\"clarification_response\":\"answer\"}")]
+    [InlineData("{\"action\":\"updated_request\",\"clarification_response\":\"answer\"}")]
+    [InlineData("{\"action\":{},\"clarification_response\":\"answer\"}")]
+    [InlineData("{\"action\":\"clarification_response\",\"clarification_response\":\"answer\",\"resource_token\":\"employee-123\"}")]
+    public async Task AsClarificationRequiresMatchingAction(string json)
     {
         await using var fixture = await Fixture.CreateAsync("answer");
         using var initial = await fixture.Ps.PostAsJsonAsync("/token", new
@@ -908,9 +995,17 @@ public class DeferredFederationTests
             agent_token = fixture.AgentToken,
             resource_token = fixture.ResourceToken(),
         });
-        using var invalid = await fixture.Ps.PostAsJsonAsync(initial.Headers.Location,
-            new JsonObject { ["action"] = action, ["clarification_response"] = "answer" });
+        var policy = fixture.Policy.Last;
+        var discoveryCalls = fixture.DiscoveryTransport.Paths.Count;
+        using var invalid = await fixture.Ps.PostAsync(initial.Headers.Location, new StringContent(json, System.Text.Encoding.UTF8, "application/json"));
         Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        Assert.Equal("invalid_request", (string?)(await invalid.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.Same(policy, fixture.Policy.Last);
+        Assert.Equal(AccessPendingStatus.AwaitingClarification, fixture.AsEntry.Status);
+        Assert.Equal(0, fixture.AsEntry.ClarificationRounds);
+        Assert.Empty(fixture.AsEntry.ClarificationAnswers);
+        Assert.Equal("read write", fixture.AsEntry.Scope);
+        Assert.Equal(discoveryCalls, fixture.DiscoveryTransport.Paths.Count);
     }
 
     [Theory]
@@ -990,7 +1085,7 @@ public class DeferredFederationTests
 
     private static JsonObject Payload(string jwt) => JsonNode.Parse(Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(jwt.Split('.')[1]))!.AsObject();
 
-    private sealed class Policy(string outcome) : IAccessPolicy
+    private sealed class Policy(string outcome, IReadOnlyList<string>? requiredClaims) : IAccessPolicy
     {
         public AccessPolicyRequest? Last { get; private set; }
         public Task<AccessDecision> EvaluateAsync(AccessPolicyRequest request, CancellationToken cancellationToken = default)
@@ -1003,7 +1098,7 @@ public class DeferredFederationTests
                 return Task.FromResult(AccessDecision.NeedsClarification("Why this scope?", outcome == "timeout" ? 1 : 30));
             if (outcome == "deny") return Task.FromResult(AccessDecision.Deny("declined"));
             if (outcome == "claims" && request.Claims?["sub"] is null)
-                return Task.FromResult(AccessDecision.NeedsClaims(["sub"]));
+                return Task.FromResult(AccessDecision.NeedsClaims(requiredClaims ?? ["sub"]));
             return Task.FromResult(AccessDecision.Allow("user"));
         }
     }
@@ -1088,7 +1183,8 @@ public class DeferredFederationTests
             return client;
         }
 
-        public static async Task<Fixture> CreateAsync(string outcome, IIdentityClaimsAsserter? asserter = null, IMissionTokenConsent? missionConsent = null)
+        public static async Task<Fixture> CreateAsync(string outcome, IIdentityClaimsAsserter? asserter = null, IMissionTokenConsent? missionConsent = null,
+            IReadOnlyList<string>? requiredClaims = null)
         {
             var psKey = AAuthKey.Generate();
             var secondPsKey = AAuthKey.Generate();
@@ -1110,7 +1206,7 @@ public class DeferredFederationTests
             var metadata = new MetadataClient(discovery);
             var jwks = new JwksClient(discovery);
             var store = new Store();
-            var policy = new Policy(outcome);
+            var policy = new Policy(outcome, requiredClaims);
             var accessBuilder = WebApplication.CreateBuilder();
             accessBuilder.WebHost.UseTestServer();
             accessBuilder.Services.AddSingleton(metadata).AddSingleton(jwks).AddSingleton(new TokenVerifier())

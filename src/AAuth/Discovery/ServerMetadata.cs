@@ -146,7 +146,7 @@ public sealed class ResourceMetadata
     /// <summary>Signature window in seconds.</summary>
     public int? SignatureWindow { get; init; }
 
-    /// <summary>Authorization endpoint (for resource-initiated flows).</summary>
+    /// <summary>Resource-owned proactive authorization endpoint, not the PS/AS resource-token recipient.</summary>
     public string? AuthorizationEndpoint { get; init; }
 
     /// <summary>Revocation endpoint.</summary>

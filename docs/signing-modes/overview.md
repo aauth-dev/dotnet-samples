@@ -99,9 +99,20 @@ var handler = new AAuthSigningHandler(signingKey, provider);
 |-----------|:---------:|:------------:|:--------------:|:-----------:|
 | Proof of key possession | — | ✓ | ✓ | ✓ |
 | Agent identifier disclosed | — | — | ✓ | ✓ |
-| Replay protection (jti) | — | — | — | ✓ |
-| Remote key discovery (JWKS) | — | — | ✓ | — |
+| Per-request signature freshness | — | ✓ | ✓ | ✓ |
+| Optional signature replay cache | — | ✓ | ✓ | ✓ |
+| Remote key discovery (JWKS) | — | — | ✓ | ✓ (cached) |
 | Person Server binding | — | — | — | ✓ |
+
+Every signed request is subject to signature freshness checks, regardless of its
+signing scheme. An optional replay cache rejects repeated verified signatures
+within that window for all schemes. Token revocation is separate, keyed by the
+issuer and `jti`; a valid, non-revoked token remains reusable with fresh request
+signatures. See [Replay Detection and Revocation](../server/replay-detection.md).
+
+Agent Token verification discovers the issuer's signing key through role metadata
+and JWKS, with cached discovery. The embedded `cnf.jwk` supplies the request's
+confirmation key; it does not replace issuer-key discovery or JWT verification.
 
 ## Valid Combinations per Access Mode
 

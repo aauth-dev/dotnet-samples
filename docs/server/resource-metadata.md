@@ -58,7 +58,7 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
         ["write"] = "Write access to your data"
     },
     SignatureWindow = 60,
-    AuthorizationEndpoint = "https://as.example/authorize",
+    AuthorizationEndpoint = "https://resource.example/authorize",
     RevocationEndpoint = "https://resource.example/revoke"
 });
 ```
@@ -70,12 +70,12 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 | Property | Required | Description |
 |----------|:--------:|-------------|
 | `Issuer` | Yes | The resource's canonical URL (used as `iss` in resource tokens) |
-| `SigningKeys` | Yes | Dictionary of key-id → `AAuthKey` used to sign resource tokens |
+| `SigningKeys` | Conditional | Key-id to `IAAuthKey` map; required to issue resource tokens or make signed calls, optional for verification-only resources |
 | `Name` | No | Human-readable name for the resource (`name`) |
 | `DocumentationUri` | No | Developer-documentation URL (`documentation_uri`) |
 | `ScopeDescriptions` | No | Scope → description map (displayed during consent) |
 | `SignatureWindow` | No | Signature validity window in seconds (advertised to agents) |
-| `AuthorizationEndpoint` | No | URL of the Access Server's authorization endpoint |
+| `AuthorizationEndpoint` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient selected by `PersonServerAudience` |
 | `RevocationEndpoint` | No | URL of the revocation endpoint |
 
 ## Published Endpoint
@@ -93,12 +93,17 @@ The extension maps `GET /.well-known/aauth-resource.json` returning:
     "write": "Write access to your data"
   },
   "signature_window": 60,
-  "authorization_endpoint": "https://as.example/authorize",
+  "authorization_endpoint": "https://resource.example/authorize",
   "revocation_endpoint": "https://resource.example/revoke"
 }
 ```
 
 The keys themselves are served separately at `/.well-known/jwks.json` (also mapped by `MapAAuthWellKnown()` / `MapAAuthResourceWellKnown()`).
+
+The `authorization_endpoint` belongs to the resource's proactive authorization
+flow. `PersonServerAudience` on the challenge options instead selects the
+resource token's recipient: an AS URL for federation, or the agent token's PS
+when the option is unset. It does not change this metadata endpoint.
 
 ## Agent-Side Discovery
 

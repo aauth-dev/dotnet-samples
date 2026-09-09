@@ -3057,6 +3057,213 @@ types, and conditional signing-key requirements. Add source-semantic API-table
 regressions, regenerate maps, and repeat Release/docs/full zero-retry stub/live
 browser gates. No gate beyond the focused results above is claimed yet.
 
+### [2026-09-09] [Phase 14] Remaining repair final gates - RESOLVED (fresh review pending)
+
+The four requested findings are repaired and verified. This entry supersedes
+only the pending status of the preceding remaining-repair entry, not historical
+results or review requirements. The parent alone may commit/push after final
+gates and fresh review. This worker performed no delegate, commit, push, branch
+change, package change, vendored-source change, or new Markdown frontmatter.
+
+Finding 1 is resolved by
+[TokenRequestBody.ReadAsync](../../../src/AAuth/Server/TokenRequestBody.cs#L12)
+and [TokenVerifier.ReadStructure](../../../src/AAuth/Tokens/TokenVerifier.cs#L720).
+All four credential fields receive guarded shape checks; malformed base64 and
+raw duplicate header/payload/body JSON produce problem-details 400 responses.
+The PS audience peek uses that parser and remains routing-only. Initial,
+pending replacement and claims-push readers share the JSON boundary. Known
+identity claim shapes are checked before state/policy mutation, covered by
+[claims-push tests](../../../tests/AAuth.Conformance/Person/DeferredFederationTests.cs#L37).
+No blanket application exception catch was added.
+
+Finding 2 is resolved by typed credential context and
+[TokenFailure](../../../src/AAuth/Server/AAuthProblemDetails.cs#L9).
+Core/R3 AS body-token failures are 400 after authenticated PS signatures;
+expired agent/resource tokens have distinct errors, child failures retain the
+agent-token category, and upstream errors never become authentication 401s.
+Actual carrier failures retain 401 plus Signature-Error. Canonical protocol
+[#error-responses L2298](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L2298)
+and [#token-endpoint-error-codes L2316](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L2316)
+were re-read. Shared signed mutation tables cover non-string/empty credentials,
+missing claims, invalid base64/signatures, duplicate JSON and expired parent,
+child and upstream credentials. Structural failures permit only required
+carrier discovery; no access policy, R3 document fetch, audit or token issuance
+occurs. Source-token registration follows full credential validation.
+
+Finding 3 is resolved at
+[overview L103](../../../docs/signing-modes/overview.md#L103): Agent Token needs
+cached issuer JWKS; embedded cnf.jwk is the confirmation key, not an issuer-trust
+substitute. The canonical cache rule is protocol
+[L2517](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L2517).
+
+Finding 4 is resolved at
+[configuration L203](../../../docs/reference/configuration.md#L203),
+[configuration L276](../../../docs/reference/configuration.md#L276), and
+[DI L361](../../../docs/reference/dependency-injection.md#L361).
+Resource metadata uses nullable IReadOnlyDictionary<string, IAAuthKey>;
+resource options use Dictionary<string, IAAuthKey>. Keys are conditional on
+resource-token issuance or signed calls; verification-only registration does
+not require them. Canonical protocol resource metadata is
+[L2734](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L2734).
+The complete tables in both reference pages are checked against Roslyn source
+names, types and nullability. This also corrected MetadataClient.http nullability
+and its documented default cache lifetime. The cached-JWKS and no-key
+registration cases have source/behavior assertions.
+
+Final verification:
+
+- Release solution build: zero warnings/errors.
+- Release solution tests: 2859/2859, zero failures/skips; 1461 core,
+	1033 conformance, 290 R3 and 75 Events. Net increase: 222 over 2637.
+- Focused federation suite: 240/240. The shared parser's earlier 217-case gate
+	and the focused R3/body gates are retained in the /tmp/phase14-remaining logs.
+- Documentation: 96/96 snippet/source-semantic checks; 169 files, 629 blocks,
+	272 exact compiled C# blocks. Links and TypeScript checks pass.
+- API: 201 changed public-source files, +810/-162 declarations, zero unmapped.
+	Generated maps retain the preceding historical records.
+- Fresh full stub browser run: 71 passed, one existing Keycloak-only skip,
+	zero unexpected/flaky outcomes or global errors; both projects retries=0.
+- Fresh full live Keycloak browser run: 72 passed, zero skipped/unexpected/flaky
+	outcomes or global errors; both projects retries=0.
+
+Evidence: /tmp/phase14-remaining-release-build.log,
+/tmp/phase14-remaining-release-tests.log, /tmp/phase14-remaining-trx/,
+/tmp/phase14-remaining-doc-inventory.log and the
+/tmp/phase14-remaining-stub / -live JSON, service logs and browser traces.
+Both browser gates used isolated HOME/XDG_DATA_HOME and fresh services.
+The existing review Keycloak container is restored to its original stopped
+state. No application services are intentionally left running.
+
+Validation corrections are not hidden: early test compilation needed the C# 14
+query variable renamed and declared namespaces used. Four initial near-expiry
+resource assertions conflicted with the existing 30-second verification skew;
+those cases now target strict parent/child/upstream issuance ceilings, while
+expired resource cases exceed the configured skew. Runtime clock-skew behavior
+was not changed. A nullable-flow warning in pending parsing was fixed, and the
+final full build is clean. These are not browser failures; both newly executed
+full browser gates passed on their first zero-retry runs.
+
+Residuals: no confirmed requested repair remains open. Fresh independent
+adversarial review remains pending, so Phase 14/15 stay open. Existing limits
+remain: the concrete Ed25519 bootstrap convenience, external live AAuth interop,
+production deployment and platform-attestation templates were not expanded or
+executed by these local gates. No blanket conformance certification is claimed.
+
+### [2026-09-09] [Phase 14] Final records and handoff - RESOLVED (review open)
+
+Final documentation/link validation passes 97/97 (96 snippet/source-semantic
+cases plus links); the separate non-writing frozen-document check passes 1/1.
+The source-type table sweep covers 136 rows: 115 configuration and 21 DI.
+API non-writing freshness and whitespace checks pass. Canonical issuer-key
+discovery is also verified at protocol
+[Agent Token Verification L614](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L614);
+the caching section's explicit stable anchor is #jwks-discovery, not #jwks-caching.
+
+Repair scope for this worker: 21 files (8 runtime, 5 tests/helpers, 3 public docs,
+5 plan/ledger/maps). At handoff the observed HEAD is 0d093da (wip), with 16
+modified files and no staged delta; earlier repair content is already present
+in that HEAD. This worker did not create that commit or run any push. Do not
+interpret the remaining diff alone as the full 2637-to-2859 repair scope.
+No sample/browser process or running Keycloak container remains. Historical
+records and existing Markdown metadata are preserved. Phases 14/15 and fresh
+independent review remain open.
+
+### [2026-09-09] [Phase 14] Context-aware claims and semantic docs final repair - RESOLVED (focused checks)
+
+The 2859-test checkpoint's claims failure is confirmed: all 30 new signed HTTP
+cases returned 400 before the fix. `TokenRequestBody.ReadAsync` treated every
+credential-like identity name as a JWT, and core AS pending dispatch also treated
+the presence of `action` as a clarification request. The fix separates strict
+raw JSON parsing from credential validation without adding reserved claim names.
+Initial token requests retain credential validation; pending POSTs select the
+contract from authenticated, owned pending state. Only `AwaitingClarification`
+accepts the matching required `clarification_response` / `updated_request` action;
+the latter validates credential structure before discovery or context mutation.
+Missing/unknown/mismatched actions return 400. In claims-pending state, `action`
+is an ordinary policy-requested identity claim, including either action-like
+string; it cannot change dispatch. The existing protocol-owned name prohibitions
+and typed sub/tenant/roles/groups checks remain unchanged.
+
+Canonical requirements were checked directly: protocol
+[Claims Required L1583](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L1583)
+(#requirement-claims), signed requested-claim POST at
+[L1599](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L1599), and
+[mandatory clarification action L1054](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L1054)
+(#agent-response-to-clarification). Regression coverage in
+[DeferredFederationTests](../../../tests/AAuth.Conformance/Person/DeferredFederationTests.cs)
+uses actual signed PS-to-AS HTTP requests, NeedsClaims policy, pending acceptance
+and issued auth-token payloads for agent_token/resource_token/subagent_token/
+upstream_token/action with strings, objects, arrays and numbers. It asserts no
+additional discovery or clarification mutation. Duplicate raw JSON, nested
+duplicates, reserved claims and malformed typed identities fail before policy or
+pending-state mutation. Existing initial and pending replacement matrices pass.
+
+Focused sequence: 30/30 reproduced failures; first repair 268 passed/2 failed
+because empty replacement strings lost invalid_resource_token classification;
+preserving that classification yielded 270/270. Expanded negative-state matrix
+passes 286/286. VS Code test discovery returned no tests, so the same conformance
+project was executed with a dotnet filter. Logs:
+/tmp/phase14-finalrepair-red.log and /tmp/phase14-finalrepair-focused.log.
+
+Documentation dispositions: signing overview now separates per-request freshness,
+optional signature replay caching across schemes, and issuer+jti revocation.
+Protocol [freshness L2505](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L2505)
+(#freshness-and-replay), optional cache L2507, and
+[revocation identity L2361](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L2361)
+(#token-revocation) were rechecked. Configuration (three rows), DI (row and
+example), resource-metadata prose/examples, and three source XML descriptions
+now distinguish the resource's proactive authorization endpoint from the
+PersonServerAudience PS/AS recipient. See protocol
+[authorization endpoint L642](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L642)
+(#authorization-endpoint-request), federation L1603, and resource metadata L2743.
+Token issuance uses IAAuthKey, Ed25519/ES256 examples and recipient policy, not a
+universal Ed25519-only signing mandate; algorithm requirements are at
+[L2405](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L2405)
+(#signature-algorithms). The existing source-table checker now also validates all
+13 PS options rows in token-issuance. Adjacent active docs/src/samples were swept
+for the same erroneous semantics; historical vendored sources were not edited.
+
+Focused docs pass 9/9; full snippets/source-semantic/link gate passes 103/103.
+The frozen docs inventory was regenerated after review. No new frontmatter or
+unrelated cleanup was introduced. Full Release and fresh zero-retry stub/live
+browser gates are next because pending dispatch changed. These implementation
+repairs do not complete Phase 14 or Phase 15; independent review remains pending.
+
+### [2026-09-09] [Phase 14] Context-aware final repair full gates - RESOLVED (review open)
+
+The final Release solution build passed with zero warnings/errors. All 2911
+tests passed, with no failures/skips: core 1467, conformance 1079, R3 290 and
+Events 75. This is 52 additional tests over the 2859 checkpoint. The existing
+malformed initial/pending updated-request matrices ran in this full solution gate.
+API inventory was regenerated and then checked without writing: 201 changed
+public-source files, +810/-162 declarations, zero unmapped. Documentation has
+169 files/629 blocks, including 272 exact compiled C# blocks. The complete
+snippet/source-semantic/link gate passed 103 tests; source tables cover 149 rows
+(115 configuration, 21 DI, 13 PS token-issuance options).
+
+Both full fresh browser gates passed with isolated HOME/XDG state, all services
+started by Playwright, retries=0 in both projects, and no unexpected/flaky
+outcomes or global errors. Stub: 71 passed and one expected live-only skip,
+274673 ms. Live Keycloak: 72 passed, zero skipped, 273556 ms. Each report contains
+40 GuidedTour and 32 SampleApp cases. The existing review Keycloak container was
+restored to its original stopped state; no sample service was left running.
+
+Exact evidence: /tmp/phase14-finalrepair-release-build.log,
+/tmp/phase14-finalrepair-release-tests.log, /tmp/phase14-finalrepair-trx/,
+/tmp/phase14-finalrepair-docs.log, and /tmp/phase14-finalrepair-stub.json /
+/tmp/phase14-finalrepair-live.json, with sibling -services.log and -results
+trace directories. The reproduced failing baseline remains in
+/tmp/phase14-finalrepair-red.log. Canonical lines in the preceding disposition
+were reprinted directly from the immutable v10 source before final gates.
+
+No requested code or documentation repair remains open. This is implementation
+verification, not an independent review: all Phase 14/15 DoD checkboxes remain
+open. External live AAuth interop, production deployment and platform-attestation
+templates remain unexecuted; the concrete Ed25519 bootstrap convenience limit
+is unchanged. Existing changes from the preceding repair were preserved. No
+delegation or branch change occurred. Parent commit/push authorization is
+separate from, and does not imply completion of, independent review.
+
 ## Deviations from Plan
 
 ### [2026-09-09] [Phase 11] Additional verified fixes - RESOLVED

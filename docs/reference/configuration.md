@@ -79,7 +79,7 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 | `Name` | `string?` | `null` | Human-readable resource name (`name`) |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | `null` | Scope → description map for metadata |
 | `SignatureWindow` | `int?` | `null` | Advertised signature validity (seconds) |
-| `AuthorizationEndpoint` | `string?` | `null` | AS authorization URL |
+| `AuthorizationEndpoint` | `string?` | `null` | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient selected by `PersonServerAudience` |
 | `RevocationEndpoint` | `string?` | `null` | Revocation endpoint URL |
 
 ### AAuthPersonServerOptions (via MapAAuthPersonServer)
@@ -183,8 +183,8 @@ Server `Retry-After` headers override `DefaultPollInterval` (clamped to `MinPoll
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `http` | `HttpClient` | — (required) | HTTP client for fetching documents |
-| `cacheTtl` | `TimeSpan?` | null (no expiry) | Cache entry lifetime |
+| `http` | `HttpClient?` | `null` | Optional HTTP client for fetching documents; supplied transports require an explicit transport contract |
+| `cacheTtl` | `TimeSpan?` | `null` (5 minutes) | Cache entry lifetime |
 | `clock` | `Func<DateTimeOffset>?` | `UtcNow` | Clock source for cache expiration |
 
 Methods:
@@ -200,11 +200,11 @@ Methods:
 | Property | Type | Required | Description |
 |----------|------|:--------:|-------------|
 | `Issuer` | `string` | Yes | Resource canonical URL |
-| `SigningKeys` | `IReadOnlyDictionary<string, AAuthKey>` | Yes | Key-id → signing key map |
+| `SigningKeys` | `IReadOnlyDictionary<string, IAAuthKey>?` | Conditional | Key-id to signing key map; required when issuing resource tokens or making signed calls, optional for verification-only resources |
 | `Name` | `string?` | No | Human-readable resource name (`name`) |
 | `ScopeDescriptions` | `IReadOnlyDictionary<string, string>?` | No | Scope → description |
 | `SignatureWindow` | `int?` | No | Advertised signature validity (seconds) |
-| `AuthorizationEndpoint` | `string?` | No | AS authorization URL |
+| `AuthorizationEndpoint` | `string?` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient selected by `PersonServerAudience` |
 | `RevocationEndpoint` | `string?` | No | Revocation endpoint URL |
 
 ## Key Storage
@@ -273,11 +273,11 @@ remains `~/.aauth/ap-keys`.
 | Property | Type | Required | Description |
 |----------|------|:--------:|-------------|
 | `Issuer` | `string` | Yes | Resource canonical URL |
-| `SigningKeys` | `Dictionary<string, AAuthKey>` | Yes | Key-id → signing key map |
+| `SigningKeys` | `Dictionary<string, IAAuthKey>` | Conditional | Key-id to signing key map; required when issuing resource tokens or making signed calls, optional for verification-only resources |
 | `Name` | `string?` | No | Resource display name (`name`) |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | No | Scope descriptions for metadata |
 | `SignatureWindow` | `int?` | No | Advertised signature validity (seconds) |
-| `AuthorizationEndpoint` | `string?` | No | AS authorization URL |
+| `AuthorizationEndpoint` | `string?` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient selected by `PersonServerAudience` |
 | `RevocationEndpoint` | `string?` | No | Revocation endpoint URL |
 
 ### AAuthDiscoveryOptions (AddAAuthDiscovery)

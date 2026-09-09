@@ -12,10 +12,11 @@ public static class TestTokens
     public static readonly string UpdatedResource = BuildResource();
 
     public static IEnumerable<object[]> InvalidCredentials =>
-        from field in new[] { "agent_token", "resource_token", "subagent_token", "upstream_token" }
+        from credentialField in new[] { "agent_token", "resource_token", "subagent_token", "upstream_token" }
         from variant in new[] { "object", "array", "number", "boolean", "empty", "blank", "base64",
-            "missing-claim", "signature-base64", "signature", "expired", "recently-expired", "duplicate-header", "duplicate-payload" }
-        select new object[] { field, variant, CredentialError(field, variant) };
+            "missing-claim", "signature-base64", "signature-length", "signature", "expired", "recently-expired", "duplicate-header", "duplicate-payload" }
+        where credentialField != "resource_token" || variant != "recently-expired"
+        select new object[] { credentialField, variant, CredentialError(credentialField, variant) };
 
     public static string CredentialError(string field, string variant) => variant switch
     {
@@ -53,6 +54,7 @@ public static class TestTokens
         var input = Base64UrlEncoder.Encode(headerJson) + "." + Base64UrlEncoder.Encode(payloadJson);
         var signature = key.Sign(Encoding.ASCII.GetBytes(input));
         if (variant == "signature") signature[0] ^= 1;
+        if (variant == "signature-length") signature = signature[..1];
         return JsonValue.Create(input + "." + (variant == "signature-base64" ? "%" : Base64UrlEncoder.Encode(signature)))!;
     }
 
