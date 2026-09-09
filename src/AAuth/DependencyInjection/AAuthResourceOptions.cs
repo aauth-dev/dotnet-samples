@@ -37,7 +37,11 @@ public sealed class AAuthResourceOptions
     /// </summary>
     public Func<DateTimeOffset>? Clock { get; set; }
 
-    /// <summary>Enable JTI-based replay detection. Default: true.</summary>
+    /// <summary>
+    /// Enable request replay detection using the signing-key thumbprint and
+    /// canonical signature base. Default: true. Token revocation is separately
+    /// keyed by issuer and token id; reusable tokens are not made single-use.
+    /// </summary>
     public bool EnableReplayDetection { get; set; } = true;
 
     /// <summary>

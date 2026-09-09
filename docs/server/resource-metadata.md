@@ -34,9 +34,10 @@ app.MapAAuthWellKnown(); // serves /.well-known/aauth-resource.json
 <summary>Manual Setup (building block)</summary>
 
 > `AddAAuthResource(...)` + `app.MapAAuthWellKnown()` is the preferred setup for
-> the common case. Reach for `MapAAuthResourceWellKnown(...)` directly only when
-> you need to publish a metadata field that `AAuthResourceOptions` does not expose
-> (for example `RevocationEndpoint`).
+> the common case. Use `MapAAuthResourceWellKnown(...)` directly when the host
+> manages metadata separately from the resource service registration.
+> `RevocationEndpoint` is also available through `AAuthResourceOptions`; it does
+> not require the manual mapper.
 
 ```csharp
 using AAuth.Server.Metadata;
@@ -112,11 +113,16 @@ Agents use `MetadataClient` to fetch and cache this document:
 ```csharp
 using AAuth.Discovery;
 
-var metadata = new MetadataClient(new HttpClient(), cacheTtl: TimeSpan.FromMinutes(15));
+using var metadata = new MetadataClient(cacheTtl: TimeSpan.FromMinutes(15));
 var url = MetadataClient.BuildUrl("https://resource.example", "aauth-resource.json");
 var doc = await metadata.FetchAsync(url);
 // doc["issuer"], doc["jwks_uri"], etc.
 ```
+
+Without an injected client, `MetadataClient` owns and disposes its admitted
+production transport. An injected client must carry an explicit transport
+policy contract and remains caller-owned; a plain `new HttpClient()` is not an
+admitted discovery transport.
 
 ## Further Reading
 

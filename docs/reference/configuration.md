@@ -227,7 +227,15 @@ Methods:
 
 ### AAuthSigningHandler
 
-Standard `DelegatingHandler` — no configurable options. Requires an `ISignatureKeyProvider` to supply the signing key and Signature-Key header value.
+A `DelegatingHandler` constructed with an `IAAuthKey` containing the private
+signing key and an `ISignatureKeyProvider` supplying the `Signature-Key` header
+value. The provider does not supply the private key. The constructor also accepts
+an optional clock for deterministic tests.
+
+Configure `Label` (default `"sig"`) to match the provider's signature label,
+`Capabilities` to declare outbound capabilities, and `OnSignatureBase` to inspect
+the canonical signed input. Per-request `AdditionalComponentsKey` selects extra
+covered components. Prefer `AAuthClientBuilder` for ordinary client composition.
 
 ### ISignatureKeyProvider Implementations
 

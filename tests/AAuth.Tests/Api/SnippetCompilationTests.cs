@@ -9,6 +9,42 @@ namespace AAuth.Tests.Api;
 
 public sealed class SnippetCompilationTests
 {
+    [Fact]
+    public void Documentation_ResourceDiscoveryUsesOwnedAdmittedTransport()
+    {
+        var snippet = DocumentationInventory.Read().Single(snippet => snippet.File == "docs/server/resource-metadata.md"
+            && snippet.Code.Contains("metadata.FetchAsync"));
+        var creation = CSharpSyntaxTree.ParseText(snippet.Code).GetRoot().DescendantNodes()
+            .OfType<ObjectCreationExpressionSyntax>().Single(expression => expression.Type.ToString() == "MetadataClient");
+        Assert.Equal("cacheTtl", Assert.Single(creation.ArgumentList!.Arguments).NameColon!.Name.Identifier.ValueText);
+        Assert.Contains("using var metadata", snippet.Code);
+        Compile(snippet.Key, snippet.Code);
+        using var metadata = new AAuth.Discovery.MetadataClient(cacheTtl: TimeSpan.FromMinutes(15));
+        Assert.Same(AAuth.Discovery.AAuthEgressPolicy.Production, metadata.Policy);
+        Assert.Equal("https://resource.example/.well-known/aauth-resource.json",
+            metadata.GetUrl("https://resource.example", "aauth-resource.json").AbsoluteUri);
+    }
+
+    [Fact]
+    public void Documentation_SigningAndReplayDescribeActualInputs()
+    {
+        var text = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs/reference/configuration.md"));
+        var signing = text.Split("### AAuthSigningHandler", StringSplitOptions.None)[1]
+            .Split("### ISignatureKeyProvider Implementations", StringSplitOptions.None)[0];
+        Assert.Contains("IAAuthKey", signing);
+        Assert.Contains("provider does not supply the private key", signing);
+        foreach (var name in new[] { "Label", "Capabilities", "OnSignatureBase" })
+        {
+            Assert.Contains(name, signing);
+            Assert.NotNull(typeof(AAuth.HttpSig.AAuthSigningHandler).GetProperty(name));
+        }
+        var resourceOptions = File.ReadAllText(Path.Combine(RepositoryRoot(), "src/AAuth/DependencyInjection/AAuthResourceOptions.cs"));
+        Assert.DoesNotContain("JTI-based replay", resourceOptions);
+        Assert.Contains("canonical signature base", resourceOptions);
+        var resourceGuide = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs/server/resource-metadata.md"));
+        Assert.Contains("`RevocationEndpoint` is also available through `AAuthResourceOptions`", resourceGuide);
+    }
+
     [Theory]
     [InlineData("docs/reference/configuration.md", 100)]
     [InlineData("docs/reference/dependency-injection.md", 20)]

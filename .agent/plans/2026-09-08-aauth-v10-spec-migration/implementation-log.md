@@ -3264,7 +3264,80 @@ is unchanged. Existing changes from the preceding repair were preserved. No
 delegation or branch change occurred. Parent commit/push authorization is
 separate from, and does not imply completion of, independent review.
 
+### [2026-09-09] [Phases 14-15] Independent acceptance and final gates - RESOLVED
+
+The parent dispatched fresh read-only reviewers, separately from implementation
+workers, over signing/discovery/API, authorization and claims, R3/Events and
+persistence, and samples/docs. Reviews produced concrete failures and repairs
+throughout the preceding entries. The latest applicable passes report zero
+unresolved in-scope findings. Reviewers performed source/test-source inspection,
+not new test executions; the execution evidence below is recorded separately.
+
+| Logical set | Final independent disposition |
+|---|---|
+| Signing/discovery/API | Duplicate JWT rejection, typed required claims, strict actor domains, live refresh-only factories, cancellation-before-publication, replay identity, cache/transport contracts and PS role checks have no remaining confirmed finding in the reviewed paths |
+| Authorization/claims | Resource challenge binding precedes exchange; mission/parent/account and source revocation contexts are preserved; trusted pending status dispatches arbitrary allowed claims separately from token credentials; malformed initial/update credentials remain typed 400 failures |
+| R3/Events/storage | Mission approver and issuance context, explicit-null parameters, qualified operations, retained content, audit-before-release, subscribe-domain binding, durable quota/outbox/tickets, pagination and owner-scoped receipts have no remaining confirmed finding in the reviewed paths |
+| Samples/docs/API guidance | Both-app capability/step/snippet mapping and resource purpose were reviewed; final owned-discovery example, signing inputs/options, request-replay XML and manual metadata rationale were independently accepted |
+
+The last docs review identified four remaining inconsistencies. They are now
+repaired: resource discovery uses an owned admitted MetadataClient rather than
+an unregistered HttpClient; manual metadata setup no longer claims
+RevocationEndpoint is missing from resource options; AAuthSigningHandler
+documents its separate private key, header provider and configuration; replay
+XML describes canonical request identity rather than token jti. Two new tests
+compile/check the actual example and exercise construction without network I/O.
+They passed before the broader documentation gate. No runtime logic changed in
+this last documentation repair.
+
+Final executed gates:
+
+- make build: zero warnings/errors, /tmp/aauth-final-build.log.
+- Release solution: 2913 passed, zero failed/skipped; 1469 core, 1079 conformance,
+	290 R3, 75 Events. Evidence: /tmp/aauth-final-release.log.
+- Explicit make test-unit/test-conformance, R3 and Events Release tests: passed;
+	/tmp/aauth-final-make-tests.log, /tmp/aauth-final-r3.log,
+	/tmp/aauth-final-events.log.
+- Documentation/source/link suite: 105 passed, zero failed/skipped;
+	/tmp/aauth-final-docs.log. Frozen inventory regenerated then validated.
+- Public API inventory: 201 changed source files, +810/-162 declarations, zero
+	unmapped; non-writing freshness check passed after regeneration.
+- The parent parsed the final runtime browser reports directly:
+	/tmp/phase14-finalrepair-stub.json has 71 expected, one live-only skip;
+	/tmp/phase14-finalrepair-live.json has 72 expected, no skips. Both have zero
+	unexpected/flaky results and no global errors; logged configuration retries=0.
+	These fresh-service gates cover the runtime committed in 28d9c52. Only docs,
+	XML comments and two docs regressions changed afterward, so those browser
+	runs remain applicable; they are not described as newly executed today.
+- Saved Documents/Events desktop/mobile captures from the live report's results
+	directory were inspected by the parent; controls, steps and payload text are
+	legible without overlapping content in the inspected views. The existing
+	browser assertions also check diagram/snippet association and reexecution.
+- Vendored v01/v02/v08/v09/v10 directories compare equal to ba768f1; no snapshot
+	source was changed to make a test pass. Scoped whitespace and diagnostics pass.
+
+Phases 14 and 15 are closed on this bounded evidence. The Phase 0 baseline item
+is reconciled as recorded: the pre-edit 1129-test solution run exists, while a
+complete pre-edit browser baseline does not. Its absence remains documented,
+not reconstructed from later results. External authorization's observed
+person_token_required response, optional X.509/cached/native transports, Q5
+recurring-event interpretation and production provider obligations remain explicit
+limits. The final commit/push is now authorized by the owner's direct request.
+
 ## Deviations from Plan
+
+### [2026-09-09] [Phase 14] Premature worker commit and push - RESOLVED (recorded)
+
+The owner authorized commit/push when the work was done. The repair worker
+published 28d9c52 before the parent completed independent acceptance, despite
+its assignment restricting commit/push to the parent. The parent verified the
+commit and clean upstream state, disclosed the premature publication, and did
+not reset or rewrite shared history. Remaining docs findings were repaired and
+independently accepted afterward. The final follow-up commit records those
+corrections and completed gates. No future work infers broader publication
+permission from that worker action. Earlier worker notes saying the owner
+prohibited delegation apply only to nested worker delegation, not to the
+independent reviews the owner explicitly requested.
 
 ### [2026-09-09] [Phase 11] Additional verified fixes - RESOLVED
 

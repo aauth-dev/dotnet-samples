@@ -111,7 +111,7 @@ an explicit logged decision.
 - [x] Every Q1-Q10 has a recorded ruling in the implementation log.
 - [x] Optional capabilities and ambiguous clauses have explicit dispositions.
 - [x] Every research finding has a phase and a planned discriminating check.
-- [ ] Baseline failures and unavailable environments are recorded separately.
+- [x] Baseline failures and unavailable environments are recorded separately.
 - [x] The implementation scope and plan are approved before SDK edits.
 
 Phase 12 reconciliation (2026-09-09): Q1-Q10 and execution authorization were
@@ -120,6 +120,12 @@ checks are present. These checkboxes now reflect that evidence. A complete
 pre-edit full-suite/browser baseline cannot be reconstructed from later passing
 gates, so the baseline item remains open as a historical evidence limitation.
 Later Phase 11/12 verification does not rewrite the original baseline.
+
+Final evidence reconciliation (2026-09-09): the baseline item above requires
+separate recording of failures and unavailable environments, not reconstruction
+of a run that never happened. The log records the 1129-test pre-edit solution
+gate and explicitly identifies the unavailable pre-edit browser baseline. The
+item is closed on that recording basis; no missing browser run is claimed.
 
 ## Phase 1 - shared problem-details cutover
 
@@ -1094,16 +1100,24 @@ Phase rule: no compatibility exception or spec interpretation is implicit.
 
 ### Definition of Done
 
-- [ ] Every review finding has a recorded disposition and supporting evidence.
-- [ ] Approved fixes have focused regression tests and rerun affected gates.
-- [ ] Material architectural changes receive another independent review.
-- [ ] Independent review checks the capability-to-scenario matrix, both apps'
+- [x] Every review finding has a recorded disposition and supporting evidence.
+- [x] Approved fixes have focused regression tests and rerun affected gates.
+- [x] Material architectural changes receive another independent review.
+- [x] Independent review checks the capability-to-scenario matrix, both apps'
   new-flow Playwright coverage, and resource purpose/readability, not only SDK code.
-- [ ] Release solution tests, explicit R3/Events suites, stub/Keycloak e2e,
+- [x] Release solution tests, explicit R3/Events suites, stub/Keycloak e2e,
   snippet checks, links, and the requirement ledger are complete.
-- [ ] Unavailable external live interop is explicitly reported, with local
+- [x] Unavailable external live interop is explicitly reported, with local
   captured-wire evidence; no blanket full-conformance claim hides it.
-- [ ] All changes remain uncommitted for owner inspection unless requested otherwise.
+- [x] All changes remain uncommitted for owner inspection unless requested otherwise.
+
+Closed 2026-09-09 after fresh read-only acceptance of signing/discovery/API,
+authorization/claims dispatch, R3/Events/storage and instructional surfaces.
+Reported findings were repaired and their affected sets reviewed again; the
+last applicable independent passes have zero unresolved in-scope findings.
+This is a bounded source-review result, not proof of correctness of arbitrary
+host policies, stores or transports. The owner authorized commit/push after
+completion; the premature worker publication is recorded as a deviation.
 
 ## Phase 15 - final documentation alignment gate
 
@@ -1116,12 +1130,28 @@ reopens the affected tests and logical area's independent review.
 
 ### Definition of Done
 
-- [ ] Final code and all instructional surfaces agree; no stale step or snippet remains.
-- [ ] The final capability matrix has no uncovered in-scope user-facing feature
+- [x] Final code and all instructional surfaces agree; no stale step or snippet remains.
+- [x] The final capability matrix has no uncovered in-scope user-facing feature
   in either app, including additions from review fixes.
-- [ ] Links, snippet checks and both apps' visual/browser checks pass.
-- [ ] Every logical area's last adversarial pass has zero unresolved in-scope findings.
-- [ ] Runtime and documentation validation results and limitations are recorded honestly.
+- [x] Links, snippet checks and both apps' visual/browser checks pass.
+- [x] Every logical area's last adversarial pass has zero unresolved in-scope findings.
+- [x] Runtime and documentation validation results and limitations are recorded honestly.
+
+Final verification: 2913 Release tests (1469 core, 1079 conformance, 290 R3,
+75 Events), zero failed/skipped; clean make build; explicit make unit/conformance
+and R3/Events gates pass. All 105 documentation/source/link checks pass, with
+current API and documentation inventories. The final runtime's fresh browser
+reports contain 71 stub passes plus the expected live-only skip and 72 live
+Keycloak passes, zero unexpected/flaky/global errors and retries=0. Subsequent
+changes are documentation, XML comments and two documentation regressions only;
+the browser evidence remains applicable and is not claimed as newly rerun.
+The parent inspected saved Documents/Events desktop/mobile captures. All
+vendored snapshot directories remain identical to the migration baseline.
+
+External full authorization still returns `person_token_required`; local S1-S5
+checks and successful Keycloak tests do not establish external interoperability.
+Other declared optional and production-provider limitations remain in the
+conformance ledger. No unresolved in-scope finding is hidden by those limits.
 
 ## Finding-to-phase traceability
 

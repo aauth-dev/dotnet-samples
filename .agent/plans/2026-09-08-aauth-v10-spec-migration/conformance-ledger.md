@@ -4,6 +4,30 @@ description: Section-oriented v10 conformance evidence and explicit implementati
 
 # Conformance Ledger
 
+## Final Status
+
+Closed 2026-09-09 for the approved migration scope. This supersedes the numbered
+repair checkpoints below without rewriting their historical evidence. Final
+Release: 2913 tests, zero failed/skipped; explicit core/conformance/R3/Events
+and 105 documentation/source/link checks pass, with a clean build. API inventory:
+201 changed public-source files, +810/-162 declarations, zero unmapped;
+documentation inventory remains 169 files and 629 classified blocks.
+
+The final runtime browser reports contain 71 stub passes plus the expected
+live-only skip and 72 live Keycloak passes, no failures or flaky results.
+Subsequent edits only correct docs/XML and add two documentation regressions.
+Fresh independent reviewers report zero remaining confirmed findings in their
+respective signing/discovery/API, authorization/claims, R3/Events/storage and
+sample/docs scopes after repair cycles. This is bounded acceptance, not a
+certification of arbitrary injected contracts or unexercised external systems.
+
+Both apps' capability scenarios, numbered steps, sequence displays, snippets and
+their Playwright coverage were reviewed; saved desktop/mobile captures were
+inspected. The [implementation log](implementation-log.md) records exact gate
+artifacts and the premature worker-push deviation. External full authorization
+returned `person_token_required` and is not a passing interoperability result.
+The optional, ambiguous and deployment-owned dispositions below remain in force.
+
 Pinned sources are the immutable v10 protocol, Signature Keys draft 08, R3 and
 Events snapshots. References below use canonical source lines and section names.
 This is an area/requirement ledger, not a certification of arbitrary applications
