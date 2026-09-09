@@ -1,0 +1,117 @@
+using System;
+using System.Text.Json.Nodes;
+using AAuth.Crypto;
+using AAuth.Tokens;
+using Microsoft.IdentityModel.Tokens;
+using Xunit;
+
+namespace AAuth.Tests.Tokens;
+
+public class AccountBindingTests
+{
+    [Fact]
+    public void MissionIntent_AccountlessEntryIsNotAWildcard()
+    {
+        var script = new MockPersonServer.MissionConsentScript();
+        script.SeedInScope("https://resource.example", "read");
+        var policy = new MockPersonServer.MissionPolicyStore();
+        policy.Record("mission", "test", [], script.InScopeSnapshot());
+        Assert.True(policy.IsInScope("mission", "https://resource.example", "read"));
+        Assert.False(policy.IsInScope("mission", "https://resource.example", "read", "personal"));
+        script.SeedInScope("https://resource.example", "read", "personal");
+        policy.Record("mission", "test", [], script.InScopeSnapshot());
+        Assert.True(policy.IsInScope("mission", "https://resource.example", "read", "personal"));
+        Assert.False(policy.IsInScope("mission", "https://resource.example", "read", "work"));
+        Assert.NotEqual(MockPersonServer.MissionConsentScript.ScopeKey("https://resource.example", "read|x", "y"),
+            MockPersonServer.MissionConsentScript.ScopeKey("https://resource.example", "read", "x|y"));
+    }
+
+    [Theory]
+    [InlineData(null, "personal", false)]
+    [InlineData("personal", null, false)]
+    [InlineData("personal", "work", false)]
+    [InlineData("personal", "personal", true)]
+    public void CachedAuthToken_IsSelectedOnlyForMatchingAccount(string? tokenAccount, string? requestedAccount, bool reused)
+    {
+        var issuerKey = AAuthKey.Generate();
+        var agentKey = AAuthKey.Generate();
+        var agentToken = new AgentTokenBuilder
+        {
+            Issuer = "https://ap.example", Subject = "aauth:demo@ap.example",
+            Key = issuerKey, KeyId = "ap1", ConfirmationKey = agentKey,
+        }.Build();
+        var authToken = new AuthTokenBuilder
+        {
+            Issuer = "https://ps.example", Audience = "https://resource.example",
+            Agent = "aauth:demo@ap.example", AgentConfirmationKey = agentKey,
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
+            Key = issuerKey, KeyId = "ps1", Subject = "person", Account = tokenAccount,
+        }.Build();
+        var holder = new AAuth.Agent.AAuthTokenHolder(authToken);
+        using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "https://resource.example/data");
+        if (requestedAccount is not null) request.Options.Set(AAuth.Agent.AAuthRequestOptions.Account, requestedAccount);
+        Assert.Equal(reused ? authToken : agentToken, holder.SelectForRequest(request, agentToken, agentKey.ComputeJwkThumbprint()));
+        Assert.Equal(agentToken, holder.SelectForRequest(request, agentToken, "another-key"));
+        request.RequestUri = new Uri("https://other-resource.example/data");
+        Assert.Equal(agentToken, holder.SelectForRequest(request, agentToken, agentKey.ComputeJwkThumbprint()));
+    }
+
+    [Theory]
+    [InlineData(null, "agent", "key", false)]
+    [InlineData("work", "agent", "key", false)]
+    [InlineData("personal", "other", "key", false)]
+    [InlineData("personal", "agent", "other", false)]
+    [InlineData("personal", "agent", "key", true)]
+    public async System.Threading.Tasks.Task PriorConsent_IsolatesAccountAgentAndKey(string? account, string agent, string key, bool expected)
+    {
+        var log = new AAuth.Server.Governance.InMemoryMissionLog();
+        await log.AppendAsync(new AAuth.Server.Governance.MissionLogEntry("mission", AAuth.Server.Governance.MissionLogEntryKind.Token, DateTimeOffset.UtcNow)
+        {
+            Resource = "https://resource.example", Scope = "read", Granted = true,
+            Account = "personal", AgentId = "agent", AgentKeyThumbprint = "key",
+        });
+        Assert.Equal(expected, await log.HasPriorConsentAsync("mission", "https://resource.example", "read",
+            account: account, agentId: agent, agentKeyThumbprint: key));
+    }
+
+    [Theory]
+    [InlineData(null, null, true)]
+    [InlineData("personal", "personal", true)]
+    [InlineData("personal", "work", false)]
+    [InlineData("personal", null, false)]
+    [InlineData(null, "personal", false)]
+    [InlineData("Personal", "personal", false)]
+    public void AuthToken_RequiresExactIndependentExpectation(string? actual, string? expected, bool accepted)
+    {
+        var issuer = AAuthKey.Generate();
+        var agent = AAuthKey.Generate();
+        var jwt = new AuthTokenBuilder
+        {
+            Issuer = "https://ps.example", Audience = "https://resource.example",
+            Agent = "aauth:demo@ap.example", AgentConfirmationKey = agent,
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
+            Key = issuer, KeyId = "ps1", Subject = "person", Account = actual,
+        }.Build();
+        var payload = JsonNode.Parse(Base64UrlEncoder.DecodeBytes(jwt.Split('.')[1]))!.AsObject();
+        Assert.Equal(actual is not null, payload.ContainsKey("account"));
+        var verifier = new TokenVerifier();
+        TokenVerifier.VerifiedToken Verify() => verifier.VerifyAuthToken(jwt, issuer,
+            "https://resource.example", agent, "aauth:demo@ap.example",
+            accountExpectation: new AccountExpectation(expected));
+        if (accepted) Assert.Equal(actual, Verify().Account);
+        else Assert.Throws<TokenVerificationException>(Verify);
+    }
+
+    [Theory]
+    [InlineData("{\"account\":null}")]
+    [InlineData("{\"account\":23}")]
+    [InlineData("{\"account\":[]}")]
+    [InlineData("{\"account\":{}}")]
+    [InlineData("{\"account\":\"\"}")]
+    [InlineData("""{"account":" "}""")]
+    [InlineData("{\"account\":\"a\\nb\"}")]
+    public void Read_RejectsMalformedClaim(string json)
+    {
+        Assert.False(AccountBinding.TryRead(JsonNode.Parse(json)!.AsObject(), out _));
+    }
+}
