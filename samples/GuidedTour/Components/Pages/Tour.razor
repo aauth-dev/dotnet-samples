@@ -44,22 +44,7 @@
 </header>
 
 <section class="flow-picker">
-    <label class="flow-picker__label" for="flow-select">
-        <span class="flow-picker__title">Pick a flow to demo</span>
-        <select id="flow-select" value="@Session.Mode" @onchange="OnModeChangedAsync" disabled="@_busy">
-            <option value="@TourMode.Bootstrap" disabled="@(!Session.HasAgentProvider)">1 · Bootstrap — keygen + AP enrol</option>
-            <option value="@TourMode.Identity">2 · Generic Signature Keys - no PS, 2 steps</option>
-            <option value="@TourMode.ResourceManaged">3 · Resource-Managed (Two-Party) — authenticated consent, 6 steps</option>
-            <option value="@TourMode.Autonomous" disabled="@(!Session.HasPersonServer)">4 · PS-Asserted (Direct Grant) — no user, 6 steps</option>
-            <option value="@TourMode.Deferred" disabled="@(!Session.HasPersonServer)">5 · PS-Asserted (Deferred) — authenticated consent, 9 steps</option>
-            <option value="@TourMode.CallChain" disabled="@(!Session.HasPersonServer || !Session.HasConcierge)">6 · Call Chain (Multi-Agent) — user approves, 7 or 13 steps</option>
-            <option value="@TourMode.Federated" disabled="@(!Session.HasPersonServer || !Session.HasAccessServer)">7 · Federated (Four-Party) — Access Server, 7–10 steps</option>
-            <option value="@TourMode.RichRequests" disabled="@(!Session.HasPersonServer || !Session.HasR3AccessServer)">8 · Rich Resource Requests (R3) — R3 Access Server, 14 steps</option>
-            <option value="@TourMode.Mission" disabled="@(!Session.HasPersonServer)">9 · Mission (PS-Governed) — three prompts, 20 steps</option>
-            <option value="@TourMode.MissionCallChain" disabled="@(!Session.HasPersonServer || !Session.HasConcierge)">10 · Mission + Call Chain — dual governance, 14 steps</option>
-            <option value="@TourMode.SubAgent">11 · Sub-Agents — parent-mediated worker, 7 steps</option>
-        </select>
-    </label>
+    <TourFlowSelect Value="@Session.Mode.ToString()" Disabled="_busy" ModeChanged="OnModeChangedAsync" />
     @if (Session.Mode == TourMode.Identity)
     {
         <label class="flow-picker__label" for="signing-mode-select">
@@ -93,9 +78,17 @@
     <div class="flow-picker__actions">
         @if (Session.WorkerConsentUrl is { } workerConsent)
         {
-            <a class="worker-consent" href="@workerConsent" target="_blank" rel="noopener">Open authenticated consent</a>
+            <a @key="workerConsent" class="primary approve worker-consent" href="@workerConsent" target="_blank" rel="noopener">
+                @(Session.IsSubAgentMode ? WorkerConsentAction() : "Open consent page")
+            </a>
+            @if (Session.IsSubAgentMode)
+            {
+                <span class="flow-picker__action-hint">
+                    Consent @Session.WorkerConsentRound of @TourSession.WorkerConsentRounds. Complete it in the new tab, then return here for the next decision.
+                </span>
+            }
         }
-        @if (Session.AwaitingUserApproval)
+        else if (Session.AwaitingUserApproval)
         {
             <a class="primary approve" href="@Session.UserInteractionUrl" target="_blank" rel="noopener"
                @onclick="MarkInteractionOpenedAsync" @onclick:preventDefault="false">
@@ -302,8 +295,10 @@
                 <text>
                     Aria (your AI travel assistant) spins up a short-lived
                     <strong>worker</strong> — a <strong>separate process / sandbox</strong> — to handle one
-                    slice of a task (searching flights) under the single consent <em>you</em> already gave
-                    Aria. The worker generates its <strong>own</strong> key and gets its own identity from the
+                    slice of a task (searching flights). The demo makes all three independent authorization
+                    decisions visible: the original caller's upstream grant, the worker's Wallet scope at the
+                    Person Server, and the federated Access Server grant. The worker generates its <strong>own</strong>
+                    key and gets its own identity from the
                     <strong>Agent Provider</strong> (so it's individually auditable and revocable, and not even
                     Aria can impersonate it), but it never talks to your Person Server directly:
                     <strong>Aria mediates</strong> on its behalf.<br /><br />
@@ -558,6 +553,14 @@
     private string StepButtonLabel() =>
         $"Run step {Session.Steps.Count + 1} / {Session.TotalSteps}";
 
+    private string WorkerConsentAction() => Session.WorkerConsentRound switch
+    {
+        1 => "Approve original caller at Person Server (1 of 3)",
+        2 => "Approve worker Wallet access at Person Server (2 of 3)",
+        3 => "Approve federated access at Access Server (3 of 3)",
+        _ => "Open consent page",
+    };
+
     private async Task NextAsync()
     {
         _busy = true;
@@ -635,12 +638,8 @@
         await Session.PrepareConsentStateAsync();
     }
 
-    private async Task OnModeChangedAsync(ChangeEventArgs e)
+    private async Task OnModeChangedAsync(TourMode mode)
     {
-        if (!Enum.TryParse<TourMode>(e.Value?.ToString(), out var mode))
-        {
-            return;
-        }
         _busy = true;
         _error = null;
         try

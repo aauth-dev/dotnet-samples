@@ -121,8 +121,7 @@ app.MapGet("/events", (HttpContext ctx) =&gt;
         <ConsentProgress />
         <p>The Person Server returned <code>202 Accepted</code> and is waiting for the user to approve.</p>
         <p>
-            <strong>Interaction URL:</strong><br />
-            <a href="@_interactionUrl" target="_blank" rel="noopener">@_interactionUrl</a>
+            <a class="btn btn-warning" href="@_interactionUrl" target="_blank" rel="noopener">Open Person Server consent page</a>
         </p>
         <p class="text-muted">
             Sign in at the linked consent page, then submit <strong>Approve</strong> or <strong>Deny</strong>.

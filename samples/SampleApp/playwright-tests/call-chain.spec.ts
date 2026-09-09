@@ -29,7 +29,7 @@ test('the page resets standing consent so both hops still prompt', async ({ page
   await expect(page.locator('h2')).toContainText('Call Chain');
   await waitForInteractive(page, 'button.btn-primary');
 
-  const link = page.locator('a[target="_blank"]', { hasText: /interaction/ });
+  const link = page.locator('a.btn[href*="/interaction"][target="_blank"]');
   const heading = page.locator('.alert .badge', { hasText: /Approval/ });
 
   // First click on a cold circuit can be dropped — confirm hop 1 surfaced. The

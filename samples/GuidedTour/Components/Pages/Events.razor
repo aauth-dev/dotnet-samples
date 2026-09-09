@@ -1,6 +1,8 @@
 @page "/events"
 @rendermode InteractiveServer
+@inject IConfiguration Configuration
 
 <PageTitle>AAuth Events Tour</PageTitle>
-<header class="topbar"><a href="/">Overview</a><a href="/tour?flow=RichRequests">R3 reservations</a></header>
-<AAuth.Samples.Events.EventWalkthrough />
+<CapabilityTourChrome CurrentValue="/events" ResourceLabel="Bookings"
+	ResourceUrl="@(Configuration["AAuth:Bookings"] ?? "http://localhost:5005")" />
+<AAuth.Samples.Events.EventWalkthrough GuidedTour="true" />

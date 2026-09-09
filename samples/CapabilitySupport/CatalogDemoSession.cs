@@ -64,15 +64,23 @@ public sealed class CatalogDemoSession(string provider, string person, string re
         if (challenge.StatusCode != HttpStatusCode.Unauthorized) throw new InvalidOperationException("Expected catalog challenge.");
         var token = AAuthRequirementHeader.Parse(challenge.Headers.GetValues("AAuth-Requirement").First()).ResourceToken!;
         using var metadata = new MetadataClient(_http);
-        var grant = await new TokenExchangeClient(signed, metadata).ExchangeAsync(person, token, new TokenExchangeRequest
+        string grant;
+        try
         {
-            OnInteractionRequired = async (interaction, _) =>
+            grant = await new TokenExchangeClient(signed, metadata).ExchangeAsync(person, token, new TokenExchangeRequest
             {
-                ConsentUrl = interaction.BuildUserUrl();
-                if (Changed is not null) await Changed();
-            },
-        }, cancellationToken);
-        ConsentUrl = null;
+                OnInteractionRequired = async (interaction, _) =>
+                {
+                    ConsentUrl = interaction.BuildUserUrl();
+                    if (Changed is not null) await Changed();
+                },
+            }, cancellationToken);
+        }
+        finally
+        {
+            ConsentUrl = null;
+            if (Changed is not null) await Changed();
+        }
         Result = ScenarioWireHandler.Claims(grant).ToJsonString(WalletDemoSession.Pretty);
         return grant;
     }

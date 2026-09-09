@@ -77,20 +77,27 @@ public sealed class EventDemoSession : IDisposable
                 Agent = enrolled.AgentId ?? throw new InvalidOperationException("AP did not return its assigned identity.");
                 if (Protected)
                 {
-                    using var client = new AAuthClientBuilder(_key).WithEgressPolicy(AAuthHttpTransport.GetPolicy(_http)).UseJwt(_agentToken!)
-                        .WithChallengeHandling(_person, options => options.OnInteractionRequired = async (interaction, _) =>
-                        {
-                            ConsentUrl = interaction.BuildUserUrl();
-                            if (Changed is not null) await Changed();
-                        }).Build();
-                    using var search = new HttpRequestMessage(HttpMethod.Get, _resource + "/search_availability?account=" + Uri.EscapeDataString(Account));
-                    search.Options.Set(AAuthRequestOptions.Account, Account);
-                    using var response = await client.SendAsync(search, cancellationToken);
-                    var json = await ReadAsync(response, cancellationToken);
-                    ConsentUrl = null;
-                    _subscriptionUrl = json["notifications"]!["subscribe_url"]!.GetValue<string>();
-                    if (json["account"]?.GetValue<string>() != Account) throw new InvalidOperationException("Authorized account mismatch.");
-                    Evidence.Add(new(2, "GET Bookings search -> authorized ticket", (int)response.StatusCode, json.ToJsonString(Pretty)));
+                    try
+                    {
+                        using var client = new AAuthClientBuilder(_key).WithEgressPolicy(AAuthHttpTransport.GetPolicy(_http)).UseJwt(_agentToken!)
+                            .WithChallengeHandling(_person, options => options.OnInteractionRequired = async (interaction, _) =>
+                            {
+                                ConsentUrl = interaction.BuildUserUrl();
+                                if (Changed is not null) await Changed();
+                            }).Build();
+                        using var search = new HttpRequestMessage(HttpMethod.Get, _resource + "/search_availability?account=" + Uri.EscapeDataString(Account));
+                        search.Options.Set(AAuthRequestOptions.Account, Account);
+                        using var response = await client.SendAsync(search, cancellationToken);
+                        var json = await ReadAsync(response, cancellationToken);
+                        _subscriptionUrl = json["notifications"]!["subscribe_url"]!.GetValue<string>();
+                        if (json["account"]?.GetValue<string>() != Account) throw new InvalidOperationException("Authorized account mismatch.");
+                        Evidence.Add(new(2, "GET Bookings search -> authorized ticket", (int)response.StatusCode, json.ToJsonString(Pretty)));
+                    }
+                    finally
+                    {
+                        ConsentUrl = null;
+                        if (Changed is not null) await Changed();
+                    }
                 }
                 else
                 {

@@ -16,7 +16,8 @@
     <summary>📖 What Aria is trying to do</summary>
     Aria (your AI travel assistant) spins up a short-lived <strong>worker</strong>
     sub-agent — a <strong>separate process / sandbox</strong> — to handle one slice of a task
-    (say, searching flights) under the single consent <em>you</em> already gave Aria. The worker
+    (say, searching flights). The demo exposes separate approvals for the upstream caller,
+    the worker's Wallet scope, and the federated grant. The worker
     generates its <strong>own</strong> key and gets its own identity from the
     <strong>Agent Provider</strong> (so it's individually auditable and revocable, and not even
     Aria can impersonate it), but it never talks to your Person Server directly:
@@ -128,7 +129,8 @@ var authToken = await exchange.ExchangeAsync(
 {
     <div class="alert alert-warning mt-3">
         <h5>Consent Required</h5>
-        <a href="@_interactionUrl" target="_blank" rel="noopener">Open authenticated consent</a>
+        <p>The parent-mediated exchange is paused until you complete the current consent step.</p>
+        <a class="btn btn-warning" href="@_interactionUrl" target="_blank" rel="noopener">Open consent page</a>
     </div>
 }
 

@@ -5,12 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <base href="/" />
     <title>AAuth Guided Tour</title>
-    <link rel="stylesheet" href="app.css" />
-    <link rel="stylesheet" href="GuidedTour.styles.css" />
+    <ResourcePreloader />
+    <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="@Assets["GuidedTour.styles.css"]" />
+    <link rel="stylesheet" href="_content/EventSupport/syntax-highlight.css" />
+    <ImportMap />
     <HeadOutlet />
 </head>
 <body>
     <Routes />
-    <script src="_framework/blazor.web.js"></script>
+    <script src="@Assets["_framework/blazor.web.js"]"></script>
+    <script src="_content/EventSupport/syntax-highlight.js"></script>
 </body>
 </html>

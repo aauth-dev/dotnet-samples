@@ -1,0 +1,106 @@
+@namespace AAuth.Samples.Shared
+@using System.Globalization
+
+<section class="protocol-sequence" aria-label="Sequence diagram">
+    <div class="sequence-canvas" style="--lane-count: @Participants.Count">
+        <div class="sequence-participants">
+            @foreach (var participant in Participants)
+            {
+                <div class="sequence-participant" data-participant="@participant.Id">@participant.Label</div>
+            }
+        </div>
+        <div class="sequence-messages">
+            @foreach (var center in LaneCenters())
+            {
+                <span class="sequence-lifeline" style="left: @(Format(center))%" aria-hidden="true"></span>
+            }
+            @foreach (var message in VisibleMessages)
+            {
+                @RenderMessage(message)
+            }
+        </div>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired]
+    public IReadOnlyList<ProtocolParticipant> Participants { get; set; } = [];
+
+    [Parameter, EditorRequired]
+    public IReadOnlyList<ProtocolMessage> Messages { get; set; } = [];
+
+    [Parameter]
+    public int CompletedSteps { get; set; }
+
+    [Parameter]
+    public bool ShowPendingMessages { get; set; } = true;
+
+    private IEnumerable<ProtocolMessage> VisibleMessages => ShowPendingMessages
+        ? Messages
+        : Messages.Where(message => message.Step <= CompletedSteps);
+
+    private double[] LaneCenters()
+    {
+        var centers = new double[Participants.Count];
+        for (var index = 0; index < Participants.Count; index++)
+        {
+            centers[index] = (2 * index + 1) * 100.0 / (2 * Participants.Count);
+        }
+        return centers;
+    }
+
+    private int LaneFor(string id)
+    {
+        for (var index = 0; index < Participants.Count; index++)
+        {
+            if (string.Equals(Participants[index].Id, id, StringComparison.Ordinal))
+            {
+                return index;
+            }
+        }
+        throw new InvalidOperationException($"Sequence participant '{id}' is not defined.");
+    }
+
+    private string StateFor(int step) => step <= CompletedSteps
+        ? "complete"
+        : step == CompletedSteps + 1 ? "current" : "pending";
+
+    private static string Format(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private RenderFragment RenderMessage(ProtocolMessage message) => __builder =>
+    {
+        var centers = LaneCenters();
+        var fromLane = LaneFor(message.From);
+        var toLane = LaneFor(message.To);
+        var left = centers[Math.Min(fromLane, toLane)];
+        var right = centers[Math.Max(fromLane, toLane)];
+        var width = right - left;
+        var center = (left + right) / 2;
+        var direction = toLane >= fromLane ? "rightward" : "leftward";
+        var self = fromLane == toLane;
+
+        <div class="sequence-message @StateFor(message.Step) @message.Kind @(self ? "self" : direction)"
+             data-sequence-step="@message.Step"
+             data-kind="@message.Kind"
+             aria-label="Step @message.Step: @Participants[fromLane].Label to @Participants[toLane].Label, @message.Label">
+            @if (self)
+            {
+                <span class="sequence-arrow" style="left: @(Format(left))%" aria-hidden="true"></span>
+            }
+            else if (message.HasResponse)
+            {
+                <span class="sequence-arrow @direction" style="left: @(Format(left))%; width: @(Format(width))%" aria-hidden="true"></span>
+                <span class="sequence-arrow sequence-response @(direction == "rightward" ? "leftward" : "rightward")"
+                      style="left: @(Format(left))%; width: @(Format(width))%" aria-hidden="true"></span>
+                <span class="sequence-response-label" style="left: @(Format(center))%">@message.ResponseLabel</span>
+            }
+            else
+            {
+                <span class="sequence-arrow @direction" style="left: @(Format(left))%; width: @(Format(width))%" aria-hidden="true"></span>
+            }
+            <span class="sequence-label" style="left: @(Format(center))%">
+                <strong>@message.Step</strong> @message.Label
+            </span>
+        </div>
+    };
+}

@@ -96,7 +96,15 @@ export async function denyInPopup(popup: Page): Promise<void> {
 }
 
 export async function authenticateConsent(popup: Page): Promise<void> {
-  await popup.locator('button.demo-login, button.approve').first().waitFor();
+  let state = 'pending';
+  await expect.poll(async () => {
+    if (await popup.locator('button.demo-login, button.approve').first().isVisible()) return state = 'ready';
+    const body = await popup.locator('body').innerText().catch(() => '');
+    if (/"error"\s*:\s*"[^"]+"/.test(body)) return state = `error:${body}`;
+    return state = 'pending';
+  }, { timeout: 30_000 }).not.toBe('pending');
+  if (state.startsWith('error:'))
+    throw new Error(`Consent endpoint rejected ${popup.url()}: ${state.slice('error:'.length)}`);
   const login = popup.locator('button.demo-login');
   if (await login.isVisible()) await login.click();
   await expect(popup).toHaveURL(/\?session=/);

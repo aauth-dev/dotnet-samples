@@ -27,7 +27,7 @@ test.describe('Federated (interactive consent)', () => {
     await waitForInteractive(page, 'button.btn-primary');
 
     // Send the request; the AS returns 202 and the interaction URL is surfaced.
-    const link = page.locator('a[target="_blank"]', { hasText: /interaction/ });
+    const link = page.locator('a.btn[target="_blank"][href*="/interaction"]');
     await clickAndConfirm(page, 'button.btn-primary', () => link.isVisible());
     await expect(link).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('.spinner-border')).toBeVisible();

@@ -101,7 +101,7 @@ test.describe('Rich Resource Requests (R3)', () => {
     // resource challenges the concrete call with a per-call proposal carrying the
     // parameters (r3 §Per-Call Proposals); the R3 Access Server then asks the user to
     // approve that specific reservation. The SampleApp surfaces the R3 AS interaction URL.
-    const link = page.locator('a[target="_blank"]', { hasText: /interaction/ });
+    const link = page.locator('a.btn[href*="/interaction"][target="_blank"]');
     await clickAndConfirm(page, 'button.btn-outline-primary', async () =>
       await link.isVisible() || await page.locator('div.alert-danger').isVisible());
     await expect(page.locator('div.alert-danger')).toHaveText([]);

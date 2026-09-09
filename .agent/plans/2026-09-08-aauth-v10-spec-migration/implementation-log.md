@@ -3324,6 +3324,84 @@ person_token_required response, optional X.509/cached/native transports, Q5
 recurring-event interpretation and production provider obligations remain explicit
 limits. The final commit/push is now authorized by the owner's direct request.
 
+### [2026-09-09] [Post-migration] Plain make demo startup and SubAgent - RESOLVED
+
+The owner reported partial service startup and a failing GuidedTour SubAgent
+deep link under plain `make demo`. The previous isolated review stack was still
+occupying the fixed ports; the parent stopped only that owned stack. Separately,
+normal-home MockAgentProvider startup reproduced an immediate
+JwkValidationException from FileKeyStore.Load: a persisted pre-v10 key lacked
+the required fully specified alg. This occurred before binding an ephemeral
+test port, so it was independent of the port conflict. Fresh temporary HOME
+browser runs had hidden this normal upgrade-path failure.
+
+The three demo targets now use a persistent, versioned DEMO_HOME, defaulting to
+the user's XDG data directory plus aauth-samples/v10/home. They preserve the
+normal .NET/NuGet cache locations while isolating sample HOME/XDG state. No old
+keys or databases were deleted, rewritten, or accepted by a compatibility
+fallback. Individual dotnet runs remain in their caller's environment; the
+README documents how to share demo state when needed. The demo state survives
+normal stop/start and can be explicitly overridden.
+
+Validation used plain `make demo`, not an externally supplied temporary HOME.
+All 15 services reached their listening ports. The existing GuidedTour
+SubAgent case passed; an added full-flow case covers /tour?flow=SubAgent rather
+than just picker selection. After restarting with the same persisted directory,
+all 15 metadata/app probes returned 200 and all three sub-agent browser cases
+passed across both apps with retries=0. The browser TypeScript check passes.
+Evidence: /tmp/aauth-demo-startup-repair.log,
+/tmp/aauth-demo-restart-repair.log, /tmp/aauth-demo-subagent-deeplink-results
+and /tmp/aauth-demo-subagent-restart-results. Existing tests' stale descriptions
+of an in-process/no-consent sub-agent simulation were corrected to the actual
+live PS/AS flow. These targeted checks do not claim a new full-suite or live
+Keycloak run. The owned verification stack is stopped for the handoff so it
+cannot collide with the owner's next make demo.
+
+### [2026-09-09] [Post-migration] Demo flow presentation and consent repair - RESOLVED
+
+The four added walkthroughs now use the established GuidedTour composition
+instead of their standalone SampleApp layout. All 15 flows appear in one picker.
+Events, Wallet Protocol, Document Release and Travel Catalog use the same
+topbar/config strip, controls-before-narrative order, 240-pixel numbered step
+rail, participant lifelines, executed-only timeline and third payload pane as
+the original tour. SampleApp retains its host-specific layout. The shared
+sequence renderer derives lifeline centers from the actual participant count
+and supports five through seven actors without fixed lane-count backgrounds.
+Every `ProtocolMessage.Http` renders a solid request arrow and a dashed reverse
+response arrow with an explicit status badge. One-way `Signal` messages render
+only the solid outgoing arrow; local actions use a self-loop. Browser assertions
+check participant coverage, step coverage, arrow direction, response styling,
+lifeline counts and desktop overflow.
+
+The SubAgent flow was not stalled after its first approval. It was presenting
+three different authorization rounds with identical action text: the original
+caller's upstream grant at the Person Server, the worker's Wallet scope at the
+Person Server, and the federated Access Server decision. The UI now labels each
+round and authority, keys the action by its changing URL, and tests all three
+transitions before asserting the worker-bound token and nested act chain. R3
+account denial also exposed a stale consent URL; the exchange now clears that
+URL in a finally block. R3 browser tests wait for the action to move from the
+consumed Person Server URL to the R3 Access Server URL before clicking.
+
+Both overviews now enumerate all eight resource servers and all supporting
+participants: Concierge, Agent Provider, Person Server, federated Access
+Server, R3 Access Server, user/browser, and original/parent/worker roles. The
+four shared walkthroughs language-tag stable C# code blocks. A local shared
+highlighter, rather than a CDN dependency, applies accessible host-specific
+syntax colors after Blazor renders or navigates. Shared-walkthrough dynamic JSON
+result nodes are left under Blazor ownership; only stable language-tagged code
+panels are highlighted. Rendered link contrast and syntax token spans are
+browser-tested in both hosts; SampleApp outline actions use the darker link
+token found by the contrast scan.
+
+Fresh versioned-state validation used plain `make demo`. All 15 ports returned
+an HTTP response. The final retry-free browser gates pass 43/43 GuidedTour and
+33/34 SampleApp, with the one SampleApp skip restricted to the existing
+Keycloak-only case. Focused old-versus-new screenshots at 1280 and 1440 pixels
+confirmed the three-column tour layout, paired arrows, full-height lifelines,
+syntax colors and no page overflow. Mobile visual acceptance and a new live
+Keycloak run were not requested or claimed in this follow-up.
+
 ## Deviations from Plan
 
 ### [2026-09-09] [Phase 14] Premature worker commit and push - RESOLVED (recorded)

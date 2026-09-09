@@ -8,5 +8,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/AAuth.R3/AAuth.R3.csproj" />
+    <ProjectReference Include="../EventSupport/EventSupport.csproj" />
   </ItemGroup>
 </Project>

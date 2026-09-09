@@ -127,8 +127,7 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
             is evaluated before federation; an AS interaction can follow independently.
         </p>
         <p>
-            <strong>Interaction URL:</strong><br />
-            <a href="@_interactionUrl" target="_blank" rel="noopener">@_interactionUrl</a>
+            <a class="btn btn-warning" href="@_interactionUrl" target="_blank" rel="noopener">@(IsPersonConsent ? "Open Person Server consent page" : "Open Access Server interaction")</a>
         </p>
         <p class="text-muted">
             Open the link above in a new tab and complete the login / consent.

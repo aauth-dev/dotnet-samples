@@ -1,4 +1,4 @@
-@* Three-actor swim-lane sequence diagram. Each message arrow connects the
+@* Actor swim-lane sequence diagram. Each message arrow connects the
    vertical centerlines of the from/to lanes. The current step is highlighted.
    When a step lives inside a polling loop (e.g. the poll step), it is rendered
    inside a labeled `loop […]` box matching mermaid's `loop … end` syntax;
@@ -15,6 +15,10 @@
         }
     </div>
     <div class="messages">
+        @foreach (var center in ComputeLaneCenters())
+        {
+            <span class="tramline" style="left:@(Fmt(center))%;" aria-hidden="true"></span>
+        }
         @for (int i = 0; i < Steps.Count; i++)
         {
             var s = Steps[i];

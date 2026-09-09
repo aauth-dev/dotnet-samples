@@ -156,8 +156,7 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
             @(IsPersonConsent ? "The Person Server is waiting for consent before federation." : "The R3 Access Server is waiting for approval of this specific reservation.")
         </p>
         <p>
-            <strong>Approval URL:</strong><br />
-            <a href="@_interactionUrl" target="_blank" rel="noopener">@_interactionUrl</a>
+            <a class="btn btn-warning" href="@_interactionUrl" target="_blank" rel="noopener">@(IsPersonConsent ? "Open Person Server consent page" : "Open per-call approval page")</a>
         </p>
         <p class="text-muted">
             The SDK is polling in the background&hellip;

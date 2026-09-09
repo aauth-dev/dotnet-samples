@@ -3,34 +3,30 @@
 @using Microsoft.AspNetCore.Components.Web
 @using Microsoft.Extensions.Configuration
 @using System.Text.Json
+@using AAuth.Samples.Shared
 @inject IConfiguration Configuration
 @implements IDisposable
 
-<section class="catalog-view" aria-label="Catalog gateway walkthrough" data-step="@_session.Step">
+<section class="catalog-view @(GuidedTour ? "guided-tour-flow" : null)" aria-label="Catalog gateway walkthrough" data-step="@_session.Step">
+    <SyntaxHighlight Trigger="_session.Step" />
     <header><h1>Travel Catalog Gateway</h1><output>@_session.Step / 5 complete</output></header>
+    <details class="scenario-narrative" open>
+        <summary>📖 What Aria is trying to do</summary>
+        <p>
+            Aria is comparing where to go and what to do there. One travel gateway fronts
+            a <strong>Destinations</strong> catalog and an <strong>Experiences</strong>
+            catalog, and both expose an operation called <code>list</code>.
+        </p>
+        <p>
+            The grant must therefore identify the service as well as the operation. This
+            walkthrough authorizes one catalog, proves that the sibling catalog rejects
+            that grant, then obtains the correctly qualified authorization.
+        </p>
+    </details>
     <label for="catalog-service">Catalog service</label>
     <select id="catalog-service" @bind="_session.Service" disabled="@(_busy || _session.Step > 0)">
         <option value="destinations">Destinations</option><option value="experiences">Experiences</option>
     </select>
-    <div class="catalog-layout">
-        <ol aria-label="Protocol steps">
-            @for (var index = 0; index < CatalogDemoSession.Steps.Length; index++)
-            {
-                <li aria-current="@(index == _session.Step ? "step" : null)">@CatalogDemoSession.Steps[index]</li>
-            }
-        </ol>
-        <table aria-label="Sequence diagram">
-            <thead><tr><th>Step</th><th>From</th><th></th><th>To</th></tr></thead>
-            <tbody>
-                @for (var index = 0; index < 5; index++)
-                {
-                    <tr data-sequence-step="@(index + 1)"><td>@(index + 1)</td><td>Agent</td>
-                        <td><img src="_content/EventSupport/arrow-right.svg" width="18" height="18" alt="to" /></td>
-                        <td>@(index is 1 or 4 ? "PS / R3 AS / Catalog" : "Catalog")</td></tr>
-                }
-            </tbody>
-        </table>
-    </div>
     <div class="catalog-actions">
         <button class="catalog-next" @onclick="Next" disabled="@(!_interactive || _busy || _session.Step == 5)">
             <img src="_content/EventSupport/arrow-right.svg" width="18" height="18" alt="" />
@@ -42,7 +38,29 @@
     </div>
     @if (_session.ConsentUrl is { } consent) { <a class="catalog-consent" href="@consent" target="_blank" rel="noopener">Review catalog authorization</a> }
     @if (_error is not null) { <p role="alert">@_error</p> }
-    @if (_session.Result is { } result) { <pre data-testid="catalog-result">@result</pre> }
+    <div class="tour-sequence-layout">
+        <ol class="catalog-steps" aria-label="Protocol steps">
+            @for (var index = 0; index < CatalogDemoSession.Steps.Length; index++)
+            {
+                <li aria-current="@(index == _session.Step ? "step" : null)">@CatalogDemoSession.Steps[index]</li>
+            }
+        </ol>
+        <div class="tour-diagram"><ProtocolSequence Participants="CatalogParticipants" Messages="CatalogSequence" CompletedSteps="_session.Step" ShowPendingMessages="@(!GuidedTour)" /></div>
+        @if (GuidedTour)
+        {
+            <section class="tour-payload" aria-label="Selected step payload">
+                @if (_session.Result is { } payload)
+                {
+                    <h2>Step @_session.Step result</h2><pre>@payload</pre>
+                }
+                else
+                {
+                    <p class="hint">Run a step to see its payloads here.</p>
+                }
+            </section>
+        }
+    </div>
+    @if (_session.Result is { } result) { <pre data-testid="catalog-result" class="@(GuidedTour ? "tour-result-source" : null)">@result</pre> }
     <section aria-label="Recorded exchanges">
         @foreach (var exchange in _session.Exchanges)
         {
@@ -50,10 +68,32 @@
                 <pre>@JsonSerializer.Serialize(exchange, WalletDemoSession.Pretty)</pre></details>
         }
     </section>
-    <details open class="catalog-code"><summary>C# service-qualified enforcement</summary><pre><code>@Example</code></pre></details>
+    <details open class="catalog-code"><summary>C# service-qualified enforcement</summary><pre><code class="language-csharp">@Example</code></pre></details>
 </section>
 
 @code {
+    [Parameter] public bool GuidedTour { get; set; }
+
+    private static readonly ProtocolParticipant[] CatalogParticipants =
+    [
+        new("agent", "Agent"), new("ap", "Agent Provider"), new("catalog", "Catalog"),
+        new("ps", "Person Server"), new("as", "R3 Access Server"),
+    ];
+    private static readonly ProtocolMessage[] CatalogSequence =
+    [
+        ProtocolMessage.Http(1, "network", "agent", "catalog", "Discover gateway services", responseLabel: "200"),
+        ProtocolMessage.Http(1, "setup", "agent", "ap", "Enroll and receive agent JWT", responseLabel: "200"),
+        ProtocolMessage.Http(2, "network", "agent", "catalog", "Request selected catalog; receive challenge", responseLabel: "401"),
+        ProtocolMessage.Http(2, "network", "agent", "ps", "Exchange selected-service resource token", "200"),
+        ProtocolMessage.Http(2, "network", "ps", "as", "Federate service-qualified authorization", "200"),
+        ProtocolMessage.Http(2, "network", "as", "catalog", "Fetch and verify the R3 definition", responseLabel: "200"),
+        ProtocolMessage.Http(3, "network", "agent", "catalog", "Read selected catalog", responseLabel: "200"),
+        ProtocolMessage.Http(4, "network", "agent", "catalog", "Sibling service rejects mismatched grant", responseLabel: "403"),
+        ProtocolMessage.Http(5, "network", "agent", "catalog", "Request sibling-service challenge", responseLabel: "401"),
+        ProtocolMessage.Http(5, "network", "agent", "ps", "Exchange sibling-service resource token", "200"),
+        ProtocolMessage.Http(5, "network", "ps", "as", "Authorize the qualified sibling operation", "200"),
+        ProtocolMessage.Http(5, "network", "agent", "catalog", "Read sibling catalog with fresh grant", responseLabel: "200"),
+    ];
     public const string Example = """
         public static R3EnforcementDecision AuthorizeCatalog(R3Enforcement enforcement,
             JsonObject verifiedAuthToken, string service)

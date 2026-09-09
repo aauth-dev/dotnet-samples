@@ -1,0 +1,16 @@
+pre code.hljs {
+    display: block;
+    padding: 0;
+    overflow-x: auto;
+    background: transparent;
+    color: inherit;
+}
+
+.hljs-keyword,
+.hljs-meta { color: var(--syntax-keyword, #005cc5); font-weight: 600; }
+.hljs-title.class_ { color: var(--syntax-type, #0550ae); }
+.hljs-string { color: var(--syntax-string, #0a3069); }
+.hljs-comment { color: var(--syntax-comment, #116329); font-style: italic; }
+.hljs-number { color: var(--syntax-number, #953800); }
+.hljs-literal { color: var(--syntax-literal, #8250df); font-weight: 600; }
+.hljs-attr { color: var(--syntax-attribute, #cf222e); }

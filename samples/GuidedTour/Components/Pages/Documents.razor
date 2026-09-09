@@ -1,6 +1,8 @@
 @page "/documents"
 @rendermode InteractiveServer
+@inject IConfiguration Configuration
 
 <PageTitle>Document Release</PageTitle>
-<header class="topbar"><a href="/">Overview</a></header>
-<AAuth.Samples.Capabilities.DocumentWalkthrough />
+<CapabilityTourChrome CurrentValue="/documents" ResourceLabel="Documents"
+	ResourceUrl="@(Configuration["AAuth:Documents"] ?? "http://localhost:5007")" />
+<AAuth.Samples.Capabilities.DocumentWalkthrough GuidedTour="true" />

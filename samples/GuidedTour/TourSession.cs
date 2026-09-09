@@ -82,6 +82,8 @@ public sealed class TourSession : IAsyncDisposable
     // the worker, drive the parent-mediated exchange, and nest the act claim.
     private FederatedWorkerScenario? _workerScenario;
     public string? WorkerConsentUrl { get; private set; }
+    public int WorkerConsentRound { get; private set; }
+    public const int WorkerConsentRounds = 3;
 
     // Background polling state (deferred mode, poll step). Mutated from
     // the polling task; the UI listens to StateChanged and re-renders.
@@ -749,6 +751,7 @@ public sealed class TourSession : IAsyncDisposable
         _workerScenario?.Dispose();
         _workerScenario = null;
         WorkerConsentUrl = null;
+        WorkerConsentRound = 0;
     }
 
     /// <summary>
@@ -1683,7 +1686,12 @@ public sealed class TourSession : IAsyncDisposable
         {
             OnInteraction = (interaction, _) =>
             {
-                WorkerConsentUrl = interaction.BuildUserUrl();
+                var consentUrl = interaction.BuildUserUrl();
+                if (!string.Equals(WorkerConsentUrl, consentUrl, StringComparison.Ordinal))
+                {
+                    WorkerConsentUrl = consentUrl;
+                    WorkerConsentRound++;
+                }
                 StateChanged?.Invoke();
                 return Task.CompletedTask;
             },
@@ -3747,19 +3755,26 @@ public sealed class TourSession : IAsyncDisposable
         using var client = new SampleHttpClient(signing);
 
         using var discovery = new SampleHttpClient();
-        _authToken = await new TokenExchangeClient(client, new AAuth.Discovery.MetadataClient(discovery)).ExchangeAsync(
-            _options.PersonServerUrl!, _resourceToken!, new TokenExchangeRequest
-            {
-                Account = BookingsAccount,
-                OnInteractionRequired = (interaction, _) =>
+        try
+        {
+            _authToken = await new TokenExchangeClient(client, new AAuth.Discovery.MetadataClient(discovery)).ExchangeAsync(
+                _options.PersonServerUrl!, _resourceToken!, new TokenExchangeRequest
                 {
-                    WorkerConsentUrl = interaction.BuildUserUrl();
-                    StateChanged?.Invoke();
-                    return Task.CompletedTask;
-                },
-            }, ct);
+                    Account = BookingsAccount,
+                    OnInteractionRequired = (interaction, _) =>
+                    {
+                        WorkerConsentUrl = interaction.BuildUserUrl();
+                        StateChanged?.Invoke();
+                        return Task.CompletedTask;
+                    },
+                }, ct);
+        }
+        finally
+        {
+            WorkerConsentUrl = null;
+            StateChanged?.Invoke();
+        }
         _r3ClassAuthToken = _authToken;
-        WorkerConsentUrl = null;
         var ex = capture.Last!;
 
         // Capture the granted/conditional split for the inspect summary.

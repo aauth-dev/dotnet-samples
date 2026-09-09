@@ -19,7 +19,7 @@ test.describe('Deferred', () => {
     await waitForInteractive(page, 'button.btn-primary');
 
     // First clicking test on a cold circuit — confirm the click landed.
-    const link = page.locator('a[target="_blank"]', { hasText: /interaction/ });
+    const link = page.locator('a.btn[href*="/interaction"][target="_blank"]');
     await clickAndConfirm(page, 'button.btn-primary', () => link.isVisible());
 
     // Interaction URL + polling spinner appear. First /token round-trip on a
@@ -63,7 +63,7 @@ test.describe('Deferred', () => {
     await page.goto('/calendar-deferred');
     await waitForInteractive(page, 'button.btn-primary');
 
-    const link = page.locator('a[target="_blank"]', { hasText: /interaction/ });
+    const link = page.locator('a.btn[href*="/interaction"][target="_blank"]');
     await clickAndConfirm(page, 'button.btn-primary', () => link.isVisible());
     await expect(link).toBeVisible({ timeout: 30_000 });
 

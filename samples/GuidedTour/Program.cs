@@ -38,7 +38,7 @@ app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
     SigningKeys = new Dictionary<string, IAAuthKey> { [TourKid] = tourKey },
 });
 
-app.UseStaticFiles();
+app.MapStaticAssets();
 app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 {
     EgressPolicy = SampleEgress.Policy, Issuer = tourUrl,

@@ -14,8 +14,9 @@
             <strong>Aria</strong> is the AI travel assistant used throughout these demos. Like any
             agent, Aria has to <em>prove who it is</em> and <em>get your permission</em> before it
             touches anything that belongs to you — and AAuth is the protocol that lets it do so
-            safely. Each flow below follows Aria as it works on your behalf across five services:
+            safely. Each flow below follows Aria as it works on your behalf across the complete demo topology.
         </p>
+        <h3 class="intro__label">All eight resource services</h3>
         <ul class="intro__servers">
             <li><span class="srv srv--profile">Profile</span> your saved travel preferences (identity-based access)</li>
             <li><span class="srv srv--inbox">Inbox</span> importing trip confirmations (resource-managed, two-party)</li>
@@ -23,6 +24,18 @@
             <li><span class="srv srv--trips">Trips</span> browsing and booking trips (mission-governed)</li>
             <li><span class="srv srv--wallet">Wallet</span> paying for a booking (federated, four-party)</li>
             <li><span class="srv srv--bookings">Bookings</span> reserving dining &amp; experiences (Rich Resource Requests, R3, four-party)</li>
+            <li><span class="srv srv--catalog">Catalog</span> comparing destinations and experiences behind one gateway</li>
+            <li><span class="srv srv--documents">Documents</span> releasing a travel brief after resource and person approval</li>
+        </ul>
+        <h3 class="intro__label">All supporting services and participant roles</h3>
+        <ul class="intro__servers intro__entities">
+            <li><span class="srv srv--concierge">Concierge</span> hosted agent for delegated Calendar and Wallet calls</li>
+            <li><span class="srv srv--ap">Agent Provider</span> enrolment, identity, event inbox, and acknowledgement</li>
+            <li><span class="srv srv--ps">Person Server</span> consent, token exchange, missions, and governance</li>
+            <li><span class="srv srv--as">Federated Access Server</span> Wallet policy and token issuance</li>
+            <li><span class="srv srv--r3as">R3 Access Server</span> Bookings and Catalog operation policy</li>
+            <li><span class="srv srv--user">User / Browser</span> authenticated consent and resource-owner decisions</li>
+            <li><span class="srv srv--agents">Original / Parent / Worker</span> distinct agent roles in delegated SubAgent access</li>
         </ul>
         <p class="intro__role">
             This Guided Tour runs each flow <strong>for real</strong> against live mock servers and
@@ -33,13 +46,26 @@
     </section>
 
     <section class="flow-index" aria-label="Flow index">
-        <a href="/events">Bookings Events: subscription and notification walkthrough</a>
-        <a href="/wallet-protocol">Wallet Protocol: AS clarification, direct chaining and revocation</a>
-        <a href="/documents">Document Release</a>
-        <a href="/catalog-gateway">Travel Catalog: service-qualified OpenAPI gateway</a>
         @foreach (var f in Flows)
         {
             <a class="flow-card" href="@($"tour?flow={f.Mode}")">
+                <div class="flow-card__num">@f.Number</div>
+                <div class="flow-card__body">
+                    <h3 class="flow-card__title">@f.Title</h3>
+                    <p class="flow-card__what">@f.What</p>
+                    <div class="flow-card__meta">
+                        @foreach (var badge in f.Badges)
+                        {
+                            <span class="flow-card__badge">@badge</span>
+                        }
+                    </div>
+                </div>
+                <div class="flow-card__go" aria-hidden="true">→</div>
+            </a>
+        }
+        @foreach (var f in CapabilityFlows)
+        {
+            <a class="flow-card" href="@f.Href">
                 <div class="flow-card__num">@f.Number</div>
                 <div class="flow-card__body">
                     <h3 class="flow-card__title">@f.Title</h3>
@@ -59,6 +85,7 @@
 
 @code {
     private sealed record FlowCard(int Number, string Mode, string Title, string What, string[] Badges);
+    private sealed record CapabilityCard(int Number, string Href, string Title, string What, string[] Badges);
 
     private static readonly FlowCard[] Flows =
     {
@@ -93,7 +120,23 @@
             "One mission governs both a clarification chat for an out-of-mission scope and a silent, mission-forwarded delegated chain down to your Trips.",
             new[] { "Agent + Concierge + Trips + PS", "14 steps", "dual governance" }),
         new(11, "SubAgent", "Sub-Agents — Parent-Mediated Workers",
-            "Aria spins up a short-lived worker with its own key + identity under one consent; the worker fetches a resource token, Aria mediates the exchange, and hands the worker-bound token back down to it.",
-            new[] { "Original + Parent + Worker + PS + AS", "7 steps", "live federation" }),
+            "Aria spins up a short-lived worker with its own key and identity. Three explicit decisions authorize the upstream caller, the worker's Wallet scope, and the federated grant before Aria hands the worker-bound token down.",
+            new[] { "Original + Parent + Worker + PS + AS", "7 steps", "3 approvals", "live federation" }),
+    };
+
+    private static readonly CapabilityCard[] CapabilityFlows =
+    {
+        new(12, "/events", "Bookings Events — Availability Notification",
+            "A sold-out reservation opens up. Aria subscribes through its Agent Provider, then verifies and acknowledges the signed notification without exposing a public webhook.",
+            new[] { "Agent + Bookings + AP", "6 steps", "public / protected" }),
+        new(13, "/wallet-protocol", "Wallet Protocol — Decisions and Recovery",
+            "Aria handles three Wallet edge cases: answering an Access Server question, extending an existing grant through Concierge, and recovering after a grant is revoked.",
+            new[] { "Agent + Wallet + PS + AS", "3 scenarios", "clarify / chain / revoke" }),
+        new(14, "/documents", "Document Release — Resource Permission First",
+            "Aria requests a work travel brief. The document owner decides whether it may be released before the Person Server asks you to authorize the download.",
+            new[] { "Agent + Documents + PS", "4 steps", "approve / deny" }),
+        new(15, "/catalog-gateway", "Travel Catalog — Service-Qualified Access",
+            "Aria compares destination and experience catalogs behind one gateway. A grant for one service cannot be reused for the other service's identically named list operation.",
+            new[] { "Agent + Catalog + PS + R3 AS", "5 steps", "OpenAPI Gateway" }),
     };
 }

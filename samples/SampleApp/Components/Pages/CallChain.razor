@@ -155,8 +155,7 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
         </h5>
         <p>A <code>202 Accepted</code> was returned and is waiting for you to approve.</p>
         <p>
-            <strong>Interaction URL:</strong><br />
-            <a href="@_interactionUrl" target="_blank" rel="noopener">@_interactionUrl</a>
+            <a class="btn btn-warning" href="@_interactionUrl" target="_blank" rel="noopener">Open consent page for approval @_currentHopNumber</a>
         </p>
         <p class="text-muted">
             Open the link above in a new tab and click <strong>Approve</strong>.

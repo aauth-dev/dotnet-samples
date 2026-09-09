@@ -2,6 +2,8 @@ import { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { clickAndConfirm, waitForInteractive } from './blazor';
 import { approveInPopup, keycloakLogin } from './consent';
+import { expectRequestResponseArrows } from './sequence';
+import { expectReadableLinks, expectSyntaxHighlighted } from './visual-style';
 
 async function finishExchange(page: Page, target: number, cancel = false) {
   const root = page.locator('.wallet-walkthrough');
@@ -48,7 +50,14 @@ export function walletProtocolTests() {
         await waitForInteractive(page, '.wallet-next');
         await page.locator('#wallet-flow').selectOption(flow);
         const root = page.locator('.wallet-walkthrough');
+        await expect(root.locator('.scenario-narrative')).toContainText('Aria');
+        await expect(root.locator('.scenario-narrative')).toContainText('Wallet');
         await expect(root).toHaveAttribute('data-flow', flow);
+        await expectSyntaxHighlighted(root.locator('.wallet-code code'));
+        await expect(root.locator('.wallet-code code')).toContainText(
+          flow === 'Clarification' ? 'ClarifyAsync' : flow === 'DirectAs' ? 'ReadWalletAsync' : 'RevokeAsync',
+        );
+        await expectReadableLinks(page);
         for (const step of [1, 2]) {
           await clickAndConfirm(page, '.wallet-next', async () => await root.getAttribute('data-step') === String(step));
           await expect(root).toHaveAttribute('data-step', String(step));
@@ -64,7 +73,16 @@ export function walletProtocolTests() {
           await expect(page.getByRole('alert')).toHaveCount(0);
         }
         await expect(page.getByRole('list', { name: 'Protocol steps' }).locator('li')).toHaveCount(total);
-        await expect(page.getByRole('table', { name: 'Sequence diagram' }).locator('tbody tr')).toHaveCount(total);
+        const diagram = page.getByRole('region', { name: 'Sequence diagram' });
+        const expectedParticipants = flow === 'DirectAs'
+          ? ['Agent', 'Agent Provider', 'Concierge', 'Wallet', 'Person Server', 'Access Server', 'User / Browser']
+          : flow === 'Revocation'
+            ? ['Agent', 'Agent Provider', 'Wallet', 'Person Server', 'User / Browser']
+            : ['Agent', 'Agent Provider', 'Wallet', 'Person Server', 'Access Server', 'User / Browser'];
+        await expect(diagram.locator('.sequence-participant')).toHaveText(expectedParticipants);
+        for (let step = 1; step <= total; step++)
+          expect(await diagram.locator(`[data-sequence-step="${step}"]`).count()).toBeGreaterThan(0);
+        await expectRequestResponseArrows(diagram);
         await expect(page.locator('.wallet-code')).toHaveAttribute('data-flow', flow);
         await expect(page.locator('.wallet-next')).toBeDisabled();
         if (flow === 'Clarification') {

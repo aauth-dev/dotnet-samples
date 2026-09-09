@@ -98,7 +98,7 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
     // step (10 done) with the R3 AS interaction link shown.
     await page.getByRole('button', { name: 'Run all' }).click();
     await approvePersonConsent(page, 'a.worker-consent');
-    const link = page.locator('a.primary.approve');
+    const link = page.locator('a.primary.approve[href^="http://localhost:5501/"]');
     await expect(link).toBeVisible();
     await expect(doneSteps(page)).toHaveCount(10);
 
@@ -163,7 +163,7 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
 
     await page.getByRole('button', { name: 'Run all' }).click();
     await approvePersonConsent(page, 'a.worker-consent');
-    const link = page.locator('a.primary.approve');
+    const link = page.locator('a.primary.approve[href^="http://localhost:5501/"]');
     await expect(link).toBeVisible();
 
     const [popup] = await Promise.all([

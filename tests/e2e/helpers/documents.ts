@@ -1,6 +1,8 @@
 import { test, expect } from './fixtures';
 import { clickAndConfirm, waitForInteractive } from './blazor';
 import { approveInPopup } from './consent';
+import { expectRequestResponseArrows } from './sequence';
+import { expectReadableLinks, expectSyntaxHighlighted } from './visual-style';
 
 export function documentTests() {
   test.describe.configure({ timeout: 120_000 });
@@ -11,16 +13,23 @@ export function documentTests() {
       await page.locator('a[href="/documents"], a[href="documents"]').first().click();
       await waitForInteractive(page, '.document-next');
       const root = page.locator('.document-view');
+      await expect(root.locator('.scenario-narrative')).toContainText('Aria');
+      await expect(root.locator('.scenario-narrative')).toContainText('Documents');
+      await expectSyntaxHighlighted(root.locator('[data-code-step="1"] code'));
+      await expectReadableLinks(page);
       await expect(root.locator('[data-protocol-step]')).toHaveCount(4);
       const methods = ['EnrollDocumentAgentAsync', 'VerifyResourceTokenAsync', 'TokenExchangeClient', 'DownloadDocumentAsync'];
       for (const step of [1, 2, 3, 4]) {
-        expect(await root.locator(`[data-sequence-step="${step}"]`).count()).toBeGreaterThan(0);
         await expect(root.locator(`[data-code-step="${step}"] summary`)).toContainText(`${step}.`);
         await expect(root.locator(`[data-code-step="${step}"] code`)).toContainText(methods[step - 1]);
       }
-      await expect(root.locator('tr[data-kind="setup"]')).toContainText('AP');
-      await expect(root.locator('tr[data-kind="local"] img')).toHaveCount(0);
-      await expect(root.getByRole('table', { name: 'Sequence diagram' })).toContainText('Signed GET pending Location');
+      const diagram = root.getByRole('region', { name: 'Sequence diagram' });
+      if (new URL(page.url()).port === '5400') await expect(diagram.locator('[data-sequence-step]')).toHaveCount(0);
+      else for (const step of [1, 2, 3, 4])
+        expect(await diagram.locator(`[data-sequence-step="${step}"]`).count()).toBeGreaterThan(0);
+      await expect(diagram.locator('.sequence-participant')).toHaveText([
+        'Agent', 'Agent Provider', 'Documents', 'User / Browser', 'Person Server',
+      ]);
       for (const cycle of [0, 1]) {
       for (const step of [1, 2]) {
         await expect(root.locator(`[data-protocol-step="${step}"]`)).toHaveAttribute('aria-current', 'step');
@@ -33,6 +42,7 @@ export function documentTests() {
       await page.locator('.document-next').click();
       const link = page.locator('.document-consent');
       await expect(link).toHaveAttribute('href', /:5100\/interaction\/resource\?code=/, { timeout: 30_000 });
+      await expect(link).toHaveCSS('display', /^(inline-)?flex$/);
       const [popup] = await Promise.all([page.context().waitForEvent('page'), link.click()]);
       await popup.locator('button.demo-login, button').filter({ hasText: /Sign in|Continue to resource/ }).first().waitFor();
       if (await popup.locator('button.demo-login').isVisible()) await popup.locator('button.demo-login').click();
@@ -72,13 +82,19 @@ export function documentTests() {
         await expect(page.locator('.document-next')).toBeDisabled();
         await expect(page.locator('.document-exchange[data-status="200"]').filter({ hasText: 'GET http://localhost:5007/document' })).toHaveCount(0);
       }
+      for (let step = 1; step <= (approve ? 4 : 3); step++)
+        expect(await diagram.locator(`[data-sequence-step="${step}"]`).count()).toBeGreaterThan(0);
+      await expect(diagram.locator('[data-kind="setup"]')).toContainText('Enroll');
+      await expect(diagram.locator('[data-kind="local"]')).toContainText('Verify token');
+      await expect(diagram).toContainText('Poll pending grant');
+      await expectRequestResponseArrows(diagram);
       await popup.close();
       await expect(page.getByRole('alert')).toHaveCount(0);
       for (const width of [1280, 390]) {
         await page.setViewportSize({ width, height: 844 });
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
         await page.screenshot({ path: testInfo.outputPath(`documents-${approve}-${cycle}-${width}.png`) });
-        await root.getByRole('table', { name: 'Sequence diagram' }).screenshot({ path: testInfo.outputPath(`documents-diagram-${cycle}-${width}.png`) });
+        await diagram.screenshot({ path: testInfo.outputPath(`documents-diagram-${cycle}-${width}.png`) });
         const code = root.locator('[data-code-step="3"]');
         if (!await code.evaluate(element => (element as HTMLDetailsElement).open)) await code.locator('summary').click();
         await code.screenshot({ path: testInfo.outputPath(`documents-code-${cycle}-${width}.png`) });

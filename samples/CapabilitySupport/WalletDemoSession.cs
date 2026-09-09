@@ -109,24 +109,32 @@ public sealed class WalletDemoSession(string provider, string person, string wal
     {
         using var signed = Signed(_agentToken!);
         using var metadata = new MetadataClient(_http);
-        var result = await new TokenExchangeClient(signed, metadata).ExchangeAsync(person, _resourceToken!, new TokenExchangeRequest
+        string result;
+        try
         {
-            OnInteractionRequired = async (interaction, _) =>
+            result = await new TokenExchangeClient(signed, metadata).ExchangeAsync(person, _resourceToken!, new TokenExchangeRequest
             {
-                ConsentUrl = interaction.BuildUserUrl();
-                if (Changed is not null) await Changed();
-            },
-            OnClarificationRequired = async (question, token) =>
-            {
-                _answer = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                Question = question.Clarification;
-                if (Changed is not null) await Changed();
-                var answer = await _answer.Task.WaitAsync(token);
-                Question = null;
-                return answer;
-            },
-        }, cancellationToken);
-        ConsentUrl = null;
+                OnInteractionRequired = async (interaction, _) =>
+                {
+                    ConsentUrl = interaction.BuildUserUrl();
+                    if (Changed is not null) await Changed();
+                },
+                OnClarificationRequired = async (question, token) =>
+                {
+                    _answer = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    Question = question.Clarification;
+                    if (Changed is not null) await Changed();
+                    var answer = await _answer.Task.WaitAsync(token);
+                    Question = null;
+                    return answer;
+                },
+            }, cancellationToken);
+        }
+        finally
+        {
+            ConsentUrl = null;
+            if (Changed is not null) await Changed();
+        }
         Result = ScenarioWireHandler.Claims(result).ToJsonString(Pretty);
         return result;
     }

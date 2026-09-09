@@ -45,6 +45,13 @@ KEYCLOAK_URL   := http://localhost:8080
 KEYCLOAK_IMAGE := quay.io/keycloak/keycloak:26.0
 KEYCLOAK_REALM := samples/MockAccessServers/Federated/keycloak
 
+# Keep draft-10 demo credentials separate from keys created by earlier drafts.
+USER_HOME := $(HOME)
+USER_DATA_HOME := $(or $(XDG_DATA_HOME),$(USER_HOME)/.local/share)
+DEMO_HOME ?= $(USER_DATA_HOME)/aauth-samples/v10/home
+DEMO_DOTNET_HOME := $(or $(DOTNET_CLI_HOME),$(USER_HOME))
+DEMO_NUGET_PACKAGES := $(or $(NUGET_PACKAGES),$(USER_HOME)/.nuget/packages)
+
 # AgentConsole persists its enrollment under $LocalApplicationData; the MockAgentProvider
 # keeps its agent registry in memory, so the cache goes stale whenever the AP restarts.
 AGENT_CACHE_DIR := $(or $(XDG_DATA_HOME),$(HOME)/.local/share)/aauth-agent-console
@@ -75,6 +82,17 @@ endef
 .DEFAULT_GOAL := help
 
 demo demo-mission demo-keycloak ps-consent resources: export AAuth__EnableIsolatedDemoConsent=true
+demo demo-mission demo-keycloak: export HOME = $(DEMO_HOME)
+demo demo-mission demo-keycloak: export XDG_DATA_HOME = $(DEMO_HOME)/.local/share
+demo demo-mission demo-keycloak: export DOTNET_CLI_HOME := $(DEMO_DOTNET_HOME)
+demo demo-mission demo-keycloak: export NUGET_PACKAGES := $(DEMO_NUGET_PACKAGES)
+demo demo-mission demo-keycloak: demo-state
+
+.PHONY: demo-state
+demo-state:
+	@mkdir -p "$(DEMO_HOME)" "$(DEMO_HOME)/.local/share"
+	@chmod 700 "$(DEMO_HOME)" "$(DEMO_HOME)/.local/share"
+	@echo "Demo state: $(DEMO_HOME) (override with DEMO_HOME=...)"
 
 .PHONY: help build restore test test-unit test-conformance test-events agent-events format clean \
         resources ps ps-consent ap concierge tour sampleapp agent live \

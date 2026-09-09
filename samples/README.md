@@ -133,6 +133,21 @@ The fastest way to run all samples together:
 make demo
 ```
 
+The `demo`, `demo-mission` and `demo-keycloak` targets keep persistent draft-10
+sample keys, enrollment records and databases under
+`$XDG_DATA_HOME/aauth-samples/v10/home` (or
+`~/.local/share/aauth-samples/v10/home` when `XDG_DATA_HOME` is unset).
+They set the services' `HOME` and `XDG_DATA_HOME` to that isolated location while
+reusing your existing .NET and NuGet caches. Earlier `~/.aauth` keys are left
+untouched; keys created before the required JWK `alg` member was introduced are
+not silently accepted or overwritten. Restarts reuse the same demo state.
+Set `DEMO_HOME` to an absolute directory to select another demo state location.
+
+Run only one stack at a time: stop an existing demo with `Ctrl+C` before starting
+another, since the services use fixed ports. Individual `dotnet run` commands
+use your normal environment; supply the same `HOME` and `XDG_DATA_HOME` if they
+need to share the demo's persisted state.
+
 This starts Profile + Calendar + Trips + Wallet + Inbox + Bookings + Catalog + Documents + Concierge + MockPersonServer + MockAgentProvider + Federated AS (stub) + R3 AS + GuidedTour + SampleApp in parallel, prints their URLs, and tears them down on `Ctrl+C`. Then open the **GuidedTour** at <http://localhost:5400> and click **Run all**, or the **SampleApp** at <http://localhost:5240>.
 
 For the **four-party (federated)** flow with an Access Server, `make demo` already

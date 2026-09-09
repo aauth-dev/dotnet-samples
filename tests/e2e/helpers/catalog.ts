@@ -1,6 +1,8 @@
 import { test, expect } from './fixtures';
 import { waitForInteractive } from './blazor';
-import { approveInPopup } from './consent';
+import { approveInPopup, denyInPopup } from './consent';
+import { expectRequestResponseArrows } from './sequence';
+import { expectReadableLinks, expectSyntaxHighlighted } from './visual-style';
 
 export function catalogTests() {
   test.describe('Service-qualified catalog gateway', () => {
@@ -12,6 +14,10 @@ export function catalogTests() {
         await waitForInteractive(page, '.catalog-next');
         await page.locator('#catalog-service').selectOption(service);
         const root = page.locator('.catalog-view');
+        await expect(root.locator('.scenario-narrative')).toContainText('Aria');
+        await expect(root.locator('.scenario-narrative')).toContainText('Destinations');
+        await expectSyntaxHighlighted(root.locator('.catalog-code code'));
+        await expectReadableLinks(page);
         for (let step = 1; step <= 5; step++) {
           await page.locator('.catalog-next').click();
           if (step === 2 || step === 5) {
@@ -28,6 +34,7 @@ export function catalogTests() {
               if (state === 'error') throw new Error(await page.getByRole('alert').innerText());
               if (state === 'done') break;
               const link = page.locator('.catalog-consent');
+              await expect(link).toHaveCSS('display', /^(inline-)?flex$/);
               previous = await link.getAttribute('href');
               const [popup] = await Promise.all([page.context().waitForEvent('page'), link.click()]);
               await approveInPopup(popup);
@@ -50,7 +57,13 @@ export function catalogTests() {
         expect(result.grant.operations).toEqual([{ service: result.service, operationId: 'list' }]);
         await expect(root.locator('.catalog-exchange[data-status="403"]')).toHaveCount(1);
         await expect(root.getByRole('list', { name: 'Protocol steps' }).locator('li')).toHaveCount(5);
-        await expect(root.getByRole('table', { name: 'Sequence diagram' }).locator('tbody tr')).toHaveCount(5);
+        const diagram = root.getByRole('region', { name: 'Sequence diagram' });
+        await expect(diagram.locator('.sequence-participant')).toHaveText([
+          'Agent', 'Agent Provider', 'Catalog', 'Person Server', 'R3 Access Server',
+        ]);
+        for (const step of [1, 2, 3, 4, 5])
+          expect(await diagram.locator(`[data-sequence-step="${step}"]`).count()).toBeGreaterThan(0);
+        await expectRequestResponseArrows(diagram);
         await expect(root.locator('.catalog-code')).toContainText('R3Operation.OpenApiGateway(service, "list")');
         for (const width of [1280, 390]) {
           await page.setViewportSize({ width, height: 844 });
@@ -65,5 +78,25 @@ export function catalogTests() {
         await expect(root).toHaveAttribute('data-step', '1');
       });
     }
+
+    test('denied catalog consent clears the consumed action and can reset', async ({ page }) => {
+      await page.goto('/catalog-gateway');
+      await waitForInteractive(page, '.catalog-next');
+      const root = page.locator('.catalog-view');
+      await page.locator('.catalog-next').click();
+      await expect(root).toHaveAttribute('data-step', '1');
+      await page.locator('.catalog-next').click();
+      const link = page.locator('.catalog-consent');
+      await expect(link).toBeVisible({ timeout: 30_000 });
+      const [popup] = await Promise.all([page.context().waitForEvent('page'), link.click()]);
+      await denyInPopup(popup);
+      await popup.close();
+      await expect(link).toHaveCount(0);
+      await expect(page.getByRole('alert')).toContainText(/denied/i);
+      await page.getByRole('button', { name: 'Reset catalog flow' }).click();
+      await expect(root).toHaveAttribute('data-step', '0');
+      await page.locator('.catalog-next').click();
+      await expect(root).toHaveAttribute('data-step', '1');
+    });
   });
 }
