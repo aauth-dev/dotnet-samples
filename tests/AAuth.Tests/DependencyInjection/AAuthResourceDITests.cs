@@ -191,7 +191,7 @@ public class AAuthResourceDITests
             opts.SigningKeys["k1"] = _key;
         });
 
-        var custom = new JwksClient(new System.Net.Http.HttpClient());
+        var custom = new JwksClient();
         services.RemoveAll<JwksClient>();
         services.AddSingleton(custom);
 

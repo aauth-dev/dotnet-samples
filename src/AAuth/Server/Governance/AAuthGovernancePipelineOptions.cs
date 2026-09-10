@@ -10,6 +10,7 @@ namespace AAuth.Server.Governance;
 /// </summary>
 public sealed class AAuthGovernancePipelineOptions
 {
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
     /// <summary>
     /// Route prefix prepended to each endpoint path (default empty). For example,
     /// set <c>"/governance"</c> to mount at <c>/governance/permission</c>.

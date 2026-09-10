@@ -1,4 +1,7 @@
-# Mission Governance (Server)
+---
+title: Mission Governance (Server)
+description: Host authenticated mission approval, permission, audit and interaction endpoints.
+---
 
 > [Mission Lifecycle](https://explorer.aauth.dev/missions/lifecycle)
 
@@ -30,10 +33,10 @@ using Microsoft.Extensions.DependencyInjection;
 builder.Services.AddAAuthGovernance(); // stores + no-op approver/decider/sink/relay
 
 // Override the policy and user-channel seams with the PS's own:
-builder.Services.AddSingleton<IMissionApprover, MyMissionApprover>();
-builder.Services.AddSingleton<IPermissionDecider, MyPermissionDecider>();
-builder.Services.AddSingleton<IAuditSink, MyAuditSink>();
-builder.Services.AddSingleton<IInteractionRelay, MyInteractionRelay>();
+builder.Services.AddSingleton<IMissionApprover>(missionApprover);
+builder.Services.AddSingleton<IPermissionDecider>(permissionDecider);
+builder.Services.AddSingleton<IAuditSink>(missionAuditSink);
+builder.Services.AddSingleton<IInteractionRelay>(interactionRelay);
 ```
 
 For a lightweight user channel you can supply the relay as a lambda instead of a
@@ -45,7 +48,7 @@ the no-op default:
 builder.Services.AddAAuthInteractionRelay(async (request, ct) =>
 {
     // request.Type is question | completion | interaction | payment
-    var accepted = await myUserChannel.AskAsync(request, ct);
+    var accepted = await askThroughUserChannel(request, ct);
     return new InteractionRelayResult { Accepted = accepted };
 });
 ```
@@ -191,7 +194,8 @@ public interface IMissionLog
 {
     Task AppendAsync(MissionLogEntry entry, CancellationToken ct = default);
     Task<IReadOnlyList<MissionLogEntry>> ReadAsync(string s256, CancellationToken ct = default);
-    Task<bool> HasPriorConsentAsync(string s256, string resource, string scope, CancellationToken ct = default);
+    Task<bool> HasPriorConsentAsync(string s256, string resource, string scope, CancellationToken ct = default,
+        string? account = null, string? agentId = null, string? agentKeyThumbprint = null);
 }
 ```
 

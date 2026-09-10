@@ -30,14 +30,18 @@
 </p>
 
 <p class="text-muted">
-    <strong>Federation is transparent to the agent.</strong> This page's agent
+    <strong>PS consent and AS policy are independent.</strong> This page's agent
+    receives a grant only after PS consent. For a mission request, the shared PS
+    gate rejects terminated missions and reviews the resource, scope, account and
+    agent key before any AS request or claims release; deferred delivery checks
+    mission state again. This page's agent
     code is identical to the three-party
     <a href="calendar-deferred">Deferred</a> page — only the PS behaves differently. When
     the AS requires consent it returns <code>202 requirement=interaction</code>;
     the PS relays it, and the agent surfaces the AS consent URL on the
     <em>same</em> challenge callback, then polls until the AS mints the auth
     token. <strong>The consent screen tells you which Access Server you're
-    using:</strong> the stub AS shows its own Approve/Deny page
+    using:</strong> the stub AS requires explicit demo sign-in before its Approve/Deny page
     (<code>make demo</code>), while Keycloak shows a login page
     (<code>make demo-keycloak</code>).
 </p>
@@ -49,7 +53,7 @@
 // talks to the Access Server. Federation happens at the
 // PS when resource_token.aud != PS. A 202 from the AS is
 // relayed by the PS and arrives on THIS callback.
-using var client = AAuthClientBuilder.SelfIssuing(key)
+using var client = AAuthClientBuilder.SelfIssuing(key).WithEgressPolicy(SampleEgress.Policy)
     .As(issuer, agentId)
     .WithKid(keyId)
     .WithPersonServer(personServer)
@@ -73,29 +77,20 @@ var response = await client.GetAsync($"{resource}/wallet");</code></pre>
 </div>
 <div class="col-md-6">
 <h5>Person Server (federation) Code</h5>
-<pre><code class="language-csharp">// The PS peeks resource_token.aud. If it is the PS
-// itself → mint directly (three-party). If it is a
-// trusted Access Server → federate: discover the AS,
-// make a SIGNED POST {as}/token with the resource_token
-// + agent_token, and return the AS-minted auth token.
-var aud = PeekJwtAudience(resourceToken);
-if (aud == psIssuer)
-    return MintLocally(...);            // three-party
-
-if (!trustedAccessServers.Contains(aud))
-    return Results.Json(new { error =
-        "untrusted_access_server" }, statusCode: 403);
-
-var auth = await accessServerClient.ExchangeAsync(
-    new AccessServerRequest
-    {
-        ResourceToken = resourceToken,
-        AgentToken    = agentToken,
-        // 202 interaction (Keycloak login) is relayed
-        // back to the agent via OnInteractionRequired.
-    }, ct);
-
-return Results.Json(new { auth_token = auth.Token });</code></pre>
+<pre><code class="language-csharp">// Register the host's authenticated identity/consent policy first.
+// The mapper verifies agent and resource tokens before routing:
+// aud == PS: direct grant; admitted AS audience: signed federation.
+// The signed PS-to-AS body carries resource_token and agent_token.
+// Deferred AS consent/clarification is relayed through PS pending state.
+builder.Services.AddSingleton&lt;IPersonPendingStore, InMemoryPersonPendingStore&gt;();
+var app = builder.Build();
+app.MapAAuthPersonServer(new AAuthPersonServerOptions
+{
+    EgressPolicy = SampleEgress.Policy,
+    Issuer = psIssuer,
+    SigningKeys = new Dictionary&lt;string, IAAuthKey&gt; { [PsKid] = psKey },
+    TrustedAccessServers = trustedAccessServers,
+});</code></pre>
 </div>
 </div>
 
@@ -125,14 +120,14 @@ return Results.Json(new { auth_token = auth.Token });</code></pre>
 @if (_waitingForApproval)
 {
     <div class="mt-3 alert alert-warning">
-        <h5>Access Server Interaction Required</h5>
+        <h5>@(IsPersonConsent ? "Person Server Consent Required" : "Access Server Interaction Required")</h5>
+        <ConsentProgress ConsentPath="@(IsPersonConsent ? "/interaction" : "/interaction/login")" />
         <p>
-            The Access Server returned <code>202 Accepted</code> and is waiting for the
-            user to authenticate / consent (relayed by the Person Server).
+            The current authority is waiting for authenticated consent. PS consent
+            is evaluated before federation; an AS interaction can follow independently.
         </p>
         <p>
-            <strong>Interaction URL:</strong><br />
-            <a href="@_interactionUrl" target="_blank" rel="noopener">@_interactionUrl</a>
+            <a class="btn btn-warning" href="@_interactionUrl" target="_blank" rel="noopener">@(IsPersonConsent ? "Open Person Server consent page" : "Open Access Server interaction")</a>
         </p>
         <p class="text-muted">
             Open the link above in a new tab and complete the login / consent.
@@ -172,6 +167,7 @@ return Results.Json(new { auth_token = auth.Token });</code></pre>
     private string? _statusCode;
     private bool _success;
     private string? _accessServer;
+    private bool IsPersonConsent => _interactionUrl?.StartsWith(Config["AAuth:PersonServer"]!.TrimEnd('/') + "/", StringComparison.Ordinal) == true;
 
     protected override void OnInitialized()
     {
@@ -202,7 +198,7 @@ return Results.Json(new { auth_token = auth.Token });</code></pre>
             // Self-issued token refresh + interaction relay. A 202 from the AS
             // (via the PS) surfaces a consent URL here; the SDK then polls and
             // resumes. This is byte-for-byte the three-party deferred agent.
-            using var client = AAuthClientBuilder.SelfIssuing(_identity.Key)
+            using var client = AAuthClientBuilder.SelfIssuing(_identity.Key).WithEgressPolicy(SampleEgress.Policy)
                 .As(_identity.Issuer, _identity.AgentId)
                 .WithKid(_identity.KeyId)
                 .WithPersonServer(personServer)
@@ -272,7 +268,7 @@ return Results.Json(new { auth_token = auth.Token });</code></pre>
         var agentId = _identity.AgentId;
         var resource = Config["AAuth:Wallet"]!;
 
-        using var http = new HttpClient();
+        using var http = new SampleHttpClient();
         try
         {
             await http.PostAsJsonAsync(

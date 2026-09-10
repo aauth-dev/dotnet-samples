@@ -13,6 +13,29 @@ namespace AAuth.Tests.HttpSig;
 
 public class AAuthAccessHandlerTests
 {
+    [Fact]
+    public async Task AccountSwitchAndOtherKey_DoNotReuseCredentials()
+    {
+        var key = AAuthKey.Generate();
+        var store = new InMemoryAAuthAccessStore();
+        var inner = new ProgrammableHandler(index => index == 0 ? Ok("personal-token") : Ok());
+        using var client = BuildClient(key, store, inner);
+        foreach (var account in new string?[] { "personal", "work", null, "personal" })
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "https://resource.example/messages");
+            if (account is not null) request.Options.Set(AAuthRequestOptions.Account, account);
+            await client.SendAsync(request);
+        }
+        Assert.Null(inner.Requests[1].Headers.Authorization);
+        Assert.Null(inner.Requests[2].Headers.Authorization);
+        Assert.Equal("personal-token", inner.Requests[3].Headers.Authorization?.Parameter);
+        using var otherClient = BuildClient(AAuthKey.Generate(), store, inner);
+        using var other = new HttpRequestMessage(HttpMethod.Get, "https://resource.example/messages");
+        other.Options.Set(AAuthRequestOptions.Account, "personal");
+        await otherClient.SendAsync(other);
+        Assert.Null(inner.Requests[4].Headers.Authorization);
+    }
+
     private sealed class ProgrammableHandler : HttpMessageHandler
     {
         private readonly Func<int, HttpResponseMessage> _responder;
@@ -44,7 +67,7 @@ public class AAuthAccessHandlerTests
         => new AAuthClientBuilder(key)
             .UseHwk()
             .WithResourceManagedAccess(store)
-            .WithInnerHandler(inner)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(inner, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
     [Fact]
@@ -57,7 +80,7 @@ public class AAuthAccessHandlerTests
 
         await client.GetAsync("https://resource.example/messages");
 
-        Assert.True(store.TryGet("https://resource.example", out var token));
+        Assert.True(store.TryGet("https://resource.example", out var token, signingKeyThumbprint: key.ComputeJwkThumbprint()));
         Assert.Equal("token-abc", token);
     }
 
@@ -130,7 +153,7 @@ public class AAuthAccessHandlerTests
 
         Assert.Equal("token-1", inner.Requests[1].Headers.Authorization!.Parameter);
         Assert.Equal("token-2", inner.Requests[2].Headers.Authorization!.Parameter);
-        Assert.True(store.TryGet("https://resource.example", out var token));
+        Assert.True(store.TryGet("https://resource.example", out var token, signingKeyThumbprint: key.ComputeJwkThumbprint()));
         Assert.Equal("token-2", token);
     }
 
@@ -150,7 +173,7 @@ public class AAuthAccessHandlerTests
 
         await client.GetAsync("https://resource.example/messages");
 
-        Assert.False(store.TryGet("https://resource.example", out _));
+        Assert.False(store.TryGet("https://resource.example", out _, signingKeyThumbprint: key.ComputeJwkThumbprint()));
     }
 
     [Fact]
@@ -163,7 +186,7 @@ public class AAuthAccessHandlerTests
 
         await client.GetAsync("https://resource.example/messages");
 
-        Assert.False(store.TryGet("https://resource.example", out _));
+        Assert.False(store.TryGet("https://resource.example", out _, signingKeyThumbprint: key.ComputeJwkThumbprint()));
     }
 
     [Fact]

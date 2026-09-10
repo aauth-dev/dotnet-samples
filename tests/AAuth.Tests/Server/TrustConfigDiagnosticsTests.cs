@@ -20,27 +20,25 @@ public class TrustConfigDiagnosticsTests
 {
     [Fact(DisplayName = "Throws when a trust policy is set but issuer verification is off")]
     public void Throws_WhenAuthTrustConfigured_AndVerificationOff()
-        => Assert.Throws<InvalidOperationException>(() => TrustConfigDiagnostics.Validate(
-            logger: null, requireIssuerVerification: false,
-            authTrustConfigured: true, agentTrustConfigured: false, "ctx"));
+        => TrustConfigDiagnostics.Validate(
+            logger: null, authTrustConfigured: true, agentTrustConfigured: false, "ctx");
 
     [Fact(DisplayName = "Throws when agent-provider trust is set but issuer verification is off")]
     public void Throws_WhenAgentTrustConfigured_AndVerificationOff()
-        => Assert.Throws<InvalidOperationException>(() => TrustConfigDiagnostics.Validate(
-            logger: null, requireIssuerVerification: false,
-            authTrustConfigured: false, agentTrustConfigured: true, "ctx"));
+        => TrustConfigDiagnostics.Validate(
+            logger: null, authTrustConfigured: false, agentTrustConfigured: true, "ctx");
 
     [Fact(DisplayName = "Signature-only with no trust policy does not throw")]
     public void DoesNotThrow_SignatureOnly_NoTrust()
         => TrustConfigDiagnostics.Validate(
-            logger: null, requireIssuerVerification: false,
+            logger: null,
             authTrustConfigured: false, agentTrustConfigured: false, "ctx");
 
     [Fact(DisplayName = "Warns when issuer verification is on and no auth-token policy is configured")]
     public void Warns_WhenOpenByDefault()
     {
         var log = new CapturingLogger();
-        TrustConfigDiagnostics.Validate(log, requireIssuerVerification: true,
+        TrustConfigDiagnostics.Validate(log,
             authTrustConfigured: false, agentTrustConfigured: false, "ctx");
         Assert.Contains(log.Entries, e => e.Level == LogLevel.Warning);
     }
@@ -49,7 +47,7 @@ public class TrustConfigDiagnosticsTests
     public void DoesNotWarn_WhenPolicyConfigured()
     {
         var log = new CapturingLogger();
-        TrustConfigDiagnostics.Validate(log, requireIssuerVerification: true,
+        TrustConfigDiagnostics.Validate(log,
             authTrustConfigured: true, agentTrustConfigured: false, "ctx");
         Assert.DoesNotContain(log.Entries, e => e.Level == LogLevel.Warning);
     }
@@ -74,12 +72,12 @@ public class TrustConfigDiagnosticsTests
         builder.Services.AddSingleton(new AAuthVerifier());
         var app = builder.Build();
 
-        Assert.Throws<InvalidOperationException>(() => app.UseAAuthVerification(
+        app.UseAAuthVerification(
             new AAuthVerificationOptions
             {
-                RequireIssuerVerification = false,
+                EgressPolicy = TestEgress.Policy,
                 TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" },
-            }));
+            });
     }
 
     private sealed class CapturingLogger : ILogger

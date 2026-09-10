@@ -5,6 +5,36 @@ namespace AAuth.R3.Tests;
 
 public class R3ModelTests
 {
+    [Theory]
+    [InlineData("{\"tool\":\"create\"}")]
+    [InlineData("{\"operationId\":\"create\"}")]
+    [InlineData("{\"operationId\":\"create\",\"service\":\"calendar\"}")]
+    [InlineData("{\"method\":\"calendar.Service/Create\"}")]
+    [InlineData("{\"operation\":\"Create\",\"type\":\"mutation\"}")]
+    [InlineData("{\"operationId\":\"receive\",\"action\":\"receive\"}")]
+    [InlineData("{\"operation\":\"Create\",\"service\":\"Calendar\"}")]
+    [InlineData("{\"operation\":\"Events\",\"methods\":[\"GET\",\"POST\"]}")]
+    public void Operation_AllStandardShapesRoundTrip(string json)
+    {
+        var operation = JsonSerializer.Deserialize<R3Operation>(json, R3Json.Options)!;
+        Assert.Equal(json, JsonSerializer.Serialize(operation, R3Json.Options));
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"operationId\":\"\"}")]
+    [InlineData("{\"operationId\":\"create\",\"service\":null}")]
+    [InlineData("{\"operationId\":\"create\",\"service\":[]}")]
+    [InlineData("{\"operationId\":\"create\",\"action\":\"subscribe\"}")]
+    [InlineData("{\"operation\":\"Create\",\"type\":\"Mutation\"}")]
+    [InlineData("{\"operation\":\"Events\",\"methods\":null}")]
+    [InlineData("{\"operation\":\"Events\",\"methods\":[]}")]
+    [InlineData("{\"operation\":\"Events\",\"methods\":[1]}")]
+    [InlineData("{\"operation\":\"Events\",\"methods\":[\"get\"]}")]
+    [InlineData("{\"operationId\":\"one\",\"operationId\":\"two\"}")]
+    public void Operation_RejectsMalformedMembers(string json) =>
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<R3Operation>(json, R3Json.Options));
+
     [Fact]
     public void Document_RoundTripsAndSerializesByteStable()
     {
@@ -101,7 +131,8 @@ public class R3ModelTests
         Assert.Equal(bytes, parsed.ToUtf8Bytes());
         Assert.Equal("Approve concrete itinerary.", parsed.Display!.Detail);
         Assert.True(parsed.Parameters["policy"].IsDigest);
-        Assert.Throws<InvalidOperationException>(() => (proposal with { Parameters = new Dictionary<string, R3Parameter>() }).ToUtf8Bytes());
+        Assert.Empty(R3ProposalDocument.FromUtf8Bytes((proposal with { Parameters = new Dictionary<string, R3Parameter>() }).ToUtf8Bytes()).Parameters);
+        Assert.Throws<InvalidOperationException>(() => (proposal with { Parameters = null! }).ToUtf8Bytes());
         Assert.Throws<InvalidOperationException>(() => (proposal with
         {
             Operations =

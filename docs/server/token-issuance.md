@@ -1,14 +1,22 @@
-# Token Issuance
+---
+title: Token Issuance
+description: Issue bounded AAuth resource, agent, and authorization tokens.
+---
 
 > [Token Types](https://explorer.aauth.dev/foundations/tokens) | [Token Lifecycle](https://explorer.aauth.dev/tokens/lifecycle)
 
 ## Overview
 
-The SDK provides builders for all three AAuth JWT token types. Each produces a compact JWT (`header.payload.signature`) signed with Ed25519.
+The SDK provides builders for all three AAuth JWT token types. Each produces a
+compact JWT (`header.payload.signature`) signed by the configured `IAAuthKey`.
+Built-in keys support Ed25519 (`AAuthKey`) and ES256 (`EcdsaAAuthKey`); the key's
+algorithm determines `alg`. Ed25519 examples are not a universal algorithm
+requirement. Choose a supported algorithm that the recipient accepts.
 
 ## Resource Tokens (`aa-resource+jwt`)
 
-Issued by a resource to challenge the agent. Contains the audience (Access Server URL) and the agent's key thumbprint.
+Issued by a resource to challenge the agent. Contains the recipient PS URL
+(three-party) or AS URL (federated), and the agent's key thumbprint.
 
 ```csharp
 using AAuth.Tokens;
@@ -16,10 +24,10 @@ using AAuth.Tokens;
 var resourceToken = new ResourceTokenBuilder
 {
     Issuer = "https://resource.example",
-    Audience = "https://as.example",          // where agent exchanges this
+    Audience = "https://as.example",          // recipient AS reached through the PS
     Agent = "aauth:myapp@ap.example",         // agent identifier
-    AgentJkt = keyInfo.Jkt!,                  // from parsed signature key
-    Key = resourceSigningKey,                 // Ed25519 key
+    AgentJkt = agentConfirmationKey.ComputeJwkThumbprint(), // verified HTTP key
+    Key = resourceSigningKey,
     KeyId = "resource-key-1",
     Scope = "read write",                     // requested scope
     Lifetime = TimeSpan.FromMinutes(5),       // default: 5 min
@@ -50,8 +58,13 @@ return context.ChallengeAAuth(resourceToken);
 Issued by a Person Server or Access Server to grant access. Bound to the agent's confirmation key.
 
 ```csharp
+var verifiedAgent = await tokenVerifier.VerifyWithJwksAsync(
+    agentToken, metadata, jwks,
+    AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk,
+    expectedAudience: null);
 var authToken = new AuthTokenBuilder
 {
+    AgentTokenExpiresAt = verifiedAgent.ExpiresAt,
     Issuer = "https://ps.example",
     Audience = "https://resource.example",    // resource that will accept this
     Agent = "aauth:myapp@ap.example",
@@ -72,24 +85,44 @@ var authToken = new AuthTokenBuilder
 | `Issuer` | Yes | — | PS or AS URL (becomes `iss`) |
 | `Audience` | Yes | — | Resource URL (becomes `aud`) |
 | `Agent` | Yes | — | Agent identifier |
-| `AgentConfirmationKey` | Yes | — | Agent's public key (bound via `cnf.jkt`) |
+| `AgentConfirmationKey` | Yes | — | Agent's public key (bound via `cnf.jwk`) |
+| `AgentTokenExpiresAt` | Yes | None | Expiry from the verified agent token; no unbounded default |
+| `AuthorizationExpiresAt` | No | None | Additional verified parent/upstream ceiling |
 | `Key` | Yes | — | PS/AS signing key |
 | `KeyId` | Yes | — | Key ID (JWT header `kid`) |
 | `Dwk` | No | `"aauth-person.json"` | Discovery well-known path (`PersonDwk` or `AccessDwk`) |
 | `Scope` | No | — | Granted scope |
 | `Subject` | No | — | Person identifier |
-| `Lifetime` | No | 1 hour | Token validity |
+| `Lifetime` | No | 1 hour | Positive requested lifetime, at most one hour; capped by verified expiry |
+| `TimeProvider` | No | System | Clock used to reject expired contexts and determine issuance time |
 | `IssuedAt` | No | Now | Override issuance time |
 | `TokenId` | No | Auto | Custom `jti` |
+
+The builder rejects expired source contexts, nonpositive lifetimes, and lifetimes
+over one hour. `IssuedAt` does not bypass the current-clock expiry check. For
+sub-agent issuance, use the verified child's expiry and confirmation key; pass
+the earlier verified parent/upstream expiry as `AuthorizationExpiresAt`.
+
+PS, AS, and R3 pending state retains the original verified ceilings. A fresh poll
+carrier does not extend them. Consent that finishes after expiry cannot mint a
+new token. Success responses calculate `expires_in` from the issued token's
+remaining Unix seconds, including after deferred delivery.
+
+`AdditionalClaims` accepts identity extensions such as `email`, but rejects
+`iss`, `dwk`, `aud`, `jti`, `agent`, `cnf`, `iat`, `exp`, `nbf`, `sub`, `scope`,
+`act`, `mission`, `account`, `tenant`, `roles`, and `groups`, even when their typed
+properties are unset. Set supported identity fields through the named builder
+properties. AS claims requests and pushes cannot supply protocol-owned fields;
+`sub`, `tenant`, `roles`, and `groups` use the typed identity projection path.
 
 ### Person Server vs Access Server
 
 ```csharp
 // Person Server issues:
-Dwk = AuthTokenBuilder.PersonDwk  // "aauth-person.json"
+var personDwk = AuthTokenBuilder.PersonDwk;  // "aauth-person.json"
 
 // Access Server issues:
-Dwk = AuthTokenBuilder.AccessDwk  // "aauth-access.json"
+var accessDwk = AuthTokenBuilder.AccessDwk;  // "aauth-access.json"
 ```
 
 The `Dwk` determines which `.well-known` document an agent fetches to find the issuer's public key for verification.
@@ -153,7 +186,20 @@ var verified = await verifier.VerifyResourceTokenAsync(
     expectedAgentJkt: confirmationKey.ComputeJwkThumbprint(),
     metadata: metadataClient,                   // resolves {iss}/.well-known/aauth-resource.json
     jwks: jwksClient,                           // resolves the resource's signing key
-    expectedApprover: null);                    // optional: mission.approver constraint
+    expectedApprover: psIssuer);
+```
+
+At a PS, `expectedApprover` is the local PS identifier. At an AS, it is the
+authenticated PS caller's identifier, never a value taken from the request body
+or the resource token. The AS also validates retained upstream context before
+document fetch, policy evaluation, consent, or issuance:
+
+```csharp
+var verified = await verifier.VerifyResourceTokenAsync(
+    resourceTokenString, asIssuer, issuance.AgentId,
+    issuance.ConfirmationKey.ComputeJwkThumbprint(), metadataClient, jwksClient,
+    expectedApprover: authenticatedPsIdentifier);
+issuance.ValidateResourceContext(verified.Payload, authenticatedPsIdentifier);
 ```
 
 The seven checks (failure throws `TokenVerificationException`):
@@ -166,7 +212,7 @@ The seven checks (failure throws `TokenVerificationException`):
 | 4 | `aud` | Equals `expectedAudience` |
 | 5 | `agent` | Equals `expectedAgentId` from the verified HTTP signature |
 | 6 | `agent_jkt` | Equals the presenting agent's key thumbprint (PoP binding) |
-| 7 | `mission.approver` | When `expectedApprover` is set, must match |
+| 7 | `mission.approver` | If mission is present, must match the local PS or authenticated PS caller at the AS |
 
 Map failures to the spec error response — `expired_resource_token` for an expired
 token, otherwise `invalid_resource_token` — and derive the consent screen and the
@@ -188,7 +234,7 @@ namespace AAuth.Tokens;
 public sealed record MissionClaim(string Approver, string S256)
 {
     public JsonObject ToJsonObject();
-    public static MissionClaim? FromPayload(JsonObject? payload);
+    public static MissionClaim? FromPayload(JsonObject? payload, AAuth.Discovery.AAuthEgressPolicy? policy = null);
 }
 ```
 
@@ -198,8 +244,10 @@ the PS even when the resource is not the approver. Enable it with
 `ChallengeOptions.MissionAware` — see
 [Challenge Middleware](challenge-middleware.md#mission-aware-resources). The PS
 echoes the same claim into the auth token it mints. When verifying a presented
-resource token the recipient MAY constrain `mission.approver` via
-`expectedApprover` (check 7 above).
+resource token, the PS/AS recipient must supply `expectedApprover` (check 7
+above). An absent mission does not require a new mission; a present mission
+cannot name another PS. Immediate and deferred issuance retain the verified
+mission unchanged, including R3 AS responses validated by the PS.
 
 For the full PS-side evaluation of mission context, see
 [Mission Governance (Server)](mission-governance.md).
@@ -237,7 +285,7 @@ var app = builder.Build();
 app.MapAAuthPersonServer(new AAuthPersonServerOptions
 {
     Issuer               = psIssuer,
-    SigningKeys          = new Dictionary<string, AAuthKey> { [PsKid] = psKey },
+    SigningKeys          = new Dictionary<string, IAAuthKey> { [PsKid] = psKey },
     DefaultScope         = "calendar.read",
     TrustedAccessServers = trustedAccessServers,   // null ⇒ federate to verified aud; empty ⇒ three-party only
 });
@@ -245,19 +293,21 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
 
 ### AAuthPersonServerOptions Properties
 
-| Property | Required | Default | Description |
-|----------|:--------:|---------|-------------|
-| `Issuer` | Yes | — | HTTPS URL of this PS (`iss` of minted auth tokens) |
-| `SigningKeys` | Yes | — | `kid → AAuthKey` map published at the PS JWKS |
-| `TokenPath` | No | `/token` | The token endpoint path |
-| `PendingPathPrefix` | No | `/pending` | The deferred-consent poll path prefix |
-| `DefaultScope` | No | `""` | Scope assumed when the resource token omits one |
-| `InteractionPath` | No | `/interaction` | Path the host maps for the consent page |
-| `TrustedAccessServers` | No | `null` | Access Server URLs the PS will federate to. `null` ⇒ federate to the AS named in a verified resource token's `aud` (the spec default); empty ⇒ three-party only (four-party disabled); non-empty ⇒ restrict to the listed Access Servers. AND-composed with `IsTrustedAccessServer`. |
-| `IsTrustedAccessServer` | No | `null` | Optional predicate AND-composed with `TrustedAccessServers`; assign `AAuthTrust.Any` to federate to any verifiable AS explicitly. |
-| `InteractionEndpoint` | No | `null` | §Interaction Endpoint URL advertised in metadata (falls back to `InteractionPath`) |
-| `MissionEndpoint` / `PermissionEndpoint` / `AuditEndpoint` | No | `null` | Governance endpoint URLs advertised in `aauth-person.json` (the PS maps the endpoints) |
-| `UnsignedPathPrefixes` | No | `null` | Extra path prefixes the mapper's signature verification skips (e.g. the PS's own unsigned `/admin` consent surface) |
+| Property | Type | Required | Default | Description |
+|----------|------|:--------:|---------|-------------|
+| `Issuer` | `string` | Yes | — | HTTPS URL of this PS (`iss` of minted auth tokens) |
+| `SigningKeys` | `IReadOnlyDictionary<string, IAAuthKey>` | Yes | — | Key-id to signing key map published at the PS JWKS; supports Ed25519 and ES256 keys |
+| `TokenPath` | `string` | No | `/token` | The token endpoint path |
+| `PendingPathPrefix` | `string` | No | `/pending` | The deferred-consent poll path prefix |
+| `DefaultScope` | `string` | No | `""` | Scope assumed when the resource token omits one |
+| `InteractionPath` | `string` | No | `/interaction` | Path the host maps for the consent page |
+| `TrustedAccessServers` | `IReadOnlyCollection<string>?` | No | `null` | Access Server URLs the PS will federate to. `null` ⇒ federate to the AS named in a verified resource token's `aud` (the spec default); empty ⇒ three-party only (four-party disabled); non-empty ⇒ restrict to the listed Access Servers. AND-composed with `IsTrustedAccessServer`. |
+| `IsTrustedAccessServer` | `Func<string, bool>?` | No | `null` | Optional predicate AND-composed with `TrustedAccessServers`; assign `AAuthTrust.Any` to federate to any verifiable AS explicitly. |
+| `InteractionEndpoint` | `string?` | No | `null` | §Interaction Endpoint URL advertised in metadata (falls back to `InteractionPath`) |
+| `MissionEndpoint` | `string?` | No | `null` | Mission endpoint URL advertised in `aauth-person.json` (the PS maps the endpoint) |
+| `PermissionEndpoint` | `string?` | No | `null` | Permission endpoint URL advertised in `aauth-person.json` (the PS maps the endpoint) |
+| `AuditEndpoint` | `string?` | No | `null` | Audit endpoint URL advertised in `aauth-person.json` (the PS maps the endpoint) |
+| `UnsignedPathPrefixes` | `IReadOnlyCollection<string>?` | No | `null` | Extra path prefixes the mapper's signature verification skips (e.g. the PS's own unsigned `/admin` consent surface) |
 
 ### The `IIdentityClaimsAsserter` seam
 

@@ -49,6 +49,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
 
     private IHost? _host;
     private IHost? _metadataHost;
+    private int _jwksRequests;
 
     public async Task InitializeAsync()
     {
@@ -71,27 +72,24 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
         app.MapGet("/.well-known/aauth-agent.json", () => Results.Json(new
         {
             issuer = ApIssuer,
-            jwks_uri = $"{ApIssuer}/.well-known/ap-jwks.json",
+            jwks_uri = $"{ApIssuer}/.well-known/jwks.json",
         }));
         app.MapGet("/.well-known/aauth-person.json", () => Results.Json(new
         {
             issuer = PsIssuer,
-            jwks_uri = $"{PsIssuer}/.well-known/ps-jwks.json",
+            jwks_uri = $"{PsIssuer}/.well-known/jwks.json",
             token_endpoint = $"{PsIssuer}/token",
         }));
-        app.MapGet("/.well-known/ap-jwks.json", () =>
+        app.MapGet("/.well-known/jwks.json", () =>
         {
-            var jwk = _apKey.ToPublicJwk();
-            jwk["kid"] = "ap-key-1";
-            jwk["use"] = "sig";
-            return Results.Json(new JsonObject { ["keys"] = new JsonArray { jwk } });
-        });
-        app.MapGet("/.well-known/ps-jwks.json", () =>
-        {
-            var jwk = _psKey.ToPublicJwk();
-            jwk["kid"] = "ps-key-1";
-            jwk["use"] = "sig";
-            return Results.Json(new JsonObject { ["keys"] = new JsonArray { jwk } });
+            Interlocked.Increment(ref _jwksRequests);
+            var apJwk = _apKey.ToPublicJwk();
+            apJwk["kid"] = "ap-key-1";
+            apJwk["use"] = "sig";
+            var psJwk = _psKey.ToPublicJwk();
+            psJwk["kid"] = "ps-key-1";
+            psJwk["use"] = "sig";
+            return Results.Json(new JsonObject { ["keys"] = new JsonArray { apJwk, psJwk } });
         });
 
         await app.StartAsync();
@@ -105,9 +103,9 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
         builder.Services.AddSingleton(new AAuthVerifier { Clock = () => FixedClock });
         builder.Services.AddSingleton<HttpClient>(_metadataHost!.GetTestClient());
         builder.Services.AddSingleton(sp =>
-            new MetadataClient(sp.GetRequiredService<HttpClient>()));
+            new MetadataClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
         builder.Services.AddSingleton(sp =>
-            new JwksClient(sp.GetRequiredService<HttpClient>()));
+            new JwksClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
 
         // Register AAuth authentication + authorization.
         builder.Services.AddAAuthAuthentication();
@@ -120,8 +118,9 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
         // Verification middleware populates Features.
         app.UseAAuthVerification(new AAuthVerificationOptions
         {
+            EgressPolicy = TestEgress.Policy,
+            AcceptedSchemes = ["jwt", "hwk"],
             ResourceIdentifier = ResourceId,
-            RequireIssuerVerification = true,
             TrustedAuthTokenIssuers = new HashSet<string> { PsIssuer },
         });
         app.UseAuthentication();
@@ -168,6 +167,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
     {
         return new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
             Subject = AgentId,
             Key = _apKey,
@@ -181,6 +181,8 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
     {
         return new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = PsIssuer,
             Audience = ResourceId,
             Agent = AgentId,
@@ -202,7 +204,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
         {
             InnerHandler = capture,
         };
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, $"http://localhost:5000{path}"));
         return capture.Captured!;
     }
@@ -225,7 +227,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
         {
             InnerHandler = capture,
         };
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, $"http://localhost:5000{path}"));
         var signed = capture.Captured!;
         var relay = new HttpRequestMessage(HttpMethod.Get, path);
@@ -311,6 +313,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
         var authToken = BuildAuthToken();
         response = await SendSigned(authToken, "/authorized");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, _jwksRequests);
     }
 
     [Fact(DisplayName = "§Auth — [Authorize(AAuth.Identified)] accepts agent and auth tokens")]
@@ -323,6 +326,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
         var authToken = BuildAuthToken();
         response = await SendSigned(authToken, "/identified");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, _jwksRequests);
     }
 
     [Fact(DisplayName = "§Auth — [Authorize(AAuth.Identified)] rejects hwk (Pseudonymous)")]

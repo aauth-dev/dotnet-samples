@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -19,6 +20,7 @@ public class PollingErrorTests
     public async Task SlowDown_IncreasesInterval()
     {
         int callCount = 0;
+        var delays = new List<TimeSpan>();
         var handler = new MockHandler(req =>
         {
             callCount++;
@@ -36,21 +38,26 @@ public class PollingErrorTests
             };
         });
 
-        var client = new HttpClient(handler);
+        var client = new InProcessHttpClient(handler);
         var poller = new DeferredPoller(client, new DeferredPollerOptions
         {
             MaxTotalWait = TimeSpan.FromSeconds(30),
             DefaultPollInterval = TimeSpan.FromMilliseconds(10),
             MinPollInterval = TimeSpan.FromMilliseconds(1),
+            DelayAsync = (delay, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                delays.Add(delay);
+                return Task.CompletedTask;
+            },
         });
 
-        var start = DateTime.UtcNow;
         var result = await poller.PollAsync(new Uri("http://localhost/pending/x"));
-        var elapsed = DateTime.UtcNow - start;
 
         Assert.Equal(HttpStatusCode.OK, result.StatusCode);
-        // Should have waited at least ~10s (two slow_down = +5s each)
-        Assert.True(elapsed >= TimeSpan.FromSeconds(9), $"Expected ≥9s delay from two slow_downs, got {elapsed.TotalSeconds:F1}s");
+        Assert.Collection(delays,
+            delay => Assert.Equal(TimeSpan.FromMilliseconds(5_010), delay),
+            delay => Assert.Equal(TimeSpan.FromMilliseconds(10_010), delay));
         Assert.Equal(3, callCount);
     }
 
@@ -66,7 +73,7 @@ public class PollingErrorTests
             return resp;
         });
 
-        var client = new HttpClient(handler);
+        var client = new InProcessHttpClient(handler);
         var poller = new DeferredPoller(client, new DeferredPollerOptions
         {
             MaxTotalWait = TimeSpan.FromSeconds(5),
@@ -90,7 +97,7 @@ public class PollingErrorTests
             return resp;
         });
 
-        var client = new HttpClient(handler);
+        var client = new InProcessHttpClient(handler);
         var poller = new DeferredPoller(client);
 
         var ex = await Assert.ThrowsAsync<PollingErrorException>(
@@ -109,7 +116,7 @@ public class PollingErrorTests
             return resp;
         });
 
-        var client = new HttpClient(handler);
+        var client = new InProcessHttpClient(handler);
         var poller = new DeferredPoller(client);
 
         var ex = await Assert.ThrowsAsync<PollingErrorException>(

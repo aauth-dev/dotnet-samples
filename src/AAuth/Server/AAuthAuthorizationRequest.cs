@@ -11,4 +11,7 @@ namespace AAuth.Server;
 /// </summary>
 /// <param name="Scope">The requested scope (space-separated), from the request body's <c>scope</c> field.</param>
 /// <param name="Verification">The verified AAuth result for the signed request (agent identity, key thumbprint, etc.).</param>
-public sealed record AAuthAuthorizationRequest(string Scope, AAuthVerificationResult Verification);
+public sealed record AAuthAuthorizationRequest(string Scope, AAuthVerificationResult Verification)
+{
+	public string? Account { get; init; }
+}

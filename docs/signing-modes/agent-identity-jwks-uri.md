@@ -1,14 +1,21 @@
-# Agent Identity (sig=jwks_uri)
+---
+description: Metadata-based server key discovery and distinct direct JWKS signatures.
+---
+
+# Server Identity (sig=jwks_uri)
 
 ## Overview
 
-The agent references its JWKS endpoint and key ID. The resource fetches the public key to verify. See [live demo](https://explorer.aauth.dev/signing/identity). This replaces API keys with cryptographic identity.
+The signer presents `id`, `dwk` and `kid`. The verifier fetches
+`{id}/.well-known/{dwk}`, verifies its `issuer` equals `id`, then follows the
+metadata's `jwks_uri` and selects only the matching key. PS/AS server signers
+use this scheme; AAuth agents use `jwt`.
 
 ## When to Use
 
-- Access control by agent identity (the resource knows WHO is calling)
-- Replacing static API keys with verifiable cryptographic identity
-- Requires a JWKS endpoint — either self-hosted (hosted services) or published by an Agent Provider (CLI/desktop agents)
+- PS/AS server requests with an explicit signer identifier and role metadata
+- Generic server signing where the receiver admits the metadata-discovery scheme
+- Requires matching issuer metadata and a JWKS endpoint; an AAuth agent instead presents its agent JWT
 
 ## Code Example
 
@@ -23,13 +30,13 @@ var key = AAuthKey.Generate();
 // Hosted services publish their own JWKS at a stable URL.
 // The resource fetches this URL to verify the agent's signature.
 using var client = new AAuthClientBuilder(key)
-    .UseJwksUri("https://my-service.example/.well-known/jwks.json", "svc-key-1")
+    .UseJwksUri("https://my-service.example", "service-configuration", "svc-key-1")
     .Build();
 
 var response = await client.GetAsync("https://resource.example/data");
 ```
 
-**CLI/Desktop agent (AP-enrolled):**
+**Generic Direct JWKS Demonstration:**
 
 ```csharp
 using AAuth.Agent;
@@ -43,7 +50,7 @@ var key = AAuthKey.Generate();
 // "my-key-1" is the AP-published kid (EnrollResult.AgentTokenKid).
 // The AP chooses this value — there is no valid fallback if the AP didn't provide it.
 using var client = new AAuthClientBuilder(key)
-    .UseJwksUri("https://ap.example/agents/aauth:myapp@ap.example/jwks.json", "my-key-1")
+    .UseJwks("https://ap.example/agents/aauth:myapp@ap.example/jwks.json", "my-key-1")
     .Build();
 
 var response = await client.GetAsync("https://resource.example/data");
@@ -53,7 +60,7 @@ var response = await client.GetAsync("https://resource.example/data");
 <summary>Manual Setup</summary>
 
 ```csharp
-var provider = new JwksUriSignatureKeyProvider(
+var provider = new JwksSignatureKeyProvider(
     "https://ap.example/agents/aauth:myapp@ap.example/jwks.json", "my-key-1");
 var handler = new AAuthSigningHandler(key, provider)
 {
@@ -66,9 +73,9 @@ using var client = new HttpClient(handler);
 
 ## What the Resource Sees
 
-- `Signature-Key: sig=jwks_uri;uri="https://ap.example/agents/aauth:myapp@ap.example/jwks.json";kid="my-key-1"`
-- Resource fetches the JWKS, finds the key by `kid`, verifies the signature
-- Resource learns: full agent identifier + verifiable public key
+- `Signature-Key: sig=jwks_uri;id="https://my-service.example";dwk="service-configuration";kid="svc-key-1"`
+- Metadata issuer verification binds the signer identity before key resolution.
+- Direct `jwks` instead uses `url` and `kid`; its identity is the exact key URL.
 
 ## Verification
 
@@ -83,7 +90,11 @@ builder.Services.AddAAuthResource(o =>
 });
 ```
 
-The `DefaultSignatureKeyResolver` then fetches the agent's JWKS automatically. URI MUST be `https` (loopback allowed for dev).
+The resolver fetches keys only after URL/metadata admission. Production requires
+HTTPS public destinations. Development loopback origins must be individually
+configured; they are not automatically allowed. A resource accepting this
+generic scheme must explicitly configure its accepted schemes and generic
+Signature Keys profile. `AddAAuthResource` alone retains the AAuth JWT default.
 
 ## Further Reading
 

@@ -24,16 +24,16 @@ public class SignatureKeySchemesTests
         var jkt = key.ComputeJwkThumbprint();
         var jwkJson = System.Text.Json.JsonSerializer.Serialize(key.ToPublicJwk());
         var jwkB64 = Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Encode(jwkJson);
-        var header = SignatureKeyHeader.FormatHwk(jkt, jwkB64);
-        Assert.StartsWith("sig=hwk;jkt=\"", header);
-        Assert.Contains(";jwk=\"", header);
+        var header = SignatureKeyHeader.FormatHwk(key);
+        Assert.StartsWith("sig=hwk;kty=\"OKP\"", header);
+        Assert.Contains(";alg=\"Ed25519\"", header);
     }
 
     [Fact(DisplayName = "§4 — jwks_uri scheme formats with uri and kid parameters")]
     public void JwksUriScheme_FormatsCorrectly()
     {
-        var header = SignatureKeyHeader.FormatJwksUri("https://example.com/.well-known/jwks.json", "key-1");
-        Assert.Equal("sig=jwks_uri;uri=\"https://example.com/.well-known/jwks.json\";kid=\"key-1\"", header);
+        var header = SignatureKeyHeader.FormatJwksUri("https://example.com", "config", "key-1");
+        Assert.Equal("sig=jwks_uri;id=\"https://example.com\";dwk=\"config\";kid=\"key-1\"", header);
     }
 
     [Fact(DisplayName = "§4 — jkt-jwt scheme formats with a single jwt parameter")]
@@ -60,7 +60,7 @@ public class SignatureKeySchemesTests
 
         var info = SignatureKeyParser.ParseAny(headerValue);
         Assert.Equal("jwt", info.Scheme);
-        Assert.NotNull(info.ConfirmationKey);
+        Assert.Null(info.ConfirmationKey);
         Assert.NotNull(info.Jwt);
         Assert.NotNull(info.Payload);
     }
@@ -82,11 +82,11 @@ public class SignatureKeySchemesTests
     [Fact(DisplayName = "§4 — ParseAny handles jwks_uri scheme")]
     public void ParseAny_JwksUriScheme()
     {
-        var headerValue = SignatureKeyHeader.FormatJwksUri("https://example.com/jwks", "kid1");
+        var headerValue = SignatureKeyHeader.FormatJwksUri("https://example.com", "config", "kid1");
 
         var info = SignatureKeyParser.ParseAny(headerValue);
         Assert.Equal("jwks_uri", info.Scheme);
-        Assert.Equal("https://example.com/jwks", info.JwksUri);
+        Assert.Equal("https://example.com", info.Identifier);
         Assert.Equal("kid1", info.Kid);
     }
 
@@ -101,10 +101,10 @@ public class SignatureKeySchemesTests
         var info = SignatureKeyParser.ParseAny(headerValue);
         Assert.Equal("jkt-jwt", info.Scheme);
         // The reported pseudonym is the DURABLE key's thumbprint (§7.1).
-        Assert.Equal(durableKey.ComputeJwkThumbprint(), info.Jkt);
+        Assert.Null(info.Jkt);
         // The confirmation key is the ephemeral key (cnf.jwk).
-        Assert.NotNull(info.ConfirmationKey);
-        Assert.Equal(ephemeralKey.ComputeJwkThumbprint(), info.ConfirmationKey.ComputeJwkThumbprint());
+        var verified = NamingTokenVerifier.Verify(info.Jwt!, DateTimeOffset.UtcNow, TimeSpan.Zero);
+        Assert.Equal(ephemeralKey.ComputeJwkThumbprint(), verified.ConfirmationKey.ComputeJwkThumbprint());
         Assert.NotNull(info.Jwt);
         Assert.NotNull(info.Payload);
     }

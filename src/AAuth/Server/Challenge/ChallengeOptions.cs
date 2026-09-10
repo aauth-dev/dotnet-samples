@@ -11,6 +11,7 @@ namespace AAuth.Server.Challenge;
 /// </summary>
 public sealed class ChallengeOptions
 {
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
     /// <summary>
     /// Access mode controlling whether the middleware challenges or passes through.
     /// Default: <see cref="AAuthAccessMode.RequireAuthToken"/>.
@@ -21,7 +22,7 @@ public sealed class ChallengeOptions
     /// The resource's signing key used to sign resource tokens.
     /// Required when <see cref="AccessMode"/> is <see cref="AAuthAccessMode.RequireAuthToken"/>.
     /// </summary>
-    public AAuthKey? ResourceSigningKey { get; init; }
+    public IAAuthKey? ResourceSigningKey { get; init; }
 
     /// <summary>
     /// Key identifier for the resource signing key (<c>kid</c> in the resource token header).
@@ -34,6 +35,7 @@ public sealed class ChallengeOptions
     /// Required when <see cref="AccessMode"/> is <see cref="AAuthAccessMode.RequireAuthToken"/>.
     /// </summary>
     public string? ResourceIdentifier { get; init; }
+    public System.Func<Microsoft.AspNetCore.Http.HttpContext, string?>? RequestedAccount { get; init; }
 
     /// <summary>
     /// Explicit audience for resource tokens. When set, this value is used as
@@ -46,6 +48,7 @@ public sealed class ChallengeOptions
     /// Default scopes to request in the resource token. Space-separated.
     /// </summary>
     public string? DefaultScopes { get; init; }
+    public IReadOnlyDictionary<string, string>? ScopeDescriptions { get; init; }
 
     /// <summary>
     /// Optional filter on allowed Signature-Key schemes. When set, requests using

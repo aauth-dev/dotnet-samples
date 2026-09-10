@@ -1,0 +1,20 @@
+@namespace AAuth.Samples.Shared
+@using Microsoft.JSInterop
+@inject IJSRuntime JavaScript
+
+<span hidden aria-hidden="true"></span>
+
+@code {
+    [Parameter] public object? Trigger { get; set; }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        try
+        {
+            await JavaScript.InvokeVoidAsync("highlightCode");
+        }
+        catch (JSException)
+        {
+        }
+    }
+}

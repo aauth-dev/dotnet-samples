@@ -14,7 +14,7 @@ public class MissionForwardingHandlerTests
 {
     private static string CreateToken(JsonObject? payload = null)
     {
-        var header = new JsonObject { ["alg"] = "EdDSA", ["typ"] = "aa-auth+jwt" };
+        var header = new JsonObject { ["alg"] = "Ed25519", ["typ"] = "aa-auth+jwt" };
         payload ??= new JsonObject { ["iss"] = "https://ps.example", ["sub"] = "user1" };
         var headerB64 = Base64UrlEncoder.Encode(Encoding.UTF8.GetBytes(header.ToJsonString()));
         var payloadB64 = Base64UrlEncoder.Encode(Encoding.UTF8.GetBytes(payload.ToJsonString()));
@@ -48,7 +48,7 @@ public class MissionForwardingHandlerTests
             InnerHandler = inner,
         };
 
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         await client.GetAsync("https://downstream.example/resource");
 
         Assert.Single(capturedHeaders);
@@ -68,7 +68,7 @@ public class MissionForwardingHandlerTests
             InnerHandler = inner,
         };
 
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         await client.GetAsync("https://downstream.example/resource");
 
         Assert.Empty(capturedHeaders);
@@ -85,7 +85,7 @@ public class MissionForwardingHandlerTests
             InnerHandler = inner,
         };
 
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         await client.GetAsync("https://downstream.example/resource");
 
         Assert.Empty(capturedHeaders);
@@ -113,7 +113,7 @@ public class MissionForwardingHandlerTests
             InnerHandler = inner,
         };
 
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         await client.GetAsync("https://downstream.example/resource");
 
         Assert.Empty(capturedHeaders);
@@ -140,7 +140,7 @@ public class MissionForwardingHandlerTests
             InnerHandler = inner,
         };
 
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         await client.GetAsync("https://downstream.example/resource");
 
         Assert.Empty(capturedHeaders);

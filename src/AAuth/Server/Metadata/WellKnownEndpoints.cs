@@ -191,7 +191,7 @@ public static class WellKnownEndpoints
         return doc;
     }
 
-    internal static JsonObject BuildJwks(IReadOnlyDictionary<string, AAuthKey> signingKeys)
+    internal static JsonObject BuildJwks(IReadOnlyDictionary<string, IAAuthKey> signingKeys)
     {
         var keys = new JsonArray();
         foreach (var (kid, key) in signingKeys)
@@ -199,7 +199,7 @@ public static class WellKnownEndpoints
             var jwk = key.ToPublicJwk();
             jwk["kid"] = kid;
             jwk["use"] = "sig";
-            jwk["alg"] = AAuthKey.Algorithm;
+            jwk["alg"] = key.Algorithm;
             keys.Add(jwk);
         }
         return new JsonObject { ["keys"] = keys };
@@ -271,7 +271,7 @@ public static class WellKnownEndpoints
 
     private static readonly ConditionalWeakTable<IEndpointRouteBuilder, SharedJwksState> _jwksState = new();
 
-    private static void RegisterJwksKeys(IEndpointRouteBuilder endpoints, IReadOnlyDictionary<string, AAuthKey> signingKeys)
+    private static void RegisterJwksKeys(IEndpointRouteBuilder endpoints, IReadOnlyDictionary<string, IAAuthKey> signingKeys)
     {
         var state = _jwksState.GetOrCreateValue(endpoints);
         lock (state)
@@ -296,7 +296,7 @@ public static class WellKnownEndpoints
 
     private sealed class SharedJwksState
     {
-        public Dictionary<string, AAuthKey> Keys { get; } = new();
+        public Dictionary<string, IAAuthKey> Keys { get; } = new();
         public bool EndpointRegistered { get; set; }
     }
 }
@@ -306,6 +306,7 @@ public static class WellKnownEndpoints
 /// </summary>
 public sealed class AAuthResourceMetadataOptions
 {
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; init; } = AAuth.Discovery.AAuthEgressPolicy.Production;
     /// <summary>HTTPS URL of this resource (<c>issuer</c>).</summary>
     public required string Issuer { get; init; }
 
@@ -316,7 +317,7 @@ public sealed class AAuthResourceMetadataOptions
     /// that only verifies agent signatures MAY omit them, in which case no
     /// <c>jwks_uri</c> is advertised and no JWKS endpoint is mapped (§Resource Metadata).
     /// </summary>
-    public IReadOnlyDictionary<string, AAuthKey>? SigningKeys { get; init; }
+    public IReadOnlyDictionary<string, IAAuthKey>? SigningKeys { get; init; }
 
     /// <summary>
     /// Optional advisory <c>access_mode</c> declaring the credential flow agents
@@ -358,7 +359,7 @@ public sealed class AAuthResourceMetadataOptions
     /// <summary>Optional signature-window override (<c>signature_window</c>, seconds).</summary>
     public int? SignatureWindow { get; init; }
 
-    /// <summary>Optional authorization endpoint (§2, resource-initiated flow).</summary>
+    /// <summary>Optional resource-owned proactive authorization endpoint, not the PS/AS resource-token recipient.</summary>
     public string? AuthorizationEndpoint { get; init; }
 
     /// <summary>Optional revocation endpoint.</summary>
@@ -386,7 +387,7 @@ public sealed class AAuthResourceMetadataOptions
         {
             throw new InvalidOperationException("Issuer must be set.");
         }
-        if (!AAuthUrl.IsHttpsOrLoopback(Issuer))
+        if (!AAuthUrl.IsHttpsOrLoopback(Issuer, EgressPolicy))
         {
             // Spec mandates https. We additionally accept http://localhost
             // and http://127.0.0.1 so WebApplicationFactory tests (which

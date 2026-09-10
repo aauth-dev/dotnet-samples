@@ -12,23 +12,31 @@ public sealed class R3Enforcement
     private readonly R3ProposalStore _proposalStore;
     private readonly Uri _resourceBaseUri;
     private readonly string _proposalPathPrefix;
+    private readonly R3VocabularySchemas _schemas;
 
-    public R3Enforcement(R3ProposalStore proposalStore, Uri resourceBaseUri, string proposalPathPrefix = "/r3/proposals")
+    public R3Enforcement(R3ProposalStore proposalStore, Uri resourceBaseUri, string proposalPathPrefix = "/r3/proposals", R3VocabularySchemas? schemas = null)
     {
         _proposalStore = proposalStore;
         _resourceBaseUri = resourceBaseUri;
         _proposalPathPrefix = proposalPathPrefix;
+        _schemas = schemas ?? R3VocabularySchemas.Standard;
     }
 
     public R3EnforcementDecision Evaluate(
         R3ClaimReader.AuthTokenClaims claims,
-        string operation,
+        R3OperationIdentity operation,
         IReadOnlyDictionary<string, R3Parameter>? parameters = null,
-        Func<string, IReadOnlyDictionary<string, R3Parameter>, R3Display?>? displayFactory = null,
-        string? approvedProposalS256 = null)
+        Func<R3OperationIdentity, IReadOnlyDictionary<string, R3Parameter>, R3Display?>? displayFactory = null,
+        string? approvedProposalS256 = null,
+        string? expectedAccount = null)
     {
         ArgumentNullException.ThrowIfNull(claims);
-        ArgumentException.ThrowIfNullOrEmpty(operation);
+        ArgumentNullException.ThrowIfNull(operation);
+        _schemas.Validate(operation.Vocabulary, operation.Operation);
+        claims.Granted.Validate(allowEmpty: true, _schemas);
+        claims.Conditional?.Validate(allowEmpty: true, _schemas);
+        if (!AccountBinding.Matches(expectedAccount, claims.Account))
+            return R3EnforcementDecision.Rejected("account_mismatch");
 
         if (approvedProposalS256 is not null)
         {
@@ -45,15 +53,12 @@ public sealed class R3Enforcement
         }
 
         var conditional = claims.Conditional;
-        var conditionalOp = conditional?.Operations
-            .FirstOrDefault(op => string.Equals(op.Id, operation, StringComparison.Ordinal));
-        if (conditional is null || conditionalOp is null)
+        if (conditional is null || !conditional.Contains(operation))
         {
             return R3EnforcementDecision.Rejected("operation_not_granted");
         }
 
-        var proposalParams = parameters ?? new Dictionary<string, R3Parameter>(StringComparer.Ordinal);
-        if (proposalParams.Count == 0)
+        if (parameters is null)
         {
             return R3EnforcementDecision.Rejected("parameters_required");
         }
@@ -62,36 +67,42 @@ public sealed class R3Enforcement
         {
             Version = "v02",
             Vocabulary = conditional.Vocabulary,
-            Operations = [conditionalOp],
-            Parameters = proposalParams,
-            Display = displayFactory?.Invoke(operation, proposalParams),
+            Operations = [operation.Operation],
+            Parameters = parameters,
+            Display = displayFactory?.Invoke(operation, parameters),
+            Account = claims.Account,
         };
-        var storedProposal = _proposalStore.Add(proposal, _resourceBaseUri, _proposalPathPrefix);
-        return R3EnforcementDecision.Conditional(storedProposal.Uri, storedProposal.S256);
+        var storedProposal = _proposalStore.Add(proposal, _resourceBaseUri, _proposalPathPrefix, _schemas);
+        return R3EnforcementDecision.Conditional(storedProposal.Uri, storedProposal.S256) with { Account = claims.Account };
     }
 
     public R3EnforcementDecision Evaluate(
         R3ClaimReader.AuthTokenClaims claims,
-        string operation,
+        R3OperationIdentity operation,
         R3PresentedParameters presentedParameters,
-        string approvedProposalS256)
+        string approvedProposalS256,
+        string? expectedAccount = null)
     {
         ArgumentNullException.ThrowIfNull(presentedParameters);
         ArgumentException.ThrowIfNullOrEmpty(approvedProposalS256);
+        if (!AccountBinding.Matches(expectedAccount, claims.Account))
+            return R3EnforcementDecision.Rejected("account_mismatch");
         return EvaluateApprovedProposalRetry(claims, operation, presentedParameters, approvedProposalS256);
     }
 
-    public R3EnforcementDecision Evaluate(JsonObject verifiedAuthTokenPayload, string operation, IReadOnlyDictionary<string, R3Parameter>? parameters = null, string? approvedProposalS256 = null) =>
-        Evaluate(R3ClaimReader.ReadAuthToken(verifiedAuthTokenPayload), operation, parameters, approvedProposalS256: approvedProposalS256);
+    public R3EnforcementDecision Evaluate(JsonObject verifiedAuthTokenPayload, R3OperationIdentity operation, IReadOnlyDictionary<string, R3Parameter>? parameters = null, string? approvedProposalS256 = null, string? expectedAccount = null) =>
+        Evaluate(R3ClaimReader.ReadAuthToken(verifiedAuthTokenPayload, _schemas), operation, parameters, approvedProposalS256: approvedProposalS256, expectedAccount: expectedAccount);
 
     private R3EnforcementDecision EvaluateApprovedProposalRetry(
         R3ClaimReader.AuthTokenClaims claims,
-        string operation,
+        R3OperationIdentity operation,
         R3PresentedParameters? presentedParameters,
         string approvedProposalS256)
     {
         ArgumentNullException.ThrowIfNull(claims);
-        ArgumentException.ThrowIfNullOrEmpty(operation);
+        ArgumentNullException.ThrowIfNull(operation);
+        _schemas.Validate(operation.Vocabulary, operation.Operation);
+        claims.Granted.Validate(allowEmpty: true, _schemas);
 
         if (!claims.Granted.Contains(operation))
         {
@@ -111,14 +122,18 @@ public sealed class R3Enforcement
         R3ProposalDocument expected;
         try
         {
-            expected = R3ProposalDocument.FromUtf8Bytes(stored);
+            R3Hash.Verify(stored, approvedProposalS256);
+            expected = R3ProposalDocument.FromUtf8Bytes(stored, schemas: _schemas);
         }
-        catch (InvalidOperationException)
+        catch (Exception exception) when (exception is InvalidOperationException or System.Text.Json.JsonException or R3HashMismatchException)
         {
             return R3EnforcementDecision.Rejected("invalid_proposal");
         }
 
-        if (!expected.Operations.Any(op => string.Equals(op.Id, operation, StringComparison.Ordinal)))
+        if (!AccountBinding.Matches(expected.Account, claims.Account))
+            return R3EnforcementDecision.Rejected("proposal_account_mismatch");
+
+        if (!expected.Operations.Any(op => operation.Matches(expected.Vocabulary, op)))
         {
             return R3EnforcementDecision.Rejected("proposal_tool_mismatch");
         }
@@ -164,6 +179,7 @@ public sealed class R3Enforcement
 
 public sealed record R3EnforcementDecision(R3EnforcementDecisionKind Kind, string? ProposalUri = null, string? ProposalS256 = null, string? Error = null)
 {
+    public string? Account { get; init; }
     public static R3EnforcementDecision Granted() => new(R3EnforcementDecisionKind.Granted);
     public static R3EnforcementDecision Conditional(string proposalUri, string proposalS256) => new(R3EnforcementDecisionKind.Conditional, proposalUri, proposalS256);
     public static R3EnforcementDecision Rejected(string error) => new(R3EnforcementDecisionKind.Rejected, Error: error);
@@ -175,7 +191,7 @@ public sealed record R3EnforcementDecision(R3EnforcementDecisionKind Kind, strin
             R3EnforcementDecisionKind.Granted => Results.Ok(),
             R3EnforcementDecisionKind.Conditional => throw new InvalidOperationException(
                 "Conditional R3 decisions require an AAuth-Requirement challenge; call the ToResult overload that receives HttpContext and R3Challenge."),
-            _ => Results.Json(new { error = Error ?? "r3_denied" }, statusCode: StatusCodes.Status403Forbidden),
+            _ => AAuth.Server.AAuthProblemDetails.Create(Error ?? "r3_denied", statusCode: StatusCodes.Status403Forbidden),
         };
     }
 
@@ -189,7 +205,7 @@ public sealed record R3EnforcementDecision(R3EnforcementDecisionKind Kind, strin
             return ToResult();
         }
         var proposal = RequireConditionalProposal();
-        var resourceToken = challenge.BuildResourceToken(agent, agentJkt, proposal.Uri, proposal.S256, scope);
+        var resourceToken = challenge.BuildResourceToken(agent, agentJkt, proposal.Uri, proposal.S256, scope, Account);
         return ToConditionalChallengeResult(context, resourceToken);
     }
 
@@ -214,9 +230,13 @@ public sealed record R3EnforcementDecision(R3EnforcementDecisionKind Kind, strin
         var proposal = RequireConditionalProposal();
 
         context.Response.Headers[AAuthRequirementHeader.Name] = AAuthRequirementHeader.FormatAuthToken(resourceToken);
-        return Results.Json(
-            new { error = "r3_approval_required", r3_uri = proposal.Uri, r3_s256 = proposal.S256 },
-            statusCode: StatusCodes.Status401Unauthorized);
+        return AAuth.Server.AAuthProblemDetails.Create("r3_approval_required",
+            statusCode: StatusCodes.Status401Unauthorized,
+            extensions: new Dictionary<string, object?>
+            {
+                ["r3_uri"] = proposal.Uri,
+                ["r3_s256"] = proposal.S256,
+            });
     }
 
     private (string Uri, string S256) RequireConditionalProposal()

@@ -34,7 +34,7 @@ public static class AAuthFederationServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddAAuthFederation(
         this IServiceCollection services,
-        AAuthKey personServerKey,
+        IAAuthKey personServerKey,
         string personServerIssuer,
         string personServerKeyId)
     {
@@ -43,7 +43,9 @@ public static class AAuthFederationServiceCollectionExtensions
         ArgumentException.ThrowIfNullOrEmpty(personServerIssuer);
         ArgumentException.ThrowIfNullOrEmpty(personServerKeyId);
 
-        services.AddHttpClient(FederationHttpClientName);
+        services.AddOptions<AAuthFederationOptions>();
+        services.AddHttpClient(FederationHttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(sp => AAuthHttpTransport.CreateHandler(sp.GetRequiredService<MetadataClient>().Policy));
         services.TryAddSingleton(sp =>
         {
             var metadata = sp.GetRequiredService<MetadataClient>();
@@ -51,9 +53,17 @@ public static class AAuthFederationServiceCollectionExtensions
             var validator = new AuthTokenResponseValidator(metadata, jwks);
             var transport = sp.GetRequiredService<IHttpMessageHandlerFactory>()
                 .CreateHandler(FederationHttpClientName);
+            var contract = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AAuthFederationOptions>>().Value.TransportContract;
+            if (contract is null)
+            {
+                transport = AAuthHttpTransport.BorrowEnforcingHandler(transport, metadata.Policy)
+                    ?? throw new InvalidOperationException("Overridden federation handlers require AAuthFederationOptions.TransportContract.");
+                contract = AAuthTransportContract.EnforcesEgressPolicy;
+            }
             var signedClient = new AAuthClientBuilder(personServerKey)
-                .UseJwksUri($"{personServerIssuer.TrimEnd('/')}/.well-known/jwks.json", personServerKeyId)
-                .WithInnerHandler(transport)
+                .WithEgressPolicy(metadata.Policy)
+                .UseJwksUri(personServerIssuer, AAuthConstants.DwkFiles.Person, personServerKeyId)
+                .WithInnerHandler(transport, contract.Value)
                 .Build();
             return new AccessServerClient(signedClient, metadata, validator);
         });

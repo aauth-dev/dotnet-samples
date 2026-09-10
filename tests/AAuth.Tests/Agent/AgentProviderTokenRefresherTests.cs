@@ -50,18 +50,18 @@ public class AgentProviderTokenRefresherTests
             refresher.RefreshAsync(null!, CancellationToken.None));
     }
 
-    [Fact]
-    public async Task RefreshAsync_DelegatesToAgentProviderClient()
+    [Theory]
+    [InlineData(RefreshMode.SingleKey, "sig=hwk")]
+    [InlineData(RefreshMode.TwoKey, "sig=jkt-jwt")]
+    public async Task RefreshAsync_DelegatesToAdmittedClient(RefreshMode mode, string scheme)
     {
-        // AgentProviderClient.RefreshCoreAsync creates its own internal HttpClient
-        // for the signed refresh request, so we verify the refresher is correctly
-        // wired by checking it loads the key and attempts the refresh.
         var key = AAuthKey.Generate();
         var keyStore = new InMemoryKeyStore();
         await keyStore.StoreAsync("k1", key);
 
-        var http = new HttpClient();
-        var refresher = new AgentProviderTokenRefresher(http, keyStore, "https://ap.example/refresh", "k1");
+        var transport = new RefreshTransport();
+        using var http = new InProcessHttpClient(transport);
+        var refresher = new AgentProviderTokenRefresher(http, keyStore, "https://ap.example/refresh", "k1", mode);
 
         var context = new TokenRefreshContext
         {
@@ -71,11 +71,54 @@ public class AgentProviderTokenRefresherTests
             SigningKeyThumbprint = "thumbprint-not-used",
         };
 
-        // The refresh will fail at the network layer (no real AP), but it proves
-        // the refresher correctly resolves the key and calls through.
-        var ex = await Assert.ThrowsAsync<HttpRequestException>(() =>
-            refresher.RefreshAsync(context, CancellationToken.None));
-        Assert.NotNull(ex);
+        Assert.Equal("new-token", await refresher.RefreshAsync(context, CancellationToken.None));
+        Assert.StartsWith(scheme, transport.SignatureKey);
+        Assert.Equal(1, transport.Calls);
+        Assert.Equal(mode == RefreshMode.TwoKey, refresher.LatestEphemeralKey is not null);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_RejectsUnregisteredTransport()
+    {
+        var keyStore = new InMemoryKeyStore();
+        await keyStore.StoreAsync("key", AAuthKey.Generate());
+        var transport = new RefreshTransport();
+        using var http = new HttpClient(transport);
+        var client = new AgentProviderClient(http, keyStore);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.RefreshAsync("https://ap.example/refresh", "key"));
+        Assert.Equal(0, transport.Calls);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_CancellationDoesNotSend()
+    {
+        var keyStore = new InMemoryKeyStore();
+        await keyStore.StoreAsync("key", AAuthKey.Generate());
+        var transport = new RefreshTransport();
+        using var http = new InProcessHttpClient(transport);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var client = new AgentProviderClient(http, keyStore);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            client.RefreshAsync("https://ap.example/refresh", "key", cancellation.Token));
+        Assert.Equal(0, transport.Calls);
+    }
+
+    private sealed class RefreshTransport : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+        public string? SignatureKey { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Calls++;
+            SignatureKey = string.Join("", request.Headers.GetValues("Signature-Key"));
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"agent_token\":\"new-token\"}"),
+            });
+        }
     }
 
     [Fact]

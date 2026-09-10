@@ -3,6 +3,7 @@
 @implements IDisposable
 @inject TourSession Session
 @inject Microsoft.Extensions.Options.IOptions<TourOptions> Options
+@inject TourAgentIdentity AgentIdentity
 
 <PageTitle>AAuth Guided Tour</PageTitle>
 
@@ -27,7 +28,14 @@
         {
             <span class="hl-ps"><strong>Person Server:</strong> @(string.IsNullOrWhiteSpace(Options.Value.PersonServerUrl) ? "(none)" : Options.Value.PersonServerUrl)</span>
         }
-        <span class="hl-agent"><strong>Agent Provider:</strong> @(string.IsNullOrWhiteSpace(Options.Value.AgentProviderUrl) ? "(none)" : new Uri(Options.Value.AgentProviderUrl).GetLeftPart(UriPartial.Authority))</span>
+        @if (Session.Mode is TourMode.Bootstrap or TourMode.SubAgent)
+        {
+            <span class="hl-agent"><strong>Agent Provider:</strong> @Options.Value.AgentProviderUrl</span>
+        }
+        else if (!Session.IsIdentityMode)
+        {
+            <span class="hl-agent"><strong>Agent issuer (self-issued):</strong> @AgentIdentity.Issuer</span>
+        }
     </div>
     @if (_error is not null)
     {
@@ -36,39 +44,55 @@
 </header>
 
 <section class="flow-picker">
-    <label class="flow-picker__label" for="flow-select">
-        <span class="flow-picker__title">Pick a flow to demo</span>
-        <select id="flow-select" value="@Session.Mode" @onchange="OnModeChangedAsync" disabled="@_busy">
-            <option value="@TourMode.Bootstrap" disabled="@(!Session.HasAgentProvider)">1 · Bootstrap — keygen + AP enrol</option>
-            <option value="@TourMode.Identity">2 · Identity-based — no PS, 2 steps</option>
-            <option value="@TourMode.ResourceManaged">3 · Resource-Managed (Two-Party) — own consent, 6 steps</option>
-            <option value="@TourMode.Autonomous" disabled="@(!Session.HasPersonServer)">4 · PS-Asserted (Direct Grant) — no user, 6 steps</option>
-            <option value="@TourMode.Deferred" disabled="@(!Session.HasPersonServer)">5 · PS-Asserted (Deferred) — user approves, 9 steps</option>
-            <option value="@TourMode.CallChain" disabled="@(!Session.HasPersonServer || !Session.HasConcierge)">6 · Call Chain (Multi-Agent) — user approves, 7 or 13 steps</option>
-            <option value="@TourMode.Federated" disabled="@(!Session.HasPersonServer || !Session.HasAccessServer)">7 · Federated (Four-Party) — Access Server, 7–10 steps</option>
-            <option value="@TourMode.RichRequests" disabled="@(!Session.HasPersonServer || !Session.HasR3AccessServer)">8 · Rich Resource Requests (R3) — R3 Access Server, 14 steps</option>
-            <option value="@TourMode.Mission" disabled="@(!Session.HasPersonServer)">9 · Mission (PS-Governed) — three prompts, 20 steps</option>
-            <option value="@TourMode.MissionCallChain" disabled="@(!Session.HasPersonServer || !Session.HasConcierge)">10 · Mission + Call Chain — dual governance, 14 steps</option>
-            <option value="@TourMode.SubAgent">11 · Sub-Agents — parent-mediated worker, 7 steps</option>
-        </select>
-    </label>
+    <TourFlowSelect Value="@Session.Mode.ToString()" Disabled="_busy" ModeChanged="OnModeChangedAsync" />
     @if (Session.Mode == TourMode.Identity)
     {
         <label class="flow-picker__label" for="signing-mode-select">
-            <span class="flow-picker__title">Signing mode</span>
+            <span class="flow-picker__title">Signature scheme</span>
             <select id="signing-mode-select" value="@Session.SigningMode" @onchange="OnSigningModeChanged" disabled="@_busy">
                 <option value="@SigningMode.Hwk">Pseudonymous (hwk) — key only, no identity</option>
-                <option value="@SigningMode.JwksUri">Agent Identity (jwks_uri) — JWKS-discoverable</option>
+                <option value="@SigningMode.Jwks">Direct JWKS (jwks) - URL identity</option>
                 <option value="@SigningMode.JktJwt">Key Rotation (jkt-jwt) — ephemeral keys</option>
             </select>
         </label>
     }
+    @if (Session.IsRichRequestsMode)
+    {
+        <a href="/events">Optional booking notifications: Events walkthrough</a>
+        <label class="flow-picker__label" for="bookings-account">
+            <span class="flow-picker__title">Bookings account</span>
+            <select id="bookings-account" value="@Session.BookingsAccount" @onchange="OnAccountChanged" disabled="@(_busy || Session.IsPolling)">
+                <option value="">No account selected</option>
+                @foreach (var account in Session.BookingsAccounts)
+                {
+                    <option value="@account.Id">@account.Name</option>
+                }
+            </select>
+        </label>
+        <button @onclick="CheckPreviousAccountAsync" disabled="@(_busy || !Session.CanCheckPreviousAccount)">Check previous account grant</button>
+        @if (Session.AccountProbeResult is { } result)
+        {
+            <pre class="account-probe">@result</pre>
+        }
+    }
     <div class="flow-picker__actions">
-        @if (Session.AwaitingUserApproval)
+        @if (Session.WorkerConsentUrl is { } workerConsent)
+        {
+            <a @key="workerConsent" class="primary approve worker-consent" href="@workerConsent" target="_blank" rel="noopener">
+                @(Session.IsSubAgentMode ? WorkerConsentAction() : "Open consent page")
+            </a>
+            @if (Session.IsSubAgentMode)
+            {
+                <span class="flow-picker__action-hint">
+                    Consent @Session.WorkerConsentRound of @TourSession.WorkerConsentRounds. Complete it in the new tab, then return here for the next decision.
+                </span>
+            }
+        }
+        else if (Session.AwaitingUserApproval)
         {
             <a class="primary approve" href="@Session.UserInteractionUrl" target="_blank" rel="noopener"
                @onclick="MarkInteractionOpenedAsync" @onclick:preventDefault="false">
-                @(Session.IsFederatedMode ? "Open Access Server consent ↗" : Session.IsRichRequestsMode ? "Open R3 Access Server consent ↗" : "Open consent page ↗")
+                Open consent page
             </a>
         }
         else
@@ -90,8 +114,8 @@
                     anything, it needs an identity of its own — here it generates a keypair and
                     registers with an Agent Provider so every later flow can prove who it is.<br /><br />
                     The agent generates a keypair and registers with an Agent Provider to obtain
-                    a signed <code>aa-agent+jwt</code>. Required before Agent Identity
-                    (<code>jwks_uri</code>) access and all Person Server flows (Direct Grant / Deferred).
+                    a signed <code>aa-agent+jwt</code>. This flow demonstrates external AP setup;
+                    the other GuidedTour flows self-issue locally using this host's published identity.
                     Not needed for Pseudonymous (<code>hwk</code>) access — that uses a bare key.
                     <strong>Agent ↔ Agent Provider only.</strong><br /><br />
                     <em>Who enrols?</em> Only agents <strong>without</strong> a stable URL —
@@ -103,6 +127,8 @@
                 break;
             case TourMode.Identity:
                 <text>
+                    These are generic Signature Keys demonstrations, not the
+                    AAuth identity-based resource access mode, which requires an agent JWT.
                     Aria (your AI travel assistant) wants to read something from
                     your <strong>Profile</strong> server, and the server decides access purely from the
                     signature on the request — no Person Server and no consent screen.<br /><br />
@@ -117,9 +143,9 @@
                             <strong>Pseudonymous:</strong>
                             <text> resource sees a key thumbprint only — no agent identity disclosed.</text>
                             break;
-                        case SigningMode.JwksUri:
-                            <strong>Agent Identity:</strong>
-                            <text> resource discovers agent's public key via JWKS URI — replaces API keys.</text>
+                        case SigningMode.Jwks:
+                            <strong>Direct JWKS:</strong>
+                            <text> the exact key URL identifies the signer. This is a generic signing demonstration.</text>
                             break;
                         case SigningMode.JktJwt:
                             <strong>Key Rotation:</strong>
@@ -134,9 +160,12 @@
                     <strong>Inbox</strong> to import trip confirmations, but there's no Person
                     Server in sight — the Inbox manages authorization <strong>itself</strong>,
                     exactly like the OAuth provider it's replacing.<br /><br />
-                    <strong>Signing mode: Pseudonymous (<code>hwk</code>)</strong> — two parties only,
-                    no token exchange. The agent's first signed <code>GET /messages</code> returns
-                    <code>202</code> with the Inbox's <strong>own</strong> consent URL; the user clicks
+                    <strong>Signature scheme: <code>jwt</code>; token purpose: agent identity.</strong>
+                    GuidedTour locally self-issues the token using this host's published issuer and key.
+                    No external AP enrollment occurs in this flow. The Inbox discovers that issuer/key
+                    to verify the token; authorization involves only the agent and Inbox, with no PS/AS
+                    exchange. The agent's first signed <code>GET /messages</code> returns
+                    <code>202</code> with the Inbox's <strong>own</strong> consent URL; the user signs in and clicks
                     <strong>Approve</strong> on the Inbox's page in a new tab; the agent polls a pending
                     URL until the Inbox issues an <strong>opaque <code>AAuth-Access</code> token</strong>.
                     On the retry the agent sends <code>Authorization: AAuth &lt;token&gt;</code> and the
@@ -165,7 +194,7 @@
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — required for all
                     Person Server flows.
                     The agent has <em>no</em> consent yet. <code>POST /token</code> returns <code>202 Accepted</code>
-                    with an interaction URL; the user clicks <strong>Approve</strong> at the PS's consent page in
+                    with an interaction URL; the user signs in and submits <strong>Approve</strong> at the PS's consent page in
                     a new tab; the agent polls a pending URL until the PS mints the <code>auth_token</code>.
                     <strong>Human approval required.</strong>
                 </text>
@@ -183,6 +212,10 @@
                     acted on whose behalf. <strong>Human approval required — two consents:</strong> first
                     for <em>Agent → Concierge</em>, then for the Concierge's chained
                     <em>Concierge → Calendar</em> hop. Each surfaces its own interaction URL and pending poll.
+                    This demo uses the upstream PS. A no-mission AS-issued upstream instead
+                    uses access-server metadata and a direct agent-signed AS exchange.
+                    A mission routes through its PS, whose shared mission gate runs before federation
+                    or claims release. Changing upstream authorization cannot reuse a previous caller's grant.
                 </text>
                 break;
             case TourMode.Federated:
@@ -262,23 +295,25 @@
                 <text>
                     Aria (your AI travel assistant) spins up a short-lived
                     <strong>worker</strong> — a <strong>separate process / sandbox</strong> — to handle one
-                    slice of a task (searching flights) under the single consent <em>you</em> already gave
-                    Aria. The worker generates its <strong>own</strong> key and gets its own identity from the
+                    slice of a task (searching flights). The demo makes all three independent authorization
+                    decisions visible: the original caller's upstream grant, the worker's Wallet scope at the
+                    Person Server, and the federated Access Server grant. The worker generates its <strong>own</strong>
+                    key and gets its own identity from the
                     <strong>Agent Provider</strong> (so it's individually auditable and revocable, and not even
                     Aria can impersonate it), but it never talks to your Person Server directly:
                     <strong>Aria mediates</strong> on its behalf.<br /><br />
                     The worker's agent token carries a <code>parent_agent</code> claim naming Aria. The
                     worker obtains a <code>resource_token</code> bound to <em>its own</em> key and hands it up
                     to the parent; Aria then signs <code>POST /token</code> with the <strong>parent's</strong>
-                    key, including the worker's token as <code>subagent_token</code>. The Person Server binds
+                    key, including <code>subagent_token</code> and the original caller's <code>upstream_token</code>. The Access Server binds
                     the issued <code>auth_token</code> to the <strong>worker</strong> (nesting the
-                    <code>act</code> claim <code>{ sub: worker, act: { sub: parent } }</code> for audit) and
+                    <code>act</code> claim <code>{ agent: parent, act: { agent: original } }</code> for audit) and
                     returns it to the <strong>parent</strong> — which <strong>hands it down</strong> to the
                     worker, the only party whose key can use it.
                     Delegation stays <strong>one level deep</strong> — a sub-agent can't spawn its own
                     sub-agents.<br /><br />
-                    <em>Runs entirely in-process with the real SDK builders</em> — no live servers — so every
-                    wire artifact is built and shown directly. <strong>No human approval in this demo.</strong>
+                    <em>Live PS, AS and Wallet endpoints.</em> Consent is evaluated independently
+                    of AS claims requests. The final step checks worker success and parent-key rejection.
                 </text>
                 break;
         }
@@ -421,10 +456,12 @@
     // exchanges at the Person Server.
     private static readonly SequenceDiagram.LaneDefinition[] SubAgentLanes =
     {
+        new("Original Caller", "agent", Actor.Agent),
         new("Parent", "agent", Actor.Parent),
         new("Sub-Agent", "ap", Actor.SubAgent),
         new("Resource", "resource", Actor.Resource),
         new("Person Server", "ps", Actor.PersonServer),
+        new("Access Server", "as", Actor.AccessServer),
     };
 
     private SequenceDiagram.LaneDefinition[]? ActiveLanes =>
@@ -452,6 +489,7 @@
         // Sync the MockPS consent store so each fresh tour session starts
         // in the right state for its configured mode.
         await Session.PrepareConsentStateAsync();
+        if (Session.IsRichRequestsMode) await Session.LoadBookingsAccountsAsync();
         // The polling task runs in the background and pings us via
         // StateChanged after each poll — marshal those onto the UI
         // synchronization context so Blazor re-renders the spinner.
@@ -514,6 +552,14 @@
 
     private string StepButtonLabel() =>
         $"Run step {Session.Steps.Count + 1} / {Session.TotalSteps}";
+
+    private string WorkerConsentAction() => Session.WorkerConsentRound switch
+    {
+        1 => "Approve original caller at Person Server (1 of 3)",
+        2 => "Approve worker Wallet access at Person Server (2 of 3)",
+        3 => "Approve federated access at Access Server (3 of 3)",
+        _ => "Open consent page",
+    };
 
     private async Task NextAsync()
     {
@@ -592,12 +638,8 @@
         await Session.PrepareConsentStateAsync();
     }
 
-    private async Task OnModeChangedAsync(ChangeEventArgs e)
+    private async Task OnModeChangedAsync(TourMode mode)
     {
-        if (!Enum.TryParse<TourMode>(e.Value?.ToString(), out var mode))
-        {
-            return;
-        }
         _busy = true;
         _error = null;
         try
@@ -606,12 +648,28 @@
             // store to match the new mode's expectations.
             Session.Mode = mode;
             await Session.PrepareConsentStateAsync();
+            if (Session.IsRichRequestsMode) await Session.LoadBookingsAccountsAsync();
             _selected = -1;
         }
         catch (Exception ex)
         {
             _error = $"{ex.GetType().Name}: {ex.Message}";
         }
+        finally { _busy = false; }
+    }
+
+    private void OnAccountChanged(ChangeEventArgs args)
+    {
+        Session.SelectBookingsAccount(args.Value?.ToString());
+        _selected = -1;
+        _error = null;
+    }
+
+    private async Task CheckPreviousAccountAsync()
+    {
+        _busy = true;
+        try { await Session.CheckPreviousAccountAsync(); }
+        catch (Exception exception) { _error = exception.Message; }
         finally { _busy = false; }
     }
 

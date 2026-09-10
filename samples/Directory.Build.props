@@ -1,0 +1,6 @@
+<Project>
+  <ItemGroup>
+    <Using Include="AAuth.Samples" />
+    <Compile Include="$(MSBuildThisFileDirectory)SampleEgress.cs" Link="SampleEgress.cs" />
+  </ItemGroup>
+</Project>

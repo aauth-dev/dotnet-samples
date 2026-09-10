@@ -13,6 +13,7 @@ namespace AAuth.Tokens;
 /// </summary>
 public sealed class AuthTokenBuilder
 {
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; init; } = AAuth.Discovery.AAuthEgressPolicy.Production;
     /// <summary>The JWT <c>typ</c> value for an auth token.</summary>
     public const string TokenType = "aa-auth+jwt";
 
@@ -21,6 +22,17 @@ public sealed class AuthTokenBuilder
 
     /// <summary>The <c>dwk</c> value when issued by an AS.</summary>
     public const string AccessDwk = "aauth-access.json";
+
+    private static readonly HashSet<string> ReservedClaims = new(StringComparer.Ordinal)
+    {
+        "iss", "dwk", "aud", "jti", "agent", "cnf", "iat", "exp", "nbf",
+        "sub", "scope", "act", "mission", "account", "tenant", "roles", "groups",
+    };
+
+    public static bool IsReservedClaim(string name) => ReservedClaims.Contains(name);
+
+    public static bool IsIdentityClaimAllowed(string name) => !IsReservedClaim(name)
+        || name is "sub" or "tenant" or "roles" or "groups";
 
     /// <summary>HTTPS URL of the PS/AS that issues this token (<c>iss</c>).</summary>
     public required string Issuer { get; init; }
@@ -33,6 +45,12 @@ public sealed class AuthTokenBuilder
 
     /// <summary>The agent's public confirmation key (<c>cnf.jwk</c>).</summary>
     public required IAAuthKey AgentConfirmationKey { get; init; }
+
+    public required DateTimeOffset AgentTokenExpiresAt { get; init; }
+
+    public DateTimeOffset? AuthorizationExpiresAt { get; init; }
+
+    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
     /// <summary>The issuer's signing key.</summary>
     public required IAAuthKey Key { get; init; }
@@ -48,6 +66,7 @@ public sealed class AuthTokenBuilder
 
     /// <summary>Granted scopes, space-separated.</summary>
     public string? Scope { get; init; }
+    public string? Account { get; init; }
 
     /// <summary>
     /// Enterprise <c>roles</c> claim ([@!RFC9068]) — the user's roles asserted
@@ -102,7 +121,7 @@ public sealed class AuthTokenBuilder
     /// <summary>
     /// Additional identity claims to merge into the payload — used by an
     /// Access Server to assert claims it received from a Person Server via the
-    /// §Claims Required push (e.g. <c>email</c>, <c>tenant</c>). May not
+    /// §Claims Required push (e.g. <c>email</c>). May not
     /// collide with a required/reserved claim (case-sensitive per RFC 7519 §4).
     /// </summary>
     public IReadOnlyDictionary<string, JsonNode?>? AdditionalClaims { get; init; }
@@ -114,6 +133,9 @@ public sealed class AuthTokenBuilder
         Require(Audience, nameof(Audience));
         Require(Agent, nameof(Agent));
         Require(KeyId, nameof(KeyId));
+        AccountBinding.Validate(Account);
+        if (Act is not null && !ActChainBuilder.ValidateChain(Act, int.MaxValue, EgressPolicy))
+            throw new InvalidOperationException("Act must contain only valid agent identities, never person identifiers.");
         // `required` is a compile-time hint; reflection / default! callers
         // can still pass null. Fail explicitly so the diagnostic points at
         // the configuration rather than surfacing as a NullReferenceException
@@ -130,17 +152,17 @@ public sealed class AuthTokenBuilder
         {
             throw new InvalidOperationException("Signing key must include a private component.");
         }
-        if (!AAuthUrl.IsHttpsOrLoopback(Issuer))
+        if (!AAuthUrl.IsHttpsOrLoopback(Issuer, EgressPolicy))
         {
             throw new InvalidOperationException("Issuer must be an absolute https:// URL (or http://localhost).");
         }
-        if (!AAuthUrl.IsHttpsOrLoopback(Audience))
+        if (!AAuthUrl.IsHttpsOrLoopback(Audience, EgressPolicy))
         {
             throw new InvalidOperationException("Audience must be an absolute https:// URL (or http://localhost).");
         }
-        if (Lifetime > TimeSpan.FromHours(1))
+        if (Lifetime <= TimeSpan.Zero || Lifetime > TimeSpan.FromHours(1))
         {
-            throw new InvalidOperationException("Auth token Lifetime must not exceed 1 hour.");
+            throw new InvalidOperationException("Auth token Lifetime must be positive and must not exceed 1 hour.");
         }
         if (Subject is null && string.IsNullOrEmpty(Scope))
         {
@@ -148,8 +170,23 @@ public sealed class AuthTokenBuilder
             throw new InvalidOperationException("At least one of Subject or Scope must be set.");
         }
 
-        var iat = IssuedAt ?? DateTimeOffset.UtcNow;
+        var iat = IssuedAt ?? TimeProvider.GetUtcNow();
+        var ceiling = AuthorizationExpiresAt is { } authorizationExpiry && authorizationExpiry < AgentTokenExpiresAt
+            ? authorizationExpiry : AgentTokenExpiresAt;
+        var now = TimeProvider.GetUtcNow();
+        if (ceiling.ToUnixTimeSeconds() <= now.ToUnixTimeSeconds())
+        {
+            throw new AuthTokenExpiredException();
+        }
         var exp = iat + Lifetime;
+        if (exp > ceiling)
+        {
+            exp = ceiling;
+        }
+        if (exp.ToUnixTimeSeconds() <= iat.ToUnixTimeSeconds() || exp.ToUnixTimeSeconds() <= now.ToUnixTimeSeconds())
+        {
+            throw new AuthTokenExpiredException();
+        }
         var jti = TokenId ?? Guid.NewGuid().ToString("N");
 
         var header = new JsonObject
@@ -174,6 +211,8 @@ public sealed class AuthTokenBuilder
             ["iat"] = iat.ToUnixTimeSeconds(),
             ["exp"] = exp.ToUnixTimeSeconds(),
         };
+
+        if (Account is not null) payload["account"] = Account;
 
         if (Act is not null)
         {
@@ -208,9 +247,9 @@ public sealed class AuthTokenBuilder
         {
             foreach (var (k, v) in AdditionalClaims)
             {
-                if (payload.ContainsKey(k))
+                if (IsReservedClaim(k))
                 {
-                    throw new InvalidOperationException($"Additional claim '{k}' collides with a required claim.");
+                    throw new InvalidOperationException($"Additional claim '{k}' is reserved.");
                 }
                 payload[k] = v?.DeepClone();
             }

@@ -1,0 +1,30 @@
+<ol class="consent-progress" aria-label="Consent state" data-consent-stage="decision-pending">
+    <li>Authorization request verified</li>
+    <li aria-current="step">Authenticated browser decision pending</li>
+    <li>Owner-bound delivery pending</li>
+</ol>
+<details>
+    <summary>Browser and pending exchange</summary>
+    <pre><code class="language-http">GET @(ConsentPath)?code=...
+Sign in with the configured identity
+302 Location: @(ConsentPath)?session=...
+POST @(DecisionPath)/approve
+Content-Type: application/x-www-form-urlencoded
+
+session=...&amp;csrf=...
+
+GET /pending/... (signed by the original owner and key)
+200 (one delivery), 403 (denied), or 408 (expired)
+Subsequent polls: 410 Gone</code></pre>
+</details>
+
+<style>
+    .consent-progress { display: flex; flex-wrap: wrap; gap: 1rem 2rem; padding: 0 0 0 1.25rem; }
+    .consent-progress li { padding-right: 1rem; }
+    .consent-progress [aria-current] { font-weight: 600; }
+</style>
+
+@code {
+    [Parameter] public string ConsentPath { get; set; } = "/interaction";
+    [Parameter] public string DecisionPath { get; set; } = "/interaction";
+}

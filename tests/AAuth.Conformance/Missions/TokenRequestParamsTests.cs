@@ -22,8 +22,8 @@ public class TokenRequestParamsTests
 
     private static TokenExchangeClient BuildClient(HttpMessageHandler handler)
     {
-        var http = new HttpClient(handler) { BaseAddress = new Uri(Ps) };
-        var metadata = new MetadataClient(new HttpClient(handler));
+        var http = new InProcessHttpClient(handler) { BaseAddress = new Uri(Ps) };
+        var metadata = new MetadataClient(new InProcessHttpClient(handler));
         return new TokenExchangeClient(http, metadata);
     }
 
@@ -33,7 +33,7 @@ public class TokenRequestParamsTests
         JsonObject? captured = null;
         var client = BuildClient(new CaptureHandler(body => captured = body));
 
-        await client.ExchangeAsync(Ps, "fake-resource-token", new TokenExchangeRequest
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
         {
             Justification = "Booking a flight on your behalf.",
             LoginHint = "alice@example.com",
@@ -41,7 +41,7 @@ public class TokenRequestParamsTests
             DomainHint = "example.com",
             Platform = "ios",
             Device = "iphone-15",
-        });
+        }));
 
         Assert.NotNull(captured);
         Assert.Equal("Booking a flight on your behalf.", (string?)captured!["justification"]);
@@ -58,7 +58,7 @@ public class TokenRequestParamsTests
         JsonObject? captured = null;
         var client = BuildClient(new CaptureHandler(body => captured = body));
 
-        await client.ExchangeAsync(Ps, "fake-resource-token");
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource));
 
         Assert.NotNull(captured);
         Assert.False(captured!.ContainsKey("justification"));

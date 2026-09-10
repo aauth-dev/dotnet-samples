@@ -9,8 +9,9 @@ import {
   doneSteps,
   TourMode,
 } from '../../../tests/e2e/helpers/tour';
-import { approveInPopup, denyInPopup } from '../../../tests/e2e/helpers/consent';
+import { decideAccessConsent } from '../../../tests/e2e/helpers/consent';
 import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
+import { approvePersonConsent } from '../../../tests/e2e/helpers/consent';
 
 /**
  * Federated (four-party) — Guided Tour, interactive consent path.
@@ -44,7 +45,8 @@ test.describe('Federated (Guided Tour)', () => {
     // Run all: the exchange returns 202, the plan expands to 10 steps and parks
     // on the user-approval step (6 done) with the AS interaction link shown.
     await runAll(page);
-    const link = page.locator('a.primary.approve');
+    await approvePersonConsent(page, 'a.primary.approve');
+    const link = page.locator('a.worker-consent');
     await expect(link).toBeVisible();
 
     // Opening the link starts the background poll loop and opens the Access
@@ -54,8 +56,7 @@ test.describe('Federated (Guided Tour)', () => {
       link.click(),
     ]);
     // The AS consent screen is unmistakably badged "Access Server".
-    await expect(popup.locator('.badge')).toContainText('Access Server');
-    await approveInPopup(popup);
+    await decideAccessConsent(popup);
 
     // The poll loop resolves and records the auth_token step (8 of 10). Running
     // again finishes the replay (9) and inspect (10) steps.
@@ -83,15 +84,15 @@ test.describe('Federated (Guided Tour)', () => {
     await selectFlow(page, TourMode.Federated);
 
     await runAll(page);
-    const link = page.locator('a.primary.approve');
+    await approvePersonConsent(page, 'a.primary.approve');
+    const link = page.locator('a.worker-consent');
     await expect(link).toBeVisible();
 
     const [popup] = await Promise.all([
       context.waitForEvent('page'),
       link.click(),
     ]);
-    await expect(popup.locator('.badge')).toContainText('Access Server');
-    await denyInPopup(popup);
+    await decideAccessConsent(popup, false);
 
     // The flow aborts: the primary button locks to "Aborted" and the poll loop
     // records a terminal denied step (403 denied).

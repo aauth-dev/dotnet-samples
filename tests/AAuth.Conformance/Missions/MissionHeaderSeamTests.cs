@@ -58,7 +58,7 @@ public class MissionHeaderSeamTests
         using var client = new AAuthClientBuilder(AAuthKey.Generate())
             .UseJwt("a.b.c")
             .WithMission(mission)
-            .WithInnerHandler(capture)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(capture, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://r.example/path"));
@@ -75,7 +75,7 @@ public class MissionHeaderSeamTests
         using var client = new AAuthClientBuilder(AAuthKey.Generate())
             .UseJwt("a.b.c")
             .WithMission(mission)
-            .WithInnerHandler(capture)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(capture, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://r.example/path"));
@@ -92,7 +92,7 @@ public class MissionHeaderSeamTests
         using var client = new AAuthClientBuilder(AAuthKey.Generate())
             .UseJwt("a.b.c")
             .WithMission(mission)
-            .WithInnerHandler(capture)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(capture, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         var request = new HttpRequestMessage(HttpMethod.Get, "https://r.example/path");
@@ -112,7 +112,7 @@ public class MissionHeaderSeamTests
         var capture = new CaptureHandler();
         using var client = new AAuthClientBuilder(AAuthKey.Generate())
             .UseJwt("a.b.c")
-            .WithInnerHandler(capture)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(capture, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://r.example/path"));

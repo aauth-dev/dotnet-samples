@@ -23,6 +23,8 @@ public class ScopeNarrowingTests
         var agentKey = AAuthKey.Generate();
         var jwt = new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = Iss,
             Audience = Aud,
             Agent = Agent,
@@ -39,7 +41,7 @@ public class ScopeNarrowingTests
     public void Accepts_EqualScope()
     {
         var (jwt, psKey, agentKey) = BuildWithScope("read write");
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         var result = verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, Agent,
             expectedMaxScope: "read write");
         Assert.NotNull(result);
@@ -49,7 +51,7 @@ public class ScopeNarrowingTests
     public void Accepts_NarrowedScope()
     {
         var (jwt, psKey, agentKey) = BuildWithScope("read");
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         var result = verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, Agent,
             expectedMaxScope: "read write admin");
         Assert.NotNull(result);
@@ -59,7 +61,7 @@ public class ScopeNarrowingTests
     public void Rejects_BroadenedScope()
     {
         var (jwt, psKey, agentKey) = BuildWithScope("read write admin");
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         Assert.Throws<TokenVerificationException>(() =>
             verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, Agent,
                 expectedMaxScope: "read write"));
@@ -69,7 +71,7 @@ public class ScopeNarrowingTests
     public void Accepts_WhenNoMaxScopeSpecified()
     {
         var (jwt, psKey, agentKey) = BuildWithScope("anything whatever");
-        var verifier = new TokenVerifier();
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         var result = verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey, Agent,
             expectedMaxScope: null);
         Assert.NotNull(result);

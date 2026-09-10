@@ -9,6 +9,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AAuth\AAuth.csproj" />
+    <ProjectReference Include="../EventSupport/EventSupport.csproj" />
+    <ProjectReference Include="../CapabilitySupport/CapabilitySupport.csproj" />
+    <Compile Include="../FederatedWorkerScenario.cs" Link="FederatedWorkerScenario.cs" />
   </ItemGroup>
 
 </Project>

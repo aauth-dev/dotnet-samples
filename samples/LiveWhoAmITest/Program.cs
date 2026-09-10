@@ -117,7 +117,7 @@ Console.WriteLine($"Tunnel URL (agent issuer): {tunnelUrl}");
 
 // Wait for tunnel readiness
 Console.WriteLine("Waiting for tunnel to become reachable...");
-using var verifyClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+using var verifyClient = new SampleHttpClient { Timeout = TimeSpan.FromSeconds(10) };
 for (int attempt = 1; attempt <= 15; attempt++)
 {
     try
@@ -146,7 +146,7 @@ Console.WriteLine("MODE 1: No signature → 401 + Accept-Signature");
 Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 Console.WriteLine();
 
-using var rawClient = new HttpClient();
+using var rawClient = new SampleHttpClient();
 var rawResp = await rawClient.GetAsync(WhoAmIUrl);
 
 Console.WriteLine($"  Status: {(int)rawResp.StatusCode} {rawResp.ReasonPhrase}");
@@ -167,7 +167,7 @@ Console.WriteLine("━━━━━━━━━━━━━━━━━━━━�
 Console.WriteLine();
 
 // Build a client without challenge handling — unscoped requests get 200 directly
-using var mode2aClient = AAuthClientBuilder.SelfIssuing(agentKey)
+using var mode2aClient = AAuthClientBuilder.SelfIssuing(agentKey).WithEgressPolicy(SampleEgress.Policy)
     .As(tunnelUrl!, Subject)
     .WithKid(agentKid)
     .WithPersonServer(PersonServer)
@@ -201,7 +201,7 @@ Console.WriteLine("━━━━━━━━━━━━━━━━━━━━�
 Console.WriteLine();
 
 // Build a client WITHOUT challenge handling so we see the raw 401 + resource_token
-using var mode2bClient = AAuthClientBuilder.SelfIssuing(agentKey)
+using var mode2bClient = AAuthClientBuilder.SelfIssuing(agentKey).WithEgressPolicy(SampleEgress.Policy)
     .As(tunnelUrl!, Subject)
     .WithKid(agentKid)
     .WithPersonServer(PersonServer)
@@ -234,7 +234,7 @@ Console.WriteLine("  Flow: agent_token → 401/resource_token → PS exchange �
 Console.WriteLine("  Using live PS at person.hello.coop (may require user consent)");
 Console.WriteLine();
 
-using var mode3Client = AAuthClientBuilder.SelfIssuing(agentKey)
+using var mode3Client = AAuthClientBuilder.SelfIssuing(agentKey).WithEgressPolicy(SampleEgress.Policy)
     .As(tunnelUrl!, Subject)
     .WithKid(agentKid)
     .WithPersonServer(PersonServer)
@@ -274,9 +274,9 @@ catch (AAuthTokenExchangeException ex)
 {
     Console.WriteLine();
     Console.WriteLine($"  Token exchange error: {ex.ErrorCode} (HTTP {ex.StatusCode}, terminal={ex.IsTerminal})");
-    if (!string.IsNullOrEmpty(ex.ErrorDescription))
+    if (!string.IsNullOrEmpty(ex.Detail))
     {
-        Console.WriteLine($"    {ex.ErrorDescription}");
+        Console.WriteLine($"    {ex.Detail}");
     }
     Console.WriteLine();
     Console.WriteLine("  This is expected if:");

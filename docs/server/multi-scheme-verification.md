@@ -1,10 +1,16 @@
-# Multi-Scheme Verification
+---
+title: Multi-Scheme Verification
+description: Resolve and verify supported Signature Keys carriers under explicit role policy.
+---
 
 > [Signature-Key Schemes](https://explorer.aauth.dev/foundations/schemes)
 
 ## Overview
 
-Resources must handle all four signing modes (hwk, jwks_uri, jwt, jkt-jwt). The `ISignatureKeyResolver` interface resolves the `Signature-Key` header into a verified public key regardless of scheme.
+AAuth resources accept the `jwt` signature scheme by default. Generic Signature
+Keys endpoints explicitly opt into other schemes; they do not become AAuth
+resource access modes. The resolver supplies typed verified context, not merely
+a parsed public key. Companion token types require explicit verifier registration.
 
 ## ISignatureKeyResolver Interface
 
@@ -27,7 +33,7 @@ public sealed class SignatureKeyResolution
 
 ## DefaultSignatureKeyResolver
 
-Handles all four schemes out of the box:
+Supports the six schemes subject to the endpoint's explicit policy:
 
 ```csharp
 using AAuth;
@@ -54,7 +60,7 @@ builder.Services.AddAAuthResource(options => options.Issuer = "https://resource.
 
 app.UseAAuthVerification(new AAuthVerificationOptions
 {
-    RequireIssuerVerification = true,
+    AcceptedSchemes = ["jwt", "hwk", "jkt-jwt", "jwks_uri", "jwks", "self-jwt"],
 });
 ```
 
@@ -64,15 +70,17 @@ app.UseAAuthVerification(new AAuthVerificationOptions
 
 | Scheme | How Key Is Resolved |
 |--------|-------------------|
-| `hwk` | Extracts inline public key from `Signature-Key` header (`jwk` parameter) |
-| `jwks_uri` | Fetches JWKS from the declared URI, finds key by `kid` |
+| `hwk` | Validates structured public JWK members and computes the thumbprint locally |
+| `jwks_uri` | Discovers exact id/dwk metadata, validates issuer, follows jwks_uri and selects kid |
+| `jwks` | Fetches the exact direct url and selects kid |
+| `self-jwt` | Validates the registered assertion type; issuer key verifies JWT and HTTP, with no cnf |
 | `jwt` | Extracts `cnf.jwk` from agent token, fetches AP's JWKS to verify token signature |
-| `jkt-jwt` | Self-anchored (draft-05 §3.4): derives the durable key from the naming JWT header `jwk`, checks `iss` equals its thumbprint URN, verifies the naming JWT signature, then returns the ephemeral `cnf.jwk` |
+| `jkt-jwt` | Self-anchored (Signature Keys draft-08 section 3.5): derives the durable key from header `jwk`, checks the thumbprint issuer, verifies the naming JWT, then returns ephemeral `cnf.jwk` |
 
 ## HWK — Inline Public Key
 
 For `hwk` (pseudonymous) mode, the agent sends its full public key inline in the
-`Signature-Key` header as a base64url-encoded JWK. The resource extracts the key
+`Signature-Key` header as structured public JWK members. The resource extracts the key
 directly — no pre-registration or key lookup is required.
 
 ## ParsedSignatureKeyInfo
@@ -101,16 +109,17 @@ For non-standard schemes or additional validation:
 // Sample implementation — not part of the SDK.
 // Implements AAuth.HttpSig.ISignatureKeyResolver by wrapping the SDK's
 // DefaultSignatureKeyResolver and consulting an application-provided
-// IPolicyService (also not part of the SDK).
+// asynchronous issuer-admission callback (host-owned).
 public sealed class PolicyEnforcingResolver : ISignatureKeyResolver
 {
     private readonly DefaultSignatureKeyResolver _inner;
-    private readonly IPolicyService _policy;
+    private readonly Func<string?, CancellationToken, Task<bool>> _isAllowedIssuer;
 
-    public PolicyEnforcingResolver(DefaultSignatureKeyResolver inner, IPolicyService policy)
+    public PolicyEnforcingResolver(DefaultSignatureKeyResolver inner,
+        Func<string?, CancellationToken, Task<bool>> isAllowedIssuer)
     {
         _inner = inner;
-        _policy = policy;
+        _isAllowedIssuer = isAllowedIssuer;
     }
 
     public async Task<SignatureKeyResolution> ResolveAsync(
@@ -123,7 +132,7 @@ public sealed class PolicyEnforcingResolver : ISignatureKeyResolver
         if (info.Jwt is not null)
         {
             var iss = info.Payload?["iss"]?.GetValue<string>();
-            if (!await _policy.IsAllowedIssuerAsync(iss, ct))
+            if (!await _isAllowedIssuer(iss, ct))
                 throw new AAuthVerificationException("Agent provider not allowed");
         }
 
@@ -140,8 +149,7 @@ wins):
 builder.Services.AddAAuthResource(options =>
 {
     options.Issuer = "https://resource.example";
-    options.KeyResolver = new PolicyEnforcingResolver(
-        new DefaultSignatureKeyResolver(jwksClient), policyService);
+    options.KeyResolver = issuerPolicyResolver;
 });
 ```
 

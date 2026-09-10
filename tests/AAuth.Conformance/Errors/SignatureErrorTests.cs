@@ -35,7 +35,7 @@ public class SignatureErrorTests : IAsyncLifetime
         builder.WebHost.UseTestServer();
         builder.Services.AddSingleton(new AAuthVerifier());
         var app = builder.Build();
-        app.UseAAuthVerification(AAuthVerificationOptions.SignatureOnly());
+        app.UseAAuthVerification(AAuthVerificationOptions.Generic());
         app.MapGet("/protected", () => Results.Ok("hello"));
         await app.StartAsync();
         _host = app;
@@ -66,7 +66,7 @@ public class SignatureErrorTests : IAsyncLifetime
     {
         var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "/protected");
         request.Headers.TryAddWithoutValidation("Signature", "sig=:AAAA:");
-        request.Headers.TryAddWithoutValidation("Signature-Input", "sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\");created=9999999999");
+        request.Headers.TryAddWithoutValidation("Signature-Input", $"sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\");created={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
         request.Headers.TryAddWithoutValidation("Signature-Key", "sig=jwt;jwt=\"not-a-jwt\"");
 
         var response = await Client.SendAsync(request);
@@ -109,7 +109,7 @@ public class SignatureErrorTests : IAsyncLifetime
     {
         foreach (SignatureErrorCode code in Enum.GetValues<SignatureErrorCode>())
         {
-            var formatted = SignatureError.ToHeaderValue(code);
+            var formatted = SignatureError.Format(code);
             Assert.True(SignatureError.TryParse(formatted, out var parsed));
             Assert.Equal(code, parsed);
         }
@@ -121,14 +121,14 @@ public class SignatureErrorTests : IAsyncLifetime
         var header = SignatureError.Format(SignatureErrorCode.InvalidInput,
             new[] { "content-digest" });
         Assert.Contains("invalid_input", header);
-        Assert.Contains("required_input=\"content-digest\"", header);
+        Assert.Contains("required_input=(\"content-digest\")", header);
     }
 
     [Fact(DisplayName = "§Signature-Error — ParseRequiredInput extracts space-separated components")]
     public void ParseRequiredInput_ExtractsComponents()
     {
         var components = SignatureError.ParseRequiredInput(
-            "invalid_input; required_input=\"@method @authority content-digest\"");
+            "error=invalid_input, required_input=(\"@method\" \"@authority\" \"content-digest\")");
         Assert.Equal(new[] { "@method", "@authority", "content-digest" }, components);
     }
 
@@ -153,10 +153,9 @@ public class SignatureErrorTests : IAsyncLifetime
     [Fact(DisplayName = "§Signature-Error — unsupported_algorithm includes supported_algorithms parameter")]
     public void UnsupportedAlgorithm_IncludesSupportedAlgorithms()
     {
-        var header = SignatureError.Format(SignatureErrorCode.UnsupportedAlgorithm,
-            supportedAlgorithms: new[] { "EdDSA" });
+        var header = SignatureError.Format(SignatureErrorCode.UnsupportedAlgorithm);
         Assert.Contains("unsupported_algorithm", header);
-        Assert.Contains("supported_algorithms=\"EdDSA\"", header);
+        Assert.Equal("error=unsupported_algorithm", header);
     }
 
     [Fact(DisplayName = "§Authentication Errors — non-Ed25519 key returns unsupported_algorithm with supported_algorithms")]
@@ -170,10 +169,10 @@ public class SignatureErrorTests : IAsyncLifetime
         var payload64 = Base64UrlEncoder.Encode(System.Text.Encoding.UTF8.GetBytes(payloadJson));
         var fakeJwt = $"{header64}.{payload64}.AAAA";
 
-        var signatureKey = $"sig=jwt;jwt=\"{fakeJwt}\"";
+        var signatureKey = "sig=hwk;kty=\"EC\";crv=\"P-256\";x=\"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU\";y=\"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0\"";
         var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "/protected");
         request.Headers.TryAddWithoutValidation("Signature-Key", signatureKey);
-        request.Headers.TryAddWithoutValidation("Signature-Input", "sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\");created=9999999999");
+        request.Headers.TryAddWithoutValidation("Signature-Input", $"sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\");created={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
         request.Headers.TryAddWithoutValidation("Signature", "sig=:AAAA:");
 
         var response = await Client.SendAsync(request);
@@ -181,6 +180,7 @@ public class SignatureErrorTests : IAsyncLifetime
         Assert.True(response.Headers.TryGetValues(SignatureError.HeaderName, out var values));
         var headerValue = string.Join(",", values);
         Assert.Contains("unsupported_algorithm", headerValue);
-        Assert.Contains("supported_algorithms=\"EdDSA ES256\"", headerValue);
+        Assert.Equal("Ed25519, ES256", string.Join(", ", response.Headers.GetValues("Accept-Signature-Alg")));
+        Assert.DoesNotContain("supported_algorithms", headerValue);
     }
 }

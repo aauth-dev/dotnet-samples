@@ -49,6 +49,7 @@ public sealed class AAuthAuthenticationHandler : AuthenticationHandler<Authentic
 
     /// <summary>Claim type for individual scopes.</summary>
     public const string ScopeClaimType = "aauth:scope";
+    public const string AccountClaimType = "aauth:account";
 
     /// <summary>Claim type for individual groups (one claim per group).</summary>
     public const string GroupClaimType = "aauth:group";
@@ -97,6 +98,9 @@ public sealed class AAuthAuthenticationHandler : AuthenticationHandler<Authentic
                 claims.Add(new Claim(SubjectIssuerClaimType, $"{assertingIssuer}|{result.Subject}", ClaimValueTypes.String, assertingIssuer));
             }
         }
+
+        if (result.AccountVerified && result.Account is not null)
+            claims.Add(new Claim(AccountClaimType, result.Account, ClaimValueTypes.String, assertingIssuer));
 
         if (result.Agent is not null)
         {

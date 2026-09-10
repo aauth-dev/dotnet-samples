@@ -49,6 +49,8 @@ public static class AAuthConstants
 
         /// <summary>JWKS URI-based agent identity.</summary>
         public const string JwksUri = "jwks_uri";
+        public const string Jwks = "jwks";
+        public const string SelfJwt = "self-jwt";
     }
 
     /// <summary>

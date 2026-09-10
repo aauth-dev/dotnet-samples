@@ -20,7 +20,7 @@ public class AgentR3RequestTests
     public async Task PostAuthorize_SendsOperationsAndChallengeFallbackIsReadable()
     {
         var handler = new CaptureAuthorizeHandler();
-        using var http = new HttpClient(handler);
+        using var http = new InProcessHttpClient(handler);
 
         var response = await R3Request.PostAuthorizeAsync(
             http,

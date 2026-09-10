@@ -13,6 +13,7 @@ namespace AAuth;
 /// </summary>
 public sealed class AAuthResourceOptions
 {
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
     /// <summary>HTTPS issuer URL for this resource (used in metadata and token audience).</summary>
     public string Issuer { get; set; } = null!;
 
@@ -20,7 +21,7 @@ public sealed class AAuthResourceOptions
     /// Signing keys keyed by <c>kid</c>. These are served via the JWKS endpoint
     /// and used to sign resource tokens / challenges.
     /// </summary>
-    public Dictionary<string, AAuthKey> SigningKeys { get; set; } = new();
+    public Dictionary<string, IAAuthKey> SigningKeys { get; set; } = new();
 
     /// <summary>Maximum allowed age of inbound signatures. Default: 60 seconds.</summary>
     public TimeSpan MaxSignatureAge { get; set; } = TimeSpan.FromSeconds(60);
@@ -36,7 +37,11 @@ public sealed class AAuthResourceOptions
     /// </summary>
     public Func<DateTimeOffset>? Clock { get; set; }
 
-    /// <summary>Enable JTI-based replay detection. Default: true.</summary>
+    /// <summary>
+    /// Enable request replay detection using the signing-key thumbprint and
+    /// canonical signature base. Default: true. Token revocation is separately
+    /// keyed by issuer and token id; reusable tokens are not made single-use.
+    /// </summary>
     public bool EnableReplayDetection { get; set; } = true;
 
     /// <summary>
@@ -80,11 +85,13 @@ public sealed class AAuthResourceOptions
     public string? AccessMode { get; set; }
 
     /// <summary>
-    /// Optional <c>authorization_endpoint</c> URL published in resource metadata
-    /// (the proactive authorization flow). When absent, the resource issues
-    /// resource tokens via <c>401</c> challenges instead.
+    /// Optional resource-owned <c>authorization_endpoint</c> URL for proactive
+    /// authorization, published in resource metadata. This does not select the
+    /// PS/AS resource-token recipient; use <see cref="Server.AAuthChallengeOptions.PersonServerAudience"/>.
+    /// When absent, the resource issues challenges for authorization instead.
     /// </summary>
     public string? AuthorizationEndpoint { get; set; }
+    public string? RevocationEndpoint { get; set; }
 
     /// <summary>
     /// Optional extension metadata merged verbatim into the resource well-known

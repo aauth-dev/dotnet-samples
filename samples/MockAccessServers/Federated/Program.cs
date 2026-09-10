@@ -58,10 +58,10 @@ builder.Services.AddSingleton(new AAuthVerifier
 {
     MaxAge = TimeSpan.FromSeconds(signatureWindowSeconds),
 });
-builder.Services.AddSingleton(new TokenVerifier());
+builder.Services.AddSingleton(new TokenVerifier { EgressPolicy = SampleEgress.Policy });
 // Shared discovery clients (MetadataClient + JwksClient) with a pooled handler;
 // no manual HttpClient wiring.
-builder.Services.AddAAuthDiscovery();
+builder.Services.AddAAuthDiscovery(options => options.EgressPolicy = SampleEgress.Policy);
 
 // -----------------------------------------------------------------------
 // Policy Decision Point (S3). The AAuth crypto stays in the SDK helper; only
@@ -75,6 +75,8 @@ builder.Services.AddAAuthDiscovery();
 // -----------------------------------------------------------------------
 var policyProvider = (builder.Configuration["AccessServer:PolicyProvider"] ?? "stub")
     .Trim().ToLowerInvariant();
+var walletRules = new WalletPolicyRules(builder.Configuration["AAuth:Wallet"] ?? "http://localhost:5003",
+    builder.Configuration["AAuth:Concierge"] ?? "http://localhost:5200");
 switch (policyProvider)
 {
     case "stub":
@@ -83,7 +85,7 @@ switch (policyProvider)
         var stubRequireConsent = builder.Configuration
             .GetValue("AccessServer:RequireConsent", false);
         builder.Services.AddSingleton<IAccessPolicy>(
-            new StubAccessPolicy(stubRequiredClaims, stubRequireConsent));
+            new StubAccessPolicy(stubRequiredClaims, stubRequireConsent, walletRules));
         break;
     case "keycloak":
         var keycloakOptions = new KeycloakOptions();
@@ -92,7 +94,7 @@ switch (policyProvider)
         builder.Services.AddHttpClient("keycloak");
         builder.Services.AddSingleton<IAccessPolicy>(sp => new KeycloakAccessPolicy(
             sp.GetRequiredService<IHttpClientFactory>().CreateClient("keycloak"),
-            sp.GetRequiredService<KeycloakOptions>()));
+            sp.GetRequiredService<KeycloakOptions>(), walletRules));
         break;
     default:
         throw new InvalidOperationException(
@@ -105,6 +107,8 @@ switch (policyProvider)
 builder.Services.AddSingleton<IAccessPendingStore, InMemoryAccessPendingStore>();
 
 var app = builder.Build();
+var browserConsent = new BrowserConsentSessions("AAuth.Federated.Consent",
+    policyProvider == "stub" && builder.Configuration.GetValue<bool>("AAuth:EnableIsolatedDemoConsent") ? "isolated-federated-demo" : null);
 
 // -----------------------------------------------------------------------
 // Map the whole AS pipeline in one call (§AS Token Endpoint): publishes
@@ -116,8 +120,9 @@ var app = builder.Build();
 // -----------------------------------------------------------------------
 app.MapAAuthAccessServer(new AAuthAccessServerOptions
 {
+    EgressPolicy = SampleEgress.Policy,
     Issuer = asIssuer,
-    SigningKeys = new Dictionary<string, AAuthKey> { [AsKid] = asKey },
+    SigningKeys = new Dictionary<string, IAAuthKey> { [AsKid] = asKey },
     DefaultScope = AsScope,
     TrustedPersonServers = trustedPersonServers,
     InteractionLoginPath = "/interaction/login",
@@ -141,10 +146,14 @@ app.MapAAuthAccessServer(new AAuthAccessServerOptions
 //
 // Excluded from AAuth verification (no signature; it is the user's browser).
 // -----------------------------------------------------------------------
-app.MapGet("/interaction/login", (HttpContext ctx, string code) =>
+app.MapMethods("/interaction/login", ["GET", "POST"], async (HttpContext ctx) =>
 {
     var pending = app.Services.GetRequiredService<IAccessPendingStore>();
-    var entry = pending.Get(code);
+    var entered = await browserConsent.EnterAsync(ctx, code => pending.GetByCode(code) is { } candidate
+        ? new BrowserPendingRequest(candidate.Id, candidate.PendingExpiresAt, candidate.Browser, candidate.Lifecycle) : null,
+        externalLogin: policyProvider == "keycloak");
+    if (entered.Error is not null) return entered.Error;
+    var entry = pending.Get(entered.Id!);
     if (entry is null)
     {
         return Results.Content(
@@ -157,12 +166,12 @@ app.MapGet("/interaction/login", (HttpContext ctx, string code) =>
     if (app.Services.GetRequiredService<IAccessPolicy>() is IInteractiveAccessPolicy interactive)
     {
         var redirectUri = $"{asIssuer.TrimEnd('/')}/interaction/callback";
-        return Results.Redirect(interactive.BuildAuthorizationUrl(entry.Id, redirectUri));
+        return Results.Redirect(interactive.BuildAuthorizationUrl(entered.Decision!, redirectUri));
     }
 
     // Stub policy: render the Access Server's own consent screen.
     return Results.Content(
-        ConsentHtml.Prompt(code, entry.AgentId, entry.ResourceUrl, entry.Scope),
+        ConsentHtml.Prompt(browserConsent.Fields(ctx, entered.Decision!), entry.AgentId, entry.ResourceUrl, entry.Scope),
         contentType: "text/html");
 });
 
@@ -173,11 +182,14 @@ app.MapGet("/interaction/login", (HttpContext ctx, string code) =>
 // -----------------------------------------------------------------------
 app.MapPost("/interaction/approve", async (HttpContext ctx) =>
 {
+    if (policyProvider != "stub") return AAuthProblemDetails.Create("denied", statusCode: 403);
     var pending = app.Services.GetRequiredService<IAccessPendingStore>();
-    var code = (await ctx.Request.ReadFormAsync())["code"].ToString();
+    var decision = await browserConsent.DecideAsync(ctx);
+    if (decision.Error is not null) return decision.Error;
+    var code = decision.Decision!.Id;
     if (string.IsNullOrEmpty(code))
     {
-        return Results.BadRequest(new { error = "invalid_request", detail = "missing 'code'" });
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "missing 'code'", statusCode: StatusCodes.Status400BadRequest);
     }
     var entry = pending.Get(code);
     if (entry is null)
@@ -186,11 +198,16 @@ app.MapPost("/interaction/approve", async (HttpContext ctx) =>
             ConsentHtml.NotFound(), contentType: "text/html",
             statusCode: StatusCodes.Status404NotFound);
     }
-    pending.MarkAllowed(entry.Id);
-    return Results.Content(
-        ConsentHtml.Approved(entry.AgentId, entry.ResourceUrl, entry.Scope),
-        contentType: "text/html");
-}).DisableAntiforgery();
+    return await decision.Decision.ApplyAsync(ctx, () =>
+    {
+        if (entry.Status != AccessPendingStatus.Pending || entry.PendingExpiresAt <= DateTimeOffset.UtcNow)
+            return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+        entry.Status = AccessPendingStatus.Allowed;
+        return Results.Content(
+            ConsentHtml.Approved(entry.AgentId, entry.ResourceUrl, entry.Scope),
+            contentType: "text/html");
+    });
+});
 
 // -----------------------------------------------------------------------
 // POST /interaction/deny — the stub AS consent screen's Deny button. Marks
@@ -198,11 +215,14 @@ app.MapPost("/interaction/approve", async (HttpContext ctx) =>
 // -----------------------------------------------------------------------
 app.MapPost("/interaction/deny", async (HttpContext ctx) =>
 {
+    if (policyProvider != "stub") return AAuthProblemDetails.Create("denied", statusCode: 403);
     var pending = app.Services.GetRequiredService<IAccessPendingStore>();
-    var code = (await ctx.Request.ReadFormAsync())["code"].ToString();
+    var decision = await browserConsent.DecideAsync(ctx);
+    if (decision.Error is not null) return decision.Error;
+    var code = decision.Decision!.Id;
     if (string.IsNullOrEmpty(code))
     {
-        return Results.BadRequest(new { error = "invalid_request", detail = "missing 'code'" });
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "missing 'code'", statusCode: StatusCodes.Status400BadRequest);
     }
     var entry = pending.Get(code);
     if (entry is null)
@@ -211,11 +231,18 @@ app.MapPost("/interaction/deny", async (HttpContext ctx) =>
             ConsentHtml.NotFound(), contentType: "text/html",
             statusCode: StatusCodes.Status404NotFound);
     }
-    pending.MarkDenied(entry.Id, "user denied at the Access Server");
-    return Results.Content(
-        ConsentHtml.Denied(entry.AgentId, entry.ResourceUrl, entry.Scope),
-        contentType: "text/html");
-}).DisableAntiforgery();
+    return await decision.Decision.ApplyAsync(ctx, () =>
+    {
+        if (entry.Status is AccessPendingStatus.Allowed or AccessPendingStatus.Denied
+            || entry.PendingExpiresAt <= DateTimeOffset.UtcNow)
+            return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+        entry.Status = AccessPendingStatus.Denied;
+        entry.DenyReason = "user denied at the Access Server";
+        return Results.Content(
+            ConsentHtml.Denied(entry.AgentId, entry.ResourceUrl, entry.Scope),
+            contentType: "text/html");
+    });
+});
 
 // -----------------------------------------------------------------------
 // GET /interaction/callback?code={kcCode}&state={id} — Keycloak redirects
@@ -227,78 +254,87 @@ app.MapPost("/interaction/deny", async (HttpContext ctx) =>
 // -----------------------------------------------------------------------
 app.MapGet("/interaction/callback", async (HttpContext ctx, string? code, string? state, string? error) =>
 {
+    if (policyProvider != "keycloak") return AAuthProblemDetails.Create("denied", statusCode: 403);
+    var session = await browserConsent.DecideAsync(ctx, externalLogin: true, externalState: state);
+    if (session.Error is not null) return session.Error;
     var pending = app.Services.GetRequiredService<IAccessPendingStore>();
-    var entry = state is null ? null : pending.Get(state);
+    var entry = pending.Get(session.Decision!.Id);
     if (entry is null)
     {
-        return Results.NotFound(new { error = "unknown_interaction" });
+        return AAuth.Server.AAuthProblemDetails.Create("unknown_interaction", statusCode: StatusCodes.Status404NotFound);
     }
 
-    if (!string.IsNullOrEmpty(error))
+    return await session.Decision.ApplyAsync(ctx, async () =>
     {
-        pending.MarkDenied(entry.Id, $"login failed: {error}");
-        return Results.Content(InteractionHtml("Access denied", "You can close this window."), "text/html");
-    }
-
-    if (string.IsNullOrEmpty(code))
-    {
-        return Results.Json(new { error = "invalid_request", detail = "missing code" },
-            statusCode: StatusCodes.Status400BadRequest);
-    }
-
-    if (app.Services.GetRequiredService<IAccessPolicy>() is not IInteractiveAccessPolicy interactive)
-    {
-        return Results.Json(
-            new { error = "interaction_unsupported", detail = "configured policy is not interactive" },
-            statusCode: StatusCodes.Status400BadRequest);
-    }
-
-    var redirectUri = $"{asIssuer.TrimEnd('/')}/interaction/callback";
-    var request = new AccessPolicyRequest
-    {
-        ResourceUrl = entry.ResourceUrl,
-        Scope = entry.Scope,
-        AgentId = entry.AgentId,
-        Claims = entry.Claims,
-        InteractionId = entry.Id,
-    };
-
-    AccessDecision decision;
-    try
-    {
-        decision = await interactive.CompleteAsync(code, redirectUri, request);
-    }
-    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-    {
-        pending.MarkDenied(entry.Id, "policy backend unavailable");
-        return Results.Content(InteractionHtml("Login error", "Please try again later."), "text/html");
-    }
-
-    switch (decision.Kind)
-    {
-        case AccessDecisionKind.Allow:
-            pending.MarkAllowed(entry.Id);
-            return Results.Content(InteractionHtml("Access granted", "You can return to your agent."), "text/html");
-        case AccessDecisionKind.NeedsClaims:
-            // Keycloak gathered a claim requirement (need_info). Transition the
-            // entry into §Claims Required; the PS's ongoing poll sees
-            // requirement=claims and pushes the attributes on the same URL.
-            entry.RequiredClaims = decision.RequiredClaims;
-            return Results.Content(InteractionHtml(
-                "More information needed",
-                "Your agent is providing the required details. You can return to it."), "text/html");
-        case AccessDecisionKind.Deny:
-        default:
-            pending.MarkDenied(entry.Id, decision.Reason ?? "access denied");
+        if (entry.Status != AccessPendingStatus.Pending || entry.PendingExpiresAt <= DateTimeOffset.UtcNow)
+            return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+        if (!string.IsNullOrEmpty(error))
+        {
+            entry.Status = AccessPendingStatus.Denied;
+            entry.DenyReason = $"login failed: {error}";
             return Results.Content(InteractionHtml("Access denied", "You can close this window."), "text/html");
-    }
+        }
+
+        if (string.IsNullOrEmpty(code))
+        {
+            return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "missing code", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (app.Services.GetRequiredService<IAccessPolicy>() is not IInteractiveAccessPolicy interactive)
+        {
+            return AAuth.Server.AAuthProblemDetails.Create("interaction_unsupported", "configured policy is not interactive", statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var redirectUri = $"{asIssuer.TrimEnd('/')}/interaction/callback";
+        var request = new AccessPolicyRequest
+        {
+            ResourceUrl = entry.ResourceUrl,
+            Scope = entry.Scope,
+            AgentId = entry.AgentId,
+            Claims = entry.Claims,
+            InteractionId = entry.Id,
+        };
+
+        AccessDecision decision;
+        try
+        {
+            decision = await interactive.CompleteAsync(code, redirectUri, request);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            entry.Status = AccessPendingStatus.Denied;
+            entry.DenyReason = "policy backend unavailable";
+            return Results.Content(InteractionHtml("Login error", "Please try again later."), "text/html");
+        }
+
+        ctx.RequestAborted.ThrowIfCancellationRequested();
+        switch (decision.Kind)
+        {
+            case AccessDecisionKind.Allow:
+                entry.Status = AccessPendingStatus.Allowed;
+                return Results.Content(InteractionHtml("Access granted", "You can return to your agent."), "text/html");
+            case AccessDecisionKind.NeedsClaims:
+                // Keycloak gathered a claim requirement (need_info). Transition the
+                // entry into §Claims Required; the PS's ongoing poll sees
+                // requirement=claims and pushes the attributes on the same URL.
+                entry.RequiredClaims = decision.RequiredClaims;
+                return Results.Content(InteractionHtml(
+                    "More information needed",
+                    "Your agent is providing the required details. You can return to it."), "text/html");
+            case AccessDecisionKind.Deny:
+            default:
+                entry.Status = AccessPendingStatus.Denied;
+                entry.DenyReason = decision.Reason ?? "access denied";
+                return Results.Content(InteractionHtml("Access denied", "You can close this window."), "text/html");
+        }
+    });
 });
 
 app.Run();
 
 // Minimal completion page shown to the user after the Keycloak round-trip.
 static string InteractionHtml(string title, string body) =>
-    ConsentHtml.Page(title, $"<p>{body}</p>");
+    ConsentHtml.Page(title, $"<h1>{System.Net.WebUtility.HtmlEncode(title)}</h1><p>{System.Net.WebUtility.HtmlEncode(body)}</p>");
 
 // Demo convention shared with MockPersonServer: an agent whose id starts with
 // `aauth:demo@` is treated as holding the admin role. A production AS would
@@ -340,20 +376,19 @@ static class ConsentHtml
         "<!doctype html><meta charset=utf-8><title>" + Enc(title) + " — Access Server</title>"
         + Style + Banner + bodyHtml;
 
-    public static string Prompt(string code, string agent, string resource, string scope) =>
+    public static string Prompt(string fields, string agent, string resource, string scope) =>
         Page(
             "Approve agent at the Access Server",
             "<h1>An agent is requesting federated access on your behalf</h1>"
-            + "<p>This is the <b>Access Server's</b> consent screen. In a real AS you would be "
-            + "signed in via your identity provider (e.g. Keycloak) before reaching here.</p>"
+            + "<p>Signed in as the isolated demo user at the <b>Access Server</b>.</p>"
             + $"<div class=row><b>Agent:</b> <code>{Enc(agent)}</code></div>"
             + $"<div class=row><b>Resource:</b> <code>{Enc(resource)}</code></div>"
             + $"<div class=row><b>Scope:</b> <code>{Enc(scope)}</code></div>"
             + "<form method=post action=\"/interaction/approve\">"
-            + $"<input type=hidden name=code value=\"{Enc(code)}\">"
+            + fields
             + "<button class=approve type=submit>Approve</button></form>"
             + "<form method=post action=\"/interaction/deny\">"
-            + $"<input type=hidden name=code value=\"{Enc(code)}\">"
+            + fields
             + "<button class=deny type=submit>Deny</button></form>");
 
     public static string Approved(string agent, string resource, string scope) =>

@@ -1,3 +1,7 @@
+---
+description: Travel intermediary demonstrating authenticated downstream delegation and interaction chaining.
+---
+
 # Concierge
 
 Multi-agent call-chaining sample. The **Concierge** is the service Aria asks to
@@ -11,7 +15,7 @@ delegation), exactly like a travel concierge booking through other providers.
 - Proper 401 challenge with resource token when receiving agent tokens
 - Token exchange with `upstream_token` for nested `act` delegation
 - `UseJwt(string)` to present a pre-acquired auth token downstream
-- Full issuer verification (`RequireIssuerVerification = true`)
+- Mandatory JWT issuer verification
 
 ## Flow
 
@@ -57,7 +61,7 @@ The final response includes:
 ## Running
 
 ```bash
-make demo-sample   # starts all 5 services
+make demo   # starts the complete sample stack
 ```
 
 Or standalone (requires Calendar, PS, and AP already running):
@@ -75,7 +79,7 @@ dotnet run --project samples/Concierge
 | `AAuth:Downstream` | `http://localhost:5001` | Downstream resource (Calendar) URL for the plain chain |
 | `AAuth:MissionDownstream` | `http://localhost:5002` | Downstream resource (Trips) URL for the mission chain |
 | `AAuth:PersonServer` | `http://localhost:5100` | PS for token exchange |
-| `AAuth:AgentId` | `aauth:concierge@localhost:5200` | Concierge's agent identity |
+| `AAuth:AgentId` | `aauth:concierge@localhost` | Concierge's agent identity |
 
 ## Using with AgentConsole
 
@@ -87,7 +91,7 @@ curl -X POST http://localhost:5100/admin/consent \
 
 curl -X POST http://localhost:5100/admin/consent \
   -H "Content-Type: application/json" \
-  -d '{"agent":"aauth:concierge@localhost:5200","resource":"http://localhost:5001"}'
+  -d '{"agent":"aauth:concierge@localhost","resource":"http://localhost:5001"}'
 
 # Call through the chain
 dotnet run --project samples/AgentConsole -- http://localhost:5200 \

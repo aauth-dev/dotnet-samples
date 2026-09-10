@@ -10,6 +10,18 @@ This is the AAuth mode for resources that authorize requests themselves — the 
 
 Runnable demo: the **Inbox** resource server (`samples/MockResourceServers/Inbox`, `:5004`) and the SampleApp [`/inbox`](http://localhost:5240/inbox) page / GuidedTour **Resource-Managed** flow.
 
+All AAuth resource access uses the `jwt` Signature-Key scheme with an agent or
+auth token. Here an `aa-agent+jwt` authenticates the agent; the opaque
+`AAuth-Access` credential carries the Inbox's authorization. These are different
+credentials. Generic `hwk` signing is not this access mode.
+
+GuidedTour acts as its own AP and self-issues locally using its published issuer
+and key. SampleApp signs enrollment with an external AP on first use, retains
+its durable key handle, and lazily obtains a fresh agent JWT from the AP. That
+provisioning/refresh is separate from resource authorization. The resource can
+discover the issuer's metadata/key to verify the JWT, but performs no PS/AS
+authorization exchange.
+
 ## Sequence Diagram
 
 ```mermaid
@@ -17,7 +29,8 @@ sequenceDiagram
     participant Agent
     participant Resource
     participant User
-    Agent->>Resource: GET /data (signed)
+    Note over Agent: Setup complete: self-issued or AP-enrolled agent JWT
+    Agent->>Resource: GET /data (jwt + HTTP proof)
     Resource-->>Agent: 202 + AAuth-Requirement: interaction (url, code)
     User->>Resource: Completes interaction at resource's page
     Agent->>Resource: GET /pending/<id> (poll)
@@ -33,14 +46,21 @@ sequenceDiagram
 `WithResourceManagedAccess()` captures the `AAuth-Access` token and replays it as `Authorization: AAuth <token68>` (the signer covers `authorization` automatically). Combine with `WithInteractionHandling()` to drive the resource's `202 → consent → 200` handshake:
 
 ```csharp
-using var client = new AAuthClientBuilder(key)
-    .UseHwk()
+var keyStore = FileKeyStore.Default();
+var enrollment = await AAuthClientBuilder.Bootstrap("https://ap.example/enrol")
+    .WithKey(keyStore.LoadOrCreate("inbox-agent"))
+    .WithKeyStore(keyStore)
+    .EnrolAsync();
+
+using var client = AAuthClientBuilder.Enrolled(enrollment.Key)
+    .RefreshingFrom("https://ap.example/refresh", enrollment.LocalKeyHandle)
+    .WithKeyStore(keyStore)
     .WithResourceManagedAccess()
     .WithInteractionHandling(options =>
     {
         options.OnInteractionRequired = (url, code, ct) =>
         {
-            Console.WriteLine($"Approve at: {url}?code={code}");
+            Console.WriteLine($"Approve at: {url}");
             return Task.CompletedTask;
         };
     })
@@ -51,6 +71,17 @@ using var client = new AAuthClientBuilder(key)
 await client.GetAsync("https://resource.example/messages");
 var response = await client.GetAsync("https://resource.example/messages");
 ```
+
+The example combines setup and use for completeness. Persist the key handle
+and configured refresh endpoint so later startups can skip enrollment. The
+built client owns its refresh transport and disposes it with the pipeline.
+For an already-held valid enrollment token, use
+`AAuthClientBuilder.From(enrollment).WithResourceManagedAccess()`; `From` uses
+that JWT without an implicit refresh or a switch to direct JWKS.
+
+Hosted agents use `SelfIssuing(key).As(issuer, agentId).WithKid(keyId)` before
+the same resource-managed/interaction options. This issues an agent token with
+`cnf`, not a `self-jwt` carrier.
 
 <details>
 <summary>Manual Handling</summary>
@@ -107,10 +138,9 @@ app.MapAAuthAuthorizationEndpoint("/authorize", async (ctx, request) =>
     return ctx.RequireAAuthInteraction(request.Scope);
 }).RequireAAuthSignature();
 
-// The resource's own consent page records the user's decision; the next poll
-// then issues the AAuth-Access token.
-app.MapPost("/consent/approve", (string code, IInteractionPendingStore pending) =>
-    pending.Approve(code) ? Results.Ok() : Results.NotFound());
+// The resource's authenticated consent page consumes the correlation code,
+// binds a decision session to the person and pending owner, and validates CSRF.
+// Only that verified decision context can approve the stored interaction.
 ```
 
 ## DI Registration
@@ -123,10 +153,11 @@ var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!);
 builder.Services.AddAAuthAgent("resource-managed", options =>
 {
     options.Key = key!;
+    options.AgentToken = agentToken; // already-held aa-agent+jwt bound to key
     options.EnableResourceManagedAccess = true; // capture + replay AAuth-Access
     options.OnResourceInteraction = async (url, code, ct) =>
     {
-        await notifier.SendAsync($"Approve at: {url}?code={code}", ct);
+        await Surface(url);
     };
     options.PollingTimeout = TimeSpan.FromMinutes(3);
 });
@@ -155,7 +186,10 @@ builder.Services.AddAAuthResourceManaged(options =>
 
 The endpoints then drive the flow with `ResolveAAuthAccessAsync` /
 `RequireAAuthInteraction` and `MapAAuthInteractionPoll`; the consent page records
-the decision via `IInteractionPendingStore.Approve`, and (optionally)
+the decision using an authenticated, owner-bound `BrowserConsentSessions`
+session and the pending-store generation. See the actual
+[Inbox consent endpoints](../../samples/MockResourceServers/Inbox/Program.cs).
+Optionally,
 `MapAAuthAuthorizationEndpoint` adds the proactive entry point.
 
 See [Dependency Injection](../reference/dependency-injection.md) for full reference.

@@ -1,0 +1,9 @@
+@page "/wallet-protocol"
+@rendermode InteractiveServer
+@inject IConfiguration Configuration
+
+<PageTitle>Wallet Protocol Tour</PageTitle>
+<CapabilityTourChrome CurrentValue="/wallet-protocol" ResourceLabel="Wallet"
+	ResourceUrl="@(Configuration["AAuth:Wallet"] ?? "http://localhost:5003")"
+	ShowAccessServer="true" ShowConcierge="true" />
+<AAuth.Samples.Capabilities.WalletWalkthrough GuidedTour="true" />

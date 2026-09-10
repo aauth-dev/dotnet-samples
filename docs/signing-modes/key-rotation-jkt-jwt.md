@@ -1,14 +1,18 @@
-# Key Rotation (sig=jkt-jwt)
+---
+title: Key Rotation with jkt-jwt
+description: Generic naming-JWT delegation and AP refresh with distinct durable and ephemeral keys.
+---
 
 ## Overview
 
-A self-issued, two-key delegation where a durable (hardware-backed) key signs a
+A self-issued, two-key delegation where a durable key signs a
 naming JWT that delegates HTTP-message signing to a short-lived ephemeral key.
 The scheme is **self-anchored**: the durable public key travels in the naming
 JWT's header, and the issuer is that key's own thumbprint — so a verifier needs
 no external lookup. Access stays **pseudonymous**. Defined in
-[`draft-hardt-httpbis-signature-key-05`](../../aauth-spec/v08/draft-hardt-httpbis-signature-key-05.txt)
-§3.4; the AAuth protocol references this scheme normatively.
+[`draft-hardt-httpbis-signature-key-08`](../../aauth-spec/v10/draft-hardt-httpbis-signature-key-08.txt)
+section 3.5. This is an AP refresh or explicitly generic Signature Keys scheme;
+AAuth resource access presents the returned agent JWT with its matching key.
 
 ## When to Use
 
@@ -24,13 +28,12 @@ impractical to invoke on every HTTP request. The enclave therefore signs a
 naming JWT **once per agent-token lifetime** to delegate signing to a fast
 ephemeral software key, which signs the actual requests.
 
-Trust is anchored at enrolment, not by pure trust-on-first-use: on first use the
-Agent Provider drives a **platform attestation** (e.g. Apple App Attest or Google
-Play Integrity) *alongside* the `jkt-jwt` to prove the durable key really is
-enclave-resident material. After that, the durable-key signature on each naming
-JWT is sufficient for every future agent token — the AP does not re-attest on
-each refresh. See [Bootstrap & Enrollment](../workflows/bootstrap-enrollment.md)
-for the attestation ceremony and the two-key refresh flow.
+An AP can additionally validate platform attestation at enrollment if its
+deployment supports that ceremony. This SDK's samples use software keys and
+signed enrollment, not hardware attestation. The AP binds the durable key to
+its enrollment record; generic resource verification alone does not establish
+provider or device trust. See [Bootstrap & Enrollment](../workflows/bootstrap-enrollment.md)
+for the implemented two-key refresh and [platform limits](../advanced/platform-attestation.md).
 
 ## Code Example
 
@@ -38,7 +41,7 @@ for the attestation ceremony and the two-key refresh flow.
 using AAuth.Crypto;
 using AAuth;
 
-var durableKey = AAuthKey.Generate();    // long-lived, possibly hardware-backed
+var durableKey = AAuthKey.Generate();    // long-lived software key in this example
 var ephemeralKey = AAuthKey.Generate();  // short-lived signing key
 
 // The naming JWT is signed by the durable key, embeds the durable public key in
@@ -68,7 +71,7 @@ using var client = new HttpClient(handler);
 ## The naming JWT (jkt-s256+jwt)
 
 ```text
-header:  { "typ": "jkt-s256+jwt", "alg": "EdDSA", "jwk": { …durable public key… } }
+header:  { "typ": "jkt-s256+jwt", "alg": "Ed25519", "jwk": { …durable public key… } }
 payload: { "iss": "urn:jkt:sha-256:<durable-thumbprint>",
            "iat": …, "exp": …,
            "cnf": { "jwk": { …ephemeral public key… } } }
@@ -80,7 +83,7 @@ payload: { "iss": "urn:jkt:sha-256:<durable-thumbprint>",
 - The reported pseudonym is the **durable** key's thumbprint — stable across
   ephemeral-key rotation.
 
-## Verification (self-anchored TOFU, §3.4 steps 1–11)
+## Verification (self-anchored, section 3.5)
 
 1. Parse the naming JWT and check `typ` is `jkt-s256+jwt`.
 2. Extract the durable public key from the header `jwk`.
@@ -98,5 +101,5 @@ identity, not authority-vouched identity (§6.3).
 
 ## Further Reading
 
-- [`draft-hardt-httpbis-signature-key-05`](../../aauth-spec/v08/draft-hardt-httpbis-signature-key-05.txt) §3.4
+- [`draft-hardt-httpbis-signature-key-08`](../../aauth-spec/v10/draft-hardt-httpbis-signature-key-08.txt) section 3.5
 - [Bootstrap](../workflows/bootstrap-enrollment.md)

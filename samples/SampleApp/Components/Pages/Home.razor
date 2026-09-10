@@ -10,10 +10,18 @@
         <strong>Aria</strong> is the AI travel assistant used throughout these demos. Like any
         agent, Aria has to <em>prove who it is</em> and <em>get your permission</em> before it
         touches anything that belongs to you — and AAuth is the protocol that lets it do so
-        safely. Each page below follows Aria as it works on your behalf across the
-        <strong>Aria</strong> resource servers — <strong>Profile</strong> (your preferences),
-        <strong>Calendar</strong> (when you're free), <strong>Trips</strong> (browsing and
-        booking), <strong>Wallet</strong> (paying), and <strong>Bookings</strong> (reserving).
+        safely. Each page below follows Aria across all eight resource servers:
+        <strong>Profile</strong> (preferences), <strong>Inbox</strong> (trip confirmations),
+        <strong>Calendar</strong> (availability), <strong>Trips</strong> (planning),
+        <strong>Wallet</strong> (payments), <strong>Bookings</strong> (reservations),
+        <strong>Catalog</strong> (travel options), and <strong>Documents</strong> (briefs).
+    </p>
+    <p class="mb-2">
+        The supporting topology is exhaustive too: <strong>Concierge</strong>, the
+        <strong>Agent Provider</strong>, <strong>Person Server</strong>, federated
+        <strong>Access Server</strong>, <strong>R3 Access Server</strong>, the authenticated
+        <strong>User / Browser</strong>, and the distinct <strong>Original Caller</strong>,
+        <strong>Parent</strong>, and <strong>Worker</strong> roles used by SubAgents.
     </p>
     <p class="mb-0 text-muted">
         This <strong>Sample App</strong> is the “golden example”: each page is a small,
@@ -46,14 +54,14 @@
     <div class="col">
         <div class="card h-100">
             <div class="card-body">
-                <h5 class="card-title">🪪 JWKS URI — Agent Identity</h5>
+                <h5 class="card-title">🪪 Direct JWKS — Generic Identity</h5>
                 <p class="card-text">
-                    Identity-based access. The AP publishes the agent's public key at a
-                    JWKS endpoint. Resources verify by fetching that URI — no Person
-                    Server or token exchange needed.
+                    A generic Signature Keys example. The AP publishes the agent's public
+                    key at a direct JWKS URL, and Profile verifies that discovered key.
+                    It is not one of the four AAuth resource access modes.
                 </p>
-                <span class="badge bg-success">2-party</span>
-                <span class="badge bg-secondary">sig=jwks_uri</span>
+                <span class="badge bg-success">agent + resource</span>
+                <span class="badge bg-secondary">sig=jwks</span>
             </div>
             <div class="card-footer">
                 <a href="identified" class="btn btn-outline-primary btn-sm">Open demo →</a>
@@ -163,14 +171,14 @@
                 <h5 class="card-title">👥 Sub-Agents — Parent-Mediated Workers</h5>
                 <p class="card-text">
                     An orchestrating <strong>parent</strong> spawns a short-lived
-                    <strong>worker</strong> sub-agent under one user consent. The worker has its
-                    own key (individually auditable + revocable) but the parent mediates its
-                    token exchange via <code>subagent_token</code>; the auth token's
-                    <code>act</code> records the chain.
+                    <strong>worker</strong> sub-agent with its own key (individually auditable
+                    and revocable). Three explicit decisions cover the upstream caller, the
+                    worker's Wallet scope, and federation; the parent mediates the exchange via
+                    <code>subagent_token</code>, and the auth token's <code>act</code> records the chain.
                 </p>
                 <span class="badge bg-danger">sub-agents</span>
                 <span class="badge bg-secondary">parent_agent</span>
-                <span class="badge bg-info text-dark">in-process</span>
+                <span class="badge bg-info text-dark">live federation</span>
             </div>
             <div class="card-footer">
                 <a href="sub-agent" class="btn btn-outline-primary btn-sm">Open demo →</a>
@@ -258,6 +266,79 @@
             </div>
         </div>
     </div>
+
+    <div class="col">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">✉️ Bookings Events — Availability Notification</h5>
+                <p class="card-text">
+                    A sold-out reservation opens up. Aria subscribes through its Agent
+                    Provider, then verifies and acknowledges the signed notification
+                    without exposing a public webhook. Try a public channel or bind the
+                    subscription to your Work bookings account.
+                </p>
+                <span class="badge bg-secondary">aa-subscribe+jwt</span>
+                <span class="badge bg-info text-dark">self-jwt delivery</span>
+            </div>
+            <div class="card-footer">
+                <a href="events" class="btn btn-outline-primary btn-sm">Open demo →</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">🛡️ Wallet Protocol — Decisions and Recovery</h5>
+                <p class="card-text">
+                    Aria handles three Wallet edge cases: answering an Access Server
+                    question, extending an existing authorization through Concierge,
+                    and recovering after a Wallet grant is revoked.
+                </p>
+                <span class="badge bg-dark">4-party</span>
+                <span class="badge bg-info text-dark">clarify · chain · revoke</span>
+            </div>
+            <div class="card-footer">
+                <a href="wallet-protocol" class="btn btn-outline-primary btn-sm">Open demo →</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">📄 Document Release — Permission Before Consent</h5>
+                <p class="card-text">
+                    Aria requests a work travel brief. The document owner first decides
+                    whether it may be released; only then does the Person Server ask you
+                    to authorize the account-bound download.
+                </p>
+                <span class="badge bg-warning text-dark">resource decision</span>
+                <span class="badge bg-secondary">PS consent</span>
+            </div>
+            <div class="card-footer">
+                <a href="documents" class="btn btn-outline-primary btn-sm">Open demo →</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">🧭 Travel Catalog — Service-Qualified R3</h5>
+                <p class="card-text">
+                    Aria compares destinations and experiences behind one gateway. Both
+                    services define <code>list</code>, so the grant includes the service
+                    name and cannot be reused across catalogs.
+                </p>
+                <span class="badge bg-dark">4-party</span>
+                <span class="badge bg-info text-dark">R3 · OpenAPI Gateway</span>
+            </div>
+            <div class="card-footer">
+                <a href="catalog-gateway" class="btn btn-outline-primary btn-sm">Open demo →</a>
+            </div>
+        </div>
+    </div>
 </div>
 
 <h4 class="mt-4">Prerequisites</h4>
@@ -265,9 +346,11 @@
 <pre><code>make demo</code></pre>
 <p>
     This starts the Agent Provider (<code>:5301</code>), Person Server
-    (<code>:5100</code> with consent required), the five Aria resource servers
+    (<code>:5100</code> with consent required), the eight Aria resource servers
     (Profile <code>:5000</code>, Calendar <code>:5001</code>, Trips
-    <code>:5002</code>, Wallet <code>:5003</code>, Bookings <code>:5005</code>),
+    <code>:5002</code>, Wallet <code>:5003</code>, Inbox <code>:5004</code>,
+    Bookings <code>:5005</code>, Catalog <code>:5006</code>, and Documents
+    <code>:5007</code>),
     Concierge (<code>:5200</code>), and the two Access Servers (Federated
     <code>:5500</code>, R3 <code>:5501</code>), then opens this app at
     <code>:5240</code> and the GuidedTour at <code>:5400</code>.

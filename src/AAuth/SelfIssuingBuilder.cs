@@ -26,6 +26,16 @@ public sealed class SelfIssuingBuilder
     private string? _issuer;
     private string? _subject;
     private string? _kid;
+    private AAuth.Discovery.AAuthEgressPolicy _egressPolicy = AAuth.Discovery.AAuthEgressPolicy.Production;
+
+    public SelfIssuingBuilder WithEgressPolicy(AAuth.Discovery.AAuthEgressPolicy policy)
+    {
+        _egressPolicy = policy ?? throw new ArgumentNullException(nameof(policy));
+        return this;
+    }
+
+    public SelfIssuingBuilder WithDevelopmentLoopback(params string[] origins) =>
+        WithEgressPolicy(AAuth.Discovery.AAuthEgressPolicy.ForDevelopmentLoopback(origins));
 
     internal SelfIssuingBuilder(IAAuthKey key)
     {
@@ -83,6 +93,17 @@ public sealed class SelfIssuingBuilder
         return ToBuilder().WithChallengeHandling(configure);
     }
 
+    /// <summary>Enable resource-managed opaque access credentials without a PS/AS exchange.</summary>
+    public AAuthClientBuilder WithResourceManagedAccess(Agent.IAAuthAccessStore? store = null) =>
+        ToBuilder().WithResourceManagedAccess(store);
+
+    /// <summary>Enable resource interaction handling.</summary>
+    public AAuthClientBuilder WithInteractionHandling() => ToBuilder().WithInteractionHandling();
+
+    /// <summary>Configure resource interaction handling.</summary>
+    public AAuthClientBuilder WithInteractionHandling(Action<InteractionHandlingOptions> configure) =>
+        ToBuilder().WithInteractionHandling(configure);
+
     /// <summary>Enable call-chaining with a delegate that provides the upstream auth token.</summary>
     public AAuthClientBuilder WithCallChaining(Func<string?> upstreamTokenProvider)
     {
@@ -102,9 +123,9 @@ public sealed class SelfIssuingBuilder
     }
 
     /// <summary>Override the inner HTTP handler.</summary>
-    public AAuthClientBuilder WithInnerHandler(HttpMessageHandler handler)
+    public AAuthClientBuilder WithInnerHandler(HttpMessageHandler handler, AAuth.Discovery.AAuthTransportContract? transportContract = null)
     {
-        return ToBuilder().WithInnerHandler(handler);
+        return ToBuilder().WithInnerHandler(handler, transportContract);
     }
 
     /// <summary>Build the configured <see cref="HttpClient"/>.</summary>
@@ -113,11 +134,12 @@ public sealed class SelfIssuingBuilder
     /// <summary>Build the configured handler pipeline.</summary>
     public HttpMessageHandler BuildHandler() => ToBuilder().BuildHandler();
 
-    private AAuthClientBuilder ToBuilder()
+    /// <summary>Finish provisioning configuration and select general client options without enabling a flow or making a network call.</summary>
+    public AAuthClientBuilder ToBuilder()
     {
         if (_issuer is null || _subject is null)
             throw new InvalidOperationException(
                 "As(issuer, subject) must be called before building.");
-        return new AAuthClientBuilder(_key).WithSelfIssuedToken(_issuer, _subject, _kid);
+        return new AAuthClientBuilder(_key).WithEgressPolicy(_egressPolicy).WithSelfIssuedToken(_issuer, _subject, _kid);
     }
 }

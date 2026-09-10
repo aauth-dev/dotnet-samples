@@ -16,7 +16,8 @@ namespace AAuth;
 
 /// <summary>
 /// Fluent builder for creating an <see cref="HttpClient"/> that signs every
-/// outbound request with one of the AAuth signing modes.
+/// outbound request with a Signature-Key scheme. Resource access modes and
+/// agent provisioning are configured independently.
 /// </summary>
 /// <example>
 /// <code>
@@ -30,6 +31,20 @@ public sealed class AAuthClientBuilder
     private readonly IAAuthKey _key;
     private ISignatureKeyProvider? _provider;
     private HttpMessageHandler? _innerHandler;
+    private AAuthEgressPolicy _egressPolicy = AAuthEgressPolicy.Production;
+    private AAuthTransportContract? _transportContract;
+
+    public AAuthClientBuilder WithEgressPolicy(AAuthEgressPolicy policy)
+    {
+        _egressPolicy = policy ?? throw new ArgumentNullException(nameof(policy));
+        return this;
+    }
+
+    public AAuthClientBuilder WithDevelopmentLoopback(params string[] origins) =>
+        WithEgressPolicy(AAuthEgressPolicy.ForDevelopmentLoopback(origins));
+
+    private HttpMessageHandler CreateTransport() =>
+        AAuthHttpTransport.CreateHandler(_egressPolicy, _innerHandler, _transportContract);
     private IReadOnlyList<string>? _capabilities;
     private Action<HttpRequestMessage, string>? _onSignatureBase;
 
@@ -38,33 +53,26 @@ public sealed class AAuthClientBuilder
     /// that enrols with the AP and returns an <see cref="EnrollResult"/>.
     /// Use the result with <see cref="AAuthClientBuilder"/> to build a client separately.
     /// </summary>
-    /// <param name="enrollEndpoint">The AP's enrollment endpoint URL (not discoverable from metadata).</param>
-    /// <param name="agentId">Desired agent identifier (e.g. <c>aauth:myagent@example.com</c>).</param>
-    public static BootstrapBuilder Bootstrap(string enrollEndpoint, string agentId)
+    /// <param name="enrollEndpoint">The AP's enrollment endpoint URL, advertised in its metadata.</param>
+    /// <param name="agentId">Desired agent identifier, or null for provider-assigned identity.</param>
+    public static BootstrapBuilder Bootstrap(string enrollEndpoint, string? agentId = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(enrollEndpoint);
-        ArgumentException.ThrowIfNullOrEmpty(agentId);
+        if (agentId is not null) ArgumentException.ThrowIfNullOrWhiteSpace(agentId);
         return new BootstrapBuilder(enrollEndpoint, agentId);
     }
 
     /// <summary>
     /// Create a builder pre-configured from an <see cref="EnrollResult"/>.
-    /// If the enrollment includes a <c>JwksUri</c> and <c>AgentTokenKid</c>,
-    /// the builder is configured for <c>jwks_uri</c> signing mode.
-    /// Callers may chain additional methods (e.g. <see cref="WithTokenRefresh"/>
-    /// for JWT mode, <see cref="WithChallengeHandling(string)"/>) which will
-    /// override the default signing mode.
+    /// Uses the issued agent token with the <c>jwt</c> Signature-Key scheme.
+    /// Does not enroll or refresh implicitly. Add <see cref="WithTokenRefresh(ITokenRefresher, TimeSpan?)"/>
+    /// for renewal, or select another scheme explicitly. Flow options never select a scheme.
     /// </summary>
     /// <param name="result">The enrollment result from <see cref="AgentProviderClient.EnrolAsync"/>.</param>
     public static AAuthClientBuilder From(EnrollResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
-        var builder = new AAuthClientBuilder(result.Key);
-        if (result.JwksUri is not null && result.AgentTokenKid is not null)
-        {
-            builder.UseJwksUri(result.JwksUri, result.AgentTokenKid);
-        }
-        return builder;
+        return new AAuthClientBuilder(result.Key).UseJwt(result.AgentToken);
     }
 
     // Challenge handling state
@@ -86,6 +94,7 @@ public sealed class AAuthClientBuilder
 
     // Token refresh state
     private ITokenRefresher? _tokenRefresher;
+    private Func<AAuthEgressPolicy, ITokenRefresher>? _ownedTokenRefresherFactory;
     private TimeSpan? _refreshThreshold;
 
     // Interaction handling state
@@ -148,6 +157,7 @@ public sealed class AAuthClientBuilder
     /// <summary>Use the pseudonymous (hwk) signing mode.</summary>
     public AAuthClientBuilder UseHwk()
     {
+        ClearTokenRefresh();
         _provider = new HwkSignatureKeyProvider(_key);
         return this;
     }
@@ -162,8 +172,9 @@ public sealed class AAuthClientBuilder
     /// </summary>
     public AAuthClientBuilder UseJwt(Func<string> tokenFactory)
     {
+        ArgumentNullException.ThrowIfNull(tokenFactory);
+        ClearTokenRefresh();
         _tokenFactory = tokenFactory;
-        _agentToken = tokenFactory();
         _provider = new JwtSignatureKeyProvider(tokenFactory);
         return this;
     }
@@ -173,21 +184,38 @@ public sealed class AAuthClientBuilder
     /// call-chaining scenarios where the Orchestrator has already obtained
     /// a chained auth token via <c>upstream_token</c> exchange.
     /// </summary>
-    public AAuthClientBuilder UseJwt(string agentToken)
+    public AAuthClientBuilder UseJwt(string token)
     {
-        ArgumentException.ThrowIfNullOrEmpty(agentToken);
-        _agentToken = agentToken;
-        _tokenFactory = () => agentToken;
+        ArgumentException.ThrowIfNullOrEmpty(token);
+        ClearTokenRefresh();
+        _agentToken = token;
+        _tokenFactory = () => token;
         _provider = new JwtSignatureKeyProvider(_tokenFactory);
         return this;
     }
 
-    /// <summary>Use the Agent Identity (jwks_uri) signing mode.</summary>
-    /// <param name="uri">JWKS endpoint URL where the verifier can fetch the public key.</param>
+    /// <summary>Use server identity and metadata discovery.</summary>
+    /// <param name="id">Signer identifier.</param>
+    /// <param name="dwk">Well-known metadata document name.</param>
     /// <param name="kid">Key ID within the JWKS.</param>
-    public AAuthClientBuilder UseJwksUri(string uri, string kid)
+    public AAuthClientBuilder UseJwksUri(string id, string dwk, string kid)
     {
-        _provider = new JwksUriSignatureKeyProvider(uri, kid);
+        ClearTokenRefresh();
+        _provider = new JwksUriSignatureKeyProvider(id, dwk, kid);
+        return this;
+    }
+
+    public AAuthClientBuilder UseJwks(string url, string kid)
+    {
+        ClearTokenRefresh();
+        _provider = new JwksSignatureKeyProvider(url, kid);
+        return this;
+    }
+
+    public AAuthClientBuilder UseSelfJwt(Func<string> tokenFactory)
+    {
+        ClearTokenRefresh();
+        _provider = new SelfJwtSignatureKeyProvider(tokenFactory);
         return this;
     }
 
@@ -195,6 +223,7 @@ public sealed class AAuthClientBuilder
     /// <param name="namingJwtFactory">Returns the <c>jkt-s256+jwt</c> delegation JWT (signed by the durable key) for each request.</param>
     public AAuthClientBuilder UseJktJwt(Func<string> namingJwtFactory)
     {
+        ClearTokenRefresh();
         _provider = new JktJwtSignatureKeyProvider(namingJwtFactory);
         return this;
     }
@@ -203,15 +232,17 @@ public sealed class AAuthClientBuilder
     public AAuthClientBuilder UseProvider(ISignatureKeyProvider provider)
     {
         ArgumentNullException.ThrowIfNull(provider);
+        ClearTokenRefresh();
         _provider = provider;
         return this;
     }
 
     /// <summary>Override the inner HTTP handler (defaults to <see cref="HttpClientHandler"/>).</summary>
-    public AAuthClientBuilder WithInnerHandler(HttpMessageHandler handler)
+    public AAuthClientBuilder WithInnerHandler(HttpMessageHandler handler, AAuthTransportContract? transportContract = null)
     {
         ArgumentNullException.ThrowIfNull(handler);
         _innerHandler = handler;
+        _transportContract = transportContract;
         return this;
     }
 
@@ -371,12 +402,15 @@ public sealed class AAuthClientBuilder
     }
 
     /// <summary>
-    /// Register a custom token refresher that is invoked when the agent
-    /// token nears expiry.
+    /// Select a refreshed JWT carrier, overriding an earlier scheme selector.
+    /// The refresher remains caller-owned. A later explicit Use* selector
+    /// disables refresh; resource flow options do not select a scheme.
     /// </summary>
     public AAuthClientBuilder WithTokenRefresh(ITokenRefresher refresher, TimeSpan? refreshThreshold = null)
     {
         ArgumentNullException.ThrowIfNull(refresher);
+        _provider = null;
+        _ownedTokenRefresherFactory = null;
         _tokenRefresher = refresher;
         _refreshThreshold = refreshThreshold;
         return this;
@@ -388,9 +422,24 @@ public sealed class AAuthClientBuilder
     public AAuthClientBuilder WithTokenRefresh(Func<TokenRefreshContext, CancellationToken, Task<string>> refreshFunc, TimeSpan? refreshThreshold = null)
     {
         ArgumentNullException.ThrowIfNull(refreshFunc);
-        _tokenRefresher = new DelegateTokenRefresher(refreshFunc);
-        _refreshThreshold = refreshThreshold;
+        return WithTokenRefresh(new DelegateTokenRefresher(refreshFunc), refreshThreshold);
+    }
+
+    internal AAuthClientBuilder WithOwnedTokenRefresh(Func<AAuthEgressPolicy, ITokenRefresher> factory)
+    {
+        ClearTokenRefresh();
+        _provider = null;
+        _ownedTokenRefresherFactory = factory;
         return this;
+    }
+
+    private void ClearTokenRefresh()
+    {
+        _tokenRefresher = null;
+        _ownedTokenRefresherFactory = null;
+        _selfIssuedIssuer = null;
+        _agentToken = null;
+        _tokenFactory = null;
     }
 
     /// <summary>
@@ -439,13 +488,14 @@ public sealed class AAuthClientBuilder
 
     /// <summary>Build the configured <see cref="HttpClient"/>.</summary>
     /// <exception cref="InvalidOperationException">No signing mode was configured.</exception>
-    public HttpClient Build() => new HttpClient(BuildHandler());
+    public HttpClient Build() => AAuthHttpTransport.AttachPolicy(new HttpClient(BuildHandler()),
+        _egressPolicy, _transportContract ?? AAuthTransportContract.EnforcesEgressPolicy);
 
     /// <summary>
     /// Build a governance client (mission / permission / audit / interaction) that
-    /// signs every request with the configured agent identity. Requires an explicit
-    /// signing mode (<see cref="UseHwk"/>, <see cref="UseJwt(string)"/>,
-    /// <see cref="UseJwksUri"/>, <see cref="UseJktJwt"/>, or <see cref="UseProvider"/>).
+    /// signs every request with the configured agent JWT. Accepts a held token,
+    /// a refresher, or enrolled/self-issued provisioning configuration.
+    /// The returned facade owns its internally created clients and must be disposed.
     /// The client is wired from the same signed exchange channel as the token-exchange
     /// pipeline in <see cref="BuildHandler"/>.
     /// </summary>
@@ -465,16 +515,36 @@ public sealed class AAuthClientBuilder
     /// <exception cref="InvalidOperationException">No signing mode or no Person Server was configured.</exception>
     public AAuthGovernanceClient BuildGovernance(Agent.Governance.GovernanceOptions? defaultOptions)
     {
-        var provider = _provider
-            ?? throw new InvalidOperationException(
-                "BuildGovernance requires an explicit signing mode (UseHwk, UseJwt, UseJwksUri, UseJktJwt, or UseProvider).");
+        if (_provider is not JwtSignatureKeyProvider && _tokenRefresher is null
+            && _ownedTokenRefresherFactory is null && _selfIssuedIssuer is null)
+            throw new InvalidOperationException("BuildGovernance requires an agent JWT source. Use UseJwt, Enrolled, SelfIssuing, or WithTokenRefresh.");
         if (string.IsNullOrEmpty(_personServer))
         {
             throw new InvalidOperationException(
                 "BuildGovernance requires a Person Server. Configure one via WithPersonServer(...).");
         }
-        var (signed, metadata) = BuildSignedChannel(provider, _innerHandler ?? new HttpClientHandler());
-        return new AAuthGovernanceClient(signed, metadata, _personServer, defaultOptions);
+        var agentBuilder = new AAuthClientBuilder(_key)
+        {
+            _provider = _provider, _agentToken = _agentToken, _tokenFactory = _tokenFactory,
+            _tokenRefresher = _tokenRefresher, _ownedTokenRefresherFactory = _ownedTokenRefresherFactory,
+            _refreshThreshold = _refreshThreshold, _selfIssuedIssuer = _selfIssuedIssuer,
+            _selfIssuedSubject = _selfIssuedSubject, _selfIssuedKid = _selfIssuedKid,
+            _selfIssuedPersonServer = _selfIssuedPersonServer, _egressPolicy = _egressPolicy,
+            _innerHandler = _innerHandler, _transportContract = _transportContract,
+            _capabilities = _capabilities, _onSignatureBase = _onSignatureBase,
+        };
+        var signed = agentBuilder.Build();
+        signed.Timeout = Timeout.InfiniteTimeSpan;
+        try
+        {
+            var metadata = new MetadataClient(policy: _egressPolicy);
+            return new AAuthGovernanceClient(signed, metadata, _personServer, defaultOptions, ownsClients: true);
+        }
+        catch
+        {
+            signed.Dispose();
+            throw;
+        }
     }
 
     // Build a signed HttpClient (pinned to the agent identity) plus a metadata
@@ -492,7 +562,8 @@ public sealed class AAuthClientBuilder
         {
             Timeout = Timeout.InfiniteTimeSpan,
         };
-        var metadata = new MetadataClient(new HttpClient());
+        AAuthHttpTransport.AttachPolicy(signed, _egressPolicy, _transportContract ?? AAuthTransportContract.EnforcesEgressPolicy);
+        var metadata = new MetadataClient(policy: _egressPolicy);
         return (signed, metadata);
     }
 
@@ -503,38 +574,60 @@ public sealed class AAuthClientBuilder
     /// <exception cref="InvalidOperationException">No signing mode was configured.</exception>
     public HttpMessageHandler BuildHandler()
     {
-        // Materialize self-issued token refresher if WithSelfIssuedToken was called.
-        if (_selfIssuedIssuer is not null && _tokenRefresher is null)
+        var owned = new List<IDisposable>();
+        HttpMessageHandler? partial = null;
+        try
         {
-            if (_key is not AAuthKey concreteKey)
-                throw new InvalidOperationException(
-                    "WithSelfIssuedToken() requires the key to be an AAuthKey instance.");
-            _tokenRefresher = new SelfIssuedTokenRefresher(
-                concreteKey,
+            var handler = BuildHandlerCore(owned, ref partial);
+            return owned.Count == 0 ? handler : new OwnedPipelineHandler(handler, owned);
+        }
+        catch
+        {
+            partial?.Dispose();
+            foreach (var resource in owned) resource.Dispose();
+            throw;
+        }
+    }
+
+    private HttpMessageHandler BuildHandlerCore(List<IDisposable> owned, ref HttpMessageHandler? partial)
+    {
+        var tokenRefresher = _tokenRefresher;
+        if (_ownedTokenRefresherFactory is not null)
+        {
+            var refresher = _ownedTokenRefresherFactory(_egressPolicy);
+            if (refresher is IDisposable disposable) owned.Add(disposable);
+            tokenRefresher = refresher;
+        }
+        // Materialize self-issued token refresher if WithSelfIssuedToken was called.
+        if (_selfIssuedIssuer is not null && tokenRefresher is null)
+        {
+            tokenRefresher = new SelfIssuedTokenRefresher(
+                _key,
                 _selfIssuedIssuer,
                 _selfIssuedSubject!,
                 _selfIssuedKid ?? _key.ComputeJwkThumbprint(),
-                _selfIssuedPersonServer);
+                _selfIssuedPersonServer, egressPolicy: _egressPolicy);
         }
 
-        if (_provider is null && _tokenRefresher is null)
+        if (_provider is null && tokenRefresher is null)
             throw new InvalidOperationException(
-                "A signing mode must be configured. Call UseHwk(), UseJwksUri(), WithSelfIssuedToken(), or UseJktJwt() before Build(), or use WithTokenRefresh() for JWT mode.");
+                "A signature scheme or token source must be configured. Use a Use* scheme selector, Enrolled, SelfIssuing, or WithTokenRefresh before Build().");
 
         if (!_challengeHandling)
         {
             // When WithTokenRefresh is configured but no explicit provider,
             // create a JWT signing pipeline with lazy token acquisition.
-            if (_provider is null && _tokenRefresher is not null)
-                return WithMissionHeader(BuildRefreshOnlyHandler());
+            if (_provider is null && tokenRefresher is not null)
+                return WithMissionHeader(BuildRefreshOnlyHandler(tokenRefresher, ref partial));
 
             // Simple signing-only pipeline (possibly with interaction handling).
             var handler = new AAuthSigningHandler(_key, _provider!)
             {
-                InnerHandler = _innerHandler ?? new HttpClientHandler(),
+                InnerHandler = CreateTransport(),
                 Capabilities = _interactionHandling ? MergeCapabilities("interaction") : _capabilities,
                 OnSignatureBase = _onSignatureBase,
             };
+            partial = handler;
 
             // Resource-managed access handler sits just above the signer so the
             // Authorization: AAuth header it sets is covered by the signature.
@@ -555,13 +648,15 @@ public sealed class AAuthClientBuilder
                 interactionOpts.PreferWaitSeconds,
                 interactionOpts.OnPoll)
             {
+                EgressPolicy = _egressPolicy,
+                TransportContract = _transportContract ?? AAuthTransportContract.EnforcesEgressPolicy,
                 InnerHandler = signed,
             };
             return WithMissionHeader(interactionHandler);
         }
 
         // --- Challenge-handling pipeline ---
-        var agentToken = ResolveAgentToken();
+        var agentToken = ResolveAgentToken(tokenRefresher is not null);
         var personServer = _upstreamTokenProvider is not null
             ? ResolvePersonServerOptional(agentToken)
             : ResolvePersonServer(agentToken);
@@ -583,23 +678,29 @@ public sealed class AAuthClientBuilder
         // Resource requests present the carrier once one is obtained, else the (fresh)
         // agent token.
         var resourceProvider = new JwtSignatureKeyProvider(
-            () => carrierHolder.HasToken ? carrierHolder.Current : agentTokenHolder.Current);
+            request => carrierHolder.SelectForRequest(request, agentTokenHolder.Current, _key.ComputeJwkThumbprint()));
 
         // Outer signing handler (signs requests to resources).
         var outerSigner = new AAuthSigningHandler(_key, resourceProvider)
         {
-            InnerHandler = _innerHandler ?? new HttpClientHandler(),
+            InnerHandler = CreateTransport(),
             Capabilities = _interactionHandling
                 ? MergeCapabilities("auth-token", "interaction")
                 : MergeCapabilities("auth-token"),
             OnSignatureBase = _onSignatureBase,
         };
+        partial = outerSigner;
 
         // Exchange pipeline: always agent-signed — a key provider (HWK/JWKS-URI/JktJwt)
         // or the dedicated agent-token channel, never the mutable carrier holder.
-        var exchangeProvider = _provider ?? new JwtSignatureKeyProvider(() => agentTokenHolder.Current);
-        var (exchangeHttpClient, metadata) = BuildSignedChannel(exchangeProvider, new HttpClientHandler());
+        var exchangeProvider = _tokenFactory is not null || _provider is null
+            ? new JwtSignatureKeyProvider(() => agentTokenHolder.Current) : _provider;
+        var (exchangeHttpClient, metadata) = BuildSignedChannel(exchangeProvider, AAuthHttpTransport.CreateHandler(_egressPolicy));
+        owned.Add(exchangeHttpClient);
+        owned.Add(metadata);
         var exchangeClient = new TokenExchangeClient(exchangeHttpClient, metadata);
+        var jwks = new JwksClient(policy: _egressPolicy);
+        owned.Add(jwks);
 
         var pollerOptions = new DeferredPollerOptions
         {
@@ -612,7 +713,7 @@ public sealed class AAuthClientBuilder
 
         // Challenge handler sits above the outer signer.
         var challengeHandler = new ChallengeHandler(
-            exchangeClient, carrierHolder, personServer,
+            exchangeClient, carrierHolder, new Tokens.TokenVerifier { EgressPolicy = _egressPolicy }, metadata, jwks, personServer,
             challengeOptions.OnInteractionRequired, pollerOptions,
             _upstreamTokenProvider)
         {
@@ -624,18 +725,27 @@ public sealed class AAuthClientBuilder
             AdditionalSignatureComponents = challengeOptions.AdditionalSignatureComponents,
             OnClarificationRequired = challengeOptions.OnClarificationRequired,
             MaxClarificationRounds = challengeOptions.MaxClarificationRounds,
+            PersonServerProvider = _personServer is null ? () => ResolvePersonServer(agentTokenHolder.Current) : null,
         };
 
         // If token refresh is configured, insert it above the challenge handler.
         HttpMessageHandler topHandler = challengeHandler;
-        if (_tokenRefresher is not null)
+        partial = topHandler;
+        if (tokenRefresher is not null)
         {
             var signingKeyThumbprint = _key.ComputeJwkThumbprint();
-            var refreshHandler = new TokenRefreshHandler(agentTokenHolder, _tokenRefresher, signingKeyThumbprint, _refreshThreshold)
+            var refreshHandler = new TokenRefreshHandler(agentTokenHolder, tokenRefresher, signingKeyThumbprint, _refreshThreshold)
             {
                 InnerHandler = challengeHandler,
             };
             topHandler = refreshHandler;
+            partial = topHandler;
+        }
+
+        if (_tokenFactory is not null)
+        {
+            topHandler = new AgentTokenSourceHandler(_tokenFactory, agentTokenHolder, agentToken) { InnerHandler = topHandler };
+            partial = topHandler;
         }
 
         // If interaction handling is configured, insert it at the top.
@@ -652,9 +762,12 @@ public sealed class AAuthClientBuilder
                 interactionOpts.PreferWaitSeconds,
                 interactionOpts.OnPoll)
             {
+                EgressPolicy = _egressPolicy,
+                TransportContract = _transportContract ?? AAuthTransportContract.EnforcesEgressPolicy,
                 InnerHandler = topHandler,
             };
             topHandler = interactionHandler;
+            partial = topHandler;
         }
 
         // If call-chaining is configured, add mission forwarding at the top.
@@ -693,32 +806,41 @@ public sealed class AAuthClientBuilder
     {
         if (!_resourceManagedAccess)
             return signer;
-        return new AAuthAccessHandler(_accessStore ?? new InMemoryAAuthAccessStore())
+        return new AAuthAccessHandler(_accessStore ?? new InMemoryAAuthAccessStore(), _key.ComputeJwkThumbprint())
         {
             InnerHandler = signer,
         };
     }
 
-    private HttpMessageHandler BuildRefreshOnlyHandler()
+    private HttpMessageHandler BuildRefreshOnlyHandler(ITokenRefresher refresher, ref HttpMessageHandler? partial)
     {
-        var holder = new AAuthTokenHolder();
+        var holder = _agentToken is not null ? new AAuthTokenHolder(_agentToken) : new AAuthTokenHolder();
         var provider = new JwtSignatureKeyProvider(() => holder.Current);
         var signingKeyThumbprint = _key.ComputeJwkThumbprint();
 
         var signingHandler = new AAuthSigningHandler(_key, provider)
         {
-            InnerHandler = _innerHandler ?? new HttpClientHandler(),
-            Capabilities = _capabilities,
+            InnerHandler = CreateTransport(),
+            Capabilities = _interactionHandling ? MergeCapabilities("interaction") : _capabilities,
             OnSignatureBase = _onSignatureBase,
         };
+        partial = signingHandler;
 
-        var refreshHandler = new TokenRefreshHandler(holder, _tokenRefresher!, signingKeyThumbprint, _refreshThreshold)
+        var refreshHandler = new TokenRefreshHandler(holder, refresher, signingKeyThumbprint, _refreshThreshold)
         {
             InnerHandler = WrapWithAccessHandler(signingHandler),
         };
+        partial = refreshHandler;
+
+        HttpMessageHandler topHandler = refreshHandler;
+        if (_tokenFactory is not null)
+        {
+            topHandler = new AgentTokenSourceHandler(_tokenFactory, holder, _agentToken) { InnerHandler = topHandler };
+            partial = topHandler;
+        }
 
         if (!_interactionHandling)
-            return refreshHandler;
+            return topHandler;
 
         var opts = new InteractionHandlingOptions();
         _interactionOptionsConfigure?.Invoke(opts);
@@ -731,11 +853,13 @@ public sealed class AAuthClientBuilder
             opts.PreferWaitSeconds,
             opts.OnPoll)
         {
-            InnerHandler = refreshHandler,
+            EgressPolicy = _egressPolicy,
+            TransportContract = _transportContract ?? AAuthTransportContract.EnforcesEgressPolicy,
+            InnerHandler = topHandler,
         };
     }
 
-    private string? ResolveAgentToken()
+    private string? ResolveAgentToken(bool canRefresh)
     {
         if (_agentToken is not null)
             return _agentToken;
@@ -744,7 +868,7 @@ public sealed class AAuthClientBuilder
 
         // Lazy acquisition: no token provided, but WithTokenRefresh will fetch one
         // on the first request. Return null to signal the holder should start empty.
-        if (_tokenRefresher is not null)
+        if (canRefresh)
             return null;
 
         throw new InvalidOperationException(

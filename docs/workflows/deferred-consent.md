@@ -1,4 +1,7 @@
-# Deferred Consent (User Approval)
+---
+title: Deferred Consent (User Approval)
+description: Drive authenticated consent, pending polling and terminal outcomes.
+---
 
 > [PS-Asserted Demo](https://explorer.aauth.dev/access/ps-asserted)
 
@@ -76,7 +79,7 @@ using AAuth.Crypto;
 using AAuth;
 
 var keyStore = FileKeyStore.Default();
-var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!)
+var key = keyStore.Load(configuration["AAuth:LocalKeyHandle"]!)
     ?? throw new InvalidOperationException("Key not found. Run enrollment first.");
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
@@ -111,7 +114,7 @@ builder.Services.AddAAuthAgent("deferred", options =>
     options.OnInteractionRequired = async (interaction, ct) =>
     {
         // Present to user — push notification, SignalR, etc.
-        await notifier.SendAsync(interaction.Url, interaction.Code, ct);
+        await Surface(interaction.BuildUserUrl());
     };
 });
 ```
@@ -123,7 +126,7 @@ See [Dependency Injection](../reference/dependency-injection.md) for full option
 
 ```csharp
 var challengeHandler = new ChallengeHandler(
-    exchange, tokenHolder, "https://ps.example",
+    exchange, tokenHolder, verifier, metadata, jwks, "https://ps.example",
     onInteractionRequired: async (interaction, ct) =>
     {
         await new ConsoleInteractionPresenter().PresentAsync(interaction, ct);

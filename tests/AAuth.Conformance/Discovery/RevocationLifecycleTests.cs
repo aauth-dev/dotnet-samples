@@ -1,0 +1,386 @@
+using System;
+using System.Collections.Generic;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text.Json.Nodes;
+using System.Threading;
+using System.Threading.Tasks;
+using AAuth.Access;
+using AAuth.Crypto;
+using AAuth.Discovery;
+using AAuth.HttpSig;
+using AAuth.Person;
+using AAuth.Server;
+using AAuth.Server.Verification;
+using AAuth.Tokens;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Xunit;
+
+namespace AAuth.Conformance.Discovery;
+
+public class RevocationLifecycleTests
+{
+    [Fact]
+    public async Task ThreeGenerationsRevokeAndNotifyAllLocalDescendants()
+    {
+        await using var graph = await Graph.CreateAsync();
+        var first = graph.AgentToken(FirstProvider, "original");
+        var second = graph.AgentToken(FirstResource, "intermediary-one", distinctKey: true);
+        var third = graph.AgentToken(SecondResource, "intermediary-two", distinctKey: true);
+        var root = await graph.GrantAsync(first, FirstResource, false);
+        var child = await graph.GrantAsync(second, SecondResource, false, root);
+        var grandchild = await graph.GrantAsync(third, FirstResource, false, child);
+        Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(child, SecondResource));
+        Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(grandchild, FirstResource));
+        using var issuer = graph.Signed(Person, AuthTokenBuilder.PersonDwk);
+        Assert.Equal(HttpStatusCode.OK, await new RevocationClient(issuer).RevokeAsync(new Uri(Person + "/revoke"),
+            new TokenKey(Person, (string)Decode(root)["jti"]!)));
+        Assert.Equal(HttpStatusCode.Unauthorized, await graph.UseAsync(child, SecondResource));
+        Assert.Equal(HttpStatusCode.Unauthorized, await graph.UseAsync(grandchild, FirstResource));
+        Assert.Contains(graph.Revocations, entry => entry.Token.TokenId == (string?)Decode(child)["jti"]);
+        Assert.Contains(graph.Revocations, entry => entry.Token.TokenId == (string?)Decode(grandchild)["jti"]);
+        using var extension = await graph.RequestAsync(second, SecondResource, false, grandchild);
+        Assert.Equal(HttpStatusCode.BadRequest, extension.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LocallyRevokedUpstreamCannotBeExtended(bool federated)
+    {
+        await using var graph = await Graph.CreateAsync();
+        var agent = graph.AgentToken(FirstProvider, "agent");
+        var upstream = await graph.GrantAsync(agent, FirstProvider, false);
+        using var issuer = graph.Signed(Person, AuthTokenBuilder.PersonDwk);
+        Assert.Equal(HttpStatusCode.OK, await new RevocationClient(issuer).RevokeAsync(new Uri(Person + "/revoke"),
+            new TokenKey(Person, (string)Decode(upstream)["jti"]!)));
+        using var blocked = await graph.RequestAsync(agent, FirstResource, federated, upstream);
+        Assert.Equal(HttpStatusCode.BadRequest, blocked.StatusCode);
+        Assert.False((await blocked.Content.ReadFromJsonAsync<JsonObject>())!.ContainsKey("auth_token"));
+    }
+
+    [Fact]
+    public async Task UpstreamRevokedDuringConsentCannotMintAfterApproval()
+    {
+        await using var graph = await Graph.CreateAsync();
+        var agent = graph.AgentToken(FirstProvider, "agent");
+        var upstream = await graph.GrantAsync(agent, FirstProvider, false);
+        graph.Consent.Required = true;
+        using var initial = await graph.RequestAsync(agent, FirstResource, false, upstream);
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        using var issuer = graph.Signed(Person, AuthTokenBuilder.PersonDwk);
+        Assert.Equal(HttpStatusCode.OK, await new RevocationClient(issuer).RevokeAsync(new Uri(Person + "/revoke"),
+            new TokenKey(Person, (string)Decode(upstream)["jti"]!)));
+        graph.Pending.MarkAllowed(initial.Headers.Location!.ToString().Split('/').Last(), "person");
+        using var client = graph.AgentClient(agent);
+        using var result = await client.GetAsync(Person + initial.Headers.Location);
+        Assert.Equal(HttpStatusCode.BadRequest, result.StatusCode);
+        Assert.False((await result.Content.ReadFromJsonAsync<JsonObject>())!.ContainsKey("auth_token"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UpstreamRevocationCascadesToDownstreamGrant(bool federated)
+    {
+        await using var graph = await Graph.CreateAsync();
+        var agent = graph.AgentToken(FirstProvider, "agent");
+        var upstream = await graph.GrantAsync(agent, FirstProvider, false);
+        var grant = await graph.GrantAsync(agent, FirstResource, federated, upstream);
+        Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(grant, FirstResource));
+        using var issuer = graph.Signed(Person, AuthTokenBuilder.PersonDwk);
+        Assert.Equal(HttpStatusCode.OK, await new RevocationClient(issuer).RevokeAsync(new Uri(Person + "/revoke"),
+            new TokenKey(Person, (string)Decode(upstream)["jti"]!)));
+        Assert.Equal(HttpStatusCode.Unauthorized, await graph.UseAsync(grant, FirstResource));
+        Assert.Contains(graph.Revocations, entry => entry.Token.TokenId == (string?)Decode(grant)["jti"]);
+    }
+
+    private const string Person = "https://person.example";
+    private const string Access = "https://access.example";
+    private const string FirstProvider = "https://first-ap.example";
+    private const string SecondProvider = "https://second-ap.example";
+    private const string FirstResource = "https://first-resource.example";
+    private const string SecondResource = "https://second-resource.example";
+    private const string Agent = "aauth:demo@agent.example";
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ProviderRevoke_BlocksSourceAndCascadesExactIssuedOrProvidedGrants(bool federated)
+    {
+        await using var graph = await Graph.CreateAsync();
+        var first = graph.AgentToken(FirstProvider, "same-id");
+        var second = graph.AgentToken(SecondProvider, "same-id");
+        var firstGrant = await graph.GrantAsync(first, FirstResource, federated);
+        var secondGrant = await graph.GrantAsync(first, SecondResource, federated);
+        var foreignGrant = await graph.GrantAsync(second, FirstResource, federated);
+        Assert.Equal(federated ? Access : Person, (string?)Decode(firstGrant)["iss"]);
+        Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(firstGrant, FirstResource));
+        Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(secondGrant, SecondResource));
+        Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(foreignGrant, FirstResource));
+        using var ap = graph.Signed(FirstProvider, "aauth-agent.json");
+        var revoke = new RevocationClient(ap);
+
+        Assert.Equal(HttpStatusCode.NotFound, await revoke.RevokeAsync(new Uri(Person + "/revoke"), new TokenKey(FirstProvider, "unknown")));
+        Assert.Equal(HttpStatusCode.Forbidden, await revoke.RevokeAsync(new Uri(Person + "/revoke"), new TokenKey(SecondProvider, "same-id")));
+        Assert.Equal(HttpStatusCode.OK, await revoke.RevokeAsync(new Uri(Person + "/revoke"), new TokenKey(FirstProvider, "same-id")));
+        Assert.Equal(HttpStatusCode.OK, await revoke.RevokeAsync(new Uri(Person + "/revoke"), new TokenKey(FirstProvider, "same-id")));
+        Assert.Equal(HttpStatusCode.Unauthorized, await graph.UseAsync(firstGrant, FirstResource));
+        Assert.Equal(HttpStatusCode.Unauthorized, await graph.UseAsync(secondGrant, SecondResource));
+        Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(foreignGrant, FirstResource));
+        using var blocked = await graph.RequestAsync(first, FirstResource, federated);
+        Assert.Equal(HttpStatusCode.Unauthorized, blocked.StatusCode);
+        using var allowed = await graph.RequestAsync(second, FirstResource, federated);
+        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+        Assert.Equal(4, graph.Revocations.Count);
+        Assert.All(graph.Revocations, entry => Assert.Equal(federated ? Access : Person, entry.Token.Issuer));
+        Assert.Contains(graph.Revocations, entry => entry.Resource == FirstResource && entry.Token.TokenId == (string?)Decode(firstGrant)["jti"]);
+        Assert.Contains(graph.Revocations, entry => entry.Resource == SecondResource && entry.Token.TokenId == (string?)Decode(secondGrant)["jti"]);
+    }
+
+    [Fact]
+    public async Task PendingApproval_CannotReplaceRevokedOriginalSourceWithFreshCarrier()
+    {
+        await using var graph = await Graph.CreateAsync(consent: true);
+        var original = graph.AgentToken(FirstProvider, "original");
+        using var response = await graph.RequestAsync(original, FirstResource, false);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var pendingPath = response.Headers.Location!.ToString();
+        var entry = graph.Pending.Get(pendingPath[(pendingPath.LastIndexOf('/') + 1)..])!;
+        graph.Pending.MarkAllowed(entry.Id, "person");
+        using var ap = graph.Signed(FirstProvider, "aauth-agent.json");
+        Assert.Equal(HttpStatusCode.OK, await new RevocationClient(ap).RevokeAsync(new Uri(Person + "/revoke"), new TokenKey(FirstProvider, "original")));
+        var fresh = graph.AgentToken(FirstProvider, "fresh");
+        using var agent = graph.AgentClient(fresh);
+        using var poll = await agent.GetAsync(Person + pendingPath);
+        Assert.Equal(HttpStatusCode.BadRequest, poll.StatusCode);
+        var body = await poll.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("invalid_agent_token", (string?)body!["error"]);
+        Assert.False(body.ContainsKey("auth_token"));
+    }
+
+    [Fact]
+    public async Task UnseenResourceGrant_ReturnsIncompleteWithoutUndoingSourceDenial()
+    {
+        await using var graph = await Graph.CreateAsync();
+        var source = graph.AgentToken(FirstProvider, "unseen-grant");
+        _ = await graph.GrantAsync(source, FirstResource, false);
+        using var ap = graph.Signed(FirstProvider, "aauth-agent.json");
+        Assert.Equal(HttpStatusCode.BadGateway, await new RevocationClient(ap).RevokeAsync(new Uri(Person + "/revoke"), new TokenKey(FirstProvider, "unseen-grant")));
+        using var blocked = await graph.RequestAsync(source, FirstResource, false);
+        Assert.Equal(HttpStatusCode.Unauthorized, blocked.StatusCode);
+    }
+
+    [Fact]
+    public async Task ResourceMiddleware_SameAuthJtiFromTwoIssuers_RemainsIsolated()
+    {
+        await using var graph = await Graph.CreateAsync();
+        var first = graph.AuthToken(Person, "same-auth-id");
+        var second = graph.AuthToken(Access, "same-auth-id");
+        Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(first, FirstResource));
+        Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(second, FirstResource));
+        using var person = graph.Signed(Person, "aauth-person.json");
+        Assert.Equal(HttpStatusCode.OK, await new RevocationClient(person).RevokeAsync(
+            new Uri(FirstResource + "/revoke"), new TokenKey(Person, "same-auth-id")));
+        Assert.Equal(HttpStatusCode.Unauthorized, await graph.UseAsync(first, FirstResource));
+        Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(second, FirstResource));
+    }
+
+    private static JsonObject Decode(string token) => TokenVerifier.DecodeJsonSegment(token.Split('.')[1], "payload");
+
+    private sealed class Graph : IAsyncDisposable
+    {
+        private readonly Dictionary<string, AAuthKey> _keys = new();
+        private readonly Dictionary<string, WebApplication> _hosts = new();
+        private readonly AAuthKey _agentKey = AAuthKey.Generate();
+        private readonly Dictionary<string, AAuthKey> _agentKeys = new();
+        public InMemoryPersonPendingStore Pending { get; } = new();
+        public Asserter Consent { get; } = new(false);
+        public List<(string Resource, TokenKey Token)> Revocations { get; } = [];
+
+        public static async Task<Graph> CreateAsync(bool consent = false)
+        {
+            var graph = new Graph();
+            foreach (var issuer in new[] { Person, Access, FirstProvider, SecondProvider, FirstResource, SecondResource })
+                graph._keys[issuer] = AAuthKey.Generate();
+            await graph.StartResource(FirstResource);
+            await graph.StartResource(SecondResource);
+            var accessBuilder = graph.Builder();
+            accessBuilder.Services.AddSingleton<IAccessPolicy>(new AllowPolicy());
+            accessBuilder.Services.AddSingleton<IAccessPendingStore, InMemoryAccessPendingStore>();
+            var access = accessBuilder.Build();
+            access.MapAAuthAccessServer(new AAuthAccessServerOptions
+            {
+                EgressPolicy = TestEgress.Policy, Issuer = Access,
+                SigningKeys = new Dictionary<string, IAAuthKey> { ["key"] = graph._keys[Access] },
+            });
+            await access.StartAsync();
+            graph._hosts.Add(Access, access);
+            var personBuilder = graph.Builder();
+            personBuilder.Services.AddSingleton<IPersonPendingStore>(graph.Pending);
+            graph.Consent.Required = consent;
+            personBuilder.Services.AddSingleton<IIdentityClaimsAsserter>(graph.Consent);
+            personBuilder.Services.AddSingleton(new RevocationClient(graph.Signed(Person, "aauth-person.json")));
+            personBuilder.Services.AddSingleton(provider => new AccessServerClient(graph.Signed(Person, "aauth-person.json"),
+                provider.GetRequiredService<MetadataClient>(), new AuthTokenResponseValidator(
+                    provider.GetRequiredService<MetadataClient>(), provider.GetRequiredService<JwksClient>(), provider.GetRequiredService<TokenVerifier>())));
+            var person = personBuilder.Build();
+            person.MapAAuthPersonServer(new AAuthPersonServerOptions
+            {
+                EgressPolicy = TestEgress.Policy, Issuer = Person,
+                SigningKeys = new Dictionary<string, IAAuthKey> { ["key"] = graph._keys[Person] },
+            });
+            await person.StartAsync();
+            graph._hosts.Add(Person, person);
+            return graph;
+        }
+
+        private WebApplicationBuilder Builder()
+        {
+            var builder = WebApplication.CreateBuilder();
+            builder.WebHost.UseTestServer();
+            builder.Services.AddSingleton(new AAuthVerifier());
+            builder.Services.AddSingleton(new TokenVerifier { EgressPolicy = TestEgress.Policy });
+            builder.Services.AddSingleton(new MetadataClient(new InProcessHttpClient(new Router(this))));
+            builder.Services.AddSingleton(new JwksClient(new InProcessHttpClient(new Router(this))));
+            builder.Services.AddSingleton<UpstreamTokenValidator>();
+            return builder;
+        }
+
+        private async Task StartResource(string issuer)
+        {
+            var builder = Builder();
+            var inventory = new InMemoryJtiStore();
+            var app = builder.Build();
+            app.Use(async (context, next) =>
+            {
+                context.Items[AAuthVerificationMiddleware.TokenStoreItemKey] = inventory;
+                await next();
+            });
+            app.UseAAuthVerification(new AAuthVerificationOptions
+            {
+                EgressPolicy = TestEgress.Policy, ResourceIdentifier = issuer, AcceptedSchemes = ["jwt", "jwks_uri"],
+            });
+            app.MapGet("/use", () => Results.Ok());
+            app.Use(async (context, next) =>
+            {
+                if (context.Request.Path == "/revoke")
+                {
+                    context.Request.EnableBuffering();
+                    var body = await context.Request.ReadFromJsonAsync<JsonObject>();
+                    context.Request.Body.Position = 0;
+                    Revocations.Add((issuer, new TokenKey((string)body!["iss"]!, (string)body["jti"]!)));
+                }
+                await next();
+            });
+            app.MapAAuthRevocationEndpoint(inventory, options =>
+            {
+                options.AllowTokenIssuer = true;
+                options.TrustedPersonServers = [Person];
+            });
+            await app.StartAsync();
+            _hosts.Add(issuer, app);
+        }
+
+        public string AgentToken(string issuer, string tokenId, bool distinctKey = false)
+        {
+            var key = distinctKey ? AAuthKey.Generate() : _agentKey;
+            _agentKeys[key.ComputeJwkThumbprint()] = key;
+            return new AgentTokenBuilder
+            {
+                EgressPolicy = TestEgress.Policy, Issuer = issuer, Subject = "aauth:demo@" + new Uri(issuer).Host, Key = _keys[issuer], KeyId = "key",
+                ConfirmationKey = key, TokenId = tokenId, PersonServer = Person,
+            }.Build();
+        }
+
+        public string AuthToken(string issuer, string tokenId) => new AuthTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy, Issuer = issuer, Audience = FirstResource,
+            Agent = Agent, AgentConfirmationKey = _agentKey, Key = _keys[issuer], KeyId = "key", Subject = "person",
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1), TokenId = tokenId,
+            Dwk = issuer == Access ? AuthTokenBuilder.AccessDwk : AuthTokenBuilder.PersonDwk,
+        }.Build();
+
+        public HttpClient Signed(string issuer, string dwk) => new InProcessHttpClient(new AAuthSigningHandler(_keys[issuer],
+            new JwksUriSignatureKeyProvider(issuer, dwk, "key")) { InnerHandler = new Router(this) });
+
+        private AAuthKey AgentKey(string token)
+        {
+            var thumbprint = KeyFactory.FromPublicJwk((JsonObject)Decode(token)["cnf"]!["jwk"]!).ComputeJwkThumbprint();
+            return _agentKeys.GetValueOrDefault(thumbprint, _agentKey);
+        }
+
+        public HttpClient AgentClient(string token) => new InProcessHttpClient(new AAuthSigningHandler(AgentKey(token),
+            new JwtSignatureKeyProvider(() => token)) { InnerHandler = new Router(this) });
+
+        public async Task<HttpResponseMessage> RequestAsync(string agentToken, string resource, bool federated, string? upstream = null)
+        {
+            var request = new ResourceTokenBuilder
+            {
+                EgressPolicy = TestEgress.Policy, Issuer = resource, Audience = federated ? Access : Person,
+                Agent = (string)Decode(agentToken)["sub"]!, AgentJkt = AgentKey(agentToken).ComputeJwkThumbprint(), Key = _keys[resource], KeyId = "key",
+            }.Build();
+            using var client = AgentClient(agentToken);
+            return await client.PostAsJsonAsync(Person + "/token", new { resource_token = request, upstream_token = upstream });
+        }
+
+        public async Task<string> GrantAsync(string agentToken, string resource, bool federated, string? upstream = null)
+        {
+            using var response = await RequestAsync(agentToken, resource, federated, upstream);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            return (string)(await response.Content.ReadFromJsonAsync<JsonObject>())!["auth_token"]!;
+        }
+
+        public async Task<HttpStatusCode> UseAsync(string token, string resource)
+        {
+            using var client = AgentClient(token);
+            using var response = await client.GetAsync(resource + "/use");
+            return response.StatusCode;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            foreach (var host in _hosts.Values) await host.DisposeAsync();
+        }
+
+        private sealed class Router(Graph graph) : HttpMessageHandler
+        {
+            protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            {
+                var issuer = request.RequestUri!.GetLeftPart(UriPartial.Authority);
+                if (!graph._keys.TryGetValue(issuer, out var key)) return new(HttpStatusCode.NotFound);
+                if (request.RequestUri.AbsolutePath.StartsWith("/.well-known/", StringComparison.Ordinal))
+                {
+                    var jwk = key.ToPublicJwk();
+                    jwk["kid"] = "key";
+                    var document = request.RequestUri.AbsolutePath.EndsWith("/keys", StringComparison.Ordinal)
+                        ? new JsonObject { ["keys"] = new JsonArray(jwk) }
+                        : new JsonObject { ["issuer"] = issuer, ["jwks_uri"] = issuer + "/.well-known/keys",
+                            ["token_endpoint"] = issuer + "/token", ["revocation_endpoint"] = issuer + "/revoke" };
+                    return new(HttpStatusCode.OK) { Content = JsonContent.Create(document) };
+                }
+                if (!graph._hosts.TryGetValue(issuer, out var host)) return new(HttpStatusCode.NotFound);
+                using var transport = new HttpMessageInvoker(host.GetTestServer().CreateHandler());
+                return await transport.SendAsync(request, cancellationToken);
+            }
+        }
+
+        public sealed class Asserter(bool consent) : IIdentityClaimsAsserter
+        {
+            public bool Required { get; set; } = consent;
+            public Task<IdentityAssertion> AssertAsync(IdentityAssertionRequest request, CancellationToken ct = default)
+                => Task.FromResult(Required ? IdentityAssertion.NeedsConsent() : IdentityAssertion.Assert("person"));
+        }
+
+        private sealed class AllowPolicy : IAccessPolicy
+        {
+            public Task<AccessDecision> EvaluateAsync(AccessPolicyRequest request, CancellationToken ct = default)
+                => Task.FromResult(AccessDecision.Allow("person"));
+        }
+    }
+}

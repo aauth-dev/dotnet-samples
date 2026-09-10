@@ -1,3 +1,7 @@
+---
+description: Enrolled agent CLI with JWT authorization and explicit generic signing demonstrations.
+---
+
 # Agent Console
 
 A command-line AAuth agent. It enrols with an Agent Provider, signs requests
@@ -25,10 +29,10 @@ dotnet run --project samples/AgentConsole -- <url> --ap <agent-provider-url> [op
 | Flag | Default | Purpose |
 |------|---------|---------|
 | `--ap <url>` | _(required)_ | Agent Provider URL (enrol + refresh endpoints) |
-| `--sub <id>` | `aauth:demo@ap.example` | Agent subject identifier |
+| `--sub <id>` | `aauth:demo@ap.example` | Local enrollment-cache label; the AP assigns the actual agent identity |
 | `--ps <url>` | _(none)_ | Person Server URL — enables the three-party flow |
-| `--resource-managed` | _(off)_ | Two-party resource-managed flow — HWK signing, no `--ps`; drives `202` → consent → poll → `AAuth-Access`, then replays `Authorization: AAuth` |
-| `--signing-mode <mode>` | `jwt` (with `--ps`) / `hwk` (without) | One of `jwt`, `hwk`, `jwks_uri`, `jkt-jwt` |
+| `--resource-managed` | _(off)_ | Agent-JWT two-party authorization; no `--ps`; drives consent then replays opaque `AAuth-Access` |
+| `--signing-mode <mode>` | `jwt` | `jwt` for AAuth; explicit `hwk`, `jwks`, `jkt-jwt` for generic signing demonstrations |
 | `--prefer-wait <seconds>` | _(none)_ | Long-poll hint for deferred PS responses |
 | `--upstream-token <jwt>` | _(none)_ | Upstream auth token for call-chaining scenarios |
 
@@ -44,7 +48,7 @@ three-party `jwt` mode targets the **Calendar** server (port 5001); the
 |------------------|---------------|-----------------|
 | `hwk` | `/pseudonymous` | Profile :5000 — Pseudonymous (signature only) |
 | `jkt-jwt` | `/anchored` | Profile :5000 — Pseudonymous, key delegation |
-| `jwks_uri` | `/identified` | Profile :5000 — Agent identity |
+| `jwks` | `/identified` | Profile :5000 - generic direct JWKS demonstration |
 | `jwt` _(default)_ | `/events` | Calendar :5001 — Three-party baseline |
 | `--resource-managed` _(flag)_ | `/messages` | Inbox :5004 — Resource-managed (two-party) |
 
@@ -60,15 +64,15 @@ Inbox (5004), MockAgentProvider (5301), and MockPersonServer (5100):
 ```bash
 # Pseudonymous — HTTP signature only (no PS)
 dotnet run --project samples/AgentConsole -- \
-  http://localhost:5000/pseudonymous --ap http://localhost:5301
+  http://localhost:5000/pseudonymous --ap http://localhost:5301 --signing-mode hwk
 
 # Pseudonymous, key delegation via naming JWT
 dotnet run --project samples/AgentConsole -- \
   http://localhost:5000 --ap http://localhost:5301 --signing-mode jkt-jwt
 
-# Agent identity — key verified via JWKS URI
+# Generic identity - key verified via direct JWKS
 dotnet run --project samples/AgentConsole -- \
-  http://localhost:5000 --ap http://localhost:5301 --signing-mode jwks_uri
+  http://localhost:5000 --ap http://localhost:5301 --signing-mode jwks
 
 # Resource-managed (two-party) — opaque AAuth-Access token, no PS
 # Prints a consent URL; approve it in the browser, then the read replays.
@@ -97,8 +101,11 @@ dotnet run --project samples/AgentConsole -- \
 
 ## Granting consent
 
-MockPersonServer keys consent by `(agent, resource, scope)`. Grant it ahead of
-a three-party run (the `scope` field defaults to `calendar.read` if omitted):
+The isolated demo admin endpoint can pre-grant consent for the AP-assigned
+agent, resource and scope. Replace the illustrative `agent` values below with
+the assigned ID printed by enrollment, not the `--sub` local cache label. These are local demo operations,
+not production authorization APIs. Normal browser consent binds authenticated
+person/session/key/account context; the code alone is not approval.
 
 ```bash
 # Baseline / RBAC endpoints use scope "calendar.read"
@@ -112,24 +119,15 @@ curl -X POST http://localhost:5100/admin/consent \
   -d '{"agent":"aauth:demo@ap.example","resource":"http://localhost:5001","scope":"calendar.write"}'
 ```
 
-## Enrollment-cache quirk
+## Enrollment lifetime
 
-AgentConsole caches its enrollment on disk at
-`~/.local/share/aauth-agent-console/<sub>.json`, while MockAgentProvider keeps
-enrollments in memory. If the AP is restarted, the signed `/refresh` (used by
-`jwt` and `jkt-jwt`) and the AP-hosted JWKS (used by `jwks_uri`) return `4xx`
-for the now-unknown agent. Delete the cached enrollment file so the console
-re-enrols:
+AgentConsole caches the local key handle and endpoint metadata, not the token.
+Each launch performs signed, idempotent reenrollment with the persisted key.
+The sample AP stores ownership in SQLite and assigns the actual agent ID.
+AP restart therefore does not require deleting the key or cache.
 
-```bash
-rm ~/.local/share/aauth-agent-console/aauth:demo@ap.example.json
-```
-
-The `hwk` mode is unaffected — it performs no refresh.
-
-The same cache also pins the enrolled Person Server. If you first run a
-pseudonymous mode (no `--ps`) and then a three-party mode (`--ps`), the console
-reuses the cached PS-less enrollment and the resource cannot resolve a PS
-audience (`401`, `AAuth-Error: no Person Server audience could be resolved`).
-Delete the cache file before switching to a three-party run so the console
-re-enrols with the Person Server.
+The sample AP does not implement authorized durable-key or Person Server
+rotation. Use distinct local cache labels for separately provisioned identities;
+do not treat key replacement or changed PS data as an implicit update.
+The generic `hwk` demonstration does not refresh. JWT uses the owned enrolled
+pipeline; the generic `jkt-jwt` example explicitly obtains one ephemeral pair.

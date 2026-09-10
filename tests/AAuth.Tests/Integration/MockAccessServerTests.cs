@@ -10,8 +10,10 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Tokens;
+using AAuth.Access;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Xunit;
@@ -41,6 +43,7 @@ public class MockAccessServerTests : IDisposable
     private static readonly AAuthKey PsKey = AAuthKey.Generate();
     private static readonly AAuthKey ApKey = AAuthKey.Generate();
     private static readonly AAuthKey ResourceKey = AAuthKey.Generate();
+    private static readonly AAuthKey AccessRoleKey = AAuthKey.Generate();
 
     private readonly WebApplicationFactory<Federated.Entry> _factory;
 
@@ -60,12 +63,140 @@ public class MockAccessServerTests : IDisposable
         => new WebApplicationFactory<Federated.Entry>().WithWebHostBuilder(b =>
         {
             b.UseSetting("AAuth:Issuer", AsIssuer);
+            b.UseIsolatedDemoConsent();
             b.UseSetting("MockAccessServer:TrustedPersonServers:0", PsIssuer);
             b.ConfigureServices(WireDiscovery);
             extra?.Invoke(b);
         });
 
     public void Dispose() => _factory.Dispose();
+
+    [Theory]
+    [InlineData("aauth-agent.json", false, false)]
+    [InlineData("aauth-resource.json", false, false)]
+    [InlineData("aauth-access.json", false, false)]
+    [InlineData("aauth-agent.json", true, false)]
+    [InlineData("aauth-resource.json", true, false)]
+    [InlineData("aauth-access.json", true, false)]
+    [InlineData("aauth-agent.json", false, true)]
+    [InlineData("aauth-resource.json", false, true)]
+    [InlineData("aauth-access.json", false, true)]
+    public async Task CollocatedRolesCannotActAsPersonServer(string role, bool sharedKey, bool spoofPersonRole)
+    {
+        var policy = new ClaimTrackingPolicy();
+        var discoveryTime = DateTimeOffset.UtcNow;
+        using var factory = CreateFactory(builder => builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IAccessPolicy>();
+            services.AddSingleton<IAccessPolicy>(policy);
+            services.RemoveAll<MetadataClient>();
+            services.RemoveAll<JwksClient>();
+            services.AddSingleton(new MetadataClient(new InProcessHttpClient(new StubDiscoveryHandler(sharedKey))));
+            services.AddSingleton(new JwksClient(new InProcessHttpClient(new StubDiscoveryHandler(sharedKey)), clock: () => discoveryTime));
+        }));
+        var roleKey = sharedKey ? PsKey : role switch
+        {
+            "aauth-agent.json" => ApKey, "aauth-resource.json" => ResourceKey, _ => AccessRoleKey,
+        };
+        using var attacker = new AAuthClientBuilder(roleKey)
+            .UseJwksUri(PsIssuer, spoofPersonRole ? AuthTokenBuilder.PersonDwk : role, PsKid)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(factory.Server.CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
+        attacker.BaseAddress = new Uri(AsIssuer);
+        var agentKey = AAuthKey.Generate();
+        var body = new JsonObject { ["agent_token"] = BuildAgentToken(agentKey), ["resource_token"] = BuildResourceToken(agentKey, AsIssuer) };
+        var expectedStatus = spoofPersonRole ? HttpStatusCode.Unauthorized : HttpStatusCode.Forbidden;
+        using var tokenAttack = await attacker.PostAsJsonAsync("/token", body);
+        Assert.Equal(expectedStatus, tokenAttack.StatusCode);
+        Assert.Empty(policy.Requests);
+        Assert.DoesNotContain("auth_token", await tokenAttack.Content.ReadAsStringAsync());
+
+        discoveryTime = discoveryTime.AddMinutes(1);
+        using var person = BuildPsSignedClient(factory);
+        using var parked = await person.PostAsJsonAsync("/token", body);
+        Assert.Equal(HttpStatusCode.Accepted, parked.StatusCode);
+        Assert.Single(policy.Requests);
+        Assert.Equal(PsIssuer, policy.Requests[0].PersonServerIssuer);
+        using var pollAttack = await attacker.GetAsync(parked.Headers.Location);
+        Assert.Equal(expectedStatus, pollAttack.StatusCode);
+        using var claimsAttack = await attacker.PostAsJsonAsync(parked.Headers.Location, new JsonObject
+        {
+            ["sub"] = "attacker", ["email"] = "attacker@example.test",
+        });
+        Assert.Equal(expectedStatus, claimsAttack.StatusCode);
+        Assert.Single(policy.Requests);
+        using var completion = await person.PostAsJsonAsync(parked.Headers.Location, new JsonObject
+        {
+            ["sub"] = "legitimate", ["email"] = "legitimate@example.test",
+        });
+        Assert.Equal(HttpStatusCode.OK, completion.StatusCode);
+        Assert.Equal(2, policy.Requests.Count);
+        Assert.Equal("legitimate", (string?)policy.Requests[1].Claims?["sub"]);
+    }
+
+    private sealed class ClaimTrackingPolicy : IAccessPolicy
+    {
+        public List<AccessPolicyRequest> Requests { get; } = [];
+        public Task<AccessDecision> EvaluateAsync(AccessPolicyRequest request, CancellationToken cancellationToken = default)
+        {
+            Requests.Add(request);
+            return Task.FromResult(request.Claims?["email"] is null ? AccessDecision.NeedsClaims(["email"]) : AccessDecision.Allow());
+        }
+    }
+
+    [Fact]
+    public async Task WrongSignerSchemeReturns401Negotiation()
+    {
+        using var client = new AAuthClientBuilder(PsKey).UseHwk()
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(_factory.Server.CreateHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly).Build();
+        using var response = await client.PostAsJsonAsync(AsIssuer + "/token", new { });
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal("error=unsupported_scheme", response.Headers.GetValues("Signature-Error").Single());
+        Assert.Equal("jwks_uri, jwt", response.Headers.GetValues("Accept-Signature-Scheme").Single());
+    }
+
+    [Theory]
+    [InlineData("act")]
+    [InlineData("mission")]
+    [InlineData("account")]
+    [InlineData("exp")]
+    public async Task Token_RejectsProtocolOwnedClaimRequests(string claim)
+    {
+        using var factory = CreateFactory(builder => builder.UseSetting("AccessServer:RequireClaims:0", claim));
+        using var client = BuildPsSignedClient(factory);
+        var key = AAuthKey.Generate();
+        using var response = await client.PostAsJsonAsync("/token", new JsonObject
+        {
+            ["agent_token"] = BuildAgentToken(key),
+            ["resource_token"] = BuildResourceToken(key, AsIssuer),
+        });
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("policy_error", (string?)body!["error"]);
+        Assert.Null(body["auth_token"]);
+    }
+
+    [Theory]
+    [InlineData("act")]
+    [InlineData("mission")]
+    [InlineData("account")]
+    public async Task ClaimsPush_RejectsProtocolOwnedClaims(string claim)
+    {
+        using var factory = CreateFactory(builder => builder.UseSetting("AccessServer:RequireClaims:0", "email"));
+        using var client = BuildPsSignedClient(factory);
+        var key = AAuthKey.Generate();
+        using var pending = await client.PostAsJsonAsync("/token", new JsonObject
+        {
+            ["agent_token"] = BuildAgentToken(key),
+            ["resource_token"] = BuildResourceToken(key, AsIssuer),
+        });
+        Assert.Equal(HttpStatusCode.Accepted, pending.StatusCode);
+        using var response = await client.PostAsJsonAsync(pending.Headers.Location, new JsonObject
+        {
+            ["sub"] = "user", ["email"] = "user@example.test", [claim] = "injected",
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Null((await response.Content.ReadFromJsonAsync<JsonObject>())!["auth_token"]);
+    }
 
     [Fact]
     public async Task AccessMetadata_AdvertisesTokenEndpoint()
@@ -99,6 +230,7 @@ public class MockAccessServerTests : IDisposable
 
         Assert.True(response.IsSuccessStatusCode,
             $"Status={(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
         var authTokenJwt = (string?)body!["auth_token"];
         Assert.False(string.IsNullOrEmpty(authTokenJwt));
@@ -144,6 +276,12 @@ public class MockAccessServerTests : IDisposable
         // (here, aud mismatch) is a 400 invalid_resource_token, not a 401 — 401 is
         // reserved for request-signature failures carrying a Signature-Error header.
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("invalid_resource_token", (string?)body!["error"]);
+        Assert.False(string.IsNullOrWhiteSpace((string?)body["detail"]));
+        Assert.False(body.ContainsKey("error_description"));
+        Assert.False(response.Headers.Contains("Signature-Error"));
     }
 
     [Fact]
@@ -156,8 +294,8 @@ public class MockAccessServerTests : IDisposable
         var resourceToken = BuildResourceToken(agentKey, audience: AsIssuer);
 
         using var http = new AAuthClientBuilder(PsKey)
-            .UseJwksUri("https://other-ps.test/.well-known/jwks.json", PsKid)
-            .WithInnerHandler(_factory.Server.CreateHandler())
+            .UseJwksUri("https://other-ps.test", AAuthConstants.DwkFiles.Person, PsKid)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(_factory.Server.CreateHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
         http.BaseAddress = new Uri(AsIssuer);
 
@@ -215,6 +353,9 @@ public class MockAccessServerTests : IDisposable
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
         Assert.Equal("denied", (string?)body!["error"]);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        Assert.False(string.IsNullOrWhiteSpace((string?)body["detail"]));
+        Assert.False(response.Headers.Contains("Signature-Error"));
     }
 
     [Fact]
@@ -274,8 +415,8 @@ public class MockAccessServerTests : IDisposable
         var pendingPath = token.Headers.Location!.OriginalString;
 
         using var attacker = new AAuthClientBuilder(PsKey)
-            .UseJwksUri("https://other-ps.test/.well-known/jwks.json", PsKid)
-            .WithInnerHandler(factory.Server.CreateHandler())
+            .UseJwksUri("https://other-ps.test", AAuthConstants.DwkFiles.Person, PsKid)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(factory.Server.CreateHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
         attacker.BaseAddress = new Uri(AsIssuer);
 
@@ -290,13 +431,25 @@ public class MockAccessServerTests : IDisposable
         Assert.Equal("untrusted_person_server", (string?)body!["error"]);
     }
 
+    [Fact]
+    public async Task Token_MissingAgentToken_ReturnsProblemDetails()
+    {
+        using var http = BuildPsSignedClient();
+        var response = await http.PostAsJsonAsync("/token", new JsonObject());
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        var body = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("invalid_request", (string?)body!["error"]);
+        Assert.Equal("missing agent_token", (string?)body["detail"]);
+    }
+
     // -- helpers ---------------------------------------------------------
 
     private HttpClient BuildPsSignedClient()
     {
         var http = new AAuthClientBuilder(PsKey)
-            .UseJwksUri($"{PsIssuer}/.well-known/jwks.json", PsKid)
-            .WithInnerHandler(_factory.Server.CreateHandler())
+            .UseJwksUri(PsIssuer, AAuthConstants.DwkFiles.Person, PsKid)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(_factory.Server.CreateHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
         http.BaseAddress = new Uri(AsIssuer);
         return http;
@@ -305,8 +458,8 @@ public class MockAccessServerTests : IDisposable
     private static HttpClient BuildPsSignedClient(WebApplicationFactory<Federated.Entry> factory)
     {
         var http = new AAuthClientBuilder(PsKey)
-            .UseJwksUri($"{PsIssuer}/.well-known/jwks.json", PsKid)
-            .WithInnerHandler(factory.Server.CreateHandler())
+            .UseJwksUri(PsIssuer, AAuthConstants.DwkFiles.Person, PsKid)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(factory.Server.CreateHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
         http.BaseAddress = new Uri(AsIssuer);
         return http;
@@ -315,6 +468,7 @@ public class MockAccessServerTests : IDisposable
     private static string BuildAgentToken(AAuthKey agentKey) =>
         new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
             Subject = AgentId,
             KeyId = ApKid,
@@ -326,6 +480,7 @@ public class MockAccessServerTests : IDisposable
     private static string BuildAgentToken(AAuthKey agentKey, string agent) =>
         new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
             Subject = agent,
             KeyId = ApKid,
@@ -337,6 +492,8 @@ public class MockAccessServerTests : IDisposable
     private static string BuildResourceToken(AAuthKey agentKey, string audience, string agent, string scope) =>
         new ResourceTokenBuilder
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             Issuer = ResourceUrl,
             Audience = audience,
             Agent = agent,
@@ -349,6 +506,8 @@ public class MockAccessServerTests : IDisposable
     private static string BuildResourceToken(AAuthKey agentKey, string audience) =>
         new ResourceTokenBuilder
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             Issuer = ResourceUrl,
             Audience = audience,
             Agent = AgentId,
@@ -368,11 +527,11 @@ public class MockAccessServerTests : IDisposable
     {
         services.RemoveAll<MetadataClient>();
         services.RemoveAll<JwksClient>();
-        services.AddSingleton(new MetadataClient(new HttpClient(new StubDiscoveryHandler())));
-        services.AddSingleton(new JwksClient(new HttpClient(new StubDiscoveryHandler())));
+        services.AddSingleton(new MetadataClient(new InProcessHttpClient(new StubDiscoveryHandler())));
+        services.AddSingleton(new JwksClient(new InProcessHttpClient(new StubDiscoveryHandler())));
     }
 
-    private sealed class StubDiscoveryHandler : HttpMessageHandler
+    private sealed class StubDiscoveryHandler(bool sharedRoleKeys = false) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
@@ -381,6 +540,14 @@ public class MockAccessServerTests : IDisposable
             var key = $"{uri.Host}{uri.AbsolutePath}";
             string? json = key switch
             {
+                "ps.test/.well-known/aauth-person.json" => Metadata(PsIssuer),
+                "ps.test/.well-known/aauth-agent.json" => Metadata(PsIssuer, "/agent-keys"),
+                "ps.test/.well-known/aauth-resource.json" => Metadata(PsIssuer, "/resource-keys"),
+                "ps.test/.well-known/aauth-access.json" => Metadata(PsIssuer, "/access-keys"),
+                "ps.test/agent-keys" => Jwks(sharedRoleKeys ? PsKey : ApKey, PsKid),
+                "ps.test/resource-keys" => Jwks(sharedRoleKeys ? PsKey : ResourceKey, PsKid),
+                "ps.test/access-keys" => Jwks(sharedRoleKeys ? PsKey : AccessRoleKey, PsKid),
+                "other-ps.test/.well-known/aauth-person.json" => Metadata("https://other-ps.test"),
                 "ps.test/.well-known/jwks.json" => Jwks(PsKey, PsKid),
                 "other-ps.test/.well-known/jwks.json" => Jwks(PsKey, PsKid),
                 "ap.test/.well-known/aauth-agent.json" => Metadata(ApIssuer),
@@ -399,10 +566,10 @@ public class MockAccessServerTests : IDisposable
             });
         }
 
-        private static string Metadata(string issuer) => new JsonObject
+        private static string Metadata(string issuer, string path = "/.well-known/jwks.json") => new JsonObject
         {
             ["issuer"] = issuer,
-            ["jwks_uri"] = $"{issuer}/.well-known/jwks.json",
+            ["jwks_uri"] = issuer + path,
         }.ToJsonString();
 
         private static string Jwks(AAuthKey key, string kid)
@@ -410,7 +577,7 @@ public class MockAccessServerTests : IDisposable
             var jwk = key.ToPublicJwk();
             jwk["kid"] = kid;
             jwk["use"] = "sig";
-            jwk["alg"] = AAuthKey.Algorithm;
+            jwk["alg"] = AAuthKey.Ed25519Algorithm;
             return new JsonObject { ["keys"] = new JsonArray(jwk) }.ToJsonString();
         }
     }

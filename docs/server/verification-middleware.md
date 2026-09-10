@@ -1,3 +1,7 @@
+---
+description: Typed JWT trust, selected-label HTTP signatures, and endpoint policy.
+---
+
 # Verification Middleware
 
 `AAuthVerificationMiddleware` performs HTTP signature verification (RFC 9421 PoP) and JWT issuer signature verification in a single pass.
@@ -31,17 +35,18 @@ var app = builder.Build();
 app.UseAAuthVerification(new AAuthVerificationOptions
 {
     ResourceIdentifier = "https://resource.example",
-    RequireIssuerVerification = true,
 });
 ```
 
 ## What It Verifies
 
-1. **HTTP Signature (RFC 9421)**: Validates `Signature`, `Signature-Input`, and `Signature-Key` headers. Confirms covered components (`@method`, `@authority`, `@path`, `signature-key`) match the request.
-
-2. **Signature-Key Resolution**: Parses the scheme (`jwt`, `hwk`, `jkt-jwt`, `jwks_uri`) and resolves the public key accordingly.
-
-3. **JWT Issuer Verification** (when `RequireIssuerVerification = true`): Fetches the issuer's JWKS via metadata discovery and verifies the token's signature against the issuer's published keys.
+1. Parse matching dictionary labels and validate required components and timestamps.
+2. Apply the endpoint's scheme policy and resolve key material. For JWT carriers,
+    verify the expected token type, issuer signature and claims before using `cnf.jwk`.
+3. Verify the HTTP signature in covered-component order, including `expires`,
+    key binding and required additional fields. Ignore the signature `alg` parameter.
+4. Apply issuer and endpoint authorization policy. A 403 has no signature-error
+    or signature-negotiation headers.
 
 ## Options
 
@@ -52,8 +57,9 @@ public sealed class AAuthVerificationOptions
     // When null, audience validation is skipped entirely.
     public string? ResourceIdentifier { get; init; }
 
-    // Whether to verify JWT signatures against the issuer's JWKS (default: true)
-    public bool RequireIssuerVerification { get; init; } = true;
+    public IReadOnlyList<string> AcceptedSchemes { get; init; } = ["jwt"];
+    public string SignatureLabel { get; init; } = "sig";
+    public IReadOnlyCollection<string> RequiredComponents { get; init; } = [];
 
     // Optional allow-list of trusted agent provider issuers.
     // null = accept any verifiable AP; empty = deny all; non-empty = restrict.
@@ -88,15 +94,14 @@ public sealed class AAuthVerificationOptions
 
 ### Behavior by Configuration
 
-| `RequireIssuerVerification` | `ResourceIdentifier` | Effect |
+| Scheme Policy | `ResourceIdentifier` | Effect |
 |:--:|:--:|:--|
-| `true` | set | Full verification: HTTP sig + JWT issuer JWKS + aud + PoP + agent |
-| `true` | `null` | Verifies JWT issuer sig + PoP, but skips `aud` check |
-| `false` | any | HTTP signature only — no JWT issuer verification |
+| Default `jwt` | set | Issuer JWT, audience, confirmation binding and HTTP signature |
+| Default `jwt` | `null` | Issuer JWT and HTTP signature; deployment must bind audience |
+| Explicit generic schemes | any | Scheme-specific verified resolution; JWT trust remains mandatory |
 
 > **Auth-token issuer trust is open by default, narrowed by policy.** This is a
-> two-layer model. `RequireIssuerVerification` is the crypto gate (unchanged):
-> when `true`, an auth token's `iss` JWKS signature must verify. The trust policy
+> two-layer model. An auth token's issuer JWKS signature must verify. The trust policy
 > only *narrows* that verifiable floor — "accept any PS" means "any PS whose
 > signature verifies"; the policy never replaces verification.
 >
@@ -112,16 +117,12 @@ public sealed class AAuthVerificationOptions
 > app.UseAAuthVerification(new AAuthVerificationOptions
 > {
 >     ResourceIdentifier = "https://api.example.com",
->     RequireIssuerVerification = true,
 >     TrustedAuthTokenIssuers = new HashSet<string> { "https://person.example.com" },
 > });
 > ```
 >
-> Two startup guards (diagnostics only — neither changes runtime behavior): when
-> issuer verification is on and no trust policy is configured, a `Warning` is
-> logged because the resource accepts any verifiable PS; and configuring a trust
-> policy while `RequireIssuerVerification == false` throws
-> `InvalidOperationException` (the policy would otherwise be silently ignored).
+> With no explicit trust policy, a startup warning identifies open issuer trust.
+> There is no option to accept unverified JWT issuer assertions.
 >
 > **False positive on signature-only resources.** A resource that uses `UseAAuth`
 > with **only** `RequireAAuthSignature` endpoints (no auth-token / `RequireAAuth`
@@ -131,8 +132,10 @@ public sealed class AAuthVerificationOptions
 > `o.IsTrustedAuthTokenIssuer = AAuthTrust.Any` — to declare the unused auth-token
 > path intentionally open.
 >
-> Signature-only flows (`hwk` / `jkt-jwt` / `jwks_uri`) carry no `iss`
-> assertion and are unaffected by this allow-list.
+> Generic HWK/direct-JWKS/naming-JWT/server-discovery profiles do not assert a
+> PS authorization grant. Naming JWTs still require their own JWT validation;
+> server-discovery `id` must match admitted metadata. The auth-token issuer
+> allow-list is not a substitute for those checks.
 
 ### Subject namespacing by asserting PS
 
@@ -145,7 +148,9 @@ user record on the full key rather than on `sub` alone.
 
 Each endpoint declares its access mode on the route — `.RequireAAuth(...)` for
 auth-token (three-party / four-party) endpoints and `.RequireAAuthSignature(...)`
-for signature-only (identity-based) endpoints. A single `UseAAuth` placed after
+for identity-level proof endpoints. Generic carriers require explicit generic
+profile configuration; ordinary AAuth identity access still uses an agent JWT.
+A single `UseAAuth` placed after
 `UseRouting` then runs the right verification (and, for auth-token endpoints, the
 challenge) for each matched endpoint from its metadata — no per-path `UseWhen`
 branching. This is the pattern the Profile and Calendar samples use:
@@ -160,9 +165,9 @@ app.UseAAuth(o => o.TrustedAuthTokenIssuers = trustedPersonServers);
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Pseudonymous (hwk) / agent-identity (jwks_uri) — signature only, no JWT verification.
-app.MapGet("/pseudonymous", handler).RequireAAuthSignature();
-app.MapGet("/identified", handler).RequireAAuthSignature(identified: true);
+// Identity-level routes still validate any presented JWT assertion.
+app.MapGet("/pseudonymous", handler).RequireGenericSignature();
+app.MapGet("/identified", handler).RequireGenericSignature(identified: true);
 
 // Three-party (jwt) — full issuer + audience verification, plus a per-endpoint
 // challenge requesting the scope this route protects.
@@ -233,7 +238,6 @@ The `UpstreamAuthTokenFeature` is set on the HttpContext when a valid auth token
 app.UseAAuthVerification(new AAuthVerificationOptions
 {
     ResourceIdentifier = "https://concierge.example",
-    RequireIssuerVerification = true,
     MaxActDepth = 5,              // limit chain depth for this resource
     ClockSkew = TimeSpan.FromSeconds(60), // generous skew for distributed systems
 });
@@ -256,7 +260,7 @@ app.MapGet("/", async (HttpContext ctx) =>
 When verifying `jwks_uri` (and any issuer metadata it is discovered from), the
 verifier fetches a URL controlled by the asserted signer. An unconstrained
 verifier can be induced to fetch attacker-chosen internal URLs (SSRF). Per
-[`draft-hardt-httpbis-signature-key-05`](../../aauth-spec/v08/draft-hardt-httpbis-signature-key-05.txt)
+[`draft-hardt-httpbis-signature-key-08`](../../aauth-spec/v10/draft-hardt-httpbis-signature-key-08.txt)
 §6.3, apply **egress admission** before any outbound fetch. This is a
 deployment-level control (HTTP stack, network policy, firewall), not signature
 logic:

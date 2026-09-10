@@ -97,6 +97,7 @@ public sealed class EcdsaAAuthKey : IAAuthKey
         var y = point.AffineYCoord.GetEncoded();
         return new JsonObject
         {
+            ["alg"] = Alg,
             ["kty"] = Kty,
             ["crv"] = CurveName,
             ["x"] = Base64UrlEncoder.Encode(x),
@@ -137,14 +138,12 @@ public sealed class EcdsaAAuthKey : IAAuthKey
     public static EcdsaAAuthKey FromJwk(JsonObject jwk)
     {
         ArgumentNullException.ThrowIfNull(jwk);
+        KeyFactory.Validate(jwk);
         if ((string?)jwk["kty"] != Kty || (string?)jwk["crv"] != CurveName)
             throw new ArgumentException($"JWK is not a P-256 EC key (kty={(string?)jwk["kty"]}, crv={(string?)jwk["crv"]}).", nameof(jwk));
 
-        var xStr = (string?)jwk["x"] ?? throw new ArgumentException("JWK missing 'x'.", nameof(jwk));
-        var yStr = (string?)jwk["y"] ?? throw new ArgumentException("JWK missing 'y'.", nameof(jwk));
-
-        var x = Base64UrlEncoder.DecodeBytes(xStr);
-        var y = Base64UrlEncoder.DecodeBytes(yStr);
+        var x = KeyFactory.ReadCoordinate(jwk, "x");
+        var y = KeyFactory.ReadCoordinate(jwk, "y");
 
         var point = s_curve.Curve.CreatePoint(
             new BigInteger(1, x),
@@ -152,10 +151,12 @@ public sealed class EcdsaAAuthKey : IAAuthKey
         var pub = new ECPublicKeyParameters(point, s_domain);
 
         ECPrivateKeyParameters? priv = null;
-        if (jwk["d"] is JsonValue dVal && dVal.TryGetValue<string>(out var dStr))
+        if (jwk.ContainsKey("d"))
         {
-            var dBytes = Base64UrlEncoder.DecodeBytes(dStr);
+            var dBytes = KeyFactory.ReadCoordinate(jwk, "d");
             priv = new ECPrivateKeyParameters(new BigInteger(1, dBytes), s_domain);
+            if (!s_domain.G.Multiply(priv.D).Normalize().Equals(point.Normalize()))
+                throw new ArgumentException("JWK public coordinates do not match private key.", nameof(jwk));
         }
 
         return new EcdsaAAuthKey(priv, pub);

@@ -1,10 +1,16 @@
-# Platform Attestation
+---
+title: Platform Attestation
+description: Platform integration hooks and explicit limits of the software-key samples.
+---
 
 > [Signing Modes](https://explorer.aauth.dev/foundations/schemes)
 
 ## Overview
 
-Platform attestation allows a resource or Person Server to verify that the agent is running on genuine hardware (e.g., WebAuthn, Apple App Attest). The SDK provides an `IPlatformAttestor` seam that can be plugged into enrollment and token exchange flows.
+Platform attestation can establish device/key properties when a platform verifier
+and relying-party policy validate its evidence. The SDK exposes `IPlatformAttestor`;
+it does not ship WebAuthn/App Attest verification or prove hardware custody.
+The software-key samples establish cryptographic possession, not device assurance.
 
 ## IPlatformAttestor Interface
 
@@ -76,20 +82,26 @@ public sealed class AppAttestAttestor : IPlatformAttestor
 
 ## Wiring Into the SDK
 
-Attestation is provided during enrollment or token operations where the server sends an attestation challenge:
+The following illustrative wiring is not compiled or run against a platform.
+Your provider integration must implement challenge acquisition, freshness,
+evidence validation and retry. The current `AgentProviderClient` constructor
+accepts the hook but does not implement an attestation challenge/retry ceremony:
 
 ```csharp
 var attestor = new WebAuthnAttestor(webauthnService);
 
-// The attestor is called automatically when a server
-// includes an attestation challenge in its response
+// Platform-specific provider integration supplies the ceremony.
+using var apHttp = AAuth.Discovery.AAuthHttpTransport.CreateClient();
 var apClient = new AgentProviderClient(
-    new HttpClient(), keyStore, attestor);
+    apHttp, keyStore, attestor);
 ```
 
 ## When Is Attestation Required?
 
-Attestation is **optional** in the protocol. A server signals it requires attestation by including an `attestation_challenge` in its response. If the agent doesn't provide a valid attestation, the server rejects the request.
+Attestation is a provider/platform choice. The sample AP has no attestation
+challenge endpoint, and no standardized `attestation_challenge` response member
+is implemented by this SDK. The adapter classes above intentionally stand for
+external platform code and are not complete deployable implementations.
 
 Typical scenarios:
 

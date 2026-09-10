@@ -93,6 +93,8 @@ public sealed class PermissionClient
         ArgumentNullException.ThrowIfNull(action);
         ArgumentException.ThrowIfNullOrEmpty(action.Name);
         ArgumentNullException.ThrowIfNull(mission);
+        cancellationToken.ThrowIfCancellationRequested();
+        mission.EnsureActive();
 
         foreach (var tool in mission.ApprovedTools)
         {
@@ -109,6 +111,6 @@ public sealed class PermissionClient
             Parameters = parameters,
             Mission = new Tokens.MissionClaim(mission.Approver, mission.S256),
         };
-        return RequestAsync(request, options, cancellationToken);
+        return mission.ExecuteAsync(() => RequestAsync(request, options?.ForMission(mission), cancellationToken));
     }
 }

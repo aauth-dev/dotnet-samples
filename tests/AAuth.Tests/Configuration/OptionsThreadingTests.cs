@@ -24,6 +24,7 @@ public class OptionsThreadingTests
         var fixedTime = new DateTimeOffset(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
         var options = new AAuthVerificationOptions
         {
+            EgressPolicy = TestEgress.Policy,
             Clock = () => fixedTime,
             MaxActDepth = 5,
             ClockSkew = TimeSpan.FromSeconds(10),
@@ -33,6 +34,7 @@ public class OptionsThreadingTests
         // a TokenVerifier with the same pattern and checking its behavior.
         var verifier = new TokenVerifier
         {
+            EgressPolicy = TestEgress.Policy,
             MaxActDepth = options.MaxActDepth,
             ClockSkew = options.ClockSkew,
             Clock = options.Clock ?? (() => DateTimeOffset.UtcNow),
@@ -48,6 +50,7 @@ public class OptionsThreadingTests
     {
         var options = new AAuthVerificationOptions
         {
+            EgressPolicy = TestEgress.Policy,
             MaxFutureSkew = TimeSpan.FromSeconds(15),
         };
 

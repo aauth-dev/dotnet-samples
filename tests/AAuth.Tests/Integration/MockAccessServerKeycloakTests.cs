@@ -129,6 +129,35 @@ public class MockAccessServerKeycloakTests
         Assert.StartsWith("/pending/", response.Headers.Location!.OriginalString);
     }
 
+    [Theory]
+    [InlineData("approve")]
+    [InlineData("deny")]
+    public async Task KeycloakCannotBeBypassedByStubDecision(string action)
+    {
+        using var factory = BuildFactory();
+        var pendingPath = await StartInteractionAsync(factory, GuestAgentId, "wallet.charge");
+        using var browser = factory.CreateClient();
+        using var bypass = await browser.PostAsync("/interaction/" + action, new FormUrlEncodedContent(
+            new Dictionary<string, string> { ["code"] = pendingPath.Split('/')[^1] }));
+        Assert.Equal(HttpStatusCode.Forbidden, bypass.StatusCode);
+        using var signed = BuildPsSignedClient(factory);
+        using var pending = await signed.GetAsync(pendingPath);
+        Assert.Equal(HttpStatusCode.Accepted, pending.StatusCode);
+    }
+
+    [Fact]
+    public async Task KeycloakCallbackRejectsCodeWithoutInitiatingBrowser()
+    {
+        using var factory = BuildFactory();
+        var pendingPath = await StartInteractionAsync(factory, GuestAgentId, "wallet.charge");
+        using var browser = factory.CreateClient();
+        using var bypass = await browser.GetAsync("/interaction/callback?code=fake-auth-code&state=" + pendingPath.Split('/')[^1]);
+        Assert.Equal(HttpStatusCode.Unauthorized, bypass.StatusCode);
+        using var signed = BuildPsSignedClient(factory);
+        using var pending = await signed.GetAsync(pendingPath);
+        Assert.Equal(HttpStatusCode.Accepted, pending.StatusCode);
+    }
+
     // -- flow helpers ----------------------------------------------------
 
     private static async Task<string> StartInteractionAsync(
@@ -156,9 +185,17 @@ public class MockAccessServerKeycloakTests
             BaseAddress = new Uri(AsIssuer),
             AllowAutoRedirect = false,
         });
-        var callback = await browser.GetAsync($"/interaction/callback?code=fake-auth-code&state={id}");
+        var code = factory.Services.GetRequiredService<AAuth.Access.IAccessPendingStore>().Get(id)!.Browser.Code;
+        using var arrival = await browser.GetAsync($"/interaction/login?code={code}");
+        Assert.Equal(HttpStatusCode.Redirect, arrival.StatusCode);
+        using var login = await browser.GetAsync(arrival.Headers.Location);
+        Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
+        var state = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(login.Headers.Location!.Query)["state"].ToString();
+        Assert.NotEqual(id, state);
+        var callback = await browser.GetAsync($"/interaction/callback?code=fake-auth-code&state={state}");
         Assert.True(callback.IsSuccessStatusCode,
             $"callback Status={(int)callback.StatusCode} {await callback.Content.ReadAsStringAsync()}");
+        Assert.Matches("<h1>(Access granted|Access denied)</h1>", await callback.Content.ReadAsStringAsync());
     }
 
     private static WebApplicationFactory<Federated.Entry> BuildFactory() =>
@@ -182,8 +219,8 @@ public class MockAccessServerKeycloakTests
     private static HttpClient BuildPsSignedClient(WebApplicationFactory<Federated.Entry> factory)
     {
         var http = new AAuthClientBuilder(PsKey)
-            .UseJwksUri($"{PsIssuer}/.well-known/jwks.json", PsKid)
-            .WithInnerHandler(factory.Server.CreateHandler())
+            .UseJwksUri(PsIssuer, AAuthConstants.DwkFiles.Person, PsKid)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(factory.Server.CreateHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
         http.BaseAddress = new Uri(AsIssuer);
         return http;
@@ -194,6 +231,7 @@ public class MockAccessServerKeycloakTests
     private static string BuildAgentToken(AAuthKey agentKey, string agent) =>
         new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
             Subject = agent,
             KeyId = ApKid,
@@ -205,6 +243,8 @@ public class MockAccessServerKeycloakTests
     private static string BuildResourceToken(AAuthKey agentKey, string audience, string agent, string scope) =>
         new ResourceTokenBuilder
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             Issuer = ResourceUrl,
             Audience = audience,
             Agent = agent,
@@ -224,8 +264,8 @@ public class MockAccessServerKeycloakTests
     {
         services.RemoveAll<MetadataClient>();
         services.RemoveAll<JwksClient>();
-        services.AddSingleton(new MetadataClient(new HttpClient(new StubDiscoveryHandler())));
-        services.AddSingleton(new JwksClient(new HttpClient(new StubDiscoveryHandler())));
+        services.AddSingleton(new MetadataClient(new InProcessHttpClient(new StubDiscoveryHandler())));
+        services.AddSingleton(new JwksClient(new InProcessHttpClient(new StubDiscoveryHandler())));
     }
 
     private sealed class StubDiscoveryHandler : HttpMessageHandler
@@ -237,6 +277,7 @@ public class MockAccessServerKeycloakTests
             var key = $"{uri.Host}{uri.AbsolutePath}";
             string? json = key switch
             {
+                "ps.test/.well-known/aauth-person.json" => Metadata(PsIssuer),
                 "ps.test/.well-known/jwks.json" => Jwks(PsKey, PsKid),
                 "ap.test/.well-known/aauth-agent.json" => Metadata(ApIssuer),
                 "ap.test/.well-known/jwks.json" => Jwks(ApKey, ApKid),
@@ -265,7 +306,7 @@ public class MockAccessServerKeycloakTests
             var jwk = key.ToPublicJwk();
             jwk["kid"] = kid;
             jwk["use"] = "sig";
-            jwk["alg"] = AAuthKey.Algorithm;
+            jwk["alg"] = AAuthKey.Ed25519Algorithm;
             return new JsonObject { ["keys"] = new JsonArray(jwk) }.ToJsonString();
         }
     }

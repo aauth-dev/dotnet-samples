@@ -9,6 +9,7 @@ namespace AAuth.Server.Metadata;
 /// </summary>
 public sealed class AAuthAccessServerMetadataOptions
 {
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; init; } = AAuth.Discovery.AAuthEgressPolicy.Production;
     /// <summary>HTTPS URL of this access server (<c>issuer</c>). REQUIRED.</summary>
     public required string Issuer { get; init; }
 
@@ -16,7 +17,7 @@ public sealed class AAuthAccessServerMetadataOptions
     public required string TokenEndpoint { get; init; }
 
     /// <summary>Signing keys served via the JWKS endpoint, keyed by <c>kid</c>. REQUIRED.</summary>
-    public required IReadOnlyDictionary<string, AAuthKey> SigningKeys { get; init; }
+    public required IReadOnlyDictionary<string, IAAuthKey> SigningKeys { get; init; }
 
     /// <summary>Optional human-readable name (<c>name</c>).</summary>
     public string? Name { get; init; }
@@ -51,7 +52,7 @@ public sealed class AAuthAccessServerMetadataOptions
     {
         if (string.IsNullOrWhiteSpace(Issuer))
             throw new InvalidOperationException("Issuer must be set.");
-        if (!AAuthUrl.IsHttpsOrLoopback(Issuer))
+        if (!AAuthUrl.IsHttpsOrLoopback(Issuer, EgressPolicy))
             throw new InvalidOperationException("Issuer must be an absolute https:// URL (or http://localhost).");
         if (string.IsNullOrWhiteSpace(TokenEndpoint))
             throw new InvalidOperationException("TokenEndpoint must be set.");

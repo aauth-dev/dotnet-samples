@@ -6,29 +6,60 @@ High-fidelity record of what changed between the vendored AAuth specification
 snapshots in this repository. Each snapshot is a self-contained folder; see
 [`SPEC-VERSION.md`](SPEC-VERSION.md) for source commits and metadata.
 
-Entries are grouped by snapshot folder, so every document in a release (protocol,
-R3, bootstrap) is listed together and a change to R3 or bootstrap travels with the
-protocol version it shipped in.
+Entries are grouped by snapshot folder, so every document in a release
+(protocol, R3, bootstrap, and companion documents) is listed together and a
+companion change travels with the protocol version it shipped in.
 
 Section and line references in the **`v02/`** entry point into the draft-02 files
 under [`v02/`](v02/) (commit `feda56b`); references in the **`v08/`** entry point
-into the draft-08 files under [`v08/`](v08/) (commit `dd2b852`). Anchors in
-parentheses (e.g. `#sub-agents`) are the spec's own kramdown anchors and are stable
-across line shifts.
+into the draft-08 files under [`v08/`](v08/) (commit `dd2b852`); references in the
+**`v09/`** entry point into the draft-09 files under [`v09/`](v09/) (commit
+`90089f8`); references in the **`v10/`** entry point into the draft-10 files under
+[`v10/`](v10/) (commit `9dee49f`). Anchors in parentheses (e.g. `#sub-agents`)
+are the spec's own kramdown anchors and are stable across line shifts.
 
-| Snapshot | Protocol | Bootstrap | R3 | Source commit |
-|---|---|---|---|---|
-| [`v01/`](v01/) | draft-01 | draft-01 | draft-00 | `c090879` (2026-05-11) |
-| [`v02/`](v02/) | draft-02 | draft-01 (unchanged) | draft-00 (revised) | `feda56b` (2026-06-09) |
-| [`v08/`](v08/) | draft-08 | draft-01 (unchanged) | draft-00 (unchanged) | `dd2b852` (2026-06-25) |
+| Snapshot | Protocol | Bootstrap | R3 | Interop profile | Events | Source commit |
+|---|---|---|---|---|---|---|
+| [`v01/`](v01/) | draft-01 | draft-01 | draft-00 | — | — | `c090879` (2026-05-11) |
+| [`v02/`](v02/) | draft-02 | draft-01 (unchanged) | draft-00 (revised) | — | — | `feda56b` (2026-06-09) |
+| [`v08/`](v08/) | draft-08 | draft-01 (unchanged) | draft-00 (unchanged) | new | — | `dd2b852` (2026-06-25) |
+| [`v09/`](v09/) | draft-09 | draft-01 (unchanged) | draft-00 (revised) | unchanged | draft-00 (new) | `90089f8` (2026-07-05) |
+| [`v10/`](v10/) | draft-10 | draft-02 (revised) | draft-01 (revised) | unchanged | draft-00 (revised) | `9dee49f` (2026-08-06) |
 
-> **The SDK code targets `v02/` (draft-02).** The `v08/` snapshot was vendored
-> 2026-06-25 as the latest upstream reference; migrating the SDK to draft-08 is
-> tracked separately and has not started. See
-> [`SPEC-VERSION.md`](SPEC-VERSION.md).
+> The SDK code targets `v10/` (draft-10) after the separately verified 2026-09-09
+> migration. The snapshot was vendored 2026-09-08 and remains byte-unchanged.
+> All four access modes and local four-party sub-agent scenarios are implemented;
+> optional exclusions and incomplete external authorization interop remain explicit.
+> See [SPEC-VERSION](SPEC-VERSION.md) and the
+> [migration evidence](../.agent/plans/2026-09-08-aauth-v10-spec-migration/implementation-log.md).
+> Historical per-snapshot entries below describe their original publication state.
 
 ## Contents
 
+- [`v10/` — AAuth draft-10 snapshot](#v10--aauth-draft-10-snapshot)
+  - [Protocol (draft-10)](#protocol-draft-10)
+    - [1. Fully specified algorithms and keys](#1-fully-specified-algorithms-and-keys)
+    - [2. Signature verification and errors](#2-signature-verification-and-errors)
+    - [3. Revocation identity and routing](#3-revocation-identity-and-routing)
+    - [4. Directed subject handling](#4-directed-subject-handling)
+    - [5. Account binding](#5-account-binding)
+  - [R3 (draft-01)](#r3-draft-01)
+  - [AAuth Events (revised draft-00)](#aauth-events-revised-draft-00)
+  - [Bootstrap (draft-02)](#bootstrap-draft-02)
+  - [Interoperability Demo Profile (unchanged)](#interoperability-demo-profile-unchanged)
+  - [HTTP Signature Keys (draft-08)](#http-signature-keys-draft-08)
+  - [Author's verbatim changelog (draft-10)](#authors-verbatim-changelog-draft-10)
+- [`v09/` — AAuth draft-09 snapshot](#v09--aauth-draft-09-snapshot)
+  - [Protocol (draft-09)](#protocol-draft-09)
+    - [1. Clarification response discriminator](#1-clarification-response-discriminator)
+    - [2. RFC 9457 error responses](#2-rfc-9457-error-responses)
+    - [3. AAuth Events integration](#3-aauth-events-integration)
+    - [4. Editorial and implementation-status changes](#4-editorial-and-implementation-status-changes)
+  - [AAuth Events (new companion draft)](#aauth-events-new-companion-draft)
+  - [R3 (revised)](#r3-revised)
+  - [Bootstrap and Interoperability Demo Profile (unchanged)](#bootstrap-and-interoperability-demo-profile-unchanged)
+  - [HTTP Signature Keys (draft-06)](#http-signature-keys-draft-06)
+  - [Author's verbatim changelog (draft-09)](#authors-verbatim-changelog-draft-09)
 - [`v08/` — AAuth draft-08 snapshot](#v08--aauth-draft-08-snapshot)
   - [Protocol (drafts 03–08)](#protocol-drafts-0308)
     - [1. Agent-delegation restructure](#1-agent-delegation-restructure)
@@ -55,6 +86,301 @@ across line shifts.
 - [`v01/` — AAuth draft-01 snapshot (baseline)](#v01--aauth-draft-01-snapshot-baseline)
 
 ---
+
+## `v10/` — AAuth draft-10 snapshot
+
+The latest upstream snapshot, vendored 2026-09-08 for reference. It bundles
+protocol **draft-10** with R3 **draft-01**, Bootstrap **draft-02**, revised AAuth
+Events **draft-00**, the unchanged Interoperability Demo Profile, and HTTP
+Signature Keys **draft-08**.
+
+> **The SDK continues to target draft-08.** Draft-09 and draft-10 migrations are
+> separate implementation work.
+
+### Protocol (draft-10)
+
+Published as IETF
+[draft-hardt-oauth-aauth-protocol-10](https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/10/)
+(commit `9dee49f`, source frontmatter date 2026-06-17, IETF publication date
+2026-08-06). The author's verbatim draft-10 changelog is reproduced below.
+
+#### 1. Fully specified algorithms and keys
+
+The HTTP Message Signatures profile now requires algorithms to be explicit and
+unambiguous (`#signature-algorithms`, `#keying-material`):
+
+- Every conveyed or referenced key MUST carry a fully specified `alg`.
+- `Ed25519` replaces the deprecated polymorphic `EdDSA`; `none`, symmetric
+  algorithms, and algorithms prohibited by the JOSE registry MUST NOT be used.
+- A verifier MUST reject a key whose `kty` or `crv` disagrees with `alg`.
+- Every `cnf.jwk` and every AAuth server key selected from `jwks_uri` follows
+  these rules. Unselected JWKS members do not need to use supported algorithms.
+- The HTTP Signature `alg` parameter MUST NOT be sent and is ignored if present;
+  the selected key determines the algorithm.
+
+#### 2. Signature verification and errors
+
+Verification and error behavior now align with HTTP Signature Keys draft-08
+(`#verification`, `#authentication-errors`):
+
+- Defined failures include `unsupported_scheme`, `unsupported_algorithm`,
+  `invalid_key`, `issuer_missing`, and `issuer_mismatch` in addition to existing
+  signature and JWT errors.
+- Signature failures are authentication failures and always use `401`; the
+  `Signature-Error` header is the machine-readable carrier.
+- `unsupported_scheme` and `unsupported_algorithm` can advertise accepted values
+  through `Accept-Signature-Scheme` and `Accept-Signature-Alg`.
+- A `403` means authentication succeeded but authorization failed, so it MUST NOT
+  carry `Signature-Error` or either `Accept-Signature-*` header.
+- Metadata discovery explicitly rejects a missing or mismatched `issuer`.
+
+The protocol also adds designated-expert instructions for its Requirement,
+Capability, and Platform registries (`#designated-expert-instructions`).
+
+#### 3. Revocation identity and routing
+
+Token revocation is keyed by the pair `(iss, jti)`, because `jti` is unique only
+within an issuer's namespace (`#token-revocation`):
+
+- Revocation requests carry both `iss` and `jti`; recipients MUST store
+  revocation state under the pair.
+- A PS or AS revokes an auth token at the resource that received it.
+- An AP revokes its agent token at the PS's `revocation_endpoint`; the PS denies
+  later use and should revoke auth tokens issued or provided for that agent.
+- Identity-based access cannot always receive that push, so exposure remains
+  bounded by token lifetime when no resource revocation endpoint is reachable.
+
+#### 4. Directed subject handling
+
+Federation rules prevent directed person identifiers from crossing trust
+boundaries as if they were globally meaningful:
+
+- A downstream issuer MUST NOT copy `sub` from an upstream auth token.
+- It MAY issue its own directed `sub` only after its own authenticated federation
+  step maps the person into the downstream resource's namespace.
+- Person identifiers MUST NOT appear in `act`; that chain identifies agents.
+
+#### 5. Account binding
+
+The new optional `account` parameter distinguishes multiple accounts that the
+same person may hold at one resource (`#account-binding`):
+
+- The authorization request names an account in the resource's own namespace.
+- The resource echoes it into the resource token, and the PS or AS copies it into
+  the auth token.
+- The resource enforces the claim per account, and audit records retain the
+  account covered by the authorization.
+- The value selects an existing resource account; it is not an authentication
+  hint and has no protocol-defined structure.
+
+### R3 (draft-01)
+
+R3 advances from draft-00 to draft-01 and incorporates the protocol changes:
+
+- The R3 document gains optional `account`, copied from the authorization request
+  and resource token. Its `display` should name the account in terms the person
+  recognizes rather than exposing an opaque resource identifier.
+- Operation identifiers are explicitly scoped to a vocabulary's advertised
+  discovery endpoint.
+- The new `urn:aauth:vocabulary:openapi-gateway` vocabulary qualifies operations
+  with `(service, operationId)` for multi-service gateways.
+- JWT examples use `Ed25519`, include `alg` in `cnf.jwk`, and correct token types
+  to `aa-resource+jwt` and `aa-auth+jwt`.
+- The R3 Vocabulary Registry gains designated-expert instructions.
+
+### AAuth Events (revised draft-00)
+
+Events remains draft-00 but changes resource-to-AP delivery to match the
+Signature Keys model:
+
+- Event tokens now use `scheme=self-jwt`: the resource issues the JWT and signs
+  the HTTP request with the same discoverable JWKS key, so the token has no
+  `cnf` claim.
+- Subscribe-token examples use fully specified `Ed25519` and carry `alg` in
+  `cnf.jwk`.
+- The draft adds open-network and `self-jwt` design rationale and points its
+  protocol-family references at the Datatracker document pages.
+
+### Bootstrap (draft-02)
+
+Bootstrap advances from draft-01 to draft-02. Its token examples replace
+`EdDSA` with `Ed25519`, add `alg` to `cnf.jwk`, and reference the protocol through
+its Datatracker document page. The enrollment guidance is otherwise unchanged.
+
+### Interoperability Demo Profile (unchanged)
+
+`interop-demo-profile.md` is byte-identical to `v09/`.
+
+### HTTP Signature Keys (draft-08)
+
+Bumped **draft-06 → draft-08**
+([published 2026-08-05](https://datatracker.ietf.org/doc/draft-hardt-httpbis-signature-key/08/)).
+Draft-07 was editorial only. Draft-08 is not backward compatible with draft-07
+and includes these implementation-relevant changes:
+
+- Algorithms now come from required, fully specified JWK `alg` values. `EdDSA`,
+  `none`, symmetric algorithms, and key/algorithm mismatches are forbidden.
+- `Accept-Signature-Scheme` and `Accept-Signature-Alg` replace the `sigkey`
+  parameter; `supported_algorithms` is removed from `Signature-Error`.
+- Covering `signature-key` is now mandatory for signers and verifiers; `exp` is
+  mandatory for `jwt` and `self-jwt`; malformed JWT rejection and cache limits
+  become mandatory.
+- The new `jwks` scheme directly fetches a JWKS URL that serves as both identity
+  and key location. Discovery adds `issuer_missing` and `issuer_mismatch` errors.
+- Optional assertion caching adds the `cached` scheme,
+  `Signature-Key-Cache`, and `cache_miss`, with bounded verifier state.
+- Unknown schemes and unsupported algorithms have defined negotiation and error
+  behavior, and selected JWKS keys are validated independently of other members.
+
+### Author's verbatim changelog (draft-10)
+
+Reproduced from the Document History section of
+[`v10/draft-hardt-oauth-aauth-protocol.md`](v10/draft-hardt-oauth-aauth-protocol.md):
+
+> **draft-hardt-oauth-aauth-protocol-10**
+>
+> - Adopted the fully-specified `Ed25519` of [@!RFC9864] in place of the `EdDSA`
+>   it deprecates. `alg` is REQUIRED and MUST be fully specified; `EdDSA`, `none`,
+>   and symmetric algorithms MUST NOT be used; a verifier MUST reject a key whose
+>   `kty` or `crv` disagrees with its `alg`. Addresses issue #57.
+> - A `cnf` JWK MUST carry a fully-specified `alg`, as MUST every key at an AAuth
+>   server's `jwks_uri`. A verifier MUST select the key matching `kid` without
+>   requiring the other JWKS members to be usable.
+> - Aligned verification and error mapping with
+>   [@!I-D.hardt-httpbis-signature-key]: added `unsupported_scheme`,
+>   `unsupported_algorithm`, `invalid_key`, `issuer_missing`, and
+>   `issuer_mismatch`; pinned signature failures to `401`; a `403` MUST NOT carry
+>   `Signature-Error` or either `Accept-Signature-*` header; the `alg` signature
+>   parameter MUST NOT be used.
+> - Revocation identifies a token by `(iss, jti)`, and recipients key revocation
+>   state by that pair. An agent provider revokes an agent token at the PS's
+>   `revocation_endpoint`. Addresses issues #59 and #60.
+> - A downstream issuer MUST NOT copy a directed `sub` from an upstream token,
+>   MAY emit one only from its own authenticated federation step, and MUST NOT
+>   place a person identifier in `act`. Addresses issue #41.
+> - Added the OPTIONAL `account` parameter on the authorization endpoint request,
+>   echoed in the resource token and copied into the auth token, binding an
+>   authorization to one of several accounts a resource may hold for the same
+>   person. Addresses issue #52.
+
+## `v09/` — AAuth draft-09 snapshot
+
+The latest upstream snapshot, vendored 2026-07-19 for reference. It bundles
+protocol **draft-09** with a revised R3 (**draft-00**), the unchanged bootstrap
+(**draft-01**) and Interoperability Demo Profile, the new AAuth Events companion
+(**draft-00**), and HTTP Signature Keys **draft-06**.
+
+> **The SDK continues to target draft-08.** This snapshot is the immutable input
+> to the separate draft-09 migration.
+
+### Protocol (draft-09)
+
+Published as IETF
+[draft-hardt-oauth-aauth-protocol-09](https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/09/)
+(commit `90089f8`, source frontmatter date 2026-06-17, IETF publication date
+2026-07-04). The author's verbatim draft-09 changelog is reproduced below.
+
+#### 1. Clarification response discriminator
+
+Clarification-chat POSTs to a pending URL are now explicitly typed
+(`#clarification-chat`):
+
+- The body MUST include `action=clarification_response` when answering the
+  user's question, or `action=updated_request` when replacing the resource
+  request.
+- A server MUST reject a missing or unrecognized `action` with
+  `400 Bad Request`.
+- Both wire examples now carry the discriminator, removing the draft-08
+  inference from whether `clarification_response` or `resource_token` happened
+  to be present.
+
+#### 2. RFC 9457 error responses
+
+The token-endpoint-specific JSON format became a common AAuth problem-details
+format (`#error-responses`, `#error-response-format`):
+
+- Error bodies use RFC 9457 `application/problem+json`.
+- The AAuth `error` code remains REQUIRED as an extension member; the standard
+  `detail` member replaces `error_description`.
+- Standard RFC 9457 members MAY be present, but receivers MUST use `error`, not
+  `type`, to determine AAuth behavior.
+- Authorization, interaction, mission-status, token-endpoint, and polling
+  errors now reference or demonstrate the common format. Authentication failures
+  continue to use the HTTP Signature Keys `Signature-Error` header.
+
+#### 3. AAuth Events integration
+
+The protocol now introduces its Events companion at the core integration points:
+
+- The protocol overview names asynchronous event delivery through the AP, and
+  the AP role gains event-router behavior.
+- Agent metadata (`#metadata-documents`) gains optional `event_endpoint`, which
+  is required when an AP supports AAuth Events.
+- IANA considerations register the companion's `aa-subscribe+jwt` and
+  `aa-event+jwt` token types.
+
+#### 4. Editorial and implementation-status changes
+
+- Hand-maintained source references for HTTP Signature Keys and Bootstrap were
+  removed in favor of the references resolved by the publication toolchain; the
+  citations remain.
+- The acknowledgments add Lukas Friman and Sanjay Dalal.
+
+### AAuth Events (new companion draft)
+
+`draft-hardt-aauth-events.md` is a new standards-track companion source at
+draft-00 (source date 2026-06-24). It defines AP metadata, subscribe tokens,
+public and protected registration, event tokens, resource-to-AP delivery,
+AP-to-agent routing, and AsyncAPI discovery. It is included because both the
+protocol and revised R3 reference it.
+
+At copy time the Events source was present at the pinned protocol tag but had no
+dedicated Git tag or published Datatracker revision. The snapshot therefore pins
+the exact companion source from protocol tag
+`draft-hardt-oauth-aauth-protocol-09` rather than a moving branch.
+
+### R3 (revised)
+
+R3 remains draft-00 but its AsyncAPI vocabulary changed:
+
+- `action` is now OPTIONAL rather than REQUIRED; when present it is `send` or
+  `receive`, and event subscriptions use `receive`.
+- A granted AsyncAPI subscription operation now hands off registration and
+  delivery to AAuth Events using a subscription ticket URL and subscribe token.
+
+### Bootstrap and Interoperability Demo Profile (unchanged)
+
+- `draft-hardt-aauth-bootstrap.md` remains draft-01 and is byte-identical to
+  `v08/`.
+- `interop-demo-profile.md` is byte-identical to `v08/`.
+
+### HTTP Signature Keys (draft-06)
+
+Bumped **draft-05 → draft-06**
+([published 2026-07-02](https://datatracker.ietf.org/doc/draft-hardt-httpbis-signature-key/06/)).
+Draft-06 adds the `self-jwt` scheme: a self-issued JWT whose issuer and signer
+are the same party, using the issuer's discovered JWKS key for both the JWT and
+HTTP signature and carrying no `cnf` claim.
+
+The protocol draft-09 publication resolves its Signature Keys reference to
+draft-06. This snapshot intentionally vendors that revision rather than the
+newer draft-07.
+
+### Author's verbatim changelog (draft-09)
+
+Reproduced from the Document History section of
+[`v09/draft-hardt-oauth-aauth-protocol.md`](v09/draft-hardt-oauth-aauth-protocol.md):
+
+> **draft-hardt-oauth-aauth-protocol-09**
+>
+> - Clarification chat: added a required `action` discriminator
+>   (`clarification_response` / `updated_request`) to the agent's POST responses
+>   on the pending URL, so the response type is explicit rather than inferred
+>   from key presence.
+> - Error responses: adopted RFC 9457 problem details — error bodies use
+>   `Content-Type: application/problem+json` with the AAuth error code as a
+>   required `error` extension member; `error_description` replaced by the RFC
+>   9457 `detail` member; added token endpoint and polling error examples.
 
 ## `v08/` — AAuth draft-08 snapshot
 

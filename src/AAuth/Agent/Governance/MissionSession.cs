@@ -44,6 +44,9 @@ public sealed class MissionSession
     // The mission claim threaded into every governed request.
     private MissionClaim Claim => new(Mission.Approver, Mission.S256);
 
+    private GovernanceOptions? Options(GovernanceOptions? options)
+        => (options ?? _defaultOptions)?.ForMission(Mission);
+
     /// <summary>
     /// Request permission for <paramref name="action"/> within this mission
     /// (§Permission Endpoint). Pre-approved tools short-circuit to a grant; any
@@ -55,9 +58,9 @@ public sealed class MissionSession
         JsonObject? parameters = null,
         GovernanceOptions? options = null,
         CancellationToken cancellationToken = default)
-        => _governance.Permission.RequestAsync(
+        => Mission.ExecuteAsync(() => _governance.Permission.RequestAsync(
             action, Mission, description, parameters,
-            options ?? _defaultOptions, cancellationToken);
+            Options(options), cancellationToken));
 
     /// <summary>
     /// Record an action the agent performed within this mission (§Audit Endpoint).
@@ -69,14 +72,18 @@ public sealed class MissionSession
         JsonObject? parameters = null,
         JsonObject? result = null,
         CancellationToken cancellationToken = default)
-        => _governance.Audit.RecordAsync(
+        => Mission.ExecuteAsync(async () =>
+        {
+            await _governance.Audit.RecordAsync(
             new AuditRecord(Claim, action)
             {
                 Description = description,
                 Parameters = parameters,
                 Result = result,
             },
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+            return true;
+        });
 
     /// <summary>
     /// Ask the user a question within this mission and return the answer
@@ -87,9 +94,9 @@ public sealed class MissionSession
         string? description = null,
         GovernanceOptions? options = null,
         CancellationToken cancellationToken = default)
-        => _governance.Interaction.AskQuestionAsync(
+        => Mission.ExecuteAsync(() => _governance.Interaction.AskQuestionAsync(
             question, description, Claim,
-            options ?? _defaultOptions, cancellationToken);
+            Options(options), cancellationToken));
 
     /// <summary>
     /// Relay a resource interaction (URL + code) to the user (§Interaction
@@ -101,9 +108,9 @@ public sealed class MissionSession
         string? description = null,
         GovernanceOptions? options = null,
         CancellationToken cancellationToken = default)
-        => _governance.Interaction.RelayInteractionAsync(
+        => Mission.ExecuteAsync(() => _governance.Interaction.RelayInteractionAsync(
             url, code, description, Claim,
-            options ?? _defaultOptions, cancellationToken);
+            Options(options), cancellationToken));
 
     /// <summary>
     /// Forward a payment approval (URL + code) to the user (§Interaction
@@ -115,20 +122,24 @@ public sealed class MissionSession
         string? description = null,
         GovernanceOptions? options = null,
         CancellationToken cancellationToken = default)
-        => _governance.Interaction.RelayPaymentAsync(
+        => Mission.ExecuteAsync(() => _governance.Interaction.RelayPaymentAsync(
             url, code, description, Claim,
-            options ?? _defaultOptions, cancellationToken);
+            Options(options), cancellationToken));
 
     /// <summary>
     /// Propose mission completion with a summary (§Interaction Endpoint). Returns
     /// <see langword="true"/> when the user accepted and the PS terminated the
     /// mission. The mission claim and PS are injected.
     /// </summary>
-    public Task<bool> ProposeCompletionAsync(
+    public async Task<bool> ProposeCompletionAsync(
         string summary,
         GovernanceOptions? options = null,
         CancellationToken cancellationToken = default)
-        => _governance.Interaction.ProposeCompletionAsync(
+    {
+        var terminated = await Mission.ExecuteAsync(() => _governance.Interaction.ProposeCompletionAsync(
             summary, Claim,
-            options ?? _defaultOptions, cancellationToken);
+            Options(options), cancellationToken)).ConfigureAwait(false);
+        if (terminated) Mission.Terminate();
+        return terminated;
+    }
 }

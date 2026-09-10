@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using AAuth.Agent;
 using AAuth.Agent.Governance;
 using AAuth.Errors;
+using AAuth.Server.Verification;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Http;
 
@@ -21,12 +22,27 @@ public static class GovernanceEndpoints
     /// <summary>HTTP status for a terminated mission (§Mission Status Errors).</summary>
     public const int MissionTerminatedStatus = StatusCodes.Status403Forbidden;
 
+    public static IResult? Authorize(HttpContext context, MissionClaim? reference, StoredMission? mission)
+    {
+        var verified = context.GetAAuthVerification();
+        if (verified is not { TokenType: AAuthTokenType.AgentToken, IssuerVerified: true, Agent: not null })
+        {
+            return AAuthProblemDetails.Create("invalid_carrier_token", statusCode: StatusCodes.Status403Forbidden);
+        }
+        if (reference is null) return null;
+        if (mission is null || mission.Approver != reference.Approver || mission.Agent != verified.Agent)
+        {
+            return AAuthProblemDetails.Create("invalid_mission", statusCode: StatusCodes.Status403Forbidden);
+        }
+        return mission.State == MissionState.Terminated ? MissionTerminated() : null;
+    }
+
     /// <summary>
     /// Parse a permission request body (§Permission Request) into a
     /// <see cref="PermissionRequest"/>.
     /// </summary>
     /// <exception cref="FormatException">The required <c>action</c> is missing.</exception>
-    public static PermissionRequest ParsePermission(JsonObject body)
+    public static PermissionRequest ParsePermission(JsonObject body, AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
         ArgumentNullException.ThrowIfNull(body);
         var action = (string?)body["action"]
@@ -35,7 +51,7 @@ public static class GovernanceEndpoints
         {
             Description = (string?)body["description"],
             Parameters = body["parameters"] as JsonObject,
-            Mission = MissionClaim.FromPayload(body),
+            Mission = MissionClaim.FromPayload(body, policy),
         };
     }
 
@@ -43,10 +59,10 @@ public static class GovernanceEndpoints
     /// Parse an audit request body (§Audit Request) into an <see cref="AuditRecord"/>.
     /// </summary>
     /// <exception cref="FormatException">The required <c>mission</c> or <c>action</c> is missing.</exception>
-    public static AuditRecord ParseAudit(JsonObject body)
+    public static AuditRecord ParseAudit(JsonObject body, AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
         ArgumentNullException.ThrowIfNull(body);
-        var mission = MissionClaim.FromPayload(body)
+        var mission = MissionClaim.FromPayload(body, policy)
             ?? throw new FormatException("Audit request is missing the required 'mission'.");
         var action = (string?)body["action"]
             ?? throw new FormatException("Audit request is missing the required 'action'.");
@@ -63,7 +79,7 @@ public static class GovernanceEndpoints
     /// <see cref="InteractionRequest"/>.
     /// </summary>
     /// <exception cref="FormatException">The required <c>type</c> is missing or unknown.</exception>
-    public static InteractionRequest ParseInteraction(JsonObject body)
+    public static InteractionRequest ParseInteraction(JsonObject body, AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
         ArgumentNullException.ThrowIfNull(body);
         var typeValue = (string?)body["type"]
@@ -84,7 +100,7 @@ public static class GovernanceEndpoints
             Question = (string?)body["question"],
             Summary = (string?)body["summary"],
             MaxWait = (int?)body["max_wait"],
-            Mission = MissionClaim.FromPayload(body),
+            Mission = MissionClaim.FromPayload(body, policy),
         };
     }
 
@@ -120,7 +136,9 @@ public static class GovernanceEndpoints
     /// <c>403 mission_terminated</c> response (§Mission Status Errors).
     /// </summary>
     public static IResult MissionTerminated(string missionStatus = "terminated")
-        => Results.Json(MissionTerminatedBody(missionStatus), statusCode: MissionTerminatedStatus);
+        => AAuthProblemDetails.Create(AAuthMissionTerminatedException.ErrorCode,
+            statusCode: MissionTerminatedStatus,
+            extensions: new Dictionary<string, object?> { ["mission_status"] = missionStatus });
 
     private static IReadOnlyList<MissionTool> ParseTools(JsonArray? tools)
     {

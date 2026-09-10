@@ -7,6 +7,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Discovery;
 using AAuth.Headers;
+using AAuth.Crypto;
+using AAuth.HttpSig;
+using AAuth.Tokens;
 
 namespace AAuth.Agent;
 
@@ -31,7 +34,12 @@ public sealed class TokenExchangeClient
     /// <param name="signedClient">HttpClient already wired with an <see cref="HttpSig.AAuthSigningHandler"/>.</param>
     /// <param name="metadata">Metadata client for resolving the PS <c>token_endpoint</c>.</param>
     public TokenExchangeClient(HttpClient signedClient, MetadataClient metadata)
-        => _exchange = new DeferredExchange(signedClient, metadata);
+    {
+        _exchange = new DeferredExchange(signedClient, metadata);
+        EgressPolicy = metadata.Policy;
+    }
+
+    public AAuthEgressPolicy EgressPolicy { get; }
 
     /// <summary>
     /// Submit <paramref name="resourceToken"/> to the PS at
@@ -68,17 +76,30 @@ public sealed class TokenExchangeClient
         ArgumentException.ThrowIfNullOrEmpty(personServer);
         ArgumentException.ThrowIfNullOrEmpty(resourceToken);
         ArgumentNullException.ThrowIfNull(options);
+        AccountBinding.Validate(options.Account);
+        void ValidateResourceAccount(string token)
+        {
+            var segments = token.Split('.');
+            if (segments.Length != 3) throw new TokenVerificationException("Resource token must be a compact JWS.");
+            var payload = TokenVerifier.DecodeJsonSegment(segments[1], "payload");
+            if (!AccountBinding.Matches(options.Account, AccountBinding.Read(payload)))
+                throw new TokenVerificationException("Resource token account differs from the requested account.");
+        }
+        ValidateResourceAccount(resourceToken);
 
         var onInteractionRequired = options.OnInteractionRequired;
         var pollerOptions = options.PollerOptions;
         var upstreamToken = options.UpstreamToken;
         var capabilities = options.Capabilities;
         var prompt = options.Prompt;
+        var effectiveResourceToken = resourceToken;
 
         using var activity = AAuthDiagnostics.Source.StartActivity("AAuth.TokenExchange");
 
         var tokenEndpointUri = await _exchange.ResolveEndpointAsync(
-            personServer, "token_endpoint", cancellationToken).ConfigureAwait(false);
+            personServer, "token_endpoint", cancellationToken,
+            upstreamToken is null ? AAuthConstants.DwkFiles.Person
+                : Server.CallChaining.CallChainingRouter.ResolveMetadataFile(upstreamToken)).ConfigureAwait(false);
 
         var body = new JsonObject { ["resource_token"] = resourceToken };
         if (!string.IsNullOrEmpty(upstreamToken))
@@ -122,11 +143,18 @@ public sealed class TokenExchangeClient
         var exchangeOptions = new DeferredExchangeOptions
         {
             OnInteractionRequired = onInteractionRequired,
-            OnClarificationRequired = options.OnClarificationRequired,
+            OnClarificationRequired = options.OnClarificationRequired is { } clarify ? async (question, ct) =>
+            {
+                var answer = await clarify(question, ct);
+                if (answer.Action == ClarificationResponse.Kind.Update)
+                {
+                    ValidateResourceAccount(answer.ResourceToken!);
+                    effectiveResourceToken = answer.ResourceToken!;
+                }
+                return answer;
+            } : null,
             MaxClarificationRounds = options.MaxClarificationRounds,
             PollerOptions = pollerOptions,
-            // Token exchange cannot complete consent without an interaction
-            // callback, so any deferred 202 with no callback fails fast.
             RequireInteractionCallback = true,
             // §Polling Error Codes: a user denial surfaces as 403 `denied` on
             // the poll. Classify it only after an interaction poll (matching the
@@ -142,11 +170,24 @@ public sealed class TokenExchangeClient
             },
         };
 
+        IAAuthKey? signingKey = null;
+        string? signedAgentToken = null;
         var response = await _exchange.PostAsync(
-            tokenEndpointUri, body, exchangeOptions, cancellationToken).ConfigureAwait(false);
+            tokenEndpointUri, body, exchangeOptions, cancellationToken, request =>
+            {
+                request.Options.TryGetValue(AAuthSigningHandler.SigningKeyContext, out signingKey);
+                if (request.Headers.TryGetValues(AAuthConstants.Headers.SignatureKey, out var values))
+                    foreach (var value in values)
+                        signedAgentToken = SignatureKeyParser.Parse(value).Jwt;
+            }).ConfigureAwait(false);
         try
         {
-            return await ReadAuthTokenAsync(response, cancellationToken).ConfigureAwait(false);
+            var authToken = await ReadAuthTokenAsync(response, cancellationToken).ConfigureAwait(false);
+            if (signingKey is null || signedAgentToken is null)
+                throw new TokenVerificationException("Token exchange requires a locally signed agent-token request context.");
+            AgentAuthTokenValidator.Validate(authToken, effectiveResourceToken, signingKey, signedAgentToken,
+                options.SubagentToken, upstreamToken, EgressPolicy);
+            return authToken;
         }
         finally
         {
@@ -183,7 +224,8 @@ public sealed class TokenExchangeClient
         try
         {
             var json = JsonNode.Parse(body) as JsonObject;
-            return (string?)json?["error"] == "denied";
+            return json?["error"] is JsonValue value
+                && value.TryGetValue<string>(out var error) && error == "denied";
         }
         catch (System.Text.Json.JsonException)
         {
@@ -198,16 +240,16 @@ public sealed class TokenExchangeClient
         if (!response.IsSuccessStatusCode)
         {
             // The token endpoint signals failure with a JSON body carrying a
-            // required 'error' code and optional 'error_description'
+            // required 'error' code and optional 'detail'
             // (§Token Endpoint Error Response Format). Surface those as a
             // typed exception so callers can branch on the code. Bodies that
             // are not parseable AAuth error objects fall back to a plain
             // HttpRequestException.
-            var errorCode = TryReadErrorCode(responseBody, out var errorDescription);
+            var errorCode = TryReadErrorCode(responseBody, out var detail);
             if (errorCode is not null)
             {
                 throw new Errors.AAuthTokenExchangeException(
-                    errorCode, errorDescription, (int)response.StatusCode,
+                    errorCode, detail, (int)response.StatusCode,
                     Errors.AAuthTokenExchangeException.IsTerminalCode(errorCode));
             }
 
@@ -222,12 +264,12 @@ public sealed class TokenExchangeClient
     }
 
     // Parse a token-endpoint error body into its 'error' code (and optional
-    // 'error_description'). Returns null when the body is not a JSON object
+    // 'detail'). Returns null when the body is not a JSON object
     // with a non-empty string 'error' member, signalling the caller to fall
     // back to a generic transport exception.
-    private static string? TryReadErrorCode(string body, out string? errorDescription)
+    private static string? TryReadErrorCode(string body, out string? detail)
     {
-        errorDescription = null;
+        detail = null;
         if (string.IsNullOrWhiteSpace(body))
         {
             return null;
@@ -239,12 +281,14 @@ public sealed class TokenExchangeClient
         {
             return null;
         }
-        var error = (string?)json["error"];
-        if (string.IsNullOrEmpty(error))
+        if (json["error"] is not JsonValue errorValue
+            || !errorValue.TryGetValue<string>(out var error)
+            || string.IsNullOrWhiteSpace(error))
         {
             return null;
         }
-        errorDescription = (string?)json["error_description"];
+        if (json["detail"] is JsonValue detailValue)
+            detailValue.TryGetValue<string>(out detail);
         return error;
     }
 }

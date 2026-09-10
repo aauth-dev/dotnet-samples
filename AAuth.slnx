@@ -1,7 +1,10 @@
 <Solution>
   <Folder Name="/samples/">
     <Project Path="samples/AgentConsole/AgentConsole.csproj" />
+    <Project Path="samples/CapabilitySupport/CapabilitySupport.csproj" />
     <Project Path="samples/Concierge/Concierge.csproj" />
+    <Project Path="samples/EventAgent/EventAgent.csproj" />
+    <Project Path="samples/EventSupport/EventSupport.csproj" />
     <Project Path="samples/GuidedTour/GuidedTour.csproj" />
     <Project Path="samples/LiveWhoAmITest/LiveWhoAmITest.csproj" />
     <Project Path="samples/MissionAgent/MissionAgent.csproj" />
@@ -12,6 +15,8 @@
   <Folder Name="/samples/MockResourceServers/">
     <Project Path="samples/MockResourceServers/Bookings/Bookings.csproj" />
     <Project Path="samples/MockResourceServers/Calendar/Calendar.csproj" />
+    <Project Path="samples/MockResourceServers/Catalog/Catalog.csproj" />
+    <Project Path="samples/MockResourceServers/Documents/Documents.csproj" />
     <Project Path="samples/MockResourceServers/Inbox/Inbox.csproj" />
     <Project Path="samples/MockResourceServers/Profile/Profile.csproj" />
     <Project Path="samples/MockResourceServers/Trips/Trips.csproj" />
@@ -23,11 +28,16 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/AAuth/AAuth.csproj" />
+    <Project Path="src/AAuth.Events/AAuth.Events.csproj" />
     <Project Path="src/AAuth.R3/AAuth.R3.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/AAuth.Conformance/AAuth.Conformance.csproj" />
+    <Project Path="tests/AAuth.Events.Tests/AAuth.Events.Tests.csproj" />
     <Project Path="tests/AAuth.R3.Tests/AAuth.R3.Tests.csproj" />
     <Project Path="tests/AAuth.Tests/AAuth.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/ApiSurface/ApiSurface.csproj" />
   </Folder>
 </Solution>

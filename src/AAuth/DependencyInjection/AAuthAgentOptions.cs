@@ -13,8 +13,15 @@ namespace AAuth;
 /// </summary>
 public sealed class AAuthAgentOptions
 {
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
     /// <summary>The agent's signing key (must have private component).</summary>
     public IAAuthKey Key { get; set; } = null!;
+
+    /// <summary>Already-held agent JWT. Combine with TokenRefresher for renewal; no implicit enrollment occurs.</summary>
+    public string? AgentToken { get; set; }
+
+    /// <summary>Explicit generic Signature Keys provider. Cannot be combined with agent credentials or AAuth authorization flows.</summary>
+    public AAuth.HttpSig.ISignatureKeyProvider? SignatureKeyProvider { get; set; }
 
     /// <summary>
     /// Person Server URL. When set together with <see cref="TokenRefresher"/>,
@@ -39,7 +46,7 @@ public sealed class AAuthAgentOptions
     public Func<CancellationToken, Task>? OnApprovalPending { get; set; }
 
     /// <summary>
-    /// Token refresher. When set, the SDK auto-refreshes before expiry.
+    /// Caller-owned token refresher. When set, the SDK auto-refreshes before expiry.
     /// </summary>
     public ITokenRefresher? TokenRefresher { get; set; }
 

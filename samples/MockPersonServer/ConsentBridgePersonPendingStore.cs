@@ -16,8 +16,6 @@ namespace MockPersonServer;
 /// </summary>
 public sealed class ConsentBridgePersonPendingStore : IPersonPendingStore
 {
-    private const string Subject = "pairwise-sub";
-
     private readonly InMemoryPersonPendingStore _inner = new();
     private readonly ConsentStore _consent;
     private readonly IReadOnlyList<string> _demoRoles;
@@ -33,23 +31,40 @@ public sealed class ConsentBridgePersonPendingStore : IPersonPendingStore
 
     public PersonPendingEntry Add(
         string resourceUrl, string scope, string agentId, IAAuthKey? agentConfirmationKey,
-        JsonObject? upstreamAct = null, MissionClaim? mission = null)
-        => _inner.Add(resourceUrl, scope, agentId, agentConfirmationKey, upstreamAct, mission);
+        DateTimeOffset agentTokenExpiresAt,
+        JsonObject? upstreamAct = null, MissionClaim? mission = null,
+        DateTimeOffset? authorizationExpiresAt = null)
+        => _inner.Add(resourceUrl, scope, agentId, agentConfirmationKey, agentTokenExpiresAt,
+            upstreamAct, mission, authorizationExpiresAt);
 
     public PersonPendingEntry? Get(string id)
     {
         var entry = _inner.Get(id);
-        // Non-mission three-party entry awaiting consent (PS mints): flip to
-        // allowed once the demo ConsentStore records it.
-        if (entry is { MissionGate: false, Mission: null, AgentConfirmationKey: not null, Status: PersonPendingStatus.Pending }
-            && _consent.IsConsented(entry.AgentId, entry.ResourceUrl, entry.Scope))
+        if (entry is null) return null;
+        entry.Lifecycle.Gate.Wait();
+        try
         {
-            var isAdmin = SampleIdentityClaimsAsserter.IsAdminAgent(entry.AgentId);
-            _inner.MarkAllowed(id, Subject, tenant: null,
-                roles: isAdmin ? _demoRoles : null, groups: isAdmin ? _demoGroups : null);
+            // Non-mission three-party entry awaiting consent (PS mints): flip to
+            // allowed once the demo ConsentStore records it.
+            if (entry is { MissionGate: false, Mission: null, AgentConfirmationKey: not null, Status: PersonPendingStatus.Pending }
+                && !entry.Lifecycle.Delivered && !entry.Lifecycle.Cancelled && !entry.Lifecycle.InvalidCode
+                && entry.PendingExpiresAt > DateTimeOffset.UtcNow
+                && _consent.IsConsented(entry.ConsentAgentId, entry.ResourceUrl, entry.Scope, entry.Account, entry.ResourceKeyThumbprint))
+            {
+                var isAdmin = SampleIdentityClaimsAsserter.IsAdminAgent(entry.ConsentAgentId);
+                entry.Subject = SampleIdentityClaimsAsserter.DirectedSubject(entry.ResourceUrl);
+                entry.Tenant = null;
+                entry.Roles = isAdmin ? _demoRoles : null;
+                entry.Groups = isAdmin ? _demoGroups : null;
+                entry.AdditionalClaims = null;
+                entry.Status = PersonPendingStatus.Allowed;
+            }
+            return entry;
         }
-        return _inner.Get(id);
+        finally { entry.Lifecycle.Gate.Release(); }
     }
+
+    public PersonPendingEntry? GetByCode(string code) => _inner.GetByCode(code);
 
     public void MarkAllowed(
         string id, string subject, string? tenant = null,

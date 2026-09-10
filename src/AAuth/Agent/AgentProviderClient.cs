@@ -46,27 +46,26 @@ public sealed class AgentProviderClient
     /// public key with the AP, and returns the issued agent token.
     /// </summary>
     /// <param name="apIssuer">The AP's issuer URL.</param>
-    /// <param name="agentId">Desired agent identifier (e.g. aauth:myagent@example.com).</param>
+    /// <param name="agentId">Desired agent identifier, or null for provider-assigned identity.</param>
     /// <param name="enrollEndpoint">The AP's enrollment endpoint URL.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The issued agent token (JWT).</returns>
     public async Task<EnrollResult> EnrolAsync(
         string apIssuer,
-        string agentId,
+        string? agentId,
         string enrollEndpoint,
         string? personServer = null,
         CancellationToken ct = default)
+        => await EnrolWithKeyAsync(apIssuer, agentId, enrollEndpoint, AAuthKey.Generate(), personServer, ct);
+
+    /// <summary>Enroll using an existing durable key and body-bound HTTP proof of possession.</summary>
+    public async Task<EnrollResult> EnrolWithKeyAsync(string apIssuer, string? agentId, string enrollEndpoint,
+        AAuthKey key, string? personServer = null, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(apIssuer);
-        ArgumentException.ThrowIfNullOrEmpty(agentId);
         ArgumentException.ThrowIfNullOrEmpty(enrollEndpoint);
-
-        // Generate a new key pair for this agent.
-        // The local handle is the durable key's JWK thumbprint (RFC 7638) —
-        // stable, collision-free, derivable from the key itself, and spec-
-        // endorsed (§ "Agent Identifier Strategies"). It is a purely local
-        // identifier used by IKeyStore; it is never sent to the AP.
-        var key = AAuthKey.Generate();
+        ArgumentNullException.ThrowIfNull(key);
+        ct.ThrowIfCancellationRequested();
         var localKeyHandle = key.ComputeJwkThumbprint();
 
         // Build enrollment request
@@ -87,7 +86,12 @@ public sealed class AgentProviderClient
             request["attestation"] = attestation;
         }
 
-        using var response = await _http.PostAsJsonAsync(enrollEndpoint, request, ct);
+        await _keyStore.StoreAsync(localKeyHandle, key, ct);
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, enrollEndpoint) { Content = JsonContent.Create(request) };
+        httpRequest.Options.Set(HttpSig.AAuthSigningHandler.AdditionalComponentsKey, ["content-type", "content-digest"]);
+        using var signer = new HttpSig.AAuthSigningHandler(key, new HttpSig.HwkSignatureKeyProvider(key));
+        await signer.SignAsync(httpRequest, ct);
+        using var response = await AAuthHttpTransport.SendAsync(_http, httpRequest, ct);
         response.EnsureSuccessStatusCode();
 
         var body = await response.Content.ReadFromJsonAsync<JsonObject>(ct)
@@ -96,11 +100,6 @@ public sealed class AgentProviderClient
         var agentToken = (string?)body["agent_token"]
             ?? throw new InvalidOperationException("AP enrollment response missing 'agent_token'.");
 
-        // The AP may return an opaque "key_id" — this is the AP-internal JWT
-        // `kid` it uses inside the issued agent token. Receivers treat it as
-        // opaque (spec § "Agent Identifier Strategies") and the agent never
-        // needs to send it back at refresh time. We expose it on the result
-        // for diagnostics only; the local keystore key remains the thumbprint.
         var agentTokenKid = (string?)body["key_id"];
 
         // Persist the key under the local handle (thumbprint).
@@ -108,6 +107,7 @@ public sealed class AgentProviderClient
 
         return new EnrollResult
         {
+            AgentId = (string?)body["agent_id"],
             AgentToken = agentToken,
             LocalKeyHandle = localKeyHandle,
             AgentTokenKid = agentTokenKid,
@@ -138,6 +138,7 @@ public sealed class AgentProviderClient
         ArgumentException.ThrowIfNullOrEmpty(refreshEndpoint);
         ArgumentException.ThrowIfNullOrEmpty(localKeyHandle);
 
+        ct.ThrowIfCancellationRequested();
         return await RefreshCoreAsync(refreshEndpoint, localKeyHandle, ct);
     }
 
@@ -152,18 +153,15 @@ public sealed class AgentProviderClient
         // Per spec: single-key refresh signs the POST with the durable key (hwk scheme).
         // The body is empty — the AP identifies the agent via the signature.
         using var signingHandler = new HttpSig.AAuthSigningHandler(
-            key, new HttpSig.HwkSignatureKeyProvider(key))
-        {
-            InnerHandler = new HttpClientHandler(),
-        };
-        using var signedClient = new HttpClient(signingHandler);
+            key, new HttpSig.HwkSignatureKeyProvider(key));
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, refreshEndpoint)
         {
             Content = JsonContent.Create(new JsonObject()),
         };
 
-        using var response = await signedClient.SendAsync(httpRequest, ct);
+        await signingHandler.SignAsync(httpRequest, ct);
+        using var response = await AAuthHttpTransport.SendAsync(_http, httpRequest, ct);
         response.EnsureSuccessStatusCode();
 
         var body = await response.Content.ReadFromJsonAsync<JsonObject>(ct)
@@ -192,6 +190,7 @@ public sealed class AgentProviderClient
         ArgumentException.ThrowIfNullOrEmpty(refreshEndpoint);
         ArgumentException.ThrowIfNullOrEmpty(localKeyHandle);
 
+        ct.ThrowIfCancellationRequested();
         var durableKey = await _keyStore.LoadAsync(localKeyHandle, ct)
             ?? throw new InvalidOperationException($"Key '{localKeyHandle}' not found in store.");
 
@@ -205,18 +204,15 @@ public sealed class AgentProviderClient
 
         // Sign the refresh request with the ephemeral key under jkt-jwt scheme
         using var signingHandler = new HttpSig.AAuthSigningHandler(
-            ephemeralKey, new HttpSig.JktJwtSignatureKeyProvider(() => namingJwt))
-        {
-            InnerHandler = new HttpClientHandler(),
-        };
-        using var signedClient = new HttpClient(signingHandler);
+            ephemeralKey, new HttpSig.JktJwtSignatureKeyProvider(() => namingJwt));
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, refreshEndpoint)
         {
             Content = JsonContent.Create(new JsonObject()),
         };
 
-        using var response = await signedClient.SendAsync(httpRequest, ct);
+        await signingHandler.SignAsync(httpRequest, ct);
+        using var response = await AAuthHttpTransport.SendAsync(_http, httpRequest, ct);
         response.EnsureSuccessStatusCode();
 
         var body = await response.Content.ReadFromJsonAsync<JsonObject>(ct)
@@ -246,6 +242,9 @@ public sealed class TwoKeyRefreshResult
 /// <summary>Result of enrolling with an Agent Provider.</summary>
 public sealed class EnrollResult
 {
+    /// <summary>The provider-assigned identity, when returned by the enrollment endpoint.</summary>
+    public string? AgentId { get; init; }
+
     /// <summary>The issued <c>aa-agent+jwt</c> token.</summary>
     public required string AgentToken { get; init; }
 
@@ -267,9 +266,10 @@ public sealed class EnrollResult
 
     /// <summary>
     /// AP-published key identifier returned in the enrollment response (<c>key_id</c> field).
-    /// Required as the <c>kid</c> parameter for <see cref="AAuth.HttpSig.AAuthClientBuilder.UseJwksUri"/>
-    /// when using <c>jwks_uri</c> signing mode — the receiver selects the
+    /// Used as the <c>kid</c> parameter for <see cref="AAuthClientBuilder.UseJwks"/>
+    /// in an explicit generic direct-JWKS demonstration. The receiver selects the
     /// verification key from the AP's per-agent JWKS by this value.
+    /// This is not the AP's token-signing JWT header <c>kid</c>.
     /// For other signing modes (<c>hwk</c>, <c>jwt</c>, <c>jkt-jwt</c>), this
     /// value is informational only.
     /// </summary>
@@ -278,14 +278,15 @@ public sealed class EnrollResult
     /// "Receivers treat the identifier as opaque"). The agent never sends it
     /// back at refresh time — refresh is identified by HTTP signature alone.
     /// Null when the AP did not return a <c>key_id</c> in the enrollment response;
-    /// in that case <c>jwks_uri</c> signing mode is not available (the agent has
+    /// in that case direct <c>jwks</c> selection is not available (the agent has
     /// no way to know what <c>kid</c> the AP published the key under).
     /// </remarks>
     public string? AgentTokenKid { get; init; }
 
     /// <summary>
     /// The per-agent JWKS URI where the AP publishes this agent's public key.
-    /// Used with <c>scheme=jwks_uri</c> for identity-based access.
+    /// Used only with explicit generic <c>scheme=jwks</c> signing. AAuth resource
+    /// access uses <see cref="AgentToken"/> with the <c>jwt</c> carrier instead.
     /// Null if the AP didn't provide one.
     /// </summary>
     public string? JwksUri { get; init; }

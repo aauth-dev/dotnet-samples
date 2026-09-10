@@ -9,7 +9,7 @@ namespace AAuth.Crypto;
 /// </summary>
 public interface IAAuthKey
 {
-    /// <summary>The JOSE <c>alg</c> value (e.g. "EdDSA", "ES256").</summary>
+    /// <summary>The JOSE <c>alg</c> value (e.g. "Ed25519", "ES256").</summary>
     string Algorithm { get; }
 
     /// <summary>True if this instance can sign (holds private key material).</summary>

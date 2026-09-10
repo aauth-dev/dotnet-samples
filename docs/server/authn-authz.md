@@ -192,7 +192,6 @@ app.MapAAuthWellKnown();
 app.UseAAuthVerification(new AAuthVerificationOptions
 {
     ResourceIdentifier = resourceUrl,
-    RequireIssuerVerification = true,
     TrustedAuthTokenIssuers = trustedPersonServers,
 });
 app.UseAAuthChallenge(challengeOptions);

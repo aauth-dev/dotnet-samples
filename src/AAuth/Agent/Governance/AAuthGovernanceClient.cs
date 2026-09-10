@@ -25,10 +25,33 @@ namespace AAuth.Agent.Governance;
 /// auto-threads the mission claim and PS into every subsequent call.
 /// </para>
 /// </remarks>
-public sealed class AAuthGovernanceClient
+public sealed class AAuthGovernanceClient : IDisposable
 {
     private readonly string _personServer;
     private readonly GovernanceOptions? _defaultOptions;
+    private readonly HttpClient? _ownedClient;
+    private readonly MetadataClient? _ownedMetadata;
+    private bool _disposed;
+
+    internal AAuthGovernanceClient(HttpClient signedClient, MetadataClient metadata,
+        string personServer, GovernanceOptions? defaultOptions, bool ownsClients)
+        : this(signedClient, metadata, personServer, defaultOptions)
+    {
+        if (ownsClients)
+        {
+            _ownedClient = signedClient;
+            _ownedMetadata = metadata;
+        }
+    }
+
+    /// <summary>Release builder-created clients. Constructor/Create dependencies remain caller-owned.</summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _ownedClient?.Dispose();
+        _ownedMetadata?.Dispose();
+    }
 
     /// <summary>Propose and approve missions at the PS <c>mission_endpoint</c>.</summary>
     public MissionClient Mission { get; }

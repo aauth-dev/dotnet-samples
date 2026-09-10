@@ -21,7 +21,7 @@ function dotnetRun(project: string, env?: Record<string, string>) {
   return {
     command: `dotnet run --project ${project}`,
     cwd: repoRoot,
-    env,
+    env: { AAuth__EnableIsolatedDemoConsent: 'true', ...env },
     reuseExistingServer: !process.env.CI,
     stdout: 'pipe' as const,
     stderr: 'pipe' as const,
@@ -57,6 +57,14 @@ export default defineConfig({
   ],
 
   webServer: [
+    {
+      ...dotnetRun('samples/MockResourceServers/Documents/Documents.csproj'),
+      url: 'http://localhost:5007/.well-known/aauth-resource.json',
+    },
+    {
+      ...dotnetRun('samples/MockResourceServers/Catalog/Catalog.csproj'),
+      url: 'http://localhost:5006/.well-known/aauth-resource.json',
+    },
     {
       ...dotnetRun('samples/MockResourceServers/Profile/Profile.csproj'),
       url: 'http://localhost:5000/.well-known/aauth-resource.json',

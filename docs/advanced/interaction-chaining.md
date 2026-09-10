@@ -1,10 +1,28 @@
-# Interaction Chaining
+---
+title: Interaction Chaining
+description: Propagate deferred consent through intermediary resources.
+---
 
 When an intermediary resource calls a downstream resource and the downstream PS/AS requires user consent, the intermediary must propagate the interaction requirement back through the call chain to the original agent.
 
+## Resource-Initiated Permission
+
+A resource token's `interaction` claim is a separate flow. The PS mapper returns
+its authenticated resource interstitial, completes the resource callback, then
+evaluates its own consent. An error callback terminates the pending request;
+neither an allowing identity asserter nor stored mission consent bypasses the
+resource step. Replacement tokens retain their verified mission/upstream context
+and any new resource interaction must also finish before authorization resumes.
+See [Document Release](../workflows/document-release.md) for both runnable apps
+and the host's `ResourceInteractionSessions` configuration contract.
+
 ## Spec Requirement (§Interaction Chaining)
 
-> When a resource acting as an agent receives a `202 Accepted` response with `AAuth-Requirement: requirement=interaction`, and the resource needs to propagate this interaction requirement to its caller, it MUST return a `202 Accepted` response to the original agent with its own `AAuth-Requirement` header containing `requirement=interaction` and its own interaction code. The resource MUST provide its own `Location` URL for the original agent to poll. When the user completes interaction and the resource obtains the downstream auth token, the resource completes the original request and returns the result at its pending URL.
+The intermediary returns its own pending `Location` while forwarding the
+downstream interaction URL/code. The browser approves at that downstream server.
+The sample aborts the downstream exchange on interaction and re-drives it when
+the original caller polls, rather than retaining a downstream poll connection.
+See [Interaction Chaining](../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#interaction-chaining).
 
 ## Flow Diagram
 
@@ -18,14 +36,14 @@ sequenceDiagram
     A->>C: request (auth token)
     C->>PS: exchange for downstream auth token
     PS-->>C: 202 + requirement=interaction
-    C-->>A: 202 + requirement=interaction (Concierge's own URL + code)
+    C-->>A: 202 + own Location, downstream interaction URL/code
 
     A->>U: open interaction URL in browser
     U->>PS: complete consent
 
     loop poll until resolved
         A->>C: GET Location (pending URL)
-        C->>PS: poll downstream PS
+        C->>PS: re-drive downstream exchange
         PS-->>C: still pending / auth token
         C-->>A: 202 (still pending)
     end
@@ -96,7 +114,7 @@ directly):
 ```csharp
 IResult ReEmitChainedInteraction(HttpContext ctx, PendingStore.Entry entry)
 {
-    ctx.Response.Headers.Location = $"/pending/{entry.Id}";
+    ctx.Response.Headers.Location = $"{ctx.Request.Scheme}://{ctx.Request.Host}/pending/{entry.Id}";
     ctx.Response.Headers["Retry-After"] = "1";
     ctx.Response.Headers.CacheControl = "no-store";
     ctx.Response.Headers[AAuthRequirementHeader.Name] =
@@ -112,28 +130,27 @@ been granted the exchange now succeeds and the final result is returned; if it i
 pending the same chained `202` is re-emitted; a denial maps to `403`:
 
 ```csharp
-app.MapGet("/pending/{id}", async (HttpContext ctx, string id, PendingStore pending) =>
+app.MapMethods("/pending/{id}", ["GET", "DELETE"], async (HttpContext ctx, string id, PendingStore pending) =>
 {
     var entry = pending.Get(id);
-    if (entry is null)
-        return Results.Json(new { error = "unknown_pending" }, statusCode: 404);
+    if (entry is null || ctx.Request.Path != $"{entry.PendingPrefix}/{entry.Id}"
+        || !entry.Matches(ctx.Features.Get<UpstreamAuthTokenFeature>()?.Token))
+        return AAuth.Server.AAuthProblemDetails.Create("unknown_pending", statusCode: 404);
 
-    try
+    return await entry.Lifecycle.ExecuteAsync(ctx, entry.ExpiresAt, TimeProvider.System, async () =>
     {
-        var result = await RunChainAsync(ctx, entry.UpstreamToken);
-        pending.Remove(id);
-        return result;
-    }
-    catch (AAuthInteractionChainedException)
-    {
-        // Still waiting — re-emit (same url/code; consent is keyed by triple).
-        return ReEmitChainedInteraction(ctx, entry);
-    }
-    catch (AAuthInteractionDeniedException)
-    {
-        pending.Remove(id);
-        return Results.Json(new { error = "denied" }, statusCode: 403);
-    }
+        if (HttpMethods.IsDelete(ctx.Request.Method))
+        {
+            entry.Lifecycle.Cancel();
+            return Results.NoContent();
+        }
+        try { return await RunChainAsync(ctx, entry.UpstreamToken); }
+        catch (AAuthInteractionChainedException) { return ReEmitChainedInteraction(ctx, entry); }
+        catch (AAuthInteractionDeniedException)
+        {
+            return AAuth.Server.AAuthProblemDetails.Create("denied", statusCode: 403);
+        }
+    });
 });
 ```
 
@@ -182,7 +199,7 @@ apply the same throw-to-abort rule inside the `onInteractionRequired` callback:
 app.MapGet("/", async (HttpContext ctx, PendingStore pending) =>
 {
     var upstream = ctx.Features.Get<UpstreamAuthTokenFeature>()!;
-    var chainHandler = new CallChainingHandler(exchangeClient, options);
+    var chainHandler = new CallChainingHandler(exchangeClient, chainingOptions);
 
     try
     {

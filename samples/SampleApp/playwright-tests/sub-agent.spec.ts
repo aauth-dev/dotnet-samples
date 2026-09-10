@@ -1,5 +1,6 @@
 import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/blazor';
+import { completeWorkerConsent } from '../../../tests/e2e/helpers/worker-consent';
 
 /**
  * Sub-Agents — parent-mediated workers. Unlike the other SampleApp pages this
@@ -24,19 +25,24 @@ test('sub-agent flow shows parent_agent, sub-agent-bound cnf, and nested act', a
   // The flow list records each step of the parent-mediated exchange, including
   // the PS returning the token to the parent, the parent handing it down, and
   // the sub-agent calling the resource itself.
+  await completeWorkerConsent(page, '.alert-warning a', async () => (await page.locator('.list-group-item').count()) === 7);
   await expect(page.locator('.list-group-item')).toHaveCount(7);
-  await expect(page.getByText('PS returns the auth token to the parent')).toBeVisible();
+  await expect(page.getByText('PS returns the AS auth token to the parent')).toBeVisible();
   await expect(page.getByText('Parent hands the token to the worker')).toBeVisible();
   await expect(page.getByText('Sub-agent calls the resource with the token')).toBeVisible();
 
   // The sub-agent token carries the parent_agent claim (the authoritative marker).
-  const subClaims = page.locator('pre code.language-json').first();
+  const subClaims = page.locator('pre code.language-json').nth(1);
   await expect(subClaims).toContainText('parent_agent');
   await expect(subClaims).toContainText('aauth:aria+worker1@');
 
   // The issued auth token binds cnf to the sub-agent (success alert) and nests act.
   await expect(page.locator('.alert-success')).toContainText('matches');
-  const authClaims = page.locator('pre code.language-json').nth(1);
+  const authClaims = page.locator('pre code.language-json').nth(2);
   await expect(authClaims).toContainText('"agent": "aauth:aria+worker1@');
   await expect(authClaims).toContainText('"act"');
+  await expect(authClaims).toContainText('aauth:original@localhost');
+  await expect(authClaims).toContainText('aauth-access.json');
+  await expect(page.locator('pre code.language-json').first()).toContainText('aauth:aria+worker1@localhost');
+  await expect(page.getByText('Actual signed HTTP responses: worker 200, parent 401.')).toBeVisible();
 });

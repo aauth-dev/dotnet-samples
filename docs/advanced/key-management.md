@@ -1,4 +1,7 @@
-# Key Management
+---
+title: Key Management
+description: Software key persistence and explicit custom secure-key integration contracts.
+---
 
 > [Cryptographic Keys](https://explorer.aauth.dev/foundations/keys)
 
@@ -68,7 +71,7 @@ using AAuth.Crypto;
 var store = FileKeyStore.Default();
 
 // Or custom directory
-var store = new FileKeyStore("/opt/myapp/keys");
+var customStore = new FileKeyStore("/opt/myapp/keys");
 
 // Load or generate on first run
 var agentKey = store.LoadOrCreate("agent-signing-key");
@@ -100,7 +103,12 @@ Keys are stored as JWK JSON files:
 
 ## Custom Backend Example
 
-The following `AzureKeyVaultStore` is a **sample implementation of the SDK's `AAuth.Crypto.IKeyStore` interface** — it is not shipped with the SDK. It depends on `SecretClient`, `KeyVaultSecret`, and `RequestFailedException` from the `Azure.Security.KeyVault.Secrets` / `Azure` NuGet packages, which are likewise not part of the AAuth SDK.
+The following `AzureKeyVaultStore` is an illustrative external integration,
+not shipped or compiled by this repository. It requires
+`Azure.Security.KeyVault.Secrets` and `Azure.Core`. It stores exportable
+Ed25519 software keys as secrets and reloads private bytes into the process;
+it is not an HSM or remote-signing implementation. Non-exportable keys require
+an `IAAuthKey` implementation that delegates signing to the secure device.
 
 ```csharp
 // Sample implementation of AAuth.Crypto.IKeyStore — not part of the SDK.

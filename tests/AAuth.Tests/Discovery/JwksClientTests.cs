@@ -12,6 +12,31 @@ namespace AAuth.Tests.Discovery;
 
 public class JwksClientTests
 {
+    [Fact]
+    public async Task ExpiredCache_StillHonorsAttemptFloor()
+    {
+        var time = DateTimeOffset.UtcNow;
+        var stub = new StubHandler();
+        var client = new JwksClient(new HttpClient(stub),
+            cacheTtl: TimeSpan.FromSeconds(1), clock: () => time, transportContract: AAuthTransportContract.InProcessOnly);
+        var uri = new Uri("https://ps.example/jwks");
+        await client.ResolveKeyAsync(uri, "missing");
+        time = time.AddSeconds(2);
+        await client.ResolveKeyAsync(uri, "missing");
+        Assert.Equal(1, stub.Calls);
+    }
+
+    [Fact]
+    public async Task FailedFetch_StillHonorsAttemptFloor()
+    {
+        var stub = new StubHandler { Body = _ => throw new HttpRequestException("offline") };
+        var client = new JwksClient(new HttpClient(stub), transportContract: AAuthTransportContract.InProcessOnly);
+        var uri = new Uri("https://ps.example/jwks");
+        await Assert.ThrowsAsync<HttpRequestException>(() => client.ResolveKeyAsync(uri, "missing"));
+        await Assert.ThrowsAsync<HttpRequestException>(() => client.ResolveKeyAsync(uri, "missing"));
+        Assert.Equal(1, stub.Calls);
+    }
+
     private sealed class StubHandler : HttpMessageHandler
     {
         public int Calls { get; private set; }
@@ -31,7 +56,7 @@ public class JwksClientTests
     {
         var jwk = key.ToPublicJwk();
         jwk["kid"] = kid;
-        jwk["alg"] = AAuthKey.Algorithm;
+        jwk["alg"] = AAuthKey.Ed25519Algorithm;
         jwk["use"] = "sig";
         var keys = new System.Text.Json.Nodes.JsonArray { jwk };
         var doc = new System.Text.Json.Nodes.JsonObject { ["keys"] = keys };
@@ -43,7 +68,7 @@ public class JwksClientTests
     {
         var key = AAuthKey.Generate();
         var stub = new StubHandler { Body = _ => JwksOf("k1", key) };
-        var client = new JwksClient(new HttpClient(stub));
+        var client = new JwksClient(new HttpClient(stub), transportContract: AAuthTransportContract.InProcessOnly);
 
         var resolved = await client.ResolveKeyAsync(new Uri("https://ps.example/jwks"), "k1");
         Assert.NotNull(resolved);
@@ -56,7 +81,8 @@ public class JwksClientTests
         var key = AAuthKey.Generate();
         var time = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
         var stub = new StubHandler { Body = _ => JwksOf("k1", key) };
-        var client = new JwksClient(new HttpClient(stub), minRefreshInterval: TimeSpan.FromMinutes(1), clock: () => time);
+        var client = new JwksClient(new HttpClient(stub), minRefreshInterval: TimeSpan.FromMinutes(1), clock: () => time,
+            transportContract: AAuthTransportContract.InProcessOnly);
 
         await client.ResolveKeyAsync(new Uri("https://ps.example/jwks"), "k1"); // primes cache.
         var result = await client.ResolveKeyAsync(new Uri("https://ps.example/jwks"), "kX");
@@ -77,7 +103,7 @@ public class JwksClientTests
         };
         var client = new JwksClient(new HttpClient(stub),
             minRefreshInterval: TimeSpan.FromMinutes(1),
-            clock: () => time);
+            clock: () => time, transportContract: AAuthTransportContract.InProcessOnly);
 
         await client.ResolveKeyAsync(new Uri("https://ps.example/jwks"), "k1");
         time = time.AddMinutes(2);
@@ -100,7 +126,7 @@ public class JwksClientTests
         };
         var client = new JwksClient(new HttpClient(stub),
             minRefreshInterval: TimeSpan.FromMinutes(1),
-            clock: () => time);
+            clock: () => time, transportContract: AAuthTransportContract.InProcessOnly);
         var uri = new Uri("https://ps.example/jwks");
 
         // Prime the cache with the stale key.

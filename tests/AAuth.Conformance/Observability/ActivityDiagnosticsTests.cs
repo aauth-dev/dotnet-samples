@@ -165,11 +165,11 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
             };
         });
 
-        var httpClient = new HttpClient(stubHandler) { BaseAddress = new Uri("http://localhost:9999/") };
+        var httpClient = new InProcessHttpClient(stubHandler) { BaseAddress = new Uri("http://localhost:9999/") };
         var metadata = new MetadataClient(httpClient);
         var exchangeClient = new TokenExchangeClient(httpClient, metadata);
 
-        await exchangeClient.ExchangeAsync("http://localhost:9999", "rt-xyz");
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => exchangeClient.ExchangeAsync("http://localhost:9999", TestTokens.Resource));
 
         Assert.Contains(_activities, a => a.OperationName == "AAuth.TokenExchange");
     }
@@ -221,18 +221,19 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
             };
         });
 
-        var httpClient = new HttpClient(stubHandler) { BaseAddress = new Uri("http://localhost:9998/") };
+        var httpClient = new InProcessHttpClient(stubHandler) { BaseAddress = new Uri("http://localhost:9998/") };
         var metadata = new MetadataClient(httpClient);
         var exchange = new TokenExchangeClient(httpClient, metadata);
         var holder = new AAuthTokenHolder(agentToken);
 
-        var challengeHandler = new ChallengeHandler(exchange, holder, "http://localhost:9998")
+        var challengeHandler = new ChallengeHandler(exchange, holder, new AAuth.Tokens.TokenVerifier { EgressPolicy = TestEgress.Policy },
+            metadata, new JwksClient(httpClient), "http://localhost:9998")
         {
             InnerHandler = stubHandler,
         };
 
-        using var topClient = new HttpClient(challengeHandler) { BaseAddress = new Uri("http://localhost:9998/") };
-        var response = await topClient.GetAsync("/resource");
+        using var topClient = new InProcessHttpClient(challengeHandler) { BaseAddress = new Uri("http://localhost:9998/") };
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => topClient.GetAsync("/resource"));
 
         Assert.Contains(_activities, a => a.OperationName == "AAuth.ChallengeExchange");
     }
@@ -282,12 +283,12 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
             return new HttpResponseMessage(HttpStatusCode.NotFound);
         });
 
-        var httpClient = new HttpClient(stubHandler) { BaseAddress = new Uri("http://localhost:9997/") };
+        var httpClient = new InProcessHttpClient(stubHandler) { BaseAddress = new Uri("http://localhost:9997/") };
         var metadata = new MetadataClient(httpClient);
         var exchange = new TokenExchangeClient(httpClient, metadata);
 
-        await exchange.ExchangeAsync(
-            "http://localhost:9997", "rt-xyz",
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => exchange.ExchangeAsync(
+            "http://localhost:9997", TestTokens.Resource,
             new TokenExchangeRequest
             {
                 OnInteractionRequired = (_, _) => Task.CompletedTask,
@@ -296,7 +297,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
                     DefaultPollInterval = TimeSpan.FromMilliseconds(1),
                     MinPollInterval = TimeSpan.Zero,
                 },
-            });
+            }));
 
         Assert.Contains(_activities, a => a.OperationName == "AAuth.TokenExchange");
         Assert.Contains(_activities, a => a.OperationName == "AAuth.DeferredPoll");
@@ -308,6 +309,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
     {
         return new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
             Subject = AgentId,
             Key = _apKey,
@@ -321,6 +323,8 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
     {
         return new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = PsIssuer,
             Audience = ResourceId,
             Agent = AgentId,
@@ -342,15 +346,15 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
         builder.Services.AddSingleton(new AAuthVerifier { Clock = () => FixedClock });
         builder.Services.AddSingleton<HttpClient>(_metadataHost!.GetTestClient());
         builder.Services.AddSingleton(sp =>
-            new MetadataClient(sp.GetRequiredService<HttpClient>()));
+            new MetadataClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
         builder.Services.AddSingleton(sp =>
-            new JwksClient(sp.GetRequiredService<HttpClient>()));
+            new JwksClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
 
         var app = builder.Build();
         app.UseAAuthVerification(new AAuthVerificationOptions
         {
+            EgressPolicy = TestEgress.Policy,
             ResourceIdentifier = ResourceId,
-            RequireIssuerVerification = true,
             TrustedAuthTokenIssuers = new HashSet<string> { PsIssuer },
         });
         app.MapGet("/check-tags", (HttpContext ctx) =>
@@ -388,6 +392,14 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
             Assert.NotNull(capturedTags);
+            var diagnosticText = string.Join("\n", capturedTags!.Select(tag => tag.Key + "=" + tag.Value));
+            Assert.DoesNotContain(token, diagnosticText);
+            Assert.DoesNotContain(token.Split('.')[2], diagnosticText);
+            Assert.DoesNotContain("Signature-Key", diagnosticText, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("authorization", diagnosticText, StringComparison.OrdinalIgnoreCase);
+            foreach (var activity in _activities)
+                foreach (var diagnosticEvent in activity.Events)
+                    Assert.DoesNotContain(token, string.Join("\n", diagnosticEvent.Tags.Select(tag => tag.Value)));
             Assert.Equal(expectedScheme, capturedTags![AAuthDiagnostics.TagScheme]);
             Assert.Equal(expectedLevel, capturedTags[AAuthDiagnostics.TagLevel]);
             if (expectedAgent is not null)
@@ -410,7 +422,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
         {
             InnerHandler = capture,
         };
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, $"http://localhost:5000{path}"));
         return capture.Captured!;
     }

@@ -1,0 +1,169 @@
+.protocol-sequence {
+    width: 100%;
+    min-width: 0;
+    margin: 1rem 0 1.25rem;
+    overflow-x: auto;
+    border-block: 1px solid var(--border, #8a969c);
+}
+
+.sequence-canvas {
+    min-width: max(27rem, calc(var(--lane-count) * 4rem));
+    padding: .75rem 0 1rem;
+}
+
+.sequence-participants {
+    display: grid;
+    grid-template-columns: repeat(var(--lane-count), minmax(0, 1fr));
+    text-align: center;
+}
+
+.sequence-participant {
+    min-width: 0;
+    margin: 0 .25rem;
+    padding: .55rem .35rem;
+    overflow-wrap: anywhere;
+    border: 1px solid var(--border, #758d90);
+    border-radius: 4px;
+    background: var(--panel-2, #edf2f0);
+    font-weight: 700;
+}
+
+.sequence-messages {
+    position: relative;
+    min-height: 5rem;
+    padding-top: .35rem;
+}
+
+.sequence-lifeline {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--border, #758d90);
+    opacity: .75;
+}
+
+.sequence-message {
+    position: relative;
+    height: 4rem;
+    opacity: .48;
+}
+
+.sequence-message.current,
+.sequence-message.complete {
+    opacity: 1;
+}
+
+.sequence-message.current {
+    background: color-mix(in srgb, var(--accent, #39768c) 12%, transparent);
+}
+
+.sequence-arrow {
+    position: absolute;
+    top: 1.85rem;
+    height: 0;
+    border-top: 2px solid var(--accent, #39768c);
+}
+
+.sequence-message.complete .sequence-arrow {
+    border-color: var(--ok, #278e74);
+}
+
+.sequence-arrow.rightward::after,
+.sequence-arrow.leftward::after {
+    position: absolute;
+    top: -5px;
+    width: 8px;
+    height: 8px;
+    content: "";
+    border-top: 2px solid currentColor;
+    border-right: 2px solid currentColor;
+    color: var(--accent, #39768c);
+}
+
+.sequence-message.complete .sequence-arrow::after {
+    color: var(--ok, #278e74);
+}
+
+.sequence-arrow.rightward::after {
+    right: 0;
+    transform: rotate(45deg);
+}
+
+.sequence-arrow.leftward::after {
+    left: 0;
+    transform: rotate(-135deg);
+}
+
+.sequence-message.self .sequence-arrow {
+    width: 1.5rem;
+    height: 1rem;
+    border-top: 2px solid var(--accent, #39768c);
+    border-right: 2px solid var(--accent, #39768c);
+    border-bottom: 2px solid var(--accent, #39768c);
+    border-radius: 0 4px 4px 0;
+}
+
+.sequence-message.self .sequence-label {
+    max-width: calc(100% / var(--lane-count) - .75rem);
+}
+
+.sequence-message.self.complete .sequence-arrow {
+    border-color: var(--ok, #278e74);
+}
+
+.sequence-response {
+    top: 2.75rem;
+    border-top-style: dashed;
+    border-top-color: var(--muted, #88949b);
+}
+
+.sequence-message.complete .sequence-response {
+    border-top-color: var(--muted, #88949b);
+}
+
+.sequence-response::after,
+.sequence-message.complete .sequence-response::after {
+    color: var(--muted, #88949b);
+}
+
+.sequence-response-label {
+    position: absolute;
+    top: 2.15rem;
+    z-index: 1;
+    padding: 0 .3rem;
+    transform: translateX(-50%);
+    background: var(--bg, #fff);
+    color: var(--muted, #657177);
+    font-size: .65rem;
+    line-height: 1.1;
+}
+
+.sequence-label {
+    position: absolute;
+    top: .2rem;
+    z-index: 1;
+    max-width: min(48%, 30rem);
+    padding: .1rem .4rem;
+    transform: translateX(-50%);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-radius: 3px;
+    background: var(--bg, #fff);
+    font-size: .78rem;
+    line-height: 1.35;
+}
+
+.sequence-label strong {
+    margin-right: .25rem;
+    color: var(--accent, #39768c);
+}
+
+.sequence-message.complete .sequence-label strong {
+    color: var(--ok, #278e74);
+}
+
+.sequence-message.local .sequence-arrow {
+    border-style: dashed;
+}

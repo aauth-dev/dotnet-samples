@@ -20,6 +20,7 @@ namespace AAuth.Tokens;
 /// </remarks>
 public sealed class ResourceTokenBuilder
 {
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; init; } = AAuth.Discovery.AAuthEgressPolicy.Production;
     /// <summary>The JWT <c>typ</c> value for a resource token.</summary>
     public const string TokenType = "aa-resource+jwt";
 
@@ -39,13 +40,16 @@ public sealed class ResourceTokenBuilder
     public required string AgentJkt { get; init; }
 
     /// <summary>Resource's signing key.</summary>
-    public required AAuthKey Key { get; init; }
+    public required IAAuthKey Key { get; init; }
 
     /// <summary>Resource's key identifier (<c>kid</c>).</summary>
     public required string KeyId { get; init; }
 
     /// <summary>Requested scopes, space-separated (<c>scope</c>).</summary>
     public string? Scope { get; init; }
+    public string? Account { get; init; }
+    public IReadOnlyDictionary<string, string>? ScopeDescriptions { get; init; }
+    public IReadOnlyCollection<string>? PersonServerScopesSupported { get; init; }
 
     /// <summary>
     /// Mission claim (<c>mission</c>) — present when the resource is mission-aware
@@ -53,6 +57,7 @@ public sealed class ResourceTokenBuilder
     /// Carries only <c>approver</c> and <c>s256</c>; the mission content stays at the PS.
     /// </summary>
     public MissionClaim? Mission { get; init; }
+    public AAuth.Headers.Interaction? Interaction { get; init; }
 
     /// <summary>Lifetime; spec says SHOULD NOT exceed 5 minutes. Default 5 minutes.</summary>
     public TimeSpan Lifetime { get; init; } = TimeSpan.FromMinutes(5);
@@ -71,6 +76,8 @@ public sealed class ResourceTokenBuilder
         Require(Agent, nameof(Agent));
         Require(AgentJkt, nameof(AgentJkt));
         Require(KeyId, nameof(KeyId));
+        AccountBinding.Validate(Account);
+        ValidateScopes(Scope, ScopeDescriptions, PersonServerScopesSupported);
         // `required` is a compile-time hint; reflection / default! callers
         // can still pass null. Fail explicitly so the diagnostic points at
         // the configuration rather than surfacing as a NullReferenceException
@@ -83,11 +90,11 @@ public sealed class ResourceTokenBuilder
         {
             throw new InvalidOperationException("Signing key must include a private component.");
         }
-        if (!AAuthUrl.IsHttpsOrLoopback(Issuer))
+        if (!AAuthUrl.IsHttpsOrLoopback(Issuer, EgressPolicy))
         {
             throw new InvalidOperationException("Issuer must be an absolute https:// URL (or http://localhost).");
         }
-        if (!AAuthUrl.IsHttpsOrLoopback(Audience))
+        if (!AAuthUrl.IsHttpsOrLoopback(Audience, EgressPolicy))
         {
             throw new InvalidOperationException("Audience must be an absolute https:// URL (or http://localhost).");
         }
@@ -105,7 +112,7 @@ public sealed class ResourceTokenBuilder
 
         var header = new JsonObject
         {
-            ["alg"] = AAuthKey.Algorithm,
+            ["alg"] = Key.Algorithm,
             ["typ"] = TokenType,
             ["kid"] = KeyId,
         };
@@ -120,16 +127,20 @@ public sealed class ResourceTokenBuilder
             ["agent_jkt"] = AgentJkt,
             ["iat"] = iat.ToUnixTimeSeconds(),
             ["exp"] = exp.ToUnixTimeSeconds(),
+            ["scope"] = Scope ?? string.Empty,
         };
 
-        if (!string.IsNullOrEmpty(Scope))
-        {
-            payload["scope"] = Scope;
-        }
+        if (Account is not null) payload["account"] = Account;
 
         if (Mission is not null)
         {
             payload["mission"] = Mission.ToJsonObject();
+        }
+
+        if (Interaction is not null)
+        {
+            AAuth.Headers.Interaction.Format(Interaction.Url, Interaction.Code, EgressPolicy);
+            payload["interaction"] = new JsonObject { ["url"] = Interaction.Url, ["code"] = Interaction.Code };
         }
 
         return JwtWriter.SignCompact(header, payload, Key);
@@ -140,6 +151,20 @@ public sealed class ResourceTokenBuilder
         if (string.IsNullOrWhiteSpace(value))
         {
             throw new InvalidOperationException($"{name} must be a non-empty string.");
+        }
+    }
+
+    public static void ValidateScopes(string? scope, IReadOnlyDictionary<string, string>? resourceScopes,
+        IReadOnlyCollection<string>? personServerScopes)
+    {
+        if (string.IsNullOrEmpty(scope)) return;
+        var identityScopes = new HashSet<string>(personServerScopes ?? Array.Empty<string>(), StringComparer.Ordinal);
+        foreach (var value in scope.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var declaredResource = resourceScopes is not null && resourceScopes.TryGetValue(value, out var description)
+                && !string.IsNullOrWhiteSpace(description);
+            if (!declaredResource && !identityScopes.Contains(value))
+                throw new InvalidOperationException($"Scope '{value}' is not declared in resource scope_descriptions or PS scopes_supported.");
         }
     }
 

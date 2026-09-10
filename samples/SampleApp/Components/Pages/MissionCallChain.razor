@@ -90,7 +90,7 @@ var authToken = await exchange.ExchangeAsync(personServer, resourceToken,
 // into its resource token, so the agent->concierge exchange is governed
 // by the mission. The Concierge then forwards the mission to its own
 // downstream hop (§Mission Context at Resources, §Call Chaining).
-using var chain = AAuthClientBuilder.SelfIssuing(identity.Key)
+using var chain = AAuthClientBuilder.SelfIssuing(identity.Key).WithEgressPolicy(SampleEgress.Policy)
     .As(identity.Issuer, identity.AgentId)
     .WithKid(identity.KeyId)
     .WithPersonServer(personServer)
@@ -186,8 +186,7 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
             <code>202 Accepted</code> and is waiting for the user to approve before the flow continues.
         </p>
         <p>
-            <strong>Interaction URL:</strong><br />
-            <a href="@_interactionUrl" target="_blank" rel="noopener">@_interactionUrl</a>
+            <a class="btn btn-warning" href="@_interactionUrl" target="_blank" rel="noopener">Open mission approval page</a>
         </p>
         <p class="text-muted">
             Open the link in a new tab and click <strong>Approve</strong>. The SDK is polling&hellip;
@@ -296,9 +295,9 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
 
             _agentToken = MintAgentToken(personServer);
             var handler = new AAuthSigningHandler(_identity.Key, () => _agentToken)
-                { InnerHandler = new HttpClientHandler() };
-            using var signed = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
-            var metadata = new MetadataClient(new HttpClient());
+                { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+            using var signed = new SampleHttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+            var metadata = new MetadataClient(new SampleHttpClient());
             var poller = new DeferredPollerOptions { MaxTotalWait = TimeSpan.FromMinutes(2) };
 
             GovernanceOptions GovernanceFor() => new()
@@ -375,6 +374,7 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
 
     private string MintAgentToken(string personServer) => new AgentTokenBuilder
     {
+        EgressPolicy = SampleEgress.Policy,
         Issuer = _identity.Issuer,
         Subject = _identity.AgentId,
         KeyId = _identity.KeyId,
@@ -428,8 +428,8 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
         });
 
         var authHandler = new AAuthSigningHandler(_identity.Key, () => authToken)
-            { InnerHandler = new HttpClientHandler() };
-        using var authClient = new HttpClient(authHandler);
+            { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        using var authClient = new SampleHttpClient(authHandler);
         using var ok = await authClient.GetAsync(resourceUrl);
         ok.EnsureSuccessStatusCode();
         return await ok.Content.ReadFromJsonAsync<JsonObject>();
@@ -442,7 +442,7 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
     private async Task<string> RunMissionChainAsync(
         string personServer, string conciergeUrl, AAuth.Agent.Mission mission)
     {
-        using var chain = AAuthClientBuilder.SelfIssuing(_identity.Key)
+        using var chain = AAuthClientBuilder.SelfIssuing(_identity.Key).WithEgressPolicy(SampleEgress.Policy)
             .As(_identity.Issuer, _identity.AgentId)
             .WithKid(_identity.KeyId)
             .WithPersonServer(personServer)
@@ -479,7 +479,7 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
 
     private async Task<IReadOnlyList<LogEntry>> FetchMissionLogAsync(string personServer, string s256)
     {
-        using var http = new HttpClient();
+        using var http = new SampleHttpClient();
         try
         {
             var doc = await http.GetFromJsonAsync<JsonObject>(
@@ -542,7 +542,7 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
     private async Task ConfigurePersonServerAsync(
         string personServer, string resourceOrigin, string conciergeUrl)
     {
-        using var http = new HttpClient();
+        using var http = new SampleHttpClient();
         try
         {
             await http.PostAsJsonAsync($"{personServer}/admin/reset", new { });

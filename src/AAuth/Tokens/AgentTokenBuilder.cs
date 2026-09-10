@@ -15,13 +15,14 @@ namespace AAuth.Tokens;
 /// </summary>
 /// <remarks>
 /// JWT signing is hand-rolled because <c>Microsoft.IdentityModel.Tokens</c>
-/// does not ship a built-in EdDSA <c>SignatureProvider</c>, and native
-/// <c>System.Security.Cryptography.EdDSA</c> is not available on .NET 10 in
+/// does not ship a built-in Ed25519 <c>SignatureProvider</c>, and native
+/// <c>System.Security.Cryptography.Ed25519</c> is not available on .NET 10 in
 /// this runtime. The format is small enough that an external JWT stack is
 /// unwarranted.
 /// </remarks>
 public sealed class AgentTokenBuilder
 {
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; init; } = AAuth.Discovery.AAuthEgressPolicy.Production;
     /// <summary>The JWT <c>typ</c> value for an agent token.</summary>
     public const string TokenType = "aa-agent+jwt";
 
@@ -38,7 +39,7 @@ public sealed class AgentTokenBuilder
     public required string KeyId { get; init; }
 
     /// <summary>The agent's signing key. Its public half is embedded as <c>cnf.jwk</c>.</summary>
-    public required AAuthKey Key { get; init; }
+    public required IAAuthKey Key { get; init; }
 
     /// <summary>
     /// Optional separate confirmation key whose public half is embedded as
@@ -46,7 +47,7 @@ public sealed class AgentTokenBuilder
     /// the JWT (AP-issued flow). When null, <see cref="Key"/> doubles as
     /// both signer and confirmation key (self-issued flow).
     /// </summary>
-    public AAuthKey? ConfirmationKey { get; init; }
+    public IAAuthKey? ConfirmationKey { get; init; }
 
     /// <summary>Optional Person Server URL (<c>ps</c>).</summary>
     public string? PersonServer { get; init; }
@@ -102,11 +103,11 @@ public sealed class AgentTokenBuilder
         // Fail fast at the issuer rather than waiting for a verifier reject.
         // Loopback http:// is accepted so the samples can run against the
         // default Kestrel HTTP binding without a dev cert; see AAuthUrl.
-        if (!AAuthUrl.IsHttpsOrLoopback(Issuer))
+        if (!AAuthUrl.IsHttpsOrLoopback(Issuer, EgressPolicy))
         {
             throw new InvalidOperationException("Issuer must be an absolute https:// URL (or http://localhost).");
         }
-        if (PersonServer is not null && !AAuthUrl.IsHttpsOrLoopback(PersonServer))
+        if (PersonServer is not null && !AAuthUrl.IsHttpsOrLoopback(PersonServer, EgressPolicy))
         {
             throw new InvalidOperationException("PersonServer must be an absolute https:// URL (or http://localhost).");
         }
@@ -122,7 +123,7 @@ public sealed class AgentTokenBuilder
             // The agent token's sub MUST be a valid agent identifier; fail fast
             // rather than emitting a token with a malformed sub (and silently
             // skipping the '+' rule because TryParse returned false).
-            if (!AgentId.TryParse(Subject, out var topLevel, out var subjectError))
+            if (!AgentId.TryParse(Subject, out var topLevel, out var subjectError, EgressPolicy))
             {
                 throw new InvalidOperationException(
                     $"Subject is not a valid agent identifier: {subjectError}");
@@ -135,7 +136,7 @@ public sealed class AgentTokenBuilder
         }
         else
         {
-            if (!AgentId.TryParse(ParentAgent, out var parent, out var parentError))
+            if (!AgentId.TryParse(ParentAgent, out var parent, out var parentError, EgressPolicy))
             {
                 throw new InvalidOperationException($"parent_agent is not a valid agent identifier: {parentError}");
             }
@@ -144,7 +145,7 @@ public sealed class AgentTokenBuilder
                 throw new InvalidOperationException(
                     "Single-level depth: an AP MUST NOT issue a sub-agent token whose parent is itself a sub-agent.");
             }
-            if (!AgentId.TryParse(Subject, out var sub, out _) || !sub.IsSubAgent)
+            if (!AgentId.TryParse(Subject, out var sub, out _, EgressPolicy) || !sub.IsSubAgent)
             {
                 throw new InvalidOperationException(
                     "A sub-agent's local part MUST be its parent's local part followed by '+' and a non-empty discriminator.");
@@ -162,7 +163,7 @@ public sealed class AgentTokenBuilder
 
         var header = new JsonObject
         {
-            ["alg"] = AAuthKey.Algorithm,
+            ["alg"] = Key.Algorithm,
             ["typ"] = TokenType,
             ["kid"] = KeyId,
         };

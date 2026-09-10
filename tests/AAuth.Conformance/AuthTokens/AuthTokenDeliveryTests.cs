@@ -25,16 +25,63 @@ public class AuthTokenDeliveryTests
     private readonly AAuthKey _asKey = AAuthKey.Generate();
     private readonly AAuthKey _agentKey = AAuthKey.Generate();
 
+    [Theory]
+    [InlineData("personal", "personal", true)]
+    [InlineData("personal", "work", false)]
+    [InlineData(null, "personal", false)]
+    [InlineData("personal", null, false)]
+    [InlineData("Personal", "personal", false)]
+    public async Task AccountDelivery_MatchesExactResourceExpectation(string? actual, string? expected, bool accepted)
+    {
+        var result = await CreateValidator().ValidateAsync(BuildAuthToken(account: actual),
+            AsIssuer, ResourceAudience, AgentId, _agentKey, expectedAccount: expected);
+        Assert.Equal(accepted, result.IsValid);
+        if (!accepted) Assert.Contains("account_mismatch", result.Error);
+    }
+
+    [Theory]
+    [InlineData("sub")]
+    [InlineData("email")]
+    [InlineData("tenant")]
+    public void IssuerCannotEmbedPersonInActorChain(string personField)
+    {
+        var act = new JsonObject { ["agent"] = "aauth:parent@example", [personField] = "person" };
+        Assert.Throws<InvalidOperationException>(() => BuildAuthToken(act: act));
+        Assert.Throws<ArgumentException>(() => ActChainBuilder.BuildNestedAct("aauth:parent@example", act));
+    }
+
+    [Fact]
+    public async Task CorrectNestedChainCannotHideWrongImmediateActor()
+    {
+        var nested = new JsonObject { ["agent"] = "aauth:original@example" };
+        var token = BuildAuthToken(act: ActChainBuilder.BuildNestedAct("aauth:attacker@example", nested));
+        var result = await CreateValidator().ValidateAsync(token, AsIssuer, ResourceAudience, AgentId, _agentKey,
+            ActChainBuilder.BuildNestedAct("aauth:parent@example", nested));
+        Assert.False(result.IsValid);
+        Assert.Contains("act_chain_mismatch", result.Error);
+    }
+
+    [Fact]
+    public async Task UnrequestedActorChainIsRejected()
+    {
+        var token = BuildAuthToken(act: ActChainBuilder.BuildNestedAct("aauth:unexpected@example"));
+        var result = await CreateValidator().ValidateAsync(token, AsIssuer, ResourceAudience, AgentId, _agentKey);
+        Assert.False(result.IsValid);
+    }
+
     private string BuildAuthToken(
         string? issuer = null,
         string? audience = null,
         string? agent = null,
         IAAuthKey? agentConfirmationKey = null,
         string? scope = null,
-        JsonObject? act = null)
+        JsonObject? act = null,
+        string? account = null)
     {
         return new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = issuer ?? AsIssuer,
             Audience = audience ?? ResourceAudience,
             Agent = agent ?? AgentId,
@@ -43,6 +90,7 @@ public class AuthTokenDeliveryTests
             KeyId = AsKid,
             Scope = scope ?? "data.read",
             Subject = "user-123",
+            Account = account,
             Act = act,
             Dwk = AuthTokenBuilder.AccessDwk,
         }.Build();
@@ -51,7 +99,7 @@ public class AuthTokenDeliveryTests
     private AuthTokenResponseValidator CreateValidator()
     {
         var mockHandler = new MockAsHandler(_asKey, AsKid, AsIssuer);
-        var httpClient = new HttpClient(mockHandler);
+        var httpClient = new InProcessHttpClient(mockHandler);
         var metadata = new MetadataClient(httpClient);
         var jwks = new JwksClient(httpClient);
         return new AuthTokenResponseValidator(metadata, jwks);
@@ -137,7 +185,7 @@ public class AuthTokenDeliveryTests
         // PS passes the expected upstream context (what it used to construct the act)
         var result = await validator.ValidateAsync(
             token, AsIssuer, ResourceAudience, AgentId, _agentKey,
-            expectedActContext: upstreamAct);
+            expectedActContext: ActChainBuilder.BuildNestedAct("aauth:intermediary@example", upstreamAct));
 
         Assert.True(result.IsValid);
     }
@@ -226,7 +274,7 @@ public class AuthTokenDeliveryTests
                 var jwk = _key.ToPublicJwk();
                 jwk["kid"] = _kid;
                 jwk["use"] = "sig";
-                jwk["alg"] = AAuthKey.Algorithm;
+                jwk["alg"] = AAuthKey.Ed25519Algorithm;
                 var jwks = new JsonObject
                 {
                     ["keys"] = new JsonArray { jwk },

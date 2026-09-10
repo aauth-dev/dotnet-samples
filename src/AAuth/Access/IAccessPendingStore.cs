@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
 
@@ -21,11 +22,15 @@ public interface IAccessPendingStore
         string scope,
         string agentId,
         IAAuthKey agentConfirmationKey,
+        DateTimeOffset agentTokenExpiresAt,
         JsonObject? claims,
-        IReadOnlyList<string>? requiredClaims = null);
+        IReadOnlyList<string>? requiredClaims = null,
+        DateTimeOffset? authorizationExpiresAt = null,
+        JsonObject? upstreamAct = null);
 
     /// <summary>Look up a pending entry by id, or <see langword="null"/>.</summary>
     AccessPendingEntry? Get(string id);
+    AccessPendingEntry? GetByCode(string code);
 
     /// <summary>Mark the entry allowed (the poll will mint the auth token).</summary>
     void MarkAllowed(string id);
@@ -45,22 +50,48 @@ public enum AccessPendingStatus
 
     /// <summary>Denied — the next poll returns <c>403 denied</c>.</summary>
     Denied,
+    AwaitingClarification,
+    Review,
 }
 
 /// <summary>A parked federated access decision.</summary>
 public sealed class AccessPendingEntry
 {
+    public AAuth.Tokens.UpstreamTokenValidationResult? UpstreamAuthorization { get; set; }
     /// <summary>Opaque pending id (path segment of the <c>Location</c> URL).</summary>
     public required string Id { get; init; }
+    public AAuth.Server.DeferredState Lifecycle { get; } = new();
+    public AAuth.Server.BrowserInteraction Browser { get; } = new();
+    public string? OwnerKeyThumbprint { get; set; }
+    public string? OwnerAgentIssuer { get; set; }
+    public string? OwnerAgentSubject { get; set; }
+    public AAuth.Headers.ClarificationRequirement? Clarification { get; set; }
+    public DateTimeOffset? ClarificationDeadline { get; set; }
+    public List<string> ClarificationAnswers { get; } = [];
+    public int ClarificationRounds { get; set; }
+    public JsonObject? ResourceContext { get; set; }
+    public string? Account => AAuth.Tokens.AccountBinding.Read(ResourceContext);
 
     /// <summary>The resource URL the auth token will be audienced to.</summary>
     public required string ResourceUrl { get; init; }
 
     /// <summary>The requested scope.</summary>
-    public required string Scope { get; init; }
+    public required string Scope { get; set; }
 
     /// <summary>The verified agent identifier.</summary>
     public required string AgentId { get; init; }
+
+    public required DateTimeOffset AgentTokenExpiresAt { get; init; }
+
+    public DateTimeOffset? AuthorizationExpiresAt { get; init; }
+
+    public JsonObject? UpstreamAct { get; init; }
+
+    public DateTimeOffset ExpiresAt => AuthorizationExpiresAt is { } expiry && expiry < AgentTokenExpiresAt
+        ? expiry : AgentTokenExpiresAt;
+
+    public DateTimeOffset PendingExpiresAt => new[] { ExpiresAt, CreatedAt.AddMinutes(10),
+        ClarificationDeadline ?? ExpiresAt }.Min();
 
     /// <summary>The agent's confirmation key (<c>cnf.jwk</c> binding).</summary>
     public required IAAuthKey AgentConfirmationKey { get; init; }
@@ -72,6 +103,7 @@ public sealed class AccessPendingEntry
     /// poll or push into another PS's entry.
     /// </summary>
     public string? OriginPersonServerHost { get; set; }
+    public IReadOnlyList<AAuth.Server.TokenKey> SourceTokens { get; set; } = [];
 
     /// <summary>Identity claims known when the decision was parked.</summary>
     public JsonObject? Claims { get; init; }
@@ -125,8 +157,11 @@ public sealed class InMemoryAccessPendingStore : IAccessPendingStore
         string scope,
         string agentId,
         IAAuthKey agentConfirmationKey,
+        DateTimeOffset agentTokenExpiresAt,
         JsonObject? claims,
-        IReadOnlyList<string>? requiredClaims = null)
+        IReadOnlyList<string>? requiredClaims = null,
+        DateTimeOffset? authorizationExpiresAt = null,
+        JsonObject? upstreamAct = null)
     {
         Sweep();
         var entry = new AccessPendingEntry
@@ -135,6 +170,9 @@ public sealed class InMemoryAccessPendingStore : IAccessPendingStore
             ResourceUrl = resourceUrl,
             Scope = scope,
             AgentId = agentId,
+            AgentTokenExpiresAt = agentTokenExpiresAt,
+            AuthorizationExpiresAt = authorizationExpiresAt,
+            UpstreamAct = upstreamAct,
             AgentConfirmationKey = agentConfirmationKey,
             Claims = claims,
             RequiredClaims = requiredClaims,
@@ -151,12 +189,26 @@ public sealed class InMemoryAccessPendingStore : IAccessPendingStore
         return _entries.TryGetValue(id, out var entry) ? entry : null;
     }
 
+    public AccessPendingEntry? GetByCode(string code)
+    {
+        Sweep();
+        var normalized = AAuth.Headers.InteractionCode.Normalize(code);
+        return _entries.Values.FirstOrDefault(entry => entry.Browser.Code == normalized);
+    }
+
     /// <inheritdoc />
     public void MarkAllowed(string id)
     {
         if (_entries.TryGetValue(id, out var entry))
         {
-            entry.Status = AccessPendingStatus.Allowed;
+            entry.Lifecycle.Gate.Wait();
+            try
+            {
+                if (entry.Lifecycle.Delivered || entry.Lifecycle.Cancelled || entry.PendingExpiresAt <= DateTimeOffset.UtcNow
+                    || entry.Status != AccessPendingStatus.Pending) return;
+                entry.Status = AccessPendingStatus.Allowed;
+            }
+            finally { entry.Lifecycle.Gate.Release(); }
         }
     }
 
@@ -165,8 +217,15 @@ public sealed class InMemoryAccessPendingStore : IAccessPendingStore
     {
         if (_entries.TryGetValue(id, out var entry))
         {
-            entry.Status = AccessPendingStatus.Denied;
-            entry.DenyReason = reason;
+            entry.Lifecycle.Gate.Wait();
+            try
+            {
+                if (entry.Lifecycle.Delivered || entry.Lifecycle.Cancelled || entry.PendingExpiresAt <= DateTimeOffset.UtcNow
+                    || entry.Status is AccessPendingStatus.Allowed or AccessPendingStatus.Denied) return;
+                entry.Status = AccessPendingStatus.Denied;
+                entry.DenyReason = reason;
+            }
+            finally { entry.Lifecycle.Gate.Release(); }
         }
     }
 
@@ -176,7 +235,7 @@ public sealed class InMemoryAccessPendingStore : IAccessPendingStore
     /// <summary>Evict entries older than <see cref="Ttl"/>.</summary>
     private void Sweep()
     {
-        var cutoff = DateTimeOffset.UtcNow - Ttl;
+        var cutoff = DateTimeOffset.UtcNow - Ttl - TimeSpan.FromHours(1);
         foreach (var kv in _entries)
         {
             if (kv.Value.CreatedAt < cutoff)

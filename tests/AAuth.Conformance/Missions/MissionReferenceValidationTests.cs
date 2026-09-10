@@ -27,7 +27,8 @@ public class MissionReferenceValidationTests
     public void Accepts_LoopbackApprover()
     {
         var header = AAuthMissionHeader.FormatStructured("http://localhost:5100", ValidS256);
-        Assert.True(AAuthMissionHeader.TryParseStructured(header, out _, out _));
+        Assert.False(AAuthMissionHeader.TryParseStructured(header, out _, out _));
+        Assert.True(AAuthMissionHeader.TryParseStructured(header, out _, out _, TestEgress.Policy));
     }
 
     [Theory(DisplayName = "§Mission Reference — non-conformant approver is rejected")]

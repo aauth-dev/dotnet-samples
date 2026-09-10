@@ -22,12 +22,10 @@ namespace AAuth.Server.Verification;
 /// <remarks>
 /// <list type="number">
 /// <item>Pull Signature, Signature-Input, Signature-Key headers.</item>
-/// <item>Parse the scheme and resolve the public key (HTTP sig verification).</item>
-/// <item>Verify the RFC 9421 signature (PoP).</item>
-/// <item>For jwt/jkt-jwt schemes: detect token type from <c>typ</c> header claim.</item>
-/// <item>For <c>aa-agent+jwt</c>: verify JWT signature against AP JWKS.</item>
-/// <item>For <c>aa-auth+jwt</c>: verify JWT signature against PS/AS JWKS, validate
-///   <c>aud</c>, verify PoP binding (<c>cnf.jwk</c>), require <c>act</c> claim.</item>
+/// <item>Validate selected labels, required input and signature timestamps.</item>
+/// <item>Resolve the key after verifying any JWT assertion and its expected type.</item>
+/// <item>Verify the RFC 9421 signature and any covered body digest.</item>
+/// <item>Apply issuer policy and auth-token audience, confirmation and actor checks.</item>
 /// <item>Store <see cref="VerificationResult"/> in HttpContext.Items.</item>
 /// </list>
 /// </remarks>
@@ -43,13 +41,11 @@ public sealed class AAuthVerificationMiddleware
     internal const string JtiStoreItemKey = "AAuth.JtiStore";
 
     /// <summary>Algorithms this server supports, emitted in unsupported_algorithm errors.</summary>
-    private static readonly string[] SupportedAlgorithms = ["EdDSA", "ES256"];
+    private static readonly string[] SupportedAlgorithms = ["Ed25519", "ES256"];
 
     private readonly RequestDelegate _next;
     private readonly AAuthVerifier _verifier;
     private readonly ISignatureKeyResolver _resolver;
-    private readonly MetadataClient? _metadata;
-    private readonly JwksClient? _jwks;
     private readonly AAuthVerificationOptions _options;
 
     /// <summary>Create the middleware.</summary>
@@ -67,11 +63,11 @@ public sealed class AAuthVerificationMiddleware
         ArgumentNullException.ThrowIfNull(options);
         _next = next;
         _verifier = verifier;
-        _resolver = resolver;
-        _metadata = metadata;
-        _jwks = jwks;
         _options = options;
         _tokenVerifier = CreateTokenVerifier(options);
+        _resolver = resolver is DefaultSignatureKeyResolver defaultResolver
+            ? defaultResolver.WithValidation(jwks, metadata, _tokenVerifier)
+            : resolver;
     }
 
     private readonly TokenVerifier _tokenVerifier;
@@ -80,6 +76,7 @@ public sealed class AAuthVerificationMiddleware
     {
         return new TokenVerifier
         {
+            EgressPolicy = options.EgressPolicy,
             MaxActDepth = options.MaxActDepth,
             ClockSkew = options.ClockSkew,
             Clock = options.Clock ?? (() => DateTimeOffset.UtcNow),
@@ -95,26 +92,35 @@ public sealed class AAuthVerificationMiddleware
             !TryGetSingle(req, AAuthConstants.Headers.SignatureInput, out var signatureInput) ||
             !TryGetSingle(req, AAuthConstants.Headers.SignatureKey, out var signatureKey))
         {
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            context.Response.Headers[SignatureError.HeaderName] =
-                SignatureError.Format(SignatureErrorCode.InvalidRequest);
+            WriteFailure(context, SignatureErrorCode.InvalidRequest);
             return;
         }
 
         // Step 1-3: Parse scheme, resolve public key, verify HTTP signature.
         IAAuthKey publicKey;
         SignatureKeyParser.ParsedSignatureKeyInfo parsedInfo;
+        SignatureKeyResolution resolution;
+        string replayIdentity;
+        var label = _options.SignatureLabel;
         try
         {
-            parsedInfo = SignatureKeyParser.ParseAny(signatureKey);
-            var resolution = await _resolver.ResolveAsync(parsedInfo, context.RequestAborted)
+            _verifier.ValidateInput(signatureInput, label, req.Headers.Authorization.FirstOrDefault(),
+                req.Headers[AAuthMissionHeader.Name].FirstOrDefault(), _options.RequiredComponents);
+            var scheme = SignatureKeyHeader.Parse(signatureKey, label).Scheme;
+            if (!_options.AcceptedSchemes.Contains(scheme, StringComparer.Ordinal))
+                throw new AAuthVerificationException(SignatureErrorCode.UnsupportedScheme, "Scheme is not accepted by this endpoint.");
+            parsedInfo = SignatureKeyParser.ParseAny(signatureKey, label);
+            resolution = await _resolver.ResolveAsync(parsedInfo, context.RequestAborted)
                 .ConfigureAwait(false);
             publicKey = resolution.PublicKey;
+            parsedInfo = resolution.Info;
+            if (parsedInfo.Scheme is "jwt" or "self-jwt" && resolution.VerifiedToken is null)
+                throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "Resolver did not return a verified assertion.");
 
             var path = (req.PathBase + req.Path).ToUriComponent();
             if (string.IsNullOrEmpty(path)) { path = "/"; }
 
-            _verifier.Verify(
+            replayIdentity = _verifier.Verify(
                 method: req.Method,
                 authority: req.Host.ToString(),
                 path: path,
@@ -123,15 +129,56 @@ public sealed class AAuthVerificationMiddleware
                 signatureHeader: signature,
                 publicKey: publicKey,
                 authorization: req.Headers.Authorization.FirstOrDefault(),
-                mission: req.Headers[AAuthMissionHeader.Name].FirstOrDefault());
+                mission: req.Headers[AAuthMissionHeader.Name].FirstOrDefault(),
+                label: label,
+                fields: req.Headers.ToDictionary(header => header.Key.ToLowerInvariant(), header => string.Join(", ", header.Value.ToArray())),
+                requiredComponents: _options.RequiredComponents,
+                keyId: resolution.KeyId,
+                fieldValues: req.Headers.ToDictionary(header => header.Key.ToLowerInvariant(), header => header.Value.Select(value => value ?? "").ToArray()),
+                requestScheme: req.Scheme,
+                query: req.QueryString.Value ?? "",
+                requestTarget: context.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpRequestFeature>()?.RawTarget);
+            var covered = (IReadOnlyList<StructuredFieldValues.ParsedItem>)StructuredFields.Member(signatureInput, label).Value;
+            if (covered.Any(component => component.Value is "content-digest"))
+            {
+                var digests = StructuredFields.Dictionary(req.Headers["Content-Digest"].ToString());
+                req.EnableBuffering();
+                using var body = new MemoryStream();
+                await req.Body.CopyToAsync(body, context.RequestAborted).ConfigureAwait(false);
+                req.Body.Position = 0;
+                var matched = false;
+                foreach (var digest in digests)
+                {
+                    byte[]? hash = digest.Key switch
+                    {
+                        "sha-256" => System.Security.Cryptography.SHA256.HashData(body.GetBuffer().AsSpan(0, (int)body.Length)),
+                        "sha-512" => System.Security.Cryptography.SHA512.HashData(body.GetBuffer().AsSpan(0, (int)body.Length)),
+                        _ => null,
+                    };
+                    if (hash is null) continue;
+                    if (digest.Value.Value is not ReadOnlyMemory<byte> expected
+                        || !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(hash, expected.Span))
+                        throw new AAuthVerificationException(SignatureErrorCode.InvalidSignature, "Content-Digest does not match request body.");
+                    matched = true;
+                }
+                if (!matched) throw new AAuthVerificationException(SignatureErrorCode.InvalidInput, "No supported Content-Digest member.");
+            }
         }
-        catch (AAuthVerificationException ex)
+        catch (Exception ex) when (ex is AAuthVerificationException or TokenVerificationException or JwkValidationException
+            or AAuthMetadataException or System.Net.Http.HttpRequestException or FormatException or System.Text.Json.JsonException
+            || ex is OperationCanceledException && !context.RequestAborted.IsCancellationRequested)
         {
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            var errorCode = ClassifyVerificationError(ex);
-            context.Response.Headers[SignatureError.HeaderName] = errorCode == SignatureErrorCode.UnsupportedAlgorithm
-                ? SignatureError.Format(errorCode, supportedAlgorithms: SupportedAlgorithms)
-                : SignatureError.Format(errorCode);
+            var errorCode = ex switch
+            {
+                AAuthVerificationException signatureException => signatureException.Code,
+                TokenVerificationException tokenException => tokenException.Code,
+                JwkValidationException keyException => keyException.Code,
+                AAuthMetadataException metadataException => metadataException.Code,
+                System.Net.Http.HttpRequestException => SignatureErrorCode.InvalidKey,
+                OperationCanceledException => SignatureErrorCode.InvalidKey,
+                _ => SignatureErrorCode.InvalidRequest,
+            };
+            WriteFailure(context, errorCode);
             return;
         }
 
@@ -151,118 +198,84 @@ public sealed class AAuthVerificationMiddleware
             return;
         }
 
-        // Replay detection (§Freshness and Replay, spec L2376/L2378). Replay is
-        // defended on the per-request SIGNATURE, not the carrier token: an auth
-        // token (or jkt-jwt naming JWT) is a reusable credential presented on
-        // every request, so keying the cache on its `jti` would make it
-        // single-use and break legitimate reuse — e.g. an intermediary
-        // re-driving a chained call on each `GET /pending/{id}` poll. We key on
-        // the verified signature itself, which cryptographically binds the spec's
-        // tuple `(key-thumbprint, created, @method, @authority, @path)` PLUS the
-        // covered `signature-key` (the carrier). So a captured signature replayed
-        // verbatim collides and is rejected, while legitimately distinct requests
-        // — a fresh `created`, a different carrier, a different path — never do.
-        // The carrier `jti` is kept only for revocation.
-        var tokenId = parsedInfo.Payload?["jti"]?.GetValue<string>();
-        if (context.Items.TryGetValue(JtiStoreItemKey, out var storeObj) &&
-            storeObj is IJtiStore jtiStore)
+        var tokenId = SignatureKeyParser.Text(parsedInfo.Payload, "jti");
+        var createdSeconds = (long)StructuredFields.Member(signatureInput, label).Parameters["created"];
+        var replayExpiry = DateTimeOffset.FromUnixTimeSeconds(createdSeconds) + _verifier.MaxAge;
+        if (context.Items[JtiStoreItemKey] is IJtiStore jtiStore
+            && !await jtiStore.TryRecordRequestAsync(replayIdentity, replayExpiry, context.RequestAborted).ConfigureAwait(false))
         {
-            // Revocation is keyed on the token's own `jti` (audit/revocation).
-            if (tokenId is { Length: > 0 } revocableJti &&
-                await jtiStore.IsRevokedAsync(revocableJti, context.RequestAborted).ConfigureAwait(false))
-            {
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                context.Response.Headers[SignatureError.HeaderName] =
-                    SignatureError.Format(SignatureErrorCode.InvalidJwt);
-                return;
-            }
-
-            // Replay is keyed on the verified signature for the freshness window.
-            if (ParseSignatureCreated(signatureInput) is { } createdSeconds)
-            {
-                var replayKey = $"{publicKey.ComputeJwkThumbprint()}|{signature}";
-                var replayExpiry = DateTimeOffset.FromUnixTimeSeconds(createdSeconds) + _verifier.MaxAge;
-                if (!await jtiStore.TryRecordAsync(replayKey, replayExpiry, context.RequestAborted).ConfigureAwait(false))
-                {
-                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                    context.Response.Headers[SignatureError.HeaderName] =
-                        SignatureError.Format(SignatureErrorCode.InvalidJwt);
-                    return;
-                }
-            }
+            WriteFailure(context, SignatureErrorCode.InvalidJwt);
+            return;
         }
 
-        // Naming JWT expiration check: for jkt-jwt scheme, reject expired naming JWTs
-        // regardless of RequireIssuerVerification. The naming JWT has a short lifetime
-        // (typically 5 min) to limit the window of delegation from the durable key.
-        if (parsedInfo.Scheme == AAuthConstants.Schemes.JktJwt &&
-            parsedInfo.Payload?["exp"] is JsonNode expClaim)
-        {
-            var now = (_options.Clock ?? (() => DateTimeOffset.UtcNow))();
-            var expTime = DateTimeOffset.FromUnixTimeSeconds(expClaim.GetValue<long>());
-            if (now > expTime + _options.ClockSkew)
-            {
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                context.Response.Headers[SignatureError.HeaderName] =
-                    SignatureError.Format(SignatureErrorCode.InvalidJwt);
-                context.Response.Headers[AAuthConstants.Headers.AAuthError] = "Naming JWT has expired.";
-                return;
-            }
-        }
 
         // Step 4-6: external JWT issuer verification (jwt scheme: agent/auth tokens).
         // The jkt-jwt scheme is self-anchored (draft-05 §3.4) and pseudonymous
         // (§6.3) — it carries no externally-vouched issuer, so it is excluded here;
         // its durable→ephemeral delegation is verified during key resolution.
-        if (_options.RequireIssuerVerification &&
+        if (resolution.VerifiedToken is not null &&
             parsedInfo.Scheme is AAuthConstants.Schemes.Jwt &&
             parsedInfo.Jwt is not null &&
             parsedInfo.Header is not null &&
             parsedInfo.Payload is not null)
         {
-            if (_metadata is null || _jwks is null)
-                throw new InvalidOperationException(
-                    "RequireIssuerVerification is enabled but MetadataClient/JwksClient are not registered. " +
-                    "Register them in DI or set RequireIssuerVerification = false.");
 
             var typ = (string?)parsedInfo.Header["typ"];
             try
             {
                 if (typ == AgentTokenBuilder.TokenType)
                 {
-                    await VerifyAgentTokenIssuerAsync(parsedInfo, context.RequestAborted)
-                        .ConfigureAwait(false);
+                    if (!IssuerTrust.IsTrusted(_options.TrustedAgentProviderIssuers, _options.IsTrustedAgentProviderIssuer, resolution.VerifiedToken.Issuer))
+                        throw new TokenVerificationException("Agent issuer is not trusted by policy.");
                 }
                 else if (typ == AuthTokenBuilder.TokenType)
                 {
-                    await VerifyAuthTokenIssuerAsync(parsedInfo, publicKey, context.RequestAborted)
-                        .ConfigureAwait(false);
+                    if (!IssuerTrust.IsTrusted(_options.TrustedAuthTokenIssuers, _options.IsTrustedAuthTokenIssuer, resolution.VerifiedToken.Issuer))
+                        throw new TokenVerificationException("Auth token issuer is not trusted by policy.");
+                    var audience = _options.ResourceIdentifier ?? SignatureKeyParser.Text(resolution.VerifiedToken.Payload, "aud")
+                        ?? throw new TokenVerificationException("Auth token requires aud.");
+                    var agent = SignatureKeyParser.Text(resolution.VerifiedToken.Payload, "agent")
+                        ?? throw new TokenVerificationException("Auth token requires agent.");
+                    _tokenVerifier.VerifyAuthToken(parsedInfo.Jwt, resolution.IssuerKey!, audience, publicKey, agent,
+                        accountExpectation: _options.ResourceIdentifier is null ? null
+                            : new AccountExpectation(_options.ExpectedAccount?.Invoke(context)));
                 }
                 // Other token types require different trust chains and are not
                 // verified at this layer.
             }
             catch (TokenVerificationException ex)
             {
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                context.Response.Headers[SignatureError.HeaderName] =
-                    SignatureError.Format(SignatureErrorCode.InvalidJwt);
-                context.Response.Headers[AAuthConstants.Headers.AAuthError] = ex.Message;
+                WriteFailure(context, ex.Code);
+                return;
+            }
+        }
+
+        var inventory = context.Items[TokenStoreItemKey] as IJtiStore ?? context.Items[JtiStoreItemKey] as IJtiStore;
+        if (inventory is not null && tokenId is { Length: > 0 } revocableJti &&
+            resolution.VerifiedToken is { } revocableToken)
+        {
+            var tokenKey = new TokenKey(revocableToken.Issuer, revocableJti);
+            if (await inventory.IsRevokedAsync(tokenKey, context.RequestAborted).ConfigureAwait(false)
+                || (revocableToken.ExpiresAt > (_options.Clock?.Invoke() ?? DateTimeOffset.UtcNow)
+                    && !await inventory.RegisterAsync(tokenKey, revocableToken.ExpiresAt, context.RequestAborted).ConfigureAwait(false)))
+            {
+                WriteFailure(context, SignatureErrorCode.InvalidJwt);
                 return;
             }
         }
 
         // Store both the parsed info and the verification result.
+        var trustedPayload = resolution.VerifiedToken?.Payload;
         context.Items[ParsedInfoItemKey] = parsedInfo;
         context.Items[ContextItemKey] = new VerificationResult
         {
             Scheme = parsedInfo.Scheme,
             TokenType = (string?)parsedInfo.Header?["typ"],
-            Issuer = (string?)parsedInfo.Payload?["iss"],
-            Agent = (string?)parsedInfo.Payload?["agent"],
-            Subject = (string?)parsedInfo.Payload?["sub"],
-            Scope = (string?)parsedInfo.Payload?["scope"],
-            IssuerVerified = _options.RequireIssuerVerification &&
-                parsedInfo.Scheme is AAuthConstants.Schemes.Jwt,
+            Issuer = resolution.VerifiedIdentifier,
+            Agent = SignatureKeyParser.Text(trustedPayload, "agent"),
+            Subject = SignatureKeyParser.Text(trustedPayload, "sub"),
+            Scope = SignatureKeyParser.Text(trustedPayload, "scope"),
+            IssuerVerified = resolution.VerifiedToken is not null,
         };
 
         // Store typed verification result in HttpContext.Features for
@@ -270,23 +283,28 @@ public sealed class AAuthVerificationMiddleware
         var tokenType = (string?)parsedInfo.Header?["typ"];
         var tokenTypeEnum = AAuthTokenTypeExtensions.ParseTokenType(tokenType);
         var level = DetermineLevel(parsedInfo.Scheme, tokenType);
-        var scopeString = (string?)parsedInfo.Payload?["scope"];
+        var scopeString = SignatureKeyParser.Text(trustedPayload, "scope");
         var scopes = ParseScopes(scopeString);
-        var roles = ParseStringArray(parsedInfo.Payload?["roles"]);
-        var groups = ParseStringArray(parsedInfo.Payload?["groups"]);
-        var actAgent = parsedInfo.Payload?["act"]?["agent"]?.GetValue<string>();
+        var roles = ParseStringArray(trustedPayload?["roles"]);
+        var groups = ParseStringArray(trustedPayload?["groups"]);
+        var actAgent = SignatureKeyParser.Text(trustedPayload?["act"] as JsonObject, "agent");
 
         context.Features.Set(new AAuthVerificationResult
         {
+            ReplayIdentity = replayIdentity,
+            ReplayExpiresAt = replayExpiry,
             Level = level,
             Scheme = parsedInfo.Scheme,
             TokenType = tokenTypeEnum,
-            Issuer = (string?)parsedInfo.Payload?["iss"],
+            Issuer = resolution.VerifiedIdentifier,
             Agent = tokenType == AuthTokenBuilder.TokenType
-                ? (string?)parsedInfo.Payload?["agent"]
-                : (string?)parsedInfo.Payload?["sub"],
-            Subject = (string?)parsedInfo.Payload?["sub"],
+                ? SignatureKeyParser.Text(trustedPayload, "agent")
+                : SignatureKeyParser.Text(trustedPayload, "sub"),
+            Subject = SignatureKeyParser.Text(trustedPayload, "sub"),
             Scopes = scopes,
+            Account = tokenType == AuthTokenBuilder.TokenType ? AccountBinding.Read(trustedPayload) : null,
+            AccountVerified = tokenType == AuthTokenBuilder.TokenType && _options.ResourceIdentifier is not null
+                && AccountBinding.Read(trustedPayload) is not null,
             Roles = roles,
             Groups = groups,
             ActorAgent = actAgent,
@@ -296,8 +314,7 @@ public sealed class AAuthVerificationMiddleware
             Jkt = parsedInfo.Scheme == AAuthConstants.Schemes.JktJwt
                 ? parsedInfo.Jkt
                 : parsedInfo.ConfirmationKey?.ComputeJwkThumbprint() ?? parsedInfo.Jkt,
-            IssuerVerified = _options.RequireIssuerVerification &&
-                parsedInfo.Scheme is AAuthConstants.Schemes.Jwt,
+            IssuerVerified = resolution.VerifiedToken is not null,
         });
 
         // Set UpstreamAuthTokenFeature for aa-auth+jwt tokens so that
@@ -305,7 +322,7 @@ public sealed class AAuthVerificationMiddleware
         // without re-parsing Signature-Key.
         if (tokenType == AuthTokenBuilder.TokenType &&
             parsedInfo.Jwt is not null &&
-            _options.RequireIssuerVerification &&
+            resolution.VerifiedToken is not null &&
             parsedInfo.Scheme is AAuthConstants.Schemes.Jwt)
         {
             context.Features.Set(new UpstreamAuthTokenFeature(parsedInfo.Jwt));
@@ -319,280 +336,55 @@ public sealed class AAuthVerificationMiddleware
             activity.SetTag(AAuthDiagnostics.TagScheme, parsedInfo.Scheme);
             activity.SetTag(AAuthDiagnostics.TagLevel, level.ToString());
             activity.SetTag(AAuthDiagnostics.TagTokenType, tokenType);
-            if (parsedInfo.Payload?["iss"] is not null)
-                activity.SetTag(AAuthDiagnostics.TagIssuer, (string?)parsedInfo.Payload["iss"]);
+            if (resolution.VerifiedIdentifier is not null)
+                activity.SetTag(AAuthDiagnostics.TagIssuer, resolution.VerifiedIdentifier);
             var agent = tokenType == AuthTokenBuilder.TokenType
-                ? (string?)parsedInfo.Payload?["agent"]
-                : (string?)parsedInfo.Payload?["sub"];
+                ? SignatureKeyParser.Text(trustedPayload, "agent")
+                : SignatureKeyParser.Text(trustedPayload, "sub");
             if (agent is not null)
                 activity.SetTag(AAuthDiagnostics.TagAgent, agent);
             if (scopeString is not null)
                 activity.SetTag(AAuthDiagnostics.TagScope, scopeString);
             activity.SetTag(AAuthDiagnostics.TagIssuerVerified,
-                _options.RequireIssuerVerification && parsedInfo.Scheme is AAuthConstants.Schemes.Jwt);
+                resolution.VerifiedToken is not null);
         }
+
+        if (resolution.VerifiedToken is { } assertion && parsedInfo.Jwt is { } compactToken)
+            context.Features.Set(new AAuthVerifiedAssertion(compactToken, assertion, publicKey));
 
         await _next(context).ConfigureAwait(false);
     }
 
-    private async Task VerifyAgentTokenIssuerAsync(
-        SignatureKeyParser.ParsedSignatureKeyInfo info,
-        CancellationToken ct)
+
+    public const string TokenStoreItemKey = "AAuth.TokenInventory";
+
+    private void WriteFailure(HttpContext context, SignatureErrorCode code)
     {
-        var payload = info.Payload!;
-        var header = info.Header!;
-
-        var iss = (string?)payload["iss"]
-            ?? throw new TokenVerificationException("Agent token is missing 'iss'.");
-        if (!AAuthUrl.IsHttpsOrLoopback(iss))
-            throw new TokenVerificationException("Agent token 'iss' must be an absolute https:// URL (or http://localhost).");
-
-        // Check issuer allow-list.
-        // Trust policy (default open: any verifiable AP issuer), narrowed by an
-        // optional allow-list and/or predicate, composed by AND.
-        if (!IssuerTrust.IsTrusted(_options.TrustedAgentProviderIssuers, _options.IsTrustedAgentProviderIssuer, iss))
-            throw new TokenVerificationException($"Agent token issuer '{iss}' is not trusted by policy.");
-
-        var kid = (string?)header["kid"]
-            ?? throw new TokenVerificationException("Agent token header is missing 'kid'.");
-
-        // Self-issued agent tokens: iss == agent server URL, key is cnf.jwk (self-signed).
-        // AP-issued: iss == AP URL, verify against AP's JWKS.
-        var cnf = payload["cnf"] as JsonObject;
-        var cnfJwk = cnf?["jwk"] as JsonObject;
-
-        // Check if self-issued: verify signature with the embedded cnf.jwk.
-        // A self-issued agent token can be verified by checking if the kid
-        // matches the cnf.jwk thumbprint.
-        if (cnfJwk is not null && info.ConfirmationKey is not null)
-        {
-            var thumbprint = info.ConfirmationKey.ComputeJwkThumbprint();
-            if (kid == thumbprint)
-            {
-                // Self-issued: verify signature with cnf.jwk (already done as HTTP sig
-                // verified with the same key). Structural check is sufficient.
-                _tokenVerifier.Verify(
-                    info.Jwt!,
-                    info.ConfirmationKey,
-                    AgentTokenBuilder.TokenType,
-                    AgentTokenBuilder.AgentDwk);
-                return;
-            }
-        }
-
-        // AP-issued: resolve AP JWKS and verify JWT signature.
-        var metadataUrl = MetadataClient.BuildUrl(iss, AgentTokenBuilder.AgentDwk);
-        JsonObject metadataDoc;
-        try
-        {
-            metadataDoc = await _metadata!.FetchAsync(metadataUrl, ct).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            throw new TokenVerificationException($"Failed to fetch AP metadata from {metadataUrl}.", ex);
-        }
-
-        var jwksUriRaw = (string?)metadataDoc["jwks_uri"]
-            ?? throw new TokenVerificationException($"AP metadata at {metadataUrl} is missing 'jwks_uri'.");
-        if (!Uri.TryCreate(jwksUriRaw, UriKind.Absolute, out var jwksUri))
-            throw new TokenVerificationException($"AP metadata 'jwks_uri' is not an absolute URL: {jwksUriRaw}");
-        if (!AAuthUrl.IsHttpsOrLoopback(jwksUriRaw))
-            throw new TokenVerificationException(
-                $"AP metadata 'jwks_uri' must be https (or http://localhost): {jwksUriRaw}");
-
-        var issuerKey = await _jwks!.ResolveKeyAsync(jwksUri, kid, ct).ConfigureAwait(false)
-            ?? throw new TokenVerificationException($"No key with kid '{kid}' at {jwksUri}.");
-
-        _tokenVerifier.Verify(info.Jwt!, issuerKey, AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk);
+        context.Response.StatusCode = _options.GenericSignatureKeys ? StatusCodes.Status400BadRequest : StatusCodes.Status401Unauthorized;
+        context.Response.Headers[SignatureError.HeaderName] = SignatureError.Format(code,
+            requiredInput: AAuthSigningHandler.CoveredComponents.Concat(_options.RequiredComponents).Distinct().ToArray());
+        if (code == SignatureErrorCode.UnsupportedAlgorithm)
+            context.Response.Headers["Accept-Signature-Alg"] = string.Join(", ", SupportedAlgorithms);
+        if (code == SignatureErrorCode.UnsupportedScheme)
+            context.Response.Headers["Accept-Signature-Scheme"] = string.Join(", ", _options.AcceptedSchemes);
     }
 
-    private async Task VerifyAuthTokenIssuerAsync(
-        SignatureKeyParser.ParsedSignatureKeyInfo info,
-        IAAuthKey httpSignatureKey,
-        CancellationToken ct)
-    {
-        var payload = info.Payload!;
-        var header = info.Header!;
-
-        var iss = (string?)payload["iss"]
-            ?? throw new TokenVerificationException("Auth token is missing 'iss'.");
-        if (!AAuthUrl.IsHttpsOrLoopback(iss))
-            throw new TokenVerificationException("Auth token 'iss' must be an absolute https:// URL (or http://localhost).");
-
-        // Trust policy (§Trust Posture in PS-Asserted Access): default open —
-        // accept any verifiable PS, namespaced by `iss` — narrowed by an optional
-        // allow-list and/or predicate, composed by AND. An empty allow-list denies
-        // all. The issuer's JWT signature is verified below via JWKS discovery;
-        // this is the policy layer on top of that crypto check.
-        if (!IssuerTrust.IsTrusted(_options.TrustedAuthTokenIssuers, _options.IsTrustedAuthTokenIssuer, iss))
-            throw new TokenVerificationException(
-                $"Auth token issuer '{iss}' is not trusted by policy " +
-                "(TrustedAuthTokenIssuers / IsTrustedAuthTokenIssuer).");
-
-        var kid = (string?)header["kid"]
-            ?? throw new TokenVerificationException("Auth token header is missing 'kid'.");
-
-        // Resolve dwk for metadata URL.
-        var dwk = (string?)payload["dwk"]
-            ?? throw new TokenVerificationException("Auth token is missing 'dwk'.");
-        if (dwk != AuthTokenBuilder.PersonDwk && dwk != AuthTokenBuilder.AccessDwk)
-            throw new TokenVerificationException(
-                $"Auth token 'dwk' must be '{AuthTokenBuilder.PersonDwk}' or '{AuthTokenBuilder.AccessDwk}', got '{dwk}'.");
-
-        // Fetch issuer JWKS.
-        var metadataUrl = MetadataClient.BuildUrl(iss, dwk);
-        JsonObject metadataDoc;
-        try
-        {
-            metadataDoc = await _metadata!.FetchAsync(metadataUrl, ct).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            throw new TokenVerificationException($"Failed to fetch issuer metadata from {metadataUrl}.", ex);
-        }
-
-        var jwksUriRaw = (string?)metadataDoc["jwks_uri"]
-            ?? throw new TokenVerificationException($"Issuer metadata at {metadataUrl} is missing 'jwks_uri'.");
-        if (!Uri.TryCreate(jwksUriRaw, UriKind.Absolute, out var jwksUri))
-            throw new TokenVerificationException($"Issuer metadata 'jwks_uri' is not an absolute URL: {jwksUriRaw}");
-        if (!AAuthUrl.IsHttpsOrLoopback(jwksUriRaw))
-            throw new TokenVerificationException(
-                $"Issuer metadata 'jwks_uri' must be https (or http://localhost): {jwksUriRaw}");
-
-        var issuerKey = await _jwks!.ResolveKeyAsync(jwksUri, kid, ct).ConfigureAwait(false)
-            ?? throw new TokenVerificationException($"No key with kid '{kid}' at {jwksUri}.");
-
-        // Full auth token verification: signature + aud + PoP + act.
-        var expectedAudience = _options.ResourceIdentifier;
-        var expectedAgent = (string?)payload["agent"]
-            ?? throw new TokenVerificationException("Auth token is missing 'agent'.");
-
-        if (expectedAudience is not null)
-        {
-            // Full verification: signature, aud binding, PoP, and act.
-            _tokenVerifier.VerifyAuthToken(
-                info.Jwt!,
-                issuerKey,
-                expectedAudience,
-                httpSignatureKey,
-                expectedAgent,
-                expectedDwk: dwk);
-        }
-        else
-        {
-            // ResourceIdentifier is not configured, so `aud` cannot be bound — this
-            // is an identity-only posture. Resources that accept auth tokens SHOULD
-            // set ResourceIdentifier so the §Request-Context Binding `aud` check
-            // (step 5) runs; without it, audience confusion is possible. The
-            // remaining REQUIRED checks below are enforced at parity with
-            // VerifyAuthToken (signature already verified via Verify).
-            var verified = _tokenVerifier.Verify(
-                info.Jwt!, issuerKey,
-                AuthTokenBuilder.TokenType, dwk, expectedAudience: null);
-
-            // §Request-Context Binding step 7: cnf.jwk REQUIRED, with the same
-            // ordered failure classification as VerifyAuthToken —
-            // structurally-incomplete before key decode, then invalid key material,
-            // then PoP mismatch.
-            var cnf = verified.Payload["cnf"] as JsonObject;
-            var jwk = cnf?["jwk"] as JsonObject;
-            if (jwk is null || !TokenVerifier.IsStructurallyCompleteJwk(jwk))
-                throw new TokenVerificationException("Auth token 'cnf.jwk' is absent or structurally incomplete.");
-            var tokenKey = KeyFactory.TryFromJwk(jwk)
-                ?? throw new TokenVerificationException("Auth token 'cnf.jwk' is not parseable as a supported public key (invalid key material).");
-            if (tokenKey.ComputeJwkThumbprint() != httpSignatureKey.ComputeJwkThumbprint())
-                throw new TokenVerificationException("Auth token 'cnf.jwk' does not match the HTTP signature key.");
-
-            // §Request-Context Binding step 8: act is OPTIONAL — absent for direct
-            // authorization. When present, act.agent identifies the immediate
-            // upstream agent (the delegator), not the presenter, and the chain must
-            // be well-formed within the depth limit.
-            var act = verified.Payload["act"] as JsonObject;
-            if (act is not null)
-            {
-                var actAgent = (string?)act["agent"];
-                if (string.IsNullOrEmpty(actAgent) || !AgentId.TryParse(actAgent, out _, out _))
-                    throw new TokenVerificationException("Auth token 'act.agent' is missing or not a valid AAuth agent identifier.");
-                if (!ActChainBuilder.ValidateChain(act, _tokenVerifier.MaxActDepth))
-                    throw new TokenVerificationException("Auth token 'act' chain is malformed (missing 'agent' or exceeds max depth).");
-            }
-
-            // §Auth Token Verification step 9: at least one of sub or scope.
-            var sub = (string?)verified.Payload["sub"];
-            var scope = (string?)verified.Payload["scope"];
-            if (sub is null && string.IsNullOrEmpty(scope))
-                throw new TokenVerificationException("Auth token must contain at least one of 'sub' or 'scope'.");
-        }
-    }
-
-    private static SignatureErrorCode ClassifyVerificationError(AAuthVerificationException ex)
-    {
-        var msg = ex.Message;
-        if (msg.Contains("covered components", StringComparison.OrdinalIgnoreCase))
-            return SignatureErrorCode.InvalidInput;
-        if (msg.Contains("not a valid Ed25519 OKP key", StringComparison.OrdinalIgnoreCase) ||
-            msg.Contains("not an Ed25519 OKP key", StringComparison.OrdinalIgnoreCase) ||
-            msg.Contains("Unsupported or missing 'alg'", StringComparison.OrdinalIgnoreCase) ||
-            msg.Contains("Unsupported 'alg'", StringComparison.OrdinalIgnoreCase))
-            return SignatureErrorCode.UnsupportedAlgorithm;
-        if (msg.Contains("freshness window", StringComparison.OrdinalIgnoreCase) ||
-            msg.Contains("signature verification failed", StringComparison.OrdinalIgnoreCase))
-            return SignatureErrorCode.InvalidSignature;
-        if (msg.Contains("unknown key", StringComparison.OrdinalIgnoreCase) ||
-            msg.Contains("key not found", StringComparison.OrdinalIgnoreCase))
-            return SignatureErrorCode.UnknownKey;
-        if (msg.Contains("scheme is not", StringComparison.OrdinalIgnoreCase) ||
-            msg.Contains("Unsupported Signature-Key scheme", StringComparison.OrdinalIgnoreCase) ||
-            msg.Contains("cnf.jwk", StringComparison.OrdinalIgnoreCase) ||
-            msg.Contains("jkt parameter does not match", StringComparison.OrdinalIgnoreCase))
-            return SignatureErrorCode.InvalidKey;
-        if (msg.Contains("not a compact JWS", StringComparison.OrdinalIgnoreCase) ||
-            msg.Contains("missing the 'cnf'", StringComparison.OrdinalIgnoreCase))
-            return SignatureErrorCode.InvalidJwt;
-        if (msg.Contains("URI must use https", StringComparison.OrdinalIgnoreCase))
-            return SignatureErrorCode.InvalidKey;
-        return SignatureErrorCode.InvalidSignature;
-    }
 
     private static bool TryGetSingle(HttpRequest request, string headerName, out string value)
     {
         value = string.Empty;
         if (!request.Headers.TryGetValue(headerName, out var values) || values.Count == 0)
             return false;
-        if (values.Count != 1 || values[0] is null)
+        if (values.Any(string.IsNullOrEmpty))
             return false;
-        value = values[0]!;
+        value = string.Join(", ", values.Select(item => item!.Trim(' ', '\t')));
         return true;
     }
 
-    // Extract the `created` Unix timestamp from a Signature-Input value
-    // (`sig=(...);created=NNN`), used only to bound the replay-cache entry's
-    // expiry. This is a lightweight extract, NOT the authoritative parse — the
-    // signature has already been fully validated by AAuthVerifier (see
-    // AAuthVerifier.ParseSignatureInput, which validates `created` and the
-    // covered components and throws on a missing/invalid `created`). Returns null
-    // when absent; because verification already requires `created`, a null here
-    // only means no replay entry is written (replay defense is MAY, not MUST).
-    private static long? ParseSignatureCreated(string signatureInput)
-    {
-        const string Marker = "created=";
-        var idx = signatureInput.IndexOf(Marker, StringComparison.Ordinal);
-        if (idx < 0)
-            return null;
-        var start = idx + Marker.Length;
-        var end = start;
-        if (end < signatureInput.Length && signatureInput[end] == '-')
-            end++;
-        while (end < signatureInput.Length && char.IsDigit(signatureInput[end]))
-            end++;
-        return long.TryParse(signatureInput.AsSpan(start, end - start), out var created)
-            ? created
-            : null;
-    }
 
     private static AAuthLevel DetermineLevel(string scheme, string? tokenType)
     {
-        if (scheme == AAuthConstants.Schemes.Hwk)
+        if (scheme is AAuthConstants.Schemes.Hwk or AAuthConstants.Schemes.JktJwt)
             return AAuthLevel.Pseudonymous;
         if (tokenType == AuthTokenBuilder.TokenType)
             return AAuthLevel.Authorized;

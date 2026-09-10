@@ -13,6 +13,7 @@ namespace AAuth.Agent;
 /// </summary>
 public sealed class TokenExchangeRequest
 {
+    public string? Account { get; init; }
     /// <summary>
     /// Invoked when the PS returns <c>202</c> with an interaction requirement,
     /// before polling begins. Callers display the user-facing URL/code via

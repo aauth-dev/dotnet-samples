@@ -6,6 +6,7 @@ namespace AAuth.Server;
 /// <summary>A parked resource-managed interaction awaiting the user's approval.</summary>
 public sealed class InteractionPendingEntry
 {
+    public string? Account { get; init; }
     /// <summary>The interaction code presented to the user.</summary>
     public required string Code { get; init; }
 
@@ -14,6 +15,12 @@ public sealed class InteractionPendingEntry
 
     /// <summary>The agent's JWK thumbprint captured when the interaction was parked.</summary>
     public required string AgentJkt { get; init; }
+    public string? OwnerIssuer { get; set; }
+    public string? OwnerAgent { get; set; }
+    public BrowserInteraction Browser { get; init; } = new();
+    public DeferredState Lifecycle { get; } = new();
+    public bool Denied { get; set; }
+    internal bool TokenConsumed { get; set; }
 
     /// <summary>When this pending interaction (and its code) expires.</summary>
     public DateTimeOffset Expiry { get; init; }
@@ -40,7 +47,7 @@ public interface IInteractionPendingStore
     /// <paramref name="agentJkt"/>, generating a spec-conformant code with the
     /// given time-to-live.
     /// </summary>
-    InteractionPendingEntry Park(string scope, string agentJkt, TimeSpan ttl);
+    InteractionPendingEntry Park(string scope, string agentJkt, TimeSpan ttl, string? account = null);
 
     /// <summary>Look up a parked interaction by code (normalized); null if unknown or expired.</summary>
     InteractionPendingEntry? Get(string code);
@@ -71,15 +78,22 @@ public sealed class InMemoryInteractionPendingStore : IInteractionPendingStore
     private readonly ConcurrentDictionary<string, InteractionPendingEntry> _entries = new(StringComparer.Ordinal);
 
     /// <inheritdoc/>
-    public InteractionPendingEntry Park(string scope, string agentJkt, TimeSpan ttl)
+    public InteractionPendingEntry Park(string scope, string agentJkt, TimeSpan ttl, string? account = null)
     {
+        AAuth.Tokens.AccountBinding.Validate(account);
         ArgumentException.ThrowIfNullOrEmpty(scope);
         ArgumentException.ThrowIfNullOrEmpty(agentJkt);
+        if (ttl <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(ttl));
+        foreach (var pair in _entries)
+            if (pair.Value.Expiry.AddHours(1) <= DateTimeOffset.UtcNow) _entries.TryRemove(pair.Key, out _);
+        var browser = new BrowserInteraction();
         var entry = new InteractionPendingEntry
         {
-            Code = AAuthInteractionCode.Generate(),
+            Code = browser.Code,
+            Browser = browser,
             Scope = scope,
             AgentJkt = agentJkt,
+            Account = account,
             Expiry = DateTimeOffset.UtcNow.Add(ttl),
         };
         _entries[AAuthInteractionCode.Normalize(entry.Code)] = entry;
@@ -90,14 +104,11 @@ public sealed class InMemoryInteractionPendingStore : IInteractionPendingStore
     public InteractionPendingEntry? Get(string code)
     {
         ArgumentNullException.ThrowIfNull(code);
+        foreach (var pair in _entries)
+            if (pair.Value.Expiry.AddHours(1) <= DateTimeOffset.UtcNow) _entries.TryRemove(pair.Key, out _);
         var key = AAuthInteractionCode.Normalize(code);
         if (!_entries.TryGetValue(key, out var entry))
         {
-            return null;
-        }
-        if (DateTimeOffset.UtcNow > entry.Expiry)
-        {
-            _entries.TryRemove(key, out _);
             return null;
         }
         return entry;
@@ -111,8 +122,15 @@ public sealed class InMemoryInteractionPendingStore : IInteractionPendingStore
         {
             return false;
         }
-        entry.Approved = true;
-        return true;
+        entry.Lifecycle.Gate.Wait();
+        try
+        {
+            if (entry.Expiry <= DateTimeOffset.UtcNow || entry.Lifecycle.Delivered || entry.Lifecycle.Cancelled
+                || entry.Lifecycle.InvalidCode || entry.Denied || entry.Approved) return false;
+            entry.Approved = true;
+            return true;
+        }
+        finally { entry.Lifecycle.Gate.Release(); }
     }
 
     /// <inheritdoc/>
@@ -120,18 +138,21 @@ public sealed class InMemoryInteractionPendingStore : IInteractionPendingStore
     {
         entry = null!;
         var existing = Get(code);
-        if (existing is null || !existing.Approved)
+        if (existing is null)
         {
             return false;
         }
         // TryRemove is atomic: only the first concurrent caller wins, so an
         // approved interaction issues at most one token (single-use).
-        if (_entries.TryRemove(AAuthInteractionCode.Normalize(code), out var removed))
+        lock (existing)
         {
-            entry = removed;
+            if (!existing.Approved || existing.TokenConsumed || existing.Denied
+                || existing.Expiry <= DateTimeOffset.UtcNow || existing.Lifecycle.Cancelled
+                || existing.Lifecycle.InvalidCode) return false;
+            existing.TokenConsumed = true;
+            entry = existing;
             return true;
         }
-        return false;
     }
 
     /// <inheritdoc/>

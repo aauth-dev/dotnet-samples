@@ -27,7 +27,7 @@ public class DeferredPollerTests
         var handler = new ScriptedHandler(
             r => Respond(HttpStatusCode.Accepted, retryAfter: TimeSpan.Zero),
             r => Respond(HttpStatusCode.OK, body: "{\"auth_token\":\"abc\"}"));
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         var poller = new DeferredPoller(client, new DeferredPollerOptions
         {
             DefaultPollInterval = TimeSpan.FromMilliseconds(10),
@@ -47,7 +47,7 @@ public class DeferredPollerTests
         var handler = new ScriptedHandler(
             r => { observed.Add(DateTimeOffset.UtcNow); return Respond(HttpStatusCode.Accepted, retryAfter: TimeSpan.FromMilliseconds(150)); },
             r => { observed.Add(DateTimeOffset.UtcNow); return Respond(HttpStatusCode.OK, body: "{}"); });
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         var poller = new DeferredPoller(client, new DeferredPollerOptions
         {
             DefaultPollInterval = TimeSpan.FromMilliseconds(10),
@@ -65,7 +65,7 @@ public class DeferredPollerTests
     public async Task PollAsync_TimesOut_WhenServerKeepsReturning202()
     {
         var handler = new ScriptedHandler(r => Respond(HttpStatusCode.Accepted, retryAfter: TimeSpan.FromMilliseconds(10)));
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         var poller = new DeferredPoller(client, new DeferredPollerOptions
         {
             MaxTotalWait = TimeSpan.FromMilliseconds(50),
@@ -80,7 +80,7 @@ public class DeferredPollerTests
     public async Task PollAsync_RaisesCancellation()
     {
         var handler = new ScriptedHandler(r => Respond(HttpStatusCode.Accepted, retryAfter: TimeSpan.FromMilliseconds(100)));
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         var poller = new DeferredPoller(client, new DeferredPollerOptions
         {
             MaxTotalWait = TimeSpan.FromSeconds(10),
@@ -101,7 +101,7 @@ public class DeferredPollerTests
             r => Respond(HttpStatusCode.Accepted, retryAfter: TimeSpan.Zero),
             r => Respond(HttpStatusCode.Accepted, retryAfter: TimeSpan.Zero),
             r => Respond(HttpStatusCode.OK, body: "{}"));
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         var poller = new DeferredPoller(client, new DeferredPollerOptions
         {
             DefaultPollInterval = TimeSpan.FromMilliseconds(1),
@@ -128,7 +128,7 @@ public class DeferredPollerTests
         // cause the poller to sleep well past the budget before timing out.
         var handler = new ScriptedHandler(
             r => Respond(HttpStatusCode.Accepted, retryAfter: TimeSpan.FromSeconds(30)));
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         var poller = new DeferredPoller(client, new DeferredPollerOptions
         {
             MaxTotalWait = TimeSpan.FromMilliseconds(50),

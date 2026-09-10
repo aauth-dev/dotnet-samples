@@ -31,32 +31,30 @@ public enum TourMode
 
 /// <summary>
 /// Which Signature-Key scheme the agent uses for resource requests.
-/// These map to the AAuth signing modes defined in the HTTP Signature Keys
-/// specification. Three-party flows (Autonomous/Deferred) MUST use
-/// <see cref="Jwt"/> per spec (requires a PS-issued token); identity-based
-/// access (no PS) uses <see cref="Hwk"/> or <see cref="JwksUri"/>.
+/// AAuth resource flows use <see cref="Jwt"/> with an agent or auth token.
+/// The other choices are separately labeled generic Signature Keys demos,
+/// not AAuth access modes. JWT agent identity does not require a Person Server.
 /// </summary>
 public enum SigningMode
 {
     /// <summary>
     /// <c>sig=jwt</c> — Agent Token mode. The full agent token (or auth
     /// token) travels inline. Resource learns: agent identity, PS URL,
-    /// bound signing key. Requires a Person Server; used in three-party flows.
+    /// bound signing key. A Person Server is optional for agent identity.
     /// </summary>
     Jwt,
     /// <summary>
     /// <c>sig=hwk</c> — Pseudonymous mode. The full public key is sent inline
-    /// (base64url-encoded JWK). Resource learns: a specific key signed this —
+    /// as structured public JWK members. Resource learns: a specific key signed this -
     /// identity unknown. Use for accountable access, rate-limiting by key.
     /// </summary>
     Hwk,
     /// <summary>
-    /// <c>sig=jwks_uri</c> — Agent Identity mode. The resource fetches the
-    /// agent's JWKS from a well-known URI to resolve the signing key.
-    /// Resource learns: full agent identifier + verifiable public key.
-    /// Use for access control by identity, replacing API keys.
+    /// <c>sig=jwks</c> - generic direct-key URL identity. The receiver fetches
+    /// the exact JWKS URL and selects the named key. This is not metadata
+    /// discovery and does not establish an AAuth agent identity.
     /// </summary>
-    JwksUri,
+    Jwks,
     /// <summary>
     /// <c>sig=jkt-jwt</c> — Key Rotation mode. A naming JWT binds the current
     /// signing key to the agent's stable identity via JWK thumbprint confirmation.

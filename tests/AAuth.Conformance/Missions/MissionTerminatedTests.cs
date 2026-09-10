@@ -24,8 +24,8 @@ public class MissionTerminatedTests
 
     private static TokenExchangeClient BuildClient(HttpMessageHandler handler)
     {
-        var http = new HttpClient(handler) { BaseAddress = new Uri(Ps) };
-        var metadata = new MetadataClient(new HttpClient(handler));
+        var http = new InProcessHttpClient(handler) { BaseAddress = new Uri(Ps) };
+        var metadata = new MetadataClient(new InProcessHttpClient(handler));
         return new TokenExchangeClient(http, metadata);
     }
 
@@ -35,7 +35,7 @@ public class MissionTerminatedTests
         var client = BuildClient(new TerminatedHandler(deferUntilPoll: false));
 
         var ex = await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() =>
-            client.ExchangeAsync(Ps, "fake-resource-token"));
+            client.ExchangeAsync(Ps, TestTokens.Resource));
 
         Assert.Equal("terminated", ex.MissionStatus);
     }
@@ -46,8 +46,13 @@ public class MissionTerminatedTests
         var client = BuildClient(new TerminatedHandler(deferUntilPoll: true));
 
         var ex = await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() =>
-            client.ExchangeAsync(Ps, "fake-resource-token", new TokenExchangeRequest
+            client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
             {
+                PollerOptions = new DeferredPollerOptions
+                {
+                    DefaultPollInterval = TimeSpan.Zero,
+                    MinPollInterval = TimeSpan.Zero,
+                },
                 OnInteractionRequired = (_, _) => Task.CompletedTask,
             }));
 

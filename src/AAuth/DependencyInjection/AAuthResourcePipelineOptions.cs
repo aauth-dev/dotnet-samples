@@ -11,12 +11,7 @@ namespace AAuth;
 /// </summary>
 public sealed class AAuthResourcePipelineOptions
 {
-    /// <summary>
-    /// When true, the middleware verifies the JWT issuer's signature via JWKS discovery.
-    /// Default: <c>true</c>.
-    /// </summary>
-    public bool RequireIssuerVerification { get; set; } = true;
-
+    public Func<Microsoft.AspNetCore.Http.HttpContext, string?>? AccountSelector { get; set; }
     /// <summary>
     /// Access mode controlling whether the middleware challenges or passes through.
     /// Default: <see cref="AAuthAccessMode.RequireAuthToken"/>.

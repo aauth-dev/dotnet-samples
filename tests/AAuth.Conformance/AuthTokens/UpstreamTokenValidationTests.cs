@@ -26,6 +26,38 @@ public class UpstreamTokenValidationTests
     private readonly AAuthKey _psKey = AAuthKey.Generate();
     private readonly AAuthKey _agentKey = AAuthKey.Generate();
 
+    [Theory]
+    [InlineData("missing-cnf")]
+    [InlineData("incomplete-key")]
+    [InlineData("private-key")]
+    [InlineData("missing-sub-scope")]
+    [InlineData("malformed-act")]
+    [InlineData("person-sub")]
+    [InlineData("person-email")]
+    [InlineData("nested-person")]
+    [InlineData("nested-agent")]
+    public async Task SignedButStructurallyInvalidUpstreamIsRejected(string variant)
+    {
+        var segments = BuildValidUpstreamToken().Split('.');
+        var header = JsonNode.Parse(Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(segments[0]))!.AsObject();
+        var payload = JsonNode.Parse(Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(segments[1]))!.AsObject();
+        switch (variant)
+        {
+            case "missing-cnf": payload.Remove("cnf"); break;
+            case "incomplete-key": payload["cnf"]!["jwk"]!.AsObject().Remove("x"); break;
+            case "private-key": payload["cnf"]!["jwk"]!["d"] = "private"; break;
+            case "missing-sub-scope": payload.Remove("sub"); payload.Remove("scope"); break;
+            case "malformed-act": payload["act"] = "not-an-object"; break;
+            case "person-sub": payload["act"] = new JsonObject { ["agent"] = AgentId, ["sub"] = "person" }; break;
+            case "person-email": payload["act"] = new JsonObject { ["agent"] = AgentId, ["email"] = "person@example.test" }; break;
+            case "nested-person": payload["act"] = new JsonObject { ["agent"] = AgentId, ["act"] = new JsonObject { ["agent"] = AgentId, ["tenant"] = "person-tenant" } }; break;
+            case "nested-agent": payload["act"] = new JsonObject { ["agent"] = AgentId, ["act"] = new JsonObject { ["agent"] = "not-an-agent" } }; break;
+        }
+        var result = await CreateValidator().ValidateAsync(JwtWriter.SignCompact(header, payload, _psKey), ResourceAudience, _ => true);
+        Assert.False(result.IsValid);
+        Assert.NotNull(result.Error);
+    }
+
     private string BuildValidUpstreamToken(
         string? issuer = null,
         string? audience = null,
@@ -36,6 +68,8 @@ public class UpstreamTokenValidationTests
     {
         return new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = issuer ?? PsIssuer,
             Audience = audience ?? ResourceAudience,
             Agent = agent ?? AgentId,
@@ -53,7 +87,7 @@ public class UpstreamTokenValidationTests
     private UpstreamTokenValidator CreateValidator()
     {
         var mockHandler = new MockJwksHandler(_psKey, PsKid, PsIssuer);
-        var httpClient = new HttpClient(mockHandler);
+        var httpClient = new InProcessHttpClient(mockHandler);
         var metadata = new MetadataClient(httpClient);
         var jwks = new JwksClient(httpClient);
         return new UpstreamTokenValidator(metadata, jwks);
@@ -172,6 +206,8 @@ public class UpstreamTokenValidationTests
         // Build a token that's already expired
         var token = new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = PsIssuer,
             Audience = ResourceAudience,
             Agent = AgentId,
@@ -180,6 +216,7 @@ public class UpstreamTokenValidationTests
             KeyId = PsKid,
             Scope = "data.read",
             IssuedAt = DateTimeOffset.UtcNow - TimeSpan.FromHours(2),
+            TimeProvider = new IssuanceTestClock(DateTimeOffset.UtcNow - TimeSpan.FromHours(2)),
             Lifetime = TimeSpan.FromMinutes(5),
         }.Build();
 
@@ -278,7 +315,7 @@ public class UpstreamTokenValidationTests
                 var jwk = _key.ToPublicJwk();
                 jwk["kid"] = _kid;
                 jwk["use"] = "sig";
-                jwk["alg"] = AAuthKey.Algorithm;
+                jwk["alg"] = AAuthKey.Ed25519Algorithm;
                 var jwks = new JsonObject
                 {
                     ["keys"] = new JsonArray { jwk },

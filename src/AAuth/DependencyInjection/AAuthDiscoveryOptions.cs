@@ -7,6 +7,10 @@ namespace AAuth;
 /// </summary>
 public sealed class AAuthDiscoveryOptions
 {
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
+    public int MaxCacheEntries { get; set; } = 1024;
+    public TimeSpan MaxCacheAge { get; set; } = TimeSpan.FromHours(24);
+
     /// <summary>Metadata cache TTL. Default: 5 minutes.</summary>
     public TimeSpan MetadataCacheTtl { get; set; } = TimeSpan.FromMinutes(5);
 

@@ -48,12 +48,20 @@ public class GovernanceDeferredConsentMapperTests
         // Stand in for the verification middleware: present a verified agent token.
         app.Use(async (ctx, next) =>
         {
+            if (ctx.Request.Headers.ContainsKey("Test-Unauthenticated"))
+            {
+                await next();
+                return;
+            }
             ctx.Features.Set(new AAuthVerificationResult
             {
                 Level = AAuthLevel.Identified,
                 Scheme = "jwt",
+                IssuerVerified = true,
+                Issuer = ctx.Request.Headers["Test-Issuer"].FirstOrDefault() ?? "https://agent.example",
+                Jkt = ctx.Request.Headers["Test-Key"].FirstOrDefault() ?? "verified-key",
                 TokenType = AAuthTokenType.AgentToken,
-                Agent = Agent,
+                Agent = ctx.Request.Headers["Test-Agent"].FirstOrDefault() ?? Agent,
             });
             await next();
         });
@@ -73,6 +81,121 @@ public class GovernanceDeferredConsentMapperTests
 
     private static async Task<JsonObject?> ReadJson(HttpResponseMessage response)
         => JsonNode.Parse(await response.Content.ReadAsStringAsync()) as JsonObject;
+
+    [Theory]
+    [InlineData("Test-Agent", "aauth:foreign@agent.example", "GET")]
+    [InlineData("Test-Issuer", "https://foreign.example", "GET")]
+    [InlineData("Test-Key", "foreign-key", "GET")]
+    [InlineData("Test-Agent", "aauth:foreign@agent.example", "DELETE")]
+    [InlineData("Test-Issuer", "https://foreign.example", "DELETE")]
+    [InlineData("Test-Key", "foreign-key", "DELETE")]
+    [InlineData("Test-Unauthenticated", "true", "GET")]
+    [InlineData("Test-Unauthenticated", "true", "DELETE")]
+    public async Task Pending_ForeignOwnerCannotConsumeOrCancel(string header, string value, string method)
+    {
+        using var host = await BuildHostAsync(services =>
+        {
+            services.AddAAuthDeferredConsent();
+            services.AddSingleton<IMissionApprover>(new StubApprover(MissionApprovalDecision.Defer()));
+        });
+        using var client = host.GetTestServer().CreateClient();
+        using var parked = await client.PostAsync("https://localhost/mission",
+            JsonContent(new JsonObject { ["description"] = "Owner-bound consent" }));
+        var location = "https://localhost" + parked.Headers.Location;
+        var id = parked.Headers.Location!.ToString().Split('/').Last();
+        var store = host.Services.GetRequiredService<IDeferredConsentStore>();
+        await store.ResolveAsync(id, true);
+        using var foreign = new HttpRequestMessage(new HttpMethod(method), location);
+        foreign.Headers.Add(header, value);
+        using var rejected = await client.SendAsync(foreign);
+        Assert.Equal(HttpStatusCode.NotFound, rejected.StatusCode);
+        using var legitimate = await client.GetAsync(location);
+        Assert.Equal(HttpStatusCode.OK, legitimate.StatusCode);
+        using var replay = await client.GetAsync(location);
+        Assert.Equal(HttpStatusCode.Gone, replay.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Permission_Deferred_RevalidatesMissionBeforeDelivery(bool changedOwner)
+    {
+        using var host = await BuildHostAsync(services =>
+        {
+            services.AddAAuthDeferredConsent();
+            services.AddSingleton<IPermissionDecider>(new StubDecider(
+                new PermissionDecision(PermissionOutcome.Prompt, PermissionDecisionReason.OutOfScope)));
+        });
+        using var client = host.GetTestServer().CreateClient();
+        using var created = await client.PostAsync("https://localhost/mission",
+            JsonContent(new JsonObject { ["description"] = "Deferred permission ownership" }));
+        var approvalBytes = await created.Content.ReadAsByteArrayAsync();
+        var mission = Mission.FromApprovalBytes(approvalBytes);
+        using var parked = await client.PostAsync("https://localhost/permission", JsonContent(new JsonObject
+        {
+            ["action"] = "SendEmail",
+            ["mission"] = new JsonObject { ["approver"] = Ps, ["s256"] = mission.S256 },
+        }));
+        Assert.Equal(HttpStatusCode.Accepted, parked.StatusCode);
+        var location = "https://localhost" + parked.Headers.Location;
+        var missions = host.Services.GetRequiredService<IMissionStore>();
+        if (changedOwner)
+            await missions.SaveAsync(new StoredMission(mission.S256, Ps, "aauth:foreign@agent.example", approvalBytes));
+        else
+            await missions.SetStateAsync(mission.S256, MissionState.Terminated);
+        await host.Services.GetRequiredService<IDeferredConsentStore>().ResolveAsync(
+            parked.Headers.Location!.ToString().Split('/').Last(), true);
+        using var rejected = await client.GetAsync(location);
+        Assert.Equal(HttpStatusCode.Forbidden, rejected.StatusCode);
+        Assert.Equal(changedOwner ? "invalid_mission" : "mission_terminated", (string?)(await ReadJson(rejected))?["error"]);
+        Assert.Empty(await host.Services.GetRequiredService<IMissionLog>().ReadAsync(mission.S256));
+        using var replay = await client.GetAsync(location);
+        Assert.Equal(HttpStatusCode.Gone, replay.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Pending_FirstDecisionWins_ExactlyOneDelivery(bool approved)
+    {
+        using var host = await BuildHostAsync(services =>
+        {
+            services.AddAAuthDeferredConsent();
+            services.AddSingleton<IMissionApprover>(new StubApprover(MissionApprovalDecision.Defer()));
+        });
+        using var client = host.GetTestServer().CreateClient();
+        using var parked = await client.PostAsync("https://localhost/mission",
+            JsonContent(new JsonObject { ["description"] = "Single decision" }));
+        var location = "https://localhost" + parked.Headers.Location;
+        var store = host.Services.GetRequiredService<IDeferredConsentStore>();
+        var id = parked.Headers.Location!.ToString().Split('/').Last();
+        await store.ResolveAsync(id, approved);
+        await store.ResolveAsync(id, !approved);
+        var responses = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => client.GetAsync(location)));
+        Assert.Single(responses, response => response.StatusCode == (approved ? HttpStatusCode.OK : HttpStatusCode.Forbidden));
+        Assert.Equal(7, responses.Count(response => response.StatusCode == HttpStatusCode.Gone));
+        foreach (var response in responses) response.Dispose();
+    }
+
+    [Fact]
+    public async Task Pending_CancelCannotBeApprovedLater()
+    {
+        using var host = await BuildHostAsync(services =>
+        {
+            services.AddAAuthDeferredConsent();
+            services.AddSingleton<IMissionApprover>(new StubApprover(MissionApprovalDecision.Defer()));
+        });
+        using var client = host.GetTestServer().CreateClient();
+        using var parked = await client.PostAsync("https://localhost/mission",
+            JsonContent(new JsonObject { ["description"] = "Cancelled mission" }));
+        var location = "https://localhost" + parked.Headers.Location;
+        using var cancelled = await client.DeleteAsync(location);
+        Assert.Equal(HttpStatusCode.NoContent, cancelled.StatusCode);
+        await host.Services.GetRequiredService<IDeferredConsentStore>().ResolveAsync(
+            parked.Headers.Location!.ToString().Split('/').Last(), true);
+        using var replay = await client.GetAsync(location);
+        Assert.Equal(HttpStatusCode.Gone, replay.StatusCode);
+    }
 
     [Fact(DisplayName = "§Mission Creation — the default approver approves and returns a verifiable blob")]
     public async Task Mission_DefaultApprover_ReturnsApprovedBlob()
@@ -313,6 +436,32 @@ public class GovernanceDeferredConsentMapperTests
         Assert.Equal("ok", (string?)json?["status"]);
 
         await host.StopAsync();
+    }
+
+    [Theory]
+    [InlineData("interaction")]
+    [InlineData("payment")]
+    public async Task Interaction_DeclinedDecisionIsTerminalDenial(string type)
+    {
+        using var host = await BuildHostAsync(services =>
+        {
+            services.AddAAuthDeferredConsent();
+            services.AddSingleton<IInteractionRelay>(new StubRelay(new InteractionRelayResult { Pending = true }));
+        });
+        using var client = host.GetTestServer().CreateClient();
+        using var parked = await client.PostAsync("https://localhost/mission-interaction", JsonContent(new JsonObject
+        {
+            ["type"] = type, ["url"] = Ps + "/consent", ["code"] = "CODE",
+        }));
+        Assert.Equal(HttpStatusCode.Accepted, parked.StatusCode);
+        var location = "https://localhost" + parked.Headers.Location;
+        await host.Services.GetRequiredService<IDeferredConsentStore>().ResolveAsync(
+            parked.Headers.Location!.ToString().Split('/').Last(), false);
+        using var denied = await client.GetAsync(location);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        Assert.Equal("denied", (string?)(await ReadJson(denied))?["error"]);
+        using var replay = await client.GetAsync(location);
+        Assert.Equal(HttpStatusCode.Gone, replay.StatusCode);
     }
 
     [Fact(DisplayName = "§Interaction Response — a pending payment relay also parks and answers 202")]

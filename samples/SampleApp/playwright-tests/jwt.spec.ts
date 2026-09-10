@@ -3,6 +3,7 @@ import { waitForInteractive } from '../../../tests/e2e/helpers/blazor';
 import { readResponseJson, expectStatus } from '../../../tests/e2e/helpers/json';
 import { grantConsent } from '../../../tests/e2e/helpers/consent';
 import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
+import { directedSubject } from '../../../tests/e2e/helpers/consent';
 
 /**
  * JWT — three-party direct grant. The page has no interaction UI, so standing
@@ -26,7 +27,7 @@ test('jwt direct grant returns a three-party identity', async ({ page }) => {
   expect(json.scheme).toBe('jwt');
   // The auth token was minted by the Person Server for the Calendar audience.
   expect(json.agent).toBe(Agents.sampleApp);
-  expect(json.sub).toBe('pairwise-sub');
+  expect(json.sub).toBe(directedSubject(Urls.calendar));
   expect(json.scope).toEqual(['calendar.read']);
   expect(json.iss).toBe(Urls.personServer);
   // Direct grant — direct authorization, so no act chain.

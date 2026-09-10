@@ -30,7 +30,7 @@ const cases: Array<{
   idClaim: 'jkt' | 'kid';
 }> = [
   { mode: SigningMode.Hwk, resultMode: 'pseudonymous', scheme: 'hwk', idClaim: 'jkt' },
-  { mode: SigningMode.JwksUri, resultMode: 'agent-identity', scheme: 'jwks_uri', idClaim: 'kid' },
+  { mode: SigningMode.Jwks, resultMode: 'agent-identity', scheme: 'jwks', idClaim: 'kid' },
   { mode: SigningMode.JktJwt, resultMode: 'pseudonymous', scheme: 'jkt-jwt', idClaim: 'jkt' },
 ];
 

@@ -19,6 +19,7 @@ namespace AAuth.Agent;
 /// </remarks>
 public sealed class MissionForwardingHandler : DelegatingHandler
 {
+    internal static readonly HttpRequestOptionsKey<string?> UpstreamAuthorization = new("AAuth.UpstreamAuthorization");
     private readonly Func<string?> _upstreamTokenProvider;
 
     /// <summary>
@@ -34,6 +35,7 @@ public sealed class MissionForwardingHandler : DelegatingHandler
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var token = _upstreamTokenProvider();
+        request.Options.Set(UpstreamAuthorization, token);
         if (token is not null)
         {
             var mission = ExtractMission(token);

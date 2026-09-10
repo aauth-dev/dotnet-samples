@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using AAuth.Crypto;
@@ -24,11 +25,14 @@ public interface IPersonPendingStore
         string scope,
         string agentId,
         IAAuthKey? agentConfirmationKey,
+        DateTimeOffset agentTokenExpiresAt,
         JsonObject? upstreamAct = null,
-        MissionClaim? mission = null);
+        MissionClaim? mission = null,
+        DateTimeOffset? authorizationExpiresAt = null);
 
     /// <summary>Look up a pending entry by id, or <see langword="null"/>.</summary>
     PersonPendingEntry? Get(string id);
+    PersonPendingEntry? GetByCode(string code);
 
     /// <summary>
     /// Mark the entry allowed with the asserted identity the next poll mints.
@@ -77,14 +81,49 @@ public sealed class PersonPendingEntry
     /// <summary>Opaque pending id (path segment of the <c>Location</c> URL).</summary>
     public required string Id { get; init; }
 
+    public string? OwnerIssuer { get; set; }
+    public string? OwnerSubject { get; set; }
+    public string? OwnerKeyThumbprint { get; set; }
+    public IReadOnlyList<AAuth.Server.TokenKey> SourceTokens { get; set; } = [];
+    public AAuth.Server.DeferredState Lifecycle { get; } = new();
+    public AAuth.Server.BrowserInteraction Browser { get; } = new();
+    public string? ResourceKeyThumbprint { get; set; }
+    public string? ResourceAudience { get; set; }
+    public string? ResourceToken { get; set; }
+    public JsonObject? ResourceContext { get; set; }
+    public string? Account => AccountBinding.Read(ResourceContext);
+    public UpstreamTokenValidationResult? UpstreamAuthorization { get; set; }
+    internal PersonResourceInteraction? ResourceInteraction { get; set; }
+    internal Func<Microsoft.AspNetCore.Http.HttpContext, Task<Microsoft.AspNetCore.Http.IResult>>? ResumeAuthorization { get; set; }
+    public bool AwaitingResourceInteraction => ResourceInteraction is { Complete: false, Error: null };
+    public int ClarificationRounds { get; set; }
+    public DateTimeOffset? ClarificationDeadline { get; set; }
+    public System.Threading.CancellationTokenSource FederationCancellation { get; } = new();
+    public TaskCompletionSource<AAuth.Agent.ClarificationResponse>? FederationAnswer { get; set; }
+    public TaskCompletionSource<IdentityAssertion>? FederationConsent { get; set; }
+    internal TaskCompletionSource<bool>? FederationMissionConsent { get; set; }
+    public bool AwaitingFederationConsent => FederationConsent is { Task.IsCompleted: false };
+    public IReadOnlyList<string>? RequiredIdentityClaims { get; set; }
+    public string ConsentAgentId => OwnerSubject ?? AgentId;
+
     /// <summary>The resource URL the auth token will be audienced to.</summary>
     public required string ResourceUrl { get; init; }
 
     /// <summary>The requested scope.</summary>
-    public required string Scope { get; init; }
+    public required string Scope { get; set; }
 
     /// <summary>The verified agent identifier.</summary>
     public required string AgentId { get; init; }
+
+    public required DateTimeOffset AgentTokenExpiresAt { get; init; }
+
+    public DateTimeOffset? AuthorizationExpiresAt { get; init; }
+
+    public DateTimeOffset ExpiresAt => AuthorizationExpiresAt is { } expiry && expiry < AgentTokenExpiresAt
+        ? expiry : AgentTokenExpiresAt;
+
+    public DateTimeOffset PendingExpiresAt => new[] { ExpiresAt, CreatedAt.AddMinutes(10),
+        ClarificationDeadline ?? ExpiresAt }.Min();
 
     /// <summary>
     /// The agent's confirmation key (<c>cnf.jwk</c> binding) — set for the
@@ -97,7 +136,7 @@ public sealed class PersonPendingEntry
     public JsonObject? UpstreamAct { get; init; }
 
     /// <summary>The mission context governing the request, if any.</summary>
-    public MissionClaim? Mission { get; init; }
+    public MissionClaim? Mission { get; set; }
 
     /// <summary>
     /// When set, this entry's out-of-scope decision (and any clarification
@@ -205,11 +244,13 @@ public sealed class InMemoryPersonPendingStore : IPersonPendingStore
         string scope,
         string agentId,
         IAAuthKey? agentConfirmationKey,
+        DateTimeOffset agentTokenExpiresAt,
         JsonObject? upstreamAct = null,
-        MissionClaim? mission = null)
+        MissionClaim? mission = null,
+        DateTimeOffset? authorizationExpiresAt = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(resourceUrl);
-        ArgumentException.ThrowIfNullOrEmpty(scope);
+        ArgumentNullException.ThrowIfNull(scope);
         ArgumentException.ThrowIfNullOrEmpty(agentId);
         Sweep();
         var entry = new PersonPendingEntry
@@ -218,6 +259,8 @@ public sealed class InMemoryPersonPendingStore : IPersonPendingStore
             ResourceUrl = resourceUrl,
             Scope = scope,
             AgentId = agentId,
+            AgentTokenExpiresAt = agentTokenExpiresAt,
+            AuthorizationExpiresAt = authorizationExpiresAt,
             AgentConfirmationKey = agentConfirmationKey,
             UpstreamAct = upstreamAct,
             Mission = mission,
@@ -234,6 +277,13 @@ public sealed class InMemoryPersonPendingStore : IPersonPendingStore
         return _entries.TryGetValue(id, out var entry) ? entry : null;
     }
 
+    public PersonPendingEntry? GetByCode(string code)
+    {
+        Sweep();
+        var normalized = AAuth.Headers.InteractionCode.Normalize(code);
+        return _entries.Values.FirstOrDefault(entry => entry.Browser.Code == normalized);
+    }
+
     /// <inheritdoc />
     public void MarkAllowed(
         string id,
@@ -243,24 +293,42 @@ public sealed class InMemoryPersonPendingStore : IPersonPendingStore
         IReadOnlyList<string>? groups = null,
         IReadOnlyDictionary<string, JsonNode?>? additionalClaims = null)
     {
-        if (_entries.TryGetValue(id, out var entry))
+        if (Get(id) is { } entry)
         {
-            entry.Subject = subject;
-            entry.Tenant = tenant;
-            entry.Roles = roles;
-            entry.Groups = groups;
-            entry.AdditionalClaims = additionalClaims;
-            entry.Status = PersonPendingStatus.Allowed;
+            entry.Lifecycle.Gate.Wait();
+            try
+            {
+                if (entry.Lifecycle.Delivered || entry.Lifecycle.Cancelled || entry.PendingExpiresAt <= DateTimeOffset.UtcNow
+                    || entry.Status != PersonPendingStatus.Pending) return;
+                entry.Subject = subject;
+                entry.Tenant = tenant;
+                entry.Roles = roles;
+                entry.Groups = groups;
+                entry.AdditionalClaims = additionalClaims;
+                if (entry.FederationConsent is { } consent)
+                    consent.TrySetResult(IdentityAssertion.Assert(subject, tenant, roles, groups, additionalClaims));
+                else
+                    entry.Status = PersonPendingStatus.Allowed;
+            }
+            finally { entry.Lifecycle.Gate.Release(); }
         }
     }
 
     /// <inheritdoc />
     public void MarkDenied(string id, string reason)
     {
-        if (_entries.TryGetValue(id, out var entry))
+        if (Get(id) is { } entry)
         {
-            entry.Status = PersonPendingStatus.Denied;
-            entry.DenyReason = reason;
+            entry.Lifecycle.Gate.Wait();
+            try
+            {
+                if (entry.Lifecycle.Delivered || entry.Lifecycle.Cancelled || entry.PendingExpiresAt <= DateTimeOffset.UtcNow
+                    || entry.Status is PersonPendingStatus.Allowed or PersonPendingStatus.Denied or PersonPendingStatus.Withdrawn) return;
+                entry.Status = PersonPendingStatus.Denied;
+                entry.DenyReason = reason;
+                entry.FederationConsent?.TrySetResult(IdentityAssertion.Deny(reason));
+            }
+            finally { entry.Lifecycle.Gate.Release(); }
         }
     }
 
@@ -270,7 +338,7 @@ public sealed class InMemoryPersonPendingStore : IPersonPendingStore
     /// <summary>Evict entries older than <see cref="Ttl"/>.</summary>
     private void Sweep()
     {
-        var cutoff = DateTimeOffset.UtcNow - Ttl;
+        var cutoff = DateTimeOffset.UtcNow - Ttl - TimeSpan.FromHours(1);
         foreach (var kv in _entries)
         {
             if (kv.Value.CreatedAt < cutoff)

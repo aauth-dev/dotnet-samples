@@ -37,7 +37,7 @@ public sealed class AuthTokenResponseValidator
     {
         _metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
         _jwks = jwks ?? throw new ArgumentNullException(nameof(jwks));
-        _verifier = verifier ?? new TokenVerifier();
+        _verifier = verifier ?? new TokenVerifier { EgressPolicy = metadata.Policy };
     }
 
     /// <summary>
@@ -50,9 +50,9 @@ public sealed class AuthTokenResponseValidator
     /// <param name="agentKey">The agent's signing key for <c>cnf.jwk</c> binding check (step 5).</param>
     /// <param name="expectedActContext">
     /// Optional act context for chain consistency check (step 6).
-    /// When provided, verifies that the auth token's nested <c>act</c> claims match this context.
+    /// Verifies the complete immediate and nested <c>act</c> matches this context.
     /// For direct authorization: null (the auth token then carries no <c>act</c>).
-    /// For call chaining: the upstream act that was submitted with the token request.
+    /// For call chaining: the complete expected downstream actor chain.
     /// </param>
     /// <param name="requestedScope">
     /// The scope from the resource token (step 7). When provided, verifies the auth token's
@@ -68,7 +68,8 @@ public sealed class AuthTokenResponseValidator
         IAAuthKey agentKey,
         JsonObject? expectedActContext = null,
         string? requestedScope = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? expectedAccount = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(authToken);
         ArgumentException.ThrowIfNullOrEmpty(expectedIssuer);
@@ -96,6 +97,9 @@ public sealed class AuthTokenResponseValidator
                 expectedMaxScope: requestedScope,
                 cancellationToken: ct).ConfigureAwait(false);
 
+            if (!AccountBinding.Matches(expectedAccount, verified.Account))
+                return new AuthTokenDeliveryResult { IsValid = false, Error = "account_mismatch: auth token differs from the resource request." };
+
             // Step 2: Verify iss matches the AS the PS sent the request to.
             if (verified.Issuer != expectedIssuer)
             {
@@ -110,19 +114,13 @@ public sealed class AuthTokenResponseValidator
             // delegation context, verify the nested act chain matches it. act is
             // OPTIONAL (§Delegation Chain); act.agent is the immediate upstream
             // agent and its own chain is nested as act.act.
-            if (expectedActContext is not null)
+            if (!ActChainsMatch(verified.Payload["act"] as JsonObject, expectedActContext, _verifier.EgressPolicy))
             {
-                var act = verified.Payload["act"] as JsonObject;
-                var nestedAct = act?["act"] as JsonObject;
-
-                if (!ActChainsMatch(nestedAct, expectedActContext))
+                return new AuthTokenDeliveryResult
                 {
-                    return new AuthTokenDeliveryResult
-                    {
-                        IsValid = false,
-                        Error = "act_chain_mismatch: auth token act chain does not match the upstream delegation context.",
-                    };
-                }
+                    IsValid = false,
+                    Error = "act_chain_mismatch: auth token immediate and nested actors must match the complete expected delegation context.",
+                };
             }
 
             return new AuthTokenDeliveryResult
@@ -145,11 +143,13 @@ public sealed class AuthTokenResponseValidator
     /// Compare two act chain objects for structural equivalence.
     /// Checks that <c>agent</c> values match at each nesting level.
     /// </summary>
-    private static bool ActChainsMatch(JsonObject? actual, JsonObject? expected)
+    public static bool ActChainsMatch(JsonObject? actual, JsonObject? expected, AAuthEgressPolicy? policy = null)
     {
         if (actual is null && expected is null)
             return true;
         if (actual is null || expected is null)
+            return false;
+        if (!ActChainBuilder.ValidateChain(actual, policy: policy) || !ActChainBuilder.ValidateChain(expected, policy: policy))
             return false;
 
         var actualAgent = (string?)actual["agent"];
@@ -159,6 +159,6 @@ public sealed class AuthTokenResponseValidator
 
         var actualNested = actual["act"] as JsonObject;
         var expectedNested = expected["act"] as JsonObject;
-        return ActChainsMatch(actualNested, expectedNested);
+        return ActChainsMatch(actualNested, expectedNested, policy);
     }
 }

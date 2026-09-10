@@ -32,12 +32,19 @@ var app = builder.Build();
 // discover the tour's signing key when it self-issues agent tokens.
 app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 {
+    EgressPolicy = SampleEgress.Policy,
     Issuer = tourUrl,
     Name = "Guided Tour Demo",
-    SigningKeys = new Dictionary<string, AAuthKey> { [TourKid] = tourKey },
+    SigningKeys = new Dictionary<string, IAAuthKey> { [TourKid] = tourKey },
 });
 
-app.UseStaticFiles();
+app.MapStaticAssets();
+app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
+{
+    EgressPolicy = SampleEgress.Policy, Issuer = tourUrl,
+    SigningKeys = new Dictionary<string, IAAuthKey> { [TourKid] = tourKey },
+    ScopeDescriptions = FederatedWorkerScenario.ScopeDescriptions,
+});
 app.UseAntiforgery();
 
 app.MapRazorComponents<App>()

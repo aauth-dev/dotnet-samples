@@ -4,6 +4,8 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Discovery;
+using AAuth.HttpSig;
+using AAuth.Identifiers;
 
 namespace AAuth.Tokens;
 
@@ -15,8 +17,11 @@ public sealed record UpstreamTokenValidationResult
     /// <summary>Whether the upstream token is valid.</summary>
     public bool IsValid { get; init; }
 
+    public DateTimeOffset? ExpiresAt { get; init; }
+
     /// <summary>Error description when invalid.</summary>
     public string? Error { get; init; }
+    public AAuth.Errors.SignatureErrorCode FailureCode { get; init; } = AAuth.Errors.SignatureErrorCode.InvalidJwt;
 
     /// <summary>The upstream token's own <c>act</c> claim (its delegation chain),
     /// or <see langword="null"/> if the upstream token was a direct authorization.
@@ -47,6 +52,9 @@ public sealed record UpstreamTokenValidationResult
     /// <see langword="null"/> when the upstream token carries no mission. A
     /// present approver means the chain is anchored to a PS for governance.</summary>
     public string? MissionApprover { get; init; }
+    public MissionClaim? Mission { get; init; }
+    public TokenVerifier.VerifiedToken? Verified { get; init; }
+    public string? Account => Verified?.Account;
 }
 
 /// <summary>
@@ -64,7 +72,7 @@ public sealed class UpstreamTokenValidator
     {
         _metadata = metadata ?? throw new ArgumentNullException(nameof(metadata));
         _jwks = jwks ?? throw new ArgumentNullException(nameof(jwks));
-        _verifier = verifier ?? new TokenVerifier();
+        _verifier = verifier ?? new TokenVerifier { EgressPolicy = metadata.Policy };
     }
 
     /// <summary>
@@ -109,13 +117,21 @@ public sealed class UpstreamTokenValidator
         try
         {
             verified = await VerifyWithoutPoPAsync(upstreamToken, expectedAudience, ct);
+            var originalKey = SignatureKeyParser.Confirmation(verified.Payload);
+            var originalAgent = (string?)verified.Payload["agent"];
+            if (!AgentId.TryParse(originalAgent, out _, out _, _verifier.EgressPolicy))
+                throw new TokenVerificationException("invalid_upstream_token: missing or invalid 'agent'.");
+            verified = await _verifier.VerifyAuthTokenWithJwksAsync(upstreamToken, _metadata, _jwks,
+                expectedAudience, originalKey, originalAgent!, cancellationToken: ct);
         }
-        catch (TokenVerificationException ex)
+        catch (Exception ex) when (ex is TokenVerificationException or AAuthVerificationException or FormatException or ArgumentException or InvalidOperationException)
         {
             return new UpstreamTokenValidationResult
             {
                 IsValid = false,
                 Error = ex.Message,
+                FailureCode = ex is TokenVerificationException token ? token.Code
+                    : ex is AAuthVerificationException signature ? signature.Code : AAuth.Errors.SignatureErrorCode.InvalidJwt,
             };
         }
 
@@ -164,7 +180,7 @@ public sealed class UpstreamTokenValidator
         // depth is within limits. The presenter is the top-level `agent`; `act.agent`
         // identifies the upstream delegator and is intentionally different — so there
         // is no self-reference check.
-        if (act is not null && !ActChainBuilder.ValidateChain(act, _verifier.MaxActDepth))
+        if (act is not null && !ActChainBuilder.ValidateChain(act, _verifier.MaxActDepth, _verifier.EgressPolicy))
         {
             return new UpstreamTokenValidationResult
             {
@@ -179,6 +195,7 @@ public sealed class UpstreamTokenValidator
         return new UpstreamTokenValidationResult
         {
             IsValid = true,
+            ExpiresAt = verified.ExpiresAt,
             UpstreamAct = act?.DeepClone() as JsonObject,
             Issuer = verified.Issuer,
             IssuerDwk = upstreamDwk,
@@ -186,6 +203,8 @@ public sealed class UpstreamTokenValidator
             Subject = (string?)verified.Payload["sub"],
             Scope = (string?)verified.Payload["scope"],
             MissionApprover = (string?)(verified.Payload["mission"] as JsonObject)?["approver"],
+            Mission = MissionClaim.FromPayload(verified.Payload, _metadata.Policy),
+            Verified = verified,
         };
     }
 
@@ -193,29 +212,10 @@ public sealed class UpstreamTokenValidator
         string jwt, string expectedAudience, CancellationToken ct)
     {
         // Decode to find issuer and dwk for key resolution.
-        var segments = jwt.Split('.');
-        if (segments.Length != 3)
-            throw new TokenVerificationException("JWT is not a compact JWS.");
-
-        var payload = TokenVerifier.DecodeJsonSegment(segments[1], "payload");
-        var iss = (string?)payload["iss"]
-            ?? throw new TokenVerificationException("Token is missing 'iss'.");
+        var (_, payload) = _verifier.ReadStructure(jwt, AuthTokenBuilder.TokenType);
         var dwk = (string?)payload["dwk"]
             ?? throw new TokenVerificationException("Token is missing 'dwk'.");
-
-        // Resolve issuer's signing key.
-        var metaUrl = MetadataClient.BuildUrl(iss, dwk);
-        var meta = await _metadata.FetchAsync(metaUrl, ct);
-        var jwksUriStr = (string?)meta["jwks_uri"]
-            ?? throw new TokenVerificationException($"Issuer metadata missing 'jwks_uri'.");
-
-        var header = TokenVerifier.DecodeJsonSegment(segments[0], "header");
-        var kid = (string?)header["kid"]
-            ?? throw new TokenVerificationException("Token header is missing 'kid'.");
-        var issuerKey = await _jwks.ResolveKeyAsync(new Uri(jwksUriStr), kid, ct)
-            ?? throw new TokenVerificationException($"Could not resolve signing key '{kid}' from '{jwksUriStr}'.");
-
-        // Basic verification (signature, temporal, audience) without PoP enforcement.
-        return _verifier.Verify(jwt, issuerKey, AuthTokenBuilder.TokenType, dwk, expectedAudience);
+        return await _verifier.VerifyWithJwksAsync(jwt, _metadata, _jwks,
+            AuthTokenBuilder.TokenType, dwk, expectedAudience, ct).ConfigureAwait(false);
     }
 }

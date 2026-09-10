@@ -31,7 +31,8 @@ public class MetadataClientTests
     [Fact]
     public void BuildUrl_AppendsWellKnown()
     {
-        var url = MetadataClient.BuildUrl("https://resource.example/foo", "aauth-resource.json");
+        Assert.Throws<ArgumentException>(() => MetadataClient.BuildUrl("https://resource.example/foo", "aauth-resource.json"));
+        var url = MetadataClient.BuildUrl("https://resource.example", "aauth-resource.json");
         Assert.Equal("https://resource.example/.well-known/aauth-resource.json", url.ToString());
     }
 
@@ -40,7 +41,7 @@ public class MetadataClientTests
     {
         var stub = new StubHandler();
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
-        var client = new MetadataClient(new HttpClient(stub), TimeSpan.FromMinutes(5), () => clock);
+        var client = new MetadataClient(new HttpClient(stub), TimeSpan.FromMinutes(5), () => clock, transportContract: AAuthTransportContract.InProcessOnly);
 
         var url = new Uri("https://x.example/.well-known/aauth-resource.json");
         await client.FetchAsync(url);
@@ -54,7 +55,7 @@ public class MetadataClientTests
     {
         var stub = new StubHandler();
         var time = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
-        var client = new MetadataClient(new HttpClient(stub), TimeSpan.FromMinutes(5), () => time);
+        var client = new MetadataClient(new HttpClient(stub), TimeSpan.FromMinutes(5), () => time, transportContract: AAuthTransportContract.InProcessOnly);
 
         var url = new Uri("https://x.example/.well-known/aauth-resource.json");
         await client.FetchAsync(url);
@@ -68,7 +69,7 @@ public class MetadataClientTests
     public async Task FetchAsync_AcceptsMatchingIssuer()
     {
         var stub = new StubHandler { Body = "{\"issuer\":\"https://resource.example\"}" };
-        var client = new MetadataClient(new HttpClient(stub));
+        var client = new MetadataClient(new HttpClient(stub), transportContract: AAuthTransportContract.InProcessOnly);
         var url = new Uri("https://resource.example/.well-known/aauth-resource.json");
 
         var doc = await client.FetchAsync(url);
@@ -81,36 +82,37 @@ public class MetadataClientTests
     {
         // Document served from attacker.example but claiming resource.example.
         var stub = new StubHandler { Body = "{\"issuer\":\"https://resource.example\"}" };
-        var client = new MetadataClient(new HttpClient(stub));
+        var client = new MetadataClient(new HttpClient(stub), transportContract: AAuthTransportContract.InProcessOnly);
         var url = new Uri("https://attacker.example/.well-known/aauth-resource.json");
 
         var ex = await Assert.ThrowsAsync<AAuthMetadataException>(() => client.FetchAsync(url));
         Assert.Equal("https://resource.example", ex.ClaimedIssuer);
         Assert.Equal("https://attacker.example", ex.ExpectedIssuer);
+        Assert.Equal("issuer_mismatch", ex.ErrorCode);
     }
 
     [Fact(DisplayName = "§Metadata Documents — rejects a document with no issuer")]
     public async Task FetchAsync_RejectsMissingIssuer()
     {
         var stub = new StubHandler { Body = "{\"jwks_uri\":\"https://resource.example/.well-known/jwks.json\"}" };
-        var client = new MetadataClient(new HttpClient(stub));
+        var client = new MetadataClient(new HttpClient(stub), transportContract: AAuthTransportContract.InProcessOnly);
         var url = new Uri("https://resource.example/.well-known/aauth-resource.json");
 
         var ex = await Assert.ThrowsAsync<AAuthMetadataException>(() => client.FetchAsync(url));
         Assert.Null(ex.ClaimedIssuer);
+        Assert.Equal("issuer_missing", ex.ErrorCode);
     }
 
     [Fact(DisplayName = "§Metadata Documents — a rejected document is not cached")]
     public async Task FetchAsync_DoesNotCacheRejectedDocument()
     {
         var stub = new StubHandler { Body = "{\"issuer\":\"https://resource.example\"}" };
-        var client = new MetadataClient(new HttpClient(stub));
+        var client = new MetadataClient(new HttpClient(stub), transportContract: AAuthTransportContract.InProcessOnly);
         var url = new Uri("https://attacker.example/.well-known/aauth-resource.json");
 
         await Assert.ThrowsAsync<AAuthMetadataException>(() => client.FetchAsync(url));
         await Assert.ThrowsAsync<AAuthMetadataException>(() => client.FetchAsync(url));
 
-        // Both attempts reach the network — nothing poisoned the cache.
-        Assert.Equal(2, stub.Calls);
+        Assert.Equal(1, stub.Calls);
     }
 }

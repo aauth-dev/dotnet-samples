@@ -15,6 +15,7 @@ public sealed class AAuthEndpointRequirement
 {
     /// <summary>Verification/challenge mode for this endpoint.</summary>
     public AAuthAccessMode Mode { get; init; } = AAuthAccessMode.RequireAuthToken;
+    public IReadOnlyList<string> AcceptedSchemes { get; init; } = ["jwt"];
 
     /// <summary>Required scope (the challenge requests it; authorization enforces it).</summary>
     public string? Scope { get; init; }
@@ -35,9 +36,6 @@ public sealed class AAuthEndpointRequirement
 /// </summary>
 public sealed class AAuthServerOptions
 {
-    /// <summary>Verify the auth-token issuer's JWKS signature. Default true.</summary>
-    public bool RequireIssuerVerification { get; set; } = true;
-
     /// <summary>Allow-list of trusted PS/AS auth-token issuers. Null ⇒ accept any verifiable issuer; empty ⇒ deny all.</summary>
     public IReadOnlySet<string>? TrustedAuthTokenIssuers { get; set; }
 
@@ -61,7 +59,7 @@ public sealed class AAuthServerOptions
     public string? ResourceIdentifier { get; set; }
 
     /// <summary>Override the challenge signing key (default: DI metadata first key).</summary>
-    public AAuthKey? ResourceSigningKey { get; set; }
+    public IAAuthKey? ResourceSigningKey { get; set; }
 
     /// <summary>Override the challenge key id (default: DI metadata first kid).</summary>
     public string? ResourceKeyId { get; set; }

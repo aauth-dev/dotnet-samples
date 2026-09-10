@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace AAuth.Server;
 
@@ -20,22 +22,24 @@ namespace AAuth.Server;
 public sealed class AAuthRevocationOptions
 {
     /// <summary>
-    /// Allow-list of caller identities (verified issuer URL or agent identifier)
-    /// permitted to revoke. OR-composed with <see cref="IsTrustedRevoker"/>.
+    /// Explicitly permit an authenticated issuer to revoke its own token pairs.
     /// </summary>
-    public IReadOnlyCollection<string>? TrustedRevokers { get; set; }
+    public bool AllowTokenIssuer { get; set; }
 
     /// <summary>
-    /// Optional predicate authorizing a verified caller identity, OR-composed with
-    /// <see cref="TrustedRevokers"/>. <c>null</c> ⇒ no predicate.
+    /// Person Servers explicitly trusted to revoke provided tokens.
     /// </summary>
-    public Func<string, bool>? IsTrustedRevoker { get; set; }
+    public IReadOnlyCollection<string>? TrustedPersonServers { get; set; }
 
     /// <summary>
-    /// Deny-by-default authorization: a caller is allowed only when it is in
-    /// <see cref="TrustedRevokers"/> or accepted by <see cref="IsTrustedRevoker"/>.
+    /// Optional target-aware trust policy for authenticated Person Servers.
     /// </summary>
-    internal bool IsAuthorizedRevoker(string callerId)
-        => (TrustedRevokers is { } set && set.Contains(callerId))
-        || (IsTrustedRevoker?.Invoke(callerId) ?? false);
+    public Func<string, TokenKey, bool>? IsTrustedPersonServer { get; set; }
+
+    public Func<TokenGrant, CancellationToken, Task<bool>>? RevokeGrantAsync { get; set; }
+
+    internal bool IsAuthorizedRevoker(string callerId, TokenKey token)
+        => (AllowTokenIssuer && string.Equals(callerId, token.Issuer, StringComparison.Ordinal))
+        || (TrustedPersonServers?.Contains(callerId, StringComparer.Ordinal) ?? false)
+        || (IsTrustedPersonServer?.Invoke(callerId, token) ?? false);
 }

@@ -1,4 +1,7 @@
-# Missions
+---
+title: Missions
+description: Exact mission bytes, signed references and governed agent actions.
+---
 
 > [Mission Lifecycle](https://explorer.aauth.dev/missions/lifecycle) | [Mission Comparison](https://explorer.aauth.dev/missions/compare)
 
@@ -110,7 +113,8 @@ public static class AAuthMissionHeader
 
     // Produces: approver="https://ps.example"; s256="dBjf..."
     public static string FormatStructured(string approver, string s256);
-    public static bool TryParseStructured(string? value, out string? approver, out string? s256);
+    public static bool TryParseStructured(string? value, out string? approver, out string? s256,
+        AAuth.Discovery.AAuthEgressPolicy? policy = null);
 }
 ```
 
@@ -168,7 +172,7 @@ namespace AAuth.Tokens;
 public sealed record MissionClaim(string Approver, string S256)
 {
     public JsonObject ToJsonObject();
-    public static MissionClaim? FromPayload(JsonObject? payload);
+    public static MissionClaim? FromPayload(JsonObject? payload, AAuth.Discovery.AAuthEgressPolicy? policy = null);
 }
 ```
 

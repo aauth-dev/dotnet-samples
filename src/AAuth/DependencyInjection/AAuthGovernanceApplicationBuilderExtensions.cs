@@ -64,7 +64,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         endpoints.MapPost(options.Resolve(options.InteractionPath),
             (HttpContext ctx, IMissionStore missions, IMissionLog log, IInteractionRelay relay) =>
                 HandleInteractionAsync(ctx, options, missions, log, relay));
-        endpoints.MapGet(options.Resolve(options.PendingPath).TrimEnd('/') + "/{id}",
+        endpoints.MapMethods(options.Resolve(options.PendingPath).TrimEnd('/') + "/{id}", ["GET", "DELETE"],
             (HttpContext ctx, string id, IMissionStore missions, IMissionLog log) =>
                 HandlePendingAsync(ctx, id, options, missions, log));
 
@@ -78,20 +78,21 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         IMissionApprover approver)
     {
         var verification = ctx.GetAAuthVerification();
-        if (verification?.TokenType != AAuthTokenType.AgentToken || string.IsNullOrEmpty(verification.Agent))
+        if (verification is not { TokenType: AAuthTokenType.AgentToken, IssuerVerified: true, Agent: not null,
+            Issuer: not null, Jkt: not null })
         {
             // The signature already verified (this is past the verification
             // middleware); presenting a non-agent token is a semantic authorization
             // refusal, not a signature-authentication failure, so it is a 403 — the
             // §Error Responses 401/`Signature-Error` rule is reserved for the
             // §Verification (Server) signature-failure steps.
-            return Results.Json(new { error = "invalid_carrier_token" }, statusCode: StatusCodes.Status403Forbidden);
+            return AAuth.Server.AAuthProblemDetails.Create("invalid_carrier_token", statusCode: StatusCodes.Status403Forbidden);
         }
 
         var body = await ReadJsonAsync(ctx).ConfigureAwait(false);
         if (body is null)
         {
-            return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+            return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
         }
 
         MissionProposal proposal;
@@ -101,7 +102,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         }
         catch (FormatException)
         {
-            return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+            return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
         }
 
         var approverUrl = ResolveApprover(ctx, options);
@@ -111,9 +112,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         switch (decision.Outcome)
         {
             case MissionApprovalOutcome.Declined:
-                return Results.Json(
-                    new { error = "denied", detail = decision.Message },
-                    statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.Create("denied", decision.Message, statusCode: StatusCodes.Status403Forbidden);
 
             case MissionApprovalOutcome.Prompt:
             {
@@ -121,17 +120,18 @@ public static class AAuthGovernanceApplicationBuilderExtensions
                 if (store is null)
                 {
                     // No user channel: a prompt cannot be resolved — decline.
-                    return Results.Json(
-                        new { error = "denied" }, statusCode: StatusCodes.Status403Forbidden);
+                    return AAuth.Server.AAuthProblemDetails.Create("denied", statusCode: StatusCodes.Status403Forbidden);
                 }
                 var parked = await store.ParkAsync(new DeferredConsent
                 {
                     Kind = DeferredConsentKind.MissionCreation,
                     Agent = verification.Agent,
+                    OwnerIssuer = verification.Issuer,
+                    OwnerKeyThumbprint = verification.Jkt,
                     Approver = approverUrl,
                     Proposal = proposal,
                 }, ctx.RequestAborted).ConfigureAwait(false);
-                return DeferredAccepted(ctx, options, parked.Id);
+                return DeferredAccepted(ctx, options, parked);
             }
 
             default:
@@ -151,17 +151,17 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         var body = await ReadJsonAsync(ctx).ConfigureAwait(false);
         if (body is null)
         {
-            return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+            return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
         }
 
         PermissionRequest request;
         try
         {
-            request = GovernanceEndpoints.ParsePermission(body);
+            request = GovernanceEndpoints.ParsePermission(body, options.EgressPolicy);
         }
         catch (FormatException)
         {
-            return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+            return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
         }
 
         StoredMission? stored = null;
@@ -169,10 +169,10 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         if (request.Mission is not null)
         {
             stored = await missions.GetAsync(request.Mission.S256).ConfigureAwait(false);
-            if (stored is { State: MissionState.Terminated })
-            {
-                return GovernanceEndpoints.MissionTerminated();
-            }
+        }
+        if (GovernanceEndpoints.Authorize(ctx, request.Mission, stored) is { } denied) return denied;
+        if (request.Mission is not null)
+        {
             history = await log.ReadAsync(request.Mission.S256).ConfigureAwait(false);
         }
 
@@ -189,10 +189,13 @@ public static class AAuthGovernanceApplicationBuilderExtensions
                 var parked = await store.ParkAsync(new DeferredConsent
                 {
                     Kind = DeferredConsentKind.Permission,
+                    Agent = ctx.GetAAuthVerification()!.Agent!,
+                    OwnerIssuer = ctx.GetAAuthVerification()!.Issuer,
+                    OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt,
                     Approver = ResolveApprover(ctx, options),
                     Permission = request,
                 }, ctx.RequestAborted).ConfigureAwait(false);
-                return DeferredAccepted(ctx, options, parked.Id);
+                return DeferredAccepted(ctx, options, parked);
             }
         }
 
@@ -224,24 +227,21 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         var body = await ReadJsonAsync(ctx).ConfigureAwait(false);
         if (body is null)
         {
-            return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+            return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
         }
 
         AuditRecord record;
         try
         {
-            record = GovernanceEndpoints.ParseAudit(body);
+            record = GovernanceEndpoints.ParseAudit(body, ctx.RequestServices.GetService<AAuth.Discovery.MetadataClient>()?.Policy);
         }
         catch (FormatException)
         {
-            return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+            return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
         }
 
         var stored = await missions.GetAsync(record.Mission.S256).ConfigureAwait(false);
-        if (stored is { State: MissionState.Terminated })
-        {
-            return GovernanceEndpoints.MissionTerminated();
-        }
+        if (GovernanceEndpoints.Authorize(ctx, record.Mission, stored) is { } denied) return denied;
 
         await sink.RecordAsync(record, ctx.RequestAborted).ConfigureAwait(false);
         return Results.StatusCode(StatusCodes.Status201Created);
@@ -257,27 +257,22 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         var body = await ReadJsonAsync(ctx).ConfigureAwait(false);
         if (body is null)
         {
-            return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+            return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
         }
 
         InteractionRequest request;
         try
         {
-            request = GovernanceEndpoints.ParseInteraction(body);
+            request = GovernanceEndpoints.ParseInteraction(body, options.EgressPolicy);
         }
         catch (FormatException)
         {
-            return Results.Json(new { error = "invalid_request" }, statusCode: StatusCodes.Status400BadRequest);
+            return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
         }
 
-        if (request.Mission is not null)
-        {
-            var stored = await missions.GetAsync(request.Mission.S256).ConfigureAwait(false);
-            if (stored is { State: MissionState.Terminated })
-            {
-                return GovernanceEndpoints.MissionTerminated();
-            }
-        }
+        var stored = request.Mission is null ? null
+            : await missions.GetAsync(request.Mission.S256).ConfigureAwait(false);
+        if (GovernanceEndpoints.Authorize(ctx, request.Mission, stored) is { } denied) return denied;
 
         var result = await relay.RelayAsync(request, ctx.RequestAborted).ConfigureAwait(false);
 
@@ -286,9 +281,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         // user itself. Distinct from the terminal user_unreachable.
         if (result.Unavailable)
         {
-            return Results.Json(
-                new { error = "interaction_unavailable" },
-                statusCode: StatusCodes.Status424FailedDependency);
+            return AAuth.Server.AAuthProblemDetails.Create("interaction_unavailable", statusCode: StatusCodes.Status424FailedDependency);
         }
 
         if (request.Mission is not null)
@@ -320,10 +313,13 @@ public static class AAuthGovernanceApplicationBuilderExtensions
                         var parkedCompletion = await completionStore.ParkAsync(new DeferredConsent
                         {
                             Kind = DeferredConsentKind.Completion,
+                            Agent = ctx.GetAAuthVerification()!.Agent!,
+                            OwnerIssuer = ctx.GetAAuthVerification()!.Issuer,
+                            OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt,
                             Approver = request.Mission?.Approver ?? string.Empty,
                             Interaction = request,
                         }, ctx.RequestAborted).ConfigureAwait(false);
-                        return DeferredAccepted(ctx, options, parkedCompletion.Id);
+                        return DeferredAccepted(ctx, options, parkedCompletion);
                     }
                 }
                 if (result.Accepted == true && request.Mission is not null)
@@ -347,10 +343,13 @@ public static class AAuthGovernanceApplicationBuilderExtensions
                         var parked = await store.ParkAsync(new DeferredConsent
                         {
                             Kind = DeferredConsentKind.Interaction,
+                            Agent = ctx.GetAAuthVerification()!.Agent!,
+                            OwnerIssuer = ctx.GetAAuthVerification()!.Issuer,
+                            OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt,
                             Approver = request.Mission?.Approver ?? string.Empty,
                             Interaction = request,
                         }, ctx.RequestAborted).ConfigureAwait(false);
-                        return DeferredAccepted(ctx, options, parked.Id);
+                        return DeferredAccepted(ctx, options, parked);
                     }
                 }
                 return Results.Json(new { status = "ok" });
@@ -370,31 +369,52 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         var store = ctx.RequestServices.GetService<IDeferredConsentStore>();
         if (store is null)
         {
-            return Results.NotFound(new { error = "unknown_pending", id });
+            return AAuth.Server.AAuthProblemDetails.Create("unknown_pending", statusCode: StatusCodes.Status404NotFound,
+                extensions: new Dictionary<string, object?> { ["id"] = id });
         }
 
         var entry = await store.GetAsync(id, ctx.RequestAborted).ConfigureAwait(false);
         if (entry is null)
         {
-            return Results.NotFound(new { error = "unknown_pending", id });
+            return AAuth.Server.DeferredState.Missing(id);
         }
+        var verified = ctx.GetAAuthVerification();
+        if (verified is not { TokenType: AAuthTokenType.AgentToken, IssuerVerified: true }
+            || entry.OwnerIssuer is null || entry.OwnerKeyThumbprint is null
+            || verified.Issuer != entry.OwnerIssuer || verified.Agent != entry.Agent || verified.Jkt != entry.OwnerKeyThumbprint)
+        {
+            return AAuth.Server.AAuthProblemDetails.Create("unknown_pending", statusCode: StatusCodes.Status404NotFound);
+        }
+        return await entry.Lifecycle.ExecuteAsync(ctx, entry.ExpiresAt, TimeProvider.System, async () =>
+        {
+            if (HttpMethods.IsDelete(ctx.Request.Method))
+            {
+                entry.Lifecycle.Cancel();
+                return Results.NoContent();
+            }
+            var reference = entry.Permission?.Mission ?? entry.Interaction?.Mission;
+            var mission = reference is null ? null : await missions.GetAsync(reference.S256, ctx.RequestAborted);
+            if (GovernanceEndpoints.Authorize(ctx, reference, mission) is { } denied) return denied;
+            return await CompletePendingAsync(ctx, entry, options, missions, log);
+        });
+    }
+
+    private static async Task<IResult> CompletePendingAsync(HttpContext ctx, DeferredConsent entry,
+        AAuthGovernancePipelineOptions options, IMissionStore missions, IMissionLog log)
+    {
 
         // Hold at 202 until the user decides on the PS consent page.
         if (entry.Decision is null)
         {
-            return DeferredAccepted(ctx, options, id);
+            return DeferredAccepted(ctx, options, entry);
         }
-
-        await store.RemoveAsync(id, ctx.RequestAborted).ConfigureAwait(false);
 
         if (entry.Kind == DeferredConsentKind.MissionCreation)
         {
             if (!entry.Decision.Value)
             {
                 ctx.Response.Headers.CacheControl = "no-store";
-                return Results.Json(
-                    new { error = "denied", detail = "the user declined this mission" },
-                    statusCode: StatusCodes.Status403Forbidden);
+                return AAuth.Server.AAuthProblemDetails.Create("denied", "the user declined this mission", statusCode: StatusCodes.Status403Forbidden);
             }
             var proposal = entry.Proposal!;
             return await CompleteMissionAsync(
@@ -403,6 +423,8 @@ public static class AAuthGovernanceApplicationBuilderExtensions
 
         if (entry.Kind == DeferredConsentKind.Interaction)
         {
+            if (!entry.Decision.Value)
+                return AAuth.Server.AAuthProblemDetails.Create("denied", statusCode: StatusCodes.Status403Forbidden);
             // The user completed the relayed interaction / payment; the poll loop
             // terminates with the relay's final response (§Interaction Response).
             // The interaction was already recorded in the mission log when it was
@@ -466,16 +488,16 @@ public static class AAuthGovernanceApplicationBuilderExtensions
     // Emit a 202 Accepted with a poll Location (and, when configured, an
     // interaction requirement header) for a parked deferred consent.
     private static IResult DeferredAccepted(
-        HttpContext ctx, AAuthGovernancePipelineOptions options, string pendingId)
+        HttpContext ctx, AAuthGovernancePipelineOptions options, DeferredConsent pending)
     {
-        var pollPath = options.Resolve(options.PendingPath).TrimEnd('/') + "/" + pendingId;
+        var pollPath = options.Resolve(options.PendingPath).TrimEnd('/') + "/" + pending.Id;
         ctx.Response.Headers.Location = pollPath;
         ctx.Response.Headers["Retry-After"] = "1";
         ctx.Response.Headers.CacheControl = "no-store";
         if (!string.IsNullOrEmpty(options.InteractionUrl))
         {
             ctx.Response.Headers[AAuthRequirementHeader.Name] =
-                Interaction.Format(options.InteractionUrl, pendingId);
+                Interaction.Format(options.InteractionUrl, pending.Code, options.EgressPolicy);
         }
         return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
     }

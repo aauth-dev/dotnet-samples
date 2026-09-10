@@ -43,12 +43,17 @@ public sealed class DeferredConsent
 {
     /// <summary>The opaque pending id (assigned by the store on park).</summary>
     public string Id { get; set; } = string.Empty;
+    public string Code { get; } = AAuth.Headers.InteractionCode.Generate(26);
+    public DateTimeOffset ExpiresAt { get; init; } = DateTimeOffset.UtcNow.AddMinutes(10);
 
     /// <summary>Which governance decision this entry resolves.</summary>
     public required DeferredConsentKind Kind { get; init; }
 
     /// <summary>The agent the request was made by.</summary>
     public string Agent { get; init; } = string.Empty;
+    public string? OwnerIssuer { get; init; }
+    public string? OwnerKeyThumbprint { get; init; }
+    public DeferredState Lifecycle { get; } = new();
 
     /// <summary>HTTPS URL of the approver (the PS).</summary>
     public string Approver { get; init; } = string.Empty;
@@ -83,6 +88,7 @@ public interface IDeferredConsentStore
 
     /// <summary>Look up a parked consent by id. Returns <see langword="null"/> when absent.</summary>
     Task<DeferredConsent?> GetAsync(string id, CancellationToken ct = default);
+    Task<DeferredConsent?> GetByCodeAsync(string code, CancellationToken ct = default);
 
     /// <summary>Record the user's decision on a parked consent. No-op when absent.</summary>
     Task ResolveAsync(string id, bool approved, CancellationToken ct = default);

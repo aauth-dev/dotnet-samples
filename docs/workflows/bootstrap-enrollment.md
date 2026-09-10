@@ -1,4 +1,9 @@
-# Bootstrap & Agent Enrollment
+---
+title: Bootstrap and Agent Enrollment
+description: Provision durable agent keys with signed enrollment and provider-assigned identities.
+---
+
+## Overview
 
 > [Signature-Key Schemes](https://explorer.aauth.dev/foundations/schemes)
 
@@ -7,7 +12,7 @@ Overview: CLI tools, desktop apps, and mobile agents that lack a stable URL regi
 ## Prerequisites
 
 - An Agent Provider URL (e.g., `https://ap.example`)
-- Agent identifier (e.g., `aauth:myapp@ap.example`)
+- A durable signing key; the sample AP assigns its identity
 
 ```mermaid
 sequenceDiagram
@@ -16,13 +21,24 @@ sequenceDiagram
     Agent->>Agent: Generate Ed25519 keypair
     Agent->>AP: GET /.well-known/aauth-agent.json
     AP-->>Agent: metadata (enrol_endpoint, jwks_uri)
-    Agent->>AP: POST /enrol {agent_id, jwk, ps?}
-    AP-->>Agent: {agent_token, key_id?, jwks_uri}
+    Agent->>AP: Signed hwk POST /enrol {jwk, ps?}, body digest
+    AP-->>Agent: {agent_id, agent_token, key_id?, jwks_uri}
 ```
 
 ## Enrollment Is a Provisioning Step
 
-Enrollment is **not** part of your application's normal startup — it's a separate operational step, analogous to running a database migration or issuing a TLS certificate. You run it once per device/install (in a CLI tool, setup script, or CI pipeline). The durable signing key is generated **inside a keystore** (HSM, TPM, file store) and never extracted — the application references it by a local handle.
+Enrollment is normally a separate provisioning step. The sample AP also permits
+authenticated same-key reenrollment at startup: its durable registry retains the
+assigned identity and kid. Use a persisted key, not a newly generated key on each
+restart. FileKeyStore stores software key material locally; it does not provide
+hardware-backed or non-exportable key guarantees.
+
+The bootstrap convenience APIs `BootstrapBuilder.WithKey`,
+`AgentProviderClient.EnrolWithKeyAsync`, and `EnrollResult.Key` currently use the
+concrete Ed25519 `AAuthKey`. They do not provide fluent ES256 enrollment.
+This limitation does not apply to `IKeyStore`, signing/verification, or
+`AAuthClientBuilder.Enrolled` single-key refresh, which accept `IAAuthKey`.
+The sample AP accepts signed ES256 enrollment requests through its HTTP endpoint.
 
 > **The agent and the AP never share a keystore.** The agent holds the **private** durable key locally in its own `IKeyStore`. The AP holds only the **public** key, indexed in its enrollment database by JWK thumbprint. At refresh time the AP identifies the agent from the HTTP signature — never from any string the agent sends.
 
@@ -58,7 +74,7 @@ using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth;
 
-// Key is generated INSIDE the store — private material never leaves.
+// FileKeyStore persists software key material and loads it into this process.
 // FileKeyStore.Default() returns the in-process IKeyStore shipped with the SDK
 // (file-backed at ~/.aauth/keys/). AzureKeyVaultStore and
 // HsmKeyStore are placeholders for your own custom IKeyStore
@@ -66,9 +82,8 @@ using AAuth;
 var keyStore = FileKeyStore.Default(); // or new AzureKeyVaultStore(...), HsmKeyStore(...)
 
 var enrol = await AAuthClientBuilder
-    .Bootstrap(
-        enrollEndpoint: "https://ap.example/enrol",
-        agentId: "aauth:myapp@ap.example")
+    .Bootstrap(enrollEndpoint: "https://ap.example/enrol")
+    .WithKey(keyStore.LoadOrCreate("myapp"))
     .WithPersonServer("https://ps.example")
     .WithKeyStore(keyStore)
     .EnrolAsync();
@@ -86,8 +101,8 @@ using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth;
 
-// Key stays in the store — loaded by reference, never extracted
-var keyStore = FileKeyStore.Default();
+// File-backed software keys are loaded into memory; custom stores define custody.
+IKeyStore keyStore = FileKeyStore.Default();
 var localKeyHandle = configuration["AAuth:LocalKeyHandle"]!;
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 var key = await keyStore.LoadAsync(localKeyHandle)
@@ -109,11 +124,12 @@ using AAuth.Agent;
 using AAuth.Crypto;
 
 var keyStore = new InMemoryKeyStore(); // or FileKeyStore for file-based persistence
-var apClient = new AgentProviderClient(new HttpClient(), keyStore);
+using var apHttp = AAuth.Discovery.AAuthHttpTransport.CreateClient();
+var apClient = new AgentProviderClient(apHttp, keyStore);
 
 var result = await apClient.EnrolAsync(
     apIssuer: "https://ap.example",
-    agentId: "aauth:myapp@ap.example",
+    agentId: null,
     enrollEndpoint: "https://ap.example/enrol",
     personServer: "https://ps.example" // optional: include if using three-party flows
 );
@@ -121,12 +137,14 @@ var result = await apClient.EnrolAsync(
 // result.AgentToken     = the aa-agent+jwt issued by the AP
 // result.Key            = the generated durable signing key
 // result.LocalKeyHandle = agent-local IKeyStore handle (defaults to the JWK thumbprint)
-// result.AgentTokenKid  = AP-published kid for jwks_uri mode (required for UseJwksUri)
-// result.JwksUri        = per-agent JWKS URI (for jwks_uri signing mode)
+// result.AgentTokenKid  = AP-published kid for explicit generic UseJwks
+// result.JwksUri        = direct per-agent JWKS URL; not metadata discovery
 ```
 
 ## What Bootstrap Produces
 
+- A provider-assigned `EnrollResult.AgentId` when returned by the AP; the sample
+    rejects caller-chosen namespaces and unauthorized key replacement
 - An `aa-agent+jwt` token signed by the AP, containing:
   - `iss`: AP URL
   - `sub`: agent identifier (`aauth:local@domain`)
@@ -134,8 +152,21 @@ var result = await apClient.EnrolAsync(
   - `ps`: Person Server URL (optional, only if agent has a PS)
 - The agent's **private** key stored in `IKeyStore` (the AP only ever sees the public key)
 - A **local key handle** (`EnrollResult.LocalKeyHandle`) for `IKeyStore.LoadAsync` — defaults to the durable key's JWK thumbprint (RFC 7638). Purely agent-local; never sent to the AP.
-- An **AP-published JWT `kid`** (`EnrollResult.AgentTokenKid`) — the AP chooses this value and publishes it in the per-agent JWKS. Required for `jwks_uri` signing mode (passed to `UseJwksUri(url, kid)`); opaque to receivers per spec § "Agent Identifier Strategies".
-- A `jwks_uri` pointing to the per-agent JWKS endpoint where the AP publishes the agent's public key (used with `scheme=jwks_uri`)
+- An AP-published key identifier (`EnrollResult.AgentTokenKid`) selects the key in the per-agent JWKS. Generic direct-key demonstrations pass it to `UseJwks(url, kid)`; AAuth requests use the agent token instead.
+- A `jwks_uri` response member containing the per-agent key URL for generic direct `scheme=jwks`. AAuth resource requests use the agent JWT instead.
+
+`AAuthClientBuilder.From(result)` uses `result.AgentToken` with `jwt`, whether or
+not the result contains a key URL. No network call occurs in this factory.
+Add a caller-owned `WithTokenRefresh` for renewal or use the enrolled builder.
+Explicit scheme selectors applied after refresh disable it; applying refresh
+after a selector chooses JWT. `ToBuilder()` exposes general options from either
+provisioning sub-builder without selecting a resource access mode.
+
+Bootstrap, Enrolled and SelfIssuing use production admission by default.
+Configure `WithDevelopmentLoopback` only for named local development origins.
+Injected `AgentProviderClient` HTTP clients require an explicit admitted
+transport contract. Bootstrap owns its temporary client; an enrolled pipeline
+owns its refresh client. Keys/stores and injected refreshers remain caller-owned.
 
 ## Token Refresh
 
@@ -143,14 +174,20 @@ Agent tokens are short-lived (typically 1 hour, max 24 hours per spec). The SDK 
 
 ### AP-Enrolled Agents (CLI, desktop, mobile)
 
-The AP issued the original token during enrollment. At refresh time the SDK signs a POST to the AP's refresh endpoint with the **durable key** — the AP verifies the signature, looks the enrollment up by the key's **JWK thumbprint**, and returns a fresh token. **No identifier travels in the request body**; the signature alone identifies the agent.
+The AP issued the original token during enrollment. At refresh time the SDK
+signs a POST to the AP's refresh endpoint with the durable key. Its JSON body is
+`{}`, not zero bytes and not an agent identifier or local key handle. The AP
+verifies the proof, looks up the enrolled durable thumbprint, and returns
+`{"agent_token":"<aa-agent+jwt>"}`. Tokens and signatures shown in angle brackets
+are illustrative values, never usable credentials. Bootstrap is informational;
+the signed enrollment and refresh endpoints described here are the sample profile.
 
 ```mermaid
 sequenceDiagram
     participant Agent
     participant AP as Agent Provider
     Note over Agent: Token nearing expiry
-    Agent->>AP: POST /refresh (signed with durable key)
+    Agent->>AP: POST /refresh {} (hwk, signed with durable key)
     AP->>AP: Verify signature, look up by JWK thumbprint
     AP-->>Agent: New aa-agent+jwt
 ```
@@ -167,7 +204,11 @@ using var client = AAuthClientBuilder.Enrolled(key)
 
 ### Two-Key Refresh (jkt-jwt — key rotation)
 
-For agents using the `jkt-jwt` signing mode, the refresh flow uses **two keys**: the enrolled durable key for identity proof, and a fresh ephemeral key for signing HTTP requests. This enables key rotation without re-enrollment. The naming JWT is self-issued per [`draft-hardt-httpbis-signature-key-05`](../../aauth-spec/v08/draft-hardt-httpbis-signature-key-05.txt) §3.4: the durable public key travels in the JWT header and the issuer is its own thumbprint URN, so the AP verifies it self-anchored and then binds it to the enrolment record.
+The AP refresh ceremony can use `jkt-jwt`: a durable key delegates to a new
+ephemeral key. Subsequent AAuth resource requests still use `jwt`, with the
+returned agent token and its matching ephemeral key. The naming JWT is
+self-anchored under Signature Keys draft 08 section 3.5; the AP also binds the
+durable key to its enrollment record.
 
 ```mermaid
 sequenceDiagram
@@ -176,7 +217,7 @@ sequenceDiagram
     Note over Agent: Token nearing expiry
     Agent->>Agent: Generate ephemeral Ed25519 key
     Agent->>Agent: Build naming JWT (jkt-s256+jwt, signed by durable key,<br/>durable jwk in header, iss=urn:jkt:sha-256:&lt;thumbprint&gt;,<br/>ephemeral key as cnf.jwk)
-    Agent->>AP: POST /refresh (signed with ephemeral key,<br/>Signature-Key: sig=jkt-jwt;jwt="&lt;naming-jwt&gt;")
+    Agent->>AP: POST /refresh {} (signed with ephemeral key,<br/>Signature-Key: sig=jkt-jwt;jwt="&lt;naming-jwt&gt;")
     AP->>AP: Self-anchor — thumbprint(header jwk) == iss, verify naming JWT signature
     AP->>AP: Look up enrolment by the durable key thumbprint (bind to record)
     AP->>AP: Verify HTTP signature against ephemeral cnf.jwk
@@ -184,14 +225,19 @@ sequenceDiagram
 ```
 
 ```csharp
-// Self-anchored verification (draft-05 §3.4), then the AP looks up the
-// enrolment by the durable key's thumbprint and binds it to the record.
-using var client = AAuthClientBuilder.Enrolled(key)
-    .RefreshingFrom(apRefreshEndpoint, localKeyHandle)
-    .WithKeyStore(keyStore)
-    .WithRefreshMode(RefreshMode.TwoKey)
+using var apHttp = AAuth.Discovery.AAuthHttpTransport.CreateClient();
+var apClient = new AgentProviderClient(apHttp, keyStore);
+var refreshed = await apClient.RefreshTwoKeyAsync(apRefreshEndpoint, localKeyHandle);
+using var client = new AAuthClientBuilder(refreshed.EphemeralKey)
+    .UseJwt(refreshed.AgentToken)
     .Build();
 ```
+
+`Enrolled(...).WithRefreshMode(TwoKey)` is rejected: its fixed HTTP signing key
+cannot follow a newly generated ephemeral key. Advanced rotating clients must
+coordinate the returned token/key pair. The disposable
+`AgentProviderTokenRefresher.Create(...).Build()` owns only its internally
+created HTTP client; the constructor and `WithHttpClient` borrow yours.
 
 ### Self-Issued Tokens (hosted services)
 
@@ -216,7 +262,7 @@ The term "key ID" gets overloaded in AP enrollment. There are actually **three d
 |-----------|----------------|---------------|----------|
 | **JWK thumbprint** of the durable key (RFC 7638) | derived from the public key | implicit on every signed request | The AP looks the agent up in its enrollment DB by this thumbprint at refresh time |
 | **Local key handle** (`EnrollResult.LocalKeyHandle`) | the agent (SDK chooses; defaults to the JWK thumbprint) | never leaves the agent process | `IKeyStore.LoadAsync(localKeyHandle)` — loads the private key at app startup |
-| **AP-published JWT `kid`** (`EnrollResult.AgentTokenKid`) | the AP picks (opaque) | inside the issued `aa-agent+jwt` header; in `Signature-Key` for `jwks_uri` mode | Required for `UseJwksUri(url, kid)` — the agent passes it when building the client. Opaque to receivers per spec § "Agent Identifier Strategies". **Not sent back to the AP at refresh** — refresh uses the HTTP signature only. |
+| AP-published key id (`EnrollResult.AgentTokenKid`) | AP chooses | Direct per-agent JWKS key selection | Generic `UseJwks(url, kid)` demonstrations; not sent back to the AP at refresh. |
 
 For the second flavour of enrollment, **self-issued** (hosted services), only one identifier matters:
 
@@ -265,14 +311,14 @@ flowchart LR
 
 ```csharp
 // File-based (persists to ~/.aauth/keys/)
-var keyStore = FileKeyStore.Default();
+IKeyStore fileStore = FileKeyStore.Default();
 
 // In-memory (testing only)
-var keyStore = new InMemoryKeyStore();
-
-// Custom (KMS, HSM, etc.)
-class MyKeyStore : IKeyStore { ... }
+IKeyStore memoryStore = new InMemoryKeyStore();
 ```
+
+Custom KMS/HSM stores implement the complete [IKeyStore contract](../advanced/key-management.md).
+The SDK does not include a `MyKeyStore`, Azure or HSM implementation.
 
 ## Further Reading
 

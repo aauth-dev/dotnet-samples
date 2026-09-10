@@ -50,6 +50,7 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
         _factory = factory.WithWebHostBuilder(b =>
         {
             b.UseSetting("AAuth:Issuer", PsIssuer);
+            b.UseIsolatedDemoConsent();
             b.ConfigureServices(ResourceStub.WireDiscovery);
         });
     }
@@ -279,6 +280,91 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
             () => ExchangeAsync(agent, mission, "trips.read", new TokenExchangeRequest()));
     }
 
+    [Theory]
+    [InlineData("permission", "foreign")]
+    [InlineData("audit", "foreign")]
+    [InlineData("mission-interaction", "foreign")]
+    [InlineData("permission", "unknown")]
+    [InlineData("audit", "unknown")]
+    [InlineData("mission-interaction", "unknown")]
+    [InlineData("permission", "approver")]
+    [InlineData("audit", "approver")]
+    [InlineData("mission-interaction", "approver")]
+    [InlineData("permission", "terminated")]
+    [InlineData("audit", "terminated")]
+    [InlineData("mission-interaction", "terminated")]
+    public async Task Governance_SignedInvalidMissionCannotAct(string endpoint, string scenario)
+    {
+        var owner = NewAgent();
+        await ScriptAsync(owner, new JsonObject { ["reset"] = true });
+        var mission = await ProposeMissionAsync(owner, "ownership regression", "WebSearch");
+        var before = (await ReadLogAsync(mission)).Count;
+        var caller = scenario == "foreign" ? NewAgent("aauth:foreign@ap.example") : owner;
+        if (scenario == "terminated")
+            await _factory.Services.GetRequiredService<IMissionStore>().SetStateAsync(mission.S256, MissionState.Terminated);
+        var body = new JsonObject
+        {
+            ["mission"] = new JsonObject
+            {
+                ["approver"] = scenario == "approver" ? "https://foreign.example" : mission.Approver,
+                ["s256"] = scenario == "unknown" ? Mission.ComputeS256("unknown"u8.ToArray()) : mission.S256,
+            },
+            ["action"] = "WebSearch", ["type"] = "completion", ["summary"] = "Complete",
+        };
+        using var response = await caller.Signed.PostAsJsonAsync("/" + endpoint, body);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal(scenario == "terminated" ? "mission_terminated" : "invalid_mission", (string?)result?["error"]);
+        Assert.False(response.Headers.Contains("Signature-Error"));
+        Assert.Equal(before, (await ReadLogAsync(mission)).Count);
+        Assert.Equal(scenario == "terminated" ? MissionState.Terminated : MissionState.Active,
+            (await _factory.Services.GetRequiredService<IMissionStore>().GetAsync(mission.S256))!.State);
+    }
+
+    [Fact]
+    public async Task PermissionPending_TerminatedMissionCannotReleaseLateApproval()
+    {
+        var owner = NewAgent();
+        await ScriptAsync(owner, new JsonObject { ["reset"] = true });
+        var mission = await ProposeMissionAsync(owner, "Late permission approval");
+        await ScriptAsync(owner, new JsonObject { ["interactive"] = true });
+        using var initial = await owner.Signed.PostAsJsonAsync("/permission", new JsonObject
+        {
+            ["action"] = "SendEmail", ["mission"] = new JsonObject { ["approver"] = mission.Approver, ["s256"] = mission.S256 },
+        });
+        Assert.Equal(System.Net.HttpStatusCode.Accepted, initial.StatusCode);
+        await _factory.Services.GetRequiredService<IMissionStore>().SetStateAsync(mission.S256, MissionState.Terminated);
+        var id = initial.Headers.Location!.ToString().Split('/').Last();
+        Assert.True(_factory.Services.GetRequiredService<MockPersonServer.MissionPendingStore>().Get(id)!.Decide(true));
+        using var response = await owner.Signed.GetAsync(initial.Headers.Location);
+        Assert.Equal(System.Net.HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("mission_terminated", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())?["error"]);
+        Assert.DoesNotContain(await ReadLogAsync(mission), entry => entry.Kind == MissionLogEntryKind.Permission && entry.Granted == true);
+    }
+
+    [Fact]
+    public async Task MissionConsent_RendersUntrustedMarkdownAsEncodedText()
+    {
+        const string untrusted = "<img src=x onerror=alert(1)><script>private()</script> [unsafe](javascript:alert(1))";
+        var agent = NewAgent();
+        await ScriptAsync(agent, new JsonObject { ["reset"] = true, ["interactive"] = true });
+        using var response = await agent.Signed.PostAsJsonAsync("/mission", new JsonObject { ["description"] = untrusted });
+        Assert.Equal(System.Net.HttpStatusCode.Accepted, response.StatusCode);
+        var interaction = AAuth.Headers.Interaction.FromRequirement(AAuth.Headers.AAuthRequirementHeader.Parse(
+            response.Headers.GetValues("AAuth-Requirement").Single()), TestEgress.Policy)!;
+        var inspected = false;
+        using var approved = await AAuth.Testing.TestConsentBrowser.DecideAsync(agent.Plain, interaction.BuildUserUrl(), "/interaction/approve", html =>
+        {
+            inspected = true;
+            Assert.Contains(System.Net.WebUtility.HtmlEncode(untrusted), html);
+            Assert.DoesNotContain("<img src=x", html);
+            Assert.DoesNotContain("<script>private", html);
+            Assert.DoesNotContain("href=\"javascript:", html);
+        });
+        Assert.True(inspected);
+        Assert.True(approved.IsSuccessStatusCode);
+    }
+
     // ---- Helpers -------------------------------------------------------
 
     private sealed record Agent(string AgentId, AAuthKey AgentKey, HttpClient Signed, HttpClient Plain, MetadataClient Metadata);
@@ -289,22 +375,24 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
         var agentKey = AAuthKey.Generate();
         var agentToken = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
             Subject = agentId,
             KeyId = "demo",
-            Key = agentKey,
+            Key = ResourceStub.ApKey,
+            ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
         }.Build();
         var signing = new AAuthSigningHandler(agentKey, () => agentToken)
         {
             InnerHandler = _factory.Server.CreateHandler(),
         };
-        var signed = new HttpClient(signing) { BaseAddress = new Uri(PsIssuer) };
+        var signed = new InProcessHttpClient(signing) { BaseAddress = new Uri(PsIssuer) };
         var plain = _factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = new Uri(PsIssuer),
         });
-        var metadata = new MetadataClient(new HttpClient(_factory.Server.CreateHandler()));
+        var metadata = new MetadataClient(new InProcessHttpClient(_factory.Server.CreateHandler()));
         return new Agent(agentId, agentKey, signed, plain, metadata);
     }
 
@@ -332,6 +420,8 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     {
         var resourceToken = new ResourceTokenBuilder
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             Issuer = ResourceUrl,
             Audience = PsIssuer,
             Agent = agent.AgentId,

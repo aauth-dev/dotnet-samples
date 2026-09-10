@@ -29,6 +29,8 @@ public class MissionClaimTests
     {
         var jwt = new ResourceTokenBuilder
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             Issuer = Iss,
             Audience = Aud,
             Agent = Agent,
@@ -46,6 +48,8 @@ public class MissionClaimTests
     {
         var jwt = new ResourceTokenBuilder
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             Issuer = Iss,
             Audience = Aud,
             Agent = Agent,
@@ -67,6 +71,8 @@ public class MissionClaimTests
     {
         var jwt = new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = Aud,
             Audience = Iss,
             Agent = Agent,
@@ -84,6 +90,8 @@ public class MissionClaimTests
     {
         var jwt = new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = Aud,
             Audience = Iss,
             Agent = Agent,
@@ -107,6 +115,8 @@ public class MissionClaimTests
         var agentKey = AAuthKey.Generate();
         var jwt = new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = Aud,
             Audience = Iss,
             Agent = Agent,
@@ -117,7 +127,7 @@ public class MissionClaimTests
             Mission = new MissionClaim(Approver, S256),
         }.Build();
 
-        var verified = new TokenVerifier().VerifyAuthToken(
+        var verified = new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifyAuthToken(
             jwt, issuerKey, Iss, agentKey, Agent);
 
         Assert.NotNull(verified.Mission);
@@ -132,6 +142,8 @@ public class MissionClaimTests
         var agentKey = AAuthKey.Generate();
         var jwt = new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = Aud,
             Audience = Iss,
             Agent = Agent,
@@ -141,7 +153,7 @@ public class MissionClaimTests
             Scope = "whoami",
         }.Build();
 
-        var verified = new TokenVerifier().VerifyAuthToken(
+        var verified = new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifyAuthToken(
             jwt, issuerKey, Iss, agentKey, Agent);
 
         Assert.Null(verified.Mission);

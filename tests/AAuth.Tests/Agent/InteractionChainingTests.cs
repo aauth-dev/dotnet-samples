@@ -31,14 +31,14 @@ public class InteractionChainingTests
     public async Task ChainedException_AbortsBeforePolling_AndSurfacesInteraction()
     {
         var handler = new DeferredExchangeHandler();
-        var metaClient = new MetadataClient(new HttpClient(handler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(handler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(handler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(handler), metaClient);
 
         Interaction? captured = null;
 
         var ex = await Assert.ThrowsAsync<AAuthInteractionChainedException>(
             () => exchangeClient.ExchangeAsync(
-                PsUrl, "fake-resource-token",
+                PsUrl, TestTokens.Resource,
                 new TokenExchangeRequest
                 {
                     OnInteractionRequired = (interaction, _) =>
@@ -65,17 +65,15 @@ public class InteractionChainingTests
     public async Task DirectInteractionCallback_StillPollsToTerminal()
     {
         var handler = new DeferredExchangeHandler();
-        var metaClient = new MetadataClient(new HttpClient(handler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(handler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(handler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(handler), metaClient);
 
-        var authToken = await exchangeClient.ExchangeAsync(
-            PsUrl, "fake-resource-token",
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => exchangeClient.ExchangeAsync(
+            PsUrl, TestTokens.Resource,
             new TokenExchangeRequest
             {
                 OnInteractionRequired = (_, _) => Task.CompletedTask,
-            });
-
-        Assert.Equal("fake-auth-token", authToken);
+            }));
         Assert.True(handler.PendingPolled);
     }
 
@@ -83,11 +81,11 @@ public class InteractionChainingTests
     public async Task NoCallback_ThrowsUserUnreachable()
     {
         var handler = new DeferredExchangeHandler();
-        var metaClient = new MetadataClient(new HttpClient(handler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(handler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(handler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(handler), metaClient);
 
         var ex = await Assert.ThrowsAsync<AAuthTokenExchangeException>(
-            () => exchangeClient.ExchangeAsync(PsUrl, "fake-resource-token"));
+            () => exchangeClient.ExchangeAsync(PsUrl, TestTokens.Resource));
 
         Assert.Equal("user_unreachable", ex.ErrorCode);
         Assert.Equal(403, ex.StatusCode);
@@ -147,7 +145,7 @@ public class InteractionChainingTests
             response.Headers.TryAddWithoutValidation("Cache-Control", "no-store");
             response.Headers.TryAddWithoutValidation(
                 AAuthRequirementHeader.Name,
-                Interaction.Format(InteractionUrl, InteractionCode));
+                Interaction.Format(InteractionUrl, InteractionCode, TestEgress.Policy));
             return Task.FromResult(response);
         }
     }

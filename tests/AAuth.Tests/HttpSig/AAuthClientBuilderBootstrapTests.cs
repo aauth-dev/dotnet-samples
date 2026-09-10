@@ -15,6 +15,20 @@ namespace AAuth.Tests.HttpSig;
 public class AAuthClientBuilderBootstrapTests
 {
     [Fact]
+    public void Enrolled_ResourceManagedAccess_ComposesBeforeInteractionHandling()
+    {
+        var key = AAuthKey.Generate();
+        using var client = AAuthClientBuilder.Enrolled(key)
+            .RefreshingFrom("https://ap.example/refresh", "local-key")
+            .WithKeyStore(new InMemoryKeyStore())
+            .WithResourceManagedAccess()
+            .WithInteractionHandling()
+            .Build();
+
+        Assert.NotNull(client);
+    }
+
+    [Fact]
     public void Bootstrap_ReturnsBootstrapBuilder()
     {
         var builder = AAuthClientBuilder.Bootstrap(
@@ -51,6 +65,14 @@ public class AAuthClientBuilderBootstrapTests
     {
         Assert.Throws<ArgumentException>(() =>
             AAuthClientBuilder.Bootstrap("", "aauth:test@example.com"));
+    }
+
+    [Fact]
+    public void Bootstrap_OmittedAgentId_RequestsProviderAssignment()
+    {
+        var builder = AAuthClientBuilder.Bootstrap("https://ap.example/enrol")
+            .WithKey(AAuthKey.Generate());
+        Assert.NotNull(builder);
     }
 
     [Fact]

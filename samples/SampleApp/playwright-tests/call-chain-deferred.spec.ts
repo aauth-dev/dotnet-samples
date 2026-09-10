@@ -28,7 +28,7 @@ test.describe('Call Chain (deferred)', () => {
     await expect(page.locator('h2')).toContainText('Call Chain');
     await waitForInteractive(page, 'button.btn-primary');
 
-    const link = page.locator('a[target="_blank"]', { hasText: /interaction/ });
+    const link = page.locator('a.btn[href*="/interaction"][target="_blank"]');
     const heading = page.locator('.alert .badge', { hasText: /Approval/ });
 
     // First click on a cold circuit can be dropped — confirm hop 1 surfaced.
@@ -66,13 +66,13 @@ test.describe('Call Chain (deferred)', () => {
 
     // Concierge: the intermediary's own identity.
     const concierge = json.concierge as Record<string, unknown>;
-    expect(concierge.identity).toBe('aauth:concierge@localhost:5200');
+    expect(concierge.identity).toBe('aauth:concierge@localhost');
 
     // Downstream: Calendar's three-party identity with the nested act chain.
     const downstream = json.downstream as Record<string, unknown>;
     expect(downstream.accessMode).toBe('three-party');
     expect(downstream.scheme).toBe('jwt');
-    expect(downstream.agent).toBe('aauth:concierge@localhost:5200');
+    expect(downstream.agent).toBe('aauth:concierge@localhost');
     expect(downstream.iss).toBe(Urls.personServer);
     expect(downstream.scope).toEqual(['calendar.read']);
 
@@ -91,7 +91,7 @@ test.describe('Call Chain (deferred)', () => {
     await page.goto('/call-chain');
     await waitForInteractive(page, 'button.btn-primary');
 
-    const link = page.locator('a[target="_blank"]', { hasText: /interaction/ });
+    const link = page.locator('a.btn[href*="/interaction"][target="_blank"]');
     const heading = page.locator('.alert .badge', { hasText: /Approval/ });
 
     await clickAndConfirm(page, 'button.btn-primary', () => link.isVisible());

@@ -1,4 +1,7 @@
-# Protocol Concepts
+---
+title: Protocol Concepts
+description: AAuth roles, access modes, governance, token purposes and supported companions.
+---
 
 AAuth is a protocol for autonomous agent authorization. This page maps protocol concepts to SDK types. For the full interactive protocol reference, see the [AAuth Explorer](https://explorer.aauth.dev/).
 
@@ -21,12 +24,19 @@ How the agent proves who it is. Built on HTTP Message Signatures ([RFC 9421](htt
 
 SDK: `ISignatureKeyProvider` implementations → `AAuthSigningHandler`
 
-Four signing modes (see [Signing Mode Comparison](https://explorer.aauth.dev/signing/compare)):
+Six Signature-Key schemes (see [Signing Schemes](signing-modes/overview.md)):
 
-- **Anonymous** — no signature (public endpoints)
-- **Pseudonymous** (`hwk`) — `HwkSignatureKeyProvider`
-- **Agent Identity** (`jwks_uri`) — `JwksUriSignatureKeyProvider`
-- **Agent Token** (`jwt`) — `JwtSignatureKeyProvider`
+- `hwk`: inline pseudonymous public key
+- `jkt-jwt`: durable-to-ephemeral key delegation, including AP refresh
+- `jwks_uri`: server identifier and well-known metadata discovery
+- `jwks`: direct key URL, not metadata discovery
+- `jwt`: token with a confirmation key; AAuth agents use this for all resource access modes
+- `self-jwt`: typed self-issued assertion without cnf; used for Events delivery
+
+Anonymous public requests have no signature and are not a Signature-Key scheme.
+SelfIssuing/Enrolled/Bootstrap describe credential provisioning, not an access
+mode or the `self-jwt` scheme. The Profile pseudonymous demonstrations are
+generic signing examples, not identity-based AAuth access.
 
 ### 2. Resource Access
 
@@ -35,7 +45,7 @@ How a resource decides what the agent may do. See [Access Mode Comparison](https
 Four modes:
 
 - **Identity-Based** — Resource trusts the signature directly. No tokens beyond the agent token.
-- **Resource-Managed** (2-party) — Resource handles auth itself (interaction/OAuth) and issues an opaque `AAuth-Access` token. SDK: agent `WithResourceManagedAccess()`; resource `AddAAuthResourceManaged()` + `ctx.RequireAAuthInteraction(scope)` + `app.MapAAuthInteractionPoll()`, reading the token with `ResolveAAuthAccessAsync` (the consent page records approval via `IInteractionPendingStore.Approve`)
+- **Resource-Managed** (2-party): Resource handles its own consent and issues an opaque `AAuth-Access` token bound to the verified agent/key/account. SDK: `WithResourceManagedAccess`, `AddAAuthResourceManaged` and `ResolveAAuthAccessAsync`. Browser decisions require authenticated sessions and CSRF protection; the correlation code is not approval.
 - **PS-Asserted** (3-party) — Resource issues resource token → agent exchanges at PS → auth token. SDK: `ChallengeHandler`, `TokenExchangeClient`
 - **Federated** (4-party) — PS delegates to Access Server. SDK: same agent-side types; AS is the PS's concern.
 
@@ -60,6 +70,14 @@ See [Missions](https://explorer.aauth.dev/missions/compare). For the SDK surface
 | Agent Token | `aa-agent+jwt` | Agent Provider or Self | Binds key → identity | `AgentTokenBuilder` |
 | Resource Token | `aa-resource+jwt` | Resource | Challenge: "get auth from my PS/AS" | `ResourceTokenBuilder` |
 | Auth Token | `aa-auth+jwt` | PS or AS | Proves user authorized this agent | `AuthTokenBuilder` |
+| Subscribe Token | `aa-subscribe+jwt` | AP | Authorizes registration for an agent/context | `AAuth.Events.SubscribeTokenBuilder` |
+| Event Token | `aa-event+jwt` | Resource | Authenticates delivery with the resource's own signing key and no cnf | `AAuth.Events.EventTokenBuilder` |
+
+An optional `account` selects a resource-owned account, distinct from directed
+person `sub`. It must agree across the request, challenge, grant and R3 document.
+Revocation identifies a grant by `(iss, jti)`, not a globally unique bare `jti`.
+See [Wallet Protocol](workflows/wallet-protocol.md), [Catalog Gateway](workflows/catalog-gateway.md)
+and [Events](workflows/events.md) for runnable rejection/recovery paths.
 
 ## HTTP Headers AAuth Uses
 
@@ -76,5 +94,5 @@ See [Missions](https://explorer.aauth.dev/missions/compare). For the SDK surface
 
 - [AAuth Explorer](https://explorer.aauth.dev/) — interactive protocol walkthrough
 - [HTTP Signatures Profile](https://explorer.aauth.dev/foundations/profile) — what AAuth pins from RFC 9421
-- [Signature-Key Schemes](https://explorer.aauth.dev/foundations/schemes) — the four schemes side-by-side
+- [Signature-Key Schemes](signing-modes/overview.md) - the six supported carriers and AAuth profile restrictions
 - [Error Model](https://explorer.aauth.dev/foundations/errors) — Signature-Error codes

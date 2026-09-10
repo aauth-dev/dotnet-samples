@@ -52,7 +52,7 @@ public sealed record Interaction(string Url, string Code)
     /// <c>interaction</c> but is missing the mandatory <c>url</c> or
     /// <c>code</c> parameters.
     /// </summary>
-    public static Interaction? FromRequirement(AAuthRequirementHeader.ParsedRequirement requirement)
+    public static Interaction? FromRequirement(AAuthRequirementHeader.ParsedRequirement requirement, AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
         ArgumentNullException.ThrowIfNull(requirement);
         if (requirement.Requirement != RequirementType)
@@ -66,14 +66,8 @@ public sealed record Interaction(string Url, string Code)
             throw new FormatException(
                 $"AAuth-Requirement requirement=interaction is missing the '{UrlParameter}' parameter.");
         }
-        if (!AAuthUrl.IsHttpsOrLoopback(url))
-        {
-            // Reject non-http(s) schemes (e.g. `javascript:`, `data:`) so a
-            // hostile or buggy PS cannot smuggle a script URL into the agent
-            // host, which may render it as a clickable link.
-            throw new FormatException(
-                $"AAuth-Requirement requirement=interaction '{UrlParameter}' must be an absolute https URL (loopback http allowed for development).");
-        }
+        try { (policy ?? AAuth.Discovery.AAuthEgressPolicy.Production).ValidateUrl(url, endpoint: true); }
+        catch (System.Net.Http.HttpRequestException exception) { throw new FormatException("Invalid interaction URL.", exception); }
         if (!requirement.Parameters.TryGetValue(CodeParameter, out var code)
             || string.IsNullOrEmpty(code))
         {
@@ -90,16 +84,12 @@ public sealed record Interaction(string Url, string Code)
     /// resource and PS implementations can emit the header without a
     /// general RFC 8941 serializer.
     /// </summary>
-    public static string Format(string url, string code)
+    public static string Format(string url, string code, AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(url);
         ArgumentException.ThrowIfNullOrEmpty(code);
-        if (!AAuthUrl.IsHttpsOrLoopback(url))
-        {
-            throw new ArgumentException(
-                "url must be an absolute https URL (loopback http allowed for development).",
-                nameof(url));
-        }
+        try { (policy ?? AAuth.Discovery.AAuthEgressPolicy.Production).ValidateUrl(url, endpoint: true); }
+        catch (System.Net.Http.HttpRequestException exception) { throw new ArgumentException("Invalid interaction URL.", nameof(url), exception); }
         Reject(url, nameof(url));
         Reject(code, nameof(code));
         return $"requirement={RequirementType}; {UrlParameter}=\"{url}\"; {CodeParameter}=\"{code}\"";

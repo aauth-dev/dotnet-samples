@@ -38,6 +38,7 @@ public sealed class StubAccessPolicy : IAccessPolicy
 
     private readonly IReadOnlyList<string> _requiredClaims;
     private readonly bool _requireConsent;
+    private readonly WalletPolicyRules? _walletRules;
 
     /// <summary>
     /// Create the stub policy. <paramref name="requiredClaims"/> (from
@@ -51,15 +52,17 @@ public sealed class StubAccessPolicy : IAccessPolicy
     /// approves at the AS consent screen, just like the Keycloak path.
     /// </summary>
     public StubAccessPolicy(
-        IReadOnlyList<string>? requiredClaims = null, bool requireConsent = false)
+        IReadOnlyList<string>? requiredClaims = null, bool requireConsent = false, WalletPolicyRules? walletRules = null)
     {
         _requiredClaims = requiredClaims ?? [];
         _requireConsent = requireConsent;
+        _walletRules = walletRules;
     }
 
     public Task<AccessDecision> EvaluateAsync(
         AccessPolicyRequest request, CancellationToken cancellationToken = default)
     {
+        if (_walletRules?.Evaluate(request) is { } walletDecision) return Task.FromResult(walletDecision);
         // §Claims Required: if the AS is configured to need identity claims it
         // does not yet hold, ask the PS to push them before deciding.
         var missing = MissingClaims(request.Claims);

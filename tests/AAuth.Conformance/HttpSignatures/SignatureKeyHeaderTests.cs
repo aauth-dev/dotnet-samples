@@ -65,6 +65,7 @@ public class SignatureKeyHeaderTests
         var key = AAuthKey.Generate();
         var jwt = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = "https://ap.example",
             Subject = "aauth:demo@ap.example",
             KeyId = "demo",

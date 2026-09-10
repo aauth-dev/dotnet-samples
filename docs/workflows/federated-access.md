@@ -1,4 +1,7 @@
-# Federated Access (Four-Party)
+---
+title: Federated Access (Four-Party)
+description: Obtain resource access through Person Server and Access Server federation.
+---
 
 > [Live demo](https://explorer.aauth.dev/access/federated) | [Access Mode Comparison](https://explorer.aauth.dev/access/compare)
 
@@ -30,7 +33,7 @@ using AAuth.Crypto;
 using AAuth;
 
 var keyStore = FileKeyStore.Default();
-var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!)
+var key = keyStore.Load(configuration["AAuth:LocalKeyHandle"]!)
     ?? throw new InvalidOperationException("Key not found. Run enrollment first.");
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 
@@ -51,17 +54,17 @@ Identical to PS-asserted — the federation is transparent to the agent:
 using AAuth.Agent;
 using AAuth.Crypto;
 
-var keyStore = FileKeyStore.Default();
+IKeyStore keyStore = FileKeyStore.Default();
 var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!);
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
+using var refresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, configuration["AAuth:LocalKeyHandle"]!)
+    .WithKeyStore(keyStore).Build();
 
 builder.Services.AddAAuthAgent("federated", options =>
 {
     options.Key = key!;
     options.PersonServer = "https://ps.example";
-    options.TokenRefresher = AgentProviderTokenRefresher.Create(apRefreshEndpoint, configuration["AAuth:LocalKeyHandle"]!)
-        .WithKeyStore(keyStore)
-        .Build();
+    options.TokenRefresher = refresher;
 });
 ```
 
@@ -80,35 +83,17 @@ a signed server-to-server call to the AS and relays the AS-minted auth token bac
 to the agent.
 
 ```csharp
-// MockPersonServer — federation branch (simplified).
-var aud = PeekJwtAudience(resourceToken);
+using AAuth.Person;
 
-if (aud == psIssuer)
+builder.Services.AddSingleton<IIdentityClaimsAsserter>(identityAsserter);
+builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>();
+var app = builder.Build();
+app.MapAAuthPersonServer(new AAuthPersonServerOptions
 {
-    // Three-party: the PS asserts access itself.
-    return Results.Json(new { auth_token = MintLocally(...) });
-}
-
-if (!trustedAccessServers.Contains(aud))
-{
-    return Results.Json(new { error = "untrusted_access_server" }, statusCode: 403);
-}
-
-// Four-party: federate to the AS. The PS signs the call with the `jwks_uri`
-// scheme so the AS can pin the caller to a trusted Person Server.
-// `FederateAsync` drives the whole AS exchange — including polling any
-// `202` deferred/interaction/claims requirement to completion — and returns
-// the verified `aa-auth+jwt` directly.
-var authToken = await accessServerClient.FederateAsync(aud, new AccessServerRequest
-{
-    ResourceToken    = resourceToken,
-    AgentToken       = agentToken,
-    ExpectedAudience = resourceUrl,   // resource token `iss`
-    ExpectedAgentId  = agentId,
-    AgentKey         = agentConfirmationKey,
-}, ct);
-
-return Results.Json(new { auth_token = authToken });
+    Issuer = psIssuer,
+    SigningKeys = new Dictionary<string, IAAuthKey> { [PsKid] = psKey },
+    TrustedAccessServers = trustedAccessServers,
+});
 ```
 
 > Both branches above — the three-party mint and the four-party federation — are
@@ -133,7 +118,7 @@ using AAuth.Access;
 
 // Register the policy decision point (stub | keycloak) and the store that
 // parks deferred decisions (§Claims Required / interactive consent).
-builder.Services.AddSingleton<IAccessPolicy>(new StubAccessPolicy(requiredClaims));
+builder.Services.AddSingleton<IAccessPolicy>(accessPolicy);
 builder.Services.AddSingleton<IAccessPendingStore, InMemoryAccessPendingStore>();
 
 var app = builder.Build();
@@ -143,7 +128,7 @@ var app = builder.Build();
 app.MapAAuthAccessServer(new AAuthAccessServerOptions
 {
     Issuer               = asIssuer,
-    SigningKeys          = new Dictionary<string, AAuthKey> { [AsKid] = asKey },
+    SigningKeys          = new Dictionary<string, IAAuthKey> { [AsKid] = asKey },
     DefaultScope         = "wallet.read",
     TrustedPersonServers = trustedPersonServers,
 });
@@ -265,6 +250,7 @@ var fedRequest = new AccessServerRequest
 {
     ResourceToken = resourceTokenJwt,
     AgentToken = agentTokenJwt,
+    AuthorizationExpiresAt = verifiedAgent.ExpiresAt,
     ExpectedAudience = resourceUrl,
     ExpectedAgentId = agentId,
     AgentKey = agentConfirmationKey,

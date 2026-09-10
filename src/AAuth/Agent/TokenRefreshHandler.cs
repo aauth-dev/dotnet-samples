@@ -70,6 +70,10 @@ internal sealed class TokenRefreshHandler : DelegatingHandler
             {
                 var context = BuildContext(token);
                 var newToken = await _refresher.RefreshAsync(context, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!AAuth.Tokens.AccountBinding.Matches(context.Account,
+                    AAuth.Tokens.AccountBinding.Read(ReadPayloadUnsafe(newToken))))
+                    throw new AAuth.Tokens.TokenVerificationException("Refreshed token changed account binding.");
                 _holder.Update(newToken);
             }
         }
@@ -96,6 +100,7 @@ internal sealed class TokenRefreshHandler : DelegatingHandler
                 SigningKeyThumbprint = _signingKeyThumbprint,
             };
             var newToken = await _refresher.RefreshAsync(context, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             _holder.Update(newToken);
         }
         finally
@@ -114,6 +119,7 @@ internal sealed class TokenRefreshHandler : DelegatingHandler
             CurrentToken = token,
             Issuer = iss,
             AgentId = sub,
+            Account = AAuth.Tokens.AccountBinding.Read(payload),
             SigningKeyThumbprint = _signingKeyThumbprint,
         };
     }

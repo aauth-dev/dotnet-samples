@@ -18,6 +18,34 @@ public class InteractionHandlerTests
 {
     private readonly AAuthKey _key = AAuthKey.Generate();
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BareOrApproval202_DispatchesChangedInteractions(bool approval)
+    {
+        var codes = new List<string>();
+        var handler = new ScriptedHandler(
+            _ => approval ? Make202Approval("https://ps.example/pending/1") : new HttpResponseMessage(HttpStatusCode.Accepted)
+            {
+                Headers = { Location = new Uri("https://ps.example/pending/1"), RetryAfter = new RetryConditionHeaderValue(TimeSpan.Zero) },
+            },
+            _ => Make202Interaction("https://ps.example/consent", "ONE", "https://ps.example/pending/1"),
+            _ => Make202Interaction("https://ps.example/consent", "ONE", "https://ps.example/pending/1"),
+            _ => Make202Interaction("https://ps.example/consent", "TWO", "https://ps.example/pending/1"),
+            _ => new HttpResponseMessage(HttpStatusCode.OK));
+        using var client = new InProcessHttpClient(new InteractionHandler(
+            onInteractionRequired: (_, code, _) => { codes.Add(code); return Task.CompletedTask; },
+            minPollInterval: TimeSpan.Zero)
+        {
+            EgressPolicy = TestEgress.Policy,
+            TransportContract = AAuth.Discovery.AAuthTransportContract.InProcessOnly,
+            InnerHandler = handler,
+        });
+        using var response = await client.GetAsync("https://ps.example/api");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(new[] { "ONE", "TWO" }, codes);
+    }
+
     [Fact]
     public async Task Interaction_PollsUntilSuccess()
     {
@@ -44,11 +72,13 @@ public class InteractionHandlerTests
             },
             pollingTimeout: TimeSpan.FromSeconds(10))
         {
+            EgressPolicy = TestEgress.Policy,
+            TransportContract = AAuth.Discovery.AAuthTransportContract.InProcessOnly,
             InnerHandler = handler,
         };
 
-        using var client = new HttpClient(interactionHandler);
-        var response = await client.GetAsync("https://resource.example/api");
+        using var client = new InProcessHttpClient(interactionHandler);
+        var response = await client.GetAsync("https://ps.example/api");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.NotNull(capturedUrl);
@@ -76,11 +106,13 @@ public class InteractionHandlerTests
             },
             pollingTimeout: TimeSpan.FromSeconds(10))
         {
+            EgressPolicy = TestEgress.Policy,
+            TransportContract = AAuth.Discovery.AAuthTransportContract.InProcessOnly,
             InnerHandler = handler,
         };
 
-        using var client = new HttpClient(interactionHandler);
-        var response = await client.GetAsync("https://resource.example/api");
+        using var client = new InProcessHttpClient(interactionHandler);
+        var response = await client.GetAsync("https://ps.example/api");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.True(approvalCalled);
@@ -96,53 +128,50 @@ public class InteractionHandlerTests
             onInteractionRequired: null,
             pollingTimeout: TimeSpan.FromSeconds(5))
         {
+            EgressPolicy = TestEgress.Policy,
+            TransportContract = AAuth.Discovery.AAuthTransportContract.InProcessOnly,
             InnerHandler = handler,
         };
 
-        using var client = new HttpClient(interactionHandler);
+        using var client = new InProcessHttpClient(interactionHandler);
         await Assert.ThrowsAsync<AAuthInteractionDeniedException>(
-            () => client.GetAsync("https://resource.example/api"));
+            () => client.GetAsync("https://ps.example/api"));
     }
 
     [Fact]
     public async Task BacksOff_On429()
     {
-        var pollTimes = new List<DateTimeOffset>();
+        var delays = new List<TimeSpan>();
         var handler = new ScriptedHandler(
             _ => Make202Interaction("https://ps.example/interact", "CODE", "https://ps.example/pending/4"),
-            _ =>
+            _ => new HttpResponseMessage((HttpStatusCode)429),
+            _ => new HttpResponseMessage(HttpStatusCode.OK)
             {
-                pollTimes.Add(DateTimeOffset.UtcNow);
-                return new HttpResponseMessage((HttpStatusCode)429);
-            },
-            _ =>
-            {
-                pollTimes.Add(DateTimeOffset.UtcNow);
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("{}"),
-                };
+                Content = new StringContent("{}"),
             });
 
         var interactionHandler = new InteractionHandler(
             onInteractionRequired: (_, _, _) => Task.CompletedTask,
             pollingTimeout: TimeSpan.FromSeconds(30))
         {
+            EgressPolicy = TestEgress.Policy,
+            TransportContract = AAuth.Discovery.AAuthTransportContract.InProcessOnly,
             InnerHandler = handler,
+            DelayAsync = (delay, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                delays.Add(delay);
+                return Task.CompletedTask;
+            },
         };
 
-        using var client = new HttpClient(interactionHandler);
-        var response = await client.GetAsync("https://resource.example/api");
+        using var client = new InProcessHttpClient(interactionHandler);
+        var response = await client.GetAsync("https://ps.example/api");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        // After 429, the delay should be at least 5s (default) + 5s (backoff) = 10s
-        // We check that it took at least 4s (accounting for scheduling jitter)
-        if (pollTimes.Count == 2)
-        {
-            var gap = pollTimes[1] - pollTimes[0];
-            Assert.True(gap >= TimeSpan.FromSeconds(4),
-                $"Expected >= 4s backoff, got {gap.TotalSeconds:F2}s");
-        }
+        Assert.Collection(delays,
+            delay => Assert.Equal(TimeSpan.FromMilliseconds(100), delay),
+            delay => Assert.Equal(TimeSpan.FromSeconds(10), delay));
     }
 
     [Fact]
@@ -160,12 +189,14 @@ public class InteractionHandlerTests
             onInteractionRequired: (_, _, _) => Task.CompletedTask,
             pollingTimeout: TimeSpan.FromMilliseconds(50))
         {
+            EgressPolicy = TestEgress.Policy,
+            TransportContract = AAuth.Discovery.AAuthTransportContract.InProcessOnly,
             InnerHandler = handler,
         };
 
-        using var client = new HttpClient(interactionHandler);
+        using var client = new InProcessHttpClient(interactionHandler);
         await Assert.ThrowsAsync<TimeoutException>(
-            () => client.GetAsync("https://resource.example/api"));
+            () => client.GetAsync("https://ps.example/api"));
     }
 
     [Fact]
@@ -177,7 +208,7 @@ public class InteractionHandlerTests
             {
                 opts.OnInteractionRequired = (_, _, _) => Task.CompletedTask;
             })
-            .WithInnerHandler(new OkHandler())
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(new OkHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         Assert.NotNull(client);
@@ -192,7 +223,7 @@ public class InteractionHandlerTests
         using var client = new AAuthClientBuilder(_key)
             .UseHwk()
             .WithInteractionHandling()
-            .WithInnerHandler(handler)
+            .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(handler, AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
 
         await client.GetAsync("https://resource.example/api");

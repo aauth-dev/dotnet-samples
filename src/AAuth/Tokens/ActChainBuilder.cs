@@ -1,5 +1,6 @@
 using System;
 using System.Text.Json.Nodes;
+using AAuth.Identifiers;
 
 namespace AAuth.Tokens;
 
@@ -23,9 +24,12 @@ public static class ActChainBuilder
     /// Input: upstreamAgentId = "aauth:asst@example", upstreamChain = null
     /// Output: { "agent": "aauth:asst@example" }
     /// </example>
-    public static JsonObject BuildNestedAct(string upstreamAgentId, JsonObject? upstreamChain = null)
+    public static JsonObject BuildNestedAct(string upstreamAgentId, JsonObject? upstreamChain = null, AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(upstreamAgentId);
+        if (!AgentId.TryParse(upstreamAgentId, out _, out _, policy)
+            || (upstreamChain is not null && !ValidateChain(upstreamChain, 9, policy)))
+            throw new ArgumentException("Delegation must contain only valid agent identities within the depth limit.");
 
         var node = new JsonObject { ["agent"] = upstreamAgentId };
         if (upstreamChain is not null)
@@ -40,7 +44,7 @@ public static class ActChainBuilder
     /// <param name="act">The act claim to validate.</param>
     /// <param name="maxDepth">Maximum allowed nesting depth (default 10).</param>
     /// <returns><c>true</c> if valid; <c>false</c> if missing agent or too deep.</returns>
-    public static bool ValidateChain(JsonObject act, int maxDepth = 10)
+    public static bool ValidateChain(JsonObject act, int maxDepth = 10, AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
         ArgumentNullException.ThrowIfNull(act);
 
@@ -52,9 +56,13 @@ public static class ActChainBuilder
             if (++depth > maxDepth)
                 return false;
 
-            if (string.IsNullOrEmpty((string?)current["agent"]))
+            if (current["agent"] is not JsonValue agentValue || !agentValue.TryGetValue<string>(out var agent)
+                || !AgentId.TryParse(agent, out _, out _, policy))
                 return false;
 
+            foreach (var member in current)
+                if (member.Key is not ("agent" or "act")) return false;
+            if (current.ContainsKey("act") && current["act"] is not JsonObject) return false;
             current = current["act"] as JsonObject;
         }
 

@@ -26,6 +26,9 @@ jobs:
       - name: Test
         run: dotnet test AAuth.slnx --no-build -c Release --logger "trx;LogFileName=results.trx"
 
+      - name: Events HTTP and persistence gate
+        run: dotnet test tests/AAuth.Events.Tests/AAuth.Events.Tests.csproj --no-build -c Release
+
   e2e:
     needs: build
     runs-on: ubuntu-latest

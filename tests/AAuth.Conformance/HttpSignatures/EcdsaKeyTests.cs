@@ -101,7 +101,7 @@ public class EcdsaKeyTests
     {
         IAAuthKey ed = AAuthKey.Generate();
         IAAuthKey ec = EcdsaAAuthKey.Generate();
-        Assert.Equal("EdDSA", ed.Algorithm);
+        Assert.Equal("Ed25519", ed.Algorithm);
         Assert.Equal("ES256", ec.Algorithm);
     }
 }

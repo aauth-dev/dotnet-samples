@@ -64,6 +64,8 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         // Start the resource server with RequireAuthToken mode.
         _challengeHost = await StartResourceServer(new ChallengeOptions
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             AccessMode = AAuthAccessMode.RequireAuthToken,
             ResourceSigningKey = _resourceKey,
             ResourceKeyId = ResourceKid,
@@ -75,12 +77,16 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         // Start a resource server with IdentityOnly mode.
         _identityOnlyHost = await StartResourceServer(new ChallengeOptions
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             AccessMode = AAuthAccessMode.IdentityOnly,
         });
 
         // Start a resource server with scheme filter (only allow jwt).
         _schemeFilterHost = await StartResourceServer(new ChallengeOptions
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             AccessMode = AAuthAccessMode.RequireAuthToken,
             ResourceSigningKey = _resourceKey,
             ResourceKeyId = ResourceKid,
@@ -92,6 +98,8 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         // Start a resource server with AgentTokenRequired mode (§Agent Token Required).
         _agentTokenRequiredHost = await StartResourceServer(new ChallengeOptions
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             AccessMode = AAuthAccessMode.AgentTokenRequired,
         });
     }
@@ -126,6 +134,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
             issuer = PsIssuer,
             jwks_uri = $"{PsIssuer}/.well-known/ps-jwks.json",
             token_endpoint = $"{PsIssuer}/token",
+            scopes_supported = new[] { "email", "custom_identity" },
         }));
 
         // AP JWKS
@@ -157,15 +166,16 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         builder.Services.AddSingleton(new AAuthVerifier { Clock = () => FixedClock });
         builder.Services.AddSingleton<HttpClient>(_metadataHost!.GetTestClient());
         builder.Services.AddSingleton(sp =>
-            new MetadataClient(sp.GetRequiredService<HttpClient>()));
+            new MetadataClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
         builder.Services.AddSingleton(sp =>
-            new JwksClient(sp.GetRequiredService<HttpClient>()));
+            new JwksClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
 
         var app = builder.Build();
         app.UseAAuthVerification(new AAuthVerificationOptions
         {
+            EgressPolicy = TestEgress.Policy,
+            AcceptedSchemes = challengeOptions.AllowedSignatureKeySchemes?.ToArray() ?? ["jwt", "hwk"],
             ResourceIdentifier = ResourceId,
-            RequireIssuerVerification = true,
             TrustedAuthTokenIssuers = new HashSet<string> { PsIssuer },
         });
         app.UseAAuthChallenge(challengeOptions);
@@ -178,6 +188,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
     {
         return new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
             Subject = AgentId,
             Key = _apKey,
@@ -192,6 +203,8 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
     {
         return new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = PsIssuer,
             Audience = ResourceId,
             Agent = AgentId,
@@ -212,7 +225,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         {
             InnerHandler = capture,
         };
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "http://localhost:5000/protected"));
         return capture.Captured!;
     }
@@ -239,6 +252,29 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
     }
 
     // ── Tests ──────────────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("email", true)]
+    [InlineData("custom_identity", true)]
+    [InlineData("openid", false)]
+    [InlineData("undeclared.resource", false)]
+    public async Task ChallengeUsesActualPsIdentityScopeMetadata(string scope, bool allowed)
+    {
+        using var resource = await StartResourceServer(new ChallengeOptions
+        {
+            EgressPolicy = TestEgress.Policy, ResourceSigningKey = _resourceKey, ResourceKeyId = ResourceKid,
+            ResourceIdentifier = ResourceId, DefaultScopes = scope,
+            ScopeDescriptions = new Dictionary<string, string> { ["resource.read"] = "Read resource" },
+        });
+        if (allowed)
+        {
+            using var response = await SendSigned(resource, BuildAgentToken());
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            Assert.True(response.Headers.Contains(AAuthRequirementHeader.Name));
+        }
+        else await Assert.ThrowsAsync<InvalidOperationException>(() => SendSigned(resource, BuildAgentToken()));
+        await resource.StopAsync();
+    }
 
     [Fact(DisplayName = "§Challenge — RequireAuthToken challenges agent token with resource token")]
     public async Task ChallengesAgentTokenWithResourceToken()
@@ -332,7 +368,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         {
             InnerHandler = capture,
         };
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "http://localhost:5000/protected"));
 
         var signed = capture.Captured!;
@@ -361,7 +397,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         {
             InnerHandler = capture,
         };
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "http://localhost:5000/protected"));
 
         var signed = capture.Captured!;
@@ -372,7 +408,8 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
 
         var response = await _schemeFilterHost!.GetTestClient().SendAsync(relay);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        Assert.True(response.Headers.Contains("AAuth-Error"));
+        Assert.Equal("error=unsupported_scheme", response.Headers.GetValues("Signature-Error").Single());
+        Assert.True(response.Headers.Contains("Accept-Signature-Scheme"));
     }
 
     [Fact(DisplayName = "§Challenge — scheme filter allows listed scheme")]
@@ -405,6 +442,8 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         // Start a resource with explicit PersonServerAudience.
         var host = await StartResourceServer(new ChallengeOptions
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             AccessMode = AAuthAccessMode.RequireAuthToken,
             ResourceSigningKey = _resourceKey,
             ResourceKeyId = ResourceKid,
@@ -459,7 +498,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         {
             InnerHandler = capture,
         };
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         var outbound = new HttpRequestMessage(HttpMethod.Get, "http://localhost:5000/protected");
         if (missionHeader is not null)
             outbound.Headers.TryAddWithoutValidation(AAuthMissionHeader.Name, missionHeader);
@@ -486,6 +525,8 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
     {
         var host = await StartResourceServer(new ChallengeOptions
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             AccessMode = AAuthAccessMode.RequireAuthToken,
             ResourceSigningKey = _resourceKey,
             ResourceKeyId = ResourceKid,
@@ -517,6 +558,8 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
     {
         var host = await StartResourceServer(new ChallengeOptions
         {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
             AccessMode = AAuthAccessMode.RequireAuthToken,
             ResourceSigningKey = _resourceKey,
             ResourceKeyId = ResourceKid,

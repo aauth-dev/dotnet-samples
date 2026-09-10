@@ -10,6 +10,33 @@ namespace AAuth.R3.Tests;
 
 public class TokenClaimTests
 {
+    [Theory]
+    [InlineData("r3_uri", "null")]
+    [InlineData("r3_s256", "null")]
+    [InlineData("r3_uri", "123")]
+    [InlineData("r3_s256", "[]")]
+    public void ResourceClaims_RejectPresentMalformedValues(string field, string json)
+    {
+        var payload = new JsonObject { [field] = JsonNode.Parse(json) };
+        Assert.Throws<InvalidOperationException>(() => R3ClaimReader.ReadResourceDocument(payload));
+        Assert.Throws<InvalidOperationException>(() => R3AuthClaims.ValidateResourcePair(payload));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void EmptyGrantedClaimsRoundTripWithoutAuthorizingUnlistedOperations(bool conditional)
+    {
+        var payload = new JsonObject(R3AuthClaims.AuthToken("https://resource.test/r3/doc", "hash",
+            R3Grant.Mcp(), conditional ? R3Grant.Mcp("book") : null));
+        var claims = R3ClaimReader.ReadAuthToken(payload);
+        Assert.Empty(claims.Granted.Operations);
+        var enforcement = new R3Enforcement(new R3ProposalStore(), new Uri(R3TestData.ResourceIssuer));
+        Assert.Equal(R3EnforcementDecisionKind.Rejected, enforcement.Evaluate(claims, R3OperationIdentity.Mcp("unlisted")).Kind);
+        Assert.Equal(conditional ? R3EnforcementDecisionKind.Conditional : R3EnforcementDecisionKind.Rejected,
+            enforcement.Evaluate(claims, R3OperationIdentity.Mcp("book"), new Dictionary<string, R3Parameter>()).Kind);
+    }
+
     [Fact]
     public void AuthClaims_RoundTripThroughAdditionalClaims()
     {
@@ -23,6 +50,8 @@ public class TokenClaimTests
 
         var jwt = new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = "https://as.test",
             Audience = "https://resource.test",
             Agent = R3TestData.AgentId,
@@ -38,8 +67,8 @@ public class TokenClaimTests
         var parsed = R3ClaimReader.ReadAuthToken(payload);
 
         Assert.Equal("https://resource.test/r3/doc", parsed.Uri);
-        Assert.True(parsed.Granted.Contains("search_trip_options"));
-        Assert.True(parsed.Conditional!.Contains("book_trip"));
+        Assert.True(parsed.Granted.Contains(R3OperationIdentity.Mcp("search_trip_options")));
+        Assert.True(parsed.Conditional!.Contains(R3OperationIdentity.Mcp("book_trip")));
     }
 
     [Fact]
@@ -61,7 +90,7 @@ public class TokenClaimTests
         var resourceKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
         var r3Uri = "https://resource.test/r3/doc";
-        var r3S256 = "abc123";
+        var r3S256 = Base64UrlEncoder.Encode(new byte[32]);
         var token = new R3Challenge
         {
             ResourceIssuer = R3TestData.ResourceIssuer,
@@ -75,8 +104,8 @@ public class TokenClaimTests
                 R3TestData.Metadata(R3TestData.ResourceIssuer, ResourceTokenBuilder.ResourceDwk))
             .AddJson($"{R3TestData.ResourceIssuer}/.well-known/jwks.json",
                 R3TestData.Jwks(R3TestData.ResourceKid, resourceKey));
-        var http = new HttpClient(handler);
-        var verified = await new TokenVerifier().VerifyResourceTokenAsync(
+        var http = new InProcessHttpClient(handler);
+        var verified = await new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifyResourceTokenAsync(
             token,
             R3TestData.AsIssuer,
             R3TestData.AgentId,

@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AAuth\AAuth.csproj" />
+    <ProjectReference Include="../EventSupport/EventSupport.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

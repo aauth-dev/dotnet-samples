@@ -6,6 +6,10 @@ namespace AAuth.R3.Model;
 /// <summary>An R3 document served verbatim by a resource.</summary>
 public sealed record R3Document
 {
+    [JsonPropertyName("account")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Account { get; init; }
+
     [JsonPropertyName("version")]
     [JsonPropertyOrder(1)]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -40,23 +44,26 @@ public sealed record R3Document
         Display = display,
     };
 
-    public void Validate()
+    public void Validate(R3VocabularySchemas? schemas = null)
     {
-        new R3Grant { Vocabulary = Vocabulary, Operations = Operations }.Validate();
+        AAuth.Tokens.AccountBinding.Validate(Account);
+        new R3Grant { Vocabulary = Vocabulary, Operations = Operations }.Validate(schemas: schemas);
         Display?.Validate();
     }
 
-    public byte[] ToUtf8Bytes(JsonSerializerOptions? options = null)
+    public byte[] ToUtf8Bytes(JsonSerializerOptions? options = null, R3VocabularySchemas? schemas = null)
     {
-        Validate();
+        Validate(schemas);
         return JsonSerializer.SerializeToUtf8Bytes(this, R3Json.OptionsOrDefault(options));
     }
 
-    public static R3Document FromUtf8Bytes(ReadOnlySpan<byte> bytes, JsonSerializerOptions? options = null)
+    public static R3Document FromUtf8Bytes(ReadOnlySpan<byte> bytes, JsonSerializerOptions? options = null, R3VocabularySchemas? schemas = null)
     {
-        var doc = JsonSerializer.Deserialize<R3Document>(bytes, R3Json.OptionsOrDefault(options))
+        AAuth.Tokens.AccountBinding.Read(System.Text.Json.Nodes.JsonNode.Parse(bytes) as System.Text.Json.Nodes.JsonObject);
+        using var json = JsonDocument.Parse(bytes.ToArray());
+        var doc = json.RootElement.Deserialize<R3Document>((schemas ?? R3VocabularySchemas.Standard).ReadOptions(json.RootElement, options))
             ?? throw new InvalidOperationException("R3 document JSON did not deserialize to an object.");
-        doc.Validate();
+        doc.Validate(schemas);
         return doc;
     }
 }

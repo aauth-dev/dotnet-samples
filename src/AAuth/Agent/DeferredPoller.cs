@@ -16,6 +16,9 @@ namespace AAuth.Agent;
 /// </summary>
 public sealed record DeferredPollerOptions
 {
+    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+    internal Func<TimeSpan, CancellationToken, Task>? DelayAsync { get; init; }
+
     /// <summary>Hard upper bound on total polling time.</summary>
     public TimeSpan MaxTotalWait { get; init; } = TimeSpan.FromMinutes(5);
 
@@ -89,6 +92,7 @@ public sealed class DeferredPoller
     private readonly HttpClient _signedClient;
     private readonly DeferredPollerOptions _options;
     private TimeSpan _slowDownExtra;
+    private long? _startedAt;
 
     /// <summary>Optional hook fired after every poll, for tracing/UI.
     /// When not set explicitly, falls back to <see cref="DeferredPollerOptions.OnPoll"/>.</summary>
@@ -112,9 +116,26 @@ public sealed class DeferredPoller
     /// <param name="cancellationToken">Caller cancellation.</param>
     /// <returns>The terminal <see cref="HttpResponseMessage"/>. Caller disposes.</returns>
     /// <exception cref="TimeoutException">Total wait budget exhausted.</exception>
-    public async Task<HttpResponseMessage> PollAsync(
+    public Task<HttpResponseMessage> PollAsync(
         Uri pendingUrl,
         CancellationToken cancellationToken = default)
+    {
+        _startedAt = null;
+        _slowDownExtra = TimeSpan.Zero;
+        return PollCoreAsync(pendingUrl, cancellationToken);
+    }
+
+    internal Task<HttpResponseMessage> ResumeAsync(Uri pendingUrl,
+        RetryConditionHeaderValue? retryAfter, CancellationToken cancellationToken)
+        => PollCoreAsync(pendingUrl, cancellationToken, retryAfter, delayFirst: true);
+
+    internal void Start() => _startedAt ??= _options.TimeProvider.GetTimestamp();
+
+    private TimeSpan Remaining => _options.MaxTotalWait
+        - _options.TimeProvider.GetElapsedTime(_startedAt!.Value);
+
+    private async Task<HttpResponseMessage> PollCoreAsync(Uri pendingUrl,
+        CancellationToken cancellationToken, RetryConditionHeaderValue? initialRetryAfter = null, bool delayFirst = false)
     {
         ArgumentNullException.ThrowIfNull(pendingUrl);
         if (!pendingUrl.IsAbsoluteUri)
@@ -122,11 +143,13 @@ public sealed class DeferredPoller
             throw new ArgumentException("Pending URL must be absolute.", nameof(pendingUrl));
         }
 
-        var stopwatch = Stopwatch.StartNew();
+        Start();
+        if (delayFirst)
+            await DelayAsync(ComputeDelay(initialRetryAfter) + _slowDownExtra, cancellationToken).ConfigureAwait(false);
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (stopwatch.Elapsed >= _options.MaxTotalWait)
+            if (Remaining <= TimeSpan.Zero)
             {
                 throw new TimeoutException(
                     $"Deferred poll exceeded {_options.MaxTotalWait.TotalSeconds:0.##}s without a terminal response.");
@@ -143,7 +166,19 @@ public sealed class DeferredPoller
             // constructed poller must configure HttpClient.Timeout accordingly
             // (see class remarks). The overall budget is enforced by the
             // MaxTotalWait stopwatch check above.
-            var response = await _signedClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            var remainingBudget = Remaining;
+            if (remainingBudget <= TimeSpan.Zero) throw new TimeoutException("Deferred poll exceeded its total wait budget.");
+            using var timeout = new CancellationTokenSource(remainingBudget, _options.TimeProvider);
+            using var requestDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+            HttpResponseMessage response;
+            try
+            {
+                response = await AAuth.Discovery.AAuthHttpTransport.SendAsync(_signedClient, request, requestDeadline.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && requestDeadline.IsCancellationRequested)
+            {
+                throw new TimeoutException("Deferred poll exceeded its total wait budget.", exception);
+            }
             try
             {
                 (OnPoll ?? _options.OnPoll)?.Invoke(response);
@@ -152,6 +187,16 @@ public sealed class DeferredPoller
             {
                 response.Dispose();
                 throw;
+            }
+
+            if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+            {
+                if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                    _slowDownExtra += TimeSpan.FromSeconds(5);
+                var retryDelay = ComputeDelay(response.Headers.RetryAfter) + _slowDownExtra;
+                response.Dispose();
+                await DelayAsync(retryDelay, cancellationToken).ConfigureAwait(false);
+                continue;
             }
 
             if (response.StatusCode != HttpStatusCode.Accepted)
@@ -167,26 +212,6 @@ public sealed class DeferredPoller
                     if (errorCode is not null)
                     {
                         var code = errorCode.Value;
-                        // slow_down: increase interval by 5s and continue polling.
-                        if (code == PollingErrorCode.SlowDown)
-                        {
-                            _slowDownExtra += TimeSpan.FromSeconds(5);
-                            var delay2 = ComputeDelay(response.Headers.RetryAfter) + _slowDownExtra;
-                            response.Dispose();
-                            var remaining2 = _options.MaxTotalWait - stopwatch.Elapsed;
-                            if (remaining2 <= TimeSpan.Zero)
-                            {
-                                throw new TimeoutException(
-                                    $"Deferred poll exceeded {_options.MaxTotalWait.TotalSeconds:0.##}s without a terminal response.");
-                            }
-                            if (delay2 > remaining2) { delay2 = remaining2; }
-                            if (delay2 > TimeSpan.Zero)
-                            {
-                                await Task.Delay(delay2, cancellationToken).ConfigureAwait(false);
-                            }
-                            continue;
-                        }
-
                         // Terminal errors: throw typed exception.
                         response.Dispose();
                         throw new PollingErrorException(code, (int)response.StatusCode);
@@ -210,24 +235,24 @@ public sealed class DeferredPoller
                 }
             }
 
-            var delay = ComputeDelay(response.Headers.RetryAfter);
+            var delay = ComputeDelay(response.Headers.RetryAfter) + _slowDownExtra;
             response.Dispose();
+            await DelayAsync(delay, cancellationToken).ConfigureAwait(false);
+        }
+    }
 
-            // Don't exceed the overall wait budget on the upcoming sleep.
-            var remaining = _options.MaxTotalWait - stopwatch.Elapsed;
-            if (remaining <= TimeSpan.Zero)
-            {
-                throw new TimeoutException(
-                    $"Deferred poll exceeded {_options.MaxTotalWait.TotalSeconds:0.##}s without a terminal response.");
-            }
-            if (delay > remaining)
-            {
-                delay = remaining;
-            }
-            if (delay > TimeSpan.Zero)
-            {
-                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
-            }
+    private async Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var remaining = Remaining;
+        if (remaining <= TimeSpan.Zero) throw new TimeoutException("Deferred poll exceeded its total wait budget.");
+        if (delay > remaining) delay = remaining;
+        if (delay > TimeSpan.Zero)
+        {
+            if (_options.DelayAsync is { } delayAsync)
+                await delayAsync(delay, cancellationToken).ConfigureAwait(false);
+            else
+                await Task.Delay(delay, _options.TimeProvider, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -245,7 +270,7 @@ public sealed class DeferredPoller
         }
         else if (retryAfter.Date is { } date)
         {
-            delay = date - DateTimeOffset.UtcNow;
+            delay = date - _options.TimeProvider.GetUtcNow();
             if (delay < TimeSpan.Zero) { delay = TimeSpan.Zero; }
         }
         else

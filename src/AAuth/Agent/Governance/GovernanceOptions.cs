@@ -35,6 +35,20 @@ public sealed class GovernanceOptions
     /// <summary>Optional polling tuning for deferred responses.</summary>
     public DeferredPollerOptions? PollerOptions { get; init; }
 
+    internal GovernanceOptions ForMission(Mission mission) => new()
+    {
+        MaxClarificationRounds = MaxClarificationRounds,
+        PollerOptions = PollerOptions,
+        OnInteractionRequired = OnInteractionRequired is null ? null : (interaction, token) =>
+            mission.ExecuteAsync(async () =>
+            {
+                await OnInteractionRequired(interaction, token).ConfigureAwait(false);
+                return true;
+            }),
+        OnClarificationRequired = OnClarificationRequired is null ? null : (clarification, token) =>
+            mission.ExecuteAsync(() => OnClarificationRequired(clarification, token)),
+    };
+
     // Adapt the public governance options to the shared transport options.
     // Governance never forces an interaction callback and has no post-poll hook.
     internal DeferredExchangeOptions ToExchangeOptions()

@@ -25,7 +25,7 @@ public sealed record MissionClaim(string Approver, string S256)
     /// Parse a <c>mission</c> claim from a token payload object. Returns
     /// <see langword="null"/> when the claim is absent or malformed.
     /// </summary>
-    public static MissionClaim? FromPayload(JsonObject? payload)
+    public static MissionClaim? FromPayload(JsonObject? payload, AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
         if (payload?["mission"] is not JsonObject mission)
             return null;
@@ -39,7 +39,7 @@ public sealed record MissionClaim(string Approver, string S256)
         // scheme+host only) and `s256` MUST be the unpadded base64url of a 32-byte
         // SHA-256 digest. A non-conformant reference is dropped here so it cannot
         // govern a token request on the server's authorization path.
-        if (!ServerId.TryParse(approver, out _, out _) || !IsValidMissionS256(s256))
+        if (!ServerId.TryParse(approver, out _, out _, policy) || !IsValidMissionS256(s256))
             return null;
 
         return new MissionClaim(approver, s256);

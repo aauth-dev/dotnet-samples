@@ -65,7 +65,37 @@ public sealed class Mission
     public ReadOnlyMemory<byte> RawBytes { get; init; }
 
     /// <summary>The mission lifecycle state (§Mission Management).</summary>
-    public MissionState State { get; init; } = MissionState.Active;
+    public MissionState State
+    {
+        get => (MissionState)System.Threading.Volatile.Read(ref _state);
+        init => _state = (int)value;
+    }
+
+    private int _state = (int)MissionState.Active;
+
+    internal void Terminate() => System.Threading.Interlocked.Exchange(ref _state, (int)MissionState.Terminated);
+
+    internal void EnsureActive()
+    {
+        if (State == MissionState.Terminated)
+            throw new AAuth.Errors.AAuthMissionTerminatedException("terminated");
+    }
+
+    internal async System.Threading.Tasks.Task<TResult> ExecuteAsync<TResult>(Func<System.Threading.Tasks.Task<TResult>> operation)
+    {
+        EnsureActive();
+        try
+        {
+            var result = await operation().ConfigureAwait(false);
+            EnsureActive();
+            return result;
+        }
+        catch (AAuth.Errors.AAuthMissionTerminatedException)
+        {
+            Terminate();
+            throw;
+        }
+    }
 
     /// <summary>
     /// Parse a mission from the exact approval response body bytes and compute its
@@ -191,7 +221,8 @@ public static class AAuthMissionHeader
     /// <c>approver</c> and <c>s256</c> components (§Call Chaining). Returns
     /// <see langword="false"/> when the value is absent or either field is missing.
     /// </summary>
-    public static bool TryParseStructured(string? value, out string? approver, out string? s256)
+    public static bool TryParseStructured(string? value, out string? approver, out string? s256,
+        AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
         approver = null;
         s256 = null;
@@ -225,7 +256,7 @@ public static class AAuthMissionHeader
         // scheme+host only, no port/path/query/fragment) and `s256` MUST be the
         // unpadded base64url encoding of a 32-byte SHA-256 digest. A reference that
         // does not conform is rejected — the malformed mission is dropped.
-        if (!ServerId.TryParse(approver, out _, out _) || !IsValidMissionS256(s256))
+        if (!ServerId.TryParse(approver, out _, out _, policy) || !IsValidMissionS256(s256))
         {
             approver = null;
             s256 = null;

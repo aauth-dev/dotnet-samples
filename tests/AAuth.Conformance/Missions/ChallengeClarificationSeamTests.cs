@@ -30,6 +30,17 @@ public class ChallengeClarificationSeamTests
 {
     private const string ResourceUrl = "https://r.example";
     private const string Ps = "https://ps.example";
+    private static readonly AAuth.Crypto.AAuthKey SigningKey = AAuth.Crypto.AAuthKey.Generate();
+    private static readonly string AgentToken = new AAuth.Tokens.AgentTokenBuilder
+    {
+        Issuer = "https://ap.example", Subject = "aauth:test@ap.example", KeyId = "key",
+        Key = SigningKey, ConfirmationKey = SigningKey,
+    }.Build();
+    private static string ResourceToken => new AAuth.Tokens.ResourceTokenBuilder
+    {
+        Issuer = ResourceUrl, Audience = Ps, Agent = "aauth:test@ap.example",
+        AgentJkt = SigningKey.ComputeJwkThumbprint(), Key = SigningKey, KeyId = "key",
+    }.Build();
 
     private static ChallengeHandler BuildChallengeHandler(
         ClarifyingExchangeHandler exchangeHandler,
@@ -37,17 +48,25 @@ public class ChallengeClarificationSeamTests
         Func<Interaction, CancellationToken, Task>? onInteraction = null)
     {
         var holder = new AAuthTokenHolder("initial-agent-token");
-        var metaClient = new MetadataClient(new HttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new HttpClient(exchangeHandler), metaClient);
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
 
         return new ChallengeHandler(
-            exchangeClient, holder,
+            exchangeClient, holder, new AAuth.Tokens.TokenVerifier { EgressPolicy = TestEgress.Policy },
+            metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
             personServer: Ps,
             onInteractionRequired: onInteraction,
-            pollerOptions: null,
+            pollerOptions: new DeferredPollerOptions
+            {
+                DefaultPollInterval = TimeSpan.Zero,
+                MinPollInterval = TimeSpan.Zero,
+            },
             upstreamTokenProvider: null)
         {
-            InnerHandler = new ChallengingResourceHandler(),
+            InnerHandler = new AAuth.HttpSig.AAuthSigningHandler(SigningKey, () => AgentToken)
+            {
+                InnerHandler = new ChallengingResourceHandler(),
+            },
             OnClarificationRequired = onClarification,
         };
     }
@@ -63,10 +82,8 @@ public class ChallengeClarificationSeamTests
             return Task.FromResult(ClarificationResponse.Respond("Needed to compare available trip options."));
         });
 
-        using var client = new HttpClient(challenge) { BaseAddress = new Uri(ResourceUrl) };
-        using var response = await client.GetAsync("/data");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var client = new InProcessHttpClient(challenge) { BaseAddress = new Uri(ResourceUrl) };
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.GetAsync("/data"));
         Assert.NotNull(seen);
         Assert.Equal("Why does this mission need this access?", seen!.Clarification);
         Assert.Equal("Needed to compare available trip options.", exchangeHandler.LastClarificationResponse);
@@ -82,10 +99,8 @@ public class ChallengeClarificationSeamTests
             (_, _) => Task.FromResult(ClarificationResponse.Respond("Needed to compare available trip options.")),
             (interaction, _) => { surfaced = interaction; return Task.CompletedTask; });
 
-        using var client = new HttpClient(challenge) { BaseAddress = new Uri(ResourceUrl) };
-        using var response = await client.GetAsync("/data");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var client = new InProcessHttpClient(challenge) { BaseAddress = new Uri(ResourceUrl) };
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.GetAsync("/data"));
         // The clarification was answered AND the follow-on user-interaction gate
         // was surfaced (a bare poll would have swallowed it).
         Assert.Equal("Needed to compare available trip options.", exchangeHandler.LastClarificationResponse);
@@ -99,10 +114,8 @@ public class ChallengeClarificationSeamTests
         var challenge = BuildChallengeHandler(exchangeHandler, (_, _) =>
             Task.FromResult(ClarificationResponse.Respond("ok")));
 
-        using var client = new HttpClient(challenge) { BaseAddress = new Uri(ResourceUrl) };
-        using var response = await client.GetAsync("/data");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var client = new InProcessHttpClient(challenge) { BaseAddress = new Uri(ResourceUrl) };
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.GetAsync("/data"));
         Assert.Contains("clarification", exchangeHandler.DeclaredCapabilities);
     }
 
@@ -113,7 +126,7 @@ public class ChallengeClarificationSeamTests
         var challenge = BuildChallengeHandler(exchangeHandler, (_, _) =>
             Task.FromResult(ClarificationResponse.Cancel()));
 
-        using var client = new HttpClient(challenge) { BaseAddress = new Uri(ResourceUrl) };
+        using var client = new InProcessHttpClient(challenge) { BaseAddress = new Uri(ResourceUrl) };
 
         await Assert.ThrowsAsync<AAuthClarificationCancelledException>(
             () => client.GetAsync("/data"));
@@ -133,7 +146,7 @@ public class ChallengeClarificationSeamTests
                 var challenge = new HttpResponseMessage(HttpStatusCode.Unauthorized);
                 challenge.Headers.TryAddWithoutValidation(
                     AAuthRequirementHeader.Name,
-                    AAuthRequirementHeader.FormatAuthToken("fake-resource-token"));
+                    AAuthRequirementHeader.FormatAuthToken(ResourceToken));
                 return Task.FromResult(challenge);
             }
 
@@ -167,11 +180,19 @@ public class ChallengeClarificationSeamTests
         {
             var path = request.RequestUri!.AbsolutePath;
 
+            if (path == "/jwks")
+            {
+                var key = SigningKey.ToPublicJwk();
+                key["kid"] = "key";
+                return Json(HttpStatusCode.OK, new JsonObject { ["keys"] = new JsonArray(key) });
+            }
             if (path.Contains("well-known"))
             {
+                var origin = request.RequestUri.GetLeftPart(UriPartial.Authority);
                 return Json(HttpStatusCode.OK, new JsonObject
                 {
-                    ["issuer"] = Ps,
+                    ["issuer"] = origin,
+                    ["jwks_uri"] = origin + "/jwks",
                     ["token_endpoint"] = Ps + "/token",
                 });
             }

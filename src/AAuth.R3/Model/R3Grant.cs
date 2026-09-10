@@ -25,22 +25,19 @@ public sealed record R3Grant
         Operations = operationIds.Select(R3Operation.OpenApi).ToArray(),
     };
 
-    public bool Contains(string operationId) =>
-        Operations.Any(op => string.Equals(op.Id, operationId, StringComparison.Ordinal));
+    public bool Contains(R3OperationIdentity operation) =>
+        Operations.Any(candidate => new R3OperationIdentity(Vocabulary, candidate).Covers(operation));
 
-    public void Validate(bool allowEmpty = false)
+    public void Validate(bool allowEmpty = false, R3VocabularySchemas? schemas = null)
     {
-        if (string.IsNullOrWhiteSpace(Vocabulary))
-        {
-            throw new InvalidOperationException("vocabulary must be set.");
-        }
+        (schemas ?? R3VocabularySchemas.Standard).ValidateVocabulary(Vocabulary);
         if (Operations is null || (!allowEmpty && Operations.Count == 0))
         {
             throw new InvalidOperationException("operations must contain at least one operation.");
         }
         foreach (var op in Operations)
         {
-            op.Validate();
+            (schemas ?? R3VocabularySchemas.Standard).Validate(Vocabulary, op);
         }
     }
 }

@@ -126,13 +126,16 @@ Section("1. Enrol with the Agent Provider");
 // The agent's signing key is long-lived (it spans the agent install). The
 // keystore holds the private key; we keep only its handle in memory here.
 IKeyStore keyStore = FileKeyStore.Default();
-var discovery = new MetadataClient(new HttpClient());
-var apMeta = await discovery.FetchAsync(MetadataClient.BuildUrl(apUrl, "aauth-agent.json"));
+using var apHttp = new SampleHttpClient();
+using var discovery = new MetadataClient(apHttp);
+var apMeta = await discovery.FetchAsync(MetadataClient.BuildUrl(apUrl, "aauth-agent.json", SampleEgress.Policy));
 var enrolEndpoint = (string?)apMeta["enrol_endpoint"] ?? $"{apUrl}/enrol";
 var refreshEndpoint = (string?)apMeta["refresh_endpoint"] ?? $"{apUrl}/refresh";
 
-var apClient = new AgentProviderClient(new HttpClient(), keyStore);
-var enrolment = await apClient.EnrolAsync(apUrl, subject, enrolEndpoint, personServer);
+var apClient = new AgentProviderClient(apHttp, keyStore);
+var durableKey = FileKeyStore.Default().LoadOrCreate("mission-agent");
+var enrolment = await apClient.EnrolWithKeyAsync(apUrl, null, enrolEndpoint, durableKey, personServer);
+subject = enrolment.AgentId ?? throw new InvalidOperationException("AP did not return its assigned identity.");
 AAuthKey key = enrolment.Key;
 string localKeyHandle = enrolment.LocalKeyHandle;
 string agentToken = enrolment.AgentToken;
@@ -144,9 +147,9 @@ Console.WriteLine($"   person server   : {personServer}");
 // exchange, and every governance call (mission/permission/audit/interaction)
 // flow over this handler, which signs each request and carries the agent token
 // in the Signature-Key header (§HTTP Message Signatures).
-var agentHandler = new AAuthSigningHandler(key, () => agentToken) { InnerHandler = new HttpClientHandler() };
-var signedClient = new HttpClient(agentHandler) { Timeout = Timeout.InfiniteTimeSpan };
-var metadata = new MetadataClient(new HttpClient());
+var agentHandler = new AAuthSigningHandler(key, () => agentToken) { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+using var signedClient = new SampleHttpClient(agentHandler) { Timeout = Timeout.InfiniteTimeSpan };
+using var metadata = new MetadataClient(apHttp);
 var governance = new AAuthGovernanceClient(signedClient, metadata, personServer);
 
 // Tell the mock PS how to resolve prompts. Interactive mode holds each prompt
@@ -315,7 +318,7 @@ async Task<JsonObject?> AccessMissionResourceAsync(string url)
     //     and surfaces any out-of-scope consent prompt via OnInteractionRequired.
     // An out-of-scope exchange the user denies throws
     // AAuthInteractionDeniedException, exactly as the manual flow did.
-    using var client = new AAuthClientBuilder(key)
+    using var client = new AAuthClientBuilder(key).WithEgressPolicy(SampleEgress.Policy)
         .UseJwt(() => agentToken)
         .WithPersonServer(personServer)
         .WithMission(mission)

@@ -19,7 +19,7 @@ export const Urls = {
 
 export const Agents = {
   /** SampleApp's self-issued agent id (SampleApp/appsettings.json). */
-  sampleApp: 'aauth:sample-app@localhost:5240',
+  sampleApp: 'aauth:sample-app@localhost',
   /** GuidedTour agent id (GuidedTour/appsettings.json). */
-  tour: 'aauth:tour-agent@localhost:5400',
+  tour: 'aauth:tour-agent@localhost',
 } as const;

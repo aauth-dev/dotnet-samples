@@ -91,7 +91,8 @@ public class InteractionTests
     {
         var raw = "requirement=interaction; url=\"http://localhost:5100/interaction\"; code=\"ABCD\"";
         var parsed = AAuthRequirementHeader.Parse(raw);
-        var i = Interaction.FromRequirement(parsed);
+        Assert.Throws<FormatException>(() => Interaction.FromRequirement(parsed));
+        var i = Interaction.FromRequirement(parsed, TestEgress.Policy);
         Assert.NotNull(i);
         Assert.Equal("http://localhost:5100/interaction", i!.Url);
     }

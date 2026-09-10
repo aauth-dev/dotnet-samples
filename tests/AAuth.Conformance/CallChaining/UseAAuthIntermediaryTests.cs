@@ -144,21 +144,23 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
         builder.Services.AddSingleton(new AAuthVerifier { Clock = () => FixedClock });
         builder.Services.AddSingleton<HttpClient>(_metadataHost!.GetTestClient());
         builder.Services.AddSingleton(sp =>
-            new MetadataClient(sp.GetRequiredService<HttpClient>()));
+            new MetadataClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
         builder.Services.AddSingleton(sp =>
-            new JwksClient(sp.GetRequiredService<HttpClient>()));
+            new JwksClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
 
         var app = builder.Build();
 
         app.UseAAuthIntermediary(
             new AAuthVerificationOptions
             {
+                EgressPolicy = TestEgress.Policy,
                 ResourceIdentifier = ResourceId,
-                RequireIssuerVerification = true,
                 TrustedAuthTokenIssuers = new HashSet<string> { PsIssuer },
             },
             new ChallengeOptions
             {
+                ScopeDescriptions = TestScopeDefinitions.Resource,
+                EgressPolicy = TestEgress.Policy,
                 AccessMode = AAuthAccessMode.RequireAuthToken,
                 ResourceSigningKey = _resourceKey,
                 ResourceKeyId = ResourceKid,
@@ -191,7 +193,7 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
         {
             InnerHandler = capture,
         };
-        using var client = new HttpClient(handler);
+        using var client = new InProcessHttpClient(handler);
         await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, $"{ResourceId}/protected"));
         return capture.Captured!;
     }
@@ -200,6 +202,7 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
     {
         return new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
             Subject = AgentId,
             Key = _apKey,
@@ -214,6 +217,8 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
     {
         return new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = PsIssuer,
             Audience = ResourceId,
             Agent = AgentId,

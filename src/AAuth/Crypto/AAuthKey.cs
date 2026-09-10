@@ -11,21 +11,18 @@ namespace AAuth.Crypto;
 /// <summary>
 /// An Ed25519 key pair used for AAuth signing operations. Wraps BouncyCastle
 /// because neither .NET 10 (on this runtime) nor <c>Microsoft.IdentityModel</c>
-/// ships a usable EdDSA implementation yet.
+/// ships a usable Ed25519 implementation yet.
 /// </summary>
 public sealed class AAuthKey : IAAuthKey
 {
     /// <summary>The JOSE <c>alg</c> value for Ed25519.</summary>
-    public const string Ed25519Algorithm = "EdDSA";
+    public const string Ed25519Algorithm = "Ed25519";
 
     /// <summary>The JOSE <c>crv</c> value for Ed25519.</summary>
     public const string Curve = "Ed25519";
 
     /// <summary>The JOSE <c>kty</c> value for OKP keys.</summary>
     public const string KeyType = "OKP";
-
-    /// <summary>Kept for backward compatibility.</summary>
-    public const string Algorithm = "EdDSA";
 
     /// <inheritdoc/>
     string IAAuthKey.Algorithm => Ed25519Algorithm;
@@ -97,6 +94,7 @@ public sealed class AAuthKey : IAAuthKey
     /// <summary>Export the public half as a JWK JSON document.</summary>
     public JsonObject ToPublicJwk() => new()
     {
+        ["alg"] = Ed25519Algorithm,
         ["kty"] = KeyType,
         ["crv"] = Curve,
         ["x"] = Base64UrlEncoder.Encode(PublicKeyBytes),
@@ -139,20 +137,20 @@ public sealed class AAuthKey : IAAuthKey
     public static AAuthKey FromJwk(JsonObject jwk)
     {
         ArgumentNullException.ThrowIfNull(jwk);
+        KeyFactory.Validate(jwk);
 
         if ((string?)jwk["kty"] != KeyType || (string?)jwk["crv"] != Curve)
         {
             throw new ArgumentException($"JWK is not an Ed25519 OKP key (kty={(string?)jwk["kty"]}, crv={(string?)jwk["crv"]}).", nameof(jwk));
         }
 
-        var x = (string?)jwk["x"] ?? throw new ArgumentException("JWK missing 'x' parameter.", nameof(jwk));
-        var publicBytes = Base64UrlEncoder.DecodeBytes(x);
+        var publicBytes = KeyFactory.ReadCoordinate(jwk, "x");
         var pub = new Ed25519PublicKeyParameters(publicBytes, 0);
 
         Ed25519PrivateKeyParameters? priv = null;
-        if (jwk["d"] is JsonValue dValue && dValue.TryGetValue<string>(out var d))
+        if (jwk.ContainsKey("d"))
         {
-            var privateBytes = Base64UrlEncoder.DecodeBytes(d);
+            var privateBytes = KeyFactory.ReadCoordinate(jwk, "d");
             priv = new Ed25519PrivateKeyParameters(privateBytes, 0);
 
             // Defence in depth: if both halves are supplied they MUST be

@@ -45,7 +45,9 @@ var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:Signatu
 // HttpClient/discovery wiring.
 builder.Services.AddAAuthResource(o =>
 {
+    o.EgressPolicy = SampleEgress.Policy;
     o.Issuer = resourceUrl;
+    o.RevocationEndpoint = $"{resourceUrl}/revoke";
     o.SigningKeys[ResourceKid] = resourceKey;
     o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
     o.SignatureWindow = signatureWindowSeconds;
@@ -71,6 +73,7 @@ var store = app.Services.GetRequiredService<IOpaqueTokenStore>();
 // Well-known metadata + JWKS from the DI-registered resource metadata. Served
 // unsigned (no endpoint requirement metadata, so UseAAuth passes it through).
 app.MapAAuthWellKnown();
+app.MapAAuthRevocationEndpoint(app.Services.GetRequiredService<IJtiStore>(), options => options.AllowTokenIssuer = true);
 
 // Resource-managed (two-party) access: the protected endpoints declare
 // .RequireAAuthSignature(); this single post-routing middleware verifies the
@@ -143,8 +146,14 @@ app.MapAAuthInteractionPoll().RequireAAuthSignature();
 // browser). Mirrors a classic OAuth "Connect your account" screen — and, like
 // the Person Server's and Access Server's consent screens, notes that a real
 // deployment would sign the user in first.
-app.MapGet("/consent", (string? code, IInteractionPendingStore pending) =>
+var browserConsent = new BrowserConsentSessions("AAuth.Inbox.Consent",
+    builder.Configuration.GetValue<bool>("AAuth:EnableIsolatedDemoConsent") ? "isolated-inbox-demo" : null);
+app.MapMethods("/consent", ["GET", "POST"], async (HttpContext ctx, IInteractionPendingStore pending) =>
 {
+    var entered = await browserConsent.EnterAsync(ctx, code => pending.Get(code) is { } candidate
+        ? new BrowserPendingRequest(candidate.Code, candidate.Expiry, candidate.Browser, candidate.Lifecycle) : null);
+    if (entered.Error is not null) return entered.Error;
+    var code = entered.Id;
     var entry = string.IsNullOrEmpty(code) ? null : pending.Get(code);
     if (entry is null)
     {
@@ -172,27 +181,31 @@ app.MapGet("/consent", (string? code, IInteractionPendingStore pending) =>
         + "<div class=badge><span class=dot></span>Aria Inbox</div>"
         + "<div class=sub>localhost:5004 — the resource runs its own login &amp; consent (no Person Server, no Access Server)</div>"
         + "<h1>An agent wants to connect to your inbox</h1>"
-        + "<div class=note>This is the <b>Inbox's own</b> consent screen. In a real deployment the Inbox would "
-        + "<b>sign you in first</b> — with a password, passkey, or an existing OAuth / SSO session — before showing "
-        + "this, exactly like the &ldquo;Connect your account&rdquo; step when you link a third-party service. "
-        + "(The mock skips the login and trusts whoever opens this link.)</div>"
+        + "<div class=note>Signed in as the isolated demo user at <b>Aria Inbox</b>.</div>"
         + $"<div class=row><b>Agent key:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.AgentJkt)}</code></div>"
         + "<div class=row><b>Wants to:</b> read your inbox (import trip confirmations)</div>"
         + $"<div class=row><b>Scope:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.Scope)}</code></div>"
         + "<form method=post action=\"/consent/approve\">"
-        + $"<input type=hidden name=code value=\"{safeCode}\">"
+        + browserConsent.Fields(ctx, entered.Decision!)
         + "<button id=approve class=approve type=submit>Approve</button>"
-        + "</form>";
+        + "</form><form method=post action='/consent/deny'>"
+        + browserConsent.Fields(ctx, entered.Decision!)
+        + "<button class=deny type=submit>Deny</button></form>";
     return Results.Content(html, contentType: "text/html");
 });
 
 // POST /consent/approve — the user approves; mark the pending interaction done.
 app.MapPost("/consent/approve", async (HttpContext ctx, IInteractionPendingStore pending) =>
 {
-    var form = await ctx.Request.ReadFormAsync(ctx.RequestAborted);
-    var code = form["code"].ToString();
-    if (pending.Approve(code))
+    var decision = await browserConsent.DecideAsync(ctx);
+    if (decision.Error is not null) return decision.Error;
+    var entry = pending.Get(decision.Decision!.Id);
+    if (entry is null) return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+    return await decision.Decision.ApplyAsync(ctx, () =>
     {
+        if (entry.Approved || entry.Denied || entry.Expiry <= DateTimeOffset.UtcNow)
+            return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+        entry.Approved = true;
         return Results.Content(
             "<!doctype html><meta charset=utf-8><title>Connected</title>"
             + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
@@ -202,9 +215,22 @@ app.MapPost("/consent/approve", async (HttpContext ctx, IInteractionPendingStore
             + "<h1>Access approved</h1>"
             + "<p id=done>You can return to your agent — it will now receive an access token and read your inbox.</p>",
             contentType: "text/html");
-    }
+    });
+});
 
-    return Results.NotFound(new { error = "unknown_pending" });
+app.MapPost("/consent/deny", async (HttpContext ctx, IInteractionPendingStore pending) =>
+{
+    var decision = await browserConsent.DecideAsync(ctx);
+    if (decision.Error is not null) return decision.Error;
+    var entry = pending.Get(decision.Decision!.Id);
+    if (entry is null) return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+    return await decision.Decision.ApplyAsync(ctx, () =>
+    {
+        if (entry.Approved || entry.Denied || entry.Expiry <= DateTimeOffset.UtcNow)
+            return AAuthProblemDetails.Create("invalid_code", statusCode: 400);
+        entry.Denied = true;
+        return Results.Content("<!doctype html><title>Denied</title><h1>Denied</h1>", "text/html");
+    });
 });
 
 app.Run();

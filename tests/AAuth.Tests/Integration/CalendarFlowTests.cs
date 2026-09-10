@@ -69,10 +69,11 @@ public class CalendarFlowTests : IAsyncLifetime
                 services.RemoveAll<JwksClient>();
                 var psDiscovery = new MultiHostHandler(new Dictionary<string, HttpMessageHandler>
                 {
+                    [ApHost] = new StubApHandler(ApKey, ApKeyId, ApIssuer),
                     [CalendarHost] = new LazyHostHandler(() => _calendar!.Server.CreateHandler()),
                 });
-                services.AddSingleton(new MetadataClient(new HttpClient(psDiscovery)));
-                services.AddSingleton(new JwksClient(new HttpClient(psDiscovery)));
+                services.AddSingleton(new MetadataClient(new InProcessHttpClient(psDiscovery)));
+                services.AddSingleton(new JwksClient(new InProcessHttpClient(psDiscovery)));
             });
         });
         // Force the host to start so Server is available.
@@ -95,8 +96,8 @@ public class CalendarFlowTests : IAsyncLifetime
                     [PsHost] = psHandler,
                     [ApHost] = new StubApHandler(ApKey, ApKeyId, ApIssuer),
                 });
-                services.AddSingleton(new MetadataClient(new HttpClient(discoveryHandler)));
-                services.AddSingleton(new JwksClient(new HttpClient(discoveryHandler)));
+                services.AddSingleton(new MetadataClient(new InProcessHttpClient(discoveryHandler)));
+                services.AddSingleton(new JwksClient(new InProcessHttpClient(discoveryHandler)));
             });
         });
         _calendar.CreateClient();
@@ -129,11 +130,44 @@ public class CalendarFlowTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ShippedResource_AdvertisesAndEnforcesIssuerQualifiedRevocation()
+    {
+        var key = AAuthKey.Generate();
+        var token = new AgentTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy, Issuer = ApIssuer, Subject = "aauth:revocation@ap.test",
+            Key = ApKey, KeyId = ApKeyId, ConfirmationKey = key, PersonServer = PsIssuer,
+            TokenId = "calendar-revocation",
+        }.Build();
+        using var agent = new InProcessHttpClient(new AAuthSigningHandler(key, () => token,
+            () => DateTimeOffset.UtcNow.AddSeconds(-2)) { InnerHandler = _calendar!.Server.CreateHandler() });
+        using var initial = await agent.GetAsync(CalendarIssuer + "/events");
+        Assert.Equal(HttpStatusCode.Unauthorized, initial.StatusCode);
+        Assert.True(initial.Headers.Contains("AAuth-Requirement"));
+        using var metadataClient = _calendar.CreateClient();
+        var metadata = await metadataClient.GetFromJsonAsync<JsonObject>("/.well-known/aauth-resource.json");
+        Assert.Equal(CalendarIssuer + "/revoke", (string?)metadata!["revocation_endpoint"]);
+        using var provider = new AAuthClientBuilder(ApKey)
+            .UseJwksUri(ApIssuer, AAuthConstants.DwkFiles.Agent, ApKeyId)
+            .WithEgressPolicy(TestEgress.Policy)
+            .WithInnerHandler(_calendar.Server.CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
+        Assert.Equal(HttpStatusCode.OK, await new RevocationClient(provider).RevokeAsync(
+            new Uri(CalendarIssuer + "/revoke"), new TokenKey(ApIssuer, "calendar-revocation")));
+        using var freshSignature = new InProcessHttpClient(new AAuthSigningHandler(key, () => token,
+            () => DateTimeOffset.UtcNow.AddSeconds(-1)) { InnerHandler = _calendar.Server.CreateHandler() });
+        using var denied = await freshSignature.GetAsync(CalendarIssuer + "/events");
+        Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
+        Assert.True(denied.Headers.Contains("Signature-Error"));
+        Assert.False(denied.Headers.Contains("AAuth-Requirement"));
+    }
+
+    [Fact]
     public async Task ThreePartyFlow_ExchangesAndReturnsClaims()
     {
         var agentKey = AAuthKey.Generate();
         var agentToken = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
             Subject = "aauth:demo@ap.test",
             KeyId = ApKeyId,
@@ -150,7 +184,7 @@ public class CalendarFlowTests : IAsyncLifetime
         Assert.True(response.IsSuccessStatusCode, $"Status={(int)response.StatusCode}, Body={rawBody}");
         var body = JsonNode.Parse(rawBody) as JsonObject;
         Assert.Equal("aauth:demo@ap.test", (string?)body!["agent"]);
-        Assert.Equal("pairwise-sub", (string?)body["sub"]);
+        Assert.Equal(MockPersonServer.SampleIdentityClaimsAsserter.DirectedSubject(CalendarIssuer), (string?)body["sub"]);
         Assert.Contains("calendar.read", body["scope"]!.AsArray().Select(s => (string?)s));
 
         // Holder should now carry the auth token, not the agent token.
@@ -177,10 +211,11 @@ public class CalendarFlowTests : IAsyncLifetime
                 services.RemoveAll<JwksClient>();
                 var psDiscovery = new MultiHostHandler(new Dictionary<string, HttpMessageHandler>
                 {
+                    [ApHost] = new StubApHandler(ApKey, ApKeyId, ApIssuer),
                     [CalendarHost] = new LazyHostHandler(() => negCalendar!.Server.CreateHandler()),
                 });
-                services.AddSingleton(new MetadataClient(new HttpClient(psDiscovery)));
-                services.AddSingleton(new JwksClient(new HttpClient(psDiscovery)));
+                services.AddSingleton(new MetadataClient(new InProcessHttpClient(psDiscovery)));
+                services.AddSingleton(new JwksClient(new InProcessHttpClient(psDiscovery)));
             });
         });
         negPs.CreateClient();
@@ -198,8 +233,8 @@ public class CalendarFlowTests : IAsyncLifetime
                     [PsHost] = negPs.Server.CreateHandler(),
                     [ApHost] = new StubApHandler(ApKey, ApKeyId, ApIssuer),
                 });
-                services.AddSingleton(new MetadataClient(new HttpClient(discoveryHandler)));
-                services.AddSingleton(new JwksClient(new HttpClient(discoveryHandler)));
+                services.AddSingleton(new MetadataClient(new InProcessHttpClient(discoveryHandler)));
+                services.AddSingleton(new JwksClient(new InProcessHttpClient(discoveryHandler)));
             });
         });
         calendar.CreateClient();
@@ -208,6 +243,7 @@ public class CalendarFlowTests : IAsyncLifetime
         var agentKey = AAuthKey.Generate();
         var agentToken = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
             Subject = "aauth:demo@ap.test",
             KeyId = ApKeyId,
@@ -230,17 +266,18 @@ public class CalendarFlowTests : IAsyncLifetime
             InnerHandler = RoutingHandler(),
         };
         var exchange = new TokenExchangeClient(
-            new HttpClient(exchangeSigning),
-            new MetadataClient(new HttpClient(RoutingHandler())));
+            new InProcessHttpClient(exchangeSigning),
+            new MetadataClient(new InProcessHttpClient(RoutingHandler())));
         var resourceSigning = new AAuthSigningHandler(agentKey, () => holder.Current)
         {
             InnerHandler = RoutingHandler(),
         };
-        var challenge = new ChallengeHandler(exchange, holder, PsIssuer)
+        var challenge = new ChallengeHandler(exchange, holder, new TokenVerifier { EgressPolicy = TestEgress.Policy },
+            new MetadataClient(new InProcessHttpClient(RoutingHandler())), new JwksClient(new InProcessHttpClient(RoutingHandler())), PsIssuer)
         {
             InnerHandler = resourceSigning,
         };
-        using var client = new HttpClient(challenge);
+        using var client = new InProcessHttpClient(challenge);
 
         // The exchange succeeds (PS mints a real auth token), but the resource
         // rejects it because its issuer is not in TrustedPersonServers.
@@ -254,6 +291,7 @@ public class CalendarFlowTests : IAsyncLifetime
         var agentKey = AAuthKey.Generate();
         var agentToken = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
             Subject = "aauth:demo@ap.test",
             KeyId = ApKeyId,
@@ -279,6 +317,7 @@ public class CalendarFlowTests : IAsyncLifetime
         var agentKey = AAuthKey.Generate();
         var agentToken = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
             Subject = "aauth:demo@ap.test",
             KeyId = ApKeyId,
@@ -309,6 +348,7 @@ public class CalendarFlowTests : IAsyncLifetime
         var agentKey = AAuthKey.Generate();
         var agentToken = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
             Subject = "aauth:guest@ap.test",
             KeyId = ApKeyId,
@@ -339,6 +379,7 @@ public class CalendarFlowTests : IAsyncLifetime
         var agentKey = AAuthKey.Generate();
         var agentToken = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
             Subject = "aauth:demo@ap.test",
             KeyId = ApKeyId,
@@ -387,6 +428,7 @@ public class CalendarFlowTests : IAsyncLifetime
         {
             b.UseSetting("AAuth:Issuer", PsIssuer);
             b.UseSetting("MockPersonServer:RequireConsent", "true");
+            b.UseIsolatedDemoConsent();
             b.ConfigureServices(services =>
             {
                 // The PS verifies the resource token, so its discovery must
@@ -395,10 +437,11 @@ public class CalendarFlowTests : IAsyncLifetime
                 services.RemoveAll<JwksClient>();
                 var psDiscovery = new MultiHostHandler(new Dictionary<string, HttpMessageHandler>
                 {
+                    [ApHost] = new StubApHandler(ApKey, ApKeyId, ApIssuer),
                     [CalendarHost] = new LazyHostHandler(() => consentCalendar!.Server.CreateHandler()),
                 });
-                services.AddSingleton(new MetadataClient(new HttpClient(psDiscovery)));
-                services.AddSingleton(new JwksClient(new HttpClient(psDiscovery)));
+                services.AddSingleton(new MetadataClient(new InProcessHttpClient(psDiscovery)));
+                services.AddSingleton(new JwksClient(new InProcessHttpClient(psDiscovery)));
             });
         });
         consentPs.CreateClient();
@@ -419,8 +462,8 @@ public class CalendarFlowTests : IAsyncLifetime
                     [PsHost] = consentPsHandler,
                     [ApHost] = new StubApHandler(ApKey, ApKeyId, ApIssuer),
                 });
-                services.AddSingleton(new MetadataClient(new HttpClient(discoveryHandler)));
-                services.AddSingleton(new JwksClient(new HttpClient(discoveryHandler)));
+                services.AddSingleton(new MetadataClient(new InProcessHttpClient(discoveryHandler)));
+                services.AddSingleton(new JwksClient(new InProcessHttpClient(discoveryHandler)));
             });
         });
         calendar.CreateClient();
@@ -430,6 +473,7 @@ public class CalendarFlowTests : IAsyncLifetime
         const string AgentId = "aauth:consent@ap.test";
         var agentToken = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
             Subject = AgentId,
             KeyId = ApKeyId,
@@ -459,13 +503,9 @@ public class CalendarFlowTests : IAsyncLifetime
                 Assert.NotNull(interaction.Code);
                 Assert.StartsWith($"{PsIssuer}/interaction", interaction.Url);
 
-                using var browser = new HttpClient(consentPsHandler, disposeHandler: false);
-                using var resp = await browser.PostAsync(
-                    $"{PsIssuer}/interaction/approve",
-                    new FormUrlEncodedContent(new[]
-                    {
-                        new KeyValuePair<string, string>("code", interaction.Code),
-                    }), ct);
+                using var browser = new InProcessHttpClient(consentPsHandler, disposeHandler: false);
+                using var resp = await TestConsentBrowser.DecideAsync(browser,
+                    $"{PsIssuer}/interaction?code={interaction.Code}", $"{PsIssuer}/interaction/approve");
                 Assert.True(resp.IsSuccessStatusCode,
                     $"/interaction/approve failed: {(int)resp.StatusCode}");
             };
@@ -477,8 +517,8 @@ public class CalendarFlowTests : IAsyncLifetime
         {
             InnerHandler = RoutingHandler(),
         };
-        var exchangeHttp = new HttpClient(exchangeSigning);
-        var metadata = new MetadataClient(new HttpClient(RoutingHandler()));
+        var exchangeHttp = new InProcessHttpClient(exchangeSigning);
+        var metadata = new MetadataClient(new InProcessHttpClient(RoutingHandler()));
         var exchange = new TokenExchangeClient(exchangeHttp, metadata);
 
         var pollerOptions = new DeferredPollerOptions
@@ -491,11 +531,12 @@ public class CalendarFlowTests : IAsyncLifetime
         {
             InnerHandler = RoutingHandler(),
         };
-        var challenge = new ChallengeHandler(exchange, holder, PsIssuer, approveAsUser, pollerOptions)
+        var challenge = new ChallengeHandler(exchange, holder, new TokenVerifier { EgressPolicy = TestEgress.Policy },
+            metadata, new JwksClient(new InProcessHttpClient(RoutingHandler())), PsIssuer, approveAsUser, pollerOptions)
         {
             InnerHandler = resourceSigning,
         };
-        using var client = new HttpClient(challenge);
+        using var client = new InProcessHttpClient(challenge);
 
         var response = await client.GetAsync($"{CalendarIssuer}/events");
         var rawBody = await response.Content.ReadAsStringAsync();
@@ -503,7 +544,7 @@ public class CalendarFlowTests : IAsyncLifetime
             $"Status={(int)response.StatusCode}, Body={rawBody}");
         var body = JsonNode.Parse(rawBody) as JsonObject;
         Assert.Equal(AgentId, (string?)body!["agent"]);
-        Assert.Equal("pairwise-sub", (string?)body["sub"]);
+        Assert.Equal(MockPersonServer.SampleIdentityClaimsAsserter.DirectedSubject(CalendarIssuer), (string?)body["sub"]);
 
         // Carrier swapped to the post-exchange auth token, just like the
         // autonomous flow.
@@ -524,6 +565,7 @@ public class CalendarFlowTests : IAsyncLifetime
         {
             b.UseSetting("AAuth:Issuer", PsIssuer);
             b.UseSetting("MockPersonServer:RequireConsent", "true");
+            b.UseIsolatedDemoConsent();
             b.ConfigureServices(services =>
             {
                 // The PS verifies the resource token, so its discovery must
@@ -532,10 +574,11 @@ public class CalendarFlowTests : IAsyncLifetime
                 services.RemoveAll<JwksClient>();
                 var psDiscovery = new MultiHostHandler(new Dictionary<string, HttpMessageHandler>
                 {
+                    [ApHost] = new StubApHandler(ApKey, ApKeyId, ApIssuer),
                     [CalendarHost] = new LazyHostHandler(() => consentCalendar!.Server.CreateHandler()),
                 });
-                services.AddSingleton(new MetadataClient(new HttpClient(psDiscovery)));
-                services.AddSingleton(new JwksClient(new HttpClient(psDiscovery)));
+                services.AddSingleton(new MetadataClient(new InProcessHttpClient(psDiscovery)));
+                services.AddSingleton(new JwksClient(new InProcessHttpClient(psDiscovery)));
             });
         });
         consentPs.CreateClient();
@@ -553,8 +596,8 @@ public class CalendarFlowTests : IAsyncLifetime
                     [PsHost] = consentPsHandler,
                     [ApHost] = new StubApHandler(ApKey, ApKeyId, ApIssuer),
                 });
-                services.AddSingleton(new MetadataClient(new HttpClient(discoveryHandler)));
-                services.AddSingleton(new JwksClient(new HttpClient(discoveryHandler)));
+                services.AddSingleton(new MetadataClient(new InProcessHttpClient(discoveryHandler)));
+                services.AddSingleton(new JwksClient(new InProcessHttpClient(discoveryHandler)));
             });
         });
         calendar.CreateClient();
@@ -564,6 +607,7 @@ public class CalendarFlowTests : IAsyncLifetime
         const string AgentId = "aauth:denier@ap.test";
         var agentToken = new AgentTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
             Issuer = ApIssuer,
             Subject = AgentId,
             KeyId = ApKeyId,
@@ -583,13 +627,9 @@ public class CalendarFlowTests : IAsyncLifetime
         Func<Interaction, CancellationToken, Task> denyAsUser =
             async (interaction, ct) =>
             {
-                using var browser = new HttpClient(consentPsHandler, disposeHandler: false);
-                using var resp = await browser.PostAsync(
-                    $"{PsIssuer}/interaction/deny",
-                    new FormUrlEncodedContent(new[]
-                    {
-                        new KeyValuePair<string, string>("code", interaction.Code),
-                    }), ct);
+                using var browser = new InProcessHttpClient(consentPsHandler, disposeHandler: false);
+                using var resp = await TestConsentBrowser.DecideAsync(browser,
+                    $"{PsIssuer}/interaction?code={interaction.Code}", $"{PsIssuer}/interaction/deny");
                 Assert.True(resp.IsSuccessStatusCode,
                     $"/interaction/deny failed: {(int)resp.StatusCode}");
             };
@@ -599,8 +639,8 @@ public class CalendarFlowTests : IAsyncLifetime
         {
             InnerHandler = RoutingHandler(),
         };
-        var exchangeHttp = new HttpClient(exchangeSigning);
-        var metadata = new MetadataClient(new HttpClient(RoutingHandler()));
+        var exchangeHttp = new InProcessHttpClient(exchangeSigning);
+        var metadata = new MetadataClient(new InProcessHttpClient(RoutingHandler()));
         var exchange = new TokenExchangeClient(exchangeHttp, metadata);
 
         var pollerOptions = new DeferredPollerOptions
@@ -613,11 +653,12 @@ public class CalendarFlowTests : IAsyncLifetime
         {
             InnerHandler = RoutingHandler(),
         };
-        var challenge = new ChallengeHandler(exchange, holder, PsIssuer, denyAsUser, pollerOptions)
+        var challenge = new ChallengeHandler(exchange, holder, new TokenVerifier { EgressPolicy = TestEgress.Policy },
+            metadata, new JwksClient(new InProcessHttpClient(RoutingHandler())), PsIssuer, denyAsUser, pollerOptions)
         {
             InnerHandler = resourceSigning,
         };
-        using var client = new HttpClient(challenge);
+        using var client = new InProcessHttpClient(challenge);
 
         await Assert.ThrowsAsync<AAuthInteractionDeniedException>(
             () => client.GetAsync($"{CalendarIssuer}/events"));
@@ -654,16 +695,17 @@ public class CalendarFlowTests : IAsyncLifetime
             {
                 InnerHandler = RoutingHandler(),
             };
-            var exchangeHttp = new HttpClient(exchangeSigning);
-            var metadata = new MetadataClient(new HttpClient(RoutingHandler()));
+            var exchangeHttp = new InProcessHttpClient(exchangeSigning);
+            var metadata = new MetadataClient(new InProcessHttpClient(RoutingHandler()));
             var exchange = new TokenExchangeClient(exchangeHttp, metadata);
-            resourceInner = new ChallengeHandler(exchange, holder, personServer)
+            resourceInner = new ChallengeHandler(exchange, holder, new TokenVerifier { EgressPolicy = TestEgress.Policy },
+                metadata, new JwksClient(new InProcessHttpClient(RoutingHandler())), personServer)
             {
                 InnerHandler = resourceInner,
             };
         }
 
-        return new HttpClient(resourceInner);
+        return new InProcessHttpClient(resourceInner);
     }
 
     // -------------------------------------------------------------------
@@ -734,7 +776,7 @@ public class CalendarFlowTests : IAsyncLifetime
             var jwk = apKey.ToPublicJwk();
             jwk["kid"] = keyId;
             jwk["use"] = "sig";
-            jwk["alg"] = AAuthKey.Algorithm;
+            jwk["alg"] = AAuthKey.Ed25519Algorithm;
             _jwksJson = new JsonObject
             {
                 ["keys"] = new System.Text.Json.Nodes.JsonArray(jwk)

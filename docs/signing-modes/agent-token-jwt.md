@@ -2,11 +2,15 @@
 
 ## Overview
 
-The agent presents its full agent token inline. The resource (or Person Server) learns the agent's identity, issuer, and Person Server URL. See [federated demo](https://explorer.aauth.dev/access/federated). Required for all Person Server flows.
+The `jwt` Signature-Key scheme presents a token with a confirmation key.
+An agent token authenticates agent identity; an auth token carries authorization;
+the Events companion uses a subscribe token at subscription endpoints. AAuth
+agents use `jwt` for all four resource access modes. A Person Server is not
+required for identity-based or resource-managed access.
 
 ## When to Use
 
-- Three-party flows (PS-asserted, federated) — REQUIRED by spec
+- All four AAuth resource access modes, including PS-asserted and federated flows
 - When the resource needs to discover the agent's Person Server (from the `ps` claim)
 - When the resource needs verified agent identity with issuer attestation
 
@@ -65,7 +69,7 @@ using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth;
 
-var keyStore = FileKeyStore.Default();
+IKeyStore keyStore = FileKeyStore.Default();
 var key = await keyStore.LoadAsync(configuration["AAuth:LocalKeyHandle"]!);
 var apRefreshEndpoint = configuration["AAuth:ApRefreshEndpoint"]!;
 

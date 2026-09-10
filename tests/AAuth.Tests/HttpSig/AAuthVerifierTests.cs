@@ -28,7 +28,7 @@ public class AAuthVerifierTests
     {
         var capture = new CaptureHandler();
         var signing = new AAuthSigningHandler(key, () => jwt, () => clock) { InnerHandler = capture };
-        using var client = new HttpClient(signing);
+        using var client = new InProcessHttpClient(signing);
         await client.SendAsync(new HttpRequestMessage(method, url));
         return capture.Captured!;
     }

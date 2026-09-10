@@ -1,4 +1,7 @@
-# Bookings — Rich Resource Requests (R3, four-party)
+---
+title: Bookings Rich Resource Requests sample
+description: OpenAPI-scoped reservations with per-call approval and account binding.
+---
 
 Aria's external **reservations provider** for dining & experiences (reserve a table,
 book a tour). Bookings demonstrates [Rich Resource Requests](../../../docs/workflows/rich-resource-requests.md):
@@ -29,6 +32,8 @@ OpenAPI `operationId`s.
 | `/authorize` | — | — | Proactive R3 request: the agent posts `r3_operations`; Bookings returns a resource token (`aud` = R3 AS) referencing the R3 document |
 | `/search_availability` | `searchAvailability` | `r3_granted` | Read availability — served immediately |
 | `/hold_reservation` | `holdReservation` | `r3_granted` | Place a temporary hold — served immediately |
+| `POST /search_availability` | `searchAvailabilityPost` | `r3_granted` | POST variant with a distinct authoritative identity |
+| `POST /hold_reservation` | `holdReservationPost` | `r3_granted` | POST variant with a distinct authoritative identity |
 | `/confirm_reservation` | `confirmReservation` | `r3_conditional` | Charges a non-refundable deposit → **per-call proposal**: first call returns `401` + a resource token referencing a single-invocation R3 document carrying the concrete `parameters`; the R3 AS requires **human approval** (`202` → consent screen) before minting the per-call token; the retry (same params) is then served |
 | `/r3/{hash}` | — | — | The class R3 document — served **only** to a trusted fetcher (the R3 AS / PS), never to agents |
 | `/r3/proposals/{hash}` | — | — | Per-call proposal documents (same AS-only fetch gate) |
@@ -47,10 +52,24 @@ parameters match the approved proposal's digest.
 | --- | --- | --- |
 | `AAuth:Issuer` | `http://localhost:5005` | Resource issuer / metadata host. |
 | `AAuth:AccessServer` | `http://localhost:5501` | R3 Access Server this resource federates to (resource-token `aud`). |
-| `AAuth:PersonServer` | `http://localhost:5100` | Person Server (added to the trusted R3-fetcher set for `display`). |
+| `AAuth:PersonServer` | `http://localhost:5100` | Person Server used by the sample revocation policy. Does not implicitly grant R3 readership. |
 | `AAuth:SignatureWindow` | `60` | Max age (seconds) for inbound RFC 9421 signatures. |
 | `Bookings:MissionAware` | `false` | Advertised in metadata only; Bookings does not read or enforce `AAuth-Mission`. |
-| `Bookings:TrustedR3Fetchers` | `[AccessServer, PersonServer]` | Origins allowed to fetch R3 documents. |
+| `Bookings:PersonServerEvaluators` | None in code; sample settings opt in `http://localhost:5100` | Explicit PS evaluation role under the logged Q4 interpretation. The designated AS is always allowed with its access metadata role. |
+
+The grants in the table describe the default AS policy, not route assumptions.
+Every operation challenges when conditional, serves when granted, and rejects
+when absent. Proposal retries bind all parameters and the HTTP method; a class
+grant for confirmation does not incorrectly require a proposal. Confirmation
+requires all six reservation fields, including `cancellation_policy`. Unknown,
+ambiguous, or malformed parameters are rejected rather than replaced silently.
+Authorization requests must match the advertised vocabulary and the operations
+in the actual OpenAPI definition. Account-specific documents name the account in
+their display text and carry its exact resource identifier.
+
+Document and proposal bytes are held for ten minutes in memory, not durable
+storage. Restart requires a fresh authorization. The paired R3 AS persists its
+issuance audit in SQLite; pending approvals and signing keys remain volatile.
 
 ## Running
 

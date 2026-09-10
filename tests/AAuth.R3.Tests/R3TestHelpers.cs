@@ -33,12 +33,13 @@ internal static class R3TestData
         var jwk = key.ToPublicJwk();
         jwk["kid"] = kid;
         jwk["use"] = "sig";
-        jwk["alg"] = AAuthKey.Algorithm;
+        jwk["alg"] = AAuthKey.Ed25519Algorithm;
         return new JsonObject { ["keys"] = new JsonArray(jwk) };
     }
 
     public static string AgentToken(AAuthKey apKey, AAuthKey agentKey) => new AgentTokenBuilder
     {
+        EgressPolicy = TestEgress.Policy,
         Issuer = ApIssuer,
         Subject = AgentId,
         Key = apKey,

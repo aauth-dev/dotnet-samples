@@ -23,6 +23,8 @@ public class AuthTokenStructureTests
     private static string BuildToken(AAuthKey signingKey, AAuthKey agentKey,
         string? subject = "pairwise-sub", string? scope = "whoami", JsonObject? act = null) => new AuthTokenBuilder
     {
+        EgressPolicy = TestEgress.Policy,
+        AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
         Issuer = Iss,
         Audience = Aud,
         Agent = Agent,
@@ -52,11 +54,11 @@ public class AuthTokenStructureTests
         Assert.NotEqual("none", ((string?)header["alg"])?.ToLowerInvariant());
     }
 
-    [Fact(DisplayName = "§Auth Token Structure — header.alg is EdDSA")]
-    public void HeaderAlg_IsEdDsa()
+    [Fact(DisplayName = "§Auth Token Structure — header.alg is Ed25519")]
+    public void HeaderAlg_IsEd25519()
     {
         var (header, _) = Decode(BuildToken(NewKey(), NewKey()));
-        Assert.Equal("EdDSA", (string?)header["alg"]);
+        Assert.Equal("Ed25519", (string?)header["alg"]);
     }
 
     [Fact(DisplayName = "§Auth Token Structure — header.typ MUST be aa-auth+jwt")]
@@ -183,6 +185,8 @@ public class AuthTokenStructureTests
         var agentKey = NewKey();
         Assert.Throws<InvalidOperationException>(() => new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = Iss,
             Audience = Aud,
             Agent = Agent,
@@ -201,6 +205,8 @@ public class AuthTokenStructureTests
         var agentKey = NewKey();
         Assert.Throws<InvalidOperationException>(() => new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = Iss,
             Audience = Aud,
             Agent = Agent,
@@ -217,6 +223,8 @@ public class AuthTokenStructureTests
     {
         var jwt = new AuthTokenBuilder
         {
+            EgressPolicy = TestEgress.Policy,
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = "https://as.example",
             Audience = Aud,
             Agent = Agent,

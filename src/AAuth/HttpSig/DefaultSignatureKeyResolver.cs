@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.Tokens;
+using AAuth.Errors;
 using Microsoft.IdentityModel.Tokens;
 
 namespace AAuth.HttpSig;
@@ -17,36 +18,89 @@ namespace AAuth.HttpSig;
 public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
 {
     private readonly JwksClient? _jwksClient;
+    private readonly MetadataClient? _metadataClient;
+    private readonly TokenVerifier _tokenVerifier;
+    private readonly IReadOnlyList<ISignatureTokenVerifier> _tokenVerifiers;
 
     /// <summary>Create the resolver.</summary>
     /// <param name="jwksClient">Required for the <c>jwks_uri</c> scheme. The <c>jkt-jwt</c> scheme is self-anchored (draft-05 §3.4) and needs no external client.</param>
-    public DefaultSignatureKeyResolver(JwksClient? jwksClient = null)
+    public DefaultSignatureKeyResolver(JwksClient? jwksClient = null, MetadataClient? metadataClient = null,
+        TokenVerifier? tokenVerifier = null, IEnumerable<ISignatureTokenVerifier>? tokenVerifiers = null)
     {
         _jwksClient = jwksClient;
+        _metadataClient = metadataClient;
+        _tokenVerifier = tokenVerifier ?? new TokenVerifier { EgressPolicy = metadataClient?.Policy ?? AAuthEgressPolicy.Production };
+        _tokenVerifiers = tokenVerifiers?.ToArray() ?? [];
     }
+
+    internal DefaultSignatureKeyResolver WithValidation(JwksClient? jwks, MetadataClient? metadata, TokenVerifier verifier) =>
+        new(jwks ?? _jwksClient, metadata ?? _metadataClient, verifier, _tokenVerifiers);
 
     public async Task<SignatureKeyResolution> ResolveAsync(
         SignatureKeyParser.ParsedSignatureKeyInfo info, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(info);
 
+        if (info.Scheme is "jwt" or "self-jwt")
+            return await ResolveAssertionAsync(info, ct).ConfigureAwait(false);
+        if (info.Scheme == "jkt-jwt")
+        {
+            var naming = NamingTokenVerifier.Verify(info.Jwt!, _tokenVerifier.Clock(), _tokenVerifier.ClockSkew);
+            return new() { PublicKey = naming.ConfirmationKey, Info = WithKey(info, naming.ConfirmationKey, naming.DurableKey.ComputeJwkThumbprint()),
+                DurableThumbprint = naming.DurableKey.ComputeJwkThumbprint(), KeyId = naming.ConfirmationKey.ComputeJwkThumbprint() };
+        }
         IAAuthKey key = info.Scheme switch
         {
-            AAuthConstants.Schemes.Jwt => ResolveJwt(info),
             AAuthConstants.Schemes.Hwk => await ResolveHwkAsync(info, ct).ConfigureAwait(false),
             AAuthConstants.Schemes.JwksUri => await ResolveJwksUriAsync(info, ct).ConfigureAwait(false),
-            AAuthConstants.Schemes.JktJwt => await ResolveJktJwtAsync(info, ct).ConfigureAwait(false),
-            _ => throw new AAuthVerificationException($"Unsupported Signature-Key scheme: '{info.Scheme}'."),
+            AAuthConstants.Schemes.Jwks => await ResolveDirectAsync(info.JwksUri!, info.Kid!, ct).ConfigureAwait(false),
+            _ => throw new AAuthVerificationException(SignatureErrorCode.UnsupportedScheme, $"Unsupported Signature-Key scheme: '{info.Scheme}'."),
         };
 
-        return new SignatureKeyResolution { PublicKey = key, Info = info };
+        return new SignatureKeyResolution { PublicKey = key, Info = WithKey(info, key),
+            VerifiedIdentifier = info.Identifier, KeyId = info.Kid ?? key.ComputeJwkThumbprint() };
     }
 
-    private static IAAuthKey ResolveJwt(SignatureKeyParser.ParsedSignatureKeyInfo info)
+    private async Task<SignatureKeyResolution> ResolveAssertionAsync(SignatureKeyParser.ParsedSignatureKeyInfo info, CancellationToken ct)
     {
-        if (info.ConfirmationKey is null)
-            throw new AAuthVerificationException("Signature-Key jwt scheme: cnf.jwk could not be extracted.");
-        return info.ConfirmationKey;
+        var typ = SignatureKeyParser.Text(info.Header, "typ");
+        var companion = _tokenVerifiers.SingleOrDefault(verifier => verifier.Scheme == info.Scheme && verifier.TokenType == typ);
+        var builtin = info.Scheme == "jwt" && typ is AgentTokenBuilder.TokenType or AuthTokenBuilder.TokenType;
+        if (!builtin && companion is null)
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "Unexpected JWT typ for this signing scheme.");
+        TokenVerifier.ValidateStructure(info.Header!, info.Payload!, typ, _tokenVerifier.EgressPolicy, _tokenVerifier.MaxActDepth);
+        NamingTokenVerifier.ValidateTime(info.Payload!, _tokenVerifier.Clock(), _tokenVerifier.ClockSkew, requireIssuedAt: builtin);
+        var issuer = SignatureKeyParser.Text(info.Payload, "iss")
+            ?? throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires iss.");
+        var dwk = SignatureKeyParser.Text(info.Payload, "dwk")
+            ?? throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires dwk.");
+        var kid = SignatureKeyParser.Text(info.Header, "kid")
+            ?? throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires kid.");
+        if (builtin && (typ == AgentTokenBuilder.TokenType && dwk != AgentTokenBuilder.AgentDwk
+            || typ == AuthTokenBuilder.TokenType && dwk is not (AuthTokenBuilder.PersonDwk or AuthTokenBuilder.AccessDwk)))
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "Unexpected JWT dwk.");
+        var jwksUrl = await DiscoverAsync(issuer, dwk, ct).ConfigureAwait(false);
+        var issuerKey = await ResolveDirectAsync(jwksUrl, kid, ct, issuer).ConfigureAwait(false);
+        TokenVerifier.VerifiedToken verified;
+        try
+        {
+            verified = await VerifyAsync(issuerKey).ConfigureAwait(false);
+        }
+        catch (TokenVerificationException)
+        {
+            var refreshed = await _jwksClient!.ForceRefreshKeyAsync(new Uri(jwksUrl), kid, issuer, ct).ConfigureAwait(false);
+            if (refreshed is null) throw new AAuthVerificationException(SignatureErrorCode.UnknownKey, "Issuer key no longer exists.");
+            if (refreshed.ComputeJwkThumbprint() == issuerKey.ComputeJwkThumbprint()) throw;
+            issuerKey = refreshed;
+            verified = await VerifyAsync(issuerKey).ConfigureAwait(false);
+        }
+        var key = info.Scheme == "self-jwt" ? issuerKey : SignatureKeyParser.Confirmation(verified.Payload);
+        return new() { PublicKey = key, Info = WithKey(info, key), VerifiedToken = verified, IssuerKey = issuerKey,
+            VerifiedIdentifier = verified.Issuer, KeyId = info.Scheme == "self-jwt" ? kid : key.ComputeJwkThumbprint() };
+
+        Task<TokenVerifier.VerifiedToken> VerifyAsync(IAAuthKey signingKey) => companion is not null
+            ? companion.VerifyAsync(info.Jwt!, signingKey, _tokenVerifier, ct)
+            : Task.FromResult(_tokenVerifier.Verify(info.Jwt!, signingKey, typ!, dwk));
     }
 
     private Task<IAAuthKey> ResolveHwkAsync(
@@ -60,100 +114,42 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
         return Task.FromResult<IAAuthKey>(info.ConfirmationKey);
     }
 
+    private static SignatureKeyParser.ParsedSignatureKeyInfo WithKey(SignatureKeyParser.ParsedSignatureKeyInfo info, IAAuthKey key, string? jkt = null) => new()
+    {
+        Scheme = info.Scheme, Label = info.Label, ConfirmationKey = key, Jkt = jkt ?? key.ComputeJwkThumbprint(),
+        Jwt = info.Jwt, Header = info.Header, Payload = info.Payload, Identifier = info.Identifier,
+        Dwk = info.Dwk, Kid = info.Kid, JwksUri = info.JwksUri,
+    };
+
     private async Task<IAAuthKey> ResolveJwksUriAsync(
         SignatureKeyParser.ParsedSignatureKeyInfo info, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(info.JwksUri))
-            throw new AAuthVerificationException("Signature-Key jwks_uri scheme: missing uri.");
-        if (string.IsNullOrEmpty(info.Kid))
-            throw new AAuthVerificationException("Signature-Key jwks_uri scheme: missing kid.");
-
-        if (_jwksClient is null)
-            throw new AAuthVerificationException(
-                "Signature-Key jwks_uri scheme received but no JwksClient is registered.");
-
-        var uri = new Uri(info.JwksUri, UriKind.Absolute);
-
-        // Enforce https (or loopback for dev)
-        if (uri.Scheme != "https" && !IsLoopback(uri))
-            throw new AAuthVerificationException(
-                $"Signature-Key jwks_uri scheme: URI must use https (got '{uri.Scheme}').");
-
-        var key = await _jwksClient.ResolveKeyAsync(uri, info.Kid, ct).ConfigureAwait(false);
-        if (key is null)
-            throw new AAuthVerificationException(
-                $"Signature-Key jwks_uri scheme: key not found (kid={info.Kid}) at {info.JwksUri}.");
-
-        return key;
+        var url = await DiscoverAsync(info.Identifier!, info.Dwk!, ct).ConfigureAwait(false);
+        return await ResolveDirectAsync(url, info.Kid!, ct, info.Identifier!).ConfigureAwait(false);
     }
 
-    private static Task<IAAuthKey> ResolveJktJwtAsync(
-        SignatureKeyParser.ParsedSignatureKeyInfo info, CancellationToken ct)
+    private async Task<string> DiscoverAsync(string identifier, string dwk, CancellationToken ct)
     {
-        // Self-anchored TOFU verification per draft-hardt-httpbis-signature-key-05
-        // §3.4. The durable (enclave) key is embedded in the naming JWT's header
-        // jwk; the issuer is that key's own thumbprint URI. No external lookup.
-        if (info.Jwt is null || info.Header is null || info.Payload is null)
-            throw new AAuthVerificationException(
-                "Signature-Key jkt-jwt scheme: naming JWT could not be parsed.");
-
-        // §3.4 step 2: check the typ header.
-        var typ = (string?)info.Header["typ"];
-        if (typ != AAuthConstants.TokenTypes.JktS256Jwt)
-            throw new AAuthVerificationException(
-                $"Signature-Key jkt-jwt scheme: unsupported naming JWT typ '{typ}' (expected '{AAuthConstants.TokenTypes.JktS256Jwt}').");
-
-        // §3.4 step 4: extract the durable key from the header jwk.
-        if (info.Header["jwk"] is not JsonObject durableJwk)
-            throw new AAuthVerificationException(
-                "Signature-Key jkt-jwt scheme: naming JWT header is missing the durable 'jwk'.");
-        var durableKey = Crypto.KeyFactory.TryFromJwk(durableJwk)
-            ?? throw new AAuthVerificationException(
-                "Signature-Key jkt-jwt scheme: naming JWT header 'jwk' is not a valid key.");
-
-        // §3.4 steps 5-7: compute the durable thumbprint, build the expected
-        // urn:jkt:sha-256: issuer, and compare to the iss claim by string equality.
-        var expectedIss = AAuthConstants.JktThumbprintUrnPrefix + durableKey.ComputeJwkThumbprint();
-        var iss = (string?)info.Payload["iss"];
-        if (!string.Equals(iss, expectedIss, StringComparison.Ordinal))
-            throw new AAuthVerificationException(
-                "Signature-Key jkt-jwt scheme: naming JWT 'iss' does not match the thumbprint of the header 'jwk'.");
-
-        // §3.4 step 8: verify the naming JWT signature using the header jwk.
-        var segments = info.Jwt.Split('.');
-        if (segments.Length != 3)
-            throw new AAuthVerificationException(
-                "Signature-Key jkt-jwt scheme: naming JWT is not a compact JWS.");
-
-        byte[] signature;
-        try
-        {
-            signature = Base64UrlEncoder.DecodeBytes(segments[2]);
-        }
-        catch (Exception)
-        {
-            throw new AAuthVerificationException(
-                "Signature-Key jkt-jwt scheme: naming JWT signature is not valid base64url.");
-        }
-
-        var signingInput = Encoding.ASCII.GetBytes(segments[0] + "." + segments[1]);
-        if (!durableKey.Verify(signingInput, signature))
-            throw new AAuthVerificationException(
-                "Signature-Key jkt-jwt scheme: naming JWT signature verification failed against the header durable key.");
-
-        // §3.4 step 9 (exp/iat) is enforced by the verification middleware
-        // (clock-skew-aware). §3.4 step 10: extract the ephemeral key from cnf.jwk.
-        if (info.ConfirmationKey is null)
-            throw new AAuthVerificationException(
-                "Signature-Key jkt-jwt scheme: naming JWT does not contain cnf.jwk.");
-
-        // §3.4 step 11: the ephemeral key verifies the HTTP message signature.
-        return Task.FromResult(info.ConfirmationKey);
+        if (_metadataClient is null) throw new InvalidOperationException("MetadataClient is required for issuer discovery.");
+        if (!_metadataClient.Policy.IsValidIdentifier(identifier) || string.IsNullOrEmpty(dwk) || dwk is "." or ".."
+            || dwk.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not ('.' or '-' or '_')))
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidKey, "Invalid identifier or metadata name.");
+        var metadata = await _metadataClient.FetchAsync(_metadataClient.GetUrl(identifier, dwk), ct).ConfigureAwait(false);
+        var issuer = SignatureKeyParser.Text(metadata, "issuer");
+        if (issuer is null) throw new AAuthVerificationException(SignatureErrorCode.IssuerMissing, "Metadata issuer is missing.");
+        if (issuer != identifier) throw new AAuthVerificationException(SignatureErrorCode.IssuerMismatch, "Metadata issuer does not match identifier.");
+        return SignatureKeyParser.Text(metadata, "jwks_uri")
+            ?? throw new AAuthVerificationException(SignatureErrorCode.InvalidKey, "Metadata jwks_uri is missing.");
     }
 
-    private static bool IsLoopback(Uri uri)
+    private async Task<IAAuthKey> ResolveDirectAsync(string url, string kid, CancellationToken ct, string? issuer = null)
     {
-        return uri.Host is "localhost" or "127.0.0.1" or "::1"
-            || uri.Host.Equals("[::1]", StringComparison.OrdinalIgnoreCase);
+        if (_jwksClient is null) throw new InvalidOperationException("JwksClient is required for key discovery.");
+        var uri = _jwksClient.Policy.ValidateUrl(url);
+        var key = issuer is null
+            ? await _jwksClient.ResolveKeyAsync(uri, kid, ct).ConfigureAwait(false)
+            : await _jwksClient.ResolveKeyAsync(uri, kid, issuer, ct).ConfigureAwait(false);
+        return key ?? throw new AAuthVerificationException(SignatureErrorCode.UnknownKey, "Selected key not found.");
     }
+
 }

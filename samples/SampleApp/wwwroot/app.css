@@ -1,3 +1,13 @@
+:root {
+    --syntax-keyword: #005cc5;
+    --syntax-type: #0550ae;
+    --syntax-string: #0a3069;
+    --syntax-comment: #116329;
+    --syntax-number: #953800;
+    --syntax-literal: #8250df;
+    --syntax-attribute: #cf222e;
+}
+
 html, body {
     font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
 }
@@ -69,4 +79,13 @@ details.aria-narrative > summary {
 
 details.aria-narrative[open] > summary {
     margin-bottom: 0.5rem;
+}
+
+.btn-outline-primary {
+    --bs-btn-color: #0056b3;
+    --bs-btn-border-color: #0056b3;
+    --bs-btn-hover-bg: #0056b3;
+    --bs-btn-hover-border-color: #0056b3;
+    --bs-btn-active-bg: #00458f;
+    --bs-btn-active-border-color: #00458f;
 }

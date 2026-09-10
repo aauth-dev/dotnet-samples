@@ -38,7 +38,7 @@ public class AAuthSigningHandlerTests
         {
             InnerHandler = capture,
         };
-        using var client = new HttpClient(signing);
+        using var client = new InProcessHttpClient(signing);
 
         await client.GetAsync("https://resource.example/api/data");
 
@@ -55,7 +55,7 @@ public class AAuthSigningHandlerTests
         var key = AAuthKey.Generate();
         var capture = new CaptureHandler();
         var signing = new AAuthSigningHandler(key, () => "abc.def.ghi") { InnerHandler = capture };
-        using var client = new HttpClient(signing);
+        using var client = new InProcessHttpClient(signing);
 
         await client.GetAsync("https://resource.example/");
 
@@ -70,7 +70,7 @@ public class AAuthSigningHandlerTests
         var capture = new CaptureHandler();
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
         var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
-        using var client = new HttpClient(signing);
+        using var client = new InProcessHttpClient(signing);
 
         await client.GetAsync("https://resource.example/api");
 
@@ -86,7 +86,7 @@ public class AAuthSigningHandlerTests
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
         var jwt = "abc.def.ghi";
         var signing = new AAuthSigningHandler(key, () => jwt, () => clock) { InnerHandler = capture };
-        using var client = new HttpClient(signing);
+        using var client = new InProcessHttpClient(signing);
 
         await client.PostAsync("https://resource.example/authorize", new StringContent(""));
 
@@ -124,7 +124,7 @@ public class AAuthSigningHandlerTests
         var capture = new CaptureHandler();
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
         var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
-        using var client = new HttpClient(signing);
+        using var client = new InProcessHttpClient(signing);
 
         // Mixed-case host: RFC 9421 §2.2.3 requires the signed @authority
         // value to be lowercase per RFC 3986 §3.2.2.
@@ -166,7 +166,7 @@ public class AAuthSigningHandlerTests
         var capture = new CaptureHandler();
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
         var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
-        using var client = new HttpClient(signing);
+        using var client = new InProcessHttpClient(signing);
 
         // Path contains a space (percent-encoded as %20) and a non-ASCII
         // character (percent-encoded by Uri). RFC 9421 §2.2.7 requires the
@@ -218,7 +218,7 @@ public class AAuthSigningHandlerTests
                 observedBase = b;
             },
         };
-        using var client = new HttpClient(signing);
+        using var client = new InProcessHttpClient(signing);
 
         await client.GetAsync("https://resource.example/api");
 
@@ -241,7 +241,7 @@ public class AAuthSigningHandlerTests
         var capture = new CaptureHandler();
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
         var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
-        using var client = new HttpClient(signing);
+        using var client = new InProcessHttpClient(signing);
 
         await client.GetAsync("https://resource.example/api");
 
@@ -258,7 +258,7 @@ public class AAuthSigningHandlerTests
         var capture = new CaptureHandler();
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
         var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
-        using var client = new HttpClient(signing);
+        using var client = new InProcessHttpClient(signing);
 
         var request = new HttpRequestMessage(HttpMethod.Post, "https://resource.example/api")
         {
@@ -301,7 +301,7 @@ public class AAuthSigningHandlerTests
         var capture = new CaptureHandler();
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
         var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
-        using var client = new HttpClient(signing);
+        using var client = new InProcessHttpClient(signing);
 
         var request = new HttpRequestMessage(HttpMethod.Get, "https://resource.example/api");
         request.Headers.Add("X-Custom", "v1");
@@ -324,7 +324,7 @@ public class AAuthSigningHandlerTests
         var key = AAuthKey.Generate();
         var capture = new CaptureHandler();
         var signing = new AAuthSigningHandler(key, () => "abc.def.ghi") { InnerHandler = capture };
-        using var client = new HttpClient(signing);
+        using var client = new InProcessHttpClient(signing);
 
         var request = new HttpRequestMessage(HttpMethod.Get, "https://resource.example/api");
         request.Options.Set(
@@ -341,7 +341,7 @@ public class AAuthSigningHandlerTests
         var capture = new CaptureHandler();
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
         var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
-        using var client = new HttpClient(signing);
+        using var client = new InProcessHttpClient(signing);
 
         const string bodyText = "{\"hello\":\"world\"}";
         var request = new HttpRequestMessage(HttpMethod.Post, "https://resource.example/api")
@@ -387,7 +387,7 @@ public class AAuthSigningHandlerTests
         var key = AAuthKey.Generate();
         var capture = new CaptureHandler();
         var signing = new AAuthSigningHandler(key, () => "abc.def.ghi") { InnerHandler = capture };
-        using var client = new HttpClient(signing);
+        using var client = new InProcessHttpClient(signing);
 
         var request = new HttpRequestMessage(HttpMethod.Post, "https://resource.example/api")
         {

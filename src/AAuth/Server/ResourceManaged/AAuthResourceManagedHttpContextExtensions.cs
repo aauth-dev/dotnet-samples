@@ -20,7 +20,7 @@ public static class AAuthResourceManagedHttpContextExtensions
     /// (<c>MapAAuthInteractionPoll</c>) issues the opaque token on approval. Requires
     /// <c>AddAAuthResourceManaged</c> and a verified AAuth signature on the request.
     /// </summary>
-    public static IResult RequireAAuthInteraction(this HttpContext context, string scope)
+    public static IResult RequireAAuthInteraction(this HttpContext context, string scope, string? account = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentException.ThrowIfNullOrEmpty(scope);
@@ -39,10 +39,13 @@ public static class AAuthResourceManagedHttpContextExtensions
                 "RequireAAuthInteraction requires a verified AAuth signature on the request; " +
                 "place the endpoint behind signature verification (.RequireAAuthSignature()).");
         }
-        var entry = store.Park(scope, jkt, options.CodeTtl);
+        var entry = store.Park(scope, jkt, options.CodeTtl, account);
+        entry.OwnerIssuer = context.GetAAuthVerification()!.Issuer;
+        entry.OwnerAgent = context.GetAAuthVerification()!.Agent;
         var pollLocation = $"{options.PollPath.TrimEnd('/')}/{entry.Code}";
 
-        var result = context.InteractionRequiredAAuth(options.ConsentUrl, entry.Code, pollLocation);
+        var result = context.InteractionRequiredAAuth(options.ConsentUrl, entry.Code, pollLocation,
+            context.RequestServices.GetService<AAuth.Discovery.MetadataClient>()?.Policy);
         // §Deferred Responses: Retry-After is REQUIRED on the 202.
         context.Response.Headers.RetryAfter = "0";
         return result;

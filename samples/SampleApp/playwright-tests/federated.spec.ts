@@ -1,8 +1,9 @@
 import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/blazor';
 import { readResponseJson, expectStatus } from '../../../tests/e2e/helpers/json';
-import { approveInPopup } from '../../../tests/e2e/helpers/consent';
+import { decideAccessConsent } from '../../../tests/e2e/helpers/consent';
 import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
+import { approvePersonConsent } from '../../../tests/e2e/helpers/consent';
 
 /**
  * Federated (four-party) — interactive consent path (stub Access Server).
@@ -26,18 +27,19 @@ test.describe('Federated (interactive consent)', () => {
     await waitForInteractive(page, 'button.btn-primary');
 
     // Send the request; the AS returns 202 and the interaction URL is surfaced.
-    const link = page.locator('a[target="_blank"]', { hasText: /interaction/ });
+    const link = page.locator('a.btn[target="_blank"][href*="/interaction"]');
     await clickAndConfirm(page, 'button.btn-primary', () => link.isVisible());
     await expect(link).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('.spinner-border')).toBeVisible();
+    await approvePersonConsent(page, 'a[target="_blank"][href*="/interaction"]');
+    await expect(link).toHaveAttribute('href', /localhost:5500/);
 
     // The interaction URL is the Access Server's own consent screen.
     const [popup] = await Promise.all([
       context.waitForEvent('page'),
       link.click(),
     ]);
-    await expect(popup.locator('.badge')).toContainText('Access Server');
-    await approveInPopup(popup);
+    await decideAccessConsent(popup);
 
     await expectStatus(page, 200, 60_000);
     const json = (await readResponseJson(page)) as Record<string, unknown>;

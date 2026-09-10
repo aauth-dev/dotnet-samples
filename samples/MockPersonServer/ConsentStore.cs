@@ -9,17 +9,17 @@ namespace MockPersonServer;
 /// </summary>
 public sealed class ConsentStore
 {
-    private readonly ConcurrentDictionary<(string Agent, string Resource, string Scope), byte> _consented
+    private readonly ConcurrentDictionary<(string Agent, string Resource, string Scope, string? Account, string? Key), byte> _consented
         = new();
 
-    public bool IsConsented(string agent, string resource, string scope)
-        => _consented.ContainsKey((agent, resource, scope));
+    public bool IsConsented(string agent, string resource, string scope, string? account = null, string? key = null)
+        => _consented.ContainsKey((agent, resource, scope, account, key));
 
-    public void Grant(string agent, string resource, string scope)
-        => _consented[(agent, resource, scope)] = 1;
+    public void Grant(string agent, string resource, string scope, string? account = null, string? key = null)
+        => _consented[(agent, resource, scope, account, key)] = 1;
 
-    public void Revoke(string agent, string resource, string scope)
-        => _consented.TryRemove((agent, resource, scope), out _);
+    public void Revoke(string agent, string resource, string scope, string? account = null, string? key = null)
+        => _consented.TryRemove((agent, resource, scope, account, key), out _);
 
     /// <summary>Wipe all consent records back to the empty baseline.</summary>
     public void Clear() => _consented.Clear();

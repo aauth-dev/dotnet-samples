@@ -1,0 +1,9 @@
+@page "/catalog-gateway"
+@rendermode InteractiveServer
+@inject IConfiguration Configuration
+
+<PageTitle>Travel Catalog Gateway</PageTitle>
+<CapabilityTourChrome CurrentValue="/catalog-gateway" ResourceLabel="Catalog"
+	ResourceUrl="@(Configuration["AAuth:Catalog"] ?? "http://localhost:5006")"
+	ShowR3AccessServer="true" />
+<AAuth.Samples.Capabilities.CatalogWalkthrough GuidedTour="true" />

@@ -153,6 +153,7 @@ public class AAuthHttpContextExtensionsTests
         {
             Level = AAuthLevel.Pseudonymous,
             Scheme = AAuthConstants.Schemes.Hwk,
+            Jkt = "jkt-123",
         });
         return ctx;
     }
@@ -264,7 +265,7 @@ public class AAuthHttpContextExtensionsTests
         var called = false;
         var mw = new AAuthChallengeMiddleware(
             _ => { called = true; return Task.CompletedTask; },
-            new ChallengeOptions { AccessMode = AAuthAccessMode.ResourceManaged });
+            new ChallengeOptions { EgressPolicy = TestEgress.Policy, AccessMode = AAuthAccessMode.ResourceManaged });
         var ctx = new DefaultHttpContext();
         ctx.Items[AAuthVerificationMiddleware.ContextItemKey] = new VerificationResult
         {

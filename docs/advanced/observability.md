@@ -1,4 +1,7 @@
-# Observability
+---
+title: Observability
+description: Subscribe to AAuth diagnostics without exposing token material.
+---
 
 The AAuth SDK provides built-in OpenTelemetry-compatible tracing via `System.Diagnostics` — no external OTel package dependency required.
 
@@ -8,10 +11,13 @@ All AAuth operations emit traces through a single `ActivitySource`:
 
 ```csharp
 // Source name: "AAuth"
-AAuthDiagnostics.Source
+var source = AAuthDiagnostics.Source;
 ```
 
-Subscribe to it in your OTel configuration:
+Subscribe to it in your OTel configuration. This external integration template
+requires `OpenTelemetry.Extensions.Hosting` and
+`OpenTelemetry.Instrumentation.AspNetCore`, which are not repository dependencies
+and are not compiled by the snippet harness:
 
 ```csharp
 builder.Services.AddOpenTelemetry()
@@ -51,13 +57,16 @@ The SDK creates child Activity spans for key operations:
 Use `AAuthDiagnostics` constants for querying traces:
 
 ```csharp
-AAuthDiagnostics.TagScheme       // "aauth.scheme"
-AAuthDiagnostics.TagLevel        // "aauth.level"
-AAuthDiagnostics.TagAgent        // "aauth.agent"
-AAuthDiagnostics.TagScope        // "aauth.scope"
-AAuthDiagnostics.TagIssuer       // "aauth.issuer"
-AAuthDiagnostics.TagTokenType    // "aauth.token_type"
-AAuthDiagnostics.TagIssuerVerified // "aauth.issuer_verified"
+string[] tags =
+[
+    AAuthDiagnostics.TagScheme,
+    AAuthDiagnostics.TagLevel,
+    AAuthDiagnostics.TagAgent,
+    AAuthDiagnostics.TagScope,
+    AAuthDiagnostics.TagIssuer,
+    AAuthDiagnostics.TagTokenType,
+    AAuthDiagnostics.TagIssuerVerified,
+];
 ```
 
 ## No External Dependency

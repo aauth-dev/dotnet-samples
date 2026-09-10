@@ -46,8 +46,8 @@ public enum TokenErrorCode
 /// Represents a structured error response from an AAuth token endpoint.
 /// </summary>
 /// <param name="Error">The error code.</param>
-/// <param name="ErrorDescription">Optional human-readable description.</param>
-public sealed record TokenErrorResponse(TokenErrorCode Error, string? ErrorDescription = null)
+/// <param name="Detail">Optional human-readable description.</param>
+public sealed record TokenErrorResponse(TokenErrorCode Error, string? Detail = null)
 {
     /// <summary>The wire-format error code string.</summary>
     public string ErrorCode => Error switch

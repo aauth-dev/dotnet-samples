@@ -12,9 +12,6 @@ internal static class TrustConfigDiagnostics
     /// <summary>
     /// Validate a resource verification pipeline's trust configuration.
     /// <list type="bullet">
-    /// <item><description><b>Fail-fast (throw):</b> a trust policy is configured but
-    /// <paramref name="requireIssuerVerification"/> is <c>false</c> (signature-only),
-    /// so the policy would be silently ignored — an unambiguous misconfiguration.</description></item>
     /// <item><description><b>Warn:</b> issuer verification is on but no auth-token
     /// trust policy is configured, so the resource accepts auth tokens from any
     /// verifiable Person Server (the spec default). Any explicit policy — including
@@ -23,21 +20,11 @@ internal static class TrustConfigDiagnostics
     /// </summary>
     public static void Validate(
         ILogger? logger,
-        bool requireIssuerVerification,
         bool authTrustConfigured,
         bool agentTrustConfigured,
         string contextLabel)
     {
-        if (!requireIssuerVerification && (authTrustConfigured || agentTrustConfigured))
-        {
-            throw new InvalidOperationException(
-                $"AAuth ({contextLabel}): a trust policy (TrustedAuthTokenIssuers / " +
-                "IsTrustedAuthTokenIssuer / TrustedAgentProviderIssuers / IsTrustedAgentProviderIssuer) " +
-                "is configured, but RequireIssuerVerification is false (signature-only). The trust policy " +
-                "would be silently ignored. Move it to an auth-token (RequireAAuth) pipeline, or remove it.");
-        }
-
-        if (requireIssuerVerification && !authTrustConfigured)
+        if (!authTrustConfigured)
         {
             logger?.LogWarning(
                 "AAuth ({Context}): auth-token endpoints accept any verifiable Person Server because no " +

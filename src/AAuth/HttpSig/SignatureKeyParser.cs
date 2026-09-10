@@ -1,290 +1,148 @@
-using System;
-using System.Collections.Generic;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
+using AAuth.Errors;
 using Microsoft.IdentityModel.Tokens;
 
 namespace AAuth.HttpSig;
 
-/// <summary>
-/// Extracts the carrier token from a <c>Signature-Key</c> header and the
-/// agent's confirmation key (<c>cnf.jwk</c>) from inside that token. Used by
-/// the AAuth verification middleware to obtain the public key for RFC 9421
-/// signature verification before any external trust check.
-/// </summary>
-/// <remarks>
-/// Only the <c>sig=jwt</c> scheme is supported. The token's signature is
-/// <em>not</em> validated here — that is a separate step performed by
-/// <see cref="Tokens.TokenVerifier"/> against the issuer's JWKS. This parser
-/// only does the structural decoding required to obtain a public key to
-/// verify the HTTP signature.
-/// </remarks>
 public static class SignatureKeyParser
 {
-    /// <summary>Result of parsing a Signature-Key header carrying a JWT.</summary>
-    /// <param name="Jwt">The raw JWT compact serialization.</param>
-    /// <param name="Header">Decoded JOSE header.</param>
-    /// <param name="Payload">Decoded JWT payload.</param>
-    /// <param name="ConfirmationKey">The <c>cnf.jwk</c> key — what signed the HTTP request.</param>
-    public sealed record ParsedSignatureKey(
-        string Jwt,
-        JsonObject Header,
-        JsonObject Payload,
-        AAuthKey ConfirmationKey)
+    public sealed record ParsedSignatureKey(string Jwt, JsonObject Header, JsonObject Payload, IAAuthKey ConfirmationKey)
     {
-        /// <summary>Token identifier (<c>jti</c>) if present.</summary>
-        public string? TokenId => Payload["jti"]?.GetValue<string>();
-
-        /// <summary>Token expiration (<c>exp</c>) if present.</summary>
-        public DateTimeOffset? Expiration
-        {
-            get
-            {
-                var exp = Payload["exp"];
-                if (exp is null) return null;
-                return DateTimeOffset.FromUnixTimeSeconds(exp.GetValue<long>());
-            }
-        }
+        public string? TokenId => Text(Payload, "jti");
+        public DateTimeOffset? Expiration => Payload["exp"] is JsonValue value && value.TryGetValue<long>(out var seconds)
+            ? DateTimeOffset.FromUnixTimeSeconds(seconds) : null;
     }
 
-    /// <summary>
-    /// Result of parsing a Signature-Key header with any scheme. For schemes
-    /// where the key is not inline (hwk, jwks_uri), use the reference fields
-    /// to resolve the key externally.
-    /// </summary>
     public sealed class ParsedSignatureKeyInfo
     {
-        /// <summary>The scheme name (jwt, hwk, jkt-jwt, jwks_uri).</summary>
         public required string Scheme { get; init; }
-
-        /// <summary>The confirmation key (available for jwt and jkt-jwt schemes).</summary>
+        public string Label { get; init; } = "sig";
         public IAAuthKey? ConfirmationKey { get; init; }
-
-        /// <summary>JWK thumbprint (available for hwk and jkt-jwt schemes).</summary>
         public string? Jkt { get; init; }
-
-        /// <summary>JWKS URI (available for jwks_uri scheme).</summary>
+        public string? Identifier { get; init; }
+        public string? Dwk { get; init; }
         public string? JwksUri { get; init; }
-
-        /// <summary>Key ID within a JWKS (available for jwks_uri scheme).</summary>
         public string? Kid { get; init; }
-
-        /// <summary>Raw JWT (available for jwt and jkt-jwt schemes).</summary>
         public string? Jwt { get; init; }
-
-        /// <summary>Decoded JWT header (available for jwt and jkt-jwt schemes).</summary>
         public JsonObject? Header { get; init; }
-
-        /// <summary>Decoded JWT payload (available for jwt and jkt-jwt schemes).</summary>
         public JsonObject? Payload { get; init; }
     }
 
-    /// <summary>
-    /// Parse a <c>Signature-Key</c> header supporting all schemes: jwt, hwk,
-    /// jkt-jwt, jwks_uri. For non-jwt schemes, the caller must resolve the
-    /// key externally (e.g. from a JWKS endpoint or local key store).
-    /// </summary>
-    public static ParsedSignatureKeyInfo ParseAny(string signatureKeyHeader)
+    public static ParsedSignatureKeyInfo ParseAny(string signatureKeyHeader, string label = "sig")
     {
-        ArgumentException.ThrowIfNullOrEmpty(signatureKeyHeader);
-        var (scheme, parameters) = SignatureKeyHeader.Parse(signatureKeyHeader);
-
-        return scheme switch
+        var (scheme, parameters) = SignatureKeyHeader.Parse(signatureKeyHeader, label);
+        switch (scheme)
         {
-            AAuthConstants.Schemes.Jwt => ParseJwtScheme(parameters),
-            AAuthConstants.Schemes.Hwk => ParseHwkScheme(parameters),
-            AAuthConstants.Schemes.JktJwt => ParseJktJwtScheme(parameters),
-            AAuthConstants.Schemes.JwksUri => ParseJwksUriScheme(parameters),
-            _ => throw new AAuthVerificationException($"Unsupported Signature-Key scheme: '{scheme}'."),
-        };
+            case "hwk":
+                if (new[] { "kid", "jwk", "jkt", "d", "k", "p", "q", "dp", "dq", "qi", "oth" }.Any(parameters.ContainsKey))
+                    throw new AAuthVerificationException(SignatureErrorCode.InvalidKey, "Prohibited hwk parameter.");
+                var jwk = new JsonObject();
+                foreach (var name in new[] { "kty", "crv", "x", "y", "n", "e", "alg" })
+                    if (parameters.ContainsKey(name)) jwk[name] = StructuredFields.RequiredString(parameters, name);
+                var key = PublicKey(jwk);
+                return new() { Scheme = scheme, Label = label, ConfirmationKey = key, Jkt = key.ComputeJwkThumbprint() };
+            case "jwks_uri":
+                if (parameters.ContainsKey("uri"))
+                    throw new AAuthVerificationException(SignatureErrorCode.InvalidKey, "Obsolete jwks_uri carrier.");
+                return new()
+                {
+                    Scheme = scheme, Label = label,
+                    Identifier = StructuredFields.RequiredString(parameters, "id"),
+                    Dwk = StructuredFields.RequiredString(parameters, "dwk"),
+                    Kid = StructuredFields.RequiredString(parameters, "kid"),
+                };
+            case "jwks":
+                return new()
+                {
+                    Scheme = scheme, Label = label,
+                    Identifier = StructuredFields.RequiredString(parameters, "url"),
+                    JwksUri = StructuredFields.RequiredString(parameters, "url"),
+                    Kid = StructuredFields.RequiredString(parameters, "kid"),
+                };
+            case "jwt":
+            case "self-jwt":
+            case "jkt-jwt":
+                if (parameters.ContainsKey("jkt") || scheme == "self-jwt" && parameters.ContainsKey("cache"))
+                    throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "Prohibited assertion parameter.");
+                if (parameters.TryGetValue("cache", out var cache) && cache is not bool)
+                    throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "cache must be Boolean.");
+                var jwt = StructuredFields.RequiredString(parameters, "jwt");
+                var segments = jwt.Split('.');
+                if (segments.Length != 3 || segments.Any(string.IsNullOrEmpty))
+                    throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT is not a compact JWS.");
+                var header = DecodeJsonSegment(segments[0]);
+                var payload = DecodeJsonSegment(segments[1]);
+                if (scheme == "self-jwt" && payload.ContainsKey("cnf"))
+                    throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "self-jwt MUST NOT contain cnf.");
+                if (scheme != "self-jwt" && payload["cnf"] is not JsonObject)
+                    throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires cnf.jwk.");
+                if (parameters.TryGetValue("cache", out cache) && cache is true && Text(payload, "jti") is null)
+                    throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "Cacheable assertion requires jti.");
+                return new() { Scheme = scheme, Label = label, Jwt = jwt, Header = header, Payload = payload };
+            default:
+                throw new AAuthVerificationException(SignatureErrorCode.UnsupportedScheme, $"Unsupported Signature-Key scheme '{scheme}'.");
+        }
     }
 
-    private static ParsedSignatureKeyInfo ParseJwtScheme(IReadOnlyDictionary<string, string> parameters)
+    public static ParsedSignatureKey Parse(string signatureKeyHeader, string label = "sig")
     {
-        if (!parameters.TryGetValue("jwt", out var jwt) || string.IsNullOrEmpty(jwt))
-            throw new AAuthVerificationException("Signature-Key jwt scheme missing 'jwt' parameter.");
-
-        var segments = jwt.Split('.');
-        if (segments.Length != 3)
-            throw new AAuthVerificationException("JWT in Signature-Key is not a compact JWS.");
-
-        var header = DecodeJsonSegment(segments[0], "header");
-        var payload = DecodeJsonSegment(segments[1], "payload");
-
-        var cnf = payload["cnf"] as JsonObject
-            ?? throw new AAuthVerificationException("Token is missing the 'cnf' claim.");
-        var jwk = cnf["jwk"] as JsonObject
-            ?? throw new AAuthVerificationException("Token 'cnf' claim does not contain 'jwk'.");
-
-        AAuthKey key;
-        try { key = AAuthKey.FromJwk(jwk); }
-        catch (Exception ex) when (ex is ArgumentException or FormatException)
-        { throw new AAuthVerificationException("cnf.jwk is not a valid Ed25519 OKP key.", ex); }
-
-        return new ParsedSignatureKeyInfo
-        {
-            Scheme = "jwt",
-            ConfirmationKey = key,
-            Jwt = jwt,
-            Header = header,
-            Payload = payload,
-        };
+        var info = ParseAny(signatureKeyHeader, label);
+        if (info.Scheme != "jwt")
+            throw new AAuthVerificationException(SignatureErrorCode.UnsupportedScheme, "Expected jwt carrier.");
+        return new(info.Jwt!, info.Header!, info.Payload!, Confirmation(info.Payload!));
     }
 
-    private static ParsedSignatureKeyInfo ParseHwkScheme(IReadOnlyDictionary<string, string> parameters)
+    internal static IAAuthKey Confirmation(JsonObject payload)
     {
-        if (!parameters.TryGetValue("jwk", out var jwkB64) || string.IsNullOrEmpty(jwkB64))
-            throw new AAuthVerificationException("Signature-Key hwk scheme missing 'jwk' parameter.");
+        if (payload["cnf"] is not JsonObject confirmation || confirmation["jwk"] is not JsonObject jwk)
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires cnf.jwk.");
+        return PublicKey(jwk);
+    }
 
-        IAAuthKey key;
+    internal static IAAuthKey PublicKey(JsonObject jwk)
+    {
+        try { return KeyFactory.FromPublicJwk(jwk); }
+        catch (JwkValidationException exception)
+        { throw new AAuthVerificationException(exception.Code, exception.Message, exception); }
+    }
+
+    internal static string? Text(JsonObject? document, string name) =>
+        document?[name] is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
+
+    internal static JsonObject ParseJsonObject(byte[] bytes)
+    {
+        using var document = JsonDocument.Parse(bytes);
+        if (document.RootElement.ValueKind != JsonValueKind.Object) throw new JsonException("JWT segment must be an object.");
+        ValidateUniqueMembers(document.RootElement);
+        return JsonNode.Parse(bytes)!.AsObject();
+    }
+
+    private static void ValidateUniqueMembers(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in element.EnumerateObject())
+            {
+                if (!names.Add(property.Name)) throw new JsonException("Duplicate JWT JSON member.");
+                ValidateUniqueMembers(property.Value);
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+            foreach (var item in element.EnumerateArray()) ValidateUniqueMembers(item);
+    }
+
+    private static JsonObject DecodeJsonSegment(string segment)
+    {
         try
         {
-            var jwkJson = System.Text.Encoding.UTF8.GetString(
-                Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(jwkB64));
-            var jwkObj = System.Text.Json.Nodes.JsonObject.Parse(jwkJson) as JsonObject
-                ?? throw new AAuthVerificationException("Signature-Key hwk scheme: jwk is not a JSON object.");
-            key = Crypto.KeyFactory.FromJwk(jwkObj);
+            var bytes = Base64UrlEncoder.DecodeBytes(segment);
+            if (Base64UrlEncoder.Encode(bytes) != segment) throw new FormatException();
+            return ParseJsonObject(bytes);
         }
-        catch (AAuthVerificationException) { throw; }
-        catch (Exception ex)
-        {
-            throw new AAuthVerificationException($"Signature-Key hwk scheme: failed to parse inline jwk — {ex.Message}");
-        }
-
-        var jkt = parameters.TryGetValue("jkt", out var j) ? j : key.ComputeJwkThumbprint();
-
-        return new ParsedSignatureKeyInfo
-        {
-            Scheme = "hwk",
-            Jkt = jkt,
-            ConfirmationKey = key,
-        };
-    }
-
-    private static ParsedSignatureKeyInfo ParseJktJwtScheme(IReadOnlyDictionary<string, string> parameters)
-    {
-        // draft-hardt-httpbis-signature-key-05 §3.4: the jkt-jwt scheme carries a
-        // single 'jwt' parameter. A 'jkt' parameter belongs to the retired
-        // non-conformant format and is rejected.
-        if (parameters.ContainsKey("jkt"))
-            throw new AAuthVerificationException(
-                "Signature-Key jkt-jwt scheme: unexpected 'jkt' parameter (draft-05 §3.4 defines only 'jwt').");
-        if (!parameters.TryGetValue("jwt", out var jwt) || string.IsNullOrEmpty(jwt))
-            throw new AAuthVerificationException("Signature-Key jkt-jwt scheme missing 'jwt' parameter.");
-
-        var segments = jwt.Split('.');
-        if (segments.Length != 3)
-            throw new AAuthVerificationException("JWT in Signature-Key jkt-jwt is not a compact JWS.");
-
-        var header = DecodeJsonSegment(segments[0], "header");
-        var payload = DecodeJsonSegment(segments[1], "payload");
-
-        // The ephemeral signing key is named by cnf.jwk; it verifies the HTTP
-        // message signature.
-        IAAuthKey? confirmationKey = null;
-        if (payload["cnf"] is JsonObject cnf && cnf["jwk"] is JsonObject cnfJwk)
-        {
-            confirmationKey = Crypto.KeyFactory.TryFromJwk(cnfJwk);
-        }
-
-        // The stable pseudonym is the DURABLE key's thumbprint, taken from the
-        // self-issued delegation JWT's header jwk (§7.1). Full self-anchored
-        // verification (iss == thumbprint(header jwk) and the JWT signature) is
-        // performed by the Signature-Key resolver.
-        string? durableThumbprint = null;
-        if (header["jwk"] is JsonObject durableJwk &&
-            Crypto.KeyFactory.TryFromJwk(durableJwk) is { } durableKey)
-        {
-            durableThumbprint = durableKey.ComputeJwkThumbprint();
-        }
-
-        return new ParsedSignatureKeyInfo
-        {
-            Scheme = AAuthConstants.Schemes.JktJwt,
-            Jkt = durableThumbprint,
-            ConfirmationKey = confirmationKey,
-            Jwt = jwt,
-            Header = header,
-            Payload = payload,
-        };
-    }
-
-    private static ParsedSignatureKeyInfo ParseJwksUriScheme(IReadOnlyDictionary<string, string> parameters)
-    {
-        if (!parameters.TryGetValue("uri", out var uri) || string.IsNullOrEmpty(uri))
-            throw new AAuthVerificationException("Signature-Key jwks_uri scheme missing 'uri' parameter.");
-        if (!parameters.TryGetValue("kid", out var kid) || string.IsNullOrEmpty(kid))
-            throw new AAuthVerificationException("Signature-Key jwks_uri scheme missing 'kid' parameter.");
-
-        return new ParsedSignatureKeyInfo
-        {
-            Scheme = "jwks_uri",
-            JwksUri = uri,
-            Kid = kid,
-        };
-    }
-
-    /// <summary>
-    /// Parse a <c>Signature-Key</c> header value, decode the embedded JWT, and
-    /// return the <c>cnf.jwk</c> public key for HTTP-signature verification.
-    /// </summary>
-    public static ParsedSignatureKey Parse(string signatureKeyHeader)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(signatureKeyHeader);
-
-        var jwt = SignatureKeyHeader.GetJwt(signatureKeyHeader)
-            ?? throw new AAuthVerificationException(
-                "Signature-Key scheme is not 'jwt' or is missing the jwt parameter.");
-
-        var segments = jwt.Split('.');
-        if (segments.Length != 3)
-        {
-            throw new AAuthVerificationException("JWT in Signature-Key is not a compact JWS.");
-        }
-
-        var header = DecodeJsonSegment(segments[0], "header");
-        var payload = DecodeJsonSegment(segments[1], "payload");
-
-        var cnf = payload["cnf"] as JsonObject
-            ?? throw new AAuthVerificationException("Token is missing the 'cnf' claim.");
-        var jwk = cnf["jwk"] as JsonObject
-            ?? throw new AAuthVerificationException("Token 'cnf' claim does not contain 'jwk'.");
-
-        AAuthKey key;
-        try
-        {
-            key = AAuthKey.FromJwk(jwk);
-        }
-        catch (Exception ex) when (ex is ArgumentException or FormatException)
-        {
-            throw new AAuthVerificationException("cnf.jwk is not a valid Ed25519 OKP key.", ex);
-        }
-
-        return new ParsedSignatureKey(jwt, header, payload, key);
-    }
-
-    private static JsonObject DecodeJsonSegment(string segment, string label)
-    {
-        byte[] bytes;
-        try
-        {
-            bytes = Base64UrlEncoder.DecodeBytes(segment);
-        }
-        catch (Exception ex)
-        {
-            throw new AAuthVerificationException($"JWT {label} is not valid base64url.", ex);
-        }
-
-        try
-        {
-            return JsonNode.Parse(bytes) as JsonObject
-                ?? throw new AAuthVerificationException($"JWT {label} is not a JSON object.");
-        }
-        catch (JsonException ex)
-        {
-            throw new AAuthVerificationException($"JWT {label} is not valid JSON.", ex);
-        }
+        catch (Exception exception) when (exception is JsonException or FormatException or ArgumentException)
+        { throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "Invalid JWT JSON segment.", exception); }
     }
 }

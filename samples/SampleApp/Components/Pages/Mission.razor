@@ -47,6 +47,7 @@
         <pre><code class="language-csharp">// Self-issued agent token signs every governance call.
 var agentToken = new AgentTokenBuilder
 {
+    EgressPolicy = SampleEgress.Policy,
     Issuer = identity.Issuer,
     Subject = identity.AgentId,
     KeyId = identity.KeyId,
@@ -54,10 +55,8 @@ var agentToken = new AgentTokenBuilder
     PersonServer = personServer,
 }.Build();
 
-var handler = new AAuthSigningHandler(
-    identity.Key, () =&gt; agentToken)
-    { InnerHandler = new HttpClientHandler() };
-var signed = new HttpClient(handler);
+using var signed = new AAuthClientBuilder(identity.Key)
+    .WithEgressPolicy(SampleEgress.Policy).UseJwt(agentToken).Build();
 // Bind the PS once; the bound client returns a MissionSession that
 // auto-threads the mission claim {approver, s256} into every later call.
 var governance = new AAuthGovernanceClient(signed, metadata, personServer, governanceOptions);
@@ -86,7 +85,7 @@ var mission = session.Mission; // session threads the claim + PS for you
 //    a) GET the resource with the agent token + AAuth-Mission header.
 //       Having no auth token yet, the resource answers 401 and hands
 //       back a resource token (aud = the agent's PS) in AAuth-Requirement.
-var get = new HttpRequestMessage(HttpMethod.Get, $"{resourceOrigin}/protected_endpoint");
+var get = new HttpRequestMessage(HttpMethod.Get, $"{resourceOrigin}/trips");
 get.Headers.TryAddWithoutValidation(AAuthMissionHeader.Name,
     AAuthMissionHeader.FormatStructured(mission.Approver, mission.S256));
 using var challenge = await signed.SendAsync(get);            // 401 Unauthorized
@@ -102,9 +101,9 @@ var resourceToken = AAuthRequirementHeader
 var authToken = await exchange.ExchangeAsync(personServer, resourceToken);
 
 //    c) Retry the SAME request, now signing with the auth token. 200 OK.
-var authed = new HttpClient(new AAuthSigningHandler(identity.Key, () =&gt; authToken)
-    { InnerHandler = new HttpClientHandler() });
-using var ok = await authed.GetAsync($"{resourceOrigin}/protected_endpoint");
+using var authed = new AAuthClientBuilder(identity.Key)
+    .WithEgressPolicy(SampleEgress.Policy).UseJwt(authToken).Build();
+using var ok = await authed.GetAsync($"{resourceOrigin}/trips");
 var who = await ok.Content.ReadFromJsonAsync&lt;JsonObject&gt;();   // the profile
 
 // 3. Access an ELEVATED scope (PROMPT — out of mission). The same
@@ -113,8 +112,12 @@ var who = await ok.Content.ReadFromJsonAsync&lt;JsonObject&gt;();   // the profi
 //    scope, so the PS cannot grant it silently: it prompts the user.
 //    A user deny throws AAuthInteractionDeniedException (denied);
 //    otherwise the consent accrues to the mission (§Scopes, gate 3).
-var elevated = await ExchangeForScopeAsync(
-    $"{resourceOrigin}/protected_endpoint/elevated", mission, governanceOptions);
+using var elevatedClient = AAuthClientBuilder.SelfIssuing(identity.Key)
+    .WithEgressPolicy(SampleEgress.Policy).As(identity.Issuer, identity.AgentId)
+    .WithKid(identity.KeyId).WithPersonServer(personServer).WithMission(mission)
+    .WithChallengeHandling(options =&gt; options.OnInteractionRequired = SurfaceInteractionAsync)
+    .Build();
+using var elevated = await elevatedClient.GetAsync($"{resourceOrigin}/trips/book");
 
 // 4. Permission for a pre-approved tool (SILENT — no PS call).
 //    We still hold the addToCalendarTool reference from the proposal above.
@@ -132,6 +135,7 @@ var cancelBooking = await session.RequestPermissionAsync(
 // wires the verifier + JTI store (§Resource Metadata).
 builder.Services.AddAAuthResource(o =&gt;
 {
+    o.EgressPolicy = SampleEgress.Policy;
     o.Issuer = resourceUrl;
     o.SigningKeys["trips-1"] = resourceKey;
     o.AccessMode = AAuthConstants.AccessModes.AuthToken;
@@ -168,7 +172,7 @@ app.MapGet("/trips", (HttpContext ctx) =&gt;
 {
     var v = ctx.GetAAuthVerification()!;  // auth token verified
     // v.Scopes contains "trips.read" — safe to return the trips.
-    return Results.Ok(Profile(v));
+    return Results.Ok(new { agent = v.Agent, scopes = v.Scopes });
 }).RequireAAuth(scope: "trips.read", missionAware: true);
 
 // /trips/book is the ELEVATED action gate 3 calls — same
@@ -177,7 +181,7 @@ app.MapGet("/trips", (HttpContext ctx) =&gt;
 // the user at the exchange step before issuing the auth token
 // (§Scopes, gate 3).
 app.MapGet("/trips/book", (HttpContext ctx) =&gt;
-    Results.Ok(Profile(ctx.GetAAuthVerification()!)))
+    Results.Ok(new { agent = ctx.GetAAuthVerification()!.Agent }))
    .RequireAAuth(scope: "trips.book", missionAware: true);</code></pre>
     </div>
 </div>
@@ -288,8 +292,7 @@ if (cancelBooking.IsGranted)
             for the user to approve before the flow continues.
         </p>
         <p>
-            <strong>Interaction URL:</strong><br />
-            <a href="@_interactionUrl" target="_blank" rel="noopener">@_interactionUrl</a>
+            <a class="btn btn-warning" href="@_interactionUrl" target="_blank" rel="noopener">Open mission approval page</a>
         </p>
         <p class="text-muted">
             Open the link in a new tab and click <strong>Approve</strong>. The SDK is polling
@@ -370,9 +373,9 @@ if (cancelBooking.IsGranted)
             // Agents), so it mints its own short-lived agent token.
             _agentToken = MintAgentToken(personServer);
             var handler = new AAuthSigningHandler(_identity.Key, () => _agentToken)
-                { InnerHandler = new HttpClientHandler() };
-            using var signed = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
-            var metadata = new MetadataClient(new HttpClient());
+                { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+            using var signed = new SampleHttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+            var metadata = new MetadataClient(new SampleHttpClient());
             var poller = new DeferredPollerOptions { MaxTotalWait = TimeSpan.FromMinutes(2) };
 
             GovernanceOptions GovernanceFor() => new()
@@ -535,6 +538,7 @@ if (cancelBooking.IsGranted)
     // resource's replay detection on repeated access).
     private string MintAgentToken(string personServer) => new AgentTokenBuilder
     {
+        EgressPolicy = SampleEgress.Policy,
         Issuer = _identity.Issuer,
         Subject = _identity.AgentId,
         KeyId = _identity.KeyId,
@@ -589,8 +593,8 @@ if (cancelBooking.IsGranted)
         });
 
         var authHandler = new AAuthSigningHandler(_identity.Key, () => authToken)
-            { InnerHandler = new HttpClientHandler() };
-        using var authClient = new HttpClient(authHandler);
+            { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        using var authClient = new SampleHttpClient(authHandler);
         using var ok = await authClient.GetAsync(resourceUrl);
         ok.EnsureSuccessStatusCode();
         return await ok.Content.ReadFromJsonAsync<JsonObject>();
@@ -622,7 +626,7 @@ if (cancelBooking.IsGranted)
 
     private async Task ConfigurePersonServerAsync(string personServer, string resourceOrigin)
     {
-        using var http = new HttpClient();
+        using var http = new SampleHttpClient();
         try
         {
             await http.PostAsJsonAsync($"{personServer}/admin/reset", new { });

@@ -5,9 +5,9 @@
 @inject IJSRuntime JS
 @rendermode InteractiveServer
 
-<PageTitle>JWKS URI — Agent Identity</PageTitle>
+<PageTitle>Direct JWKS - Generic Signatures</PageTitle>
 
-<h2>JWKS URI — Agent Identity</h2>
+<h2>Direct JWKS - Generic Signatures</h2>
 
 <details class="alert alert-primary aria-narrative" open>
     <summary>📖 What Aria is trying to do</summary>
@@ -18,10 +18,9 @@
 </details>
 
 <p>
-    Identity-based access: the agent enrols with an AP which publishes the agent's
-    public key at a per-agent JWKS endpoint. Resources verify the signature by
-    fetching that JWKS. No Person Server or token exchange is involved — the
-    agent's identity is the trust anchor.
+    This generic Signature Keys example identifies the signer by its exact JWKS
+    URL. The verifier selects the published key by kid. AAuth agent access uses
+    an agent or auth token with the jwt scheme instead.
 </p>
 
 <div class="row">
@@ -31,8 +30,8 @@
 var jwksUri = enrollment.JwksUri;
 var kid = enrollment.AgentTokenKid; // AP-published kid
 
-using var client = new AAuthClientBuilder(key)
-    .UseJwksUri(jwksUri, kid)
+using var client = new AAuthClientBuilder(key).WithEgressPolicy(SampleEgress.Policy)
+    .UseJwks(jwksUri, kid)
     .Build();</code></pre>
 </div>
 <div class="col-md-6">
@@ -41,6 +40,7 @@ using var client = new AAuthClientBuilder(key)
 // store, and published metadata.
 builder.Services.AddAAuthResource(o =&gt;
 {
+    o.EgressPolicy = SampleEgress.Policy;
     o.Issuer = "https://resource.example";
     o.SigningKeys["profile-1"] = resourceKey;
 });
@@ -67,14 +67,15 @@ app.MapGet("/identified", (HttpContext ctx) =&gt;
     return Results.Ok(new
     {
         signingMode = "agent-identity",
-        scheme = "jwks_uri",
+        scheme = "jwks",
+        identifier = parsed.Identifier,
         jwks_uri = parsed.JwksUri,
         kid = parsed.Kid,
     });
 })
 // Require a VERIFIED named identity — a pseudonymous
 // (hwk) caller has no identity and is rejected here.
-.RequireAAuthSignature(identified: true);</code></pre>
+.RequireGenericSignature(identified: true);</code></pre>
 </div>
 </div>
 
@@ -172,8 +173,8 @@ else
                 ?? $"{Config["AAuth:AgentProvider"]!.TrimEnd('/')}/agents/{Config["AAuth:AgentId"]}/jwks.json";
 
             // Build client with jwks_uri mode — identity-based, no token exchange
-            using var client = new AAuthClientBuilder(key)
-                .UseJwksUri(jwksUri, kid)
+            using var client = new AAuthClientBuilder(key).WithEgressPolicy(SampleEgress.Policy)
+                .UseJwks(jwksUri, kid)
                 .Build();
 
             var resourceUrl = Config["AAuth:Profile"]!;

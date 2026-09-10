@@ -10,6 +10,9 @@ namespace AAuth.Server.Verification;
 /// </summary>
 public sealed class AAuthVerificationResult
 {
+    public string? ReplayIdentity { get; init; }
+    public DateTimeOffset? ReplayExpiresAt { get; init; }
+
     /// <summary>Authorization level determined from token type.</summary>
     public required AAuthLevel Level { get; init; }
 
@@ -27,6 +30,8 @@ public sealed class AAuthVerificationResult
 
     /// <summary>Subject (<c>sub</c>) — pairwise identifier for the person (on auth tokens).</summary>
     public string? Subject { get; init; }
+    public string? Account { get; init; }
+    public bool AccountVerified { get; init; }
 
     /// <summary>Verified scopes from the token's <c>scope</c> claim (space-separated → set).</summary>
     public IReadOnlySet<string> Scopes { get; init; } = new HashSet<string>();

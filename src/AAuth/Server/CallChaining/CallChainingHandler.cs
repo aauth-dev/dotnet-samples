@@ -66,13 +66,14 @@ public sealed class CallChainingHandler
         string resourceToken,
         Func<Interaction, CancellationToken, Task>? onInteractionRequired = null,
         DeferredPollerOptions? pollerOptions = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? account = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(upstreamAuthToken);
         ArgumentException.ThrowIfNullOrEmpty(resourceToken);
 
         // Determine the downstream PS/AS endpoint from the upstream auth token.
-        var targetServer = ResolveDownstreamServer(upstreamAuthToken);
+        var targetServer = CallChainingRouter.ResolveDownstreamServer(upstreamAuthToken, _exchangeClient.EgressPolicy);
 
         return await _exchangeClient.ExchangeAsync(
             targetServer,
@@ -82,6 +83,7 @@ public sealed class CallChainingHandler
                 OnInteractionRequired = onInteractionRequired,
                 PollerOptions = pollerOptions,
                 UpstreamToken = upstreamAuthToken,
+                Account = account,
             },
             cancellationToken).ConfigureAwait(false);
     }

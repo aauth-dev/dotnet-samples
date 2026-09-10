@@ -31,11 +31,13 @@ namespace AAuth.Agent;
 public sealed class AAuthAccessHandler : DelegatingHandler
 {
     private readonly IAAuthAccessStore _store;
+    private readonly string? _signingKeyThumbprint;
 
     /// <summary>Create the handler over the given per-origin token store.</summary>
-    public AAuthAccessHandler(IAAuthAccessStore store)
+    public AAuthAccessHandler(IAAuthAccessStore store, string? signingKeyThumbprint = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
+        _signingKeyThumbprint = signingKeyThumbprint;
     }
 
     /// <inheritdoc/>
@@ -43,13 +45,14 @@ public sealed class AAuthAccessHandler : DelegatingHandler
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var origin = GetOrigin(request.RequestUri);
+        var account = AAuthRequestOptions.GetAccount(request);
 
         // Replay: present the stored opaque token for this origin, unless the
         // caller already set an Authorization header itself. The signer covers
         // `authorization` automatically once it is present.
         if (origin is not null
             && request.Headers.Authorization is null
-            && _store.TryGet(origin, out var stored)
+            && _store.TryGet(origin, out var stored, account, _signingKeyThumbprint)
             && AAuthAccessHeader.IsValidToken68(stored))
         {
             request.Headers.Authorization = new AuthenticationHeaderValue(
@@ -79,7 +82,7 @@ public sealed class AAuthAccessHandler : DelegatingHandler
 
             if (count == 1 && AAuthAccessHeader.TryParseAccess(single, out var token))
             {
-                _store.Set(origin, token); // last-writer-wins (rolling refresh)
+                _store.Set(origin, token, account, _signingKeyThumbprint);
             }
         }
 
