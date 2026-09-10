@@ -20,6 +20,11 @@ namespace AAuth.Conformance.Missions;
 public class ClarificationChatTests
 {
     private const string Ps = "http://localhost:5555";
+    private static readonly DeferredPollerOptions ImmediatePolling = new()
+    {
+        DefaultPollInterval = TimeSpan.Zero,
+        MinPollInterval = TimeSpan.Zero,
+    };
 
     private static TokenExchangeClient BuildClient(HttpMessageHandler handler)
     {
@@ -65,6 +70,7 @@ public class ClarificationChatTests
         ClarificationRequirement? seen = null;
         await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
         {
+            PollerOptions = ImmediatePolling,
             OnClarificationRequired = (clarification, _) =>
             {
                 seen = clarification;
@@ -84,6 +90,7 @@ public class ClarificationChatTests
 
         await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
         {
+            PollerOptions = ImmediatePolling,
             OnClarificationRequired = (_, _) =>
                 Task.FromResult(ClarificationResponse.Update(TestTokens.UpdatedResource, "Reduced to read-only.")),
             }));
@@ -100,6 +107,7 @@ public class ClarificationChatTests
         await Assert.ThrowsAsync<AAuthClarificationCancelledException>(() =>
             client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
             {
+                PollerOptions = ImmediatePolling,
                 OnClarificationRequired = (_, _) => Task.FromResult(ClarificationResponse.Cancel()),
             }));
 
@@ -113,7 +121,10 @@ public class ClarificationChatTests
         var client = BuildClient(handler);
 
         await Assert.ThrowsAsync<HttpRequestException>(() =>
-            client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest()));
+            client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
+            {
+                PollerOptions = ImmediatePolling,
+            }));
     }
 
     [Fact(DisplayName = "§Clarification Limits — exceeding the round limit throws")]
@@ -126,6 +137,7 @@ public class ClarificationChatTests
         await Assert.ThrowsAsync<AAuthClarificationLimitException>(() =>
             client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
             {
+                PollerOptions = ImmediatePolling,
                 MaxClarificationRounds = 2,
                 OnClarificationRequired = (_, _) =>
                     Task.FromResult(ClarificationResponse.Respond("Still need it.")),
@@ -140,6 +152,7 @@ public class ClarificationChatTests
 
         await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
         {
+            PollerOptions = ImmediatePolling,
             OnClarificationRequired = (_, _) =>
                 Task.FromResult(ClarificationResponse.Respond("ok")),
             }));

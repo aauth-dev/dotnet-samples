@@ -48,6 +48,11 @@ public class MissionTerminatedTests
         var ex = await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() =>
             client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
             {
+                PollerOptions = new DeferredPollerOptions
+                {
+                    DefaultPollInterval = TimeSpan.Zero,
+                    MinPollInterval = TimeSpan.Zero,
+                },
                 OnInteractionRequired = (_, _) => Task.CompletedTask,
             }));
 

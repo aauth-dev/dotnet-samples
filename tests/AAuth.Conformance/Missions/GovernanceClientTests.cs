@@ -114,6 +114,11 @@ public class GovernanceClientTests
         var mission = await client.ProposeAsync(new MissionProposal("# Plan a trip"),
             new GovernanceOptions
             {
+                PollerOptions = new DeferredPollerOptions
+                {
+                    DefaultPollInterval = TimeSpan.Zero,
+                    MinPollInterval = TimeSpan.Zero,
+                },
                 OnClarificationRequired = (clarification, _) =>
                 {
                     seen = clarification;

@@ -56,7 +56,11 @@ public class ChallengeClarificationSeamTests
             metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
             personServer: Ps,
             onInteractionRequired: onInteraction,
-            pollerOptions: null,
+            pollerOptions: new DeferredPollerOptions
+            {
+                DefaultPollInterval = TimeSpan.Zero,
+                MinPollInterval = TimeSpan.Zero,
+            },
             upstreamTokenProvider: null)
         {
             InnerHandler = new AAuth.HttpSig.AAuthSigningHandler(SigningKey, () => AgentToken)

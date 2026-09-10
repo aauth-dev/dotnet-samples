@@ -141,21 +141,13 @@ public class InteractionHandlerTests
     [Fact]
     public async Task BacksOff_On429()
     {
-        var pollTimes = new List<DateTimeOffset>();
+        var delays = new List<TimeSpan>();
         var handler = new ScriptedHandler(
             _ => Make202Interaction("https://ps.example/interact", "CODE", "https://ps.example/pending/4"),
-            _ =>
+            _ => new HttpResponseMessage((HttpStatusCode)429),
+            _ => new HttpResponseMessage(HttpStatusCode.OK)
             {
-                pollTimes.Add(DateTimeOffset.UtcNow);
-                return new HttpResponseMessage((HttpStatusCode)429);
-            },
-            _ =>
-            {
-                pollTimes.Add(DateTimeOffset.UtcNow);
-                return new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("{}"),
-                };
+                Content = new StringContent("{}"),
             });
 
         var interactionHandler = new InteractionHandler(
@@ -165,20 +157,21 @@ public class InteractionHandlerTests
             EgressPolicy = TestEgress.Policy,
             TransportContract = AAuth.Discovery.AAuthTransportContract.InProcessOnly,
             InnerHandler = handler,
+            DelayAsync = (delay, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                delays.Add(delay);
+                return Task.CompletedTask;
+            },
         };
 
         using var client = new InProcessHttpClient(interactionHandler);
         var response = await client.GetAsync("https://ps.example/api");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        // After 429, the delay should be at least 5s (default) + 5s (backoff) = 10s
-        // We check that it took at least 4s (accounting for scheduling jitter)
-        if (pollTimes.Count == 2)
-        {
-            var gap = pollTimes[1] - pollTimes[0];
-            Assert.True(gap >= TimeSpan.FromSeconds(4),
-                $"Expected >= 4s backoff, got {gap.TotalSeconds:F2}s");
-        }
+        Assert.Collection(delays,
+            delay => Assert.Equal(TimeSpan.FromMilliseconds(100), delay),
+            delay => Assert.Equal(TimeSpan.FromSeconds(10), delay));
     }
 
     [Fact]
