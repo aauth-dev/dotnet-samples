@@ -1,7 +1,4 @@
----
-title: AAuth Guided Tour
-description: Interactive walkthroughs of AAuth signing, enrollment, authorization and Events.
----
+# AAuth Guided Tour
 
 ## Overview
 

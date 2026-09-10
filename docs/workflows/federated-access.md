@@ -1,7 +1,4 @@
----
-title: Federated Access (Four-Party)
-description: Obtain resource access through Person Server and Access Server federation.
----
+# Federated Access (Four-Party)
 
 > [Live demo](https://explorer.aauth.dev/access/federated) | [Access Mode Comparison](https://explorer.aauth.dev/access/compare)
 

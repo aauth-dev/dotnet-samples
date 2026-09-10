@@ -1,7 +1,4 @@
----
-title: EventAgent Sample
-description: A single-shot AAuth Events console demonstration using the same client as both primary apps.
----
+# EventAgent Sample
 
 ## Run
 

@@ -1,7 +1,3 @@
----
-description: Metadata-based server key discovery and distinct direct JWKS signatures.
----
-
 # Server Identity (sig=jwks_uri)
 
 ## Overview

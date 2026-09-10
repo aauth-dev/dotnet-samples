@@ -1,7 +1,4 @@
----
-title: Rich Resource Requests (R3)
-description: Qualified operation grants, per-call approval, reader policy, and durable issuance audit.
----
+# Rich Resource Requests (R3)
 
 > Preview — R3 is an IETF Exploratory Draft (`draft-hardt-aauth-r3`). It ships in the
 > separate [`AAuth.R3`](../../src/AAuth.R3/) preview package, not the core `AAuth` package.

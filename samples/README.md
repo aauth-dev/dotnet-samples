@@ -1,7 +1,3 @@
----
-description: Runnable AAuth samples and their explicit local development setup.
----
-
 # Samples
 
 Sample applications demonstrate AAuth flows end-to-end. The eight Aria

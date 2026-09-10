@@ -703,6 +703,31 @@ public class ChallengeHandlerTests
         Assert.True(exchangeHandler.PersonServerCalls > 0);
     }
 
+    [Fact(DisplayName = "ChallengeHandler — unknown requirement stays unsatisfied and never contacts the PS")]
+    public async Task UnknownRequirement_ReturnsErrorWithoutExchange()
+    {
+        var exchangeHandler = new CapturingExchangeHandler(_ => { });
+        using var discovery = new InProcessHttpClient(exchangeHandler);
+        using var metadata = new MetadataClient(discovery);
+        using var jwks = new JwksClient(discovery);
+        var holder = new AAuthTokenHolder(AgentToken);
+        using var client = new InProcessHttpClient(new ChallengeHandler(new TokenExchangeClient(discovery, metadata),
+            holder, new TokenVerifier { EgressPolicy = TestEgress.Policy }, metadata, jwks, PsUrl)
+        {
+            InnerHandler = new AAuthSigningHandler(SigningKey, () => holder.Current)
+            {
+                InnerHandler = new UnknownRequirementHandler(),
+            },
+        });
+
+        using var response = await client.GetAsync(ResourceUrl + "/data");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal("requirement=person-token", response.Headers.GetValues(AAuthRequirementHeader.Name).Single());
+        Assert.Equal(0, exchangeHandler.PersonServerCalls);
+        Assert.Equal(AgentToken, holder.Current);
+    }
+
     private static HttpMessageHandler SignedResource(string? token = null) => new AAuthSigningHandler(SigningKey, () => AgentToken)
     {
         InnerHandler = new MockResourceHandler(token),
@@ -783,6 +808,16 @@ public class ChallengeHandlerTests
             {
                 Content = new StringContent("{\"ok\":true}"),
             });
+        }
+    }
+
+    private sealed class UnknownRequirementHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.Unauthorized);
+            response.Headers.TryAddWithoutValidation(AAuthRequirementHeader.Name, "requirement=person-token");
+            return Task.FromResult(response);
         }
     }
 

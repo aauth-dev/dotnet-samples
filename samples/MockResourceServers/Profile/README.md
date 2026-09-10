@@ -1,7 +1,3 @@
----
-description: Agent-JWT identity access and explicitly generic Signature Keys demonstrations.
----
-
 # Profile Identity Resource
 
 Aria's identity service has no Person Server or authorization scope. Its

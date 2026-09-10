@@ -1,7 +1,4 @@
----
-title: AAuth SDK for .NET
-description: Proof-of-possession agent authorization, token verification and server integration.
----
+# AAuth SDK for .NET
 
 The [AAuth protocol](https://aauth.dev) SDK for .NET — agent-to-resource authorization with cryptographic proof-of-possession. Every HTTP request carries an RFC 9421 signature; there are no bearer tokens.
 

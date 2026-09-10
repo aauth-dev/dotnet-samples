@@ -1,7 +1,4 @@
----
-title: Key Rotation with jkt-jwt
-description: Generic naming-JWT delegation and AP refresh with distinct durable and ephemeral keys.
----
+# Key Rotation with jkt-jwt
 
 ## Overview
 

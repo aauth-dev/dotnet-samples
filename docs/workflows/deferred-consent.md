@@ -1,7 +1,4 @@
----
-title: Deferred Consent (User Approval)
-description: Drive authenticated consent, pending polling and terminal outcomes.
----
+# Deferred Consent (User Approval)
 
 > [PS-Asserted Demo](https://explorer.aauth.dev/access/ps-asserted)
 

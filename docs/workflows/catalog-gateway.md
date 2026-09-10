@@ -1,7 +1,4 @@
----
-title: Catalog Gateway Authorization
-description: Bind colliding OpenAPI operation IDs to their selected catalog service.
----
+# Catalog Gateway Authorization
 
 ## Run the Catalog
 

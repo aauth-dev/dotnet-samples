@@ -1,7 +1,4 @@
----
-title: Platform Attestation
-description: Platform integration hooks and explicit limits of the software-key samples.
----
+# Platform Attestation
 
 > [Signing Modes](https://explorer.aauth.dev/foundations/schemes)
 

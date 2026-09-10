@@ -1,7 +1,4 @@
----
-title: Replay Detection and Revocation
-description: Independent request replay protection and issuer-qualified token revocation.
----
+# Replay Detection and Revocation
 
 > [Signature Security](https://explorer.aauth.dev/foundations/signatures)
 

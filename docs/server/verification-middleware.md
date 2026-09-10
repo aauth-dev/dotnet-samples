@@ -1,7 +1,3 @@
----
-description: Typed JWT trust, selected-label HTTP signatures, and endpoint policy.
----
-
 # Verification Middleware
 
 `AAuthVerificationMiddleware` performs HTTP signature verification (RFC 9421 PoP) and JWT issuer signature verification in a single pass.

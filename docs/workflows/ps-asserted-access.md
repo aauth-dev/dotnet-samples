@@ -1,7 +1,4 @@
----
-title: PS-Asserted Access (Three-Party)
-description: Exchange a verified resource challenge through the agent's Person Server.
----
+# PS-Asserted Access (Three-Party)
 
 > [Live demo](https://explorer.aauth.dev/access/ps-asserted) | [Access Mode Comparison](https://explorer.aauth.dev/access/compare)
 

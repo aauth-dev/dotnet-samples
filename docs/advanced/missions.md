@@ -1,7 +1,4 @@
----
-title: Missions
-description: Exact mission bytes, signed references and governed agent actions.
----
+# Missions
 
 > [Mission Lifecycle](https://explorer.aauth.dev/missions/lifecycle) | [Mission Comparison](https://explorer.aauth.dev/missions/compare)
 

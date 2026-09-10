@@ -1,7 +1,3 @@
----
-description: Decisions and validation results for the AAuth v10 migration.
----
-
 # Implementation Log - AAuth v10 migration
 
 ## Decisions Taken

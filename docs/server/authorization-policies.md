@@ -1,7 +1,4 @@
----
-title: Authorization Policies
-description: Require verified AAuth scopes and roles in ASP.NET endpoints.
----
+# Authorization Policies
 
 The AAuth SDK integrates with ASP.NET Core's authorization system via `AAuthScopeRequirement`, `AAuthScopeHandler`, role claims, and a set of convenience policy registrations.
 

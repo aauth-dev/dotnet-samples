@@ -1,7 +1,3 @@
----
-description: Eight focused travel resources demonstrating AAuth access and explicit generic signing.
----
-
 # Mock Resource Servers
 
 Eight small ASP.NET Core resource servers demonstrate the four AAuth access

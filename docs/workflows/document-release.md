@@ -1,7 +1,4 @@
----
-title: Document Release
-description: Resource permission before Person Server consent, with signed authorization and download.
----
+# Document Release
 
 Both apps expose `/documents`: [GuidedTour](../../samples/GuidedTour/Components/Pages/Documents.razor)
 and [SampleApp](../../samples/SampleApp/Components/Pages/Documents.razor).

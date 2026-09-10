@@ -1,7 +1,4 @@
----
-title: Key Management
-description: Software key persistence and explicit custom secure-key integration contracts.
----
+# Key Management
 
 > [Cryptographic Keys](https://explorer.aauth.dev/foundations/keys)
 

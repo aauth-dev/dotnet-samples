@@ -1,7 +1,3 @@
----
-description: Single-purpose travel catalog resource demonstrating service-qualified R3 authorization.
----
-
 # Catalog Resource
 
 Catalog reads destination and experience catalogs on port 5006. Both service

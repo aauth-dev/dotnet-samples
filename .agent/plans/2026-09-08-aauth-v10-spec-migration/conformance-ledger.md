@@ -1,7 +1,3 @@
----
-description: Section-oriented v10 conformance evidence and explicit implementation, optional and deployment dispositions.
----
-
 # Conformance Ledger
 
 ## Final Status

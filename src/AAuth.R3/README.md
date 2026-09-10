@@ -1,7 +1,4 @@
----
-title: AAuth.R3 preview
-description: Vocabulary-based R3 authorization, enforcement, reader policy, and audit contracts.
----
+# AAuth.R3 preview
 
 Experimental helpers for **AAuth Rich Resource Requests (R3)** — resource-declared,
 vocabulary-based authorization layered on the [AAuth](https://www.nuget.org/packages/AAuth)

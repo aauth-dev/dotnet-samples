@@ -1,8 +1,4 @@
----
-title: "ITokenRefresher Concrete Types — Implementation Plan"
-description: Phased plan for adding AgentProviderTokenRefresher and SelfIssuedTokenRefresher to the SDK
-ms.date: 2026-05-27
----
+# ITokenRefresher Concrete Types — Implementation Plan
 
 ## Phase 1: Add `AgentProviderTokenRefresher`
 

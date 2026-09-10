@@ -1,7 +1,4 @@
----
-title: Events Workflow
-description: Run and integrate AAuth Events subscriptions, durable AP delivery and verified agent receipts.
----
+# Events Workflow
 
 ## Run the Demonstration
 
