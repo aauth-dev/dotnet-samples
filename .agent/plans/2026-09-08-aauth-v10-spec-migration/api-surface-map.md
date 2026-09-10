@@ -1,7 +1,3 @@
----
-description: Complete migration public API inventory and reviewed ownership, defaults and verification.
----
-
 # Public API surface map
 
 Phase 11, 2026-09-09. Implementation baseline: `ba768f1`. This is the complete migration source inventory,

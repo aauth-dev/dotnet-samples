@@ -1,7 +1,4 @@
----
-title: AAuth Events
-description: Events companion package, verification boundaries and durable provider contracts.
----
+# AAuth Events
 
 ## Scope
 

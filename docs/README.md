@@ -1,7 +1,4 @@
----
-title: AAuth .NET SDK Documentation
-description: Agent signing, server verification, companion packages and runnable workflows.
----
+# AAuth .NET SDK Documentation
 
 The AAuth .NET SDK (`AAuth` NuGet package) supports agent-side JWT signing,
 server-side verification, six Signature-Key schemes and four resource access

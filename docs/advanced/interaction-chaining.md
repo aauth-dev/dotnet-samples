@@ -1,7 +1,4 @@
----
-title: Interaction Chaining
-description: Propagate deferred consent through intermediary resources.
----
+# Interaction Chaining
 
 When an intermediary resource calls a downstream resource and the downstream PS/AS requires user consent, the intermediary must propagate the interaction requirement back through the call chain to the original agent.
 

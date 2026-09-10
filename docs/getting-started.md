@@ -1,7 +1,4 @@
----
-title: Getting Started
-description: Enroll an agent and make signed AAuth requests with the .NET SDK.
----
+# Getting Started
 
 ## Prerequisites
 

@@ -1,7 +1,3 @@
----
-description: Phase 12 migration capability coverage, runnable scenarios and explicit evidence limits.
----
-
 # Capability Scenarios
 
 Baseline: ba768f1. Cross-checked against [api-surface-map.md](api-surface-map.md),

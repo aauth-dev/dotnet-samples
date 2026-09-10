@@ -1,7 +1,4 @@
----
-title: Error Handling
-description: Handle AAuth problem details, signature errors, and deferred consent failures.
----
+# Error Handling
 
 > [Error Codes](https://explorer.aauth.dev/foundations/errors)
 

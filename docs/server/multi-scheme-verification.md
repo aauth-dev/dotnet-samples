@@ -1,7 +1,4 @@
----
-title: Multi-Scheme Verification
-description: Resolve and verify supported Signature Keys carriers under explicit role policy.
----
+# Multi-Scheme Verification
 
 > [Signature-Key Schemes](https://explorer.aauth.dev/foundations/schemes)
 

@@ -1,7 +1,3 @@
----
-description: AAuth JWT carriers and generic HTTP Signature Keys schemes.
----
-
 # Signing Modes Overview
 
 AAuth agents use `jwt` for every resource, PS and AS request. The SDK also

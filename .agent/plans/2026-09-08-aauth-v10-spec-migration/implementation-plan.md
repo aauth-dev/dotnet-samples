@@ -1,7 +1,3 @@
----
-description: Phased implementation and verification of the AAuth v10 migration.
----
-
 # Implementation Plan - AAuth v10 repository migration
 
 Companion to [research.md](research.md), created 2026-09-08. This plan covers the

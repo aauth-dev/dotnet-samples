@@ -1,7 +1,4 @@
----
-title: Wallet Protocol Scenarios
-description: Run AS clarification, direct-AS chaining and issuer-qualified revocation with the travel wallet.
----
+# Wallet Protocol Scenarios
 
 ## Run the Scenarios
 

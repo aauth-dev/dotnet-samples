@@ -1,7 +1,3 @@
----
-description: Agent-token authenticated identity-based AAuth resource access.
----
-
 # Identity-Based Access
 
 > [Live demo](https://explorer.aauth.dev/access/identity-based) | [Access Mode Comparison](https://explorer.aauth.dev/access/compare)

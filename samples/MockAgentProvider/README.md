@@ -1,7 +1,4 @@
----
-title: MockAgentProvider
-description: Development Agent Provider with signed enrollment and durable key ownership.
----
+# MockAgentProvider
 
 ## Overview
 

@@ -1,7 +1,4 @@
----
-title: Documents Resource
-description: Local travel-document release permission chained before PS consent.
----
+# Documents Resource
 
 Documents listens on <http://localhost:5007>. It serves one work-account travel
 document and demonstrates resource-initiated interaction, separately from

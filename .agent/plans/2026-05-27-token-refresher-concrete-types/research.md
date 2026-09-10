@@ -1,8 +1,4 @@
----
-title: "ITokenRefresher Concrete Types — Research"
-description: Research document for introducing built-in ITokenRefresher implementations to the AAuth SDK
-ms.date: 2026-05-27
----
+# ITokenRefresher Concrete Types — Research
 
 ## Problem Statement
 

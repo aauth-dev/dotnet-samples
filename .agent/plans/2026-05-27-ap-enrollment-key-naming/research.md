@@ -1,8 +1,4 @@
----
-title: "AP Enrollment Key Naming — Research"
-description: Spec alignment review of how the SDK names and uses the durable key identifier produced by Agent Provider enrollment, and how it flows into refresh.
-ms.date: 2026-05-27
----
+# AP Enrollment Key Naming — Research
 
 ## Problem Statement
 

@@ -1,7 +1,4 @@
----
-title: Protocol Concepts
-description: AAuth roles, access modes, governance, token purposes and supported companions.
----
+# Protocol Concepts
 
 AAuth is a protocol for autonomous agent authorization. This page maps protocol concepts to SDK types. For the full interactive protocol reference, see the [AAuth Explorer](https://explorer.aauth.dev/).
 

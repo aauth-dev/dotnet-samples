@@ -1,7 +1,4 @@
----
-title: Challenge Middleware
-description: Issue resource-token challenges with explicit audience and mission context.
----
+# Challenge Middleware
 
 `AAuthChallengeMiddleware` automatically issues 401 challenges with resource tokens when an agent presents only an agent token but the resource requires an auth token.
 

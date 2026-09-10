@@ -1,7 +1,4 @@
----
-title: Configuration Reference
-description: Configure AAuth verification, token issuance, and deferred exchanges.
----
+# Configuration Reference
 
 All configurable options across the AAuth .NET SDK, grouped by component.
 
