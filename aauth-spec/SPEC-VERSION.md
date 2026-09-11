@@ -3,7 +3,7 @@
 These spec files were copied from the [AAuth](https://github.com/dickhardt/AAuth)
 repository for reference while building the .NET samples. They are grouped by the
 AAuth protocol draft version under [`v01/`](v01/), [`v02/`](v02/),
-[`v08/`](v08/), [`v09/`](v09/), and [`v10/`](v10/). Each folder is a
+[`v08/`](v08/), [`v09/`](v09/), [`v10/`](v10/), and [`v11/`](v11/) (WIP). Each folder is a
 self-contained snapshot, so each carries its own copy of the HTTP Signature Keys
 draft at the version that snapshot's protocol references.
 
@@ -26,7 +26,14 @@ revocation, and real four-party parent/worker scenarios in both primary apps.
 Signature Keys draft-08, R3 draft-01 and revised Events draft-00 are included;
 Bootstrap draft-02 remains informational. No snapshot bytes changed during migration.
 
-`v10/` remains the latest vendored upstream reference. Earlier snapshots are
+> [!WARNING]
+> `v11/` is an unpublished, commit-pinned WIP snapshot of the
+> [editor's draft](https://dickhardt.github.io/AAuth/draft-hardt-oauth-aauth-protocol.html),
+> captured on 2026-09-11. It is the latest vendored working reference, not a
+> published draft-11 release or an SDK conformance target. The SDK still targets
+> draft-10. No SDK migration is included.
+
+`v10/` remains the latest vendored published protocol revision. Earlier snapshots are
 historical, not compatibility fallbacks. X.509/cached carriers and third-party
 login hosting are unsupported; platform/native transports and production
 persistence/policy are deployment responsibilities. External whoami identity
@@ -251,3 +258,91 @@ draft-08 bundles six published protocol drafts (03 → 08). The headline deltas:
 - HTTP Signature Keys draft-08 adds `jwks`, assertion caching, fully specified
   algorithm rules, stricter covered-component and expiry requirements, and new
   negotiation and error handling.
+
+## `v11/` - protocol draft-11 WIP
+
+> [!WARNING]
+> Work in progress, not a published IETF revision. The SDK continues to target
+> draft-10. This snapshot is for reference and migration research only.
+
+| Field | Value |
+|---|---|
+| Source repository | <https://github.com/dickhardt/AAuth> |
+| Source commit | `55ae44cc3a07da29c4d6821c3800569ac77b9441` |
+| Commit date | 2026-09-08 |
+| Source selection | `main` resolved once to the immutable commit above |
+| Tagged version | None; the source's Document History labels the changes draft-11 |
+| Source document identifier | `draft-hardt-oauth-aauth-protocol-latest` |
+| Source document date | 2026-06-17 (upstream frontmatter, not a publication date) |
+| Editor's draft | <https://dickhardt.github.io/AAuth/draft-hardt-oauth-aauth-protocol.html> |
+| Editor's rendered date | 2026-09-08 |
+| IETF status checked | 2026-09-11: Datatracker still reports protocol revision 10 |
+| Copied on | 2026-09-11 |
+| Signature Keys source commit | `10a7563beecb2a461d5b412549a69d49f97f500c` (2026-09-03) |
+
+The normal tagged-release vendoring workflow is intentionally relaxed for this
+requested WIP capture. Downloads use full commit SHAs, not moving branch URLs.
+The source counterparts of the editor's HTML are retained as Markdown, following
+the earlier snapshots. The live HTML may change after this capture. No published
+draft-11 tag or IETF archive file was available at capture time.
+
+### Included documents
+
+All AAuth documents below come from the same pinned AAuth commit. Draft labels
+describe their upstream Document History, not independently verified releases.
+
+- [Protocol](v11/draft-hardt-oauth-aauth-protocol.md): draft-11 working text.
+- [Bootstrap](v11/draft-hardt-aauth-bootstrap.md): revised draft-02 guidance,
+  including multiple self-hosted agents and sub-agent token acquisition.
+- [R3](v11/draft-hardt-aauth-r3.md): draft-02 working text, including per-call
+  authorization, operation access annotations, and approval to release results.
+- [Interoperability Demo Profile](v11/interop-demo-profile.md): revised for
+  person tokens, mission blobs, and parent-mediated sub-agent access.
+- [Events](v11/draft-hardt-aauth-events.md): draft-00, byte-identical to `v10/`.
+- [Budgets](v11/draft-hardt-aauth-budgets.md): new working companion referenced
+  by R3; not implemented by this vendoring change.
+- [HTTP Signature Keys draft-08](v11/draft-hardt-httpbis-signature-key-08.txt):
+  the latest published revision at capture time, downloaded from the
+  [IETF archive](https://www.ietf.org/archive/id/draft-hardt-httpbis-signature-key-08.txt)
+  and byte-identical to `v10/`.
+- [HTTP Signature Keys working source](v11/draft-hardt-httpbis-signature-key.md):
+  preserved from the separately pinned
+  [Signature Keys repository](https://github.com/dickhardt/signature-key/tree/10a7563beecb2a461d5b412549a69d49f97f500c).
+  The protocol's dependency reference is unversioned; this source is not claimed
+  to be a published or fully aligned draft-11 dependency.
+
+### Notable WIP changes since draft-10
+
+- Person tokens (`aa-person+jwt`) add a fifth access mode and a required PS
+  `person_token_endpoint`. Resources verify person identity before issuing the
+  initial resource token.
+- PS and AS `token_endpoint` metadata becomes `auth_token_endpoint`. Exchanges
+  require `presented_token`, bound to the resource token's `presented_jti`.
+- Resource and auth tokens drop agent identifiers; auth tokens also drop `act`.
+  `mission_s256` replaces nested mission references, and `AAuth-Mission` is removed.
+- Mission approval returns an encoded blob; missions gain update and completion
+  operations, expiry bounds, and open-ended termination reasons.
+- Revocation requests carry `jti` and `exp`, deriving the issuer from the verified
+  server signature. Resource/person-token revocation and new error codes are added.
+- Expiry has no verifier skew tolerance; agents receive refresh-margin guidance.
+  PS/AS request bodies require signed `content-type` and `content-digest`.
+- Resources can defer auth-token challenges with `202`; metadata gains algorithm
+  advertisement, an access-mode registry, and the `aauth-resource` link relation.
+
+### WIP limitations
+
+- The protocol uses `clock_skew` and `revoked_jwt`, but neither is defined in the
+  pinned Signature Keys working source or published draft-08. This dependency gap
+  is preserved, not patched locally.
+- The interop profile still describes PS lookup of a person token and omits
+  `presented_token` in its exchange descriptions. The pinned protocol requires
+  the agent to supply that token. The profile is retained unchanged.
+- The protocol's draft-11 history records intermediate decisions, including
+  revocation-error behavior and `mission_expired`, that later entries supersede.
+  Consult the governing sections, not an isolated history bullet.
+- A Supervision Protocol is mentioned, but no corresponding source document is
+  present at the pinned AAuth commit.
+
+This capture does not establish draft-11 conformance. When draft-11 is published,
+compare its tag and dependencies with these pins and retain the distinction
+between this WIP capture and the published snapshot.
