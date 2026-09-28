@@ -4,7 +4,7 @@ Experimental helpers for **AAuth Rich Resource Requests (R3)** — resource-decl
 vocabulary-based authorization layered on the [AAuth](https://www.nuget.org/packages/AAuth)
 protocol. Resources publish content-addressed R3 documents describing what a class
 of access *means*; tokens carry `r3_uri`, `r3_s256`, `r3_granted`, and
-`r3_conditional` alongside opaque scopes.
+`r3_per_call` alongside opaque scopes.
 
 > **Preview.** R3 is an IETF Exploratory Draft (`draft-hardt-aauth-r3`). This package
 > ships separately from `AAuth` and may change with the draft. It tracks the `AAuth`
@@ -64,7 +64,7 @@ without evicting existing references. The store is not restart-durable. Restart
 requires a new authorization request; production document and audit retention
 requires durable hosting beyond this in-memory sample store.
 
-`IsConditionalOperation` and `IsOperationAllowed` receive a qualified identity.
+`IsPerCallOperation` and `IsOperationAllowed` receive a qualified identity.
 `IsProposalAllowed` can evaluate concrete parameters. Resource scopes, when
 present, also require `IsScopeAllowed(resourceIssuer, scope)` approval and are
 retained independently of R3 grants. Account identifiers must match the resource

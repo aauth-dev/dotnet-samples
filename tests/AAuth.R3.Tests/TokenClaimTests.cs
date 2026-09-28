@@ -25,15 +25,15 @@ public class TokenClaimTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void EmptyGrantedClaimsRoundTripWithoutAuthorizingUnlistedOperations(bool conditional)
+    public void EmptyGrantedClaimsRoundTripWithoutAuthorizingUnlistedOperations(bool perCall)
     {
         var payload = new JsonObject(R3AuthClaims.AuthToken("https://resource.test/r3/doc", "hash",
-            R3Grant.Mcp(), conditional ? R3Grant.Mcp("book") : null));
+            R3Grant.Mcp(), perCall ? R3Grant.Mcp("book") : null));
         var claims = R3ClaimReader.ReadAuthToken(payload);
         Assert.Empty(claims.Granted.Operations);
         var enforcement = new R3Enforcement(new R3ProposalStore(), new Uri(R3TestData.ResourceIssuer));
         Assert.Equal(R3EnforcementDecisionKind.Rejected, enforcement.Evaluate(claims, R3OperationIdentity.Mcp("unlisted")).Kind);
-        Assert.Equal(conditional ? R3EnforcementDecisionKind.Conditional : R3EnforcementDecisionKind.Rejected,
+        Assert.Equal(perCall ? R3EnforcementDecisionKind.PerCall : R3EnforcementDecisionKind.Rejected,
             enforcement.Evaluate(claims, R3OperationIdentity.Mcp("book"), new Dictionary<string, R3Parameter>()).Kind);
     }
 
@@ -68,7 +68,7 @@ public class TokenClaimTests
 
         Assert.Equal("https://resource.test/r3/doc", parsed.Uri);
         Assert.True(parsed.Granted.Contains(R3OperationIdentity.Mcp("search_trip_options")));
-        Assert.True(parsed.Conditional!.Contains(R3OperationIdentity.Mcp("book_trip")));
+        Assert.True(parsed.PerCall!.Contains(R3OperationIdentity.Mcp("book_trip")));
     }
 
     [Fact]

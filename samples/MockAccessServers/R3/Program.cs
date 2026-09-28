@@ -18,13 +18,13 @@ var trustedPersonServers = builder.Configuration
     .GetSection("R3AccessServer:TrustedPersonServers")
     .Get<string[]>() ?? ["http://localhost:5100"];
 
-// AS policy: which operations require per-call approval (r3_conditional) vs are
+// AS policy: which operations require per-call approval (r3_per_call) vs are
 // granted outright (r3_granted). Per r3 §Auth Token Extensions the AS — not the
 // resource — decides this, from the document's operations and its own policy. This
-// dedicated Bookings AS treats confirmReservation (charges a deposit) as conditional;
-// override via R3AccessServer:ConditionalOperations. Values are OpenAPI operationIds.
-var conditionalOperations = (builder.Configuration
-    .GetSection("R3AccessServer:ConditionalOperations")
+// dedicated Bookings AS treats confirmReservation (charges a deposit) as per-call;
+// override via R3AccessServer:PerCallOperations. Values are OpenAPI operationIds.
+var perCallOperations = (builder.Configuration
+    .GetSection("R3AccessServer:PerCallOperations")
     .Get<string[]>() ?? ["confirmReservation"])
     .ToHashSet(StringComparer.Ordinal);
 
@@ -41,7 +41,7 @@ builder.Services.AddSingleton<AAuth.Server.IJtiStore, AAuth.Server.InMemoryJtiSt
 var app = builder.Build();
 
 // Dedicated R3 Access Server (four-party). It fetches the resource's R3 document
-// (AS-signed), hash-verifies it, splits granted vs conditional per its OWN policy
+// (AS-signed), hash-verifies it, splits granted vs per-call per its OWN policy
 // (r3 §Auth Token Extensions — the AS decides, not the resource), mints the R3 auth
 // token, and audits issuance. It guards the Bookings resource. The sibling `Federated`
 // AS stays the scope-based AS for Wallet: one server per concept, mirroring MockResourceServers.
@@ -51,10 +51,10 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
     Issuer = issuer,
     SigningKeys = new Dictionary<string, IAAuthKey> { [AsKid] = asKey },
     TrustedPersonServers = trustedPersonServers,
-    // AS policy decides the granted-vs-conditional split (r3 §Auth Token Extensions).
-    IsConditionalOperation = operation => conditionalOperations.Any(identifier =>
+    // AS policy decides the granted-vs-per-call split (r3 §Auth Token Extensions).
+    IsPerCallOperation = operation => perCallOperations.Any(identifier =>
         operation.Matches(Vocabulary.OpenApi, R3Operation.OpenApi(identifier))),
-    // A conditional operation's per-call proposal requires human approval: the AS
+    // A per-call operation's proposal requires human approval: the AS
     // returns 202 + a consent screen rendering the proposal's `display`, relayed by
     // the PS, and mints the per-call token only on approval (r3 §Per-Call Proposals).
     RequireProposalConsent = true,

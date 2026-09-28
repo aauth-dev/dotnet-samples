@@ -51,7 +51,7 @@ public static class R3AccessTokenEndpoint
         // human consent (r3 §Per-Call Proposals, Flow step 2 + §Audit Log Integrity).
         async Task<string> MintAndAuditAsync(AuthMintParts parts, AgentIssuanceContext issuance, string resourceIssuer, CancellationToken ct)
         {
-            var claims = R3AuthClaims.AuthToken(parts.Uri, parts.S256, parts.Granted, parts.Conditional, options.VocabularySchemas);
+            var claims = R3AuthClaims.AuthToken(parts.Uri, parts.S256, parts.Granted, parts.PerCall, options.VocabularySchemas);
             var token = new AuthTokenBuilder
             {
                 EgressPolicy = options.EgressPolicy,
@@ -418,23 +418,23 @@ public static class R3AccessTokenEndpoint
         if (!AccountBinding.Matches(r3.Account, document.Account))
             throw new TokenVerificationException("R3 document account differs from resource token.");
         // Spec (r3 §Auth Token Extensions): the AS — not the resource — decides which
-        // operations to grant outright vs make conditional, from the document's
+        // operations to grant outright vs make per-call, from the document's
         // `operations` and its OWN policy. The default policy grants everything
-        // (`r3_conditional` is OPTIONAL); a dedicated AS supplies IsConditionalOperation.
-        var isConditional = options.IsConditionalOperation ?? (static _ => false);
+        // (`r3_per_call` is OPTIONAL); a dedicated AS supplies IsPerCallOperation.
+        var isPerCall = options.IsPerCallOperation ?? (static _ => false);
         var granted = new List<R3Operation>();
-        var conditional = new List<R3Operation>();
+        var perCall = new List<R3Operation>();
         foreach (var operation in document.Operations)
         {
             var identity = new R3OperationIdentity(document.Vocabulary, operation);
             if (options.IsOperationAllowed?.Invoke(identity) == false) continue;
-            (isConditional(identity) ? conditional : granted).Add(operation);
+            (isPerCall(identity) ? perCall : granted).Add(operation);
         }
         return new AuthMintParts(
             r3.Uri,
             r3.S256,
             new R3Grant { Vocabulary = document.Vocabulary, Operations = granted },
-            conditional.Count == 0 ? null : new R3Grant { Vocabulary = document.Vocabulary, Operations = conditional },
+            perCall.Count == 0 ? null : new R3Grant { Vocabulary = document.Vocabulary, Operations = perCall },
             R3TokenIssuanceKind.Class, Account: document.Account);
     }
 
@@ -475,7 +475,7 @@ public static class R3AccessTokenEndpoint
         string Uri,
         string S256,
         R3Grant Granted,
-        R3Grant? Conditional,
+        R3Grant? PerCall,
         R3TokenIssuanceKind IssuanceKind,
         string? DisplaySummary = null,
         string? DisplayDetail = null,
@@ -691,14 +691,14 @@ public sealed class R3AccessTokenEndpointOptions
     public Func<string, string, bool>? IsScopeAllowed { get; init; }
 
     /// <summary>
-    /// AS policy deciding which R3 operations are <c>r3_conditional</c> (require
+    /// AS policy deciding which R3 operations are <c>r3_per_call</c> (require
     /// per-call approval) rather than <c>r3_granted</c> outright. Per r3 §Auth Token
     /// Extensions the AS — not the resource — makes this decision "based on the
     /// operations defined in the R3 document and its own policy." Input: each
-    /// operation from the fetched document; return <c>true</c> ⇒ conditional.
-    /// <c>null</c> (default) ⇒ grant every operation (<c>r3_conditional</c> is OPTIONAL).
+    /// operation from the fetched document; return <c>true</c> ⇒ per-call.
+    /// <c>null</c> (default) ⇒ grant every operation (<c>r3_per_call</c> is OPTIONAL).
     /// </summary>
-    public Func<R3OperationIdentity, bool>? IsConditionalOperation { get; init; }
+    public Func<R3OperationIdentity, bool>? IsPerCallOperation { get; init; }
 
     /// <summary>
     /// When <see langword="true"/>, a per-call proposal (r3 §Per-Call Proposals) is not

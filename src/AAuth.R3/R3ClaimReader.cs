@@ -16,7 +16,7 @@ public static class R3ClaimReader
         string Uri,
         string S256,
         R3Grant Granted,
-        R3Grant? Conditional)
+        R3Grant? PerCall)
     {
         public string? Account { get; init; }
     }
@@ -41,12 +41,12 @@ public static class R3ClaimReader
             ?? throw new InvalidOperationException("R3 auth token claims require r3_uri and r3_s256.");
         var granted = ReadGrant(payload[R3AuthClaims.GrantedClaim], schemas)
             ?? throw new InvalidOperationException("R3 auth token claims require r3_granted.");
-        if (payload.ContainsKey(R3AuthClaims.ConditionalClaim) && payload[R3AuthClaims.ConditionalClaim] is null)
-            throw new InvalidOperationException("r3_conditional must be an object when present.");
-        var conditional = ReadGrant(payload[R3AuthClaims.ConditionalClaim], schemas);
-        if (conditional is not null && conditional.Vocabulary != granted.Vocabulary)
-            throw new InvalidOperationException("R3 granted and conditional vocabularies must match.");
-        return new AuthTokenClaims(doc.Uri, doc.S256, granted, conditional) { Account = doc.Account };
+        if (payload.ContainsKey(R3AuthClaims.PerCallClaim) && payload[R3AuthClaims.PerCallClaim] is null)
+            throw new InvalidOperationException("r3_per_call must be an object when present.");
+        var perCall = ReadGrant(payload[R3AuthClaims.PerCallClaim], schemas);
+        if (perCall is not null && perCall.Vocabulary != granted.Vocabulary)
+            throw new InvalidOperationException("R3 granted and per-call vocabularies must match.");
+        return new AuthTokenClaims(doc.Uri, doc.S256, granted, perCall) { Account = doc.Account };
     }
 
     public static R3Grant? ReadGrant(JsonNode? node, R3VocabularySchemas? schemas = null)

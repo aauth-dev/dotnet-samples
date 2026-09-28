@@ -10,12 +10,12 @@ import { approvePersonConsent } from '../../../tests/e2e/helpers/consent';
  *
  * Bookings publishes a content-addressed R3 document (OpenAPI vocabulary,
  * `operationId`s). Its dedicated R3 Access Server (:5501) fetches + hash-verifies
- * the document, splits operations into `r3_granted` / `r3_conditional` by policy,
+ * the document, splits operations into `r3_granted` / `r3_per_call` by policy,
  * and mints the auth token. The agent code is the ordinary four-party self-issued
  * client — the R3 semantics ride the tokens.
  *
  * `searchAvailability` is granted outright (served immediately). `confirmReservation`
- * is conditional: the resource challenges with a per-call proposal carrying the
+ * is per-call: the resource challenges with a per-call proposal carrying the
  * concrete parameters; the R3 Access Server then asks the user to approve that
  * specific reservation (r3 §Per-Call Proposals, Flow step 2). After approval the same
  * client resends the parameters and the resource verifies they match the approved
@@ -92,7 +92,7 @@ test.describe('Rich Resource Requests (R3)', () => {
     expect(typeof json.r3_s256).toBe('string');
   });
 
-  test('confirming a reservation requires per-call approval, then succeeds (r3_conditional)', async ({ page, context }) => {
+  test('confirming a reservation requires per-call approval, then succeeds (r3_per_call)', async ({ page, context }) => {
     await page.goto('/bookings');
     await waitForInteractive(page, 'button.btn-primary');
     await expect(async () => {
@@ -100,7 +100,7 @@ test.describe('Rich Resource Requests (R3)', () => {
       await expect(page.locator('#bookings-account')).toHaveAttribute('data-account', 'personal', { timeout: 2_000 });
     }).toPass({ timeout: 20_000 });
 
-    // confirmReservation is authorized only in principle (r3_conditional). The
+    // confirmReservation is authorized only in principle (r3_per_call). The
     // resource challenges the concrete call with a per-call proposal carrying the
     // parameters (r3 §Per-Call Proposals); the R3 Access Server then asks the user to
     // approve that specific reservation. The SampleApp surfaces the R3 AS interaction URL.

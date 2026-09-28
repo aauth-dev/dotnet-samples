@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Http;
 
 namespace AAuth.R3;
 
-/// <summary>Evaluates R3 grants and conditional proposal retries for resource calls.</summary>
+/// <summary>Evaluates R3 grants and per-call proposal retries for resource calls.</summary>
 public sealed class R3Enforcement
 {
     private readonly R3ProposalStore _proposalStore;
@@ -34,7 +34,7 @@ public sealed class R3Enforcement
         ArgumentNullException.ThrowIfNull(operation);
         _schemas.Validate(operation.Vocabulary, operation.Operation);
         claims.Granted.Validate(allowEmpty: true, _schemas);
-        claims.Conditional?.Validate(allowEmpty: true, _schemas);
+        claims.PerCall?.Validate(allowEmpty: true, _schemas);
         if (!AccountBinding.Matches(expectedAccount, claims.Account))
             return R3EnforcementDecision.Rejected("account_mismatch");
 
@@ -52,8 +52,8 @@ public sealed class R3Enforcement
             return R3EnforcementDecision.Granted();
         }
 
-        var conditional = claims.Conditional;
-        if (conditional is null || !conditional.Contains(operation))
+        var perCall = claims.PerCall;
+        if (perCall is null || !perCall.Contains(operation))
         {
             return R3EnforcementDecision.Rejected("operation_not_granted");
         }
@@ -66,14 +66,14 @@ public sealed class R3Enforcement
         var proposal = new R3ProposalDocument
         {
             Version = "v02",
-            Vocabulary = conditional.Vocabulary,
+            Vocabulary = perCall.Vocabulary,
             Operations = [operation.Operation],
             Parameters = parameters,
             Display = displayFactory?.Invoke(operation, parameters),
             Account = claims.Account,
         };
         var storedProposal = _proposalStore.Add(proposal, _resourceBaseUri, _proposalPathPrefix, _schemas);
-        return R3EnforcementDecision.Conditional(storedProposal.Uri, storedProposal.S256) with { Account = claims.Account };
+        return R3EnforcementDecision.PerCall(storedProposal.Uri, storedProposal.S256) with { Account = claims.Account };
     }
 
     public R3EnforcementDecision Evaluate(
@@ -181,7 +181,7 @@ public sealed record R3EnforcementDecision(R3EnforcementDecisionKind Kind, strin
 {
     public string? Account { get; init; }
     public static R3EnforcementDecision Granted() => new(R3EnforcementDecisionKind.Granted);
-    public static R3EnforcementDecision Conditional(string proposalUri, string proposalS256) => new(R3EnforcementDecisionKind.Conditional, proposalUri, proposalS256);
+    public static R3EnforcementDecision PerCall(string proposalUri, string proposalS256) => new(R3EnforcementDecisionKind.PerCall, proposalUri, proposalS256);
     public static R3EnforcementDecision Rejected(string error) => new(R3EnforcementDecisionKind.Rejected, Error: error);
 
     public IResult ToResult()
@@ -189,8 +189,8 @@ public sealed record R3EnforcementDecision(R3EnforcementDecisionKind Kind, strin
         return Kind switch
         {
             R3EnforcementDecisionKind.Granted => Results.Ok(),
-            R3EnforcementDecisionKind.Conditional => throw new InvalidOperationException(
-                "Conditional R3 decisions require an AAuth-Requirement challenge; call the ToResult overload that receives HttpContext and R3Challenge."),
+            R3EnforcementDecisionKind.PerCall => throw new InvalidOperationException(
+                "Per-call R3 decisions require an AAuth-Requirement challenge; call the ToResult overload that receives HttpContext and R3Challenge."),
             _ => AAuth.Server.AAuthProblemDetails.Create(Error ?? "r3_denied", statusCode: StatusCodes.Status403Forbidden),
         };
     }
@@ -201,19 +201,19 @@ public sealed record R3EnforcementDecision(R3EnforcementDecisionKind Kind, strin
         ArgumentNullException.ThrowIfNull(challenge);
         ArgumentNullException.ThrowIfNull(verifiedAuthToken);
 
-        if (Kind != R3EnforcementDecisionKind.Conditional)
+        if (Kind != R3EnforcementDecisionKind.PerCall)
         {
             return ToResult();
         }
 
-        var proposal = RequireConditionalProposal();
+        var proposal = RequirePerCallProposal();
         var resourceToken = challenge.BuildResourceToken(verifiedAuthToken, proposal.Uri, proposal.S256, scope);
-        return ToConditionalChallengeResult(context, resourceToken);
+        return ToPerCallChallengeResult(context, resourceToken);
     }
 
-    private IResult ToConditionalChallengeResult(HttpContext context, string resourceToken)
+    private IResult ToPerCallChallengeResult(HttpContext context, string resourceToken)
     {
-        var proposal = RequireConditionalProposal();
+        var proposal = RequirePerCallProposal();
 
         context.Response.Headers[AAuthRequirementHeader.Name] = AAuthRequirementHeader.FormatAuthToken(resourceToken);
         return AAuth.Server.AAuthProblemDetails.Create("r3_approval_required",
@@ -225,11 +225,11 @@ public sealed record R3EnforcementDecision(R3EnforcementDecisionKind Kind, strin
             });
     }
 
-    private (string Uri, string S256) RequireConditionalProposal()
+    private (string Uri, string S256) RequirePerCallProposal()
     {
         if (string.IsNullOrWhiteSpace(ProposalUri) || string.IsNullOrWhiteSpace(ProposalS256))
         {
-            throw new InvalidOperationException("Conditional R3 decisions require proposal uri and s256.");
+            throw new InvalidOperationException("Per-call R3 decisions require proposal uri and s256.");
         }
 
         return (ProposalUri, ProposalS256);
@@ -239,6 +239,6 @@ public sealed record R3EnforcementDecision(R3EnforcementDecisionKind Kind, strin
 public enum R3EnforcementDecisionKind
 {
     Granted,
-    Conditional,
+    PerCall,
     Rejected,
 }

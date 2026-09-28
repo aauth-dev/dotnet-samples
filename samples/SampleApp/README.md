@@ -17,7 +17,7 @@ naming-JWT signatures; they are not alternative AAuth resource carriers.
 - [Events](../../docs/workflows/events.md): `/events`, public/protected account
   subscriptions and verified durable receipts
 - [R3](../../docs/workflows/rich-resource-requests.md): `/bookings`, account
-  selection and exact-parameter conditional approval
+  selection and exact-parameter per-call approval
 - [Shared setup](../README.md): service URLs, explicit egress policy and consent
 - [Playwright specs](playwright-tests/): executed through [the shared configuration](../../tests/e2e/playwright.config.ts)
 

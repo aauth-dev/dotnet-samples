@@ -80,7 +80,7 @@ public class ResourceR3Tests
         Assert.Equal("account_mismatch", enforcement.Evaluate(claims, R3OperationIdentity.Mcp("search"), expectedAccount: "work").Error);
         Assert.Equal("account_mismatch", enforcement.Evaluate(claims, R3OperationIdentity.Mcp("search")).Error);
         var proposal = enforcement.Evaluate(claims, R3OperationIdentity.Mcp("book"), parameters, expectedAccount: "personal");
-        Assert.Equal(R3EnforcementDecisionKind.Conditional, proposal.Kind);
+        Assert.Equal(R3EnforcementDecisionKind.PerCall, proposal.Kind);
         Assert.True(store.TryGet(proposal.ProposalS256!, out var bytes));
         Assert.Equal("personal", R3ProposalDocument.FromUtf8Bytes(bytes).Account);
         var approved = new R3ClaimReader.AuthTokenClaims(proposal.ProposalUri!, proposal.ProposalS256!, R3Grant.Mcp("book"), null)
@@ -280,10 +280,10 @@ public class ResourceR3Tests
         Assert.Equal(R3EnforcementDecisionKind.Rejected,
             enforcement.Evaluate(claims, R3OperationIdentity.Mcp("cancel_trip")).Kind);
 
-        var conditional = enforcement.Evaluate(claims, R3OperationIdentity.Mcp("book_trip"), parameters, (tool, _) =>
+        var perCall = enforcement.Evaluate(claims, R3OperationIdentity.Mcp("book_trip"), parameters, (tool, _) =>
             new R3Display { Summary = $"Approve {tool}", Detail = "Concrete itinerary." });
-        Assert.Equal(R3EnforcementDecisionKind.Conditional, conditional.Kind);
-        Assert.True(store.TryGet(conditional.ProposalS256!, out _));
+        Assert.Equal(R3EnforcementDecisionKind.PerCall, perCall.Kind);
+        Assert.True(store.TryGet(perCall.ProposalS256!, out _));
 
         var reorderedInline = new Dictionary<string, R3Parameter>(parameters)
         {
@@ -293,20 +293,20 @@ public class ResourceR3Tests
                 ["name"] = "Aria",
             }),
         };
-        var classTokenRetry = enforcement.Evaluate(claims, R3OperationIdentity.Mcp("book_trip"), reorderedInline, approvedProposalS256: conditional.ProposalS256);
+        var classTokenRetry = enforcement.Evaluate(claims, R3OperationIdentity.Mcp("book_trip"), reorderedInline, approvedProposalS256: perCall.ProposalS256);
         Assert.Equal(R3EnforcementDecisionKind.Rejected, classTokenRetry.Kind);
         Assert.Equal("operation_not_granted", classTokenRetry.Error);
 
         var approvedClaims = new R3ClaimReader.AuthTokenClaims(
-            conditional.ProposalUri!,
-            conditional.ProposalS256!,
+            perCall.ProposalUri!,
+            perCall.ProposalS256!,
             R3Grant.Mcp("book_trip"),
             null);
         Assert.Equal(R3EnforcementDecisionKind.Granted,
-            enforcement.Evaluate(approvedClaims, R3OperationIdentity.Mcp("book_trip"), reorderedInline, approvedProposalS256: conditional.ProposalS256).Kind);
+            enforcement.Evaluate(approvedClaims, R3OperationIdentity.Mcp("book_trip"), reorderedInline, approvedProposalS256: perCall.ProposalS256).Kind);
 
         var mismatchedToken = approvedClaims with { S256 = "different-proposal-hash" };
-        var mismatched = enforcement.Evaluate(mismatchedToken, R3OperationIdentity.Mcp("book_trip"), reorderedInline, approvedProposalS256: conditional.ProposalS256);
+        var mismatched = enforcement.Evaluate(mismatchedToken, R3OperationIdentity.Mcp("book_trip"), reorderedInline, approvedProposalS256: perCall.ProposalS256);
         Assert.Equal(R3EnforcementDecisionKind.Rejected, mismatched.Kind);
         Assert.Equal("proposal_token_mismatch", mismatched.Error);
 
@@ -315,7 +315,7 @@ public class ResourceR3Tests
             ["total_usd"] = R3Parameter.Inline(JsonValue.Create(1300)!),
         };
         Assert.Equal(R3EnforcementDecisionKind.Rejected,
-            enforcement.Evaluate(approvedClaims, R3OperationIdentity.Mcp("book_trip"), tampered, approvedProposalS256: conditional.ProposalS256).Kind);
+            enforcement.Evaluate(approvedClaims, R3OperationIdentity.Mcp("book_trip"), tampered, approvedProposalS256: perCall.ProposalS256).Kind);
     }
 
     [Fact]
@@ -338,10 +338,10 @@ public class ResourceR3Tests
                 mediaType: "text/plain"),
         };
 
-        var conditional = enforcement.Evaluate(initialClaims, R3OperationIdentity.Mcp("book_trip"), parameters);
+        var perCall = enforcement.Evaluate(initialClaims, R3OperationIdentity.Mcp("book_trip"), parameters);
         var approvedClaims = new R3ClaimReader.AuthTokenClaims(
-            conditional.ProposalUri!,
-            conditional.ProposalS256!,
+            perCall.ProposalUri!,
+            perCall.ProposalS256!,
             R3Grant.Mcp("book_trip"),
             null);
         var presented = new R3PresentedParameters(
@@ -369,7 +369,7 @@ public class ResourceR3Tests
     }
 
     [Fact]
-    public async Task Enforcement_ConditionalChallengeResultEmitsAAuthRequirementWithProposalResourceToken()
+    public async Task Enforcement_PerCallChallengeResultEmitsAAuthRequirementWithProposalResourceToken()
     {
         var resourceKey = AAuthKey.Generate();
         var asKey = AAuthKey.Generate();
@@ -383,7 +383,7 @@ public class ResourceR3Tests
         }.Build();
         var verifiedAuthToken = new AAuth.Tokens.TokenVerifier { EgressPolicy = TestEgress.Policy }
             .VerifyAuthToken(authToken, asKey, R3TestData.ResourceIssuer, agentKey);
-        var decision = R3EnforcementDecision.Conditional(
+        var decision = R3EnforcementDecision.PerCall(
             "https://resource.test/r3/proposals/proposal-hash",
             "proposal-hash");
         var context = new DefaultHttpContext

@@ -9,7 +9,7 @@ public static class R3AuthClaims
     public const string UriClaim = "r3_uri";
     public const string S256Claim = "r3_s256";
     public const string GrantedClaim = "r3_granted";
-    public const string ConditionalClaim = "r3_conditional";
+    public const string PerCallClaim = "r3_per_call";
 
     public static IReadOnlyDictionary<string, JsonNode?> ResourceDocument(string r3Uri, string r3S256)
     {
@@ -25,14 +25,14 @@ public static class R3AuthClaims
         string r3Uri,
         string r3S256,
         R3Grant granted,
-        R3Grant? conditional = null,
+        R3Grant? perCall = null,
         R3VocabularySchemas? schemas = null)
     {
         ValidatePair(r3Uri, r3S256);
         granted.Validate(allowEmpty: true, schemas);
-        conditional?.Validate(allowEmpty: true, schemas);
-        if (conditional is not null && conditional.Vocabulary != granted.Vocabulary)
-            throw new InvalidOperationException("R3 granted and conditional vocabularies must match.");
+        perCall?.Validate(allowEmpty: true, schemas);
+        if (perCall is not null && perCall.Vocabulary != granted.Vocabulary)
+            throw new InvalidOperationException("R3 granted and per-call vocabularies must match.");
 
         var claims = new Dictionary<string, JsonNode?>(StringComparer.Ordinal)
         {
@@ -40,9 +40,9 @@ public static class R3AuthClaims
             [S256Claim] = r3S256,
             [GrantedClaim] = R3ClaimJson.GrantToJson(granted),
         };
-        if (conditional is not null)
+        if (perCall is not null)
         {
-            claims[ConditionalClaim] = R3ClaimJson.GrantToJson(conditional);
+            claims[PerCallClaim] = R3ClaimJson.GrantToJson(perCall);
         }
         return claims;
     }

@@ -21,7 +21,7 @@ import { Urls } from '../../../tests/e2e/helpers/agents';
  * Server (:5501). The flow is a single linear plan (no branch): Bookings first
  * requires a person token (steps 2–5), then the low-risk
  * `searchAvailability` is granted outright (steps 6–8, `r3_granted`), while
- * `confirmReservation` charges a deposit, so it is `r3_conditional` — the
+ * `confirmReservation` charges a deposit, so it is `r3_per_call` — the
  * resource challenges with a per-call proposal carrying the concrete
  * parameters and naming the presented class auth token, the R3 AS asks the
  * user to approve that specific booking (202 → consent → poll), and only then
@@ -154,7 +154,7 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
     expect(typeof confirm.r3_s256).toBe('string');
 
     // Step 16 ("Inspect R3 result") — the summary decodes the auth token's
-    // object-shaped r3_granted / r3_conditional claims into their operation ids
+    // object-shaped r3_granted / r3_per_call claims into their operation ids
     // (guards against rendering "(none)" when the claim shape is misread).
     await selectStep(page, 15);
     const inspector = page.locator('section.payload');
@@ -162,7 +162,7 @@ test.describe('Rich Resource Requests (Guided Tour)', () => {
     await expect(inspector).toContainText('holdReservationPost');
     await expect(inspector).toContainText('searchAvailability');
     await expect(inspector).toContainText('holdReservation');
-    await expect(inspector).toContainText('r3_conditional: confirmReservation');
+    await expect(inspector).toContainText('r3_per_call: confirmReservation');
   });
 
   test('deny the per-call proposal at the R3 AS aborts the flow', async ({ page, context }) => {

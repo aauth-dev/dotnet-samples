@@ -12,7 +12,7 @@ R3) live under [MockAccessServers/](MockAccessServers/).
 | [Trips](MockResourceServers/Trips/) | 5002 | Mission-aware resource server — `/trips` (`trips.read`), `/trips/book` (`trips.book`) |
 | [Wallet](MockResourceServers/Wallet/) | 5003 | Federated (four-party) resource server — `/wallet` (`wallet.read`), `/wallet/charge` (`wallet.charge`) |
 | [Inbox](MockResourceServers/Inbox/) | 5004 | Resource-Managed (two-party) resource server — manages authorization itself via its own consent page; issues an opaque `AAuth-Access` token (`GET /messages`, `POST /authorize`) |
-| [Bookings](MockResourceServers/Bookings/) | 5005 | Rich Resource Requests (R3, four-party) resource server — dining & experiences reservations via the **OpenAPI** vocabulary; `searchAvailability`/`holdReservation` → `r3_granted`, `confirmReservation` → `r3_conditional` (per-call proposal) |
+| [Bookings](MockResourceServers/Bookings/) | 5005 | Rich Resource Requests (R3, four-party) resource server — dining & experiences reservations via the **OpenAPI** vocabulary; `searchAvailability`/`holdReservation` → `r3_granted`, `confirmReservation` → `r3_per_call` (per-call proposal) |
 | [Catalog](MockResourceServers/Catalog/README.md) | 5006 | Travel catalog reads with service-qualified R3 grants and colliding operation IDs |
 | [Documents](MockResourceServers/Documents/README.md) | 5007 | Resource release permission before PS consent, with account-bound signed download |
 | [Concierge](Concierge/) | 5200 | Intermediate service — call chaining with nested `act` delegation |
@@ -20,7 +20,7 @@ R3) live under [MockAccessServers/](MockAccessServers/).
 | [MockPersonServer](MockPersonServer/) | 5100 | Reference Person Server — verifies exchanges, mints auth tokens, federates to an Access Server. **Sample only — not part of the AAuth SDK.** |
 | [MockAgentProvider](MockAgentProvider/) | 5301 | Reference Agent Provider — issues agent tokens, hosts JWKS. **Sample only — not part of the AAuth SDK.** |
 | [MockAccessServer](MockAccessServers/Federated/) | 5500 | Reference Access Server (Federated) — the fourth party in federated access; evaluates policy (stub or Keycloak) and mints `aa-auth+jwt` (`dwk=aauth-access.json`). **Sample only — not part of the AAuth SDK.** |
-| [R3 Access Server](MockAccessServers/R3/) | 5501 | Dedicated Access Server for Rich Resource Requests — fetches/hash-verifies R3 documents, splits granted vs conditional by policy, mints R3 auth tokens (guards Bookings). **Sample only — not part of the AAuth SDK.** |
+| [R3 Access Server](MockAccessServers/R3/) | 5501 | Dedicated Access Server for Rich Resource Requests — fetches/hash-verifies R3 documents, splits granted vs per-call by policy, mints R3 auth tokens (guards Bookings). **Sample only — not part of the AAuth SDK.** |
 | [GuidedTour](GuidedTour/) | 5400 | Blazor walk-through — visualises every AAuth flow step by step, including the four-party federated flow |
 | [SampleApp](SampleApp/) | 5240 | Golden example — one page per signing mode (hwk, jwks_uri, jkt-jwt, jwt, call chain, federated four-party) plus the resource-managed Inbox |
 | [AgentConsole](AgentConsole/) | — | CLI agent — signs requests, handles challenges, exchanges with a PS |

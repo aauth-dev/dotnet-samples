@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 127 changed public-source files, 224 added/replacement declarations, 124 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 131 changed public-source files, 230 added/replacement declarations, 130 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -216,6 +216,14 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [FederatedWorkerSce
 ```
 
 Public owners: `AAuth.Samples.FederatedWorkerScenario`, `AAuth.Samples`.
+
+### samples/GuidedTour/TourOptions.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [TourOptions.cs](../../../samples/GuidedTour/TourOptions.cs).
+
+Public signatures unchanged (31); behavior reviewed under sample-runtime.
+
+Public owners: `GuidedTour.SigningMode`, `GuidedTour.TourMode`, `GuidedTour.TourOptions`, `GuidedTour`.
 
 ### samples/GuidedTour/TourSession.cs
 
@@ -374,15 +382,38 @@ Public signatures unchanged (3); behavior reviewed under events.
 
 Public owners: `AAuth.Events.EventsEndpoints`, `AAuth.Events`.
 
+### src/AAuth.R3/Model/R3Grant.cs
+
+Concept/decision: [r3](#r3). Source: [R3Grant.cs](../../../src/AAuth.R3/Model/R3Grant.cs).
+
+Public signatures unchanged (7); behavior reviewed under r3.
+
+Public owners: `AAuth.R3.Model.R3Grant`, `AAuth.R3.Model`.
+
 ### src/AAuth.R3/R3AccessTokenEndpoint.cs
 
 Concept/decision: [r3](#r3). Source: [R3AccessTokenEndpoint.cs](../../../src/AAuth.R3/R3AccessTokenEndpoint.cs).
 
 ```diff
+- AAuth.R3.R3AccessTokenEndpointOptions: public Func < R3OperationIdentity , bool > ? IsConditionalOperation { get ; init ; }
 - AAuth.R3.R3AccessTokenEndpointOptions: public string Subject { get ; init ; } = "pairwise-sub"
++ AAuth.R3.R3AccessTokenEndpointOptions: public Func < R3OperationIdentity , bool > ? IsPerCallOperation { get ; init ; }
 ```
 
 Public owners: `AAuth.R3.R3AccessTokenEndpointOptions`, `AAuth.R3.R3AccessTokenEndpoint`, `AAuth.R3`.
+
+### src/AAuth.R3/R3AuthClaims.cs
+
+Concept/decision: [r3](#r3). Source: [R3AuthClaims.cs](../../../src/AAuth.R3/R3AuthClaims.cs).
+
+```diff
+- AAuth.R3.R3AuthClaims: public const string ConditionalClaim = "r3_conditional" ;
+- AAuth.R3.R3AuthClaims: public static IReadOnlyDictionary < string , JsonNode ? > AuthToken ( string r3Uri , string r3S256 , R3Grant granted , R3Grant ? conditional = null , R3VocabularySchemas ? schemas = null )
++ AAuth.R3.R3AuthClaims: public const string PerCallClaim = "r3_per_call" ;
++ AAuth.R3.R3AuthClaims: public static IReadOnlyDictionary < string , JsonNode ? > AuthToken ( string r3Uri , string r3S256 , R3Grant granted , R3Grant ? perCall = null , R3VocabularySchemas ? schemas = null )
+```
+
+Public owners: `AAuth.R3.R3AuthClaims`, `AAuth.R3`.
 
 ### src/AAuth.R3/R3Challenge.cs
 
@@ -397,12 +428,27 @@ Concept/decision: [r3](#r3). Source: [R3Challenge.cs](../../../src/AAuth.R3/R3Ch
 
 Public owners: `AAuth.R3.R3Challenge`, `AAuth.R3`.
 
+### src/AAuth.R3/R3ClaimReader.cs
+
+Concept/decision: [r3](#r3). Source: [R3ClaimReader.cs](../../../src/AAuth.R3/R3ClaimReader.cs).
+
+```diff
+- AAuth.R3.R3ClaimReader: public sealed record AuthTokenClaims ( string Uri , string S256 , R3Grant Granted , R3Grant ? Conditional )
++ AAuth.R3.R3ClaimReader: public sealed record AuthTokenClaims ( string Uri , string S256 , R3Grant Granted , R3Grant ? PerCall )
+```
+
+Public owners: `AAuth.R3.R3ClaimReader.AuthTokenClaims`, `AAuth.R3.R3ClaimReader.ResourceDocumentClaims`, `AAuth.R3.R3ClaimReader`, `AAuth.R3`.
+
 ### src/AAuth.R3/R3Enforcement.cs
 
 Concept/decision: [r3](#r3). Source: [R3Enforcement.cs](../../../src/AAuth.R3/R3Enforcement.cs).
 
 ```diff
 - AAuth.R3.R3EnforcementDecision: public IResult ToResult ( HttpContext context , R3Challenge challenge , string agent , string agentJkt , string ? scope = null )
+- AAuth.R3.R3EnforcementDecision: public static R3EnforcementDecision Conditional ( string proposalUri , string proposalS256 )
+- AAuth.R3.R3EnforcementDecisionKind: Conditional
++ AAuth.R3.R3EnforcementDecision: public static R3EnforcementDecision PerCall ( string proposalUri , string proposalS256 )
++ AAuth.R3.R3EnforcementDecisionKind: PerCall
 ```
 
 Public owners: `AAuth.R3.R3EnforcementDecisionKind`, `AAuth.R3.R3EnforcementDecision`, `AAuth.R3.R3Enforcement`, `AAuth.R3`.

@@ -30,7 +30,7 @@
     (<code>urn:aauth:vocabulary:openapi</code>) at <code>/openapi.json</code>; operations
     are <code>operationId</code>s. The resource token references the R3 document
     (<code>r3_uri</code> + <code>r3_s256</code>); the auth token the R3 AS mints carries
-    <code>r3_granted</code> (serve now) and <code>r3_conditional</code> (needs per-call
+    <code>r3_granted</code> (serve now) and <code>r3_per_call</code> (needs per-call
     approval) — no scopes.
 </p>
 
@@ -39,14 +39,14 @@
     in the tokens, not the client. The resource's <code>401</code> carries a resource
     token whose <code>aud</code> is the <strong>R3 Access Server</strong> (:5501); the
     Person Server federates to it, and the AS fetches + hash-verifies the R3 document,
-    splits granted vs conditional <em>by its own policy</em>, and mints the auth token.
+    splits granted vs per-call <em>by its own policy</em>, and mints the auth token.
 </p>
 
 <div class="row">
 <div class="col-md-6">
 <h5>Agent (Client) Code</h5>
 <pre><code class="language-csharp">// Ordinary four-party self-issued agent — the R3 detail
-// is carried in the tokens, not the client. A conditional
+// is carried in the tokens, not the client. A per-call
 // operation triggers a per-call proposal that needs your
 // approval, so wire OnInteractionRequired to surface the
 // R3 Access Server's consent link; the SDK then polls.
@@ -72,7 +72,7 @@ using var searchRequest = new HttpRequestMessage(HttpMethod.Get,
 searchRequest.Options.Set(AAuthRequestOptions.Account, account);
 var search = await client.SendAsync(searchRequest);
 
-// Conditional operation — Bookings challenges with a per-call
+// Per-call operation — Bookings challenges with a per-call
 // proposal; the R3 AS asks you to approve it (202 + consent
 // link), then the same client resends the exact parameters
 // and the booking completes.
@@ -86,7 +86,7 @@ var confirm = await client.SendAsync(confirmRequest);</code></pre>
 <h5>R3 Access Server Code</h5>
 <pre><code class="language-csharp">// A dedicated R3 AS. It fetches the resource's R3 document
 // (AS-signed), rejects it unless the bytes hash to r3_s256,
-// then splits operations into granted vs conditional by its
+// then splits operations into granted vs per-call by its
 // OWN policy (r3 §Auth Token Extensions — the AS decides).
 app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
 {
@@ -94,8 +94,8 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
     Issuer = issuer,
     SigningKeys = signingKeys,
     TrustedPersonServers = trustedPersonServers,
-    // confirmReservation charges a deposit → conditional.
-    IsConditionalOperation = operation =&gt;
+    // confirmReservation charges a deposit → per-call.
+    IsPerCallOperation = operation =&gt;
         operation.Matches(Vocabulary.OpenApi,
             R3Operation.OpenApi("confirmReservation")),
     // Require human approval for the per-call proposal:
@@ -130,7 +130,7 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
         @(_loading ? "Working…" : "Search availability (r3_granted)")
     </button>
     <button class="btn btn-outline-primary" @onclick="ConfirmReservation" disabled="@_loading">
-        @(_loading ? "Working…" : "Confirm a reservation (r3_conditional)")
+        @(_loading ? "Working…" : "Confirm a reservation (r3_per_call)")
     </button>
     <button class="btn btn-outline-secondary" @onclick="CheckPreviousGrant" disabled="@(_loading || _lastAuthToken is null || _lastAccount == _account)">
         Check previous account grant
@@ -139,7 +139,7 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
 <p class="text-muted mt-1">
     <small>
         <strong>Search</strong> is authorized outright (<code>r3_granted</code>) and served
-        immediately. <strong>Confirm</strong> is <code>r3_conditional</code>: the resource
+        immediately. <strong>Confirm</strong> is <code>r3_per_call</code>: the resource
         replies <code>401</code> with a <strong>per-call proposal</strong> (the concrete
         venue / date / party size / deposit); the R3 Access Server then asks <em>you</em> to
         approve that specific reservation before the deposit is charged. Approve at the link
@@ -286,7 +286,7 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
                 .WithPersonServer(personServer)
                 .WithChallengeHandling(opts =>
                 {
-                    // A conditional operation's per-call proposal comes back as a 202
+                    // A per-call operation's proposal comes back as a 202
                     // interaction (relayed by the PS from the R3 AS). Surface the consent
                     // link and let the SDK poll until the user approves.
                     opts.OnInteractionRequired = async (interaction, _) =>

@@ -22,7 +22,7 @@ traveler's behalf — each protocol concept gets a real-feeling home:
 | [**Trips**](Trips/) | 5002 | three-party + mission-aware | trip planning under a mission | `/trips` → `trips.read` (in-mission, silent), `/trips/book` → `trips.book` (out-of-mission, prompts) |
 | [**Wallet**](Wallet/) | 5003 | Federated (four-party) | the bank, with its own Access Server | `/wallet` → `wallet.read`, `/wallet/charge` → `wallet.charge` (AS role `wallet.payer`) |
 | [**Inbox**](Inbox/) | 5004 | Resource-Managed (two-party) | the traveler's inbox / trip confirmations | `/messages` → reactive (`202` + own consent → poll `/pending/{code}` → `AAuth-Access`), `/authorize` → proactive (`{scope}`) |
-| [**Bookings**](Bookings/) | 5005 | Federated + R3 (four-party) | dining & experiences reservations, via a dedicated R3 Access Server (:5501) | `/search_availability`, `/hold_reservation` → `r3_granted`; `/confirm_reservation` → `r3_conditional` (per-call proposal; charges a deposit) |
+| [**Bookings**](Bookings/) | 5005 | Federated + R3 (four-party) | dining & experiences reservations, via a dedicated R3 Access Server (:5501) | `/search_availability`, `/hold_reservation` → `r3_granted`; `/confirm_reservation` → `r3_per_call` (per-call proposal; charges a deposit) |
 | [Catalog](Catalog/README.md) | 5006 | Federated + R3 gateway | Destination and experience catalogs | Service-qualified `list`; sibling-service grant rejected |
 | [Documents](Documents/README.md) | 5007 | PS-asserted with resource permission | Work travel document | `/document` requires `documents.read`, account `work` and completed release permission |
 
@@ -62,7 +62,7 @@ what the resource concludes; they do not authorize replacing JWT in an AAuth flo
   reflects the granted scope rather than a federated mode).
 - **Bookings** endpoints return `operationId` + `source` (`r3_granted` or per-call) +
   `r3_uri`/`r3_s256` (R3 vocabulary demo: the auth token carries granted vs.
-  conditional operations, not scopes). Bookings advertises the **OpenAPI** vocabulary
+  per-call operations, not scopes). Bookings advertises the **OpenAPI** vocabulary
   (`urn:aauth:vocabulary:openapi`) at `/openapi.json`.
 
 Each payload's field names self-describe which concept it demonstrates. None of

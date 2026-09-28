@@ -255,10 +255,10 @@
                     <strong>Rich Resource Requests (R3)</strong>. Bookings publishes a
                     content-addressed <strong>R3 document</strong> (in the <strong>OpenAPI</strong>
                     vocabulary) describing its operations; the auth token then carries
-                    <code>r3_granted</code> and <code>r3_conditional</code> instead of scopes.
+                    <code>r3_granted</code> and <code>r3_per_call</code> instead of scopes.
                     <strong>searchAvailability</strong> is <code>r3_granted</code> — served
                     outright, no prompt. <strong>confirmReservation</strong> charges a deposit, so
-                    the AS makes it <code>r3_conditional</code>: on that call Bookings returns a
+                    the AS makes it <code>r3_per_call</code>: on that call Bookings returns a
                     <strong>per-call proposal</strong> carrying the concrete reservation (venue,
                     date, party size, deposit), and the R3 Access Server asks <strong>you</strong>
                     to approve that specific booking at its own consent screen before it mints a

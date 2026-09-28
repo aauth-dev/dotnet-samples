@@ -22,7 +22,7 @@ public class BookingsPolicyTests
     [InlineData("searchAvailabilityPost", "/search_availability", "POST")]
     [InlineData("holdReservationPost", "/hold_reservation", "POST")]
     [InlineData("confirmReservation", "/confirm_reservation", "POST")]
-    public async Task EveryRoute_EnforcesGrantedConditionalRejectedAndApprovedParameters(string operation, string path, string method)
+    public async Task EveryRoute_EnforcesGrantedPerCallRejectedAndApprovedParameters(string operation, string path, string method)
     {
         using var fixture = new Fixture();
         var document = await fixture.AuthorizeAsync(R3Operations.OpenApi(operation));
@@ -31,9 +31,9 @@ public class BookingsPolicyTests
         Assert.Equal(HttpStatusCode.OK, granted.StatusCode);
         using var denied = await fixture.CallAsync(fixture.AuthToken(document, R3Grant.OpenApi()), path, method, parameters);
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
-        using var conditional = await fixture.CallAsync(fixture.AuthToken(document, R3Grant.OpenApi(), R3Grant.OpenApi(operation)), path, method, parameters);
-        Assert.Equal(HttpStatusCode.Unauthorized, conditional.StatusCode);
-        var proposal = Fixture.ResourceClaims(conditional);
+        using var perCall = await fixture.CallAsync(fixture.AuthToken(document, R3Grant.OpenApi(), R3Grant.OpenApi(operation)), path, method, parameters);
+        Assert.Equal(HttpStatusCode.Unauthorized, perCall.StatusCode);
+        var proposal = Fixture.ResourceClaims(perCall);
         var approved = fixture.AuthToken(proposal, R3Grant.OpenApi(operation));
         using var retry = await fixture.CallAsync(approved, path, method, parameters);
         Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
@@ -194,13 +194,13 @@ public class BookingsPolicyTests
             return R3ClaimReader.ReadResourceDocument(JsonNode.Parse(Base64UrlEncoder.DecodeBytes(resourceToken.Split('.')[1]))!.AsObject())!;
         }
 
-        public string AuthToken(R3ClaimReader.ResourceDocumentClaims document, R3Grant granted, R3Grant? conditional = null) => new AuthTokenBuilder
+        public string AuthToken(R3ClaimReader.ResourceDocumentClaims document, R3Grant granted, R3Grant? perCall = null) => new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy, Issuer = R3TestData.AsIssuer, Audience = R3TestData.ResourceIssuer,
             PersonServer = R3TestData.PsIssuer, AgentConfirmationKey = AgentKey, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
             Key = AsKey, KeyId = R3TestData.AsKid, Dwk = AuthTokenBuilder.AccessDwk, Account = document.Account,
             Subject = "bookings-test-person",
-            AdditionalClaims = R3AuthClaims.AuthToken(document.Uri, document.S256, granted, conditional),
+            AdditionalClaims = R3AuthClaims.AuthToken(document.Uri, document.S256, granted, perCall),
         }.Build();
 
         public async Task<HttpResponseMessage> CallAsync(string token, string path, string method, JsonObject parameters, string account = "work")

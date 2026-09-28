@@ -28,9 +28,9 @@ public class R3VocabularyTests
         var enforcement = new R3Enforcement(store, new Uri("https://resource.test"));
         var identity = R3OperationIdentity.Mcp("update");
         var claims = new R3ClaimReader.AuthTokenClaims("https://resource.test/r3/doc", "hash", R3Grant.Mcp(), R3Grant.Mcp("update"));
-        var conditional = enforcement.Evaluate(claims, identity, document.Parameters);
-        Assert.Equal(R3EnforcementDecisionKind.Conditional, conditional.Kind);
-        var approved = new R3ClaimReader.AuthTokenClaims(conditional.ProposalUri!, conditional.ProposalS256!, claims.Conditional!, null);
+        var perCall = enforcement.Evaluate(claims, identity, document.Parameters);
+        Assert.Equal(R3EnforcementDecisionKind.PerCall, perCall.Kind);
+        var approved = new R3ClaimReader.AuthTokenClaims(perCall.ProposalUri!, perCall.ProposalS256!, claims.PerCall!, null);
         Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(approved, identity, document.Parameters, approvedProposalS256: approved.S256).Kind);
         Assert.Equal("proposal_digest_mismatch", enforcement.Evaluate(approved, identity,
             new Dictionary<string, R3Parameter>(), approvedProposalS256: approved.S256).Error);
@@ -54,22 +54,22 @@ public class R3VocabularyTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void OData_MultiMethodGrantCoversIndividualCallWithoutWidening(bool conditional)
+    public void OData_MultiMethodGrantCoversIndividualCallWithoutWidening(bool perCall)
     {
         var grant = new R3Grant { Vocabulary = Vocabulary.OData, Operations = [R3Operation.OData("Events", "GET", "POST")] };
         var claims = new R3ClaimReader.AuthTokenClaims("https://resource.test/r3/doc", "hash",
-            conditional ? grant with { Operations = [] } : grant, conditional ? grant : null);
+            perCall ? grant with { Operations = [] } : grant, perCall ? grant : null);
         var store = new R3ProposalStore();
         var enforcement = new R3Enforcement(store, new Uri("https://resource.test"));
         var parameters = new Dictionary<string, R3Parameter> { ["id"] = R3Parameter.Inline(JsonValue.Create(1)!) };
         var get = new R3OperationIdentity(Vocabulary.OData, R3Operation.OData("Events", "GET"));
         var decision = enforcement.Evaluate(claims, get, parameters);
-        Assert.Equal(conditional ? R3EnforcementDecisionKind.Conditional : R3EnforcementDecisionKind.Granted, decision.Kind);
+        Assert.Equal(perCall ? R3EnforcementDecisionKind.PerCall : R3EnforcementDecisionKind.Granted, decision.Kind);
         foreach (var denied in new[] { R3Operation.OData("Events"), R3Operation.OData("Events", "DELETE"), R3Operation.OData("Other", "GET") })
             Assert.Equal("operation_not_granted", enforcement.Evaluate(claims, new(Vocabulary.OData, denied), parameters).Error);
         Assert.False((grant with { Operations = [R3Operation.OData("Events")] }).Contains(get));
         Assert.False((grant with { Operations = [get.Operation] }).Contains(new(Vocabulary.OData, grant.Operations[0])));
-        if (!conditional) return;
+        if (!perCall) return;
         Assert.True(store.TryGet(decision.ProposalS256!, out var bytes));
         var proposal = R3ProposalDocument.FromUtf8Bytes(bytes);
         Assert.True(get.Matches(proposal.Vocabulary, Assert.Single(proposal.Operations)));
@@ -82,7 +82,7 @@ public class R3VocabularyTests
     }
 
     [Fact]
-    public void ParameterlessConditionalOperation_RequiresPresentEmptyObjectAndBindsRetry()
+    public void ParameterlessPerCallOperation_RequiresPresentEmptyObjectAndBindsRetry()
     {
         var identity = R3OperationIdentity.Mcp("ping");
         var claims = new R3ClaimReader.AuthTokenClaims("https://resource.test/r3/doc", "hash", R3Grant.Mcp(), R3Grant.Mcp("ping"));
@@ -91,10 +91,10 @@ public class R3VocabularyTests
         var empty = new Dictionary<string, R3Parameter>();
         Assert.Equal("parameters_required", enforcement.Evaluate(claims, identity).Error);
         var decision = enforcement.Evaluate(claims, identity, empty);
-        Assert.Equal(R3EnforcementDecisionKind.Conditional, decision.Kind);
+        Assert.Equal(R3EnforcementDecisionKind.PerCall, decision.Kind);
         Assert.True(store.TryGet(decision.ProposalS256!, out var bytes));
         Assert.Empty(R3ProposalDocument.FromUtf8Bytes(bytes).Parameters);
-        var approved = new R3ClaimReader.AuthTokenClaims(decision.ProposalUri!, decision.ProposalS256!, claims.Conditional!, null);
+        var approved = new R3ClaimReader.AuthTokenClaims(decision.ProposalUri!, decision.ProposalS256!, claims.PerCall!, null);
         Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(approved, identity, empty, approvedProposalS256: approved.S256).Kind);
         Assert.Equal("unknown_proposal", enforcement.Evaluate(approved, identity, approvedProposalS256: approved.S256).Error);
         Assert.Equal("proposal_digest_mismatch", enforcement.Evaluate(approved, identity,
@@ -148,7 +148,7 @@ public class R3VocabularyTests
 
     [Theory]
     [MemberData(nameof(Shapes))]
-    public void AllVocabularies_MatchReorderedObjectsAndBindConditionalRetries(string vocabulary, R3Operation operation)
+    public void AllVocabularies_MatchReorderedObjectsAndBindPerCallRetries(string vocabulary, R3Operation operation)
     {
         var json = JsonSerializer.SerializeToNode(operation)!.AsObject();
         var reordered = new JsonObject(json.Reverse().Select(member => new KeyValuePair<string, JsonNode?>(member.Key, member.Value?.DeepClone())));
@@ -163,8 +163,8 @@ public class R3VocabularyTests
         Assert.False(grant.Contains(new(vocabulary, parsed with { Id = "Other" })));
         Assert.False(grant.Contains(new("https://other.test/vocabulary", parsed)));
         Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(claims, identity).Kind);
-        var challenge = enforcement.Evaluate(claims with { Granted = grant with { Operations = [] }, Conditional = grant }, identity, parameters);
-        Assert.Equal(R3EnforcementDecisionKind.Conditional, challenge.Kind);
+        var challenge = enforcement.Evaluate(claims with { Granted = grant with { Operations = [] }, PerCall = grant }, identity, parameters);
+        Assert.Equal(R3EnforcementDecisionKind.PerCall, challenge.Kind);
         var approved = claims with { Uri = challenge.ProposalUri!, S256 = challenge.ProposalS256! };
         Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(approved, identity, parameters, approvedProposalS256: approved.S256).Kind);
     }
@@ -209,8 +209,8 @@ public class R3VocabularyTests
             Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(claims, identity).Kind);
             var changed = parsed with { Extensions = new Dictionary<string, JsonElement>(parsed.Extensions!) { ["region"] = JsonSerializer.SerializeToElement("east") } };
             Assert.False(claims.Granted.Contains(new(vocabulary, changed)));
-            var conditional = claims with { Conditional = claims.Granted, Granted = claims.Granted with { Operations = [] } };
-            var challenge = enforcement.Evaluate(conditional, identity, new Dictionary<string, R3Parameter>());
+            var perCall = claims with { PerCall = claims.Granted, Granted = claims.Granted with { Operations = [] } };
+            var challenge = enforcement.Evaluate(perCall, identity, new Dictionary<string, R3Parameter>());
             var approved = claims with { Uri = challenge.ProposalUri!, S256 = challenge.ProposalS256! };
             Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(approved, identity, new Dictionary<string, R3Parameter>(), approvedProposalS256: approved.S256).Kind);
         }
@@ -324,7 +324,7 @@ public class R3VocabularyTests
     }
 
     [Fact]
-    public void QualifiedConditionalRetry_RejectsOtherServiceAndVocabulary()
+    public void QualifiedPerCallRetry_RejectsOtherServiceAndVocabulary()
     {
         var operation = R3Operation.OpenApiGateway("calendar", "create");
         var identity = new R3OperationIdentity(Vocabulary.OpenApiGateway, operation);
@@ -338,7 +338,7 @@ public class R3VocabularyTests
         Assert.Equal(R3EnforcementDecisionKind.Rejected, enforcement.Evaluate(initial, billing, parameters).Kind);
         Assert.Equal(R3EnforcementDecisionKind.Rejected, enforcement.Evaluate(initial, R3OperationIdentity.OpenApi("create"), parameters).Kind);
         var challenge = enforcement.Evaluate(initial, identity, parameters);
-        var approved = new R3ClaimReader.AuthTokenClaims(challenge.ProposalUri!, challenge.ProposalS256!, initial.Conditional!, null);
+        var approved = new R3ClaimReader.AuthTokenClaims(challenge.ProposalUri!, challenge.ProposalS256!, initial.PerCall!, null);
         Assert.Equal(R3EnforcementDecisionKind.Granted, enforcement.Evaluate(approved, identity, parameters, approvedProposalS256: approved.S256).Kind);
         var forgedGrant = approved with { Granted = new R3Grant { Vocabulary = billing.Vocabulary, Operations = [billing.Operation] } };
         Assert.Equal("proposal_tool_mismatch", enforcement.Evaluate(forgedGrant, billing, parameters, approvedProposalS256: approved.S256).Error);

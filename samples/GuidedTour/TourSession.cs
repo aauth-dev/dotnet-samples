@@ -552,7 +552,7 @@ public sealed class TourSession : IAsyncDisposable
     // branches: the dedicated R3 Access Server sets RequireProposalConsent=true,
     // so confirm_reservation ALWAYS needs a per-call consent. Steps 1–8 are the
     // granted path (search_availability served outright); steps 9–16 are the
-    // conditional path (per-call proposal → 202 consent → poll → retry).
+    // per-call path (per-call proposal → 202 consent → poll → retry).
     private static readonly TourPlanStep[] RichRequestsPlan =
     {
         new(1, "Discover Bookings metadata", "Unsigned GET /.well-known/aauth-resource.json — advertises r3_vocabularies (OpenAPI).", Actor.Agent, Actor.Resource),
@@ -561,16 +561,16 @@ public sealed class TourSession : IAsyncDisposable
         new(4, "POST /person → person token (Bookings)", "Signed POST {resource: Bookings}; the PS returns an aa-person+jwt (no scope, no account).", Actor.Agent, Actor.PersonServer),
         new(5, "GET /search_availability with person token → 401", "Bookings verifies the person token and returns a resource_token whose aud is the R3 Access Server + r3_uri/r3_s256 (class R3 doc).", Actor.Agent, Actor.Resource),
         new(6, "Parse the resource token (aud = R3 Access Server)", "Decode the resource_token — aud=R3 AS is the four-party tell; r3_uri/r3_s256 reference the class R3 document.", Actor.Agent, Actor.Agent),
-        new(7, "Exchange at PS → R3 AS federation → auth_token", "Signed POST /token with resource_token + presented_token; PS federates (aud≠self), the AS fetches + hash-verifies the R3 doc and splits granted vs conditional, minting aa-auth+jwt (r3_granted + r3_conditional).", Actor.Agent, Actor.PersonServer),
+        new(7, "Exchange at PS → R3 AS federation → auth_token", "Signed POST /token with resource_token + presented_token; PS federates (aud≠self), the AS fetches + hash-verifies the R3 doc and splits granted vs per-call, minting aa-auth+jwt (r3_granted + r3_per_call).", Actor.Agent, Actor.PersonServer),
         new(8, "Replay GET /search_availability → 200 (r3_granted)", "Signed retry; searchAvailability is in r3_granted, so it is served immediately with availability options.", Actor.Agent, Actor.Resource),
-        new(9, "Signed POST /confirm_reservation → 401 (per-call proposal)", "confirmReservation is r3_conditional, so the resource builds a per-call proposal carrying the concrete parameters and challenges with a new resource_token naming the presented auth token.", Actor.Agent, Actor.Resource),
+        new(9, "Signed POST /confirm_reservation → 401 (per-call proposal)", "confirmReservation is r3_per_call, so the resource builds a per-call proposal carrying the concrete parameters and challenges with a new resource_token naming the presented auth token.", Actor.Agent, Actor.Resource),
         new(10, "Parse the per-call proposal challenge", "Decode the new resource_token — r3_uri/r3_s256 now reference the single-invocation proposal document; presented_jti names the class auth token.", Actor.Agent, Actor.Agent),
         new(11, "Exchange proposal at PS → R3 AS eval → 202 (consent)", "Signed POST /token with the proposal resource_token + the class auth token as presented_token; the AS evaluates the params and requires human approval — 202 + interaction URL relayed by the PS.", Actor.Agent, Actor.PersonServer),
         new(12, "Direct user to R3 Access Server consent", "Agent surfaces {url}?code={code} — the R3 AS's per-call consent screen rendering the proposal display.", Actor.Agent, Actor.Agent),
         new(13, "User consents at the R3 Access Server", "User opens the R3 AS consent screen (badged 'R3 Access Server'), reviews the reservation, and approves.", Actor.AccessServer, Actor.AccessServer),
         new(14, "Poll pending URL → 200 per-call auth_token", "Signed GETs to the PS pending URL until the AS verdict resolves; the PS relays the per-call aa-auth+jwt (confirmReservation now in r3_granted).", Actor.Agent, Actor.PersonServer),
         new(15, "Replay POST /confirm_reservation → 200 (confirmed)", "Signed retry with the per-call token + same params; the resource verifies the digest and confirms the reservation.", Actor.Agent, Actor.Resource),
-        new(16, "Inspect R3 result", "Review: search was granted outright; confirm required a per-call proposal + your consent. Shows r3_uri/r3_s256/r3_granted/r3_conditional.", Actor.Agent, Actor.Agent),
+        new(16, "Inspect R3 result", "Review: search was granted outright; confirm required a per-call proposal + your consent. Shows r3_uri/r3_s256/r3_granted/r3_per_call.", Actor.Agent, Actor.Agent),
     };
 
     /// <summary>True when no more steps remain in the current flow.</summary>
@@ -761,7 +761,7 @@ public sealed class TourSession : IAsyncDisposable
         _r3ProposalUri = null;
         _r3ProposalS256 = null;
         _r3Granted = null;
-        _r3Conditional = null;
+        _r3PerCall = null;
         _r3SearchResponseBody = null;
         _r3ConfirmResponseBody = null;
         _userApproved = false;
@@ -993,7 +993,7 @@ public sealed class TourSession : IAsyncDisposable
         else if (IsRichRequestsMode)
         {
             // Single, always-full 16-step linear plan (no branch): the granted
-            // path (search_availability, 1–8) then the conditional path
+            // path (search_availability, 1–8) then the per-call path
             // (confirm_reservation per-call proposal → 202 consent → poll →
             // retry, 9–16). All cases are unconditional — the R3 AS always
             // requires consent for the per-call proposal.
@@ -3715,7 +3715,7 @@ public sealed class TourSession : IAsyncDisposable
     private string? _r3ProposalS256;
     // Operation lists decoded from the class auth token (step 5) for the inspect summary.
     private string? _r3Granted;
-    private string? _r3Conditional;
+    private string? _r3PerCall;
     // The two 200 bodies (steps 6, 13) surfaced in the inspect summary.
     private string? _r3SearchResponseBody;
     private string? _r3ConfirmResponseBody;
@@ -3762,7 +3762,7 @@ public sealed class TourSession : IAsyncDisposable
     /// <summary>The Bookings granted (r3_granted) operation branch: GET /search_availability.</summary>
     private string R3SearchUrl => $"{_options.BookingsUrl.TrimEnd('/')}/search_availability{BookingsAccountQuery}";
 
-    /// <summary>The Bookings conditional (r3_conditional) operation branch: POST /confirm_reservation.</summary>
+    /// <summary>The Bookings per-call (r3_per_call) operation branch: POST /confirm_reservation.</summary>
     private string R3ConfirmUrl => $"{_options.BookingsUrl.TrimEnd('/')}/confirm_reservation{BookingsAccountQuery}";
 
     // The concrete reservation the agent confirms. Mirrors SampleApp Bookings.razor:
@@ -3780,7 +3780,7 @@ public sealed class TourSession : IAsyncDisposable
 
     private static string? FormatR3Ops(JsonNode? node)
     {
-        // The auth-token r3_granted / r3_conditional claim is an R3Grant object:
+        // The auth-token r3_granted / r3_per_call claim is an R3Grant object:
         //   { "vocabulary": "…", "operations": [ { "<field>": "<id>" }, … ] }
         // where each operation is a single-key object (the id under a
         // vocabulary-specific member name, e.g. operationId). Pull out the ids.
@@ -3815,8 +3815,8 @@ public sealed class TourSession : IAsyncDisposable
                 "**Rich Resource Request** vocabularies it speaks (here the **OpenAPI** " +
                 "vocabulary, `urn:aauth:vocabulary:openapi`, whose discovery document is " +
                 "`/openapi.json`). Operations are `operationId`s; nothing yet reveals which " +
-                "are granted outright versus conditional — that is decided by the R3 " +
-                "Access Server and surfaced in the auth token's `r3_granted`/`r3_conditional`.",
+                "are granted outright versus per-call — that is decided by the R3 " +
+                "Access Server and surfaced in the auth token's `r3_granted`/`r3_per_call`.",
             RequestLine = $"{ex.RequestLine}  →  {url}",
             RequestHeaders = ex.RequestHeaders,
             StatusLine = ex.StatusLine,
@@ -3938,12 +3938,12 @@ public sealed class TourSession : IAsyncDisposable
         _r3ClassAuthToken = _authToken;
         var ex = capture.Last!;
 
-        // Capture the granted/conditional split for the inspect summary.
+        // Capture the granted/per-call split for the inspect summary.
         var authPayload = DecodeJwt(_authToken)?.Payload;
         if (authPayload is not null && JsonNode.Parse(authPayload) is { } claims)
         {
             _r3Granted = FormatR3Ops(claims["r3_granted"]);
-            _r3Conditional = FormatR3Ops(claims["r3_conditional"]);
+            _r3PerCall = FormatR3Ops(claims["r3_per_call"]);
         }
 
         Steps.Add(new StepRecord
@@ -3958,7 +3958,7 @@ public sealed class TourSession : IAsyncDisposable
                 "**R3 Access Server** (not itself), and federates: it makes an AS-signed " +
                 "`GET /r3/{hash}` to Bookings to fetch the class R3 document, **rejects it " +
                 "unless the served bytes hash to `r3_s256`**, then splits the operations " +
-                "into `r3_granted` (served now) and `r3_conditional` (needs per-call " +
+                "into `r3_granted` (served now) and `r3_per_call` (needs per-call " +
                 "approval) *by its own policy*, and mints the `aa-auth+jwt`. All of the AS " +
                 "hop happens server-side — the agent just sees a `200`.",
             RequestLine = $"{ex.RequestLine}  →  {_tokenEndpoint}",
@@ -3977,8 +3977,8 @@ public sealed class TourSession : IAsyncDisposable
                 new("discover aauth-access.json", Actor.PersonServer, Actor.AccessServer),
                 new("signed POST /token (resource_token + presented_token)", Actor.PersonServer, Actor.AccessServer),
                 new("AS-signed GET /r3/{hash} (fetch R3 doc)", Actor.AccessServer, Actor.Resource),
-                new("verify r3_s256 + split granted/conditional", Actor.AccessServer, Actor.AccessServer),
-                new("200 + aa-auth+jwt (r3_granted + r3_conditional)", Actor.AccessServer, Actor.PersonServer, IsResponse: true),
+                new("verify r3_s256 + split granted/per-call", Actor.AccessServer, Actor.AccessServer),
+                new("200 + aa-auth+jwt (r3_granted + r3_per_call)", Actor.AccessServer, Actor.PersonServer, IsResponse: true),
             },
             SubStepsLabel = "inside person server + R3 AS",
         });
@@ -4023,7 +4023,7 @@ public sealed class TourSession : IAsyncDisposable
         string? capturedBase = null;
         var capture = new CapturingMessageHandler { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         // Present the SAME class auth token from step 5 (confirmReservation is in
-        // its r3_conditional, not r3_granted), signing the concrete reservation body.
+        // its r3_per_call, not r3_granted), signing the concrete reservation body.
         var signing = BuildSigningHandler(
             () => _authToken!, capture, (_, b) => capturedBase = b);
         using var client = new SampleHttpClient(signing);
@@ -4055,7 +4055,7 @@ public sealed class TourSession : IAsyncDisposable
             Narrative =
                 "The agent signs a POST to `/confirm_reservation` with the concrete " +
                 "reservation, still carrying the class auth token. But `confirmReservation` " +
-                "is in `r3_conditional`, not `r3_granted`, so Bookings does **not** serve it. " +
+                "is in `r3_per_call`, not `r3_granted`, so Bookings does **not** serve it. " +
                 "Instead it builds a **per-call proposal** — the R3 document narrowed to this " +
                 "single invocation, carrying the exact `parameters` — stores it, and " +
                 "challenges with `401 r3_approval_required` plus a NEW resource_token whose " +
@@ -4069,7 +4069,7 @@ public sealed class TourSession : IAsyncDisposable
             ResponseHeaders = ex.ResponseHeaders,
             ResponseBody = PrettyJson(ex.ResponseBody),
             SignatureBase = capturedBase,
-            CodeSnippet = CodeSnippets.R3ConfirmConditional,
+            CodeSnippet = CodeSnippets.R3ConfirmPerCall,
         });
     }
 
@@ -4161,7 +4161,7 @@ public sealed class TourSession : IAsyncDisposable
                 "sees `aud` is the **R3 Access Server** and federates: it makes an AS-signed " +
                 "`GET /r3/proposals/{hash}` to Bookings to fetch the proposal, hash-verifies " +
                 "it, and evaluates the concrete parameters. Because `confirmReservation` is " +
-                "conditional and the AS requires per-call consent, the AS replies `202` with " +
+                "per-call and the AS requires per-call consent, the AS replies `202` with " +
                 "an interaction URL rendering the proposal's `display`. The PS relays that as " +
                 "its own `202 Accepted` with a `Location` (the pending URL the agent polls) " +
                 "and an `AAuth-Requirement: requirement=interaction` header.",
@@ -4256,11 +4256,11 @@ public sealed class TourSession : IAsyncDisposable
         summary.AppendLine();
         summary.AppendLine("  Two operations, two outcomes — decided by the R3 Access Server:");
         summary.AppendLine();
-        summary.AppendLine($"    r3_granted:     {_r3Granted ?? "(none)"}");
-        summary.AppendLine($"    r3_conditional: {_r3Conditional ?? "(none)"}");
+        summary.AppendLine($"    r3_granted:  {_r3Granted ?? "(none)"}");
+        summary.AppendLine($"    r3_per_call: {_r3PerCall ?? "(none)"}");
         summary.AppendLine();
         summary.AppendLine("  • searchAvailability ∈ r3_granted → served outright (no prompt).");
-        summary.AppendLine("  • confirmReservation ∈ r3_conditional → per-call proposal + your consent.");
+        summary.AppendLine("  • confirmReservation ∈ r3_per_call → per-call proposal + your consent.");
         summary.AppendLine();
         summary.AppendLine("  Content-addressed R3 references (verbatim-bytes SHA-256):");
         summary.AppendLine($"    class    r3_uri:  {_r3Uri ?? "(n/a)"}");
@@ -4280,7 +4280,7 @@ public sealed class TourSession : IAsyncDisposable
                 "hash-verified Bookings' R3 document, then split its operations by policy: " +
                 "the low-risk `searchAvailability` landed in `r3_granted` and was served " +
                 "immediately, while `confirmReservation` — which charges a deposit — landed " +
-                "in `r3_conditional` and required a **per-call proposal** carrying the exact " +
+                "in `r3_per_call` and required a **per-call proposal** carrying the exact " +
                 "reservation, plus **your** approval at the R3 AS, before the resource would " +
                 "commit it. The digest binds your approval to those precise parameters.",
             TokenDecoded = summary.ToString(),

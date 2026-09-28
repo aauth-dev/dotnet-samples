@@ -127,7 +127,7 @@ public sealed class TourOptions
     /// When set (with a Person Server), the RichRequests tour mode becomes selectable:
     /// the agent calls Bookings (whose resource token has <c>aud</c> = this AS), the
     /// Person Server federates to the R3 AS, and the AS mints an R3 <c>aa-auth+jwt</c>
-    /// carrying <c>r3_granted</c>/<c>r3_conditional</c>.
+    /// carrying <c>r3_granted</c>/<c>r3_per_call</c>.
     /// </summary>
     public string? R3AccessServerUrl { get; set; }
 

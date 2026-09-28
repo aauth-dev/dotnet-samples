@@ -105,7 +105,7 @@ app.MapGet("/", () => Results.Ok(new
     {
         new { path = "/search_availability", operationId = SearchAvailability, grant = "r3_granted" },
         new { path = "/hold_reservation", operationId = HoldReservation, grant = "r3_granted" },
-        new { path = "/confirm_reservation", operationId = ConfirmReservation, grant = "r3_conditional + per-call proposal" },
+        new { path = "/confirm_reservation", operationId = ConfirmReservation, grant = "r3_per_call + per-call proposal" },
     },
 }));
 
@@ -275,14 +275,14 @@ StoredR3Proposal StoreR3Document(R3ProposalStore store, IEnumerable<string> requ
         Display = new R3Display
         {
             Summary = $"{AccountName(account)}: search and temporarily hold reservations. Confirming a reservation may charge a deposit.",
-            Implications = "Search and hold are low risk; confirmReservation is conditional because it commits a booking and may charge a deposit.",
+            Implications = "Search and hold are low risk; confirmReservation requires per-call approval because it commits a booking and may charge a deposit.",
             DataAccessed = "Reservation availability, venue, date, party size, deposit, and cancellation terms.",
             Irreversible = ordered.Any(op => string.Equals(op.Id, ConfirmReservation, StringComparison.Ordinal))
                 ? "Calling confirmReservation may charge a non-refundable deposit; cancellation and refundability depend on the selected venue's policy."
                 : null,
         },
         // The R3 document carries only spec fields (operations + display). The R3
-        // Access Server — not the resource — decides which operations are conditional
+        // Access Server — not the resource — decides which operations are per-call
         // (r3 §Auth Token Extensions); Bookings signals irreversibility via `display`.
     };
     return store.AddBytes(doc.ToUtf8Bytes(), new Uri(resourceUrl), "/r3");
@@ -538,7 +538,7 @@ async Task<OperationOutcome> EnforceOperationAsync(HttpContext context, TokenVer
                 new R3Display { Summary = $"{AccountName(token.Account)}: approve {operation}", Detail = JsonSerializer.Serialize(values, R3Json.Options) },
             approvedProposalS256: isProposal ? claims.S256 : null, expectedAccount: token.Account);
         if (decision.Kind == R3EnforcementDecisionKind.Granted) return new(parameters, isProposal, null);
-        if (decision.Kind == R3EnforcementDecisionKind.Conditional)
+        if (decision.Kind == R3EnforcementDecisionKind.PerCall)
         {
             var resourceToken = BuildProposalResourceToken(token, decision.ProposalUri!, decision.ProposalS256!);
             context.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatAuthToken(resourceToken);

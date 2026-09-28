@@ -8,7 +8,7 @@ four AAuth access modes. Instead of opaque scope strings, the resource publishes
 content-addressed **R3 document** describing the operations a class of access covers
 (in a vocabulary the agent already understands — here **OpenAPI** operation IDs) and the
 human consequences of granting it. The auth token then carries `r3_granted` (serve
-immediately) and `r3_conditional` (needs per-call approval) instead of, or alongside,
+immediately) and `r3_per_call` (needs per-call approval) instead of, or alongside,
 `scope`. The **Bookings** sample (a dining & experiences reservation provider) is
 guarded by a **dedicated R3 Access Server**.
 
@@ -24,12 +24,12 @@ sequenceDiagram
     PS->>AS: POST /token (resource_token, agent_token, presented_token)
     AS->>Bookings: GET r3_uri (AS-signed) — fetch R3 document
     Bookings-->>AS: R3 document bytes (verbatim)
-    Note over AS: hash-verify r3_s256, split granted vs conditional, audit
-    AS-->>PS: auth token (r3_granted + r3_conditional)
+    Note over AS: hash-verify r3_s256, split granted vs per-call, audit
+    AS-->>PS: auth token (r3_granted + r3_per_call)
     PS-->>Agent: auth token
     Agent->>Bookings: GET /search_availability (auth token) — in r3_granted
     Bookings-->>Agent: 200 OK
-    Agent->>Bookings: POST /confirm_reservation (auth token) — in r3_conditional
+    Agent->>Bookings: POST /confirm_reservation (auth token) — in r3_per_call
     Bookings-->>Agent: 401 + resource token → per-call proposal (r3_uri + parameters)
     Agent->>PS: POST /token (proposal resource token, presented_token = auth token)
     PS->>AS: POST /token
@@ -56,18 +56,18 @@ sequenceDiagram
   bytes. Agents never fetch them. The designated AS may fetch with an HTTP Message
   Signature; a PS evaluator requires explicit resource policy.
 - **Token claims** — the resource token carries `r3_uri` + `r3_s256`; the auth token
-  adds `r3_granted` and (optionally) `r3_conditional`.
+  adds `r3_granted` and (optionally) `r3_per_call`.
 
-## Granted vs. conditional
+## Granted vs. per-call
 
 The **Access Server** — not the resource — decides which operations to grant outright
-and which to make conditional, from the document's `operations` and its own policy
+and which to make per-call, from the document's `operations` and its own policy
 (r3 §Auth Token Extensions). The dedicated Bookings AS is configured to treat
-`confirmReservation` as conditional (override via `R3AccessServer:ConditionalOperations`);
+`confirmReservation` as per-call (override via `R3AccessServer:PerCallOperations`);
 the R3 document itself carries only the spec fields (`operations` + `display`):
 
 - **`r3_granted`** — `searchAvailability`, `holdReservation`: served immediately.
-- **`r3_conditional`** — `confirmReservation`: charges a non-refundable deposit, so it
+- **`r3_per_call`** — `confirmReservation`: charges a non-refundable deposit, so it
   requires a **per-call proposal**. On first call the resource returns a resource token
   referencing a single-invocation R3 document that carries the concrete `parameters`
   (venue, date, party size, deposit). Because the proposal is consequential, the R3 AS
@@ -96,8 +96,8 @@ the R3 document itself carries only the spec fields (`operations` + `display`):
 - **Per-call digest match** — the resource rejects a retry whose parameters differ from
   the approved proposal.
 
-Every Bookings route supports granted, conditional, and rejected outcomes;
-confirmation is conditional only because of the demo AS policy. GET search/hold
+Every Bookings route supports granted, per-call, and rejected outcomes;
+confirmation is per-call only because of the demo AS policy. GET search/hold
 use `searchAvailability` and `holdReservation`; POST variants use
 `searchAvailabilityPost` and `holdReservationPost`. All identifiers come from the
 same published OpenAPI definition. Per-call parameters bind the HTTP method,

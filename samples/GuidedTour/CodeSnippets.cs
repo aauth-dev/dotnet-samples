@@ -224,10 +224,10 @@ internal static class CodeSnippets
         // the person token itself never carries an account.
         """;
 
-    public const string R3ConfirmConditional = """
+    public const string R3ConfirmPerCall = """
         // Rich Resource Requests (R3): the client is the ordinary four-party
         // self-issued agent — the R3 detail rides the tokens, not the client.
-        // A CONDITIONAL operation (confirmReservation charges a deposit) can't
+        // A PER-CALL operation (confirmReservation charges a deposit) can't
         // be served outright; the resource replies 401 with a per-call PROPOSAL
         // carrying the concrete parameters, and the R3 Access Server asks the
         // user to approve that specific booking (202 → consent → poll → mint).

@@ -97,7 +97,7 @@ Additional overview/navigation entries run shared scenarios:
 - `/events`: six steps for public/protected subscriptions, self-jwt delivery and
    durable verified agent receipts. [Events guide](../../docs/workflows/events.md)
 
-Bookings includes personal/work accounts and conditional proposals; Sub-agent
+Bookings includes personal/work accounts and per-call proposals; Sub-agent
 uses distinct parent/worker keys and a four-party AS grant. Their app-local
 Playwright specs use the existing shared harness, as do the additional pages.
 

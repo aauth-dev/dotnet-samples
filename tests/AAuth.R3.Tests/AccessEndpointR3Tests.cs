@@ -708,7 +708,7 @@ public class AccessEndpointR3Tests
         Assert.Equal(fixture.R3S256, claims.S256);
         Assert.True(claims.Granted.Contains(R3OperationIdentity.OpenApi("search_trip_options")));
         Assert.True(claims.Granted.Contains(R3OperationIdentity.OpenApi("hold_itinerary")));
-        Assert.True(claims.Conditional!.Contains(R3OperationIdentity.OpenApi("book_trip")));
+        Assert.True(claims.PerCall!.Contains(R3OperationIdentity.OpenApi("book_trip")));
     }
 
     [Fact]
@@ -791,7 +791,7 @@ public class AccessEndpointR3Tests
         var claims = R3ClaimReader.ReadAuthToken(verified.Payload);
         Assert.Equal(fixture.R3Uri, claims.Uri);
         Assert.True(claims.Granted.Contains(R3OperationIdentity.OpenApi("search_trip_options")));
-        Assert.True(claims.Conditional?.Contains(R3OperationIdentity.OpenApi("book_trip")) ?? false);
+        Assert.True(claims.PerCall?.Contains(R3OperationIdentity.OpenApi("book_trip")) ?? false);
     }
 
     [Fact]
@@ -1083,7 +1083,7 @@ public class AccessEndpointR3Tests
         Assert.Equal(fixture.ProposalUri, claims.Uri);
         Assert.Equal(fixture.ProposalS256, claims.S256);
         Assert.True(claims.Granted.Contains(R3OperationIdentity.OpenApi("book_trip")));
-        Assert.Null(claims.Conditional);
+        Assert.Null(claims.PerCall);
     }
 
     [Fact]
@@ -1255,8 +1255,8 @@ public class AccessEndpointR3Tests
                 SigningKeys = new Dictionary<string, IAAuthKey> { [R3TestData.AsKid] = asKey },
                 TrustedPersonServers = openPersonServerTrust ? null : (trustedPersonServers ?? [R3TestData.PsIssuer]),
                 // AS policy: book_trip requires per-call approval (r3 §Auth Token Extensions —
-                // the AS decides granted vs conditional, not the R3 document).
-                IsConditionalOperation = op => op.Matches(Vocabulary.OpenApi, R3Operation.OpenApi("book_trip")),
+                // the AS decides granted vs per-call, not the R3 document).
+                IsPerCallOperation = op => op.Matches(Vocabulary.OpenApi, R3Operation.OpenApi("book_trip")),
                 RequireProposalConsent = requireProposalConsent,
                 BrowserConsent = new AAuth.Server.BrowserConsentSessions("Test.R3.Consent", "isolated-test-user", isolatedDemoAccess: _ => true),
                 AuditSink = auditSink ?? new InMemoryR3AuditSink(),
