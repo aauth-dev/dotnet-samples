@@ -418,7 +418,7 @@ Phase rule: preserve authenticated context end to end; no placeholder consent gr
 - Complete [UpstreamTokenValidator](../../../src/AAuth/Tokens/UpstreamTokenValidator.cs)
   structural validation without incorrectly equating the original upstream PoP
   key to the intermediary's current request key.
-- Tighten [ActChainBuilder](../../../src/AAuth/Tokens/ActChainBuilder.cs), readers,
+- Tighten [ActChainBuilder](https://github.com/aauth-dev/dotnet-samples/blob/v0.10.0-alpha.1/src/AAuth/Tokens/ActChainBuilder.cs), readers,
   and [AuthTokenResponseValidator](../../../src/AAuth/Tokens/AuthTokenResponseValidator.cs):
   immediate actor, nested context, no person identifiers, independently asserted
   downstream sub. Extend agent delivery checks as well as PS-side checks.

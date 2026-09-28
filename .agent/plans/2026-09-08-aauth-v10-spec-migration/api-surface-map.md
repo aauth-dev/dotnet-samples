@@ -2970,7 +2970,7 @@ Public owners: `AAuth.Tokens.AccountBinding`, `AAuth.Tokens.AccountExpectation`,
 
 ### src/AAuth/Tokens/ActChainBuilder.cs
 
-Concept/decision: [tokens](#tokens). Source: [ActChainBuilder.cs](../../../src/AAuth/Tokens/ActChainBuilder.cs).
+Concept/decision: [tokens](#tokens). Source: [ActChainBuilder.cs](https://github.com/aauth-dev/dotnet-samples/blob/v0.10.0-alpha.1/src/AAuth/Tokens/ActChainBuilder.cs).
 
 ```diff
 - AAuth.Tokens.ActChainBuilder: public static JsonObject BuildNestedAct ( string upstreamAgentId , JsonObject ? upstreamChain = null )
@@ -2983,7 +2983,7 @@ Public owners: `AAuth.Tokens.ActChainBuilder`, `AAuth.Tokens`.
 
 ### src/AAuth/Tokens/ActChainReader.cs
 
-Concept/decision: [tokens](#tokens). Source: [ActChainReader.cs](../../../src/AAuth/Tokens/ActChainReader.cs).
+Concept/decision: [tokens](#tokens). Source: [ActChainReader.cs](https://github.com/aauth-dev/dotnet-samples/blob/v0.10.0-alpha.1/src/AAuth/Tokens/ActChainReader.cs).
 
 ```diff
 - AAuth.Tokens.ActChainReader: public static IReadOnlyList < string > GetDelegationChain ( JsonObject payload , int maxDepth = 10 )
@@ -3083,7 +3083,7 @@ Public owners: `AAuth.Tokens.AuthTokenDeliveryResult`, `AAuth.Tokens.AuthTokenRe
 
 ### src/AAuth/Tokens/MissionClaim.cs
 
-Concept/decision: [tokens](#tokens). Source: [MissionClaim.cs](../../../src/AAuth/Tokens/MissionClaim.cs).
+Concept/decision: [tokens](#tokens). Source: [MissionClaim.cs](https://github.com/aauth-dev/dotnet-samples/blob/v0.10.0-alpha.1/src/AAuth/Tokens/MissionClaim.cs).
 
 ```diff
 - AAuth.Tokens.MissionClaim: public static MissionClaim ? FromPayload ( JsonObject ? payload )
