@@ -352,9 +352,8 @@ public sealed class AAuthClientBuilder
 
     /// <summary>
     /// Operate the client in the context of the agent's own approved
-    /// <see cref="Agent.Mission"/>. Every outbound request carries the
-    /// <c>AAuth-Mission</c> header (<c>{approver, s256}</c>), which the signing
-    /// pipeline covers as the <c>aauth-mission</c> component.
+    /// <see cref="Agent.Mission"/>: person tokens are requested with its
+    /// <c>mission_s256</c>.
     /// </summary>
     /// <remarks>
     /// The challenge handler requests person tokens with the mission's

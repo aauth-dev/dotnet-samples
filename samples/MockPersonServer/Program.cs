@@ -274,7 +274,7 @@ app.MapPost("/mission", async (
             OwnerIssuer = ctx.GetAAuthVerification()!.Issuer,
             OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt,
             S256 = string.Empty,            // computed from the blob once approved
-            Approver = psIssuer,
+            PersonServer = psIssuer,
             Proposal = proposal,
         });
         ctx.Response.Headers.Location = $"/mission-create-pending/{pendingMission.Id}";
@@ -401,7 +401,7 @@ app.MapPost("/permission", async (
             OwnerIssuer = ctx.GetAAuthVerification()!.Issuer,
             OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt,
             S256 = request.MissionS256,
-            Approver = psIssuer,
+            PersonServer = psIssuer,
             Action = request.Action.Name,
         });
         ctx.Response.Headers.Location = $"/permission-pending/{entry.Id}";

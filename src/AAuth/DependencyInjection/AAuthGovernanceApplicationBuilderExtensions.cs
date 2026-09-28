@@ -108,9 +108,9 @@ public static class AAuthGovernanceApplicationBuilderExtensions
             return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
         }
 
-        var approverUrl = ResolveApprover(ctx, options);
+        var personServer = ResolvePersonServer(ctx, options);
         var decision = await approver.ApproveAsync(
-            new MissionApprovalContext(verification.Agent, approverUrl, proposal), ctx.RequestAborted).ConfigureAwait(false);
+            new MissionApprovalContext(verification.Agent, personServer, proposal), ctx.RequestAborted).ConfigureAwait(false);
 
         switch (decision.Outcome)
         {
@@ -131,7 +131,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
                     Agent = verification.Agent,
                     OwnerIssuer = verification.Issuer,
                     OwnerKeyThumbprint = verification.Jkt,
-                    Approver = approverUrl,
+                    PersonServer = personServer,
                     Proposal = proposal,
                 }, ctx.RequestAborted).ConfigureAwait(false);
                 return DeferredAccepted(ctx, options, parked);
@@ -139,7 +139,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
 
             default:
                 return await CompleteMissionAsync(
-                    ctx, missions, approverUrl, verification.Agent, proposal, decision.ApprovedTools, decision.ExpiresAt)
+                    ctx, missions, personServer, verification.Agent, proposal, decision.ApprovedTools, decision.ExpiresAt)
                     .ConfigureAwait(false);
         }
     }
@@ -195,7 +195,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
                     Agent = ctx.GetAAuthVerification()!.Agent!,
                     OwnerIssuer = ctx.GetAAuthVerification()!.Issuer,
                     OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt,
-                    Approver = ResolveApprover(ctx, options),
+                    PersonServer = ResolvePersonServer(ctx, options),
                     Permission = request,
                 }, ctx.RequestAborted).ConfigureAwait(false);
                 return DeferredAccepted(ctx, options, parked);
@@ -318,7 +318,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
                             Agent = ctx.GetAAuthVerification()!.Agent!,
                             OwnerIssuer = ctx.GetAAuthVerification()!.Issuer,
                             OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt,
-                            Approver = ResolveApprover(ctx, options),
+                            PersonServer = ResolvePersonServer(ctx, options),
                             Interaction = request,
                         }, ctx.RequestAborted).ConfigureAwait(false);
                         return DeferredAccepted(ctx, options, parked);
@@ -390,7 +390,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
             }
             var proposal = entry.Proposal!;
             return await CompleteMissionAsync(
-                ctx, missions, entry.Approver, entry.Agent, proposal, proposal.Tools).ConfigureAwait(false);
+                ctx, missions, entry.PersonServer, entry.Agent, proposal, proposal.Tools).ConfigureAwait(false);
         }
 
         if (entry.Kind == DeferredConsentKind.Interaction)
@@ -444,7 +444,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
     private static async Task<IResult> CompleteMissionAsync(
         HttpContext ctx,
         IMissionStore missions,
-        string approver,
+        string personServer,
         string agent,
         MissionProposal proposal,
         IReadOnlyList<MissionTool> approvedTools,
@@ -452,7 +452,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
     {
         var (blob, s256) = MissionApprovalBuilder.Build(
             agent, proposal, approvedTools, DateTimeOffset.UtcNow, expiresAt, proposal.Resources);
-        await missions.SaveAsync(new StoredMission(s256, approver, agent, blob) { ExpiresAt = expiresAt }).ConfigureAwait(false);
+        await missions.SaveAsync(new StoredMission(s256, personServer, agent, blob) { ExpiresAt = expiresAt }).ConfigureAwait(false);
         return Results.Json(MissionApprovalBuilder.Response(blob, s256));
     }
 
@@ -507,7 +507,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
                 Agent = verification.Agent!,
                 OwnerIssuer = verification.Issuer,
                 OwnerKeyThumbprint = verification.Jkt,
-                Approver = ResolveApprover(ctx, options),
+                PersonServer = ResolvePersonServer(ctx, options),
                 Interaction = request,
             }, ctx.RequestAborted).ConfigureAwait(false);
             return DeferredAccepted(ctx, options, parkedCompletion);
@@ -537,11 +537,11 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         return Results.Json(new { status = "pending" }, statusCode: StatusCodes.Status202Accepted);
     }
 
-    // The PS's canonical approver URL: the configured Approver, else the request origin.
-    private static string ResolveApprover(HttpContext ctx, AAuthGovernancePipelineOptions options)
-        => string.IsNullOrEmpty(options.Approver)
+    // The PS identifier: the configured PersonServer, else the request origin.
+    private static string ResolvePersonServer(HttpContext ctx, AAuthGovernancePipelineOptions options)
+        => string.IsNullOrEmpty(options.PersonServer)
             ? $"{ctx.Request.Scheme}://{ctx.Request.Host}"
-            : options.Approver;
+            : options.PersonServer;
 
     private static async Task<JsonObject?> ReadJsonAsync(HttpContext ctx)
     {

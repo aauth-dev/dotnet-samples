@@ -46,12 +46,12 @@ public sealed class AAuthGovernancePipelineOptions
     public string? InteractionUrl { get; set; }
 
     /// <summary>
-    /// The PS's canonical approver URL written into mission approval blobs
-    /// (§Mission Approval). When null, the mapper derives it from the request
+    /// The PS identifier recorded on stored missions and pending approvals
+    /// (§Mission Creation). When null, the mapper derives it from the request
     /// origin (<c>scheme://host</c>). Set this when the PS's advertised issuer
     /// differs from the request origin (e.g. behind a proxy).
     /// </summary>
-    public string? Approver { get; set; }
+    public string? PersonServer { get; set; }
 
     // Compose the prefix with a path, collapsing duplicate slashes at the seam.
     internal string Resolve(string path)

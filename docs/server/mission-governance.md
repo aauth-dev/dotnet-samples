@@ -162,10 +162,10 @@ The parsers throw `FormatException` on a missing required field or a malformed
 
 A mission is stored as its verbatim blob bytes plus its lifecycle state, so the
 `s256` stays verifiable. The second positional member names the approving PS
-(the blob itself carries no approver).
+(the blob itself carries no PS).
 
 ```csharp
-public sealed record StoredMission(string S256, string Approver, string Agent, ReadOnlyMemory<byte> Blob)
+public sealed record StoredMission(string S256, string PersonServer, string Agent, ReadOnlyMemory<byte> Blob)
 {
     public MissionState State { get; init; } = MissionState.Active;
     public DateTimeOffset? ExpiresAt { get; init; } // the blob's expires_at; terminated after it
@@ -252,7 +252,7 @@ public sealed class MyPermissionDecider : IPermissionDecider
         }
 
         // Pre-approved tool → granted silently.
-        var blob = Mission.FromBlob(mission.Blob.Span, mission.Approver);
+        var blob = Mission.FromBlob(mission.Blob.Span, mission.PersonServer);
         if (blob.ApprovedTools.Any(t => t.Name == context.Request.Action.Name))
         {
             return new PermissionDecision(PermissionOutcome.Granted, PermissionDecisionReason.ApprovedTool);

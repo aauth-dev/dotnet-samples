@@ -720,7 +720,7 @@ public static class AAuthPersonServerEndpoints
         async Task<StoredMission> ValidateMissionAsync(string missionS256, string consentAgentId, UpstreamTokenValidationResult? upstream)
         {
             var stored = await app.Services.GetRequiredService<IMissionStore>().GetAsync(missionS256);
-            var authorized = stored is not null && stored.Approver == issuer
+            var authorized = stored is not null && stored.PersonServer == issuer
                 && (stored.Agent == consentAgentId
                     || upstream is { IsValid: true } && upstream.MissionS256 == missionS256);
             if (!authorized)

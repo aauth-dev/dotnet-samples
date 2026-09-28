@@ -11,12 +11,12 @@ namespace AAuth.Server.Governance;
 /// §Mission Management).
 /// </summary>
 /// <param name="S256">The mission identity — base64url(SHA-256(blob)).</param>
-/// <param name="Approver">HTTPS URL of the approver (the PS).</param>
+/// <param name="PersonServer">HTTPS identifier of the PS that approved the mission.</param>
 /// <param name="Agent">The agent identifier the mission was approved for.</param>
 /// <param name="Blob">The exact approval response body bytes, stored verbatim.</param>
 public sealed record StoredMission(
     string S256,
-    string Approver,
+    string PersonServer,
     string Agent,
     ReadOnlyMemory<byte> Blob)
 {

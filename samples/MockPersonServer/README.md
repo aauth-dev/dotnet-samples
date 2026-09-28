@@ -98,9 +98,9 @@ out-of-scope decision, and the clarification chat) is owned by
 own deferred prompts (`POST /permission`, mission creation) resolve via
 `POST /permission-pending/{id}` and `POST /mission-create-pending/{id}`.
 
-A **mission-aware resource** copies the mission object (`approver`, `s256`) from
-the `AAuth-Mission` header into the resource token it issues (§Resource Token
-Verification, Terminology: *mission-aware resource*); the PS then has full
+Missions reach resources as `mission_s256`: the agent requests its person token
+under the mission, and the resource copies `mission_s256` into the resource
+token it issues (§Missions); the PS then has full
 mission context when it evaluates each downstream hop. Try it end-to-end with
 the [MissionAgent](../MissionAgent/README.md) CLI (`make demo-mission`).
 

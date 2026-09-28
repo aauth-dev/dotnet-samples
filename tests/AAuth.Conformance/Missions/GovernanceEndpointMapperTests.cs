@@ -27,7 +27,7 @@ namespace AAuth.Conformance.Missions;
 public class GovernanceEndpointMapperTests : IAsyncLifetime
 {
     private const string Ps = "https://ps.example";
-    private const string Approver = Ps;
+    private const string MissionPs = Ps;
 
     private IHost? _host;
     private string _missionS256 = string.Empty;
@@ -57,7 +57,7 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
         var store = app.Services.GetRequiredService<IMissionStore>();
         var (blob, s256) = BuildMission("aauth:assistant@agent.example", "WebSearch");
         _missionS256 = s256;
-        await store.SaveAsync(new StoredMission(s256, Approver, "aauth:assistant@agent.example", blob));
+        await store.SaveAsync(new StoredMission(s256, MissionPs, "aauth:assistant@agent.example", blob));
 
         await app.StartAsync();
         _host = app;

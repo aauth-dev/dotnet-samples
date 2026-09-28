@@ -294,8 +294,8 @@ public sealed class MissionPendingEntry
     /// <summary>The mission this request belongs to.</summary>
     public required string S256 { get; init; }
 
-    /// <summary>The mission approver (for re-emitting the mission claim).</summary>
-    public required string Approver { get; init; }
+    /// <summary>The PS that approves the mission.</summary>
+    public required string PersonServer { get; init; }
 
     /// <summary>The requested resource (token requests).</summary>
     public string? Resource { get; init; }

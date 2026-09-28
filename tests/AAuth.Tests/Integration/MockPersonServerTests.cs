@@ -487,7 +487,7 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
         {
             Kind = permission ? MockPersonServer.MissionPendingKind.Permission : MockPersonServer.MissionPendingKind.Mission,
             AgentId = "aauth:demo@ap.example", OwnerIssuer = "https://ap.example",
-            OwnerKeyThumbprint = key.ComputeJwkThumbprint(), S256 = "test", Approver = PsIssuer,
+            OwnerKeyThumbprint = key.ComputeJwkThumbprint(), S256 = "test", PersonServer = PsIssuer,
         });
         var path = (permission ? "/permission-pending/" : "/mission-create-pending/") + entry.Id;
         var (attacker, _, _) = BuildSignedAgentClient(AAuthKey.Generate());

@@ -68,7 +68,7 @@ public class GovernanceDeferredConsentMapperTests
 
         app.MapAAuthGovernance(o =>
         {
-            o.Approver = Ps;
+            o.PersonServer = Ps;
             o.InteractionUrl = Ps + "/interaction";
         });
 

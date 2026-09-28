@@ -45,7 +45,7 @@ public class GovernancePendingSignatureTests
         {
             EgressPolicy = TestEgress.Policy, ResourceIdentifier = "https://ps.example", AcceptedSchemes = ["jwt"],
         });
-        app.MapAAuthGovernance(options => options.Approver = "https://ps.example");
+        app.MapAAuthGovernance(options => options.PersonServer = "https://ps.example");
         await app.StartAsync();
 
         HttpClient Client(IAAuthKey key, string issuer, string agent)

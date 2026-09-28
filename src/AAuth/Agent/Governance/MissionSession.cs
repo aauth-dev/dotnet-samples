@@ -8,8 +8,8 @@ namespace AAuth.Agent.Governance;
 
 /// <summary>
 /// A mission-scoped facade over an <see cref="AAuthGovernanceClient"/> bound to a
-/// Person Server. It wraps the approved <see cref="Mission"/> and auto-threads the
-/// mission claim (<c>{approver, s256}</c>) and the bound PS URL into every
+/// Person Server. It wraps the approved <see cref="Mission"/> and threads the
+/// mission's <c>mission_s256</c> and the bound PS URL into every
 /// permission, audit, and interaction call (§Permission Endpoint, §Audit Endpoint,
 /// §Interaction Endpoint), so callers never re-supply them.
 /// </summary>
