@@ -245,6 +245,72 @@ downstream calls. L2710 says one entry per resource, with `error` absent on
 success, so every recipient is listed and `error` appears only on failure. The
 body is empty when nothing was downstream.
 
+### [2026-09-28] [Phase 5] Fresh token requests name the expired source
+
+RESOLVED. Direct PS, AS and R3 responses no longer return polling `408
+expired`. `AuthTokenResponse.CreateTrackedAsync` has an overload that takes the
+source `TokenRegistration`s, and `AAuthProblemDetails.SourceExpired` maps the
+earliest-expired source to one of:
+
+- a parameter token: 400 `expired_<parameter>_token` (#token-endpoint-error-codes);
+- the `Signature-Key` token: 401 `Signature-Error: expired_jwt`;
+- a ceiling set by a mission's `expires_at`: 403 `mission_terminated`.
+
+Pending polls keep `408 expired`. At the AS and R3 the agent token is
+registered as the `agent_token` parameter, so it reports `expired_agent_token`
+and `revoked_agent_token`. That follows the interim issue #199 ruling.
+
+### [2026-09-28] [Phase 6] Step 4 agent-token half already enforced
+
+RESOLVED (test added). The PS records every person or auth token it issues as a
+grant of the agent token, so an upstream token issued from a later-revoked agent
+token has a revoked ancestor. The intermediary's request then gets 400
+`revoked_upstream_token` (L1835, L2593). `UpstreamFromRevokedCallingAgent_IsRevokedUpstreamToken`
+pins it in three- and four-party. The "person binding" half has no SDK concept:
+bindings live in the host's `IIdentityClaimsAsserter`, which can refuse to
+assert.
+
+### [2026-09-28] [Phase 3] Mission approval issues `person_tokens`
+
+RESOLVED. When the governance and PS endpoints share an app, an approval, direct
+or on the deferred poll, mints a mission-bound person token for each proposed
+resource the identity asserter asserts (#mission-approval). The seam is
+`IMissionPersonTokenIssuer`.
+
+- Tokens bind the agent key, carry `mission_s256`, and expire by the earliest
+  of the agent token, the mission `expires_at` and one hour.
+- Each is a tracked grant of the agent token, so revocation cascades.
+- The member is present, possibly empty, whenever the PS issued for named
+  resources.
+- Governance hosted without a PS omits it.
+- The deferred path mints at poll time from the poll's agent token rather than
+  storing key material at park time.
+
+Not done: MockPersonServer's own `/mission` handler still omits
+`person_tokens`, no sample proposes `resources`, and agents do not yet reuse
+`Mission.PersonTokens` before calling `/person`.
+
+### [2026-09-28] [Phase 10] E2E isolates demo server state
+
+RESOLVED. Playwright-started servers get a scratch `HOME`
+(`$TMPDIR/aauth-e2e-home`, wiped per run; `AAUTH_E2E_HOME` keeps one) with the
+real NuGet and dotnet caches, so `~/.aauth` no longer affects runs.
+`FileKeyStore` names the offending key file. The R3 sample creates its data
+folder instead of writing `r3-audit.sqlite` into the project. A plain
+`npx playwright test` now passes against the stale `~/.aauth`.
+
+### [2026-09-28] [Phase 10] Docs spec links on v11
+
+RESOLVED.
+
+- `document-release.md` now cites v11 L993/L994.
+- The jkt-jwt and verification-middleware docs cite `signature-key-09`.
+- Their `§6.3` citations were wrong in `-08` too. They now cite §7.3 (egress
+  admission) and §8.1 (pseudonymity).
+- Draft-11 R3 removed the OpenAPI Gateway vocabulary (operation identifier
+  scope, L154). The Catalog page says so and keeps its v10 link until the
+  Phase 8 redesign.
+
 ### [2026-09-28] [Phase 10] Sample resources echo person identity
 
 RESOLVED. Calendar and Wallet responses return `ps` and `sub` instead of
@@ -478,7 +544,8 @@ refresh path is reworked.
 
 ### [2026-09-28] [Phase 6] Upstream verification step 4 not enforced
 
-OPEN. At the PS, step 4 identifies the calling agent from its own records: the
+RESOLVED 2026-09-28 by "[Phase 6] Step 4 agent-token half already enforced".
+Originally OPEN. At the PS, step 4 identifies the calling agent from its own records: the
 agent it issued the upstream person token to, or the one behind an upstream auth
 token. If that agent's token or person binding is revoked, the PS must reject
 with `revoked_upstream_token` (#upstream-token-verification, L1835). The PS keeps
@@ -488,7 +555,8 @@ revocation.
 
 ### [2026-09-28] [Phase 3] `person_tokens` in mission approval
 
-OPEN. The approval response may carry `person_tokens` for the proposal's
+RESOLVED 2026-09-28 by "[Phase 3] Mission approval issues `person_tokens`".
+Originally OPEN. The approval response may carry `person_tokens` for the proposal's
 `resources`, each with `mission_s256` (#mission-creation, L1415).
 `MissionProposal.Resources` is sent, but the PS issues no `person_tokens`, and
 `Mission.PersonTokens` stays empty. Agents fall back to per-resource
@@ -496,7 +564,8 @@ person-token requests, which the spec allows.
 
 ### [2026-09-28] [Phase 5] `408 expired` outside polling
 
-OPEN (SDK design). If an issued token's ceiling passes during a synchronous
+RESOLVED 2026-09-28 by "[Phase 5] Fresh token requests name the expired source".
+Originally OPEN (SDK design). If an issued token's ceiling passes during a synchronous
 direct `/token` audit, the R3 AS returns `408 expired`. The spec defines that
 code for pending polls (L2623). A fresh-request error (for example
 `expired_presented_token`) may fit better. R3 test
@@ -512,7 +581,8 @@ replay-detection docs test pins the `{iss, jti}` example.
 
 ### [2026-09-28] [Phase 10] Stale local sample state breaks e2e startup
 
-OPEN (environment, not a regression). MockAgentProvider aborted at startup
+RESOLVED 2026-09-28 by "[Phase 10] E2E isolates demo server state".
+Originally OPEN (environment, not a regression). MockAgentProvider aborted at startup
 loading `~/.aauth/ap-keys/ap-key-1`, a key file from June without `alg`
 (`alg` has been required since `75980b2`, draft-10). All samples persist under
 `$HOME/.aauth`, so e2e ran with a scratch `HOME` and the real NuGet and
@@ -521,7 +591,8 @@ Playwright caches. Consider giving e2e its own state directory, or having
 
 ### [2026-09-28] [Phase 10] Remaining stale citations in docs
 
-OPEN. `docs/` still links v10 in three places whose anchors or lines moved in
+RESOLVED 2026-09-28 by "[Phase 10] Docs spec links on v11" (the Wallet
+`DirectAs` label remains). Originally OPEN. `docs/` still links v10 in three places whose anchors or lines moved in
 v11 and were not re-derived: `document-release.md` L965/L973, the R3
 `openapi-gateway-vocabulary` anchor in `catalog-gateway.md`, and the
 `signature-key-08` links (v11 vendors `-09`). The Wallet sample still labels a
