@@ -1,22 +1,74 @@
 ---
-description: Proposed phased SDK, API, sample and docs migration to pinned draft-11 WIP.
+description: Proposed phased SDK, API, sample and docs migration to published AAuth draft-11.
 ---
 
-# Implementation plan - AAuth draft-11 WIP
+# Implementation plan - AAuth draft-11
 
-Created 2026-09-11. Companion to [research.md](research.md), based on SDK
-`94576a3ebcba8cd1d167923e50c8796132057600` and its recorded WIP spec pins.
-SDK implementation has not been authorized or begun. All completion boxes remain
-open. The SDK still targets draft-10. Git publication of this research branch
-is separately authorized in [implementation-log.md](implementation-log.md).
+Created 2026-09-11 against the draft-11 WIP; retargeted 2026-09 to the published
+draft. Companion to [research.md](research.md), based on SDK
+`94576a3ebcba8cd1d167923e50c8796132057600`. SDK implementation has not been
+authorized or begun. All completion boxes remain open. The SDK still targets
+draft-10. Git publication of this research branch is separately authorized in
+[implementation-log.md](implementation-log.md).
+
+## Target pins
+
+| Artifact | Pin | Local copy |
+|---|---|---|
+| Protocol, Bootstrap, R3, Events, Budgets, interop profile | AAuth tag `draft-hardt-oauth-aauth-protocol-11`, commit `178e9e6`, 2026-09-25 | [aauth-spec/v11/](../../../aauth-spec/v11/) |
+| HTTP Signature Keys | `draft-hardt-httpbis-signature-key-09`, 2026-09-13 | [signature-key-09.txt](../../../aauth-spec/v11/draft-hardt-httpbis-signature-key-09.txt) |
+| Per-role upgrade checklists | AAuth commit `180bc95` (committed after the tag) | [upgrade-10-to-11/](../../../aauth-spec/v11/upgrade-10-to-11/README.md) |
+
+R3, Events and Budgets are editor's copies at the tag, not Datatracker
+revisions. `origin/main` has moved to `f44587f` (`v0.10.0-alpha.1`), which adds
+README, Markdown-guidance and live-interop test changes after `94576a3`. Rebase
+this branch before Phase 1 and re-run the baseline there.
+
+## Upstream rulings
+
+[AAuth PR #162](https://github.com/dickhardt/AAuth/pull/162) answered the 18
+upstream questions, and the published text settles most research questions.
+Lines below are verified against [the published protocol](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md)
+unless another file is named. Phase 0 still records each ruling in the log.
+
+| Q | Status | Governing text | Plan effect |
+|---|---|---|---|
+| Q1 | Resolved by spec | Signature Keys -09 defines [`revoked_jwt`](../../../aauth-spec/v11/draft-hardt-httpbis-signature-key-09.txt#L2102) and [`clock_skew`](../../../aauth-spec/v11/draft-hardt-httpbis-signature-key-09.txt#L2133) | Phase 1 uses registered codes; no provisional extension |
+| Q2 | Resolved by spec | Resource token only after a person or auth token (#requirement-auth-token, [L639](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L639)); authorization endpoint needs a person token (#authorization-endpoint-request, [L667](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L667)) | Phase 4 accepts either at challenge, person only at authorization endpoint |
+| Q3 | Resolved by spec | Upstream `aud` MUST equal the intermediary's agent-token `iss` (#upstream-token-verification, [L1834](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1834)); intermediary is its own AP (#intermediary-agent-identity, [L1864](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1864)) | Phase 6 |
+| Q4 | Resolved by spec; consent-cache design is SDK | PS resolves the person from its own record for upstream `aud` and `sub`, rejects without one, copies upstream `mission_s256`; intermediary sends none (#person-token-endpoint, [L842](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L842)) | Phase 6 |
+| Q5 | Resolved by spec | Ticket bound to the JWK thumbprint of the `cnf` key, not an agent identifier; subscribe `sub` does not bind it (Events #pre-authorized-subscription-url-security, [L603](../../../aauth-spec/v11/draft-hardt-aauth-events.md#L603); #protected-subscriptions, [L306](../../../aauth-spec/v11/draft-hardt-aauth-events.md#L306)) | Phases 4 and 8 unblocked |
+| Q6 | SDK decision | Optional capabilities and checklist items | Phase 0 selection |
+| Q7 | Resolved by spec | Future `iat` refusal is optional (60 s window, `clock_skew`); `exp - iat` MUST NOT exceed 1 h for person/auth tokens, SHOULD NOT exceed agent/resource recommendations (#common-verification, [L2320](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2320)); five-minute refresh margin is SHOULD (#refresh-margin, [L1301](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1301)) | Phases 2 and 5 |
+| Q8 | Resolved by spec; storage design is SDK | Retain the invocation result keyed by auth-token `jti` until its `exp` (#deferred-auth-token, [L661](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L661)); retained-result flows are the `410` exception (#pending-url-security, [L2840](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2840)) | Phases 5 and 8 |
+| Q9 | Resolved by spec; delivery design is SDK | Record first, `200` only when every downstream is terminal, AS `downstream` array, `202` polled by the same identity (#token-revocation, [L2703](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2703), [L2710](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2710), [L2730](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2730)); records and chain walking (#revocation-cascade, [L2758](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2758)) | Phase 7 |
+| Q10 | Resolved by spec; full Budgets stays separate | Metered execution is not release-gated (R3 #release-gating, [L719](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L719)); refusals do not draw down and carry `required`, not `cost` (Budgets #exhaustion, [L712](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L712)) | Phase 8, out-of-scope table |
+| Q11 | Resolved by spec | `sub` is never a requested claim (#requirement-claims, [L1680](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1680)) | Phase 4 |
+| Q12 | SDK decision | Persistence and public API migration | Phase 0 |
+| Q13 | Resolved by spec | `updated_request` REQUIRES `presented_token`; the pair is verified and must keep `iss`, `ps`, `sub`, `agent_jkt`, `mission_s256`, `tenant` (#updated-request, [L1117](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1117)) | Phase 4 unblocked |
+| Q14 | Resolved by spec | Revoked auth token: SHOULD add `requirement=person-token`, MUST NOT offer `requirement=auth-token` (#revocation-cascade, [L2764](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2764)) | Phases 5 and 7 |
+
+New published requirements not in the WIP research are assigned below. They
+include the person-token lifetime ceilings (#person-token-structure,
+[L863](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L863)), person
+tokens as `upstream_token` (#call-chaining,
+[L1850](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1850)), the
+sub-agent issuer rule (#sub-agent-identity,
+[L1894](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1894)),
+uppercase agent-identifier local parts (#agent-identifiers,
+[L488](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L488)) and
+Ed25519 for every party (#signature-algorithms,
+[L2166](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2166)).
 
 ## Guiding principles
 
 - Spec conformance over backward compatibility: one coordinated alpha wire/API
   cutover, no legacy aliases or dual-format parsers. Intermediate scaffolding
   must not be advertised as completed v11 support.
-- Requirement strength matters. Optional capabilities and WIP interpretations
-  get recorded rulings; unsupported behavior cannot be advertised as enforced.
+- Requirement strength matters. Optional capabilities and checklist items get
+  recorded selections; unsupported behavior cannot be advertised as enforced.
+- The per-role upgrade checklists are an index into the spec, not a substitute
+  for it. Each checklist ID maps to one owning phase; the cited section governs.
 - Parsed claims, proof of a key, verified issuer identity, and person/mission
   authority remain distinct. Convenience APIs never manufacture verified context.
 - Preserve exact-byte hashing, scope/account checks, source-expiry bounds, egress
@@ -69,19 +121,31 @@ deployed drafts and reachable HTTPS metadata/JWKS; unavailable is not passed.
 
 ## Phase 0 - decisions and baseline gate
 
-Dependencies: none. Findings: all. Phase rule: exact pinned WIP semantics, no
-compatibility shims or silent trust-boundary interpretations.
+Dependencies: none. Findings: all. Phase rule: exact published draft-11
+semantics, no compatibility shims or silent trust-boundary interpretations.
 
 ### Responsibilities
 
-- Obtain SDK implementation authorization and record Q1-Q14 from research in
-  the append-only implementation log. Defaults are proposals, not approvals.
-  Q3-Q5 gate chained/delegated authority and protected Events compatibility.
-- Verify baseline/worktree and all spec pins. Re-diff any subsequently published
-  revision before changing the chosen target; preserve earlier snapshots/plans.
+- Obtain SDK implementation authorization and record Q1-Q14 in the append-only
+  implementation log, using the [upstream rulings](#upstream-rulings). Twelve are
+  resolved by spec; Q6 and Q12 are SDK decisions. Defaults are proposals.
+- Rebase onto current `origin/main`, then verify the worktree and all
+  [target pins](#target-pins). Preserve the WIP snapshot at `e6d18a3` and this
+  folder's history; do not rewrite earlier plans.
+- Re-derive every `v11` line citation in [research.md](research.md),
+  [conformance-ledger.md](conformance-ledger.md) and the maps against the
+  published text. WIP lines are not valid published citations. Re-check F01-F24
+  and the ledger for WIP-only statements the published text changed.
+- Map every upgrade-checklist ID (55 PS, 33 RS, 30 AG, 7 AP, 22 AS) to one
+  owning phase in the ledger. Gaps found in the mapping review are assigned in
+  the phases below.
+- Select optional checklist items explicitly: PS-05, RS-04 and AP-06 algorithm
+  advertisement; RS-04 and AG-03 `aauth-resource` links; RS-13 person-token
+  access mode; RS-35 `login_hint`; RS-36 `202` auth-token delivery; RS-62
+  resource-initiated revocation; PS-87 to PS-90, AG-35 and AG-36 mission
+  update/resources/expiry/reasons; PS-96 out-of-band interaction.
 - Confirm core person/exchange/mission/revocation migration, existing R3/Events,
-  compiled callers and both apps. Select optional annotations, link discovery
-  and algorithm advertisement explicitly.
+  compiled callers and both apps.
 - Default full Budgets, hosted child provisioning, supervision/control plane and
   delayed artifacts to separate work. Default result-release execution disabled
   with explicit unsupported handling unless its full scenario is selected.
@@ -92,8 +156,10 @@ compatibility shims or silent trust-boundary interpretations.
 
 - [ ] Every Q1-Q14 has a recorded ruling in the implementation log.
 - [ ] Implementation authorization, scope and affected-capability blocks are explicit.
-- [ ] Baseline tree, pins, environment and failures are recorded.
+- [ ] Rebased baseline tree, pins, environment and failures are recorded.
+- [ ] Research, ledger and map citations resolve to published draft-11 lines.
 - [ ] Every F01-F24 has an owner, phase and discriminatory check.
+- [ ] Every upgrade-checklist ID has an owning phase or a recorded optional exclusion.
 
 ## Phase 1 - tooling and isolated vocabulary contracts
 
@@ -115,12 +181,29 @@ Phase rule: one final vocabulary; no historical-map rewrites or OIDC renames.
 - If selected, derive advertised algorithms from actual accepted policy. Preserve
   generic signing carriers and server identity. Inventory R3 rename/removal
   callers before Phase 8; keep raw-byte hash regressions.
+- Accept `A-Z` in the agent-identifier `local` part and compare exactly, with
+  no case folding (#agent-identifiers, PS-104, RS-52, AP-01).
+  [AgentId](../../../src/AAuth/Identifiers/AgentId.cs) rejects uppercase today;
+  the domain stays lowercase.
+- Prove Ed25519 acceptance on every verifier role: PS, AS, resource, AP and
+  agent (#signature-algorithms, PS-100, RS-50, AG-52, AP-05, AS-30). The shared
+  middleware already lists it; add role-level tests, not new algorithm code.
+- Add the published error codes as typed values: `expired_presented_token`,
+  `revoked_presented_token`, `revoked_resource_token`, `as_unreachable`,
+  `invalid_`/`expired_`/`revoked_upstream_token`, `invalid_subagent_token`,
+  `revoked_subagent_token`, `invalid_account`, `user_unreachable`,
+  `rate_limited`, polling `revoked`
+  (`403` with `detail`) and the revocation outcomes `revocation_unavailable`
+  and `revocation_unsupported`. Use Signature Keys -09 `revoked_jwt` and
+  `clock_skew` for header tokens (Q1).
 
 ### Definition of Done
 
 - [ ] Inventory targets this folder/baseline without modifying historical evidence.
 - [ ] Renamed metadata/modes have no active old-field aliases in migrated paths.
 - [ ] New error types preserve header/body/status distinctions.
+- [ ] Uppercase local parts round-trip exactly; case variants are distinct identities.
+- [ ] Ed25519 is accepted at every verifier role.
 - [ ] Focused metadata/error/snippet tests and compiled callers/build pass.
 
 ## Phase 2 - person tokens and temporal trust
@@ -140,12 +223,27 @@ Phase rule: typed person verification, never person-to-auth fallback.
   not as a required lookup during token verification.
 - Separate strict AAuth expiry, optional future iat and generic naming-token
   time policy. Keep fully specified algorithms and existing lifetime checks.
+  Enforce `exp - iat` at most 1 h for person and auth tokens, and treat agent
+  and resource lifetimes as SHOULD bounds (Q7, #common-verification).
+- Cap person-token `exp` at 1 h and at the presented agent token, the
+  `upstream_token` when present, and the mission `expires_at` when
+  `mission_s256` is present (#person-token-structure, L863).
+- Accept the person-token request's optional parameters with the auth-request
+  definitions: `capabilities`, `login_hint`, `tenant`, `domain_hint`, `prompt`,
+  `justification`, `platform`, `device` (#person-token-endpoint, PS-10). The
+  agent sends `capabilities`; without it a PS that must reach the person answers
+  `user_unreachable` (AG-10).
+- Agents read `person_token_endpoint` from PS metadata rather than deriving it
+  (AG-01). Reject `aa-person+jwt` wherever an auth token is required
+  (#person-token-verification, L920).
 - Publish the required person/auth endpoint metadata and minimal PS contract.
 
 ### Definition of Done
 
 - [ ] Person typ/claims/DWK/issuer/audience/key and forbidden scope/account cases pass.
 - [ ] Person tokens cannot satisfy auth-only authorization.
+- [ ] Person-token lifetime is capped by 1 h, agent, upstream and mission expiry.
+- [ ] `capabilities` and `login_hint` reach the person-token decision.
 - [ ] Immediate/deferred issuance retains exact verified source expiry.
 - [ ] Header/body expiry and optional future iat boundaries have separate tests.
 - [ ] Metadata, compiled callers, focused tests and solution build pass.
@@ -172,6 +270,11 @@ Phase rule: exact blob bytes and mission_s256, no legacy header compatibility.
   terminal transitions atomic, including save/replacement paths.
 - Update coupled mission sessions/tests and executable consumers. Phase 4
   completes token-claim integration; intermediate flows are not v11 conformance.
+- Agents parse the new approval response: the base64url `mission` blob,
+  `capabilities` outside the blob and the `person_tokens` resource map. Verify
+  `mission_s256` over the decoded blob bytes before first use (AG-32). Stop
+  sending `AAuth-Mission` and drop it from covered components; name the
+  mission with `mission_s256` on person-token requests (AG-30).
 
 ### Definition of Done
 
@@ -179,11 +282,13 @@ Phase rule: exact blob bytes and mission_s256, no legacy header compatibility.
 - [ ] Capabilities are outside the hash and partial resource approvals work.
 - [ ] Expiry and terminal-state invariants survive store mutation/races.
 - [ ] Accepted updates have retained exact bytes without changing mission identity.
+- [ ] Agents reject an approval whose blob bytes do not match `mission_s256`.
 - [ ] Compiled callers and focused governance/build checks pass.
 
 ## Phase 4 - resource and exchange cutover
 
-Dependencies: Phases 2-3 and Q5/Q13. Findings: F01/F03/F04/F06/F07/F10/F12/F13/F16/F19/F20.
+Dependencies: Phases 2-3. Q2, Q5, Q11 and Q13 are resolved by spec.
+Findings: F01/F03/F04/F06/F07/F10/F12/F13/F16/F19/F20.
 Phase rule: resource/auth identity is ps/sub/key based; no agent/act/mission fallback.
 
 ### Responsibilities and files
@@ -192,16 +297,27 @@ Phase rule: resource/auth identity is ps/sub/key based; no agent/act/mission fal
   [AuthTokenBuilder](../../../src/AAuth/Tokens/AuthTokenBuilder.cs), validators,
   verified results and authn/authz projection together. Preserve agent identity
   on agent-token paths, never synthesize it from a person subject.
-- Require person identity at authorization/initial challenges and explicit auth
-  context for agreed runtime step-up. Add exact required presented-token carriage
-  to [agent exchange](../../../src/AAuth/Agent/TokenExchangeClient.cs) and
-  [PS-AS exchange](../../../src/AAuth/Access/AccessServerClient.cs).
+- Require person identity at authorization/initial challenges and accept a
+  person or auth token before resource-token issuance (Q2). Add exact required
+  presented-token carriage to [agent exchange](../../../src/AAuth/Agent/TokenExchangeClient.cs)
+  and [PS-AS exchange](../../../src/AAuth/Access/AccessServerClient.cs). The AS
+  body is `resource_token`, `agent_token`, `presented_token` and optional
+  `subagent_token` and `upstream_token`; `agent_token` stays required for
+  posture and is the parent's for a sub-agent (AS-11).
+- Carry `login_hint` end to end: a resource MAY set it in the resource token,
+  the agent passes it unchanged and the PS passes it through (RS-35, AG-24,
+  PS-33). Resources check the auth token rather than assuming it was honored.
 - Apply paired-token verification to core PS/AS, R3 AS and custom issuers before
   policy or pending-state mutation. Bind PS/subject/tenant/mission/key/account;
   claims or policy cannot replace verified person identity.
 - Update `ClarificationResponse.Update` and PS/AS pending replacement handlers
-  under Q13. Preserve the original pair for unchanged requests; when jti changes,
-  verify and replace both tokens atomically, retaining prior state on failure.
+  per Q13: `updated_request` carries the required `presented_token`, the pair is
+  verified, and `iss`, `ps`, `sub`, `agent_jkt`, `mission_s256` and `tenant`
+  must match. Verify and replace both tokens atomically; retain prior state on
+  failure.
+- Separate agent-asserted consent content (justification, platform, device) from
+  resource-asserted content (metadata, R3 display) in consent UI and hooks, with
+  visible attribution (PS-40).
 - Remove AAuth-Mission and MissionAware-dependent propagation, including
   forwarding/covered-component configuration. Enforce agent/presented/mission
   ceilings through immediate and deferred issuance.
@@ -212,10 +328,12 @@ Phase rule: resource/auth identity is ps/sub/key based; no agent/act/mission fal
   Update both apps' affected executable steps, snippets and captured payloads.
   This is the highest-blast-radius phase, not a constants-only change.
 - Include the minimum person acquisition/challenge support from Phase 5 and the
-  Q5-approved protected Events ticket binding from Phase 8 at this identity
-  boundary. Otherwise removing agent claims breaks existing clients and Bookings
-  ticket issuance. Phase 5 completes cache/202/refresh behavior; Phase 8 completes
-  R3/Events integration. Do not call Phase 4 green while those consumers fail.
+  protected Events ticket binding from Phase 8 at this identity boundary. Q5
+  binds the ticket to the JWK thumbprint of the key the resource verified, not
+  an agent identifier. Otherwise removing agent claims breaks existing clients
+  and Bookings ticket issuance. Phase 5 completes cache/202/refresh behavior;
+  Phase 8 completes R3/Events integration. Do not call Phase 4 green while those
+  consumers fail.
 
 ### Definition of Done
 
@@ -224,6 +342,8 @@ Phase rule: resource/auth identity is ps/sub/key based; no agent/act/mission fal
 - [ ] Removed identity/mission fields are absent from active core producers/consumers.
 - [ ] Missing body coverage/tampering fails before policy or consent mutation.
 - [ ] Immediate/deferred expiry and AS error mapping tests pass.
+- [ ] Clarification replacement rejects a mismatched or unverified pair.
+- [ ] Consent views attribute agent- and resource-asserted content separately.
 - [ ] Affected core/R3/Events projects and solution build are green.
 - [ ] Minimum person-client and protected-ticket consumers work with new identity contracts.
 
@@ -245,10 +365,20 @@ Phase rule: preserve original credential provenance; no blanket unsafe replay.
   re-acquire lazily after rotation, coalesce concurrency and preserve borrowed
   versus factory-owned key/transport/store/clock disposal and cancellation.
 - Add person challenge and 202 auth exchange followed by signed GET completion,
-  never original-body resubmission. Define atomic held-invocation/results with
-  Phase 8 R3 consumers in mind.
+  never original-body resubmission. Agents MUST support both `401` and `202`
+  delivery of `requirement=auth-token`; which one a resource uses is its choice
+  per invocation (#requirement-auth-token). If RS-36 is selected, document the
+  sample resources' policy for choosing `202`.
+- Retain the held invocation's result keyed by auth-token `jti` until that
+  token's `exp`, and answer a repeated presentation from it (Q8). Define atomic
+  held-invocation/results with Phase 8 R3 consumers in mind.
 - Distinguish skew, revocation, denial, remote unavailability and cancellation
-  recovery. Add selected link discovery only with URL checks before fetching
+  recovery. Handle `expired_presented_token`, `revoked_resource_token`,
+  `as_unreachable` and polling `revoked` (`403`), surfacing `detail` (AG-60 to
+  AG-62). A revoked auth token recovers through a fresh person token, never a
+  resource token naming the revoked one (Q14). Refresh within the SHOULD
+  five-minute margin, top-down; resource tokens are exempt (Q7, AG-70).
+- Add selected link discovery only with URL checks before fetching
   and no verifier-key-discovery coupling.
 - Deliver S01-S04/S13 in both hosts with actual wire captures.
 
@@ -257,12 +387,14 @@ Phase rule: preserve original credential provenance; no blanket unsafe replay.
 - [ ] Concurrent people/missions/accounts/worker keys cannot share authorization state.
 - [ ] Exact presented token survives holder refresh and clarification/replacement.
 - [ ] 202 completion never resends the original non-idempotent request body.
+- [ ] A repeated auth token at the pending URL returns the retained result.
+- [ ] Each published token-endpoint and polling error has a distinct agent outcome.
 - [ ] Refresh order, ownership, cancellation and recovery tests pass.
 - [ ] Both primary apps exercise person and deferred flows with matching steps.
 
 ## Phase 6 - supervision, mission actions and delegation
 
-Dependencies: Phase 5 and Q3/Q4. Findings: F08-F11/F23.
+Dependencies: Phase 5. Q3 and Q4 are resolved by spec. Findings: F08-F11/F23.
 Phase rule: no act-derived authority or direct-AS agent routing; explicit trust rulings.
 
 ### Responsibilities and files
@@ -281,6 +413,17 @@ Phase rule: no act-derived authority or direct-AS agent routing; explicit trust 
 - Derive downstream subjects from authenticated context, rejecting unresolved
   persons. Retain parent/worker checks and source bounds. Remove obsolete ActChain
   APIs only after their consumers use PS/AS evidence instead.
+- Upstream tokens (Q3, Q4, #upstream-token-verification): accept a person or
+  auth token by `typ`; require `aud` equal to the intermediary's agent-token
+  `iss`, so each intermediary is its own AP. The PS resolves the person from its
+  own record for that `aud` and `sub`, copies the upstream `mission_s256`, and
+  caps downstream expiry at the upstream token. Never copy a directed `sub` from
+  an upstream token (#call-chaining).
+- Sub-agents (#sub-agent-identity): the AP issues under the parent's `iss` with
+  a `parent+discriminator` local part (AP-02). The PS rejects a different `iss`
+  with `invalid_subagent_token` (PS-71). Auth tokens bind to the sub-agent key,
+  and the AS records the parent from `agent_token`, not `act` (AS-12, AS-13).
+  The AS verifies `upstream_token` too (AS-14).
 - Deliver S05-S07 in both apps, with MissionAgent and AgentConsole aligned.
 
 ### Definition of Done
@@ -288,12 +431,14 @@ Phase rule: no act-derived authority or direct-AS agent routing; explicit trust 
 - [ ] Actions enforce owner, expiry and irreversible termination across continuations.
 - [ ] Updated mission meaning reaches fast-path consent and audit.
 - [ ] Distinct caller/intermediary/worker-key cases validate Q3/Q4 rulings.
+- [ ] Upstream `aud` mismatch, foreign-AP intermediaries and copied `sub` fail.
+- [ ] Sub-agent `iss` mismatch fails with `invalid_subagent_token`.
 - [ ] Direct-worker and wrong-parent PS requests fail.
 - [ ] Both apps' sequences and payload assertions use PS-recorded delegation.
 
 ## Phase 7 - revocation authority and dependency graph
 
-Dependencies: Phase 6 and Q9. Findings: F14-F16.
+Dependencies: Phase 6. Q9 and Q14 are resolved by spec. Findings: F14-F16.
 Phase rule: caller's namespace only; no old issuer override or unknown-token 404.
 
 ### Responsibilities and files
@@ -310,6 +455,20 @@ Phase rule: caller's namespace only; no old issuer override or unknown-token 404
 - Implement AP-to-PS, PS-person-to-AS/resource, AS-auth-to-resource and resource
   withdrawal. Prevent pending issuance after revocation; track retryable delivery
   separately from durable local acknowledgement.
+- Response contract (#token-revocation): record first, including tokens never
+  seen (PS-112), and answer `200` only when every downstream call is terminal.
+  The AS reports a `downstream` array of `recipient` and optional `error`
+  (`revocation_unavailable`, `revocation_unsupported`), which the PS reads
+  (AS-41, PS-114). The PS answers the AP with an empty body. A slow cascade
+  answers `202` with a pending URL. Only the revoking identity may poll; others
+  get `404`. Without `Prefer: wait`, hold about 20 seconds. Parties with nothing
+  downstream never answer `202`. Rate limiting uses `rate_limited` (`429`,
+  `Retry-After` required).
+- Cascade an agent-token revocation by agent identity from the PS's records,
+  and walk person-token chains through the recorded upstream `(iss, jti)`
+  (#revocation-cascade). A resource refusing a revoked auth token SHOULD send
+  `requirement=person-token` (Q14). RS-62 resource-initiated revocation is
+  selected in Phase 0.
 - Update header/body/poll codes and S08 in both apps; remove Wallet/Bookings
   cross-issuer PS-revocation examples.
 
@@ -320,10 +479,12 @@ Phase rule: caller's namespace only; no old issuer override or unknown-token 404
 - [ ] Resource dependency does not impose a five-minute auth expiry.
 - [ ] Registration, consent completion and revocation races are covered.
 - [ ] Cascades, notification failure and retention have controlled-clock tests.
+- [ ] `downstream` outcomes, `202` polling identity and `rate_limited` have wire tests.
 
 ## Phase 8 - R3 execution, Catalog and Events
 
-Dependencies: Phase 7 and Q5/Q6/Q8/Q10. Findings: F17-F22.
+Dependencies: Phase 7. Q5, Q8 and Q10 are resolved by spec; Q6 is a Phase 0
+selection. Findings: F17-F22.
 Phase rule: PerCall and seven standard vocabularies, no gateway/conditional aliases.
 
 ### Responsibilities and files
@@ -345,17 +506,23 @@ Phase rule: PerCall and seven standard vocabularies, no gateway/conditional alia
   never silently downgrade to ordinary execute approval.
 - Resolve [BookingsEvents](../../../samples/EventSupport/BookingsEvents.cs)
   ticket binding and [Events stores](../../../src/AAuth.Events/EventStores.cs)
-  under Q5, completing the identity contract already migrated in Phase 4 with
-  SQLite transition/redemption and per-call retained-result integration. Preserve public subscriptions
-  and self-JWT semantics. Deliver S09-S12 and selected S14-S16 in both apps.
-- Do not claim full Budgets support without its separately approved plan.
+  per Q5: record the JWK thumbprint of the key the resource verified and match
+  the subscribe token's `cnf.jwk` at redemption. Deduplicate event deliveries on
+  `(iss, jti)`, not `eid`, and answer `404` for unknown or finished
+  subscriptions. Complete the identity contract already migrated in Phase 4 with
+  SQLite transition/redemption and per-call retained-result integration. Preserve
+  public subscriptions and self-JWT semantics. Deliver S09-S12 and selected
+  S14-S16 in both apps.
+- Metered or billed execution is never release-gated; approval precedes it (Q10,
+  R3 #release-gating). Do not claim full Budgets support without its separately
+  approved plan.
 
 ### Definition of Done
 
 - [ ] No obsolete R3 names/emission; seven vocabulary and Catalog tests pass.
 - [ ] One grant cannot execute twice under fresh signatures; retries return retained result.
 - [ ] Foreign valid PS cannot read unentitled R3 documents.
-- [ ] Protected Events has approved trusted binding, persistence and negative tests.
+- [ ] Protected Events tickets reject a different key; deliveries dedupe on `(iss, jti)`.
 - [ ] Optional result/Budgets behavior cannot imply unimplemented enforcement.
 - [ ] Full R3/Events tests, solution build and both-app scenarios pass.
 
@@ -399,7 +566,7 @@ Phase rule: current-format live guidance; preserve intentional generic/OIDC/hist
   their owning phases.
 - Validate exact C# snippets, response shapes, source/default tables, links,
   TypeScript and fresh desktop/mobile browser matrices with zero retries.
-- Reconcile published/WIP target language only with verified supported scope.
+- Reconcile draft-10 to draft-11 target language only with verified supported scope.
 
 ### Definition of Done
 
@@ -432,7 +599,7 @@ Phase rule: fresh spec-grounded review; no implicit acceptance of unresolved tru
 - [ ] Each finding is fixed with rerun evidence or explicitly excluded by approval.
 - [ ] Q1-Q14 and subsequent ambiguities have current recorded dispositions.
 - [ ] Final maps, ledger/log and release/browser evidence match the actual source.
-- [ ] External limits and unpublished-draft status remain accurate.
+- [ ] External limits and published-draft target language remain accurate.
 
 ## Out of scope and conditional work
 
@@ -442,8 +609,9 @@ These are proposed Phase 0 dispositions, not silent removal of existing support.
 |---|---|---|
 | SDK edits in this research task | Out of scope | Separate implementation authorization |
 | Draft-10 aliases/dual-wire support | Excluded by spec-first alpha policy | Explicit logged exception |
-| Full Budgets metering/settlement | Separate initiative | Q10 rulings, transaction/persistence model and both-app scenarios |
-| Result-release execution | Disabled; explicit unsupported handling/model awareness | Q6/Q10 selection and safe S16 in both hosts |
+| Full Budgets metering/settlement | Separate initiative | Transaction/persistence model and both-app scenarios; Q10 spec rulings apply |
+| Result-release execution | Disabled; explicit unsupported handling/model awareness | Q6 selection and safe S16 in both hosts |
+| Optional upgrade-checklist items | Selected individually in Phase 0 | Real support and tests, not metadata-only claims |
 | Annotations, link discovery, algorithm advertisement | Select small optional slices in Phase 0 | Conditional validation and real support, not metadata-only claims |
 | Hosted child provisioning/native attestation | Guidance and existing regression only | Approved platform-specific design |
 | Supervision/control-plane protocol | Separate companion/deployment concern | Pinned defined companion and authorized scope |

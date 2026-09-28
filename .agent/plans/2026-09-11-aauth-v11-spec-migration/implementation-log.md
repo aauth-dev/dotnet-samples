@@ -1,8 +1,8 @@
 ---
-description: Seeded decision gate for draft-11 WIP migration; implementation has not begun.
+description: Seeded decision gate for the AAuth draft-11 migration; implementation has not begun.
 ---
 
-# Implementation log - AAuth draft-11 WIP
+# Implementation log - AAuth draft-11
 
 Append-only log. Research defaults do not grant implementation authorization.
 No SDK runtime gates have been run for this initiative. Prior plans and existing
@@ -41,12 +41,30 @@ and tracked-document whitespace checks were clear. These are documentation
 checks, not SDK tests. No build, unit, conformance, browser or external interop
 pass is claimed, and all implementation definitions of done remain unchecked.
 
+### [2026-09-25] [Phase 0] Retarget to published draft-11
+
+RESOLVED. Draft-11 was published at AAuth tag `draft-hardt-oauth-aauth-protocol-11`
+(commit `178e9e6`) with HTTP Signature Keys -09. Both are vendored in
+[`aauth-spec/v11/`](../../../aauth-spec/v11/), along with the per-role
+[upgrade checklists](../../../aauth-spec/v11/upgrade-10-to-11/README.md) from
+commit `180bc95`. The WIP snapshot remains readable at `e6d18a3`. The
+[implementation plan](implementation-plan.md#target-pins) now targets the
+published text. Its upstream rulings table gives the governing line for each Q.
+This is a planning change. It does not authorize SDK implementation.
+
 ## Deviations from plan
 
 None. Implementation has not started. The package follows the seven-document
 draft-10 pattern without inheriting completed checkboxes, historical API counts,
 defect verdicts or test results. Its upstream-question section is part of the
 research, not a new specification or modification of vendored bytes.
+
+### [2026-09-25] [Phase 0] Research citations still point at WIP lines
+
+PROCEEDED (default: callouts now, full re-derivation in Phase 0). The v11 line
+citations in `research.md`, the ledger and the maps refer to the WIP capture.
+The plan's new citations were checked against the published files. Phase 0 now
+includes re-deriving the rest before implementation.
 
 ## Open questions
 
@@ -79,3 +97,14 @@ entries per question, retaining this original record. Record selected baselines,
 packages if any, exact tests and unavailable environments when they occur.
 Do not retrospectively invent baseline test evidence or promote research
 defaults into approvals silently.
+
+### [2026-09-25] [Phase 0] Q1-Q14 status after published draft-11
+
+BLOCKED for SDK implementation authorization only. Upstream uncertainty no
+longer blocks the gate: [PR #162](https://github.com/dickhardt/AAuth/pull/162)
+and the published text resolve Q1-Q5, Q7-Q11, Q13 and Q14. The citations are in
+[the plan's upstream rulings](implementation-plan.md#upstream-rulings). Q4, Q8
+and Q9 leave SDK design choices (consent caches, retained-result storage,
+revocation delivery). Q6 (optional capability selection) and Q12 (persistence
+and public API migration) remain SDK decisions. Record each as `RESOLVED` or
+`PROCEEDED` when implementation is authorized; this entry does not approve them.
