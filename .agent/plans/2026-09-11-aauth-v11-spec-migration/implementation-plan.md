@@ -6,10 +6,13 @@ description: Proposed phased SDK, API, sample and docs migration to published AA
 
 Created 2026-09-11 against the draft-11 WIP; retargeted 2026-09 to the published
 draft. Companion to [research.md](research.md), based on SDK
-`94576a3ebcba8cd1d167923e50c8796132057600`. SDK implementation has not been
-authorized or begun. All completion boxes remain open. The SDK still targets
-draft-10. Git publication of this research branch is separately authorized in
-[implementation-log.md](implementation-log.md).
+`94576a3ebcba8cd1d167923e50c8796132057600`. Implementation was authorized on
+2026-09-28 and is in progress on `wip/aauth-draft-11`; decisions and evidence
+are in [implementation-log.md](implementation-log.md). A box is ticked only when
+a named, passing test or gate backs it. The SDK and both apps now run the
+draft-11 identity model, exchange and revocation contracts. The open boxes, and
+the post-cutover items added to Phases 3 and 5-10, are what remains before
+[closing out the plan](#closing-out-the-plan).
 
 ## Target pins
 
@@ -240,13 +243,13 @@ Phase rule: typed person verification, never person-to-auth fallback.
 
 ### Definition of Done
 
-- [ ] Person typ/claims/DWK/issuer/audience/key and forbidden scope/account cases pass.
-- [ ] Person tokens cannot satisfy auth-only authorization.
+- [x] Person typ/claims/DWK/issuer/audience/key and forbidden scope/account cases pass.
+- [x] Person tokens cannot satisfy auth-only authorization.
 - [ ] Person-token lifetime is capped by 1 h, agent, upstream and mission expiry.
 - [ ] `capabilities` and `login_hint` reach the person-token decision.
-- [ ] Immediate/deferred issuance retains exact verified source expiry.
-- [ ] Header/body expiry and optional future iat boundaries have separate tests.
-- [ ] Metadata, compiled callers, focused tests and solution build pass.
+- [x] Immediate/deferred issuance retains exact verified source expiry.
+- [x] Header/body expiry and optional future iat boundaries have separate tests.
+- [x] Metadata, compiled callers, focused tests and solution build pass.
 
 ## Phase 3 - mission envelopes and lifecycle storage
 
@@ -275,15 +278,25 @@ Phase rule: exact blob bytes and mission_s256, no legacy header compatibility.
   `mission_s256` over the decoded blob bytes before first use (AG-32). Stop
   sending `AAuth-Mission` and drop it from covered components; name the
   mission with `mission_s256` on person-token requests (AG-30).
+- Keep the approver's `expires_at` on deferred mission approval. The
+  `MissionCreation` pending path currently completes without it, so a mission
+  approved after `202` never expires (post-cutover item 8).
+- Make [MockPersonServer](../../../samples/MockPersonServer/Program.cs)'s own
+  `/mission` handler issue `person_tokens` through `IMissionPersonTokenIssuer`,
+  and have one sample mission proposal name `resources`, so the demos show the
+  approval map (#mission-approval; post-cutover item 10).
 
 ### Definition of Done
 
-- [ ] Envelope formatting does not affect digest; modified blob bytes fail.
+- [x] Envelope formatting does not affect digest; modified blob bytes fail.
 - [ ] Capabilities are outside the hash and partial resource approvals work.
 - [ ] Expiry and terminal-state invariants survive store mutation/races.
 - [ ] Accepted updates have retained exact bytes without changing mission identity.
-- [ ] Agents reject an approval whose blob bytes do not match `mission_s256`.
-- [ ] Compiled callers and focused governance/build checks pass.
+- [x] Agents reject an approval whose blob bytes do not match `mission_s256`.
+- [x] Compiled callers and focused governance/build checks pass.
+- [x] Approval issues `person_tokens` for asserted resources, omits the rest, and tracks each as an agent-token grant.
+- [ ] A deferred mission approval keeps the approver's `expires_at`.
+- [ ] MockPersonServer approvals carry `person_tokens`, and both apps show a proposal that names `resources`.
 
 ## Phase 4 - resource and exchange cutover
 
@@ -339,13 +352,13 @@ Phase rule: resource/auth identity is ps/sub/key based; no agent/act/mission fal
 
 - [ ] Independent wire tests cover prerequisite, step-up and both exchange legs.
 - [ ] Substitution/stripping/identity overwrite fails independently at PS and AS.
-- [ ] Removed identity/mission fields are absent from active core producers/consumers.
+- [x] Removed identity/mission fields are absent from active core producers/consumers.
 - [ ] Missing body coverage/tampering fails before policy or consent mutation.
 - [ ] Immediate/deferred expiry and AS error mapping tests pass.
-- [ ] Clarification replacement rejects a mismatched or unverified pair.
+- [x] Clarification replacement rejects a mismatched or unverified pair.
 - [ ] Consent views attribute agent- and resource-asserted content separately.
-- [ ] Affected core/R3/Events projects and solution build are green.
-- [ ] Minimum person-client and protected-ticket consumers work with new identity contracts.
+- [x] Affected core/R3/Events projects and solution build are green.
+- [x] Minimum person-client and protected-ticket consumers work with new identity contracts.
 
 ## Phase 5 - agent caches, refresh and deferred completion
 
@@ -380,6 +393,16 @@ Phase rule: preserve original credential provenance; no blanket unsafe replay.
   five-minute margin, top-down; resource tokens are exempt (Q7, AG-70).
 - Add selected link discovery only with URL checks before fetching
   and no verifier-key-discovery coupling.
+- Reuse a matching `Mission.PersonTokens` entry (same resource and
+  `mission_s256`, unexpired, bound to the signing key) before calling
+  `person_token_endpoint`, from `ChallengeHandler` and `MissionSession`. That is
+  the purpose of the approval map (#mission-approval). Update both apps' mission
+  step plans and `PLAN_STEPS` if the `/person` step disappears (post-cutover
+  item 11).
+- Move the [MockAgentProvider](../../../samples/MockAgentProvider/Program.cs)
+  refresh endpoint to the shared verifier, so a missing or unverifiable
+  signature is `401` with `Signature-Error`, not a `400 invalid_request` body
+  (#error-responses; post-cutover item 4).
 - Deliver S01-S04/S13 in both hosts with actual wire captures.
 
 ### Definition of Done
@@ -390,7 +413,9 @@ Phase rule: preserve original credential provenance; no blanket unsafe replay.
 - [ ] A repeated auth token at the pending URL returns the retained result.
 - [ ] Each published token-endpoint and polling error has a distinct agent outcome.
 - [ ] Refresh order, ownership, cancellation and recovery tests pass.
-- [ ] Both primary apps exercise person and deferred flows with matching steps.
+- [x] Both primary apps exercise person and deferred flows with matching steps.
+- [ ] Agents reuse an approved mission person token instead of calling `/person`; mismatched resource, mission, key or expiry falls back.
+- [ ] MockAgentProvider refresh answers signature failures with `401` and `Signature-Error`.
 
 ## Phase 6 - supervision, mission actions and delegation
 
@@ -424,6 +449,11 @@ Phase rule: no act-derived authority or direct-AS agent routing; explicit trust 
   with `invalid_subagent_token` (PS-71). Auth tokens bind to the sub-agent key,
   and the AS records the parent from `agent_token`, not `act` (AS-12, AS-13).
   The AS verifies `upstream_token` too (AS-14).
+- Upstream Token Verification step 4 (L1835): the agent-token half is enforced
+  through the PS token graph and tested. Add the person-binding half: a PS
+  seam (for example an `IIdentityClaimsAsserter` outcome or an agent-person
+  binding store) through which the host reports a revoked binding, answered
+  `revoked_upstream_token` (L2593; post-cutover item 3).
 - Deliver S05-S07 in both apps, with MissionAgent and AgentConsole aligned.
 
 ### Definition of Done
@@ -434,7 +464,9 @@ Phase rule: no act-derived authority or direct-AS agent routing; explicit trust 
 - [ ] Upstream `aud` mismatch, foreign-AP intermediaries and copied `sub` fail.
 - [ ] Sub-agent `iss` mismatch fails with `invalid_subagent_token`.
 - [ ] Direct-worker and wrong-parent PS requests fail.
-- [ ] Both apps' sequences and payload assertions use PS-recorded delegation.
+- [x] Both apps' sequences and payload assertions use PS-recorded delegation.
+- [x] An upstream token issued from a revoked calling agent's agent token is `revoked_upstream_token`.
+- [ ] A host-revoked agent-person binding makes the upstream token `revoked_upstream_token`.
 
 ## Phase 7 - revocation authority and dependency graph
 
@@ -471,6 +503,22 @@ Phase rule: caller's namespace only; no old issuer override or unknown-token 404
   selected in Phase 0.
 - Update header/body/poll codes and S08 in both apps; remove Wallet/Bookings
   cross-issuer PS-revocation examples.
+- Post-cutover items (the `{jti, exp}` cutover itself is done):
+  - Require `content-digest` and `content-type` coverage at every revocation
+    endpoint, including resource endpoints mapped behind `UseAAuth`. The spec
+    MUST says "at a resource's revocation endpoint as much as a PS's or an
+    AS's" (L2672). Endpoint metadata needs a required-components field (item 2).
+  - Bound entries and rate per accepted issuer, answering `rate_limited` (`429`,
+    `Retry-After` REQUIRED). This SHOULD applies because
+    `MapAAuthIssuerRevocation` defaults to `AAuthTrust.Any` (L2745; item 5).
+  - Deferred revocation: answer `202` with a pending URL when the cascade
+    outlasts the hold (about 20 seconds without `Prefer: wait`). Polls must come
+    from the revoking identity (others `404`), and a recipient with nothing
+    downstream never answers `202`. As a caller, poll a downstream `202` rather
+    than reporting `revocation_unavailable` (L2728-L2730; item 6).
+  - Record every AS the PS presents each person token to, and revoke only there.
+    Make the MockPersonServer `/local/wallet/revoke` route use those records
+    instead of calling every configured AS (#revocation-cascade; item 9).
 
 ### Definition of Done
 
@@ -480,6 +528,10 @@ Phase rule: caller's namespace only; no old issuer override or unknown-token 404
 - [ ] Registration, consent completion and revocation races are covered.
 - [ ] Cascades, notification failure and retention have controlled-clock tests.
 - [ ] `downstream` outcomes, `202` polling identity and `rate_limited` have wire tests.
+- [x] Requests are `{jti, exp}` keyed by the verified caller; body `iss` is ignored and `unsupported_iss` is enforced.
+- [ ] Every revocation endpoint rejects a request whose signature omits `content-digest` or `content-type`.
+- [ ] One accepted issuer cannot exceed its entry or rate bound without `429 rate_limited` and `Retry-After`.
+- [ ] The PS revokes a person token only at the Access Servers it was presented to, and the sample route uses those records.
 
 ## Phase 8 - R3 execution, Catalog and Events
 
@@ -492,7 +544,11 @@ Phase rule: PerCall and seven standard vocabularies, no gateway/conditional alia
 - Rename R3 Conditional contracts; remove document/proposal Version and OpenAPI
   Gateway APIs from [models](../../../src/AAuth.R3/Model/), schemas, metadata,
   claims and factories. Preserve byte hashes, structural equality and legitimate
-  format qualifiers.
+  format qualifiers. On the wire (post-cutover item 1): the auth token claim
+  `r3_conditional` becomes `r3_per_call`, R3 documents and proposals drop
+  `version`, and the `per-call` access mode plus operation access-mode
+  annotations are supported (R3 #access-mode-annotation, #operation-identifier-scope).
+  Other draft-11 R3 implementations cannot interoperate until this lands.
 - Redesign [Catalog](../../../samples/MockResourceServers/Catalog/) using the
   selected standard definition/resource layout, with unique operation IDs,
   discovery, shared UI/session, snippets and negative tests.
@@ -507,8 +563,10 @@ Phase rule: PerCall and seven standard vocabularies, no gateway/conditional alia
 - Resolve [BookingsEvents](../../../samples/EventSupport/BookingsEvents.cs)
   ticket binding and [Events stores](../../../src/AAuth.Events/EventStores.cs)
   per Q5: record the JWK thumbprint of the key the resource verified and match
-  the subscribe token's `cnf.jwk` at redemption. Deduplicate event deliveries on
-  `(iss, jti)`, not `eid`, and answer `404` for unknown or finished
+  the subscribe token's `cnf.jwk` at redemption (done). Deduplicate event
+  deliveries on `(iss, jti)`, not `eid`: the sample store still keys
+  `agent_events` by `(issuer, eid)` (Events L363, L456; post-cutover item 7).
+  Answer `404` for unknown or finished
   subscriptions. Complete the identity contract already migrated in Phase 4 with
   SQLite transition/redemption and per-call retained-result integration. Preserve
   public subscriptions and self-JWT semantics. Deliver S09-S12 and selected
@@ -520,6 +578,7 @@ Phase rule: PerCall and seven standard vocabularies, no gateway/conditional alia
 ### Definition of Done
 
 - [ ] No obsolete R3 names/emission; seven vocabulary and Catalog tests pass.
+- [ ] A draft-11 R3 fixture (`r3_per_call`, no `version`, `per-call` annotation) round-trips with its published hash.
 - [ ] One grant cannot execute twice under fresh signatures; retries return retained result.
 - [ ] Foreign valid PS cannot read unentitled R3 documents.
 - [ ] Protected Events tickets reject a different key; deliveries dedupe on `(iss, jti)`.
@@ -547,7 +606,7 @@ Phase rule: report only verified checks; preserve generic and deployed-profile b
 - [ ] Ledger negatives have execution evidence or explicit conditional/deployment dispositions.
 - [ ] High-stakes R findings are directly reproduced at their controlling code.
 - [ ] API map has no unmapped changed public-source files; historical maps untouched.
-- [ ] Release/full solution, explicit R3/Events and TypeScript gates pass.
+- [x] Release/full solution, explicit R3/Events and TypeScript gates pass.
 
 ## Phase 10 - samples, snippets and docs analysis-and-update sweep
 
@@ -567,6 +626,8 @@ Phase rule: current-format live guidance; preserve intentional generic/OIDC/hist
 - Validate exact C# snippets, response shapes, source/default tables, links,
   TypeScript and fresh desktop/mobile browser matrices with zero retries.
 - Reconcile draft-10 to draft-11 target language only with verified supported scope.
+- Rename the Wallet sample's `DirectAs` flow and its UI, snippet and spec
+  labels, since it now routes through the PS (post-cutover item 12).
 
 ### Definition of Done
 
@@ -574,6 +635,7 @@ Phase rule: current-format live guidance; preserve intentional generic/OIDC/hist
 - [ ] No unexplained old wire/API name remains in live guidance.
 - [ ] Both apps' real traces and static instructions agree for selected flows.
 - [ ] Stub/Keycloak browser results and external/unavailable limits are recorded separately.
+- [ ] No Wallet flow is labelled as a direct agent-to-AS exchange.
 
 ## Phase 11 - independent internal review and closure
 
@@ -600,6 +662,28 @@ Phase rule: fresh spec-grounded review; no implicit acceptance of unresolved tru
 - [ ] Q1-Q14 and subsequent ambiguities have current recorded dispositions.
 - [ ] Final maps, ledger/log and release/browser evidence match the actual source.
 - [ ] External limits and published-draft target language remain accurate.
+
+## Closing out the plan
+
+Run this once every phase's Definition of Done is ticked. AAuth issue #199
+(AS verification of `agent_token`) is excluded: it stays an open upstream
+question under the interim ruling in the log.
+
+1. Tick the remaining Phase 2-11 boxes, each backed by a named test or gate
+   recorded in the log. Leave no box ticked on intent alone.
+2. Finish Phase 0: re-derive every `v11` citation in research, ledger and maps;
+   give F01-F24 an owner and check; assign each upgrade-checklist ID or record
+   its optional exclusion.
+3. Run Phase 9 security reconciliation over the finished source, then the
+   Phase 11 independent review. Fix or explicitly exclude each finding.
+4. Final gates on a clean tree: Release build with zero warnings; all four test
+   projects; ApiSurface "current"; docs inventory current; e2e typecheck; a full
+   Playwright run with zero retries (stub), and Keycloak separately when
+   available.
+5. Append a dated closure entry to the implementation log with commit, gate
+   results, exclusions and remaining upstream questions. Update this plan's
+   status paragraph to "complete".
+6. Push, open a PR or tag a release only with explicit authorization.
 
 ## Out of scope and conditional work
 

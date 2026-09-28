@@ -482,6 +482,23 @@ RESOLVED.
   (Conformance `RevocationLifecycleTests`). Fixed in "Revoked source tokens on a
   first request" above.
 
+### [2026-09-28] [Phase 3, 5-10] Post-cutover items folded into the plan
+
+PROCEEDED (default: assign each to its owning phase). A gap review after the
+revocation cutover found 12 remaining items. Eleven are now responsibilities
+and Definition of Done boxes in their owning phases:
+
+- Phase 3: deferred-approval expiry (item 8); MockPersonServer `person_tokens` and a resource-naming proposal (10).
+- Phase 5: agent reuse of `Mission.PersonTokens` (11); MockAgentProvider `401` Signature-Error (4).
+- Phase 6: agent-person binding revocation at step 4 (3).
+- Phase 7: revocation digest coverage at every endpoint (2); per-issuer bounds and `rate_limited` (5); deferred `202` revocation (6); AS presentation records (9).
+- Phase 8: R3 draft-11 wire names (1); event dedup on `(iss, jti)` (7).
+- Phase 10: Wallet `DirectAs` label (12).
+
+AAuth issue #199 is excluded and stays an open upstream question. Boxes were
+ticked only where a named, passing test backs them; 29 are ticked and 57 are
+open. The plan gained a closing-out section for when every box is ticked.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate
