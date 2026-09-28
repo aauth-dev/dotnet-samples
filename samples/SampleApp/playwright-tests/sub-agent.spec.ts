@@ -1,15 +1,16 @@
 import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/blazor';
 import { completeWorkerConsent } from '../../../tests/e2e/helpers/worker-consent';
+import { Urls } from '../../../tests/e2e/helpers/agents';
 
 /**
  * Sub-Agents — parent-mediated workers. Unlike the other SampleApp pages this
  * one runs the token lifecycle in-process with the real SDK builders, so it
  * needs no mock servers or standing consent. The spec asserts the wire
  * artifacts the page surfaces: the sub-agent's `parent_agent` claim, the
- * sub-agent-bound `cnf`, and the nested `act`.
+ * sub-agent-bound `cnf`, and the person-named (ps, sub) auth token.
  */
-test('sub-agent flow shows parent_agent, sub-agent-bound cnf, and nested act', async ({ page }) => {
+test('sub-agent flow shows parent_agent and a worker-bound auth token', async ({ page }) => {
   await page.goto('/sub-agent');
   await expect(page.locator('h2')).toHaveText('Sub-Agents — Parent-Mediated Workers');
   await waitForInteractive(page, 'button.btn-primary');
@@ -32,17 +33,27 @@ test('sub-agent flow shows parent_agent, sub-agent-bound cnf, and nested act', a
   await expect(page.getByText('Sub-agent calls the resource with the token')).toBeVisible();
 
   // The sub-agent token carries the parent_agent claim (the authoritative marker).
-  const subClaims = page.locator('pre code.language-json').nth(1);
-  await expect(subClaims).toContainText('parent_agent');
-  await expect(subClaims).toContainText('aauth:aria+worker1@');
+  const json = page.locator('pre code.language-json');
+  const worker = JSON.parse(await json.nth(1).innerText()) as Record<string, any>;
+  expect(worker.sub).toMatch(/^aauth:aria\+worker1@/);
+  expect(worker.parent_agent).toBe('aauth:aria@localhost');
 
-  // The issued auth token binds cnf to the sub-agent (success alert) and nests act.
+  // The issued AS auth token binds cnf to the worker's key and names the person
+  // (ps, sub) — no agent claim and no act chain.
   await expect(page.locator('.alert-success')).toContainText('matches');
-  const authClaims = page.locator('pre code.language-json').nth(2);
-  await expect(authClaims).toContainText('"agent": "aauth:aria+worker1@');
-  await expect(authClaims).toContainText('"act"');
-  await expect(authClaims).toContainText('aauth:original@localhost');
-  await expect(authClaims).toContainText('aauth-access.json');
-  await expect(page.locator('pre code.language-json').first()).toContainText('aauth:aria+worker1@localhost');
+  const auth = JSON.parse(await json.nth(2).innerText()) as Record<string, any>;
+  expect(auth.cnf.jwk).toEqual(worker.cnf.jwk);
+  expect(auth.iss).toBe(Urls.accessServer);
+  expect(auth.ps).toBe(Urls.personServer);
+  expect(auth.dwk).toBe('aauth-access.json');
+  expect(typeof auth.sub).toBe('string');
+  expect(auth).not.toHaveProperty('agent');
+  expect(auth).not.toHaveProperty('act');
+
+  // The Wallet served the worker the same person the auth token names.
+  const wallet = JSON.parse(await json.first().innerText()) as Record<string, any>;
+  expect(wallet.ps).toBe(Urls.personServer);
+  expect(wallet.sub).toBe(auth.sub);
+  expect(wallet.iss).toBe(Urls.accessServer);
   await expect(page.getByText('Actual signed HTTP responses: worker 200, parent 401.')).toBeVisible();
 });

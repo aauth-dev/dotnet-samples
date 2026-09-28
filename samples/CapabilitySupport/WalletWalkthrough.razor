@@ -107,6 +107,7 @@
     private static readonly ProtocolMessage[] ClarificationSequence =
     [
         ProtocolMessage.Http(1, "setup", "agent", "ap", "Enroll and receive agent JWT", responseLabel: "200"),
+        ProtocolMessage.Http(2, "network", "agent", "ps", "Obtain Wallet person token", responseLabel: "200"),
         ProtocolMessage.Http(2, "network", "agent", "wallet", "Request wallet review; receive challenge", responseLabel: "401"),
         ProtocolMessage.Http(3, "network", "agent", "ps", "Exchange Wallet resource token", "202/200"),
         ProtocolMessage.Http(3, "network", "ps", "as", "Federate review authorization", "202/200"),
@@ -125,12 +126,15 @@
     private static readonly ProtocolMessage[] DirectAsSequence =
     [
         ProtocolMessage.Http(1, "setup", "agent", "ap", "Enroll and receive agent JWT", responseLabel: "200"),
+        ProtocolMessage.Http(2, "network", "agent", "ps", "Obtain Concierge person token", responseLabel: "200"),
         ProtocolMessage.Http(2, "network", "agent", "concierge", "Request delegated Wallet access", responseLabel: "401"),
         ProtocolMessage.Http(3, "network", "agent", "ps", "Exchange upstream resource token", "202/200"),
         ProtocolMessage.Http(3, "network", "ps", "as", "Federate upstream authorization", "202/200"),
         ProtocolMessage.Http(3, "network", "user", "as", "Approve upstream grant", responseLabel: "200"),
-        ProtocolMessage.Http(4, "network", "agent", "concierge", "Present upstream grant", "200"),
-        ProtocolMessage.Http(4, "network", "concierge", "as", "Exchange directly for Wallet grant", "200"),
+        ProtocolMessage.Http(4, "network", "agent", "concierge", "Present upstream grant", "202/200"),
+        ProtocolMessage.Http(4, "network", "concierge", "ps", "Exchange with upstream_token at the person's PS", "202/200"),
+        ProtocolMessage.Http(4, "network", "user", "ps", "Approve the chained Wallet grant", responseLabel: "200"),
+        ProtocolMessage.Http(4, "network", "ps", "as", "Federate Wallet authorization", "200"),
         ProtocolMessage.Http(4, "network", "concierge", "wallet", "Read Wallet with delegated grant", responseLabel: "200"),
         ProtocolMessage.Http(5, "network", "agent", "wallet", "Reject upstream token at Wallet", responseLabel: "401"),
         ProtocolMessage.Http(6, "network", "agent", "concierge", "Repeat delegated Wallet read", responseLabel: "200"),
@@ -143,6 +147,7 @@
     private static readonly ProtocolMessage[] RevocationSequence =
     [
         ProtocolMessage.Http(1, "setup", "agent", "ap", "Enroll and receive agent JWT", responseLabel: "200"),
+        ProtocolMessage.Http(2, "network", "agent", "ps", "Obtain Wallet person token", responseLabel: "200"),
         ProtocolMessage.Http(2, "network", "agent", "wallet", "Request Wallet access", responseLabel: "401"),
         ProtocolMessage.Http(3, "network", "agent", "ps", "Exchange Wallet resource token", "202/200"),
         ProtocolMessage.Http(3, "network", "user", "ps", "Approve Wallet grant", responseLabel: "200"),

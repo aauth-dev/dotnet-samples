@@ -37,6 +37,7 @@ var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:Signatu
 // AS as the auth-token issuer.
 var accessServerUrl = builder.Configuration["AAuth:AccessServer"] ?? "http://localhost:5500";
 var trustedAccessServers = new HashSet<string> { accessServerUrl };
+var trustedPersonServers = builder.Configuration.GetSection("AAuth:TrustedPersonServers").Get<string[]>() ?? ["http://localhost:5100"];
 
 // One DI call: verifier, discovery clients (pooled handler), JTI store, and the
 // published metadata — no manual HttpClient/discovery wiring.
@@ -67,18 +68,18 @@ AAuth.Server.RevocationEndpoint.MapAAuthRevocationEndpoint(app,
     app.Services.GetRequiredService<AAuth.Server.IJtiStore>(), options =>
     {
         options.AllowTokenIssuer = true;
-        var personServers = builder.Configuration.GetSection("AAuth:TrustedPersonServers").Get<string[]>() ?? ["http://localhost:5100"];
-        options.IsTrustedPersonServer = (caller, token) => personServers.Contains(caller, StringComparer.Ordinal)
+        options.IsTrustedPersonServer = (caller, token) => trustedPersonServers.Contains(caller, StringComparer.Ordinal)
             && token.Issuer == accessServerUrl;
     });
 
-// One declarative pipeline. Four-party: the resource token's `aud` is the AS
-// (PersonServerAudience), routing the PS to federate; the AS is the trusted
-// auth-token issuer (iss = AS, dwk = aauth-access.json).
+// One declarative pipeline. Four-party: the resource token's `aud` is the AS,
+// routing the PS to federate; the AS is the trusted auth-token issuer
+// (iss = AS, dwk = aauth-access.json) and the PS the trusted person-token issuer.
 app.UseRouting();
 app.UseAAuth(o =>
 {
     o.TrustedAuthTokenIssuers = trustedAccessServers;
+    o.TrustedPersonServers = trustedPersonServers.ToHashSet();
     o.AccessServer = accessServerUrl;
 });
 

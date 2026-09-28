@@ -184,8 +184,9 @@ app.MapPost("/local/wallet/revoke", async (HttpContext context, MetadataClient m
     try
     {
         var key = SignatureKeyParser.Parse(context.Request.Headers["Signature-Key"].ToString()).ConfirmationKey;
+        // The auth token names no agent; the requester proves holdership by its cnf key.
         verified = await verifier.VerifyAuthTokenWithJwksAsync(token, metadata, jwks, wallet,
-            key, owner.Agent, cancellationToken: context.RequestAborted);
+            key, cancellationToken: context.RequestAborted);
         if (!trustedAccessServers.Contains(verified.Issuer, StringComparer.Ordinal))
             return AAuthProblemDetails.Create("denied", statusCode: 403);
     }

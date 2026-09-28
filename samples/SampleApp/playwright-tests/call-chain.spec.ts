@@ -1,7 +1,7 @@
 import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/blazor';
 import { readResponseJson, expectStatus } from '../../../tests/e2e/helpers/json';
-import { grantConsent, approveInPopup } from '../../../tests/e2e/helpers/consent';
+import { grantConsent, approveInPopup, directedSubject } from '../../../tests/e2e/helpers/consent';
 import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
 
 /**
@@ -60,10 +60,13 @@ test('the page resets standing consent so both hops still prompt', async ({ page
   await expectStatus(page, 200, 60_000);
   const json = (await readResponseJson(page)) as Record<string, unknown>;
 
-  // Upstream: how *we* (the calling agent) authenticated to the Concierge.
+  // Upstream: how *we* (the calling agent) authenticated to the Concierge. The
+  // auth token names the person (ps, sub directed at the Concierge), not us.
   const upstream = json.upstream as Record<string, unknown>;
   expect(upstream.scheme).toBe('jwt');
-  expect(upstream.agent).toBe(Agents.sampleApp);
+  expect(upstream.ps).toBe(Urls.personServer);
+  expect(upstream.sub).toBe(directedSubject(Urls.concierge));
+  expect(upstream).not.toHaveProperty('agent');
   // The token type renders as its protocol `typ` string, not the enum's integer.
   expect(upstream.tokenType).toBe('aa-auth+jwt');
 
@@ -71,19 +74,17 @@ test('the page resets standing consent so both hops still prompt', async ({ page
   const concierge = json.concierge as Record<string, unknown>;
   expect(concierge.identity).toBe('aauth:concierge@localhost');
 
-  // Downstream: Calendar's three-party identity with the nested act chain.
+  // Downstream: Calendar's three-party identity. The chain keeps the same PS but
+  // the PS mints a fresh directed sub for the Calendar (§Directed Identifiers
+  // Across a Chain); there is no act chain and no agent claim.
   const downstream = json.downstream as Record<string, unknown>;
   expect(downstream.accessMode).toBe('three-party');
   expect(downstream.scheme).toBe('jwt');
-  // The resource sees the Concierge as the immediate actor.
-  expect(downstream.agent).toBe('aauth:concierge@localhost');
   expect(downstream.iss).toBe(Urls.personServer);
+  expect(downstream.ps).toBe(upstream.ps);
+  expect(downstream.sub).toBe(directedSubject(Urls.calendar));
+  expect(downstream.sub).not.toBe(upstream.sub);
   expect(downstream.scope).toEqual(['calendar.read']);
-
-  // The act chain records the upstream delegation: the presenter (Concierge) is
-  // the top-level `agent`, and act.agent names the immediate upstream delegator
-  // (us). Our grant was direct — no nesting.
-  const act = downstream.act as Record<string, unknown>;
-  expect(act.agent).toBe(Agents.sampleApp);
-  expect(act.act).toBeUndefined();
+  expect(downstream).not.toHaveProperty('agent');
+  expect(downstream).not.toHaveProperty('act');
 });

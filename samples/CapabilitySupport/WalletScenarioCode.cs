@@ -11,12 +11,15 @@ public static class WalletScenarioCode
 
     public const string Clarification = """
         public static Task<string> ClarifyAsync(HttpClient signedAgent, MetadataClient metadata,
-            string personServer, string resourceToken,
+            string personServer, string resourceToken, string personToken,
             Func<Interaction, CancellationToken, Task> consent,
             Func<ClarificationRequirement, CancellationToken, Task<ClarificationResponse>> answer,
             CancellationToken cancellationToken)
             => new TokenExchangeClient(signedAgent, metadata).ExchangeAsync(personServer, resourceToken,
-                new TokenExchangeRequest { OnInteractionRequired = consent, OnClarificationRequired = answer },
+                new TokenExchangeRequest
+                {
+                    PresentedToken = personToken, OnInteractionRequired = consent, OnClarificationRequired = answer,
+                },
                 cancellationToken);
 
         public static ClarificationResponse Answer(string justification)
@@ -46,9 +49,9 @@ public static class WalletScenarioCode
                 new TokenKey(issuer, tokenId), cancellationToken);
 
         public static Task<string> RecoverAsync(HttpClient signedAgent, MetadataClient metadata,
-            string personServer, string freshResourceToken,
+            string personServer, string freshResourceToken, string personToken,
             Func<Interaction, CancellationToken, Task> consent, CancellationToken cancellationToken)
             => new TokenExchangeClient(signedAgent, metadata).ExchangeAsync(personServer, freshResourceToken,
-                new TokenExchangeRequest { OnInteractionRequired = consent }, cancellationToken);
+                new TokenExchangeRequest { PresentedToken = personToken, OnInteractionRequired = consent }, cancellationToken);
         """;
 }

@@ -17,6 +17,7 @@ public sealed class WalletDemoSession(string provider, string person, string wal
     private readonly AAuthKey _key = AAuthKey.Generate();
     private readonly HttpClient _http = AAuthHttpTransport.CreateClient(SampleEgress.Policy);
     private string? _agentToken;
+    private string? _personToken;
     private string? _resourceToken;
     private string? _authToken;
     private TaskCompletionSource<ClarificationResponse>? _answer;
@@ -32,7 +33,7 @@ public sealed class WalletDemoSession(string provider, string person, string wal
     public string[] Steps => Flow switch
     {
         WalletFlow.Clarification => ["Enroll agent", "Request wallet review", "Answer AS clarification and consent", "Read approved wallet review", "Reject a charge outside the grant"],
-        WalletFlow.DirectAs => ["Enroll agent", "Request concierge wallet access", "Approve upstream AS grant", "Delegate wallet read directly at AS", "Reject upstream token at Wallet", "Repeat the delegated read"],
+        WalletFlow.DirectAs => ["Enroll agent", "Request concierge wallet access", "Approve upstream AS grant", "Delegate wallet read through the PS", "Reject upstream token at Wallet", "Repeat the delegated read"],
         _ => ["Enroll agent", "Request wallet access", "Approve wallet grant", "Read wallet", "Reject agent as revoker", "PS revokes issuer-qualified grant", "Reject revoked grant", "Approve a fresh grant and recover"],
     };
     private string Resource => Flow == WalletFlow.DirectAs ? concierge : wallet;
@@ -60,6 +61,7 @@ public sealed class WalletDemoSession(string provider, string person, string wal
                     return;
                 }
                 break;
+            case 3 when Flow == WalletFlow.DirectAs: await DelegateAsync(cancellationToken); break;
             case 3: await AccessAsync(Resource + Path, _authToken!, HttpStatusCode.OK, cancellationToken); break;
             case 4 when Flow == WalletFlow.Clarification:
                 await AccessAsync(wallet + "/wallet/charge", _authToken!, HttpStatusCode.Forbidden, cancellationToken); break;
@@ -114,6 +116,7 @@ public sealed class WalletDemoSession(string provider, string person, string wal
         {
             result = await new TokenExchangeClient(signed, metadata).ExchangeAsync(person, _resourceToken!, new TokenExchangeRequest
             {
+                PresentedToken = _personToken,
                 OnInteractionRequired = async (interaction, _) =>
                 {
                     ConsentUrl = interaction.BuildUserUrl();
@@ -141,13 +144,71 @@ public sealed class WalletDemoSession(string provider, string person, string wal
 
     private async Task<string> ChallengeAsync(string url, CancellationToken cancellationToken)
     {
-        using var signed = Signed(_agentToken!);
+        using (var agent = Signed(_agentToken!))
+        {
+            // §Person Token Required: the agent token earns a person-token requirement first.
+            using (var prerequisite = await agent.GetAsync(url, cancellationToken))
+            {
+                Require(prerequisite.StatusCode, HttpStatusCode.Unauthorized);
+                if (AAuthRequirementHeader.Parse(prerequisite.Headers.GetValues(AAuthRequirementHeader.Name).First()).Requirement
+                    != AAuthRequirementHeader.PersonTokenRequirement)
+                    throw new InvalidOperationException("Expected a person-token requirement.");
+            }
+            using var metadata = new MetadataClient(_http);
+            try
+            {
+                _personToken = await new TokenExchangeClient(agent, metadata).RequestPersonTokenAsync(person,
+                    new Uri(url).GetLeftPart(UriPartial.Authority), new TokenExchangeRequest
+                    {
+                        OnInteractionRequired = async (interaction, _) =>
+                        {
+                            ConsentUrl = interaction.BuildUserUrl();
+                            if (Changed is not null) await Changed();
+                        },
+                    }, cancellationToken);
+            }
+            finally
+            {
+                ConsentUrl = null;
+                if (Changed is not null) await Changed();
+            }
+        }
+        using var signed = Signed(_personToken);
         using var response = await signed.GetAsync(url, cancellationToken);
         Require(response.StatusCode, HttpStatusCode.Unauthorized);
         var resource = AAuthRequirementHeader.Parse(response.Headers.GetValues("AAuth-Requirement").First()).ResourceToken
             ?? throw new InvalidOperationException("Missing resource token challenge.");
         Result = ScenarioWireHandler.Claims(resource).ToJsonString(Pretty);
         return resource;
+    }
+
+    // The Concierge chains the downstream PS consent back as its own 202 (§Interaction Chaining).
+    private async Task DelegateAsync(CancellationToken cancellationToken)
+    {
+        using var client = new AAuthClientBuilder(_key).UseJwt(_authToken!).WithEgressPolicy(SampleEgress.Policy)
+            .WithInteractionHandling(options =>
+            {
+                options.OnInteractionRequired = async (url, _, _) =>
+                {
+                    ConsentUrl = url;
+                    if (Changed is not null) await Changed();
+                };
+                options.PollingTimeout = TimeSpan.FromMinutes(2);
+                options.DefaultPollInterval = TimeSpan.FromSeconds(1);
+            })
+            .WithInnerHandler(new ScenarioWireHandler(exchange => Exchanges.Add(exchange))
+            { InnerHandler = AAuthHttpTransport.CreateHandler(SampleEgress.Policy) }, AAuthTransportContract.EnforcesEgressPolicy).Build();
+        try
+        {
+            using var response = await client.GetAsync(concierge + "/wallet", cancellationToken);
+            Require(response.StatusCode, HttpStatusCode.OK);
+            Result = await response.Content.ReadAsStringAsync(cancellationToken);
+        }
+        finally
+        {
+            ConsentUrl = null;
+            if (Changed is not null) await Changed();
+        }
     }
 
     private async Task AccessAsync(string url, string token, HttpStatusCode expected, CancellationToken cancellationToken)

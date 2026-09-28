@@ -57,6 +57,7 @@ app.UseWhen(context => context.Request.Path.StartsWithSegments("/catalog"), bran
 {
     EgressPolicy = SampleEgress.Policy, ResourceIdentifier = issuer, AcceptedSchemes = ["jwt"],
     TrustedAuthTokenIssuers = new HashSet<string> { access },
+    TrustedPersonServers = new HashSet<string> { person },
 }));
 app.MapGet("/catalog/{service}", (string service, HttpContext context) =>
 {

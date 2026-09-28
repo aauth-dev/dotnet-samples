@@ -81,7 +81,7 @@ app.MapGet("/events", (HttpContext ctx) =&gt;
     {
         accessMode = "three-party",
         scheme = "jwt",
-        agent = r.Agent,
+        ps = r.PersonServer,
         sub = r.Subject,
         scope = r.Scopes, // ["calendar.read"]
         iss = r.Issuer,

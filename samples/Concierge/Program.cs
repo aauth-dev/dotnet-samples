@@ -85,8 +85,10 @@ app.MapAAuthAgentWellKnown(new AAuthAgentMetadataOptions
 // verifies the JWT issuer, and auto-challenges agent tokens with a
 // resource token requiring an auth token for access.
 // -----------------------------------------------------------------------
+bool IsWalletPath(PathString path) => path == "/wallet" || path.StartsWithSegments("/wallet-pending");
+
 app.UseWhen(
-    ctx => !ctx.Request.Path.StartsWithSegments("/.well-known") && ctx.Request.Path != "/wallet",
+    ctx => !ctx.Request.Path.StartsWithSegments("/.well-known") && !IsWalletPath(ctx.Request.Path),
     branch => branch.UseAAuthIntermediary(
         new AAuthVerificationOptions
         {
@@ -123,22 +125,18 @@ app.UseWhen(
 // Run the downstream chained call with the given upstream auth token. Returns
 // the combined chain result on success; throws AAuthInteractionChainedException
 // when the downstream PS defers for user consent, or
-// AAuthInteractionDeniedException when the user denied.
-// Run the downstream chained call with the given upstream auth token. Returns
-// the combined chain result on success; throws AAuthInteractionChainedException
-// when the downstream PS defers for user consent, or
 // AAuthInteractionDeniedException when the user denied. <paramref name="downstreamBase"/>
 // + <paramref name="downstreamPath"/> select the downstream resource — Calendar
 // "/events" for the plain chain or the mission-aware Trips "/trips" for a
-// mission-governed chain (§Mission Context at Resources). When the upstream auth
-// token carries a mission, WithCallChaining auto-forwards the AAuth-Mission header
-// (via MissionForwardingHandler) and routes the exchange to mission.approver, so
-// the mission governs every hop (§Call Chaining).
-app.UseWhen(ctx => ctx.Request.Path == "/wallet", branch => branch.UseAAuthIntermediary(
+// mission-governed chain. WithCallChaining routes every downstream request to the
+// PS the upstream token names (its `ps`); a `mission_s256` in the upstream token
+// governs every hop (§Call Chaining).
+app.UseWhen(ctx => IsWalletPath(ctx.Request.Path), branch => branch.UseAAuthIntermediary(
     new AAuthVerificationOptions
     {
         EgressPolicy = SampleEgress.Policy, ResourceIdentifier = conciergeUrl,
         TrustedAuthTokenIssuers = new HashSet<string> { accessServerUrl },
+        TrustedPersonServers = new HashSet<string> { psUrl },
     },
     new ChallengeOptions
     {
@@ -151,14 +149,8 @@ async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken, string 
 {
     // Self-issued agent token (iss = conciergeUrl) satisfies §Upstream Token
     // Verification step 3 — the PS can match upstream_token.aud against iss.
-    //
-    // Mission governance composes with call chaining (AAuth §Agent Governance,
-    // §Call Chaining): if the upstream auth token carries `mission.approver`,
-    // WithCallChaining auto-forwards the `AAuth-Mission` header (via
-    // MissionForwardingHandler) and routes to mission.approver. The mission-aware
-    // downstream path then re-binds the mission into the next resource_token, so a
-    // single mission governs the whole chain. With no mission present this same
-    // handler follows §Call Chaining's "No mission, iss is a PS" path unchanged.
+    // The downstream person token and auth token requests carry the upstream
+    // token as `upstream_token` and go to the PS it names (§Call Chaining).
     var capture = new ChainCaptureHandler { InnerHandler = AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
     using var downstream = AAuthClientBuilder.SelfIssuing(conciergeKey).WithEgressPolicy(SampleEgress.Policy)
         .As(conciergeUrl, agentId)
@@ -192,9 +184,10 @@ async Task<IResult> RunChainAsync(HttpContext ctx, string upstreamToken, string 
         upstream = new
         {
             scheme = upstreamResult?.Scheme,
-            agent = upstreamResult?.Agent,
             issuer = upstreamResult?.Issuer,
-            mission = ctx.GetAAuthParsedKey()?.Payload?["mission"],
+            ps = upstreamResult?.PersonServer,
+            sub = upstreamResult?.Subject,
+            mission_s256 = upstreamResult?.MissionS256,
             // Render the token type as its protocol `typ` string (e.g. "aa-auth+jwt")
             // rather than letting System.Text.Json emit the enum's integer value.
             tokenType = upstreamResult?.TokenType.ToHeaderValue(),
@@ -223,11 +216,20 @@ IResult ReEmitChainedInteraction(HttpContext ctx, PendingStore.Entry entry)
     return Results.Json(new { status = "interaction_required" }, statusCode: StatusCodes.Status202Accepted);
 }
 
-app.MapGet("/wallet", async (HttpContext context) =>
+app.MapGet("/wallet", async (HttpContext context, PendingStore pending) =>
 {
     var upstream = context.Features.Get<UpstreamAuthTokenFeature>()?.Token;
     if (upstream is null) return AAuthProblemDetails.Create("invalid_request", statusCode: 403);
-    return await RunChainAsync(context, upstream, walletUrl, "/wallet");
+    try
+    {
+        return await RunChainAsync(context, upstream, walletUrl, "/wallet");
+    }
+    catch (AAuthInteractionChainedException ex)
+    {
+        var entry = pending.Add(upstream, ex.Interaction.Url, ex.Interaction.Code,
+            downstreamBase: walletUrl, downstreamPath: "/wallet", pendingPrefix: "/wallet-pending");
+        return ReEmitChainedInteraction(context, entry);
+    }
 });
 
 app.MapGet("/", async (HttpContext ctx, PendingStore pending) =>
@@ -292,6 +294,10 @@ app.MapMethods("/pending/{id}", ["GET", "DELETE"], HandlePendingAsync);
 // "/pending/{id}" but for entries whose downstream hop is the mission-aware
 // Trips "/trips" (each poll re-drives RunChainAsync with the stored path).
 app.MapMethods("/mission-pending/{id}", ["GET", "DELETE"], HandlePendingAsync);
+
+// GET /wallet-pending/{id} — the four-party /wallet chain's poll route, verified
+// by the /wallet branch (AS-issued upstream auth tokens).
+app.MapMethods("/wallet-pending/{id}", ["GET", "DELETE"], HandlePendingAsync);
 
 async Task<IResult> HandlePendingAsync(HttpContext ctx, string id, PendingStore pending)
 {

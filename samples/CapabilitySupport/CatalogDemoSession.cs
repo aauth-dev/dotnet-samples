@@ -59,22 +59,35 @@ public sealed class CatalogDemoSession(string provider, string person, string re
 
     private async Task<string> AuthorizeAsync(string service, CancellationToken cancellationToken)
     {
+        var url = resource + "/catalog/" + service;
         using var signed = Signed(_agentToken!);
-        using var challenge = await signed.GetAsync(resource + "/catalog/" + service, cancellationToken);
-        if (challenge.StatusCode != HttpStatusCode.Unauthorized) throw new InvalidOperationException("Expected catalog challenge.");
-        var token = AAuthRequirementHeader.Parse(challenge.Headers.GetValues("AAuth-Requirement").First()).ResourceToken!;
         using var metadata = new MetadataClient(_http);
+        var exchange = new TokenExchangeClient(signed, metadata);
+        async Task Surface(Interaction interaction, CancellationToken _)
+        {
+            ConsentUrl = interaction.BuildUserUrl();
+            if (Changed is not null) await Changed();
+        }
         string grant;
         try
         {
-            grant = await new TokenExchangeClient(signed, metadata).ExchangeAsync(person, token, new TokenExchangeRequest
+            // §Person Token Required: the agent token earns a person-token requirement first.
+            using (var prerequisite = await signed.GetAsync(url, cancellationToken))
             {
-                OnInteractionRequired = async (interaction, _) =>
-                {
-                    ConsentUrl = interaction.BuildUserUrl();
-                    if (Changed is not null) await Changed();
-                },
-            }, cancellationToken);
+                if (prerequisite.StatusCode != HttpStatusCode.Unauthorized
+                    || AAuthRequirementHeader.Parse(prerequisite.Headers.GetValues(AAuthRequirementHeader.Name).First()).Requirement
+                        != AAuthRequirementHeader.PersonTokenRequirement)
+                    throw new InvalidOperationException("Expected a catalog person-token requirement.");
+            }
+            var personToken = await exchange.RequestPersonTokenAsync(person, resource,
+                new TokenExchangeRequest { OnInteractionRequired = Surface }, cancellationToken);
+            using var personClient = Signed(personToken);
+            using var challenge = await personClient.GetAsync(url, cancellationToken);
+            if (challenge.StatusCode != HttpStatusCode.Unauthorized) throw new InvalidOperationException("Expected catalog challenge.");
+            var token = AAuthRequirementHeader.Parse(challenge.Headers.GetValues(AAuthRequirementHeader.Name).First()).ResourceToken
+                ?? throw new InvalidOperationException("Catalog challenge is missing its resource token.");
+            grant = await exchange.ExchangeAsync(person, token,
+                new TokenExchangeRequest { PresentedToken = personToken, OnInteractionRequired = Surface }, cancellationToken);
         }
         finally
         {

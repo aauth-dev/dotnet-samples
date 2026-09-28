@@ -67,7 +67,8 @@ export function walletProtocolTests() {
         const total = flow === 'Clarification' ? 5 : flow === 'DirectAs' ? 6 : 8;
         for (let step = 4; step <= total; step++) {
           await page.locator('.wallet-next').click();
-          if (step === 8) await finishExchange(page, 8);
+          // DirectAs step 4: the Concierge chains the downstream PS consent back.
+          if (step === 8 || (flow === 'DirectAs' && step === 4)) await finishExchange(page, step);
           await expect.poll(async () => await page.getByRole('alert').count()
             ? await page.getByRole('alert').innerText() : await root.getAttribute('data-step'), { timeout: 45_000 }).toBe(String(step));
           await expect(page.getByRole('alert')).toHaveCount(0);
@@ -92,11 +93,18 @@ export function walletProtocolTests() {
         } else if (flow === 'DirectAs') {
           const result = JSON.parse(await page.getByTestId('wallet-result').innerText());
           expect(result.upstream.issuer).toBe('http://localhost:5500');
-          expect(result.upstream.mission).toBeNull();
+          expect(result.upstream.ps).toBe('http://localhost:5100');
+          expect(result.upstream.mission_s256).toBeNull();
+          // The chained Wallet grant is AS-issued for the same person's PS, with a
+          // sub directed at the Wallet rather than copied from the upstream token.
           expect(result.downstream.iss).toBe('http://localhost:5500');
-          expect(result.downstream.agent).toBe('aauth:concierge@localhost');
-          expect(result.exchanges.map((entry: { status: number }) => entry.status)).toEqual([401, 200]);
-          expect(result.downstream.act.agent).toBeTruthy();
+          expect(result.downstream.ps).toBe(result.upstream.ps);
+          expect(typeof result.downstream.sub).toBe('string');
+          expect(result.downstream.sub).not.toBe(result.upstream.sub);
+          expect(result.downstream).not.toHaveProperty('agent');
+          expect(result.downstream).not.toHaveProperty('act');
+          // Concierge -> Wallet: person-token requirement, auth-token challenge, success.
+          expect(result.exchanges.map((entry: { status: number }) => entry.status)).toEqual([401, 401, 200]);
           await expect(root).toContainText('HTTP 401');
         } else {
           await expect(root).toContainText('untrusted_revoker');

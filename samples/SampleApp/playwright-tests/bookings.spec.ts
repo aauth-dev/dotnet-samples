@@ -58,8 +58,11 @@ test.describe('Rich Resource Requests (R3)', () => {
     await expectStatus(page, 200, 60_000);
     const work = await readResponseJson(page) as Record<string, unknown>;
     expect(work.account).toBe('work');
+    // Same person (ps, sub) behind both accounts; the grant names no agent.
     expect(work.subject).toBe(personal.subject);
-    expect(work.agent).toBe(personal.agent);
+    expect(work.ps).toBe(Urls.personServer);
+    expect(work.ps).toBe(personal.ps);
+    expect(work).not.toHaveProperty('agent');
     await page.locator('#bookings-account').scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath('accounts-mobile.png') });
   });

@@ -25,11 +25,13 @@ test('jwt direct grant returns a three-party identity', async ({ page }) => {
   const json = (await readResponseJson(page)) as Record<string, unknown>;
   expect(json.accessMode).toBe('three-party');
   expect(json.scheme).toBe('jwt');
-  // The auth token was minted by the Person Server for the Calendar audience.
-  expect(json.agent).toBe(Agents.sampleApp);
+  // The auth token was minted by the Person Server for the Calendar audience and
+  // names the person as the (ps, sub) pair, not the agent.
+  expect(json.ps).toBe(Urls.personServer);
   expect(json.sub).toBe(directedSubject(Urls.calendar));
+  expect(json.userKey).toBe(`${Urls.personServer}|${directedSubject(Urls.calendar)}`);
   expect(json.scope).toEqual(['calendar.read']);
   expect(json.iss).toBe(Urls.personServer);
-  // Direct grant — direct authorization, so no act chain.
-  expect(json.act).toBeFalsy();
+  expect(json).not.toHaveProperty('agent');
+  expect(json).not.toHaveProperty('act');
 });

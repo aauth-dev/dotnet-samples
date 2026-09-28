@@ -69,7 +69,12 @@ export function documentTests() {
         await approveInPopup(popup);
         await expect(root).toHaveAttribute('data-step', '3', { timeout: 30_000 });
         const auth = JSON.parse(await page.getByTestId('document-result').innerText());
-        expect(auth.agent).toBe(resourceToken.agent);
+        // The auth token names the same person the resource token did: (ps, sub).
+        expect(auth.ps).toBe('http://localhost:5100');
+        expect(auth.ps).toBe(resourceToken.ps);
+        expect(auth.sub).toBe(resourceToken.sub);
+        expect(auth).not.toHaveProperty('agent');
+        expect(auth).not.toHaveProperty('act');
         expect(auth.account).toBe(resourceToken.account);
         expect(auth.scope).toBe(resourceToken.scope);
         await page.locator('.document-next').click();
