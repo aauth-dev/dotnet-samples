@@ -40,8 +40,8 @@
     </li>
     <li>
         <strong>Mission-forwarded call chain</strong> (§Mission Context at Resources, §Call Chaining) —
-        the same mission is carried (<code>WithMission(...)</code>) to the Concierge, which forwards
-        the <code>AAuth-Mission</code> header to the downstream Trips hop so the mission governs every hop.
+        the same mission is carried (<code>WithMission(...)</code>) to the Concierge, whose
+        downstream Trips hop is requested under the upstream token, so the mission governs every hop.
     </li>
     <li>
         <strong>Mission log</strong> (§Mission Log) — the PS-held, ordered trail of every governed
@@ -85,11 +85,11 @@ var authToken = await exchange.ExchangeAsync(personServer, resourceToken,
     </div>
     <div class="col-md-6">
         <h5>Client Code — the mission-forwarded chain</h5>
-        <pre><code class="language-csharp">// Carry the SAME mission to the Concierge. WithMission attaches the
-// signed AAuth-Mission header; the mission-aware Concierge copies it
-// into its resource token, so the agent->concierge exchange is governed
-// by the mission. The Concierge then forwards the mission to its own
-// downstream hop (§Mission Context at Resources, §Call Chaining).
+        <pre><code class="language-csharp">// Carry the SAME mission to the Concierge. WithMission requests the
+// person token with mission_s256; the Concierge copies it into its
+// resource token, so the agent->concierge exchange is governed by the
+// mission. The Concierge's downstream hop carries the auth token as
+// upstream_token, which keeps the same mission (§Call Chaining).
 using var chain = AAuthClientBuilder.SelfIssuing(identity.Key).WithEgressPolicy(SampleEgress.Policy)
     .As(identity.Issuer, identity.AgentId)
     .WithKid(identity.KeyId)
@@ -342,8 +342,8 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
             _currentGate = "Mission call chain";
             var chainJson = await RunMissionChainAsync(personServer, conciergeUrl, mission);
             _steps.Add(new Step(3, "Mission call chain", Prompted: false, Outcome: "granted",
-                Summary: "The same mission was carried to the Concierge (WithMission), which forwarded " +
-                         "the AAuth-Mission header to its downstream Trips hop. Both hops were in-scope, " +
+                Summary: "The same mission was carried to the Concierge (WithMission), whose " +
+                         "downstream Trips hop kept it through the upstream token. Both hops were in-scope, " +
                          "so the chain resolved without a prompt — the mission governed every hop.",
                 Payload: chainJson,
                 PayloadLabel: "Chain result (Agent → Concierge → Trips /trips)"));
@@ -443,10 +443,10 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
         return await ok.Content.ReadFromJsonAsync<JsonObject>();
     }
 
-    // Carry the mission to the Concierge's mission-aware "/mission" endpoint.
-    // WithMission attaches the signed AAuth-Mission header; the mission-aware
-    // Concierge copies it into its resource token (so the exchange is governed
-    // by the mission) and forwards it to the downstream Trips hop.
+    // Carry the mission to the Concierge's "/mission" endpoint. WithMission
+    // requests the person token with mission_s256; the Concierge copies it into
+    // its resource token (so the exchange is governed by the mission), and its
+    // downstream Trips hop keeps the mission through the upstream token.
     private async Task<string> RunMissionChainAsync(
         string personServer, string conciergeUrl, AAuth.Agent.Mission mission)
     {

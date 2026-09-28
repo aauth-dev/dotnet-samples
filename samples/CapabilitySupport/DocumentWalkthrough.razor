@@ -104,21 +104,26 @@
         """;
     public const string ChallengeExample = """
         public static async Task<string> RequestDocumentAsync(string agentToken,
-            string resource, string person, string agentId, IAAuthKey key,
+            string resource, string person, IAAuthKey key,
             TokenVerifier verifier, MetadataClient metadata, JwksClient jwks,
             AAuthEgressPolicy policy, CancellationToken cancellationToken)
         {
             using var agent = new AAuthClientBuilder(key).UseJwt(agentToken)
                 .WithEgressPolicy(policy).Build();
+            // The resource first asks who the agent acts for (requirement=person-token).
+            var personToken = await new TokenExchangeClient(agent, metadata)
+                .RequestPersonTokenAsync(person, resource, cancellationToken);
+            using var personClient = new AAuthClientBuilder(key).UseJwt(personToken)
+                .WithEgressPolicy(policy).Build();
             using var request = new HttpRequestMessage(HttpMethod.Get, resource + "/document");
             request.Options.Set(AAuthRequestOptions.Account, "work");
-            using var response = await agent.SendAsync(request, cancellationToken);
+            using var response = await personClient.SendAsync(request, cancellationToken);
             if (response.StatusCode != HttpStatusCode.Unauthorized)
                 throw new InvalidOperationException("Expected document challenge.");
             var token = AAuthRequirementHeader.Parse(response.Headers
                 .GetValues(AAuthRequirementHeader.Name).Single()).ResourceToken!;
-            var verified = await verifier.VerifyResourceTokenAsync(token, person, agentId,
-                key.ComputeJwkThumbprint(), metadata, jwks, expectedApprover: person,
+            var verified = await verifier.VerifyResourceTokenAsync(token, person,
+                key.ComputeJwkThumbprint(), metadata, jwks, expectedPersonServer: person,
                 cancellationToken: cancellationToken);
             if (verified.Issuer != resource || verified.Account != "work")
                 throw new TokenVerificationException("Document request context mismatch.");
@@ -127,7 +132,7 @@
         """;
     public const string AuthorizeExample = """
         public static async Task<string> AuthorizeDocumentAsync(IAAuthKey key, string agentToken,
-            MetadataClient metadata, string person, string resourceToken,
+            MetadataClient metadata, string person, string resourceToken, string personToken,
             Func<Interaction, CancellationToken, Task> showConsent,
             AAuthEgressPolicy policy, CancellationToken cancellationToken)
         {
@@ -136,6 +141,7 @@
             return await new TokenExchangeClient(agent, metadata).ExchangeAsync(person,
                 resourceToken, new TokenExchangeRequest
                 {
+                    PresentedToken = personToken,
                     Account = "work",
                     OnInteractionRequired = showConsent,
                     PollerOptions = new DeferredPollerOptions { MaxTotalWait = TimeSpan.FromMinutes(5) },

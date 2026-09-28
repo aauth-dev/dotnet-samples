@@ -357,13 +357,13 @@ public sealed class AAuthClientBuilder
     /// pipeline covers as the <c>aauth-mission</c> component.
     /// </summary>
     /// <remarks>
-    /// Per §Mission Context at Resources, an agent operating in a mission context
-    /// includes the <c>AAuth-Mission</c> header on requests to resources. Combine
+    /// The challenge handler requests person tokens with the mission's
+    /// <c>mission_s256</c>, so resource and auth tokens carry it (#missions). Combine
     /// with <see cref="WithChallengeHandling()"/> / <see cref="WithInteractionHandling()"/>
-    /// so the whole resource-access leg (mission header + 401 challenge + token
+    /// so the whole resource-access leg (person token + 401 challenge + token
     /// exchange + retry) is handled automatically. This is for the <em>originating</em>
     /// agent that holds its own approved mission; call-chaining intermediaries that
-    /// re-emit a mission from an upstream token use <see cref="WithCallChaining(string)"/>.
+    /// inherit a mission from an upstream token use <see cref="WithCallChaining(string)"/>.
     /// </remarks>
     /// <param name="mission">The agent's own approved mission.</param>
     public AAuthClientBuilder WithMission(Agent.Mission mission)
