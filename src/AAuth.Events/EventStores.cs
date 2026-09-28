@@ -2,7 +2,7 @@ namespace AAuth.Events;
 
 public sealed record ProviderSubscription(string Eid, string Agent, string Resource,
     DateTimeOffset ExpiresAt, long? MaxUses);
-public sealed record EventEnvelope(string Token, string Eid, string Issuer, string Agent,
+public sealed record EventEnvelope(string Token, string Eid, string Jti, string Issuer, string Agent,
     DateTimeOffset ExpiresAt, byte[] Body);
 public sealed record EventAcceptance(int StatusCode, long? RemainingUses = null);
 public sealed record PendingEvent(string Receipt, EventEnvelope Event);

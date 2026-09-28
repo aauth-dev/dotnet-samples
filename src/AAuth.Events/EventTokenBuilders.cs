@@ -39,6 +39,9 @@ public sealed class EventTokenBuilder
     public required string Eid { get; init; }
     public required IAAuthKey Key { get; init; }
     public required string KeyId { get; init; }
+
+    /// <summary>The event's identity: <c>(iss, jti)</c> is the AP and agent deduplication key.</summary>
+    public string Jti { get; init; } = Guid.NewGuid().ToString("N");
     public TimeSpan Lifetime { get; init; } = TimeSpan.FromMinutes(5);
     public TokenVerifier Verifier { get; init; } = new();
 
@@ -47,7 +50,7 @@ public sealed class EventTokenBuilder
         var now = Verifier.Clock();
         return EventsTokens.Create(Key, KeyId, new JsonObject
         {
-            ["iss"] = Issuer, ["dwk"] = EventsTokens.ResourceDwk, ["aud"] = Audience, ["eid"] = Eid,
+            ["iss"] = Issuer, ["dwk"] = EventsTokens.ResourceDwk, ["aud"] = Audience, ["eid"] = Eid, ["jti"] = Jti,
             ["iat"] = now.ToUnixTimeSeconds(), ["exp"] = now.Add(Lifetime).ToUnixTimeSeconds()
         }, false, Verifier);
     }

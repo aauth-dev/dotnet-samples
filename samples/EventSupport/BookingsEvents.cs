@@ -47,9 +47,9 @@ public sealed class BookingsEvents(string issuer, IAAuthKey key, string keyId, E
             if (store.Find(subscription.Provider, eid, protocol.TokenVerifier.Clock()) is null) return Results.NotFound();
             var envelope = store.PrepareDelivery(subscription.Provider, eid, () =>
             {
-                var jwt = new EventTokenBuilder { Issuer = issuer, Audience = subscription.Agent, Eid = eid,
-                    Key = key, KeyId = keyId, Verifier = protocol.TokenVerifier }.Build();
-                return new EventEnvelope(jwt, eid, issuer, subscription.Agent, protocol.TokenVerifier.Clock().AddMinutes(5),
+                var builder = new EventTokenBuilder { Issuer = issuer, Audience = subscription.Agent, Eid = eid,
+                    Key = key, KeyId = keyId, Verifier = protocol.TokenVerifier };
+                return new EventEnvelope(builder.Build(), eid, builder.Jti, issuer, subscription.Agent, protocol.TokenVerifier.Clock().AddMinutes(5),
                     System.Text.Encoding.UTF8.GetBytes(new JsonObject { ["event_type"] = EventType,
                         ["reservation_id"] = "dining-lumiere-001", ["account"] = subscription.Account }.ToJsonString()));
             });

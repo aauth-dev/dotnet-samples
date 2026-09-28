@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 138 changed public-source files, 245 added/replacement declarations, 135 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 141 changed public-source files, 247 added/replacement declarations, 136 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -364,18 +364,38 @@ Public signatures unchanged (1); behavior reviewed under sample-runtime.
 
 Public owners: `Wallet`.
 
+### src/AAuth.Events/EventReceiver.cs
+
+Concept/decision: [events](#events). Source: [EventReceiver.cs](../../../src/AAuth.Events/EventReceiver.cs).
+
+Public signatures unchanged (2); behavior reviewed under events.
+
+Public owners: `AAuth.Events.EventReceiver`, `AAuth.Events`.
+
 ### src/AAuth.Events/EventStores.cs
 
 Concept/decision: [events](#events). Source: [EventStores.cs](../../../src/AAuth.Events/EventStores.cs).
 
 ```diff
+- AAuth.Events: public sealed record EventEnvelope ( string Token , string Eid , string Issuer , string Agent , DateTimeOffset ExpiresAt , byte [  ] Body )
 - AAuth.Events: public sealed record ResourceSubscription ( string Eid , string Provider , string Agent , string Operation , string ? Account , string State , DateTimeOffset ExpiresAt )
 - AAuth.Events: public sealed record SubscriptionTicket ( string Ticket , string Agent , string Operation , string ? Account , string State , DateTimeOffset ExpiresAt )
++ AAuth.Events: public sealed record EventEnvelope ( string Token , string Eid , string Jti , string Issuer , string Agent , DateTimeOffset ExpiresAt , byte [  ] Body )
 + AAuth.Events: public sealed record ResourceSubscription ( string Eid , string Provider , string Agent , string Operation , string ? Account , string State , DateTimeOffset ExpiresAt , string ? KeyThumbprint = null )
 + AAuth.Events: public sealed record SubscriptionTicket ( string Ticket , string KeyThumbprint , string Operation , string ? Account , string State , DateTimeOffset ExpiresAt )
 ```
 
 Public owners: `AAuth.Events.IAgentEventStore`, `AAuth.Events.IAgentProviderEventStore`, `AAuth.Events.IResourceEventStore`, `AAuth.Events`.
+
+### src/AAuth.Events/EventTokenBuilders.cs
+
+Concept/decision: [events](#events). Source: [EventTokenBuilders.cs](../../../src/AAuth.Events/EventTokenBuilders.cs).
+
+```diff
++ AAuth.Events.EventTokenBuilder: public string Jti { get ; init ; } = Guid . NewGuid ( ) . ToString ( "N" )
+```
+
+Public owners: `AAuth.Events.EventTokenBuilder`, `AAuth.Events.SubscribeTokenBuilder`, `AAuth.Events`.
 
 ### src/AAuth.Events/EventsEndpoints.cs
 
@@ -384,6 +404,14 @@ Concept/decision: [events](#events). Source: [EventsEndpoints.cs](../../../src/A
 Public signatures unchanged (3); behavior reviewed under events.
 
 Public owners: `AAuth.Events.EventsEndpoints`, `AAuth.Events`.
+
+### src/AAuth.Events/EventsTokens.cs
+
+Concept/decision: [events](#events). Source: [EventsTokens.cs](../../../src/AAuth.Events/EventsTokens.cs).
+
+Public signatures unchanged (8); behavior reviewed under events.
+
+Public owners: `AAuth.Events.EventsTokens`, `AAuth.Events`.
 
 ### src/AAuth.R3/Model/R3Document.cs
 

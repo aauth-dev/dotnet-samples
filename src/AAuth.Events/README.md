@@ -49,7 +49,9 @@ provider/eid pairs. Implementations must not trust caller-supplied account or
 state over the protected ticket's stored context.
 
 `IAgentEventStore` persists context and deduplicates receipts by resource issuer
-and `eid`. `EventReceiver` verifies the resource JWT and agent audience before
+and event token `jti`; every event on a subscription shares its `eid`, so `eid`
+cannot serve. `EventTokenBuilder` issues a fresh `jti` per event, and
+`EventsTokens.Verify` rejects an event token without one. `EventReceiver` verifies the resource JWT and agent audience before
 looking up context. It never records expired or mismatched events. A receipt is
 not an exactly-once transaction with arbitrary external business effects; hosts
 must coordinate those effects with their own durable processing mechanism.

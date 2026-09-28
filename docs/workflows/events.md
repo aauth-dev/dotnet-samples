@@ -99,9 +99,9 @@ Metadata, keys and outbound event endpoints use the shared SDK's admission,
 cache and connection-pinning policy. Development permits only explicitly listed
 sample loopback origins. External platform transports, renewal APIs, arbitrary
 business-effect exactly-once execution and general recurring-event semantics are
-not claimed. Unlimited AP accounting is implemented, while literal `(iss, eid)`
-agent deduplication means repeated notifications under one subscription are
-ignored. No required per-event `jti` was added.
+not claimed. Unlimited AP accounting is implemented. Event tokens carry a required
+`jti`, and the AP and agent deduplicate on `(iss, jti)`, so each notification
+under one subscription is a distinct event and only a resent copy is ignored.
 
 ## Verification
 

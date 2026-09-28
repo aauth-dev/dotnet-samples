@@ -9,7 +9,7 @@ public class EventPersistenceTests : IDisposable
     private static readonly DateTimeOffset Now = DateTimeOffset.UtcNow;
     private const string Jkt = "agent-key-thumbprint";
     private SqliteEventStore Store() => new(_path);
-    private static EventEnvelope Envelope(string token = "token") => new(token, "eid", "https://resource.example",
+    private static EventEnvelope Envelope(string token = "token", string? jti = null) => new(token, "eid", jti ?? token, "https://resource.example",
         "aauth:agent@ap.example", Now.AddMinutes(5), [1, 2, 3]);
 
     [Fact]
@@ -84,15 +84,27 @@ public class EventPersistenceTests : IDisposable
     }
 
     [Fact]
-    public void AgentContextAndLiteralIssuerEidDedupPersist()
+    public void AgentContextPersistsAndEventsDedupeOnIssuerAndJti()
     {
         var context = new AgentEventContext("eid", "https://resource.example", "aauth:agent@ap.example", "work reservation");
         Store().Remember(context);
         Assert.Equal(context, Store().FindContext("eid"));
         Assert.True(Store().RecordOnce(new(context, Envelope()), Now));
-        Assert.False(Store().RecordOnce(new(context, Envelope("different-token")), Now));
-        Assert.False(Store().RecordOnce(new(context, Envelope() with { ExpiresAt = Now }), Now));
-        Assert.Single(Store().ReadEvents(context.Agent));
+        Assert.False(Store().RecordOnce(new(context, Envelope("re-signed", jti: "token")), Now));
+        // Every event on a subscription shares its eid; a new jti is a new event (Events L363).
+        Assert.True(Store().RecordOnce(new(context, Envelope("second")), Now));
+        Assert.False(Store().RecordOnce(new(context, Envelope("third") with { ExpiresAt = Now }), Now));
+        Assert.Equal(2, Store().ReadEvents(context.Agent).Count);
+    }
+
+    [Fact]
+    public void ProviderAcceptsEachJtiOnceWithoutSpendingQuotaOnDuplicates()
+    {
+        Store().Create(new("eid", "aauth:agent@ap.example", "https://resource.example", Now.AddHours(1), 2));
+        Assert.Equal(new EventAcceptance(202, 1), Store().Accept(Envelope("first"), Now));
+        Assert.Equal(new EventAcceptance(202, 1), Store().Accept(Envelope("first-re-signed", jti: "first"), Now));
+        Assert.Equal(new EventAcceptance(202, 0), Store().Accept(Envelope("second"), Now));
+        Assert.Equal(2, Store().Pending("aauth:agent@ap.example").Count);
     }
 
     [Fact]

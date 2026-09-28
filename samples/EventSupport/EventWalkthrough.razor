@@ -87,7 +87,7 @@
     {
         <section class="events-receipt @(GuidedTour ? "tour-result-source" : null)" aria-label="Verified event">
             <h2>Verified notification</h2>
-            <dl><dt>Context</dt><dd>@_session.Context</dd><dt>Event ID</dt><dd>@_session.Eid</dd><dt>Duplicate</dt><dd>Ignored by issuer and event ID</dd></dl>
+            <dl><dt>Context</dt><dd>@_session.Context</dd><dt>Event ID</dt><dd>@_session.Eid</dd><dt>Duplicate</dt><dd>Ignored by issuer and event token jti</dd></dl>
             <pre data-testid="event-payload">@_session.Payload</pre>
         </section>
     }
@@ -109,7 +109,7 @@
     }
     <footer class="events-limits">
         <p>Single-shot sample: <code>max_uses: 1</code>. AP token acquisition, authenticated polling, acknowledgement and the notification trigger are local sample APIs, not standard endpoints.</p>
-        <p>Unlimited AP subscriptions are supported. The draft's agent deduplication rule uses <code>eid</code> and issuer, so recurring notifications under the same subscription are ignored. No per-event <code>jti</code> requirement is added.</p>
+        <p>Unlimited AP subscriptions are supported. Each event token carries its own <code>jti</code>, and the AP and agent deduplicate on issuer and <code>jti</code>, so recurring notifications under one subscription are all delivered and only a resent copy is ignored.</p>
     </footer>
 </section>
 

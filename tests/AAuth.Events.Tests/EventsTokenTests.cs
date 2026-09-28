@@ -13,16 +13,42 @@ public class EventsTokenTests
     private static readonly TokenVerifier Verifier = new() { Clock = () => Now };
 
     [Fact]
-    public void EventWithoutJtiOrCnfVerifies()
+    public void EventWithJtiAndWithoutCnfVerifies()
     {
         var key = AAuthKey.Generate();
         var jwt = EventsTokens.Create(key, "resource", Payload(), false, Verifier);
         var token = EventsTokens.Verify(jwt, key, false, Verifier, "aauth:agent@ap.example");
         Assert.False(token.Payload.ContainsKey("cnf"));
-        Assert.False(token.Payload.ContainsKey("jti"));
+        Assert.Equal("ev-4d2a91", token.Jti);
+    }
+
+    [Fact]
+    public void EventWithoutJtiFails()
+    {
+        var key = AAuthKey.Generate();
+        var payload = Payload();
+        payload.Remove("jti");
+        Assert.Throws<TokenVerificationException>(() => EventsTokens.Verify(Sign(key, payload), key, false, Verifier));
+    }
+
+    [Fact]
+    public void BuilderIssuesDistinctJtiPerEvent()
+    {
+        var key = AAuthKey.Generate();
+        EventTokenBuilder Builder() => new()
+        {
+            Issuer = "https://resource.example", Audience = "aauth:agent@ap.example", Eid = "event-one",
+            Key = key, KeyId = "resource", Verifier = Verifier,
+        };
+        var first = EventsTokens.Verify(Builder().Build(), key, false, Verifier);
+        var second = EventsTokens.Verify(Builder().Build(), key, false, Verifier);
+        Assert.Equal((string?)first.Payload["eid"], (string?)second.Payload["eid"]);
+        Assert.NotEqual(first.Jti, second.Jti);
     }
 
     [Theory]
+    [InlineData("jti", "\"\"")]
+    [InlineData("jti", "null")]
     [InlineData("cnf", "{}")]
     [InlineData("cnf", "null")]
     [InlineData("eid", "\"\"")]
@@ -52,7 +78,7 @@ public class EventsTokenTests
     private static JsonObject Payload() => new()
     {
         ["iss"] = "https://resource.example", ["dwk"] = EventsTokens.ResourceDwk,
-        ["aud"] = "aauth:agent@ap.example", ["eid"] = "event-one",
+        ["aud"] = "aauth:agent@ap.example", ["eid"] = "event-one", ["jti"] = "ev-4d2a91",
         ["iat"] = Now.ToUnixTimeSeconds(), ["exp"] = Now.AddMinutes(5).ToUnixTimeSeconds()
     };
 

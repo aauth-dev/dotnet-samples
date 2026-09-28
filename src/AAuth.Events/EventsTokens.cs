@@ -61,6 +61,7 @@ public static class EventsTokens
         }
         else if (payload.ContainsKey("cnf") || !AgentId.TryParse(actualAudience, out _, out _, verifier.EgressPolicy))
             throw new TokenVerificationException("Event tokens forbid cnf and require an agent audience.");
+        else RequireText(payload, "jti");
         return token;
     }
 

@@ -18,7 +18,7 @@ public static class EventsEndpoints
         await context.Request.Body.CopyToAsync(body, context.RequestAborted).ConfigureAwait(false);
         var token = assertion.Token;
         var envelope = new EventEnvelope(assertion.CompactToken, EventsTokens.RequireText(token.Payload, "eid"),
-            token.Issuer, EventsTokens.RequireText(token.Payload, "aud"), token.ExpiresAt, body.ToArray());
+            token.Jti, token.Issuer, EventsTokens.RequireText(token.Payload, "aud"), token.ExpiresAt, body.ToArray());
         EventAcceptance acceptance;
         try { acceptance = store.Accept(envelope, protocol.TokenVerifier.Clock()); }
         catch (Exception exception) when (exception is not OperationCanceledException)

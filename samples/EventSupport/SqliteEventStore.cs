@@ -43,9 +43,9 @@ public sealed class SqliteEventStore : IAgentProviderEventStore, IResourceEventS
             CREATE TABLE IF NOT EXISTS delivery_receipts (
                 provider TEXT NOT NULL, eid TEXT NOT NULL, agent TEXT NOT NULL, account TEXT NOT NULL,
                 response TEXT NOT NULL, PRIMARY KEY(provider,eid));
-            CREATE TABLE IF NOT EXISTS agent_events (
-                issuer TEXT NOT NULL, eid TEXT NOT NULL, agent TEXT NOT NULL, record TEXT NOT NULL,
-                PRIMARY KEY(issuer,eid));
+            CREATE TABLE IF NOT EXISTS received_events (
+                issuer TEXT NOT NULL, jti TEXT NOT NULL, agent TEXT NOT NULL, record TEXT NOT NULL,
+                PRIMARY KEY(issuer,jti));
             """);
     }
 
@@ -78,7 +78,8 @@ public sealed class SqliteEventStore : IAgentProviderEventStore, IResourceEventS
         if (expires <= now.ToUnixTimeSeconds()) return new(404);
         if (resource != envelope.Issuer || agent != envelope.Agent) return new(403);
         if (envelope.ExpiresAt <= now) return new(400);
-        var receipt = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(envelope.Token)));
+        // (iss, jti) identifies one event (Events L363); a re-signed copy is the same delivery.
+        var receipt = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(envelope.Issuer + "\n" + envelope.Jti)));
         if (JsonSerializer.SerializeToUtf8Bytes(new PendingEvent(receipt, envelope), InboxJson).Length + 2 > InboxMaxBytes)
             return new(413);
         var bodyHash = Convert.ToHexString(SHA256.HashData(envelope.Body));
@@ -265,15 +266,15 @@ public sealed class SqliteEventStore : IAgentProviderEventStore, IResourceEventS
         if (received.Event.ExpiresAt <= now || received.Context.Agent != received.Event.Agent
             || received.Context.Resource != received.Event.Issuer || received.Context.Eid != received.Event.Eid) return false;
         using var connection = Open();
-        return Execute(connection, null, "INSERT OR IGNORE INTO agent_events(issuer,eid,agent,record) VALUES($issuer,$eid,$agent,$record)",
-            ("$issuer", received.Event.Issuer), ("$eid", received.Event.Eid), ("$agent", received.Event.Agent),
+        return Execute(connection, null, "INSERT OR IGNORE INTO received_events(issuer,jti,agent,record) VALUES($issuer,$jti,$agent,$record)",
+            ("$issuer", received.Event.Issuer), ("$jti", received.Event.Jti), ("$agent", received.Event.Agent),
             ("$record", JsonSerializer.Serialize(received))) == 1;
     }
 
     public IReadOnlyList<ProcessedEvent> ReadEvents(string agent)
     {
         using var connection = Open();
-        using var command = Command(connection, null, "SELECT record FROM agent_events WHERE agent=$agent ORDER BY rowid", ("$agent", agent));
+        using var command = Command(connection, null, "SELECT record FROM received_events WHERE agent=$agent ORDER BY rowid", ("$agent", agent));
         using var reader = command.ExecuteReader();
         var events = new List<ProcessedEvent>();
         while (reader.Read()) events.Add(JsonSerializer.Deserialize<ProcessedEvent>(reader.GetString(0))!);

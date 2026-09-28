@@ -11,7 +11,7 @@ public sealed class EventReceiver(EventsProtocol protocol, IAgentEventStore stor
         var context = store.FindContext(eid);
         if (context is null || context.Resource != verified.Issuer || context.Agent != agent)
             throw new TokenVerificationException("Unknown or mismatched event context.");
-        return store.RecordOnce(new(context, new(token, eid, verified.Issuer, agent, verified.ExpiresAt, body)),
+        return store.RecordOnce(new(context, new(token, eid, verified.Jti, verified.Issuer, agent, verified.ExpiresAt, body)),
             protocol.TokenVerifier.Clock());
     }
 }

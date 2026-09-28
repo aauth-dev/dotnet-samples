@@ -573,6 +573,46 @@ has no required components; the uncovered request gets 401 and the token is not
 revoked) and `Revocation_RejectsTamperedBody`. The test helper now signs as
 `RevocationClient` does. Conformance 1163 passed.
 
+### [2026-09-28] [Phase 8] Event tokens carry `jti`; dedup on `(iss, jti)` (post-cutover item 7)
+
+RESOLVED. The gap was wider than the sample key. The SDK issued event tokens
+with no `jti`, although Events -11 lists `jti` among the required payload claims
+(L363). Two tests encoded the old behaviour:
+
+- `EventWithoutJtiOrCnfVerifies` asserted that no `jti` was present;
+- `AgentContextAndLiteralIssuerEidDedupPersist` asserted that a second event on
+  the same `eid` was dropped.
+
+The docs also said "No required per-event `jti` was added." Deduplicating on
+`eid` drops every event after the first on an unlimited subscription.
+
+Fix:
+
+- `EventTokenBuilder.Jti` defaults to a fresh value, and the builder emits it.
+- `EventsTokens.Verify` requires `jti` on event tokens.
+- `EventEnvelope` carries `Jti`, and the AP endpoint and `EventReceiver` fill it
+  in.
+- The sample AP receipt is now a hash of `(iss, jti)` rather than of the token.
+  A re-signed copy is the same delivery, costs no quota, and a different body is
+  still 400.
+- The agent table `received_events` is keyed `(issuer, jti)`. It is a new table
+  name so that existing sample databases pick up the new key.
+
+Evidence:
+
+- `EventWithJtiAndWithoutCnfVerifies`, `EventWithoutJtiFails` and
+  `InvalidEventClaimsFail(jti, ...)`;
+- `BuilderIssuesDistinctJtiPerEvent`;
+- `AgentContextPersistsAndEventsDedupeOnIssuerAndJti` (a re-signed copy is
+  ignored; a second event on the same `eid` is recorded);
+- `ProviderAcceptsEachJtiOnceWithoutSpendingQuotaOnDuplicates`;
+- `HttpStatusQuotaUnlimitedUnknownAndWrongAudience`, where a true retry resends
+  the same token and a new event on a single-use subscription is 429.
+
+The ticket-key half of the box was already covered by
+`TicketRedemptionIsAtomicAndPreservesAccount`. Events tests 80 passed; Events
+e2e 4/4.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate

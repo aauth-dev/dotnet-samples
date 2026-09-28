@@ -327,17 +327,20 @@ public class EventHttpTests
     public async Task HttpStatusQuotaUnlimitedUnknownAndWrongAudience()
     {
         await using var host = await EventHost.StartAsync();
-        async Task<HttpResponseMessage> Deliver(string eid, string? agent = null) => await host.Protocol.SendAsync(HttpMethod.Post,
-            new(host.Issuer + "/events"), host.ResourceKey, host.EventToken(eid, agent), true);
+        async Task<HttpResponseMessage> Deliver(string eid, string? agent = null, string? token = null) => await host.Protocol.SendAsync(HttpMethod.Post,
+            new(host.Issuer + "/events"), host.ResourceKey, token ?? host.EventToken(eid, agent), true);
         using var unknown = await Deliver("unknown");
         Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
         host.Store.Create(new("eid", EventHost.Agent, host.Issuer, DateTimeOffset.UtcNow.AddHours(1), 1));
         using var wrongAudience = await Deliver("eid", "aauth:other@ap.example");
         Assert.Equal(HttpStatusCode.Forbidden, wrongAudience.StatusCode);
-        using var first = await Deliver("eid");
-        using var retry = await Deliver("eid");
+        var eventToken = host.EventToken("eid");
+        using var first = await Deliver("eid", token: eventToken);
+        using var retry = await Deliver("eid", token: eventToken);
+        using var another = await Deliver("eid");
         Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
         Assert.Equal(HttpStatusCode.Accepted, retry.StatusCode);
+        Assert.Equal((HttpStatusCode)429, another.StatusCode);
         host.Store.Create(new("unlimited", EventHost.Agent, host.Issuer, DateTimeOffset.UtcNow.AddHours(1), null));
         using var unlimited = await Deliver("unlimited");
         Assert.Equal(HttpStatusCode.Accepted, unlimited.StatusCode);
