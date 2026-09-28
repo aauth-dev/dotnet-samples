@@ -187,6 +187,31 @@ public class RevocationLifecycleTests
         Assert.All(graph.Revocations, entry => Assert.Contains(entry.Token.Issuer, new[] { Person, grantIssuer }));
     }
 
+    [Fact(DisplayName = "§Mission Approval / §Token Revocation — revoking the agent token revokes the person tokens its mission approval issued")]
+    public async Task ProviderRevoke_CascadesToMissionApprovalPersonTokens()
+    {
+        await using var graph = await Graph.CreateAsync();
+        var agent = graph.AgentToken(FirstProvider, "mission-agent");
+        using var client = graph.AgentClient(agent);
+        using var approval = await client.PostAsJsonAsync(Person + "/mission",
+            new { description = "Plan the offsite", resources = new[] { FirstResource } });
+        Assert.True(approval.StatusCode == HttpStatusCode.OK, await approval.Content.ReadAsStringAsync());
+        var mission = AAuth.Agent.Mission.FromApprovalResponse(await approval.Content.ReadAsByteArrayAsync(), Person);
+        var personToken = mission.PersonTokens[FirstResource];
+
+        using var ap = graph.Signed(FirstProvider, "aauth-agent.json");
+        Assert.Equal(HttpStatusCode.OK, (await Revoke(ap, Person, agent)).StatusCode);
+
+        Assert.Contains(graph.Revocations, entry => entry.Resource == FirstResource
+            && entry.Token == new TokenKey(Person, (string)Decode(personToken)["jti"]!));
+        // A fresh agent token under the same key cannot present the revoked person token.
+        using var reused = await graph.RequestAsync(graph.AgentToken(FirstProvider, "fresh"), FirstResource, false,
+            personToken: personToken);
+        var reusedBody = await reused.Content.ReadAsStringAsync();
+        Assert.False(reused.IsSuccessStatusCode, reusedBody);
+        Assert.DoesNotContain("auth_token", reusedBody);
+    }
+
     [Fact]
     public async Task PendingApproval_CannotReplaceRevokedOriginalSourceWithFreshCarrier()
     {
@@ -325,6 +350,7 @@ public class RevocationLifecycleTests
             personBuilder.Services.AddSingleton<IPersonPendingStore>(graph.Pending);
             graph.Consent.Required = consent;
             personBuilder.Services.AddSingleton<IIdentityClaimsAsserter>(graph.Consent);
+            personBuilder.Services.AddAAuthGovernance();
             personBuilder.Services.AddSingleton(new RevocationClient(graph.Signed(Person, "aauth-person.json")));
             personBuilder.Services.AddSingleton(provider => new AccessServerClient(graph.Signed(Person, "aauth-person.json"),
                 provider.GetRequiredService<MetadataClient>(), new AuthTokenResponseValidator(
@@ -335,6 +361,7 @@ public class RevocationLifecycleTests
                 EgressPolicy = TestEgress.Policy, Issuer = Person,
                 SigningKeys = new Dictionary<string, IAAuthKey> { ["key"] = graph._keys[Person] },
             });
+            person.MapAAuthGovernance(options => options.PersonServer = Person);
             await person.StartAsync();
             graph._hosts.Add(Person, person);
             return graph;
@@ -438,6 +465,7 @@ public class RevocationLifecycleTests
             {
                 EgressPolicy = TestEgress.Policy, Issuer = resource, Audience = federated ? Access : Person,
                 PersonServer = Person, Subject = (string)person["sub"]!, PresentedJti = (string)person["jti"]!,
+                MissionS256 = (string?)person["mission_s256"],
                 AgentJkt = AgentKey(agentToken).ComputeJwkThumbprint(), Key = _keys[resource], KeyId = "key",
             }.Build();
             using var client = AgentClient(agentToken);

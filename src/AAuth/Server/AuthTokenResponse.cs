@@ -48,20 +48,29 @@ public static class AuthTokenResponse
         Func<IResult> expired, CancellationToken cancellationToken)
     {
         var clock = timeProvider ?? TimeProvider.System;
-        if (ceiling.ToUnixTimeSeconds() <= clock.GetUtcNow().ToUnixTimeSeconds()) return expired();
+        var (token, failure) = await MintTrackedAsync(mint, ceiling, inventory, sources, clock, expired, cancellationToken);
+        return failure ?? Create(token!, ceiling, clock, member, expired);
+    }
+
+    // Mint a token and record it as a grant of its sources; a failure is expired or revoked.
+    internal static async Task<(string? Token, IResult? Failure)> MintTrackedAsync(Func<string> mint, DateTimeOffset ceiling,
+        IJtiStore inventory, IReadOnlyCollection<TokenKey> sources, TimeProvider clock,
+        Func<IResult> expired, CancellationToken cancellationToken)
+    {
+        if (ceiling.ToUnixTimeSeconds() <= clock.GetUtcNow().ToUnixTimeSeconds()) return (null, expired());
         foreach (var source in sources)
             if (await inventory.IsRevokedAsync(source, cancellationToken))
-                return Revoked();
+                return (null, Revoked());
         string token;
         try { token = mint(); }
-        catch (AuthTokenExpiredException) { return expired(); }
+        catch (AuthTokenExpiredException) { return (null, expired()); }
         var payload = TokenVerifier.DecodeJsonSegment(token.Split('.')[1], "payload");
         var registration = TokenRegistration.FromPayload(payload);
         var grant = new TokenGrant(registration.Token,
             (string?)payload["aud"] ?? throw new TokenVerificationException("Issued token missing aud."), registration.ExpiresAt);
         if (registration.ExpiresAt > ceiling || !await inventory.RegisterGrantAsync(sources, grant, cancellationToken))
-            return Revoked();
-        return Create(token, ceiling, clock, member, expired);
+            return (null, Revoked());
+        return (token, null);
     }
 
     public static IResult Create(Func<string> mint, DateTimeOffset ceiling, TimeProvider? timeProvider = null)

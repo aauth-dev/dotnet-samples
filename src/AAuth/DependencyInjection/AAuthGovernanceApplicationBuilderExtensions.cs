@@ -440,7 +440,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
     }
 
     // Build the verbatim mission blob, persist the mission, and answer with the
-    // §Mission Approval response { s256, mission }.
+    // §Mission Approval response { s256, mission, person_tokens? }.
     private static async Task<IResult> CompleteMissionAsync(
         HttpContext ctx,
         IMissionStore missions,
@@ -453,7 +453,43 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         var (blob, s256) = MissionApprovalBuilder.Build(
             agent, proposal, approvedTools, DateTimeOffset.UtcNow, expiresAt, proposal.Resources);
         await missions.SaveAsync(new StoredMission(s256, personServer, agent, blob) { ExpiresAt = expiresAt }).ConfigureAwait(false);
-        return Results.Json(MissionApprovalBuilder.Response(blob, s256));
+        IReadOnlyDictionary<string, string>? personTokens = null;
+        if (proposal.Resources.Count > 0
+            && ctx.RequestServices.GetService<IMissionPersonTokenIssuer>() is { } issuer
+            && PersonTokenRequest(ctx, personServer, agent, s256, expiresAt, proposal.Resources) is { } request)
+        {
+            personTokens = await issuer.IssueAsync(request, ctx.RequestAborted).ConfigureAwait(false);
+        }
+        return Results.Json(MissionApprovalBuilder.Response(blob, s256, personTokens: personTokens));
+    }
+
+    // The verified agent token that signed this request (the proposal, or the poll
+    // of its parked approval, which the owner check binds to the same agent key).
+    // A sub-agent obtains person tokens only through its parent (§Sub-Agents).
+    private static MissionPersonTokenRequest? PersonTokenRequest(HttpContext ctx, string personServer, string agent,
+        string s256, DateTimeOffset? expiresAt, IReadOnlyList<string> resources)
+    {
+        if (ctx.GetAAuthVerification() is not { TokenType: AAuthTokenType.AgentToken, IssuerVerified: true }
+            || ctx.GetAAuthParsedKey()?.Payload is not { } payload
+            || payload["parent_agent"] is not null
+            || payload["cnf"]?["jwk"] is not JsonObject jwk)
+        {
+            return null;
+        }
+        AAuth.Server.TokenRegistration registration;
+        try { registration = AAuth.Server.TokenRegistration.FromPayload(payload); }
+        catch (AAuth.Tokens.TokenVerificationException) { return null; }
+        return new MissionPersonTokenRequest
+        {
+            PersonServer = personServer,
+            AgentId = agent,
+            ConfirmationKey = AAuth.Crypto.KeyFactory.FromPublicJwk(jwk),
+            AgentTokenExpiresAt = registration.ExpiresAt,
+            SourceTokens = [registration],
+            MissionS256 = s256,
+            MissionExpiresAt = expiresAt,
+            Resources = resources,
+        };
     }
 
     // POST {mission_endpoint}/{mission_s256}: `update` (§Mission Update) or

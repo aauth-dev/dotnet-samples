@@ -135,7 +135,10 @@ var personToken = await exchangeClient.RequestPersonTokenAsync(
 ```
 
 If the proposal named `resources`, the approval envelope may already carry person
-tokens for them in `Mission.PersonTokens`, each with `mission_s256` set.
+tokens for them in `Mission.PersonTokens`, each with `mission_s256` set, bound to
+the proposing agent's key, and capped at the agent token's `exp`, the mission's
+`expires_at`, and one hour. A resource the PS declined is simply absent; request
+it through the person token endpoint as above.
 
 ### Carrying your own mission with `WithMission`
 

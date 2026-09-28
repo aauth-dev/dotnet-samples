@@ -410,6 +410,49 @@ public static class AAuthPersonServerEndpoints
 
         static DateTimeOffset Earliest(DateTimeOffset left, DateTimeOffset right) => left < right ? left : right;
 
+        bool IsResourceIdentifier([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] string? resource) => resource is not null
+            && AAuthUrl.IsHttpsOrLoopback(resource, options.EgressPolicy)
+            && Uri.TryCreate(resource, UriKind.Absolute, out var resourceUri)
+            && string.IsNullOrEmpty(resourceUri.Query) && string.IsNullOrEmpty(resourceUri.Fragment);
+
+        // §Mission Approval `person_tokens`: the /person mint for each approved resource the
+        // asserter asserts silently, tracked as a grant of the agent token.
+        async Task<IReadOnlyDictionary<string, string>> IssueMissionPersonTokensAsync(
+            MissionPersonTokenRequest request, System.Threading.CancellationToken ct)
+        {
+            var tokens = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (request.PersonServer != issuer || request.SourceTokens.Count == 0 || !MissionReference.IsValid(request.MissionS256))
+                return tokens;
+            IReadOnlyList<TokenKey> sources;
+            try { sources = await TokenRegistration.RegisterAsync(inventory, request.SourceTokens, ct); }
+            catch (TokenVerificationException) { return tokens; }
+            var ceiling = request.MissionExpiresAt is { } missionExpiry
+                ? Earliest(request.AgentTokenExpiresAt, missionExpiry) : request.AgentTokenExpiresAt;
+            var thumbprint = request.ConfirmationKey.ComputeJwkThumbprint();
+            foreach (var resource in request.Resources.Distinct(StringComparer.Ordinal))
+            {
+                if (!IsResourceIdentifier(resource)) continue;
+                var assertion = await asserter.AssertAsync(new IdentityAssertionRequest
+                {
+                    PersonTokenRequest = true,
+                    ResourceUrl = resource,
+                    Scope = string.Empty,
+                    AgentId = request.AgentId,
+                    AgentKeyThumbprint = thumbprint,
+                    MissionS256 = request.MissionS256,
+                }, ct);
+                if (assertion.Kind != IdentityAssertionKind.Assert || string.IsNullOrWhiteSpace(assertion.Subject)) continue;
+                var (token, _) = await AuthTokenResponse.MintTrackedAsync(() => MintPerson(
+                    resource, assertion.Subject, assertion.Tenant, request.ConfirmationKey, request.MissionS256,
+                    request.AgentTokenExpiresAt, ceiling), ceiling, inventory, sources, options.TimeProvider,
+                    AuthTokenResponse.Expired, ct);
+                if (token is not null) tokens[resource] = token;
+            }
+            return tokens;
+        }
+        if (app.Services.GetService<IMissionPersonTokenIssuer>() is AttachableMissionPersonTokenIssuer missionIssuer)
+            missionIssuer.Issue = IssueMissionPersonTokensAsync;
+
         // -------------------------------------------------------------------
         // POST {PersonTokenPath} — the PS person token endpoint (§Person Token Endpoint).
         // -------------------------------------------------------------------
@@ -419,9 +462,7 @@ public static class AAuthPersonServerEndpoints
             if (failure is not null) return failure;
 
             var resource = StringMember(body, "resource");
-            if (resource is null || !AAuthUrl.IsHttpsOrLoopback(resource, options.EgressPolicy)
-                || !Uri.TryCreate(resource, UriKind.Absolute, out var resourceUri)
-                || !string.IsNullOrEmpty(resourceUri.Query) || !string.IsNullOrEmpty(resourceUri.Fragment))
+            if (!IsResourceIdentifier(resource))
             {
                 return AAuthProblemDetails.Create("invalid_request", "resource must be an HTTPS server identifier", statusCode: StatusCodes.Status400BadRequest);
             }

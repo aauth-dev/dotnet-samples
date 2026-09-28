@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 125 changed public-source files, 213 added/replacement declarations, 124 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 127 changed public-source files, 224 added/replacement declarations, 124 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -734,6 +734,14 @@ Public signatures unchanged (2); behavior reviewed under di.
 
 Public owners: `Microsoft.AspNetCore.Builder.AAuthGovernanceApplicationBuilderExtensions`, `Microsoft.AspNetCore.Builder`.
 
+### src/AAuth/DependencyInjection/AAuthGovernanceServiceCollectionExtensions.cs
+
+Concept/decision: [di](#di). Source: [AAuthGovernanceServiceCollectionExtensions.cs](../../../src/AAuth/DependencyInjection/AAuthGovernanceServiceCollectionExtensions.cs).
+
+Public signatures unchanged (4); behavior reviewed under di.
+
+Public owners: `Microsoft.Extensions.DependencyInjection.AAuthGovernanceServiceCollectionExtensions`, `Microsoft.Extensions.DependencyInjection`.
+
 ### src/AAuth/DependencyInjection/AAuthResourceOptions.cs
 
 Concept/decision: [di](#di). Source: [AAuthResourceOptions.cs](../../../src/AAuth/DependencyInjection/AAuthResourceOptions.cs).
@@ -1151,6 +1159,26 @@ Concept/decision: [governance](#governance). Source: [IMissionLog.cs](../../../s
 ```
 
 Public owners: `AAuth.Server.Governance.IMissionLog`, `AAuth.Server.Governance.MissionLogEntryKind`, `AAuth.Server.Governance.MissionLogEntry`, `AAuth.Server.Governance`.
+
+### src/AAuth/Server/Governance/IMissionPersonTokenIssuer.cs
+
+Concept/decision: [governance](#governance). Source: [IMissionPersonTokenIssuer.cs](../../../src/AAuth/Server/Governance/IMissionPersonTokenIssuer.cs).
+
+```diff
++ AAuth.Server.Governance.IMissionPersonTokenIssuer: Task < IReadOnlyDictionary < string , string > > IssueAsync ( MissionPersonTokenRequest request , CancellationToken ct = default )
++ AAuth.Server.Governance.MissionPersonTokenRequest: public DateTimeOffset ? MissionExpiresAt { get ; init ; }
++ AAuth.Server.Governance.MissionPersonTokenRequest: public required DateTimeOffset AgentTokenExpiresAt { get ; init ; }
++ AAuth.Server.Governance.MissionPersonTokenRequest: public required IAAuthKey ConfirmationKey { get ; init ; }
++ AAuth.Server.Governance.MissionPersonTokenRequest: public required IReadOnlyList < TokenRegistration > SourceTokens { get ; init ; }
++ AAuth.Server.Governance.MissionPersonTokenRequest: public required IReadOnlyList < string > Resources { get ; init ; }
++ AAuth.Server.Governance.MissionPersonTokenRequest: public required string AgentId { get ; init ; }
++ AAuth.Server.Governance.MissionPersonTokenRequest: public required string MissionS256 { get ; init ; }
++ AAuth.Server.Governance.MissionPersonTokenRequest: public required string PersonServer { get ; init ; }
++ AAuth.Server.Governance: public interface IMissionPersonTokenIssuer
++ AAuth.Server.Governance: public sealed record MissionPersonTokenRequest
+```
+
+Public owners: `AAuth.Server.Governance.IMissionPersonTokenIssuer`, `AAuth.Server.Governance.MissionPersonTokenRequest`, `AAuth.Server.Governance`.
 
 ### src/AAuth/Server/Governance/IMissionStore.cs
 

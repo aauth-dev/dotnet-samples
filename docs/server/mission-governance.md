@@ -60,6 +60,7 @@ builder.Services.AddAAuthInteractionRelay(async (request, ct) =>
 | `IAuditSink` | `DefaultAuditSink` (logs to the mission log) | PS supplies storage/alerting |
 | `IInteractionRelay` | `DefaultInteractionRelay` (no user channel) | PS supplies the user channel |
 | `IMissionTokenConsent` | `DefaultMissionTokenConsent` (hold for a user verdict) | PS supplies the out-of-scope mission **token** decision (`MapAAuthPersonServer`) |
+| `IMissionPersonTokenIssuer` | Issues nothing until `MapAAuthPersonServer` attaches its person-token minting | SDK default; replace to mint approval `person_tokens` elsewhere |
 
 By default a `Prompt` outcome is resolved synchronously (a permission denial / a
 mission decline), since the mapper has no user channel. To opt into the deferred
@@ -99,6 +100,15 @@ A mission-creation request requires a verified **agent token**; the mapper hands
 the proposal to `IMissionApprover`, builds the mission blob with
 `MissionApprovalBuilder`, persists the resulting `StoredMission`, and answers
 with the approval envelope `{ s256, mission }` (the blob base64url-encoded).
+When the proposal named `resources` and the same app maps `MapAAuthPersonServer`,
+the envelope also carries `person_tokens`: for each approved resource the
+`IIdentityClaimsAsserter` asserts (a `PersonTokenRequest` with `MissionS256`
+set), the PS mints the same person token its `/person` endpoint would, bound to
+the agent token's key and capped at its `exp` and the mission's `expires_at`.
+Each is recorded as a grant of that agent token, so revoking the agent token
+revokes them. A resource the asserter defers or denies is omitted; a deferred
+approval mints them when the owning agent polls. Governance hosted without a PS
+omits `person_tokens`.
 A request naming a `mission_s256` that does not exist or belongs to another
 agent is `404 mission_not_found` — the two cases are indistinguishable — and a
 terminated or expired mission is `403 mission_terminated` (§Mission Endpoint

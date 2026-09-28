@@ -115,6 +115,25 @@ public class GovernanceDeferredConsentMapperTests
         Assert.Equal(HttpStatusCode.Gone, replay.StatusCode);
     }
 
+    [Fact(DisplayName = "§Mission Approval — governance hosted without a PS omits person_tokens")]
+    public async Task Mission_WithoutPersonServer_OmitsPersonTokens()
+    {
+        using var host = await BuildHostAsync();
+        using var client = host.GetTestServer().CreateClient();
+
+        using var created = await client.PostAsync("https://localhost/mission", JsonContent(new JsonObject
+        {
+            ["description"] = "Resources without a PS",
+            ["resources"] = new JsonArray("https://whoami.example"),
+        }));
+
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        var body = await ReadJson(created);
+        Assert.False(body!.ContainsKey("person_tokens"));
+        var mission = Mission.FromApprovalResponse(System.Text.Encoding.UTF8.GetBytes(body.ToJsonString()), Ps);
+        Assert.Equal(new[] { "https://whoami.example" }, mission.ApprovedResources);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

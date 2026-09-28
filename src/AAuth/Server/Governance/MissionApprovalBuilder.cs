@@ -89,7 +89,8 @@ public static class MissionApprovalBuilder
             foreach (var capability in capabilities) values.Add(capability);
             body["capabilities"] = values;
         }
-        if (personTokens is { Count: > 0 })
+        // Present whenever the PS issued for named resources, even if it declined them all.
+        if (personTokens is not null)
         {
             var tokens = new JsonObject();
             foreach (var (resource, token) in personTokens) tokens[resource] = token;

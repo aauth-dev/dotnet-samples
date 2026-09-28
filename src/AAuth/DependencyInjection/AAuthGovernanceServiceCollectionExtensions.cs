@@ -26,7 +26,9 @@ public static class AAuthGovernanceServiceCollectionExtensions
     /// <see cref="AAuth.Server.Governance.DefaultInteractionRelay"/>) as singletons.
     /// Every seam is registered with <c>TryAdd</c> so a PS overrides only what it
     /// needs — register your own <see cref="AAuth.Server.Governance.IPermissionDecider"/>
-    /// (and friends) before or after this call to take over the policy.
+    /// (and friends) before or after this call to take over the policy. The
+    /// <see cref="AAuth.Server.Governance.IMissionPersonTokenIssuer"/> default issues
+    /// the approval's <c>person_tokens</c> once <c>MapAAuthPersonServer</c> is mapped.
     /// </summary>
     public static IServiceCollection AddAAuthGovernance(this IServiceCollection services)
     {
@@ -38,6 +40,7 @@ public static class AAuthGovernanceServiceCollectionExtensions
         services.TryAddSingleton<IAuditSink, DefaultAuditSink>();
         services.TryAddSingleton<IInteractionRelay, DefaultInteractionRelay>();
         services.TryAddSingleton<IMissionTokenConsent, DefaultMissionTokenConsent>();
+        services.TryAddSingleton<IMissionPersonTokenIssuer, AttachableMissionPersonTokenIssuer>();
         return services;
     }
 
