@@ -13,8 +13,8 @@ decision vocabulary; the PS owns the policy and the user channel.
 This split is deliberate. A mission is a Markdown statement of intent, not a
 machine-checkable rule set. The PS decides each request in context — the SDK
 never tries to evaluate the mission for you. See
-[Missions](../advanced/missions.md) for the agent-side model and the
-`AAuth-Mission` header, and
+[Missions](../advanced/missions.md) for the agent-side model and how
+`mission_s256` flows through tokens, and
 [Mission Governance Clients](../advanced/mission-governance-clients.md) for the
 calls the PS answers.
 
@@ -44,7 +44,8 @@ the no-op default:
 ```csharp
 builder.Services.AddAAuthInteractionRelay(async (request, ct) =>
 {
-    // request.Type is question | completion | interaction | payment
+    // request.Type is question | interaction | payment; the mapper also relays
+    // a mission completion proposal here with Type = Completion.
     var accepted = await askThroughUserChannel(request, ct);
     return new InteractionRelayResult { Accepted = accepted };
 });
@@ -76,14 +77,15 @@ builder.Services.AddAAuthDeferredConsent(); // Prompt → 202 + poll route
 
 `MapAAuthGovernance()` maps the mission, permission, audit, and interaction
 endpoints (plus the deferred-consent poll route) onto the registered seams in one
-call, mirroring `MapAAuthResource`. It parses each request with
-`GovernanceEndpoints`, enforces the `mission_terminated` rule, and delegates the
-decision to the seams:
+call, mirroring `MapAAuthResource`. It also maps `POST {mission_endpoint}/{s256}`,
+where the owning agent records an `update` or proposes `completion` (§Mission
+Update, §Mission Completion). It parses each request with `GovernanceEndpoints`,
+enforces the mission status rules, and delegates the decision to the seams:
 
 ```csharp
 var app = builder.Build();
 
-app.MapAAuthGovernance(); // /mission, /permission, /audit, /mission-interaction + poll route
+app.MapAAuthGovernance(); // /mission, /mission/{s256}, /permission, /audit, /mission-interaction + poll route
 
 // Optional: override the default paths.
 app.MapAAuthGovernance(o =>
@@ -94,9 +96,14 @@ app.MapAAuthGovernance(o =>
 ```
 
 A mission-creation request requires a verified **agent token**; the mapper hands
-the proposal to `IMissionApprover`, persists the resulting `StoredMission`, and
-emits the `AAuth-Mission` response header. Reach for the manual mapping below only
-when an endpoint needs behavior the seams do not express.
+the proposal to `IMissionApprover`, builds the mission blob with
+`MissionApprovalBuilder`, persists the resulting `StoredMission`, and answers
+with the approval envelope `{ s256, mission }` (the blob base64url-encoded).
+A request naming a `mission_s256` that does not exist or belongs to another
+agent is `404 mission_not_found` — the two cases are indistinguishable — and a
+terminated or expired mission is `403 mission_terminated` (§Mission Endpoint
+Errors). Reach for the manual mapping below only when an endpoint needs behavior
+the seams do not express.
 
 > **Carrier-type guard.** The governed endpoints require the request to carry the
 > expected token type. When the wrong carrier is presented (e.g. an auth token
@@ -107,8 +114,8 @@ when an endpoint needs behavior the seams do not express.
 ## Parsing requests by hand
 
 When a PS maps its own endpoints, `GovernanceEndpoints` maps request bodies to the
-shared DTOs and emits the canonical `mission_terminated` response, so endpoints
-avoid hand-rolled parsing.
+shared DTOs, authorizes the mission reference, and emits the canonical mission
+errors, so endpoints avoid hand-rolled parsing.
 
 ```csharp
 using AAuth.Server.Governance;
@@ -119,13 +126,15 @@ app.MapPost("/aauth/permission", async (HttpContext ctx, IPermissionDecider deci
     var body = await ctx.Request.ReadFromJsonAsync<JsonObject>();
     PermissionRequest request = GovernanceEndpoints.ParsePermission(body!);
 
-    StoredMission? mission = request.Mission is { } claim
-        ? await store.GetAsync(claim.S256)
+    StoredMission? mission = request.MissionS256 is { } missionS256
+        ? await store.GetAsync(missionS256)
         : null;
 
-    if (mission is { State: MissionState.Terminated })
+    // Agent token required; 404 mission_not_found for a missing or foreign
+    // mission, 403 mission_terminated for a terminated or expired one.
+    if (GovernanceEndpoints.Authorize(ctx, request.MissionS256, mission) is { } refused)
     {
-        return GovernanceEndpoints.MissionTerminated(); // 403 mission_terminated
+        return refused;
     }
 
     var entries = mission is null
@@ -144,20 +153,22 @@ app.MapPost("/aauth/permission", async (HttpContext ctx, IPermissionDecider deci
 });
 ```
 
-The parsers throw `FormatException` on a missing required field
-(`ParsePermission` needs `action`, `ParseAudit` needs `mission` + `action`,
-`ParseInteraction` needs a valid `type`, `ParseMissionProposal` needs
-`description`).
+The parsers throw `FormatException` on a missing required field or a malformed
+`mission_s256` (`ParsePermission` needs `action`, `ParseAudit` needs
+`mission_s256` + `action`, `ParseInteraction` needs a `type` of `interaction`,
+`payment`, or `question`, `ParseMissionProposal` needs `description`).
 
 ## Persisting missions: `IMissionStore`
 
-A mission is stored as its verbatim approval bytes plus its lifecycle state, so
-the `s256` stays verifiable.
+A mission is stored as its verbatim blob bytes plus its lifecycle state, so the
+`s256` stays verifiable. The second positional member names the approving PS
+(the blob itself carries no approver).
 
 ```csharp
 public sealed record StoredMission(string S256, string Approver, string Agent, ReadOnlyMemory<byte> Blob)
 {
     public MissionState State { get; init; } = MissionState.Active;
+    public DateTimeOffset? ExpiresAt { get; init; } // the blob's expires_at; terminated after it
 }
 
 public interface IMissionStore
@@ -176,10 +187,13 @@ to resolve repeat requests silently via prior consent (§Mission Log, §Agent To
 Request).
 
 ```csharp
-public enum MissionLogEntryKind { Token, Permission, Audit, Interaction, Clarification }
+public enum MissionLogEntryKind { Token, Permission, Audit, Interaction, Update, Clarification }
 
 public sealed record MissionLogEntry(string S256, MissionLogEntryKind Kind, DateTimeOffset Timestamp)
 {
+    public string? Account { get; init; }            // for token entries — prior-consent binding
+    public string? AgentId { get; init; }            // for token entries — prior-consent binding
+    public string? AgentKeyThumbprint { get; init; } // for token entries — prior-consent binding
     public string? Resource { get; init; } // for token entries — prior-consent lookup
     public string? Scope { get; init; }    // for token entries — prior-consent lookup
     public string? Action { get; init; }   // for permission/audit entries
@@ -199,7 +213,7 @@ public interface IMissionLog
 ## The decision: three gates
 
 When the agent requests an auth token or a permission, the PS reaches one of
-three outcomes (§Permission Endpoint, §Agent Token Request). The SDK supplies the
+three outcomes (§Permission Endpoint, §Auth Token Request). The SDK supplies the
 outcome and reason enums; the PS supplies the policy in `IPermissionDecider`.
 
 ```csharp
@@ -238,7 +252,7 @@ public sealed class MyPermissionDecider : IPermissionDecider
         }
 
         // Pre-approved tool → granted silently.
-        var blob = Mission.FromApprovalBytes(mission.Blob.Span);
+        var blob = Mission.FromBlob(mission.Blob.Span, mission.Approver);
         if (blob.ApprovedTools.Any(t => t.Name == context.Request.Action.Name))
         {
             return new PermissionDecision(PermissionOutcome.Granted, PermissionDecisionReason.ApprovedTool);
@@ -266,7 +280,7 @@ public interface IAuditSink
 public sealed record InteractionRelayResult
 {
     public string? Answer { get; init; }  // for question
-    public bool? Accepted { get; init; }  // for completion — true terminates the mission
+    public bool? Accepted { get; init; }  // for a relayed completion — true terminates the mission
     public bool Pending { get; init; }    // defer + let the agent poll
 }
 
@@ -280,8 +294,8 @@ public interface IInteractionRelay
 
 When a mission is terminated, the PS moves it to `MissionState.Terminated` and
 answers governed requests with the canonical error (§Mission Status Errors). The
-agent's `AuditClient` / `InteractionClient` surface this as
-`AAuthMissionTerminatedException`.
+agent's governance clients surface this as `AAuthMissionTerminatedException`.
+A terminated mission never returns to active; the agent proposes a new one.
 
 ```csharp
 await store.SetStateAsync(s256, MissionState.Terminated);
@@ -292,8 +306,8 @@ return GovernanceEndpoints.MissionTerminated();
 
 ## Further reading
 
-- [Missions](../advanced/missions.md) — the mission model and `AAuth-Mission` header
+- [Missions](../advanced/missions.md) — the mission model and `mission_s256`
 - [Mission Governance Clients](../advanced/mission-governance-clients.md) — the agent calls the PS answers
 - [Mission-Governed Access](../workflows/mission-governed-access.md) — end-to-end walkthrough
-- [Token Issuance](token-issuance.md#mission-claims) — emitting the mission claim in tokens
+- [Token Issuance](token-issuance.md#mission-claims) — emitting `mission_s256` in tokens
 - [Dependency Injection](../reference/dependency-injection.md#governance) — registering the seams

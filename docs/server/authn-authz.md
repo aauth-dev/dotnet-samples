@@ -20,8 +20,9 @@ previous one produced.
    read its `.RequireAAuth(...)` / `.RequireAAuthSignature(...)` metadata.
 2. **AAuth** (`UseAAuth`) — the single AAuth middleware. For each matched endpoint
    it verifies the HTTP signature (RFC 9421) and, for auth-token endpoints, the auth
-   token against the issuer's JWKS, then returns a `401` resource-token challenge
-   when only an agent token is presented. It writes an `AAuthVerificationResult` to
+   token against the issuer's JWKS, then returns a `401 requirement=person-token`
+   when only an agent token is presented, or a `401` resource-token challenge
+   when a person token is presented. It writes an `AAuthVerificationResult` to
    `HttpContext.Features`. (Internally it runs the verification and challenge
    middleware described in [Verification Middleware](verification-middleware.md) and
    [Challenge Middleware](challenge-middleware.md).)

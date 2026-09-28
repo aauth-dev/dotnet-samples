@@ -73,7 +73,7 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 | `DocumentationUri` | No | Developer-documentation URL (`documentation_uri`) |
 | `ScopeDescriptions` | No | Scope → description map (displayed during consent) |
 | `SignatureWindow` | No | Signature validity window in seconds (advertised to agents) |
-| `AuthorizationEndpoint` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient selected by `PersonServerAudience` |
+| `AuthorizationEndpoint` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
 | `RevocationEndpoint` | No | URL of the revocation endpoint |
 
 ## Published Endpoint
@@ -99,9 +99,10 @@ The extension maps `GET /.well-known/aauth-resource.json` returning:
 The keys themselves are served separately at `/.well-known/jwks.json` (also mapped by `MapAAuthWellKnown()` / `MapAAuthResourceWellKnown()`).
 
 The `authorization_endpoint` belongs to the resource's proactive authorization
-flow. `PersonServerAudience` on the challenge options instead selects the
-resource token's recipient: an AS URL for federation, or the agent token's PS
-when the option is unset. It does not change this metadata endpoint.
+flow. `AccessServer` on the challenge options instead selects the resource
+token's recipient: the resource's AS for federation, or the PS that issued the
+presented person token when the option is unset. It does not change this
+metadata endpoint.
 
 ## Agent-Side Discovery
 

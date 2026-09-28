@@ -11,9 +11,13 @@ sequenceDiagram
     participant PS as Person Server
     participant AS as Access Server
     Agent->>Resource: GET /data (signed, sig=jwt)
+    Resource-->>Agent: 401 requirement=person-token
+    Agent->>PS: POST /person (resource)
+    PS-->>Agent: person token
+    Agent->>Resource: GET /data (signed, person token)
     Resource-->>Agent: 401 + resource token (aud=AS URL)
-    Agent->>PS: POST /token (resource token)
-    PS->>AS: POST /token (signed, forwards resource token)
+    Agent->>PS: POST /token (resource_token, presented_token)
+    PS->>AS: POST /token (signed; resource_token, agent_token, presented_token)
     AS-->>PS: auth token (iss=AS)
     PS-->>Agent: auth token
     Agent->>Resource: GET /data (signed, auth token)
@@ -22,7 +26,7 @@ sequenceDiagram
 
 ## Agent-Side Code
 
-Identical to PS-asserted — `WithChallengeHandling()` handles it transparently. The only difference is the resource token's `aud` points to the AS URL instead of the PS URL.
+Identical to PS-asserted — `WithChallengeHandling()` handles it transparently. The only difference is the resource token's `aud` points to the AS URL instead of the PS URL. The PS passes the person token through to the AS as `presented_token`; the AS verifies it against the resource token and requires its PS (`iss` or `ps`) to be the PS that signed the request.
 
 ```csharp
 using AAuth.Agent;
@@ -107,7 +111,8 @@ The Access Server is the fourth party. The whole token-endpoint pipeline ships
 as a single host helper, `MapAAuthAccessServer`: it publishes the
 `/.well-known/aauth-access.json` metadata + JWKS, verifies the RFC 9421 request
 signature (pinning the caller's `jwks_uri` host to a trusted Person Server),
-verifies the agent and resource tokens, evaluates policy through a pluggable
+verifies the agent, resource, and presented tokens (the presented token's PS must
+be the calling PS), evaluates policy through a pluggable
 `IAccessPolicy`, and mints the auth token.
 
 ```csharp
@@ -184,9 +189,9 @@ sequenceDiagram
     participant PS as Person Server
     participant AS as Access Server
     participant KC as Keycloak
-    Agent->>Resource: GET /data (signed)
+    Agent->>Resource: GET /data (signed, person token)
     Resource-->>Agent: 401 + resource token (aud=AS)
-    Agent->>PS: POST /token (resource token)
+    Agent->>PS: POST /token (resource_token, presented_token)
     PS->>AS: POST /token (signed)
     AS-->>PS: 202 requirement=interaction + Location
     PS-->>Agent: 202 + interaction URL (relayed)
@@ -237,22 +242,26 @@ Content-Type: application/json
 ```
 
 The Person Server is the identity authority, so it supplies the requested
-claims — including a directed pseudonymous `sub` — by POSTing a **signed**
-request to the `Location` URL, then resumes polling that same URL for the
-issued auth token. In the SDK this is a single additive callback on the PS's
-federation request:
+claims by POSTing a **signed** request to the `Location` URL, then resumes
+polling that same URL for the issued auth token. It never pushes `sub`: the
+person is already identified by the presented token and the resource token's
+`sub`. In the SDK this is a single additive callback on the PS's federation
+request:
 
 ```csharp
 var fedRequest = new AccessServerRequest
 {
     ResourceToken = resourceTokenJwt,
     AgentToken = agentTokenJwt,
+    PresentedToken = heldToken,                       // the token the resource token's presented_jti names
+    PresentedTokenExpiresAt = verifiedToken.ExpiresAt, // bounds the AS-issued auth token
     AuthorizationExpiresAt = verifiedAgent.ExpiresAt,
     ExpectedAudience = resourceUrl,
-    ExpectedAgentId = agentId,
+    ExpectedSubject = directedSubject,                // the resource token's sub
+    ExpectedPersonServer = psIssuer,                  // this PS, as the auth token's ps
     AgentKey = agentConfirmationKey,
     RequestedScope = scope,
-    // The AS asked for identity claims; answer with a directed sub + claims.
+    // The AS asked for identity claims; answer with the claims this PS holds.
     OnClaimsRequired = (requirement, ct) =>
     {
         var claims = new Dictionary<string, JsonNode?>(StringComparer.Ordinal);
@@ -265,7 +274,6 @@ var fedRequest = new AccessServerRequest
         }
         return Task.FromResult(new ClaimsResponse
         {
-            Subject = directedSubject,
             Claims = claims,
         });
     },
@@ -275,10 +283,10 @@ var fedRequest = new AccessServerRequest
 `AccessServerClient.FederateAsync` reads `required_claims`, invokes the
 callback, POSTs the returned `ClaimsResponse` (signed, origin-pinned to
 the AS) to the `Location`, and continues the poll loop to the `200` auth token.
-The `Subject` (directed `sub`) is mandatory — leaving it blank surfaces an
-`InvalidOperationException`. The issued auth token asserts the pushed claims
-(the AS sets `sub` to the directed identifier, promotes `tenant` to the named
-`tenant` claim, and echoes the recognized claims). Try it with the stub policy
+Protocol-owned names, including `sub`, are rejected when the response is
+serialized. The issued auth token keeps the resource token's `sub` and `ps`,
+promotes `tenant` to the named `tenant` claim, and echoes the recognized claims.
+Try it with the stub policy
 by configuring the Access Server with `AccessServer:RequireClaims` (e.g.
 `AccessServer__RequireClaims__0=email`); the demo Person Server releases
 `email`, `tenant`, and `name` for its bound principal.

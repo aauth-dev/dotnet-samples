@@ -50,14 +50,18 @@ public sealed class ClarificationResponse
     public enum Kind { Respond, Update, Cancel }
 
     public static ClarificationResponse Respond(string markdown);                       // answer the question
-    public static ClarificationResponse Update(string resourceToken, string? justification = null); // replace the request
+    public static ClarificationResponse Update(string resourceToken, string presentedToken,
+        string? justification = null);                                                  // replace the request
     public static ClarificationResponse Cancel();                                       // withdraw
 }
 ```
 
 - `Respond` posts a Markdown answer and resumes the exchange.
 - `Update` replaces the original request with a new resource token (for example a
-  reduced scope) plus an optional justification.
+  reduced scope) and the `presented_token` the agent presented to obtain it, plus
+  an optional (RECOMMENDED) justification. The replacement must keep the original
+  resource token's `iss`, `ps`, `sub`, `agent_jkt`, `mission_s256`, and `tenant`;
+  only `presented_jti` may differ.
 - `Cancel` withdraws the request entirely.
 
 ## Driving the chat: `ClarificationExchange`
@@ -79,7 +83,8 @@ public sealed class ClarificationExchange
 
     public Task ApplyAsync(ClarificationResponse response, CancellationToken ct = default);
     public Task RespondAsync(string markdown, CancellationToken ct = default);
-    public Task UpdateRequestAsync(string resourceToken, string? justification = null, CancellationToken ct = default);
+    public Task UpdateRequestAsync(string resourceToken, string presentedToken, string? justification = null,
+        CancellationToken ct = default);
     public Task CancelAsync(CancellationToken ct = default);
 }
 ```
@@ -110,6 +115,7 @@ the PS decides or `MaxClarificationRounds` is hit.
 ```csharp
 var request = new TokenExchangeRequest
 {
+    PresentedToken = heldToken, // the person or auth token the resource token names
     MaxClarificationRounds = ClarificationExchange.DefaultMaxRounds,
     OnClarificationRequired = async (requirement, ct) =>
     {
@@ -158,7 +164,8 @@ A Person Server built on [`MapAAuthPersonServer`](../server/token-issuance.md#on
 gets the **server half** of the protocol for free. For an out-of-scope mission
 token request the helper calls the `IMissionTokenConsent` seam; returning
 `Clarify` makes the SDK emit the `requirement=clarification` `202`, accept the
-agent's `clarification_response` / updated `resource_token` / `DELETE` on the
+agent's `clarification_response` / updated `resource_token` + `presented_token` /
+`DELETE` on the
 pending URL, record each round in the mission log, and re-consult the seam:
 
 ```csharp

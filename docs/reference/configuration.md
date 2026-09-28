@@ -20,7 +20,7 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 |----------|------|---------|-------------|
 | `TrustedAuthTokenIssuers` | `IReadOnlySet<string>?` | `null` | Allow-list of trusted auth token (PS/AS) issuers. `null` ⇒ accept any *verifiable* auth-token issuer (the spec default — the JWT signature still verifies against the issuer's JWKS); empty ⇒ deny all; non-empty ⇒ restrict to the listed issuers. AND-composed with `IsTrustedAuthTokenIssuer`. |
 | `IsTrustedAuthTokenIssuer` | `Func<string, bool>?` | `null` | Optional predicate AND-composed with `TrustedAuthTokenIssuers` (each only narrows). Assign `AAuthTrust.Any` to trust any verifiable issuer explicitly and suppress the open-trust startup warning. |
-| `PersonServerAudience` | `string?` | `null` | Resource-token audience for the challenge. Set to an Access Server URL for four-party (federated) resources; when `null` the audience is the agent token's `ps` claim (three-party). |
+| `AccessServer` | `string?` | `null` | Resource-token audience for four-party (federated) resources: the resource's own Access Server. When `null` the audience is the PS that issued the presented person token (three-party). |
 | `TrustedAgentProviderIssuers` | `IReadOnlySet<string>?` | `null` | Allow-list of trusted Agent Provider issuers (for `aa-agent+jwt`). `null` ⇒ accept any verifiable Agent Provider; empty ⇒ deny all; non-empty ⇒ restrict. AND-composed with `IsTrustedAgentProviderIssuer`. |
 | `IsTrustedAgentProviderIssuer` | `Func<string, bool>?` | `null` | Optional predicate AND-composed with `TrustedAgentProviderIssuers`. Assign `AAuthTrust.Any` to trust any verifiable Agent Provider explicitly. |
 | `ResourceIdentifier` | `string?` | DI metadata issuer | Override the resource identifier used for `aud` checks and challenges. |
@@ -45,7 +45,6 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 | `IsTrustedAgentProviderIssuer` | `Func<string, bool>?` | `null` | Optional predicate AND-composed with `TrustedAgentProviderIssuers`; assign `AAuthTrust.Any` for explicit open trust. |
 | `TrustedAuthTokenIssuers` | `IReadOnlySet<string>?` | `null` | Allow-list of trusted auth token (PS/AS) issuers. `null` ⇒ accept any *verifiable* PS (the spec default); empty ⇒ deny all PS-asserted tokens; non-empty ⇒ restrict to the listed issuers. AND-composed with `IsTrustedAuthTokenIssuer`. |
 | `IsTrustedAuthTokenIssuer` | `Func<string, bool>?` | `null` | Optional predicate AND-composed with `TrustedAuthTokenIssuers` (each only narrows). Assign `AAuthTrust.Any` to trust any verifiable issuer explicitly and suppress the open-trust startup warning. |
-| `MaxActDepth` | `int` | `10` | Maximum delegation chain depth for nested `act` claims |
 | `ClockSkew` | `TimeSpan` | 30 seconds | Tolerance applied to `exp`/`iat` checks |
 | `Clock` | `Func<DateTimeOffset>?` | `null` (UtcNow) | Clock source for all time-dependent checks. Inject for deterministic testing. |
 
@@ -74,16 +73,17 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 | `Name` | `string?` | `null` | Human-readable resource name (`name`) |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | `null` | Scope → description map for metadata |
 | `SignatureWindow` | `int?` | `null` | Advertised signature validity (seconds) |
-| `AuthorizationEndpoint` | `string?` | `null` | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient selected by `PersonServerAudience` |
+| `AuthorizationEndpoint` | `string?` | `null` | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
 | `RevocationEndpoint` | `string?` | `null` | Revocation endpoint URL |
 
 ### AAuthPersonServerOptions (via MapAAuthPersonServer)
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `Issuer` | `string` | — (required) | HTTPS URL of this PS (`iss` of minted auth tokens) |
+| `Issuer` | `string` | — (required) | HTTPS URL of this PS (`iss` of minted person and auth tokens) |
 | `SigningKeys` | `IReadOnlyDictionary<string, IAAuthKey>` | Required | Key-id to signing key map (published at the PS JWKS) |
-| `TokenPath` | `string` | `/token` | Token endpoint path |
+| `TokenPath` | `string` | `/token` | Auth token endpoint path (`auth_token_endpoint`) |
+| `PersonTokenPath` | `string` | `/person` | Person token endpoint path (`person_token_endpoint`) |
 | `PendingPathPrefix` | `string` | `/pending` | Deferred-consent poll path prefix |
 | `DefaultScope` | `string` | `""` | Scope assumed when the resource token omits one |
 | `InteractionPath` | `string` | `/interaction` | Path the host maps for the consent page |
@@ -92,7 +92,7 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 
 The helper resolves `IIdentityClaimsAsserter` and `IPersonPendingStore` from DI
 (and the `IMissionStore` / `IMissionLog` mission primitives when a request carries
-a `mission` claim). See
+`mission_s256`). See
 [Token Issuance → One-Call Person Server](../server/token-issuance.md#one-call-person-server-mapaauthpersonserver).
 
 ## Token Builders
@@ -110,7 +110,7 @@ a `mission` claim). See
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `AgentTokenExpiresAt` | `DateTimeOffset` | Required | Expiry from the verified source agent token |
-| `AuthorizationExpiresAt` | `DateTimeOffset?` | None | Additional verified parent/upstream ceiling |
+| `AuthorizationExpiresAt` | `DateTimeOffset?` | None | Additional verified presented/parent/upstream/mission ceiling |
 | `TimeProvider` | `TimeProvider` | System | Issuance and expiration clock |
 | `Lifetime` | `TimeSpan` | 1 hour | Positive requested lifetime, at most one hour, capped by verified ceilings |
 | `Dwk` | `string` | `"aauth-person.json"` | Discovery well-known path |
@@ -132,8 +132,7 @@ a `mission` claim). See
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `Clock` | `Func<DateTimeOffset>` | `UtcNow` | Clock source |
-| `ClockSkew` | `TimeSpan` | 30 seconds | Tolerance for exp/iat validation |
-| `MaxActDepth` | `int` | 10 | Maximum delegation chain depth |
+| `ClockSkew` | `TimeSpan` | 60 seconds | Tolerance for exp/iat validation |
 
 ## Deferred Consent (Polling)
 
@@ -199,7 +198,7 @@ Methods:
 | `Name` | `string?` | No | Human-readable resource name (`name`) |
 | `ScopeDescriptions` | `IReadOnlyDictionary<string, string>?` | No | Scope → description |
 | `SignatureWindow` | `int?` | No | Advertised signature validity (seconds) |
-| `AuthorizationEndpoint` | `string?` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient selected by `PersonServerAudience` |
+| `AuthorizationEndpoint` | `string?` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
 | `RevocationEndpoint` | `string?` | No | Revocation endpoint URL |
 
 ## Key Storage
@@ -280,7 +279,7 @@ remains `~/.aauth/ap-keys`.
 | `Name` | `string?` | No | Resource display name (`name`) |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | No | Scope descriptions for metadata |
 | `SignatureWindow` | `int?` | No | Advertised signature validity (seconds) |
-| `AuthorizationEndpoint` | `string?` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient selected by `PersonServerAudience` |
+| `AuthorizationEndpoint` | `string?` | No | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
 | `RevocationEndpoint` | `string?` | No | Revocation endpoint URL |
 
 ### AAuthDiscoveryOptions (AddAAuthDiscovery)

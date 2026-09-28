@@ -50,29 +50,41 @@ sequenceDiagram
     Wallet-->>Agent: 200; charge with same scope is rejected
 ```
 
-## Direct-AS Chaining
+## Chaining an AS-Issued Grant
+
+Draft-11 has no direct agent-to-AS path: every token request goes to a PS, and
+an intermediary routes to the PS its upstream token names (an auth token's
+`ps`), which federates with the Wallet's AS. The sample still labels this flow
+`DirectAs`.
 
 1. Enroll a new agent.
 2. Request Concierge Wallet access and retain the AS-audience resource token.
 3. Complete consent and obtain an AS-issued upstream grant with no mission.
-4. Call Concierge with that grant. Concierge uses its own agent JWT, routes the
-   Wallet challenge directly to the upstream issuer's AS metadata, and sends
-   upstream authorization in the exchange body, not as its HTTP carrier.
+4. Call Concierge with that grant. Concierge signs with its own agent JWT,
+   requests a Wallet person token at the grant's PS with the grant as
+   `upstream_token`, and sends the same `upstream_token` with the Wallet
+   resource token and that person token (`presented_token`). The upstream grant
+   travels in the request body, never as Concierge's HTTP carrier.
 5. Present the original Concierge grant directly to Wallet; the audience fails.
-6. Repeat the legitimate delegated read and inspect the retained attribution.
+6. Repeat the legitimate delegated read.
 
 ```mermaid
 sequenceDiagram
     participant Agent
     participant Concierge
+    participant PS
     participant Wallet
     participant AS
     Agent->>Concierge: Request with upstream AS auth_token
-    Concierge->>Wallet: Request with Concierge agent JWT
+    Concierge->>PS: Person token request, upstream_token (resource = Wallet)
+    PS-->>Concierge: Wallet person token
+    Concierge->>Wallet: Request with Wallet person token
     Wallet-->>Concierge: 401, resource_token
-    Concierge->>AS: Signed exchange, upstream_token and resource_token
-    AS->>AS: Validate audience, key, scope and delegation
-    AS-->>Concierge: Downstream auth_token, agent=Concierge, nested act
+    Concierge->>PS: resource_token, presented_token, upstream_token
+    PS->>AS: Signed federation, agent_token (Concierge), presented_token, upstream_token
+    AS->>AS: Validate upstream audience and PS, presented token, scope
+    AS-->>PS: Downstream auth_token (ps, sub; no agent or act claim)
+    PS-->>Concierge: Downstream auth_token
     Concierge->>Wallet: Retry with downstream auth_token
     Wallet-->>Concierge: 200
     Concierge-->>Agent: Combined result
@@ -87,7 +99,7 @@ sequenceDiagram
 5. Try withdrawal as the agent. Wallet rejects the unauthorized revoker.
 6. Ask the sample PS to withdraw the grant. The PS signs the actual resource
    revocation body `{"iss":"<issuer>","jti":"<id>"}`; repeating it is idempotent.
-7. Reuse the withdrawn grant and observe rejection.
+7. Reuse the withdrawn grant and observe the `401` rejection.
 8. Obtain a fresh grant through the normal consent callback. Its new `jti`
    restores the Wallet read without undoing the old revocation.
 
@@ -98,12 +110,13 @@ the revoker independently. Revocation does not renew a token or extend its expir
 ## Verification and Sources
 
 The shared browser tests run in both app-local Playwright projects and cover
-clarification answer/cancel, scope rejection, direct-AS audience rejection,
-idempotent withdrawal, recovery callbacks, reset and narrow layouts. Captures
-show the requests visible to the scenario transport; the builder's separate AS
-exchange channel is verified by endpoint tests, not invented in the inspector.
+clarification answer/cancel, scope rejection, AS-issued upstream grant audience
+rejection, idempotent withdrawal, recovery callbacks, reset and narrow layouts.
+Captures show the requests visible to the scenario transport; the builder's
+separate PS exchange channel is verified by endpoint tests, not invented in the
+inspector.
 
-- [Clarification](../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#clarification-chat)
+- [Clarification](../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#clarification-chat)
 - [Call chaining](call-chaining.md)
 - [Revocation](../server/replay-detection.md#revocation-endpoint)
 - [Capability evidence](../../.agent/plans/2026-09-08-aauth-v10-spec-migration/capability-scenarios.md)

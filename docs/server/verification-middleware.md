@@ -74,9 +74,6 @@ public sealed class AAuthVerificationOptions
     // narrows). Assign AAuthTrust.Any to trust any verifiable issuer explicitly.
     public Func<string, bool>? IsTrustedAuthTokenIssuer { get; init; }
 
-    // Maximum depth of nested act claims (default: 10)
-    public int MaxActDepth { get; init; } = 10;
-
     // Tolerance for exp/iat validation (default: 30s)
     public TimeSpan ClockSkew { get; init; } = TimeSpan.FromSeconds(30);
 
@@ -183,7 +180,7 @@ app.MapGet("/protected", (HttpContext ctx) =>
     var result = ctx.GetAAuthVerification()!;
     // result.Level: Pseudonymous | Identified | Authorized
     // result.Scheme: "jwt" | "hwk" | "jkt-jwt" | "jwks_uri"
-    // result.Agent: agent identifier
+    // result.Agent: agent identifier (agent tokens only; person and auth tokens name no agent)
     // result.Scopes: granted scopes (auth tokens only)
     // result.Roles: enterprise roles from the auth token (IReadOnlySet<string>)
     // result.Groups: enterprise groups from the auth token (IReadOnlySet<string>)
@@ -209,8 +206,12 @@ On verification failure, the middleware returns `401 Unauthorized` with a `Signa
 | `unsupported_algorithm` | Signature algorithm not supported |
 | `invalid_key` | Signature key malformed or unusable |
 | `unknown_key` | Referenced key could not be resolved |
-| `invalid_jwt` | JWT parsing/issuer verification failed |
+| `invalid_jwt` | JWT parsing/issuer verification failed, or the token was revoked |
 | `expired_jwt` | Token JWT expired |
+
+The PS and AS token endpoints answer a revoked `Signature-Key` token with
+`Signature-Error: revoked_jwt`; this middleware currently reports a revoked token
+as `invalid_jwt`.
 
 ## OpenTelemetry Integration
 
@@ -218,26 +219,27 @@ When `Activity.Current` is present, the middleware enriches it with tags. See [O
 
 ## Call Chaining Verification
 
-When verifying auth tokens from call-chaining scenarios, the middleware validates the optional nested `act` chain:
+Draft-11 has no delegation chain claim: an auth token names the person
+(`ps`, `sub`) and binds the agent's key through `cnf.jwk`, with no `agent` or
+`act` claim. The token a calling agent presents to an intermediary is the
+**upstream token** for the intermediary's downstream requests (§Call Chaining).
 
-- the HTTP request signer's agent identity is the token's top-level `agent` claim
-- `act` is OPTIONAL (absent for direct authorization); when present, `act.agent` names the upstream delegator
-- Nested `act` depth cannot exceed `MaxActDepth` (default 10)
-- Each nested level must contain an `agent` field
-
-The `UpstreamAuthTokenFeature` is set on the HttpContext when a valid auth token is verified, making the upstream token available to downstream `WithCallChaining(httpContext)` calls:
+The `UpstreamAuthTokenFeature` is set on the HttpContext when a valid person or
+auth token is verified under the `jwt` scheme, making the upstream token
+available to downstream `WithCallChaining(httpContext)` calls. The downstream PS
+verifies it as `upstream_token` (its `aud` must be the intermediary's agent-token
+`iss`):
 
 ```csharp
 app.UseAAuthVerification(new AAuthVerificationOptions
 {
     ResourceIdentifier = "https://concierge.example",
-    MaxActDepth = 5,              // limit chain depth for this resource
     ClockSkew = TimeSpan.FromSeconds(60), // generous skew for distributed systems
 });
 
 app.MapGet("/", async (HttpContext ctx) =>
 {
-    // Middleware verified the auth token and set the feature.
+    // Middleware verified the person or auth token and set the feature.
     // WithCallChaining reads the upstream token from it automatically.
     using var client = new AAuthClientBuilder(myKey)
         .WithTokenRefresh(refreshFunc)

@@ -19,7 +19,7 @@ The intermediary returns its own pending `Location` while forwarding the
 downstream interaction URL/code. The browser approves at that downstream server.
 The sample aborts the downstream exchange on interaction and re-drives it when
 the original caller polls, rather than retaining a downstream poll connection.
-See [Interaction Chaining](../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#interaction-chaining).
+See [Interaction Chaining](../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#interaction-chaining).
 
 ## Flow Diagram
 
@@ -190,7 +190,10 @@ straight through unless `WithInteractionHandling` is also configured.
 ## Manual Pattern (Without Builder)
 
 For full control over the interaction-chaining flow using `CallChainingHandler` directly,
-apply the same throw-to-abort rule inside the `onInteractionRequired` callback:
+apply the same throw-to-abort rule inside the `onInteractionRequired` callback. The
+intermediary first requests a downstream person token with the caller's token as
+`upstream_token` (at the PS that token names), presents it downstream, and passes the
+resulting resource token **and** that person token (`presentedToken`) to the exchange:
 
 ```csharp
 app.MapGet("/", async (HttpContext ctx, PendingStore pending) =>
@@ -200,9 +203,17 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =>
 
     try
     {
+        // Person token for the downstream resource, requested under the upstream token.
+        var downstreamPersonToken = await exchangeClient.RequestPersonTokenAsync(
+            CallChainingRouter.ResolveDownstreamServer(upstream.Token, exchangeClient.EgressPolicy),
+            downstreamResource,
+            new TokenExchangeRequest { UpstreamToken = upstream.Token });
+
+        // ...present downstreamPersonToken downstream; its 401 carries resourceToken...
         var chainedToken = await chainHandler.ExchangeForDownstreamAsync(
             upstream.Token,
             resourceToken,
+            downstreamPersonToken,
             onInteractionRequired: (interaction, _) =>
                 // Abort before the blocking poll; the endpoint re-emits its own 202.
                 throw new AAuthInteractionChainedException(interaction),

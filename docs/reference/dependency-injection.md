@@ -189,8 +189,8 @@ builder.Services.AddAAuthResource(options =>
 
 Advertise the resource's proactive authorization endpoint for agents to start
 authorization without first receiving a resource challenge. This does not select
-an Access Server: configure `PersonServerAudience` on the challenge options to
-set the resource token's PS/AS recipient.
+an Access Server: configure `AccessServer` on the challenge options to
+set the resource token's AS recipient (unset means the presented token's PS).
 
 ```csharp
 builder.Services.AddAAuthResource(options =>
@@ -372,7 +372,7 @@ a verification-only resource can leave `SigningKeys` empty.
 | `Name` | `string?` | `null` | Human-readable name in metadata (`name`) |
 | `ScopeDescriptions` | `Dictionary<string, string>?` | `null` | Scope descriptions in metadata |
 | `SignatureWindow` | `int?` | `null` | Advertised signature validity (seconds) |
-| `AuthorizationEndpoint` | `string?` | `null` | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient selected by `PersonServerAudience` |
+| `AuthorizationEndpoint` | `string?` | `null` | Resource's proactive authorization endpoint URL; not the PS/AS resource-token recipient (draft-11 removed `PersonServerAudience`; the recipient is `AccessServer` or the presented token's PS) |
 | `RevocationEndpoint` | `string?` | `null` | Revocation endpoint URL |
 | `EnableResourceManagedAccess` | `bool` | `false` | Register a default `IOpaqueTokenStore` for the resource-managed (two-party) flow |
 
@@ -411,10 +411,11 @@ using var dynamicUpstreamClient = new AAuthClientBuilder(key)
 ```
 
 `WithCallChaining` automatically:
-- Routes downstream exchanges to the correct PS/AS via `CallChainingRouter`
-- Passes `upstream_token` in exchange POST body
-- Inserts `MissionForwardingHandler` to propagate `AAuth-Mission` headers
-- Handles the full 401 → exchange → retry cycle
+- Routes downstream token requests to the PS the upstream token names via `CallChainingRouter`
+- Passes `upstream_token` on the downstream person token and auth token requests
+- Inserts `MissionForwardingHandler` to attach the upstream token to downstream requests
+  (the PS carries its `mission_s256` forward)
+- Handles the person-token and auth-token challenges and retries
 
 ## Governance
 
@@ -498,7 +499,7 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
 });
 ```
 
-When the resource token carries a `mission` claim, the helper also resolves the
+When a request carries `mission_s256`, the helper also resolves the
 `IMissionStore` / `IMissionLog` primitives registered by `AddAAuthGovernance()`.
 See [Token Issuance → One-Call Person Server](../server/token-issuance.md#one-call-person-server-mapaauthpersonserver).
 

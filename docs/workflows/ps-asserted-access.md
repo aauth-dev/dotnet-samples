@@ -4,7 +4,11 @@
 
 ## Overview
 
-The resource doesn't handle authorization itself — it delegates to the agent's Person Server. The resource issues a resource token; the agent exchanges it at the PS for an auth token; then presents the auth token back. Requires `sig=jwt` signing mode.
+The resource doesn't handle authorization itself — it delegates to the agent's
+Person Server. The agent first presents a person token from its PS; the resource
+issues a resource token naming that person token; the agent exchanges both at
+the PS for an auth token; then presents the auth token back. Requires `sig=jwt`
+signing mode.
 
 ## Sequence Diagram
 
@@ -14,8 +18,12 @@ sequenceDiagram
     participant Resource
     participant PS as Person Server
     Agent->>Resource: GET /data (signed, sig=jwt with agent token)
-    Resource-->>Agent: 401 + resource token (aud=PS)
-    Agent->>PS: POST /token (signed, resource token in body)
+    Resource-->>Agent: 401 requirement=person-token
+    Agent->>PS: POST /person (signed, resource in body)
+    PS-->>Agent: 200 + person token (aa-person+jwt)
+    Agent->>Resource: GET /data (signed, sig=jwt with person token)
+    Resource-->>Agent: 401 requirement=auth-token + resource token (aud=PS)
+    Agent->>PS: POST /token (signed, resource_token + presented_token)
     PS-->>Agent: 200 + auth token (aa-auth+jwt)
     Agent->>Resource: GET /data (signed, sig=jwt with auth token)
     Resource-->>Agent: 200 OK
@@ -41,8 +49,9 @@ using var client = AAuthClientBuilder.SelfIssuing(key)
     .Build();
 
 var response = await client.GetAsync("https://resource.example/data");
-// ChallengeHandler intercepts the 401, exchanges the resource token,
-// swaps to the auth token, and retries automatically.
+// ChallengeHandler intercepts each 401: it requests a person token, retries,
+// exchanges the resource token with that person token, swaps to the auth
+// token, and retries automatically.
 ```
 
 <details>
@@ -136,16 +145,26 @@ builder.Services.AddAAuthAgent("ps-asserted", options =>
 });
 ```
 
-This registers a named `HttpClient` with signing + automatic challenge handling. Inject via `IHttpClientFactory.CreateClient("ps-asserted")`. The `ChallengeHandler` intercepts 401 responses, exchanges the resource token at the PS, and retries transparently.
+This registers a named `HttpClient` with signing + automatic challenge handling. Inject via `IHttpClientFactory.CreateClient("ps-asserted")`. The `ChallengeHandler` intercepts 401 responses, obtains the person token and
+exchanges the resource token at the PS, and retries transparently.
 
 See [Dependency Injection](../reference/dependency-injection.md) for full options reference.
 
 ## Token Flow
 
-1. Agent sends signed request with agent token → resource returns 401 + resource token
-2. `ChallengeHandler` intercepts: extracts resource token from response
-3. `TokenExchangeClient.ExchangeAsync()` posts resource token to PS's `auth_token_endpoint`
-4. PS **verifies the resource token** (`TokenVerifier.VerifyResourceTokenAsync`: `typ`/`dwk`/signature via the issuing resource's JWKS, `exp`/`iat`, `aud`, `agent`, `agent_jkt`), then verifies the agent identity, checks consent, and returns the auth token
+1. Agent sends signed request with agent token → resource returns
+   `401 requirement=person-token`
+2. `ChallengeHandler` requests a person token at the PS's `person_token_endpoint`
+   (`TokenExchangeClient.RequestPersonTokenAsync`) and retries with it → resource
+   returns `401 requirement=auth-token` + a resource token naming the person token
+3. `TokenExchangeClient.ExchangeAsync()` posts the resource token and the person
+   token (`presented_token`) to the PS's `auth_token_endpoint`
+4. PS **verifies the resource token** (`TokenVerifier.VerifyResourceTokenAsync`:
+   `typ`/`dwk`/signature via the issuing resource's JWKS, `exp`/`iat`, `aud`,
+   `agent_jkt`, `ps`) and **the pair** (`VerifyPresentedTokenAsync`: the presented
+   token's `jti`, `sub`, `mission_s256`, and `tenant` match), identifies the agent
+   from the agent token that signed the request, checks consent, and returns the
+   auth token
 5. `AAuthTokenHolder` is updated with the auth token
 6. `ChallengeHandler` retries the original request (now with auth token in Signature-Key)
 
@@ -158,7 +177,8 @@ See [Dependency Injection](../reference/dependency-injection.md) for full option
 
 The PS half of this flow (steps 3–4) ships as the one-call host helper
 `MapAAuthPersonServer`: it publishes the PS metadata + JWKS, verifies the request
-signature and the presented `resource_token`, delegates the identity + consent
+signature, maps the person token endpoint, verifies the presented
+`resource_token` and `presented_token`, delegates the identity + consent
 decision to a pluggable `IIdentityClaimsAsserter`, and mints the auth token (or
 parks a `202` deferred consent). See
 [Token Issuance → One-Call Person Server](../server/token-issuance.md#one-call-person-server-mapaauthpersonserver).

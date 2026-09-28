@@ -18,10 +18,10 @@ sequenceDiagram
     participant Bookings as Bookings (:5005)
     participant PS as Person Server (:5100)
     participant AS as R3 Access Server (:5501)
-    Agent->>Bookings: POST /authorize { r3_operations } (signed)
-    Bookings-->>Agent: resource token (aud=AS, r3_uri + r3_s256)
-    Agent->>PS: POST /token (resource token)
-    PS->>AS: POST /token (forwards resource token)
+    Agent->>Bookings: POST /authorize { r3_operations } (signed, person token)
+    Bookings-->>Agent: resource token (aud=AS, r3_uri + r3_s256, presented_jti = person token)
+    Agent->>PS: POST /token (resource_token, presented_token)
+    PS->>AS: POST /token (resource_token, agent_token, presented_token)
     AS->>Bookings: GET r3_uri (AS-signed) — fetch R3 document
     Bookings-->>AS: R3 document bytes (verbatim)
     Note over AS: hash-verify r3_s256, split granted vs conditional, audit
@@ -31,7 +31,7 @@ sequenceDiagram
     Bookings-->>Agent: 200 OK
     Agent->>Bookings: POST /confirm_reservation (auth token) — in r3_conditional
     Bookings-->>Agent: 401 + resource token → per-call proposal (r3_uri + parameters)
-    Agent->>PS: POST /token (proposal resource token)
+    Agent->>PS: POST /token (proposal resource token, presented_token = auth token)
     PS->>AS: POST /token
     AS-->>PS: 202 Accepted + interaction URL (per-call consent required)
     PS-->>Agent: 202 Accepted + interaction URL

@@ -178,10 +178,12 @@ public sealed class SnippetCompilationTests
     {
         var snippets = DocumentationInventory.Read();
         var issuance = snippets.Where(snippet => snippet.File == "docs/server/token-issuance.md").Select(snippet => snippet.Code).ToArray();
-        Assert.Contains(issuance, code => code.Contains("expectedApprover: psIssuer"));
-        Assert.Contains(issuance, code => code.Contains("expectedApprover: authenticatedPsIdentifier")
-            && code.Contains("issuance.ValidateResourceContext(verified.Payload, authenticatedPsIdentifier)"));
-        Assert.DoesNotContain(issuance, code => code.Contains("expectedApprover: null"));
+        Assert.Contains(issuance, code => code.Contains("expectedPersonServer: psIssuer")
+            && code.Contains("VerifyPresentedTokenAsync"));
+        Assert.Contains(issuance, code => code.Contains("expectedPersonServer: authenticatedPsIdentifier")
+            && code.Contains("VerifyPresentedTokenAsync")
+            && code.Contains("issuance.ValidateResourceContext(verified.Payload)"));
+        Assert.DoesNotContain(issuance, code => code.Contains("expectedApprover"));
         var routes = snippets.Single(snippet => snippet.File == "docs/server/verification-middleware.md"
             && snippet.Code.Contains("MapGet(\"/pseudonymous\""));
         Assert.Contains("MapGet(\"/pseudonymous\", handler).RequireGenericSignature()", routes.Code);
@@ -190,7 +192,8 @@ public sealed class SnippetCompilationTests
             .GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>().Single(method => method.Identifier.ValueText == "VerifyResourceTokenAsync");
         var documentation = verifier.GetLeadingTrivia().ToFullString();
         Assert.DoesNotContain("without a mission constraint pass", documentation);
-        Assert.Contains("When a mission is present, a verifying recipient must supply", documentation);
+        Assert.Contains("VerifyPresentedTokenAsync", documentation);
+        Assert.DoesNotContain("expectedApprover", documentation);
         var profile = File.ReadAllText(Path.Combine(RepositoryRoot(), "samples/MockResourceServers/Profile/Program.cs"));
         Assert.DoesNotContain("RequireAAuthSignature", profile);
         Assert.DoesNotContain("no JWT issuer check", profile);

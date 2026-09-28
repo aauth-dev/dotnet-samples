@@ -21,7 +21,7 @@ distinct requests â€” a fresh `created`, a different carrier, a different path â
 never do. A valid, non-revoked auth token remains reusable with fresh signatures.
 Token revocation is keyed by `TokenKey(issuer, tokenId)`, never by a bare `jti`.
 The wire identity is `(iss,jti)`; both strings are required by
-[Token Revocation](../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L2361).
+[Token Revocation](../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#token-revocation).
 
 ## IJtiStore Interface
 
@@ -186,7 +186,7 @@ No successful cascade is claimed for that response.
 
 Unreached recipients learn nothing from local JWKS verification and remain
 bounded by token lifetime, at most one hour for auth tokens. See the
-[revocation exposure limits](../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L2395).
+[revocation exposure limits](../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2767).
 Deployments needing shorter exposure should issue shorter-lived tokens and use a
 durable retry mechanism. The SDK's in-memory sample does not provide restart-safe
 delivery or a background retry service.

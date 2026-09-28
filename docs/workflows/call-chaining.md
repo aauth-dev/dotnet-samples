@@ -1,6 +1,10 @@
 # Call Chaining
 
-Call chaining enables multi-hop delegation where a resource acts as an agent to downstream resources, preserving the full authorization chain via nested `act` claims.
+Call chaining enables multi-hop access where a resource acts as an agent to
+downstream resources on behalf of its caller. The intermediary presents the
+token its caller presented to it as `upstream_token`; the person server
+authorizes every hop and holds the chain. Tokens carry no delegation chain
+claim (§Why There Is No Delegation Chain Claim).
 
 ## Scenario
 
@@ -12,28 +16,42 @@ sequenceDiagram
     participant C as Calendar (Resource C)
 
     A->>B: request (agent token)
-    B-->>A: 401 + resource token
-    A->>PS: exchange resource token
+    B-->>A: 401 requirement=person-token
+    A->>PS: POST person_token_endpoint (resource = B)
+    PS-->>A: person token for Resource B
+    A->>B: retry (person token)
+    B-->>A: 401 requirement=auth-token + resource token
+    A->>PS: POST auth_token_endpoint (resource_token, presented_token)
     PS-->>A: auth token for Resource B
     A->>B: retry (auth token)
 
-    Note over B,C: Resource B now acts as an agent
-    B->>C: request (agent token)
-    C-->>B: 401 + resource token
-    B->>PS: exchange (upstream_token = Agent A's auth token)
-    PS-->>B: chained auth token (nested act)
-    B->>C: retry (chained auth token)
-    C-->>B: 200 OK (sees full delegation chain)
+    Note over B,C: Resource B now acts as an agent (its own agent token)
+    B->>PS: POST person_token_endpoint (resource = C, upstream_token)
+    PS-->>B: person token for Resource C
+    B->>C: request (person token)
+    C-->>B: 401 requirement=auth-token + resource token
+    B->>PS: POST auth_token_endpoint (resource_token, presented_token, upstream_token)
+    PS-->>B: auth token for Resource C
+    B->>C: retry (auth token)
+    C-->>B: 200 OK
     B-->>A: 200 OK
 ```
 
-1. Agent A calls Resource B with an agent token → Resource B challenges with a resource token
-2. Agent A exchanges at PS → gets an auth token for Resource B
-3. Agent A retries with auth token → Resource B accepts
-4. Resource B calls Resource C with its own agent token → Resource C challenges
-5. Resource B exchanges at PS with `upstream_token` = Agent A's auth token
-6. PS mints a chained auth token with nested `act` → Resource B retries
-7. Resource C sees the full delegation chain in the `act` claim
+1. Agent A calls Resource B with an agent token → Resource B asks for a person token
+2. Agent A obtains a person token for Resource B and retries → Resource B
+   challenges with a resource token naming that person token
+3. Agent A exchanges the resource token and the person token (`presented_token`)
+   at its PS → gets an auth token for Resource B, retries, and Resource B accepts
+4. Resource B, signing with its own agent token, requests a person token for
+   Resource C at the PS the upstream token names, with Agent A's auth token as
+   `upstream_token`
+5. Resource B presents that person token at Resource C → Resource C challenges
+6. Resource B sends the resource token, its person token as `presented_token`,
+   and the same `upstream_token` to the PS → gets an auth token for Resource C
+   that carries the upstream `mission_s256` (if any) and expires no later than
+   the upstream token
+7. Resource C verifies the auth token like any other; it sees the person
+   (`ps`, `sub`) and the signing intermediary, not the upstream parties
 
 ## Running the Sample
 
@@ -48,7 +66,8 @@ The Concierge runs on port 5200, acting as both resource (verifies callers) and 
 
 ### Client Side — Challenge Handling (Transparent)
 
-The calling agent uses standard challenge handling. The SDK automatically handles the 401 → exchange → retry cycle:
+The calling agent uses standard challenge handling. The SDK automatically handles
+the person-token and auth-token challenges and the retries:
 
 ```csharp
 using AAuth.Agent;
@@ -67,21 +86,25 @@ using var client = AAuthClientBuilder.Enrolled(key)
     .WithChallengeHandling(personServer)
     .Build();
 
-// The Concierge challenges with 401 + resource token.
-// SDK handles the exchange transparently.
+// The Concierge challenges for a person token, then for an auth token.
+// SDK handles both exchanges transparently.
 var response = await client.GetAsync("https://concierge.example");
 ```
 
 ### Intermediate Service — Resource + Agent Pattern
 
-The intermediate service (Concierge) acts as both a resource and an agent.
+The intermediate service (Concierge) acts as both a resource and an agent. It
+must be its own agent provider: it publishes `/.well-known/aauth-agent.json` on
+its own origin and signs downstream requests with an agent token it issued to
+itself, so the upstream token's `aud` (the Concierge) equals that agent token's
+`iss` (§Intermediary Agent Identity).
 
 #### Simplified Pattern (Recommended)
 
 Use `UseAAuthIntermediary` for verification + challenge, and `WithCallChaining(ctx)` for automatic downstream routing:
 
 ```csharp
-// Middleware: verify callers + auto-challenge agent tokens
+// Middleware: verify callers + auto-challenge for person and auth tokens
 app.UseWhen(
     ctx => !ctx.Request.Path.StartsWithSegments("/.well-known"),
     branch => branch.UseAAuthIntermediary(
@@ -112,10 +135,14 @@ app.MapGet("/", async (HttpContext ctx) =>
 ```
 
 `WithCallChaining(ctx)` automatically:
-- Reads the upstream auth token from `UpstreamAuthTokenFeature` (set by verification middleware)
-- Routes the downstream exchange to the correct PS/AS via `CallChainingRouter`
-- Passes `upstream_token` in the exchange POST body to preserve the delegation chain
-- Handles the full 401 → exchange → retry cycle transparently
+- Reads the upstream person or auth token from `UpstreamAuthTokenFeature` (set by verification middleware)
+- Routes every downstream token request to the PS the upstream token names (a
+  person token's `iss`, an auth token's `ps`) via `CallChainingRouter` — never
+  the `ps` of the intermediary's own agent token
+- Sends `upstream_token` on the downstream person token request and on the auth
+  token request, and sends no `mission_s256` of its own (the PS carries the
+  upstream token's mission forward)
+- Handles the person-token and auth-token challenges and retries transparently
 
 #### Lower-Level Pattern
 
@@ -130,36 +157,37 @@ app.UseAAuthVerification(new AAuthVerificationOptions
 
 app.MapGet("/", async (HttpContext ctx) =>
 {
-    var parsed = ctx.GetAAuthParsedKey()!;
     var tokenType = ctx.GetAAuthTokenType();
 
-    // Agent token → challenge the caller
+    // Agent token → ask the caller for a person token
     if (tokenType == AAuthTokenType.AgentToken)
     {
-        var rt = new ResourceTokenBuilder
-        {
-            Issuer = conciergeUrl,
-            Audience = parsed.Payload?["ps"]?.ToString(),
-            Agent = parsed.Payload?["sub"]?.ToString(),
-            AgentJkt = parsed.ConfirmationKey!.ComputeJwkThumbprint(),
-            Key = conciergeKey,
-            KeyId = "orch-1",
-            Scope = "concierge",
-        }.Build();
-
-        return ctx.ChallengeAAuth(rt);
+        ctx.Response.Headers[AAuthRequirementHeader.Name] = AAuthRequirementHeader.FormatPersonToken();
+        return Results.Unauthorized();
     }
 
-    // Auth token → forward downstream with call chaining
-    var upstreamAuthToken = parsed.Jwt; // caller's auth token
+    // Person token → challenge for an auth token with a resource token naming it
+    var presented = ctx.GetAAuthVerifiedAssertion()!;
+    if (tokenType == AAuthTokenType.PersonToken)
+        return ctx.ChallengeAAuth(
+            AAuthChallengeMiddleware.BuildResourceToken(challengeOptions, presented, scope: "concierge"));
 
-    // 2. Exchange at PS WITH upstream_token
-    var exchange = new TokenExchangeClient(signedClient, metadata);
-    var chained = await exchange.ExchangeAsync(
-        personServer, resourceToken,
-        new TokenExchangeRequest { UpstreamToken = upstreamAuthToken });
+    // Auth token → it is the upstream token for downstream requests
+    var upstream = presented.CompactToken;
+    var downstreamPs = CallChainingRouter.ResolveDownstreamServer(upstream, exchangeClient.EgressPolicy);
 
-    // 3. Call downstream with the chained auth token
+    // 2. Person token for the downstream resource, under the upstream token
+    var personToken = await exchangeClient.RequestPersonTokenAsync(
+        downstreamPs, downstreamResource, new TokenExchangeRequest { UpstreamToken = upstream });
+
+    // ...present personToken downstream; its 401 carries resourceToken...
+
+    // 3. Auth token request: resource_token + presented_token + upstream_token
+    var chained = await exchangeClient.ExchangeAsync(
+        downstreamPs, resourceToken,
+        new TokenExchangeRequest { PresentedToken = personToken, UpstreamToken = upstream });
+
+    // 4. Call downstream with the chained auth token
     using var downstream = new AAuthClientBuilder(myKey)
         .UseJwt(chained)
         .Build();
@@ -187,58 +215,71 @@ using var dynamicTokenClient = new AAuthClientBuilder(key)
 
 ### Token Exchange with upstream_token
 
-When calling `TokenExchangeClient.ExchangeAsync`, pass the upstream auth token:
+When calling `TokenExchangeClient.ExchangeAsync`, pass the upstream token beside
+the token you presented downstream:
 
 ```csharp
 var exchange = new TokenExchangeClient(signedClient, metadata);
 var downstreamToken = await exchange.ExchangeAsync(
     personServer: "https://ps.example",
     resourceToken: resourceToken,
-    new TokenExchangeRequest { UpstreamToken = incomingAuthToken }); // preserves delegation chain
+    new TokenExchangeRequest
+    {
+        PresentedToken = heldToken,       // the downstream person token the resource token names
+        UpstreamToken = incomingAuthToken, // the token the caller presented to this intermediary
+    });
 ```
 
-The SDK includes the upstream token as `upstream_token` in the POST body to the PS token endpoint.
+The SDK includes the upstream token as `upstream_token` in the POST body to the
+PS auth token endpoint. An intermediary may reuse the same upstream token for any
+number of downstream requests until it expires; downstream tokens never outlive
+it. A revoked upstream token is `400 revoked_upstream_token` on a new request,
+and a pending downstream request whose upstream token expires ends with
+`408 expired` (or `403 revoked` if it is revoked while pending).
 
-### Auth Token Builder — Nested Act Claims
+### Downstream Auth Tokens Carry No Delegation Chain
 
-When an auth token carries delegation context, the `act` claim records the
-upstream delegator. The presenter (the intermediary that signs the downstream
-request) is the top-level `agent`; `act.agent` names the immediate upstream
-delegator, and any further-upstream chain nests as `act.act`:
+A chained auth token looks like any other auth token. It names the person
+(`ps`, `sub`), binds the intermediary's key through `cnf.jwk`, and carries the
+upstream `mission_s256` when there is one. It has no `agent` or `act` claim: the
+downstream resource already knows its immediate caller from the signature, and
+the PS, which authorized every hop, holds the chain in its mission log.
 
 ```json
 {
   "iss": "https://ps.example",
+  "dwk": "aauth-person.json",
+  "aud": "https://calendar.example",
+  "ps": "https://ps.example",
   "sub": "pairwise-sub",
-  "agent": "aauth:concierge@concierge.example",
-  "act": {
-    "agent": "aauth:agent-a@ap.example"
-  }
+  "scope": "calendar.read",
+  "mission_s256": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
 }
 ```
 
-The `AuthTokenBuilder` supports this via `Act` (the composed delegation node;
-omitted entirely for direct authorization):
+A PS that mints the downstream token by hand bounds it by the verified upstream
+token and copies its mission:
 
 ```csharp
 var token = new AuthTokenBuilder
 {
     AgentTokenExpiresAt = verifiedAgent.ExpiresAt,
-    AuthorizationExpiresAt = verifiedUpstream.ExpiresAt,
+    AuthorizationExpiresAt = verifiedUpstream.ExpiresAt, // never outlives the upstream token
     Issuer = psIssuer,
     Audience = downstreamResource,
-    Agent = resourceBAgent,
-    AgentConfirmationKey = resourceBKey,
+    PersonServer = psIssuer,
+    Subject = directedSubject,                  // sub from the downstream resource token
+    AgentConfirmationKey = resourceBKey,        // the intermediary's key
+    MissionS256 = verifiedUpstream.MissionS256, // the upstream mission, unchanged
     Key = psKey,
     KeyId = "ps-key-1",
     Scope = "downstream:read",
-    Act = upstreamActNode, // nested JsonObject ({ agent, act? }); null ⇒ no act
 }.Build();
 ```
 
 ## AgentConsole Support
 
-Pass `--upstream-token` to include an upstream auth token in the exchange:
+Pass `--upstream-token` to include an upstream token in the exchange:
 
 ```bash
 dotnet run --project samples/AgentConsole -- http://localhost:5001/events \
@@ -260,27 +301,24 @@ The final resource (Calendar) validates the chained auth token using standard mi
 - JWT signature against the PS's JWKS
 - `aud` matches the resource's identifier
 - `cnf.jwk` matches the request signing key (PoP binding)
-- `agent` is the presenting agent; `act.agent`, when present, names the upstream delegator
 
-The `act` claim is OPTIONAL (absent for direct authorization) and, when present,
-is available in the response for audit/logging purposes but is not verified
-recursively — that responsibility lies with the PS that minted the token.
+There is nothing chain-specific to check: the resource enforces the token it
+receives, and the PS attributes the chain.
 
 ## PS-Side — Upstream Token Validation
 
-When a PS receives an `upstream_token` parameter during a call-chaining exchange, it must validate the token per §Upstream Token Verification. Use `UpstreamTokenValidator`:
+When a PS receives an `upstream_token` parameter during a call-chaining request, it must validate the token per §Upstream Token Verification. Use `UpstreamTokenValidator`:
 
 > **Upstream trust is tight by default — the inverse of first-hop federation.**
 > First-hop PS→AS federation (`TrustedAccessServers` on the PS) is *open* by default:
 > a `null` policy lets the PS federate to the AS named in a verified resource token's
-> `aud` (§PS-AS Trust Establishment, L1581). Call-chaining (§Upstream Token
-> Verification, L1742) is deliberately the opposite — **tight by default**: an
-> unconfigured PS trusts only its **own** (three-party, previously-brokered)
-> upstreams. Extending a *four-party* chain — trusting an upstream token an AS
-> issued — requires explicitly listing that AS in `TrustedAccessServers` or
-> accepting it via `IsTrustedAccessServer`. The asymmetry is intentional:
-> call-chaining extends an existing delegation chain, so the stakes are higher than
-> opening a fresh first-hop delegation.
+> `aud` (§PS-AS Trust Establishment). Call-chaining (§Upstream Token
+> Verification) is deliberately the opposite — **tight by default**: a PS accepts
+> an upstream person token only if it issued it, and an upstream auth token only
+> if it names this PS as `ps` and was issued by this PS or an AS this PS
+> federated with. Extending a *four-party* chain — trusting an upstream token an
+> AS issued — requires explicitly listing that AS in `TrustedAccessServers` or
+> accepting it via `IsTrustedAccessServer`.
 
 ```csharp
 // Register in DI
@@ -291,41 +329,44 @@ builder.Services.AddSingleton(sp =>
 
 // In the token endpoint handler
 var validator = app.Services.GetRequiredService<UpstreamTokenValidator>();
-var trustedIssuers = new HashSet<string> { psIssuer };
 
 var result = await validator.ValidateAsync(
     upstreamToken,
-    expectedAudience: intermediaryResourceUrl, // aud must match the caller
-    trustedIssuers);
+    intermediary: intermediaryResourceUrl,   // aud must equal the intermediary's agent-token iss
+    expectedPersonServer: psIssuer,          // a person token's iss / an auth token's ps
+    isTrustedAuthTokenIssuer: iss => iss == psIssuer || trustedAccessServers.Contains(iss));
 
 if (!result.IsValid)
     return AAuth.Server.AAuthProblemDetails.Create("invalid_upstream_token", result.Error);
 
-// Compose the downstream act node from the upstream token's agent + its own chain.
-var downstreamAct = ActChainBuilder.BuildNestedAct(result.Agent!, result.UpstreamAct);
-var authToken = new AuthTokenBuilder
+// The downstream person token is bounded by the upstream token and carries its mission.
+var personToken = new PersonTokenBuilder
 {
-    AgentTokenExpiresAt = verifiedAgent.ExpiresAt,
-    AuthorizationExpiresAt = result.ExpiresAt,
     Issuer = psIssuer,
     Audience = downstreamResource,
-    Agent = intermediaryAgentId,
-    AgentConfirmationKey = intermediaryKey,
+    Subject = directedSubject,
+    ConfirmationKey = intermediaryKey,
+    AgentTokenExpiresAt = verifiedAgent.ExpiresAt,
+    AuthorizationExpiresAt = result.ExpiresAt,
+    MissionS256 = result.MissionS256,
+    Tenant = result.Tenant,
     Key = psKey, KeyId = "ps-1",
-    Scope = "downstream:read",
-    Act = downstreamAct, // composed delegation chain ({ agent, act? })
 }.Build();
 ```
 
-The validator performs:
-1. JWT signature verification via issuer JWKS discovery
-2. Issuer trust check against provided set
-3. Audience binding (aud == intermediary resource URL)
-4. Act chain well-formedness (each level has `agent`, depth within limits)
+The validator performs §Upstream Token Verification steps 1–3:
+1. Verifies the token as a person token or an auth token (by `typ`) via issuer
+   JWKS discovery; `cnf.jwk` is the calling agent's key and is not compared with
+   the intermediary's signing key
+2. Checks the issuer: the PS a person token's `iss` or an auth token's `ps`
+   names must equal `expectedPersonServer`, and an auth token's `iss` must pass
+   `isTrustedAuthTokenIssuer`
+3. Checks that the upstream `aud` equals the intermediary's agent-token `iss`
 
-It returns `result.Agent` (the upstream token's agent) and `result.UpstreamAct`
-(its raw, optional chain); the caller composes the downstream node via
-`ActChainBuilder.BuildNestedAct`.
+It returns the verified token and its `Subject`, `PersonServer`, `MissionS256`,
+`Tenant`, and `ExpiresAt`. `MapAAuthPersonServer` runs this validation for you.
+Failures map to `invalid_upstream_token`, `expired_upstream_token`, or
+`revoked_upstream_token` (all `400`).
 
 ## PS-Side — Auth Token Delivery Validation
 
@@ -338,53 +379,18 @@ var result = await deliveryValidator.ValidateAsync(
     authToken: responseFromAs,
     expectedIssuer: asUrl,             // must match the AS we sent to
     expectedAudience: resourceUrl,     // downstream resource
-    expectedAgentId: agentId,          // the requesting agent
+    expectedSubject: directedSubject,  // the directed sub from the resource token
+    expectedPersonServer: psIssuer,    // this PS, as ps
     agentKey: agentSigningKey,         // cnf.jwk binding check
-    expectedActContext: upstreamAct,   // chain consistency (optional)
+    presentedTokenExpiresAt: verifiedToken.ExpiresAt, // never outlives the presented token
     requestedScope: "data.read");      // scope narrowing check
 
 if (!result.IsValid)
-    return AAuth.Server.AAuthProblemDetails.Create("delivery_verification_failed");
-```
-
-## Act Chain Utilities
-
-### Reading the Delegation Chain
-
-Resources can inspect the full delegation chain for authorization policy:
-
-```csharp
-var payload = verifiedToken.Payload;
-var chain = ActChainReader.GetDelegationChain(payload);
-// ["aauth:concierge@concierge.example", "aauth:agent-a@ap.example"]
-
-var immediate = ActChainReader.GetImmediateActor(payload);
-// "aauth:concierge@concierge.example"
-
-var original = ActChainReader.GetOriginalActor(payload);
-// "aauth:agent-a@ap.example"
-
-var depth = ActChainReader.GetChainDepth(payload);
-// 2
-```
-
-### Building Nested Act Claims
-
-PS implementations constructing downstream tokens can use `ActChainBuilder`:
-
-```csharp
-// Wrap upstream act inside new intermediary act
-var nestedAct = ActChainBuilder.BuildNestedAct(
-    upstreamAgentId: "aauth:agent@ap.example",
-    upstreamChain: validatedUpstreamAct);
-// { "agent": "aauth:agent@ap.example", "act": { "agent": "..." } }
-
-// Validate chain before issuing
-bool valid = ActChainBuilder.ValidateChain(nestedAct, maxDepth: 10);
+    return AAuth.Server.AAuthProblemDetails.Create("as_unreachable", statusCode: 502);
 ```
 
 ## See Also
 
 - [Interaction Chaining](../advanced/interaction-chaining.md) — propagating a downstream consent requirement back up the chain when a hop needs human approval (the multi-actor, human-in-the-loop variant of this workflow).
 - [Deferred Consent](deferred-consent.md) — agent-side handling of a `202` interaction requirement.
-- [Missions](../advanced/missions.md#forwarding-a-mission-in-a-call-chain) — how `MissionForwardingHandler` carries the `AAuth-Mission` header across hops.
+- [Missions](../advanced/missions.md#missions-in-a-call-chain) — how the upstream token's `mission_s256` carries across hops.

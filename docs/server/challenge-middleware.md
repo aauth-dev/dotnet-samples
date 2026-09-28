@@ -1,6 +1,9 @@
 # Challenge Middleware
 
-`AAuthChallengeMiddleware` automatically issues 401 challenges with resource tokens when an agent presents only an agent token but the resource requires an auth token.
+`AAuthChallengeMiddleware` automatically issues 401 challenges when the resource
+requires an auth token: an agent token alone is answered with
+`requirement=person-token`, and a verified person token is answered with
+`requirement=auth-token` and a resource token naming that person token.
 
 > **Prefer the high-level pipeline for the common case.** `app.UseAAuth(...)` after
 > `app.UseRouting()` runs this challenge middleware internally for every endpoint
@@ -30,8 +33,11 @@ public enum AAuthAccessMode
     // Accept any verified identity without requiring auth token
     IdentityOnly,
 
-    // Require auth token — issue 401 challenge if only agent token present
+    // Require auth token — challenge for a person token, then for an auth token
     RequireAuthToken,
+
+    // Require the agent's own agent token — bare requirement=agent-token otherwise
+    AgentTokenRequired,
 
     // Resource manages authorization itself (two-party) — challenge middleware
     // passes through; endpoints issue/validate the AAuth-Access opaque token
@@ -42,10 +48,29 @@ public enum AAuthAccessMode
 ## How It Works
 
 1. `UseAAuthVerification` runs first and stores `AAuthVerificationResult` in features
-2. If `AccessMode` is `RequireAuthToken` and the token is an agent token (not auth token):
-   - Middleware mints a resource token (`aa-resource+jwt`) scoped to the request
-   - Returns `401 Unauthorized` with `AAuth-Requirement: requirement=auth-token; resource-token="<jwt>"`
-3. The agent's `ChallengeHandler` catches the 401, exchanges the resource token at its PS, and retries
+2. If `AccessMode` is `RequireAuthToken`:
+   - An **agent token** alone gets `401 Unauthorized` with
+     `AAuth-Requirement: requirement=person-token` (§Person Token Required). A
+     resource issues a resource token only after it verifies a person or auth
+     token, because the resource token names the token it was issued against.
+   - A verified **person token** gets a resource token (`aa-resource+jwt`)
+     scoped to the request and
+     `401 Unauthorized` with `AAuth-Requirement: requirement=auth-token; resource-token="<jwt>"`
+     (§Auth Token Required).
+   - A verified **auth token** passes through.
+3. The agent's `ChallengeHandler` catches each 401: it requests a person token at
+   its PS's `person_token_endpoint`, retries, then sends the resource token and
+   the person token it presented (`presented_token`) to the PS's
+   `auth_token_endpoint`, and retries with the auth token.
+
+The resource token names the presented token: `ps` and `sub` come from it (a
+person token's `iss`, an auth token's `ps`), `presented_jti` is its `jti`,
+`agent_jkt` is the thumbprint of the key that signed the request, and
+`mission_s256` and `tenant` are copied when present. `aud` is the resource's
+`AccessServer` (four-party) or the person's PS (three-party). A custom endpoint
+can mint the same token from the verified assertion with
+`AAuthChallengeMiddleware.BuildResourceToken(options, presented, scope, ...)`,
+which also accepts an optional `interaction` and `loginHint`.
 
 ## Challenge Options
 
@@ -64,42 +89,39 @@ public sealed class ChallengeOptions
     // Resource identifier (used as iss in the resource token)
     public string? ResourceIdentifier { get; init; }
 
-    // Explicit audience for resource tokens (e.g. the AS URL in a four-party flow).
-    // When null, audience is resolved from the agent token's ps claim (three-party).
-    public string? PersonServerAudience { get; init; }
+    // The resource's own Access Server (four-party): the resource-token aud.
+    // When null, aud is the PS that issued the presented token (three-party).
+    public string? AccessServer { get; init; }
 
     // Default scopes to request in the resource token (space-separated)
     public string? DefaultScopes { get; init; }
 
     // Allowed Signature-Key schemes (null = allow all)
     public IReadOnlySet<string>? AllowedSignatureKeySchemes { get; init; }
-
-    // When true, copy the AAuth-Mission header's mission object into the
-    // issued resource token so the mission context flows to the PS (default false)
-    public bool MissionAware { get; init; }
 }
 ```
 
-## Mission-Aware Resources
+## Missions in Resource Tokens
 
-Set `MissionAware = true` to make the resource carry mission context forward. When
-a challenged request includes a valid `AAuth-Mission` header, the issued resource
-token includes the mission object (`approver` + `s256`), so the mission reaches the
-PS even when the resource is not the approver (§Terminology). When `false` (the
-default) the header is ignored.
+Every resource carries mission context forward; there is no opt-in. When the
+presented person or auth token carries `mission_s256`, the challenge middleware
+copies it into the resource token, and the PS rejects a resource token whose
+`mission_s256` differs from the presented token's (§Resource Token
+Verification). There is no mission request header to read.
 
 ```csharp
 app.UseAAuthChallenge(new ChallengeOptions
 {
     AccessMode = AAuthAccessMode.RequireAuthToken,
     ResourceSigningKey = resourceKey,
+    ResourceKeyId = keyId,
     ResourceIdentifier = resourceUrl,
-    MissionAware = true, // copy AAuth-Mission into the resource token
+    // mission_s256 and tenant are copied from the presented token automatically
 });
 ```
 
-See [Missions](../advanced/missions.md#the-binding-chain) for how the mission
-claim threads through the tokens, and
+See [Missions](../advanced/missions.md#the-binding-chain) for how `mission_s256`
+threads through the tokens, and
 [Token Issuance](token-issuance.md#mission-claims) for the claim itself.
 
 ## Typical Pipeline
@@ -132,7 +154,7 @@ app.MapGet("/data", (HttpContext ctx) =>
 
 With the high-level pipeline, the scope each endpoint challenges for is declared on
 the endpoint itself with `.RequireAAuth(scope: ...)`. The single `UseAAuth`
-middleware mints a resource token requesting exactly that scope when only an agent
+middleware mints a resource token requesting exactly that scope when a person
 token is presented. This is the pattern the Calendar sample uses: `/events`
 challenges for `calendar.read`, while the step-up `/events/write` endpoint
 challenges for `calendar.write`.

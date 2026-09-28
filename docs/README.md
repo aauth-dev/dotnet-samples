@@ -5,7 +5,7 @@ server-side verification, six Signature-Key schemes and four resource access
 modes. Generic signing demonstrations are separate from AAuth resource access.
 
 - [Interactive Protocol Explorer](https://explorer.aauth.dev/)
-- [AAuth Protocol Specification](../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md)
+- [AAuth Protocol Specification](../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md)
 
 ## Getting Started
 
@@ -113,13 +113,13 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | `InteractionHandler` | `DelegatingHandler` — handles 202 deferred/interaction |
 | `AAuthAccessHandler` | `DelegatingHandler` — captures/replays the resource-managed `AAuth-Access` token |
 | `IAAuthAccessStore` / `InMemoryAAuthAccessStore` | Per-origin store for captured `AAuth-Access` tokens |
-| `TokenExchangeClient` | Sends signed `POST /token` to the Person Server |
+| `TokenExchangeClient` | Signed person token requests and auth token exchanges at the Person Server |
 | `DeferredPoller` | Polls the pending URL until auth_token or timeout |
 | `AgentProviderClient` | Enrols with an Agent Provider (CLI/desktop agents; hosted services self-issue) |
-| `Mission` / `AAuthMissionHeader` | Mission state + the `AAuth-Mission` header helpers |
-| `MissionForwardingHandler` | `DelegatingHandler` that forwards mission context downstream |
+| `Mission` / `MissionHeaderHandler` | Mission state + the handler that names the mission (`mission_s256`) on person token requests |
+| `MissionForwardingHandler` | `DelegatingHandler` that forwards the caller's token downstream as `upstream_token` |
 | `AAuthGovernanceClient` | Facade bundling the four PS governance clients |
-| `MissionClient` | Propose missions at the PS `mission_endpoint` |
+| `MissionClient` | Propose, update, and complete missions at the PS `mission_endpoint` |
 | `PermissionClient` | Request permission at the PS `permission_endpoint` |
 | `AuditClient` | Record actions at the PS `audit_endpoint` |
 | `InteractionClient` | Reach the user via the PS `interaction_endpoint` |
@@ -141,10 +141,11 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | Type | Purpose |
 |------|---------|
 | `AgentTokenBuilder` | Builds `aa-agent+jwt` (agent identity + DWK) |
-| `ResourceTokenBuilder` | Builds `aa-resource+jwt` (401 challenge payload) |
+| `PersonTokenBuilder` | Builds `aa-person+jwt` (the person's identity at one resource) |
+| `ResourceTokenBuilder` | Builds `aa-resource+jwt` (401 challenge payload naming the presented token) |
 | `AuthTokenBuilder` | Builds `aa-auth+jwt` (person delegation proof) |
 | `TokenVerifier` | Ed25519 JWT verification with claim checks and JWKS resolution |
-| `MissionClaim` | The `mission` claim (`approver` + `s256`) carried in tokens |
+| `MissionReference` | The `mission_s256` claim/parameter name and validation |
 
 ### `AAuth.Discovery` — Metadata and JWKS
 
@@ -163,7 +164,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | `ClarificationRequirement` | Typed `requirement=clarification` projection (untrusted question) |
 | `AAuthAccessHeader` | Format/parse/validate the `AAuth-Access` opaque token (`token68`) |
 
-> The `AAuthCapabilitiesHeader` and `AAuthMissionHeader` types live in the `AAuth.Agent` namespace (alongside `Mission` and `MissionForwardingHandler`), not in `AAuth.Headers`.
+> The `AAuthCapabilitiesHeader` and `MissionHeaderHandler` types live in the `AAuth.Agent` namespace (alongside `Mission` and `MissionForwardingHandler`), not in `AAuth.Headers`.
 
 ### `AAuth.Server.Verification` — Verification middleware
 

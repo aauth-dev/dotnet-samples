@@ -544,7 +544,7 @@ using var client = new HttpClient(pipeline);
 - [Resource-Managed Access](workflows/resource-managed-access.md) — resource runs its own authorization
 - [PS-Asserted Access](workflows/ps-asserted-access.md) — full three-party authorization flow
 - [Federated Access](workflows/federated-access.md) — four-party flow with an Access Server
-- [Call Chaining](workflows/call-chaining.md) — multi-agent delegation with nested `act`
+- [Call Chaining](workflows/call-chaining.md) — multi-hop access with `upstream_token`
 - [Bootstrap & Enrollment](workflows/bootstrap-enrollment.md) — detailed AP enrollment for CLI/desktop agents
 - [Server Guide](server/verification-middleware.md) — verification middleware and token issuance
 - [Protocol Concepts](concepts.md) — understand the full picture

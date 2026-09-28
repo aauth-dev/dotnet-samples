@@ -10,10 +10,10 @@ sequenceDiagram
     participant Resource
     participant PS as Person Server
     participant User
-    Agent->>Resource: GET /data (signed)
+    Agent->>Resource: GET /data (signed, person token)
     Resource-->>Agent: 401 + resource token
-    Agent->>PS: POST /token (resource token)
-    Note over PS: Verifies resource token<br/>(typ/dwk/sig, exp/iat, aud, agent, agent_jkt)
+    Agent->>PS: POST /token (resource_token, presented_token)
+    Note over PS: Verifies resource token<br/>(typ/dwk/sig, exp/iat, aud, agent_jkt, ps)<br/>and the presented token it names
     PS-->>Agent: 202 + {interaction_url, pending_url, code}
     Agent->>User: Present interaction URL + code
     User->>PS: Approve at interaction page
@@ -41,6 +41,7 @@ try
         resourceToken,
         new TokenExchangeRequest
         {
+            PresentedToken = heldToken, // the person or auth token the resource token names
             OnInteractionRequired = async (interaction, ct) =>
             {
                 // Present to user - open browser, show notification, etc.

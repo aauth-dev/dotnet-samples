@@ -4,16 +4,43 @@
 
 ## Overview
 
-The SDK provides builders for all three AAuth JWT token types. Each produces a
+The SDK provides builders for all four AAuth JWT token types (agent, person,
+resource, and auth tokens). Each produces a
 compact JWT (`header.payload.signature`) signed by the configured `IAAuthKey`.
 Built-in keys support Ed25519 (`AAuthKey`) and ES256 (`EcdsaAAuthKey`); the key's
 algorithm determines `alg`. Ed25519 examples are not a universal algorithm
 requirement. Choose a supported algorithm that the recipient accepts.
 
+Most hosts never call these builders directly: `UseAAuth` / `UseAAuthChallenge`
+mint resource tokens, and `MapAAuthPersonServer` / `MapAAuthAccessServer` mint
+person and auth tokens. The builders are the primitives those helpers use.
+
 ## Resource Tokens (`aa-resource+jwt`)
 
-Issued by a resource to challenge the agent. Contains the recipient PS URL
-(three-party) or AS URL (federated), and the agent's key thumbprint.
+Issued by a resource to challenge an agent that presented a **person token** (or
+an auth token, on a step-up). A resource token names the token it was issued
+against: `ps`, `sub`, `presented_jti`, and the agent's key thumbprint, plus
+`mission_s256` and `tenant` copied from the presented token. It carries no agent
+identifier. `aud` is the resource's AS (four-party) or the person's PS
+(three-party).
+
+The simplest way to mint one is from the verified assertion the verification
+middleware stored, so every copied claim comes from the verified token:
+
+```csharp
+using AAuth.Server.Challenge;
+
+// The person or auth token the agent presented, verified by UseAAuthVerification.
+var presented = context.GetAAuthVerifiedAssertion()!;
+var resourceToken = AAuthChallengeMiddleware.BuildResourceToken(
+    challengeOptions, presented, scope: "read write");
+
+// Return as 401 challenge (sets the AAuth-Requirement header:
+// requirement=auth-token; resource-token="...")
+return context.ChallengeAAuth(resourceToken);
+```
+
+The underlying builder takes the same values explicitly:
 
 ```csharp
 using AAuth.Tokens;
@@ -21,18 +48,18 @@ using AAuth.Tokens;
 var resourceToken = new ResourceTokenBuilder
 {
     Issuer = "https://resource.example",
-    Audience = "https://as.example",          // recipient AS reached through the PS
-    Agent = "aauth:myapp@ap.example",         // agent identifier
-    AgentJkt = agentConfirmationKey.ComputeJwkThumbprint(), // verified HTTP key
+    Audience = "https://as.example",          // resource's AS, or the person's PS (three-party)
+    PersonServer = "https://ps.example",      // person token iss, or auth token ps
+    Subject = verifiedToken.Subject!,         // sub of the presented token
+    PresentedJti = verifiedToken.Jti,         // jti of the presented token
+    AgentJkt = agentConfirmationKey.ComputeJwkThumbprint(), // verified HTTP signing key
+    MissionS256 = verifiedToken.MissionS256,  // copied unchanged when present
+    Tenant = verifiedToken.Tenant,            // copied when present
     Key = resourceSigningKey,
     KeyId = "resource-key-1",
     Scope = "read write",                     // requested scope
     Lifetime = TimeSpan.FromMinutes(5),       // default: 5 min
 }.Build();
-
-// Return as 401 challenge (sets the AAuth-Requirement header:
-// requirement=auth-token; resource-token="...")
-return context.ChallengeAAuth(resourceToken);
 ```
 
 ### ResourceTokenBuilder Properties
@@ -40,19 +67,50 @@ return context.ChallengeAAuth(resourceToken);
 | Property | Required | Default | Description |
 |----------|:--------:|---------|-------------|
 | `Issuer` | Yes | — | Resource URL (becomes `iss`) |
-| `Audience` | Yes | — | AS/PS URL where agent exchanges (becomes `aud`) |
-| `Agent` | Yes | — | Agent identifier (becomes `agent`) |
-| `AgentJkt` | Yes | — | Agent's key thumbprint (for binding) |
+| `Audience` | Yes | — | Resource's AS, or the PS that issued the presented token (becomes `aud`) |
+| `PersonServer` | Yes | — | The person's PS (becomes `ps`) |
+| `Subject` | Yes | — | `sub` of the presented token |
+| `PresentedJti` | Yes | — | `jti` of the presented person or auth token (becomes `presented_jti`) |
+| `AgentJkt` | Yes | — | Agent's key thumbprint (becomes `agent_jkt`) |
 | `Key` | Yes | — | Signing key |
 | `KeyId` | Yes | — | Key ID (goes in JWT header `kid`) |
+| `MissionS256` | No | — | `mission_s256` copied unchanged from the presented token |
+| `Tenant` | No | — | `tenant` copied from the presented token |
 | `Scope` | No | — | Space-separated scopes |
+| `Account` | No | — | Echoed `account` from the authorization request |
+| `LoginHint` | No | — | `login_hint` for the PS |
+| `Interaction` | No | — | Resource-initiated interaction (`url` + `code`) |
 | `Lifetime` | No | 5 min | Token validity duration |
 | `IssuedAt` | No | Now | Override issuance time |
 | `TokenId` | No | Auto | Custom `jti` (auto-generated UUID if omitted) |
 
+## Person Tokens (`aa-person+jwt`)
+
+Issued by a Person Server's `person_token_endpoint` to identify the person to one
+resource. The agent presents it in `Signature-Key` in place of its agent token.
+A person token is identity, not authorization: it carries no `scope` or
+`account`, and a recipient rejects it wherever an auth token is required.
+`MapAAuthPersonServer` mints these at `POST /person`.
+
+```csharp
+var personToken = new PersonTokenBuilder
+{
+    Issuer = "https://ps.example",
+    Audience = "https://resource.example",   // the resource this token identifies the person to
+    Subject = directedSubject,               // directed sub for this resource
+    ConfirmationKey = agentPublicKey,        // binds the token to the agent's key
+    AgentTokenExpiresAt = verifiedAgent.ExpiresAt, // never outlives the agent token
+    Key = psSigningKey,
+    KeyId = "ps-key-1",
+    MissionS256 = mission.S256,              // optional: the mission the agent named
+}.Build();
+```
+
 ## Auth Tokens (`aa-auth+jwt`)
 
-Issued by a Person Server or Access Server to grant access. Bound to the agent's confirmation key.
+Issued by a Person Server or Access Server to grant access. Bound to the agent's
+confirmation key. The person is identified by `(ps, sub)`; an auth token carries
+no agent identifier and no delegation chain.
 
 ```csharp
 var verifiedAgent = await tokenVerifier.VerifyWithJwksAsync(
@@ -64,13 +122,13 @@ var authToken = new AuthTokenBuilder
     AgentTokenExpiresAt = verifiedAgent.ExpiresAt,
     Issuer = "https://ps.example",
     Audience = "https://resource.example",    // resource that will accept this
-    Agent = "aauth:myapp@ap.example",
+    PersonServer = "https://ps.example",      // ps: the issuer (three-party) or the federating PS
+    Subject = directedSubject,                // sub copied from the resource token
     AgentConfirmationKey = agentPublicKey,    // binds token to agent's key
     Key = psSigningKey,
     KeyId = "ps-key-1",
     Dwk = AuthTokenBuilder.PersonDwk,        // "aauth-person.json" (or AccessDwk for AS)
     Scope = "read",
-    Subject = "user@example.com",            // optional: person identifier
     Lifetime = TimeSpan.FromHours(1),
 }.Build();
 ```
@@ -81,15 +139,17 @@ var authToken = new AuthTokenBuilder
 |----------|:--------:|---------|-------------|
 | `Issuer` | Yes | — | PS or AS URL (becomes `iss`) |
 | `Audience` | Yes | — | Resource URL (becomes `aud`) |
-| `Agent` | Yes | — | Agent identifier |
+| `PersonServer` | Yes | — | The person's PS (becomes `ps`) |
+| `Subject` | Yes | — | Directed person identifier copied from the resource token |
 | `AgentConfirmationKey` | Yes | — | Agent's public key (bound via `cnf.jwk`) |
 | `AgentTokenExpiresAt` | Yes | None | Expiry from the verified agent token; no unbounded default |
-| `AuthorizationExpiresAt` | No | None | Additional verified parent/upstream ceiling |
+| `AuthorizationExpiresAt` | No | None | Additional verified ceiling (presented, parent, upstream, or mission expiry) |
 | `Key` | Yes | — | PS/AS signing key |
 | `KeyId` | Yes | — | Key ID (JWT header `kid`) |
 | `Dwk` | No | `"aauth-person.json"` | Discovery well-known path (`PersonDwk` or `AccessDwk`) |
 | `Scope` | No | — | Granted scope |
-| `Subject` | No | — | Person identifier |
+| `MissionS256` | No | — | `mission_s256` copied from the resource token |
+| `Tenant` | No | — | `tenant` copied from the resource token |
 | `Lifetime` | No | 1 hour | Positive requested lifetime, at most one hour; capped by verified expiry |
 | `TimeProvider` | No | System | Clock used to reject expired contexts and determine issuance time |
 | `IssuedAt` | No | Now | Override issuance time |
@@ -106,11 +166,13 @@ new token. Success responses calculate `expires_in` from the issued token's
 remaining Unix seconds, including after deferred delivery.
 
 `AdditionalClaims` accepts identity extensions such as `email`, but rejects
-`iss`, `dwk`, `aud`, `jti`, `agent`, `cnf`, `iat`, `exp`, `nbf`, `sub`, `scope`,
-`act`, `mission`, `account`, `tenant`, `roles`, and `groups`, even when their typed
-properties are unset. Set supported identity fields through the named builder
-properties. AS claims requests and pushes cannot supply protocol-owned fields;
-`sub`, `tenant`, `roles`, and `groups` use the typed identity projection path.
+`iss`, `dwk`, `aud`, `jti`, `ps`, `cnf`, `iat`, `exp`, `nbf`, `sub`, `scope`,
+`mission_s256`, `account`, `tenant`, `roles`, and `groups`, even when their typed
+properties are unset. It also rejects the draft-10 `agent`, `act`, and `mission`
+claims, which an auth token no longer carries. Set supported identity fields
+through the named builder properties. AS claims requests and pushes cannot supply
+protocol-owned fields; `sub`, `tenant`, `roles`, and `groups` use the typed
+identity projection path.
 
 ### Person Server vs Access Server
 
@@ -159,47 +221,64 @@ var result = verifier.Verify(
     expectedDwk: ResourceTokenBuilder.ResourceDwk,
     expectedAudience: "https://ps.example");
 
-// Verify an auth token (also checks agent key binding)
+// Verify an auth token (also checks cnf.jwk against the HTTP signing key)
 var auth = verifier.VerifyAuthToken(
     jwt: authTokenString,
     issuerKey: psPublicKey,
     expectedAudience: "https://resource.example",
-    httpSignatureKey: agentKey,
-    expectedAgentId: "aauth:myapp@ap.example");
+    httpSignatureKey: agentKey);
+
+// Verify a person token presented in Signature-Key (identity, not authorization)
+var person = verifier.VerifyPersonToken(
+    jwt: heldToken,
+    issuerKey: psPublicKey,
+    expectedAudience: "https://resource.example",
+    httpSignatureKey: agentKey);
 ```
 
-### Verifying a presented resource token (PS/AS side)
+### Verifying a resource token and its presented token (PS/AS side)
 
-When an agent exchanges a `resource_token` at the PS/AS `/token` endpoint, the
-recipient MUST verify it before minting an auth token (spec §"Resource Token
-Verification"). `VerifyResourceTokenAsync` performs JWKS discovery and all seven
-recipient checks in one call:
+An agent's auth token request carries a `resource_token` **and** the
+`presented_token` it names — the person or auth token the agent presented to the
+resource. The recipient MUST verify both before minting an auth token (spec
+§Resource Token Verification). `VerifyResourceTokenAsync` performs JWKS discovery
+and the resource-token checks; `VerifyPresentedTokenAsync` then verifies the
+presented token and the pair:
 
 ```csharp
+var body = await context.Request.ReadFromJsonAsync<JsonObject>();
+var presentedToken = (string)body!["presented_token"]!;
+
 var verified = await verifier.VerifyResourceTokenAsync(
     jwt: resourceTokenString,
     expectedAudience: psIssuer,                 // this PS/AS own identifier (aud)
-    expectedAgentId: agentId,                   // from the verified HTTP signature
-    expectedAgentJkt: confirmationKey.ComputeJwkThumbprint(),
+    expectedAgentJkt: confirmationKey.ComputeJwkThumbprint(), // from the verified HTTP signature
     metadata: metadataClient,                   // resolves {iss}/.well-known/aauth-resource.json
     jwks: jwksClient,                           // resolves the resource's signing key
-    expectedApprover: psIssuer);
+    expectedPersonServer: psIssuer);            // a PS verifies that ps names itself
+
+var presented = await verifier.VerifyPresentedTokenAsync(
+    presentedToken, verified, metadataClient, jwksClient);
 ```
 
-At a PS, `expectedApprover` is the local PS identifier. At an AS, it is the
+At a PS, `expectedPersonServer` is the local PS identifier. At an AS, it is the
 authenticated PS caller's identifier, never a value taken from the request body
 or the resource token. The AS also validates retained upstream context before
 document fetch, policy evaluation, consent, or issuance:
 
 ```csharp
+var body = await context.Request.ReadFromJsonAsync<JsonObject>();
+var presentedToken = (string)body!["presented_token"]!;
+
 var verified = await verifier.VerifyResourceTokenAsync(
-    resourceTokenString, asIssuer, issuance.AgentId,
+    resourceTokenString, asIssuer,
     issuance.ConfirmationKey.ComputeJwkThumbprint(), metadataClient, jwksClient,
-    expectedApprover: authenticatedPsIdentifier);
-issuance.ValidateResourceContext(verified.Payload, authenticatedPsIdentifier);
+    expectedPersonServer: authenticatedPsIdentifier);
+await verifier.VerifyPresentedTokenAsync(presentedToken, verified, metadataClient, jwksClient);
+issuance.ValidateResourceContext(verified.Payload);
 ```
 
-The seven checks (failure throws `TokenVerificationException`):
+The checks (failure throws `TokenVerificationException`):
 
 | # | Check | Detail |
 |---|-------|--------|
@@ -207,13 +286,18 @@ The seven checks (failure throws `TokenVerificationException`):
 | 2 | `dwk` + signature | `dwk=aauth-resource.json`; key resolved from `{iss}/.well-known/aauth-resource.json` → `jwks_uri` |
 | 3 | `exp` / `iat` | Within validity (honours `ClockSkew`) |
 | 4 | `aud` | Equals `expectedAudience` |
-| 5 | `agent` | Equals `expectedAgentId` from the verified HTTP signature |
-| 6 | `agent_jkt` | Equals the presenting agent's key thumbprint (PoP binding) |
-| 7 | `mission.approver` | If mission is present, must match the local PS or authenticated PS caller at the AS |
+| 5 | `agent_jkt` | Equals the presenting agent's key thumbprint (PoP binding); the sub-agent's for a parent-mediated sub-agent request |
+| 6 | `ps` | Equals `expectedPersonServer`: the local PS, or the authenticated PS caller at an AS |
+| 7 | `presented_token` | `VerifyPresentedTokenAsync`: a person or auth token whose `aud` is the resource token's `iss` and whose `cnf.jwk` matches `agent_jkt`; its `jti` equals `presented_jti`, its PS (`iss` or `ps`) equals `ps`, and `sub`, `mission_s256`, and `tenant` match exactly |
 
-Map failures to the spec error response — `expired_resource_token` for an expired
-token, otherwise `invalid_resource_token` — and derive the consent screen and the
-issued auth token only from the verified payload. The SDK host helpers
+Map failures to the spec error response — `expired_resource_token` /
+`invalid_resource_token` for the resource token and a pair mismatch,
+`expired_presented_token` / `invalid_presented_token` for the presented token
+itself (`TokenVerificationException.Credential` says which), and
+`revoked_<parameter>_token` (400) when a parameter token was revoked — and
+derive the consent screen and the issued auth token only from the verified
+payload. When the resource token carries `mission_s256`, a PS also verifies the
+mission is active and unexpired. The SDK host helpers
 `MapAAuthPersonServer` / `MapAAuthAccessServer` run exactly these checks
 internally; the [`samples/MockPersonServer`](../../samples/MockPersonServer/)
 adopts the PS helper rather than hand-rolling them.
@@ -221,48 +305,57 @@ adopts the PS helper rather than hand-rolling them.
 ## Mission Claims
 
 When a request is governed by a mission, the mission travels through the tokens as
-a `mission` claim — `{ approver, s256 }` — never the mission content itself
-(§Resource Token Structure, §Auth Token Structure). The SDK models it with
-`MissionClaim`:
+the `mission_s256` string claim — the mission's `s256`, never the mission content
+itself (§Person Token Structure, §Resource Token Structure, §Auth Token
+Structure). The approving PS is named beside it: the `iss` of a person token, the
+`ps` of a resource or auth token. `MissionReference` names and validates it, and
+each builder exposes a `MissionS256` property:
 
 ```csharp
 namespace AAuth.Tokens;
 
-public sealed record MissionClaim(string Approver, string S256)
+public static class MissionReference
 {
-    public JsonObject ToJsonObject();
-    public static MissionClaim? FromPayload(JsonObject? payload, AAuth.Discovery.AAuthEgressPolicy? policy = null);
+    public const string ClaimName = "mission_s256";
+    public static bool IsValid(string? value);
+    public static string? Read(JsonObject? document);
 }
 ```
 
-A mission-aware resource copies the mission object from the `AAuth-Mission`
-request header into the resource token it issues, so the mission context reaches
-the PS even when the resource is not the approver. Enable it with
-`ChallengeOptions.MissionAware` — see
-[Challenge Middleware](challenge-middleware.md#mission-aware-resources). The PS
-echoes the same claim into the auth token it mints. When verifying a presented
-resource token, the PS/AS recipient must supply `expectedApprover` (check 7
-above). An absent mission does not require a new mission; a present mission
-cannot name another PS. Immediate and deferred issuance retain the verified
-mission unchanged, including R3 AS responses validated by the PS.
+The PS stamps `mission_s256` into the person token when the agent names the
+mission on its person token request. The resource copies it from the presented
+token into the resource token it issues — every resource does this; there is no
+opt-in (see
+[Challenge Middleware](challenge-middleware.md#missions-in-resource-tokens)). The
+PS carries it into the auth token it mints, and `VerifyPresentedTokenAsync`
+rejects a resource token whose `mission_s256` differs from its presented token's,
+which makes mission stripping detectable. Immediate and deferred issuance retain
+the verified mission unchanged, including R3 AS responses validated by the PS.
 
 For the full PS-side evaluation of mission context, see
 [Mission Governance (Server)](mission-governance.md).
 
 ## One-Call Person Server (`MapAAuthPersonServer`)
 
-The builders above are the primitives. The whole Person Server token-endpoint
-pipeline also ships as a single host helper, `MapAAuthPersonServer` — the PS
+The builders above are the primitives. The whole Person Server token pipeline
+also ships as a single host helper, `MapAAuthPersonServer` — the PS
 counterpart to [`MapAAuthAccessServer`](../workflows/federated-access.md#access-server-side-code).
-One call publishes the `/.well-known/aauth-person.json` metadata + JWKS, verifies
-the RFC 9421 request signature, verifies the presented `resource_token`, and then
-routes on the resource token's `aud` (§PS-AS Federation):
+One call publishes the `/.well-known/aauth-person.json` metadata (including
+`person_token_endpoint` and `auth_token_endpoint`) + JWKS, verifies the RFC 9421
+request signature, and maps both token endpoints:
 
-- **`aud` = this PS** → three-party (PS-asserted): mint the auth token directly
-  (`dwk=aauth-person.json`, `iss`=PS).
-- **`aud` = a trusted Access Server** → four-party (federated): forward a signed
-  PS→AS request via `AccessServerClient` and return the AS-issued auth token after
-  the §Auth Token Delivery check.
+- **`POST /person`** (`person_token_endpoint`) — issues a person token
+  (`aa-person+jwt`) for the named `resource`, optionally under a `mission_s256`
+  the agent owns, or under the mission of an `upstream_token` when chaining.
+- **`POST /token`** (`auth_token_endpoint`) — verifies the `resource_token` and
+  its `presented_token`, then routes on the resource token's `aud` (§PS-AS
+  Federation):
+  - **`aud` = this PS** → three-party (PS-asserted): mint the auth token directly
+    (`dwk=aauth-person.json`, `iss`=PS).
+  - **`aud` = a trusted Access Server** → four-party (federated): forward a signed
+    PS→AS request (resource token plus a presented token) via
+    `AccessServerClient` and return the AS-issued auth token after the §Auth
+    Token Delivery check.
 
 The host owns all AAuth crypto; the identity and consent decision is delegated to
 a pluggable `IIdentityClaimsAsserter`.
@@ -278,7 +371,7 @@ builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>()
 var app = builder.Build();
 
 // One call maps /.well-known + JWKS, request-signature verification,
-// POST /token, and GET /pending/{id}.
+// POST /person, POST /token, and GET /pending/{id}.
 app.MapAAuthPersonServer(new AAuthPersonServerOptions
 {
     Issuer               = psIssuer,
@@ -294,7 +387,9 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
 |----------|------|:--------:|---------|-------------|
 | `Issuer` | `string` | Yes | — | HTTPS URL of this PS (`iss` of minted auth tokens) |
 | `SigningKeys` | `IReadOnlyDictionary<string, IAAuthKey>` | Yes | — | Key-id to signing key map published at the PS JWKS; supports Ed25519 and ES256 keys |
-| `TokenPath` | `string` | No | `/token` | The token endpoint path |
+| `TokenPath` | `string` | No | `/token` | The auth token endpoint path (`auth_token_endpoint`) |
+| `PersonTokenPath` | `string` | No | `/person` | The person token endpoint path (`person_token_endpoint`) |
+| `RevocationPath` | `string` | No | `/revoke` | The revocation endpoint path |
 | `PendingPathPrefix` | `string` | No | `/pending` | The deferred-consent poll path prefix |
 | `DefaultScope` | `string` | No | `""` | Scope assumed when the resource token omits one |
 | `InteractionPath` | `string` | No | `/interaction` | Path the host maps for the consent page |
@@ -343,12 +438,13 @@ identity and consent decision.
 
 ### Mission three-gate packaging
 
-When the resource token carries a `mission` claim, `MapAAuthPersonServer` packages
+When the resource token carries `mission_s256`, `MapAAuthPersonServer` packages
 the mission three-gate token-issuance mechanics, using the `IMissionStore` /
 `IMissionLog` primitives registered by
 [`AddAAuthGovernance()`](mission-governance.md):
 
-1. **Terminated mission** → `403 mission_terminated`.
+1. **Unknown, foreign, or terminated mission** → `404 mission_not_found` or
+   `403 mission_terminated` (an expired mission counts as terminated).
 2. **Prior consent on record** for the `(resource, scope)` → silent mint, logged
    `PriorConsent` (identity from the asserter).
 3. **Otherwise** → the `IMissionTokenConsent` seam decides: `Grant` (silent

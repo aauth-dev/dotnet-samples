@@ -23,8 +23,10 @@ notifications. Follow the printed consent URL for a protected subscription.
 
 The previous R3 reservation pages retain their original flow and link to the
 optional Events demonstration. The ticket issued from an authorized search or
-confirmation binds the authenticated agent, receive operation, selected account
-and current resource state. Its five-minute lifetime is separate from the
+confirmation binds the authenticated agent's key (its JWK thumbprint, not the
+agent identifier), receive operation, selected account and current resource
+state. The subscription records the same key thumbprint from the subscribe
+request's HTTP signing key. Its five-minute lifetime is separate from the
 subscription's one-hour lifetime and the subscribe token's five-minute validity.
 
 ## SDK Integration

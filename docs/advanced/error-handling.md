@@ -142,6 +142,17 @@ public sealed record TokenErrorResponse(TokenErrorCode Error, string? Detail = n
 `TokenExchangeClient` and `AccessServerClient` throw when a token endpoint returns
 an error response.
 
+Token-specific codes exist only for tokens carried as request parameters and
+follow the pattern `<invalid|expired|revoked>_<parameter>_token`. A parameter
+token that was revoked before the first request is a `400`
+`revoked_<parameter>_token` (for example `revoked_upstream_token`). The token in
+the `Signature-Key` header has no body code: when it fails — including a revoked
+agent, person, or auth token — the response is `401` with
+`Signature-Error`; the PS and AS token endpoints report a revoked one as
+`revoked_jwt` (see [Signature Errors](#signature-errors-resource--agent)).
+A request that is already pending reports a revocation while polling instead
+(`403 revoked`, see [Polling Errors](#polling-errors-deferred-consent)).
+
 When the PS returns a non-success status with a structured AAuth error body
 (`{ "error": ..., "detail": ... }`), the exchange throws a typed
 `AAuthTokenExchangeException` carrying the parsed fields. Responses that are not
@@ -160,7 +171,8 @@ public sealed class AAuthTokenExchangeException : Exception
 ```csharp
 try
 {
-    var authToken = await exchangeClient.ExchangeAsync(personServer, resourceToken);
+    // The resource token and the person (or auth) token it names.
+    var authToken = await exchangeClient.ExchangeAsync(personServer, resourceToken, heldToken);
 }
 catch (AAuthTokenExchangeException ex)
 {
@@ -220,9 +232,9 @@ namespace AAuth.Errors;
 
 public enum PollingErrorCode
 {
-    Denied,        // User explicitly denied the request
-    Abandoned,     // User navigated away / session expired
-    Expired,       // Interaction timed out server-side
+    Denied,        // User explicitly denied the request (403)
+    Abandoned,     // User navigated away / session expired (403)
+    Expired,       // Timed out server-side (408), e.g. a chained request's upstream token expired
     Revoked,       // A token the pending request depends on was revoked (403)
     InvalidCode,   // Code doesn't match any pending interaction
     SlowDown,      // Polling too fast — back off
@@ -292,9 +304,11 @@ catch (TokenVerificationException ex)
 
 ## Mission Termination
 
-Once a mission is terminated (the user completed it, or the PS revoked it), the PS
-refuses governed requests with `403 mission_terminated` (§Mission Status Errors).
-The governance clients surface this as a typed exception.
+Once a mission is terminated (the person accepted completion, the mission expired,
+or it was revoked or superseded), the PS refuses governed requests with
+`403 mission_terminated` (§Mission Status Errors). A `mission_s256` the PS does
+not know, or that belongs to another agent, is `404 mission_not_found` instead.
+The governance clients surface termination as a typed exception.
 
 ```csharp
 namespace AAuth.Errors;
@@ -350,7 +364,7 @@ public sealed class AAuthClarificationLimitException : Exception
 | `AAuthInteractionDeniedException` | `DeferredPoller` / `ChallengeHandler` | User denied |
 | `AAuthInteractionTimeoutException` | `DeferredPoller` / `ChallengeHandler` | Polling timed out |
 | `PollingErrorException` | `DeferredPoller` | PS returned terminal error during polling |
-| `AAuthMissionTerminatedException` | `AuditClient` / `InteractionClient` | Mission terminated (`403 mission_terminated`) |
+| `AAuthMissionTerminatedException` | `MissionClient` / `MissionSession` / `AuditClient` / `InteractionClient` | Mission terminated (`403 mission_terminated`) |
 | `AAuthClarificationCancelledException` | `ClarificationExchange` | Agent withdrew during clarification |
 | `AAuthClarificationLimitException` | `ClarificationExchange` | Clarification round limit reached |
 
