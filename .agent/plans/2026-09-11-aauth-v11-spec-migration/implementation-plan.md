@@ -669,8 +669,15 @@ Run this once every phase's Definition of Done is ticked. AAuth issue #199
 (AS verification of `agent_token`) is excluded: it stays an open upstream
 question under the interim ruling in the log.
 
-1. Tick the remaining Phase 2-11 boxes, each backed by a named test or gate
-   recorded in the log. Leave no box ticked on intent alone.
+1. Implement and test the 12 post-cutover items folded into Phases 3 and
+   5-10: R3 draft-11 wire names; revocation body coverage at every endpoint;
+   the person-binding half of step 4; MockAgentProvider `401` Signature-Error;
+   per-issuer bounds and `rate_limited`; deferred `202` revocation; event
+   dedup on `(iss, jti)`; deferred-approval expiry; AS presentation records;
+   MockPersonServer `person_tokens` and a `resources` proposal; agent reuse of
+   `Mission.PersonTokens`; the Wallet `DirectAs` rename. Then tick the
+   remaining Phase 2-11 boxes, each backed by a named test or gate recorded
+   in the log. Leave no box ticked on intent alone.
 2. Finish Phase 0: re-derive every `v11` citation in research, ledger and maps;
    give F01-F24 an owner and check; assign each upgrade-checklist ID or record
    its optional exclusion.
