@@ -23,14 +23,11 @@ public sealed class AAuthResourceOptions
     /// </summary>
     public Dictionary<string, IAAuthKey> SigningKeys { get; set; } = new();
 
-    /// <summary>Maximum allowed age of inbound signatures. Default: 60 seconds.</summary>
-    public TimeSpan MaxSignatureAge { get; set; } = TimeSpan.FromSeconds(60);
-
     /// <summary>
-    /// Maximum allowed skew into the future for HTTP signature timestamps.
-    /// Default: 5 seconds.
+    /// Signature validity window for inbound <c>created</c>, applied in both
+    /// directions. Default: 60 seconds.
     /// </summary>
-    public TimeSpan MaxFutureSkew { get; set; } = TimeSpan.FromSeconds(5);
+    public TimeSpan MaxSignatureAge { get; set; } = TimeSpan.FromSeconds(60);
 
     /// <summary>
     /// Clock function for deterministic testing. Default: <c>null</c> (uses UtcNow).
@@ -80,7 +77,7 @@ public sealed class AAuthResourceOptions
 
     /// <summary>
     /// Optional advisory <c>access_mode</c> published in resource metadata: one
-    /// of <c>agent-token</c>, <c>aauth-access-token</c>, or <c>auth-token</c>.
+    /// of <c>agent-token</c>, <c>person-token</c>, <c>session-token</c>, or <c>auth-token</c>.
     /// </summary>
     public string? AccessMode { get; set; }
 

@@ -225,7 +225,7 @@ public sealed class SnippetCompilationTests
             appendix.AppendLine($"| [{snippet.Key}](../../../{snippet.File}#L{snippet.Line}) | {snippet.Language} | `{snippet.Hash}` | {status} | {EvidenceFor(snippet.File)} |");
         var report = appendix.ToString();
         File.WriteAllText(Path.Combine(Path.GetTempPath(), "aauth-phase13-docs-surface.md"), report);
-        var mapPath = Path.Combine(RepositoryRoot(), ".agent/plans/2026-09-08-aauth-v10-spec-migration/docs-surface-map.md");
+        var mapPath = Path.Combine(RepositoryRoot(), ".agent/plans/2026-09-11-aauth-v11-spec-migration/docs-surface-map.md");
         var existing = File.ReadAllText(mapPath);
         const string marker = "<!-- generated-docs-surface -->";
         var expected = existing[..(existing.IndexOf(marker, StringComparison.Ordinal) + marker.Length)] + report;
@@ -296,7 +296,12 @@ public sealed class SnippetCompilationTests
                 var body = System.Text.Json.Nodes.JsonNode.Parse(snippet.Code[(bodyOffset + 2)..]);
                 Assert.NotNull(body);
                 if (snippet.Code.Contains("application/problem+json")) Assert.NotNull(body["error"]);
-                if (body["jti"] is not null) Assert.NotNull(body["iss"]);
+                if (body["jti"] is not null)
+                {
+                    Assert.True(JtiBodyExamples.TryGetValue(snippet.Key, out var members),
+                        $"{snippet.Key} carries a jti body but has no explicit HTTP example classification.");
+                    Assert.Equal(members.Order(StringComparer.Ordinal), body.AsObject().Select(member => member.Key).Order(StringComparer.Ordinal));
+                }
             }
             foreach (Match header in Regex.Matches(snippet.Code, @"(?m)^AAuth-Requirement:\s*(?<value>[^\r\n]+)"))
             {
@@ -309,6 +314,13 @@ public sealed class SnippetCompilationTests
         }
         throw new InvalidOperationException($"Unclassified {snippet.Language} block");
     }
+
+    private static readonly string[] RevocationRequestMembers = ["iss", "jti"];
+
+    private static readonly Dictionary<string, string[]> JtiBodyExamples = new(StringComparer.Ordinal)
+    {
+        ["docs/server/replay-detection.md:fence-5"] = RevocationRequestMembers,
+    };
 
     private static string EvidenceFor(string file)
     {

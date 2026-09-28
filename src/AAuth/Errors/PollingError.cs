@@ -16,6 +16,12 @@ public enum PollingErrorCode
     /// <summary>Timed out. HTTP 408.</summary>
     Expired,
 
+    /// <summary>
+    /// A token the pending request depends on was revoked: its resource token,
+    /// a chained request's upstream token, or the starting agent's token. HTTP 403.
+    /// </summary>
+    Revoked,
+
     /// <summary>Interaction code not recognized or already consumed. HTTP 410.</summary>
     InvalidCode,
 
@@ -51,6 +57,7 @@ public sealed class PollingErrorException : Exception
         PollingErrorCode.Denied => "denied",
         PollingErrorCode.Abandoned => "abandoned",
         PollingErrorCode.Expired => "expired",
+        PollingErrorCode.Revoked => "revoked",
         PollingErrorCode.InvalidCode => "invalid_code",
         PollingErrorCode.SlowDown => "slow_down",
         PollingErrorCode.ServerError => "server_error",
@@ -65,12 +72,13 @@ public sealed class PollingErrorException : Exception
             "denied" => PollingErrorCode.Denied,
             "abandoned" => PollingErrorCode.Abandoned,
             "expired" => PollingErrorCode.Expired,
+            "revoked" => PollingErrorCode.Revoked,
             "invalid_code" => PollingErrorCode.InvalidCode,
             "slow_down" => PollingErrorCode.SlowDown,
             "server_error" => PollingErrorCode.ServerError,
             _ => default,
         };
-        return code is "denied" or "abandoned" or "expired" or "invalid_code"
+        return code is "denied" or "abandoned" or "expired" or "revoked" or "invalid_code"
             or "slow_down" or "server_error";
     }
 }

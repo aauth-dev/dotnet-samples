@@ -9,13 +9,13 @@ public enum SignatureErrorCode
     UnsupportedScheme,
     IssuerMissing,
     IssuerMismatch,
-    /// <summary>Missing Signature, Signature-Input, or Signature-Key headers.</summary>
+    /// <summary>Malformed or missing information unrelated to signature verification.</summary>
     InvalidRequest,
 
     /// <summary>Covered components do not match the required set or required additional components are missing.</summary>
     InvalidInput,
 
-    /// <summary>The <c>created</c> parameter is outside the server's signature validity window, or signature verification failed.</summary>
+    /// <summary>Signature headers are missing or malformed, <c>created</c> is older than the validity window, or verification failed.</summary>
     InvalidSignature,
 
     /// <summary>The signing algorithm is not supported.</summary>
@@ -32,6 +32,12 @@ public enum SignatureErrorCode
 
     /// <summary>JWT in Signature-Key has expired.</summary>
     ExpiredJwt,
+
+    /// <summary>JWT in Signature-Key verifies and is unexpired, but its issuer has withdrawn it.</summary>
+    RevokedJwt,
+
+    /// <summary>JWT <c>iat</c> or signature <c>created</c> is further ahead of the verifier's clock than the validity window.</summary>
+    ClockSkew,
 }
 
 /// <summary>
@@ -57,6 +63,8 @@ public static class SignatureError
         SignatureErrorCode.UnknownKey => "unknown_key",
         SignatureErrorCode.InvalidJwt => "invalid_jwt",
         SignatureErrorCode.ExpiredJwt => "expired_jwt",
+        SignatureErrorCode.RevokedJwt => "revoked_jwt",
+        SignatureErrorCode.ClockSkew => "clock_skew",
         _ => "invalid_request",
     };
 
@@ -98,11 +106,14 @@ public static class SignatureError
             "unknown_key" => SignatureErrorCode.UnknownKey,
             "invalid_jwt" => SignatureErrorCode.InvalidJwt,
             "expired_jwt" => SignatureErrorCode.ExpiredJwt,
+            "revoked_jwt" => SignatureErrorCode.RevokedJwt,
+            "clock_skew" => SignatureErrorCode.ClockSkew,
             _ => default,
         };
         return codeStr is "invalid_request" or "invalid_input" or "invalid_signature"
             or "unsupported_algorithm" or "invalid_key" or "unknown_key"
-            or "invalid_jwt" or "expired_jwt" or "unsupported_scheme" or "issuer_missing" or "issuer_mismatch";
+            or "invalid_jwt" or "expired_jwt" or "revoked_jwt" or "clock_skew"
+            or "unsupported_scheme" or "issuer_missing" or "issuer_mismatch";
     }
 
     /// <summary>

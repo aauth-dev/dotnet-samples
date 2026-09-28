@@ -184,7 +184,7 @@ public class GovernanceFacadeTests
                 {
                     ["issuer"] = Ps,
                     ["jwks_uri"] = Ps + "/jwks",
-                    ["token_endpoint"] = Ps + "/token",
+                    ["auth_token_endpoint"] = Ps + "/token",
                     ["mission_endpoint"] = Ps + "/mission",
                     ["permission_endpoint"] = Ps + "/permission",
                     ["audit_endpoint"] = Ps + "/audit",

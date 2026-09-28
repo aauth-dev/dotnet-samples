@@ -40,7 +40,6 @@ public static class AAuthResourceServiceCollectionExtensions
         services.TryAddSingleton(sp => new AAuthVerifier
         {
             MaxAge = options.MaxSignatureAge,
-            MaxFutureSkew = options.MaxFutureSkew,
             Clock = options.Clock ?? (() => DateTimeOffset.UtcNow),
         });
 

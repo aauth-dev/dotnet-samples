@@ -17,7 +17,7 @@ public class DeferredExchangeTests
     public async Task TokenExchange_ApprovalNeedsNoInteractionCallback(string? requirement)
     {
         using var handler = new SequenceHandler(
-            _ => Json(HttpStatusCode.OK, "{\"issuer\":\"https://ps.example\",\"token_endpoint\":\"https://ps.example/token\"}"),
+            _ => Json(HttpStatusCode.OK, "{\"issuer\":\"https://ps.example\",\"auth_token_endpoint\":\"https://ps.example/token\"}"),
             _ => Pending(requirement),
             _ => Json(HttpStatusCode.Forbidden, "{\"error\":\"denied\"}"));
         using var http = new InProcessHttpClient(handler);

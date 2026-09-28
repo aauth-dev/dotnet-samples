@@ -25,7 +25,7 @@ internal static class R3TestData
     {
         ["issuer"] = issuer,
         ["jwks_uri"] = $"{issuer}/.well-known/jwks.json",
-        ["token_endpoint"] = $"{issuer}/token",
+        ["auth_token_endpoint"] = $"{issuer}/token",
     };
 
     public static JsonObject Jwks(string kid, AAuthKey key)

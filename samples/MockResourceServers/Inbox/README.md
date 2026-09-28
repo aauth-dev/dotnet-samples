@@ -1,7 +1,7 @@
 # Inbox — Resource-Managed (Two-Party) Resource Server
 
 Aria's email service, on **`:5004`**. The **Inbox** demonstrates the
-**resource-managed** access mode (`access_mode: "aauth-access-token"`): the
+**resource-managed** access mode (`access_mode: "session-token"`): the
 resource manages authorization **itself**, via its **own** consent page, with no
 Person Server and no Access Server. After the user approves, the Inbox hands the
 agent an opaque access token (`AAuth-Access`) that the agent replays — bound to
@@ -35,7 +35,7 @@ the user's Person Server. Two parties only: agent + resource.
 | `GET /consent?code=…` | none | The Inbox's **own** consent page (the user approves here) |
 | `POST /consent/approve` | none | Records the user's approval |
 
-`/.well-known/aauth-resource.json` advertises `access_mode = "aauth-access-token"`
+`/.well-known/aauth-resource.json` advertises `access_mode = "session-token"`
 and the `authorization_endpoint`. `/.well-known/jwks.json` serves the resource key.
 
 ## The flow

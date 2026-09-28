@@ -60,6 +60,50 @@ public class ResourceAccessModeMetadataTests
         Assert.False(doc.ContainsKey("access_mode"));
     }
 
+    [Theory(DisplayName = "§Resource Metadata — publishes each draft-11 access_mode value")]
+    [InlineData("agent-token")]
+    [InlineData("person-token")]
+    [InlineData("session-token")]
+    [InlineData("auth-token")]
+    public async Task EmitsEachAccessMode(string mode)
+    {
+        var doc = await FetchMetadata(new AAuthResourceMetadataOptions { Issuer = Issuer, AccessMode = mode });
+        Assert.Equal(mode, (string?)doc["access_mode"]);
+    }
+
+    [Fact(DisplayName = "§Resource Metadata — draft-10 aauth-access-token is rejected at configuration")]
+    public void RejectsRenamedAccessMode()
+    {
+        Assert.Throws<System.InvalidOperationException>(() =>
+            new AAuthResourceMetadataOptions { Issuer = Issuer, AccessMode = "aauth-access-token" }.Validate());
+    }
+
+    [Theory(DisplayName = "§Resource Metadata — agents treat an unrecognized access_mode as no declaration")]
+    [InlineData("aauth-access-token", null)]
+    [InlineData("future-mode", null)]
+    [InlineData("person-token", "person-token")]
+    [InlineData("session-token", "session-token")]
+    public void AgentParsesOnlyKnownAccessModes(string wire, string? expected)
+    {
+        var parsed = AAuth.Discovery.ResourceMetadata.FromJson(new JsonObject { ["issuer"] = Issuer, ["access_mode"] = wire });
+        Assert.Equal(expected, parsed.AccessMode);
+    }
+
+    [Fact(DisplayName = "§Person Server Metadata — agents read auth_token_endpoint and person_token_endpoint")]
+    public void AgentReadsDraft11PersonServerEndpoints()
+    {
+        var parsed = AAuth.Discovery.ServerMetadata.FromJson(new JsonObject
+        {
+            ["issuer"] = "https://ps.example",
+            ["jwks_uri"] = "https://ps.example/jwks",
+            ["token_endpoint"] = "https://ps.example/old",
+            ["auth_token_endpoint"] = "https://ps.example/token",
+            ["person_token_endpoint"] = "https://ps.example/person-token",
+        });
+        Assert.Equal("https://ps.example/token", parsed.AuthTokenEndpoint);
+        Assert.Equal("https://ps.example/person-token", parsed.PersonTokenEndpoint);
+    }
+
     private static async Task<JsonObject> FetchMetadata(AAuthResourceMetadataOptions options)
     {
         var builder = WebApplication.CreateBuilder();

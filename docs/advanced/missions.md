@@ -187,7 +187,7 @@ sequenceDiagram
 
     Agent->>Resource: GET /data (signed, AAuth-Mission: approver, s256)
     Resource-->>Agent: 401 + resource token (mission claim copied in)
-    Agent->>PS: POST token_endpoint (resource token)
+    Agent->>PS: POST auth_token_endpoint (resource token)
     Note over PS: evaluate requested scope vs mission intent
     PS-->>Agent: auth token (mission claim echoed)
     Agent->>Resource: GET /data (signed, auth token)

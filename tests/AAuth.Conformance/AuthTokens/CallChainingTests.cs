@@ -394,7 +394,7 @@ public class CallChainingTests
         return JsonNode.Parse(json)!.AsObject();
     }
 
-    /// <summary>Mock handler that returns metadata with a token_endpoint.</summary>
+    /// <summary>Mock handler that returns metadata with an auth_token_endpoint.</summary>
     private sealed class MockMetadataHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
@@ -403,7 +403,7 @@ public class CallChainingTests
             var metadata = new JsonObject
             {
                 ["issuer"] = "http://localhost:5555",
-                ["token_endpoint"] = "http://localhost:5555/token",
+                ["auth_token_endpoint"] = "http://localhost:5555/token",
             };
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
@@ -426,7 +426,7 @@ public class CallChainingTests
                 var metadata = new JsonObject
                 {
                     ["issuer"] = "http://localhost:5555",
-                    ["token_endpoint"] = "http://localhost:5555/token",
+                    ["auth_token_endpoint"] = "http://localhost:5555/token",
                 };
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {

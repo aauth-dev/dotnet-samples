@@ -80,9 +80,6 @@ public sealed class AAuthVerificationOptions
     // Tolerance for exp/iat validation (default: 30s)
     public TimeSpan ClockSkew { get; init; } = TimeSpan.FromSeconds(30);
 
-    // Maximum future skew for HTTP signature timestamps (default: 5s)
-    public TimeSpan MaxFutureSkew { get; init; } = TimeSpan.FromSeconds(5);
-
     // Clock source for all time checks (null = UtcNow; inject for testing)
     public Func<DateTimeOffset>? Clock { get; init; }
 }

@@ -20,7 +20,7 @@ namespace AAuth.Access;
 /// token (<c>aa-auth+jwt</c>) after verifying it per §Auth Token Delivery.
 /// </summary>
 /// <remarks>
-/// <para>The HTTP POST to the AS's <c>token_endpoint</c> MUST be signed with
+/// <para>The HTTP POST to the AS's <c>auth_token_endpoint</c> MUST be signed with
 /// the PS's key (RFC 9421) and carry the PS's <c>jwks_uri</c> in
 /// <c>Signature-Key</c>. The caller supplies an <see cref="HttpClient"/>
 /// wrapped in an <see cref="HttpSig.AAuthSigningHandler"/> configured for the
@@ -44,7 +44,7 @@ public sealed class AccessServerClient
 
     /// <summary>Create the federation client.</summary>
     /// <param name="signedClient">HttpClient already wired with the PS's <see cref="HttpSig.AAuthSigningHandler"/> (jwks_uri scheme).</param>
-    /// <param name="metadata">Metadata client for resolving the AS <c>token_endpoint</c>.</param>
+    /// <param name="metadata">Metadata client for resolving the AS <c>auth_token_endpoint</c>.</param>
     /// <param name="validator">Validator for the §Auth Token Delivery checks on the AS response.</param>
     public AccessServerClient(
         HttpClient signedClient,
@@ -91,9 +91,9 @@ public sealed class AccessServerClient
 
         var metadataUrl = _metadata.GetUrl(accessServer, AAuthConstants.DwkFiles.Access);
         var doc = await _metadata.FetchAsync(metadataUrl, cancellationToken).ConfigureAwait(false);
-        var tokenEndpoint = (string?)doc["token_endpoint"]
+        var tokenEndpoint = (string?)doc["auth_token_endpoint"]
             ?? throw new InvalidOperationException(
-                $"Access Server metadata at {metadataUrl} is missing 'token_endpoint'.");
+                $"Access Server metadata at {metadataUrl} is missing 'auth_token_endpoint'.");
 
         // A malicious or compromised AS metadata document could otherwise
         // redirect the signed federation request to an arbitrary URL (SSRF
@@ -109,7 +109,7 @@ public sealed class AccessServerClient
                 StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                $"Access Server 'token_endpoint' must share an origin with {accessServer}: {tokenEndpoint}");
+                $"Access Server 'auth_token_endpoint' must share an origin with {accessServer}: {tokenEndpoint}");
         }
 
         var body = new JsonObject

@@ -17,16 +17,26 @@ namespace AAuth.Errors;
 
 public enum SignatureErrorCode
 {
-    InvalidRequest,         // Missing required headers (Signature, Signature-Input, Signature-Key)
+    UnsupportedScheme,      // Signature-Key scheme not accepted by this endpoint
+    IssuerMissing,          // jwks_uri/jwks carrier names no issuer
+    IssuerMismatch,         // Carrier issuer disagrees with the verified identity
+    InvalidRequest,         // Malformed information unrelated to signature verification
     InvalidInput,           // Covered components don't match the required set (see required_input)
-    InvalidSignature,       // Signature bytes don't verify against key
+    InvalidSignature,       // Signature headers missing or malformed, created older than the window, or bytes don't verify
     UnsupportedAlgorithm,   // Algorithm not supported by this resource
-    InvalidKey,             // Key material is malformed or unsupported
+    InvalidKey,             // Signature-Key or its key material is malformed or unsupported
     UnknownKey,             // Key not found (jwks_uri: kid not in JWKS)
-    InvalidJwt,             // Agent token JWT fails validation
-    ExpiredJwt,             // Agent token exp has passed
+    InvalidJwt,             // JWT in Signature-Key fails validation
+    ExpiredJwt,             // JWT in Signature-Key exp has passed
+    RevokedJwt,             // JWT verifies and is unexpired, but its issuer withdrew it
+    ClockSkew,              // JWT iat or signature created is ahead of the verifier clock by more than the window
 }
 ```
+
+The `created` window is symmetric: `AAuthVerifier.MaxAge` (60 seconds by default)
+bounds both how old and how far ahead `created` may be. A fresh signature from a
+sender whose clock runs ahead still fails with `clock_skew`, so wait and resend
+rather than re-signing immediately.
 
 ### Wire Format
 
@@ -98,12 +108,23 @@ namespace AAuth.Errors;
 public enum TokenErrorCode
 {
     InvalidRequest,         // Malformed request body
-    InvalidAgentToken,      // Agent token fails validation
-    ExpiredAgentToken,      // Agent token exp has passed
+    InvalidAgentToken,      // Draft-10 code; removed at the draft-11 exchange cutover
+    ExpiredAgentToken,      // Draft-10 code; removed at the draft-11 exchange cutover
     InvalidResourceToken,   // Resource token fails validation
     ExpiredResourceToken,   // Resource token exp has passed
-    InteractionRequired,    // User must approve (deferred consent, non-terminal 202)
+    RevokedResourceToken,   // The issuing resource withdrew it; do not resubmit
+    InvalidPresentedToken,  // Presented person/auth token fails validation
+    ExpiredPresentedToken,  // Get a fresh person token, then a fresh resource token
+    RevokedPresentedToken,  // Get a fresh person token, then a fresh resource token
+    InvalidUpstreamToken,   // Call chaining: upstream token fails validation
+    ExpiredUpstreamToken,   // Call chaining: caller must re-authorize at the intermediary
+    RevokedUpstreamToken,   // Call chaining: terminal for that token
+    InvalidSubagentToken,   // Sub-agent token fails validation or names another parent/issuer
+    ExpiredSubagentToken,   // Parent obtains a fresh sub-agent token
+    RevokedSubagentToken,   // Terminal for that sub-agent token
+    ClockSkew,              // A parameter token's iat is too far ahead; wait, don't refresh
     UserUnreachable,        // No channel to the user; agent declared no interaction capability (terminal 403)
+    AsUnreachable,          // PS could not get a verifiable auth token from the AS (502; retry later)
     MissionTerminated,      // Mission already terminated (terminal 403 mission_terminated)
     ServerError,            // Internal server error (transient, retryable)
 }
@@ -114,7 +135,7 @@ public enum TokenErrorCode
 ```csharp
 public sealed record TokenErrorResponse(TokenErrorCode Error, string? Detail = null)
 {
-    public string ErrorCode { get; }  // wire format: "invalid_request", "expired_agent_token", etc.
+    public string ErrorCode { get; }  // wire format: "invalid_request", "expired_presented_token", etc.
 }
 ```
 
@@ -202,6 +223,7 @@ public enum PollingErrorCode
     Denied,        // User explicitly denied the request
     Abandoned,     // User navigated away / session expired
     Expired,       // Interaction timed out server-side
+    Revoked,       // A token the pending request depends on was revoked (403)
     InvalidCode,   // Code doesn't match any pending interaction
     SlowDown,      // Polling too fast — back off
     ServerError,   // Internal server error

@@ -44,9 +44,6 @@ public sealed class AAuthAgentMetadataOptions
     /// <summary>Optional callback endpoint (<c>callback_endpoint</c>).</summary>
     public string? CallbackEndpoint { get; init; }
 
-    /// <summary>Optional login endpoint (<c>login_endpoint</c>).</summary>
-    public string? LoginEndpoint { get; init; }
-
     /// <summary>Throw if any required field is unset/invalid.</summary>
     public void Validate()
     {

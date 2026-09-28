@@ -332,7 +332,7 @@ public class UpstreamTokenValidationTests
                 {
                     ["issuer"] = _issuer,
                     ["jwks_uri"] = $"{_issuer}/.well-known/jwks.json",
-                    ["token_endpoint"] = $"{_issuer}/token",
+                    ["auth_token_endpoint"] = $"{_issuer}/token",
                 };
                 return JsonResponse(meta);
             }

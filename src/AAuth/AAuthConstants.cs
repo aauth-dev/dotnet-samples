@@ -64,11 +64,14 @@ public static class AAuthConstants
         /// <summary>Identity-only: the agent signs with its agent token.</summary>
         public const string AgentToken = "agent-token";
 
+        /// <summary>Person identity: the agent presents a person token from its PS.</summary>
+        public const string PersonToken = "person-token";
+
         /// <summary>Resource-managed: the agent completes the resource's interaction/
         /// consent flow and receives an opaque token via <c>AAuth-Access</c>.</summary>
-        public const string AAuthAccessToken = "aauth-access-token";
+        public const string SessionToken = "session-token";
 
-        /// <summary>The agent obtains an auth token from its PS using a resource token.</summary>
+        /// <summary>The agent presents a person token first, then an auth token from its PS or the resource's AS.</summary>
         public const string AuthToken = "auth-token";
     }
 

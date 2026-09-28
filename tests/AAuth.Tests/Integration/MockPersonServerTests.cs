@@ -60,7 +60,8 @@ public class MockPersonServerTests : IClassFixture<WebApplicationFactory<MockPer
         Assert.NotNull(doc);
         Assert.Equal(PsIssuer, (string?)doc!["issuer"]);
         Assert.Equal($"{PsIssuer}/.well-known/jwks.json", (string?)doc["jwks_uri"]);
-        Assert.Equal($"{PsIssuer}/token", (string?)doc["token_endpoint"]);
+        Assert.Equal($"{PsIssuer}/token", (string?)doc["auth_token_endpoint"]);
+        Assert.False(doc.ContainsKey("token_endpoint"));
     }
 
     [Fact]

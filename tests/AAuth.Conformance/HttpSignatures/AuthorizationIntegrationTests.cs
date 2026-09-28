@@ -78,7 +78,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
         {
             issuer = PsIssuer,
             jwks_uri = $"{PsIssuer}/.well-known/jwks.json",
-            token_endpoint = $"{PsIssuer}/token",
+            auth_token_endpoint = $"{PsIssuer}/token",
         }));
         app.MapGet("/.well-known/jwks.json", () =>
         {

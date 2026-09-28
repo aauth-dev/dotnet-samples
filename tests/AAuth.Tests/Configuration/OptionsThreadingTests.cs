@@ -9,6 +9,7 @@ using AAuth.Server.Challenge;
 using AAuth.Server.Metadata;
 using AAuth.Server.Verification;
 using AAuth.Tokens;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace AAuth.Tests.Configuration;
@@ -45,41 +46,24 @@ public class OptionsThreadingTests
         Assert.Equal(fixedTime, verifier.Clock());
     }
 
-    [Fact(DisplayName = "AAuthVerificationOptions.MaxFutureSkew exposed")]
-    public void VerificationOptions_MaxFutureSkew_Configurable()
-    {
-        var options = new AAuthVerificationOptions
-        {
-            EgressPolicy = TestEgress.Policy,
-            MaxFutureSkew = TimeSpan.FromSeconds(15),
-        };
-
-        Assert.Equal(TimeSpan.FromSeconds(15), options.MaxFutureSkew);
-    }
-
-    [Fact(DisplayName = "AAuthResourceOptions threads MaxFutureSkew and Clock to AAuthVerifier")]
+    [Fact(DisplayName = "AAuthResourceOptions threads MaxSignatureAge and Clock to AAuthVerifier")]
     public void ResourceOptions_ThreadsToAAuthVerifier()
     {
         var fixedTime = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var options = new AAuthResourceOptions
+        var services = new ServiceCollection();
+        services.AddAAuthResource(options =>
         {
-            Issuer = "https://example.com",
-            MaxSignatureAge = TimeSpan.FromSeconds(120),
-            MaxFutureSkew = TimeSpan.FromSeconds(10),
-            Clock = () => fixedTime,
-        };
-
-        // Simulate DI registration pattern.
-        var verifier = new AAuthVerifier
-        {
-            MaxAge = options.MaxSignatureAge,
-            MaxFutureSkew = options.MaxFutureSkew,
-            Clock = options.Clock ?? (() => DateTimeOffset.UtcNow),
-        };
+            options.Issuer = "https://example.com";
+            options.MaxSignatureAge = TimeSpan.FromSeconds(120);
+            options.Clock = () => fixedTime;
+        });
+        using var provider = services.BuildServiceProvider();
+        var verifier = provider.GetRequiredService<AAuthVerifier>();
 
         Assert.Equal(TimeSpan.FromSeconds(120), verifier.MaxAge);
-        Assert.Equal(TimeSpan.FromSeconds(10), verifier.MaxFutureSkew);
         Assert.Equal(fixedTime, verifier.Clock());
+        var ahead = fixedTime.AddSeconds(90).ToUnixTimeSeconds();
+        verifier.ValidateInput("sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\");created=" + ahead, "sig");
     }
 
     [Fact(DisplayName = "ChallengeHandlingOptions exposes MinPollInterval and OnPoll")]
@@ -126,12 +110,10 @@ public class OptionsThreadingTests
         var verification = new AAuthVerificationOptions();
         Assert.Equal(10, verification.MaxActDepth);
         Assert.Equal(TimeSpan.FromSeconds(30), verification.ClockSkew);
-        Assert.Equal(TimeSpan.FromSeconds(5), verification.MaxFutureSkew);
         Assert.Null(verification.Clock);
 
         var resource = new AAuthResourceOptions();
         Assert.Equal(TimeSpan.FromSeconds(60), resource.MaxSignatureAge);
-        Assert.Equal(TimeSpan.FromSeconds(5), resource.MaxFutureSkew);
         Assert.Null(resource.Clock);
 
         var challenge = new ChallengeHandlingOptions();

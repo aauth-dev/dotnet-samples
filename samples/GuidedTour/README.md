@@ -137,7 +137,7 @@ Assumes the agent is already bootstrapped. Two-party — no Person Server and
 no token exchange; the **Inbox** manages authorization itself.
 
 1. Discover Inbox metadata — unsigned `GET /.well-known/aauth-resource.json`
-   (`access_mode=aauth-access-token` + `authorization_endpoint`).
+   (`access_mode=session-token` + `authorization_endpoint`).
 2. Signed `GET /messages` → **`202 Accepted`** with `Location: /pending/{id}`
    and an `AAuth-Requirement: interaction` pointing at the Inbox's own consent
    page + single-use code.

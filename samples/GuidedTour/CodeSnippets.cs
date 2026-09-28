@@ -121,7 +121,7 @@ internal static class CodeSnippets
         var metadata = new MetadataClient(policy: SampleEgress.Policy);
         var meta = await metadata.FetchAsync(
             metadata.GetUrl("https://ps.example", "aauth-person.json"));
-        var tokenEndpoint = (string)meta["token_endpoint"];
+        var tokenEndpoint = (string)meta["auth_token_endpoint"];
         """;
 
     public const string TokenExchangeDirect = """
@@ -365,7 +365,7 @@ internal static class CodeSnippets
         var meta = await metadata.FetchAsync(
             metadata.GetUrl("https://ps.example", "aauth-person.json"));
         var mission     = (string)meta["mission_endpoint"];
-        var tokenEp     = (string)meta["token_endpoint"];
+        var tokenEp     = (string)meta["auth_token_endpoint"];
         var permission  = (string)meta["permission_endpoint"];
         """;
 

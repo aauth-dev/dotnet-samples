@@ -154,9 +154,9 @@ semantics, no compatibility shims or silent trust-boundary interpretations.
 
 ### Definition of Done
 
-- [ ] Every Q1-Q14 has a recorded ruling in the implementation log.
-- [ ] Implementation authorization, scope and affected-capability blocks are explicit.
-- [ ] Rebased baseline tree, pins, environment and failures are recorded.
+- [x] Every Q1-Q14 has a recorded ruling in the implementation log.
+- [x] Implementation authorization, scope and affected-capability blocks are explicit.
+- [x] Rebased baseline tree, pins, environment and failures are recorded.
 - [ ] Research, ledger and map citations resolve to published draft-11 lines.
 - [ ] Every F01-F24 has an owner, phase and discriminatory check.
 - [ ] Every upgrade-checklist ID has an owning phase or a recorded optional exclusion.
@@ -199,12 +199,12 @@ Phase rule: one final vocabulary; no historical-map rewrites or OIDC renames.
 
 ### Definition of Done
 
-- [ ] Inventory targets this folder/baseline without modifying historical evidence.
-- [ ] Renamed metadata/modes have no active old-field aliases in migrated paths.
-- [ ] New error types preserve header/body/status distinctions.
-- [ ] Uppercase local parts round-trip exactly; case variants are distinct identities.
-- [ ] Ed25519 is accepted at every verifier role.
-- [ ] Focused metadata/error/snippet tests and compiled callers/build pass.
+- [x] Inventory targets this folder/baseline without modifying historical evidence.
+- [x] Renamed metadata/modes have no active old-field aliases in migrated paths.
+- [x] New error types preserve header/body/status distinctions.
+- [x] Uppercase local parts round-trip exactly; case variants are distinct identities.
+- [x] Ed25519 is accepted at every verifier role.
+- [x] Focused metadata/error/snippet tests and compiled callers/build pass.
 
 ## Phase 2 - person tokens and temporal trust
 

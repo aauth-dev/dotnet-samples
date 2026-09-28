@@ -133,7 +133,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         {
             issuer = PsIssuer,
             jwks_uri = $"{PsIssuer}/.well-known/ps-jwks.json",
-            token_endpoint = $"{PsIssuer}/token",
+            auth_token_endpoint = $"{PsIssuer}/token",
             scopes_supported = new[] { "email", "custom_identity" },
         }));
 

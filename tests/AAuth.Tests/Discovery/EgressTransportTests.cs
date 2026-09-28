@@ -117,7 +117,7 @@ public class EgressTransportTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("{\"issuer\":\"https://access.example\",\"token_endpoint\":\"https://access.example/token\"}"),
+                Content = new StringContent("{\"issuer\":\"https://access.example\",\"auth_token_endpoint\":\"https://access.example/token\"}"),
             });
     }
 

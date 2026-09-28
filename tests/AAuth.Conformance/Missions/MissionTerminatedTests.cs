@@ -86,7 +86,7 @@ public class MissionTerminatedTests
                 return Task.FromResult(Json(HttpStatusCode.OK, new JsonObject
                 {
                     ["issuer"] = Ps,
-                    ["token_endpoint"] = Ps + "/token",
+                    ["auth_token_endpoint"] = Ps + "/token",
                 }));
             }
 

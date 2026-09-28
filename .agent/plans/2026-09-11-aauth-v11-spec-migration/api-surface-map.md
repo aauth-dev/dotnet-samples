@@ -58,6 +58,12 @@ refer to its findings. New names below are proposals, not implemented APIs.
 
 ## Inventory tooling
 
+> **Update (2026-09):** Phase 1 parameterized the tool. It now defaults to
+> this map and baseline `v0.10.0-alpha.1` (`f44587f`, the released draft-10
+> SDK merged into this branch), and accepts `--map` and `--baseline`. The v10
+> map is written only when named explicitly. Run
+> `dotnet run --project tools/ApiSurface -- . --write` after reviewing a delta.
+
 [tools/ApiSurface/Program.cs L9](../../../tools/ApiSurface/Program.cs#L9) hardcodes
 the v10 map and defaults to `ba768f1`. Parameterize the destination and choose
 this research baseline before generating an implementation delta. Its source
@@ -70,3 +76,275 @@ required inputs, nullable states, disposal/ownership, behavior-only changes,
 obsolete-member removal, and every compiled caller. This research map is not a
 substitute for that future gate. See [docs-surface-map.md](docs-surface-map.md)
 for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for tests.
+
+<!-- generated-public-api-delta -->
+
+## Complete declaration delta
+
+Baseline `v0.10.0-alpha.1`; 26 changed public-source files, 35 added/replacement declarations, 9 removed/replaced declarations.
+
+Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
+
+### samples/GuidedTour/TourSession.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [TourSession.cs](../../../samples/GuidedTour/TourSession.cs).
+
+Public signatures unchanged (57); behavior reviewed under sample-runtime.
+
+Public owners: `GuidedTour.TourSession`, `GuidedTour`.
+
+### samples/MockAccessServers/Federated/Program.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [Program.cs](../../../samples/MockAccessServers/Federated/Program.cs).
+
+Public signatures unchanged (1); behavior reviewed under sample-runtime.
+
+Public owners: `Federated`.
+
+### samples/MockResourceServers/Inbox/Program.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [Program.cs](../../../samples/MockResourceServers/Inbox/Program.cs).
+
+Public signatures unchanged (1); behavior reviewed under sample-runtime.
+
+Public owners: `Inbox`.
+
+### src/AAuth.R3/R3AccessTokenEndpoint.cs
+
+Concept/decision: [r3](#r3). Source: [R3AccessTokenEndpoint.cs](../../../src/AAuth.R3/R3AccessTokenEndpoint.cs).
+
+Public signatures unchanged (24); behavior reviewed under r3.
+
+Public owners: `AAuth.R3.R3AccessTokenEndpointOptions`, `AAuth.R3.R3AccessTokenEndpoint`, `AAuth.R3`.
+
+### src/AAuth/AAuthConstants.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [AAuthConstants.cs](../../../src/AAuth/AAuthConstants.cs).
+
+```diff
+- AAuth.AAuthConstants.AccessModes: public const string AAuthAccessToken = "aauth-access-token" ;
++ AAuth.AAuthConstants.AccessModes: public const string PersonToken = "person-token" ;
++ AAuth.AAuthConstants.AccessModes: public const string SessionToken = "session-token" ;
+```
+
+Public owners: `AAuth.AAuthConstants.AccessModes`, `AAuth.AAuthConstants.DwkFiles`, `AAuth.AAuthConstants.Headers`, `AAuth.AAuthConstants.Schemes`, `AAuth.AAuthConstants.TokenTypes`, `AAuth.AAuthConstants`, `AAuth`.
+
+### src/AAuth/Access/AAuthAccessServerEndpoints.cs
+
+Concept/decision: [consent](#consent). Source: [AAuthAccessServerEndpoints.cs](../../../src/AAuth/Access/AAuthAccessServerEndpoints.cs).
+
+Public signatures unchanged (16); behavior reviewed under consent.
+
+Public owners: `AAuth.Access.AAuthAccessServerEndpoints`, `AAuth.Access.AAuthAccessServerOptions`, `AAuth.Access`.
+
+### src/AAuth/Access/AccessServerClient.cs
+
+Concept/decision: [consent](#consent). Source: [AccessServerClient.cs](../../../src/AAuth/Access/AccessServerClient.cs).
+
+Public signatures unchanged (3); behavior reviewed under consent.
+
+Public owners: `AAuth.Access.AccessServerClient`, `AAuth.Access`.
+
+### src/AAuth/Agent/TokenExchangeClient.cs
+
+Concept/decision: [agent-clients](#agent-clients). Source: [TokenExchangeClient.cs](../../../src/AAuth/Agent/TokenExchangeClient.cs).
+
+Public signatures unchanged (5); behavior reviewed under agent-clients.
+
+Public owners: `AAuth.Agent.TokenExchangeClient`, `AAuth.Agent`.
+
+### src/AAuth/DependencyInjection/AAuthResourceOptions.cs
+
+Concept/decision: [di](#di). Source: [AAuthResourceOptions.cs](../../../src/AAuth/DependencyInjection/AAuthResourceOptions.cs).
+
+```diff
+- AAuth.AAuthResourceOptions: public TimeSpan MaxFutureSkew { get ; set ; } = TimeSpan . FromSeconds ( 5 )
+```
+
+Public owners: `AAuth.AAuthResourceOptions`, `AAuth`.
+
+### src/AAuth/DependencyInjection/AAuthResourceServiceCollectionExtensions.cs
+
+Concept/decision: [di](#di). Source: [AAuthResourceServiceCollectionExtensions.cs](../../../src/AAuth/DependencyInjection/AAuthResourceServiceCollectionExtensions.cs).
+
+Public signatures unchanged (6); behavior reviewed under di.
+
+Public owners: `Microsoft.Extensions.DependencyInjection.AAuthResourceServiceCollectionExtensions`, `Microsoft.Extensions.DependencyInjection`.
+
+### src/AAuth/Discovery/MetadataClient.cs
+
+Concept/decision: [discovery](#discovery). Source: [MetadataClient.cs](../../../src/AAuth/Discovery/MetadataClient.cs).
+
+Public signatures unchanged (8); behavior reviewed under discovery.
+
+Public owners: `AAuth.Discovery.MetadataClient`, `AAuth.Discovery`.
+
+### src/AAuth/Discovery/ServerMetadata.cs
+
+Concept/decision: [discovery](#discovery). Source: [ServerMetadata.cs](../../../src/AAuth/Discovery/ServerMetadata.cs).
+
+```diff
+- AAuth.Discovery.ServerMetadata: public string ? TokenEndpoint { get ; init ; }
++ AAuth.Discovery.ServerMetadata: public string ? AuthTokenEndpoint { get ; init ; }
++ AAuth.Discovery.ServerMetadata: public string ? PersonTokenEndpoint { get ; init ; }
+```
+
+Public owners: `AAuth.Discovery.MetadataClientExtensions`, `AAuth.Discovery.ResourceMetadata`, `AAuth.Discovery.ServerMetadata`, `AAuth.Discovery`.
+
+### src/AAuth/Errors/PollingError.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [PollingError.cs](../../../src/AAuth/Errors/PollingError.cs).
+
+```diff
++ AAuth.Errors.PollingErrorCode: Revoked
+```
+
+Public owners: `AAuth.Errors.PollingErrorCode`, `AAuth.Errors.PollingErrorException`, `AAuth.Errors`.
+
+### src/AAuth/Errors/RevocationError.cs
+
+Concept/decision: [revocation](#revocation). Source: [RevocationError.cs](../../../src/AAuth/Errors/RevocationError.cs).
+
+```diff
++ AAuth.Errors.RevocationDownstreamError: RevocationUnavailable
++ AAuth.Errors.RevocationDownstreamError: RevocationUnsupported
++ AAuth.Errors.RevocationError: public static bool TryParseCode ( string ? code , out RevocationErrorCode result )
++ AAuth.Errors.RevocationError: public static bool TryParseDownstream ( string ? code , out RevocationDownstreamError result )
++ AAuth.Errors.RevocationError: public static int StatusCode ( RevocationErrorCode code )
++ AAuth.Errors.RevocationError: public static string ToWireCode ( RevocationDownstreamError error )
++ AAuth.Errors.RevocationError: public static string ToWireCode ( RevocationErrorCode code )
++ AAuth.Errors.RevocationErrorCode: InvalidRequest
++ AAuth.Errors.RevocationErrorCode: RateLimited
++ AAuth.Errors.RevocationErrorCode: ServerError
++ AAuth.Errors.RevocationErrorCode: UnsupportedIss
++ AAuth.Errors: public enum RevocationDownstreamError
++ AAuth.Errors: public enum RevocationErrorCode
++ AAuth.Errors: public static class RevocationError
+```
+
+Public owners: `AAuth.Errors.RevocationDownstreamError`, `AAuth.Errors.RevocationErrorCode`, `AAuth.Errors.RevocationError`, `AAuth.Errors`.
+
+### src/AAuth/Errors/SignatureError.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [SignatureError.cs](../../../src/AAuth/Errors/SignatureError.cs).
+
+```diff
++ AAuth.Errors.SignatureErrorCode: ClockSkew
++ AAuth.Errors.SignatureErrorCode: RevokedJwt
+```
+
+Public owners: `AAuth.Errors.SignatureErrorCode`, `AAuth.Errors.SignatureError`, `AAuth.Errors`.
+
+### src/AAuth/Errors/TokenError.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [TokenError.cs](../../../src/AAuth/Errors/TokenError.cs).
+
+```diff
+- AAuth.Errors.TokenErrorCode: InteractionRequired
++ AAuth.Errors.TokenErrorCode: AsUnreachable
++ AAuth.Errors.TokenErrorCode: ClockSkew
++ AAuth.Errors.TokenErrorCode: ExpiredPresentedToken
++ AAuth.Errors.TokenErrorCode: ExpiredSubagentToken
++ AAuth.Errors.TokenErrorCode: ExpiredUpstreamToken
++ AAuth.Errors.TokenErrorCode: InvalidPresentedToken
++ AAuth.Errors.TokenErrorCode: InvalidSubagentToken
++ AAuth.Errors.TokenErrorCode: InvalidUpstreamToken
++ AAuth.Errors.TokenErrorCode: RevokedPresentedToken
++ AAuth.Errors.TokenErrorCode: RevokedResourceToken
++ AAuth.Errors.TokenErrorCode: RevokedSubagentToken
++ AAuth.Errors.TokenErrorCode: RevokedUpstreamToken
+```
+
+Public owners: `AAuth.Errors.TokenErrorCode`, `AAuth.Errors.TokenErrorResponse`, `AAuth.Errors`.
+
+### src/AAuth/HttpSig/AAuthVerifier.cs
+
+Concept/decision: [signatures](#signatures). Source: [AAuthVerifier.cs](../../../src/AAuth/HttpSig/AAuthVerifier.cs).
+
+```diff
+- AAuth.HttpSig.AAuthVerifier: public TimeSpan MaxFutureSkew { get ; init ; } = TimeSpan . FromSeconds ( 5 )
+```
+
+Public owners: `AAuth.HttpSig.AAuthVerificationException`, `AAuth.HttpSig.AAuthVerifier`, `AAuth.HttpSig`.
+
+### src/AAuth/HttpSig/SignatureKeyHeader.cs
+
+Concept/decision: [signatures](#signatures). Source: [SignatureKeyHeader.cs](../../../src/AAuth/HttpSig/SignatureKeyHeader.cs).
+
+Public signatures unchanged (10); behavior reviewed under signatures.
+
+Public owners: `AAuth.HttpSig.SignatureKeyHeader`, `AAuth.HttpSig`.
+
+### src/AAuth/Identifiers/AgentId.cs
+
+Concept/decision: [discovery](#discovery). Source: [AgentId.cs](../../../src/AAuth/Identifiers/AgentId.cs).
+
+Public signatures unchanged (14); behavior reviewed under discovery.
+
+Public owners: `AAuth.Identifiers.AgentId`, `AAuth.Identifiers`.
+
+### src/AAuth/Person/AAuthPersonServerEndpoints.cs
+
+Concept/decision: [consent](#consent). Source: [AAuthPersonServerEndpoints.cs](../../../src/AAuth/Person/AAuthPersonServerEndpoints.cs).
+
+Public signatures unchanged (23); behavior reviewed under consent.
+
+Public owners: `AAuth.Person.AAuthPersonServerEndpoints`, `AAuth.Person.AAuthPersonServerOptions`, `AAuth.Person`.
+
+### src/AAuth/Server/Metadata/AAuthAccessServerMetadataOptions.cs
+
+Concept/decision: [resource-managed](#resource-managed). Source: [AAuthAccessServerMetadataOptions.cs](../../../src/AAuth/Server/Metadata/AAuthAccessServerMetadataOptions.cs).
+
+```diff
+- AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public required string TokenEndpoint { get ; init ; }
++ AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public required string AuthTokenEndpoint { get ; init ; }
+```
+
+Public owners: `AAuth.Server.Metadata.AAuthAccessServerMetadataOptions`, `AAuth.Server.Metadata`.
+
+### src/AAuth/Server/Metadata/AAuthAgentMetadataOptions.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [AAuthAgentMetadataOptions.cs](../../../src/AAuth/Server/Metadata/AAuthAgentMetadataOptions.cs).
+
+```diff
+- AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? LoginEndpoint { get ; init ; }
+```
+
+Public owners: `AAuth.Server.Metadata.AAuthAgentMetadataOptions`, `AAuth.Server.Metadata`.
+
+### src/AAuth/Server/Metadata/AAuthPersonServerMetadataOptions.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [AAuthPersonServerMetadataOptions.cs](../../../src/AAuth/Server/Metadata/AAuthPersonServerMetadataOptions.cs).
+
+```diff
+- AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public required string TokenEndpoint { get ; init ; }
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public required string AuthTokenEndpoint { get ; init ; }
+```
+
+Public owners: `AAuth.Server.Metadata.AAuthPersonServerMetadataOptions`, `AAuth.Server.Metadata`.
+
+### src/AAuth/Server/Metadata/WellKnownEndpoints.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [WellKnownEndpoints.cs](../../../src/AAuth/Server/Metadata/WellKnownEndpoints.cs).
+
+Public signatures unchanged (23); behavior reviewed under server-contracts.
+
+Public owners: `AAuth.Server.Metadata.AAuthResourceMetadataOptions`, `AAuth.Server.Metadata.WellKnownEndpoints`, `AAuth.Server.Metadata`.
+
+### src/AAuth/Server/Verification/AAuthVerificationMiddleware.cs
+
+Concept/decision: [signatures](#signatures). Source: [AAuthVerificationMiddleware.cs](../../../src/AAuth/Server/Verification/AAuthVerificationMiddleware.cs).
+
+Public signatures unchanged (14); behavior reviewed under signatures.
+
+Public owners: `AAuth.Server.Verification.AAuthVerificationMiddleware`, `AAuth.Server.Verification.VerificationResult`, `AAuth.Server.Verification`.
+
+### src/AAuth/Server/Verification/AAuthVerificationOptions.cs
+
+Concept/decision: [signatures](#signatures). Source: [AAuthVerificationOptions.cs](../../../src/AAuth/Server/Verification/AAuthVerificationOptions.cs).
+
+```diff
+- AAuth.Server.Verification.AAuthVerificationOptions: public TimeSpan MaxFutureSkew { get ; init ; } = TimeSpan . FromSeconds ( 5 )
+```
+
+Public owners: `AAuth.Server.Verification.AAuthVerificationOptions`, `AAuth.Server.Verification`.

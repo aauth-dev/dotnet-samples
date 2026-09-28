@@ -361,7 +361,7 @@ public sealed class TourSession : IAsyncDisposable
     // every leg is agent ↔ resource — there is no third party.
     private static readonly TourPlanStep[] ResourceManagedPlan =
     {
-        new(1, "Discover Inbox metadata", "Unsigned GET /.well-known/aauth-resource.json — access_mode=aauth-access-token + authorization_endpoint.", Actor.Agent, Actor.Resource),
+        new(1, "Discover Inbox metadata", "Unsigned GET /.well-known/aauth-resource.json — access_mode=session-token + authorization_endpoint.", Actor.Agent, Actor.Resource),
         new(2, "Signed GET /messages → 202", "GuidedTour locally self-issues an agent JWT with its published identity/key; the Inbox returns 202 + interaction. No external AP enrollment or PS/AS exchange.", Actor.Agent, Actor.Resource),
         new(3, "Direct user to Inbox consent", "Agent surfaces the {url}?code={code} link to the Inbox's OWN consent page.", Actor.Agent, Actor.Agent),
         new(4, "Authenticated Inbox consent", "Browser signs in, consumes the correlation code once, and submits a CSRF-protected decision. The following signed poll confirms the verdict.", Actor.Resource, Actor.Resource),
@@ -385,7 +385,7 @@ public sealed class TourSession : IAsyncDisposable
         new(1, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
         new(2, "Signed GET /events → 401", "Resource returns 401 with a resource_token + AAuth-Requirement.", Actor.Agent, Actor.Resource),
         new(3, "Parse the 401 challenge", "Decode the AAuth-Requirement header and resource_token claims.", Actor.Agent, Actor.Agent),
-        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint + jwks_uri.", Actor.Agent, Actor.PersonServer),
+        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for auth_token_endpoint + jwks_uri.", Actor.Agent, Actor.PersonServer),
         new(5, "Exchange at PS → 200 auth_token", "Signed POST /token with the resource_token; PS mints an aa-auth+jwt immediately.", Actor.Agent, Actor.PersonServer),
         new(6, "Replay GET /events with auth_token", "Signed retry carries the auth_token in Signature-Key → 200 + claims.", Actor.Agent, Actor.Resource),
     };
@@ -395,7 +395,7 @@ public sealed class TourSession : IAsyncDisposable
         new(1, "Discover resource metadata", "Unsigned GET /.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
         new(2, "Signed GET /events → 401", "Resource returns 401 with a resource_token + AAuth-Requirement.", Actor.Agent, Actor.Resource),
         new(3, "Parse the 401 challenge", "Decode the AAuth-Requirement header and resource_token claims.", Actor.Agent, Actor.Agent),
-        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint + jwks_uri.", Actor.Agent, Actor.PersonServer),
+        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for auth_token_endpoint + jwks_uri.", Actor.Agent, Actor.PersonServer),
         new(5, "Exchange → 202 Accepted", "PS lacks consent; returns 202 + Location + interaction URL + single-use code.", Actor.Agent, Actor.PersonServer),
         new(6, "Direct user to interaction URL", "Agent surfaces the {url}?code={code} link for the user to visit.", Actor.Agent, Actor.Agent),
         new(7, "Authenticated PS consent", "Browser signs in, consumes the code once, and submits a session-bound decision. Opening the page does not approve the request.", Actor.PersonServer, Actor.PersonServer),
@@ -408,7 +408,7 @@ public sealed class TourSession : IAsyncDisposable
         new(1, "Discover Concierge metadata", "Unsigned GET /.well-known/aauth-resource.json on the Concierge.", Actor.Agent, Actor.Concierge),
         new(2, "Signed GET → 401 (agent token challenge)", "Concierge returns 401 with a resource_token — it requires an auth token.", Actor.Agent, Actor.Concierge),
         new(3, "Parse the 401 challenge", "Decode the AAuth-Requirement header and Concierge's resource_token.", Actor.Agent, Actor.Agent),
-        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint.", Actor.Agent, Actor.PersonServer),
+        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for auth_token_endpoint.", Actor.Agent, Actor.PersonServer),
         new(5, "Exchange at PS → auth_token", "Signed POST /token with the Concierge's resource_token; PS mints auth_token.", Actor.Agent, Actor.PersonServer),
         new(6, "Retry Concierge with auth_token", "Signed GET with auth_token → Concierge chains downstream.", Actor.Agent, Actor.Concierge),
         new(7, "Inspect multi-agent result", "Review the combined response showing the full Agent → Concierge → Calendar chain.", Actor.Agent, Actor.Agent),
@@ -425,7 +425,7 @@ public sealed class TourSession : IAsyncDisposable
         new(1, "Discover Concierge metadata", "Unsigned GET /.well-known/aauth-resource.json on the Concierge.", Actor.Agent, Actor.Concierge),
         new(2, "Signed GET → 401 (agent token challenge)", "Concierge returns 401 with a resource_token — it requires an auth token.", Actor.Agent, Actor.Concierge),
         new(3, "Parse the 401 challenge", "Decode the AAuth-Requirement header and Concierge's resource_token.", Actor.Agent, Actor.Agent),
-        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint.", Actor.Agent, Actor.PersonServer),
+        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for auth_token_endpoint.", Actor.Agent, Actor.PersonServer),
         new(5, "Exchange → 202 (hop 1 consent)", "No standing consent for the Concierge; PS returns 202 + interaction URL + single-use code.", Actor.Agent, Actor.PersonServer),
         new(6, "Direct user to interaction URL (hop 1)", "Agent surfaces the {url}?code={code} link to approve the Agent → Concierge hop.", Actor.Agent, Actor.Agent),
         new(7, "User approves hop 1 at the PS", "User opens the PS consent page and approves Agent → Concierge; PS records consent.", Actor.PersonServer, Actor.PersonServer),
@@ -446,7 +446,7 @@ public sealed class TourSession : IAsyncDisposable
     // page's four-gate use case as a step-by-step raw-HTTP walkthrough.
     private static readonly TourPlanStep[] MissionPlan =
     {
-        new(1, "Discover Person Server metadata", "Unsigned GET /.well-known/aauth-person.json for mission_endpoint, token_endpoint + permission_endpoint.", Actor.Agent, Actor.PersonServer),
+        new(1, "Discover Person Server metadata", "Unsigned GET /.well-known/aauth-person.json for mission_endpoint, auth_token_endpoint + permission_endpoint.", Actor.Agent, Actor.PersonServer),
         new(2, "Propose mission → 202 (PROMPT)", "Signed POST /mission {description, tools}; the PS parks the proposal and returns 202 + interaction URL + single-use code.", Actor.Agent, Actor.PersonServer),
         new(3, "Direct user to mission approval", "Agent surfaces the {url}?code={code} link for the user to approve the durable mission + its tools.", Actor.Agent, Actor.Agent),
         new(4, "User approves the mission at the PS", "User opens the PS consent page and approves the mission; the PS records the approved mission + tools.", Actor.PersonServer, Actor.PersonServer),
@@ -478,7 +478,7 @@ public sealed class TourSession : IAsyncDisposable
     // otherwise-silent multi-agent chain, and the PS's mission log records it all.
     private static readonly TourPlanStep[] MissionCallChainPlan =
     {
-        new(1, "Discover Person Server metadata", "Unsigned GET /.well-known/aauth-person.json for mission_endpoint + token_endpoint.", Actor.Agent, Actor.PersonServer),
+        new(1, "Discover Person Server metadata", "Unsigned GET /.well-known/aauth-person.json for mission_endpoint + auth_token_endpoint.", Actor.Agent, Actor.PersonServer),
         new(2, "Propose mission → 202 (PROMPT)", "Signed POST /mission {description, tools}; the PS parks the proposal and returns 202 + interaction URL + single-use code.", Actor.Agent, Actor.PersonServer),
         new(3, "Direct user to mission approval", "Agent surfaces the {url}?code={code} link for the user to approve the durable mission.", Actor.Agent, Actor.Agent),
         new(4, "User approves the mission at the PS", "User opens the PS consent page and approves the mission; the PS records the approved mission + tools.", Actor.PersonServer, Actor.PersonServer),
@@ -499,7 +499,7 @@ public sealed class TourSession : IAsyncDisposable
         new(1, "Discover resource metadata", "Unsigned GET /wallet/.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
         new(2, "Signed GET /wallet → 401", "Resource returns 401 with a resource_token whose aud is the Access Server (not the PS).", Actor.Agent, Actor.Resource),
         new(3, "Parse the 401 challenge", "Decode the resource_token — its aud=Access Server URL is the four-party tell.", Actor.Agent, Actor.Agent),
-        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint.", Actor.Agent, Actor.PersonServer),
+        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for auth_token_endpoint.", Actor.Agent, Actor.PersonServer),
         new(5, "Exchange at PS → AS federation → auth_token", "Signed POST /token; the PS sees aud≠self, federates to the AS, and the AS mints the aa-auth+jwt.", Actor.Agent, Actor.PersonServer),
         new(6, "Replay GET /wallet with auth_token", "Signed retry carries the AS-issued auth_token → 200 + claims.", Actor.Agent, Actor.Resource),
         new(7, "Inspect federated result", "Review the AS-minted auth token: dwk=aauth-access.json, cnf.jwk bound to the agent key.", Actor.Agent, Actor.Agent),
@@ -517,7 +517,7 @@ public sealed class TourSession : IAsyncDisposable
         new(1, "Discover resource metadata", "Unsigned GET /wallet/.well-known/aauth-resource.json.", Actor.Agent, Actor.Resource),
         new(2, "Signed GET /wallet → 401", "Resource returns 401 with a resource_token whose aud is the Access Server (not the PS).", Actor.Agent, Actor.Resource),
         new(3, "Parse the 401 challenge", "Decode the resource_token — its aud=Access Server URL is the four-party tell.", Actor.Agent, Actor.Agent),
-        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for token_endpoint.", Actor.Agent, Actor.PersonServer),
+        new(4, "Discover Person Server", "Unsigned GET /.well-known/aauth-person.json for auth_token_endpoint.", Actor.Agent, Actor.PersonServer),
         new(5, "Exchange → 202 (AS needs consent)", "PS federates to the AS; the AS needs the user to consent, so the PS relays a 202 + interaction URL.", Actor.Agent, Actor.PersonServer),
         new(6, "Direct user to AS consent", "Agent surfaces the AS interaction link ({url}?code={code}) for the user to approve at the Access Server.", Actor.Agent, Actor.Agent),
         new(7, "User consents at the AS", "User opens the Access Server consent screen (its own stub screen, or a Keycloak login), authenticates, and approves; the AS records the verdict.", Actor.AccessServer, Actor.AccessServer),
@@ -537,7 +537,7 @@ public sealed class TourSession : IAsyncDisposable
         new(1, "Discover Bookings metadata", "Unsigned GET /bookings/.well-known/aauth-resource.json — advertises r3_vocabularies (OpenAPI).", Actor.Agent, Actor.Resource),
         new(2, "Signed GET /search_availability → 401", "Agent-token signed; 401 auth_token_required with a resource_token whose aud is the R3 Access Server + r3_uri/r3_s256 (class R3 doc).", Actor.Agent, Actor.Resource),
         new(3, "Parse 401 challenge (aud = R3 Access Server)", "Decode the resource_token — aud=R3 AS is the four-party tell; r3_uri/r3_s256 reference the class R3 document.", Actor.Agent, Actor.Agent),
-        new(4, "Discover Person Server metadata", "Unsigned GET /.well-known/aauth-person.json for token_endpoint.", Actor.Agent, Actor.PersonServer),
+        new(4, "Discover Person Server metadata", "Unsigned GET /.well-known/aauth-person.json for auth_token_endpoint.", Actor.Agent, Actor.PersonServer),
         new(5, "Exchange at PS → R3 AS federation → auth_token", "Signed POST /token; PS federates (aud≠self), the AS fetches + hash-verifies the R3 doc and splits granted vs conditional, minting aa-auth+jwt (r3_granted + r3_conditional).", Actor.Agent, Actor.PersonServer),
         new(6, "Replay GET /search_availability → 200 (r3_granted)", "Signed retry; searchAvailability is in r3_granted, so it is served immediately with availability options.", Actor.Agent, Actor.Resource),
         new(7, "Signed POST /confirm_reservation → 401 (per-call proposal)", "confirmReservation is r3_conditional, so the resource builds a per-call proposal carrying the concrete parameters and challenges with a new resource_token.", Actor.Agent, Actor.Resource),
@@ -1946,9 +1946,9 @@ public sealed class TourSession : IAsyncDisposable
         await client.GetAsync(url, ct);
         var ex = capture.Last!;
 
-        // Extract token_endpoint for step 7.
+        // Extract auth_token_endpoint for step 7.
         var meta = JsonNode.Parse(ex.ResponseBody);
-        _tokenEndpoint = (string?)meta?["token_endpoint"];
+        _tokenEndpoint = (string?)meta?["auth_token_endpoint"];
 
         Steps.Add(new StepRecord
         {
@@ -1957,7 +1957,7 @@ public sealed class TourSession : IAsyncDisposable
             From = Actor.Agent,
             To = Actor.PersonServer,
             Narrative =
-                "Unsigned discovery to the Person Server announces the token_endpoint " +
+                "Unsigned discovery to the Person Server announces the auth_token_endpoint " +
                 "the agent will POST to. The PS's JWKS will be needed later to verify " +
                 "the auth_token it returns.",
             RequestLine = $"{ex.RequestLine}  →  {url}",
@@ -1995,7 +1995,7 @@ public sealed class TourSession : IAsyncDisposable
             From = Actor.Agent,
             To = Actor.PersonServer,
             Narrative =
-                "The agent POSTs the resource_token to the PS's token_endpoint. " +
+                "The agent POSTs the resource_token to the PS's auth_token_endpoint. " +
                 "Per spec, the agent MUST present its agent token via the " +
                 "Signature-Key header using `scheme=jwt`. The PS verifies the " +
                 "signature, validates the resource_token, and (in a real PS) " +
@@ -2223,7 +2223,7 @@ public sealed class TourSession : IAsyncDisposable
             Narrative =
                 "Before signing anything, the agent fetches the Inbox's well-known " +
                 "metadata. The tell for this access mode is `access_mode: " +
-                "\"aauth-access-token\"` plus an `authorization_endpoint` — the Inbox " +
+                "\"session-token\"` plus an `authorization_endpoint` — the Inbox " +
                 "manages authorization **itself**, with no Person Server. This call is " +
                 "unsigned.",
             RequestLine = $"{ex.RequestLine}  →  {url}",
@@ -4132,7 +4132,7 @@ public sealed class TourSession : IAsyncDisposable
         var ex = capture.Last!;
 
         var meta = JsonNode.Parse(ex.ResponseBody);
-        _tokenEndpoint = (string?)meta?["token_endpoint"];
+        _tokenEndpoint = (string?)meta?["auth_token_endpoint"];
         _missionEndpoint = (string?)meta?["mission_endpoint"]
             ?? $"{_options.PersonServerUrl!.TrimEnd('/')}/mission";
         _permissionEndpoint = (string?)meta?["permission_endpoint"]
@@ -4147,7 +4147,7 @@ public sealed class TourSession : IAsyncDisposable
             Narrative =
                 "Unsigned discovery to the Person Server announces its governance " +
                 "endpoints: the `mission_endpoint` the agent proposes the mission to, " +
-                "the `token_endpoint` for the in-scope token exchange, and the " +
+                "the `auth_token_endpoint` for the in-scope token exchange, and the " +
                 "`permission_endpoint` for per-action checks. In the mission model the " +
                 "PS is the **policy-enforcement point** — every one of these endpoints " +
                 "is governed by the mission the user approves next.",
@@ -4345,7 +4345,7 @@ public sealed class TourSession : IAsyncDisposable
             From = Actor.Agent,
             To = Actor.PersonServer,
             Narrative =
-                "The agent POSTs the `resource_token` to the `token_endpoint`. Because " +
+                "The agent POSTs the `resource_token` to the `auth_token_endpoint`. Because " +
                 "the token carries the mission claim, the PS evaluates it as " +
                 "**gate 2**: the requested `(resource, trips.read)` pair is within the " +
                 "mission's approved scope, so the PS mints the `auth_token` **silently** " +
@@ -4488,7 +4488,7 @@ public sealed class TourSession : IAsyncDisposable
             From = Actor.Agent,
             To = Actor.PersonServer,
             Narrative =
-                "The agent POSTs the elevated `resource_token` to the `token_endpoint`. " +
+                "The agent POSTs the elevated `resource_token` to the `auth_token_endpoint`. " +
                 "The PS evaluates the requested `trips.book` against the " +
                 "mission's natural-language intent (\"plan my weekend trip\") — it does **not** " +
                 "fit. Unlike gate 2, the PS cannot mint silently: out-of-mission scopes " +
@@ -4755,7 +4755,7 @@ public sealed class TourSession : IAsyncDisposable
             From = Actor.Agent,
             To = Actor.PersonServer,
             Narrative =
-                "The agent POSTs the elevated `resource_token` to the `token_endpoint`. " +
+                "The agent POSTs the elevated `resource_token` to the `auth_token_endpoint`. " +
                 "`trips.book` falls **outside** the mission's intent, so before " +
                 "it asks the user to decide the PS opens a **clarification chat** " +
                 "(§Clarification Chat): it returns `202` with " +

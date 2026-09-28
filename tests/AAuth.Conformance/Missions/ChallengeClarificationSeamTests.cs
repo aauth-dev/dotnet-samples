@@ -193,7 +193,7 @@ public class ChallengeClarificationSeamTests
                 {
                     ["issuer"] = origin,
                     ["jwks_uri"] = origin + "/jwks",
-                    ["token_endpoint"] = Ps + "/token",
+                    ["auth_token_endpoint"] = Ps + "/token",
                 });
             }
 

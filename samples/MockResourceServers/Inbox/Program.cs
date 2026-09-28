@@ -52,7 +52,7 @@ builder.Services.AddAAuthResource(o =>
     o.MaxSignatureAge = TimeSpan.FromSeconds(signatureWindowSeconds);
     o.SignatureWindow = signatureWindowSeconds;
     o.Name = "Aria Inbox";
-    o.AccessMode = AAuthConstants.AccessModes.AAuthAccessToken;
+    o.AccessMode = AAuthConstants.AccessModes.SessionToken;
     o.AuthorizationEndpoint = $"{resourceUrl}/authorize";
 });
 
@@ -99,7 +99,7 @@ string[] sampleMessages =
 app.MapGet("/", () => Results.Ok(new
 {
     resource = "Aria Inbox",
-    accessMode = "aauth-access-token",
+    accessMode = "session-token",
     flows = new[]
     {
         new { path = "/messages", entry = "reactive", note = "202 → consent → AAuth-Access → replay" },

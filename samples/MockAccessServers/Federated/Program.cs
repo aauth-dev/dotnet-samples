@@ -21,7 +21,7 @@ var builder = WebApplication.CreateBuilder(args);
 // In four-party (federated) access the resource issues a resource token
 // whose `aud` is the AS (not the Person Server). The PS does not assert
 // access itself; it federates to the AS by POSTing the resource token (and
-// the agent token) to the AS `token_endpoint`. The AS evaluates policy and,
+// the agent token) to the AS `auth_token_endpoint`. The AS evaluates policy and,
 // when allowed, mints the `aa-auth+jwt` auth token — distinguished from a
 // PS-issued one by `dwk = aauth-access.json`.
 //

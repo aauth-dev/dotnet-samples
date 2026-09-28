@@ -147,7 +147,7 @@ public class ResourceR3Tests
             Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
             var error = await response.Content.ReadFromJsonAsync<JsonObject>();
             Assert.Equal("invalid_signature", (string?)error!["error"]);
-            Assert.Equal("error=invalid_request", response.Headers.GetValues("Signature-Error").Single());
+            Assert.Equal("error=invalid_signature", response.Headers.GetValues("Signature-Error").Single());
         }
         finally
         {

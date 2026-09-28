@@ -69,7 +69,7 @@ builder.Services.AddAAuthResource(o =&gt;
     o.EgressPolicy = SampleEgress.Policy;
     o.Issuer = "https://resource.example";
     o.SigningKeys["inbox-1"] = resourceKey;
-    o.AccessMode = AAuthConstants.AccessModes.AAuthAccessToken;
+    o.AccessMode = AAuthConstants.AccessModes.SessionToken;
     o.AuthorizationEndpoint = "https://resource.example/authorize";
 });
 

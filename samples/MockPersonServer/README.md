@@ -6,7 +6,7 @@ A minimal AAuth Person Server for end-to-end demos and integration tests.
 
 ## What it does
 
-- Serves PS discovery metadata at `/.well-known/aauth-person.json` (with `token_endpoint`).
+- Serves PS discovery metadata at `/.well-known/aauth-person.json` (with `auth_token_endpoint`).
 - Serves its signing JWKS at `/.well-known/jwks.json`.
 - Maps the token endpoint, the deferred-poll endpoint, and PS metadata in one
   call — [`app.MapAAuthPersonServer(...)`](../../docs/server/token-issuance.md#one-call-person-server-mapaauthpersonserver).

@@ -947,7 +947,7 @@ public class AccessEndpointR3Tests
         var polled = await unsigned.GetAsync(location);
 
         Assert.Equal(HttpStatusCode.Unauthorized, polled.StatusCode);
-        Assert.Equal("error=invalid_request", polled.Headers.GetValues("Signature-Error").Single());
+        Assert.Equal("error=invalid_signature", polled.Headers.GetValues("Signature-Error").Single());
     }
 
     [Fact]
@@ -1051,7 +1051,7 @@ public class AccessEndpointR3Tests
         var jwks = await client.GetFromJsonAsync<JsonObject>("/.well-known/jwks.json");
 
         Assert.Equal(R3TestData.AsIssuer, (string?)metadata!["issuer"]);
-        Assert.Equal($"{R3TestData.AsIssuer}/token", (string?)metadata["token_endpoint"]);
+        Assert.Equal($"{R3TestData.AsIssuer}/token", (string?)metadata["auth_token_endpoint"]);
         Assert.NotEmpty((JsonArray)jwks!["keys"]!);
     }
 

@@ -92,7 +92,7 @@ public sealed class AAuthVerificationMiddleware
             !TryGetSingle(req, AAuthConstants.Headers.SignatureInput, out var signatureInput) ||
             !TryGetSingle(req, AAuthConstants.Headers.SignatureKey, out var signatureKey))
         {
-            WriteFailure(context, SignatureErrorCode.InvalidRequest);
+            WriteFailure(context, SignatureErrorCode.InvalidSignature);
             return;
         }
 

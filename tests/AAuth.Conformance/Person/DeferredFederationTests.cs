@@ -1342,7 +1342,7 @@ public class DeferredFederationTests
                 var alternate = second.ToPublicJwk(); alternate["kid"] = "second";
                 body = new JsonObject { ["keys"] = new JsonArray(primary, alternate) };
             }
-            else body = new JsonObject { ["issuer"] = origin, ["jwks_uri"] = origin + "/.well-known/jwks.json", ["token_endpoint"] = origin + "/token" };
+            else body = new JsonObject { ["issuer"] = origin, ["jwks_uri"] = origin + "/.well-known/jwks.json", ["auth_token_endpoint"] = origin + "/token" };
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(body) });
         }
     }

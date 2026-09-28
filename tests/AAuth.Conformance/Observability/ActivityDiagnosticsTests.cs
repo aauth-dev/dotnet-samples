@@ -155,7 +155,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
                     Content = JsonContent.Create(new JsonObject
                     {
                         ["issuer"] = "http://localhost:9999",
-                        ["token_endpoint"] = "http://localhost:9999/token",
+                        ["auth_token_endpoint"] = "http://localhost:9999/token",
                     }),
                 };
             }
@@ -197,7 +197,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
                     Content = JsonContent.Create(new JsonObject
                     {
                         ["issuer"] = "http://localhost:9998",
-                        ["token_endpoint"] = "http://localhost:9998/token",
+                        ["auth_token_endpoint"] = "http://localhost:9998/token",
                     }),
                 };
             }
@@ -256,7 +256,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
                     Content = JsonContent.Create(new JsonObject
                     {
                         ["issuer"] = "http://localhost:9997",
-                        ["token_endpoint"] = "http://localhost:9997/token",
+                        ["auth_token_endpoint"] = "http://localhost:9997/token",
                     }),
                 };
             }
@@ -445,7 +445,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
         {
             issuer = PsIssuer,
             jwks_uri = $"{PsIssuer}/.well-known/ps-jwks.json",
-            token_endpoint = $"{PsIssuer}/token",
+            auth_token_endpoint = $"{PsIssuer}/token",
         }));
 
         // AP JWKS

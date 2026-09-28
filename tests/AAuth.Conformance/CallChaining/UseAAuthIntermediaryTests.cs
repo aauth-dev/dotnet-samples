@@ -114,7 +114,7 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
         {
             issuer = PsIssuer,
             jwks_uri = $"{PsIssuer}/.well-known/ps-jwks.json",
-            token_endpoint = $"{PsIssuer}/token",
+            auth_token_endpoint = $"{PsIssuer}/token",
         }));
 
         app.MapGet("/.well-known/ap-jwks.json", () =>

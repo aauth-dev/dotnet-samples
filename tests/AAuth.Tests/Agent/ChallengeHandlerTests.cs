@@ -845,14 +845,14 @@ public class ChallengeHandlerTests
                     Content = new StringContent(new JsonObject { ["keys"] = new JsonArray(key) }.ToJsonString(), Encoding.UTF8, "application/json"),
                 });
             }
-            // Metadata discovery — return token_endpoint at the same origin
+            // Metadata discovery — return auth_token_endpoint at the same origin
             if (request.RequestUri?.AbsolutePath.Contains("well-known") == true)
             {
                 var origin = request.RequestUri.GetLeftPart(UriPartial.Authority);
                 var metadata = new JsonObject
                 {
                     ["issuer"] = origin,
-                    ["token_endpoint"] = $"{origin}/token",
+                    ["auth_token_endpoint"] = $"{origin}/token",
                     ["jwks_uri"] = $"{origin}/jwks",
                 };
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
@@ -894,7 +894,7 @@ public class ChallengeHandlerTests
                 var metadata = new JsonObject
                 {
                     ["issuer"] = origin,
-                    ["token_endpoint"] = $"{origin}/token",
+                    ["auth_token_endpoint"] = $"{origin}/token",
                 };
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {

@@ -4,8 +4,8 @@ namespace AAuth.Identifiers;
 
 /// <summary>
 /// Validates and normalises an AAuth agent identifier per §Agent Identifiers.
-/// Format: <c>aauth:local@domain</c> where local is [a-z0-9\-_+.]{1,255}
-/// and domain is a valid server identifier domain.
+/// Format: <c>aauth:local@domain</c> where local is [A-Za-z0-9\-_+.]{1,255}
+/// and domain is a valid server identifier domain. Comparison is exact and case-sensitive.
 /// </summary>
 public readonly struct AgentId : IEquatable<AgentId>
 {
@@ -101,7 +101,7 @@ public readonly struct AgentId : IEquatable<AgentId>
             if (!IsValidLocalChar(c))
             {
                 error = $"Agent identifier local part contains invalid character '{c}' at position {i}. " +
-                        "Allowed: a-z, 0-9, hyphen, underscore, plus, period.";
+                        "Allowed: A-Z, a-z, 0-9, hyphen, underscore, plus, period.";
                 return false;
             }
         }
@@ -136,7 +136,7 @@ public readonly struct AgentId : IEquatable<AgentId>
     }
 
     private static bool IsValidLocalChar(char c) =>
-        c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '_' or '+' or '.';
+        c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '_' or '+' or '.';
 
     /// <inheritdoc/>
     public bool Equals(AgentId other) => string.Equals(_value, other._value, StringComparison.Ordinal);

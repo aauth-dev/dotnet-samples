@@ -9,10 +9,10 @@ A minimal AAuth Access Server (AS) for the four-party (federated) access demo an
 The Access Server is the fourth party in **federated access**. In this mode the
 resource issues a resource token whose `aud` is the AS (not the Person Server).
 The PS does not assert access itself — it *federates* to the AS by POSTing the
-resource token (and the agent token) to the AS `token_endpoint`. The AS
+resource token (and the agent token) to the AS `auth_token_endpoint`. The AS
 evaluates policy and mints the auth token.
 
-- Serves AS discovery metadata at `/.well-known/aauth-access.json` (with `token_endpoint`).
+- Serves AS discovery metadata at `/.well-known/aauth-access.json` (with `auth_token_endpoint`).
 - Serves its signing JWKS at `/.well-known/jwks.json`.
 - On `POST /token` (signed by the PS via the `jwks_uri` scheme):
   1. Verifies the RFC 9421 signature and pins the caller's `jwks_uri` host to a

@@ -25,19 +25,12 @@ public sealed class AAuthVerifier
             ["repr-digest"] = StructuredFieldType.Dictionary,
         };
     /// <summary>
-    /// Default freshness window for the RFC 9421 <c>created</c> parameter.
-    /// Matches the AAuth spec's default of 60 seconds; resources may
-    /// advertise a different value via the <c>signature_window</c> field of
-    /// their <c>aauth-resource.json</c> metadata.
+    /// Signature validity window for the RFC 9421 <c>created</c> parameter,
+    /// applied in both directions. Matches the AAuth spec's default of 60
+    /// seconds; resources may advertise a different value via the
+    /// <c>signature_window</c> field of their <c>aauth-resource.json</c> metadata.
     /// </summary>
     public TimeSpan MaxAge { get; init; } = TimeSpan.FromSeconds(60);
-
-    /// <summary>
-    /// Tolerated <c>created</c> drift into the future. A small one-sided
-    /// window accommodates real-world NTP skew without widening the legitimate
-    /// replay window the way a symmetric <see cref="MaxAge"/> would.
-    /// </summary>
-    public TimeSpan MaxFutureSkew { get; init; } = TimeSpan.FromSeconds(5);
 
     /// <summary>Clock injection point for deterministic tests.</summary>
     public Func<DateTimeOffset> Clock { get; init; } = () => DateTimeOffset.UtcNow;
@@ -82,7 +75,7 @@ public sealed class AAuthVerifier
             throw new AAuthVerificationException(SignatureErrorCode.InvalidKey, "Signature keyid conflicts with Signature-Key.");
         var signature = StructuredFields.Member(signatureHeader, label);
         if (signature.Value is not ReadOnlyMemory<byte> signatureBytes)
-            throw new AAuthVerificationException(SignatureErrorCode.InvalidRequest, "Signature must be a byte sequence.");
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidSignature, "Signature must be a byte sequence.");
         var sb = new StringBuilder();
         foreach (var component in (IReadOnlyList<ParsedItem>)input.Value)
         {
@@ -146,8 +139,10 @@ public sealed class AAuthVerifier
         if (!input.Parameters.TryGetValue("created", out var createdValue) || createdValue is not long created)
             throw new AAuthVerificationException(SignatureErrorCode.InvalidSignature, "Signature-Input requires integer created.");
         var now = Clock().ToUnixTimeSeconds();
-        if (created < now - (long)MaxAge.TotalSeconds || created > now + (long)MaxFutureSkew.TotalSeconds)
-            throw new AAuthVerificationException(SignatureErrorCode.InvalidSignature, "Signature is outside freshness window.");
+        if (created < now - (long)MaxAge.TotalSeconds)
+            throw new AAuthVerificationException(SignatureErrorCode.InvalidSignature, "Signature is older than the validity window.");
+        if (created > now + (long)MaxAge.TotalSeconds)
+            throw new AAuthVerificationException(SignatureErrorCode.ClockSkew, "Signature created is ahead of the verifier clock by more than the validity window.");
         if (input.Parameters.TryGetValue("expires", out var expiresValue)
             && (expiresValue is not long expires || expires < now || expires < created))
             throw new AAuthVerificationException(SignatureErrorCode.InvalidSignature, "Signature expires is invalid or in the past.");

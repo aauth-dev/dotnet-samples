@@ -36,7 +36,7 @@ public static class R3AccessTokenEndpoint
         {
             EgressPolicy = options.EgressPolicy,
             Issuer = issuer,
-            TokenEndpoint = $"{issuer}{tokenPath}",
+            AuthTokenEndpoint = $"{issuer}{tokenPath}",
             SigningKeys = options.SigningKeys,
             RevocationEndpoint = $"{issuer}/revoke",
         });

@@ -361,7 +361,7 @@ public class RevocationLifecycleTests
                     var document = request.RequestUri.AbsolutePath.EndsWith("/keys", StringComparison.Ordinal)
                         ? new JsonObject { ["keys"] = new JsonArray(jwk) }
                         : new JsonObject { ["issuer"] = issuer, ["jwks_uri"] = issuer + "/.well-known/keys",
-                            ["token_endpoint"] = issuer + "/token", ["revocation_endpoint"] = issuer + "/revoke" };
+                            ["auth_token_endpoint"] = issuer + "/token", ["revocation_endpoint"] = issuer + "/revoke" };
                     return new(HttpStatusCode.OK) { Content = JsonContent.Create(document) };
                 }
                 if (!graph._hosts.TryGetValue(issuer, out var host)) return new(HttpStatusCode.NotFound);

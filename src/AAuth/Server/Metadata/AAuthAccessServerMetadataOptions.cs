@@ -13,8 +13,8 @@ public sealed class AAuthAccessServerMetadataOptions
     /// <summary>HTTPS URL of this access server (<c>issuer</c>). REQUIRED.</summary>
     public required string Issuer { get; init; }
 
-    /// <summary>Token endpoint URL (<c>token_endpoint</c>). REQUIRED.</summary>
-    public required string TokenEndpoint { get; init; }
+    /// <summary>Auth token endpoint URL (<c>auth_token_endpoint</c>). REQUIRED.</summary>
+    public required string AuthTokenEndpoint { get; init; }
 
     /// <summary>Signing keys served via the JWKS endpoint, keyed by <c>kid</c>. REQUIRED.</summary>
     public required IReadOnlyDictionary<string, IAAuthKey> SigningKeys { get; init; }
@@ -54,8 +54,8 @@ public sealed class AAuthAccessServerMetadataOptions
             throw new InvalidOperationException("Issuer must be set.");
         if (!AAuthUrl.IsHttpsOrLoopback(Issuer, EgressPolicy))
             throw new InvalidOperationException("Issuer must be an absolute https:// URL (or http://localhost).");
-        if (string.IsNullOrWhiteSpace(TokenEndpoint))
-            throw new InvalidOperationException("TokenEndpoint must be set.");
+        if (string.IsNullOrWhiteSpace(AuthTokenEndpoint))
+            throw new InvalidOperationException("AuthTokenEndpoint must be set.");
         if (SigningKeys is null || SigningKeys.Count == 0)
             throw new InvalidOperationException("At least one signing key must be supplied.");
     }

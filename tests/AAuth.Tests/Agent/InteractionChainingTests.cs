@@ -114,7 +114,7 @@ public class InteractionChainingTests
                 var metadata = new JsonObject
                 {
                     ["issuer"] = origin,
-                    ["token_endpoint"] = $"{origin}/token",
+                    ["auth_token_endpoint"] = $"{origin}/token",
                 };
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {

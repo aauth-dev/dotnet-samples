@@ -170,7 +170,7 @@ builder.Services.AddAAuthResource(options =>
 {
     options.Issuer = "https://resource.example";
     options.SigningKeys = new() { ["key-1"] = resourceKey };
-    options.AccessMode = AAuthConstants.AccessModes.AAuthAccessToken;
+    options.AccessMode = AAuthConstants.AccessModes.SessionToken;
     options.AuthorizationEndpoint = "https://resource.example/authorize";
 });
 

@@ -217,8 +217,6 @@ public static class WellKnownEndpoints
             options.LogoDarkUri, options.DocumentationUri, options.TosUri, options.PolicyUri);
         if (!string.IsNullOrEmpty(options.CallbackEndpoint))
             doc["callback_endpoint"] = options.CallbackEndpoint;
-        if (!string.IsNullOrEmpty(options.LoginEndpoint))
-            doc["login_endpoint"] = options.LoginEndpoint;
         return doc;
     }
 
@@ -227,7 +225,7 @@ public static class WellKnownEndpoints
         var doc = new JsonObject
         {
             ["issuer"] = options.Issuer,
-            ["token_endpoint"] = options.TokenEndpoint,
+            ["auth_token_endpoint"] = options.AuthTokenEndpoint,
             ["jwks_uri"] = $"{options.Issuer.TrimEnd('/')}/.well-known/jwks.json",
         };
         AddCommonMetadataFields(
@@ -258,7 +256,7 @@ public static class WellKnownEndpoints
         var doc = new JsonObject
         {
             ["issuer"] = options.Issuer,
-            ["token_endpoint"] = options.TokenEndpoint,
+            ["auth_token_endpoint"] = options.AuthTokenEndpoint,
             ["jwks_uri"] = $"{options.Issuer.TrimEnd('/')}/.well-known/jwks.json",
         };
         AddCommonMetadataFields(
@@ -322,7 +320,7 @@ public sealed class AAuthResourceMetadataOptions
     /// <summary>
     /// Optional advisory <c>access_mode</c> declaring the credential flow agents
     /// should expect — one of <see cref="AAuthConstants.AccessModes"/>
-    /// (<c>agent-token</c>, <c>aauth-access-token</c>, <c>auth-token</c>). The runtime
+    /// (<c>agent-token</c>, <c>person-token</c>, <c>session-token</c>, <c>auth-token</c>). The runtime
     /// <c>AAuth-Requirement</c> remains authoritative. Omitted when <see langword="null"/>
     /// (the spec default is <c>agent-token</c>).
     /// </summary>
@@ -399,11 +397,12 @@ public sealed class AAuthResourceMetadataOptions
         // resource MAY omit them, so no hard "at least one key" requirement here.
         if (AccessMode is not null
             && AccessMode is not (AAuthConstants.AccessModes.AgentToken
-                or AAuthConstants.AccessModes.AAuthAccessToken
+                or AAuthConstants.AccessModes.PersonToken
+                or AAuthConstants.AccessModes.SessionToken
                 or AAuthConstants.AccessModes.AuthToken))
         {
             throw new InvalidOperationException(
-                $"access_mode must be one of 'agent-token', 'aauth-access-token', or 'auth-token' (was '{AccessMode}').");
+                $"access_mode must be one of 'agent-token', 'person-token', 'session-token', or 'auth-token' (was '{AccessMode}').");
         }
     }
 }

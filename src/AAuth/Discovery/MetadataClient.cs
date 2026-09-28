@@ -102,7 +102,7 @@ public sealed class MetadataClient : IDisposable
             // URL it was fetched from (the URL minus the `/.well-known/{dwk}` suffix).
             // Reject on mismatch — only verified documents are ever cached.
             VerifyIssuer(url, expectedIssuer, doc);
-            foreach (var field in new[] { "jwks_uri", "token_endpoint", "authorization_endpoint", "mission_endpoint", "callback_endpoint", "interaction_endpoint", "revocation_endpoint", "event_endpoint" })
+            foreach (var field in new[] { "jwks_uri", "auth_token_endpoint", "person_token_endpoint", "authorization_endpoint", "mission_endpoint", "callback_endpoint", "interaction_endpoint", "revocation_endpoint", "event_endpoint" })
             {
                 if (!doc.TryGetPropertyValue(field, out var node)) continue;
                 if (node is not JsonValue endpoint || !endpoint.TryGetValue<string>(out var endpointUrl)

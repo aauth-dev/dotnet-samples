@@ -8,8 +8,7 @@ All configurable options across the AAuth .NET SDK, grouped by component.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `MaxAge` | `TimeSpan` | 60 seconds | Maximum signature age before rejection |
-| `MaxFutureSkew` | `TimeSpan` | 5 seconds | Clock skew tolerance into the future |
+| `MaxAge` | `TimeSpan` | 60 seconds | Signature validity window for `created`, in both directions: older is `invalid_signature`, further ahead is `clock_skew` |
 | `Clock` | `Func<DateTimeOffset>` | `UtcNow` | Clock source (override for testing) |
 
 ### AAuthServerOptions (via UseAAuth)
@@ -48,7 +47,6 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 | `IsTrustedAuthTokenIssuer` | `Func<string, bool>?` | `null` | Optional predicate AND-composed with `TrustedAuthTokenIssuers` (each only narrows). Assign `AAuthTrust.Any` to trust any verifiable issuer explicitly and suppress the open-trust startup warning. |
 | `MaxActDepth` | `int` | `10` | Maximum delegation chain depth for nested `act` claims |
 | `ClockSkew` | `TimeSpan` | 30 seconds | Tolerance applied to `exp`/`iat` checks |
-| `MaxFutureSkew` | `TimeSpan` | 5 seconds | Maximum allowed skew into the future for HTTP signature timestamps |
 | `Clock` | `Func<DateTimeOffset>?` | `null` (UtcNow) | Clock source for all time-dependent checks. Inject for deterministic testing. |
 
 > Startup diagnostics do not change runtime trust policy:

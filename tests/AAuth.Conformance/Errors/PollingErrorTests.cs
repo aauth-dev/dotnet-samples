@@ -128,6 +128,7 @@ public class PollingErrorTests
     [InlineData("denied", PollingErrorCode.Denied)]
     [InlineData("abandoned", PollingErrorCode.Abandoned)]
     [InlineData("expired", PollingErrorCode.Expired)]
+    [InlineData("revoked", PollingErrorCode.Revoked)]
     [InlineData("invalid_code", PollingErrorCode.InvalidCode)]
     [InlineData("slow_down", PollingErrorCode.SlowDown)]
     [InlineData("server_error", PollingErrorCode.ServerError)]

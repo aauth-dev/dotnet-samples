@@ -4,9 +4,20 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-var root = Path.GetFullPath(args.ElementAtOrDefault(0) ?? ".");
-var baseline = args.ElementAtOrDefault(1) ?? "ba768f1";
-var mapPath = Path.Combine(root, ".agent/plans/2026-09-08-aauth-v10-spec-migration/api-surface-map.md");
+var positional = new List<string>();
+var options = new Dictionary<string, string>(StringComparer.Ordinal);
+for (var index = 0; index < args.Length; index++)
+{
+    if (args[index] is "--map" or "--baseline")
+    {
+        if (index + 1 >= args.Length) throw new ArgumentException($"{args[index]} requires a value.");
+        options[args[index]] = args[++index];
+    }
+    else if (!args[index].StartsWith("--", StringComparison.Ordinal)) positional.Add(args[index]);
+}
+var root = Path.GetFullPath(positional.ElementAtOrDefault(0) ?? ".");
+var baseline = options.GetValueOrDefault("--baseline") ?? positional.ElementAtOrDefault(1) ?? "v0.10.0-alpha.1";
+var mapPath = Path.Combine(root, options.GetValueOrDefault("--map") ?? ".agent/plans/2026-09-11-aauth-v11-spec-migration/api-surface-map.md");
 const string marker = "<!-- generated-public-api-delta -->";
 var baselineFiles = Git("ls-tree", "-r", "--name-only", baseline, "--", "src", "samples")
     .Split('\n', StringSplitOptions.RemoveEmptyEntries).Where(IsSource).ToHashSet(StringComparer.Ordinal);

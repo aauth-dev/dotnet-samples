@@ -599,7 +599,7 @@ public class AccessServerClientTests
                 {
                     ["issuer"] = AsIssuer,
                     ["jwks_uri"] = $"{AsIssuer}/.well-known/jwks.json",
-                    ["token_endpoint"] = $"{AsIssuer}/token",
+                    ["auth_token_endpoint"] = $"{AsIssuer}/token",
                 }.ToJsonString(),
                 "as.test/.well-known/jwks.json" => Jwks(AsKey, AsKid),
                 _ => null,

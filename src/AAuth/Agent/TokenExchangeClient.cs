@@ -19,7 +19,7 @@ namespace AAuth.Agent;
 /// success, or surfaces the PS response body / status to the caller.
 /// </summary>
 /// <remarks>
-/// The HTTP POST to the PS's <c>token_endpoint</c> MUST be signed with the
+/// The HTTP POST to the PS's <c>auth_token_endpoint</c> MUST be signed with the
 /// agent's key (RFC 9421) and carry the agent's agent token in
 /// <c>Signature-Key</c>. The caller is expected to supply an
 /// <see cref="HttpClient"/> wrapped in an
@@ -32,7 +32,7 @@ public sealed class TokenExchangeClient
 
     /// <summary>Create the exchange client.</summary>
     /// <param name="signedClient">HttpClient already wired with an <see cref="HttpSig.AAuthSigningHandler"/>.</param>
-    /// <param name="metadata">Metadata client for resolving the PS <c>token_endpoint</c>.</param>
+    /// <param name="metadata">Metadata client for resolving the PS <c>auth_token_endpoint</c>.</param>
     public TokenExchangeClient(HttpClient signedClient, MetadataClient metadata)
     {
         _exchange = new DeferredExchange(signedClient, metadata);
@@ -97,7 +97,7 @@ public sealed class TokenExchangeClient
         using var activity = AAuthDiagnostics.Source.StartActivity("AAuth.TokenExchange");
 
         var tokenEndpointUri = await _exchange.ResolveEndpointAsync(
-            personServer, "token_endpoint", cancellationToken,
+            personServer, "auth_token_endpoint", cancellationToken,
             upstreamToken is null ? AAuthConstants.DwkFiles.Person
                 : Server.CallChaining.CallChainingRouter.ResolveMetadataFile(upstreamToken)).ConfigureAwait(false);
 

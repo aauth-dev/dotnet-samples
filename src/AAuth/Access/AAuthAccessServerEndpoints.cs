@@ -187,7 +187,7 @@ public static class AAuthAccessServerEndpoints
         {
             EgressPolicy = options.EgressPolicy,
             Issuer = options.Issuer,
-            TokenEndpoint = $"{issuer}{options.TokenPath}",
+            AuthTokenEndpoint = $"{issuer}{options.TokenPath}",
             SigningKeys = new Dictionary<string, IAAuthKey>(options.SigningKeys),
             RevocationEndpoint = $"{issuer}{options.RevocationPath}",
         });

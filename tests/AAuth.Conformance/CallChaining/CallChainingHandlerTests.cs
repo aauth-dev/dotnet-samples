@@ -40,7 +40,7 @@ public class CallChainingHandlerTests
                 var meta = new JsonObject
                 {
                     ["issuer"] = origin,
-                    ["token_endpoint"] = $"{origin}/token",
+                    ["auth_token_endpoint"] = $"{origin}/token",
                 };
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
@@ -106,7 +106,7 @@ public class CallChainingHandlerTests
                 var meta = new JsonObject
                 {
                     ["issuer"] = origin,
-                    ["token_endpoint"] = $"{origin}/token",
+                    ["auth_token_endpoint"] = $"{origin}/token",
                 };
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
@@ -148,7 +148,7 @@ public class CallChainingHandlerTests
                 var meta = new JsonObject
                 {
                     ["issuer"] = origin,
-                    ["token_endpoint"] = $"{origin}/token",
+                    ["auth_token_endpoint"] = $"{origin}/token",
                 };
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
@@ -187,7 +187,7 @@ public class CallChainingHandlerTests
                 var meta = new JsonObject
                 {
                     ["issuer"] = origin,
-                    ["token_endpoint"] = $"{origin}/token",
+                    ["auth_token_endpoint"] = $"{origin}/token",
                 };
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {

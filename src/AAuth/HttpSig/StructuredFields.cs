@@ -6,10 +6,11 @@ namespace AAuth.HttpSig;
 
 internal static class StructuredFields
 {
-    public static IReadOnlyDictionary<string, ParsedItem> Dictionary(string wire)
+    public static IReadOnlyDictionary<string, ParsedItem> Dictionary(string wire,
+        SignatureErrorCode malformed = SignatureErrorCode.InvalidSignature)
     {
         if (SfvParser.ParseDictionary(wire, out var members) is not null)
-            throw new AAuthVerificationException(SignatureErrorCode.InvalidRequest, "Malformed structured-field dictionary.");
+            throw new AAuthVerificationException(malformed, "Malformed structured-field dictionary.");
         var count = string.IsNullOrWhiteSpace(wire) ? 0 : 1;
         var quoted = false;
         var escaped = false;
@@ -25,14 +26,15 @@ internal static class StructuredFields
             if (character == ',' && depth == 0) count++;
         }
         if (count != members.Count)
-            throw new AAuthVerificationException(SignatureErrorCode.InvalidRequest, "Duplicate signature dictionary labels.");
+            throw new AAuthVerificationException(malformed, "Duplicate signature dictionary labels.");
         return members;
     }
 
-    public static ParsedItem Member(string wire, string label)
+    public static ParsedItem Member(string wire, string label,
+        SignatureErrorCode malformed = SignatureErrorCode.InvalidSignature)
     {
-        if (!Dictionary(wire).TryGetValue(label, out var member))
-            throw new AAuthVerificationException(SignatureErrorCode.InvalidRequest, $"Missing signature label '{label}'.");
+        if (!Dictionary(wire, malformed).TryGetValue(label, out var member))
+            throw new AAuthVerificationException(malformed, $"Missing signature label '{label}'.");
         return member;
     }
 
@@ -58,7 +60,7 @@ internal static class StructuredFields
         bool boolean => boolean ? "?1" : "?0",
         ReadOnlyMemory<byte> bytes => ":" + Convert.ToBase64String(bytes.Span) + ":",
         IReadOnlyList<ParsedItem> items => "(" + string.Join(" ", items.Select(Item)) + ")",
-        _ => throw new AAuthVerificationException(SignatureErrorCode.InvalidRequest, "Unsupported structured-field value type."),
+        _ => throw new AAuthVerificationException(SignatureErrorCode.InvalidSignature, "Unsupported structured-field value type."),
     };
 
     public static string RequiredString(IReadOnlyDictionary<string, object> parameters, string name)

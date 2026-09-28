@@ -13,16 +13,30 @@ public class AgentIdTests
     [InlineData("aauth:cli+instance.1@tools.example")]
     [InlineData("aauth:a@x.co")]
     [InlineData("aauth:test_user@domain.example")]
+    [InlineData("aauth:MyAgent@agent.example")]
+    [InlineData("aauth:Planner.7F3C+Search1@vendor.example")]
     public void ValidIdentifiers_Accepted(string input)
     {
         Assert.True(AgentId.TryParse(input, out var id, out _));
         Assert.Equal(input, id.Value);
     }
 
-    [Fact(DisplayName = "§Agent Identifiers — uppercase rejected")]
-    public void Rejects_Uppercase()
+    [Fact(DisplayName = "§Agent Identifiers — uppercase local part is not case-folded")]
+    public void UppercaseLocal_PreservedAndDistinct()
     {
-        Assert.False(AgentId.TryParse("aauth:MyAgent@agent.example", out _, out var err));
+        var upper = AgentId.Parse("aauth:MyAgent@agent.example");
+        var lower = AgentId.Parse("aauth:myagent@agent.example");
+        Assert.Equal("MyAgent", upper.Local);
+        Assert.NotEqual(upper, lower);
+        Assert.Equal("aauth:Planner@vendor.example", AgentId.Parse("aauth:Planner+Search1@vendor.example").ParentAgent);
+    }
+
+    [Theory(DisplayName = "§Agent Identifiers — non-ASCII letters rejected")]
+    [InlineData("aauth:\u00C4gent@agent.example")]
+    [InlineData("aauth:agent\u212A@agent.example")]
+    public void Rejects_NonAsciiLetters(string input)
+    {
+        Assert.False(AgentId.TryParse(input, out _, out var err));
         Assert.Contains("invalid character", err!);
     }
 

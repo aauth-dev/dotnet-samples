@@ -211,7 +211,8 @@ public class MockAccessServerTests : IDisposable
         Assert.NotNull(doc);
         Assert.Equal(AsIssuer, (string?)doc!["issuer"]);
         Assert.Equal($"{AsIssuer}/.well-known/jwks.json", (string?)doc["jwks_uri"]);
-        Assert.Equal($"{AsIssuer}/token", (string?)doc["token_endpoint"]);
+        Assert.Equal($"{AsIssuer}/token", (string?)doc["auth_token_endpoint"]);
+        Assert.False(doc.ContainsKey("token_endpoint"));
     }
 
     [Fact]

@@ -141,7 +141,7 @@ public class InboxFlowTests : IAsyncLifetime
 
         var doc = await client.GetFromJsonAsync<JsonObject>("/.well-known/aauth-resource.json");
 
-        Assert.Equal("aauth-access-token", (string?)doc!["access_mode"]);
+        Assert.Equal("session-token", (string?)doc!["access_mode"]);
         Assert.Equal($"{Base}/authorize", (string?)doc["authorization_endpoint"]);
     }
 

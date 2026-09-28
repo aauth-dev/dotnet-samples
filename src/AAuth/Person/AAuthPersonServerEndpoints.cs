@@ -217,7 +217,7 @@ public static class AAuthPersonServerEndpoints
         {
             EgressPolicy = options.EgressPolicy,
             Issuer = options.Issuer,
-            TokenEndpoint = $"{issuer}{options.TokenPath}",
+            AuthTokenEndpoint = $"{issuer}{options.TokenPath}",
             SigningKeys = new Dictionary<string, IAAuthKey>(options.SigningKeys),
             InteractionEndpoint = options.InteractionEndpoint ?? interactionUrl,
             MissionEndpoint = options.MissionEndpoint,

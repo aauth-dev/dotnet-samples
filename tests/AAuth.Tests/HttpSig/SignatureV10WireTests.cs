@@ -78,22 +78,33 @@ public class SignatureV10WireTests
     [InlineData("sig=hwk;jkt=\"old\";jwk=\"old\"", SignatureErrorCode.InvalidKey)]
     [InlineData("sig=jwks_uri;uri=\"https://example.com/jwks\";kid=\"key\"", SignatureErrorCode.InvalidKey)]
     [InlineData("sig=unregistered", SignatureErrorCode.UnsupportedScheme)]
-    [InlineData("other=hwk", SignatureErrorCode.InvalidRequest)]
-    [InlineData("sig=hwk;kty=\"bad", SignatureErrorCode.InvalidRequest)]
-    [InlineData("sig=hwk, sig=jwt", SignatureErrorCode.InvalidRequest)]
+    [InlineData("other=hwk", SignatureErrorCode.InvalidKey)]
+    [InlineData("sig=hwk;kty=\"bad", SignatureErrorCode.InvalidKey)]
+    [InlineData("sig=hwk, sig=jwt", SignatureErrorCode.InvalidKey)]
     public void LegacyMalformedAndUnknownCarriersAreTyped(string wire, SignatureErrorCode code)
         => Assert.Equal(code, Assert.Throws<AAuthVerificationException>(() => SignatureKeyParser.ParseAny(wire)).Code);
 
     [Theory]
-    [InlineData("expires", 1799999999L)]
-    [InlineData("created", 1800000100L)]
-    public void InvalidSignatureTimesRejectBeforeKeyResolution(string parameter, long value)
+    [InlineData("expires", 1799999999L, SignatureErrorCode.InvalidSignature)]
+    [InlineData("created", 1799999939L, SignatureErrorCode.InvalidSignature)]
+    [InlineData("created", 1800000061L, SignatureErrorCode.ClockSkew)]
+    public void InvalidSignatureTimesRejectBeforeKeyResolution(string parameter, long value, SignatureErrorCode code)
     {
-        var parameters = new Dictionary<string, long> { ["created"] = 1800000000, ["expires"] = 1800000001 };
+        var parameters = new Dictionary<string, long> { ["created"] = 1800000000, ["expires"] = 1800000100 };
         parameters[parameter] = value;
         var input = "sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\");created=" + parameters["created"] + ";expires=" + parameters["expires"];
-        Assert.Equal(SignatureErrorCode.InvalidSignature, Assert.Throws<AAuthVerificationException>(() =>
+        Assert.Equal(code, Assert.Throws<AAuthVerificationException>(() =>
             new AAuthVerifier { Clock = () => Now }.ValidateInput(input, "sig")).Code);
+    }
+
+    [Theory]
+    [InlineData(1799999940L)]
+    [InlineData(1800000030L)]
+    [InlineData(1800000060L)]
+    public void CreatedWindowIsSymmetric(long created)
+    {
+        var input = "sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\");created=" + created;
+        new AAuthVerifier { Clock = () => Now }.ValidateInput(input, "sig");
     }
 
     internal static string Jwt(JsonObject header, JsonObject payload, IAAuthKey key)
