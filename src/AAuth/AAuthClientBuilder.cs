@@ -617,7 +617,7 @@ public sealed class AAuthClientBuilder
             // When WithTokenRefresh is configured but no explicit provider,
             // create a JWT signing pipeline with lazy token acquisition.
             if (_provider is null && tokenRefresher is not null)
-                return WithMissionHeader(BuildRefreshOnlyHandler(tokenRefresher, ref partial));
+                return WithMissionContext(BuildRefreshOnlyHandler(tokenRefresher, ref partial));
 
             // Simple signing-only pipeline (possibly with interaction handling).
             var handler = new AAuthSigningHandler(_key, _provider!)
@@ -633,7 +633,7 @@ public sealed class AAuthClientBuilder
             var signed = WrapWithAccessHandler(handler);
 
             if (!_interactionHandling)
-                return WithMissionHeader(signed);
+                return WithMissionContext(signed);
 
             // Wrap with interaction handler
             var interactionOpts = new InteractionHandlingOptions();
@@ -651,7 +651,7 @@ public sealed class AAuthClientBuilder
                 TransportContract = _transportContract ?? AAuthTransportContract.EnforcesEgressPolicy,
                 InnerHandler = signed,
             };
-            return WithMissionHeader(interactionHandler);
+            return WithMissionContext(interactionHandler);
         }
 
         // --- Challenge-handling pipeline ---
@@ -769,9 +769,8 @@ public sealed class AAuthClientBuilder
             partial = topHandler;
         }
 
-        // If call-chaining is configured, add mission forwarding at the top.
-        // Per §Call Chaining, intermediaries in a mission context MUST include
-        // AAuth-Mission on downstream requests.
+        // If call-chaining is configured, attach the upstream token at the top so the
+        // challenge handler sends it as upstream_token (§Call Chaining).
         if (_upstreamTokenProvider is not null)
         {
             var missionHandler = new MissionForwardingHandler(_upstreamTokenProvider)
@@ -781,20 +780,17 @@ public sealed class AAuthClientBuilder
             topHandler = missionHandler;
         }
 
-        return WithMissionHeader(topHandler);
+        return WithMissionContext(topHandler);
     }
 
-    // Wrap a pipeline with the originating-agent mission header handler when a
-    // mission was configured via WithMission(...). Sits at the very top so the
-    // AAuth-Mission header is present before the request is signed; the signing
-    // handler beneath then covers it as the `aauth-mission` component (§Mission
-    // Context at Resources). Skipped under call-chaining, where
-    // MissionForwardingHandler already emits the header from the upstream token.
-    private HttpMessageHandler WithMissionHeader(HttpMessageHandler inner)
+    // Tag requests with the originating agent's mission (WithMission) so the
+    // challenge handler requests person tokens with its mission_s256. Skipped
+    // under call-chaining, where the upstream token carries the mission.
+    private HttpMessageHandler WithMissionContext(HttpMessageHandler inner)
     {
         if (_mission is null || _upstreamTokenProvider is not null)
             return inner;
-        return new MissionHeaderHandler(_mission) { InnerHandler = inner };
+        return new MissionContextHandler(_mission) { InnerHandler = inner };
     }
 
     // Wrap a signing handler with the resource-managed AAuth-Access handler when

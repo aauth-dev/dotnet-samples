@@ -11,12 +11,12 @@ namespace AAuth.Agent;
 /// puts <c>mission_s256</c> in the token and the resource copies it from there
 /// (§Missions). A caller-set value is left untouched.
 /// </summary>
-public sealed class MissionHeaderHandler : DelegatingHandler
+public sealed class MissionContextHandler : DelegatingHandler
 {
     private readonly Mission _mission;
 
     /// <summary>Creates the handler for the agent's approved mission.</summary>
-    public MissionHeaderHandler(Mission mission)
+    public MissionContextHandler(Mission mission)
     {
         _mission = mission ?? throw new System.ArgumentNullException(nameof(mission));
     }

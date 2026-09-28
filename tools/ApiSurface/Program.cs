@@ -95,7 +95,7 @@ static string Group(string path) => path switch
     var value when value.Contains("/Server/ResourceManaged/") || value.Contains("OpaqueToken") || value.Contains("AAuthAccess") || value.Contains("AAuthRequestOptions") => "resource-managed",
     var value when value.Contains("Revocation") || value.Contains("JtiStore") || value.Contains("/TokenKey") || value.Contains("/TokenGrant") || value.Contains("/TokenRegistration") => "revocation",
     var value when value.Contains("Governance") || value.Contains("/CallChaining/") => "governance",
-    var value when value.Contains("/Server/") || value.Contains("/Errors/") || value.Contains("/Headers/") || value.EndsWith("AAuthConstants.cs") => "server-contracts",
+    var value when value.Contains("/Server/") || value.Contains("/Errors/") || value.Contains("/Headers/") || value.EndsWith("AAuthConstants.cs") || value.EndsWith("AAuthTokenType.cs") => "server-contracts",
     var value when value.Contains("/Agent/") || value.EndsWith("Builder.cs") => "agent-clients",
     _ => throw new InvalidOperationException($"Unmapped public API file: {path}"),
 };

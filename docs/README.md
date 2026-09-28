@@ -116,7 +116,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | `TokenExchangeClient` | Signed person token requests and auth token exchanges at the Person Server |
 | `DeferredPoller` | Polls the pending URL until auth_token or timeout |
 | `AgentProviderClient` | Enrols with an Agent Provider (CLI/desktop agents; hosted services self-issue) |
-| `Mission` / `MissionHeaderHandler` | Mission state + the handler that names the mission (`mission_s256`) on person token requests |
+| `Mission` / `MissionContextHandler` | Mission state + the handler that names the mission (`mission_s256`) on person token requests |
 | `MissionForwardingHandler` | `DelegatingHandler` that forwards the caller's token downstream as `upstream_token` |
 | `AAuthGovernanceClient` | Facade bundling the four PS governance clients |
 | `MissionClient` | Propose, update, and complete missions at the PS `mission_endpoint` |
@@ -164,7 +164,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 | `ClarificationRequirement` | Typed `requirement=clarification` projection (untrusted question) |
 | `AAuthAccessHeader` | Format/parse/validate the `AAuth-Access` opaque token (`token68`) |
 
-> The `AAuthCapabilitiesHeader` and `MissionHeaderHandler` types live in the `AAuth.Agent` namespace (alongside `Mission` and `MissionForwardingHandler`), not in `AAuth.Headers`.
+> The `AAuthCapabilitiesHeader` and `MissionContextHandler` types live in the `AAuth.Agent` namespace (alongside `Mission` and `MissionForwardingHandler`), not in `AAuth.Headers`.
 
 ### `AAuth.Server.Verification` — Verification middleware
 
