@@ -1,7 +1,3 @@
----
-description: Runnable AAuth application with inspected protocol flows and shared capability scenarios.
----
-
 # SampleApp
 
 Start the full stack from the repository root with `make demo`, then open

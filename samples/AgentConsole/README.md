@@ -1,7 +1,3 @@
----
-description: Enrolled agent CLI with JWT authorization and explicit generic signing demonstrations.
----
-
 # Agent Console
 
 A command-line AAuth agent. It enrols with an Agent Provider, signs requests

@@ -1,7 +1,4 @@
----
-title: Dependency Injection
-description: Register agent provisioning, verification and policy services with explicit ownership.
----
+# Dependency Injection
 
 Register AAuth services in ASP.NET Core and hosted applications using the built-in DI extensions.
 

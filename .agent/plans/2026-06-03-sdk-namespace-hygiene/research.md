@@ -1,8 +1,4 @@
----
-title: "SDK Namespace Hygiene — Research"
-description: Research document for improving the AAuth SDK namespace layout and public type naming
-ms.date: 2026-06-03
----
+# SDK Namespace Hygiene — Research
 
 ## Problem Statement
 

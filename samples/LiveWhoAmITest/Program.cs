@@ -29,6 +29,7 @@ using System.Text.RegularExpressions;
 using AAuth;
 using AAuth.Crypto;
 using AAuth.Errors;
+using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Server;
 using AAuth.Server.Authorization;
@@ -36,6 +37,7 @@ using AAuth.Server.CallChaining;
 using AAuth.Server.Challenge;
 using AAuth.Server.Metadata;
 using AAuth.Server.Verification;
+using LiveWhoAmITest;
 
 const string WhoAmIUrl = "https://whoami.aauth.dev/";
 const string PersonServer = "https://person.hello.coop";
@@ -155,7 +157,12 @@ if (rawResp.Headers.TryGetValues("Accept-Signature", out var acceptSigValues))
 var rawBody = await rawResp.Content.ReadAsStringAsync();
 Console.WriteLine($"  Body: {rawBody}");
 Console.WriteLine();
-Console.WriteLine("  → Resource tells the agent: sign with these components, use JWT key scheme.");
+var mode1Passed = LiveInteropValidation.IsSignatureChallenge(rawResp.StatusCode,
+    rawResp.Headers.TryGetValues("Accept-Signature", out var mode1SignatureValues) ? mode1SignatureValues : []);
+if (mode1Passed)
+    Console.WriteLine("  → Resource tells the agent: sign with these components, use JWT key scheme.");
+else
+    Console.WriteLine("  ✗ Expected a usable 401 Accept-Signature challenge with the required components.");
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODE 2a: aa-agent+jwt (no scope) — agent identity returned directly
@@ -177,7 +184,9 @@ var mode2aResp = await mode2aClient.SendAsync(new HttpRequestMessage(HttpMethod.
 
 Console.WriteLine($"  Status: {(int)mode2aResp.StatusCode} {mode2aResp.ReasonPhrase}");
 var mode2aBody = await mode2aResp.Content.ReadAsStringAsync();
-if (mode2aResp.IsSuccessStatusCode)
+var mode2aPassed = LiveInteropValidation.IsAgentIdentityResponse(mode2aResp.StatusCode,
+    mode2aBody, tunnelUrl!, Subject, PersonServer);
+if (mode2aPassed)
 {
     Console.WriteLine($"  Body: {mode2aBody}");
     Console.WriteLine();
@@ -188,7 +197,7 @@ else
 {
     Console.WriteLine($"  Body: {mode2aBody}");
     Console.WriteLine();
-    Console.WriteLine($"  ⚠ Expected 200 but got {(int)mode2aResp.StatusCode}.");
+    Console.WriteLine($"  ✗ Expected 200 with the exact agent issuer, subject, and Person Server claims; got {(int)mode2aResp.StatusCode}.");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -210,17 +219,38 @@ using var mode2bClient = AAuthClientBuilder.SelfIssuing(agentKey).WithEgressPoli
 var mode2bResp = await mode2bClient.SendAsync(new HttpRequestMessage(HttpMethod.Get, $"{WhoAmIUrl}?scope=email"));
 
 Console.WriteLine($"  Status: {(int)mode2bResp.StatusCode} {mode2bResp.ReasonPhrase}");
+AAuthRequirementHeader.ParsedRequirement? mode2bRequirement = null;
 if (mode2bResp.Headers.TryGetValues("AAuth-Requirement", out var reqValues))
 {
     var reqHeader = string.Join(", ", reqValues);
     Console.WriteLine($"  AAuth-Requirement: {(reqHeader.Length > 100 ? reqHeader[..100] + "..." : reqHeader)}");
+    foreach (var value in reqValues)
+    {
+        try
+        {
+            mode2bRequirement = AAuthRequirementHeader.Parse(value);
+            break;
+        }
+        catch (FormatException) { }
+    }
 }
 var mode2bBody = await mode2bResp.Content.ReadAsStringAsync();
 Console.WriteLine($"  Body: {mode2bBody}");
 Console.WriteLine();
-Console.WriteLine("  → Resource verified our agent token via our tunneled JWKS,");
-Console.WriteLine("    read the 'ps' claim (person.hello.coop), and minted a resource_token");
-Console.WriteLine("    audienced to the PS. Agent takes this to the PS to get an auth_token.");
+var mode2bPassed = LiveInteropValidation.IsAuthTokenChallenge(mode2bResp.StatusCode, mode2bRequirement);
+if (mode2bPassed)
+{
+    Console.WriteLine("  → Resource verified our agent token via our tunneled JWKS,");
+    Console.WriteLine("    read the 'ps' claim (person.hello.coop), and minted a resource_token");
+    Console.WriteLine("    audienced to the PS. Agent takes this to the PS to get an auth_token.");
+}
+else
+{
+    Console.WriteLine("  ✗ Draft-10 scoped challenge was not returned.");
+    Console.WriteLine("    Expected: requirement=auth-token; resource-token=\"<aa-resource+jwt>\"");
+    Console.WriteLine($"    Received: requirement={mode2bRequirement?.Requirement ?? "(missing or malformed)"}");
+    Console.WriteLine("    The client leaves this unsupported requirement unsatisfied and does not contact the PS.");
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MODE 3: Full 3-party flow — WithChallengeHandling does it automatically
@@ -266,7 +296,12 @@ using var mode3Client = AAuthClientBuilder.SelfIssuing(agentKey).WithEgressPolic
     .Build();
 
 HttpResponseMessage? mode3Resp = null;
-try
+string? mode3Body = null;
+if (!mode2bPassed)
+{
+    Console.WriteLine("  SKIPPED: The resource did not issue the draft-10 resource token required for PS exchange.");
+}
+else try
 {
     mode3Resp = await mode3Client.SendAsync(new HttpRequestMessage(HttpMethod.Get, $"{WhoAmIUrl}?scope=email"));
 }
@@ -307,8 +342,8 @@ if (mode3Resp is not null)
 {
     Console.WriteLine();
     Console.WriteLine($"  Status: {(int)mode3Resp.StatusCode} {mode3Resp.ReasonPhrase}");
-    var mode3Body = await mode3Resp.Content.ReadAsStringAsync();
-    if (mode3Resp.IsSuccessStatusCode)
+    mode3Body = await mode3Resp.Content.ReadAsStringAsync();
+    if (LiveInteropValidation.IsAuthorizedIdentityResponse(mode3Resp.StatusCode, mode3Body))
     {
         Console.WriteLine("  Identity claims returned by whoami.aauth.dev:");
         try
@@ -337,8 +372,19 @@ if (mode3Resp is not null)
 // ── Cleanup ─────────────────────────────────────────────────────────────────
 Console.WriteLine();
 Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-Console.WriteLine("Done. Shutting down...");
-return 0;
+var mode3Passed = mode3Resp is not null
+    && LiveInteropValidation.IsAuthorizedIdentityResponse(mode3Resp.StatusCode, mode3Body ?? string.Empty);
+if (mode1Passed && mode2aPassed && mode2bPassed && mode3Passed)
+{
+    Console.WriteLine("All live interoperability modes passed. Shutting down...");
+    return 0;
+}
+Console.WriteLine("Live interoperability is incomplete. Shutting down...");
+Console.WriteLine($"  Mode 1:  {(mode1Passed ? "PASS" : "FAIL")}");
+Console.WriteLine($"  Mode 2a: {(mode2aPassed ? "PASS" : "FAIL")}");
+Console.WriteLine($"  Mode 2b: {(mode2bPassed ? "PASS" : "FAIL")}");
+Console.WriteLine($"  Mode 3:  {(mode3Passed ? "PASS" : mode2bPassed ? "FAIL" : "SKIPPED")}");
+return 2;
 
 }
 finally

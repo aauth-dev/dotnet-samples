@@ -1,7 +1,3 @@
----
-description: Agent-JWT resource-managed Inbox consent and key-bound opaque credentials.
----
-
 # Inbox — Resource-Managed (Two-Party) Resource Server
 
 Aria's email service, on **`:5004`**. The **Inbox** demonstrates the

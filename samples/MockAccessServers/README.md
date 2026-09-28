@@ -1,7 +1,3 @@
----
-description: Federated and R3 access-server samples with explicit policy and consent.
----
-
 # Mock Access Servers
 
 The **Access Server (AS)** is the fourth party in AAuth's four-party (federated)

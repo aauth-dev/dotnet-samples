@@ -1,8 +1,4 @@
----
-title: "Before / After — Fluent API Migration Summary"
-description: Side-by-side comparison of old vs new API patterns and affected files
-ms.date: 2026-05-28
----
+# Before / After — Fluent API Migration Summary
 
 ## Self-Issued Identity (Phases 1 + 5)
 

@@ -1,8 +1,4 @@
----
-title: "Self-Issued Client Builder Shorthand — Research"
-description: Research for combining AgentTokenBuilder into the AAuthClientBuilder fluent API
-ms.date: 2026-05-28
----
+# Self-Issued Client Builder Shorthand — Research
 
 ## Problem Statement
 

@@ -1,8 +1,4 @@
----
-title: "AP Enrollment Key Naming — Implementation Plan"
-description: Rename EnrolledKeyId to LocalKeyHandle, default to JWK thumbprint, and clarify docs/samples around AP↔agent identifier separation.
-ms.date: 2026-05-27
----
+# AP Enrollment Key Naming — Implementation Plan
 
 ## Goals
 

@@ -1,7 +1,4 @@
----
-title: AAuth SDK for .NET
-description: AAuth SDK for .NET, companion packages and runnable protocol demonstrations.
----
+# AAuth SDK for .NET
 
 [![CI](https://github.com/aauth-dev/dotnet-samples/actions/workflows/ci.yml/badge.svg)](https://github.com/aauth-dev/dotnet-samples/actions/workflows/ci.yml)
 [![NuGet](https://img.shields.io/nuget/vpre/AAuth)](https://www.nuget.org/packages/AAuth)

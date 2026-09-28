@@ -1,7 +1,3 @@
----
-description: Generic inline public-key signatures using the hwk scheme.
----
-
 # Pseudonymous Signatures (sig=hwk)
 
 ## Overview

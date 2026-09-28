@@ -1,7 +1,4 @@
----
-title: Mission Governance (Server)
-description: Host authenticated mission approval, permission, audit and interaction endpoints.
----
+# Mission Governance (Server)
 
 > [Mission Lifecycle](https://explorer.aauth.dev/missions/lifecycle)
 

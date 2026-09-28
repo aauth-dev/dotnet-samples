@@ -1,7 +1,4 @@
----
-title: Call Chaining
-description: Preserve authorization context across multi-hop agent calls.
----
+# Call Chaining
 
 Call chaining enables multi-hop delegation where a resource acts as an agent to downstream resources, preserving the full authorization chain via nested `act` claims.
 

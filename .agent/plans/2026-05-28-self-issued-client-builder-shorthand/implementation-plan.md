@@ -1,8 +1,4 @@
----
-title: "Client Builder Fluent Shorthand — Implementation Plan"
-description: Phased plan for fluent shorthand methods across the AAuth SDK builder surface
-ms.date: 2026-05-28
----
+# Client Builder Fluent Shorthand — Implementation Plan
 
 > **Phases 1–4:** COMPLETE (self-issued shorthand)
 > **Phases 5–10:** COMPLETE (fluent refactor + AP-enrolled + resource shorthand + constants/extensions + response helpers)

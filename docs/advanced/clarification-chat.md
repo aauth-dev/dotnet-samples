@@ -1,7 +1,4 @@
----
-title: Clarification Chat
-description: Answer, narrow or cancel authenticated PS and AS clarification requests.
----
+# Clarification Chat
 
 > [Clarification Chat](https://explorer.aauth.dev/missions/clarification)
 

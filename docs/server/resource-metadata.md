@@ -1,7 +1,4 @@
----
-title: Resource Metadata
-description: Publish AAuth resource metadata and discover admitted issuer keys.
----
+# Resource Metadata
 
 > [Discovery](https://explorer.aauth.dev/foundations/discovery)
 

@@ -1,7 +1,4 @@
----
-title: Bootstrap and Agent Enrollment
-description: Provision durable agent keys with signed enrollment and provider-assigned identities.
----
+# Bootstrap and Agent Enrollment
 
 ## Overview
 

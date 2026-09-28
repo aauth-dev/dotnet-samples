@@ -13,6 +13,7 @@
     <ProjectReference Include="..\..\samples\SampleApp\SampleApp.csproj" />
     <ProjectReference Include="../../samples/Concierge/Concierge.csproj" />
     <ProjectReference Include="../../samples/MockAgentProvider/MockAgentProvider.csproj" />
+    <ProjectReference Include="../../samples/LiveWhoAmITest/LiveWhoAmITest.csproj" />
   </ItemGroup>
 
   <!--

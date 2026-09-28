@@ -1,7 +1,4 @@
----
-title: Observability
-description: Subscribe to AAuth diagnostics without exposing token material.
----
+# Observability
 
 The AAuth SDK provides built-in OpenTelemetry-compatible tracing via `System.Diagnostics` — no external OTel package dependency required.
 

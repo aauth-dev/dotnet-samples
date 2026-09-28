@@ -1,7 +1,3 @@
----
-description: Travel intermediary demonstrating authenticated downstream delegation and interaction chaining.
----
-
 # Concierge
 
 Multi-agent call-chaining sample. The **Concierge** is the service Aria asks to

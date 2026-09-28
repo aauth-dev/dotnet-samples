@@ -1,7 +1,4 @@
----
-title: Glossary and Acronyms
-description: Current AAuth roles, token purposes, cryptography and sample terminology.
----
+# Glossary and Acronyms
 
 A single reference for the acronyms, abbreviations, and short protocol terms
 used across this repository (samples, SDK, docs). AAuth-specific and

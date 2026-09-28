@@ -1,7 +1,4 @@
----
-title: Token Issuance
-description: Issue bounded AAuth resource, agent, and authorization tokens.
----
+# Token Issuance
 
 > [Token Types](https://explorer.aauth.dev/foundations/tokens) | [Token Lifecycle](https://explorer.aauth.dev/tokens/lifecycle)
 

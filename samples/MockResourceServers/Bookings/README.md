@@ -1,7 +1,4 @@
----
-title: Bookings Rich Resource Requests sample
-description: OpenAPI-scoped reservations with per-call approval and account binding.
----
+# Bookings Rich Resource Requests sample
 
 Aria's external **reservations provider** for dining & experiences (reserve a table,
 book a tour). Bookings demonstrates [Rich Resource Requests](../../../docs/workflows/rich-resource-requests.md):

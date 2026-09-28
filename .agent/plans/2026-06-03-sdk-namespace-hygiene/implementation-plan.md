@@ -1,8 +1,4 @@
----
-title: "SDK Namespace Hygiene — Implementation Plan"
-description: Phased plan to improve AAuth SDK namespace layout and public type naming
-ms.date: 2026-06-03
----
+# SDK Namespace Hygiene — Implementation Plan
 
 This plan addresses the four issues in [research.md](research.md). Phasing is
 **non-breaking first**: Phase 1 ships the high-value DI ergonomics win on its
