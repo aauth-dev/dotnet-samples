@@ -143,6 +143,76 @@ RESOLVED. Release build clean. Tests: Events 75, R3 290, Conformance 1112, core
 declarations, 0 unmapped, current on rerun. Docs inventory regenerated and
 current on rerun. e2e typecheck passes. Browser suites not run.
 
+### [2026-09-28] [Phase 2-6] Single identity-model cutover
+
+PROCEEDED (default: one coordinated cutover; revisit at review). Owner
+direction: no backwards compatibility, but consumer-facing API, DI and helpers
+stay usable without hand-built tokens. Auth and resource tokens carry `ps`,
+`sub`, optional `tenant` and `mission_s256`; `agent`, `act` and `mission` are
+removed and reserved in `AdditionalClaims`. The PS issues person tokens at
+`person_token_endpoint` (`/person`). Token requests carry `resource_token` and
+`presented_token`, and servers verify the pair with
+`TokenVerifier.VerifyPresentedTokenAsync`. Removed: `ActChainBuilder`,
+`ActChainReader`, `MaxActDepth`, `MissionClaim`, `AAuthMissionHeader`, the
+`aauth-mission` signature component, `AccessDecision.Subject`, and the R3
+`Subject` option.
+
+### [2026-09-28] [Phase 4] Consumer helpers kept for the new flow
+
+RESOLVED. The two-leg flow runs without callers building tokens:
+
+- `ChallengeHandler` answers `requirement=person-token` itself.
+- `TokenExchangeClient.RequestPersonTokenAsync(ps, resource)` and
+  `ExchangeAsync(ps, resourceToken, presentedToken)` cover explicit use.
+- `ctx.GetAAuthVerifiedAssertion()` exposes the presented token and signing key.
+- `AAuthChallengeMiddleware.BuildResourceToken(..., interaction?, loginHint?)`
+  and `R3Challenge.Challenge(ctx, uri, s256)` build challenges; the R3 one gives
+  agent tokens the person-token requirement.
+- `R3Challenge.BuildResourceToken(verifiedAuthToken, uri, s256)` names an
+  already-presented auth token for per-call proposals.
+
+### [2026-09-28] [Phase 4] Access Server accepts only PS callers
+
+PROCEEDED (default: remove direct agent mode). Draft-11 gives the AS a
+`jwks_uri`-signed PS caller with `agent_token`, `resource_token` and
+`presented_token`. The direct-agent path and its conformance tests were removed,
+and `DirectAsDeferredSourceRevocationAndClarification` now goes through the PS.
+`agent_token` keeps the draft-10 `invalid_agent_token`/`expired_agent_token`
+codes pending AAuth issue #199 (see Open questions).
+
+### [2026-09-28] [Phase 3] Mission errors and actions
+
+RESOLVED. Unknown or foreign missions return 404 `mission_not_found`; terminated
+or expired missions return 403 `mission_terminated` (previously 403
+`invalid_mission`). Approval returns the `{s256, mission}` envelope. Update and
+completion are `POST {mission_endpoint}/{s256}` (`MissionClient.UpdateAsync` and
+`CompleteAsync`); the interaction endpoint rejects `completion`.
+
+### [2026-09-28] [Phase 8] Events tickets bind to the key thumbprint (Q5)
+
+RESOLVED. Draft-11 auth tokens name no agent, so `SubscriptionTicket.Agent`
+became `KeyThumbprint`, taken from the auth token's `cnf.jwk`.
+`ResourceSubscription.KeyThumbprint` records the subscribe request's HTTP
+signing key, and redemption requires the two to match. Tickets persisted with
+the old shape no longer redeem; the sample SQLite store is disposable.
+
+### [2026-09-28] [Phase 7] Revoked source tokens on a first request
+
+RESOLVED. `TokenRegistration` now records the request parameter that carried
+each source token. A revoked parameter token returns 400
+`revoked_<parameter>_token` (#token-revocation, L2765; `revoked_upstream_token`
+L2593). A revoked `Signature-Key` agent token returns 401
+`Signature-Error: error=revoked_jwt` (L2764). Polling `403 revoked` stays for
+revocation while a request is pending (L2624). The helper is
+`AAuthProblemDetails.SourceRevoked`.
+
+### [2026-09-28] [Phase 10] Sample resources echo person identity
+
+RESOLVED. Calendar and Wallet responses return `ps` and `sub` instead of
+`agent` and `act`. `userKey` is `{ps}|{sub}`, because in four-party the `iss` is
+the AS, not the person's PS. Profile's `/identified` keeps `agent`, because it
+accepts agent tokens only.
+
 ## Deviations from plan
 
 None. Implementation has not started. The package follows the seven-document
@@ -170,6 +240,40 @@ vocabulary, which was read from the published text directly. Re-deriving the
 research, ledger and map citations, and assigning each upgrade-checklist ID to a
 phase in the ledger, are still open Phase 0 items. Phase 2 does not start until
 they are done.
+
+### [2026-09-28] [Phase 2-6] Cutover landed as one commit
+
+PROCEEDED (default: accept). Person tokens, the presented-token pair, `ps`/`sub`
+and the `mission_s256` reference change the same wire contracts at every role,
+so Phases 2-6 could not be split and still build. The Events ticket binding and
+later fixes are separate commits. The Phase 0 documentation re-derivation was
+not finished first; it moves to Phase 10.
+
+### [2026-09-28] [Phase 10] GuidedTour and snippets still show draft-10 flows
+
+PROCEEDED (default: sweep in Phase 10). `TourSession.cs` was only changed to
+compile; its steps and `CodeSnippets` still describe agent-to-auth flows. The
+snippet-compilation, frozen-surface and reference-table tests fail until the
+sweep, along with the SampleApp `Mission.razor` snippets, the Documents step 2
+snippet, and the v10 plan links to deleted files.
+
+### [2026-09-28] [Phase 2-6] Bugs found and fixed during the cutover
+
+RESOLVED.
+
+- **The PS fetched its own metadata over HTTP** to verify the tokens it had
+  issued. It now verifies them with its configured keys, via
+  `TokenVerifier.WithLocalIssuer`.
+- **`AuthTokenResponse` left `StatusCode` null**, which broke callers checking
+  for 200 (federation, mission log). It now returns an explicit 200.
+- **A Bookings call silently rebound an argument.** After the
+  `VerifyAuthTokenWithJwksAsync` signature change, the agent id bound to
+  `expectedMaxScope` with no compile error. The argument was removed.
+- **The Calendar consent-deny fixture** did not trust the test PS. This only
+  surfaced once the resource verified a PS-issued person token before consent.
+- **First requests with a revoked upstream token returned 403 `revoked`**
+  (Conformance `RevocationLifecycleTests`). Fixed in "Revoked source tokens on a
+  first request" above.
 
 ## Open questions
 
@@ -230,3 +334,29 @@ OPEN. The sample AP refresh endpoint answers a missing or unparsable
 `Signature-Key` with a problem body (`invalid_request`), not `401` with
 `Signature-Error`. Move it to the shared verifier or to -09 codes when the agent
 refresh path is reworked.
+
+### [2026-09-28] [Phase 6] Upstream verification step 4 not enforced
+
+OPEN. At the PS, step 4 identifies the calling agent from its own records: the
+agent it issued the upstream person token to, or the one behind an upstream auth
+token. If that agent's token or person binding is revoked, the PS must reject
+with `revoked_upstream_token` (#upstream-token-verification, L1835). The PS keeps
+no issued-to record yet, so only the token-level check runs. No test covers it.
+This needs an issuance record keyed by person-token `jti`, and Phase 7's binding
+revocation.
+
+### [2026-09-28] [Phase 3] `person_tokens` in mission approval
+
+OPEN. The approval response may carry `person_tokens` for the proposal's
+`resources`, each with `mission_s256` (#mission-creation, L1415).
+`MissionProposal.Resources` is sent, but the PS issues no `person_tokens`, and
+`Mission.PersonTokens` stays empty. Agents fall back to per-resource
+person-token requests, which the spec allows.
+
+### [2026-09-28] [Phase 5] `408 expired` outside polling
+
+OPEN (SDK design). If an issued token's ceiling passes during a synchronous
+direct `/token` audit, the R3 AS returns `408 expired`. The spec defines that
+code for pending polls (L2623). A fresh-request error (for example
+`expired_presented_token`) may fit better. R3 test
+`TokenEndpoint_DoesNotReleaseTokenThatExpiresDuringAudit` pins the current code.
