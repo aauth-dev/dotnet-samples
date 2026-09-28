@@ -86,7 +86,6 @@ public class R3ModelTests
         const string irreversible = "Submitting the booking may create cancellation fees.";
         var doc = new R3Document
         {
-            Version = "v02",
             Vocabulary = Vocabulary.Mcp,
             Operations = [R3Operation.Mcp("book_trip")],
             Display = new R3Display
@@ -114,7 +113,6 @@ public class R3ModelTests
     {
         var proposal = new R3ProposalDocument
         {
-            Version = "v02",
             Vocabulary = Vocabulary.Mcp,
             Operations = [R3Operation.Mcp("book_trip")],
             Parameters = new Dictionary<string, R3Parameter>

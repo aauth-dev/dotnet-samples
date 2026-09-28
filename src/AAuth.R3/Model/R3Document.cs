@@ -10,11 +10,6 @@ public sealed record R3Document
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Account { get; init; }
 
-    [JsonPropertyName("version")]
-    [JsonPropertyOrder(1)]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? Version { get; init; }
-
     [JsonPropertyName("vocabulary")]
     [JsonPropertyOrder(2)]
     public required string Vocabulary { get; init; }
@@ -30,7 +25,6 @@ public sealed record R3Document
 
     public static R3Document Mcp(IReadOnlyList<R3Operation> operations, R3Display? display = null) => new()
     {
-        Version = "v02",
         Vocabulary = global::AAuth.R3.Model.Vocabulary.Mcp,
         Operations = operations,
         Display = display,
@@ -38,7 +32,6 @@ public sealed record R3Document
 
     public static R3Document OpenApi(IReadOnlyList<R3Operation> operations, R3Display? display = null) => new()
     {
-        Version = "v02",
         Vocabulary = global::AAuth.R3.Model.Vocabulary.OpenApi,
         Operations = operations,
         Display = display,

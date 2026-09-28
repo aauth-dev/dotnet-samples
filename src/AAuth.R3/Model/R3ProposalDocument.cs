@@ -10,11 +10,6 @@ public sealed record R3ProposalDocument
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Account { get; init; }
 
-    [JsonPropertyName("version")]
-    [JsonPropertyOrder(1)]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? Version { get; init; }
-
     [JsonPropertyName("vocabulary")]
     [JsonPropertyOrder(2)]
     public required string Vocabulary { get; init; }

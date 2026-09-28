@@ -38,6 +38,30 @@ public class TokenClaimTests
     }
 
     [Fact]
+    public void Draft11WireNames_PerCallClaimAndNoDocumentVersion()
+    {
+        var claims = R3AuthClaims.AuthToken("https://resource.test/r3/doc", "hash", R3Grant.Mcp("a"), R3Grant.Mcp("b"));
+        Assert.Contains("r3_per_call", claims.Keys);
+        Assert.DoesNotContain("r3_conditional", claims.Keys);
+
+        var legacy = new JsonObject(R3AuthClaims.AuthToken("https://resource.test/r3/doc", "hash", R3Grant.Mcp("a")))
+        {
+            ["r3_conditional"] = JsonNode.Parse("{\"vocabulary\":\"urn:aauth:vocabulary:mcp\",\"operations\":[{\"tool\":\"b\"}]}"),
+        };
+        Assert.Null(R3ClaimReader.ReadAuthToken(legacy).PerCall);
+
+        var document = R3Document.Mcp([R3Operation.Mcp("a")]);
+        var proposal = new R3ProposalDocument
+        {
+            Vocabulary = Vocabulary.Mcp,
+            Operations = [R3Operation.Mcp("b")],
+            Parameters = new Dictionary<string, R3Parameter>(),
+        };
+        Assert.False(JsonNode.Parse(document.ToUtf8Bytes())!.AsObject().ContainsKey("version"));
+        Assert.False(JsonNode.Parse(proposal.ToUtf8Bytes())!.AsObject().ContainsKey("version"));
+    }
+
+    [Fact]
     public void AuthClaims_RoundTripThroughAdditionalClaims()
     {
         var issuerKey = AAuthKey.Generate();

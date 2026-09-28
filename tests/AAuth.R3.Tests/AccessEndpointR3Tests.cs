@@ -1198,7 +1198,6 @@ public class AccessEndpointR3Tests
             var proposal = new R3ProposalDocument
             {
                 Account = documentAccount,
-                Version = "v02",
                 Vocabulary = Vocabulary.OpenApi,
                 Operations = [R3Operation.OpenApi("book_trip")],
                 Parameters = new Dictionary<string, R3Parameter>

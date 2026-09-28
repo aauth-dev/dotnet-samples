@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 131 changed public-source files, 230 added/replacement declarations, 130 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 133 changed public-source files, 230 added/replacement declarations, 132 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -382,6 +382,16 @@ Public signatures unchanged (3); behavior reviewed under events.
 
 Public owners: `AAuth.Events.EventsEndpoints`, `AAuth.Events`.
 
+### src/AAuth.R3/Model/R3Document.cs
+
+Concept/decision: [r3](#r3). Source: [R3Document.cs](../../../src/AAuth.R3/Model/R3Document.cs).
+
+```diff
+- AAuth.R3.Model.R3Document: [ JsonPropertyName ( "version" ) ] [ JsonPropertyOrder ( 1 ) ] [ JsonIgnore ( Condition = JsonIgnoreCondition . WhenWritingNull ) ] public string ? Version { get ; init ; }
+```
+
+Public owners: `AAuth.R3.Model.R3Document`, `AAuth.R3.Model`.
+
 ### src/AAuth.R3/Model/R3Grant.cs
 
 Concept/decision: [r3](#r3). Source: [R3Grant.cs](../../../src/AAuth.R3/Model/R3Grant.cs).
@@ -389,6 +399,16 @@ Concept/decision: [r3](#r3). Source: [R3Grant.cs](../../../src/AAuth.R3/Model/R3
 Public signatures unchanged (7); behavior reviewed under r3.
 
 Public owners: `AAuth.R3.Model.R3Grant`, `AAuth.R3.Model`.
+
+### src/AAuth.R3/Model/R3ProposalDocument.cs
+
+Concept/decision: [r3](#r3). Source: [R3ProposalDocument.cs](../../../src/AAuth.R3/Model/R3ProposalDocument.cs).
+
+```diff
+- AAuth.R3.Model.R3ProposalDocument: [ JsonPropertyName ( "version" ) ] [ JsonPropertyOrder ( 1 ) ] [ JsonIgnore ( Condition = JsonIgnoreCondition . WhenWritingNull ) ] public string ? Version { get ; init ; }
+```
+
+Public owners: `AAuth.R3.Model.R3ProposalDocument`, `AAuth.R3.Model`.
 
 ### src/AAuth.R3/R3AccessTokenEndpoint.cs
 

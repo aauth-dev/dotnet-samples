@@ -269,7 +269,6 @@ StoredR3Proposal StoreR3Document(R3ProposalStore store, IEnumerable<string> requ
     var doc = new R3Document
     {
         Account = account,
-        Version = "v02",
         Vocabulary = Vocabulary.OpenApi,
         Operations = ordered,
         Display = new R3Display

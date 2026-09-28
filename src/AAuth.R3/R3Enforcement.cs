@@ -65,7 +65,6 @@ public sealed class R3Enforcement
 
         var proposal = new R3ProposalDocument
         {
-            Version = "v02",
             Vocabulary = perCall.Vocabulary,
             Operations = [operation.Operation],
             Parameters = parameters,

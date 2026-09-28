@@ -81,7 +81,6 @@ internal static class R3TestData
 
     public static R3Document Document() => new()
     {
-        Version = "v02",
         Vocabulary = Vocabulary.OpenApi,
         Operations =
         [
