@@ -34,7 +34,7 @@ OpenAPI `operationId`s.
 | `/confirm_reservation` | `confirmReservation` | `r3_conditional` | Charges a non-refundable deposit → **per-call proposal**: first call returns `401` + a resource token referencing a single-invocation R3 document carrying the concrete `parameters`; the R3 AS requires **human approval** (`202` → consent screen) before minting the per-call token; the retry (same params) is then served |
 | `/r3/{hash}` | — | — | The class R3 document — served **only** to a trusted fetcher (the R3 AS / PS), never to agents |
 | `/r3/proposals/{hash}` | — | — | Per-call proposal documents (same AS-only fetch gate) |
-| `/.well-known/aauth-resource.json` | — | — | Resource metadata (via `MapAAuthWellKnown`), incl. `r3_vocabularies` and `mission_aware` |
+| `/.well-known/aauth-resource.json` | — | — | Resource metadata (via `MapAAuthWellKnown`), incl. `r3_vocabularies` |
 | `/.well-known/jwks.json` | — | — | Resource signing JWKS |
 
 `confirm_reservation` is where R3's per-call authorization earns its keep: the AS
@@ -51,7 +51,6 @@ parameters match the approved proposal's digest.
 | `AAuth:AccessServer` | `http://localhost:5501` | R3 Access Server this resource federates to (resource-token `aud`). |
 | `AAuth:PersonServer` | `http://localhost:5100` | Person Server used by the sample revocation policy. Does not implicitly grant R3 readership. |
 | `AAuth:SignatureWindow` | `60` | Max age (seconds) for inbound RFC 9421 signatures. |
-| `Bookings:MissionAware` | `false` | Advertised in metadata only; Bookings does not read or enforce `AAuth-Mission`. |
 | `Bookings:PersonServerEvaluators` | None in code; sample settings opt in `http://localhost:5100` | Explicit PS evaluation role under the logged Q4 interpretation. The designated AS is always allowed with its access metadata role. |
 
 The grants in the table describe the default AS policy, not route assumptions.

@@ -39,7 +39,6 @@ var resourceUrl = (builder.Configuration["AAuth:Issuer"] ?? "http://localhost:50
 var accessServerUrl = (builder.Configuration["AAuth:AccessServer"] ?? "http://localhost:5501").TrimEnd('/');
 var personServerUrl = (builder.Configuration["AAuth:PersonServer"] ?? "http://localhost:5100").TrimEnd('/');
 var signatureWindowSeconds = builder.Configuration.GetValue<int?>("AAuth:SignatureWindow") ?? 60;
-var missionAware = builder.Configuration.GetValue("Bookings:MissionAware", false);
 var accounts = builder.Configuration.GetSection("Bookings:Accounts").Get<Dictionary<string, string>>()
     ?? new Dictionary<string, string>(StringComparer.Ordinal)
     {
@@ -58,7 +57,7 @@ var authoritativeOperations = supportedOperations.Select(R3OperationIdentity.Ope
 // Resource DI via the one-call helper: registers the AAuth verifier, the shared
 // discovery clients (MetadataClient + JwksClient) behind an SDK-owned pooled handler,
 // and the well-known metadata options — no manual HttpClient wiring (2026-06-27
-// server-api-surface). R3's r3_vocabularies (and the mission_aware flag) ride the
+// server-api-surface). R3's r3_vocabularies ride the
 // generic AdditionalMetadata seam, so Bookings uses the high-level MapAAuthWellKnown
 // instead of hand-rolling the well-known + JWKS.
 builder.Services.AddAAuthResource(o =>
@@ -74,8 +73,6 @@ builder.Services.AddAAuthResource(o =>
     o.AuthorizationEndpoint = $"{resourceUrl}/authorize";
     o.AdditionalMetadata = new Dictionary<string, JsonNode?>
     {
-        // Bookings is deliberately not mission-aware (advertised for discovery only).
-        ["mission_aware"] = missionAware,
         ["r3_vocabularies"] = discoveryMetadata["r3_vocabularies"]!.DeepClone(),
     };
 });
@@ -93,7 +90,6 @@ bookingEvents.Map(app);
 
 // Resource well-known (aauth-resource.json + jwks.json) from the DI-registered
 // metadata options — including R3's r3_vocabularies via the AdditionalMetadata seam.
-// Bookings does not read or enforce AAuth-Mission; mission_aware is advertised false.
 app.MapAAuthWellKnown();
 var tokenInventory = app.MapAAuthIssuerRevocation(resourceUrl, ResourceTokenBuilder.ResourceDwk,
     resourceKey, ResourceKid, "/revoke", SampleEgress.Policy, TimeProvider.System,
@@ -103,7 +99,6 @@ app.MapGet("/", () => Results.Ok(new
 {
     resource = "Aria Reservations",
     accessMode = "four-party-r3",
-    missionAware,
     authorization_endpoint = $"{resourceUrl}/authorize",
     r3_vocabularies = new Dictionary<string, string> { [Vocabulary.OpenApi] = $"{resourceUrl}/openapi.json" },
     flows = new[]

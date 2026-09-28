@@ -368,7 +368,7 @@ public sealed class AAuthResourceMetadataOptions
     /// Optional extension metadata merged verbatim into
     /// <c>/.well-known/aauth-resource.json</c> as top-level members. Lets a resource
     /// advertise fields not modelled by the typed options above (for example an R3
-    /// resource's <c>r3_vocabularies</c> map or a <c>mission_aware</c> flag) while
+    /// resource's <c>r3_vocabularies</c> map) while
     /// still using the high-level <c>MapAAuthResourceWellKnown</c>/<c>MapAAuthWellKnown</c>
     /// APIs. Each value is deep-cloned on emit. Keys that collide with a field the
     /// builder already emits are ignored (the typed field wins). Core attaches no

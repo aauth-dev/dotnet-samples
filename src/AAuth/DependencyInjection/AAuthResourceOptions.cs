@@ -93,7 +93,7 @@ public sealed class AAuthResourceOptions
     /// <summary>
     /// Optional extension metadata merged verbatim into the resource well-known
     /// document as top-level members (for example an R3 resource's
-    /// <c>r3_vocabularies</c> map or a <c>mission_aware</c> flag). See
+    /// <c>r3_vocabularies</c> map). See
     /// <see cref="Server.Metadata.AAuthResourceMetadataOptions.AdditionalMetadata"/>.
     /// </summary>
     public Dictionary<string, JsonNode?>? AdditionalMetadata { get; set; }
