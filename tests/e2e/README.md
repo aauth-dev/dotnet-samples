@@ -67,6 +67,11 @@ apps:
 `make demo` / `make demo-sample` running, the suite reuses those processes.
 Otherwise Playwright starts them and waits on each service's health endpoint.
 
+Servers that Playwright starts get a scratch `HOME` (`$TMPDIR/aauth-e2e-home`,
+wiped at the start of each run), so the keys and databases the demos keep under
+`~/.aauth` never leak into a run. Set `AAUTH_E2E_HOME` to keep a directory
+across runs. Reused `make demo` processes keep their own `HOME`.
+
 ## Notes
 
 - **Blazor circuit readiness.** Pages render static HTML first; handlers only

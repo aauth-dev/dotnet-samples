@@ -1,4 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 /**
  * Playwright config for the AAuth Blazor demo E2E suite.
@@ -17,11 +20,28 @@ import { defineConfig, devices } from '@playwright/test';
 
 const repoRoot = '../..';
 
+// Demo servers persist keys and databases under $HOME/.aauth. Give them a scratch
+// HOME (fresh per run; set AAUTH_E2E_HOME to keep one) so a developer's own
+// ~/.aauth never leaks into a run. Worker processes re-read this file, so only
+// the main process resets it.
+const realHome = os.homedir();
+const stateHome = process.env.AAUTH_E2E_HOME ?? path.join(os.tmpdir(), 'aauth-e2e-home');
+if (!process.env.AAUTH_E2E_HOME && !process.env.TEST_WORKER_INDEX) {
+  fs.rmSync(stateHome, { recursive: true, force: true });
+}
+fs.mkdirSync(path.join(stateHome, '.local', 'share'), { recursive: true });
+const stateEnv = {
+  HOME: stateHome,
+  XDG_DATA_HOME: path.join(stateHome, '.local', 'share'),
+  NUGET_PACKAGES: process.env.NUGET_PACKAGES ?? path.join(realHome, '.nuget', 'packages'),
+  DOTNET_CLI_HOME: process.env.DOTNET_CLI_HOME ?? realHome,
+};
+
 function dotnetRun(project: string, env?: Record<string, string>) {
   return {
     command: `dotnet run --project ${project}`,
     cwd: repoRoot,
-    env: { AAuth__EnableIsolatedDemoConsent: 'true', ...env },
+    env: { AAuth__EnableIsolatedDemoConsent: 'true', ...stateEnv, ...env },
     reuseExistingServer: !process.env.CI,
     stdout: 'pipe' as const,
     stderr: 'pipe' as const,

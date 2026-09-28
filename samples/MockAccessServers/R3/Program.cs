@@ -61,7 +61,7 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
     BrowserConsent = new AAuth.Server.BrowserConsentSessions("AAuth.R3.Consent",
         builder.Configuration.GetValue<bool>("AAuth:EnableIsolatedDemoConsent") ? "isolated-r3-demo" : null),
     AuditSink = new SqliteR3AuditSink(builder.Configuration["R3AccessServer:AuditPath"] ??
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "aauth-samples", "r3-audit.sqlite")),
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create), "aauth-samples", "r3-audit.sqlite")),
 });
 
 app.Run();

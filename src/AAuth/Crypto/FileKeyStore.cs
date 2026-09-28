@@ -87,7 +87,11 @@ public sealed class FileKeyStore : IKeyStore
             throw new FileNotFoundException($"No key named '{name}' under {_directory}.", path);
         }
 
-        return AAuthKey.FromJwkJson(File.ReadAllText(path));
+        try { return AAuthKey.FromJwkJson(File.ReadAllText(path)); }
+        catch (JwkValidationException ex)
+        {
+            throw new JwkValidationException(ex.Code, $"Key file '{path}' is not a valid AAuth key: {ex.Message}", ex);
+        }
     }
 
     /// <summary>True if a key with the given name is present.</summary>
