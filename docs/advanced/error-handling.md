@@ -146,10 +146,9 @@ Token-specific codes exist only for tokens carried as request parameters and
 follow the pattern `<invalid|expired|revoked>_<parameter>_token`. A parameter
 token that was revoked before the first request is a `400`
 `revoked_<parameter>_token` (for example `revoked_upstream_token`). The token in
-the `Signature-Key` header has no body code: when it fails — including a revoked
-agent, person, or auth token — the response is `401` with
-`Signature-Error`; the PS and AS token endpoints report a revoked one as
-`revoked_jwt` (see [Signature Errors](#signature-errors-resource--agent)).
+the `Signature-Key` header has no body code: when it fails, the response is
+`401` with `Signature-Error`, and a revoked agent, person, or auth token is
+reported as `revoked_jwt` (see [Signature Errors](#signature-errors-resource--agent)).
 A request that is already pending reports a revocation while polling instead
 (`403 revoked`, see [Polling Errors](#polling-errors-deferred-consent)).
 

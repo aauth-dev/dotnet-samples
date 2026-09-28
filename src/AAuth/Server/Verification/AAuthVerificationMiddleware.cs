@@ -260,9 +260,13 @@ public sealed class AAuthVerificationMiddleware
             resolution.VerifiedToken is { } revocableToken)
         {
             var tokenKey = new TokenKey(revocableToken.Issuer, revocableJti);
-            if (await inventory.IsRevokedAsync(tokenKey, context.RequestAborted).ConfigureAwait(false)
-                || (revocableToken.ExpiresAt > (_options.Clock?.Invoke() ?? DateTimeOffset.UtcNow)
-                    && !await inventory.RegisterAsync(tokenKey, revocableToken.ExpiresAt, context.RequestAborted).ConfigureAwait(false)))
+            if (await inventory.IsRevokedAsync(tokenKey, context.RequestAborted).ConfigureAwait(false))
+            {
+                WriteFailure(context, SignatureErrorCode.RevokedJwt);
+                return;
+            }
+            if (revocableToken.ExpiresAt > (_options.Clock?.Invoke() ?? DateTimeOffset.UtcNow)
+                && !await inventory.RegisterAsync(tokenKey, revocableToken.ExpiresAt, context.RequestAborted).ConfigureAwait(false))
             {
                 WriteFailure(context, SignatureErrorCode.InvalidJwt);
                 return;

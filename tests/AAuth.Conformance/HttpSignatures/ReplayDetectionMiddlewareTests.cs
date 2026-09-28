@@ -107,7 +107,7 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
             second.Headers.GetValues(SignatureError.HeaderName).First());
     }
 
-    [Fact(DisplayName = "§Revocation — a revoked auth token jti is rejected")]
+    [Fact(DisplayName = "§Token Revocation — a revoked auth token jti is rejected with revoked_jwt")]
     public async Task RevokedAuthToken_Rejected()
     {
         // Revocation is keyed on the token's own jti (not the replay tuple).
@@ -119,8 +119,8 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
         var response = await Send(await SignRequest(token, FixedClock.AddSeconds(-1)));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        Assert.Contains(
-            "invalid_jwt",
+        Assert.Equal(
+            "error=revoked_jwt",
             response.Headers.GetValues(SignatureError.HeaderName).First());
     }
 
