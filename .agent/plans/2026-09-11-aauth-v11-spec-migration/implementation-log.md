@@ -246,6 +246,75 @@ now asserts draft-11 wording (`expectedPersonServer`, `VerifyPresentedTokenAsync
 no `expectedApprover`). The docs inventory is regenerated after the GuidedTour
 snippets compile.
 
+### [2026-09-28] [Phase 5] Holder dropped cached person tokens for account requests
+
+RESOLVED (bug fix, found by e2e). `AAuthTokenHolder.SelectForRequest` required
+the carrier token's `account` to match the request's account. A person token
+MUST NOT carry `account` (#person-tokens, L898), so every account-scoped request
+fell back to the agent token and looped on `person_token_required` (Bookings,
+protected Events). Person tokens now skip the account check; the resource token
+and the auth token still bind the account.
+
+### [2026-09-28] [Phase 4] Person-token issuer trust separated from auth-token trust
+
+PROCEEDED (default: new `TrustedPersonServers` / `IsTrustedPersonServer`,
+falling back to the auth-token issuer policy when unset). The verification
+middleware checked person-token issuers against `TrustedAuthTokenIssuers`. In
+four-party the AS issues auth tokens and the PS issues person tokens, so a
+resource had to list the PS as an auth-token issuer too, which widens what it
+accepts. The options are on `AAuthVerificationOptions`,
+`AAuthResourcePipelineOptions` (`UseAAuth`) and `AAuthServerOptions`
+(`RequireAAuth`). Wallet, Catalog and the Concierge `/wallet` branch use them.
+Conformance `PersonTokenIssuerTrustIsIndependent` covers four-party, untrusted,
+and the three-party fallback.
+
+### [2026-09-28] [Phase 10] Downstream `sub` is directed per resource
+
+RESOLVED. The downstream auth token in a call chain keeps the upstream `ps`,
+but `sub` is directed at the downstream resource, and the issuer must not copy
+the upstream `sub` (§Call Chaining, directed identifiers). The e2e specs assert
+a directed downstream `sub`, not equality with the upstream one.
+
+### [2026-09-28] [Phase 10] GuidedTour and SampleApp migrated; step counts grew
+
+RESOLVED. Every PS-governed tour flow now shows the person-token leg, and plan
+lengths grew to match:
+
+| Flow | Steps |
+|---|---|
+| Autonomous | 6 → 8 |
+| Deferred | 9 → 11 |
+| CallChain | 7/13 → 9/15 |
+| Federated | 7/10 → 9/12 |
+| RichRequests | 14 → 16 |
+| Mission | 20 → 21 |
+| MissionCallChain | 14 → 15 |
+| SubAgent | 7 → 8 |
+
+The elevated `/trips/book` step presents the mission person token again rather
+than stepping up from the `/trips` auth token; the spec allows either. Two e2e
+checks became weaker because the echoed `agent` no longer exists: the
+RichRequests account switch compares `ps`, and the sub-agent step 8 checks the
+four-party result, while step 6 still binds the auth token `cnf` to the worker
+key. The worker also fixed the MockPersonServer `/local/wallet/revoke` route: it
+passed the agent id as the scope limit, a draft-10 argument order.
+
+### [2026-09-28] [Phase 9] `MissionHeaderHandler` renamed; ApiSurface gate restored
+
+RESOLVED. The handler only tags requests with `mission_s256`, so it is now
+`MissionContextHandler`. The ApiSurface tool failed on the new
+`AAuthTokenType.PersonToken` because `AAuthTokenType.cs` had no grouping rule.
+It now maps to server contracts, and the API map is regenerated and current
+(116 changed public-source files, +198/-117 declarations).
+
+### [2026-09-28] [Phase 10] Gates at `be7211c`
+
+RESOLVED. Release build: 0 errors, 0 warnings. Tests: core 1651,
+Conformance 1124, R3 319, Events 75, all passing. The API map and docs inventory
+are current on rerun, and the e2e typecheck is clean. Full Playwright run
+(isolated `HOME`): 76 passed, 1 skipped. The skip is the Keycloak-gated
+`federated-deferred` spec, which needs `KEYCLOAK_E2E=1`.
+
 ## Deviations from plan
 
 None. Implementation has not started. The package follows the seven-document
