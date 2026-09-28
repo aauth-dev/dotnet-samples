@@ -15,10 +15,10 @@ public interface IAgentProviderEventStore
     bool Acknowledge(string agent, string receipt);
 }
 
-public sealed record SubscriptionTicket(string Ticket, string Agent, string Operation,
+public sealed record SubscriptionTicket(string Ticket, string KeyThumbprint, string Operation,
     string? Account, string State, DateTimeOffset ExpiresAt);
 public sealed record ResourceSubscription(string Eid, string Provider, string Agent,
-    string Operation, string? Account, string State, DateTimeOffset ExpiresAt);
+    string Operation, string? Account, string State, DateTimeOffset ExpiresAt, string? KeyThumbprint = null);
 public sealed record RegistrationResult(int StatusCode, ResourceSubscription? Subscription = null);
 
 public interface IResourceEventStore

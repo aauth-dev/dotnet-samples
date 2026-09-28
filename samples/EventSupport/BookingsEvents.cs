@@ -20,7 +20,9 @@ public sealed class BookingsEvents(string issuer, IAAuthKey key, string keyId, E
         var ticket = Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
         var account = authorization.Account;
         var state = store.EnsureState(Operation, account, "availability-v1");
-        store.IssueTicket(new(ticket, EventsTokens.RequireText(authorization.Payload, "agent"), Operation,
+        var cnf = authorization.Payload["cnf"]?["jwk"] as JsonObject
+            ?? throw new InvalidOperationException("auth token missing cnf.jwk");
+        store.IssueTicket(new(ticket, KeyFactory.FromJwk(cnf).ComputeJwkThumbprint(), Operation,
             account, state, protocol.TokenVerifier.Clock().AddMinutes(5)));
         return new { subscribe_url = issuer + "/events/subscriptions/" + ticket,
             event_types = new[] { EventType }, operation = Operation, account };

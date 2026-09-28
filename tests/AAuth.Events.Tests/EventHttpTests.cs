@@ -48,7 +48,7 @@ public class EventHttpTests
         await using var victim = await EventHost.StartAsync(evil.Issuer, localhost: true);
         const string agent = "aauth:victim@localhost";
         victim.Store.SetState("receive", "work", "state");
-        victim.Store.IssueTicket(new("ticket", agent, "receive", "work", "state", DateTimeOffset.UtcNow.AddMinutes(5)));
+        victim.Store.IssueTicket(new("ticket", victim.AgentKey.ComputeJwkThumbprint(), "receive", "work", "state", DateTimeOffset.UtcNow.AddMinutes(5)));
         var header = new JsonObject { ["alg"] = AAuthKey.Ed25519Algorithm, ["typ"] = EventsTokens.SubscribeType, ["kid"] = "key" };
         var payload = new JsonObject { ["iss"] = evil.Issuer, ["dwk"] = EventsTokens.AgentDwk, ["sub"] = agent,
             ["aud"] = victim.Issuer, ["eid"] = "evil", ["cnf"] = new JsonObject { ["jwk"] = evil.AgentKey.ToPublicJwk() },
@@ -234,7 +234,7 @@ public class EventHttpTests
     {
         await using var host = await EventHost.StartAsync();
         host.Store.SetState("receive", "work", "state");
-        host.Store.IssueTicket(new("ticket", EventHost.Agent, "receive", "work", "state", DateTimeOffset.UtcNow.AddMinutes(5)));
+        host.Store.IssueTicket(new("ticket", host.AgentKey.ComputeJwkThumbprint(), "receive", "work", "state", DateTimeOffset.UtcNow.AddMinutes(5)));
         string Subscribe(string audience) => new SubscribeTokenBuilder { Issuer = host.Issuer, Subject = EventHost.Agent,
             Audience = audience, Eid = "eid", Key = host.ResourceKey, KeyId = "key", ConfirmationKey = host.AgentKey,
             Verifier = host.Protocol.TokenVerifier }.Build();
@@ -264,7 +264,7 @@ public class EventHttpTests
         if (protectedChannel)
         {
             host.Store.SetState("receive", "work", "reservation-1");
-            host.Store.IssueTicket(new("ticket", EventHost.Agent, "receive", "work", "reservation-1", DateTimeOffset.UtcNow.AddMinutes(2)));
+            host.Store.IssueTicket(new("ticket", host.AgentKey.ComputeJwkThumbprint(), "receive", "work", "reservation-1", DateTimeOffset.UtcNow.AddMinutes(2)));
         }
         var path = protectedChannel ? "/subscribe/ticket" : "/subscribe/public";
         using var registered = await host.Protocol.SendAsync(HttpMethod.Post, new(host.Issuer + path), host.AgentKey,

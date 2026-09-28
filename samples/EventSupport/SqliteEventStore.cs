@@ -181,7 +181,7 @@ public sealed class SqliteEventStore : IAgentProviderEventStore, IResourceEventS
             if (json is null) return new(404);
             var authorization = JsonSerializer.Deserialize<SubscriptionTicket>(json)!;
             if (authorization.ExpiresAt <= now) return new(404);
-            if (authorization.Agent != subscription.Agent || authorization.Operation != subscription.Operation) return new(403);
+            if (authorization.KeyThumbprint != subscription.KeyThumbprint || authorization.Operation != subscription.Operation) return new(403);
             var state = Scalar(connection, transaction, "SELECT state FROM resource_states WHERE operation=$op AND account=$account",
                 ("$op", authorization.Operation), ("$account", authorization.Account ?? "")) as string;
             if (state != authorization.State) return new(409);

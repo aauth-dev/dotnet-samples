@@ -7,6 +7,7 @@ public class EventPersistenceTests : IDisposable
 {
     private readonly string _path = Path.Combine(Path.GetTempPath(), "events-" + Guid.NewGuid().ToString("N") + ".db");
     private static readonly DateTimeOffset Now = DateTimeOffset.UtcNow;
+    private const string Jkt = "agent-key-thumbprint";
     private SqliteEventStore Store() => new(_path);
     private static EventEnvelope Envelope(string token = "token") => new(token, "eid", "https://resource.example",
         "aauth:agent@ap.example", Now.AddMinutes(5), [1, 2, 3]);
@@ -58,9 +59,10 @@ public class EventPersistenceTests : IDisposable
     public async Task TicketRedemptionIsAtomicAndPreservesAccount()
     {
         Store().SetState("receive", "work", "state-1");
-        Store().IssueTicket(new("ticket", "aauth:agent@ap.example", "receive", "work", "state-1", Now.AddMinutes(2)));
-        ResourceSubscription Subscription(int index) => new("eid" + index, "https://ap.example", "aauth:agent@ap.example", "receive", null, "", Now.AddDays(1));
-        Assert.Equal(403, Store().Register(Subscription(0) with { Agent = "aauth:other@ap.example" }, "ticket", Now).StatusCode);
+        Store().IssueTicket(new("ticket", Jkt, "receive", "work", "state-1", Now.AddMinutes(2)));
+        ResourceSubscription Subscription(int index) => new("eid" + index, "https://ap.example", "aauth:agent@ap.example", "receive", null, "", Now.AddDays(1), Jkt);
+        Assert.Equal(403, Store().Register(Subscription(0) with { KeyThumbprint = "other-key" }, "ticket", Now).StatusCode);
+        Assert.Equal(403, Store().Register(Subscription(0) with { KeyThumbprint = null }, "ticket", Now).StatusCode);
         Assert.Equal(403, Store().Register(Subscription(0) with { Operation = "other" }, "ticket", Now).StatusCode);
         var results = await Task.WhenAll(Enumerable.Range(0, 16).Select(index => Task.Run(() => Store().Register(Subscription(index), "ticket", Now))));
         var success = Assert.Single(results, result => result.StatusCode == 200);
@@ -72,9 +74,9 @@ public class EventPersistenceTests : IDisposable
     public void StaleAndExpiredTicketsAndDuplicateRegistrationsFail()
     {
         Store().SetState("receive", "work", "new-state");
-        Store().IssueTicket(new("stale", "aauth:agent@ap.example", "receive", "work", "old-state", Now.AddMinutes(2)));
-        Store().IssueTicket(new("expired", "aauth:agent@ap.example", "receive", "work", "new-state", Now));
-        var subscription = new ResourceSubscription("eid", "https://ap.example", "aauth:agent@ap.example", "receive", null, "", Now.AddDays(1));
+        Store().IssueTicket(new("stale", Jkt, "receive", "work", "old-state", Now.AddMinutes(2)));
+        Store().IssueTicket(new("expired", Jkt, "receive", "work", "new-state", Now));
+        var subscription = new ResourceSubscription("eid", "https://ap.example", "aauth:agent@ap.example", "receive", null, "", Now.AddDays(1), Jkt);
         Assert.Equal(409, Store().Register(subscription, "stale", Now).StatusCode);
         Assert.Equal(404, Store().Register(subscription, "expired", Now).StatusCode);
         Assert.Equal(200, Store().Register(subscription, null, Now).StatusCode);
@@ -97,8 +99,8 @@ public class EventPersistenceTests : IDisposable
     public void ResourceFailureRollsBackTicketAndPreparedDeliverySurvivesRestart()
     {
         Store().SetState("receive", "work", "state");
-        Store().IssueTicket(new("ticket", "aauth:agent@ap.example", "receive", "work", "state", Now.AddMinutes(5)));
-        var subscription = new ResourceSubscription("eid", "https://ap.example", "aauth:agent@ap.example", "receive", null, "", Now.AddHours(1));
+        Store().IssueTicket(new("ticket", Jkt, "receive", "work", "state", Now.AddMinutes(5)));
+        var subscription = new ResourceSubscription("eid", "https://ap.example", "aauth:agent@ap.example", "receive", null, "", Now.AddHours(1), Jkt);
         using var connection = new SqliteConnection("Data Source=" + _path);
         connection.Open();
         using var command = connection.CreateCommand();

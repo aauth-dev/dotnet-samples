@@ -49,7 +49,8 @@ public static class EventsEndpoints
         await protocol.ResolveEventEndpointAsync(token.Issuer, context.RequestAborted).ConfigureAwait(false);
         var subscription = new ResourceSubscription(EventsTokens.RequireText(token.Payload, "eid"), token.Issuer,
             EventsTokens.RequireText(token.Payload, "sub"), operation, null, "public",
-            protocol.TokenVerifier.Clock().Add(subscriptionLifetime ?? TimeSpan.FromHours(1)));
+            protocol.TokenVerifier.Clock().Add(subscriptionLifetime ?? TimeSpan.FromHours(1)),
+            assertion.HttpSigningKey.ComputeJwkThumbprint());
         RegistrationResult registration;
         try { registration = store.Register(subscription, ticket, protocol.TokenVerifier.Clock()); }
         catch (Exception exception) when (exception is not OperationCanceledException)
