@@ -321,7 +321,7 @@ public sealed class AAuthResourceMetadataOptions
     /// <summary>
     /// Optional advisory <c>access_mode</c> declaring the credential flow agents
     /// should expect — one of <see cref="AAuthConstants.AccessModes"/>
-    /// (<c>agent-token</c>, <c>person-token</c>, <c>session-token</c>, <c>auth-token</c>). The runtime
+    /// (<c>agent-token</c>, <c>person-token</c>, <c>session-token</c>, <c>auth-token</c>, <c>per-call</c>). The runtime
     /// <c>AAuth-Requirement</c> remains authoritative. Omitted when <see langword="null"/>
     /// (the spec default is <c>agent-token</c>).
     /// </summary>
@@ -400,10 +400,11 @@ public sealed class AAuthResourceMetadataOptions
             && AccessMode is not (AAuthConstants.AccessModes.AgentToken
                 or AAuthConstants.AccessModes.PersonToken
                 or AAuthConstants.AccessModes.SessionToken
-                or AAuthConstants.AccessModes.AuthToken))
+                or AAuthConstants.AccessModes.AuthToken
+                or AAuthConstants.AccessModes.PerCall))
         {
             throw new InvalidOperationException(
-                $"access_mode must be one of 'agent-token', 'person-token', 'session-token', or 'auth-token' (was '{AccessMode}').");
+                $"access_mode must be one of 'agent-token', 'person-token', 'session-token', 'auth-token', or 'per-call' (was '{AccessMode}').");
         }
     }
 }

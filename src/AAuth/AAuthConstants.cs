@@ -70,6 +70,9 @@ public static class AAuthConstants
 
         /// <summary>The agent presents a person token first, then an auth token from its PS or the resource's AS.</summary>
         public const string AuthToken = "auth-token";
+
+        /// <summary>R3 extension value: each invocation is authorized individually from a per-call proposal.</summary>
+        public const string PerCall = "per-call";
     }
 
     /// <summary>Token type (<c>typ</c> header) values.</summary>

@@ -26,6 +26,12 @@ protocol hosting; runnable integrations use OpenAPI and AsyncAPI.
   `AdditionalClaims` seam.
 - Server helpers: designated-AS document readership, signed fetch and hash
   verification, per-call proposal enforcement, and mandatory audit persistence.
+- Operation access annotations (`R3AccessAnnotations`): write or read the
+  `per-call`/`auth-token`/`person-token`/`agent-token` requirement and the budget
+  flag on an OpenAPI or AsyncAPI operation (`x-aauth-access-mode`,
+  `x-aauth-budget`) or an MCP tool's `_meta`. `EffectiveAccessMode` applies the
+  sparse-default and budget rules. Annotations are advisory; resources still
+  enforce `r3_granted` and `r3_per_call` from the auth token.
 
 ## Qualified identity
 

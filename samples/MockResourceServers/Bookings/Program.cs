@@ -32,6 +32,9 @@ var openApiDocument = new JsonObject
         ["/confirm_reservation"] = OpenApiPath(ConfirmReservation, "Confirm a reservation; may charge a non-refundable deposit."),
     },
 };
+// Tell agents up front that confirming blocks on a person for every call (R3 #operation-access-annotations).
+R3AccessAnnotations.Annotate(openApiDocument["paths"]!["/confirm_reservation"]!["post"]!.AsObject(), Vocabulary.OpenApi,
+    new R3OperationAccess(AAuthConstants.AccessModes.PerCall));
 var supportedOperations = openApiDocument["paths"]!.AsObject().SelectMany(path => path.Value!.AsObject())
     .Select(method => method.Value!["operationId"]!.GetValue<string>()).ToArray();
 

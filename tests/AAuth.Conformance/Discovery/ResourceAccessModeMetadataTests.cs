@@ -65,10 +65,12 @@ public class ResourceAccessModeMetadataTests
     [InlineData("person-token")]
     [InlineData("session-token")]
     [InlineData("auth-token")]
+    [InlineData("per-call")]
     public async Task EmitsEachAccessMode(string mode)
     {
         var doc = await FetchMetadata(new AAuthResourceMetadataOptions { Issuer = Issuer, AccessMode = mode });
         Assert.Equal(mode, (string?)doc["access_mode"]);
+        Assert.Equal(mode, AAuth.Discovery.ResourceMetadata.FromJson(doc).AccessMode);
     }
 
     [Fact(DisplayName = "§Resource Metadata — draft-10 aauth-access-token is rejected at configuration")]

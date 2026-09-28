@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 137 changed public-source files, 231 added/replacement declarations, 135 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 138 changed public-source files, 244 added/replacement declarations, 135 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -441,6 +441,27 @@ Concept/decision: [r3](#r3). Source: [Vocabulary.cs](../../../src/AAuth.R3/Model
 
 Public owners: `AAuth.R3.Model.Vocabulary`, `AAuth.R3.Model`.
 
+### src/AAuth.R3/R3AccessAnnotations.cs
+
+Concept/decision: [r3](#r3). Source: [R3AccessAnnotations.cs](../../../src/AAuth.R3/R3AccessAnnotations.cs).
+
+```diff
++ AAuth.R3.R3AccessAnnotations: public const string McpAccessMode = "aauth.dev/access-mode" ;
++ AAuth.R3.R3AccessAnnotations: public const string McpBudget = "aauth.dev/budget" ;
++ AAuth.R3.R3AccessAnnotations: public const string McpMeta = "_meta" ;
++ AAuth.R3.R3AccessAnnotations: public const string ODataAccessMode = "AAuth.AccessMode" ;
++ AAuth.R3.R3AccessAnnotations: public const string ODataBudget = "AAuth.Budget" ;
++ AAuth.R3.R3AccessAnnotations: public const string OpenApiAccessMode = "x-aauth-access-mode" ;
++ AAuth.R3.R3AccessAnnotations: public const string OpenApiBudget = "x-aauth-budget" ;
++ AAuth.R3.R3AccessAnnotations: public static JsonObject Annotate ( JsonObject definition , string vocabulary , R3OperationAccess access )
++ AAuth.R3.R3AccessAnnotations: public static R3OperationAccess ? Read ( JsonObject definition , string vocabulary )
++ AAuth.R3.R3AccessAnnotations: public static string EffectiveAccessMode ( R3OperationAccess ? annotation , string ? resourceAccessMode )
++ AAuth.R3: public sealed record R3OperationAccess ( string ? AccessMode , bool Budget = false )
++ AAuth.R3: public static class R3AccessAnnotations
+```
+
+Public owners: `AAuth.R3.R3AccessAnnotations`, `AAuth.R3`.
+
 ### src/AAuth.R3/R3AccessTokenEndpoint.cs
 
 Concept/decision: [r3](#r3). Source: [R3AccessTokenEndpoint.cs](../../../src/AAuth.R3/R3AccessTokenEndpoint.cs).
@@ -527,6 +548,7 @@ Concept/decision: [server-contracts](#server-contracts). Source: [AAuthConstants
 ```diff
 - AAuth.AAuthConstants.AccessModes: public const string AAuthAccessToken = "aauth-access-token" ;
 - AAuth.AAuthConstants.Headers: public const string AAuthMission = "AAuth-Mission" ;
++ AAuth.AAuthConstants.AccessModes: public const string PerCall = "per-call" ;
 + AAuth.AAuthConstants.AccessModes: public const string PersonToken = "person-token" ;
 + AAuth.AAuthConstants.AccessModes: public const string SessionToken = "session-token" ;
 + AAuth.AAuthConstants.TokenTypes: public const string PersonToken = "aa-person+jwt" ;

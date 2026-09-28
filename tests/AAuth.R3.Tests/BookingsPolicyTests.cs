@@ -61,6 +61,19 @@ public class BookingsPolicyTests
     }
 
     [Fact]
+    public async Task OpenApi_AnnotatesOnlyConfirmationAsPerCall()
+    {
+        using var fixture = new Fixture();
+        using var client = fixture.Anonymous();
+        var paths = (await client.GetFromJsonAsync<JsonObject>("/openapi.json"))!["paths"]!.AsObject();
+        Assert.Equal(new R3OperationAccess(AAuthConstants.AccessModes.PerCall),
+            R3AccessAnnotations.Read(paths["/confirm_reservation"]!["post"]!.AsObject(), Vocabulary.OpenApi));
+        Assert.Null(R3AccessAnnotations.Read(paths["/search_availability"]!["get"]!.AsObject(), Vocabulary.OpenApi));
+        Assert.Equal(AAuthConstants.AccessModes.AuthToken, R3AccessAnnotations.EffectiveAccessMode(
+            R3AccessAnnotations.Read(paths["/hold_reservation"]!["get"]!.AsObject(), Vocabulary.OpenApi), AAuthConstants.AccessModes.AuthToken));
+    }
+
+    [Fact]
     public async Task ValidButWrongVocabulary_CannotGainSameIdGrant()
     {
         using var fixture = new Fixture();
@@ -167,6 +180,8 @@ public class BookingsPolicyTests
             });
             App.CreateClient();
         }
+
+        public HttpClient Anonymous() => App.CreateClient();
 
         public HttpClient SignedAgent(string token) => new AAuthClientBuilder(AgentKey).UseJwt(() => token)
             .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(App.Server.CreateHandler(), AAuthTransportContract.InProcessOnly).Build();

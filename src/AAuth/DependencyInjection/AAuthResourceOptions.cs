@@ -77,7 +77,8 @@ public sealed class AAuthResourceOptions
 
     /// <summary>
     /// Optional advisory <c>access_mode</c> published in resource metadata: one
-    /// of <c>agent-token</c>, <c>person-token</c>, <c>session-token</c>, or <c>auth-token</c>.
+    /// of <c>agent-token</c>, <c>person-token</c>, <c>session-token</c>, <c>auth-token</c>,
+    /// or R3's <c>per-call</c>.
     /// </summary>
     public string? AccessMode { get; set; }
 

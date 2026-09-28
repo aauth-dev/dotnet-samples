@@ -112,7 +112,7 @@ public sealed class ResourceMetadata
 
     /// <summary>
     /// The credential flow the resource expects — one of <c>agent-token</c>,
-    /// <c>person-token</c>, <c>session-token</c>, or <c>auth-token</c> (see
+    /// <c>person-token</c>, <c>session-token</c>, <c>auth-token</c>, or R3's <c>per-call</c> (see
     /// <see cref="AAuthConstants.AccessModes"/>). Advisory: the runtime
     /// <c>AAuth-Requirement</c> remains authoritative. <see langword="null"/> when
     /// the document omits it or carries an unrecognized value, both of which
@@ -181,7 +181,7 @@ public sealed class ResourceMetadata
 
     private static bool IsKnownAccessMode(string mode) => mode is AAuthConstants.AccessModes.AgentToken
         or AAuthConstants.AccessModes.PersonToken or AAuthConstants.AccessModes.SessionToken
-        or AAuthConstants.AccessModes.AuthToken;
+        or AAuthConstants.AccessModes.AuthToken or AAuthConstants.AccessModes.PerCall;
 }
 
 /// <summary>
