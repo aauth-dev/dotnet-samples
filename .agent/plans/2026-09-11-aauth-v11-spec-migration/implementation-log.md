@@ -213,6 +213,39 @@ RESOLVED. Calendar and Wallet responses return `ps` and `sub` instead of
 the AS, not the person's PS. Profile's `/identified` keeps `agent`, because it
 accepts agent tokens only.
 
+### [2026-09-28] [Phase 7] Resource middleware reports revoked tokens as `revoked_jwt`
+
+RESOLVED (bug fix). `AAuthVerificationMiddleware` answered a revoked
+`Signature-Key` token with `Signature-Error: invalid_jwt`. It now returns
+`revoked_jwt` (#token-revocation, L2764). An inventory conflict on a live token
+stays `invalid_jwt`. The docs sweep found this; the conformance test
+`RevokedAuthToken_Rejected` now pins the exact header.
+
+### [2026-09-28] [Phase 3] Mission `Approver` members renamed to `PersonServer`
+
+PROCEEDED (default: rename, no alias). Draft-11 missions have no approver
+field. The renamed members are `StoredMission.PersonServer`,
+`AAuthGovernancePipelineOptions.PersonServer` and the deferred-consent entry's
+`PersonServer`, matching `Mission.PersonServer` and `MissionApprovalContext`.
+`IMissionApprover` keeps its name, because it is the PS component that decides
+a proposal, not a token field.
+
+### [2026-09-28] [Phase 10] `mission_aware` metadata removed
+
+RESOLVED. Draft-11 defines no `mission_aware` resource metadata and no
+`AAuth-Mission` header; a mission reaches a resource as `mission_s256`. Bookings
+no longer advertises or configures the flag, and the SDK doc comments no longer
+cite it.
+
+### [2026-09-28] [Phase 10] Docs sweep
+
+RESOLVED for `docs/`. 27 files were rewritten to the draft-11 model by a worker,
+and the highest-stakes claims were spot-checked against source (revocation
+error rules, pair verification). `Documentation_ResourceRecipientsAndGenericRoutesUseCorrectContext`
+now asserts draft-11 wording (`expectedPersonServer`, `VerifyPresentedTokenAsync`,
+no `expectedApprover`). The docs inventory is regenerated after the GuidedTour
+snippets compile.
+
 ## Deviations from plan
 
 None. Implementation has not started. The package follows the seven-document
@@ -360,3 +393,42 @@ direct `/token` audit, the R3 AS returns `408 expired`. The spec defines that
 code for pending polls (L2623). A fresh-request error (for example
 `expired_presented_token`) may fit better. R3 test
 `TokenEndpoint_DoesNotReleaseTokenThatExpiresDuringAudit` pins the current code.
+
+### [2026-09-28] [Phase 7] Revocation endpoint still uses the draft-10 body
+
+OPEN (Phase 7 not started). `RevocationEndpoint` accepts `{iss, jti}` and
+returns 404 for unknown tokens. Draft-11 revocation requests are `{jti, exp}`,
+with one recipient per token type and no "not found" (#token-revocation). A
+replay-detection docs test pins the `{iss, jti}` example.
+
+### [2026-09-28] [Phase 10] Stale local sample state breaks e2e startup
+
+OPEN (environment, not a regression). MockAgentProvider aborted at startup
+loading `~/.aauth/ap-keys/ap-key-1`, a key file from June without `alg`
+(`alg` has been required since `75980b2`, draft-10). All samples persist under
+`$HOME/.aauth`, so e2e ran with a scratch `HOME` and the real NuGet and
+Playwright caches. Consider giving e2e its own state directory, or having
+`FileKeyStore` report the offending path.
+
+### [2026-09-28] [Phase 10] Remaining stale citations in docs
+
+OPEN. `docs/` still links v10 in three places whose anchors or lines moved in
+v11 and were not re-derived: `document-release.md` L965/L973, the R3
+`openapi-gateway-vocabulary` anchor in `catalog-gateway.md`, and the
+`signature-key-08` links (v11 vendors `-09`). The Wallet sample still labels a
+flow `DirectAs` although it routes through the PS.
+
+### [2026-09-28] [Phase 10] E2E baseline after the cutover
+
+OPEN. Full Playwright run (isolated `HOME`, commit `979ce07`): 36 passed,
+40 failed, 1 skipped. The failures are the demo flows that still drive draft-10
+agent-to-auth exchanges, which resources now answer with `person-token`:
+
+- **GuidedTour:** autonomous, deferred, call-chain, federated, mission,
+  mission-call-chain, rich-requests, sub-agent, catalog, events, reset, and the
+  wallet protocol walkthroughs.
+- **SampleApp:** bookings, call-chain, federated, jwt, mission-call-chain,
+  sub-agent, catalog, events, and the wallet protocol pages.
+
+Sub-agent specs also assert a nested `act`, which draft-11 removes. These pages
+are the remaining Phase 10 sweep.
