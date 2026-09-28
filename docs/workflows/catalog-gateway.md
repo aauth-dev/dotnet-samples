@@ -1,5 +1,10 @@
 # Catalog Gateway Authorization
 
+> **Draft-10 vocabulary.** R3 draft-11 removed the OpenAPI Gateway vocabulary.
+> An aggregating resource now publishes one merged definition or separate
+> resource identifiers ([operation identifier scope](../../aauth-spec/v11/draft-hardt-aauth-r3.md#operation-identifier-scope)).
+> Catalog still uses the gateway vocabulary until its planned redesign.
+
 ## Run the Catalog
 
 Run `make demo` and open `/catalog-gateway` in
@@ -52,7 +57,7 @@ models exist. Account-aware reservations and Events remain in Bookings.
 - [Shared runtime](../../samples/CapabilitySupport/CatalogDemoSession.cs)
 - [Displayed enforcement example](../../samples/CapabilitySupport/CatalogWalkthrough.razor)
 - [Shared browser assertions](../../tests/e2e/helpers/catalog.ts), used by both app projects
-- [OpenAPI gateway vocabulary](../../aauth-spec/v10/draft-hardt-aauth-r3.md#openapi-gateway-vocabulary)
+- [OpenAPI gateway vocabulary (draft-10)](../../aauth-spec/v10/draft-hardt-aauth-r3.md#openapi-gateway-vocabulary)
 - [R3 workflow](rich-resource-requests.md)
 
 The browser checks both service selections, sibling rejection, recovery, exact

@@ -255,8 +255,8 @@ app.MapGet("/", async (HttpContext ctx) =>
 When verifying `jwks_uri` (and any issuer metadata it is discovered from), the
 verifier fetches a URL controlled by the asserted signer. An unconstrained
 verifier can be induced to fetch attacker-chosen internal URLs (SSRF). Per
-[`draft-hardt-httpbis-signature-key-08`](../../aauth-spec/v10/draft-hardt-httpbis-signature-key-08.txt)
-§6.3, apply **egress admission** before any outbound fetch. This is a
+[`draft-hardt-httpbis-signature-key-09`](../../aauth-spec/v11/draft-hardt-httpbis-signature-key-09.txt)
+§7.3, apply **egress admission** before any outbound fetch. This is a
 deployment-level control (HTTP stack, network policy, firewall), not signature
 logic:
 

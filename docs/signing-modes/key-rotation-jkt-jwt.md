@@ -7,7 +7,7 @@ naming JWT that delegates HTTP-message signing to a short-lived ephemeral key.
 The scheme is **self-anchored**: the durable public key travels in the naming
 JWT's header, and the issuer is that key's own thumbprint — so a verifier needs
 no external lookup. Access stays **pseudonymous**. Defined in
-[`draft-hardt-httpbis-signature-key-08`](../../aauth-spec/v10/draft-hardt-httpbis-signature-key-08.txt)
+[`draft-hardt-httpbis-signature-key-09`](../../aauth-spec/v11/draft-hardt-httpbis-signature-key-09.txt)
 section 3.5. This is an AP refresh or explicitly generic Signature Keys scheme;
 AAuth resource access presents the returned agent JWT with its matching key.
 
@@ -94,9 +94,9 @@ payload: { "iss": "urn:jkt:sha-256:<durable-thumbprint>",
 Because the issuer is derived from the header key, an attacker cannot claim
 another agent's pseudonym: a spoofed `iss` fails step 4, and supplying the
 victim's `jwk` fails step 5 (no private key). The scheme provides pseudonymous
-identity, not authority-vouched identity (§6.3).
+identity, not authority-vouched identity (Signature Keys §8.1).
 
 ## Further Reading
 
-- [`draft-hardt-httpbis-signature-key-08`](../../aauth-spec/v10/draft-hardt-httpbis-signature-key-08.txt) section 3.5
+- [`draft-hardt-httpbis-signature-key-09`](../../aauth-spec/v11/draft-hardt-httpbis-signature-key-09.txt) section 3.5
 - [Bootstrap](../workflows/bootstrap-enrollment.md)

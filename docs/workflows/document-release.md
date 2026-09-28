@@ -26,9 +26,9 @@ resource permission records.
 
 ## Security Boundary
 
-The [v10 resource-initiated interaction flow](../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#resource-initiated-interaction)
-places resource permission before PS consent (L965) and requires abandonment on
-callback error (L973). The SDK admits the destination before redirecting. The
+The [resource-initiated interaction flow](../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#resource-initiated-interaction)
+places resource permission before PS consent (L993) and requires abandonment on
+callback error (L994). The SDK admits the destination before redirecting. The
 interstitial continuation uses authenticated person/session and CSRF checks;
 the browser callback uses per-flow state, a browser cookie and the retained
 resource-token/context snapshot. Replays and changed context fail. The callback
