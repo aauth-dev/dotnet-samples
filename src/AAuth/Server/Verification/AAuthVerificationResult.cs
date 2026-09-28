@@ -19,6 +19,9 @@ public sealed class AAuthVerificationResult
     /// <summary>The Signature-Key scheme (jwt, hwk, jwks_uri, jkt-jwt).</summary>
     public required string Scheme { get; init; }
 
+    /// <summary>Components the verified signature covers (without <c>key</c>/<c>tr</c>-parameterized entries).</summary>
+    public IReadOnlySet<string> CoveredComponents { get; init; } = new HashSet<string>();
+
     /// <summary>Token type from JWT <c>typ</c> header.</summary>
     public AAuthTokenType TokenType { get; init; }
 

@@ -18,7 +18,7 @@ namespace AAuth.Server;
 /// </summary>
 public sealed class RevocationClient
 {
-    private static readonly string[] CoveredContent = ["content-type", "content-digest"];
+    internal static readonly string[] CoveredContent = ["content-type", "content-digest"];
     private readonly HttpClient _signedHttp;
 
     public RevocationClient(HttpClient signedHttp)

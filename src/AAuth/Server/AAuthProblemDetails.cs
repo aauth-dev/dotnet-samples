@@ -55,6 +55,10 @@ public static class AAuthProblemDetails
         return otherwise ?? new SignatureErrorResult(Errors.SignatureError.Format(Errors.SignatureErrorCode.ExpiredJwt));
     }
 
+    internal static IResult MissingCoverage(IEnumerable<string> required) =>
+        new SignatureErrorResult(Errors.SignatureError.Format(Errors.SignatureErrorCode.InvalidInput,
+            requiredInput: HttpSig.AAuthSigningHandler.CoveredComponents.Concat(required).Distinct().ToArray()));
+
     private sealed class SignatureErrorResult(string header) : IResult
     {
         public Task ExecuteAsync(HttpContext httpContext)

@@ -113,6 +113,39 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
         Assert.True(await _jtiStore.IsRevokedAsync(new TokenKey(ApIssuer, "jti-trusted")));
     }
 
+    [Fact(DisplayName = "§Token Revocation — a signature not covering content-digest/content-type is 401 invalid_input, even when the host verifier does not require them")]
+    public async Task Revocation_RequiresBodyCoverageAtEveryRecipient()
+    {
+        await StartRevocationHost(o => o.IsAcceptedIssuer = AAuthTrust.Any);
+        await _jtiStore.RegisterAsync(new TokenKey(ApIssuer, "jti-uncovered"), FixedClock.AddMinutes(5));
+
+        var response = await PostSignedRevoke(JsonContent.Create(new JsonObject { ["jti"] = "jti-uncovered", ["exp"] = Exp() }),
+            coverContent: false);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var error = Assert.Single(response.Headers.GetValues("Signature-Error"));
+        Assert.Contains("invalid_input", error);
+        Assert.Contains("content-digest", error);
+        Assert.Contains("content-type", error);
+        Assert.False(await _jtiStore.IsRevokedAsync(new TokenKey(ApIssuer, "jti-uncovered")));
+    }
+
+    [Fact(DisplayName = "§Token Revocation — a body that does not match the covered Content-Digest is rejected")]
+    public async Task Revocation_RejectsTamperedBody()
+    {
+        await StartRevocationHost(o => o.IsAcceptedIssuer = AAuthTrust.Any);
+        await _jtiStore.RegisterAsync(new TokenKey(ApIssuer, "jti-signed"), FixedClock.AddMinutes(5));
+        var content = JsonContent.Create(new JsonObject { ["jti"] = "jti-other", ["exp"] = Exp() });
+        var signedBody = System.Text.Encoding.UTF8.GetBytes($"{{\"jti\":\"jti-signed\",\"exp\":{Exp()}}}");
+        content.Headers.TryAddWithoutValidation("Content-Digest",
+            $"sha-256=:{Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(signedBody))}:");
+
+        var response = await PostSignedRevoke(content);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.False(await _jtiStore.IsRevokedAsync(new TokenKey(ApIssuer, "jti-other")));
+    }
+
     [Fact(DisplayName = "§Token Revocation — unsigned caller is rejected (401)")]
     public async Task Revocation_RejectsUnsignedCaller()
     {
@@ -491,7 +524,7 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
         return PostSignedRevoke(JsonContent.Create(body));
     }
 
-    private async Task<HttpResponseMessage> PostSignedRevoke(HttpContent content, bool asAgent = false)
+    private async Task<HttpResponseMessage> PostSignedRevoke(HttpContent content, bool asAgent = false, bool coverContent = true)
     {
         var agentToken = new AgentTokenBuilder
         {
@@ -512,7 +545,9 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
             InnerHandler = _host!.GetTestServer().CreateHandler(),
         };
         using var client = new HttpClient(signing) { BaseAddress = new Uri("http://localhost") };
-        return await client.PostAsync("/revoke", content);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/revoke") { Content = content };
+        if (coverContent) request.Options.Set(AAuthSigningHandler.AdditionalComponentsKey, ["content-type", "content-digest"]);
+        return await client.SendAsync(request);
     }
 
     private async Task<IHost> StartMetadataServer()

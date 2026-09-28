@@ -313,6 +313,9 @@ public sealed class AAuthVerificationMiddleware
             ReplayExpiresAt = replayExpiry,
             Level = level,
             Scheme = parsedInfo.Scheme,
+            CoveredComponents = ((IReadOnlyList<StructuredFieldValues.ParsedItem>)StructuredFields.Member(signatureInput, label).Value)
+                .Where(component => !component.Parameters.ContainsKey("key") && !component.Parameters.ContainsKey("tr"))
+                .Select(component => (string)component.Value).ToHashSet(StringComparer.Ordinal),
             TokenType = tokenTypeEnum,
             Issuer = resolution.VerifiedIdentifier,
             Agent = agentIdentifier,

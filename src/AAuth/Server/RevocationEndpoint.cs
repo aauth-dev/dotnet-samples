@@ -132,6 +132,10 @@ public static class RevocationEndpoint
                     statusCode: StatusCodes.Status401Unauthorized);
             }
 
+            // MUST at every recipient, not only when the host's verifier was configured to demand it.
+            if (!verified.CoveredComponents.IsSupersetOf(RevocationClient.CoveredContent))
+                return AAuthProblemDetails.MissingCoverage(RevocationClient.CoveredContent);
+
             // The caller signs as a server; its verified identity is the issuer of the token it revokes.
             var callerId = verified.Scheme is "jwks_uri" or "jwks" or "self-jwt" ? verified.Issuer : null;
             if (callerId is null)

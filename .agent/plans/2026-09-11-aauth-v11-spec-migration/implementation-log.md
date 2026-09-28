@@ -548,6 +548,31 @@ Not done in this item: atomic single-use per-call grants, per-document PS
 readership, and release gating (the `result` member). These stay open under
 their own Phase 8 boxes.
 
+### [2026-09-28] [Phase 7] Revocation body coverage at every endpoint (post-cutover item 2)
+
+RESOLVED. Before this change, only hosts using `MapAAuthIssuerRevocation` (the
+PS, the AS and R3) demanded `content-type` and `content-digest`. A resource that
+mapped `MapAAuthRevocationEndpoint` behind its own `UseAAuth` verifier accepted
+a revocation whose signature covered neither (L2672: "at a resource's
+revocation endpoint as much as a PS's or an AS's").
+
+Fix:
+
+- `AAuthVerificationResult.CoveredComponents` exposes the components the
+  verified signature covers.
+- The shared revocation handler now answers `401 Signature-Error:
+  invalid_input` with `required_input` when either component is missing. This
+  holds whatever the host verifier was configured to require.
+- The middleware already rejects a covered digest that does not match the body.
+
+Every SDK revocation route goes through that handler: PS, AS and R3 via
+`MapAAuthIssuerRevocation`, resources directly.
+
+Evidence: `Revocation_RequiresBodyCoverageAtEveryRecipient` (the host verifier
+has no required components; the uncovered request gets 401 and the token is not
+revoked) and `Revocation_RejectsTamperedBody`. The test helper now signs as
+`RevocationClient` does. Conformance 1163 passed.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate
