@@ -505,6 +505,49 @@ CORRECTED. The previous entry says "Eleven". The gap review listed 12 items,
 with AAuth issue #199 listed separately, and all 12 were folded in as the list
 above shows. No plan change was needed.
 
+### [2026-09-28] [Phase 8] R3 draft-11 wire format (post-cutover item 1)
+
+RESOLVED in four commits:
+
+- `368aa85`: `r3_conditional` is now `r3_per_call`. The public names follow:
+  `PerCallClaim`, `AuthTokenClaims.PerCall`, `R3EnforcementDecision.PerCall`,
+  `R3EnforcementDecisionKind.PerCall` and `IsPerCallOperation`. The R3 sample
+  config key is now `PerCallOperations`.
+- `f849825`: R3 documents and proposals no longer carry `version`. The reader is
+  tolerant, so a `version` member sent by a peer is ignored.
+- `88c0882`: the OpenAPI Gateway vocabulary is removed. Catalog now publishes one
+  merged OpenAPI definition that renames the colliding `list` operations to
+  `listDestinations` and `listExperiences` (R3 #operation-identifier-scope). The
+  `/catalog-gateway` route name is kept so links stay stable.
+- `ad40801`: the core SDK accepts `per-call` as an `access_mode`. The new
+  `R3AccessAnnotations` writes and reads the OpenAPI/AsyncAPI and MCP encodings
+  and applies the spec rules: `session-token` is rejected, a budget flag means
+  at least `auth-token`, and annotations are sparse. OData is left to
+  `$metadata` XML; gRPC, GraphQL and WSDL have no encoding. Bookings marks
+  `confirmReservation` as `per-call`.
+
+DECISION: a reader ignores an unrecognized or `session-token` annotation
+value, the same way it treats an unknown `access_mode`. Only the writer
+rejects them.
+
+ISSUE: my first draft of the Catalog snippet opened with a `//` comment. That
+broke `SnippetCompilationTests`, which classifies a snippet as a member by
+checking `StartsWith("public static")`. I dropped the comment rather than
+change the harness.
+
+Evidence: `Draft11WireNames_PerCallClaimAndNoDocumentVersion`,
+`R3Draft11FixtureTests` (the spec's R3 document example pins
+`DB_rCyQ4eWAg8LYhNyyKl-Ze3_hmuGK3zf-AnoK4WOU`; the spec's annotation examples
+read as `per-call` plus budget), `MergedDefinition_RenamedCollidingOperationsAreDistinct`,
+`MalformedOrRemovedDiscoveryFails`, `OpenApi_AnnotatesOnlyConfirmationAsPerCall`
+and `EmitsEachAccessMode(per-call)`. Gates: R3 tests 323, Conformance 1161,
+AAuth.Tests 1658, Events 75; the API map and docs inventory are current; e2e
+76 passed, 1 skipped (Keycloak), including 6/6 Catalog.
+
+Not done in this item: atomic single-use per-call grants, per-document PS
+readership, and release gating (the `result` member). These stay open under
+their own Phase 8 boxes.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate

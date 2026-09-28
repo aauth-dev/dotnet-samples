@@ -577,8 +577,8 @@ Phase rule: PerCall and seven standard vocabularies, no gateway/conditional alia
 
 ### Definition of Done
 
-- [ ] No obsolete R3 names/emission; seven vocabulary and Catalog tests pass.
-- [ ] A draft-11 R3 fixture (`r3_per_call`, no `version`, `per-call` annotation) round-trips with its published hash.
+- [x] No obsolete R3 names/emission; seven vocabulary and Catalog tests pass.
+- [x] A draft-11 R3 fixture (`r3_per_call`, no `version`, `per-call` annotation) round-trips with its published hash.
 - [ ] One grant cannot execute twice under fresh signatures; retries return retained result.
 - [ ] Foreign valid PS cannot read unentitled R3 documents.
 - [ ] Protected Events tickets reject a different key; deliveries dedupe on `(iss, jti)`.
