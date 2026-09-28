@@ -4,6 +4,14 @@ description: Draft-11 WIP breaking-change research against the current draft-10 
 
 # Research - AAuth draft-11 WIP migration
 
+> **Update (2026-09):** Draft-11 was published on 2026-09-25, and
+> [`aauth-spec/v11/`](../../../aauth-spec/v11/) now holds the tagged snapshot
+> (commit `178e9e6`) with HTTP Signature Keys draft-09. The `v11` line citations
+> below refer to the WIP capture, readable at git commit `e6d18a3`. They must be
+> re-derived against the published text. [AAuth PR #162](https://github.com/dickhardt/AAuth/pull/162)
+> answered all 18 upstream questions; the findings and Q1-Q14 have not yet been
+> re-assessed against those answers.
+
 ## Status and scope
 
 Research date: 2026-09-11. Analysis baseline: SDK commit

@@ -5,12 +5,12 @@
 HTTP                                                            D. Hardt
 Internet-Draft                                                     Hellō
 Intended status: Standards Track                              T. Meunier
-Expires: 6 February 2027                                      Cloudflare
-                                                           5 August 2026
+Expires: 17 March 2027                                        Cloudflare
+                                                       13 September 2026
 
 
                           HTTP Signature Keys
-                  draft-hardt-httpbis-signature-key-08
+                  draft-hardt-httpbis-signature-key-09
 
 Abstract
 
@@ -53,9 +53,9 @@ Status of This Memo
 
 
 
-Hardt & Meunier          Expires 6 February 2027                [Page 1]
+Hardt & Meunier           Expires 17 March 2027                 [Page 1]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    Internet-Drafts are draft documents valid for a maximum of six months
@@ -63,7 +63,7 @@ Internet-Draft               Signature-Keys                  August 2026
    time.  It is inappropriate to use Internet-Drafts as reference
    material or to cite them other than as "work in progress."
 
-   This Internet-Draft will expire on 6 February 2027.
+   This Internet-Draft will expire on 17 March 2027.
 
 Copyright Notice
 
@@ -85,14 +85,14 @@ Table of Contents
    2.  Introduction  . . . . . . . . . . . . . . . . . . . . . . . .   4
    3.  Signature-Key HTTP Request Header . . . . . . . . . . . . . .   7
      3.1.  Label Consistency . . . . . . . . . . . . . . . . . . . .   8
-     3.2.  Multiple Signatures . . . . . . . . . . . . . . . . . . .   8
+     3.2.  Multiple Signatures . . . . . . . . . . . . . . . . . . .   9
      3.3.  Algorithm Determination . . . . . . . . . . . . . . . . .   9
      3.4.  Header Web Key (hwk)  . . . . . . . . . . . . . . . . . .  12
      3.5.  JKT JWT Self-Issued Key Delegation (jkt-jwt)  . . . . . .  13
      3.6.  JWKS URI Discovery (jwks_uri) . . . . . . . . . . . . . .  18
      3.7.  Direct JWKS (jwks)  . . . . . . . . . . . . . . . . . . .  19
      3.8.  JWT Confirmation Key (jwt)  . . . . . . . . . . . . . . .  20
-     3.9.  Self-Issued JWT (self-jwt)  . . . . . . . . . . . . . . .  22
+     3.9.  Self-Issued JWT (self-jwt)  . . . . . . . . . . . . . . .  23
      3.10. X.509 Certificates (x509) . . . . . . . . . . . . . . . .  25
      3.11. Cached Assertion (cached) . . . . . . . . . . . . . . . .  26
    4.  Accept-Signature-Scheme and Accept-Signature-Alg Response
@@ -109,9 +109,9 @@ Table of Contents
 
 
 
-Hardt & Meunier          Expires 6 February 2027                [Page 2]
+Hardt & Meunier           Expires 17 March 2027                 [Page 2]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    5.  Signature-Error HTTP Response Header  . . . . . . . . . . . .  34
@@ -131,60 +131,62 @@ Internet-Draft               Signature-Keys                  August 2026
        5.4.10. issuer_mismatch . . . . . . . . . . . . . . . . . . .  38
        5.4.11. invalid_jwt . . . . . . . . . . . . . . . . . . . . .  38
        5.4.12. expired_jwt . . . . . . . . . . . . . . . . . . . . .  38
-   6.  Signature-Key-Cache Response Header . . . . . . . . . . . . .  38
-     6.1.  Presenting and Resolving a Cached Assertion . . . . . . .  40
-     6.2.  Degradation and Interoperability  . . . . . . . . . . . .  40
-   7.  Security Considerations . . . . . . . . . . . . . . . . . . .  41
-     7.1.  Key Validation  . . . . . . . . . . . . . . . . . . . . .  41
-     7.2.  Caching and Performance . . . . . . . . . . . . . . . . .  41
-     7.3.  Scheme-Specific Risks . . . . . . . . . . . . . . . . . .  42
-     7.4.  Algorithm Selection . . . . . . . . . . . . . . . . . . .  44
-     7.5.  Symmetric Algorithms  . . . . . . . . . . . . . . . . . .  45
-     7.6.  Cache Identifiers . . . . . . . . . . . . . . . . . . . .  45
-     7.7.  Post-Quantum Key and Signature Sizes  . . . . . . . . . .  47
-     7.8.  Signature-Key Integrity . . . . . . . . . . . . . . . . .  47
-   8.  Privacy Considerations  . . . . . . . . . . . . . . . . . . .  48
-     8.1.  Pseudonymity vs. Identity . . . . . . . . . . . . . . . .  48
-     8.2.  Key Discovery Tracking  . . . . . . . . . . . . . . . . .  48
-     8.3.  JWT Contents  . . . . . . . . . . . . . . . . . . . . . .  48
-   9.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .  49
-     9.1.  HTTP Field Name Registration  . . . . . . . . . . . . . .  49
-     9.2.  Signature-Key Scheme Registry . . . . . . . . . . . . . .  50
-       9.2.1.  Registration Procedure  . . . . . . . . . . . . . . .  50
-       9.2.2.  Initial Registry Contents . . . . . . . . . . . . . .  50
-       9.2.3.  Registration Template . . . . . . . . . . . . . . . .  51
-     9.3.  URN Sub-namespace Registration  . . . . . . . . . . . . .  51
-     9.4.  Signature Error Code Registry . . . . . . . . . . . . . .  51
-       9.4.1.  Initial Registry Contents . . . . . . . . . . . . . .  52
-       9.4.2.  Registration Template . . . . . . . . . . . . . . . .  53
-     9.5.  Designated Expert Instructions  . . . . . . . . . . . . .  53
-   10. Document History  . . . . . . . . . . . . . . . . . . . . . .  54
-   11. Acknowledgments . . . . . . . . . . . . . . . . . . . . . . .  62
-   12. References  . . . . . . . . . . . . . . . . . . . . . . . . .  62
-     12.1.  Normative References . . . . . . . . . . . . . . . . . .  62
+       5.4.13. revoked_jwt . . . . . . . . . . . . . . . . . . . . .  38
+       5.4.14. clock_skew  . . . . . . . . . . . . . . . . . . . . .  39
+   6.  Signature-Key-Cache Response Header . . . . . . . . . . . . .  39
+     6.1.  Presenting and Resolving a Cached Assertion . . . . . . .  41
+     6.2.  Degradation and Interoperability  . . . . . . . . . . . .  42
+   7.  Security Considerations . . . . . . . . . . . . . . . . . . .  42
+     7.1.  Key Validation  . . . . . . . . . . . . . . . . . . . . .  42
+     7.2.  Caching and Performance . . . . . . . . . . . . . . . . .  43
+     7.3.  Scheme-Specific Risks . . . . . . . . . . . . . . . . . .  43
+     7.4.  Algorithm Selection . . . . . . . . . . . . . . . . . . .  45
+     7.5.  Symmetric Algorithms  . . . . . . . . . . . . . . . . . .  46
+     7.6.  Cache Identifiers . . . . . . . . . . . . . . . . . . . .  46
+     7.7.  Post-Quantum Key and Signature Sizes  . . . . . . . . . .  48
+     7.8.  Signature-Key Integrity . . . . . . . . . . . . . . . . .  48
+   8.  Privacy Considerations  . . . . . . . . . . . . . . . . . . .  49
+     8.1.  Pseudonymity vs. Identity . . . . . . . . . . . . . . . .  49
+     8.2.  Key Discovery Tracking  . . . . . . . . . . . . . . . . .  49
+     8.3.  JWT Contents  . . . . . . . . . . . . . . . . . . . . . .  49
+   9.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .  50
+     9.1.  HTTP Field Name Registration  . . . . . . . . . . . . . .  50
+     9.2.  Signature-Key Scheme Registry . . . . . . . . . . . . . .  51
+       9.2.1.  Registration Procedure  . . . . . . . . . . . . . . .  51
+       9.2.2.  Initial Registry Contents . . . . . . . . . . . . . .  51
+       9.2.3.  Registration Template . . . . . . . . . . . . . . . .  52
+     9.3.  URN Sub-namespace Registration  . . . . . . . . . . . . .  52
+     9.4.  Signature Error Code Registry . . . . . . . . . . . . . .  52
+       9.4.1.  Initial Registry Contents . . . . . . . . . . . . . .  53
+       9.4.2.  Registration Template . . . . . . . . . . . . . . . .  54
+     9.5.  Designated Expert Instructions  . . . . . . . . . . . . .  54
+   10. Document History  . . . . . . . . . . . . . . . . . . . . . .  55
+   11. Acknowledgments . . . . . . . . . . . . . . . . . . . . . . .  63
 
 
 
-Hardt & Meunier          Expires 6 February 2027                [Page 3]
+Hardt & Meunier           Expires 17 March 2027                 [Page 3]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
-     12.2.  Informative References . . . . . . . . . . . . . . . . .  63
-   Appendix A.  Design Rationale . . . . . . . . . . . . . . . . . .  65
-     A.1.  Why jwks_uri Instead of Inline JWKS?  . . . . . . . . . .  65
-     A.2.  Why Both jwks and jwks_uri? . . . . . . . . . . . . . . .  66
-     A.3.  Why a Separate Header?  . . . . . . . . . . . . . . . . .  66
-     A.4.  Why Schemes Instead of Just a Key and Key ID? . . . . . .  67
-     A.5.  Why a Scheme Token Instead of a Header per Scheme?  . . .  67
+   12. References  . . . . . . . . . . . . . . . . . . . . . . . . .  64
+     12.1.  Normative References . . . . . . . . . . . . . . . . . .  64
+     12.2.  Informative References . . . . . . . . . . . . . . . . .  65
+   Appendix A.  Design Rationale . . . . . . . . . . . . . . . . . .  67
+     A.1.  Why jwks_uri Instead of Inline JWKS?  . . . . . . . . . .  67
+     A.2.  Why Both jwks and jwks_uri? . . . . . . . . . . . . . . .  68
+     A.3.  Why a Separate Header?  . . . . . . . . . . . . . . . . .  68
+     A.4.  Why Schemes Instead of Just a Key and Key ID? . . . . . .  69
+     A.5.  Why a Scheme Token Instead of a Header per Scheme?  . . .  69
      A.6.  Why Accept-Signature-Scheme and Accept-Signature-Alg Are
-            Separate Headers . . . . . . . . . . . . . . . . . . . .  69
-     A.7.  Layered Cryptographic Agility . . . . . . . . . . . . . .  71
-     A.8.  Why the Verifier Issues the Cache Identifier  . . . . . .  72
-     A.9.  Precedents for Assertion Caching  . . . . . . . . . . . .  73
-     A.10. Why Strings Instead of Byte Sequences for hwk?  . . . . .  74
-     A.11. Why alg Is Required on Every Conveyed Key . . . . . . . .  74
-   Authors' Addresses  . . . . . . . . . . . . . . . . . . . . . . .  75
+            Separate Headers . . . . . . . . . . . . . . . . . . . .  71
+     A.7.  Layered Cryptographic Agility . . . . . . . . . . . . . .  73
+     A.8.  Why the Verifier Issues the Cache Identifier  . . . . . .  74
+     A.9.  Precedents for Assertion Caching  . . . . . . . . . . . .  75
+     A.10. Why Strings Instead of Byte Sequences for hwk?  . . . . .  76
+     A.11. Why alg Is Required on Every Conveyed Key . . . . . . . .  76
+   Authors' Addresses  . . . . . . . . . . . . . . . . . . . . . . .  77
 
 1.  Conventions and Definitions
 
@@ -216,16 +218,16 @@ Internet-Draft               Signature-Keys                  August 2026
    key signed this" and "why should the verifier trust that key" are
    distinct.  A raw inline key answers the first and defers the second
    to the verifier's policy.  A key discovered from an origin ties the
+
+
+
+Hardt & Meunier           Expires 17 March 2027                 [Page 4]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    key to that origin.  A delegated key carries an assertion from a
    third party.  A certificate chain carries a PKI trust path.  These
-
-
-
-Hardt & Meunier          Expires 6 February 2027                [Page 4]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
    are different trust models over the same signature primitive, and a
    mechanism that hard-codes one of them cannot serve the others.  This
    document treats the trust model as a scheme dimension rather than a
@@ -271,16 +273,17 @@ Internet-Draft               Signature-Keys                  August 2026
       8.  *Cached Assertion (cached)* - A reference to an assertion the
           verifier has already cached
 
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                 [Page 5]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    Additional schemes may be defined through the IANA registry
    established by this document.
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027                [Page 5]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
    *  *Accept-Signature-Scheme* and *Accept-Signature-Alg* (Section 4) —
       response headers stating the Signature-Key schemes and the
@@ -327,22 +330,23 @@ Internet-Draft               Signature-Keys                  August 2026
    protocol [I-D.hardt-oauth-aauth-protocol], all parties communicate
    using Signature-Key to distribute the keys that verify their signed
    requests.  Email Verification [I-D.hardt-email-verification] uses the
+
+
+
+Hardt & Meunier           Expires 17 March 2027                 [Page 6]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    hwk scheme to convey the browser's public key so the issuer can bind
    it into the verification token it issues.  Additional protocols can
    adopt these mechanisms without further coordination.
-
-
-
-Hardt & Meunier          Expires 6 February 2027                [Page 6]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
 3.  Signature-Key HTTP Request Header
 
    The Signature-Key header provides the public key or key reference
    needed to verify an HTTP Message Signature.  It is a Structured Field
-   Dictionary [RFC8941] keyed by signature label, where each member
+   Dictionary [RFC9651] keyed by signature label, where each member
    describes how to obtain the verification key for the corresponding
    signature.
 
@@ -353,11 +357,11 @@ Internet-Draft               Signature-Keys                  August 2026
    Where: - <label> (dictionary key) matches the label in Signature-
    Input and Signature headers - <scheme> (token) identifies the key
    distribution scheme - <parameters> are semicolon-separated key-value
-   pairs whose values are structured field strings or byte sequences,
-   varying by scheme
+   pairs whose values are structured field strings, byte sequences, or
+   booleans, varying by scheme
 
    Multiple keys are comma-separated per the dictionary format.  See
-   [RFC8941] for definitions of dictionary, token, string, and byte
+   [RFC9651] for definitions of dictionary, token, string, and byte
    sequence.
 
    *Unknown schemes:*
@@ -381,18 +385,20 @@ Internet-Draft               Signature-Keys                  August 2026
 
    *Example:*
 
-Signature-Input: sig=("@method" "@authority" "@path" "signature-key"); created=1732210000
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                 [Page 7]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
+Signature-Input: sig=("@method" "@authority" "@path" "signature-key");created=1732210000
 Signature: sig=:MEQCIA5...
-Signature-Key: sig=hwk;kty="OKP";crv="Ed25519";x="JrQLj..."
+Signature-Key: sig=hwk;kty="OKP";crv="Ed25519";x="JrQLj...";alg="Ed25519"
 
    *Label Correlation:*
-
-
-
-Hardt & Meunier          Expires 6 February 2027                [Page 7]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
    Labels are correlated by equality of label names across Signature-
    Input, Signature, and Signature-Key. Signature-Key is a dictionary
@@ -434,6 +440,16 @@ Internet-Draft               Signature-Keys                  August 2026
    MUST exist in Signature-Key. If Signature-Key contains members for
    labels not being verified, verifiers MAY ignore them.
 
+
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                 [Page 8]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
 3.2.  Multiple Signatures
 
    The dictionary format supports multiple signatures per message.  Each
@@ -442,13 +458,6 @@ Internet-Draft               Signature-Keys                  August 2026
 Signature-Input: sig1=(... "signature-key"), sig2=(... "signature-key")
 Signature: sig1=:...:, sig2=:...:
 Signature-Key: sig1=jwt;jwt="eyJ...", sig2=jwks_uri;id="https://example.com";dwk="eg-config";kid="k1"
-
-
-
-Hardt & Meunier          Expires 6 February 2027                [Page 8]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
    Most deployments use a single signature.  When multiple signatures
    are required, the complete Signature-Key header (containing all keys)
@@ -489,6 +498,14 @@ Internet-Draft               Signature-Keys                  August 2026
    *  The none algorithm MUST NOT be used, nor any algorithm whose JOSE
       Implementation Requirement is Prohibited.  [RFC9421],
       Section 3.3.7 requires this of any JWS algorithm used for an HTTP
+
+
+
+Hardt & Meunier           Expires 17 March 2027                 [Page 9]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
       Message Signature.  A server MUST NOT list such an algorithm in
       Accept-Signature-Alg (Section 4.2); listing none would advertise
       that the server takes an unsigned request for a signed one.
@@ -496,15 +513,6 @@ Internet-Draft               Signature-Keys                  August 2026
    *  The polymorphic EdDSA identifier MUST NOT be used.  Use the fully-
       specified Ed25519 or Ed448 identifiers registered by [RFC9864]
       instead.
-
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027                [Page 9]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
    *  For RSA keys, the alg MUST name both the padding scheme and the
       hash, for example PS256 (RSASSA-PSS with SHA-256) or RS256
@@ -544,6 +552,16 @@ Internet-Draft               Signature-Keys                  August 2026
    [I-D.richer-oauth-httpsig] arrives at the same requirement
    independently for the keys it binds as JWKs.
 
+
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 10]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    A verifier MUST reject a key whose alg names an algorithm it does not
    support, reporting unsupported_algorithm (Section 5.4.1).  Accept-
    Signature-Alg (Section 4.2) states exactly that set — the algorithms
@@ -554,14 +572,6 @@ Internet-Draft               Signature-Keys                  August 2026
    Where the alg member comes from depends on the scheme.  The hwk
    scheme carries it as a header parameter, the key itself being in the
    header.  The jwt and jkt-jwt schemes carry it inside cnf.jwk, in an
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 10]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
    assertion the issuer mints.  The jwks_uri, jwks, and self-jwt schemes
    carry no algorithm in the Signature-Key header at all: that header
    conveys id, kid, and dwk, which identify a key rather than describe
@@ -601,6 +611,13 @@ Internet-Draft               Signature-Keys                  August 2026
    unsupported_algorithm (Section 5.4.1).  Absence of support for a key
    type is a reason to decline, not a parsing failure.
 
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 11]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    The rules above apply to the key a scheme resolves to and to that key
    alone.  A JWKS may hold keys a verifier cannot use.  A verifier MUST
    select the member matching kid without requiring any other member to
@@ -610,14 +627,6 @@ Internet-Draft               Signature-Keys                  August 2026
    Without this rule no signer could introduce a new algorithm: an
    issuer adding a post-quantum key alongside a classical one would
    break every verifier that does not implement the new type, including
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 11]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
    those that were only ever going to use the classical key.  The
    accommodation above would never be reached in deployment, because no
    issuer could afford to publish such a key.
@@ -657,6 +666,14 @@ Signature-Key: sig=hwk;kty="OKP";crv="Ed25519";x="JrQLj5P...";alg="Ed25519"
 
    *  x (REQUIRED, String) - X coordinate
 
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 12]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    *  y (REQUIRED, String) - Y coordinate
 
    *  alg (REQUIRED, String) - Fully-specified algorithm identifier
@@ -665,14 +682,6 @@ Signature-Key: sig=hwk;kty="OKP";crv="Ed25519";x="JrQLj5P...";alg="Ed25519"
 Signature-Key: sig=hwk;kty="EC";crv="P-256";x="f83OJ3D...";y="x_FEzRu...";alg="ES256"
 
    RSA:
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 12]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
    *  kty (REQUIRED, String) - "RSA"
 
@@ -711,6 +720,16 @@ Signature-Key: sig=hwk;kty="RSA";n="0vx7agoebGcQ...";e="AQAB";alg="PS256"
    performance cost of repeated enclave operations while maintaining a
    cryptographic chain of trust rooted in the enclave key.
 
+
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 13]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    Many devices — mobile phones, laptops, IoT hardware — include secure
    enclaves or trusted execution environments (e.g., Apple Secure
    Enclave, Android StrongBox, TPM) that can generate and store private
@@ -722,13 +741,6 @@ Signature-Key: sig=hwk;kty="RSA";n="0vx7agoebGcQ...";e="AQAB";alg="PS256"
    signature, this creates a tension between security and performance.
    The jkt-jwt scheme resolves this by allowing the enclave key to sign
    a JWT that delegates authority to a faster ephemeral key:
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 13]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
    1.  The enclave generates a long-lived key pair (the identity key)
    2.  The device generates an ephemeral key pair in software (the
@@ -765,6 +777,15 @@ Internet-Draft               Signature-Keys                  August 2026
 
    *  alg (REQUIRED) - Signature algorithm used by the enclave key
 
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 14]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    *  jwk (REQUIRED) - JWK public key of the enclave/identity key (the
       key that signed this JWT)
 
@@ -777,14 +798,6 @@ Internet-Draft               Signature-Keys                  August 2026
       the hash algorithm from the typ it accepted, computes the
       thumbprint of the header jwk, prepends the known urn:jkt:<hash-
       algorithm>: prefix, and compares to iss by string equality.
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 14]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
    *  iat (REQUIRED) - Issued-at timestamp
 
@@ -820,6 +833,15 @@ Internet-Draft               Signature-Keys                  August 2026
 
                                  Table 1
 
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 15]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    The jkt- prefix indicates a self-issued delegation JWT: the signing
    key is embedded in the JWT header as a JWK, the issuer is identified
    by the key's thumbprint, and the JWT delegates signing authority to
@@ -834,14 +856,6 @@ Internet-Draft               Signature-Keys                  August 2026
 
    *Example:*
 
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 15]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
    Signature-Key: sig=jkt-jwt;jwt="eyJ..."
 
    JWT header:
@@ -853,7 +867,8 @@ Internet-Draft               Signature-Keys                  August 2026
        "kty": "EC",
        "crv": "P-256",
        "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
-       "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+       "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0",
+       "alg": "ES256"
      }
    }
 
@@ -867,10 +882,21 @@ Internet-Draft               Signature-Keys                  August 2026
        "jwk": {
          "kty": "OKP",
          "crv": "Ed25519",
-         "x": "JrQLj5P_89iXES9-vFgrIy29clF9CC_oPPsw3c5D0bs"
+         "x": "JrQLj5P_89iXES9-vFgrIy29clF9CC_oPPsw3c5D0bs",
+         "alg": "Ed25519"
        }
      }
    }
+
+
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 16]
+
+Internet-Draft               Signature-Keys               September 2026
+
 
    In this example, the enclave holds a P-256 key (signed via hardware)
    and delegates to an Ed25519 ephemeral key (signed in software).  The
@@ -890,13 +916,6 @@ Internet-Draft               Signature-Keys                  August 2026
 
    2.   Check the typ header (e.g., jkt-s256+jwt).  Reject if the type
         is not supported.
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 16]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
    3.   Determine the hash algorithm and iss prefix from the typ (e.g.,
         jkt-s256+jwt → SHA-256, urn:jkt:sha-256:)
@@ -927,6 +946,14 @@ Internet-Draft               Signature-Keys                  August 2026
    off the wire in the steady state, and the saving grows with the size
    of the keys and signatures the assertion carries (Section 7.7).  This
    applies to any cacheable assertion, not only to jkt-jwt.  What is
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 17]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    specific to jkt-jwt is that the assertion carries a public key in its
    header and is signed by that key, so caching it also removes the
    thumbprint computation and the verification of that signature, which
@@ -944,15 +971,6 @@ Internet-Draft               Signature-Keys                  August 2026
       authority
 
    *  Mobile apps, laptops, and IoT devices with enclave-backed identity
-
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 17]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
 3.6.  JWKS URI Discovery (jwks_uri)
 
@@ -984,6 +1002,14 @@ Internet-Draft               Signature-Keys                  August 2026
 
    5.  Fetch JWKS from jwks_uri
 
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 18]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    6.  Find key with matching kid
 
    The issuer check binds the metadata document to the identity it was
@@ -1001,14 +1027,6 @@ Internet-Draft               Signature-Keys                  August 2026
    *Example:*
 
 Signature-Key: sig=jwks_uri;id="https://client.example";dwk="example-configuration";kid="key-1"
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 18]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
    *Use cases:*
 
@@ -1041,6 +1059,13 @@ Internet-Draft               Signature-Keys                  August 2026
 
    4.  Find the key with matching kid
 
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 19]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    The JWK selected from the fetched JWKS is subject to Algorithm
    Determination (Section 3.3).
 
@@ -1049,22 +1074,6 @@ Internet-Draft               Signature-Keys                  August 2026
 Signature-Key: sig=jwks;url="https://client.example/keys.jwks";kid="key-1"
 
    *Identifier semantics:*
-
-
-
-
-
-
-
-
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 19]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
    Under the jwks scheme the signer's identity is the JWKS URL itself.
    A verifier that allowlists or policies by identity is doing so
@@ -1102,25 +1111,25 @@ Internet-Draft               Signature-Keys                  August 2026
       present a cache identifier on subsequent requests, using the
       cached scheme (Section 3.11), and requests that the verifier issue
       one.  Absent means the caller does not want one.  Boolean true is
-      indicated by omitting the value ([RFC8941], Section 4.1.1.2), so
+      indicated by omitting the value ([RFC9651], Section 4.1.1.2), so
       the parameter is serialized as cache rather than cache=?1.
       Because it is carried in the Signature-Key header, this signal is
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 20]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
       covered by the per-request signature.  A JWT presented with cache
       MUST contain a jti claim ([RFC7519], Section 4.1.7); a verifier
       MUST NOT issue a cache identifier for a JWT without one.  See
       Section 6.
 
-   Signature-Key: sig1=jwt;jwt="eyJhbGciOiJFZERTQSJ9...";cache
+   Signature-Key: sig1=jwt;jwt="eyJhbGciOiJFZDI1NTE5In0...";cache
 
    *JWT requirements:*
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 20]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
    *  MUST contain cnf.jwk claim with embedded JWK.  The key conveyed in
       the assertion is subject to Algorithm Determination (Section 3.3).
@@ -1160,7 +1169,14 @@ Internet-Draft               Signature-Keys                  August 2026
    2.  Verify the JWT typ header parameter has an expected value per
        policy.  Reject if unexpected.
 
-   3.  Validate exp claim if present.  Reject if the token has expired.
+   3.  Validate exp.  Reject if the token has expired.
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 21]
+
+Internet-Draft               Signature-Keys               September 2026
+
 
    4.  Verify required claims are present (cnf.jwk, plus any claims
        required by deployment policy).  Reject if a required claim is
@@ -1170,14 +1186,6 @@ Internet-Draft               Signature-Keys                  August 2026
        parse as JSON metadata, and verify the document's issuer member
        equals the iss claim as for the jwks_uri scheme (Section 3.6),
        rejecting with issuer_missing or issuer_mismatch.  Extract
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 21]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
        jwks_uri, fetch the JWKS from it, and find the key matching kid
        in the JWT header.  If iss or dwk is absent, the verifier MUST
        obtain the issuer's key through an application-specific
@@ -1206,7 +1214,8 @@ Internet-Draft               Signature-Keys                  August 2026
        "jwk": {
          "kty": "OKP",
          "crv": "Ed25519",
-         "x": "JrQLj5P_89iXES9-vFgrIy29clF9CC_oPPsw3c5D0bs"
+         "x": "JrQLj5P_89iXES9-vFgrIy29clF9CC_oPPsw3c5D0bs",
+         "alg": "Ed25519"
        }
      }
    }
@@ -1217,6 +1226,14 @@ Internet-Draft               Signature-Keys                  August 2026
 
    *  Delegation scenarios where instances act on behalf of an authority
 
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 22]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    *  Short-lived credentials for horizontal scaling
 
 3.9.  Self-Issued JWT (self-jwt)
@@ -1226,13 +1243,6 @@ Internet-Draft               Signature-Keys                  August 2026
    discoverable from the issuer's JWKS, and that same key verifies both
    the JWT and the HTTP Message Signature.  Unlike the jwt scheme, no
    cnf claim is present — the signing key is the confirmation key.
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 22]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
    *Parameters:*
 
@@ -1257,16 +1267,6 @@ Internet-Draft               Signature-Keys                  August 2026
 
    *  SHOULD contain standard claims: sub, aud, iat
 
-   The self-jwt scheme does not support the cache parameter, and a
-   verifier MUST NOT issue a cache identifier for a self-jwt.  A self-
-   jwt embeds no key: its signing key is the confirmation key and is
-   discovered from the issuer's JWKS by iss and kid.  That key is
-   already cacheable on those two values (Section 7.2), so caching the
-   assertion in addition would save only the assertion's own bytes, of
-   which there are few.  A self-jwt also typically carries claims
-   specific to the request it accompanies, so a cached copy would be
-   stale for the next request rather than reusable.
-
    *  Verifiers SHOULD verify the JWT typ header parameter has an
       expected value per deployment policy, following the explicit-
       typing guidance of [RFC8725], Section 3.11.  The check is a
@@ -1277,18 +1277,25 @@ Internet-Draft               Signature-Keys                  August 2026
    |  *Note:* The mechanism by which the JWT is obtained is out of scope
    |  of this specification.
 
-   *Verification procedure:*
+   The self-jwt scheme does not support the cache parameter, and a
+   verifier MUST NOT issue a cache identifier for a self-jwt.  A self-
+   jwt embeds no key: its signing key is the confirmation key and is
+   discovered from the issuer's JWKS by iss and kid.  That key is
+   already cacheable on those two values (Section 7.2), so caching the
 
 
 
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 23]
+Hardt & Meunier           Expires 17 March 2027                [Page 23]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
+
+   assertion in addition would save only the assertion's own bytes, of
+   which there are few.  A self-jwt also typically carries claims
+   specific to the request it accompanies, so a cached copy would be
+   stale for the next request rather than reusable.
+
+   *Verification procedure:*
 
    1.  Parse the JWT parameter value per [RFC7519] Section 7.2.
        Verifiers MUST reject if the value is not a well-formed JWT.
@@ -1299,7 +1306,7 @@ Internet-Draft               Signature-Keys                  August 2026
    2.  Verify the JWT typ header parameter has an expected value per
        policy.  Reject if unexpected.
 
-   3.  Validate exp claim if present.  Reject if the token has expired.
+   3.  Validate exp.  Reject if the token has expired.
 
    4.  Verify iss, dwk claims and kid JWT header parameter are present.
        Reject if any is absent.
@@ -1328,36 +1335,31 @@ Signature-Key: sig=self-jwt;jwt="eyJhbGciOiJFUzI1NiIsImtpZCI6InIxIn0..."
    {
      "alg": "ES256",
      "kid": "r1",
-     "typ": "aauth-resource+jwt"
+     "typ": "aa-event+jwt"
    }
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 24]
+
+Internet-Draft               Signature-Keys               September 2026
+
 
    JWT payload:
 
-
-
-
-
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 24]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
    {
      "iss": "https://resource.example",
-     "dwk": "aauth-resource",
+     "dwk": "aauth-resource.json",
      "aud": "https://agent.example",
      "eid": "evt-abc123",
      "exp": 1732210000
    }
 
    The verifier fetches https://resource.example/.well-known/aauth-
-   resource, retrieves the JWKS, finds the key with kid="r1", verifies
-   the JWT signature with it, then uses that same key to verify the HTTP
-   Message Signature.
+   resource.json, retrieves the JWKS, finds the key with kid="r1",
+   verifies the JWT signature with it, then uses that same key to verify
+   the HTTP Message Signature.
 
    *Use cases:*
 
@@ -1392,15 +1394,15 @@ Internet-Draft               Signature-Keys                  August 2026
 
    5.  Verify x5t matches end-entity certificate
 
-   6.  Extract public key from end-entity certificate
 
 
 
-
-Hardt & Meunier          Expires 6 February 2027               [Page 25]
+Hardt & Meunier           Expires 17 March 2027                [Page 25]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
+
+   6.  Extract public key from end-entity certificate
 
    7.  Verify signature using extracted key
 
@@ -1448,15 +1450,15 @@ Signature-Key: sig=x509;x5u="https://client.example/.well-known/cert.pem";x5t=:b
    cached and issued a cache identifier for (Section 6), in place of
    presenting the assertion in full.
 
-   *Parameters:*
 
 
 
-
-Hardt & Meunier          Expires 6 February 2027               [Page 26]
+Hardt & Meunier           Expires 17 March 2027                [Page 26]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
+
+   *Parameters:*
 
    *  cid (REQUIRED, String) - The cache identifier previously issued by
       the verifier for this assertion.  It is opaque to the caller,
@@ -1487,13 +1489,13 @@ Internet-Draft               Signature-Keys                  August 2026
    [RFC9421] Section 5 defines the Accept-Signature response header for
    requesting HTTP Message Signatures.  Its signature metadata
    parameters are Item parameters, whose values are bare Items
-   ([RFC8941], Section 3.1.2) and cannot be lists.  A server therefore
+   ([RFC9651], Section 3.1.2) and cannot be lists.  A server therefore
    cannot use Accept-Signature to state that it accepts any of several
    Signature-Key schemes, nor any of several algorithms: its alg
    parameter names one algorithm.
 
    This document defines two response header fields that carry those
-   sets.  Both are List Structured Fields ([RFC8941], Section 3.1) of
+   sets.  Both are List Structured Fields ([RFC9651], Section 3.1) of
    Tokens, so a server states everything it accepts in one response, and
    a client selects a scheme and an algorithm before it signs rather
    than discovering them through a rejection.
@@ -1507,16 +1509,14 @@ Internet-Draft               Signature-Keys                  August 2026
 
 
 
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 27]
+Hardt & Meunier           Expires 17 March 2027                [Page 27]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
 4.1.  Accept-Signature-Scheme
 
-   Accept-Signature-Scheme is a List ([RFC8941], Section 3.1) of Tokens,
+   Accept-Signature-Scheme is a List ([RFC9651], Section 3.1) of Tokens,
    each naming a scheme registered in the HTTP Signature-Key Scheme
    registry (Section 9.2).  It states the Signature-Key schemes the
    server accepts.
@@ -1549,7 +1549,7 @@ Internet-Draft               Signature-Keys                  August 2026
 
 4.2.  Accept-Signature-Alg
 
-   Accept-Signature-Alg is a List ([RFC8941], Section 3.1) of Tokens,
+   Accept-Signature-Alg is a List ([RFC9651], Section 3.1) of Tokens,
    each a fully-specified identifier from the IANA "JSON Web Signature
    and Encryption Algorithms" registry [IANA.JOSE.Algorithms] — the same
    identifiers a conveyed key carries in its alg member (Section 3.3),
@@ -1565,14 +1565,14 @@ Internet-Draft               Signature-Keys                  August 2026
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 28]
+Hardt & Meunier           Expires 17 March 2027                [Page 28]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    Each Token is the registered identifier verbatim, including its case:
    ES256, not es256.  Structured Field parsing preserves the case of a
-   Token ([RFC8941], Section 4.2.6), and the comparison a client
+   Token ([RFC9651], Section 4.2.6), and the comparison a client
    performs is against the alg member of a JWK, a case-sensitive JSON
    string.  A case-folded token names no registered algorithm and
    matches no key.
@@ -1621,9 +1621,9 @@ Internet-Draft               Signature-Keys                  August 2026
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 29]
+Hardt & Meunier           Expires 17 March 2027                [Page 29]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    HTTP/1.1 401 Unauthorized
@@ -1677,9 +1677,9 @@ Signature: sig1=:MEQCIA5...:
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 30]
+Hardt & Meunier           Expires 17 March 2027                [Page 30]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    +========+================+==================+======================+
@@ -1733,9 +1733,9 @@ Internet-Draft               Signature-Keys                  August 2026
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 31]
+Hardt & Meunier           Expires 17 March 2027                [Page 31]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    *Stage 3 - Identity (401):* The server advertises Accept-Signature-
@@ -1777,21 +1777,21 @@ Internet-Draft               Signature-Keys                  August 2026
       not satisfied by the choice challenges again.
 
    *  Where the challenge is not an authentication or authorization
-      challenge, such as the payment challenge defined by the
-      Micropayment Protocol ([I-D.ryan-httpauth-payment]), the two are
-      complements: satisfying one does not satisfy the other, and a
-      client that wants the resource satisfies both.
+      challenge, such as the payment challenge defined by the Payment
+      scheme ([I-D.ryan-httpauth-payment]), the two are complements:
+      satisfying one does not satisfy the other, and a client that wants
+      the resource satisfies both.
 
    A 402 response MAY include a payment mechanism such as x402 [x402] or
-   the Micropayment Protocol ([I-D.ryan-httpauth-payment]) alongside a
+   the Payment scheme ([I-D.ryan-httpauth-payment]) alongside a
    signature challenge.  Payment is not authentication, so this is the
    complementary case and a client satisfies both:
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 32]
+Hardt & Meunier           Expires 17 March 2027                [Page 32]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    HTTP/1.1 402 Payment Required
@@ -1845,9 +1845,9 @@ Internet-Draft               Signature-Keys                  August 2026
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 33]
+Hardt & Meunier           Expires 17 March 2027                [Page 33]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    A conforming verifier, when presented with a well-formed request
@@ -1885,10 +1885,10 @@ Internet-Draft               Signature-Keys                  August 2026
 
 5.1.  Header Structure
 
-   The Signature-Error header is a Dictionary ([RFC8941], Section 3.2)
+   The Signature-Error header is a Dictionary ([RFC9651], Section 3.2)
    with the following member:
 
-   *  error (REQUIRED): A Token ([RFC8941], Section 3.3.4) indicating
+   *  error (REQUIRED): A Token ([RFC9651], Section 3.3.4) indicating
       the error code.
 
    Additional members are defined per error code.  Recipients MUST
@@ -1901,9 +1901,9 @@ Internet-Draft               Signature-Keys                  August 2026
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 34]
+Hardt & Meunier           Expires 17 March 2027                [Page 34]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    The Signature-Error header is the authoritative source for machine-
@@ -1957,9 +1957,9 @@ Internet-Draft               Signature-Keys                  August 2026
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 35]
+Hardt & Meunier           Expires 17 March 2027                [Page 35]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    Signature-Error: error=unsupported_algorithm
@@ -2013,16 +2013,16 @@ Internet-Draft               Signature-Keys                  August 2026
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 36]
+Hardt & Meunier           Expires 17 March 2027                [Page 36]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
 5.4.5.  invalid_input
 
    The Signature-Input is missing required covered components.
 
-   *  required_input (RECOMMENDED): An Inner List of String ([RFC8941],
+   *  required_input (RECOMMENDED): An Inner List of String ([RFC9651],
       Section 3.1.1) listing the covered components the server requires.
       A server SHOULD include this member, and MAY omit it where
       enumerating its requirements to an unauthenticated caller is
@@ -2051,9 +2051,9 @@ Internet-Draft               Signature-Keys                  August 2026
 5.4.8.  unknown_key
 
    The public key from Signature-Key does not match any key at the
-   client's jwks_uri (applicable when the client uses scheme=jwks_uri).
-   The server SHOULD re-fetch the JWKS once before returning this error,
-   to handle key rotation.
+   client's jwks_uri (applicable to the jwks_uri, jwks, and self-jwt
+   schemes).  The server SHOULD re-fetch the JWKS once before returning
+   this error, to handle key rotation.
 
    Signature-Error: error=unknown_key
 
@@ -2069,9 +2069,9 @@ Internet-Draft               Signature-Keys                  August 2026
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 37]
+Hardt & Meunier           Expires 17 March 2027                [Page 37]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
 5.4.10.  issuer_mismatch
@@ -2085,17 +2085,77 @@ Internet-Draft               Signature-Keys                  August 2026
 
 5.4.11.  invalid_jwt
 
-   The JWT in the Signature-Key header (when using scheme=jwt or
-   scheme=jkt-jwt) is malformed or its signature verification failed.
+   The JWT in the Signature-Key header (under any scheme that carries a
+   JWT: jwt, jkt-jwt, or self-jwt) is malformed or its signature
+   verification failed.
 
    Signature-Error: error=invalid_jwt
 
 5.4.12.  expired_jwt
 
-   The JWT in the Signature-Key header (when using scheme=jwt or
-   scheme=jkt-jwt) has expired (exp claim is in the past).
+   The JWT in the Signature-Key header (under any scheme that carries a
+   JWT: jwt, jkt-jwt, or self-jwt) has expired (exp claim is in the
+   past).
 
    Signature-Error: error=expired_jwt
+
+5.4.13.  revoked_jwt
+
+   The JWT in the Signature-Key header (under any scheme that carries a
+   JWT: jwt, jkt-jwt, or self-jwt) verifies and has not expired, but the
+   verifier holds notice from the issuer that it has been withdrawn.
+
+   Signature-Error: error=revoked_jwt
+
+   This is distinct from invalid_jwt and expired_jwt, and the
+   distinction is what the caller needs: nothing about the assertion is
+   malformed and nothing about it has timed out, so a caller told only
+   that the JWT was invalid has no reason not to present it again.
+   revoked_jwt says the assertion will not become acceptable with time,
+   and that recovery runs through the issuer that withdrew it.
+
+   How a verifier learns of a withdrawal is out of scope for this
+   document.  It is not discoverable from the JWT, so a verifier returns
+   this code only where an application protocol gives it that notice.
+
+
+
+
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 38]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
+5.4.14.  clock_skew
+
+   The JWT in the Signature-Key header (under any scheme that carries a
+   JWT: jwt, jkt-jwt, or self-jwt) carries an iat further ahead of the
+   verifier's clock than the verifier's signature validity window, or
+   the signature's created parameter ([RFC9421]) is further ahead of the
+   verifier's clock than that window.
+
+   Signature-Error: error=clock_skew
+
+   Nothing about the assertion or the signature is wrong; the sender's
+   clock, or the clock of the issuer that signed the JWT, disagrees with
+   the verifier's.  This is distinct from invalid_jwt, expired_jwt, and
+   invalid_signature, and the distinction is what the caller needs:
+   those say to obtain a fresh assertion or sign again, and a fresh
+   assertion from the same issuer carries the same skew.  A future iat
+   or created becomes acceptable with time, so the sender MAY wait and
+   present the same assertion again.  The Date header on the response is
+   the verifier's clock, and the difference between it and the iat or
+   created, less the window, is how long to wait.
+
+   A verifier is not required to bound iat at all; one that does SHOULD
+   use the same window it applies to created, so that a sender faces one
+   skew tolerance rather than two.  A created older than the window is a
+   stale or replayed signature, not skew, and is refused with
+   invalid_signature.
 
 6.  Signature-Key-Cache Response Header
 
@@ -2105,12 +2165,26 @@ Internet-Draft               Signature-Keys                  August 2026
    Signature-Key-Cache response header to issue the caller a cache
    identifier for later reference.
 
-   Signature-Key-Cache is a Dictionary ([RFC8941], Section 3.2) keyed by
+   Signature-Key-Cache is a Dictionary ([RFC9651], Section 3.2) keyed by
    the signature label whose assertion was cached.
 
    The member value is the cache identifier itself, a String.  It is not
    a named parameter.  The caller presents this same String back to the
    verifier as the cid parameter of the cached scheme (Section 3.11).
+
+
+
+
+
+
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 39]
+
+Internet-Draft               Signature-Keys               September 2026
+
 
    The cache identifier is opaque to the caller.  A verifier chooses its
    own form: a random value indexed in a cache, or a self-contained,
@@ -2121,14 +2195,6 @@ Internet-Draft               Signature-Keys                  August 2026
    Appendix A.8.
 
    The member's parameters describe the cached assertion:
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 38]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
    *  jti (String, OPTIONAL): The jti claim of the cached assertion
       ([RFC7519], Section 4.1.7), echoed so the caller can associate the
@@ -2155,7 +2221,7 @@ Signature-Key-Cache: sig1="2f9c8a1e-a7b3";jti="2f9c8a1e";expires=1730000000
    identifier.  The JWT carries a jti, without which it is not
    cacheable:
 
-   Signature-Key: sig1=jwt;jwt="eyJhbGciOiJFZERTQSJ9...";cache
+   Signature-Key: sig1=jwt;jwt="eyJhbGciOiJFZDI1NTE5In0...";cache
 
    The verifier caches the assertion and issues a cache identifier for
    it:
@@ -2168,6 +2234,14 @@ Signature-Key-Cache: sig1="2f9c8a1e-a7b3";jti="2f9c8a1e";expires=1730000000
 
    Signature-Key: sig1=cached;cid="2f9c8a1e-a7b3"
 
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 40]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    Each request is signed as usual, and signature-key remains a covered
    component, so the cache identifier is signed over on every request
    that carries it.
@@ -2178,14 +2252,6 @@ Signature-Key-Cache: sig1="2f9c8a1e-a7b3";jti="2f9c8a1e";expires=1730000000
    the assertion's expiry is a property of the assertion.  A verifier
    that still holds the entry MUST resolve it and let the assertion fail
    validation (Section 6.1), exactly as an expired assertion presented
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 39]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
    in full would, rather than reporting cache_miss.  A verifier that has
    already evicted the entry returns cache_miss, which is correct: it no
    longer holds the assertion and cannot say why the assertion would
@@ -2222,6 +2288,16 @@ Internet-Draft               Signature-Keys                  August 2026
    failure as a cache miss, nor a cache miss as an authorization
    failure.
 
+
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 41]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    Because assertions are short-lived, expiry at stage 2 is the
    freshness check and no separate revocation state is required; the
    short lifetime is the revocation window.  A deployment that issues
@@ -2232,15 +2308,6 @@ Internet-Draft               Signature-Keys                  August 2026
 
    Implementation of assertion caching is OPTIONAL.  The degradation
    behavior in this subsection is not.
-
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 40]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
    A verifier that does not implement assertion caching MUST NOT emit
    Signature-Key-Cache, and MUST reject a request using the cached
@@ -2280,6 +2347,13 @@ Internet-Draft               Signature-Keys                  August 2026
       validate thumbprint matches iss per [RFC7638], validate embedded
       ephemeral JWK per [RFC7517]
 
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 42]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
 7.2.  Caching and Performance
 
    Verifiers MAY cache keys to improve performance but MUST implement
@@ -2288,15 +2362,6 @@ Internet-Draft               Signature-Keys                  August 2026
    *  *jwks_uri*: Respect cache-control headers, implement reasonable
       TTLs.  Verifiers MUST NOT refetch a given issuer's JWKS more
       frequently than once per minute to prevent abuse.
-
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 41]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
    *  *jwks*: Cache by url; the same cache-control handling and once-
       per-minute refetch floor as jwks_uri apply.
@@ -2335,24 +2400,24 @@ Internet-Draft               Signature-Keys                  August 2026
    should be aware that the jkt-jwt scheme implies but does not prove
    hardware protection — there is no attestation mechanism in this
    scheme.  Unlike the jwt scheme where trust is rooted in a
-   discoverable issuer, jkt-jwt trust is rooted in the key itself.
-   Verifiers MUST understand that any party can create a jkt-jwt — the
-   scheme provides pseudonymous identity, not verified identity.  The
-   exp claim on the JWT controls how long the ephemeral key is valid.
-   Shorter lifetimes limit the exposure window if an ephemeral key is
-   compromised, and the lifetime should be no longer than the
-   deployment's re-delegation interval allows.  The iss value is a JWK
-   Thumbprint URI — a globally unique, collision-resistant identifier.
-   The verifier MUST always compute the expected iss from the header jwk
-   and compare by string equality — never trust the iss value alone.
+   discoverable issuer, jkt-jwt trust is rooted in the key itself.  Any
+   party can create a jkt-jwt: the scheme provides pseudonymous
 
 
 
-
-Hardt & Meunier          Expires 6 February 2027               [Page 42]
+Hardt & Meunier           Expires 17 March 2027                [Page 43]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
+
+   identity, not verified identity.  The exp claim on the JWT controls
+   how long the ephemeral key is valid.  Shorter lifetimes limit the
+   exposure window if an ephemeral key is compromised, and the lifetime
+   should be no longer than the deployment's re-delegation interval
+   allows.  The iss value is a JWK Thumbprint URI — a globally unique,
+   collision-resistant identifier.  The verifier MUST always compute the
+   expected iss from the header jwk and compare by string equality —
+   never trust the iss value alone.
 
    *jwks_uri*: Relies on HTTPS security — vulnerable to DNS/CA
    compromise.  Beyond HTTPS validation, nothing prevents an attacker
@@ -2391,24 +2456,19 @@ Internet-Draft               Signature-Keys                  August 2026
    presenter chooses; verifiers SHOULD verify that url matches an
    expected or authorized origin.
 
+
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 44]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    *jwt*: Delegation trust depends on JWT issuer verification.
    Verifiers MUST validate JWT signatures and claims before trusting
    embedded keys.
-
-
-
-
-
-
-
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 43]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
    *self-jwt*: Trust is rooted entirely in the issuer's JWKS.  The same
    SSRF egress admission requirements that apply to jwks_uri and jwt
@@ -2454,18 +2514,18 @@ Internet-Draft               Signature-Keys                  August 2026
    Algorithm agility depends on the verifier selecting exactly one
    signature algorithm for a given key.  A key whose algorithm is not
    fully determined by its identifier invites downgrade and confused-
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 45]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    verifier conditions, where two verifiers disagree on the operation a
    signature represents.  For this reason this document requires a
    present, fully-specified alg for conveyed JWKs (Section 3.3).  This
    aligns with [RFC9864], which states that a key is to be used with
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 44]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
    only a single algorithm unless the use of that key with multiple
    algorithms has been proven secure, and recommends that the algorithm
    parameter of a JWK be present.
@@ -2511,17 +2571,16 @@ Internet-Draft               Signature-Keys                  August 2026
    is covered by the per-request signature and cannot be substituted by
    an intermediary.
 
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 46]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    A verifier MUST NOT treat successful resolution as authentication.
    Resolution answers only which assertion was referenced.  The caller
    is authenticated by the per-request signature, which the verifier
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 45]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
    MUST verify against the confirmation key carried in the resolved
    assertion, exactly as it would had the assertion been presented in
    full.  A caller presenting a cache identifier it did not receive
@@ -2567,16 +2626,17 @@ Internet-Draft               Signature-Keys                  August 2026
    A self-contained cache identifier carries verifier state to itself
    across a fleet.  Such an identifier MUST be integrity-protected and
    encrypted under keys known only to the verifier fleet, so that it
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 47]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    cannot be forged or read by any other party, and one that fails
    integrity or decryption MUST be treated as a cache miss
    (Section 5.4.3).
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 46]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
 7.7.  Post-Quantum Key and Signature Sizes
 
@@ -2605,7 +2665,7 @@ Internet-Draft               Signature-Keys                  August 2026
    The Signature-Key header MUST be included as a covered component in
    Signature-Input:
 
-Signature-Input: sig=("@method" "@authority" "@path" "signature-key"); created=1732210000
+Signature-Input: sig=("@method" "@authority" "@path" "signature-key");created=1732210000
 
    If signature-key is not covered, an attacker can modify the header
    without invalidating the signature.  Attacks include:
@@ -2625,13 +2685,9 @@ Signature-Input: sig=("@method" "@authority" "@path" "signature-key"); created=1
 
 
 
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 47]
+Hardt & Meunier           Expires 17 March 2027                [Page 48]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
 8.  Privacy Considerations
@@ -2685,9 +2741,9 @@ Internet-Draft               Signature-Keys                  August 2026
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 48]
+Hardt & Meunier           Expires 17 March 2027                [Page 49]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    *  Only process claims necessary for verification
@@ -2741,9 +2797,9 @@ Internet-Draft               Signature-Keys                  August 2026
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 49]
+Hardt & Meunier           Expires 17 March 2027                [Page 50]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    Status: standard
@@ -2797,9 +2853,9 @@ Internet-Draft               Signature-Keys                  August 2026
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 50]
+Hardt & Meunier           Expires 17 March 2027                [Page 51]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
        +----------+------------------------------------+-----------+
@@ -2853,9 +2909,9 @@ Internet-Draft               Signature-Keys                  August 2026
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 51]
+Hardt & Meunier           Expires 17 March 2027                [Page 52]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
 9.4.1.  Initial Registry Contents
@@ -2882,15 +2938,15 @@ Internet-Draft               Signature-Keys                  August 2026
    | invalid_request       | Missing required info         | [this     |
    |                       | unrelated to signature        | document] |
    +-----------------------+-------------------------------+-----------+
-   | invalid_key           | Key cannot be parsed          | [this     |
-   |                       | or doesn't meet trust         | document] |
+   | invalid_key           | Key cannot be parsed or       | [this     |
+   |                       | doesn't meet trust            | document] |
    |                       | requirements                  |           |
    +-----------------------+-------------------------------+-----------+
    | unknown_key           | Key not found at              | [this     |
    |                       | jwks_uri                      | document] |
    +-----------------------+-------------------------------+-----------+
-   | issuer_missing        | Metadata document             | [this     |
-   |                       | lacks an issuer member        | document] |
+   | issuer_missing        | Metadata document lacks       | [this     |
+   |                       | an issuer member              | document] |
    +-----------------------+-------------------------------+-----------+
    | issuer_mismatch       | Metadata document             | [this     |
    |                       | issuer does not match         | document] |
@@ -2903,16 +2959,23 @@ Internet-Draft               Signature-Keys                  August 2026
    | expired_jwt           | JWT expired                   | [this     |
    |                       |                               | document] |
    +-----------------------+-------------------------------+-----------+
+   | revoked_jwt           | JWT withdrawn by its          | [this     |
+   |                       | issuer                        | document] |
+   +-----------------------+-------------------------------+-----------+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 53]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
+   | clock_skew            | JWT iat or signature          | [this     |
+   |                       | created too far ahead         | document] |
+   |                       | of the verifier's clock       |           |
+   +-----------------------+-------------------------------+-----------+
 
                                   Table 4
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 52]
-
-Internet-Draft               Signature-Keys                  August 2026
-
 
 9.4.2.  Registration Template
 
@@ -2956,20 +3019,18 @@ Internet-Draft               Signature-Keys                  August 2026
       trust model (e.g., pseudonymous, URI-bound, or PKI-anchored) and
       any risks introduced by network fetches during verification.
 
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 54]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
    For the Signature Error Code registry, the expert should additionally
    verify that:
 
    *  The error code is a lowercase token using only lowercase letters
       and underscore, consistent with the registry's existing entries.
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 53]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
    *  The error condition is broadly applicable to signed HTTP message
       exchanges rather than specific to a single application.  The
       condition need not be a signature verification failure; it may
@@ -2983,9 +3044,43 @@ Internet-Draft               Signature-Keys                  August 2026
 
    _Note: This section is to be removed before publishing as an RFC._
 
+   *  draft-hardt-httpbis-signature-key-09
+
+      -  Editorial, no normative change.  Examples now carry the
+         REQUIRED alg member and use Ed25519 in place of EdDSA; the
+         self-jwt example matches the AAuth Events event token; RFC 9651
+         replaces RFC 8941 as the Structured Fields reference; the JWT
+         error codes (invalid_jwt, expired_jwt, revoked_jwt, clock_skew)
+         and unknown_key state that they apply to self-jwt; exp
+         validation in the jwt and self-jwt procedures is unconditional,
+         since exp is REQUIRED; prose names schemes as "the jwt scheme"
+         rather than scheme=jwt.
+      -  Added the revoked_jwt error code, for a JWT that verifies and
+         has not expired but that the verifier has been told its issuer
+         withdrew. invalid_jwt and expired_jwt both describe the
+         assertion itself, so a verifier acting on a revocation had to
+         report one of them and a caller reading either had no reason
+         not to retry with the same JWT.  How the verifier learns of the
+         withdrawal is left to the application protocol.
+      -  Added the clock_skew error code (issue 38): a JWT iat, or a
+         signature created, further ahead of the verifier's clock than
+         its validity window.  Distinct from invalid_jwt, expired_jwt
+         and invalid_signature because a fresh assertion from the same
+         issuer carries the same skew, while waiting out the difference
+         — readable from the response Date header — makes the same
+         assertion acceptable.  A verifier that bounds iat SHOULD use
+         the created window.
+
    *  draft-hardt-httpbis-signature-key-08
 
    Not backward compatible with -07.  Breaking changes are listed first.
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 55]
+
+Internet-Draft               Signature-Keys               September 2026
+
 
    Breaking changes:
 
@@ -3018,14 +3113,6 @@ Internet-Draft               Signature-Keys                  August 2026
       Signature.  Gave the rule its response-side half: a server MUST
       NOT list such an algorithm in Accept-Signature-Alg, which would
       otherwise advertise that it accepts unsigned requests as signed.
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 54]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
    *  Named the registry these identifiers come from, citing the IANA
       "JSON Web Signature and Encryption Algorithms" registry itself
       rather than [RFC7518], which established it but no longer holds
@@ -3043,6 +3130,14 @@ Internet-Draft               Signature-Keys                  August 2026
       it.  The consistency rule had no testable meaning, since
       Section 3.3.7 states that JWA values are not registered in the
       HTTP Signature Algorithms registry and so no mapping between the
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 56]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
       two namespaces exists.  Cited Section 1.4, which names deriving
       the algorithm from the key material as one of the three approaches
       an application may take.
@@ -3072,16 +3167,6 @@ Internet-Draft               Signature-Keys                  August 2026
       being made and is retained as such.
    *  Raised cache limits from SHOULD to MUST.  Cache entries are
       created by unauthenticated callers.
-
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 55]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
    *  Required the Problem Details type member, where a Problem Details
       body is returned, to be the urn:ietf:params:sig-error: URN form.
       Whether to return that body remains a SHOULD; the format of the
@@ -3100,6 +3185,14 @@ Internet-Draft               Signature-Keys                  August 2026
       that an unknown member within a single JWK is ignored per
       [RFC7517], Section 4, which is distinct from a member this
       document forbids.
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 57]
+
+Internet-Draft               Signature-Keys               September 2026
+
 
    *  Stated that an Accept-Signature-Alg Token is the registered
       identifier verbatim, case included: ES256, not es256.  Structured
@@ -3129,15 +3222,6 @@ Internet-Draft               Signature-Keys                  August 2026
       vague "validate the algorithm against policy" verifier obligations
       with the specific checks.
 
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 56]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
    *  Stated where alg comes from in each scheme, and that jwks_uri,
       jwks, and self-jwt have no in-band channel for it: the resolved
       JWKS entry is the only source, so adopting those schemes means
@@ -3158,6 +3242,14 @@ Internet-Draft               Signature-Keys                  August 2026
       it.  The requirement now says what it is — a tightening — and
       gives the reason: keys conveyed in band come from a party the
       verifier has no prior relationship with, so no such other
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 58]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
       mechanism exists, and kty and crv underdetermine the algorithm for
       RSA, EC, and AKP keys alike.  Noted that
       [I-D.richer-oauth-httpsig] reaches the same requirement
@@ -3185,15 +3277,6 @@ Internet-Draft               Signature-Keys                  August 2026
       a token-confusion defence, not the optimization the text
       previously called it.
 
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 57]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
    *  Corrected the layered cryptographic agility rationale: post-
       quantum verification is not the expensive part, since ML-DSA
       verification is comparable to Ed25519.  What caching saves the
@@ -3214,6 +3297,14 @@ Internet-Draft               Signature-Keys                  August 2026
    *  Added the jwks scheme: a direct JWKS fetch whose HTTPS url is both
       the signer identity and the key location, under the same egress-
       admission rules as jwks_uri.
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 59]
+
+Internet-Draft               Signature-Keys               September 2026
+
 
    *  Stated that the jwks url is compared by byte equality as
       presented, with no canonicalization.
@@ -3242,14 +3333,6 @@ Internet-Draft               Signature-Keys                  August 2026
       without special treatment.  Added a deployment consideration on
       post-quantum key and signature sizes.
 
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 58]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
    *  Added assertion caching as a strawman for discussion: the cached
       scheme, the cache signal on jwt and jkt-jwt, the Signature-Key-
       Cache response header, the cache_miss error, and the resolution
@@ -3267,6 +3350,17 @@ Internet-Draft               Signature-Keys                  August 2026
    *  Made cached in Accept-Signature-Scheme a capability announcement:
       a client cannot present it until a verifier has issued it a cache
       identifier.
+
+
+
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 60]
+
+Internet-Draft               Signature-Keys               September 2026
+
 
    *  Bounded verifier-side cache state: a caller can mint an assertion,
       and so a cache entry, per request, so the cache limits apply to
@@ -3298,14 +3392,6 @@ Internet-Draft               Signature-Keys                  August 2026
    *  Expanded the Introduction to state the gaps this document
       addresses and the invariants that follow.
 
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 59]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
    *  Added rationale for a scheme token rather than a header per
       scheme, for carrying the accepted sets in header fields rather
       than in parameters or error members, for layered cryptographic
@@ -3323,6 +3409,14 @@ Internet-Draft               Signature-Keys                  August 2026
 
    *  Converted internal cross-references to mmark xref syntax so they
       render as section numbers.
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 61]
+
+Internet-Draft               Signature-Keys               September 2026
+
 
    *  IANA review feedback: added Designated Expert Instructions for the
       HTTP Signature-Key Scheme and Signature Error Code registries per
@@ -3353,15 +3447,6 @@ Internet-Draft               Signature-Keys                  August 2026
 
       -  Incorporated implementer feedback from Joshua Gay (sidecat),
          and added him to the acknowledgments.
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 60]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
       -  Added a mandatory egress-admission checklist to the jwks_uri
          SSRF risk bullet: HTTPS, size and timeout limits, redirect
          policy, private and loopback address rejection, DNS rebinding
@@ -3378,6 +3463,17 @@ Internet-Draft               Signature-Keys                  August 2026
 
       -  Renamed the specification from "HTTP Signature-Key Header" to
          "HTTP Signature Keys".
+
+
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 62]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
       -  Added the sigkey parameter to Accept-Signature ([RFC9421],
          Section 5) with three values: jkt (pseudonymous), uri (URI-
          identified), and x509 (PKI certificate), and registered it in
@@ -3411,13 +3507,6 @@ Internet-Draft               Signature-Keys                  August 2026
       -  Added a design note on the string versus byte sequence choice
          for hwk.
 
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 61]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
    *  draft-hardt-httpbis-signature-key-01
 
       -  Initial public draft, with four schemes: hwk, jwks_uri, x509,
@@ -3425,8 +3514,27 @@ Internet-Draft               Signature-Keys                  August 2026
 
 11.  Acknowledgments
 
-   The author would like to thank Joshua Gay and Yaron Sheffer for their
-   feedback on this specification.
+   The author would like to thank Joshua Gay, Ted Hardie, Thibault
+   Meunier, Mikkel Albrechtsen, Yaron Sheffer, and Martin Thomson for
+   their feedback on this specification.  Ted Hardie raised the question
+   of client behaviour when WWW-Authenticate and a signature challenge
+   coexist, which Section 4.7 answers.  Thibault Meunier's review shaped
+   much of -08: citing the JOSE registry itself rather than [RFC7518],
+   closing the none case on the response side, scoping the unknown-
+   scheme rejection to the selected member, restoring what keyid means
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 63]
+
+Internet-Draft               Signature-Keys               September 2026
+
+
+   alongside Signature-Key, and untangling the key cache expiry from the
+   assertion cache expiry.  Mikkel Albrechtsen raised the question of
+   adding signatures independently of one another.  Martin Thomson
+   suggested the guidance of [RFC9170], which shaped the extensibility
+   design, and this document's repository is built on his i-d-template.
 
 12.  References
 
@@ -3464,20 +3572,19 @@ Internet-Draft               Signature-Keys                  August 2026
               Thumbprint", RFC 7638, DOI 10.17487/RFC7638, September
               2015, <https://www.rfc-editor.org/info/rfc7638>.
 
-
-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 62]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
    [RFC7800]  Jones, M., Bradley, J., and H. Tschofenig, "Proof-of-
               Possession Key Semantics for JSON Web Tokens (JWTs)",
               RFC 7800, DOI 10.17487/RFC7800, April 2016,
               <https://www.rfc-editor.org/info/rfc7800>.
+
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 64]
+
+Internet-Draft               Signature-Keys               September 2026
+
 
    [RFC8126]  Cotton, M., Leiba, B., and T. Narten, "Guidelines for
               Writing an IANA Considerations Section in RFCs", BCP 26,
@@ -3488,10 +3595,6 @@ Internet-Draft               Signature-Keys                  August 2026
               Current Practices", BCP 225, RFC 8725,
               DOI 10.17487/RFC8725, February 2020,
               <https://www.rfc-editor.org/info/rfc8725>.
-
-   [RFC8941]  Nottingham, M. and P. Kamp, "Structured Field Values for
-              HTTP", RFC 8941, DOI 10.17487/RFC8941, February 2021,
-              <https://www.rfc-editor.org/info/rfc8941>.
 
    [RFC9110]  Fielding, R., Ed., Nottingham, M., Ed., and J. Reschke,
               Ed., "HTTP Semantics", STD 97, RFC 9110,
@@ -3505,6 +3608,10 @@ Internet-Draft               Signature-Keys                  August 2026
    [RFC9457]  Nottingham, M., Wilde, E., and S. Dalal, "Problem Details
               for HTTP APIs", RFC 9457, DOI 10.17487/RFC9457, July 2023,
               <https://www.rfc-editor.org/info/rfc9457>.
+
+   [RFC9651]  Nottingham, M. and P. Kamp, "Structured Field Values for
+              HTTP", RFC 9651, DOI 10.17487/RFC9651, September 2024,
+              <https://www.rfc-editor.org/info/rfc9651>.
 
    [RFC9864]  Jones, M.B. and O. Steele, "Fully-Specified Algorithms for
               JSON Object Signing and Encryption (JOSE) and CBOR Object
@@ -3522,23 +3629,24 @@ Internet-Draft               Signature-Keys                  August 2026
    [I-D.hardt-email-verification]
               Hardt, D. and S. Goto, "Email Verification Protocol", Work
               in Progress, Internet-Draft, draft-hardt-email-
-
-
-
-Hardt & Meunier          Expires 6 February 2027               [Page 63]
-
-Internet-Draft               Signature-Keys                  August 2026
-
-
-              verification-01, 7 July 2026,
+              verification-02, 25 August 2026,
               <https://datatracker.ietf.org/doc/html/draft-hardt-email-
-              verification-01>.
+              verification-02>.
+
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 65]
+
+Internet-Draft               Signature-Keys               September 2026
+
 
    [I-D.hardt-oauth-aauth-protocol]
               Hardt, D., "AAuth Protocol", Work in Progress, Internet-
-              Draft, draft-hardt-oauth-aauth-protocol-09, 4 July 2026,
+              Draft, draft-hardt-oauth-aauth-protocol-10, 6 August 2026,
               <https://datatracker.ietf.org/doc/html/draft-hardt-oauth-
-              aauth-protocol-09>.
+              aauth-protocol-10>.
 
    [I-D.richer-oauth-httpsig]
               Richer, J., Parecki, A., Bastian, P., Skokan, F., and C.
@@ -3581,9 +3689,13 @@ Internet-Draft               Signature-Keys                  August 2026
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 64]
+
+
+
+
+Hardt & Meunier           Expires 17 March 2027                [Page 66]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    [RFC8414]  Jones, M., Sakimura, N., and J. Bradley, "OAuth 2.0
@@ -3637,9 +3749,9 @@ A.1.  Why jwks_uri Instead of Inline JWKS?
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 65]
+Hardt & Meunier           Expires 17 March 2027                [Page 67]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    3.  *Caching semantics*: The JWKS endpoint can have its own cache-
@@ -3693,9 +3805,9 @@ A.3.  Why a Separate Header?
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 66]
+Hardt & Meunier           Expires 17 March 2027                [Page 68]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    4.  *Multiple signatures*: With a dictionary structure keyed by
@@ -3749,9 +3861,9 @@ A.5.  Why a Scheme Token Instead of a Header per Scheme?
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 67]
+Hardt & Meunier           Expires 17 March 2027                [Page 69]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    mechanism header would ride that established tolerance rather than a
@@ -3805,9 +3917,9 @@ Internet-Draft               Signature-Keys                  August 2026
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 68]
+Hardt & Meunier           Expires 17 March 2027                [Page 70]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    To keep the scheme registry usable despite its narrow traffic, this
@@ -3833,7 +3945,7 @@ A.6.  Why Accept-Signature-Scheme and Accept-Signature-Alg Are Separate
    new header field looks like the more invasive choice.
 
    1.  *A set cannot be expressed in a parameter.* A Structured Fields
-       parameter value is a bare Item ([RFC8941], Section 3.1.2) and
+       parameter value is a bare Item ([RFC9651], Section 3.1.2) and
        cannot be an Inner List.  A parameter can therefore name one
        scheme, never a set.  This is not a limitation of sigkey: the alg
        parameter of Accept-Signature ([RFC9421], Section 5.1) is
@@ -3861,9 +3973,9 @@ A.6.  Why Accept-Signature-Scheme and Accept-Signature-Alg Are Separate
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 69]
+Hardt & Meunier           Expires 17 March 2027                [Page 71]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    4.  *One dimension per field is the established HTTP pattern.* HTTP
@@ -3917,9 +4029,9 @@ Internet-Draft               Signature-Keys                  August 2026
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 70]
+Hardt & Meunier           Expires 17 March 2027                [Page 72]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
 A.7.  Layered Cryptographic Agility
@@ -3973,9 +4085,9 @@ A.7.  Layered Cryptographic Agility
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 71]
+Hardt & Meunier           Expires 17 March 2027                [Page 73]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    Long-term non-repudiation is out of scope for this layer and is
@@ -4029,9 +4141,9 @@ A.8.  Why the Verifier Issues the Cache Identifier
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 72]
+Hardt & Meunier           Expires 17 March 2027                [Page 74]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    4.  *Only the verifier can make the identifier self-contained.* A
@@ -4085,9 +4197,9 @@ A.9.  Precedents for Assertion Caching
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 73]
+Hardt & Meunier           Expires 17 March 2027                [Page 75]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    identifier would no longer be unpredictable (Section 7.6).  A
@@ -4105,7 +4217,7 @@ A.10.  Why Strings Instead of Byte Sequences for hwk?
 
    The hwk parameters use structured field strings rather than byte
    sequences.  JWK key values are base64url-encoded per [RFC7517], while
-   structured field byte sequences use base64 encoding per [RFC8941].
+   structured field byte sequences use base64 encoding per [RFC9651].
    Using strings allows implementations to pass JWK values directly
    without converting between base64url and base64, avoiding a potential
    source of encoding bugs.
@@ -4141,9 +4253,9 @@ A.11.  Why alg Is Required on Every Conveyed Key
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 74]
+Hardt & Meunier           Expires 17 March 2027                [Page 76]
 
-Internet-Draft               Signature-Keys                  August 2026
+Internet-Draft               Signature-Keys               September 2026
 
 
    *The set of underdetermined types grows.* A conditional rule needs a
@@ -4197,4 +4309,4 @@ Authors' Addresses
 
 
 
-Hardt & Meunier          Expires 6 February 2027               [Page 75]
+Hardt & Meunier           Expires 17 March 2027                [Page 77]

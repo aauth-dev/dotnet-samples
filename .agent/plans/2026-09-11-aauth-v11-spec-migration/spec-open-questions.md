@@ -4,6 +4,12 @@ description: Open questions and specification gaps for Dick Hardt from the draft
 
 # AAuth draft-11 WIP: questions for Dick Hardt
 
+> **Update (2026-09):** Dick answered all 18 questions in
+> [AAuth PR #162](https://github.com/dickhardt/AAuth/pull/162), merged 2026-09-14,
+> and draft-11 was published on 2026-09-25. The snapshot links below point at the
+> WIP files replaced in [`aauth-spec/v11/`](../../../aauth-spec/v11/); read those
+> lines at git commit `e6d18a3`.
+
 Date: 2026-09-11. Status: open; no answers or interpretations are assumed.
 
 Dick, we are preparing the .NET SDK migration from draft-10 to the draft-11
