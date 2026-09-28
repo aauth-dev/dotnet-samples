@@ -61,7 +61,9 @@ public sealed class AAuthTokenHolder
         var payload = TokenRefreshHandler.ReadPayloadUnsafe(token);
         var audience = request.Options.TryGetValue(AAuthRequestOptions.ResourceIdentifier, out var resource)
             ? resource : request.RequestUri?.GetLeftPart(UriPartial.Authority);
-        if (!AAuth.Tokens.AccountBinding.Matches(AAuthRequestOptions.GetAccount(request), AAuth.Tokens.AccountBinding.Read(payload))
+        // A person token never carries `account` (#person-tokens); the account binds at the resource token.
+        var personToken = (string?)AAuth.Tokens.TokenVerifier.DecodeJsonSegment(token.Split('.')[0], "header")["typ"] == AAuth.Tokens.PersonTokenBuilder.TokenType;
+        if ((!personToken && !AAuth.Tokens.AccountBinding.Matches(AAuthRequestOptions.GetAccount(request), AAuth.Tokens.AccountBinding.Read(payload)))
             || (string?)payload["aud"] != audience
             || (long?)payload["exp"] is not { } expiration || expiration <= DateTimeOffset.UtcNow.ToUnixTimeSeconds()
             || AAuth.HttpSig.SignatureKeyParser.Confirmation(payload).ComputeJwkThumbprint() != signingKeyThumbprint)

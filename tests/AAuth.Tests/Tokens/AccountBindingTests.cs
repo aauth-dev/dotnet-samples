@@ -89,6 +89,31 @@ public class AccountBindingTests
     }
 
     [Theory]
+    [InlineData(null)]
+    [InlineData("work")]
+    public void CachedPersonToken_IsSelectedForAnyAccount(string? requestedAccount)
+    {
+        // A person token never carries `account`; the resource token it earns binds the account.
+        var issuerKey = AAuthKey.Generate();
+        var agentKey = AAuthKey.Generate();
+        var agentToken = new AgentTokenBuilder
+        {
+            Issuer = "https://ap.example", Subject = "aauth:demo@ap.example",
+            Key = issuerKey, KeyId = "ap1", ConfirmationKey = agentKey,
+        }.Build();
+        var personToken = new PersonTokenBuilder
+        {
+            Issuer = "https://ps.example", Audience = "https://resource.example", Subject = "person",
+            ConfirmationKey = agentKey, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
+            Key = issuerKey, KeyId = "ps1",
+        }.Build();
+        var holder = new AAuth.Agent.AAuthTokenHolder(personToken);
+        using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "https://resource.example/data");
+        if (requestedAccount is not null) request.Options.Set(AAuth.Agent.AAuthRequestOptions.Account, requestedAccount);
+        Assert.Equal(personToken, holder.SelectForRequest(request, agentToken, agentKey.ComputeJwkThumbprint()));
+    }
+
+    [Theory]
     [InlineData(null, "agent", "key", false)]
     [InlineData("work", "agent", "key", false)]
     [InlineData("personal", "other", "key", false)]
