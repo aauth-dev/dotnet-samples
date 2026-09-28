@@ -878,7 +878,7 @@ public class ChallengeHandlerTests
 
             // Token endpoint POST — capture and return auth_token
             _onTokenPost(request);
-            var response = request.RequestUri.AbsolutePath == "/person"
+            var response = request.RequestUri!.AbsolutePath == "/person"
                 ? new JsonObject { ["person_token"] = "fake-person-token" }
                 : new JsonObject { ["auth_token"] = "fake-auth-token" };
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)

@@ -55,6 +55,17 @@ public sealed class AAuthVerificationOptions
     public Func<string, bool>? IsTrustedAuthTokenIssuer { get; init; }
 
     /// <summary>
+    /// Allow-list of Person Servers whose person tokens (<c>aa-person+jwt</c>) are
+    /// accepted. When both this and <see cref="IsTrustedPersonServer"/> are null,
+    /// person tokens use the auth-token issuer policy (three-party, where the PS
+    /// issues both). Set it in four-party, where the AS issues the auth tokens.
+    /// </summary>
+    public IReadOnlySet<string>? TrustedPersonServers { get; init; }
+
+    /// <summary>Trust policy for person-token issuers, AND-composed with <see cref="TrustedPersonServers"/>.</summary>
+    public Func<string, bool>? IsTrustedPersonServer { get; init; }
+
+    /// <summary>
     /// This resource's own identifier — used for <c>aud</c> validation on auth tokens.
     /// When null, audience is not validated by the middleware (caller must check).
     /// </summary>

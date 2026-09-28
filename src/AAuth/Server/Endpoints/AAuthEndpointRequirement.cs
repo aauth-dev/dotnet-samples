@@ -39,6 +39,12 @@ public sealed class AAuthServerOptions
     /// <summary>Trust policy for PS/AS auth-token issuers, AND-composed with the allow-list.</summary>
     public Func<string, bool>? IsTrustedAuthTokenIssuer { get; set; }
 
+    /// <summary>Allow-list of Person Servers for person tokens. Null (with no policy) ⇒ use the auth-token issuer trust.</summary>
+    public IReadOnlySet<string>? TrustedPersonServers { get; set; }
+
+    /// <summary>Trust policy for person-token issuers, AND-composed with the allow-list.</summary>
+    public Func<string, bool>? IsTrustedPersonServer { get; set; }
+
     /// <summary>Allow-list of trusted Agent Provider issuers (for <c>aa-agent+jwt</c>).</summary>
     public IReadOnlySet<string>? TrustedAgentProviderIssuers { get; set; }
 

@@ -159,7 +159,8 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         return app;
     }
 
-    private async Task<IHost> StartResourceServer(ChallengeOptions challengeOptions)
+    private async Task<IHost> StartResourceServer(ChallengeOptions challengeOptions,
+        IReadOnlySet<string>? trustedAuthTokenIssuers = null, IReadOnlySet<string>? trustedPersonServers = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
@@ -176,7 +177,8 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
             EgressPolicy = TestEgress.Policy,
             AcceptedSchemes = challengeOptions.AllowedSignatureKeySchemes?.ToArray() ?? ["jwt", "hwk"],
             ResourceIdentifier = ResourceId,
-            TrustedAuthTokenIssuers = new HashSet<string> { PsIssuer },
+            TrustedAuthTokenIssuers = trustedAuthTokenIssuers ?? new HashSet<string> { PsIssuer },
+            TrustedPersonServers = trustedPersonServers,
         });
         app.UseAAuthChallenge(challengeOptions);
         app.MapGet("/protected", () => Results.Ok("hello"));
@@ -288,6 +290,34 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
             Assert.True(response.Headers.Contains(AAuthRequirementHeader.Name));
         }
         else await Assert.ThrowsAsync<InvalidOperationException>(() => SendSigned(resource, BuildPersonToken()));
+        await resource.StopAsync();
+    }
+
+    [Theory(DisplayName = "§Person Token Usage — person-token issuer trust is separate from auth-token issuer trust")]
+    [InlineData(false, true, true)]    // four-party: auth tokens from the AS, person tokens from the PS
+    [InlineData(false, false, false)] // PS trusted for neither
+    [InlineData(true, null, true)]    // three-party: no person-server list falls back to auth-token trust
+    public async Task PersonTokenIssuerTrustIsIndependent(bool psIssuesAuthTokens, bool? psTrustedForPersonTokens, bool challenged)
+    {
+        var challenge = new ChallengeOptions
+        {
+            EgressPolicy = TestEgress.Policy, ResourceSigningKey = _resourceKey, ResourceKeyId = ResourceKid,
+            ResourceIdentifier = ResourceId, DefaultScopes = ResourceScope,
+            ScopeDescriptions = new Dictionary<string, string> { [ResourceScope] = "Read resource" },
+        };
+        using var resource = await StartResourceServer(challenge,
+            trustedAuthTokenIssuers: new HashSet<string>(psIssuesAuthTokens ? [PsIssuer] : ["https://as.example"]),
+            trustedPersonServers: psTrustedForPersonTokens switch
+            {
+                true => new HashSet<string> { PsIssuer },
+                false => new HashSet<string> { "https://other-ps.example" },
+                null => null,
+            });
+
+        using var response = await SendSigned(resource, BuildPersonToken());
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(challenged, response.Headers.Contains(AAuthRequirementHeader.Name));
         await resource.StopAsync();
     }
 

@@ -239,7 +239,10 @@ public sealed class AAuthVerificationMiddleware
                 }
                 else if (typ == PersonTokenBuilder.TokenType)
                 {
-                    if (!IssuerTrust.IsTrusted(_options.TrustedAuthTokenIssuers, _options.IsTrustedAuthTokenIssuer, resolution.VerifiedToken.Issuer))
+                    var trusted = _options.TrustedPersonServers is null && _options.IsTrustedPersonServer is null
+                        ? IssuerTrust.IsTrusted(_options.TrustedAuthTokenIssuers, _options.IsTrustedAuthTokenIssuer, resolution.VerifiedToken.Issuer)
+                        : IssuerTrust.IsTrusted(_options.TrustedPersonServers, _options.IsTrustedPersonServer, resolution.VerifiedToken.Issuer);
+                    if (!trusted)
                         throw new TokenVerificationException("Person token issuer is not trusted by policy.");
                     var audience = _options.ResourceIdentifier ?? SignatureKeyParser.Text(resolution.VerifiedToken.Payload, "aud")
                         ?? throw new TokenVerificationException("Person token requires aud.");

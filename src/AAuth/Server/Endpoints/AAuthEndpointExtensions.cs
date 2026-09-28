@@ -181,6 +181,8 @@ public static class AAuthEndpointExtensions
                     ResourceIdentifier = resourceIdentifier,
                     TrustedAuthTokenIssuers = opts.TrustedAuthTokenIssuers,
                     IsTrustedAuthTokenIssuer = opts.IsTrustedAuthTokenIssuer,
+                    TrustedPersonServers = opts.TrustedPersonServers,
+                    IsTrustedPersonServer = opts.IsTrustedPersonServer,
                     TrustedAgentProviderIssuers = opts.TrustedAgentProviderIssuers,
                     IsTrustedAgentProviderIssuer = opts.IsTrustedAgentProviderIssuer,
                 }
@@ -193,6 +195,8 @@ public static class AAuthEndpointExtensions
                     IsTrustedAgentProviderIssuer = opts.IsTrustedAgentProviderIssuer,
                     TrustedAuthTokenIssuers = opts.TrustedAuthTokenIssuers,
                     IsTrustedAuthTokenIssuer = opts.IsTrustedAuthTokenIssuer,
+                    TrustedPersonServers = opts.TrustedPersonServers,
+                    IsTrustedPersonServer = opts.IsTrustedPersonServer,
                 };
 
             RequestDelegate afterVerify = req.Mode == AAuthAccessMode.RequireAuthToken

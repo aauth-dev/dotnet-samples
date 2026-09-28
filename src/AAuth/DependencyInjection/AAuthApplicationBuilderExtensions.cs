@@ -213,6 +213,8 @@ public static class AAuthApplicationBuilderExtensions
             ExpectedAccount = pipelineOptions.AccountSelector,
             TrustedAuthTokenIssuers = pipelineOptions.TrustedAuthTokenIssuers,
             IsTrustedAuthTokenIssuer = pipelineOptions.IsTrustedAuthTokenIssuer,
+            TrustedPersonServers = pipelineOptions.TrustedPersonServers,
+            IsTrustedPersonServer = pipelineOptions.IsTrustedPersonServer,
             TrustedAgentProviderIssuers = pipelineOptions.TrustedAgentProviderIssuers,
             IsTrustedAgentProviderIssuer = pipelineOptions.IsTrustedAgentProviderIssuer,
         });
