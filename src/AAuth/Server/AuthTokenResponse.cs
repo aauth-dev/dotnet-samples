@@ -24,22 +24,44 @@ public static class AuthTokenResponse
     public static async Task<IResult> CreateTrackedAsync(Func<string> mint, DateTimeOffset ceiling,
         IJtiStore inventory, IReadOnlyCollection<TokenKey> sources, string member, TimeProvider? timeProvider = null,
         CancellationToken cancellationToken = default)
+        => await CreateTrackedCoreAsync(mint, ceiling, inventory, sources, member, timeProvider, Expired, cancellationToken);
+
+    /// <summary>
+    /// Mint and register a token for a fresh (non-pending) request. An expired
+    /// source is reported as <c>expired_&lt;parameter&gt;_token</c> or
+    /// <c>expired_jwt</c> (<see cref="AAuthProblemDetails.SourceExpired"/>), not
+    /// polling <c>expired</c>; <paramref name="ceilingExpired"/> answers a ceiling
+    /// set by something other than a source token, such as a mission's <c>expires_at</c>.
+    /// </summary>
+    public static Task<IResult> CreateTrackedAsync(Func<string> mint, DateTimeOffset ceiling,
+        IJtiStore inventory, IReadOnlyCollection<TokenRegistration> sources, string member, TimeProvider? timeProvider = null,
+        CancellationToken cancellationToken = default, IResult? ceilingExpired = null)
+    {
+        ArgumentNullException.ThrowIfNull(sources);
+        var clock = timeProvider ?? TimeProvider.System;
+        return CreateTrackedCoreAsync(mint, ceiling, inventory, sources.Select(source => source.Token).ToArray(), member, clock,
+            () => AAuthProblemDetails.SourceExpired(sources, clock.GetUtcNow(), ceilingExpired), cancellationToken);
+    }
+
+    private static async Task<IResult> CreateTrackedCoreAsync(Func<string> mint, DateTimeOffset ceiling,
+        IJtiStore inventory, IReadOnlyCollection<TokenKey> sources, string member, TimeProvider? timeProvider,
+        Func<IResult> expired, CancellationToken cancellationToken)
     {
         var clock = timeProvider ?? TimeProvider.System;
-        if (ceiling.ToUnixTimeSeconds() <= clock.GetUtcNow().ToUnixTimeSeconds()) return Expired();
+        if (ceiling.ToUnixTimeSeconds() <= clock.GetUtcNow().ToUnixTimeSeconds()) return expired();
         foreach (var source in sources)
             if (await inventory.IsRevokedAsync(source, cancellationToken))
                 return Revoked();
         string token;
         try { token = mint(); }
-        catch (AuthTokenExpiredException) { return Expired(); }
+        catch (AuthTokenExpiredException) { return expired(); }
         var payload = TokenVerifier.DecodeJsonSegment(token.Split('.')[1], "payload");
         var registration = TokenRegistration.FromPayload(payload);
         var grant = new TokenGrant(registration.Token,
             (string?)payload["aud"] ?? throw new TokenVerificationException("Issued token missing aud."), registration.ExpiresAt);
         if (registration.ExpiresAt > ceiling || !await inventory.RegisterGrantAsync(sources, grant, cancellationToken))
             return Revoked();
-        return Create(token, ceiling, clock, member);
+        return Create(token, ceiling, clock, member, expired);
     }
 
     public static IResult Create(Func<string> mint, DateTimeOffset ceiling, TimeProvider? timeProvider = null)
@@ -52,15 +74,15 @@ public static class AuthTokenResponse
     }
 
     public static IResult Create(string token, DateTimeOffset ceiling, TimeProvider? timeProvider = null)
-        => Create(token, ceiling, timeProvider, "auth_token");
+        => Create(token, ceiling, timeProvider, "auth_token", Expired);
 
-    private static IResult Create(string token, DateTimeOffset ceiling, TimeProvider? timeProvider, string member)
+    private static IResult Create(string token, DateTimeOffset ceiling, TimeProvider? timeProvider, string member, Func<IResult> expired)
     {
         var payload = TokenVerifier.DecodeJsonSegment(token.Split('.')[1], "payload");
         var expiration = payload["exp"]!.GetValue<long>();
         var remaining = expiration - (timeProvider ?? TimeProvider.System).GetUtcNow().ToUnixTimeSeconds();
         if (remaining <= 0 || expiration > ceiling.ToUnixTimeSeconds())
-            return Expired();
+            return expired();
         return Results.Json(new JsonObject { [member] = token, ["expires_in"] = remaining },
             statusCode: StatusCodes.Status200OK);
     }

@@ -133,7 +133,7 @@ public static class R3AccessTokenEndpoint
             {
                 issuance = await AgentIssuanceContext.VerifyAsync(
                     agentToken, (string?)body?["subagent_token"], (string?)body?["upstream_token"], caller.Identifier,
-                    tokenVerifier, metadata, jwks, static _ => true, context.RequestAborted);
+                    tokenVerifier, metadata, jwks, static _ => true, context.RequestAborted, TokenCredential.Agent);
             }
             catch (TokenVerificationException ex)
             {
@@ -168,10 +168,11 @@ public static class R3AccessTokenEndpoint
                 return AAuth.Server.AAuthProblemDetails.Create("invalid_resource_token", ex.Message, statusCode: StatusCodes.Status400BadRequest);
             }
 
+            IReadOnlyList<TokenRegistration> sourceRegistrations =
+                [.. issuance.SourceTokens, TokenRegistration.FromVerified(verifiedPresented, TokenCredential.Presented)];
             try
             {
-                await TokenRegistration.RegisterAsync(inventory,
-                    [.. issuance.SourceTokens, TokenRegistration.FromVerified(verifiedPresented, TokenCredential.Presented)], context.RequestAborted);
+                await TokenRegistration.RegisterAsync(inventory, sourceRegistrations, context.RequestAborted);
             }
             catch (TokenVerificationException ex) { return AAuth.Server.AAuthProblemDetails.SourceRevoked(ex); }
 
@@ -239,9 +240,12 @@ public static class R3AccessTokenEndpoint
             {
                 var authToken = await MintAndAuditAsync(mintParts, issuance, resourceIssuer, context.RequestAborted);
                 return await AuthTokenResponse.CreateTrackedAsync(() => authToken, issuance.ExpiresAt,
-                    inventory, issuance.SourceTokens.Select(source => source.Token).ToArray(), options.TimeProvider, context.RequestAborted);
+                    inventory, sourceRegistrations, "auth_token", options.TimeProvider, context.RequestAborted);
             }
-            catch (AuthTokenExpiredException) { return AuthTokenResponse.Expired(); }
+            catch (AuthTokenExpiredException)
+            {
+                return AAuth.Server.AAuthProblemDetails.SourceExpired(sourceRegistrations, options.TimeProvider.GetUtcNow());
+            }
         });
 
         // GET /pending/{id} — polled (PS federation client, signed) after the 202

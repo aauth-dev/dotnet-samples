@@ -625,9 +625,10 @@ public class AccessEndpointR3Tests
         var fixture = await R3AccessFixture.CreateAsync(timeProvider: clock, auditSink: new AdvancingAuditSink(clock));
         await using var app = fixture.App;
         using var response = await fixture.PostTokenAsync(extra: new JsonObject { ["agent_token"] = ShortAgent(fixture, clock, 120) });
-        Assert.Equal(HttpStatusCode.RequestTimeout, response.StatusCode);
+        // A fresh request names the expired parameter, not polling `expired` (#token-endpoint-error-codes).
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = (await response.Content.ReadFromJsonAsync<JsonObject>())!;
-        Assert.Equal("expired", (string?)body["error"]);
+        Assert.Equal("expired_agent_token", (string?)body["error"]);
         Assert.Null(body["auth_token"]);
     }
 

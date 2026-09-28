@@ -330,7 +330,7 @@ public static class AAuthAccessServerEndpoints
             {
                 issuance = await AgentIssuanceContext.VerifyAsync(
                     agentTokenJwt, StringMember(body, "subagent_token"), StringMember(body, "upstream_token"), personServer,
-                    tokenVerifier, metadataClient, jwksClient, static _ => true, ctx.RequestAborted);
+                    tokenVerifier, metadataClient, jwksClient, static _ => true, ctx.RequestAborted, TokenCredential.Agent);
             }
             catch (TokenVerificationException ex)
             {
@@ -372,11 +372,11 @@ public static class AAuthAccessServerEndpoints
             var requestedScope = (string?)resource.Payload["scope"] is { } scopeClaim && !string.IsNullOrWhiteSpace(scopeClaim)
                 ? scopeClaim : options.DefaultScope;
 
+            IReadOnlyList<TokenRegistration> sourceRegistrations = [.. issuance.SourceTokens, TokenRegistration.FromVerified(presented, TokenCredential.Presented)];
             IReadOnlyList<TokenKey> sourceTokens;
             try
             {
-                sourceTokens = await TokenRegistration.RegisterAsync(inventory,
-                    [.. issuance.SourceTokens, TokenRegistration.FromVerified(presented, TokenCredential.Presented)], ctx.RequestAborted);
+                sourceTokens = await TokenRegistration.RegisterAsync(inventory, sourceRegistrations, ctx.RequestAborted);
             }
             catch (TokenVerificationException ex) { return AAuthProblemDetails.SourceRevoked(ex); }
 
@@ -464,7 +464,7 @@ public static class AAuthAccessServerEndpoints
                     return await AuthTokenResponse.CreateTrackedAsync(() => Mint(
                             audience, requestedScope, agentConfirmationKey, resourceContext,
                             allowTenant, allowClaims, agentTokenExpiresAt, ceiling), ceiling,
-                            inventory, sourceTokens, options.TimeProvider, ctx.RequestAborted);
+                            inventory, sourceRegistrations, "auth_token", options.TimeProvider, ctx.RequestAborted);
             }
         });
 

@@ -36,6 +36,25 @@ public static class AAuthProblemDetails
         return new SignatureErrorResult(Errors.SignatureError.Format(Errors.SignatureErrorCode.RevokedJwt));
     }
 
+    /// <summary>
+    /// A source token of a fresh (non-pending) request expired before issuance: a
+    /// parameter token is 400 <c>expired_&lt;parameter&gt;_token</c>; the
+    /// <c>Signature-Key</c> token is 401 <c>Signature-Error: error=expired_jwt</c>.
+    /// Returns <paramref name="otherwise"/> when no source has expired.
+    /// </summary>
+    public static IResult SourceExpired(IEnumerable<TokenRegistration> sources, DateTimeOffset now, IResult? otherwise = null)
+    {
+        ArgumentNullException.ThrowIfNull(sources);
+        foreach (var source in sources.Where(source => source.ExpiresAt.ToUnixTimeSeconds() <= now.ToUnixTimeSeconds())
+            .OrderBy(source => source.Credential is null ? 0 : 1))
+        {
+            return source.Credential is { } credential
+                ? TokenFailure(new Tokens.TokenVerificationException(Errors.SignatureErrorCode.ExpiredJwt, "The token has expired."), credential)
+                : new SignatureErrorResult(Errors.SignatureError.Format(Errors.SignatureErrorCode.ExpiredJwt));
+        }
+        return otherwise ?? new SignatureErrorResult(Errors.SignatureError.Format(Errors.SignatureErrorCode.ExpiredJwt));
+    }
+
     private sealed class SignatureErrorResult(string header) : IResult
     {
         public Task ExecuteAsync(HttpContext httpContext)

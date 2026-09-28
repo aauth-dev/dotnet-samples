@@ -46,7 +46,8 @@ public sealed record AgentIssuanceContext
     public static async Task<AgentIssuanceContext> VerifyAsync(
         string agentToken, string? subagentToken, string? upstreamToken, string personServer,
         TokenVerifier verifier, MetadataClient metadata, JwksClient jwks,
-        Func<string, bool> isTrustedAuthTokenIssuer, CancellationToken cancellationToken = default)
+        Func<string, bool> isTrustedAuthTokenIssuer, CancellationToken cancellationToken = default,
+        TokenCredential? agentTokenCredential = null)
     {
         async Task<TokenVerifier.VerifiedToken> VerifyAgentAsync(string token, TokenCredential credential)
         {
@@ -67,7 +68,8 @@ public sealed record AgentIssuanceContext
         var parentId = (string?)parent.Payload["sub"]
             ?? throw new TokenVerificationException("agent_token missing sub");
         var bound = parent;
-        var sources = new List<TokenRegistration> { TokenRegistration.FromVerified(parent) };
+        // Null when the agent token signed the request; TokenCredential.Agent at an AS, where it is a body parameter.
+        var sources = new List<TokenRegistration> { TokenRegistration.FromVerified(parent, agentTokenCredential) };
         var ceiling = parent.ExpiresAt;
         UpstreamTokenValidationResult? upstreamContext = null;
         if (upstreamToken is not null)

@@ -391,14 +391,17 @@ public static class AAuthPersonServerEndpoints
             return (resource, presented);
         }
 
-        async Task<(IReadOnlyList<TokenKey>? Sources, IResult? Failure)> RegisterSourcesAsync(
+        async Task<(IReadOnlyList<TokenRegistration>? Sources, IResult? Failure)> RegisterSourcesAsync(
             AgentIssuanceContext issuance, TokenVerifier.VerifiedToken? presented, System.Threading.CancellationToken ct)
         {
             var registrations = new List<TokenRegistration>(issuance.SourceTokens);
             if (presented is not null) registrations.Add(TokenRegistration.FromVerified(presented, TokenCredential.Presented));
-            try { return (await TokenRegistration.RegisterAsync(inventory, registrations, ct), null); }
+            try { await TokenRegistration.RegisterAsync(inventory, registrations, ct); return (registrations, null); }
             catch (TokenVerificationException ex) { return (null, AAuthProblemDetails.SourceRevoked(ex)); }
         }
+
+        static IReadOnlyList<TokenKey> Keys(IReadOnlyList<TokenRegistration> sources) => sources.Select(source => source.Token).ToArray();
+        IResult? MissionExpired(string? missionS256) => missionS256 is null ? null : GovernanceEndpoints.MissionTerminated("expired");
 
         static DateTimeOffset Earliest(DateTimeOffset left, DateTimeOffset right) => left < right ? left : right;
 
@@ -464,7 +467,7 @@ public static class AAuthPersonServerEndpoints
                     return await AuthTokenResponse.CreateTrackedAsync(() => MintPerson(
                         resource, assertion.Subject, assertion.Tenant, issuance.ConfirmationKey, missionS256,
                         issuance.AgentTokenExpiresAt, ceiling), ceiling, inventory, sources, "person_token",
-                        options.TimeProvider, ctx.RequestAborted);
+                        options.TimeProvider, ctx.RequestAborted, MissionExpired(missionS256));
                 case IdentityAssertionKind.Deny:
                     return AAuthProblemDetails.Create("denied", assertion.Reason, statusCode: StatusCodes.Status403Forbidden);
                 case IdentityAssertionKind.NeedsConsent:
@@ -473,7 +476,7 @@ public static class AAuthPersonServerEndpoints
                         issuance.AgentTokenExpiresAt, missionS256, ceiling);
                     entry.PersonToken = true;
                     BindOwner(ctx, entry);
-                    entry.SourceTokens = sources;
+                    entry.SourceTokens = Keys(sources);
                     entry.UpstreamAuthorization = issuance.Upstream;
                     entry.Prompt = prompt;
                     entry.Capabilities = capabilities;
@@ -926,7 +929,7 @@ public static class AAuthPersonServerEndpoints
                 entry.PresentedToken = presentedTokenJwt;
                 entry.PersonSubject = subject;
                 entry.PersonTenant = tenant;
-                entry.SourceTokens = sourceTokens;
+                entry.SourceTokens = Keys(sourceTokens);
                 entry.UpstreamAuthorization = issuance.Upstream;
                 entry.Prompt = prompt;
                 entry.Capabilities = capabilities;
@@ -1002,7 +1005,8 @@ public static class AAuthPersonServerEndpoints
                         var response = await AuthTokenResponse.CreateTrackedAsync(() => MintAuth(
                             audience, requestedScope, issuance.ConfirmationKey, subject, tenant, granted.Roles,
                             granted.Groups, granted.AdditionalClaims, missionS256,
-                            issuance.AgentTokenExpiresAt, ceiling, account), ceiling, inventory, sourceTokens, options.TimeProvider);
+                            issuance.AgentTokenExpiresAt, ceiling, account), ceiling, inventory, sourceTokens, "auth_token",
+                            options.TimeProvider, ceilingExpired: MissionExpired(missionS256));
                         if (response is IStatusCodeHttpResult { StatusCode: StatusCodes.Status200OK })
                             await AppendMissionTokenAsync(missionLog, missionS256, audience, requestedScope, consentDetail,
                                 account, issuance.AgentId, agentKeyThumbprint);
@@ -1047,7 +1051,8 @@ public static class AAuthPersonServerEndpoints
                     return await AuthTokenResponse.CreateTrackedAsync(() => MintAuth(
                         audience, requestedScope, issuance.ConfirmationKey, subject, tenant, assertion.Roles,
                         assertion.Groups, assertion.AdditionalClaims, missionS256: null,
-                        issuance.AgentTokenExpiresAt, ceiling, account), ceiling, inventory, sourceTokens, options.TimeProvider, ctx.RequestAborted);
+                        issuance.AgentTokenExpiresAt, ceiling, account), ceiling, inventory, sourceTokens, "auth_token",
+                        options.TimeProvider, ctx.RequestAborted);
                 case IdentityAssertionKind.Deny:
                     return AAuth.Server.AAuthProblemDetails.Create("denied", assertion.Reason, statusCode: StatusCodes.Status403Forbidden);
                 case IdentityAssertionKind.NeedsConsent:
@@ -1112,7 +1117,7 @@ public static class AAuthPersonServerEndpoints
                 issuance.AgentTokenExpiresAt, federatedMission, ceiling);
             entry.ResourceContext = federatedContext;
             entry.UpstreamAuthorization = issuance.Upstream;
-            entry.SourceTokens = sourceTokens;
+            entry.SourceTokens = Keys(sourceTokens);
             entry.Prompt = prompt;
             entry.Capabilities = capabilities;
             entry.PresentedToken = presentedTokenJwt;
