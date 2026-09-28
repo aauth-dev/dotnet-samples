@@ -318,7 +318,7 @@ public sealed class SnippetCompilationTests
         throw new InvalidOperationException($"Unclassified {snippet.Language} block");
     }
 
-    private static readonly string[] RevocationRequestMembers = ["iss", "jti"];
+    private static readonly string[] RevocationRequestMembers = ["jti", "exp"];
 
     private static readonly Dictionary<string, string[]> JtiBodyExamples = new(StringComparer.Ordinal)
     {

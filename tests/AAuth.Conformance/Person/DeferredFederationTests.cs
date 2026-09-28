@@ -378,8 +378,10 @@ public class DeferredFederationTests
         {
             using var issuer = new AAuthClientBuilder(fixture.AsKey).UseJwksUri("https://as.test", AuthTokenBuilder.AccessDwk, "key")
                 .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(fixture.AccessApp.GetTestServer().CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
-            Assert.Equal(HttpStatusCode.OK, await new RevocationClient(issuer).RevokeAsync(new Uri("https://as.test/revoke"),
-                new TokenKey("https://as.test", (string)Payload(upstream)["jti"]!)));
+            var revoked = await new RevocationClient(issuer).RevokeAsync(new Uri("https://as.test/revoke"),
+                (string)Payload(upstream)["jti"]!, DateTimeOffset.FromUnixTimeSeconds((long)Payload(upstream)["exp"]!));
+            Assert.Equal(HttpStatusCode.OK, revoked.StatusCode);
+            Assert.Null(revoked.Failure);
         }
         using var answer = await fixture.Ps.PostAsJsonAsync(initial.Headers.Location, new { action = "clarification_response", clarification_response = "resource policy approved" });
         Assert.Equal(HttpStatusCode.NoContent, answer.StatusCode);

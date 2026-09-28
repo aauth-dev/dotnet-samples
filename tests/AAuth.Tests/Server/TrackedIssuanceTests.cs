@@ -35,7 +35,7 @@ public class TrackedIssuanceTests
             var accepted = await inventory.RegisterGrantAsync([grandchild], new(token, "https://last.example", expiry));
             return (token, accepted);
         }).ToArray();
-        Assert.True(await inventory.RevokeAsync(root));
+        await inventory.RevokeAsync(root, expiry);
         foreach (var (token, accepted) in await Task.WhenAll(extensions))
             if (accepted) Assert.True(await inventory.IsRevokedAsync(token));
         Assert.True(await inventory.IsRevokedAsync(grandchild));
@@ -53,7 +53,7 @@ public class TrackedIssuanceTests
         var upstream = new TokenKey("https://issuer.example", "upstream");
         var ceiling = DateTimeOffset.UtcNow.AddMinutes(2);
         Assert.True(await inventory.RegisterAsync(upstream, ceiling));
-        Assert.True(await inventory.RevokeAsync(upstream));
+        await inventory.RevokeAsync(upstream, ceiling);
         var result = await AuthTokenResponse.CreateTrackedAsync(
             () => throw new InvalidOperationException("Mint must not run for an already revoked upstream."),
             ceiling, inventory, [upstream]);

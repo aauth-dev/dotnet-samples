@@ -1,6 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Threading;
 using System.Threading.Tasks;
+using AAuth.Errors;
 using AAuth.Server.Verification;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -15,6 +19,12 @@ namespace AAuth.Server;
 /// </summary>
 public static class RevocationEndpoint
 {
+    /// <summary>
+    /// Map a verified revocation endpoint for a token-issuing server (PS, AS, or resource)
+    /// that cascades over the returned inventory, signing downstream revocations as
+    /// <paramref name="issuer"/>. Accepts any verified issuer unless <paramref name="configure"/>
+    /// narrows <see cref="AAuthRevocationOptions.IsAcceptedIssuer"/>.
+    /// </summary>
     public static IJtiStore MapAAuthIssuerRevocation(this WebApplication app, string issuer, string dwk,
         AAuth.Crypto.IAAuthKey signingKey, string signingKid, string path,
         AAuth.Discovery.AAuthEgressPolicy egressPolicy, TimeProvider clock, Action<AAuthRevocationOptions>? configure)
@@ -47,31 +57,38 @@ public static class RevocationEndpoint
                 resolver, metadata, jwks, new AAuthVerificationOptions
                 {
                     EgressPolicy = egressPolicy, AcceptedSchemes = ["jwks_uri", "jwks", "self-jwt"],
+                    RequiredComponents = ["content-type", "content-digest"],
                     Clock = () => clock.GetUtcNow(),
                 }).InvokeAsync));
+
+        async Task<RevocationDownstreamError?> RevokeAtAsync(TokenGrant grant, string recipientDwk, CancellationToken cancellationToken)
+        {
+            var document = await metadata.FetchAsync(metadata.GetUrl(grant.Resource, recipientDwk), cancellationToken);
+            if ((string?)document["revocation_endpoint"] is not { } endpoint) return RevocationDownstreamError.RevocationUnsupported;
+            var endpointUri = egressPolicy.ValidateUrl(endpoint, endpoint: true);
+            if (endpointUri.GetLeftPart(UriPartial.Authority) != new Uri(grant.Resource).GetLeftPart(UriPartial.Authority))
+                return RevocationDownstreamError.RevocationUnsupported;
+            return (await client.RevokeAsync(endpointUri, grant.Token.TokenId, grant.ExpiresAt, cancellationToken)).Failure;
+        }
+
         app.MapAAuthRevocationEndpoint(inventory, options =>
         {
-            options.AllowTokenIssuer = true;
-            options.RevokeGrantAsync = async (grant, cancellationToken) =>
-            {
-                var document = await metadata.FetchAsync(metadata.GetUrl(grant.Resource, "aauth-resource.json"), cancellationToken);
-                var endpoint = (string?)document["revocation_endpoint"];
-                if (endpoint is null) return false;
-                var endpointUri = egressPolicy.ValidateUrl(endpoint, endpoint: true);
-                if (endpointUri.GetLeftPart(UriPartial.Authority) != new Uri(grant.Resource).GetLeftPart(UriPartial.Authority))
-                    return false;
-                return await client.RevokeAsync(endpointUri, grant.Token, cancellationToken) == System.Net.HttpStatusCode.OK;
-            };
+            options.IsAcceptedIssuer = AAuthTrust.Any;
+            options.Issuer = issuer;
+            options.Clock = clock;
+            options.RevokeGrantAsync = (grant, cancellationToken) => RevokeAtAsync(grant, "aauth-resource.json", cancellationToken);
+            options.RevokeAtAccessServerAsync = (grant, cancellationToken) =>
+                RevokeAtAsync(grant, AAuth.Tokens.AuthTokenBuilder.AccessDwk, cancellationToken);
             configure?.Invoke(options);
         }, path);
         return inventory;
     }
 
     /// <summary>
-    /// Map the revocation endpoint with no authorized revokers configured (every
-    /// caller is denied — see <see cref="AAuthRevocationOptions"/>). Prefer the
+    /// Map the revocation endpoint with no accepted issuers configured (every
+    /// caller is answered <c>unsupported_iss</c> — see <see cref="AAuthRevocationOptions"/>). Prefer the
     /// <see cref="MapAAuthRevocationEndpoint(IEndpointRouteBuilder, IJtiStore, Action{AAuthRevocationOptions}, string)"/>
-    /// overload to declare who may revoke.
+    /// overload to declare whose revocations are accepted.
     /// </summary>
     public static IEndpointRouteBuilder MapAAuthRevocationEndpoint(
         this IEndpointRouteBuilder endpoints,
@@ -81,16 +98,16 @@ public static class RevocationEndpoint
 
     /// <summary>
     /// Map the revocation endpoint. The endpoint accepts a signed POST with a JSON
-    /// body <c>{ "iss": "...", "jti": "..." }</c> and marks the token revoked in the
-    /// <see cref="IJtiStore"/>.
+    /// body <c>{ "jti": "...", "exp": 1788727813 }</c> and records <c>(verified caller, jti)</c>
+    /// as revoked in the <see cref="IJtiStore"/>, seen or not, then cascades to the grants
+    /// recorded against it and answers <c>200</c> once each downstream call is terminal.
     /// </summary>
     /// <remarks>
-    /// Per §Token Revocation (L2302) the endpoint MUST verify the caller's identity
-    /// via HTTP Message Signatures and MUST only accept revocation from the issuer of
-    /// the token or a trusted Person Server. Map this endpoint <b>behind</b> AAuth
-    /// verification (<c>UseAAuthVerification</c> or a <c>RequireAAuthSignature</c>
-    /// endpoint) so the verified caller identity is available; authorize callers via
-    /// <see cref="AAuthRevocationOptions"/> (deny-by-default).
+    /// Per §Token Revocation the endpoint MUST verify the caller's identity via HTTP
+    /// Message Signatures; the issuer is that identity, never a body member. Map this
+    /// endpoint <b>behind</b> AAuth verification (<c>UseAAuthVerification</c> or
+    /// <c>UseAAuth</c>) so the verified caller identity is available; accept callers via
+    /// <see cref="AAuthRevocationOptions.IsAcceptedIssuer"/> (deny-by-default).
     /// </remarks>
     public static IEndpointRouteBuilder MapAAuthRevocationEndpoint(
         this IEndpointRouteBuilder endpoints,
@@ -106,9 +123,7 @@ public static class RevocationEndpoint
 
         endpoints.MapPost(path, async (HttpContext context) =>
         {
-            // §Token Revocation (L2302): MUST verify the caller's identity via HTTP
-            // Message Signatures. Read the verified result produced by AAuth
-            // verification middleware; absence means the request was not verified.
+            var cancellationToken = context.RequestAborted;
             var verified = context.Features.Get<AAuthVerificationResult>();
             if (verified is null)
             {
@@ -117,76 +132,81 @@ public static class RevocationEndpoint
                     statusCode: StatusCodes.Status401Unauthorized);
             }
 
-            string? issuer = null;
+            // The caller signs as a server; its verified identity is the issuer of the token it revokes.
+            var callerId = verified.Scheme is "jwks_uri" or "jwks" or "self-jwt" ? verified.Issuer : null;
+            if (callerId is null)
+                return Error(RevocationErrorCode.UnsupportedIss, "revocations are accepted only from a server signature (jwks_uri, jwks, or self-jwt).");
+            if (options.IsAcceptedIssuer?.Invoke(callerId) != true)
+                return Error(RevocationErrorCode.UnsupportedIss, $"revocations from '{callerId}' are not accepted.");
+
             string? jti = null;
+            long? exp = null;
             try
             {
-                var body = await context.Request.ReadFromJsonAsync<JsonElement>(context.RequestAborted);
+                var body = await context.Request.ReadFromJsonAsync<JsonElement>(cancellationToken);
                 if (body.ValueKind == JsonValueKind.Object)
                 {
-                    if (body.TryGetProperty("iss", out var issuerEl) && issuerEl.ValueKind == JsonValueKind.String)
-                        issuer = issuerEl.GetString();
-                    if (body.TryGetProperty("jti", out var jtiEl) && jtiEl.ValueKind == JsonValueKind.String)
-                        jti = jtiEl.GetString();
+                    if (body.TryGetProperty("jti", out var jtiElement) && jtiElement.ValueKind == JsonValueKind.String)
+                        jti = jtiElement.GetString();
+                    if (body.TryGetProperty("exp", out var expElement) && expElement.ValueKind == JsonValueKind.Number
+                        && expElement.TryGetInt64(out var seconds))
+                        exp = seconds;
                 }
             }
             catch (Exception ex) when (ex is JsonException or InvalidOperationException)
             {
-                // Malformed JSON (JsonException) or a missing/non-JSON Content-Type
-                // (InvalidOperationException from ReadFromJsonAsync) — fall through to 400.
+                // Malformed JSON or a non-JSON Content-Type: answered 400 below.
             }
 
-            if (string.IsNullOrWhiteSpace(issuer) || string.IsNullOrWhiteSpace(jti))
+            if (string.IsNullOrWhiteSpace(jti) || exp is not { } expSeconds || expSeconds <= 0)
+                return Error(RevocationErrorCode.InvalidRequest, "a JSON body with a 'jti' string and an integer 'exp' is required.");
+            if (expSeconds > (options.Clock.GetUtcNow() + options.MaxTokenLifetime + ClockSkew).ToUnixTimeSeconds())
+                return Error(RevocationErrorCode.InvalidRequest, "'exp' is later than the longest token lifetime this recipient accepts.");
+
+            var token = new TokenKey(callerId, jti);
+            var expiresAt = DateTimeOffset.FromUnixTimeSeconds(expSeconds);
+            try
             {
-                return AAuthProblemDetails.Create(
-                    "invalid_request", "a JSON body with an 'iss' string and a 'jti' string is required.",
-                    statusCode: StatusCodes.Status400BadRequest);
+                await jtiStore.RevokeAsync(token, expiresAt, cancellationToken);
             }
-
-            var token = new TokenKey(issuer, jti);
-            var callerId = verified.Scheme is "jwks_uri" or "jwks" or "self-jwt"
-                ? verified.Issuer
-                : null;
-            if (callerId is null || !options.IsAuthorizedRevoker(callerId, token))
+            catch (InvalidOperationException)
             {
-                return AAuthProblemDetails.Create(
-                    "untrusted_revoker", $"'{callerId}' is not authorized to revoke this token.",
-                    statusCode: StatusCodes.Status403Forbidden);
+                return Error(RevocationErrorCode.ServerError, "the revocation could not be recorded.");
             }
 
-            if (!await jtiStore.RevokeAsync(token, context.RequestAborted))
-                return AAuthProblemDetails.Create("unknown_token", "The token pair is not recognized.",
-                    statusCode: StatusCodes.Status404NotFound);
-
-            var complete = true;
+            var outcomes = new Dictionary<string, RevocationDownstreamError?>(StringComparer.Ordinal);
             var visited = new HashSet<TokenKey> { token };
-            var remaining = new Queue<TokenKey>();
-            remaining.Enqueue(token);
+            var federated = new HashSet<(TokenKey, string)>();
+            var remaining = new Queue<(TokenKey Token, DateTimeOffset ExpiresAt)>();
+            remaining.Enqueue((token, expiresAt));
             while (remaining.TryDequeue(out var source))
             {
-                foreach (var grant in await jtiStore.GetGrantsAsync(source, context.RequestAborted))
+                foreach (var grant in await jtiStore.GetGrantsAsync(source.Token, cancellationToken))
                 {
+                    var own = options.Issuer is null || grant.Token.Issuer == options.Issuer;
+                    // Four-party: a token another server issued against one of ours is terminated by
+                    // revoking ours at that AS, which cascades to what it issued (#revocation-cascade).
+                    if (!own && source.Token.Issuer == options.Issuer && federated.Add((source.Token, grant.Token.Issuer)))
+                        Record(outcomes, grant.Token.Issuer, await DeliverAsync(options.RevokeAtAccessServerAsync,
+                            new TokenGrant(source.Token, grant.Token.Issuer, source.ExpiresAt), cancellationToken));
                     if (!visited.Add(grant.Token)) continue;
-                    remaining.Enqueue(grant.Token);
-                    await jtiStore.RevokeAsync(grant.Token, context.RequestAborted);
-                    try
-                    {
-                        if (options.RevokeGrantAsync is null || !await options.RevokeGrantAsync(grant, context.RequestAborted))
-                            complete = false;
-                    }
-                    catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or AAuth.Errors.AAuthMetadataException
-                        or ArgumentException or InvalidOperationException || ex is OperationCanceledException && !context.RequestAborted.IsCancellationRequested)
-                    {
-                        complete = false;
-                    }
+                    remaining.Enqueue((grant.Token, grant.ExpiresAt));
+                    await jtiStore.RevokeAsync(grant.Token, grant.ExpiresAt, cancellationToken);
+                    if (own)
+                        Record(outcomes, grant.Resource, await DeliverAsync(options.RevokeGrantAsync, grant, cancellationToken));
                 }
             }
-            if (!complete)
-                return AAuthProblemDetails.Create("revocation_incomplete", "Local revocation is effective, but not every resource confirmed revocation. Retry this request.",
-                    statusCode: StatusCodes.Status502BadGateway);
 
-            // 200 OK whether the token was revoked or was already invalid.
-            return Results.Ok();
+            if (!options.ReportDownstream || outcomes.Count == 0)
+                return Results.Ok();
+            var downstream = new JsonArray();
+            foreach (var (recipient, error) in outcomes)
+            {
+                var entry = new JsonObject { ["recipient"] = recipient };
+                if (error is { } failure) entry["error"] = RevocationError.ToWireCode(failure);
+                downstream.Add(entry);
+            }
+            return Results.Json(new JsonObject { ["downstream"] = downstream }, statusCode: StatusCodes.Status200OK);
         }).WithMetadata(new AAuth.Server.Endpoints.AAuthEndpointRequirement
         {
             Mode = AAuthAccessMode.IdentityOnly,
@@ -194,5 +214,33 @@ public static class RevocationEndpoint
         });
 
         return endpoints;
+    }
+
+    private static readonly TimeSpan ClockSkew = TimeSpan.FromMinutes(5);
+
+    private static IResult Error(RevocationErrorCode code, string detail)
+        => AAuthProblemDetails.Create(RevocationError.ToWireCode(code), detail, statusCode: RevocationError.StatusCode(code));
+
+    private static async Task<RevocationDownstreamError?> DeliverAsync(
+        Func<TokenGrant, CancellationToken, Task<RevocationDownstreamError?>>? revoke, TokenGrant grant, CancellationToken cancellationToken)
+    {
+        if (revoke is null) return RevocationDownstreamError.RevocationUnsupported;
+        try
+        {
+            return await revoke(grant, cancellationToken);
+        }
+        catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or AAuthMetadataException or ArgumentException
+            or InvalidOperationException or JsonException || ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            return RevocationDownstreamError.RevocationUnavailable;
+        }
+    }
+
+    // Keep the worst outcome per recipient: unavailable (retryable) over unsupported over recorded.
+    private static void Record(Dictionary<string, RevocationDownstreamError?> outcomes, string recipient, RevocationDownstreamError? error)
+    {
+        if (!outcomes.TryGetValue(recipient, out var current) || current is null
+            || error == RevocationDownstreamError.RevocationUnavailable)
+            outcomes[recipient] = error ?? current;
     }
 }

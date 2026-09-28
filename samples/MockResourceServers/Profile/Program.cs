@@ -54,7 +54,7 @@ var app = builder.Build();
 // Well-known metadata + JWKS from the DI-registered resource metadata.
 app.MapAAuthWellKnown();
 AAuth.Server.RevocationEndpoint.MapAAuthRevocationEndpoint(app,
-    app.Services.GetRequiredService<AAuth.Server.IJtiStore>(), options => options.AllowTokenIssuer = true);
+    app.Services.GetRequiredService<AAuth.Server.IJtiStore>(), options => options.IsAcceptedIssuer = AAuth.Server.AAuthTrust.Any);
 
 // Each protected endpoint declares RequireGenericSignature admission.
 // The pipeline verifies HTTP proof and any JWT assertion without starting

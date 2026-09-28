@@ -206,6 +206,45 @@ L2593). A revoked `Signature-Key` agent token returns 401
 revocation while a request is pending (L2624). The helper is
 `AAuthProblemDetails.SourceRevoked`.
 
+### [2026-09-28] [Phase 7] Revocation wire cutover to `{jti, exp}`
+
+RESOLVED. Single cutover, no draft-10 shim (#token-revocation, L2666-L2768):
+
+- Request `{jti, exp}`, both required; the issuer is the verified server
+  signer (`jwks_uri`/`jwks`/`self-jwt`), never a body member (L2690). Body `iss`
+  is ignored. Malformed body, `jti` or `exp` is `400 invalid_request`.
+- `IJtiStore.RevokeAsync(TokenKey, DateTimeOffset expiresAt)` records unseen
+  tokens (retained until `exp` plus retention, bounded capacity). There is no
+  404 (L2703). A full inventory is `500 server_error`.
+- `AAuthRevocationOptions.IsAcceptedIssuer` replaces
+  `AllowTokenIssuer`/`TrustedPersonServers`/`IsTrustedPersonServer`. Unset
+  means deny, answered `403 unsupported_iss` (L2745). `MapAAuthIssuerRevocation`
+  defaults to `AAuthTrust.Any`. `MaxTokenLifetime` (24 h + 5 min skew) rejects
+  a far-future `exp` (L2690 MAY).
+- The endpoint records first, cascades, then answers `200` with a `downstream`
+  report (L2703, L2710). `revocation_incomplete`/502 is gone. The PS sets
+  `ReportDownstream = false`, so it answers the AP with an empty body.
+  `RevocationClient.RevokeAsync(Uri, jti, exp)` returns `RevocationResult`
+  (status, error, downstream, `Failure`).
+- Cascade: a grant the recipient issued is revoked at its resource. For a grant
+  another server (an AS) issued against one of its own tokens, it revokes that
+  token at the AS instead (L2751), so AP revocation still ends federated access.
+- `RevocationClient` covers `content-type`/`content-digest` (L2672). PS/AS/R3
+  issuer endpoints require them. The generic resource endpoint behind
+  `UseAAuth` does not yet enforce coverage.
+- Wallet sample: the PS revokes the person token it presented at the AS, and
+  the AS cascades to Wallet. Resource samples accept only the issuers of their
+  tokens.
+- Not implemented: `202` deferred revocation, `rate_limited`, per-issuer
+  entry bounds, and records of every AS a person token was presented to.
+
+### [2026-09-28] [Phase 7] `downstream` lists every recipient
+
+PROCEEDED (default: spec text). The owner brief suggested listing only failed
+downstream calls. L2710 says one entry per resource, with `error` absent on
+success, so every recipient is listed and `error` appears only on failure. The
+body is empty when nothing was downstream.
+
 ### [2026-09-28] [Phase 10] Sample resources echo person identity
 
 RESOLVED. Calendar and Wallet responses return `ps` and `sub` instead of
@@ -465,7 +504,8 @@ code for pending polls (L2623). A fresh-request error (for example
 
 ### [2026-09-28] [Phase 7] Revocation endpoint still uses the draft-10 body
 
-OPEN (Phase 7 not started). `RevocationEndpoint` accepts `{iss, jti}` and
+RESOLVED 2026-09-28 by "[Phase 7] Revocation wire cutover to `{jti, exp}`".
+Originally OPEN (Phase 7 not started). `RevocationEndpoint` accepts `{iss, jti}` and
 returns 404 for unknown tokens. Draft-11 revocation requests are `{jti, exp}`,
 with one recipient per token type and no "not found" (#token-revocation). A
 replay-detection docs test pins the `{iss, jti}` example.

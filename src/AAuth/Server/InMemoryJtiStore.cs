@@ -59,16 +59,23 @@ public sealed class InMemoryJtiStore : IJtiStore
         }
     }
 
-    public Task<bool> RevokeAsync(TokenKey token, CancellationToken ct = default)
+    public Task RevokeAsync(TokenKey token, DateTimeOffset expiresAt, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(token);
         ct.ThrowIfCancellationRequested();
         lock (_gate)
         {
             MaybeCleanup();
-            if (!_tokens.TryGetValue(token, out var entry)) return Task.FromResult(false);
-            entry.Revoked = true;
-            return Task.FromResult(true);
+            if (_tokens.TryGetValue(token, out var entry))
+            {
+                entry.Revoked = true;
+            }
+            else if (expiresAt + _retention > _clock.GetUtcNow())
+            {
+                EnsureCapacity(_tokens.Count);
+                _tokens.Add(token, new Entry(expiresAt) { Revoked = true });
+            }
+            return Task.CompletedTask;
         }
     }
 

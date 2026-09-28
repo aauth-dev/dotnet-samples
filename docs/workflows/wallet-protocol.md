@@ -90,22 +90,44 @@ sequenceDiagram
     Concierge-->>Agent: Combined result
 ```
 
-## Issuer-Qualified Revocation
+## Federated Revocation
 
 1. Enroll a new agent.
-2. Request Wallet access and retain the resource challenge.
-3. Complete consent and obtain the Wallet grant, retaining its `iss` and `jti`.
+2. Request Wallet access and retain the resource challenge and the person token
+   the agent presented.
+3. Complete consent. The PS federates to the Wallet's AS with that person token
+   as `presented_token`, and the AS issues the Wallet grant against it.
 4. Read Wallet with that grant.
-5. Try withdrawal as the agent. Wallet rejects the unauthorized revoker.
-6. Ask the sample PS to withdraw the grant. The PS signs the actual resource
-   revocation body `{"iss":"<issuer>","jti":"<id>"}`; repeating it is idempotent.
+5. Try withdrawal as the agent. An agent signs with its agent token, not as a
+   server, so Wallet answers `403 unsupported_iss`.
+6. Ask the sample PS to terminate the access it federated. The PS signs
+   `{"jti":"<person token id>","exp":<its exp>}` to the AS revocation
+   endpoint; the AS records it and revokes the auth token it issued against
+   that person token at the Wallet, then reports the Wallet in `downstream`.
+   Repeating it is idempotent.
 7. Reuse the withdrawn grant and observe the `401` rejection.
-8. Obtain a fresh grant through the normal consent callback. Its new `jti`
-   restores the Wallet read without undoing the old revocation.
+8. Obtain a fresh person token and grant through the normal consent callback.
+   Its new `jti` restores the Wallet read without undoing the old revocation.
 
-The issuer/id values above are placeholders taken from a verified grant, not
-literal credentials. The resource keys revocation by `(iss, jti)` and verifies
-the revoker independently. Revocation does not renew a token or extend its expiry.
+The id values above are placeholders taken from a verified token, not literal
+credentials. The request names no issuer: each recipient keys the revocation
+by `(verified signer, jti)`, so the PS can revoke only its own person token and
+only the AS can revoke the grant it issued. Revocation does not renew a token or
+extend its expiry.
+
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant PS
+    participant AS
+    participant Wallet
+    Agent->>PS: Terminate federated access, person_token
+    PS->>AS: Signed revocation {jti, exp} of the presented person token
+    AS->>Wallet: Signed revocation {jti, exp} of the AS-issued auth token
+    Wallet-->>AS: 200
+    AS-->>PS: 200, downstream [Wallet]
+    PS-->>Agent: 200
+```
 
 ## Verification and Sources
 

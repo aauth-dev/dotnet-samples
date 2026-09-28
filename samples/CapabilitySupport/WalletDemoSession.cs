@@ -34,7 +34,7 @@ public sealed class WalletDemoSession(string provider, string person, string wal
     {
         WalletFlow.Clarification => ["Enroll agent", "Request wallet review", "Answer AS clarification and consent", "Read approved wallet review", "Reject a charge outside the grant"],
         WalletFlow.DirectAs => ["Enroll agent", "Request concierge wallet access", "Approve upstream AS grant", "Delegate wallet read through the PS", "Reject upstream token at Wallet", "Repeat the delegated read"],
-        _ => ["Enroll agent", "Request wallet access", "Approve wallet grant", "Read wallet", "Reject agent as revoker", "PS revokes issuer-qualified grant", "Reject revoked grant", "Approve a fresh grant and recover"],
+        _ => ["Enroll agent", "Request wallet access", "Approve wallet grant", "Read wallet", "Reject agent as revoker", "PS revokes its person token at the AS", "Reject revoked grant", "Approve a fresh grant and recover"],
     };
     private string Resource => Flow == WalletFlow.DirectAs ? concierge : wallet;
     private string Path => Flow == WalletFlow.Clarification ? "/wallet/review" : "/wallet";
@@ -73,10 +73,12 @@ public sealed class WalletDemoSession(string provider, string person, string wal
             case 4:
                 using (var signed = Signed(_agentToken!))
                 {
+                    // An agent signs with its agent token, not as a server: unsupported_iss.
                     var claims = ScenarioWireHandler.Claims(_authToken!);
-                    var status = await new RevocationClient(signed).RevokeAsync(new Uri(wallet + "/revoke"),
-                        new TokenKey((string)claims["iss"]!, (string)claims["jti"]!), cancellationToken);
-                    Require(status, HttpStatusCode.Forbidden);
+                    var rejected = await new RevocationClient(signed).RevokeAsync(new Uri(wallet + "/revoke"),
+                        (string)claims["jti"]!, DateTimeOffset.FromUnixTimeSeconds((long)claims["exp"]!), cancellationToken);
+                    Require(rejected.StatusCode, HttpStatusCode.Forbidden);
+                    Result = JsonSerializer.Serialize(rejected, Pretty);
                 }
                 break;
             case 5:
@@ -85,7 +87,7 @@ public sealed class WalletDemoSession(string provider, string person, string wal
                     {
                         if (attempt > 0) await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
                         using var revoked = await signed.PostAsJsonAsync(person + "/local/wallet/revoke",
-                            new { auth_token = _authToken }, cancellationToken);
+                            new { person_token = _personToken }, cancellationToken);
                         Require(revoked.StatusCode, HttpStatusCode.OK);
                         Result = await revoked.Content.ReadAsStringAsync(cancellationToken);
                     }

@@ -63,12 +63,11 @@ var app = builder.Build();
 
 // Well-known metadata + JWKS from the DI-registered resource metadata.
 app.MapAAuthWellKnown();
+// Revocations are keyed by (verified caller, jti); only the trusted PSes issue
+// the tokens this resource accepts, so only they may revoke here.
 AAuth.Server.RevocationEndpoint.MapAAuthRevocationEndpoint(app,
     app.Services.GetRequiredService<AAuth.Server.IJtiStore>(), options =>
-    {
-        options.AllowTokenIssuer = true;
-        options.TrustedPersonServers = trustedPersonServers;
-    });
+        options.IsAcceptedIssuer = trustedPersonServers.Contains);
 
 // One declarative pipeline. Mission-aware: when the agent sends a signed
 // AAuth-Mission header, the issued resource token carries the mission object so

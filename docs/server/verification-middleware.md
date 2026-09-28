@@ -206,12 +206,11 @@ On verification failure, the middleware returns `401 Unauthorized` with a `Signa
 | `unsupported_algorithm` | Signature algorithm not supported |
 | `invalid_key` | Signature key malformed or unusable |
 | `unknown_key` | Referenced key could not be resolved |
-| `invalid_jwt` | JWT parsing/issuer verification failed, or the token was revoked |
+| `invalid_jwt` | JWT parsing/issuer verification failed |
 | `expired_jwt` | Token JWT expired |
+| `revoked_jwt` | The token's `(iss, jti)` was revoked, including a revocation recorded before the token was first seen |
 
-The PS and AS token endpoints answer a revoked `Signature-Key` token with
-`Signature-Error: revoked_jwt`; this middleware currently reports a revoked token
-as `invalid_jwt`.
+The PS and AS token endpoints answer a revoked `Signature-Key` token the same way.
 
 ## OpenTelemetry Integration
 

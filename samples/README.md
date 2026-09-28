@@ -30,7 +30,7 @@ R3) live under [MockAccessServers/](MockAccessServers/).
 ## Quick Start
 
 Both primary apps expose `/wallet-protocol` (AS clarification, direct-AS chaining,
-issuer-qualified revocation), `/catalog-gateway`, `/documents` and `/events`. See the
+federated revocation), `/catalog-gateway`, `/documents` and `/events`. See the
 [Wallet guide](../docs/workflows/wallet-protocol.md),
 [Document Release guide](../docs/workflows/document-release.md),
 [Catalog guide](../docs/workflows/catalog-gateway.md) and

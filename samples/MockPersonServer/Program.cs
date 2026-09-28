@@ -171,23 +171,25 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
     ResourceInteractionSessions = browserConsent,
 });
 
-app.MapPost("/local/wallet/revoke", async (HttpContext context, MetadataClient metadata, JwksClient jwks, TokenVerifier verifier) =>
+// Demo route: the agent asks this PS to terminate access it federated. Per
+// #revocation-cascade the PS revokes, at the AS, the person token it presented
+// there; the AS then revokes the auth tokens it issued against it at the Wallet.
+app.MapPost("/local/wallet/revoke", async (HttpContext context, MetadataClient metadata, TokenVerifier verifier) =>
 {
     var owner = context.GetAAuthVerification();
     if (owner is not { TokenType: AAuthTokenType.AgentToken, IssuerVerified: true, Agent: not null })
         return AAuthProblemDetails.Create("invalid_carrier_token", statusCode: 403);
     var body = await context.Request.ReadFromJsonAsync<JsonObject>();
-    if (body?["auth_token"] is not JsonValue value || !value.TryGetValue<string>(out var token))
+    if (body?["person_token"] is not JsonValue value || !value.TryGetValue<string>(out var personToken))
         return AAuthProblemDetails.Create("invalid_request", statusCode: 400);
     var wallet = builder.Configuration["AAuth:Wallet"] ?? "http://localhost:5003";
     TokenVerifier.VerifiedToken verified;
     try
     {
+        // Only this PS's own person token, bound to the requesting agent's key.
         var key = SignatureKeyParser.Parse(context.Request.Headers["Signature-Key"].ToString()).ConfirmationKey;
-        // The auth token names no agent; the requester proves holdership by its cnf key.
-        verified = await verifier.VerifyAuthTokenWithJwksAsync(token, metadata, jwks, wallet,
-            key, cancellationToken: context.RequestAborted);
-        if (!trustedAccessServers.Contains(verified.Issuer, StringComparer.Ordinal))
+        verified = verifier.VerifyPersonToken(personToken, psKey, wallet, key);
+        if (verified.Issuer != psIssuer)
             return AAuthProblemDetails.Create("denied", statusCode: 403);
     }
     catch (TokenVerificationException)
@@ -196,9 +198,28 @@ app.MapPost("/local/wallet/revoke", async (HttpContext context, MetadataClient m
     }
     using var signed = new AAuthClientBuilder(psKey).UseJwksUri(psIssuer, AuthTokenBuilder.PersonDwk, PsKid)
         .WithEgressPolicy(SampleEgress.Policy).Build();
-    var tokenKey = new TokenKey(verified.Issuer, (string)verified.Payload["jti"]!);
-    var status = await new RevocationClient(signed).RevokeAsync(new Uri(wallet + "/revoke"), tokenKey, context.RequestAborted);
-    return Results.Json(new { iss = tokenKey.Issuer, jti = tokenKey.TokenId, resource = wallet, status = (int)status }, statusCode: (int)status);
+    var jti = (string)verified.Payload["jti"]!;
+    var results = new JsonArray();
+    var recorded = true;
+    foreach (var accessServer in trustedAccessServers)
+    {
+        var endpoint = (await metadata.FetchAccessServerMetadataAsync(accessServer, context.RequestAborted)).RevocationEndpoint;
+        if (endpoint is null) { recorded = false; continue; }
+        var result = await new RevocationClient(signed).RevokeAsync(new Uri(endpoint), jti, verified.ExpiresAt, context.RequestAborted);
+        recorded &= result.Failure is null;
+        results.Add(new JsonObject
+        {
+            ["access_server"] = accessServer,
+            ["status"] = (int)result.StatusCode,
+            ["downstream"] = new JsonArray(result.Downstream.Select(entry => (JsonNode)new JsonObject
+            {
+                ["recipient"] = entry.Recipient,
+                ["error"] = entry.Error is { } error ? AAuth.Errors.RevocationError.ToWireCode(error) : null,
+            }).ToArray()),
+        });
+    }
+    return Results.Json(new JsonObject { ["jti"] = jti, ["exp"] = verified.ExpiresAt.ToUnixTimeSeconds(), ["revocations"] = results },
+        statusCode: recorded ? 200 : 502);
 });
 
 // -----------------------------------------------------------------------

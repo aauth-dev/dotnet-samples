@@ -73,7 +73,8 @@ See [Missions](https://explorer.aauth.dev/missions/compare). For the SDK surface
 
 An optional `account` selects a resource-owned account, distinct from directed
 person `sub`. It must agree across the request, challenge, grant and R3 document.
-Revocation identifies a grant by `(iss, jti)`, not a globally unique bare `jti`.
+Revocation identifies a grant by `(iss, jti)`, not a globally unique bare `jti`;
+`iss` is the revoker's verified signing identity, never a request member.
 See [Wallet Protocol](workflows/wallet-protocol.md), [Catalog Gateway](workflows/catalog-gateway.md)
 and [Events](workflows/events.md) for runnable rejection/recovery paths.
 

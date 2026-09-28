@@ -20,8 +20,9 @@ an exact captured-signature replay collides and is rejected, while legitimately
 distinct requests — a fresh `created`, a different carrier, a different path —
 never do. A valid, non-revoked auth token remains reusable with fresh signatures.
 Token revocation is keyed by `TokenKey(issuer, tokenId)`, never by a bare `jti`.
-The wire identity is `(iss,jti)`; both strings are required by
-[Token Revocation](../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#token-revocation).
+The request carries only `jti` and `exp`; the issuer is the caller's verified
+signing identity, so a caller revokes only its own tokens
+([Token Revocation](../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#token-revocation)).
 
 ## IJtiStore Interface
 
@@ -32,7 +33,7 @@ public interface IJtiStore
 {
     Task<bool> TryRecordRequestAsync(string requestKey, DateTimeOffset expiration, CancellationToken ct = default);
     Task<bool> RegisterAsync(TokenKey token, DateTimeOffset expiration, CancellationToken ct = default);
-    Task<bool> RevokeAsync(TokenKey token, CancellationToken ct = default);
+    Task RevokeAsync(TokenKey token, DateTimeOffset expiresAt, CancellationToken ct = default);
     Task<bool> IsRevokedAsync(TokenKey token, CancellationToken ct = default);
     Task<bool> RegisterGrantAsync(IReadOnlyCollection<TokenKey> sources, TokenGrant grant, CancellationToken ct = default);
     Task<IReadOnlyList<TokenGrant>> GetGrantsAsync(TokenKey source, CancellationToken ct = default);
@@ -41,8 +42,10 @@ public interface IJtiStore
 
 `TryRecordRequestAsync` records verified signatures in a separate namespace.
 `RegisterAsync` records verified tokens without consuming them. It cannot revive
-a revoked token. `RevokeAsync` returns false for an unknown pair and true for a
-known token, including repeated revocation. `RegisterGrantAsync` atomically checks
+a revoked token. `RevokeAsync` records the pair whether or not the store has
+seen it, so a later registration or presentation is refused; an unseen entry is
+kept until `expiresAt` plus retention, and repeating a revocation changes
+nothing. `RegisterGrantAsync` atomically checks
 all source tokens and records the issued or provided token's exact issuer, ID,
 resource recipient, and expiration. Do not populate this inventory from unverified
 JWT claims.
@@ -52,7 +55,8 @@ JWT claims.
 Thread-safe development implementation. State is lost on restart; it is not a
 durable production backend. By default, each token/request inventory admits at
 most 100,000 entries. Capacity exhaustion fails closed instead of evicting active
-revocations. Token tombstones remain for one hour after expiry, after which the
+revocations. Token entries, including revocations of unseen tokens, remain for
+one hour after their expiry, after which the
 pair becomes unknown. Cleanup runs opportunistically at most once per minute,
 or explicitly through `Cleanup()`. Inject the same `TimeProvider` as the verifier
 when testing with a fixed clock.
@@ -100,9 +104,10 @@ sufficient for these guarantees.
 ## Revocation Endpoint
 
 The endpoint verifies the caller's server identity through HTTP Message
-Signatures and authorizes it against the requested token pair. An AP-issued agent
-token identifies its holder, not the AP. Revokers use `jwks_uri`, `jwks`, or
-`self-jwt`; a token's issuer or subject claim is not substituted for caller identity.
+Signatures. Callers sign with `jwks_uri`, `jwks`, or `self-jwt`; an agent
+signing with its agent token is not a server and is answered `unsupported_iss`.
+That verified identity is the issuer of the revoked token, so the endpoint
+records `(caller, jti)` and a caller can never touch another issuer's tokens.
 
 The generic mapper is deny-by-default. Use `UseAAuth()` after routing for its
 endpoint metadata, or place it behind explicitly configured verification that
@@ -115,41 +120,60 @@ app.MapAAuthRevocationEndpoint(
     jtiStore,
     configure: options =>
     {
-        options.AllowTokenIssuer = true;
-        options.TrustedPersonServers = ["https://ps.example"];
+        options.IsAcceptedIssuer = issuer => issuer == "https://ps.example";
     },
     path: "/revoke");
 ```
 
-`AllowTokenIssuer` compares the authenticated caller to the target `TokenKey.Issuer`.
-`TrustedPersonServers` explicitly trusts a PS to revoke provided tokens.
-`IsTrustedPersonServer(caller, token)` permits a target-aware PS policy. These
-rules are OR-composed; an unconfigured generic endpoint authorizes no caller.
+`IsAcceptedIssuer` decides whose revocations the recipient accepts; assign
+`AAuthTrust.Any` to accept any verified issuer. `MaxTokenLifetime` (default 24
+hours) bounds the `exp` a revocation may name, and so how long an unseen
+revocation is held.
 
 ```http
 Content-Type: application/json
 
-{ "iss": "https://issuer.example", "jti": "token-id-to-revoke" }
+{ "jti": "token-id-to-revoke", "exp": 1788727813 }
 ```
 
-The endpoint enforces, in order:
+`exp` is the revoked token's own expiration in seconds. The endpoint enforces,
+in order:
 
 | Condition | Response |
 |-----------|----------|
-| Caller has no verified AAuth signature | `401 Unauthorized` (`invalid_request`) |
-| Missing, empty, or non-string `iss` or `jti` | `400 Bad Request` (`invalid_request`) |
-| Verified caller cannot revoke the target pair | `403 Forbidden` (`untrusted_revoker`) |
-| Authorized caller, unknown pair | `404 Not Found` (`unknown_token`) |
-| Known pair, including repeated revocation | `200 OK` |
-| Local revocation succeeded but cascade is incomplete | `502 Bad Gateway` (`revocation_incomplete`) |
+| Caller has no verified AAuth signature | `401 Unauthorized` (`invalid_request`); a failed signature is `401` with `Signature-Error` |
+| Caller is not a server, or not accepted | `403 Forbidden` (`unsupported_iss`) |
+| Malformed JSON, or missing/malformed `jti` or `exp`, or `exp` beyond `MaxTokenLifetime` | `400 Bad Request` (`invalid_request`) |
+| The revocation cannot be recorded (inventory full) | `500 Internal Server Error` (`server_error`) |
+| Recorded, seen or not, including repeated revocation | `200 OK` once every downstream revocation is terminal |
 
-`RevocationClient` accepts a signed, admitted `HttpClient` and sends the typed pair:
+There is no "not found". A recipient that cascades reports each recipient it
+revoked at; `error` is present only when that revocation did not succeed:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{ "downstream": [ { "recipient": "https://resource.example", "error": "revocation_unavailable" } ] }
+```
+
+`revocation_unsupported` means the recipient publishes no `revocation_endpoint`
+or answered `unsupported_iss`; `revocation_unavailable` means it did not answer,
+failed with `5xx`, or sent a malformed response. A `200` with nothing downstream
+has an empty body, and a PS always answers its agent provider with an empty body
+(`ReportDownstream = false`). Deferred `202` responses and `rate_limited` are not
+implemented.
+
+`RevocationClient` accepts a signed, admitted `HttpClient`, sends `{jti, exp}`
+with `content-type` and `content-digest` covered, and parses the answer:
 
 ```csharp
 var client = new RevocationClient(signedHttp);
-var status = await client.RevokeAsync(
+var result = await client.RevokeAsync(
     new Uri("https://resource.example/revoke"),
-    new TokenKey("https://issuer.example", "token-id-to-revoke"));
+    "token-id-to-revoke",
+    DateTimeOffset.FromUnixTimeSeconds(1788727813));
+// result.Failure is null once recorded; result.Downstream carries the recipient's report.
 ```
 
 Advertise it in resource metadata:
@@ -164,25 +188,28 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 
 ## Source Token Lifecycle
 
-Core PS/AS mappers and the R3 AS advertise and map `/revoke`, explicitly allowing
-an authenticated token issuer. Core PS/AS options expose `RevocationPath` and
-`ConfigureRevocation`; custom issuer hosts can use `MapAAuthIssuerRevocation`.
+Core PS/AS mappers and the R3 AS advertise and map `/revoke` and accept any
+verified issuer; their verification requires `content-type` and
+`content-digest` in the signature. Core PS/AS options expose `RevocationPath`
+and `ConfigureRevocation`; custom issuer hosts can use `MapAAuthIssuerRevocation`.
 Register `IJtiStore` in DI to supply a durable inventory and `RevocationClient`
 to supply an admitted custom signed transport. Defaults are in-memory inventory
 and a server-signed, pinned HTTP transport.
 
 The PS records the verified parent and child source tokens, retains their keys
 through consent and federation, and records grants with each exact resource
-recipient. AP revocation blocks subsequent source use and attempts every recorded
-resource revocation. Deferred delivery rechecks the original source, so a fresh
-agent token cannot revive consent tied to a revoked predecessor. The PS also
-tracks verified AS-provided grants, preserving the AS issuer in each cascade.
+recipient. A revocation is recorded first; the recipient then revokes each
+grant it issued at that grant's resource, signing as itself. A PS never revokes
+an AS-issued grant directly: where an AS issued a grant against a token of the
+PS's (a presented person token or an upstream token), the PS revokes that token
+at the AS, and the AS revokes the auth tokens it issued against it. Deferred
+delivery rechecks the original source, so a fresh agent token cannot revive
+consent tied to a revoked predecessor.
 
-Local revocation is not rolled back when delivery fails. A missing endpoint,
-unreachable resource, or resource 404 produces an incomplete result; repeated
-source revocation retries the outstanding recipient set. A resource recognizes
-tokens it has actually verified, so a never-presented grant may return 404.
-No successful cascade is claimed for that response.
+Local revocation is not rolled back when delivery fails. Repeating a revocation
+records nothing new and re-attempts every downstream revocation. A resource
+records a revocation for a token it never verified, so that grant is refused
+when it is presented later.
 
 Unreached recipients learn nothing from local JWKS verification and remain
 bounded by token lifetime, at most one hour for auth tokens. See the

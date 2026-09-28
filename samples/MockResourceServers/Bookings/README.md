@@ -49,7 +49,7 @@ parameters match the approved proposal's digest.
 | --- | --- | --- |
 | `AAuth:Issuer` | `http://localhost:5005` | Resource issuer / metadata host. |
 | `AAuth:AccessServer` | `http://localhost:5501` | R3 Access Server this resource federates to (resource-token `aud`). |
-| `AAuth:PersonServer` | `http://localhost:5100` | Person Server used by the sample revocation policy. Does not implicitly grant R3 readership. |
+| `AAuth:PersonServer` | `http://localhost:5100` | Person Server whose revocations (with the Access Server's) the sample accepts. Does not implicitly grant R3 readership. |
 | `AAuth:SignatureWindow` | `60` | Max age (seconds) for inbound RFC 9421 signatures. |
 | `Bookings:PersonServerEvaluators` | None in code; sample settings opt in `http://localhost:5100` | Explicit PS evaluation role under the logged Q4 interpretation. The designated AS is always allowed with its access metadata role. |
 

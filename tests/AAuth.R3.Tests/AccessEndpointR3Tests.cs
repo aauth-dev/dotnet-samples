@@ -652,9 +652,9 @@ public class AccessEndpointR3Tests
             .WithEgressPolicy(TestEgress.Policy)
             .WithInnerHandler(app.GetTestServer().CreateHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
             .Build();
-        var status = await new AAuth.Server.RevocationClient(provider).RevokeAsync(
-            new Uri(R3TestData.AsIssuer + "/revoke"), new AAuth.Server.TokenKey(R3TestData.ApIssuer, (string)payload["jti"]!));
-        Assert.Equal(HttpStatusCode.OK, status);
+        var result = await new AAuth.Server.RevocationClient(provider).RevokeAsync(
+            new Uri(R3TestData.AsIssuer + "/revoke"), (string)payload["jti"]!, DateTimeOffset.FromUnixTimeSeconds((long)payload["exp"]!));
+        Assert.Equal(HttpStatusCode.OK, result.StatusCode);
         await ApproveAsync(fixture, pending);
         using var denied = await fixture.PollPendingAsync(pending.Headers.Location!.ToString());
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);

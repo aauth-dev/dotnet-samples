@@ -93,7 +93,7 @@ bookingEvents.Map(app);
 app.MapAAuthWellKnown();
 var tokenInventory = app.MapAAuthIssuerRevocation(resourceUrl, ResourceTokenBuilder.ResourceDwk,
     resourceKey, ResourceKid, "/revoke", SampleEgress.Policy, TimeProvider.System,
-    options => options.IsTrustedPersonServer = (caller, token) => caller == personServerUrl && token.Issuer == accessServerUrl);
+    options => options.IsAcceptedIssuer = caller => caller == personServerUrl || caller == accessServerUrl);
 
 app.MapGet("/", () => Results.Ok(new
 {

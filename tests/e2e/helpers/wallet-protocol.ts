@@ -77,9 +77,7 @@ export function walletProtocolTests() {
         const diagram = page.getByRole('region', { name: 'Sequence diagram' });
         const expectedParticipants = flow === 'DirectAs'
           ? ['Agent', 'Agent Provider', 'Concierge', 'Wallet', 'Person Server', 'Access Server', 'User / Browser']
-          : flow === 'Revocation'
-            ? ['Agent', 'Agent Provider', 'Wallet', 'Person Server', 'User / Browser']
-            : ['Agent', 'Agent Provider', 'Wallet', 'Person Server', 'Access Server', 'User / Browser'];
+          : ['Agent', 'Agent Provider', 'Wallet', 'Person Server', 'Access Server', 'User / Browser'];
         await expect(diagram.locator('.sequence-participant')).toHaveText(expectedParticipants);
         for (let step = 1; step <= total; step++)
           expect(await diagram.locator(`[data-sequence-step="${step}"]`).count()).toBeGreaterThan(0);
@@ -107,13 +105,17 @@ export function walletProtocolTests() {
           expect(result.exchanges.map((entry: { status: number }) => entry.status)).toEqual([401, 401, 200]);
           await expect(root).toContainText('HTTP 401');
         } else {
-          await expect(root).toContainText('untrusted_revoker');
+          // draft-11: an agent is not a server revoker; the PS revokes its presented
+          // person token at the AS, which cascades to the Wallet and reports it.
+          await expect(root).toContainText('unsupported_iss');
           await expect(root).toContainText('HTTP 401');
           await expect(root).toContainText('http://localhost:5500');
           const revocations = page.locator('.wallet-exchange').filter({ hasText: 'POST http://localhost:5100/local/wallet/revoke' });
           await expect(revocations).toHaveCount(2);
           await expect(revocations.first()).toHaveAttribute('data-status', '200');
           await expect(revocations.last()).toHaveAttribute('data-status', '200');
+          await expect(revocations.last()).toContainText('http://localhost:5003');
+          await expect(revocations.last()).not.toContainText('revocation_unavailable');
         }
         for (const width of [1280, 390]) {
           await page.setViewportSize({ width, height: 844 });

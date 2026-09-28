@@ -114,7 +114,7 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
         const string Jti = "revoked-jti-1";
         var token = BuildAuthToken(Jti);
         Assert.Equal(HttpStatusCode.OK, (await Send(await SignRequest(token, FixedClock.AddSeconds(-2)))).StatusCode);
-        await _jtiStore.RevokeAsync(new TokenKey(PsIssuer, Jti));
+        await _jtiStore.RevokeAsync(new TokenKey(PsIssuer, Jti), FixedClock.AddMinutes(5));
 
         var response = await Send(await SignRequest(token, FixedClock.AddSeconds(-1)));
 

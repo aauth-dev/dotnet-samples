@@ -191,7 +191,12 @@ public static class AAuthPersonServerEndpoints
 
         var issuer = options.Issuer;
         var inventory = app.MapAAuthIssuerRevocation(issuer, AuthTokenBuilder.PersonDwk,
-            signingKey, signingKid, options.RevocationPath, options.EgressPolicy, options.TimeProvider, options.ConfigureRevocation);
+            signingKey, signingKid, options.RevocationPath, options.EgressPolicy, options.TimeProvider, revocation =>
+            {
+                // A PS answers an agent provider's revocation with an empty 200.
+                revocation.ReportDownstream = false;
+                options.ConfigureRevocation?.Invoke(revocation);
+            });
         var interactionPath = "/" + options.InteractionPath.Trim('/');
         var interactionPrefix = interactionPath.Split('/', StringSplitOptions.RemoveEmptyEntries) is { Length: > 0 } seg
             ? "/" + seg[0]

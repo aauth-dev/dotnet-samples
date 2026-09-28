@@ -474,8 +474,8 @@ Phase rule: caller's namespace only; no old issuer override or unknown-token 404
 
 ### Definition of Done
 
-- [ ] Valid unseen/repeated revocation returns 200 and blocks presentation.
-- [ ] Namespace collisions, injected issuer, forbidden roles and malformed expiry fail safely.
+- [x] Valid unseen/repeated revocation returns 200 and blocks presentation.
+- [x] Namespace collisions, injected issuer, forbidden roles and malformed expiry fail safely.
 - [ ] Resource dependency does not impose a five-minute auth expiry.
 - [ ] Registration, consent completion and revocation races are covered.
 - [ ] Cascades, notification failure and retention have controlled-clock tests.

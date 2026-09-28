@@ -28,7 +28,7 @@
     <select id="wallet-flow" @bind="_session.Flow" disabled="@(_busy || _session.Step > 0)">
         <option value="Clarification">AS clarification</option>
         <option value="DirectAs">Direct AS chaining</option>
-        <option value="Revocation">Issuer-qualified revocation</option>
+        <option value="Revocation">Federated revocation</option>
     </select>
     <div class="wallet-actions">
         <button class="wallet-next" disabled="@(!_interactive || _busy || _session.Cancelled || _session.Step == _session.Steps.Length)" @onclick="Next">
@@ -142,7 +142,7 @@
     private static readonly ProtocolParticipant[] RevocationParticipants =
     [
         new("agent", "Agent"), new("ap", "Agent Provider"), new("wallet", "Wallet"),
-        new("ps", "Person Server"), new("user", "User / Browser"),
+        new("ps", "Person Server"), new("as", "Access Server"), new("user", "User / Browser"),
     ];
     private static readonly ProtocolMessage[] RevocationSequence =
     [
@@ -150,10 +150,13 @@
         ProtocolMessage.Http(2, "network", "agent", "ps", "Obtain Wallet person token", responseLabel: "200"),
         ProtocolMessage.Http(2, "network", "agent", "wallet", "Request Wallet access", responseLabel: "401"),
         ProtocolMessage.Http(3, "network", "agent", "ps", "Exchange Wallet resource token", "202/200"),
+        ProtocolMessage.Http(3, "network", "ps", "as", "Federate with the presented person token", "202/200"),
         ProtocolMessage.Http(3, "network", "user", "ps", "Approve Wallet grant", responseLabel: "200"),
         ProtocolMessage.Http(4, "network", "agent", "wallet", "Read Wallet", responseLabel: "200"),
-        ProtocolMessage.Http(5, "network", "agent", "wallet", "Reject agent as token revoker", responseLabel: "403"),
-        ProtocolMessage.Http(6, "network", "agent", "ps", "Ask issuer to revoke qualified grant", responseLabel: "200"),
+        ProtocolMessage.Http(5, "network", "agent", "wallet", "Reject agent as revoker (unsupported_iss)", responseLabel: "403"),
+        ProtocolMessage.Http(6, "network", "agent", "ps", "Ask the PS to end federated access", responseLabel: "200"),
+        ProtocolMessage.Http(6, "network", "ps", "as", "Revoke presented person token {jti, exp}", responseLabel: "200"),
+        ProtocolMessage.Http(6, "network", "as", "wallet", "Cascade: revoke AS auth token {jti, exp}", responseLabel: "200"),
         ProtocolMessage.Http(7, "network", "agent", "wallet", "Reject revoked grant", responseLabel: "401"),
         ProtocolMessage.Http(8, "network", "agent", "wallet", "Request fresh challenge", responseLabel: "401"),
         ProtocolMessage.Http(8, "network", "agent", "ps", "Obtain fresh grant", "202/200"),
