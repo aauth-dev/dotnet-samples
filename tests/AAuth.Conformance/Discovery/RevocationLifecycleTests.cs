@@ -109,6 +109,27 @@ public class RevocationLifecycleTests
         Assert.Contains(graph.Revocations, entry => entry.Token.TokenId == (string?)Decode(grant)["jti"]);
     }
 
+    [Theory(DisplayName = "§Upstream Token Verification step 4 — an upstream token from a revoked calling agent is revoked_upstream_token")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UpstreamFromRevokedCallingAgent_IsRevokedUpstreamToken(bool federated)
+    {
+        await using var graph = await Graph.CreateAsync();
+        var caller = graph.AgentToken(FirstProvider, "caller");
+        var intermediary = graph.AgentToken(FirstResource, "intermediary", distinctKey: true);
+        var upstream = await graph.GrantAsync(caller, FirstResource, false);
+        Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(upstream, FirstResource));
+        using var ap = graph.Signed(FirstProvider, "aauth-agent.json");
+        Assert.Equal(HttpStatusCode.OK, await new RevocationClient(ap).RevokeAsync(new Uri(Person + "/revoke"),
+            new TokenKey(FirstProvider, "caller")));
+
+        using var blocked = await graph.RequestAsync(intermediary, SecondResource, federated, upstream);
+
+        var body = await blocked.Content.ReadAsStringAsync();
+        Assert.True(blocked.StatusCode == HttpStatusCode.BadRequest, $"Status={(int)blocked.StatusCode} {body}");
+        Assert.Equal("revoked_upstream_token", (string?)JsonNode.Parse(body)!["error"]);
+    }
+
     private const string Person = "https://person.example";
     private const string Access = "https://access.example";
     private const string FirstProvider = "https://first-ap.example";
