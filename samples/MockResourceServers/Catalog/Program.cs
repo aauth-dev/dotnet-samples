@@ -62,22 +62,21 @@ app.MapGet("/catalog/{service}", (string service, HttpContext context) =>
 {
     if (!catalog.TryGetValue(service, out var entries)) return Results.NotFound();
     var identity = context.GetAAuthVerification()!;
-    if (identity.TokenType == AAuthTokenType.AgentToken)
+    if (identity.TokenType is AAuthTokenType.AgentToken or AAuthTokenType.PersonToken)
     {
         var request = new R3Operations { Vocabulary = Vocabulary.OpenApiGateway, Operations = [R3Operation.OpenApiGateway(service, "list")] };
         var definitions = catalog.Keys.Select(name => new R3OperationIdentity(Vocabulary.OpenApiGateway, R3Operation.OpenApiGateway(name, "list")));
         R3Metadata.ValidateOperations(request, metadata, definitions);
         var document = descriptions[service];
-        var token = new R3Challenge { EgressPolicy = SampleEgress.Policy, ResourceIssuer = issuer, Audience = access, Key = key, KeyId = kid }
-            .BuildResourceToken(identity.Agent!, identity.Jkt!, document.Uri, document.S256);
-        context.Response.Headers[AAuthRequirementHeader.Name] = AAuthRequirementHeader.FormatAuthToken(token);
-        return AAuthProblemDetails.Create("auth_token_required", statusCode: 401);
+        // Agent token -> person-token requirement; person token -> R3 resource token naming it.
+        return new R3Challenge { EgressPolicy = SampleEgress.Policy, ResourceIssuer = issuer, Audience = access, Key = key, KeyId = kid }
+            .Challenge(context, document.Uri, document.S256);
     }
     var payload = context.GetAAuthParsedKey()!.Payload!;
     var decision = new R3Enforcement(documents, new Uri(issuer)).Evaluate(payload,
         new R3OperationIdentity(Vocabulary.OpenApiGateway, R3Operation.OpenApiGateway(service, "list")));
     return decision.Kind == R3EnforcementDecisionKind.Granted
-        ? Results.Json(new { service, operationId = "list", entries, agent = identity.Agent, issuer = identity.Issuer,
+        ? Results.Json(new { service, operationId = "list", entries, sub = identity.Subject, issuer = identity.Issuer,
             grant = payload["r3_granted"] })
         : decision.ToResult();
 });

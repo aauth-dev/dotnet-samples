@@ -68,6 +68,7 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
         {
             Issuer = PsIssuer,
             AuthTokenEndpoint = $"{PsIssuer}/token",
+            PersonTokenEndpoint = $"{PsIssuer}/person",
             Description = "**Test PS** — manage which agents act for you.",
             SigningKeys = new Dictionary<string, IAAuthKey> { [PsKid] = _psKey },
             MissionEndpoint = $"{PsIssuer}/mission",
@@ -190,6 +191,13 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
         var doc = await Get(_psHost!, "/.well-known/aauth-person.json");
         Assert.Equal($"{PsIssuer}/token", (string?)doc["auth_token_endpoint"]);
         Assert.False(doc.ContainsKey("token_endpoint"));
+    }
+
+    [Fact(DisplayName = "§Discovery — aauth-person.json has 'person_token_endpoint'")]
+    public async Task PsMetadata_HasPersonTokenEndpoint()
+    {
+        var doc = await Get(_psHost!, "/.well-known/aauth-person.json");
+        Assert.Equal($"{PsIssuer}/person", (string?)doc["person_token_endpoint"]);
     }
 
     [Fact(DisplayName = "§Discovery — aauth-person.json has 'jwks_uri'")]
@@ -321,6 +329,20 @@ public class AllRolesWellKnownMetadataTests : IAsyncLifetime
             {
                 Issuer = "https://ps.example",
                 AuthTokenEndpoint = "",
+                PersonTokenEndpoint = "https://ps.example/person",
+                SigningKeys = new Dictionary<string, IAAuthKey> { ["k"] = AAuthKey.Generate() },
+            }.Validate());
+    }
+
+    [Fact(DisplayName = "§Discovery — PS metadata requires person_token_endpoint")]
+    public void PsMetadata_RequiresPersonTokenEndpoint()
+    {
+        Assert.Throws<InvalidOperationException>(() =>
+            new AAuthPersonServerMetadataOptions
+            {
+                Issuer = "https://ps.example",
+                AuthTokenEndpoint = "https://ps.example/token",
+                PersonTokenEndpoint = "",
                 SigningKeys = new Dictionary<string, IAAuthKey> { ["k"] = AAuthKey.Generate() },
             }.Validate());
     }

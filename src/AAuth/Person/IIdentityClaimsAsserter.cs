@@ -40,14 +40,32 @@ public sealed class IdentityAssertionRequest
 {
     public string? Account { get; init; }
     public string? AgentKeyThumbprint { get; init; }
-    /// <summary>The resource URL the auth token will be audienced to (the resource token's <c>iss</c>).</summary>
+    /// <summary>
+    /// The resource the token will be audienced to: the <c>resource</c> parameter of
+    /// a person token request, or the resource token's <c>iss</c>.
+    /// </summary>
     public required string ResourceUrl { get; init; }
 
-    /// <summary>The requested scope (from the resource token).</summary>
+    /// <summary>The requested scope (from the resource token); empty for a person token request.</summary>
     public required string Scope { get; init; }
 
     /// <summary>The verified agent identifier (the agent token's <c>sub</c>).</summary>
     public required string AgentId { get; init; }
+
+    /// <summary>
+    /// <see langword="true"/> for a person token request: decide which person the
+    /// agent acts for at <see cref="ResourceUrl"/> and return that person's directed
+    /// <c>sub</c>. <see langword="false"/> for an auth token request, where the person
+    /// is fixed by the verified resource token (<see cref="Subject"/>) and the
+    /// asserter decides consent and identity claims.
+    /// </summary>
+    public bool PersonTokenRequest { get; init; }
+
+    /// <summary>The verified directed subject of an auth token request (the resource token's <c>sub</c>).</summary>
+    public string? Subject { get; init; }
+
+    /// <summary>The <c>login_hint</c> the agent passed through, if any. The PS MAY ignore it.</summary>
+    public string? LoginHint { get; init; }
 
     /// <summary>
     /// The claim names the recipient asked for. In a four-party exchange these
@@ -58,13 +76,12 @@ public sealed class IdentityAssertionRequest
     public IReadOnlyList<string>? RequiredClaims { get; init; }
 
     /// <summary>
-    /// The mission context (if any) the resource token carried. When set, the
-    /// request is governed by the mission; the asserter decides whether the
-    /// (resource, scope) is within the mission's approved intent (silent
-    /// <see cref="IdentityAssertion.Assert"/>) or needs the user
-    /// (<see cref="IdentityAssertion.NeedsConsent"/>).
+    /// The mission (<c>mission_s256</c>) governing the request, if any. The
+    /// asserter decides whether the (resource, scope) is within the mission's
+    /// approved intent (silent <see cref="IdentityAssertion.Assert"/>) or needs the
+    /// user (<see cref="IdentityAssertion.NeedsConsent"/>).
     /// </summary>
-    public MissionClaim? Mission { get; init; }
+    public string? MissionS256 { get; init; }
 
     /// <summary>
     /// The OIDC <c>prompt</c> value from the token request, if any (space-delimited
@@ -130,7 +147,7 @@ public sealed class IdentityAssertion
     /// <summary>The decision kind.</summary>
     public IdentityAssertionKind Kind { get; }
 
-    /// <summary>The directed (pairwise) user identifier — the auth token's <c>sub</c>.</summary>
+    /// <summary>The directed (pairwise) person identifier: a person token's <c>sub</c>. Ignored for auth token requests, whose <c>sub</c> is the verified resource token's.</summary>
     public string? Subject { get; }
 
     /// <summary>The asserted tenant claim, if any.</summary>

@@ -35,7 +35,7 @@ public class MissionTerminatedTests
         var client = BuildClient(new TerminatedHandler(deferUntilPoll: false));
 
         var ex = await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() =>
-            client.ExchangeAsync(Ps, TestTokens.Resource));
+            client.ExchangeAsync(Ps, TestTokens.Resource, "presented.person.token"));
 
         Assert.Equal("terminated", ex.MissionStatus);
     }
@@ -48,6 +48,7 @@ public class MissionTerminatedTests
         var ex = await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() =>
             client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
             {
+                PresentedToken = "presented.person.token",
                 PollerOptions = new DeferredPollerOptions
                 {
                     DefaultPollInterval = TimeSpan.Zero,

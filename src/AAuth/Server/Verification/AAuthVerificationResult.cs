@@ -25,13 +25,22 @@ public sealed class AAuthVerificationResult
     /// <summary>Issuer (<c>iss</c>) from the JWT, or null for non-JWT schemes.</summary>
     public string? Issuer { get; init; }
 
-    /// <summary>Agent identifier (from <c>sub</c> on agent tokens, <c>agent</c> on auth tokens).</summary>
+    /// <summary>Agent identifier: the <c>sub</c> of an agent token. Person and auth tokens name no agent.</summary>
     public string? Agent { get; init; }
 
-    /// <summary>Subject (<c>sub</c>) — pairwise identifier for the person (on auth tokens).</summary>
+    /// <summary>Subject (<c>sub</c>): the agent for an agent token, the person's directed identifier for a person or auth token.</summary>
     public string? Subject { get; init; }
     public string? Account { get; init; }
     public bool AccountVerified { get; init; }
+
+    /// <summary>The person's PS: a person token's <c>iss</c>, an auth token's <c>ps</c>.</summary>
+    public string? PersonServer { get; init; }
+
+    /// <summary>The mission the person or auth token is under (<c>mission_s256</c>).</summary>
+    public string? MissionS256 { get; init; }
+
+    /// <summary>Organization context (<c>tenant</c>); not part of the person identifier.</summary>
+    public string? Tenant { get; init; }
 
     /// <summary>Verified scopes from the token's <c>scope</c> claim (space-separated → set).</summary>
     public IReadOnlySet<string> Scopes { get; init; } = new HashSet<string>();
@@ -41,11 +50,6 @@ public sealed class AAuthVerificationResult
 
     /// <summary>Verified groups from the auth token's <c>groups</c> claim ([@!RFC9068]).</summary>
     public IReadOnlySet<string> Groups { get; init; } = new HashSet<string>();
-
-    /// <summary>The immediate upstream agent (delegator) from <c>act.agent</c>, when
-    /// the auth token carries a delegation chain; <see langword="null"/> for direct
-    /// authorization.</summary>
-    public string? ActorAgent { get; init; }
 
     /// <summary>JWK thumbprint of the signing key (available for all schemes).</summary>
     public string? Jkt { get; init; }

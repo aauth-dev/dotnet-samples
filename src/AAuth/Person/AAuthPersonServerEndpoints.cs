@@ -41,8 +41,11 @@ public sealed class AAuthPersonServerOptions
     /// </summary>
     public required IReadOnlyDictionary<string, IAAuthKey> SigningKeys { get; init; }
 
-    /// <summary>The token endpoint path. Default <c>/token</c>.</summary>
+    /// <summary>The auth token endpoint path (<c>auth_token_endpoint</c>). Default <c>/token</c>.</summary>
     public string TokenPath { get; init; } = "/token";
+
+    /// <summary>The person token endpoint path (<c>person_token_endpoint</c>). Default <c>/person</c>.</summary>
+    public string PersonTokenPath { get; init; } = "/person";
     public string RevocationPath { get; init; } = "/revoke";
     public Action<AAuthRevocationOptions>? ConfigureRevocation { get; init; }
 
@@ -218,6 +221,7 @@ public static class AAuthPersonServerEndpoints
             EgressPolicy = options.EgressPolicy,
             Issuer = options.Issuer,
             AuthTokenEndpoint = $"{issuer}{options.TokenPath}",
+            PersonTokenEndpoint = $"{issuer}{options.PersonTokenPath}",
             SigningKeys = new Dictionary<string, IAAuthKey>(options.SigningKeys),
             InteractionEndpoint = options.InteractionEndpoint ?? interactionUrl,
             MissionEndpoint = options.MissionEndpoint,
@@ -258,24 +262,63 @@ public static class AAuthPersonServerEndpoints
             "default). Configure a policy to restrict, or assign AAuthTrust.Any to declare intentional open " +
             "federation and silence this warning.");
 
-        Task<IResult> MintEntry(PersonPendingEntry entry) => AuthTokenResponse.CreateTrackedAsync(() => Mint(
-            entry.ResourceUrl, entry.AgentId, entry.Scope, entry.AgentConfirmationKey!,
-            entry.Subject ?? throw new TokenVerificationException("Approved identity assertion is missing its directed subject."), entry.Tenant, entry.Roles, entry.Groups,
-            entry.AdditionalClaims, entry.UpstreamAct, entry.Mission,
-            entry.AgentTokenExpiresAt, entry.AuthorizationExpiresAt, entry.Account), entry.ExpiresAt, inventory, entry.SourceTokens, options.TimeProvider);
+        bool IsTrustedAuthTokenIssuer(string candidate) =>
+            string.Equals(candidate, issuer, StringComparison.Ordinal)
+            || trustedAccessServers.Contains(candidate)
+            || (options.IsTrustedAccessServer?.Invoke(candidate) ?? false);
 
-        string Mint(
-            string resourceUrl, string agentId, string scope, IAAuthKey confirmationKey,
+        // Presented and upstream person tokens are this PS's own: verify them with
+        // its signing keys rather than fetching its own JWKS.
+        var selfVerifier = tokenVerifier.WithLocalIssuer(issuer, options.SigningKeys);
+
+        Task<IResult> MintEntry(PersonPendingEntry entry) => entry.PersonToken
+            ? AuthTokenResponse.CreateTrackedAsync(() => MintPerson(
+                entry.ResourceUrl,
+                entry.Subject ?? throw new TokenVerificationException("Approved identity assertion is missing its directed subject."),
+                entry.Tenant, entry.AgentConfirmationKey!, entry.MissionS256,
+                entry.AgentTokenExpiresAt, entry.AuthorizationExpiresAt),
+                entry.ExpiresAt, inventory, entry.SourceTokens, "person_token", options.TimeProvider)
+            : AuthTokenResponse.CreateTrackedAsync(() => MintAuth(
+                entry.ResourceUrl, entry.Scope, entry.AgentConfirmationKey!,
+                entry.PersonSubject ?? throw new TokenVerificationException("Pending request is missing its verified subject."),
+                entry.PersonTenant, entry.Roles, entry.Groups, entry.AdditionalClaims, entry.MissionS256,
+                entry.AgentTokenExpiresAt, entry.AuthorizationExpiresAt, entry.Account),
+                entry.ExpiresAt, inventory, entry.SourceTokens, options.TimeProvider);
+
+        string MintPerson(
+            string resource, string subject, string? tenant, IAAuthKey confirmationKey, string? missionS256,
+            DateTimeOffset agentTokenExpiresAt, DateTimeOffset? authorizationExpiresAt) =>
+            new PersonTokenBuilder
+            {
+                EgressPolicy = options.EgressPolicy,
+                Issuer = issuer,
+                Audience = resource,
+                Subject = subject,
+                Tenant = tenant,
+                ConfirmationKey = confirmationKey,
+                MissionS256 = missionS256,
+                AgentTokenExpiresAt = agentTokenExpiresAt,
+                AuthorizationExpiresAt = authorizationExpiresAt,
+                TimeProvider = options.TimeProvider,
+                Key = signingKey,
+                KeyId = signingKid,
+            }.Build();
+
+        // The auth token's sub, tenant and mission_s256 are the verified resource
+        // token's (copied from the presented token); the asserter only decides
+        // consent and releases roles/groups/additional claims.
+        string MintAuth(
+            string resourceUrl, string scope, IAAuthKey confirmationKey,
             string subject, string? tenant, IReadOnlyList<string>? roles, IReadOnlyList<string>? groups,
-            IReadOnlyDictionary<string, JsonNode?>? additionalClaims, JsonObject? upstreamAct, MissionClaim? mission,
+            IReadOnlyDictionary<string, JsonNode?>? additionalClaims, string? missionS256,
             DateTimeOffset agentTokenExpiresAt, DateTimeOffset? authorizationExpiresAt, string? account = null) =>
             new AuthTokenBuilder
             {
                 EgressPolicy = options.EgressPolicy,
-                Issuer = options.Issuer,
+                Issuer = issuer,
+                PersonServer = issuer,
                 Audience = resourceUrl,
                 Account = account,
-                Agent = agentId,
                 AgentConfirmationKey = confirmationKey,
                 AgentTokenExpiresAt = agentTokenExpiresAt,
                 AuthorizationExpiresAt = authorizationExpiresAt,
@@ -288,80 +331,175 @@ public static class AAuthPersonServerEndpoints
                 Roles = roles,
                 Groups = groups,
                 AdditionalClaims = additionalClaims,
-                Act = upstreamAct,
-                Mission = mission,
+                MissionS256 = missionS256,
             }.Build();
 
+        // Shared front half of both PS token endpoints: an agent-token carrier,
+        // a JSON body, and the verified agent / sub-agent / upstream context.
+        async Task<(AgentIssuanceContext? Issuance, JsonObject? Body, IResult? Failure)> ReadAgentRequestAsync(HttpContext ctx)
+        {
+            // Only an agent token may call a PS token endpoint — a signature-verified
+            // carrier of another type is an authorization refusal (403), not a 401.
+            if (ctx.GetAAuthTokenType() != AAuthTokenType.AgentToken)
+            {
+                return (null, null, AAuthProblemDetails.Create("invalid_request",
+                    $"expected {AAuthConstants.TokenTypes.AgentToken}, got {ctx.GetAAuthTokenType()}", statusCode: StatusCodes.Status403Forbidden));
+            }
+            var parsed = ctx.GetAAuthParsedKey()!;
+            // §Single-Level Depth: a sub-agent cannot request on its own behalf.
+            if (parsed.Payload?["parent_agent"] is not null)
+            {
+                return (null, null, AAuthProblemDetails.Create("invalid_request",
+                    "a sub-agent MUST NOT request authorization directly; the parent mediates (§Sub-Agents)", statusCode: StatusCodes.Status400BadRequest));
+            }
+            JsonObject? body;
+            try { body = await TokenRequestBody.ReadAsync(ctx.Request, tokenVerifier); }
+            catch (System.Text.Json.JsonException)
+            {
+                return (null, null, AAuthProblemDetails.Create("invalid_request", "body is not valid JSON", statusCode: StatusCodes.Status400BadRequest));
+            }
+            catch (TokenVerificationException ex) { return (null, null, AAuthProblemDetails.TokenFailure(ex)); }
+            if (body is null)
+                return (null, null, AAuthProblemDetails.Create("invalid_request", "missing JSON body", statusCode: StatusCodes.Status400BadRequest));
+            try
+            {
+                var issuance = await AgentIssuanceContext.VerifyAsync(parsed.Jwt!,
+                    StringMember(body, "subagent_token"), StringMember(body, "upstream_token"), issuer,
+                    selfVerifier, metadataClient, jwksClient, IsTrustedAuthTokenIssuer, ctx.RequestAborted);
+                return (issuance, body, null);
+            }
+            catch (TokenVerificationException ex) { return (null, body, AAuthProblemDetails.TokenFailure(ex)); }
+        }
+
+        // §Resource Token Verification steps 1–3: the resource token is audienced to
+        // the recipient, bound to the key the issued token will carry, names this PS
+        // as `ps`, and pairs with the presented token by jti/ps/sub/mission/tenant.
+        async Task<(TokenVerifier.VerifiedToken Resource, TokenVerifier.VerifiedToken Presented)> VerifyPairAsync(
+            string resourceTokenJwt, string presentedTokenJwt, string expectedAudience, string agentJkt,
+            System.Threading.CancellationToken ct)
+        {
+            TokenVerifier.VerifiedToken resource;
+            try
+            {
+                resource = await tokenVerifier.VerifyResourceTokenAsync(resourceTokenJwt, expectedAudience, agentJkt,
+                    metadataClient, jwksClient, expectedPersonServer: issuer, cancellationToken: ct);
+                _ = resource.Account;
+            }
+            catch (TokenVerificationException ex)
+            { throw new TokenVerificationException(ex.Message, ex) { Credential = TokenCredential.Resource }; }
+            var presented = await selfVerifier.VerifyPresentedTokenAsync(presentedTokenJwt, resource, metadataClient, jwksClient, ct);
+            return (resource, presented);
+        }
+
+        async Task<(IReadOnlyList<TokenKey>? Sources, IResult? Failure)> RegisterSourcesAsync(
+            AgentIssuanceContext issuance, TokenVerifier.VerifiedToken? presented, System.Threading.CancellationToken ct)
+        {
+            var registrations = new List<TokenRegistration>(issuance.SourceTokens);
+            if (presented is not null) registrations.Add(TokenRegistration.FromVerified(presented, TokenCredential.Presented));
+            try { return (await TokenRegistration.RegisterAsync(inventory, registrations, ct), null); }
+            catch (TokenVerificationException ex) { return (null, AAuthProblemDetails.SourceRevoked(ex)); }
+        }
+
+        static DateTimeOffset Earliest(DateTimeOffset left, DateTimeOffset right) => left < right ? left : right;
+
         // -------------------------------------------------------------------
-        // POST {TokenPath} — the PS token endpoint (§Agent Token Request).
+        // POST {PersonTokenPath} — the PS person token endpoint (§Person Token Endpoint).
+        // -------------------------------------------------------------------
+        app.MapPost(options.PersonTokenPath, async (HttpContext ctx) =>
+        {
+            var (issuance, body, failure) = await ReadAgentRequestAsync(ctx);
+            if (failure is not null) return failure;
+
+            var resource = StringMember(body, "resource");
+            if (resource is null || !AAuthUrl.IsHttpsOrLoopback(resource, options.EgressPolicy)
+                || !Uri.TryCreate(resource, UriKind.Absolute, out var resourceUri)
+                || !string.IsNullOrEmpty(resourceUri.Query) || !string.IsNullOrEmpty(resourceUri.Fragment))
+            {
+                return AAuthProblemDetails.Create("invalid_request", "resource must be an HTTPS server identifier", statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            string? missionS256 = null;
+            if (body!.ContainsKey("mission_s256"))
+            {
+                if (issuance!.Upstream is not null)
+                    return AAuthProblemDetails.Create("invalid_request", "mission_s256 is not sent with upstream_token; the upstream token carries the mission", statusCode: StatusCodes.Status400BadRequest);
+                missionS256 = StringMember(body, "mission_s256");
+                if (!MissionReference.IsValid(missionS256))
+                    return AAuthProblemDetails.Create("invalid_request", "mission_s256 is malformed", statusCode: StatusCodes.Status400BadRequest);
+            }
+            missionS256 ??= issuance!.Upstream?.MissionS256;
+            DateTimeOffset? missionExpiresAt = null;
+            if (missionS256 is not null)
+            {
+                try { missionExpiresAt = (await ValidateMissionAsync(missionS256, issuance!.AgentId, issuance.Upstream)).ExpiresAt; }
+                catch (AAuthTokenExchangeException ex)
+                { return AAuthProblemDetails.Create(ex.ErrorCode, ex.Detail, statusCode: ex.StatusCode); }
+            }
+            var ceiling = missionExpiresAt is { } missionExpiry ? Earliest(issuance!.ExpiresAt, missionExpiry) : issuance!.ExpiresAt;
+
+            var (registered, sourceFailure) = await RegisterSourcesAsync(issuance, presented: null, ctx.RequestAborted);
+            if (sourceFailure is not null) return sourceFailure;
+            var sources = registered!;
+
+            var prompt = StringMember(body, "prompt");
+            var capabilities = ParseStringArray(body["capabilities"] as JsonArray);
+            var assertion = await asserter.AssertAsync(new IdentityAssertionRequest
+            {
+                PersonTokenRequest = true,
+                ResourceUrl = resource,
+                Scope = string.Empty,
+                AgentId = issuance.AgentId,
+                AgentKeyThumbprint = issuance.ConfirmationKey.ComputeJwkThumbprint(),
+                MissionS256 = missionS256,
+                LoginHint = StringMember(body, "login_hint"),
+                Prompt = prompt,
+                Capabilities = capabilities,
+                UpstreamAuthorization = issuance.Upstream,
+            }, ctx.RequestAborted);
+            switch (assertion.Kind)
+            {
+                case IdentityAssertionKind.Assert:
+                    if (string.IsNullOrWhiteSpace(assertion.Subject))
+                        return AAuthProblemDetails.Create("server_error", "The identity asserter returned no directed subject.", statusCode: StatusCodes.Status500InternalServerError);
+                    return await AuthTokenResponse.CreateTrackedAsync(() => MintPerson(
+                        resource, assertion.Subject, assertion.Tenant, issuance.ConfirmationKey, missionS256,
+                        issuance.AgentTokenExpiresAt, ceiling), ceiling, inventory, sources, "person_token",
+                        options.TimeProvider, ctx.RequestAborted);
+                case IdentityAssertionKind.Deny:
+                    return AAuthProblemDetails.Create("denied", assertion.Reason, statusCode: StatusCodes.Status403Forbidden);
+                case IdentityAssertionKind.NeedsConsent:
+                default:
+                    var entry = pending.Add(resource, string.Empty, issuance.AgentId, issuance.ConfirmationKey,
+                        issuance.AgentTokenExpiresAt, missionS256, ceiling);
+                    entry.PersonToken = true;
+                    BindOwner(ctx, entry);
+                    entry.SourceTokens = sources;
+                    entry.UpstreamAuthorization = issuance.Upstream;
+                    entry.Prompt = prompt;
+                    entry.Capabilities = capabilities;
+                    return Pending202(ctx, entry, options, interactionUrl);
+            }
+        });
+
+        // -------------------------------------------------------------------
+        // POST {TokenPath} — the PS auth token endpoint (§Auth Token Request).
         // -------------------------------------------------------------------
         app.MapPost(options.TokenPath, async (HttpContext ctx) =>
         {
-            var parsed = ctx.GetAAuthParsedKey()!;
+            var (issuance, body, failure) = await ReadAgentRequestAsync(ctx);
+            if (failure is not null) return failure;
 
-            // Only an agent token may exchange — a signature-verified carrier of
-            // the wrong type is an authorization refusal (403), not a 401
-            // signature failure (§Error Responses reserves 401 + Signature-Error
-            // for the §Verification steps, which already passed).
-            if (ctx.GetAAuthTokenType() != AAuthTokenType.AgentToken)
-            {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_carrier_token", $"expected {AAuthConstants.TokenTypes.AgentToken}, got {ctx.GetAAuthTokenType()}", statusCode: StatusCodes.Status403Forbidden);
-            }
-
-            var agentId = (string?)parsed.Payload?["sub"];
-            if (string.IsNullOrEmpty(agentId))
-            {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_carrier_token", "missing sub", statusCode: StatusCodes.Status403Forbidden);
-            }
-
-            TokenVerifier.VerifiedToken verifiedAgent;
-            try
-            {
-                verifiedAgent = await tokenVerifier.VerifyWithJwksAsync(
-                    parsed.Jwt!, metadataClient, jwksClient,
-                    AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk, expectedAudience: null);
-                if (verifiedAgent.ExpiresAt.ToUnixTimeSeconds() <= options.TimeProvider.GetUtcNow().ToUnixTimeSeconds())
-                    return AuthTokenResponse.Expired();
-            }
-            catch (TokenVerificationException ex)
-            {
-                return AAuthProblemDetails.TokenFailure(ex);
-            }
-
-            JsonObject? body;
-            try
-            {
-                body = await TokenRequestBody.ReadAsync(ctx.Request, tokenVerifier);
-            }
-            catch (System.Text.Json.JsonException)
-            {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "body is not valid JSON", statusCode: StatusCodes.Status400BadRequest);
-            }
-            catch (TokenVerificationException ex) { return AAuthProblemDetails.TokenFailure(ex); }
-
-            var resourceTokenJwt = (string?)body?["resource_token"];
+            var resourceTokenJwt = StringMember(body, "resource_token");
             if (string.IsNullOrEmpty(resourceTokenJwt))
-            {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "missing resource_token", statusCode: StatusCodes.Status400BadRequest);
-            }
+                return AAuthProblemDetails.Create("invalid_request", "missing resource_token", statusCode: StatusCodes.Status400BadRequest);
+            var presentedTokenJwt = StringMember(body, "presented_token");
+            if (string.IsNullOrEmpty(presentedTokenJwt))
+                return AAuthProblemDetails.Create("invalid_request", "missing presented_token", statusCode: StatusCodes.Status400BadRequest);
 
-            var upstreamTokenJwt = (string?)body?["upstream_token"];
-            var subagentTokenJwt = (string?)body?["subagent_token"];
-
-            // §Agent Token Request: optional consent-shaping params. `prompt` is an
-            // OIDC string; `capabilities` is the request-body equivalent of the
-            // AAuth-Capabilities header. Both are tolerant — unknown values flow to
-            // the asserter, which MAY honor or ignore them.
+            // §Auth Token Request: optional consent-shaping params. Both are tolerant —
+            // unknown values flow to the asserter, which MAY honor or ignore them.
             var prompt = StringMember(body, "prompt");
-            var capabilities = ParseStringArray(body?["capabilities"] as JsonArray);
-
-            // §Single-Level Depth: a PS MUST reject a token request signed by an
-            // agent whose own token carries `parent_agent` — a sub-agent cannot
-            // request authorization on its own behalf; its parent must mediate.
-            if (parsed.Payload?["parent_agent"] is not null)
-            {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "a sub-agent MUST NOT request authorization directly; the parent mediates (§Sub-Agents)", statusCode: StatusCodes.Status400BadRequest);
-            }
+            var capabilities = ParseStringArray(body!["capabilities"] as JsonArray);
 
             // Route on the resource token's `aud` (peeked, not trusted; both
             // branches fully verify the token afterwards). `aud == this PS` →
@@ -375,12 +513,11 @@ public static class AAuthPersonServerEndpoints
             if (resourceAudience is not null
                 && !string.Equals(resourceAudience, issuer, StringComparison.Ordinal))
             {
-                return await HandleFederatedAsync(
-                    ctx, parsed, verifiedAgent, agentId, resourceTokenJwt, upstreamTokenJwt, subagentTokenJwt, resourceAudience, prompt, capabilities);
+                return await HandleFederatedAsync(ctx, issuance!, resourceTokenJwt, presentedTokenJwt, body,
+                    resourceAudience, prompt, capabilities);
             }
 
-            return await HandleThreePartyAsync(
-                ctx, parsed, verifiedAgent, agentId, resourceTokenJwt, upstreamTokenJwt, subagentTokenJwt, prompt, capabilities);
+            return await HandleThreePartyAsync(ctx, issuance!, resourceTokenJwt, presentedTokenJwt, prompt, capabilities);
         });
 
         // -------------------------------------------------------------------
@@ -397,12 +534,10 @@ public static class AAuthPersonServerEndpoints
 
             return await entry.Lifecycle.ExecuteAsync(ctx, entry.PendingExpiresAt, options.TimeProvider, async () =>
             {
-                // Mission-gate entries resolve through the consent seam + the
-                // clarification protocol (§Agent Token Request gate 2c).
                 if (entry.ExpiresAt.ToUnixTimeSeconds() <= options.TimeProvider.GetUtcNow().ToUnixTimeSeconds())
                     return AuthTokenResponse.Expired();
-                if (entry.Mission is { } pendingMission
-                    && await app.Services.GetRequiredService<IMissionStore>().GetAsync(pendingMission.S256)
+                if (entry.MissionS256 is { } pendingMission
+                    && await app.Services.GetRequiredService<IMissionStore>().GetAsync(pendingMission)
                         is { State: MissionState.Terminated })
                 {
                     entry.FederationCancellation.Cancel();
@@ -443,8 +578,8 @@ public static class AAuthPersonServerEndpoints
                     return Pending202(ctx, entry, options, interactionUrl);
                 }
 
-                // Three-party entries resolve when the host's interaction page marks
-                // the verdict against the shared store.
+                // Three-party and person-token entries resolve when the host's
+                // interaction page marks the verdict against the shared store.
                 switch (entry.Status)
                 {
                     case PersonPendingStatus.Allowed:
@@ -487,10 +622,12 @@ public static class AAuthPersonServerEndpoints
                 var action = StringMember(body, "action");
                 var answer = StringMember(body, "clarification_response");
                 var updatedResourceToken = StringMember(body, "resource_token");
+                var updatedPresentedToken = StringMember(body, "presented_token");
                 if (entry.Status != PersonPendingStatus.AwaitingClarification
                     || action is not ("clarification_response" or "updated_request")
                     || (action == "clarification_response" && (string.IsNullOrWhiteSpace(answer) || body!.ContainsKey("resource_token")))
-                    || (action == "updated_request" && (string.IsNullOrWhiteSpace(updatedResourceToken) || body!.ContainsKey("clarification_response")))
+                    || (action == "updated_request" && (string.IsNullOrWhiteSpace(updatedResourceToken)
+                        || string.IsNullOrWhiteSpace(updatedPresentedToken) || body!.ContainsKey("clarification_response")))
                     || (body!.ContainsKey("justification") && StringMember(body, "justification") is null))
                 {
                     return AAuthProblemDetails.Create("invalid_request", "Expected a matching clarification action and payload on an awaiting clarification request.", statusCode: StatusCodes.Status400BadRequest);
@@ -504,38 +641,20 @@ public static class AAuthPersonServerEndpoints
                 {
                     try
                     {
-                        var replacement = await tokenVerifier.VerifyResourceTokenAsync(updatedResourceToken!,
-                            entry.ResourceAudience!, entry.AgentId, entry.ResourceKeyThumbprint!, metadataClient, jwksClient,
-                            expectedApprover: issuer);
-                        if (!string.Equals((string?)replacement.Payload["iss"], entry.ResourceUrl, StringComparison.Ordinal))
-                            throw new TokenVerificationException("Replacement resource issuer differs from the original.");
+                        var (replacement, _) = await VerifyPairAsync(updatedResourceToken!, updatedPresentedToken!,
+                            entry.ResourceAudience!, entry.ResourceKeyThumbprint!, ctx.RequestAborted);
+                        RequireSameRequest(entry.ResourceContext!, replacement.Payload);
                         if (!AccountBinding.Matches(entry.Account, replacement.Account))
-                            throw new TokenVerificationException("Changing account requires a new authorization request.");
-                        var replacementMission = MissionClaim.FromPayload(replacement.Payload, options.EgressPolicy);
-                        if (entry.FederationMissionConsent is { Task.IsCompleted: false }
-                            && (replacementMission?.Approver != entry.Mission?.Approver || replacementMission?.S256 != entry.Mission?.S256))
-                            throw new TokenVerificationException("Changing a pending mission requires a new authorization request.");
-                        if (entry.UpstreamAuthorization?.Mission is { } upstreamMission
-                            && (replacementMission?.Approver != upstreamMission.Approver || replacementMission.S256 != upstreamMission.S256))
-                            throw new TokenVerificationException("Replacement must retain the upstream mission.");
-                        if (replacementMission is not null)
-                        {
-                            try { await ValidateMissionAsync(replacementMission, entry.ConsentAgentId, entry.UpstreamAuthorization); }
-                            catch (AAuthTokenExchangeException ex)
-                            {
-                                return AAuthProblemDetails.Create(ex.ErrorCode, ex.Detail, statusCode: ex.StatusCode);
-                            }
-                        }
+                            throw new TokenVerificationException("Changing account requires a new authorization request.")
+                            { Credential = TokenCredential.Resource };
                         var replacementInteraction = await PersonResourceInteraction.CreateAsync(replacement.Payload,
                             updatedResourceToken!, options.EgressPolicy, ctx.RequestAborted);
                         entry.Scope = (string?)replacement.Payload["scope"] ?? options.DefaultScope;
-                        entry.Mission = replacementMission;
                         entry.ResourceToken = updatedResourceToken;
+                        entry.PresentedToken = updatedPresentedToken;
                         entry.ResourceContext = (JsonObject)replacement.Payload.DeepClone();
                         entry.ResourceInteraction = replacementInteraction;
                         if (replacementInteraction is not null) entry.InteractionUrl = interactionUrl + "/resource";
-                        entry.MissionGate = replacementMission is not null && (entry.AgentConfirmationKey is not null
-                            || entry.FederationMissionConsent is { Task.IsCompleted: false });
                     }
                     catch (TokenVerificationException ex)
                     {
@@ -550,8 +669,8 @@ public static class AAuthPersonServerEndpoints
                     entry.ClarificationAnswers.Add(answer);
                 }
                 var missionLog = app.Services.GetRequiredService<IMissionLog>();
-                if (entry.Mission is not null) await missionLog.AppendAsync(new MissionLogEntry(
-                    entry.Mission.S256, MissionLogEntryKind.Clarification, DateTimeOffset.UtcNow)
+                if (entry.MissionS256 is not null) await missionLog.AppendAsync(new MissionLogEntry(
+                    entry.MissionS256, MissionLogEntryKind.Clarification, DateTimeOffset.UtcNow)
                 {
                     Detail = answer ?? "updated_request",
                 });
@@ -561,7 +680,7 @@ public static class AAuthPersonServerEndpoints
                 entry.Status = PersonPendingStatus.Pending;
                 entry.Browser.Renew();
                 entry.FederationAnswer?.TrySetResult(action == "updated_request"
-                    ? ClarificationResponse.Update(updatedResourceToken!, StringMember(body, "justification"))
+                    ? ClarificationResponse.Update(updatedResourceToken!, updatedPresentedToken!, StringMember(body, "justification"))
                     : ClarificationResponse.Respond(answer!));
                 return Results.NoContent();
             });
@@ -583,8 +702,8 @@ public static class AAuthPersonServerEndpoints
                 entry.Lifecycle.Cancel();
                 entry.FederationCancellation.Cancel();
                 var missionLog = app.Services.GetRequiredService<IMissionLog>();
-                if (entry.Mission is not null) await missionLog.AppendAsync(new MissionLogEntry(
-                    entry.Mission.S256, MissionLogEntryKind.Clarification, DateTimeOffset.UtcNow)
+                if (entry.MissionS256 is not null) await missionLog.AppendAsync(new MissionLogEntry(
+                    entry.MissionS256, MissionLogEntryKind.Clarification, DateTimeOffset.UtcNow)
                 {
                     Detail = "cancelled",
                 });
@@ -595,31 +714,29 @@ public static class AAuthPersonServerEndpoints
         return app;
 
         // ---- mission-gate resolution (gate 2c) -----------------------------
-        async Task<StoredMission> ValidateMissionAsync(MissionClaim mission, string consentAgentId, UpstreamTokenValidationResult? upstream)
+        // §Person Token Endpoint / §Resource Token Verification step 4: the mission
+        // exists, is active, and belongs to this agent — or, when chaining, is the
+        // mission the verified upstream token carries under this PS.
+        async Task<StoredMission> ValidateMissionAsync(string missionS256, string consentAgentId, UpstreamTokenValidationResult? upstream)
         {
-            var stored = await app.Services.GetRequiredService<IMissionStore>().GetAsync(mission.S256);
-            if (stored is null || stored.Approver != issuer || mission.Approver != issuer)
-                throw new AAuthTokenExchangeException("invalid_mission", "Mission approval is not known to this Person Server.", 403, true);
-            var authorized = stored.Agent == consentAgentId;
-            if (!authorized && upstream is { IsValid: true, Verified: not null } && upstream.Mission == mission)
-            {
-                authorized = upstream.Agent == stored.Agent;
-                for (var ancestor = upstream.Verified.Payload["act"] as JsonObject; ancestor is not null; ancestor = ancestor["act"] as JsonObject)
-                    authorized |= (string?)ancestor["agent"] == stored.Agent;
-            }
+            var stored = await app.Services.GetRequiredService<IMissionStore>().GetAsync(missionS256);
+            var authorized = stored is not null && stored.Approver == issuer
+                && (stored.Agent == consentAgentId
+                    || upstream is { IsValid: true } && upstream.MissionS256 == missionS256);
             if (!authorized)
-                throw new AAuthTokenExchangeException("invalid_mission", "Mission approval does not authorize this agent or verified delegation.", 403, true);
-            if (stored.State == MissionState.Terminated)
-                throw new AAuthTokenExchangeException("mission_terminated", null, 403, true);
+                throw new AAuthTokenExchangeException("mission_not_found", null, StatusCodes.Status404NotFound, true);
+            if (stored!.State == MissionState.Terminated
+                || stored.ExpiresAt is { } expiresAt && expiresAt.ToUnixTimeSeconds() <= options.TimeProvider.GetUtcNow().ToUnixTimeSeconds())
+                throw new AAuthTokenExchangeException("mission_terminated", null, StatusCodes.Status403Forbidden, true);
             return stored;
         }
 
         async Task<(MissionTokenConsentDecision Decision, string Detail)> ReviewMissionAsync(MissionTokenConsentContext context)
         {
-            var approval = await ValidateMissionAsync(context.Mission, context.ConsentAgentId ?? context.AgentId, context.UpstreamAuthorization);
+            var approval = await ValidateMissionAsync(context.MissionS256, context.ConsentAgentId ?? context.AgentId, context.UpstreamAuthorization);
             if (context.Stage == MissionTokenConsentStage.Gate
                 && await app.Services.GetRequiredService<IMissionLog>().HasPriorConsentAsync(
-                    context.Mission.S256, context.ResourceUrl, context.Scope, account: context.Account,
+                    context.MissionS256, context.ResourceUrl, context.Scope, account: context.Account,
                     agentId: context.AgentId, agentKeyThumbprint: context.AgentKeyThumbprint))
                 return (MissionTokenConsentDecision.Grant(), "PriorConsent");
             return (await app.Services.GetRequiredService<IMissionTokenConsent>().ReviewAsync(context with { ValidatedApproval = approval }), "InScope");
@@ -627,16 +744,15 @@ public static class AAuthPersonServerEndpoints
 
         async Task<IResult> ResolveMissionGateAsync(HttpContext ctx, PersonPendingEntry entry)
         {
-            if (entry.Mission is null)
+            if (entry.MissionS256 is not { } s256)
                 return Pending202(ctx, entry, options, interactionUrl);
-            try { await ValidateMissionAsync(entry.Mission, entry.ConsentAgentId, entry.UpstreamAuthorization); }
+            try { await ValidateMissionAsync(s256, entry.ConsentAgentId, entry.UpstreamAuthorization); }
             catch (AAuthTokenExchangeException ex)
             {
                 entry.FederationMissionConsent?.TrySetException(ex);
                 return AAuthProblemDetails.Create(ex.ErrorCode, ex.Detail, statusCode: ex.StatusCode);
             }
             var missionLog = app.Services.GetRequiredService<IMissionLog>();
-            var s256 = entry.Mission!.S256;
 
             switch (entry.Status)
             {
@@ -672,7 +788,7 @@ public static class AAuthPersonServerEndpoints
                         Account = entry.Account,
                         AgentKeyThumbprint = entry.ResourceKeyThumbprint,
                         Scope = entry.Scope,
-                        Mission = entry.Mission!,
+                        MissionS256 = s256,
                         Stage = MissionTokenConsentStage.Resolve,
                         Prompt = entry.Prompt,
                         Capabilities = entry.Capabilities,
@@ -718,15 +834,15 @@ public static class AAuthPersonServerEndpoints
             var response = await MintEntry(entry);
             if (!entry.MissionResolved && response is IStatusCodeHttpResult { StatusCode: StatusCodes.Status200OK })
             {
-                await AppendMissionTokenAsync(app.Services.GetRequiredService<IMissionLog>(), entry.Mission!.S256,
+                await AppendMissionTokenAsync(app.Services.GetRequiredService<IMissionLog>(), entry.MissionS256!,
                     entry.ResourceUrl, entry.Scope, "OutOfScope", entry.Account, entry.AgentId, entry.ResourceKeyThumbprint);
                 entry.MissionResolved = true;
             }
             return response;
         }
 
-        // Mint an out-of-scope grant: the asserter supplies identity, the verdict
-        // is cached on the entry so a repeat poll is idempotent.
+        // Mint an out-of-scope grant: the asserter decides consent and releases
+        // identity claims; the verdict is cached on the entry so a repeat poll is idempotent.
         async Task<IResult> ResolveMissionGrantAsync(PersonPendingEntry entry)
         {
             if (entry.FederationMissionConsent is not null)
@@ -738,7 +854,8 @@ public static class AAuthPersonServerEndpoints
                 AgentKeyThumbprint = entry.ResourceKeyThumbprint,
                 Scope = entry.Scope,
                 AgentId = entry.ConsentAgentId,
-                Mission = entry.Mission,
+                Subject = entry.PersonSubject,
+                MissionS256 = entry.MissionS256,
                 Prompt = entry.Prompt,
                 Capabilities = entry.Capabilities,
                 ResourceContext = entry.ResourceContext,
@@ -750,8 +867,6 @@ public static class AAuthPersonServerEndpoints
                 entry.DenyReason = asserted.Reason ?? "identity assertion failed";
                 return AAuth.Server.AAuthProblemDetails.Create("denied", entry.DenyReason, statusCode: StatusCodes.Status403Forbidden);
             }
-            entry.Subject = asserted.Subject;
-            entry.Tenant = asserted.Tenant;
             entry.Roles = asserted.Roles;
             entry.Groups = asserted.Groups;
             entry.AdditionalClaims = asserted.AdditionalClaims;
@@ -759,254 +874,83 @@ public static class AAuthPersonServerEndpoints
             return await MintMissionEntryAsync(entry);
         }
 
-        // Silent grant (gate 2a / 2b): the asserter supplies identity, the SDK
-        // mints immediately without parking.
-        async Task<IResult> MintMissionGrantAsync(
-            string audience, string boundAgentId, string scope, IAAuthKey confirmationKey,
-            JsonObject? upstreamAct, MissionClaim mission, string? prompt,
-            IReadOnlyList<string>? capabilities, string agentId,
-            DateTimeOffset agentTokenExpiresAt, DateTimeOffset authorizationExpiresAt, IReadOnlyList<TokenKey> sources,
-            string? account, string consentDetail, JsonObject resourceContext, UpstreamTokenValidationResult? upstreamAuthorization)
-        {
-            var asserted = await asserter.AssertAsync(new IdentityAssertionRequest
-            {
-                ResourceUrl = audience,
-                Account = account,
-                AgentKeyThumbprint = confirmationKey.ComputeJwkThumbprint(),
-                Scope = scope,
-                AgentId = agentId,
-                Mission = mission,
-                Prompt = prompt,
-                Capabilities = capabilities,
-                ResourceContext = resourceContext,
-                UpstreamAuthorization = upstreamAuthorization,
-            });
-            if (asserted.Kind != IdentityAssertionKind.Assert)
-            {
-                return AAuth.Server.AAuthProblemDetails.Create("denied", asserted.Reason, statusCode: StatusCodes.Status403Forbidden);
-            }
-            var response = await AuthTokenResponse.CreateTrackedAsync(() => Mint(
-                audience, boundAgentId, scope, confirmationKey,
-                asserted.Subject ?? throw new TokenVerificationException("Approved identity assertion is missing its directed subject."), asserted.Tenant, asserted.Roles,
-                asserted.Groups, asserted.AdditionalClaims, upstreamAct, mission,
-                agentTokenExpiresAt, authorizationExpiresAt, account), authorizationExpiresAt, inventory, sources, options.TimeProvider);
-            if (response is IStatusCodeHttpResult { StatusCode: StatusCodes.Status200OK })
-                await AppendMissionTokenAsync(app.Services.GetRequiredService<IMissionLog>(), mission.S256,
-                    audience, scope, consentDetail, account, boundAgentId, confirmationKey.ComputeJwkThumbprint());
-            return response;
-        }
-
-        // ---- three-party (PS-asserted) handler -----------------------------
+        // ---- three-party (PS-issued) handler --------------------------------
         async Task<IResult> HandleThreePartyAsync(
-            HttpContext ctx, SignatureKeyParser.ParsedSignatureKeyInfo parsed,
-            TokenVerifier.VerifiedToken verifiedAgent,
-            string agentId, string resourceTokenJwt, string? upstreamTokenJwt, string? subagentTokenJwt,
+            HttpContext ctx, AgentIssuanceContext issuance, string resourceTokenJwt, string presentedTokenJwt,
             string? prompt = null, IReadOnlyList<string>? capabilities = null, PersonPendingEntry? resumed = null)
         {
-            // Call-chaining: validate upstream_token (§Upstream Token Verification).
-            JsonObject? upstreamAct = null;
-            UpstreamTokenValidationResult? upstreamAuthorization = null;
-            var agentTokenExpiresAt = verifiedAgent.ExpiresAt;
-            var authorizationExpiresAt = verifiedAgent.ExpiresAt;
-            var sourceRegistrations = new List<TokenRegistration> { TokenRegistration.FromVerified(verifiedAgent) };
-            if (!string.IsNullOrEmpty(upstreamTokenJwt))
-            {
-                var validator = app.Services.GetRequiredService<UpstreamTokenValidator>();
-                var intermediaryResourceUrl = (string?)parsed.Payload?["iss"]
-                    ?? throw new InvalidOperationException("Agent token missing 'iss' claim.");
-                // §Upstream Token Verification step 2 (L1742): trust an upstream
-                // issuer only when the PS "previously brokered" it (self) or is
-                // "authorized to extend" it — explicitly: it is in the configured
-                // TrustedAccessServers set or accepted by IsTrustedAccessServer.
-                // Unlike first-hop federation (#4, open by default — L1581), four-party
-                // CALL-CHAINING extension is a tighter, explicit decision (higher
-                // delegation stakes): an unconfigured PS trusts only its own
-                // (three-party) upstreams.
-                Func<string, bool> isTrustedUpstreamIssuer = upstreamIss =>
-                {
-                    var normalized = upstreamIss;
-                    return string.Equals(normalized, issuer, StringComparison.Ordinal)
-                        || trustedAccessServers.Contains(normalized)
-                        || (options.IsTrustedAccessServer?.Invoke(normalized) ?? false);
-                };
-
-                var result = await validator.ValidateAsync(
-                    upstreamTokenJwt,
-                    expectedAudience: intermediaryResourceUrl,
-                    isTrustedUpstreamIssuer);
-                if (!result.IsValid)
-                {
-                    return AAuth.Server.AAuthProblemDetails.Create("invalid_upstream_token", result.Error, statusCode: StatusCodes.Status400BadRequest);
-                }
-                if (result.ExpiresAt!.Value.ToUnixTimeSeconds() <= options.TimeProvider.GetUtcNow().ToUnixTimeSeconds())
-                    return AAuthProblemDetails.Create("invalid_upstream_token", "Upstream token has expired.");
-
-                // Four-party PS mission gate (§Call Chaining, draft-08 L1765): a PS
-                // MUST require a mission to remain in the loop for four-party upstream
-                // chains. The upstream token's `dwk` authoritatively identifies its
-                // issuer (resolved and signature-verified during validation above):
-                // `aauth-access.json` ⇒ an AS (four-party), `aauth-person.json` ⇒ a PS
-                // (three-party). When a four-party upstream carries no mission, no
-                // `mission.approver` anchors the chain to any PS — the intermediary
-                // should have routed to its AS, not here — so reject. A three-party
-                // upstream (PS-issued) without a mission stays allowed.
-                if (result.MissionApprover is null
-                    && string.Equals(result.IssuerDwk, AuthTokenBuilder.AccessDwk, StringComparison.Ordinal))
-                {
-                    return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "call chaining from a four-party (AS-issued) upstream token requires a mission so the PS stays in the loop (§Call Chaining)", statusCode: StatusCodes.Status400BadRequest);
-                }
-
-                // Compose the downstream act node (§Delegation Chain): act.agent is
-                // the upstream token's agent (the delegator), nesting the upstream's
-                // own chain as act.act. `upstreamAct` now holds this complete node.
-                upstreamAct = ActChainBuilder.BuildNestedAct(result.Agent!, result.UpstreamAct, options.EgressPolicy);
-                upstreamAuthorization = result;
-                sourceRegistrations.Add(TokenRegistration.FromVerified(result.Verified!));
-                if (result.ExpiresAt!.Value < authorizationExpiresAt)
-                    authorizationExpiresAt = result.ExpiresAt.Value;
-            }
-
-            // §Sub-Agents (parent-mediated authorization): when a subagent_token is
-            // present the signing agent is the parent. Verify the sub-agent token,
-            // confirm its parent_agent names the signer, and bind the issued auth
-            // token to the SUB-AGENT's key/identity while recording the parent in
-            // the act chain. Consent is still evaluated for the parent (the agentId).
-            var boundAgentId = agentId;
-            var boundConfirmationKey = parsed.ConfirmationKey!;
-            var boundUpstreamAct = upstreamAct;
-            string? subagentJkt = null;
-            if (!string.IsNullOrEmpty(subagentTokenJwt))
-            {
-                string subagentId;
-                IAAuthKey subagentKey;
-                string? subagentParent;
-                try
-                {
-                    var verifiedSub = await tokenVerifier.VerifyWithJwksAsync(
-                        subagentTokenJwt, metadataClient, jwksClient,
-                        AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk, expectedAudience: null);
-                    if (verifiedSub.ExpiresAt.ToUnixTimeSeconds() <= options.TimeProvider.GetUtcNow().ToUnixTimeSeconds())
-                        throw new TokenVerificationException(AAuth.Errors.SignatureErrorCode.ExpiredJwt, "Sub-agent token has expired.");
-                    sourceRegistrations.Add(TokenRegistration.FromVerified(verifiedSub));
-                    subagentId = (string?)verifiedSub.Payload["sub"]
-                        ?? throw new TokenVerificationException("subagent_token missing sub");
-                    var subCnf = verifiedSub.Payload["cnf"]?["jwk"] as JsonObject
-                        ?? throw new TokenVerificationException("subagent_token missing cnf.jwk");
-                    subagentKey = KeyFactory.FromPublicJwk(subCnf);
-                    subagentParent = (string?)verifiedSub.Payload["parent_agent"]
-                        ?? throw new TokenVerificationException("subagent_token missing parent_agent");
-                    agentTokenExpiresAt = verifiedSub.ExpiresAt;
-                    if (agentTokenExpiresAt < authorizationExpiresAt)
-                        authorizationExpiresAt = agentTokenExpiresAt;
-                }
-                catch (TokenVerificationException ex)
-                {
-                    return AAuthProblemDetails.TokenFailure(ex, TokenCredential.Subagent);
-                }
-
-                // The signing agent (parent) MUST be named by subagent_token.parent_agent.
-                if (!string.Equals(subagentParent, agentId, StringComparison.Ordinal))
-                {
-                    return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "subagent_token.parent_agent does not name the signing agent (§Sub-Agents)", statusCode: StatusCodes.Status400BadRequest);
-                }
-
-                boundAgentId = subagentId;
-                boundConfirmationKey = subagentKey;
-                subagentJkt = subagentKey.ComputeJwkThumbprint();
-                // Sub-agent act (§Delegation Chain): act.agent = the parent (the
-                // signer that mediates). When the parent presented an upstream_token,
-                // `upstreamAct` already records the parent as its top node; otherwise
-                // build a single-node act naming the parent.
-                boundUpstreamAct = ActChainBuilder.BuildNestedAct(agentId, upstreamAct, options.EgressPolicy);
-            }
-
-            // Verify the resource token (§Resource Token Verification). `iss`
-            // becomes the auth token's `aud`; `scope` is echoed; `mission` (if
-            // present) governs the request. For a sub-agent the resource token's
-            // `agent`/`agent_jkt` bind to the sub-agent (step 6 uses subagentJkt).
-            string audience;
-            string? account;
-            var requestedScope = options.DefaultScope;
-            MissionClaim? missionClaim;
-            JsonObject resourceContext;
+            TokenVerifier.VerifiedToken resource, presented;
             try
             {
-                var verified = await tokenVerifier.VerifyResourceTokenAsync(
-                    resourceTokenJwt,
-                    expectedAudience: options.Issuer,
-                    expectedAgentId: boundAgentId,
-                    expectedAgentJkt: parsed.ConfirmationKey!.ComputeJwkThumbprint(),
-                    metadataClient, jwksClient,
-                    expectedApprover: issuer,
-                    subagentAgentJkt: subagentJkt);
+                (resource, presented) = await VerifyPairAsync(resourceTokenJwt, presentedTokenJwt, issuer,
+                    issuance.ConfirmationKey.ComputeJwkThumbprint(), ctx.RequestAborted);
+                issuance.ValidateResourceContext(resource.Payload);
+            }
+            catch (TokenVerificationException ex)
+            {
+                return AAuthProblemDetails.TokenFailure(ex, TokenCredential.Resource);
+            }
 
-
-                audience = (string?)verified.Payload["iss"]
-                    ?? throw new TokenVerificationException("resource_token missing iss");
-                resourceContext = (JsonObject)verified.Payload.DeepClone();
-                account = verified.Account;
-                var scopeClaim = (string?)verified.Payload["scope"];
-                if (!string.IsNullOrWhiteSpace(scopeClaim))
+            // `iss` becomes the auth token's `aud`; `sub`, `tenant` and `mission_s256`
+            // are copied from the resource token (verified equal to the presented token's).
+            var audience = resource.Issuer;
+            var resourceContext = (JsonObject)resource.Payload.DeepClone();
+            var account = resource.Account;
+            var subject = resource.Subject!;
+            var tenant = resource.Tenant;
+            var missionS256 = resource.MissionS256;
+            var requestedScope = (string?)resource.Payload["scope"] is { } scopeClaim && !string.IsNullOrWhiteSpace(scopeClaim)
+                ? scopeClaim : options.DefaultScope;
+            var ceiling = Earliest(issuance.ExpiresAt, presented.ExpiresAt);
+            if (missionS256 is not null)
+            {
+                try
                 {
-                    requestedScope = scopeClaim;
+                    if ((await ValidateMissionAsync(missionS256, issuance.AgentId, issuance.Upstream)).ExpiresAt is { } missionExpiry)
+                        ceiling = Earliest(ceiling, missionExpiry);
                 }
-                missionClaim = MissionClaim.FromPayload(verified.Payload, options.EgressPolicy);
-                if (upstreamAuthorization?.Mission is { } upstreamMission
-                    && (upstreamMission.Approver != issuer || missionClaim?.Approver != upstreamMission.Approver
-                        || missionClaim.S256 != upstreamMission.S256))
-                    throw new TokenVerificationException("Downstream request must retain its upstream mission and governing PS.");
-            }
-            catch (TokenVerificationException ex)
-            {
-                var expired = ex.Code == AAuth.Errors.SignatureErrorCode.ExpiredJwt;
-                // §Token Endpoint Error Codes: invalid_resource_token / expired_resource_token
-                // are 400 (a bad token parameter in the body), not 401 — 401 is reserved for
-                // request-signature failures carrying a Signature-Error header (§Authentication
-                // Errors). The request itself was correctly signed; the resource_token is invalid.
-                return AAuth.Server.AAuthProblemDetails.Create(expired ? "expired_resource_token" : "invalid_resource_token", ex.Message, statusCode: StatusCodes.Status400BadRequest);
+                catch (AAuthTokenExchangeException ex)
+                { return AAuthProblemDetails.Create(ex.ErrorCode, ex.Detail, statusCode: ex.StatusCode); }
             }
 
-            IReadOnlyList<TokenKey> sourceTokens;
-            try { sourceTokens = await TokenRegistration.RegisterAsync(inventory, sourceRegistrations, ctx.RequestAborted); }
-            catch (TokenVerificationException ex)
+            var (registered, sourceFailure) = await RegisterSourcesAsync(issuance, presented, ctx.RequestAborted);
+            if (sourceFailure is not null) return sourceFailure;
+            var sourceTokens = registered!;
+
+            PersonPendingEntry Park()
             {
-                return AAuthProblemDetails.Create("invalid_agent_token", ex.Message, statusCode: 400);
+                var entry = resumed ?? pending.Add(audience, requestedScope, issuance.AgentId, issuance.ConfirmationKey,
+                    issuance.AgentTokenExpiresAt, missionS256, ceiling);
+                BindOwner(ctx, entry);
+                BindResource(entry, resourceTokenJwt, issuer, issuance.ConfirmationKey);
+                entry.PresentedToken = presentedTokenJwt;
+                entry.PersonSubject = subject;
+                entry.PersonTenant = tenant;
+                entry.SourceTokens = sourceTokens;
+                entry.UpstreamAuthorization = issuance.Upstream;
+                entry.Prompt = prompt;
+                entry.Capabilities = capabilities;
+                return entry;
             }
 
-            // Mission gate (§Agent Token Request, three-gate model). The SDK owns
-            // the gate structure + the clarification protocol; IMissionTokenConsent
-            // owns the out-of-scope decision (L3226 "does not prescribe how the
-            // decision is made"). Identity claims on a grant come from the asserter.
+            // §Resource-Initiated Interaction: resolve the resource's flow first.
             if (resumed is null && resourceContext.ContainsKey("interaction"))
             {
-                if (missionClaim is not null)
-                {
-                    try { await ValidateMissionAsync(missionClaim, agentId, upstreamAuthorization); }
-                    catch (AAuthTokenExchangeException ex)
-                    { return AAuthProblemDetails.Create(ex.ErrorCode, ex.Detail, statusCode: ex.StatusCode); }
-                }
                 PersonResourceInteraction? resourceInteraction;
                 try { resourceInteraction = await PersonResourceInteraction.CreateAsync(resourceContext, resourceTokenJwt, options.EgressPolicy, ctx.RequestAborted); }
                 catch (TokenVerificationException) { return AAuthProblemDetails.Create("invalid_resource_token", statusCode: 400); }
-                var resourceEntry = pending.Add(audience, requestedScope, boundAgentId, boundConfirmationKey,
-                    agentTokenExpiresAt, boundUpstreamAct, missionClaim, authorizationExpiresAt);
-                BindOwner(ctx, resourceEntry);
-                BindResource(resourceEntry, resourceTokenJwt, options.Issuer, boundConfirmationKey);
-                resourceEntry.SourceTokens = sourceTokens;
-                resourceEntry.UpstreamAuthorization = upstreamAuthorization;
+                var resourceEntry = Park();
                 resourceEntry.ResourceInteraction = resourceInteraction;
                 resourceEntry.InteractionUrl = interactionUrl + "/resource";
-                resourceEntry.Prompt = prompt;
-                resourceEntry.Capabilities = capabilities;
-                resourceEntry.ResumeAuthorization = active => HandleThreePartyAsync(active, parsed, verifiedAgent,
-                    agentId, resourceEntry.ResourceToken!, upstreamTokenJwt, subagentTokenJwt, prompt, capabilities, resourceEntry);
+                resourceEntry.ResumeAuthorization = active => HandleThreePartyAsync(active, issuance,
+                    resourceEntry.ResourceToken!, resourceEntry.PresentedToken!, prompt, capabilities, resourceEntry);
                 return Pending202(ctx, resourceEntry, options, interactionUrl);
             }
 
-            if (missionClaim is not null)
+            var agentKeyThumbprint = issuance.ConfirmationKey.ComputeJwkThumbprint();
+            if (missionS256 is not null)
             {
                 var missionLog = app.Services.GetRequiredService<IMissionLog>();
-                var s256 = missionClaim.S256;
 
                 // Gate 2a/2c: the consent seam decides in-scope-silent vs the
                 // out-of-scope review (grant / deny / clarify / interactive hold).
@@ -1016,15 +960,15 @@ public static class AAuthPersonServerEndpoints
                 {
                     (decision, consentDetail) = await ReviewMissionAsync(new MissionTokenConsentContext
                     {
-                        AgentId = boundAgentId,
-                        ConsentAgentId = agentId,
-                        UpstreamAuthorization = upstreamAuthorization,
+                        AgentId = issuance.AgentId,
+                        ConsentAgentId = issuance.AgentId,
+                        UpstreamAuthorization = issuance.Upstream,
                         ResourceContext = resourceContext,
                         ResourceUrl = audience,
                         Account = account,
-                        AgentKeyThumbprint = boundConfirmationKey.ComputeJwkThumbprint(),
+                        AgentKeyThumbprint = agentKeyThumbprint,
                         Scope = requestedScope,
-                        Mission = missionClaim,
+                        MissionS256 = missionS256,
                         Stage = MissionTokenConsentStage.Gate,
                         Prompt = prompt,
                         Capabilities = capabilities,
@@ -1038,23 +982,37 @@ public static class AAuthPersonServerEndpoints
                 {
                     case MissionTokenConsentKind.Grant:
                         // Gate 2a: within the approved intent → silent grant.
-                        return await MintMissionGrantAsync(
-                            audience, boundAgentId, requestedScope, boundConfirmationKey,
-                            boundUpstreamAct, missionClaim, prompt, capabilities, agentId,
-                            agentTokenExpiresAt, authorizationExpiresAt, sourceTokens, account, consentDetail, resourceContext, upstreamAuthorization);
+                        var granted = await asserter.AssertAsync(new IdentityAssertionRequest
+                        {
+                            ResourceUrl = audience,
+                            Account = account,
+                            AgentKeyThumbprint = agentKeyThumbprint,
+                            Scope = requestedScope,
+                            AgentId = issuance.AgentId,
+                            Subject = subject,
+                            MissionS256 = missionS256,
+                            LoginHint = (string?)resourceContext["login_hint"],
+                            Prompt = prompt,
+                            Capabilities = capabilities,
+                            ResourceContext = resourceContext,
+                            UpstreamAuthorization = issuance.Upstream,
+                        });
+                        if (granted.Kind != IdentityAssertionKind.Assert)
+                            return AAuthProblemDetails.Create("denied", granted.Reason, statusCode: StatusCodes.Status403Forbidden);
+                        var response = await AuthTokenResponse.CreateTrackedAsync(() => MintAuth(
+                            audience, requestedScope, issuance.ConfirmationKey, subject, tenant, granted.Roles,
+                            granted.Groups, granted.AdditionalClaims, missionS256,
+                            issuance.AgentTokenExpiresAt, ceiling, account), ceiling, inventory, sourceTokens, options.TimeProvider);
+                        if (response is IStatusCodeHttpResult { StatusCode: StatusCodes.Status200OK })
+                            await AppendMissionTokenAsync(missionLog, missionS256, audience, requestedScope, consentDetail,
+                                account, issuance.AgentId, agentKeyThumbprint);
+                        return response;
                     case MissionTokenConsentKind.Deny:
-                        await AppendMissionTokenDenialAsync(missionLog, s256, audience, requestedScope, account, boundAgentId, boundConfirmationKey.ComputeJwkThumbprint());
+                        await AppendMissionTokenDenialAsync(missionLog, missionS256, audience, requestedScope, account, issuance.AgentId, agentKeyThumbprint);
                         return AAuth.Server.AAuthProblemDetails.Create("denied", decision.Reason, statusCode: StatusCodes.Status403Forbidden);
                     case MissionTokenConsentKind.Clarify:
-                        var clarifyEntry = resumed ?? ParkMissionGate(
-                            pending, audience, requestedScope, boundAgentId, boundConfirmationKey,
-                            boundUpstreamAct, missionClaim, prompt, capabilities,
-                            agentTokenExpiresAt, authorizationExpiresAt);
-                        BindOwner(ctx, clarifyEntry);
+                        var clarifyEntry = Park();
                         clarifyEntry.MissionGate = true;
-                        clarifyEntry.UpstreamAuthorization = upstreamAuthorization;
-                        clarifyEntry.SourceTokens = sourceTokens;
-                        BindResource(clarifyEntry, resourceTokenJwt, options.Issuer, boundConfirmationKey);
                         clarifyEntry.Status = PersonPendingStatus.AwaitingClarification;
                         clarifyEntry.ClarificationQuestion = decision.Question;
                         clarifyEntry.ClarificationTimeout = decision.Timeout;
@@ -1062,15 +1020,8 @@ public static class AAuthPersonServerEndpoints
                         return Pending202Clarification(ctx, clarifyEntry, options);
                     case MissionTokenConsentKind.Interact:
                     default:
-                        var interactEntry = resumed ?? ParkMissionGate(
-                            pending, audience, requestedScope, boundAgentId, boundConfirmationKey,
-                            boundUpstreamAct, missionClaim, prompt, capabilities,
-                            agentTokenExpiresAt, authorizationExpiresAt);
-                        BindOwner(ctx, interactEntry);
+                        var interactEntry = Park();
                         interactEntry.MissionGate = true;
-                        interactEntry.UpstreamAuthorization = upstreamAuthorization;
-                        interactEntry.SourceTokens = sourceTokens;
-                        BindResource(interactEntry, resourceTokenJwt, options.Issuer, boundConfirmationKey);
                         return Pending202(ctx, interactEntry, options, interactionUrl);
                 }
             }
@@ -1080,48 +1031,41 @@ public static class AAuthPersonServerEndpoints
             {
                 ResourceUrl = audience,
                 Account = account,
-                AgentKeyThumbprint = boundConfirmationKey.ComputeJwkThumbprint(),
+                AgentKeyThumbprint = agentKeyThumbprint,
                 Scope = requestedScope,
-                AgentId = agentId,
+                AgentId = issuance.AgentId,
+                Subject = subject,
+                LoginHint = (string?)resourceContext["login_hint"],
                 Prompt = prompt,
                 Capabilities = capabilities,
-                UpstreamAuthorization = upstreamAuthorization,
+                UpstreamAuthorization = issuance.Upstream,
                 ResourceContext = resourceContext,
             });
             switch (assertion.Kind)
             {
                 case IdentityAssertionKind.Assert:
-                    return await AuthTokenResponse.CreateTrackedAsync(() => Mint(
-                        audience, boundAgentId, requestedScope, boundConfirmationKey,
-                        assertion.Subject ?? throw new TokenVerificationException("Approved identity assertion is missing its directed subject."), assertion.Tenant, assertion.Roles,
-                        assertion.Groups, assertion.AdditionalClaims, boundUpstreamAct, mission: null,
-                        agentTokenExpiresAt, authorizationExpiresAt, account), authorizationExpiresAt, inventory, sourceTokens, options.TimeProvider, ctx.RequestAborted);
+                    return await AuthTokenResponse.CreateTrackedAsync(() => MintAuth(
+                        audience, requestedScope, issuance.ConfirmationKey, subject, tenant, assertion.Roles,
+                        assertion.Groups, assertion.AdditionalClaims, missionS256: null,
+                        issuance.AgentTokenExpiresAt, ceiling, account), ceiling, inventory, sourceTokens, options.TimeProvider, ctx.RequestAborted);
                 case IdentityAssertionKind.Deny:
                     return AAuth.Server.AAuthProblemDetails.Create("denied", assertion.Reason, statusCode: StatusCodes.Status403Forbidden);
                 case IdentityAssertionKind.NeedsConsent:
                 default:
-                    var entry = resumed ?? pending.Add(audience, requestedScope, boundAgentId, boundConfirmationKey,
-                        agentTokenExpiresAt, boundUpstreamAct, authorizationExpiresAt: authorizationExpiresAt);
-                    BindOwner(ctx, entry);
-                    entry.SourceTokens = sourceTokens;
-                    BindResource(entry, resourceTokenJwt, options.Issuer, boundConfirmationKey);
-                    entry.UpstreamAuthorization = upstreamAuthorization;
-                    return Pending202(ctx, entry, options, interactionUrl);
+                    return Pending202(ctx, Park(), options, interactionUrl);
             }
         }
 
         // ---- four-party (federated) handler --------------------------------
         async Task<IResult> HandleFederatedAsync(
-            HttpContext ctx, SignatureKeyParser.ParsedSignatureKeyInfo parsed,
-            TokenVerifier.VerifiedToken verifiedAgent,
-            string agentId, string resourceTokenJwt, string? upstreamTokenJwt, string? subagentTokenJwt, string resourceAudience,
-            string? prompt, IReadOnlyList<string>? capabilities)
+            HttpContext ctx, AgentIssuanceContext issuance, string resourceTokenJwt, string presentedTokenJwt,
+            JsonObject body, string resourceAudience, string? prompt, IReadOnlyList<string>? capabilities)
         {
-            // §PS-AS Trust Establishment (L1581): trust may be pre-established OR
-            // established dynamically — "no separate registration step". Default
-            // open: federate to the AS named in the (verified) resource-token aud.
-            // An empty TrustedAccessServers set disables four-party (three-party
-            // only); a non-empty set and/or predicate restricts.
+            // §PS-AS Trust Establishment: trust may be pre-established OR established
+            // dynamically — "no separate registration step". Default open: federate to
+            // the AS named in the (verified) resource-token aud. An empty
+            // TrustedAccessServers set disables four-party; a non-empty set and/or
+            // predicate restricts.
             if (!AAuthUrl.IsHttpsOrLoopback(resourceAudience, options.EgressPolicy))
             {
                 return AAuth.Server.AAuthProblemDetails.Create("untrusted_access_server", $"Access Server audience '{resourceAudience}' must be an absolute https URL (loopback http allowed for development).", statusCode: StatusCodes.Status400BadRequest);
@@ -1131,73 +1075,49 @@ public static class AAuthPersonServerEndpoints
                 return AAuth.Server.AAuthProblemDetails.Create("untrusted_access_server", $"'{resourceAudience}' is not a trusted Access Server.", statusCode: StatusCodes.Status403Forbidden);
             }
 
-            // Verify the resource token's agent binding before forwarding it.
-            AgentIssuanceContext issuance;
-            IReadOnlyList<TokenKey> sourceTokens;
+            TokenVerifier.VerifiedToken resource, presented;
             try
             {
-                issuance = await AgentIssuanceContext.VerifyAsync(parsed.Jwt!, subagentTokenJwt, upstreamTokenJwt,
-                    tokenVerifier, metadataClient, jwksClient,
-                    upstreamIssuer => string.Equals(upstreamIssuer, issuer, StringComparison.Ordinal)
-                        || trustedAccessServers.Contains(upstreamIssuer)
-                        || (options.IsTrustedAccessServer?.Invoke(upstreamIssuer) ?? false),
-                    ctx.RequestAborted);
+                (resource, presented) = await VerifyPairAsync(resourceTokenJwt, presentedTokenJwt, resourceAudience,
+                    issuance.ConfirmationKey.ComputeJwkThumbprint(), ctx.RequestAborted);
+                issuance.ValidateResourceContext(resource.Payload);
             }
             catch (TokenVerificationException ex)
             {
-                return AAuthProblemDetails.TokenFailure(ex);
+                return AAuthProblemDetails.TokenFailure(ex, TokenCredential.Resource);
             }
-            string resourceUrl;
-            JsonObject federatedContext;
-            MissionClaim? federatedMission;
-            var federatedScope = options.DefaultScope;
-            try
-            {
-                var verified = await tokenVerifier.VerifyResourceTokenAsync(
-                    resourceTokenJwt,
-                    expectedAudience: resourceAudience,
-                    expectedAgentId: issuance.AgentId,
-                    expectedAgentJkt: issuance.ConfirmationKey.ComputeJwkThumbprint(),
-                    metadataClient, jwksClient, expectedApprover: issuer);
-
-                resourceUrl = (string?)verified.Payload["iss"]
-                    ?? throw new TokenVerificationException("resource_token missing iss");
-                federatedContext = (JsonObject)verified.Payload.DeepClone();
-                issuance.ValidateResourceContext(federatedContext, issuer);
-                federatedMission = MissionClaim.FromPayload(verified.Payload, options.EgressPolicy);
-                var scopeClaim = (string?)verified.Payload["scope"];
-                if (!string.IsNullOrWhiteSpace(scopeClaim))
-                {
-                    federatedScope = scopeClaim;
-                }
-            }
-            catch (TokenVerificationException ex)
-            {
-                var expired = ex.Code == AAuth.Errors.SignatureErrorCode.ExpiredJwt;
-                // §Token Endpoint Error Codes: invalid_resource_token / expired_resource_token
-                // are 400 (a bad token parameter in the body), not 401 — 401 is reserved for
-                // request-signature failures carrying a Signature-Error header (§Authentication
-                // Errors). The request itself was correctly signed; the resource_token is invalid.
-                return AAuth.Server.AAuthProblemDetails.Create(expired ? "expired_resource_token" : "invalid_resource_token", ex.Message, statusCode: StatusCodes.Status400BadRequest);
-            }
-
-            try { sourceTokens = await TokenRegistration.RegisterAsync(inventory, issuance.SourceTokens, ctx.RequestAborted); }
-            catch (TokenVerificationException ex) { return AAuthProblemDetails.TokenFailure(ex); }
+            var resourceUrl = resource.Issuer;
+            var federatedContext = (JsonObject)resource.Payload.DeepClone();
+            var federatedMission = resource.MissionS256;
+            var federatedScope = (string?)resource.Payload["scope"] is { } scopeClaim && !string.IsNullOrWhiteSpace(scopeClaim)
+                ? scopeClaim : options.DefaultScope;
+            var ceiling = Earliest(issuance.ExpiresAt, presented.ExpiresAt);
 
             if (federatedMission is not null)
             {
-                try { await ValidateMissionAsync(federatedMission, agentId, issuance.Upstream); }
+                try
+                {
+                    if ((await ValidateMissionAsync(federatedMission, issuance.AgentId, issuance.Upstream)).ExpiresAt is { } missionExpiry)
+                        ceiling = Earliest(ceiling, missionExpiry);
+                }
                 catch (AAuthTokenExchangeException ex)
                 { return AAuthProblemDetails.Create(ex.ErrorCode, ex.Detail, statusCode: ex.StatusCode); }
             }
+            var (registered, sourceFailure) = await RegisterSourcesAsync(issuance, presented, ctx.RequestAborted);
+            if (sourceFailure is not null) return sourceFailure;
+            var sourceTokens = registered!;
+
             var federation = app.Services.GetRequiredService<AccessServerClient>();
             var entry = pending.Add(resourceUrl, federatedScope, issuance.AgentId, agentConfirmationKey: null,
-                issuance.AgentTokenExpiresAt, issuance.Act, mission: federatedMission, authorizationExpiresAt: issuance.ExpiresAt);
+                issuance.AgentTokenExpiresAt, federatedMission, ceiling);
             entry.ResourceContext = federatedContext;
             entry.UpstreamAuthorization = issuance.Upstream;
             entry.SourceTokens = sourceTokens;
             entry.Prompt = prompt;
             entry.Capabilities = capabilities;
+            entry.PresentedToken = presentedTokenJwt;
+            entry.PersonSubject = resource.Subject;
+            entry.PersonTenant = resource.Tenant;
             BindOwner(ctx, entry);
             BindResource(entry, resourceTokenJwt, resourceAudience, issuance.ConfirmationKey);
             try { entry.ResourceInteraction = await PersonResourceInteraction.CreateAsync(federatedContext, resourceTokenJwt, options.EgressPolicy, ctx.RequestAborted); }
@@ -1208,6 +1128,13 @@ public static class AAuthPersonServerEndpoints
                 entry.FirstAnswer.TrySetResult();
             }
 
+            async Task ThrowIfMissionTerminatedAsync()
+            {
+                if (entry.MissionS256 is { } current
+                    && await app.Services.GetRequiredService<IMissionStore>().GetAsync(current) is { State: MissionState.Terminated })
+                    throw new AAuthTokenExchangeException("mission_terminated", null, 403, true);
+            }
+
             string? consentedResourceToken = null;
             string? missionConsentedResourceToken = null;
             async Task<IdentityAssertion> RequireConsentAsync(IReadOnlyList<string>? requiredClaims, System.Threading.CancellationToken ct)
@@ -1215,23 +1142,20 @@ public static class AAuthPersonServerEndpoints
                 if (entry.ResourceInteraction is { } resourceInteraction
                     && !await resourceInteraction.Completion.Task.WaitAsync(ct))
                     throw new AAuthTokenExchangeException(resourceInteraction.Error!, null, resourceInteraction.ErrorStatus, true);
-                if (entry.Mission is { } currentMission
-                    && await app.Services.GetRequiredService<IMissionStore>().GetAsync(currentMission.S256)
-                        is { State: MissionState.Terminated })
-                    throw new AAuthTokenExchangeException("mission_terminated", null, 403, true);
-                if (entry.Mission is { } mission && missionConsentedResourceToken != entry.ResourceToken)
+                await ThrowIfMissionTerminatedAsync();
+                if (entry.MissionS256 is { } mission && missionConsentedResourceToken != entry.ResourceToken)
                 {
                     var (decision, _) = await ReviewMissionAsync(new MissionTokenConsentContext
                     {
                         AgentId = entry.AgentId, ResourceUrl = entry.ResourceUrl, Account = entry.Account,
                         ConsentAgentId = entry.ConsentAgentId, UpstreamAuthorization = entry.UpstreamAuthorization,
-                        AgentKeyThumbprint = entry.ResourceKeyThumbprint, Scope = entry.Scope, Mission = mission,
+                        AgentKeyThumbprint = entry.ResourceKeyThumbprint, Scope = entry.Scope, MissionS256 = mission,
                         Stage = MissionTokenConsentStage.Gate, Prompt = entry.Prompt, Capabilities = entry.Capabilities,
                         ResourceContext = entry.ResourceContext, ClarificationHistory = entry.ClarificationAnswers,
                     });
                     if (decision.Kind == MissionTokenConsentKind.Deny)
                     {
-                        await AppendMissionTokenDenialAsync(app.Services.GetRequiredService<IMissionLog>(), mission.S256,
+                        await AppendMissionTokenDenialAsync(app.Services.GetRequiredService<IMissionLog>(), mission,
                             entry.ResourceUrl, entry.Scope, entry.Account, entry.AgentId, entry.ResourceKeyThumbprint);
                         throw new AAuthInteractionDeniedException(decision.Reason ?? "Mission consent denied.");
                     }
@@ -1254,9 +1178,7 @@ public static class AAuthPersonServerEndpoints
                         }
                         finally { entry.Lifecycle.Gate.Release(); }
                         await approval.WaitAsync(ct);
-                        if (await app.Services.GetRequiredService<IMissionStore>().GetAsync(mission.S256)
-                            is { State: MissionState.Terminated })
-                            throw new AAuthTokenExchangeException("mission_terminated", null, 403, true);
+                        await ThrowIfMissionTerminatedAsync();
                     }
                     missionConsentedResourceToken = entry.ResourceToken;
                 }
@@ -1267,9 +1189,11 @@ public static class AAuthPersonServerEndpoints
                     Account = entry.Account,
                     AgentKeyThumbprint = entry.ResourceKeyThumbprint,
                     Scope = entry.Scope,
-                    AgentId = agentId,
+                    AgentId = issuance.AgentId,
+                    Subject = entry.PersonSubject,
                     RequiredClaims = requiredClaims,
-                    Mission = entry.Mission,
+                    MissionS256 = entry.MissionS256,
+                    LoginHint = (string?)entry.ResourceContext?["login_hint"],
                     Prompt = entry.Prompt,
                     Capabilities = entry.Capabilities,
                     ResourceContext = entry.ResourceContext,
@@ -1294,32 +1218,51 @@ public static class AAuthPersonServerEndpoints
                     finally { entry.Lifecycle.Gate.Release(); }
                     asserted = await approval.WaitAsync(ct);
                 }
-                if (asserted.Kind != IdentityAssertionKind.Assert || string.IsNullOrWhiteSpace(asserted.Subject))
-                    throw new AAuthInteractionDeniedException(asserted.Reason ?? "PS consent or directed identity was not asserted.");
-                if (entry.Mission is { } assertedMission
-                    && await app.Services.GetRequiredService<IMissionStore>().GetAsync(assertedMission.S256)
-                        is { State: MissionState.Terminated })
-                    throw new AAuthTokenExchangeException("mission_terminated", null, 403, true);
+                if (asserted.Kind != IdentityAssertionKind.Assert)
+                    throw new AAuthInteractionDeniedException(asserted.Reason ?? "PS consent was not asserted.");
+                await ThrowIfMissionTerminatedAsync();
                 consentedResourceToken = entry.ResourceToken;
                 return asserted;
             }
 
-            var agentTokenJwt = parsed.Jwt
-                ?? throw new InvalidOperationException("Agent token JWT unavailable on the verified request.");
-            var agentConfirmationKey = parsed.ConfirmationKey!;
+            // Replace the pending request with a verified updated_request pair: same
+            // iss, ps, sub, agent_jkt, mission_s256 and tenant as the original.
             AccessServerRequest fedRequest = null!;
+            async Task ApplyReplacementAsync(string replacementResourceToken, string replacementPresentedToken,
+                System.Threading.CancellationToken ct)
+            {
+                var (replacement, replacementPresented) = await VerifyPairAsync(replacementResourceToken, replacementPresentedToken,
+                    resourceAudience, entry.ResourceKeyThumbprint!, ct);
+                RequireSameRequest(entry.ResourceContext!, replacement.Payload);
+                if (!AccountBinding.Matches(entry.Account, replacement.Account))
+                    throw new TokenVerificationException("Changing account requires a new authorization request.");
+                var replacementInteraction = await PersonResourceInteraction.CreateAsync(replacement.Payload,
+                    replacementResourceToken, options.EgressPolicy, ct);
+                entry.Scope = (string?)replacement.Payload["scope"] ?? options.DefaultScope;
+                entry.ResourceToken = replacementResourceToken;
+                entry.PresentedToken = replacementPresentedToken;
+                entry.ResourceContext = (JsonObject)replacement.Payload.DeepClone();
+                entry.ResourceInteraction = replacementInteraction;
+                if (replacementInteraction is not null) entry.InteractionUrl = interactionUrl + "/resource";
+                fedRequest.PresentedTokenExpiresAt = replacementPresented.ExpiresAt;
+            }
+
+            var agentTokenJwt = ctx.GetAAuthParsedKey()?.Jwt
+                ?? throw new InvalidOperationException("Agent token JWT unavailable on the verified request.");
             fedRequest = new AccessServerRequest
             {
                 ResourceToken = resourceTokenJwt,
                 AgentToken = agentTokenJwt,
-                SubagentToken = subagentTokenJwt,
-                AuthorizationExpiresAt = issuance.ExpiresAt,
-                UpstreamToken = upstreamTokenJwt,
+                PresentedToken = presentedTokenJwt,
+                PresentedTokenExpiresAt = presented.ExpiresAt,
+                SubagentToken = StringMember(body, "subagent_token"),
+                AuthorizationExpiresAt = ceiling,
+                UpstreamToken = StringMember(body, "upstream_token"),
                 ExpectedAudience = resourceUrl,
-                ExpectedAgentId = issuance.AgentId,
+                ExpectedSubject = resource.Subject!,
+                ExpectedPersonServer = issuer,
                 AgentKey = issuance.ConfirmationKey,
-                ExpectedActContext = issuance.Act,
-                ExpectedMission = federatedMission,
+                ExpectedMissionS256 = federatedMission,
                 Account = entry.Account,
                 RequestedScope = federatedScope,
                 OnClarificationRequired = async (question, ct) =>
@@ -1330,26 +1273,8 @@ public static class AAuthPersonServerEndpoints
                     {
                         if (localAnswer.Action == ClarificationResponse.Kind.Update)
                         {
-                            var replacement = await tokenVerifier.VerifyResourceTokenAsync(localAnswer.ResourceToken!,
-                                resourceAudience, entry.AgentId, entry.ResourceKeyThumbprint!, metadataClient, jwksClient,
-                                expectedApprover: issuer);
-                            if ((string?)replacement.Payload["iss"] != entry.ResourceUrl)
-                                throw new TokenVerificationException("Replacement issuer differs from original.");
-                            if (!AccountBinding.Matches(entry.Account, replacement.Account))
-                                throw new TokenVerificationException("Changing account requires a new authorization request.");
-                            issuance.ValidateResourceContext(replacement.Payload, issuer);
-                            if (MissionClaim.FromPayload(replacement.Payload, options.EgressPolicy) is { } replacementMission)
-                                await ValidateMissionAsync(replacementMission, entry.ConsentAgentId, entry.UpstreamAuthorization);
-                            var replacementInteraction = await PersonResourceInteraction.CreateAsync(replacement.Payload,
-                                localAnswer.ResourceToken!, options.EgressPolicy, ct);
-                            entry.Scope = (string?)replacement.Payload["scope"] ?? options.DefaultScope;
-                            entry.ResourceToken = localAnswer.ResourceToken;
-                            entry.ResourceContext = (JsonObject)replacement.Payload.DeepClone();
-                            entry.Mission = MissionClaim.FromPayload(replacement.Payload, options.EgressPolicy);
-                            entry.ResourceInteraction = replacementInteraction;
-                            if (replacementInteraction is not null) entry.InteractionUrl = interactionUrl + "/resource";
+                            await ApplyReplacementAsync(localAnswer.ResourceToken!, localAnswer.PresentedToken!, ct);
                             fedRequest.RequestedScope = entry.Scope;
-                            fedRequest.ExpectedMission = entry.Mission;
                         }
                         if (entry.ResourceToken != consentedResourceToken) await RequireConsentAsync(null, ct);
                         return localAnswer;
@@ -1370,9 +1295,10 @@ public static class AAuthPersonServerEndpoints
                     }
                     finally { entry.Lifecycle.Gate.Release(); }
                     var result = await answer.WaitAsync(ct);
-                    issuance.ValidateResourceContext(entry.ResourceContext!, issuer);
+                    if (result.Action == ClarificationResponse.Kind.Update && result.PresentedToken is { } updatedPresented)
+                        fedRequest.PresentedTokenExpiresAt = DateTimeOffset.FromUnixTimeSeconds(
+                            (long)TokenVerifier.DecodeJsonSegment(updatedPresented.Split('.')[1], "payload")["exp"]!);
                     fedRequest.RequestedScope = entry.Scope;
-                    fedRequest.ExpectedMission = entry.Mission;
                     if (entry.ResourceToken != consentedResourceToken) await RequireConsentAsync(null, ct);
                     return result;
                 },
@@ -1383,17 +1309,13 @@ public static class AAuthPersonServerEndpoints
                     entry.FirstAnswer.TrySetResult();
                     return Task.CompletedTask;
                 },
-                // The AS needs identity claims (§Claims Required) for its policy
-                // decision. The PS is the identity authority — answer via the
-                // same asserter, mapping its Assert into the directed claims push.
+                // The AS needs identity claims (§Claims Required) beyond the presented
+                // token's identity. The PS is the identity authority — answer via the
+                // same asserter, projecting only the requested claims (never `sub`).
                 OnClaimsRequired = async (claimsRequirement, ct) =>
                 {
                     var asserted = await RequireConsentAsync(claimsRequirement.RequiredClaims, ct);
-                    return new ClaimsResponse
-                    {
-                        Subject = asserted.Subject!,
-                        Claims = ProjectClaims(asserted, claimsRequirement.RequiredClaims),
-                    };
+                    return new ClaimsResponse { Claims = ProjectClaims(asserted, claimsRequirement.RequiredClaims) };
                 },
             };
 
@@ -1404,16 +1326,13 @@ public static class AAuthPersonServerEndpoints
                     entry.FederationCancellation.CancelAfter(entry.PendingExpiresAt - options.TimeProvider.GetUtcNow());
                     await RequireConsentAsync(null, entry.FederationCancellation.Token);
                     var token = await federation.FederateAsync(resourceAudience, fedRequest, entry.FederationCancellation.Token);
-                    if (entry.Mission is { } completedMission
-                        && await app.Services.GetRequiredService<IMissionStore>().GetAsync(completedMission.S256)
-                            is { State: MissionState.Terminated })
-                        throw new AAuthTokenExchangeException("mission_terminated", null, 403, true);
+                    await ThrowIfMissionTerminatedAsync();
                     var tracked = await AuthTokenResponse.CreateTrackedAsync(() => token, entry.ExpiresAt,
                         inventory, entry.SourceTokens, options.TimeProvider, entry.FederationCancellation.Token);
                     if (tracked is not IStatusCodeHttpResult { StatusCode: StatusCodes.Status200OK })
                         throw new AAuthInteractionDeniedException("Source authorization was revoked before federation completed.");
-                    if (entry.Mission is { } grantedMission)
-                        await AppendMissionTokenAsync(app.Services.GetRequiredService<IMissionLog>(), grantedMission.S256,
+                    if (entry.MissionS256 is { } grantedMission)
+                        await AppendMissionTokenAsync(app.Services.GetRequiredService<IMissionLog>(), grantedMission,
                             entry.ResourceUrl, entry.Scope, "Federated", entry.Account, entry.AgentId, entry.ResourceKeyThumbprint);
                     await entry.Lifecycle.Gate.WaitAsync();
                     try
@@ -1455,11 +1374,12 @@ public static class AAuthPersonServerEndpoints
                 }
                 catch (Exception ex)
                 {
-                    entry.Error = "federation_failed";
+                    // §Auth Token Delivery: no verifiable auth token from the AS.
+                    entry.Error = "as_unreachable";
                     entry.ErrorStatus = StatusCodes.Status502BadGateway;
                     logger.LogWarning("Four-party federation failed. Status={StatusCode}; Error={ErrorCode}.",
                         ex is System.Net.Http.HttpRequestException requestError ? (int?)requestError.StatusCode : null,
-                        "federation_failed");
+                        "as_unreachable");
                     entry.Status = PersonPendingStatus.Denied;
                 }
                 finally
@@ -1505,19 +1425,8 @@ public static class AAuthPersonServerEndpoints
         }
     }
 
-    private static PersonPendingEntry ParkMissionGate(
-        IPersonPendingStore pending, string audience, string scope, string agentId,
-        IAAuthKey confirmationKey, JsonObject? upstreamAct, MissionClaim mission,
-        string? prompt, IReadOnlyList<string>? capabilities,
-        DateTimeOffset agentTokenExpiresAt, DateTimeOffset authorizationExpiresAt)
-    {
-        var entry = pending.Add(audience, scope, agentId, confirmationKey,
-            agentTokenExpiresAt, upstreamAct, mission, authorizationExpiresAt);
-        entry.MissionGate = true;
-        entry.Prompt = prompt;
-        entry.Capabilities = capabilities;
-        return entry;
-    }
+    private static void RequireSameRequest(JsonObject original, JsonObject replacement)
+        => TokenVerifier.RequireSameResourceRequest(original, replacement);
 
     private static IResult Pending202(
         HttpContext ctx, PersonPendingEntry entry, AAuthPersonServerOptions options, string interactionUrl)

@@ -34,7 +34,7 @@ public class ResourceR3Tests
         var token = new AAuth.Tokens.AuthTokenBuilder
         {
             Issuer = R3TestData.AsIssuer, Audience = R3TestData.ResourceIssuer,
-            Agent = R3TestData.AgentId, AgentConfirmationKey = agentKey,
+            PersonServer = R3TestData.PsIssuer, Subject = R3TestData.PersonSubject, AgentConfirmationKey = agentKey,
             Scope = "book",
             Key = issuerKey, KeyId = "issuer", Dwk = AAuth.Tokens.AuthTokenBuilder.AccessDwk,
             IssuedAt = issued, AgentTokenExpiresAt = issued.AddHours(1),
@@ -42,7 +42,7 @@ public class ResourceR3Tests
         }.Build();
         clock.Now = issued.AddMinutes(11);
         var verified = new AAuth.Tokens.TokenVerifier { Clock = () => clock.Now }.VerifyAuthToken(
-            token, issuerKey, R3TestData.ResourceIssuer, agentKey, R3TestData.AgentId);
+            token, issuerKey, R3TestData.ResourceIssuer, agentKey);
         var approved = R3ClaimReader.ReadAuthToken(verified.Payload);
         Assert.True(store.TryGet(document.S256, out var documentBytes));
         R3Hash.Verify(documentBytes, document.S256);
@@ -372,7 +372,17 @@ public class ResourceR3Tests
     public async Task Enforcement_ConditionalChallengeResultEmitsAAuthRequirementWithProposalResourceToken()
     {
         var resourceKey = AAuthKey.Generate();
+        var asKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
+        var authToken = new AAuth.Tokens.AuthTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy, Issuer = R3TestData.AsIssuer, Audience = R3TestData.ResourceIssuer,
+            PersonServer = R3TestData.PsIssuer, Subject = R3TestData.PersonSubject, AgentConfirmationKey = agentKey,
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1), Key = asKey, KeyId = R3TestData.AsKid,
+            Dwk = AAuth.Tokens.AuthTokenBuilder.AccessDwk, Account = "personal",
+        }.Build();
+        var verifiedAuthToken = new AAuth.Tokens.TokenVerifier { EgressPolicy = TestEgress.Policy }
+            .VerifyAuthToken(authToken, asKey, R3TestData.ResourceIssuer, agentKey);
         var decision = R3EnforcementDecision.Conditional(
             "https://resource.test/r3/proposals/proposal-hash",
             "proposal-hash");
@@ -395,8 +405,7 @@ public class ResourceR3Tests
         await decision.ToResult(
             context,
             challenge,
-            R3TestData.AgentId,
-            agentKey.ComputeJwkThumbprint()).ExecuteAsync(context);
+            verifiedAuthToken).ExecuteAsync(context);
 
         Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
         Assert.Equal("application/problem+json", context.Response.ContentType);
@@ -414,6 +423,12 @@ public class ResourceR3Tests
         var payload = (JsonObject)JsonNode.Parse(Base64UrlEncoder.DecodeBytes(resourceToken.Split('.')[1]))!;
         Assert.Equal(decision.ProposalUri, (string?)payload[R3AuthClaims.UriClaim]);
         Assert.Equal(decision.ProposalS256, (string?)payload[R3AuthClaims.S256Claim]);
+        Assert.Equal(R3TestData.PsIssuer, (string?)payload["ps"]);
+        Assert.Equal(R3TestData.PersonSubject, (string?)payload["sub"]);
+        Assert.Equal(verifiedAuthToken.Jti, (string?)payload["presented_jti"]);
+        Assert.Equal(agentKey.ComputeJwkThumbprint(), (string?)payload["agent_jkt"]);
+        Assert.Equal("personal", (string?)payload["account"]);
+        Assert.False(payload.ContainsKey("agent"));
     }
 
     private static async Task<HttpResponseMessage> SignedGet(WebApplication app, AAuthKey key, string jwksUri, string kid)

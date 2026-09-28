@@ -26,8 +26,7 @@ public interface IPersonPendingStore
         string agentId,
         IAAuthKey? agentConfirmationKey,
         DateTimeOffset agentTokenExpiresAt,
-        JsonObject? upstreamAct = null,
-        MissionClaim? mission = null,
+        string? missionS256 = null,
         DateTimeOffset? authorizationExpiresAt = null);
 
     /// <summary>Look up a pending entry by id, or <see langword="null"/>.</summary>
@@ -132,11 +131,20 @@ public sealed class PersonPendingEntry
     /// </summary>
     public IAAuthKey? AgentConfirmationKey { get; init; }
 
-    /// <summary>Optional upstream <c>act</c> context for call chaining.</summary>
-    public JsonObject? UpstreamAct { get; init; }
+    /// <summary><see langword="true"/> when the entry resolves to a person token rather than an auth token.</summary>
+    public bool PersonToken { get; set; }
 
-    /// <summary>The mission context governing the request, if any.</summary>
-    public MissionClaim? Mission { get; set; }
+    /// <summary>The verified directed <c>sub</c> the minted auth token carries (from the resource token).</summary>
+    public string? PersonSubject { get; set; }
+
+    /// <summary>The verified <c>tenant</c> the minted token carries.</summary>
+    public string? PersonTenant { get; set; }
+
+    /// <summary>The <c>presented_token</c> of an auth token request, forwarded to an AS in four-party.</summary>
+    public string? PresentedToken { get; set; }
+
+    /// <summary>The mission governing the request (<c>mission_s256</c>), if any.</summary>
+    public string? MissionS256 { get; set; }
 
     /// <summary>
     /// When set, this entry's out-of-scope decision (and any clarification
@@ -245,8 +253,7 @@ public sealed class InMemoryPersonPendingStore : IPersonPendingStore
         string agentId,
         IAAuthKey? agentConfirmationKey,
         DateTimeOffset agentTokenExpiresAt,
-        JsonObject? upstreamAct = null,
-        MissionClaim? mission = null,
+        string? missionS256 = null,
         DateTimeOffset? authorizationExpiresAt = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(resourceUrl);
@@ -262,8 +269,7 @@ public sealed class InMemoryPersonPendingStore : IPersonPendingStore
             AgentTokenExpiresAt = agentTokenExpiresAt,
             AuthorizationExpiresAt = authorizationExpiresAt,
             AgentConfirmationKey = agentConfirmationKey,
-            UpstreamAct = upstreamAct,
-            Mission = mission,
+            MissionS256 = missionS256,
             Status = PersonPendingStatus.Pending,
         };
         _entries[entry.Id] = entry;

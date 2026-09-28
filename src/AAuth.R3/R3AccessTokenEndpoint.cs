@@ -58,17 +58,17 @@ public static class R3AccessTokenEndpoint
                 Issuer = issuer,
                 Audience = resourceIssuer,
                 Account = parts.Account,
-                Mission = parts.Mission,
-                Agent = issuance.AgentId,
+                MissionS256 = parts.MissionS256,
+                PersonServer = parts.PersonServer,
                 AgentConfirmationKey = issuance.ConfirmationKey,
                 AgentTokenExpiresAt = issuance.AgentTokenExpiresAt,
-                AuthorizationExpiresAt = issuance.ExpiresAt,
-                Act = issuance.Act,
+                AuthorizationExpiresAt = parts.ExpiresAt,
                 TimeProvider = options.TimeProvider,
                 Key = signingKey,
                 KeyId = signingKid,
                 Dwk = AuthTokenBuilder.AccessDwk,
-                Subject = options.Subject,
+                Subject = parts.Subject,
+                Tenant = parts.Tenant,
                 Scope = parts.Scope,
                 AdditionalClaims = claims,
             }.Build();
@@ -119,9 +119,10 @@ public static class R3AccessTokenEndpoint
 
             var agentToken = (string?)body?["agent_token"];
             var resourceToken = (string?)body?["resource_token"];
-            if (string.IsNullOrWhiteSpace(agentToken) || string.IsNullOrWhiteSpace(resourceToken))
+            var presentedToken = (string?)body?["presented_token"];
+            if (string.IsNullOrWhiteSpace(agentToken) || string.IsNullOrWhiteSpace(resourceToken) || string.IsNullOrWhiteSpace(presentedToken))
             {
-                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "missing agent_token or resource_token", statusCode: StatusCodes.Status400BadRequest);
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "missing agent_token, resource_token or presented_token", statusCode: StatusCodes.Status400BadRequest);
             }
 
             var metadata = GetRequired<MetadataClient>(context);
@@ -131,11 +132,8 @@ public static class R3AccessTokenEndpoint
             try
             {
                 issuance = await AgentIssuanceContext.VerifyAsync(
-                    agentToken, (string?)body?["subagent_token"], (string?)body?["upstream_token"],
-                    tokenVerifier, metadata, jwks,
-                    upstreamIssuer => string.Equals(upstreamIssuer, issuer, StringComparison.Ordinal)
-                        || string.Equals(upstreamIssuer, caller.Identifier, StringComparison.Ordinal),
-                    context.RequestAborted);
+                    agentToken, (string?)body?["subagent_token"], (string?)body?["upstream_token"], caller.Identifier,
+                    tokenVerifier, metadata, jwks, static _ => true, context.RequestAborted);
             }
             catch (TokenVerificationException ex)
             {
@@ -143,21 +141,21 @@ public static class R3AccessTokenEndpoint
             }
 
             TokenVerifier.VerifiedToken verifiedResource;
+            TokenVerifier.VerifiedToken verifiedPresented;
             R3ClaimReader.ResourceDocumentClaims r3DocumentClaims;
             try
             {
                 verifiedResource = await tokenVerifier.VerifyResourceTokenAsync(
                     resourceToken,
                     expectedAudience: issuer,
-                    expectedAgentId: issuance.AgentId,
                     expectedAgentJkt: issuance.ConfirmationKey.ComputeJwkThumbprint(),
                     metadata,
                     jwks,
-                    expectedApprover: caller.Identifier,
+                    expectedPersonServer: caller.Identifier,
                     cancellationToken: context.RequestAborted);
-                issuance.ValidateResourceContext(verifiedResource.Payload, caller.Identifier);
-                if (verifiedResource.Payload.ContainsKey("mission") && verifiedResource.Mission is null)
-                    throw new TokenVerificationException("resource_token contains an invalid mission reference");
+                verifiedPresented = await tokenVerifier.VerifyPresentedTokenAsync(
+                    presentedToken, verifiedResource, metadata, jwks, context.RequestAborted);
+                issuance.ValidateResourceContext(verifiedResource.Payload);
                 r3DocumentClaims = R3ClaimReader.ReadResourceDocument(verifiedResource.Payload)
                     ?? throw new TokenVerificationException("resource_token missing r3_uri/r3_s256");
             }
@@ -170,8 +168,12 @@ public static class R3AccessTokenEndpoint
                 return AAuth.Server.AAuthProblemDetails.Create("invalid_resource_token", ex.Message, statusCode: StatusCodes.Status400BadRequest);
             }
 
-            try { await TokenRegistration.RegisterAsync(inventory, issuance.SourceTokens, context.RequestAborted); }
-            catch (TokenVerificationException ex) { return AAuthProblemDetails.TokenFailure(ex); }
+            try
+            {
+                await TokenRegistration.RegisterAsync(inventory,
+                    [.. issuance.SourceTokens, TokenRegistration.FromVerified(verifiedPresented, TokenCredential.Presented)], context.RequestAborted);
+            }
+            catch (TokenVerificationException ex) { return AAuth.Server.AAuthProblemDetails.SourceRevoked(ex); }
 
             var resourceIssuer = (string?)verifiedResource.Payload["iss"];
             if (string.IsNullOrWhiteSpace(resourceIssuer))
@@ -183,7 +185,14 @@ public static class R3AccessTokenEndpoint
             try
             {
                 mintParts = await EvaluateDocumentAsync(context, options, r3DocumentClaims, resourceIssuer, context.RequestAborted);
-                mintParts = mintParts with { Mission = verifiedResource.Mission };
+                mintParts = mintParts with
+                {
+                    MissionS256 = verifiedResource.MissionS256,
+                    PersonServer = caller.Identifier,
+                    Subject = verifiedResource.Subject!,
+                    Tenant = verifiedResource.Tenant,
+                    ExpiresAt = verifiedPresented.ExpiresAt < issuance.ExpiresAt ? verifiedPresented.ExpiresAt : issuance.ExpiresAt,
+                };
                 var scope = (string?)verifiedResource.Payload["scope"];
                 if (scope is not null)
                 {
@@ -468,7 +477,11 @@ public static class R3AccessTokenEndpoint
         string? DisplayDetail = null,
         string? Account = null,
         string? Scope = null,
-        MissionClaim? Mission = null);
+        string? MissionS256 = null,
+        string PersonServer = "",
+        string Subject = "",
+        string? Tenant = null,
+        DateTimeOffset? ExpiresAt = null);
 
     private static bool IsProposal(byte[] bytes)
     {
@@ -638,7 +651,6 @@ public sealed class R3AccessTokenEndpointOptions
     public required string Issuer { get; init; }
     public required IReadOnlyDictionary<string, IAAuthKey> SigningKeys { get; init; }
     public string TokenPath { get; init; } = "/token";
-    public string Subject { get; init; } = "pairwise-sub";
     /// <summary>
     /// Person Servers this AS brokers for, by authority (or absolute URL). <c>null</c>
     /// ⇒ broker any *verifiable* PS (the AAuth spec default); empty ⇒ deny-all;
@@ -715,10 +727,6 @@ public sealed class R3AccessTokenEndpointOptions
         if (string.IsNullOrWhiteSpace(TokenPath))
         {
             throw new InvalidOperationException("TokenPath must be set.");
-        }
-        if (string.IsNullOrWhiteSpace(Subject))
-        {
-            throw new InvalidOperationException("Subject must be set.");
         }
         if (AuditSink is null)
         {

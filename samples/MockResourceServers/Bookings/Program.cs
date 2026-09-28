@@ -123,15 +123,16 @@ app.MapGet("/openapi.json", () => Results.Json(openApiDocument, contentType: "ap
 
 app.MapPost("/authorize", async (HttpContext ctx, R3ProposalStore documents) =>
 {
-    SignedAgent agent;
+    SignedPresenter presenter;
     try
     {
-        agent = await VerifyAgentAsync(ctx);
+        presenter = await VerifyPresenterAsync(ctx);
     }
     catch (Exception ex) when (ex is R3FetchVerificationException or AAuthVerificationException or TokenVerificationException or InvalidOperationException)
     {
         return AAuth.Server.AAuthProblemDetails.Create("invalid_agent_signature", ex.Message, statusCode: StatusCodes.Status401Unauthorized);
     }
+    if (presenter.Person is null) return PersonTokenRequired(ctx);
 
     JsonObject? body;
     try
@@ -164,7 +165,7 @@ app.MapPost("/authorize", async (HttpContext ctx, R3ProposalStore documents) =>
     }
 
     var stored = StoreR3Document(documents, operations.Operations.Select(op => op.Id), account);
-    var resourceToken = BuildResourceToken(agent.AgentId, agent.ConfirmationKey.ComputeJwkThumbprint(), stored.Uri, stored.S256, account);
+    var resourceToken = BuildResourceToken(presenter.Person, presenter.ConfirmationKey.ComputeJwkThumbprint(), stored.Uri, stored.S256, account);
     ctx.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatAuthToken(resourceToken);
     return Results.Ok(new
     {
@@ -203,7 +204,7 @@ app.MapMethods("/search_availability", ["GET", "POST"], async (HttpContext ctx) 
         account = auth.Verified!.Account,
         account_name = AccountName(auth.Verified.Account),
         subject = (string?)auth.Verified.Payload["sub"],
-        agent = (string?)auth.Verified.Payload["agent"],
+        ps = (string?)auth.Verified.Payload["ps"],
         source = "r3_granted",
         notifications = bookingEvents.IssueTicket(auth.Verified),
         options = new[]
@@ -292,25 +293,27 @@ StoredR3Proposal StoreR3Document(R3ProposalStore store, IEnumerable<string> requ
     return store.AddBytes(doc.ToUtf8Bytes(), new Uri(resourceUrl), "/r3");
 }
 
-string BuildResourceToken(string agentId, string agentJkt, string r3Uri, string r3S256, string? account) =>
-    new R3Challenge
-    {
-        EgressPolicy = SampleEgress.Policy,
-        ResourceIssuer = resourceUrl,
-        Audience = accessServerUrl,
-        Key = resourceKey,
-        KeyId = ResourceKid,
-    }.BuildResourceToken(agentId, agentJkt, r3Uri, r3S256, account: account);
-
-string BuildProposalResourceToken(TokenVerifier.VerifiedToken verifiedAuthToken, string proposalUri, string proposalS256)
+R3Challenge Challenger() => new()
 {
-    var payload = verifiedAuthToken.Payload;
-    var agentId = (string?)payload["agent"]
-        ?? throw new InvalidOperationException("auth token missing agent");
-    var cnf = payload["cnf"]?["jwk"] as JsonObject
-        ?? throw new InvalidOperationException("auth token missing cnf.jwk");
-    var agentJkt = KeyFactory.FromJwk(cnf).ComputeJwkThumbprint();
-    return BuildResourceToken(agentId, agentJkt, proposalUri, proposalS256, verifiedAuthToken.Account);
+    EgressPolicy = SampleEgress.Policy,
+    ResourceIssuer = resourceUrl,
+    Audience = accessServerUrl,
+    Key = resourceKey,
+    KeyId = ResourceKid,
+};
+
+// The resource token names the presented person token (draft-11 §Resource Token Structure).
+string BuildResourceToken(TokenVerifier.VerifiedToken presented, string agentJkt, string r3Uri, string r3S256, string? account) =>
+    Challenger().BuildResourceToken(presented, agentJkt, r3Uri, r3S256, account: account);
+
+// Per-call proposals name the auth token the agent already presented.
+string BuildProposalResourceToken(TokenVerifier.VerifiedToken verifiedAuthToken, string proposalUri, string proposalS256) =>
+    Challenger().BuildResourceToken(verifiedAuthToken, proposalUri, proposalS256);
+
+IResult PersonTokenRequired(HttpContext ctx)
+{
+    ctx.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatPersonToken();
+    return AAuthProblemDetails.Create("person_token_required", statusCode: StatusCodes.Status401Unauthorized);
 }
 
 async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCollection<string> fallbackTools)
@@ -348,13 +351,14 @@ async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCol
     }
 
     var typ = (string?)fetcher.ParsedKey.Header?["typ"];
-    if (typ == AgentTokenBuilder.TokenType)
+    if (typ is AgentTokenBuilder.TokenType or PersonTokenBuilder.TokenType)
     {
         try
         {
-            var agent = await VerifyAgentAsync(ctx, fetcher);
+            var presenter = await VerifyPresenterAsync(ctx, fetcher);
+            if (presenter.Person is null) return new AuthOutcome(null, PersonTokenRequired(ctx));
             var stored = StoreR3Document(ctx.RequestServices.GetRequiredService<R3ProposalStore>(), fallbackTools, account);
-            var resourceToken = BuildResourceToken(agent.AgentId, agent.ConfirmationKey.ComputeJwkThumbprint(), stored.Uri, stored.S256, account);
+            var resourceToken = BuildResourceToken(presenter.Person, presenter.ConfirmationKey.ComputeJwkThumbprint(), stored.Uri, stored.S256, account);
             ctx.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatAuthToken(resourceToken);
             return new AuthOutcome(null, AAuth.Server.AAuthProblemDetails.Create("auth_token_required",
                 statusCode: StatusCodes.Status401Unauthorized,
@@ -362,7 +366,7 @@ async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCol
         }
         catch (Exception ex) when (ex is TokenVerificationException or InvalidOperationException)
         {
-            return new AuthOutcome(null, AAuth.Server.AAuthProblemDetails.Create("invalid_agent_token", ex.Message, statusCode: StatusCodes.Status401Unauthorized));
+            return new AuthOutcome(null, AAuth.Server.AAuthProblemDetails.Create("invalid_token", ex.Message, statusCode: StatusCodes.Status401Unauthorized));
         }
     }
 
@@ -374,10 +378,9 @@ async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCol
     var tokenVerifier = ctx.RequestServices.GetRequiredService<TokenVerifier>();
     var metadata = ctx.RequestServices.GetRequiredService<MetadataClient>();
     var jwks = ctx.RequestServices.GetRequiredService<JwksClient>();
-    var agentId = (string?)fetcher.ParsedKey.Payload["agent"];
-    if (string.IsNullOrWhiteSpace(agentId) || fetcher.ParsedKey.ConfirmationKey is null)
+    if (fetcher.ParsedKey.ConfirmationKey is null)
     {
-        return new AuthOutcome(null, AAuth.Server.AAuthProblemDetails.Create("invalid_auth_token", "missing agent or cnf.jwk", statusCode: StatusCodes.Status401Unauthorized));
+        return new AuthOutcome(null, AAuth.Server.AAuthProblemDetails.Create("invalid_auth_token", "missing cnf.jwk", statusCode: StatusCodes.Status401Unauthorized));
     }
 
     try
@@ -388,7 +391,6 @@ async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCol
             jwks,
             resourceUrl,
             fetcher.ParsedKey.ConfirmationKey,
-            agentId,
             cancellationToken: ctx.RequestAborted,
             accountExpectation: new AccountExpectation(account));
         var issuer = ((string?)verified.Payload["iss"])?.TrimEnd('/');
@@ -406,7 +408,9 @@ async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCol
     }
 }
 
-async Task<SignedAgent> VerifyAgentAsync(HttpContext ctx, R3VerifiedFetcher? knownFetcher = null)
+// Verifies the signing token: an agent token yields no person token (the caller
+// answers with requirement=person-token); a person token is verified against its PS.
+async Task<SignedPresenter> VerifyPresenterAsync(HttpContext ctx, R3VerifiedFetcher? knownFetcher = null)
 {
     var fetcher = knownFetcher;
     if (fetcher is null)
@@ -426,28 +430,18 @@ async Task<SignedAgent> VerifyAgentAsync(HttpContext ctx, R3VerifiedFetcher? kno
     {
         throw new InvalidOperationException("expected jwt Signature-Key with cnf.jwk");
     }
-    var verifier = ctx.RequestServices.GetRequiredService<TokenVerifier>();
-    var metadata = ctx.RequestServices.GetRequiredService<MetadataClient>();
-    var jwks = ctx.RequestServices.GetRequiredService<JwksClient>();
-    var verified = await verifier.VerifyWithJwksAsync(
+    var typ = (string?)fetcher.ParsedKey.Header?["typ"];
+    if (typ == AgentTokenBuilder.TokenType) return new SignedPresenter(null, fetcher.ParsedKey.ConfirmationKey);
+    if (typ != PersonTokenBuilder.TokenType) throw new InvalidOperationException("expected an agent token or a person token");
+    var verified = await ctx.RequestServices.GetRequiredService<TokenVerifier>().VerifyPersonTokenWithJwksAsync(
         fetcher.ParsedKey.Jwt,
-        metadata,
-        jwks,
-        AgentTokenBuilder.TokenType,
-        AgentTokenBuilder.AgentDwk,
-        expectedAudience: null,
-        cancellationToken: ctx.RequestAborted);
-    var cnf = verified.Payload["cnf"]?["jwk"] as JsonObject
-        ?? throw new TokenVerificationException("agent token missing cnf.jwk");
-    var tokenKey = KeyFactory.FromJwk(cnf);
-    if (tokenKey.ComputeJwkThumbprint() != fetcher.ParsedKey.ConfirmationKey.ComputeJwkThumbprint())
-    {
-        throw new TokenVerificationException("agent token cnf.jwk does not match the HTTP signature key");
-    }
-    var agentId = (string?)verified.Payload["sub"]
-        ?? throw new TokenVerificationException("agent token missing sub");
+        ctx.RequestServices.GetRequiredService<MetadataClient>(),
+        ctx.RequestServices.GetRequiredService<JwksClient>(),
+        resourceUrl,
+        fetcher.ParsedKey.ConfirmationKey,
+        ctx.RequestAborted);
     await TokenRegistration.RegisterAsync(tokenInventory, [TokenRegistration.FromVerified(verified)], ctx.RequestAborted);
-    return new SignedAgent(agentId, fetcher.ParsedKey.ConfirmationKey);
+    return new SignedPresenter(verified, fetcher.ParsedKey.ConfirmationKey);
 }
 
 void ValidateRequestedOperations(R3Operations operations)
@@ -585,7 +579,7 @@ static decimal ParameterNumber(IReadOnlyDictionary<string, R3Parameter> paramete
         ? number
         : 0m;
 
-sealed record SignedAgent(string AgentId, IAAuthKey ConfirmationKey);
+sealed record SignedPresenter(TokenVerifier.VerifiedToken? Person, IAAuthKey ConfirmationKey);
 sealed record AuthOutcome(TokenVerifier.VerifiedToken? Verified, IResult? Result);
 sealed record OperationOutcome(IReadOnlyDictionary<string, R3Parameter>? Parameters, bool IsProposal, IResult? Result);
 

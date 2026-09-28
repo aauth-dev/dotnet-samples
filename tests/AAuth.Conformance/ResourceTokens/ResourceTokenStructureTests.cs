@@ -15,7 +15,6 @@ public class ResourceTokenStructureTests
 {
     private const string Iss = "https://resource.example";
     private const string Aud = "https://ps.example";
-    private const string Agent = "aauth:alice@ap.example";
 
     private static (string Jwt, JsonObject Header, JsonObject Payload) Build()
     {
@@ -26,7 +25,9 @@ public class ResourceTokenStructureTests
             EgressPolicy = TestEgress.Policy,
             Issuer = Iss,
             Audience = Aud,
-            Agent = Agent,
+            PersonServer = Aud,
+            Subject = "person-1",
+            PresentedJti = "person-token-1",
             AgentJkt = "thumb",
             Key = key,
             KeyId = "r1",
@@ -73,11 +74,36 @@ public class ResourceTokenStructureTests
         Assert.Equal(Aud, (string?)payload["aud"]);
     }
 
-    [Fact(DisplayName = "§Resource Token Structure — payload.agent MUST identify the agent")]
-    public void PayloadAgent_IsPresent()
+    [Fact(DisplayName = "§Resource Token Structure — payload names the presented token (ps, sub, presented_jti) and no agent")]
+    public void PayloadNamesPresentedToken()
     {
         var (_, _, payload) = Build();
-        Assert.Equal(Agent, (string?)payload["agent"]);
+        Assert.Equal(Aud, (string?)payload["ps"]);
+        Assert.Equal("person-1", (string?)payload["sub"]);
+        Assert.Equal("person-token-1", (string?)payload["presented_jti"]);
+        Assert.False(payload.ContainsKey("agent"));
+    }
+
+    [Theory(DisplayName = "§Resource Token Structure — builder requires ps, sub and presented_jti")]
+    [InlineData("ps")]
+    [InlineData("sub")]
+    [InlineData("presented_jti")]
+    public void Builder_RequiresPresentedTokenClaims(string missing)
+    {
+        var b = new ResourceTokenBuilder
+        {
+            ScopeDescriptions = TestScopeDefinitions.Resource,
+            EgressPolicy = TestEgress.Policy,
+            Issuer = Iss,
+            Audience = Aud,
+            PersonServer = missing == "ps" ? "" : Aud,
+            Subject = missing == "sub" ? "" : "person-1",
+            PresentedJti = missing == "presented_jti" ? "" : "person-token-1",
+            AgentJkt = "t",
+            Key = AAuthKey.Generate(),
+            KeyId = "r",
+        };
+        Assert.Throws<InvalidOperationException>(() => b.Build());
     }
 
     [Fact(DisplayName = "§Resource Token Structure — payload.agent_jkt MUST be the agent JWK thumbprint")]
@@ -106,7 +132,9 @@ public class ResourceTokenStructureTests
             EgressPolicy = TestEgress.Policy,
             Issuer = Iss,
             Audience = Aud,
-            Agent = Agent,
+            PersonServer = Aud,
+            Subject = "person-1",
+            PresentedJti = "person-token-1",
             AgentJkt = "t",
             Key = key,
             KeyId = "r",
@@ -125,7 +153,9 @@ public class ResourceTokenStructureTests
             EgressPolicy = TestEgress.Policy,
             Issuer = "http://insecure.example",
             Audience = Aud,
-            Agent = Agent,
+            PersonServer = Aud,
+            Subject = "person-1",
+            PresentedJti = "person-token-1",
             AgentJkt = "t",
             Key = key,
             KeyId = "r",

@@ -16,6 +16,9 @@ public sealed class AAuthPersonServerMetadataOptions
     /// <summary>Auth token endpoint URL (<c>auth_token_endpoint</c>). REQUIRED.</summary>
     public required string AuthTokenEndpoint { get; init; }
 
+    /// <summary>Person token endpoint URL (<c>person_token_endpoint</c>). REQUIRED.</summary>
+    public required string PersonTokenEndpoint { get; init; }
+
     /// <summary>Signing keys served via the JWKS endpoint, keyed by <c>kid</c>. REQUIRED.</summary>
     public required IReadOnlyDictionary<string, IAAuthKey> SigningKeys { get; init; }
 
@@ -71,6 +74,8 @@ public sealed class AAuthPersonServerMetadataOptions
             throw new InvalidOperationException("Issuer must be an absolute https:// URL (or http://localhost).");
         if (string.IsNullOrWhiteSpace(AuthTokenEndpoint))
             throw new InvalidOperationException("AuthTokenEndpoint must be set.");
+        if (string.IsNullOrWhiteSpace(PersonTokenEndpoint))
+            throw new InvalidOperationException("PersonTokenEndpoint must be set.");
         if (SigningKeys is null || SigningKeys.Count == 0)
             throw new InvalidOperationException("At least one signing key must be supplied.");
     }

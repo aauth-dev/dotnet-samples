@@ -109,7 +109,7 @@ public sealed class PermissionClient
         {
             Description = description,
             Parameters = parameters,
-            Mission = new Tokens.MissionClaim(mission.Approver, mission.S256),
+            MissionS256 = mission.S256,
         };
         return mission.ExecuteAsync(() => RequestAsync(request, options?.ForMission(mission), cancellationToken));
     }

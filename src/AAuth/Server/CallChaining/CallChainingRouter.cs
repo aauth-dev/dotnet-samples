@@ -1,98 +1,51 @@
 using System;
-using System.Text;
 using System.Text.Json.Nodes;
-using Microsoft.IdentityModel.Tokens;
 
 namespace AAuth.Server.CallChaining;
 
 /// <summary>
-/// Pure-function routing logic for call chaining per §Call Chaining.
-/// Determines which PS/AS the intermediary should contact to exchange
-/// a downstream resource token, based on the upstream auth token's claims.
+/// Pure-function routing logic for call chaining per §Call Chaining. The
+/// intermediary routes downstream token requests to the person server the
+/// upstream token names: the <c>iss</c> of a person token, the <c>ps</c> of an
+/// auth token. The <c>ps</c> in the intermediary's own agent token is not used.
 /// </summary>
 public static class CallChainingRouter
 {
-    internal static string ResolveMetadataFile(string upstreamAuthToken)
-    {
-        var payload = AAuth.Tokens.TokenVerifier.DecodeJsonSegment(upstreamAuthToken.Split('.')[1], "payload");
-        return payload["mission"] is null && (string?)payload["dwk"] == AAuthConstants.DwkFiles.Access
-            ? AAuthConstants.DwkFiles.Access : AAuthConstants.DwkFiles.Person;
-    }
-
-    /// <summary>
-    /// Resolve the downstream PS/AS server URL from the upstream auth token.
-    /// </summary>
-    /// <remarks>
-    /// <para>Routing priority (per spec):</para>
-    /// <list type="number">
-    /// <item><c>mission.approver</c> present and valid → PS at approver URL.</item>
-    /// <item>No mission → PS/AS at <c>iss</c> claim.</item>
-    /// </list>
-    /// <para>
-    /// Security: if <c>mission.approver</c> is present but invalid (empty,
-    /// non-https, non-loopback), the method throws rather than silently
-    /// falling through to <c>iss</c>. This prevents a compromised upstream
-    /// from re-routing a chained request to a different governance authority.
-    /// </para>
-    /// </remarks>
-    /// <param name="upstreamAuthToken">The verified upstream auth token (compact JWS).</param>
-    /// <returns>The target server URL for the downstream token exchange.</returns>
+    /// <summary>Resolve the downstream person server from the upstream token.</summary>
+    /// <param name="upstreamToken">The upstream person or auth token (compact JWS).</param>
+    /// <param name="policy">Egress policy for the URL check.</param>
+    /// <returns>The person server URL the downstream requests go to.</returns>
     /// <exception cref="InvalidOperationException">
-    /// Thrown when the token is malformed, <c>mission.approver</c> is invalid,
-    /// or <c>iss</c> is missing/invalid.
+    /// The token is malformed, has an unexpected <c>typ</c>, or names no valid person server.
     /// </exception>
-    public static string ResolveDownstreamServer(string upstreamAuthToken, AAuth.Discovery.AAuthEgressPolicy? policy = null)
+    public static string ResolveDownstreamServer(string upstreamToken, AAuth.Discovery.AAuthEgressPolicy? policy = null)
     {
-        ArgumentException.ThrowIfNullOrEmpty(upstreamAuthToken);
+        ArgumentException.ThrowIfNullOrEmpty(upstreamToken);
 
-        var segments = upstreamAuthToken.Split('.');
+        var segments = upstreamToken.Split('.');
         if (segments.Length != 3)
             throw new InvalidOperationException("upstream_token is not a valid JWT (expected 3 segments).");
 
-        JsonObject payload;
+        JsonObject header, payload;
         try
         {
-            var payloadJson = Encoding.UTF8.GetString(
-                Base64UrlEncoder.DecodeBytes(segments[1]));
-            payload = JsonNode.Parse(payloadJson) as JsonObject
-                ?? throw new InvalidOperationException("upstream_token payload is not a JSON object.");
+            header = AAuth.Tokens.TokenVerifier.DecodeJsonSegment(segments[0], "header");
+            payload = AAuth.Tokens.TokenVerifier.DecodeJsonSegment(segments[1], "payload");
         }
-        catch (Exception ex) when (ex is not InvalidOperationException)
+        catch (Exception ex)
         {
-            throw new InvalidOperationException("Failed to decode upstream_token payload.", ex);
+            throw new InvalidOperationException("Failed to decode upstream_token.", ex);
         }
 
-        // Route 1: mission.approver present → PS at approver URL.
-        if (payload["mission"] is JsonObject mission)
+        var personServer = (string?)header["typ"] switch
         {
-            var approver = (string?)mission["approver"];
-
-            // Security: mission.approver present but empty → fail-fast.
-            if (approver is not null && string.IsNullOrWhiteSpace(approver))
-                throw new InvalidOperationException(
-                    "upstream_token 'mission.approver' is present but empty. " +
-                    "Cannot fall through to 'iss' — this may indicate a compromised upstream.");
-
-            if (!string.IsNullOrEmpty(approver))
-            {
-                if (!AAuthUrl.IsHttpsOrLoopback(approver, policy))
-                    throw new InvalidOperationException(
-                        $"upstream_token 'mission.approver' must be an absolute https:// URL " +
-                        $"(or http://localhost): {approver}");
-
-                return approver;
-            }
-        }
-
-        // Route 2/3: Use iss (PS or AS — the exchange client resolves the
-        // correct metadata document based on the server's discovery).
-        var iss = (string?)payload["iss"]
-            ?? throw new InvalidOperationException("upstream_token is missing 'iss' claim.");
-
-        if (!AAuthUrl.IsHttpsOrLoopback(iss, policy))
+            AAuth.Tokens.PersonTokenBuilder.TokenType => (string?)payload["iss"],
+            AAuth.Tokens.AuthTokenBuilder.TokenType => (string?)payload["ps"],
+            _ => throw new InvalidOperationException("upstream_token must be a person token or an auth token."),
+        };
+        if (string.IsNullOrEmpty(personServer) || !AAuthUrl.IsHttpsOrLoopback(personServer, policy))
             throw new InvalidOperationException(
-                $"upstream_token 'iss' must be an absolute https:// URL (or http://localhost): {iss}");
-
-        return iss;
+                $"upstream_token must name an absolute https:// person server (or http://localhost): {personServer}");
+        return personServer;
     }
 }

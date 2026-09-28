@@ -20,6 +20,8 @@ namespace AAuth.Conformance.Missions;
 public class ClarificationChatTests
 {
     private const string Ps = "http://localhost:5555";
+    private const string Presented = "presented.person.token";
+    private const string UpdatedPresented = "updated.person.token";
     private static readonly DeferredPollerOptions ImmediatePolling = new()
     {
         DefaultPollInterval = TimeSpan.Zero,
@@ -70,6 +72,7 @@ public class ClarificationChatTests
         ClarificationRequirement? seen = null;
         await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
         {
+            PresentedToken = Presented,
             PollerOptions = ImmediatePolling,
             OnClarificationRequired = (clarification, _) =>
             {
@@ -90,11 +93,13 @@ public class ClarificationChatTests
 
         await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
         {
+            PresentedToken = Presented,
             PollerOptions = ImmediatePolling,
             OnClarificationRequired = (_, _) =>
-                Task.FromResult(ClarificationResponse.Update(TestTokens.UpdatedResource, "Reduced to read-only.")),
+                Task.FromResult(ClarificationResponse.Update(TestTokens.UpdatedResource, UpdatedPresented, "Reduced to read-only.")),
             }));
         Assert.Equal(TestTokens.UpdatedResource, handler.LastUpdatedResourceToken);
+        Assert.Equal(UpdatedPresented, handler.LastUpdatedPresentedToken);
         Assert.Equal("Reduced to read-only.", handler.LastUpdatedJustification);
     }
 
@@ -107,6 +112,7 @@ public class ClarificationChatTests
         await Assert.ThrowsAsync<AAuthClarificationCancelledException>(() =>
             client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
             {
+                PresentedToken = Presented,
                 PollerOptions = ImmediatePolling,
                 OnClarificationRequired = (_, _) => Task.FromResult(ClarificationResponse.Cancel()),
             }));
@@ -123,6 +129,7 @@ public class ClarificationChatTests
         await Assert.ThrowsAsync<HttpRequestException>(() =>
             client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
             {
+                PresentedToken = Presented,
                 PollerOptions = ImmediatePolling,
             }));
     }
@@ -137,6 +144,7 @@ public class ClarificationChatTests
         await Assert.ThrowsAsync<AAuthClarificationLimitException>(() =>
             client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
             {
+                PresentedToken = Presented,
                 PollerOptions = ImmediatePolling,
                 MaxClarificationRounds = 2,
                 OnClarificationRequired = (_, _) =>
@@ -152,6 +160,7 @@ public class ClarificationChatTests
 
         await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
         {
+            PresentedToken = Presented,
             PollerOptions = ImmediatePolling,
             OnClarificationRequired = (_, _) =>
                 Task.FromResult(ClarificationResponse.Respond("ok")),
@@ -170,6 +179,7 @@ public class ClarificationChatTests
         public bool AlwaysClarify { get; init; }
         public string? LastClarificationResponse { get; private set; }
         public string? LastUpdatedResourceToken { get; private set; }
+        public string? LastUpdatedPresentedToken { get; private set; }
         public string? LastUpdatedJustification { get; private set; }
         public bool DeleteCalled { get; private set; }
         public List<string> DeclaredCapabilities { get; } = new();
@@ -220,6 +230,7 @@ public class ClarificationChatTests
                 if (body?["resource_token"] is { } rt)
                 {
                     LastUpdatedResourceToken = (string?)rt;
+                    LastUpdatedPresentedToken = (string?)body["presented_token"];
                     LastUpdatedJustification = (string?)body["justification"];
                 }
                 _answered = true;

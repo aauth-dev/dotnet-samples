@@ -106,7 +106,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
         await VerifyActivityTagsViaEndpoint(
             expectedScheme: "jwt",
             expectedLevel: "Authorized",
-            expectedAgent: AgentId,
+            expectedAgent: null,
             expectedScope: ResourceScope);
     }
 
@@ -169,7 +169,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
         var metadata = new MetadataClient(httpClient);
         var exchangeClient = new TokenExchangeClient(httpClient, metadata);
 
-        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => exchangeClient.ExchangeAsync("http://localhost:9999", TestTokens.Resource));
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => exchangeClient.ExchangeAsync("http://localhost:9999", TestTokens.Resource, "presented.person.token"));
 
         Assert.Contains(_activities, a => a.OperationName == "AAuth.TokenExchange");
     }
@@ -291,6 +291,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
             "http://localhost:9997", TestTokens.Resource,
             new TokenExchangeRequest
             {
+                PresentedToken = "presented.person.token",
                 OnInteractionRequired = (_, _) => Task.CompletedTask,
                 PollerOptions = new DeferredPollerOptions
                 {
@@ -327,7 +328,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = PsIssuer,
             Audience = ResourceId,
-            Agent = AgentId,
+            PersonServer = PsIssuer,
             AgentConfirmationKey = _agentKey,
             Key = _psKey,
             KeyId = "ps-key-1",
@@ -338,7 +339,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
     }
 
     private async Task VerifyActivityTagsViaEndpoint(
-        string expectedScheme, string expectedLevel, string expectedAgent, string? expectedScope)
+        string expectedScheme, string expectedLevel, string? expectedAgent, string? expectedScope)
     {
         Dictionary<string, string?>? capturedTags = null;
         var builder = WebApplication.CreateBuilder();
@@ -404,6 +405,8 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
             Assert.Equal(expectedLevel, capturedTags[AAuthDiagnostics.TagLevel]);
             if (expectedAgent is not null)
                 Assert.Equal(expectedAgent, capturedTags[AAuthDiagnostics.TagAgent]);
+            else
+                Assert.Null(capturedTags.GetValueOrDefault(AAuthDiagnostics.TagAgent));
             if (expectedScope is not null)
                 Assert.Equal(expectedScope, capturedTags[AAuthDiagnostics.TagScope]);
         }

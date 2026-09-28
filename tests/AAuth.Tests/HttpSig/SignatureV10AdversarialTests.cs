@@ -150,68 +150,6 @@ public class SignatureV10AdversarialTests
         .Where(test => (string)test[0] != ResourceTokenBuilder.TokenType);
 
     [Theory]
-    [InlineData("bad/path")]
-    [InlineData("ap.example:443")]
-    [InlineData("ap.example?query")]
-    [InlineData("ap.example#fragment")]
-    [InlineData("")]
-    [InlineData(" ")]
-    [InlineData("b\u00fccher.example")]
-    [InlineData("localhost")]
-    public async Task InvalidActorDomainsRejectAtEveryDepth(string domain)
-    {
-        var key = AAuthKey.Generate();
-        var invalid = new JsonObject { ["agent"] = "aauth:actor@" + domain };
-        foreach (var act in new[] { invalid, new JsonObject { ["agent"] = "aauth:other@different.example", ["act"] = invalid.DeepClone() } })
-        {
-            Assert.False(ActChainBuilder.ValidateChain(act));
-            Assert.Throws<ArgumentException>(() => ActChainBuilder.BuildNestedAct("aauth:next@another.example", act));
-            var payload = new JsonObject { ["act"] = act.DeepClone() };
-            Assert.Throws<InvalidOperationException>(() => ActChainReader.GetDelegationChain(payload));
-            Assert.Throws<InvalidOperationException>(() => ActChainReader.GetImmediateActor(payload));
-            var jwt = TestTokens.Raw(key, AuthTokenBuilder.TokenType, (_, body) => body["act"] = act.DeepClone());
-            Assert.Equal(SignatureErrorCode.InvalidJwt, Assert.Throws<TokenVerificationException>(() =>
-                new TokenVerifier { Clock = () => Now }.VerifyAuthToken(jwt, key, "https://resource.example", key, "aauth:wire@issuer.example")).Code);
-            var context = Signed(key, SignatureKeyHeader.FormatJwt(jwt));
-            await Middleware(null).InvokeAsync(context);
-            Assert.Equal(401, context.Response.StatusCode);
-            Assert.Equal("error=invalid_jwt", context.Response.Headers["Signature-Error"].ToString());
-            Assert.Null(context.Features.Get<AAuthVerifiedAssertion>());
-        }
-    }
-
-    [Theory]
-    [InlineData("xn--bcher-kva.example", false)]
-    [InlineData("another.example", false)]
-    [InlineData("localhost", true)]
-    [InlineData("127.0.0.1", true)]
-    public void ActorDomainsUseExplicitPolicyWithoutSameProviderRequirement(string domain, bool development)
-    {
-        var policy = development ? AAuthEgressPolicy.ForDevelopmentLoopback("http://" + domain + ":5010") : AAuthEgressPolicy.Production;
-        var actor = "aauth:actor@" + domain;
-        var chain = ActChainBuilder.BuildNestedAct(actor, policy: policy);
-        var act = ActChainBuilder.BuildNestedAct("aauth:next@different.example", chain, policy);
-        var payload = new JsonObject { ["act"] = act.DeepClone() };
-        Assert.True(ActChainBuilder.ValidateChain(act, policy: policy));
-        Assert.Equal(actor, ActChainReader.GetOriginalActor(payload, policy: policy));
-        Assert.Equal(2, ActChainReader.GetChainDepth(payload, policy: policy));
-        Assert.Equal(2, ActChainReader.GetDelegationChain(payload, policy: policy).Count);
-        Assert.Equal("aauth:next@different.example", ActChainReader.GetImmediateActor(payload, policy));
-        var key = AAuthKey.Generate();
-        var jwt = TestTokens.Raw(key, AuthTokenBuilder.TokenType, (_, body) => body["act"] = act);
-        Assert.NotNull(new TokenVerifier { Clock = () => Now, EgressPolicy = policy }
-            .VerifyAuthToken(jwt, key, "https://resource.example", key, "aauth:wire@issuer.example"));
-        Assert.True(AuthTokenResponseValidator.ActChainsMatch(act, (JsonObject)act.DeepClone(), policy));
-        if (development)
-        {
-            Assert.False(ActChainBuilder.ValidateChain(act));
-            Assert.Throws<ArgumentException>(() => ActChainBuilder.BuildNestedAct(actor + ":5010", policy: policy));
-            var httpsPolicy = AAuthEgressPolicy.ForDevelopmentLoopback("https://" + domain + ":5010");
-            Assert.Throws<ArgumentException>(() => ActChainBuilder.BuildNestedAct(actor + ":5010", policy: httpsPolicy));
-        }
-    }
-
-    [Theory]
     [InlineData("aa-agent+jwt", "ps", "null")]
     [InlineData("aa-agent+jwt", "ps", "123")]
     [InlineData("aa-agent+jwt", "ps", "\"http://ps.example\"")]
@@ -228,9 +166,12 @@ public class SignatureV10AdversarialTests
     [InlineData("aa-auth+jwt", "aud", "[]")]
     [InlineData("aa-auth+jwt", "sub", "null")]
     [InlineData("aa-auth+jwt", "sub", "\"\"")]
-    [InlineData("aa-auth+jwt", "agent", "\"aauth:wire@bad/path\"")]
-    [InlineData("aa-auth+jwt", "act", "{\"agent\":123}")]
-    [InlineData("aa-auth+jwt", "mission", "{\"approver\":123,\"s256\":\"bad\"}")]
+    [InlineData("aa-auth+jwt", "ps", "123")]
+    [InlineData("aa-auth+jwt", "ps", "\"http://ps.example\"")]
+    [InlineData("aa-auth+jwt", "mission_s256", "\"bad\"")]
+    [InlineData("aa-person+jwt", "scope", "\"read\"")]
+    [InlineData("aa-person+jwt", "account", "\"work\"")]
+    [InlineData("aa-person+jwt", "mission_s256", "123")]
     [InlineData("aa-auth+jwt", "iat", "-9223372036854775808")]
     [InlineData("aa-auth+jwt", "iat", "9223372036854775807")]
     [InlineData("aa-auth+jwt", "iat", "1800000000.5")]
@@ -418,7 +359,9 @@ public class SignatureV10AdversarialTests
         else if (mutation == "alg") header["alg"] = "Ed25519";
         else payload.Remove(mutation);
         var jwt = SignatureV10WireTests.Jwt(header, payload, durable);
-        Assert.Equal(SignatureErrorCode.InvalidJwt, Assert.Throws<AAuthVerificationException>(() => NamingTokenVerifier.Verify(jwt, Now, TimeSpan.Zero)).Code);
+        // A future iat beyond the window is clock skew, not a malformed token.
+        Assert.Equal(mutation == "future-iat" ? SignatureErrorCode.ClockSkew : SignatureErrorCode.InvalidJwt,
+            Assert.Throws<AAuthVerificationException>(() => NamingTokenVerifier.Verify(jwt, Now, TimeSpan.Zero)).Code);
     }
 
     [Fact]

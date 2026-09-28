@@ -4220,9 +4220,9 @@ public sealed class TourSession : IAsyncDisposable
             _missionResponseBody = last.ResponseBody;
             try
             {
-                var mission = Mission.FromApprovalBytes(
-                    System.Text.Encoding.UTF8.GetBytes(last.ResponseBody));
-                _missionApprover = mission.Approver;
+                var mission = Mission.FromApprovalResponse(
+                    System.Text.Encoding.UTF8.GetBytes(last.ResponseBody), _options.PersonServerUrl!);
+                _missionApprover = mission.PersonServer;
                 _missionS256 = mission.S256;
                 _missionDescription = mission.Description;
                 _missionApprovedToolCount = mission.ApprovedTools.Count;
@@ -4270,14 +4270,6 @@ public sealed class TourSession : IAsyncDisposable
         using var client = new SampleHttpClient(signing);
 
         using var req = new HttpRequestMessage(HttpMethod.Get, MissionResourceUrl);
-        // The agent advertises the mission it is acting under so the resource
-        // copies the {approver, s256} claim into the resource_token it mints.
-        if (_missionApprover is not null && _missionS256 is not null)
-        {
-            req.Headers.TryAddWithoutValidation(
-                AAuthMissionHeader.Name,
-                AAuthMissionHeader.FormatStructured(_missionApprover, _missionS256));
-        }
         using var resp = await client.SendAsync(req, ct);
         var ex = capture.Last!;
 
@@ -4412,12 +4404,6 @@ public sealed class TourSession : IAsyncDisposable
         using var client = new SampleHttpClient(signing);
 
         using var req = new HttpRequestMessage(HttpMethod.Get, MissionElevatedResourceUrl);
-        if (_missionApprover is not null && _missionS256 is not null)
-        {
-            req.Headers.TryAddWithoutValidation(
-                AAuthMissionHeader.Name,
-                AAuthMissionHeader.FormatStructured(_missionApprover, _missionS256));
-        }
         using var resp = await client.SendAsync(req, ct);
         var ex = capture.Last!;
 
@@ -4835,12 +4821,6 @@ public sealed class TourSession : IAsyncDisposable
         using (var challengeClient = new SampleHttpClient(challengeSigning))
         {
             using var challengeReq = new HttpRequestMessage(HttpMethod.Get, MissionChainTargetUrl);
-            if (_missionApprover is not null && _missionS256 is not null)
-            {
-                challengeReq.Headers.TryAddWithoutValidation(
-                    AAuthMissionHeader.Name,
-                    AAuthMissionHeader.FormatStructured(_missionApprover, _missionS256));
-            }
             using var challengeResp = await challengeClient.SendAsync(challengeReq, ct);
             if (challengeResp.Headers.TryGetValues(AAuthRequirementHeader.Name, out var reqVals))
             {

@@ -47,15 +47,37 @@ internal static class R3TestData
         KeyId = ApKid,
     }.Build();
 
-    public static string ResourceToken(AAuthKey resourceKey, AAuthKey agentKey, string r3Uri, string r3S256) =>
-        new R3Challenge
+    public const string PersonSubject = "person-1";
+
+    public static string PersonToken(AAuthKey psKey, AAuthKey agentKey, string? missionS256 = null, DateTimeOffset? agentTokenExpiresAt = null) =>
+        new PersonTokenBuilder
         {
-            ResourceIssuer = ResourceIssuer,
-            Audience = AsIssuer,
-            Key = resourceKey,
-            KeyId = ResourceKid,
-            Clock = () => DateTimeOffset.UtcNow,
-        }.BuildResourceToken(AgentId, agentKey.ComputeJwkThumbprint(), r3Uri, r3S256);
+            EgressPolicy = TestEgress.Policy,
+            Issuer = PsIssuer,
+            Audience = ResourceIssuer,
+            Subject = PersonSubject,
+            ConfirmationKey = agentKey,
+            AgentTokenExpiresAt = agentTokenExpiresAt ?? DateTimeOffset.UtcNow.AddHours(1),
+            Key = psKey,
+            KeyId = PsKid,
+            MissionS256 = missionS256,
+        }.Build();
+
+    public static TokenVerifier.VerifiedToken VerifyPersonToken(string personToken, AAuthKey psKey, AAuthKey agentKey) =>
+        new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifyPersonToken(personToken, psKey, ResourceIssuer, agentKey);
+
+    public static R3Challenge Challenge(AAuthKey resourceKey) => new()
+    {
+        EgressPolicy = TestEgress.Policy,
+        ResourceIssuer = ResourceIssuer,
+        Audience = AsIssuer,
+        Key = resourceKey,
+        KeyId = ResourceKid,
+    };
+
+    public static string ResourceToken(AAuthKey resourceKey, TokenVerifier.VerifiedToken presented, AAuthKey agentKey,
+        string r3Uri, string r3S256, string? scope = null, string? account = null) =>
+        Challenge(resourceKey).BuildResourceToken(presented, agentKey.ComputeJwkThumbprint(), r3Uri, r3S256, scope, account);
 
     public static R3Document Document() => new()
     {

@@ -65,10 +65,10 @@ public class IssuanceBoundsTests
         using (response)
         {
             var payload = await fixture.AssertTokenAsync(response, started.AddSeconds(120));
-            Assert.Equal(childSeconds > 0 ? IssuerFixture.ChildId : IssuerFixture.ParentId, (string?)payload["agent"]);
+            Assert.Null(payload["agent"]);
+            Assert.Null(payload["act"]);
             var boundKey = AAuthKey.FromJwk((JsonObject)payload["cnf"]!["jwk"]!);
             Assert.Equal((childSeconds > 0 ? fixture.ChildKey : fixture.ParentKey).ComputeJwkThumbprint(), boundKey.ComputeJwkThumbprint());
-            if (childSeconds > 0) Assert.Equal(IssuerFixture.ParentId, (string?)payload["act"]?["agent"]);
         }
     }
 
@@ -105,7 +105,8 @@ public class IssuanceBoundsTests
         using var client = fixture.Client(parentSeconds);
         using var response = await client.PostAsJsonAsync("/token", fixture.Request(parentSeconds, childSeconds));
         Assert.False(response.IsSuccessStatusCode);
-        Assert.Null((await response.Content.ReadFromJsonAsync<JsonObject>())!["auth_token"]);
+        // A rejection may come from the signature layer (401 with no body) or the token endpoint.
+        Assert.DoesNotContain("auth_token", await response.Content.ReadAsStringAsync());
     }
 
     [Theory]
@@ -130,8 +131,9 @@ public class IssuanceBoundsTests
         using (response)
         {
             var payload = await fixture.AssertTokenAsync(response, ceiling);
-            Assert.Equal(IssuerFixture.ParentId, (string?)payload["act"]?["agent"]);
-            Assert.Equal("aauth:upstream@ap.test", (string?)payload["act"]?["act"]?["agent"]);
+            // The downstream token names the resource token's person, never the upstream sub.
+            Assert.Equal("user", (string?)payload["sub"]);
+            Assert.Null(payload["act"]);
         }
     }
 
@@ -148,7 +150,7 @@ public class IssuanceBoundsTests
         fixture.Clock.Now = fixture.Clock.Now.AddSeconds(expired ? 120 : 30);
         using var response = await client.PostAsJsonAsync(pending.Headers.Location, new JsonObject
         {
-            ["sub"] = "user", ["email"] = "user@example.test", ["tenant"] = "org",
+            ["email"] = "user@example.test", ["tenant"] = "org",
             ["roles"] = new JsonArray("reader"), ["groups"] = new JsonArray("team"),
         });
         if (expired) { await AssertExpiredAsync(response); return; }
@@ -251,7 +253,16 @@ public class IssuanceBoundsTests
 
         public JsonObject Request(int parentSeconds, int childSeconds = 0, bool upstream = false)
         {
-            var mission = Access && upstream ? new MissionClaim(Ps, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk") : null;
+            var mission = Access && upstream ? "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk" : null;
+            var agentKey = childSeconds != 0 ? ChildKey : ParentKey;
+            // The presented person token outlives every ceiling these tests assert.
+            var personToken = new PersonTokenBuilder
+            {
+                EgressPolicy = TestEgress.Policy,
+                Issuer = Ps, Audience = Resource, Subject = "user", ConfirmationKey = agentKey,
+                AgentTokenExpiresAt = Clock.Now.AddHours(1), TimeProvider = Clock, MissionS256 = mission,
+                Key = PsKey, KeyId = "key",
+            }.Build();
             var body = new JsonObject
             {
                 ["agent_token"] = AgentToken(parentSeconds),
@@ -259,21 +270,23 @@ public class IssuanceBoundsTests
                 {
                     ScopeDescriptions = TestScopeDefinitions.Resource,
                     EgressPolicy = TestEgress.Policy,
-                    Issuer = Resource, Audience = Access ? As : Ps, Agent = childSeconds != 0 ? ChildId : ParentId,
-                    AgentJkt = (childSeconds != 0 ? ChildKey : ParentKey).ComputeJwkThumbprint(),
+                    Issuer = Resource, Audience = Access ? As : Ps, PersonServer = Ps, Subject = "user",
+                    PresentedJti = (string)JsonNode.Parse(Base64UrlEncoder.DecodeBytes(personToken.Split('.')[1]))!["jti"]!,
+                    AgentJkt = agentKey.ComputeJwkThumbprint(),
                     Key = ResourceKey, KeyId = "key", Scope = "read",
-                    Mission = mission,
+                    MissionS256 = mission, IssuedAt = Clock.Now,
                 }.Build(),
+                ["presented_token"] = personToken,
             };
             if (childSeconds != 0) body["subagent_token"] = AgentToken(childSeconds, child: true);
             if (upstream) body["upstream_token"] = new AuthTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy,
-                Issuer = Access ? As : Ps, Audience = Ap, Agent = "aauth:upstream@ap.test",
+                Issuer = Access ? As : Ps, Audience = Ap, PersonServer = Ps, Subject = "upstream-person",
                 AgentConfirmationKey = ParentKey, Key = IssuerKey, KeyId = "key", Scope = "read",
                 AgentTokenExpiresAt = Clock.Now.AddSeconds(60), TimeProvider = Clock,
                 Dwk = Access ? AuthTokenBuilder.AccessDwk : AuthTokenBuilder.PersonDwk,
-                Mission = mission,
+                MissionS256 = mission,
             }.Build();
             return body;
         }
@@ -313,8 +326,8 @@ public class IssuanceBoundsTests
     private sealed class Policy(bool deferred, bool claims, bool injectClaim) : IAccessPolicy
     {
         public Task<AccessDecision> EvaluateAsync(AccessPolicyRequest request, CancellationToken cancellationToken = default)
-            => Task.FromResult(injectClaim ? AccessDecision.Allow("user", additionalClaims: new Dictionary<string, JsonNode?> { ["act"] = "injected" })
-                : request.Claims is not null || !deferred ? AccessDecision.Allow("user")
+            => Task.FromResult(injectClaim ? AccessDecision.Allow(additionalClaims: new Dictionary<string, JsonNode?> { ["act"] = "injected" })
+                : request.Claims is not null || !deferred ? AccessDecision.Allow()
                 : claims ? AccessDecision.NeedsClaims(["email", "tenant", "roles", "groups"]) : AccessDecision.NeedsInteraction());
     }
 

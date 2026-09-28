@@ -21,20 +21,34 @@ public sealed class R3Challenge
     public TimeSpan Lifetime { get; init; } = TimeSpan.FromMinutes(5);
     public Func<DateTimeOffset> Clock { get; init; } = () => DateTimeOffset.UtcNow;
 
+    /// <summary>
+    /// Build an R3 resource token naming <paramref name="presented"/> — the verified
+    /// person or auth token the request carried — bound to <paramref name="agentJkt"/>,
+    /// the thumbprint of the key that signed the request (§Resource Token Structure).
+    /// </summary>
     public string BuildResourceToken(
-        string agent,
+        TokenVerifier.VerifiedToken presented,
         string agentJkt,
         string r3Uri,
         string r3S256,
         string? scope = null,
         string? account = null)
     {
+        ArgumentNullException.ThrowIfNull(presented);
         AccountBinding.Validate(account);
-        ArgumentException.ThrowIfNullOrEmpty(agent);
         ArgumentException.ThrowIfNullOrEmpty(agentJkt);
         EgressPolicy.ValidateIdentifier(ResourceIssuer);
         EgressPolicy.ValidateIdentifier(Audience);
         R3AuthClaims.ResourceDocument(r3Uri, r3S256);
+        var personServer = presented.TokenType switch
+        {
+            PersonTokenBuilder.TokenType => presented.Issuer,
+            AuthTokenBuilder.TokenType => (string?)presented.Payload["ps"]
+                ?? throw new InvalidOperationException("Presented auth token is missing 'ps'."),
+            _ => throw new InvalidOperationException("A resource token must name a presented person token or auth token."),
+        };
+        var subject = presented.Subject
+            ?? throw new InvalidOperationException("Presented token is missing 'sub'.");
 
         if (Key is null)
         {
@@ -62,13 +76,17 @@ public sealed class R3Challenge
             ["dwk"] = ResourceTokenBuilder.ResourceDwk,
             ["aud"] = Audience,
             ["jti"] = Guid.NewGuid().ToString("N"),
-            ["agent"] = agent,
+            ["ps"] = personServer,
+            ["sub"] = subject,
+            ["presented_jti"] = presented.Jti,
             ["agent_jkt"] = agentJkt,
             ["iat"] = iat.ToUnixTimeSeconds(),
             ["exp"] = iat.Add(Lifetime).ToUnixTimeSeconds(),
             [R3AuthClaims.UriClaim] = r3Uri,
             [R3AuthClaims.S256Claim] = r3S256,
         };
+        if (presented.MissionS256 is { } mission) payload[MissionReference.ClaimName] = mission;
+        if (presented.Tenant is { } tenant) payload["tenant"] = tenant;
         if (!string.IsNullOrWhiteSpace(scope))
         {
             payload["scope"] = scope;
@@ -77,6 +95,7 @@ public sealed class R3Challenge
         return SignCompact(header, payload, Key);
     }
 
+    /// <summary>Build an R3 resource token for a presented auth token, bound to its <c>cnf</c> key and account.</summary>
     public string BuildResourceToken(
         TokenVerifier.VerifiedToken verifiedAuthToken,
         string r3Uri,
@@ -84,18 +103,28 @@ public sealed class R3Challenge
         string? scope = null)
     {
         ArgumentNullException.ThrowIfNull(verifiedAuthToken);
-        var payload = verifiedAuthToken.Payload;
-        var agent = (string?)payload["agent"]
-            ?? throw new InvalidOperationException("auth token missing agent");
-        var cnf = payload["cnf"]?["jwk"] as JsonObject
+        var cnf = verifiedAuthToken.Payload["cnf"]?["jwk"] as JsonObject
             ?? throw new InvalidOperationException("auth token missing cnf.jwk");
         var agentJkt = KeyFactory.FromJwk(cnf).ComputeJwkThumbprint();
-        return BuildResourceToken(agent, agentJkt, r3Uri, r3S256, scope, verifiedAuthToken.Account);
+        return BuildResourceToken(verifiedAuthToken, agentJkt, r3Uri, r3S256, scope, verifiedAuthToken.Account);
     }
 
-    public IResult Challenge(HttpContext context, string agent, string agentJkt, string r3Uri, string r3S256, string? scope = null, string? account = null)
+    /// <summary>
+    /// Challenge the current request: an agent token gets <c>requirement=person-token</c>;
+    /// a person or auth token gets <c>requirement=auth-token</c> with an R3 resource token
+    /// naming it (§Resource Access Modes).
+    /// </summary>
+    public IResult Challenge(HttpContext context, string r3Uri, string r3S256, string? scope = null, string? account = null)
     {
-        var token = BuildResourceToken(agent, agentJkt, r3Uri, r3S256, scope, account);
+        ArgumentNullException.ThrowIfNull(context);
+        var presented = AAuth.Server.Verification.AAuthHttpContextExtensions.GetAAuthVerifiedAssertion(context)
+            ?? throw new InvalidOperationException("R3 challenges require verified AAuth request context.");
+        if (presented.Token.TokenType == AgentTokenBuilder.TokenType)
+        {
+            context.Response.Headers[AAuthRequirementHeader.Name] = AAuthRequirementHeader.FormatPersonToken();
+            return AAuth.Server.AAuthProblemDetails.Create("person_token_required", statusCode: StatusCodes.Status401Unauthorized);
+        }
+        var token = BuildResourceToken(presented.Token, presented.HttpSigningKey.ComputeJwkThumbprint(), r3Uri, r3S256, scope, account);
         context.Response.Headers[AAuthRequirementHeader.Name] = AAuthRequirementHeader.FormatAuthToken(token);
         return AAuth.Server.AAuthProblemDetails.Create("auth_token_required", statusCode: StatusCodes.Status401Unauthorized);
     }

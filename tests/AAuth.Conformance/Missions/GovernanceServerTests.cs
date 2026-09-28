@@ -29,7 +29,7 @@ public class GovernanceServerTests
             ["action"] = "SendEmail",
             ["description"] = "Send the itinerary",
             ["parameters"] = new JsonObject { ["to"] = "user@example.com" },
-            ["mission"] = new JsonObject { ["approver"] = "https://ps.example", ["s256"] = S256 },
+            ["mission_s256"] = S256,
         };
 
         var request = GovernanceEndpoints.ParsePermission(body);
@@ -37,8 +37,18 @@ public class GovernanceServerTests
         Assert.Equal("SendEmail", request.Action.Name);
         Assert.Equal("Send the itinerary", request.Description);
         Assert.Equal("user@example.com", (string?)request.Parameters!["to"]);
-        Assert.Equal(S256, request.Mission!.S256);
+        Assert.Equal(S256, request.MissionS256);
     }
+
+    [Theory(DisplayName = "§Permission Request — a malformed mission_s256 throws")]
+    [InlineData("not-a-digest")]
+    [InlineData("object")]
+    public void ParsePermission_MalformedMission_Throws(string variant)
+        => Assert.Throws<FormatException>(() => GovernanceEndpoints.ParsePermission(new JsonObject
+        {
+            ["action"] = "SendEmail",
+            ["mission_s256"] = variant == "object" ? new JsonObject { ["s256"] = S256 } : variant,
+        }));
 
     [Fact(DisplayName = "§Permission Request — missing action throws")]
     public void ParsePermission_MissingAction_Throws()
@@ -50,14 +60,14 @@ public class GovernanceServerTests
     {
         var body = new JsonObject
         {
-            ["mission"] = new JsonObject { ["approver"] = "https://ps.example", ["s256"] = S256 },
+            ["mission_s256"] = S256,
             ["action"] = "WebSearch",
             ["result"] = new JsonObject { ["status"] = "completed" },
         };
 
         var record = GovernanceEndpoints.ParseAudit(body);
 
-        Assert.Equal(S256, record.Mission.S256);
+        Assert.Equal(S256, record.MissionS256);
         Assert.Equal("WebSearch", record.Action.Name);
         Assert.Equal("completed", (string?)record.Result!["status"]);
     }
@@ -71,17 +81,18 @@ public class GovernanceServerTests
     [InlineData("interaction", InteractionType.Interaction)]
     [InlineData("payment", InteractionType.Payment)]
     [InlineData("question", InteractionType.Question)]
-    [InlineData("completion", InteractionType.Completion)]
     public void ParseInteraction_MapsType(string wire, InteractionType expected)
     {
         var request = GovernanceEndpoints.ParseInteraction(new JsonObject { ["type"] = wire });
         Assert.Equal(expected, request.Type);
     }
 
-    [Fact(DisplayName = "§Interaction Request — unknown type throws")]
-    public void ParseInteraction_UnknownType_Throws()
+    [Theory(DisplayName = "§Interaction Request — unknown type throws; completion belongs at the mission endpoint")]
+    [InlineData("bogus")]
+    [InlineData("completion")]
+    public void ParseInteraction_UnknownType_Throws(string type)
         => Assert.Throws<FormatException>(() =>
-            GovernanceEndpoints.ParseInteraction(new JsonObject { ["type"] = "bogus" }));
+            GovernanceEndpoints.ParseInteraction(new JsonObject { ["type"] = type }));
 
     [Fact(DisplayName = "§Interaction Request — parser maps max_wait when present")]
     public void ParseInteraction_MapsMaxWait()
@@ -228,7 +239,7 @@ public class GovernanceServerTests
         var decider = new StubDecider();
         var request = new PermissionRequest(new MissionAction("SendEmail"))
         {
-            Mission = new AAuth.Tokens.MissionClaim("https://ps.example", S256),
+            MissionS256 = S256,
         };
         var mission = await store.GetAsync(S256);
         var entries = await log.ReadAsync(S256);

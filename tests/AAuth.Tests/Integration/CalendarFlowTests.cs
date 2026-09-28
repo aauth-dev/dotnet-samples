@@ -183,7 +183,8 @@ public class CalendarFlowTests : IAsyncLifetime
         var rawBody = await response.Content.ReadAsStringAsync();
         Assert.True(response.IsSuccessStatusCode, $"Status={(int)response.StatusCode}, Body={rawBody}");
         var body = JsonNode.Parse(rawBody) as JsonObject;
-        Assert.Equal("aauth:demo@ap.test", (string?)body!["agent"]);
+        Assert.Equal(PsIssuer, (string?)body!["ps"]);
+        Assert.Null(body["agent"]);
         Assert.Equal(MockPersonServer.SampleIdentityClaimsAsserter.DirectedSubject(CalendarIssuer), (string?)body["sub"]);
         Assert.Contains("calendar.read", body["scope"]!.AsArray().Select(s => (string?)s));
 
@@ -369,13 +370,10 @@ public class CalendarFlowTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ThreePartyChallenge_Returns401WithResourceToken()
+    public async Task ThreePartyChallenge_PersonTokenThenResourceTokenNamingIt()
     {
         // Send only through the signing pipeline (no ChallengeHandler) so we
-        // can inspect the raw 401 + AAuth-Requirement response that Calendar
-        // emits before the agent would retry. This guards against silent
-        // regressions in the 401 shape that the happy-path three-party test
-        // would mask.
+        // can inspect each raw 401 + AAuth-Requirement response Calendar emits.
         var agentKey = AAuthKey.Generate();
         var agentToken = new AgentTokenBuilder
         {
@@ -393,27 +391,43 @@ public class CalendarFlowTests : IAsyncLifetime
         // pipeline without the auto-retry challenge handler.
         using var client = BuildAgentClient(agentKey, holder, personServer: null);
 
-        var response = await client.GetAsync($"{CalendarIssuer}/events");
+        using var first = await client.GetAsync($"{CalendarIssuer}/events");
+        Assert.Equal(HttpStatusCode.Unauthorized, first.StatusCode);
+        Assert.Equal(AAuthRequirementHeader.PersonTokenRequirement, Requirement(first).Requirement);
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        Assert.True(response.Headers.TryGetValues(AAuthRequirementHeader.Name, out var values),
-            "401 response is missing the AAuth-Requirement header.");
-        var requirement = AAuthRequirementHeader.Parse(string.Join(", ", values!));
+        var psHandler = new MultiHostHandler(new Dictionary<string, HttpMessageHandler> { [PsHost] = _ps!.Server.CreateHandler() });
+        using var exchangeHttp = new InProcessHttpClient(new AAuthSigningHandler(agentKey, () => agentToken) { InnerHandler = psHandler });
+        var exchange = new TokenExchangeClient(exchangeHttp, new MetadataClient(new InProcessHttpClient(psHandler)));
+        var personToken = await exchange.RequestPersonTokenAsync(PsIssuer, CalendarIssuer);
+        holder.Update(personToken);
+
+        using var second = await client.GetAsync($"{CalendarIssuer}/events");
+        Assert.Equal(HttpStatusCode.Unauthorized, second.StatusCode);
+        var requirement = Requirement(second);
         Assert.Equal(AAuthRequirementHeader.AuthTokenRequirement, requirement.Requirement);
-        Assert.NotNull(requirement.ResourceToken);
 
-        // Decode the resource_token payload and assert the spec-mandated
-        // claim shape: iss=resource, aud=ps, agent + agent_jkt bound to the
-        // signing key.
-        var payloadSegment = requirement.ResourceToken!.Split('.')[1];
+        // The resource token names the presented person token (ps, sub,
+        // presented_jti) and binds the signing key (agent_jkt).
+        var person = (JsonObject)JsonNode.Parse(
+            Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(personToken.Split('.')[1]))!;
         var payload = (JsonObject)JsonNode.Parse(
-            Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(payloadSegment))!;
+            Microsoft.IdentityModel.Tokens.Base64UrlEncoder.DecodeBytes(requirement.ResourceToken!.Split('.')[1]))!;
         Assert.Equal(CalendarIssuer, (string?)payload["iss"]);
         Assert.Equal(PsIssuer, (string?)payload["aud"]);
-        Assert.Equal("aauth:demo@ap.test", (string?)payload["agent"]);
+        Assert.Equal(PsIssuer, (string?)payload["ps"]);
+        Assert.Equal((string?)person["sub"], (string?)payload["sub"]);
+        Assert.Equal((string?)person["jti"], (string?)payload["presented_jti"]);
+        Assert.Null(payload["agent"]);
         Assert.Equal(agentKey.ComputeJwkThumbprint(), (string?)payload["agent_jkt"]);
         Assert.Equal(ResourceTokenBuilder.ResourceDwk, (string?)payload["dwk"]);
         Assert.Equal("calendar.read", (string?)payload["scope"]);
+
+        static AAuthRequirementHeader.ParsedRequirement Requirement(HttpResponseMessage response)
+        {
+            Assert.True(response.Headers.TryGetValues(AAuthRequirementHeader.Name, out var values),
+                "401 response is missing the AAuth-Requirement header.");
+            return AAuthRequirementHeader.Parse(string.Join(", ", values!));
+        }
     }
 
     [Fact]
@@ -543,7 +557,7 @@ public class CalendarFlowTests : IAsyncLifetime
         Assert.True(response.IsSuccessStatusCode,
             $"Status={(int)response.StatusCode}, Body={rawBody}");
         var body = JsonNode.Parse(rawBody) as JsonObject;
-        Assert.Equal(AgentId, (string?)body!["agent"]);
+        Assert.Equal(PsIssuer, (string?)body!["ps"]);
         Assert.Equal(MockPersonServer.SampleIdentityClaimsAsserter.DirectedSubject(CalendarIssuer), (string?)body["sub"]);
 
         // Carrier swapped to the post-exchange auth token, just like the
@@ -587,6 +601,7 @@ public class CalendarFlowTests : IAsyncLifetime
         using var calendar = new WebApplicationFactory<Calendar.Entry>().WithWebHostBuilder(b =>
         {
             b.UseSetting("AAuth:Issuer", CalendarIssuer);
+            b.UseSetting("AAuth:TrustedPersonServers:0", PsIssuer);
             b.ConfigureServices(services =>
             {
                 services.RemoveAll<MetadataClient>();
@@ -663,8 +678,10 @@ public class CalendarFlowTests : IAsyncLifetime
         await Assert.ThrowsAsync<AAuthInteractionDeniedException>(
             () => client.GetAsync($"{CalendarIssuer}/events"));
 
-        // Carrier did NOT swap — the agent never received an auth token.
-        Assert.Equal(agentToken, holder.Current);
+        // The carrier holds the person token from the first leg; the denied
+        // auth token request never replaced it.
+        Assert.Equal(PersonTokenBuilder.TokenType, (string?)JsonNode.Parse(
+            Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Decode(holder.Current.Split('.')[0]))!["typ"]);
     }
 
     // -------------------------------------------------------------------

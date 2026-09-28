@@ -36,10 +36,23 @@ public class ChallengeClarificationSeamTests
         Issuer = "https://ap.example", Subject = "aauth:test@ap.example", KeyId = "key",
         Key = SigningKey, ConfirmationKey = SigningKey,
     }.Build();
-    private static string ResourceToken => new AAuth.Tokens.ResourceTokenBuilder
+    private static string ResourceToken(string presentedToken)
     {
-        Issuer = ResourceUrl, Audience = Ps, Agent = "aauth:test@ap.example",
-        AgentJkt = SigningKey.ComputeJwkThumbprint(), Key = SigningKey, KeyId = "key",
+        var presented = AAuth.Tokens.TokenVerifier.DecodeJsonSegment(presentedToken.Split('.')[1], "payload");
+        return new AAuth.Tokens.ResourceTokenBuilder
+        {
+            Issuer = ResourceUrl, Audience = Ps, PersonServer = Ps,
+            Subject = (string)presented["sub"]!, PresentedJti = (string)presented["jti"]!,
+            AgentJkt = SigningKey.ComputeJwkThumbprint(), Key = SigningKey, KeyId = "key",
+        }.Build();
+    }
+
+    private static string PersonToken() => new AAuth.Tokens.PersonTokenBuilder
+    {
+        Issuer = Ps, Audience = ResourceUrl, Subject = "person-1", ConfirmationKey = SigningKey,
+        AgentTokenExpiresAt = DateTimeOffset.FromUnixTimeSeconds(
+            (long)AAuth.Tokens.TokenVerifier.DecodeJsonSegment(AgentToken.Split('.')[1], "payload")["exp"]!),
+        Lifetime = TimeSpan.FromMinutes(30), Key = SigningKey, KeyId = "key",
     }.Build();
 
     private static ChallengeHandler BuildChallengeHandler(
@@ -47,9 +60,11 @@ public class ChallengeClarificationSeamTests
         Func<ClarificationRequirement, CancellationToken, Task<ClarificationResponse>> onClarification,
         Func<Interaction, CancellationToken, Task>? onInteraction = null)
     {
-        var holder = new AAuthTokenHolder("initial-agent-token");
+        var holder = new AAuthTokenHolder();
         var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
-        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient);
+        // The PS exchange is agent-signed; the resource request presents the current carrier.
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(
+            new AAuth.HttpSig.AAuthSigningHandler(SigningKey, () => AgentToken) { InnerHandler = exchangeHandler }), metaClient);
 
         return new ChallengeHandler(
             exchangeClient, holder, new AAuth.Tokens.TokenVerifier { EgressPolicy = TestEgress.Policy },
@@ -63,7 +78,8 @@ public class ChallengeClarificationSeamTests
             },
             upstreamTokenProvider: null)
         {
-            InnerHandler = new AAuth.HttpSig.AAuthSigningHandler(SigningKey, () => AgentToken)
+            InnerHandler = new AAuth.HttpSig.AAuthSigningHandler(SigningKey, new AAuth.HttpSig.JwtSignatureKeyProvider(
+                request => holder.SelectForRequest(request, AgentToken, SigningKey.ComputeJwkThumbprint())))
             {
                 InnerHandler = new ChallengingResourceHandler(),
             },
@@ -133,27 +149,31 @@ public class ChallengeClarificationSeamTests
         Assert.True(exchangeHandler.DeleteCalled);
     }
 
-    /// <summary>Resource handler: 401 challenge first, 200 once an auth token is exchanged.</summary>
+    /// <summary>
+    /// Resource handler: an agent token gets <c>requirement=person-token</c>; a person
+    /// token gets a resource token naming it; an auth token gets 200.
+    /// </summary>
     private sealed class ChallengingResourceHandler : HttpMessageHandler
     {
-        private int _callCount;
-
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken ct)
         {
-            if (Interlocked.Increment(ref _callCount) == 1)
+            var carrier = AAuth.HttpSig.SignatureKeyParser.Parse(request.Headers.GetValues("Signature-Key").Single()).Jwt!;
+            var typ = (string?)AAuth.Tokens.TokenVerifier.DecodeJsonSegment(carrier.Split('.')[0], "header")["typ"];
+            if (typ == AAuth.Tokens.AuthTokenBuilder.TokenType)
             {
-                var challenge = new HttpResponseMessage(HttpStatusCode.Unauthorized);
-                challenge.Headers.TryAddWithoutValidation(
-                    AAuthRequirementHeader.Name,
-                    AAuthRequirementHeader.FormatAuthToken(ResourceToken));
-                return Task.FromResult(challenge);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"ok\":true}", Encoding.UTF8, "application/json"),
+                });
             }
-
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("{\"ok\":true}", Encoding.UTF8, "application/json"),
-            });
+            var challenge = new HttpResponseMessage(HttpStatusCode.Unauthorized);
+            challenge.Headers.TryAddWithoutValidation(
+                AAuthRequirementHeader.Name,
+                typ == AAuth.Tokens.PersonTokenBuilder.TokenType
+                    ? AAuthRequirementHeader.FormatAuthToken(ResourceToken(carrier))
+                    : AAuthRequirementHeader.FormatPersonToken());
+            return Task.FromResult(challenge);
         }
     }
 
@@ -194,8 +214,12 @@ public class ChallengeClarificationSeamTests
                     ["issuer"] = origin,
                     ["jwks_uri"] = origin + "/jwks",
                     ["auth_token_endpoint"] = Ps + "/token",
+                    ["person_token_endpoint"] = Ps + "/person",
                 });
             }
+
+            if (path == "/person" && request.Method == HttpMethod.Post)
+                return Json(HttpStatusCode.OK, new JsonObject { ["person_token"] = PersonToken() });
 
             if (request.Method == HttpMethod.Delete)
             {

@@ -102,12 +102,6 @@ app.UseWhen(
             ResourceKeyId = ConciergeKid,
             ResourceIdentifier = conciergeUrl,
             DefaultScopes = ConciergeScope,
-            // Mission-aware: when an AAuth-Mission header is present, copy the
-            // {approver, s256} into the resource token so the PS governs the
-            // agent→concierge exchange under the mission (§Mission Context at
-            // Resources). A no-op when no mission header is present, so the plain
-            // call chain ("/" → Calendar "/events") is unaffected.
-            MissionAware = true,
         }));
 
 // -----------------------------------------------------------------------
@@ -149,7 +143,7 @@ app.UseWhen(ctx => ctx.Request.Path == "/wallet", branch => branch.UseAAuthInter
     new ChallengeOptions
     {
         EgressPolicy = SampleEgress.Policy, ResourceSigningKey = conciergeKey, ResourceKeyId = ConciergeKid,
-        ResourceIdentifier = conciergeUrl, PersonServerAudience = accessServerUrl, DefaultScopes = "wallet.read",
+        ResourceIdentifier = conciergeUrl, AccessServer = accessServerUrl, DefaultScopes = "wallet.read",
         ScopeDescriptions = new Dictionary<string, string> { ["wallet.read"] = "Read the travel wallet through the concierge" },
     }));
 

@@ -75,7 +75,7 @@ public class GovernancePendingSignatureTests
         Assert.Equal(difference == "unsigned" ? HttpStatusCode.Unauthorized : HttpStatusCode.NotFound, rejected.StatusCode);
         using var delivered = await owner.GetAsync(pending);
         Assert.Equal(HttpStatusCode.OK, delivered.StatusCode);
-        Assert.Equal("aauth:owner@agent.example", Mission.FromApprovalBytes(await delivered.Content.ReadAsByteArrayAsync()).Agent);
+        Assert.Equal("aauth:owner@agent.example", Mission.FromApprovalResponse(await delivered.Content.ReadAsByteArrayAsync(), "https://ps.example").Agent);
     }
 
     private sealed class PromptApprover : IMissionApprover

@@ -25,6 +25,7 @@ public class DeferredExchangeTests
         await Assert.ThrowsAsync<AAuthInteractionDeniedException>(() => client.ExchangeAsync(
             "https://ps.example", TestTokens.Resource, new TokenExchangeRequest
             {
+                PresentedToken = "presented",
                 PollerOptions = new DeferredPollerOptions { MinPollInterval = TimeSpan.Zero },
             }));
         Assert.Equal(new[] { "GET", "POST", "GET" }, handler.Methods);

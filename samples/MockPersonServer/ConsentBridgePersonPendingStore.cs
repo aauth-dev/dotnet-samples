@@ -32,10 +32,10 @@ public sealed class ConsentBridgePersonPendingStore : IPersonPendingStore
     public PersonPendingEntry Add(
         string resourceUrl, string scope, string agentId, IAAuthKey? agentConfirmationKey,
         DateTimeOffset agentTokenExpiresAt,
-        JsonObject? upstreamAct = null, MissionClaim? mission = null,
+        string? missionS256 = null,
         DateTimeOffset? authorizationExpiresAt = null)
         => _inner.Add(resourceUrl, scope, agentId, agentConfirmationKey, agentTokenExpiresAt,
-            upstreamAct, mission, authorizationExpiresAt);
+            missionS256, authorizationExpiresAt);
 
     public PersonPendingEntry? Get(string id)
     {
@@ -46,7 +46,7 @@ public sealed class ConsentBridgePersonPendingStore : IPersonPendingStore
         {
             // Non-mission three-party entry awaiting consent (PS mints): flip to
             // allowed once the demo ConsentStore records it.
-            if (entry is { MissionGate: false, Mission: null, AgentConfirmationKey: not null, Status: PersonPendingStatus.Pending }
+            if (entry is { MissionGate: false, MissionS256: null, AgentConfirmationKey: not null, Status: PersonPendingStatus.Pending }
                 && !entry.Lifecycle.Delivered && !entry.Lifecycle.Cancelled && !entry.Lifecycle.InvalidCode
                 && entry.PendingExpiresAt > DateTimeOffset.UtcNow
                 && _consent.IsConsented(entry.ConsentAgentId, entry.ResourceUrl, entry.Scope, entry.Account, entry.ResourceKeyThumbprint))

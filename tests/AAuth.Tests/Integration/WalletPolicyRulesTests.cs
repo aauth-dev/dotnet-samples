@@ -31,7 +31,7 @@ public class WalletPolicyRulesTests
         {
             ResourceUrl = "http://localhost:5003", Scope = "wallet.read", AgentId = "aauth:parent+worker@ap.example",
             PersonServerIssuer = "http://localhost:5100",
-            UpstreamAuthorization = new UpstreamTokenValidationResult { IsValid = true, Scope = "delegation.invoke" },
+            UpstreamAuthorization = new UpstreamTokenValidationResult { IsValid = true, Scope = "delegation.invoke", Audience = "http://localhost:5010" },
         }));
     }
 

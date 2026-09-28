@@ -200,7 +200,7 @@ var session = await governance.ProposeMissionAsync(new MissionProposal(
 // (approver + s256) and the bound PS into every later governed call.
 var mission = session.Mission;
 Console.WriteLine($"   description     : {mission.Description}");
-Console.WriteLine($"   approved by     : {mission.Approver}");
+Console.WriteLine($"   approved by     : {mission.PersonServer}");
 Console.WriteLine($"   approved tools  : {string.Join(", ", mission.ApprovedTools.Select(t => t.Name))}");
 // The s256 is an RFC 7638-style thumbprint of the signed approval blob, NOT the
 // text: tokens carry only {approver, s256} as a compact, verifiable reference

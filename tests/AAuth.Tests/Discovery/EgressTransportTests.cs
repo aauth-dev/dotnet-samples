@@ -88,7 +88,8 @@ public class EgressTransportTests
             await Assert.ThrowsAsync<HttpRequestException>(() => federation.FederateAsync("https://access.example", new()
             {
                 ResourceToken = "resource", AgentToken = "agent", ExpectedAudience = "https://resource.example",
-                ExpectedAgentId = "aauth:agent@example", AgentKey = AAuth.Crypto.AAuthKey.Generate(),
+                ExpectedSubject = "person", ExpectedPersonServer = "https://ps.example", AgentKey = AAuth.Crypto.AAuthKey.Generate(),
+                PresentedToken = "presented", PresentedTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
                 AuthorizationExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
             }));
             Assert.Equal(0, bypass.Calls);

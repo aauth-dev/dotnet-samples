@@ -41,8 +41,8 @@ public sealed class MissionSession
     /// <summary>The Person Server this session's mission was approved by.</summary>
     public string PersonServer => _personServer;
 
-    // The mission claim threaded into every governed request.
-    private MissionClaim Claim => new(Mission.Approver, Mission.S256);
+    // The mission reference threaded into every governed request.
+    private string Claim => Mission.S256;
 
     private GovernanceOptions? Options(GovernanceOptions? options)
         => (options ?? _defaultOptions)?.ForMission(Mission);
@@ -127,17 +127,28 @@ public sealed class MissionSession
             Options(options), cancellationToken));
 
     /// <summary>
-    /// Propose mission completion with a summary (§Interaction Endpoint). Returns
+    /// Record a change in the work (§Mission Update). Returns the accepted update's
+    /// <c>s256</c>; the mission and its <c>mission_s256</c> are unchanged.
+    /// </summary>
+    public Task<string> UpdateAsync(
+        string description,
+        GovernanceOptions? options = null,
+        CancellationToken cancellationToken = default)
+        => Mission.ExecuteAsync(() => _governance.Mission.UpdateAsync(
+            Mission, description, Options(options), cancellationToken));
+
+    /// <summary>
+    /// Propose mission completion with a summary (§Mission Completion). Returns
     /// <see langword="true"/> when the user accepted and the PS terminated the
-    /// mission. The mission claim and PS are injected.
+    /// mission.
     /// </summary>
     public async Task<bool> ProposeCompletionAsync(
         string summary,
         GovernanceOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var terminated = await Mission.ExecuteAsync(() => _governance.Interaction.ProposeCompletionAsync(
-            summary, Claim,
+        var terminated = await Mission.ExecuteAsync(() => _governance.Mission.CompleteAsync(
+            Mission, summary,
             Options(options), cancellationToken)).ConfigureAwait(false);
         if (terminated) Mission.Terminate();
         return terminated;

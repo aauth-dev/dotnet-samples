@@ -7,15 +7,14 @@ using Xunit;
 namespace AAuth.Conformance.Missions;
 
 /// <summary>
-/// Conformance for the optional <c>mission</c> claim ({approver, s256}) carried in
-/// resource and auth tokens (§Resource Token Structure, §Auth Token Structure).
+/// Conformance for the optional <c>mission_s256</c> claim carried in resource,
+/// person and auth tokens (§Resource Token Structure, §Person Token Structure,
+/// §Auth Token Structure): the unpadded base64url SHA-256 of the mission blob.
 /// </summary>
 public class MissionClaimTests
 {
     private const string Iss = "https://resource.example";
     private const string Aud = "https://ps.example";
-    private const string Agent = "aauth:alice@ap.example";
-    private const string Approver = "https://ps.example";
     private const string S256 = "47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU";
 
     private static JsonObject PayloadOf(string jwt)
@@ -24,167 +23,137 @@ public class MissionClaimTests
         return (JsonObject)JsonNode.Parse(Base64UrlEncoder.Decode(parts[1]))!;
     }
 
-    [Fact(DisplayName = "§Resource Token Structure — mission omitted when not set")]
+    private static string ResourceToken(string? missionS256) => new ResourceTokenBuilder
+    {
+        ScopeDescriptions = TestScopeDefinitions.Resource,
+        EgressPolicy = TestEgress.Policy,
+        Issuer = Iss,
+        Audience = Aud,
+        PersonServer = Aud,
+        Subject = "person-1",
+        PresentedJti = "person-token-1",
+        AgentJkt = "thumb",
+        Key = AAuthKey.Generate(),
+        KeyId = "r1",
+        Scope = "whoami",
+        MissionS256 = missionS256,
+    }.Build();
+
+    private static string AuthToken(IAAuthKey issuerKey, IAAuthKey agentKey, string? missionS256) => new AuthTokenBuilder
+    {
+        EgressPolicy = TestEgress.Policy,
+        AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
+        Issuer = Aud,
+        Audience = Iss,
+        PersonServer = Aud,
+        Subject = "person-1",
+        AgentConfirmationKey = agentKey,
+        Key = issuerKey,
+        KeyId = "p1",
+        Scope = "whoami",
+        MissionS256 = missionS256,
+    }.Build();
+
+    [Fact(DisplayName = "§Resource Token Structure — mission_s256 omitted when not set")]
     public void ResourceToken_OmitsMission_WhenNotSet()
     {
-        var jwt = new ResourceTokenBuilder
-        {
-            ScopeDescriptions = TestScopeDefinitions.Resource,
-            EgressPolicy = TestEgress.Policy,
-            Issuer = Iss,
-            Audience = Aud,
-            Agent = Agent,
-            AgentJkt = "thumb",
-            Key = AAuthKey.Generate(),
-            KeyId = "r1",
-            Scope = "whoami",
-        }.Build();
-
-        Assert.False(PayloadOf(jwt).ContainsKey("mission"));
+        var payload = PayloadOf(ResourceToken(null));
+        Assert.False(payload.ContainsKey("mission_s256"));
+        Assert.False(payload.ContainsKey("mission"));
     }
 
-    [Fact(DisplayName = "§Resource Token Structure — mission emitted as {approver, s256} when set")]
+    [Fact(DisplayName = "§Resource Token Structure — mission_s256 emitted as a string when set")]
     public void ResourceToken_EmitsMission_WhenSet()
     {
-        var jwt = new ResourceTokenBuilder
-        {
-            ScopeDescriptions = TestScopeDefinitions.Resource,
-            EgressPolicy = TestEgress.Policy,
-            Issuer = Iss,
-            Audience = Aud,
-            Agent = Agent,
-            AgentJkt = "thumb",
-            Key = AAuthKey.Generate(),
-            KeyId = "r1",
-            Scope = "whoami",
-            Mission = new MissionClaim(Approver, S256),
-        }.Build();
-
-        var mission = PayloadOf(jwt)["mission"] as JsonObject;
-        Assert.NotNull(mission);
-        Assert.Equal(Approver, (string?)mission!["approver"]);
-        Assert.Equal(S256, (string?)mission["s256"]);
+        var payload = PayloadOf(ResourceToken(S256));
+        Assert.Equal(S256, (string?)payload["mission_s256"]);
+        Assert.False(payload.ContainsKey("mission"));
     }
 
-    [Fact(DisplayName = "§Auth Token Structure — mission omitted when not set")]
+    [Fact(DisplayName = "§Auth Token Structure — mission_s256 omitted when not set")]
     public void AuthToken_OmitsMission_WhenNotSet()
     {
-        var jwt = new AuthTokenBuilder
-        {
-            EgressPolicy = TestEgress.Policy,
-            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
-            Issuer = Aud,
-            Audience = Iss,
-            Agent = Agent,
-            AgentConfirmationKey = AAuthKey.Generate(),
-            Key = AAuthKey.Generate(),
-            KeyId = "p1",
-            Scope = "whoami",
-        }.Build();
-
-        Assert.False(PayloadOf(jwt).ContainsKey("mission"));
+        Assert.False(PayloadOf(AuthToken(AAuthKey.Generate(), AAuthKey.Generate(), null)).ContainsKey("mission_s256"));
     }
 
-    [Fact(DisplayName = "§Auth Token Structure — mission emitted as {approver, s256} when set")]
+    [Fact(DisplayName = "§Auth Token Structure — mission_s256 emitted as a string when set")]
     public void AuthToken_EmitsMission_WhenSet()
     {
-        var jwt = new AuthTokenBuilder
-        {
-            EgressPolicy = TestEgress.Policy,
-            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
-            Issuer = Aud,
-            Audience = Iss,
-            Agent = Agent,
-            AgentConfirmationKey = AAuthKey.Generate(),
-            Key = AAuthKey.Generate(),
-            KeyId = "p1",
-            Scope = "whoami",
-            Mission = new MissionClaim(Approver, S256),
-        }.Build();
-
-        var mission = PayloadOf(jwt)["mission"] as JsonObject;
-        Assert.NotNull(mission);
-        Assert.Equal(Approver, (string?)mission!["approver"]);
-        Assert.Equal(S256, (string?)mission["s256"]);
+        var payload = PayloadOf(AuthToken(AAuthKey.Generate(), AAuthKey.Generate(), S256));
+        Assert.Equal(S256, (string?)payload["mission_s256"]);
+        Assert.False(payload.ContainsKey("mission"));
     }
 
-    [Fact(DisplayName = "§Auth Token Verification — VerifiedToken.Mission surfaces the verified claim")]
+    [Fact(DisplayName = "§Person Token Structure — mission_s256 emitted as a string when set")]
+    public void PersonToken_EmitsMission_WhenSet()
+    {
+        var payload = PayloadOf(new PersonTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy,
+            Issuer = Aud,
+            Audience = Iss,
+            Subject = "person-1",
+            ConfirmationKey = AAuthKey.Generate(),
+            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
+            Key = AAuthKey.Generate(),
+            KeyId = "p1",
+            MissionS256 = S256,
+        }.Build());
+        Assert.Equal(S256, (string?)payload["mission_s256"]);
+    }
+
+    [Theory(DisplayName = "§Missions — builders reject a malformed mission_s256")]
+    [InlineData("47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU=")]   // padded
+    [InlineData("tooshort")]                                      // not 32 bytes
+    [InlineData("47DEQpj8HBSa+_TImW/5JCeuQeRkm5NMpJWZG3hSuFU")]   // standard base64 (+,/)
+    public void Builders_RejectMalformedMission(string s256)
+    {
+        Assert.Throws<System.InvalidOperationException>(() => ResourceToken(s256));
+        Assert.Throws<System.InvalidOperationException>(() => AuthToken(AAuthKey.Generate(), AAuthKey.Generate(), s256));
+    }
+
+    [Fact(DisplayName = "§Auth Token Verification — VerifiedToken.MissionS256 surfaces the verified claim")]
     public void VerifiedToken_SurfacesMission()
     {
         var issuerKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var jwt = new AuthTokenBuilder
-        {
-            EgressPolicy = TestEgress.Policy,
-            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
-            Issuer = Aud,
-            Audience = Iss,
-            Agent = Agent,
-            AgentConfirmationKey = agentKey,
-            Key = issuerKey,
-            KeyId = "p1",
-            Scope = "whoami",
-            Mission = new MissionClaim(Approver, S256),
-        }.Build();
-
         var verified = new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifyAuthToken(
-            jwt, issuerKey, Iss, agentKey, Agent);
+            AuthToken(issuerKey, agentKey, S256), issuerKey, Iss, agentKey);
 
-        Assert.NotNull(verified.Mission);
-        Assert.Equal(Approver, verified.Mission!.Approver);
-        Assert.Equal(S256, verified.Mission.S256);
+        Assert.Equal(S256, verified.MissionS256);
     }
 
-    [Fact(DisplayName = "§Auth Token Verification — VerifiedToken.Mission is null when absent")]
+    [Fact(DisplayName = "§Auth Token Verification — VerifiedToken.MissionS256 is null when absent")]
     public void VerifiedToken_MissionNull_WhenAbsent()
     {
         var issuerKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var jwt = new AuthTokenBuilder
-        {
-            EgressPolicy = TestEgress.Policy,
-            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
-            Issuer = Aud,
-            Audience = Iss,
-            Agent = Agent,
-            AgentConfirmationKey = agentKey,
-            Key = issuerKey,
-            KeyId = "p1",
-            Scope = "whoami",
-        }.Build();
-
         var verified = new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifyAuthToken(
-            jwt, issuerKey, Iss, agentKey, Agent);
+            AuthToken(issuerKey, agentKey, null), issuerKey, Iss, agentKey);
 
-        Assert.Null(verified.Mission);
+        Assert.Null(verified.MissionS256);
     }
 
-    [Theory(DisplayName = "§Mission Reference — FromPayload rejects a malformed approver or s256")]
-    [InlineData("http://ps.example", S256)]                                   // non-https approver
-    [InlineData("https://ps.example/path", S256)]                             // approver has a path
-    [InlineData("https://ps.example:8443", S256)]                             // approver has a port
-    [InlineData(Approver, "47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU=")]    // padded s256
-    [InlineData(Approver, "tooshort")]                                        // wrong-length s256
-    [InlineData(Approver, "47DEQpj8HBSa+_TImW/5JCeuQeRkm5NMpJWZG3hSuFU")]     // non-url base64 chars
-    public void FromPayload_RejectsMalformedReference(string approver, string s256)
+    [Theory(DisplayName = "§Missions — MissionReference rejects a malformed mission_s256")]
+    [InlineData("47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU=")]
+    [InlineData("tooshort")]
+    [InlineData("47DEQpj8HBSa+_TImW/5JCeuQeRkm5NMpJWZG3hSuFU")]
+    [InlineData("")]
+    public void MissionReference_RejectsMalformed(string s256)
     {
-        var payload = new JsonObject
-        {
-            ["mission"] = new JsonObject { ["approver"] = approver, ["s256"] = s256 },
-        };
-        Assert.Null(MissionClaim.FromPayload(payload));
+        Assert.False(MissionReference.IsValid(s256));
+        Assert.Throws<TokenVerificationException>(() => MissionReference.Read(new JsonObject { ["mission_s256"] = s256 }));
     }
 
-    [Fact(DisplayName = "§Mission Reference — FromPayload accepts a conformant reference")]
-    public void FromPayload_AcceptsConformantReference()
+    [Fact(DisplayName = "§Missions — MissionReference accepts a conformant mission_s256")]
+    public void MissionReference_AcceptsConformant()
     {
-        var payload = new JsonObject
+        Assert.True(MissionReference.IsValid(S256));
+        Assert.Equal(S256, MissionReference.Read(new JsonObject { ["mission_s256"] = S256 }));
+        Assert.Null(MissionReference.Read(new JsonObject()));
+        Assert.Throws<TokenVerificationException>(() => MissionReference.Read(new JsonObject
         {
-            ["mission"] = new JsonObject { ["approver"] = Approver, ["s256"] = S256 },
-        };
-        var claim = MissionClaim.FromPayload(payload);
-        Assert.NotNull(claim);
-        Assert.Equal(Approver, claim!.Approver);
-        Assert.Equal(S256, claim.S256);
+            ["mission_s256"] = new JsonObject { ["approver"] = Aud, ["s256"] = S256 },
+        }));
     }
 }

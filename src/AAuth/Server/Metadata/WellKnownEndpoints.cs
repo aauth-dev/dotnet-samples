@@ -225,6 +225,7 @@ public static class WellKnownEndpoints
         var doc = new JsonObject
         {
             ["issuer"] = options.Issuer,
+            ["person_token_endpoint"] = options.PersonTokenEndpoint,
             ["auth_token_endpoint"] = options.AuthTokenEndpoint,
             ["jwks_uri"] = $"{options.Issuer.TrimEnd('/')}/.well-known/jwks.json",
         };

@@ -130,24 +130,25 @@ public class GovernanceDeferredConsentMapperTests
         using var created = await client.PostAsync("https://localhost/mission",
             JsonContent(new JsonObject { ["description"] = "Deferred permission ownership" }));
         var approvalBytes = await created.Content.ReadAsByteArrayAsync();
-        var mission = Mission.FromApprovalBytes(approvalBytes);
+        var mission = Mission.FromApprovalResponse(approvalBytes, Ps);
         using var parked = await client.PostAsync("https://localhost/permission", JsonContent(new JsonObject
         {
             ["action"] = "SendEmail",
-            ["mission"] = new JsonObject { ["approver"] = Ps, ["s256"] = mission.S256 },
+            ["mission_s256"] = mission.S256,
         }));
         Assert.Equal(HttpStatusCode.Accepted, parked.StatusCode);
         var location = "https://localhost" + parked.Headers.Location;
         var missions = host.Services.GetRequiredService<IMissionStore>();
         if (changedOwner)
-            await missions.SaveAsync(new StoredMission(mission.S256, Ps, "aauth:foreign@agent.example", approvalBytes));
+            await missions.SaveAsync(new StoredMission(mission.S256, Ps, "aauth:foreign@agent.example", mission.RawBytes));
         else
             await missions.SetStateAsync(mission.S256, MissionState.Terminated);
         await host.Services.GetRequiredService<IDeferredConsentStore>().ResolveAsync(
             parked.Headers.Location!.ToString().Split('/').Last(), true);
         using var rejected = await client.GetAsync(location);
-        Assert.Equal(HttpStatusCode.Forbidden, rejected.StatusCode);
-        Assert.Equal(changedOwner ? "invalid_mission" : "mission_terminated", (string?)(await ReadJson(rejected))?["error"]);
+        // §Mission Status Errors: a foreign mission is indistinguishable from a missing one.
+        Assert.Equal(changedOwner ? HttpStatusCode.NotFound : HttpStatusCode.Forbidden, rejected.StatusCode);
+        Assert.Equal(changedOwner ? "mission_not_found" : "mission_terminated", (string?)(await ReadJson(rejected))?["error"]);
         Assert.Empty(await host.Services.GetRequiredService<IMissionLog>().ReadAsync(mission.S256));
         using var replay = await client.GetAsync(location);
         Assert.Equal(HttpStatusCode.Gone, replay.StatusCode);
@@ -211,11 +212,14 @@ public class GovernanceDeferredConsentMapperTests
         var response = await client.PostAsync("https://localhost/mission", JsonContent(body));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.True(response.Headers.Contains("AAuth-Mission"));
+        Assert.False(response.Headers.Contains("AAuth-Mission"));
 
         var bytes = await response.Content.ReadAsByteArrayAsync();
-        var mission = Mission.FromApprovalBytes(bytes);
-        Assert.Equal(Ps, mission.Approver);
+        var envelope = JsonNode.Parse(bytes)!.AsObject();
+        Assert.NotNull((string?)envelope["s256"]);
+        Assert.NotNull((string?)envelope["mission"]);
+        var mission = Mission.FromApprovalResponse(bytes, Ps);
+        Assert.Equal(Ps, mission.PersonServer);
         Assert.Equal(Agent, mission.Agent);
         Assert.Contains(mission.ApprovedTools, t => t.Name == "WebSearch");
 
@@ -292,8 +296,7 @@ public class GovernanceDeferredConsentMapperTests
 
         using var done = await client.GetAsync("https://localhost" + location);
         Assert.Equal(HttpStatusCode.OK, done.StatusCode);
-        Assert.True(done.Headers.Contains("AAuth-Mission"));
-        var mission = Mission.FromApprovalBytes(await done.Content.ReadAsByteArrayAsync());
+        var mission = Mission.FromApprovalResponse(await done.Content.ReadAsByteArrayAsync(), Ps);
         Assert.Equal(Agent, mission.Agent);
 
         await host.StopAsync();
@@ -562,7 +565,7 @@ public class GovernanceDeferredConsentMapperTests
         await host.StopAsync();
     }
 
-    [Fact(DisplayName = "§Interaction Response — a completion relay reviewing asynchronously parks 202, then terminates the mission on accept")]
+    [Fact(DisplayName = "§Mission Completion — a completion reviewed asynchronously parks 202, then terminates the mission on accept")]
     public async Task Completion_PendingRelay_Parks202_ThenTerminates()
     {
         const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
@@ -577,11 +580,10 @@ public class GovernanceDeferredConsentMapperTests
 
         var body = new JsonObject
         {
-            ["type"] = "completion",
+            ["action"] = "completion",
             ["summary"] = "# Booked the refundable option",
-            ["mission"] = new JsonObject { ["approver"] = Ps, ["s256"] = s256 },
         };
-        var response = await client.PostAsync("https://localhost/mission-interaction", JsonContent(body));
+        var response = await client.PostAsync("https://localhost/mission/" + s256, JsonContent(body));
 
         // §Interaction Response: "The PS returns a deferred response while the user reviews."
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -607,7 +609,7 @@ public class GovernanceDeferredConsentMapperTests
         await host.StopAsync();
     }
 
-    [Fact(DisplayName = "§Interaction Response — a reviewed completion the user does not accept keeps the mission active")]
+    [Fact(DisplayName = "§Mission Completion — a reviewed completion the user does not accept keeps the mission active")]
     public async Task Completion_PendingRelay_FollowUp_StaysActive()
     {
         const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
@@ -622,11 +624,10 @@ public class GovernanceDeferredConsentMapperTests
 
         var body = new JsonObject
         {
-            ["type"] = "completion",
+            ["action"] = "completion",
             ["summary"] = "# Draft itinerary",
-            ["mission"] = new JsonObject { ["approver"] = Ps, ["s256"] = s256 },
         };
-        var response = await client.PostAsync("https://localhost/mission-interaction", JsonContent(body));
+        var response = await client.PostAsync("https://localhost/mission/" + s256, JsonContent(body));
         var location = response.Headers.Location!.ToString();
 
         var id = location[(location.LastIndexOf('/') + 1)..];
@@ -642,7 +643,7 @@ public class GovernanceDeferredConsentMapperTests
         await host.StopAsync();
     }
 
-    [Fact(DisplayName = "§Interaction Response — without the deferred store a completion resolves synchronously off the relay's Accepted result")]
+    [Fact(DisplayName = "§Mission Completion — without the deferred store a completion resolves synchronously off the relay's Accepted result")]
     public async Task Completion_NoStore_ResolvesSynchronously()
     {
         const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
@@ -654,11 +655,10 @@ public class GovernanceDeferredConsentMapperTests
 
         var body = new JsonObject
         {
-            ["type"] = "completion",
+            ["action"] = "completion",
             ["summary"] = "# Done",
-            ["mission"] = new JsonObject { ["approver"] = Ps, ["s256"] = s256 },
         };
-        var response = await client.PostAsync("https://localhost/mission-interaction", JsonContent(body));
+        var response = await client.PostAsync("https://localhost/mission/" + s256, JsonContent(body));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Null(response.Headers.Location);
@@ -666,6 +666,57 @@ public class GovernanceDeferredConsentMapperTests
         Assert.Equal("terminated", (string?)json?["mission_status"]);
         Assert.Equal(MissionState.Terminated, (await missionStore.GetAsync(s256))!.State);
 
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Interaction Endpoint — completion is no longer an interaction type")]
+    public async Task Completion_AtInteractionEndpoint_Rejected()
+    {
+        const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        using var host = await BuildHostAsync(s =>
+            s.AddSingleton<IInteractionRelay>(new StubRelay(new InteractionRelayResult { Accepted = true })));
+        var missionStore = host.Services.GetRequiredService<IMissionStore>();
+        await missionStore.SaveAsync(new StoredMission(s256, Ps, Agent, new byte[] { 1, 2, 3 }));
+        using var client = host.GetTestServer().CreateClient();
+
+        var response = await client.PostAsync("https://localhost/mission-interaction", JsonContent(new JsonObject
+        {
+            ["type"] = "completion", ["summary"] = "# Done", ["mission_s256"] = s256,
+        }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(MissionState.Active, (await missionStore.GetAsync(s256))!.State);
+        await host.StopAsync();
+    }
+
+    [Theory(DisplayName = "§Mission Update — an update is logged and returns its s256; a foreign mission is not found")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MissionUpdate_OwnedMissionOnly(bool foreign)
+    {
+        const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        using var host = await BuildHostAsync();
+        await host.Services.GetRequiredService<IMissionStore>().SaveAsync(new StoredMission(
+            s256, Ps, foreign ? "aauth:foreign@agent.example" : Agent, new byte[] { 1, 2, 3 }));
+        using var client = host.GetTestServer().CreateClient();
+
+        var response = await client.PostAsync("https://localhost/mission/" + s256, JsonContent(new JsonObject
+        {
+            ["action"] = "update", ["description"] = "Also book a hotel.",
+        }));
+
+        if (foreign)
+        {
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+            Assert.Equal("mission_not_found", (string?)(await ReadJson(response))?["error"]);
+        }
+        else
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.False(string.IsNullOrEmpty((string?)(await ReadJson(response))?["s256"]));
+            Assert.Contains(await host.Services.GetRequiredService<IMissionLog>().ReadAsync(s256),
+                entry => entry.Kind == MissionLogEntryKind.Update);
+        }
         await host.StopAsync();
     }
 

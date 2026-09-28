@@ -7,19 +7,13 @@ namespace AAuth.Headers;
 /// <summary>
 /// Typed reply a Person Server returns from an
 /// <see cref="ClaimsRequirement"/> callback (AAuth protocol §Claims
-/// Required). Carries the directed user identifier (<see cref="Subject"/>) the
-/// recipient MUST supply as <c>sub</c>, plus any of the requested identity
-/// claims the PS holds for the bound principal. The SDK serializes this into
-/// the signed POST to the Access Server's <c>Location</c> URL.
+/// Required). Carries the requested identity claims the PS holds for the
+/// person. The person is already identified by the presented token, so
+/// <c>sub</c> is never pushed. The SDK serializes this into the signed POST to
+/// the Access Server's <c>Location</c> URL.
 /// </summary>
 public sealed record ClaimsResponse
 {
-    /// <summary>
-    /// The directed (pairwise) user identifier for the requesting resource —
-    /// pushed as the <c>sub</c> field. REQUIRED by §Claims Required.
-    /// </summary>
-    public required string Subject { get; init; }
-
     /// <summary>
     /// The released identity claims, keyed by claim name (e.g. <c>email</c>,
     /// <c>tenant</c>). Claims the PS does not hold are simply omitted; the
@@ -31,15 +25,11 @@ public sealed record ClaimsResponse
     /// <summary>Serialize to the JSON body pushed to the AS Location URL.</summary>
     public JsonObject ToJson()
     {
-        var body = new JsonObject { ["sub"] = Subject };
+        var body = new JsonObject();
         foreach (var (name, value) in Claims)
         {
             if (!AuthTokenBuilder.IsIdentityClaimAllowed(name))
                 throw new System.InvalidOperationException($"Claim '{name}' is protocol-owned.");
-            if (name == "sub")
-            {
-                continue;
-            }
             body[name] = value?.DeepClone();
         }
         return body;

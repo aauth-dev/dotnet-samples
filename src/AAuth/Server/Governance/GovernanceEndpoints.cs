@@ -22,27 +22,41 @@ public static class GovernanceEndpoints
     /// <summary>HTTP status for a terminated mission (§Mission Status Errors).</summary>
     public const int MissionTerminatedStatus = StatusCodes.Status403Forbidden;
 
-    public static IResult? Authorize(HttpContext context, MissionClaim? reference, StoredMission? mission)
+    /// <summary>
+    /// Authorize a governance request: the carrier is a verified agent token and,
+    /// when <paramref name="missionS256"/> is present, the mission exists, is this
+    /// agent's, and is active. A missing and a foreign mission are indistinguishable
+    /// (<c>mission_not_found</c>, §Mission Endpoint Errors).
+    /// </summary>
+    public static IResult? Authorize(HttpContext context, string? missionS256, StoredMission? mission)
     {
         var verified = context.GetAAuthVerification();
         if (verified is not { TokenType: AAuthTokenType.AgentToken, IssuerVerified: true, Agent: not null })
         {
-            return AAuthProblemDetails.Create("invalid_carrier_token", statusCode: StatusCodes.Status403Forbidden);
+            return AAuthProblemDetails.Create("invalid_request", "Governance endpoints require an agent token.", statusCode: StatusCodes.Status403Forbidden);
         }
-        if (reference is null) return null;
-        if (mission is null || mission.Approver != reference.Approver || mission.Agent != verified.Agent)
+        if (missionS256 is null) return null;
+        if (mission is null || mission.S256 != missionS256 || mission.Agent != verified.Agent)
         {
-            return AAuthProblemDetails.Create("invalid_mission", statusCode: StatusCodes.Status403Forbidden);
+            return AAuthProblemDetails.Create("mission_not_found", statusCode: StatusCodes.Status404NotFound);
         }
-        return mission.State == MissionState.Terminated ? MissionTerminated() : null;
+        return mission.State == MissionState.Terminated
+            || mission.ExpiresAt is { } expiresAt && expiresAt <= DateTimeOffset.UtcNow
+            ? MissionTerminated() : null;
+    }
+
+    private static string? ReadMission(JsonObject body)
+    {
+        try { return MissionReference.Read(body); }
+        catch (TokenVerificationException ex) { throw new FormatException(ex.Message, ex); }
     }
 
     /// <summary>
     /// Parse a permission request body (§Permission Request) into a
     /// <see cref="PermissionRequest"/>.
     /// </summary>
-    /// <exception cref="FormatException">The required <c>action</c> is missing.</exception>
-    public static PermissionRequest ParsePermission(JsonObject body, AAuth.Discovery.AAuthEgressPolicy? policy = null)
+    /// <exception cref="FormatException">The required <c>action</c> is missing, or <c>mission_s256</c> is malformed.</exception>
+    public static PermissionRequest ParsePermission(JsonObject body)
     {
         ArgumentNullException.ThrowIfNull(body);
         var action = (string?)body["action"]
@@ -51,19 +65,19 @@ public static class GovernanceEndpoints
         {
             Description = (string?)body["description"],
             Parameters = body["parameters"] as JsonObject,
-            Mission = MissionClaim.FromPayload(body, policy),
+            MissionS256 = ReadMission(body),
         };
     }
 
     /// <summary>
     /// Parse an audit request body (§Audit Request) into an <see cref="AuditRecord"/>.
     /// </summary>
-    /// <exception cref="FormatException">The required <c>mission</c> or <c>action</c> is missing.</exception>
-    public static AuditRecord ParseAudit(JsonObject body, AAuth.Discovery.AAuthEgressPolicy? policy = null)
+    /// <exception cref="FormatException">The required <c>mission_s256</c> or <c>action</c> is missing.</exception>
+    public static AuditRecord ParseAudit(JsonObject body)
     {
         ArgumentNullException.ThrowIfNull(body);
-        var mission = MissionClaim.FromPayload(body, policy)
-            ?? throw new FormatException("Audit request is missing the required 'mission'.");
+        var mission = ReadMission(body)
+            ?? throw new FormatException("Audit request is missing the required 'mission_s256'.");
         var action = (string?)body["action"]
             ?? throw new FormatException("Audit request is missing the required 'action'.");
         return new AuditRecord(mission, new MissionAction(action))
@@ -79,7 +93,7 @@ public static class GovernanceEndpoints
     /// <see cref="InteractionRequest"/>.
     /// </summary>
     /// <exception cref="FormatException">The required <c>type</c> is missing or unknown.</exception>
-    public static InteractionRequest ParseInteraction(JsonObject body, AAuth.Discovery.AAuthEgressPolicy? policy = null)
+    public static InteractionRequest ParseInteraction(JsonObject body)
     {
         ArgumentNullException.ThrowIfNull(body);
         var typeValue = (string?)body["type"]
@@ -89,7 +103,7 @@ public static class GovernanceEndpoints
             "interaction" => InteractionType.Interaction,
             "payment" => InteractionType.Payment,
             "question" => InteractionType.Question,
-            "completion" => InteractionType.Completion,
+            // §Interaction Endpoint: completion belongs at the mission endpoint.
             _ => throw new FormatException($"Interaction request has an unknown 'type': {typeValue}"),
         };
         return new InteractionRequest(type)
@@ -100,7 +114,7 @@ public static class GovernanceEndpoints
             Question = (string?)body["question"],
             Summary = (string?)body["summary"],
             MaxWait = (int?)body["max_wait"],
-            Mission = MissionClaim.FromPayload(body, policy),
+            MissionS256 = ReadMission(body),
         };
     }
 
@@ -117,7 +131,21 @@ public static class GovernanceEndpoints
         return new MissionProposal(description)
         {
             Tools = ParseTools(body["tools"] as JsonArray),
+            Resources = ParseResources(body["resources"] as JsonArray),
         };
+    }
+
+    private static IReadOnlyList<string> ParseResources(JsonArray? resources)
+    {
+        var result = new List<string>();
+        foreach (var node in resources ?? [])
+        {
+            if (node is not JsonValue value || !value.TryGetValue<string>(out var resource)
+                || !AAuthUrl.IsHttpsOrLoopback(resource))
+                throw new FormatException("Mission proposal 'resources' must be HTTPS server identifiers.");
+            result.Add(resource);
+        }
+        return result;
     }
 
     /// <summary>

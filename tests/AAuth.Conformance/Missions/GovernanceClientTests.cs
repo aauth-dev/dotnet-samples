@@ -27,8 +27,18 @@ public class GovernanceClientTests
 {
     private const string Ps = "http://localhost:5555";
 
-    private static readonly MissionClaim TestMission =
-        new("http://localhost:5555", "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk");
+    private const string TestMissionS256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+
+    private static Mission ApprovedMission(IReadOnlyList<MissionTool>? tools = null, MissionState state = MissionState.Active) => new()
+    {
+        PersonServer = Ps,
+        Agent = "aauth:assistant@agent.example",
+        ApprovedAt = DateTimeOffset.UtcNow,
+        Description = "x",
+        S256 = TestMissionS256,
+        State = state,
+        ApprovedTools = tools ?? Array.Empty<MissionTool>(),
+    };
 
     private static (HttpClient signed, MetadataClient metadata) Build(HttpMessageHandler handler)
         => (new InProcessHttpClient(handler) { BaseAddress = new Uri(Ps) },
@@ -73,15 +83,17 @@ public class GovernanceClientTests
         });
 
         Assert.Equal("aauth:assistant@agent.example", mission.Agent);
+        Assert.Equal(Ps, mission.PersonServer);
         Assert.Single(mission.ApprovedTools);
         Assert.Equal("WebSearch", mission.ApprovedTools[0].Name);
         Assert.True(mission.VerifyS256(handler.MissionS256));
+        Assert.Equal(new[] { "interaction" }, mission.Capabilities);
     }
 
-    [Fact(DisplayName = "§Mission Approval — s256 header mismatch throws")]
+    [Fact(DisplayName = "§Mission Approval — envelope s256 mismatch throws")]
     public async Task MissionClient_S256Mismatch_Throws()
     {
-        var handler = new GovernanceHandler { TamperMissionHeaderS256 = true };
+        var handler = new GovernanceHandler { Envelope = "tampered-s256" };
         var (signed, metadata) = Build(handler);
         var client = new MissionClient(signed, metadata, Ps);
 
@@ -89,14 +101,14 @@ public class GovernanceClientTests
             client.ProposeAsync(new MissionProposal("# Plan a trip")));
     }
 
-    [Theory]
-    [InlineData(null, Ps)]
-    [InlineData("https://foreign.example", Ps)]
-    [InlineData(Ps, "https://foreign.example")]
-    [InlineData("https://foreign.example", "https://foreign.example")]
-    public async Task MissionClient_ApproverMustMatchHeaderBodyAndBoundPersonServer(string? header, string body)
+    [Theory(DisplayName = "§Mission Approval — a malformed approval envelope throws")]
+    [InlineData("missing-s256")]
+    [InlineData("missing-mission")]
+    [InlineData("mission-not-base64url")]
+    [InlineData("not-an-object")]
+    public async Task MissionClient_MalformedApprovalEnvelope_Throws(string envelope)
     {
-        var handler = new GovernanceHandler { HeaderApprover = header, BodyApprover = body };
+        var handler = new GovernanceHandler { Envelope = envelope };
         var (signed, metadata) = Build(handler);
         var client = new MissionClient(signed, metadata, Ps);
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -143,7 +155,7 @@ public class GovernanceClientTests
         var result = await client.RequestAsync(new PermissionRequest(new MissionAction("SendEmail"))
         {
             Description = "Send the itinerary",
-            Mission = TestMission,
+            MissionS256 = TestMissionS256,
         });
 
         Assert.True(result.IsGranted);
@@ -169,15 +181,7 @@ public class GovernanceClientTests
         var (signed, metadata) = Build(handler);
         var client = new PermissionClient(signed, metadata, Ps);
 
-        var mission = new Mission
-        {
-            Approver = Ps,
-            Agent = "aauth:assistant@agent.example",
-            ApprovedAt = DateTimeOffset.UtcNow,
-            Description = "x",
-            S256 = "abc",
-            ApprovedTools = new[] { new MissionTool("WebSearch") },
-        };
+        var mission = ApprovedMission(new[] { new MissionTool("WebSearch") });
 
         var result = await client.RequestAsync(new MissionAction("WebSearch"), mission);
 
@@ -193,12 +197,7 @@ public class GovernanceClientTests
         var handler = new GovernanceHandler();
         var (signed, metadata) = Build(handler);
         var client = new PermissionClient(signed, metadata, Ps);
-        var mission = new Mission
-        {
-            Approver = Ps, Agent = "aauth:assistant@agent.example", ApprovedAt = DateTimeOffset.UtcNow,
-            Description = "Ended", S256 = TestMission.S256, State = MissionState.Terminated,
-            ApprovedTools = new[] { new MissionTool("WebSearch") },
-        };
+        var mission = ApprovedMission(new[] { new MissionTool("WebSearch") }, MissionState.Terminated);
         await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() => client.RequestAsync(new MissionAction(action), mission));
         Assert.False(handler.PermissionCalled);
     }
@@ -211,7 +210,7 @@ public class GovernanceClientTests
         var client = new PermissionClient(signed, metadata, Ps);
 
         var ex = await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() =>
-            client.RequestAsync(new PermissionRequest(new MissionAction("SendEmail")) { Mission = TestMission }));
+            client.RequestAsync(new PermissionRequest(new MissionAction("SendEmail")) { MissionS256 = TestMissionS256 }));
 
         Assert.Equal("terminated", ex.MissionStatus);
     }
@@ -225,12 +224,14 @@ public class GovernanceClientTests
         var (signed, metadata) = Build(handler);
         var client = new AuditClient(signed, metadata, Ps);
 
-        await client.RecordAsync(new AuditRecord(TestMission, new MissionAction("WebSearch"))
+        await client.RecordAsync(new AuditRecord(TestMissionS256, new MissionAction("WebSearch"))
         {
             Description = "Searched for flights",
         });
 
         Assert.True(handler.AuditCalled);
+        Assert.Equal(TestMissionS256, (string?)handler.LastAuditBody!["mission_s256"]);
+        Assert.Null(handler.LastAuditBody["mission"]);
     }
 
     [Fact(DisplayName = "§Mission Status Errors — audit 403 mission_terminated throws")]
@@ -241,7 +242,7 @@ public class GovernanceClientTests
         var client = new AuditClient(signed, metadata, Ps);
 
         await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() =>
-            client.RecordAsync(new AuditRecord(TestMission, new MissionAction("WebSearch"))));
+            client.RecordAsync(new AuditRecord(TestMissionS256, new MissionAction("WebSearch"))));
     }
 
     [Fact(DisplayName = "§Audit Response — a non-201 acknowledgment is rejected (F3)")]
@@ -254,7 +255,7 @@ public class GovernanceClientTests
         var client = new AuditClient(signed, metadata, Ps);
 
         await Assert.ThrowsAsync<HttpRequestException>(() =>
-            client.RecordAsync(new AuditRecord(TestMission, new MissionAction("WebSearch"))));
+            client.RecordAsync(new AuditRecord(TestMissionS256, new MissionAction("WebSearch"))));
     }
 
     // ---- §Interaction Endpoint ----
@@ -271,17 +272,55 @@ public class GovernanceClientTests
         Assert.Equal("Yes, go ahead.", answer);
     }
 
-    [Fact(DisplayName = "§Interaction Response — completion terminates the mission")]
-    public async Task InteractionClient_Completion_Terminates()
+    [Fact(DisplayName = "§Mission Completion — completion is posted to {mission_endpoint}/{s256} and terminates the mission")]
+    public async Task MissionClient_Completion_Terminates()
     {
         var handler = new GovernanceHandler();
         var (signed, metadata) = Build(handler);
-        var client = new InteractionClient(signed, metadata, Ps);
+        var client = new MissionClient(signed, metadata, Ps);
 
-        var terminated = await client.ProposeCompletionAsync("# Done", TestMission);
+        var terminated = await client.CompleteAsync(ApprovedMission(), "# Done");
 
         Assert.True(terminated);
-        Assert.Equal("completion", handler.LastInteractionType);
+        Assert.Equal("/mission/" + TestMissionS256, handler.LastMissionActionPath);
+        Assert.Equal("completion", (string?)handler.LastMissionActionBody!["action"]);
+        Assert.Equal("# Done", (string?)handler.LastMissionActionBody["summary"]);
+    }
+
+    [Fact(DisplayName = "§Mission Completion — a declined completion leaves the mission active")]
+    public async Task MissionClient_CompletionDeclined_StaysActive()
+    {
+        var handler = new GovernanceHandler { CompletionStatus = "active" };
+        var (signed, metadata) = Build(handler);
+        var client = new MissionClient(signed, metadata, Ps);
+
+        Assert.False(await client.CompleteAsync(ApprovedMission(), "# Done"));
+    }
+
+    [Fact(DisplayName = "§Mission Update — update is posted to {mission_endpoint}/{s256} and returns the update s256")]
+    public async Task MissionClient_Update_ReturnsS256()
+    {
+        var handler = new GovernanceHandler();
+        var (signed, metadata) = Build(handler);
+        var client = new MissionClient(signed, metadata, Ps);
+
+        var s256 = await client.UpdateAsync(ApprovedMission(), "Also book a hotel.");
+
+        Assert.Equal("update-s256", s256);
+        Assert.Equal("/mission/" + TestMissionS256, handler.LastMissionActionPath);
+        Assert.Equal("update", (string?)handler.LastMissionActionBody!["action"]);
+        Assert.Equal("Also book a hotel.", (string?)handler.LastMissionActionBody["description"]);
+    }
+
+    [Fact(DisplayName = "§Mission Status Errors — a mission action on a terminated mission throws")]
+    public async Task MissionClient_ActionOnTerminatedMission_Throws()
+    {
+        var handler = new GovernanceHandler { MissionTerminated = true };
+        var (signed, metadata) = Build(handler);
+        var client = new MissionClient(signed, metadata, Ps);
+
+        await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() =>
+            client.UpdateAsync(ApprovedMission(), "More work"));
     }
 
     /// <summary>Configurable PS mock for the governance endpoints.</summary>
@@ -289,16 +328,18 @@ public class GovernanceClientTests
     {
         public bool PermissionDenied { get; init; }
         public bool MissionTerminated { get; init; }
-        public bool TamperMissionHeaderS256 { get; init; }
-        public string? HeaderApprover { get; init; } = Ps;
-        public string BodyApprover { get; init; } = Ps;
+        public string? Envelope { get; init; }
         public bool MissionNeedsClarification { get; init; }
         public HttpStatusCode AuditStatus { get; init; } = HttpStatusCode.Created;
+        public string CompletionStatus { get; init; } = "terminated";
 
         public bool PermissionCalled { get; private set; }
         public bool AuditCalled { get; private set; }
+        public JsonObject? LastAuditBody { get; private set; }
         public string? LastInteractionType { get; private set; }
         public string? LastClarificationResponse { get; private set; }
+        public string? LastMissionActionPath { get; private set; }
+        public JsonObject? LastMissionActionBody { get; private set; }
         public string MissionS256 { get; private set; } = "";
 
         private bool _missionClarified;
@@ -342,6 +383,15 @@ public class GovernanceClientTests
 
             switch (path)
             {
+                case not null when path.StartsWith("/mission/", StringComparison.Ordinal):
+                {
+                    LastMissionActionPath = path;
+                    LastMissionActionBody = JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))?.AsObject();
+                    return (string?)LastMissionActionBody?["action"] == "update"
+                        ? Json(HttpStatusCode.OK, new JsonObject { ["s256"] = "update-s256" })
+                        : Json(HttpStatusCode.OK, new JsonObject { ["mission_status"] = CompletionStatus });
+                }
+
                 case "/mission" when MissionNeedsClarification && !_missionClarified:
                 case "/pending/m" when MissionNeedsClarification && !_missionClarified:
                 {
@@ -359,11 +409,10 @@ public class GovernanceClientTests
                 case "/mission":
                 case "/pending/m":
                 {
-                    // Return the mission blob verbatim and the AAuth-Mission header
-                    // whose s256 is SHA-256 over the exact body bytes (§Mission Approval).
+                    // §Mission Approval: the envelope carries the blob base64url-encoded
+                    // and its s256 = SHA-256 over the exact blob bytes.
                     var blob = new JsonObject
                     {
-                        ["approver"] = BodyApprover,
                         ["agent"] = "aauth:assistant@agent.example",
                         ["approved_at"] = "2026-04-07T14:30:00Z",
                         ["description"] = "# Plan a trip",
@@ -374,17 +423,19 @@ public class GovernanceClientTests
                     };
                     var bytes = Encoding.UTF8.GetBytes(blob.ToJsonString());
                     MissionS256 = Base64UrlEncoder.Encode(SHA256.HashData(bytes));
-                    var headerS256 = TamperMissionHeaderS256 ? "tampered-value" : MissionS256;
-
+                    var envelope = new JsonObject
+                    {
+                        ["s256"] = Envelope == "tampered-s256" ? "tampered-value" : MissionS256,
+                        ["mission"] = Envelope == "mission-not-base64url" ? "%%%" : Base64UrlEncoder.Encode(bytes),
+                        ["capabilities"] = new JsonArray("interaction"),
+                    };
+                    if (Envelope == "missing-s256") envelope.Remove("s256");
+                    if (Envelope == "missing-mission") envelope.Remove("mission");
                     var resp = new HttpResponseMessage(HttpStatusCode.OK)
                     {
-                        Content = new ByteArrayContent(bytes),
+                        Content = new StringContent(Envelope == "not-an-object" ? "[]" : envelope.ToJsonString(),
+                            Encoding.UTF8, "application/json"),
                     };
-                    resp.Content.Headers.ContentType =
-                        new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
-                    resp.Headers.TryAddWithoutValidation(
-                        "AAuth-Mission", HeaderApprover is null ? $"s256=\"{headerS256}\""
-                            : $"approver=\"{HeaderApprover}\"; s256=\"{headerS256}\"");
                     return resp;
                 }
 
@@ -402,6 +453,7 @@ public class GovernanceClientTests
 
                 case "/audit":
                     AuditCalled = true;
+                    LastAuditBody = JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))?.AsObject();
                     return new HttpResponseMessage(AuditStatus);
 
                 case "/interaction":

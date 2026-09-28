@@ -288,14 +288,13 @@ app.MapPost("/mission", async (
 
     // The demo approves every proposed tool; a real PS would let the user prune them.
     var approvedTools = proposal.Tools;
-    var (blob, s256) = MissionApprovalBuilder.Build(psIssuer, agentId, proposal, approvedTools, DateTimeOffset.UtcNow);
+    var (blob, s256) = MissionApprovalBuilder.Build(agentId, proposal, approvedTools, DateTimeOffset.UtcNow,
+        approvedResources: proposal.Resources);
 
     await missions.SaveAsync(new StoredMission(s256, psIssuer, agentId, blob));
     policy.Record(s256, proposal.Description, approvedTools, script.InScopeSnapshot());
 
-    ctx.Response.Headers[AAuthMissionHeader.Name] =
-        AAuthMissionHeader.FormatStructured(psIssuer, s256);
-    return Results.Bytes(blob, "application/json");
+    return Results.Json(MissionApprovalBuilder.Response(blob, s256));
 });
 
 // Interactive mission-creation resolution (§Mission Creation). The agent polls
@@ -340,12 +339,11 @@ app.MapMethods("/mission-create-pending/{id}", ["GET", "DELETE"], async (
         var proposal = entry.Proposal!;
         // The demo approves every proposed tool; a real PS would let the user prune them.
         var approvedTools = proposal.Tools;
-        var (blob, s256) = MissionApprovalBuilder.Build(psIssuer, entry.AgentId, proposal, approvedTools, DateTimeOffset.UtcNow);
+        var (blob, s256) = MissionApprovalBuilder.Build(entry.AgentId, proposal, approvedTools, DateTimeOffset.UtcNow,
+            approvedResources: proposal.Resources);
         await missions.SaveAsync(new StoredMission(s256, psIssuer, entry.AgentId, blob));
         policy.Record(s256, proposal.Description, approvedTools, script.InScopeSnapshot());
-        ctx.Response.Headers[AAuthMissionHeader.Name] =
-            AAuthMissionHeader.FormatStructured(psIssuer, s256);
-        return Results.Bytes(blob, "application/json");
+        return Results.Json(MissionApprovalBuilder.Response(blob, s256));
     });
 });
 
@@ -372,7 +370,7 @@ app.MapPost("/permission", async (
     PermissionRequest request;
     try
     {
-        request = GovernanceEndpoints.ParsePermission(body, SampleEgress.Policy);
+        request = GovernanceEndpoints.ParsePermission(body);
     }
     catch (FormatException)
     {
@@ -381,20 +379,20 @@ app.MapPost("/permission", async (
 
     StoredMission? stored = null;
     IReadOnlyList<MissionLogEntry> history = [];
-    if (request.Mission is not null)
+    if (request.MissionS256 is not null)
     {
-        stored = await missions.GetAsync(request.Mission.S256);
+        stored = await missions.GetAsync(request.MissionS256);
     }
-    if (GovernanceEndpoints.Authorize(ctx, request.Mission, stored) is { } denied) return denied;
-    if (request.Mission is not null)
+    if (GovernanceEndpoints.Authorize(ctx, request.MissionS256, stored) is { } denied) return denied;
+    if (request.MissionS256 is not null)
     {
-        history = await log.ReadAsync(request.Mission.S256);
+        history = await log.ReadAsync(request.MissionS256);
     }
 
     var decision = await decider.DecideAsync(new PermissionDecisionContext(request, stored, history));
 
     // Prompt -> park the request and let the agent poll while the user decides.
-    if (decision.Outcome == PermissionOutcome.Prompt && request.Mission is not null)
+    if (decision.Outcome == PermissionOutcome.Prompt && request.MissionS256 is not null)
     {
         var entry = pending.Add(new MissionPendingEntry
         {
@@ -402,8 +400,8 @@ app.MapPost("/permission", async (
             AgentId = agentId,
             OwnerIssuer = ctx.GetAAuthVerification()!.Issuer,
             OwnerKeyThumbprint = ctx.GetAAuthVerification()!.Jkt,
-            S256 = request.Mission.S256,
-            Approver = request.Mission.Approver,
+            S256 = request.MissionS256,
+            Approver = psIssuer,
             Action = request.Action.Name,
         });
         ctx.Response.Headers.Location = $"/permission-pending/{entry.Id}";
@@ -420,10 +418,10 @@ app.MapPost("/permission", async (
     }
 
     var granted = decision.Outcome == PermissionOutcome.Granted;
-    if (request.Mission is not null)
+    if (request.MissionS256 is not null)
     {
         await log.AppendAsync(new MissionLogEntry(
-            request.Mission.S256, MissionLogEntryKind.Permission, DateTimeOffset.UtcNow)
+            request.MissionS256, MissionLogEntryKind.Permission, DateTimeOffset.UtcNow)
         {
             Action = request.Action.Name,
             Granted = granted,
@@ -453,23 +451,22 @@ app.MapPost("/audit", async (
     AuditRecord record;
     try
     {
-        record = GovernanceEndpoints.ParseAudit(body, SampleEgress.Policy);
+        record = GovernanceEndpoints.ParseAudit(body);
     }
     catch (FormatException)
     {
         return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
     }
 
-    var stored = await missions.GetAsync(record.Mission.S256);
-    if (GovernanceEndpoints.Authorize(ctx, record.Mission, stored) is { } denied) return denied;
+    var stored = await missions.GetAsync(record.MissionS256);
+    if (GovernanceEndpoints.Authorize(ctx, record.MissionS256, stored) is { } denied) return denied;
 
     await sink.RecordAsync(record);
     return Results.StatusCode(StatusCodes.Status201Created);
 });
 
-// interaction_endpoint (§Interaction Endpoint): questions and completion
-// proposals relayed to the user. A completion the user accepts terminates the
-// mission; otherwise the mission stays active.
+// interaction_endpoint (§Interaction Endpoint): questions relayed to the user.
+// Completion is proposed at the mission endpoint (/mission/{s256}).
 app.MapPost("/mission-interaction", async (
     HttpContext ctx,
     IMissionStore missions,
@@ -485,44 +482,72 @@ app.MapPost("/mission-interaction", async (
     InteractionRequest request;
     try
     {
-        request = GovernanceEndpoints.ParseInteraction(body, SampleEgress.Policy);
+        request = GovernanceEndpoints.ParseInteraction(body);
     }
     catch (FormatException)
     {
         return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
     }
 
-    var stored = request.Mission is null ? null : await missions.GetAsync(request.Mission.S256);
-    if (GovernanceEndpoints.Authorize(ctx, request.Mission, stored) is { } denied) return denied;
+    var stored = request.MissionS256 is null ? null : await missions.GetAsync(request.MissionS256);
+    if (GovernanceEndpoints.Authorize(ctx, request.MissionS256, stored) is { } denied) return denied;
 
     var result = await relay.RelayAsync(request);
 
-    if (request.Mission is not null)
+    if (request.MissionS256 is not null)
     {
         await log.AppendAsync(new MissionLogEntry(
-            request.Mission.S256, MissionLogEntryKind.Interaction, DateTimeOffset.UtcNow)
+            request.MissionS256, MissionLogEntryKind.Interaction, DateTimeOffset.UtcNow)
         {
             Detail = request.Type.ToString(),
         });
     }
 
-    switch (request.Type)
+    return request.Type == InteractionType.Question
+        ? Results.Json(new { answer = result.Answer ?? string.Empty })
+        : Results.Json(new { status = "ok" });
+});
+
+// mission_endpoint actions (§Mission Update, §Mission Completion). A completion
+// the user accepts terminates the mission; otherwise the mission stays active.
+app.MapPost("/mission/{missionS256}", async (
+    HttpContext ctx,
+    string missionS256,
+    IMissionStore missions,
+    IMissionLog log,
+    IInteractionRelay relay) =>
+{
+    var body = await ctx.Request.ReadFromJsonAsync<JsonObject>();
+    var action = (string?)(body?["action"] as JsonValue);
+    if (body is null || !AAuth.Tokens.MissionReference.IsValid(missionS256) || action is not ("update" or "completion"))
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
+    var stored = await missions.GetAsync(missionS256);
+    if (GovernanceEndpoints.Authorize(ctx, missionS256, stored) is { } denied) return denied;
+
+    if (action == "update")
     {
-        case InteractionType.Question:
-            return Results.Json(new { answer = result.Answer ?? string.Empty });
-
-        case InteractionType.Completion:
-            // The user accepted completion -> terminate the mission (§Mission Management).
-            if (result.Accepted == true && request.Mission is not null)
-            {
-                await missions.SetStateAsync(request.Mission.S256, MissionState.Terminated);
-                return Results.Json(new { mission_status = "terminated" });
-            }
-            return Results.Json(new { mission_status = "active" });
-
-        default:
-            return Results.Json(new { status = "ok" });
+        var description = (string?)(body["description"] as JsonValue);
+        if (string.IsNullOrWhiteSpace(description))
+            return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
+        var persisted = new JsonObject { ["description"] = description, ["accepted_at"] = DateTimeOffset.UtcNow.ToString("o") }.ToJsonString();
+        await log.AppendAsync(new MissionLogEntry(missionS256, MissionLogEntryKind.Update, DateTimeOffset.UtcNow) { Detail = persisted });
+        return Results.Json(new { s256 = Mission.ComputeS256(System.Text.Encoding.UTF8.GetBytes(persisted)) });
     }
+
+    var summary = (string?)(body["summary"] as JsonValue);
+    if (string.IsNullOrWhiteSpace(summary))
+        return AAuth.Server.AAuthProblemDetails.Create("invalid_request", statusCode: StatusCodes.Status400BadRequest);
+    var result = await relay.RelayAsync(new InteractionRequest(InteractionType.Completion) { Summary = summary, MissionS256 = missionS256 });
+    await log.AppendAsync(new MissionLogEntry(missionS256, MissionLogEntryKind.Interaction, DateTimeOffset.UtcNow)
+    {
+        Detail = InteractionType.Completion.ToString(),
+    });
+    if (result.Accepted == true)
+    {
+        await missions.SetStateAsync(missionS256, MissionState.Terminated);
+        return Results.Json(new { mission_status = "terminated" });
+    }
+    return Results.Json(new { mission_status = "active" });
 });
 
 // Non-pre-approved permission resolution (§Permission Endpoint). The poll
@@ -547,7 +572,7 @@ app.MapMethods("/permission-pending/{id}", ["GET", "DELETE"], async (
         }
         // Interactive mode: hold at 202 until the user decides in the browser.
         var mission = await missions.GetAsync(entry.S256, ctx.RequestAborted);
-        if (GovernanceEndpoints.Authorize(ctx, entry.MissionClaim, mission) is { } denied) return denied;
+        if (GovernanceEndpoints.Authorize(ctx, entry.S256, mission) is { } denied) return denied;
         bool granted;
         if (script.InteractiveBrowser)
         {
@@ -958,7 +983,7 @@ app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent
         {
             ResourceUrl = entry.ResourceUrl, Scope = entry.Scope, AgentId = entry.ConsentAgentId,
             Account = entry.Account, AgentKeyThumbprint = entry.ResourceKeyThumbprint,
-            Mission = entry.Mission, RequiredClaims = entry.RequiredIdentityClaims,
+            MissionS256 = entry.MissionS256, RequiredClaims = entry.RequiredIdentityClaims,
             ResourceContext = entry.ResourceContext, InteractionId = entry.Id,
         }, ctx.RequestAborted);
         if (asserted.Kind != IdentityAssertionKind.Assert)

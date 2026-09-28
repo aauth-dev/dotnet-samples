@@ -101,6 +101,28 @@ public class BookingsPolicyTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await agent.GetAsync(document.Uri)).StatusCode);
     }
 
+    [Fact]
+    public async Task Authorize_AgentTokenGetsPersonTokenRequirement_PersonTokenGetsResourceTokenNamingIt()
+    {
+        using var fixture = new Fixture();
+        var body = R3Request.CreateBody(R3Operations.OpenApi("searchAvailability"), "work");
+        using var agent = fixture.SignedAgent(fixture.AgentToken);
+        using var challenged = await agent.PostAsJsonAsync(R3TestData.ResourceIssuer + "/authorize", body);
+        Assert.Equal(HttpStatusCode.Unauthorized, challenged.StatusCode);
+        Assert.Equal(AAuthRequirementHeader.PersonTokenRequirement,
+            AAuthRequirementHeader.Parse(challenged.Headers.GetValues("AAuth-Requirement").Single()).Requirement);
+
+        using var authorized = await fixture.PostAuthorizationAsync(body);
+        Assert.Equal(HttpStatusCode.OK, authorized.StatusCode);
+        var resourceToken = AAuthRequirementHeader.Parse(authorized.Headers.GetValues("AAuth-Requirement").Single()).ResourceToken!;
+        var payload = JsonNode.Parse(Base64UrlEncoder.DecodeBytes(resourceToken.Split('.')[1]))!.AsObject();
+        var person = JsonNode.Parse(Base64UrlEncoder.DecodeBytes(fixture.PersonToken.Split('.')[1]))!.AsObject();
+        Assert.Equal(R3TestData.PsIssuer, (string?)payload["ps"]);
+        Assert.Equal(R3TestData.PersonSubject, (string?)payload["sub"]);
+        Assert.Equal((string?)person["jti"], (string?)payload["presented_jti"]);
+        Assert.Equal("work", (string?)payload["account"]);
+    }
+
     private static JsonObject Parameters(string operation) => operation.StartsWith("searchAvailability", StringComparison.Ordinal) ? new JsonObject { ["venue"] = "Dinner" } : new()
     {
         ["reservation_id"] = "reservation-1", ["venue"] = "Dinner", ["date"] = "2026-10-01T19:00",
@@ -115,10 +137,12 @@ public class BookingsPolicyTests
         private AAuthKey AgentKey { get; } = AAuthKey.Generate();
         private WebApplicationFactory<Bookings.Entry> App { get; }
         public string AgentToken { get; }
+        public string PersonToken { get; }
 
         public Fixture()
         {
             AgentToken = R3TestData.AgentToken(ApKey, AgentKey);
+            PersonToken = R3TestData.PersonToken(PsKey, AgentKey);
             var discovery = new StaticJsonHandler()
                 .AddJson(R3TestData.ApIssuer + "/.well-known/aauth-agent.json", R3TestData.Metadata(R3TestData.ApIssuer, AgentTokenBuilder.AgentDwk))
                 .AddJson(R3TestData.ApIssuer + "/.well-known/jwks.json", R3TestData.Jwks(R3TestData.ApKid, ApKey))
@@ -153,7 +177,7 @@ public class BookingsPolicyTests
 
         public async Task<HttpResponseMessage> PostAuthorizationAsync(JsonObject body)
         {
-            using var client = SignedAgent(AgentToken);
+            using var client = SignedAgent(PersonToken);
             return await client.PostAsJsonAsync(R3TestData.ResourceIssuer + "/authorize", body);
         }
 
@@ -173,7 +197,7 @@ public class BookingsPolicyTests
         public string AuthToken(R3ClaimReader.ResourceDocumentClaims document, R3Grant granted, R3Grant? conditional = null) => new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy, Issuer = R3TestData.AsIssuer, Audience = R3TestData.ResourceIssuer,
-            Agent = R3TestData.AgentId, AgentConfirmationKey = AgentKey, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
+            PersonServer = R3TestData.PsIssuer, AgentConfirmationKey = AgentKey, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
             Key = AsKey, KeyId = R3TestData.AsKid, Dwk = AuthTokenBuilder.AccessDwk, Account = document.Account,
             Subject = "bookings-test-person",
             AdditionalClaims = R3AuthClaims.AuthToken(document.Uri, document.S256, granted, conditional),

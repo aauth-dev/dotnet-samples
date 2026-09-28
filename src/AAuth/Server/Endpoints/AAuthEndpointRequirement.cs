@@ -22,9 +22,6 @@ public sealed class AAuthEndpointRequirement
 
     /// <summary>Required role, enforced from the auth token's <c>roles</c> claim.</summary>
     public string? Role { get; init; }
-
-    /// <summary>Copy a signed <c>AAuth-Mission</c> header into the issued resource token.</summary>
-    public bool MissionAware { get; init; }
 }
 
 /// <summary>
@@ -49,11 +46,11 @@ public sealed class AAuthServerOptions
     public Func<string, bool>? IsTrustedAgentProviderIssuer { get; set; }
 
     /// <summary>
-    /// Explicit resource-token audience for the challenge. Set to an Access Server
-    /// URL for four-party (federated) resources; when null the audience is the
-    /// agent token's <c>ps</c> claim (three-party).
+    /// Resource-token audience for four-party (federated) resources: the
+    /// resource's own Access Server. When null the audience is the PS that
+    /// issued the presented person token (three-party).
     /// </summary>
-    public string? PersonServerAudience { get; set; }
+    public string? AccessServer { get; set; }
 
     /// <summary>Override the resource identifier (default: DI metadata issuer).</summary>
     public string? ResourceIdentifier { get; set; }

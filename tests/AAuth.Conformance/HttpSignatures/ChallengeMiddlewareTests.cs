@@ -207,7 +207,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = PsIssuer,
             Audience = ResourceId,
-            Agent = AgentId,
+            PersonServer = PsIssuer,
             AgentConfirmationKey = _agentKey,
             Key = _psKey,
             KeyId = "ps-key-1",
@@ -216,6 +216,21 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
             IssuedAt = FixedClock,
         }.Build();
     }
+
+    private string BuildPersonToken(string? missionS256 = null, string? tenant = null) => new PersonTokenBuilder
+    {
+        EgressPolicy = TestEgress.Policy,
+        Issuer = PsIssuer,
+        Audience = ResourceId,
+        Subject = "pairwise-sub",
+        ConfirmationKey = _agentKey,
+        AgentTokenExpiresAt = FixedClock.AddHours(1),
+        Key = _psKey,
+        KeyId = "ps-key-1",
+        IssuedAt = FixedClock,
+        MissionS256 = missionS256,
+        Tenant = tenant,
+    }.Build();
 
     private async Task<HttpRequestMessage> SignRequest(string token)
     {
@@ -268,19 +283,32 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         });
         if (allowed)
         {
-            using var response = await SendSigned(resource, BuildAgentToken());
+            using var response = await SendSigned(resource, BuildPersonToken());
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
             Assert.True(response.Headers.Contains(AAuthRequirementHeader.Name));
         }
-        else await Assert.ThrowsAsync<InvalidOperationException>(() => SendSigned(resource, BuildAgentToken()));
+        else await Assert.ThrowsAsync<InvalidOperationException>(() => SendSigned(resource, BuildPersonToken()));
         await resource.StopAsync();
     }
 
-    [Fact(DisplayName = "§Challenge — RequireAuthToken challenges agent token with resource token")]
-    public async Task ChallengesAgentTokenWithResourceToken()
+    [Fact(DisplayName = "§Person Token Required — RequireAuthToken challenges an agent token with requirement=person-token")]
+    public async Task ChallengesAgentTokenWithPersonTokenRequirement()
     {
         var token = BuildAgentToken();
         var response = await SendSigned(_challengeHost!, token);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var headerValue = string.Join(",", response.Headers.GetValues(AAuthRequirementHeader.Name));
+        Assert.Equal(AAuthRequirementHeader.FormatPersonToken(), headerValue);
+        var parsed = AAuthRequirementHeader.Parse(headerValue);
+        Assert.Equal(AAuthRequirementHeader.PersonTokenRequirement, parsed.Requirement);
+        Assert.Null(parsed.ResourceToken);
+    }
+
+    [Fact(DisplayName = "§Challenge — RequireAuthToken challenges a person token with a resource token")]
+    public async Task ChallengesPersonTokenWithResourceToken()
+    {
+        var response = await SendSigned(_challengeHost!, BuildPersonToken());
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.True(response.Headers.Contains(AAuthRequirementHeader.Name));
@@ -292,11 +320,11 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         Assert.NotEmpty(parsed.ResourceToken);
     }
 
-    [Fact(DisplayName = "§Challenge — resource token contains correct claims")]
+    [Fact(DisplayName = "§Challenge — resource token names the presented person token")]
     public async Task ResourceTokenHasCorrectClaims()
     {
-        var token = BuildAgentToken();
-        var response = await SendSigned(_challengeHost!, token);
+        var personToken = BuildPersonToken();
+        var response = await SendSigned(_challengeHost!, personToken);
 
         var headerValue = string.Join(",", response.Headers.GetValues(AAuthRequirementHeader.Name));
         var parsed = AAuthRequirementHeader.Parse(headerValue);
@@ -307,14 +335,18 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
 
         var headerJson = JsonNode.Parse(Base64UrlDecode(parts[0]))!.AsObject();
         var payloadJson = JsonNode.Parse(Base64UrlDecode(parts[1]))!.AsObject();
+        var person = JsonNode.Parse(Base64UrlDecode(personToken.Split('.')[1]))!.AsObject();
 
         Assert.Equal(ResourceTokenBuilder.TokenType, (string?)headerJson["typ"]);
         Assert.Equal(ResourceKid, (string?)headerJson["kid"]);
         Assert.Equal(ResourceId, (string?)payloadJson["iss"]);
         Assert.Equal(PsIssuer, (string?)payloadJson["aud"]);
-        Assert.Equal(AgentId, (string?)payloadJson["agent"]);
+        Assert.Equal(PsIssuer, (string?)payloadJson["ps"]);
+        Assert.Equal("pairwise-sub", (string?)payloadJson["sub"]);
+        Assert.Equal((string?)person["jti"], (string?)payloadJson["presented_jti"]);
+        Assert.False(payloadJson.ContainsKey("agent"));
         Assert.Equal(ResourceScope, (string?)payloadJson["scope"]);
-        Assert.NotNull((string?)payloadJson["agent_jkt"]);
+        Assert.Equal(_agentKey.ComputeJwkThumbprint(), (string?)payloadJson["agent_jkt"]);
     }
 
     [Fact(DisplayName = "§Challenge — auth token passes through to endpoint")]
@@ -421,20 +453,20 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Challenge — no ps claim returns 401 without resource token")]
-    public async Task NoPsClaimReturns401WithoutResourceToken()
+    [Fact(DisplayName = "§Person Token Required — an agent token without ps still gets a person-token challenge")]
+    public async Task NoPsClaimStillChallengesForPersonToken()
     {
-        // Build agent token without ps claim.
+        // The resource token's ps/aud come from the presented person token, not the agent token.
         var token = BuildAgentToken(personServer: null);
         var response = await SendSigned(_challengeHost!, token);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        // Should NOT have a resource token since we can't resolve audience.
-        Assert.False(response.Headers.Contains(AAuthRequirementHeader.Name));
-        Assert.True(response.Headers.Contains("AAuth-Error"));
+        var parsed = AAuthRequirementHeader.Parse(string.Join(",", response.Headers.GetValues(AAuthRequirementHeader.Name)));
+        Assert.Equal(AAuthRequirementHeader.PersonTokenRequirement, parsed.Requirement);
+        Assert.Null(parsed.ResourceToken);
     }
 
-    [Fact(DisplayName = "§Challenge — explicit PersonServerAudience overrides ps claim")]
+    [Fact(DisplayName = "§Challenge — an explicit AccessServer is the resource token audience; ps stays the person's PS")]
     public async Task ExplicitAudienceOverridesPsClaim()
     {
         const string explicitAud = "http://localhost:9999";
@@ -449,12 +481,12 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
             ResourceKeyId = ResourceKid,
             ResourceIdentifier = ResourceId,
             DefaultScopes = ResourceScope,
-            PersonServerAudience = explicitAud,
+            AccessServer = explicitAud,
         });
 
         try
         {
-            var token = BuildAgentToken(personServer: PsIssuer);
+            var token = BuildPersonToken();
             var response = await SendSigned(host, token);
 
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -465,6 +497,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
             var parts = parsed.ResourceToken!.Split('.');
             var payloadJson = JsonNode.Parse(Base64UrlDecode(parts[1]))!.AsObject();
             Assert.Equal(explicitAud, (string?)payloadJson["aud"]);
+            Assert.Equal(PsIssuer, (string?)payloadJson["ps"]);
         }
         finally
         {
@@ -486,31 +519,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
 
     // ── Mission-aware resource (§Terminology, §Missions) ─────────────────
 
-    private const string MissionApprover = PsIssuer;
     private const string MissionS256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
-
-    private async Task<HttpResponseMessage> SendSignedWithMission(
-        IHost host, string token, string? missionHeader)
-    {
-        var capture = new CaptureHandler();
-        var provider = new JwtSignatureKeyProvider(() => token);
-        var handler = new AAuthSigningHandler(_agentKey, provider, () => FixedClock)
-        {
-            InnerHandler = capture,
-        };
-        using var client = new InProcessHttpClient(handler);
-        var outbound = new HttpRequestMessage(HttpMethod.Get, "http://localhost:5000/protected");
-        if (missionHeader is not null)
-            outbound.Headers.TryAddWithoutValidation(AAuthMissionHeader.Name, missionHeader);
-        await client.SendAsync(outbound);
-        var signed = capture.Captured!;
-
-        var relay = new HttpRequestMessage(HttpMethod.Get, "/protected");
-        foreach (var h in signed.Headers)
-            relay.Headers.TryAddWithoutValidation(h.Key, h.Value);
-        relay.Headers.Host = "localhost:5000";
-        return await host.GetTestClient().SendAsync(relay);
-    }
 
     private static JsonObject DecodeResourceTokenPayload(HttpResponseMessage response)
     {
@@ -520,80 +529,26 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         return JsonNode.Parse(Base64UrlDecode(parts[1]))!.AsObject();
     }
 
-    [Fact(DisplayName = "§Missions — mission-aware resource copies AAuth-Mission into the resource token")]
-    public async Task MissionAwareResourceCopiesMissionClaim()
+    [Fact(DisplayName = "§Resource Token Structure — mission_s256 and tenant are copied from the presented person token")]
+    public async Task ResourceTokenCopiesPresentedMissionAndTenant()
     {
-        var host = await StartResourceServer(new ChallengeOptions
-        {
-            ScopeDescriptions = TestScopeDefinitions.Resource,
-            EgressPolicy = TestEgress.Policy,
-            AccessMode = AAuthAccessMode.RequireAuthToken,
-            ResourceSigningKey = _resourceKey,
-            ResourceKeyId = ResourceKid,
-            ResourceIdentifier = ResourceId,
-            DefaultScopes = ResourceScope,
-            MissionAware = true,
-        });
-        try
-        {
-            var token = BuildAgentToken();
-            var missionHeader = AAuthMissionHeader.FormatStructured(MissionApprover, MissionS256);
-            var response = await SendSignedWithMission(host, token, missionHeader);
-
-            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-            var payload = DecodeResourceTokenPayload(response);
-            var mission = Assert.IsType<JsonObject>(payload["mission"]);
-            Assert.Equal(MissionApprover, (string?)mission["approver"]);
-            Assert.Equal(MissionS256, (string?)mission["s256"]);
-        }
-        finally
-        {
-            await host.StopAsync();
-            host.Dispose();
-        }
-    }
-
-    [Fact(DisplayName = "§Missions — mission-aware resource omits the mission claim when no header is present")]
-    public async Task MissionAwareResourceOmitsMissionWhenHeaderAbsent()
-    {
-        var host = await StartResourceServer(new ChallengeOptions
-        {
-            ScopeDescriptions = TestScopeDefinitions.Resource,
-            EgressPolicy = TestEgress.Policy,
-            AccessMode = AAuthAccessMode.RequireAuthToken,
-            ResourceSigningKey = _resourceKey,
-            ResourceKeyId = ResourceKid,
-            ResourceIdentifier = ResourceId,
-            DefaultScopes = ResourceScope,
-            MissionAware = true,
-        });
-        try
-        {
-            var token = BuildAgentToken();
-            var response = await SendSignedWithMission(host, token, missionHeader: null);
-
-            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-            var payload = DecodeResourceTokenPayload(response);
-            Assert.False(payload.ContainsKey("mission"));
-        }
-        finally
-        {
-            await host.StopAsync();
-            host.Dispose();
-        }
-    }
-
-    [Fact(DisplayName = "§Missions — non-mission-aware resource ignores the AAuth-Mission header")]
-    public async Task NonMissionAwareResourceIgnoresMissionHeader()
-    {
-        // _challengeHost is configured WITHOUT MissionAware — the mission header
-        // must be ignored (opt-in only), so no mission claim is emitted.
-        var token = BuildAgentToken();
-        var missionHeader = AAuthMissionHeader.FormatStructured(MissionApprover, MissionS256);
-        var response = await SendSignedWithMission(_challengeHost!, token, missionHeader);
+        var response = await SendSigned(_challengeHost!, BuildPersonToken(MissionS256, "acme"));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         var payload = DecodeResourceTokenPayload(response);
+        Assert.Equal(MissionS256, (string?)payload["mission_s256"]);
+        Assert.Equal("acme", (string?)payload["tenant"]);
+        Assert.False(payload.ContainsKey("mission"));
+    }
+
+    [Fact(DisplayName = "§Resource Token Structure — mission_s256 omitted when the presented token carries none")]
+    public async Task ResourceTokenOmitsMissionWhenPresentedTokenHasNone()
+    {
+        var response = await SendSigned(_challengeHost!, BuildPersonToken());
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var payload = DecodeResourceTokenPayload(response);
+        Assert.False(payload.ContainsKey("mission_s256"));
         Assert.False(payload.ContainsKey("mission"));
     }
 }

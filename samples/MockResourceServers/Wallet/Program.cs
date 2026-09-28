@@ -79,7 +79,7 @@ app.UseRouting();
 app.UseAAuth(o =>
 {
     o.TrustedAuthTokenIssuers = trustedAccessServers;
-    o.PersonServerAudience = accessServerUrl;
+    o.AccessServer = accessServerUrl;
 });
 
 app.UseAuthentication();
@@ -102,20 +102,18 @@ app.MapGet("/", () => Results.Ok(new
 app.MapGet("/wallet", (HttpContext ctx) =>
 {
     var result = ctx.GetAAuthVerification()!;
-    var parsed = ctx.GetAAuthParsedKey()!;
 
     return Results.Ok(new
     {
         accessMode = "four-party",
         scheme = "jwt",
         access = "read",
-        agent = result.Agent,
+        ps = result.PersonServer,
         sub = result.Subject,
         scope = result.Scopes,
         // In four-party the auth-token issuer is the Access Server, not the PS.
         iss = result.Issuer,
-        userKey = result.Issuer is null ? null : $"{result.Issuer}|{result.Subject}",
-        act = parsed.Payload?["act"],
+        userKey = result.PersonServer is null ? null : $"{result.PersonServer}|{result.Subject}",
     });
 }).RequireAAuth(scope: ScopeRead);
 
@@ -125,24 +123,22 @@ app.MapGet("/wallet", (HttpContext ctx) =>
 app.MapGet("/wallet/charge", (HttpContext ctx) =>
 {
     var result = ctx.GetAAuthVerification()!;
-    var parsed = ctx.GetAAuthParsedKey()!;
 
     return Results.Ok(new
     {
         accessMode = "four-party",
         scheme = "jwt",
         access = "charge",
-        agent = result.Agent,
+        ps = result.PersonServer,
         sub = result.Subject,
         scope = result.Scopes,
         iss = result.Issuer,
-        act = parsed.Payload?["act"],
     });
 }).RequireAAuth(scope: ScopeCharge);
 
 app.MapGet("/wallet/review", (HttpContext context) => Results.Ok(new
 {
-    access = "review", agent = context.GetAAuthVerification()!.Agent,
+    access = "review", ps = context.GetAAuthVerification()!.PersonServer,
     iss = context.GetAAuthVerification()!.Issuer, scope = "wallet.review",
     review = "Wallet is available for the approved travel review.",
 })).RequireAAuth(scope: "wallet.review");

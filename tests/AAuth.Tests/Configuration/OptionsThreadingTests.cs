@@ -27,7 +27,6 @@ public class OptionsThreadingTests
         {
             EgressPolicy = TestEgress.Policy,
             Clock = () => fixedTime,
-            MaxActDepth = 5,
             ClockSkew = TimeSpan.FromSeconds(10),
         };
 
@@ -36,12 +35,10 @@ public class OptionsThreadingTests
         var verifier = new TokenVerifier
         {
             EgressPolicy = TestEgress.Policy,
-            MaxActDepth = options.MaxActDepth,
             ClockSkew = options.ClockSkew,
             Clock = options.Clock ?? (() => DateTimeOffset.UtcNow),
         };
 
-        Assert.Equal(5, verifier.MaxActDepth);
         Assert.Equal(TimeSpan.FromSeconds(10), verifier.ClockSkew);
         Assert.Equal(fixedTime, verifier.Clock());
     }
@@ -108,7 +105,6 @@ public class OptionsThreadingTests
     public void AllOptions_DefaultsPreserved()
     {
         var verification = new AAuthVerificationOptions();
-        Assert.Equal(10, verification.MaxActDepth);
         Assert.Equal(TimeSpan.FromSeconds(30), verification.ClockSkew);
         Assert.Null(verification.Clock);
 

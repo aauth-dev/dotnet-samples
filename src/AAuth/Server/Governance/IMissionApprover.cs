@@ -27,11 +27,11 @@ public enum MissionApprovalOutcome
 /// agent, the approving PS, and the proposal itself (§Mission Creation).
 /// </summary>
 /// <param name="Agent">The agent identifier the mission would be approved for.</param>
-/// <param name="Approver">HTTPS URL of the approver (the PS).</param>
+/// <param name="PersonServer">HTTPS URL of the approving PS.</param>
 /// <param name="Proposal">The parsed mission proposal.</param>
 public sealed record MissionApprovalContext(
     string Agent,
-    string Approver,
+    string PersonServer,
     MissionProposal Proposal);
 
 /// <summary>
@@ -48,6 +48,9 @@ public sealed record MissionApprovalDecision(
     IReadOnlyList<MissionTool> ApprovedTools,
     string? Message = null)
 {
+    /// <summary>Optional mission <c>expires_at</c>; tokens carrying the mission are capped at it.</summary>
+    public System.DateTimeOffset? ExpiresAt { get; init; }
+
     /// <summary>Approve the mission with the given approved tool set.</summary>
     public static MissionApprovalDecision Approve(IReadOnlyList<MissionTool> approvedTools)
         => new(MissionApprovalOutcome.Approved, approvedTools);

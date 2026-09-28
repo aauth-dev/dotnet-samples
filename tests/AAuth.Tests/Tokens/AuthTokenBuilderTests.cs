@@ -47,7 +47,7 @@ public class AuthTokenBuilderTests
         var token = new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
-            Issuer = "https://ps.example", Audience = "https://resource.example", Agent = "aauth:demo@ap.example",
+            Issuer = "https://ps.example", Audience = "https://resource.example", PersonServer = "https://ps.example", Subject = "person-1",
             Key = key, KeyId = "ps1", AgentConfirmationKey = key, Scope = "read",
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
             AdditionalClaims = new System.Collections.Generic.Dictionary<string, JsonNode?> { ["email"] = "user@example.test" },
@@ -61,7 +61,7 @@ public class AuthTokenBuilderTests
         return new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
-            Issuer = "https://ps.example", Audience = "https://resource.example", Agent = "aauth:demo@ap.example",
+            Issuer = "https://ps.example", Audience = "https://resource.example", PersonServer = "https://ps.example", Subject = "person-1",
             Key = key, KeyId = "ps1", AgentConfirmationKey = key, Scope = "read", IssuedAt = now,
             AgentTokenExpiresAt = agentExpiry, AuthorizationExpiresAt = parentExpiry,
         };
@@ -70,6 +70,9 @@ public class AuthTokenBuilderTests
     [Theory]
     [InlineData("act")]
     [InlineData("mission")]
+    [InlineData("agent")]
+    [InlineData("mission_s256")]
+    [InlineData("ps")]
     [InlineData("account")]
     [InlineData("tenant")]
     [InlineData("roles")]
@@ -85,7 +88,8 @@ public class AuthTokenBuilderTests
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = "https://ps.example",
             Audience = "https://resource.example",
-            Agent = "aauth:demo@ap.example",
+            PersonServer = "https://ps.example",
+            Subject = "person-1",
             AgentConfirmationKey = key,
             Key = key,
             KeyId = "ps1",
@@ -109,7 +113,8 @@ public class AuthTokenBuilderTests
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = "https://ps.example",
             Audience = "https://resource.example",
-            Agent = "aauth:demo@ap.example",
+            PersonServer = "https://ps.example",
+            Subject = "person-1",
             AgentConfirmationKey = key,
             Key = key,
             KeyId = "ps1",
@@ -129,7 +134,7 @@ public class AuthTokenBuilderTests
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = "https://ps.example",
             Audience = "https://resource.example",
-            Agent = "aauth:demo@ap.example",
+            PersonServer = "https://ps.example",
             AgentConfirmationKey = agentKey,
             Key = psKey,
             KeyId = "ps1",
@@ -141,17 +146,20 @@ public class AuthTokenBuilderTests
         Assert.Equal("https://ps.example", (string?)payload["iss"]);
         Assert.Equal("aauth-person.json", (string?)payload["dwk"]);
         Assert.Equal("https://resource.example", (string?)payload["aud"]);
-        Assert.Equal("aauth:demo@ap.example", (string?)payload["agent"]);
+        Assert.Equal("https://ps.example", (string?)payload["ps"]);
         Assert.Equal("user-pairwise-id", (string?)payload["sub"]);
         Assert.Equal("whoami", (string?)payload["scope"]);
         var cnfJwk = (JsonObject)payload["cnf"]!["jwk"]!;
         Assert.Equal(agentKey.ComputeJwkThumbprint(), AAuthKey.FromJwk(cnfJwk).ComputeJwkThumbprint());
-        // act is OPTIONAL (§Delegation Chain) — a direct-auth token carries no act.
+        // §Auth Token Structure: no agent identifier and no delegation chain.
+        Assert.Null(payload["agent"]);
         Assert.Null(payload["act"]);
     }
 
-    [Fact]
-    public void Build_RejectsMissingSubAndScope()
+    [Theory]
+    [InlineData("", "https://ps.example")]
+    [InlineData("person-1", "")]
+    public void Build_RejectsMissingSubOrPersonServer(string subject, string personServer)
     {
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
@@ -161,7 +169,8 @@ public class AuthTokenBuilderTests
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = "https://ps.example",
             Audience = "https://resource.example",
-            Agent = "aauth:demo@ap.example",
+            PersonServer = personServer,
+            Subject = subject,
             AgentConfirmationKey = agentKey,
             Key = psKey,
             KeyId = "k",

@@ -41,32 +41,29 @@ public sealed class AuthTokenResponseValidator
     }
 
     /// <summary>
-    /// Verify an auth token received from an AS per §Auth Token Delivery.
+    /// Verify an auth token received from an AS per §Auth Token Delivery: issued
+    /// by the AS, for the resource, bound to the agent's key, naming the directed
+    /// <c>sub</c> this PS minted and this PS as <c>ps</c>, no broader than the
+    /// requested scope, and expiring no later than the presented token.
     /// </summary>
     /// <param name="authToken">The compact JWS auth token from the AS response.</param>
-    /// <param name="expectedIssuer">The AS URL the PS sent the token request to (step 2).</param>
-    /// <param name="expectedAudience">The resource URL from the resource token's <c>iss</c> (step 3).</param>
-    /// <param name="expectedAgentId">The agent identifier that submitted the token request (step 4).</param>
-    /// <param name="agentKey">The agent's signing key for <c>cnf.jwk</c> binding check (step 5).</param>
-    /// <param name="expectedActContext">
-    /// Optional act context for chain consistency check (step 6).
-    /// Verifies the complete immediate and nested <c>act</c> matches this context.
-    /// For direct authorization: null (the auth token then carries no <c>act</c>).
-    /// For call chaining: the complete expected downstream actor chain.
-    /// </param>
-    /// <param name="requestedScope">
-    /// The scope from the resource token (step 7). When provided, verifies the auth token's
-    /// scope is not broader than what was requested.
-    /// </param>
+    /// <param name="expectedIssuer">The AS URL the PS sent the token request to.</param>
+    /// <param name="expectedAudience">The resource URL from the resource token's <c>iss</c>.</param>
+    /// <param name="expectedSubject">The directed <c>sub</c> from the resource token.</param>
+    /// <param name="expectedPersonServer">This PS's identifier (<c>ps</c>).</param>
+    /// <param name="agentKey">The agent's (or sub-agent's) key for the <c>cnf.jwk</c> check.</param>
+    /// <param name="presentedTokenExpiresAt">The <c>exp</c> of the <c>presented_token</c> the PS sent.</param>
+    /// <param name="requestedScope">The resource token's scope; the auth token's must be a subset.</param>
     /// <param name="ct">Cancellation token.</param>
-    /// <returns>Validation result with verified token or error.</returns>
+    /// <param name="expectedAccount">The resource token's <c>account</c>, if any.</param>
     public async Task<AuthTokenDeliveryResult> ValidateAsync(
         string authToken,
         string expectedIssuer,
         string expectedAudience,
-        string expectedAgentId,
+        string expectedSubject,
+        string expectedPersonServer,
         IAAuthKey agentKey,
-        JsonObject? expectedActContext = null,
+        DateTimeOffset presentedTokenExpiresAt,
         string? requestedScope = null,
         CancellationToken ct = default,
         string? expectedAccount = null)
@@ -74,54 +71,29 @@ public sealed class AuthTokenResponseValidator
         ArgumentException.ThrowIfNullOrEmpty(authToken);
         ArgumentException.ThrowIfNullOrEmpty(expectedIssuer);
         ArgumentException.ThrowIfNullOrEmpty(expectedAudience);
-        ArgumentException.ThrowIfNullOrEmpty(expectedAgentId);
+        ArgumentException.ThrowIfNullOrEmpty(expectedSubject);
+        ArgumentException.ThrowIfNullOrEmpty(expectedPersonServer);
         ArgumentNullException.ThrowIfNull(agentKey);
 
         try
         {
-            // Steps 1, 3–5, 8–9: Reuse VerifyAuthTokenWithJwksAsync which performs:
-            //  - JWT signature via JWKS discovery (step 1)
-            //  - aud check (step 3)
-            //  - agent claim check (step 5)
-            //  - cnf.jwk binding against agentKey (step 4)
-            //  - act OPTIONAL; when present act.agent is a valid agent id (step 6)
-            //  - sub or scope present
-            //  - scope narrowing
             var verified = await _verifier.VerifyAuthTokenWithJwksAsync(
                 authToken,
                 _metadata,
                 _jwks,
                 expectedAudience,
                 agentKey,
-                expectedAgentId,
                 expectedMaxScope: requestedScope,
                 cancellationToken: ct).ConfigureAwait(false);
 
             if (!AccountBinding.Matches(expectedAccount, verified.Account))
                 return new AuthTokenDeliveryResult { IsValid = false, Error = "account_mismatch: auth token differs from the resource request." };
-
-            // Step 2: Verify iss matches the AS the PS sent the request to.
             if (verified.Issuer != expectedIssuer)
-            {
-                return new AuthTokenDeliveryResult
-                {
-                    IsValid = false,
-                    Error = $"issuer_mismatch: expected '{expectedIssuer}', got '{verified.Issuer}'.",
-                };
-            }
-
-            // Step 6 (full): when the caller supplies the expected upstream
-            // delegation context, verify the nested act chain matches it. act is
-            // OPTIONAL (§Delegation Chain); act.agent is the immediate upstream
-            // agent and its own chain is nested as act.act.
-            if (!ActChainsMatch(verified.Payload["act"] as JsonObject, expectedActContext, _verifier.EgressPolicy))
-            {
-                return new AuthTokenDeliveryResult
-                {
-                    IsValid = false,
-                    Error = "act_chain_mismatch: auth token immediate and nested actors must match the complete expected delegation context.",
-                };
-            }
+                return new AuthTokenDeliveryResult { IsValid = false, Error = $"issuer_mismatch: expected '{expectedIssuer}', got '{verified.Issuer}'." };
+            if (verified.Subject != expectedSubject || (string?)verified.Payload["ps"] != expectedPersonServer)
+                return new AuthTokenDeliveryResult { IsValid = false, Error = "person_mismatch: auth token must name this PS and the resource token's sub." };
+            if (verified.ExpiresAt > presentedTokenExpiresAt)
+                return new AuthTokenDeliveryResult { IsValid = false, Error = "lifetime_mismatch: auth token outlives the presented token." };
 
             return new AuthTokenDeliveryResult
             {
@@ -137,28 +109,5 @@ public sealed class AuthTokenResponseValidator
                 Error = ex.Message,
             };
         }
-    }
-
-    /// <summary>
-    /// Compare two act chain objects for structural equivalence.
-    /// Checks that <c>agent</c> values match at each nesting level.
-    /// </summary>
-    public static bool ActChainsMatch(JsonObject? actual, JsonObject? expected, AAuthEgressPolicy? policy = null)
-    {
-        if (actual is null && expected is null)
-            return true;
-        if (actual is null || expected is null)
-            return false;
-        if (!ActChainBuilder.ValidateChain(actual, policy: policy) || !ActChainBuilder.ValidateChain(expected, policy: policy))
-            return false;
-
-        var actualAgent = (string?)actual["agent"];
-        var expectedAgent = (string?)expected["agent"];
-        if (actualAgent != expectedAgent)
-            return false;
-
-        var actualNested = actual["act"] as JsonObject;
-        var expectedNested = expected["act"] as JsonObject;
-        return ActChainsMatch(actualNested, expectedNested, policy);
     }
 }

@@ -29,8 +29,9 @@ namespace AAuth.Tests;
 public class AccessServerClientTests
 {
     private const string AsIssuer = "https://as.test";
+    private const string PsIssuer = "https://ps.test";
     private const string ResourceUrl = "https://whoami.test";
-    private const string AgentId = "aauth:demo@ap.test";
+    private const string Subject = "pairwise-sub";
     private const string AsKid = "as-1";
 
     private static readonly AAuthKey AsKey = AAuthKey.Generate();
@@ -63,7 +64,7 @@ public class AccessServerClientTests
         {
             var response = new HttpResponseMessage(HttpStatusCode.Accepted)
             {
-                Content = JsonContent.Create(new { clarification = "Why?", timeout = 30, required_claims = new[] { "sub" } }),
+                Content = JsonContent.Create(new { clarification = "Why?", timeout = 30, required_claims = new[] { "email" } }),
             };
             response.Headers.Location = new Uri($"{AsIssuer}/pending/mixed");
             response.Headers.TryAddWithoutValidation("Retry-After", "0");
@@ -85,8 +86,9 @@ public class AccessServerClientTests
         {
             ResourceToken = "resource", AgentToken = "agent", AgentKey = agentKey,
             AuthorizationExpiresAt = DateTimeOffset.UtcNow.AddHours(2),
-            ExpectedAudience = ResourceUrl, ExpectedAgentId = AgentId, RequestedScope = "whoami",
-            OnClaimsRequired = (_, _) => { callbacks.Add("claims"); return Task.FromResult(new ClaimsResponse { Subject = "user" }); },
+            ExpectedAudience = ResourceUrl, ExpectedSubject = Subject, ExpectedPersonServer = PsIssuer, RequestedScope = "whoami",
+            PresentedToken = "presented", PresentedTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(2),
+            OnClaimsRequired = (_, _) => { callbacks.Add("claims"); return Task.FromResult(new ClaimsResponse()); },
             OnClarificationRequired = (_, _) => { callbacks.Add("clarification"); return Task.FromResult(ClarificationResponse.Respond("because")); },
             OnInteractionRequired = (interaction, _) => { callbacks.Add(interaction.Code!); return Task.CompletedTask; },
         });
@@ -113,7 +115,8 @@ public class AccessServerClientTests
         await Assert.ThrowsAsync<TokenVerificationException>(() => BuildClient(stub).FederateAsync(AsIssuer, new AccessServerRequest
         {
             ResourceToken = "resource", AgentToken = "agent", AuthorizationExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
-            ExpectedAudience = ResourceUrl, ExpectedAgentId = AgentId, AgentKey = agentKey,
+            ExpectedAudience = ResourceUrl, ExpectedSubject = Subject, ExpectedPersonServer = PsIssuer, AgentKey = agentKey,
+            PresentedToken = "presented", PresentedTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(2),
             OnInteractionRequired = (_, _) => Task.CompletedTask,
         }));
     }
@@ -127,9 +130,11 @@ public class AccessServerClientTests
         {
             ResourceToken = "resource", AgentToken = "parent", SubagentToken = "child",
             AuthorizationExpiresAt = DateTimeOffset.UtcNow.AddHours(2),
-            ExpectedAudience = ResourceUrl, ExpectedAgentId = AgentId, AgentKey = key,
+            ExpectedAudience = ResourceUrl, ExpectedSubject = Subject, ExpectedPersonServer = PsIssuer, AgentKey = key,
+            PresentedToken = "presented", PresentedTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(2),
         });
         Assert.Equal("child", (string?)stub.LastTokenRequestBody!["subagent_token"]);
+        Assert.Equal("presented", (string?)stub.LastTokenRequestBody["presented_token"]);
     }
 
     [Fact]
@@ -139,7 +144,7 @@ public class AccessServerClientTests
         {
             var response = new HttpResponseMessage(HttpStatusCode.Accepted)
             {
-                Content = JsonContent.Create(new { required_claims = new[] { "act" } }),
+                Content = JsonContent.Create(new { required_claims = new[] { "sub" } }),
             };
             response.Headers.Location = new Uri($"{AsIssuer}/pending/claims");
             response.Headers.TryAddWithoutValidation(AAuthRequirementHeader.Name, "requirement=claims");
@@ -149,8 +154,9 @@ public class AccessServerClientTests
         await Assert.ThrowsAsync<TokenVerificationException>(() => BuildClient(stub).FederateAsync(AsIssuer, new AccessServerRequest
         {
             ResourceToken = "resource", AgentToken = "agent", AuthorizationExpiresAt = DateTimeOffset.UtcNow.AddMinutes(2),
-            ExpectedAudience = ResourceUrl, ExpectedAgentId = AgentId, AgentKey = AAuthKey.Generate(),
-            OnClaimsRequired = (_, _) => { called = true; return Task.FromResult(new ClaimsResponse { Subject = "user" }); },
+            ExpectedAudience = ResourceUrl, ExpectedSubject = Subject, ExpectedPersonServer = PsIssuer, AgentKey = AAuthKey.Generate(),
+            PresentedToken = "presented", PresentedTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(2),
+            OnClaimsRequired = (_, _) => { called = true; return Task.FromResult(new ClaimsResponse()); },
         }));
         Assert.False(called);
         Assert.Null(stub.LastClaimsPushBody);
@@ -188,7 +194,10 @@ public class AccessServerClientTests
             AgentToken = "the-agent-token",
             UpstreamToken = "the-upstream-token",
             ExpectedAudience = ResourceUrl,
-            ExpectedAgentId = AgentId,
+            ExpectedSubject = Subject,
+            ExpectedPersonServer = PsIssuer,
+            PresentedToken = "the-presented-token",
+            PresentedTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
             AgentKey = agentKey,
             RequestedScope = "whoami",
         });
@@ -273,7 +282,10 @@ public class AccessServerClientTests
             ResourceToken = "the-resource-token",
             AgentToken = "the-agent-token",
             ExpectedAudience = ResourceUrl,
-            ExpectedAgentId = AgentId,
+            ExpectedSubject = Subject,
+            ExpectedPersonServer = PsIssuer,
+            PresentedToken = "the-presented-token",
+            PresentedTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
             AgentKey = agentKey,
             RequestedScope = "whoami",
             OnClaimsRequired = (requirement, _) =>
@@ -281,7 +293,6 @@ public class AccessServerClientTests
                 seen = requirement;
                 return Task.FromResult(new ClaimsResponse
                 {
-                    Subject = "directed-123",
                     Claims = new Dictionary<string, JsonNode?>
                     {
                         ["email"] = "demo@person.example",
@@ -295,48 +306,10 @@ public class AccessServerClientTests
         Assert.NotNull(seen);
         Assert.Contains("email", seen!.RequiredClaims);
         Assert.Contains("tenant", seen.RequiredClaims);
-        // The directed sub + claims were POSTed (signed) to the pending URL.
+        // The claims were POSTed (signed) to the pending URL, never a `sub`.
         Assert.NotNull(stub.LastClaimsPushBody);
-        Assert.Equal("directed-123", (string?)stub.LastClaimsPushBody!["sub"]);
+        Assert.False(stub.LastClaimsPushBody!.ContainsKey("sub"));
         Assert.Equal("demo@person.example", (string?)stub.LastClaimsPushBody["email"]);
-    }
-
-    [Fact]
-    public async Task FederateAsync_ThrowsInvalidOperation_WhenClaimsHandlerOmitsSub()
-    {
-        var agentKey = AAuthKey.Generate();
-        var stub = new StubAccessServer(
-            tokenResponse: () =>
-            {
-                var response = new HttpResponseMessage(HttpStatusCode.Accepted)
-                {
-                    Content = new StringContent(
-                        new JsonObject { ["required_claims"] = new JsonArray("email") }.ToJsonString(),
-                        Encoding.UTF8,
-                        "application/json"),
-                };
-                response.Headers.TryAddWithoutValidation(AAuthRequirementHeader.Name, "requirement=claims");
-                response.Headers.Location = new Uri($"{AsIssuer}/pending/abc");
-                return response;
-            });
-        var client = BuildClient(stub);
-
-        // The handler returns claims WITHOUT the mandatory directed sub.
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => client.FederateAsync(AsIssuer, new AccessServerRequest
-            {
-                AuthorizationExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
-                ResourceToken = "the-resource-token",
-                AgentToken = "the-agent-token",
-                ExpectedAudience = ResourceUrl,
-                ExpectedAgentId = AgentId,
-                AgentKey = agentKey,
-                RequestedScope = "whoami",
-                OnClaimsRequired = (_, _) => Task.FromResult(
-                    new ClaimsResponse { Subject = string.Empty }),
-            }));
-
-        Assert.Contains("sub", ex.Message);
     }
 
     [Fact]
@@ -384,7 +357,10 @@ public class AccessServerClientTests
             ResourceToken = "the-resource-token",
             AgentToken = "the-agent-token",
             ExpectedAudience = ResourceUrl,
-            ExpectedAgentId = AgentId,
+            ExpectedSubject = Subject,
+            ExpectedPersonServer = PsIssuer,
+            PresentedToken = "the-presented-token",
+            PresentedTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
             AgentKey = agentKey,
             RequestedScope = "whoami",
             OnInteractionRequired = (_, _) => { interactionSeen = true; return Task.CompletedTask; },
@@ -393,7 +369,6 @@ public class AccessServerClientTests
                 claimsSeen = requirement;
                 return Task.FromResult(new ClaimsResponse
                 {
-                    Subject = "directed-xyz",
                     Claims = new Dictionary<string, JsonNode?>
                     {
                         ["email"] = "demo@person.example",
@@ -406,7 +381,7 @@ public class AccessServerClientTests
         Assert.True(interactionSeen, "interaction callback should have fired first");
         Assert.NotNull(claimsSeen);
         Assert.Contains("email", claimsSeen!.RequiredClaims);
-        Assert.Equal("directed-xyz", (string?)stub.LastClaimsPushBody!["sub"]);
+        Assert.Equal("demo@person.example", (string?)stub.LastClaimsPushBody!["email"]);
     }
     [Fact]
     public async Task FederateAsync_ThrowsVerification_WhenAudienceMismatch()
@@ -491,7 +466,10 @@ public class AccessServerClientTests
         ResourceToken = "the-resource-token",
         AgentToken = "the-agent-token",
         ExpectedAudience = ResourceUrl,
-        ExpectedAgentId = AgentId,
+        ExpectedSubject = Subject,
+        ExpectedPersonServer = PsIssuer,
+        PresentedToken = "the-presented-token",
+        PresentedTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
         AgentKey = agentKey,
         RequestedScope = "whoami",
     };
@@ -521,13 +499,13 @@ public class AccessServerClientTests
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = AsIssuer,
             Audience = audience,
-            Agent = AgentId,
+            PersonServer = PsIssuer,
             AgentConfirmationKey = agentKey,
             Key = AsKey,
             KeyId = AsKid,
             Dwk = AuthTokenBuilder.AccessDwk,
             Scope = scope,
-            Subject = "pairwise-sub",
+            Subject = Subject,
         }.Build();
 
     /// <summary>

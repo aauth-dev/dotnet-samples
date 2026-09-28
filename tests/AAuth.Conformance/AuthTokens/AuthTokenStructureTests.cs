@@ -15,25 +15,25 @@ public class AuthTokenStructureTests
 {
     private const string Iss = "https://ps.example";
     private const string Aud = "https://resource.example";
-    private const string Agent = "aauth:alice@ap.example";
     private const string Kid = "ps-1";
 
     private static AAuthKey NewKey() => AAuthKey.Generate();
 
     private static string BuildToken(AAuthKey signingKey, AAuthKey agentKey,
-        string? subject = "pairwise-sub", string? scope = "whoami", JsonObject? act = null) => new AuthTokenBuilder
+        string subject = "pairwise-sub", string? scope = "whoami",
+        System.Collections.Generic.IReadOnlyDictionary<string, JsonNode?>? additionalClaims = null) => new AuthTokenBuilder
     {
         EgressPolicy = TestEgress.Policy,
         AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
         Issuer = Iss,
         Audience = Aud,
-        Agent = Agent,
+        PersonServer = Iss,
         AgentConfirmationKey = agentKey,
         Key = signingKey,
         KeyId = Kid,
         Subject = subject,
         Scope = scope,
-        Act = act,
+        AdditionalClaims = additionalClaims,
     }.Build();
 
     private static (JsonObject Header, JsonObject Payload) Decode(string jwt)
@@ -109,11 +109,13 @@ public class AuthTokenStructureTests
         Assert.NotEqual((string?)a["jti"], (string?)b["jti"]);
     }
 
-    [Fact(DisplayName = "§Auth Token Structure — payload.agent MUST be the agent identifier")]
-    public void PayloadAgent_IsPresent()
+    [Fact(DisplayName = "§Auth Token Structure — payload names the person (ps, sub) and no agent")]
+    public void PayloadNamesPersonNotAgent()
     {
         var (_, payload) = Decode(BuildToken(NewKey(), NewKey()));
-        Assert.Equal(Agent, (string?)payload["agent"]);
+        Assert.Equal(Iss, (string?)payload["ps"]);
+        Assert.Equal("pairwise-sub", (string?)payload["sub"]);
+        Assert.False(payload.ContainsKey("agent"));
     }
 
     [Fact(DisplayName = "§Auth Token Structure — payload.cnf.jwk MUST embed the agent public key")]
@@ -129,24 +131,24 @@ public class AuthTokenStructureTests
         Assert.Null(jwk["d"]); // private MUST NOT leak
     }
 
-    [Fact(DisplayName = "§Auth Token Structure — payload.act OMITTED for direct authorization")]
-    public void PayloadAct_OmittedForDirectAuth()
+    [Fact(DisplayName = "§Auth Token Structure — payload carries no act delegation chain")]
+    public void PayloadAct_Omitted()
     {
-        // `act` is OPTIONAL (§Delegation Chain) — a direct-auth token carries no act.
         var (_, payload) = Decode(BuildToken(NewKey(), NewKey()));
         Assert.Null(payload["act"]);
     }
 
-    [Fact(DisplayName = "§Auth Token Structure — payload.act carries the upstream delegator's agent")]
-    public void PayloadAct_CarriesUpstreamAgent()
+    [Theory(DisplayName = "§Auth Token Structure — agent, act and mission are reserved and cannot be injected")]
+    [InlineData("agent")]
+    [InlineData("act")]
+    [InlineData("mission")]
+    [InlineData("ps")]
+    [InlineData("mission_s256")]
+    public void ReservedClaims_RejectedInAdditionalClaims(string claim)
     {
-        // When delegating, act.agent names the immediate upstream agent (delegator),
-        // not the presenter (whose identity is the top-level `agent` claim).
-        var act = ActChainBuilder.BuildNestedAct("aauth:up@example");
-        var (_, payload) = Decode(BuildToken(NewKey(), NewKey(), act: act));
-        var actClaim = payload["act"]?.AsObject();
-        Assert.NotNull(actClaim);
-        Assert.Equal("aauth:up@example", (string?)actClaim!["agent"]);
+        Assert.True(AuthTokenBuilder.IsReservedClaim(claim));
+        Assert.Throws<InvalidOperationException>(() => BuildToken(NewKey(), NewKey(),
+            additionalClaims: new System.Collections.Generic.Dictionary<string, JsonNode?> { [claim] = "x" }));
     }
 
     [Fact(DisplayName = "§Auth Token Structure — payload.iat MUST be set")]
@@ -166,20 +168,18 @@ public class AuthTokenStructureTests
         Assert.True(exp - iat <= 3600, "Auth token lifetime MUST NOT exceed 1 hour.");
     }
 
-    [Fact(DisplayName = "§Auth Token Structure — at least one of sub or scope MUST be present")]
-    public void AtLeastOneOfSubOrScope()
+    [Fact(DisplayName = "§Auth Token Structure — sub is REQUIRED, scope is OPTIONAL")]
+    public void SubRequired_ScopeOptional()
     {
-        // With sub
-        var (_, p1) = Decode(BuildToken(NewKey(), NewKey(), subject: "user1", scope: null));
-        Assert.NotNull(p1["sub"]);
-
-        // With scope
-        var (_, p2) = Decode(BuildToken(NewKey(), NewKey(), subject: null, scope: "read"));
-        Assert.NotNull(p2["scope"]);
+        var (_, payload) = Decode(BuildToken(NewKey(), NewKey(), subject: "user1", scope: null));
+        Assert.Equal("user1", (string?)payload["sub"]);
+        Assert.False(payload.ContainsKey("scope"));
     }
 
-    [Fact(DisplayName = "§Auth Token Structure — builder rejects missing both sub and scope")]
-    public void Builder_RejectsMissingBothSubAndScope()
+    [Theory(DisplayName = "§Auth Token Structure — builder rejects a missing sub or ps")]
+    [InlineData("sub")]
+    [InlineData("ps")]
+    public void Builder_RejectsMissingSubjectOrPersonServer(string missing)
     {
         var psKey = NewKey();
         var agentKey = NewKey();
@@ -189,12 +189,12 @@ public class AuthTokenStructureTests
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = Iss,
             Audience = Aud,
-            Agent = Agent,
+            PersonServer = missing == "ps" ? "" : Iss,
             AgentConfirmationKey = agentKey,
             Key = psKey,
             KeyId = Kid,
-            Subject = null,
-            Scope = null,
+            Subject = missing == "sub" ? "" : "sub",
+            Scope = "read",
         }.Build());
     }
 
@@ -209,7 +209,7 @@ public class AuthTokenStructureTests
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = Iss,
             Audience = Aud,
-            Agent = Agent,
+            PersonServer = Iss,
             AgentConfirmationKey = agentKey,
             Key = psKey,
             KeyId = Kid,
@@ -227,7 +227,7 @@ public class AuthTokenStructureTests
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = "https://as.example",
             Audience = Aud,
-            Agent = Agent,
+            PersonServer = Iss,
             AgentConfirmationKey = NewKey(),
             Key = NewKey(),
             KeyId = "as-1",

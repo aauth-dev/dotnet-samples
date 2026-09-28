@@ -65,11 +65,12 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
     {
         var typ = SignatureKeyParser.Text(info.Header, "typ");
         var companion = _tokenVerifiers.SingleOrDefault(verifier => verifier.Scheme == info.Scheme && verifier.TokenType == typ);
-        var builtin = info.Scheme == "jwt" && typ is AgentTokenBuilder.TokenType or AuthTokenBuilder.TokenType;
+        var builtin = info.Scheme == "jwt" && typ is AgentTokenBuilder.TokenType or AuthTokenBuilder.TokenType or PersonTokenBuilder.TokenType;
         if (!builtin && companion is null)
             throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "Unexpected JWT typ for this signing scheme.");
-        TokenVerifier.ValidateStructure(info.Header!, info.Payload!, typ, _tokenVerifier.EgressPolicy, _tokenVerifier.MaxActDepth);
-        NamingTokenVerifier.ValidateTime(info.Payload!, _tokenVerifier.Clock(), _tokenVerifier.ClockSkew, requireIssuedAt: builtin);
+        TokenVerifier.ValidateStructure(info.Header!, info.Payload!, typ, _tokenVerifier.EgressPolicy);
+        NamingTokenVerifier.ValidateTime(info.Payload!, _tokenVerifier.Clock(), builtin ? TimeSpan.Zero : _tokenVerifier.ClockSkew,
+            requireIssuedAt: builtin, issuedAtWindow: _tokenVerifier.ClockSkew);
         var issuer = SignatureKeyParser.Text(info.Payload, "iss")
             ?? throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires iss.");
         var dwk = SignatureKeyParser.Text(info.Payload, "dwk")
@@ -77,6 +78,7 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
         var kid = SignatureKeyParser.Text(info.Header, "kid")
             ?? throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires kid.");
         if (builtin && (typ == AgentTokenBuilder.TokenType && dwk != AgentTokenBuilder.AgentDwk
+            || typ == PersonTokenBuilder.TokenType && dwk != PersonTokenBuilder.PersonDwk
             || typ == AuthTokenBuilder.TokenType && dwk is not (AuthTokenBuilder.PersonDwk or AuthTokenBuilder.AccessDwk)))
             throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "Unexpected JWT dwk.");
         var jwksUrl = await DiscoverAsync(issuer, dwk, ct).ConfigureAwait(false);

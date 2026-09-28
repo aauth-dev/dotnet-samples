@@ -33,8 +33,7 @@ public static class AAuthEndpointExtensions
     public static RouteHandlerBuilder RequireAAuth(
         this RouteHandlerBuilder builder,
         string? scope = null,
-        string? role = null,
-        bool missionAware = false)
+        string? role = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
         builder.WithMetadata(new AAuthEndpointRequirement
@@ -42,7 +41,6 @@ public static class AAuthEndpointExtensions
             Mode = AAuthAccessMode.RequireAuthToken,
             Scope = scope,
             Role = role,
-            MissionAware = missionAware,
         });
         builder.RequireAuthorization(policy =>
         {
@@ -205,9 +203,8 @@ public static class AAuthEndpointExtensions
                     ResourceSigningKey = signingKey,
                     ResourceKeyId = signingKid,
                     ResourceIdentifier = resourceIdentifier,
-                    PersonServerAudience = opts.PersonServerAudience,
+                    AccessServer = opts.AccessServer,
                     DefaultScopes = req.Scope,
-                    MissionAware = req.MissionAware,
                 }).InvokeAsync(ctx)
                 : next;
 

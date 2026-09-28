@@ -54,7 +54,7 @@ public class TokenClaimTests
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = "https://as.test",
             Audience = "https://resource.test",
-            Agent = R3TestData.AgentId,
+            PersonServer = R3TestData.PsIssuer,
             AgentConfirmationKey = agentKey,
             Key = issuerKey,
             KeyId = "as-1",
@@ -88,16 +88,13 @@ public class TokenClaimTests
     public async Task R3Challenge_HandSignedResourceTokenPassesTokenVerifier()
     {
         var resourceKey = AAuthKey.Generate();
+        var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
         var r3Uri = "https://resource.test/r3/doc";
         var r3S256 = Base64UrlEncoder.Encode(new byte[32]);
-        var token = new R3Challenge
-        {
-            ResourceIssuer = R3TestData.ResourceIssuer,
-            Audience = R3TestData.AsIssuer,
-            Key = resourceKey,
-            KeyId = R3TestData.ResourceKid,
-        }.BuildResourceToken(R3TestData.AgentId, agentKey.ComputeJwkThumbprint(), r3Uri, r3S256);
+        var mission = R3Hash.ComputeS256("mission"u8);
+        var presented = R3TestData.VerifyPersonToken(R3TestData.PersonToken(psKey, agentKey, mission), psKey, agentKey);
+        var token = R3TestData.ResourceToken(resourceKey, presented, agentKey, r3Uri, r3S256);
 
         var handler = new StaticJsonHandler()
             .AddJson($"{R3TestData.ResourceIssuer}/.well-known/aauth-resource.json",
@@ -108,29 +105,28 @@ public class TokenClaimTests
         var verified = await new TokenVerifier { EgressPolicy = TestEgress.Policy }.VerifyResourceTokenAsync(
             token,
             R3TestData.AsIssuer,
-            R3TestData.AgentId,
             agentKey.ComputeJwkThumbprint(),
             new MetadataClient(http),
-            new JwksClient(http));
+            new JwksClient(http),
+            expectedPersonServer: R3TestData.PsIssuer);
 
         Assert.Equal(ResourceTokenBuilder.TokenType, (string?)verified.Header["typ"]);
         Assert.Equal(ResourceTokenBuilder.ResourceDwk, (string?)verified.Payload["dwk"]);
         Assert.Equal(r3Uri, (string?)verified.Payload[R3AuthClaims.UriClaim]);
         Assert.Equal(r3S256, (string?)verified.Payload[R3AuthClaims.S256Claim]);
+        Assert.Equal(R3TestData.PersonSubject, verified.Subject);
+        Assert.Equal(presented.Jti, (string?)verified.Payload["presented_jti"]);
+        Assert.Equal(mission, verified.MissionS256);
     }
 
     [Fact]
     public void ChallengeHeader_CarriesResourceToken()
     {
         var resourceKey = AAuthKey.Generate();
+        var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var token = new R3Challenge
-        {
-            ResourceIssuer = R3TestData.ResourceIssuer,
-            Audience = R3TestData.AsIssuer,
-            Key = resourceKey,
-            KeyId = R3TestData.ResourceKid,
-        }.BuildResourceToken(R3TestData.AgentId, agentKey.ComputeJwkThumbprint(), "https://resource.test/r3/doc", "abc123");
+        var presented = R3TestData.VerifyPersonToken(R3TestData.PersonToken(psKey, agentKey), psKey, agentKey);
+        var token = R3TestData.ResourceToken(resourceKey, presented, agentKey, "https://resource.test/r3/doc", "abc123");
 
         var parsed = AAuthRequirementHeader.Parse(AAuthRequirementHeader.FormatAuthToken(token));
 

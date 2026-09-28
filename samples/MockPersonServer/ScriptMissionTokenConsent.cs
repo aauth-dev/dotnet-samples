@@ -40,8 +40,7 @@ public sealed class ScriptMissionTokenConsent : IMissionTokenConsent
         if (context.Stage == MissionTokenConsentStage.Gate)
         {
             // Gate 2a: within the approved intent → silent grant.
-            if (context.ValidatedApproval is { } approval && approval.S256 == context.Mission.S256
-                && approval.Approver == context.Mission.Approver
+            if (context.ValidatedApproval is { } approval && approval.S256 == context.MissionS256
                 && _policy.IsInScope(approval.S256, context.ResourceUrl, context.Scope, context.Account))
             {
                 return Task.FromResult(MissionTokenConsentDecision.Grant());

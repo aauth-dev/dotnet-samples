@@ -2,35 +2,36 @@ using System;
 using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
-using AAuth.Identifiers;
 using Microsoft.IdentityModel.Tokens;
 
 namespace AAuth.Agent;
 
 /// <summary>
-/// An approved AAuth mission (§Mission Approval) — the <em>mission blob</em>
-/// returned by the PS's <c>mission_endpoint</c>. A mission is a scoped
-/// authorization context that the PS uses to evaluate every subsequent request
-/// in context.
+/// An approved AAuth mission (§Mission Approval): the <em>mission blob</em>
+/// returned by the PS's <c>mission_endpoint</c>, plus the approval response's
+/// session members (<c>capabilities</c>, <c>person_tokens</c>).
 /// </summary>
 /// <remarks>
-/// The mission's identity is its <see cref="S256"/>: the base64url-encoded
-/// SHA-256 hash of the exact approval response body bytes. Per spec, the agent
-/// MUST store the mission body bytes exactly as received — no re-serialization —
-/// so the hash can be verified and the same value carried in the
-/// <c>AAuth-Mission</c> header on subsequent requests.
+/// The mission's identity is its <see cref="S256"/>: the unpadded base64url
+/// SHA-256 digest of the exact blob bytes. It travels as <c>mission_s256</c> in
+/// person, resource and auth tokens and as the <c>mission_s256</c> parameter of
+/// PS requests; the PS that approved it is named beside it.
 /// </remarks>
 public sealed class Mission
 {
-    /// <summary>HTTPS URL of the entity that approved the mission (currently always the PS).</summary>
-    public required string Approver { get; init; }
+    /// <summary>The Person Server that approved the mission (the one the agent proposed to).</summary>
+    public required string PersonServer { get; init; }
 
     /// <summary>The agent identifier (<c>aauth:local@domain</c>) the mission was approved for.</summary>
     public required string Agent { get; init; }
 
     /// <summary>When the mission was approved (ensures the <see cref="S256"/> is globally unique).</summary>
     public required DateTimeOffset ApprovedAt { get; init; }
+
+    /// <summary>When set, the PS treats the mission as terminated after this instant.</summary>
+    public DateTimeOffset? ExpiresAt { get; init; }
 
     /// <summary>
     /// Markdown string describing the approved mission scope. This is
@@ -45,23 +46,27 @@ public sealed class Mission
     /// </summary>
     public IReadOnlyList<MissionTool> ApprovedTools { get; init; } = Array.Empty<MissionTool>();
 
+    /// <summary>The resources the person pre-approved for this mission (<c>approved_resources</c>).</summary>
+    public IReadOnlyList<string> ApprovedResources { get; init; } = Array.Empty<string>();
+
     /// <summary>
     /// Capability strings (e.g. <c>interaction</c>, <c>payment</c>) the PS can provide
     /// on behalf of the user for this session. The agent unions these with its own
     /// capabilities when constructing the <c>AAuth-Capabilities</c> request header.
+    /// Not part of the blob or its digest.
     /// </summary>
     public IReadOnlyList<string> Capabilities { get; init; } = Array.Empty<string>();
 
     /// <summary>
-    /// The mission identity: base64url(SHA-256(approval body bytes)). Carried in the
-    /// <c>AAuth-Mission</c> header and embedded as the <c>mission</c> claim in tokens.
+    /// Person tokens the PS issued with the approval, keyed by resource identifier,
+    /// each carrying <c>mission_s256</c>. Not part of the blob or its digest.
     /// </summary>
+    public IReadOnlyDictionary<string, string> PersonTokens { get; init; } = new Dictionary<string, string>();
+
+    /// <summary>The mission identity: base64url(SHA-256(blob bytes)), carried as <c>mission_s256</c>.</summary>
     public required string S256 { get; init; }
 
-    /// <summary>
-    /// The verbatim approval response body bytes, stored exactly as received so the
-    /// <see cref="S256"/> can be verified without re-serialization.
-    /// </summary>
+    /// <summary>The verbatim mission blob bytes, so <see cref="S256"/> stays verifiable.</summary>
     public ReadOnlyMemory<byte> RawBytes { get; init; }
 
     /// <summary>The mission lifecycle state (§Mission Management).</summary>
@@ -77,7 +82,8 @@ public sealed class Mission
 
     internal void EnsureActive()
     {
-        if (State == MissionState.Terminated)
+        if (State == MissionState.Terminated
+            || ExpiresAt is { } expiresAt && expiresAt <= DateTimeOffset.UtcNow)
             throw new AAuth.Errors.AAuthMissionTerminatedException("terminated");
     }
 
@@ -98,50 +104,90 @@ public sealed class Mission
     }
 
     /// <summary>
-    /// Parse a mission from the exact approval response body bytes and compute its
-    /// <see cref="S256"/> identity. The bytes are stored verbatim in
-    /// <see cref="RawBytes"/> — they are never re-serialized.
+    /// Parse a §Mission Approval response body — <c>{ s256, mission, capabilities?,
+    /// person_tokens? }</c> — decode the blob, and verify <c>s256</c> against it.
     /// </summary>
-    public static Mission FromApprovalBytes(ReadOnlySpan<byte> body)
+    /// <param name="body">The approval response body.</param>
+    /// <param name="personServer">The PS the mission was proposed to.</param>
+    /// <exception cref="InvalidOperationException">The response is malformed or <c>s256</c> does not match the blob.</exception>
+    public static Mission FromApprovalResponse(ReadOnlySpan<byte> body, string personServer)
     {
-        if (body.IsEmpty)
-            throw new ArgumentException("Mission approval body is empty.", nameof(body));
+        ArgumentException.ThrowIfNullOrEmpty(personServer);
+        JsonObject envelope;
+        try
+        {
+            envelope = JsonNode.Parse(body.ToArray()) as JsonObject
+                ?? throw new InvalidOperationException("Mission approval response is not a JSON object.");
+        }
+        catch (JsonException ex) { throw new InvalidOperationException("Mission approval response is not valid JSON.", ex); }
+        var s256 = (string?)envelope["s256"]
+            ?? throw new InvalidOperationException("Mission approval response is missing 's256'.");
+        var encoded = (string?)envelope["mission"]
+            ?? throw new InvalidOperationException("Mission approval response is missing 'mission'.");
+        byte[] blob;
+        try { blob = Base64UrlEncoder.DecodeBytes(encoded); }
+        catch (FormatException ex) { throw new InvalidOperationException("Mission approval 'mission' is not base64url.", ex); }
+        var mission = FromBlob(blob, personServer,
+            ParseStrings(envelope["capabilities"] as JsonArray), ParsePersonTokens(envelope["person_tokens"] as JsonObject));
+        if (!mission.VerifyS256(s256))
+            throw new InvalidOperationException("Mission approval 's256' does not match the mission blob.");
+        return mission;
+    }
 
-        var bytes = body.ToArray();
+    /// <summary>
+    /// Parse a mission from its exact blob bytes and compute its <see cref="S256"/>.
+    /// The bytes are stored verbatim in <see cref="RawBytes"/>.
+    /// </summary>
+    public static Mission FromBlob(ReadOnlySpan<byte> blob, string personServer,
+        IReadOnlyList<string>? capabilities = null, IReadOnlyDictionary<string, string>? personTokens = null)
+    {
+        if (blob.IsEmpty)
+            throw new ArgumentException("Mission blob is empty.", nameof(blob));
+        ArgumentException.ThrowIfNullOrEmpty(personServer);
 
-        if (JsonNode.Parse(bytes) is not JsonObject json)
-            throw new InvalidOperationException("Mission approval body is not a JSON object.");
+        var bytes = blob.ToArray();
+        JsonObject json;
+        try
+        {
+            json = JsonNode.Parse(bytes) as JsonObject
+                ?? throw new InvalidOperationException("Mission blob is not a JSON object.");
+        }
+        catch (JsonException ex) { throw new InvalidOperationException("Mission blob is not valid JSON.", ex); }
 
-        var approver = (string?)json["approver"]
-            ?? throw new InvalidOperationException("Mission blob missing required 'approver'.");
         var agent = (string?)json["agent"]
             ?? throw new InvalidOperationException("Mission blob missing required 'agent'.");
         var description = (string?)json["description"]
             ?? throw new InvalidOperationException("Mission blob missing required 'description'.");
-
         if (json["approved_at"] is not JsonValue approvedAtValue
             || !DateTimeOffset.TryParse((string?)approvedAtValue, out var approvedAt))
         {
             throw new InvalidOperationException("Mission blob missing or invalid 'approved_at'.");
         }
+        DateTimeOffset? expiresAt = null;
+        if (json["expires_at"] is { } expiresNode)
+        {
+            if (expiresNode is not JsonValue expiresValue || !DateTimeOffset.TryParse((string?)expiresValue, out var parsedExpiry))
+                throw new InvalidOperationException("Mission blob has an invalid 'expires_at'.");
+            expiresAt = parsedExpiry;
+        }
 
         return new Mission
         {
-            Approver = approver,
+            PersonServer = personServer,
             Agent = agent,
             ApprovedAt = approvedAt,
+            ExpiresAt = expiresAt,
             Description = description,
             ApprovedTools = ParseTools(json["approved_tools"] as JsonArray),
-            Capabilities = ParseCapabilities(json["capabilities"] as JsonArray),
+            ApprovedResources = ParseStrings(json["approved_resources"] as JsonArray),
+            Capabilities = capabilities ?? Array.Empty<string>(),
+            PersonTokens = personTokens ?? new Dictionary<string, string>(),
             S256 = ComputeS256(bytes),
             RawBytes = bytes,
         };
     }
 
-    /// <summary>
-    /// Verify that the supplied value (e.g. from the <c>AAuth-Mission</c> header) matches
-    /// the <see cref="S256"/> computed over the stored approval body bytes.
-    /// </summary>
+    /// <summary>Verify that <paramref name="expected"/> matches the <see cref="S256"/> of the stored blob bytes.</summary>
     public bool VerifyS256(string expected)
     {
         if (string.IsNullOrEmpty(expected))
@@ -151,7 +197,7 @@ public sealed class Mission
             Encoding.ASCII.GetBytes(expected));
     }
 
-    /// <summary>Compute base64url(SHA-256(<paramref name="body"/>)) per §Mission Approval.</summary>
+    /// <summary>Compute base64url(SHA-256(<paramref name="body"/>)) per §Mission Identifier.</summary>
     public static string ComputeS256(ReadOnlySpan<byte> body)
     {
         var hash = SHA256.HashData(body);
@@ -177,107 +223,29 @@ public sealed class Mission
         return result;
     }
 
-    private static IReadOnlyList<string> ParseCapabilities(JsonArray? capabilities)
+    private static IReadOnlyList<string> ParseStrings(JsonArray? values)
     {
-        if (capabilities is null || capabilities.Count == 0)
+        if (values is null || values.Count == 0)
             return Array.Empty<string>();
 
-        var result = new List<string>(capabilities.Count);
-        foreach (var node in capabilities)
+        var result = new List<string>(values.Count);
+        foreach (var node in values)
         {
-            var value = (string?)node;
-            if (!string.IsNullOrEmpty(value))
-                result.Add(value);
+            if (node is JsonValue value && value.TryGetValue<string>(out var text) && !string.IsNullOrEmpty(text))
+                result.Add(text);
         }
 
         return result;
     }
-}
 
-/// <summary>
-/// The AAuth-Mission header value, used by the agent to declare its mission
-/// context on outbound requests (§AAuth-Mission Request Header).
-/// </summary>
-public static class AAuthMissionHeader
-{
-    /// <summary>The HTTP header name.</summary>
-    public const string Name = "AAuth-Mission";
-
-    /// <summary>
-    /// Format the structured header value with approver and s256 per §Call Chaining.
-    /// </summary>
-    /// <remarks>
-    /// Produces: <c>approver="https://ps.example"; s256="dBjf..."</c>
-    /// </remarks>
-    public static string FormatStructured(string approver, string s256)
+    private static IReadOnlyDictionary<string, string> ParsePersonTokens(JsonObject? tokens)
     {
-        ArgumentException.ThrowIfNullOrEmpty(approver);
-        ArgumentException.ThrowIfNullOrEmpty(s256);
-        return $"approver=\"{approver}\"; s256=\"{s256}\"";
-    }
-
-    /// <summary>
-    /// Parse a structured <c>AAuth-Mission</c> header value into its
-    /// <c>approver</c> and <c>s256</c> components (§Call Chaining). Returns
-    /// <see langword="false"/> when the value is absent or either field is missing.
-    /// </summary>
-    public static bool TryParseStructured(string? value, out string? approver, out string? s256,
-        AAuth.Discovery.AAuthEgressPolicy? policy = null)
-    {
-        approver = null;
-        s256 = null;
-        if (string.IsNullOrWhiteSpace(value))
-            return false;
-
-        foreach (var part in value.Split(';'))
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (resource, node) in tokens ?? [])
         {
-            var trimmed = part.Trim();
-            var eq = trimmed.IndexOf('=');
-            if (eq <= 0)
-                continue;
-            var name = trimmed[..eq].Trim();
-            var raw = trimmed[(eq + 1)..].Trim().Trim('"');
-            if (raw.Length == 0)
-                continue;
-            if (name.Equals("approver", StringComparison.OrdinalIgnoreCase))
-                approver = raw;
-            else if (name.Equals("s256", StringComparison.OrdinalIgnoreCase))
-                s256 = raw;
+            if (node is JsonValue value && value.TryGetValue<string>(out var token) && !string.IsNullOrEmpty(token))
+                result[resource] = token;
         }
-
-        if (string.IsNullOrEmpty(approver) || string.IsNullOrEmpty(s256))
-        {
-            approver = null;
-            s256 = null;
-            return false;
-        }
-
-        // §Mission Reference: `approver` MUST be a Server Identifier (https,
-        // scheme+host only, no port/path/query/fragment) and `s256` MUST be the
-        // unpadded base64url encoding of a 32-byte SHA-256 digest. A reference that
-        // does not conform is rejected — the malformed mission is dropped.
-        if (!ServerId.TryParse(approver, out _, out _, policy) || !IsValidMissionS256(s256))
-        {
-            approver = null;
-            s256 = null;
-            return false;
-        }
-
-        return true;
-    }
-
-    // Unpadded base64url of exactly 32 bytes (SHA-256), per §Mission Reference.
-    private static bool IsValidMissionS256(string value)
-    {
-        if (value.IndexOf('=') >= 0 || value.IndexOf('+') >= 0 || value.IndexOf('/') >= 0)
-            return false;
-        try
-        {
-            return Base64UrlEncoder.DecodeBytes(value).Length == 32;
-        }
-        catch (FormatException)
-        {
-            return false;
-        }
+        return result;
     }
 }

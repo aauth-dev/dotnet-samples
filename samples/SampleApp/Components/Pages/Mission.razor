@@ -547,8 +547,9 @@ if (cancelBooking.IsGranted)
         Lifetime = TimeSpan.FromHours(1),
     }.Build();
 
-    // Challenge -> token exchange (governed by the PS) -> retry, carrying the
-    // mission claim so the resource copies it into the resource token.
+    // Person token under the mission -> challenge -> token exchange (governed by
+    // the PS) -> retry. The person token carries mission_s256, which the resource
+    // copies into its resource token (§Mission Log).
     private async Task<JsonObject?> AccessMissionResourceAsync(
         HttpClient signed,
         TokenExchangeClient exchange,
@@ -560,10 +561,17 @@ if (cancelBooking.IsGranted)
         // Refresh the agent token for a fresh jti before each resource access.
         _agentToken = MintAgentToken(personServer);
 
-        var challengeReq = new HttpRequestMessage(HttpMethod.Get, resourceUrl);
-        challengeReq.Headers.TryAddWithoutValidation(
-            AAuthMissionHeader.Name, AAuthMissionHeader.FormatStructured(mission.Approver, mission.S256));
-        using var challenge = await signed.SendAsync(challengeReq);
+        var personToken = await exchange.RequestPersonTokenAsync(personServer,
+            new Uri(resourceUrl).GetLeftPart(UriPartial.Authority), new TokenExchangeRequest
+            {
+                MissionS256 = mission.S256,
+                OnInteractionRequired = SurfaceInteractionAsync,
+                PollerOptions = poller,
+            });
+        var personHandler = new AAuthSigningHandler(_identity.Key, () => personToken)
+            { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
+        using var personClient = new SampleHttpClient(personHandler);
+        using var challenge = await personClient.GetAsync(resourceUrl);
         if (challenge.StatusCode != HttpStatusCode.Unauthorized)
         {
             throw new InvalidOperationException(
@@ -588,6 +596,7 @@ if (cancelBooking.IsGranted)
 
         var authToken = await exchange.ExchangeAsync(personServer, resourceToken, new TokenExchangeRequest
         {
+            PresentedToken = personToken,
             OnInteractionRequired = SurfaceInteractionAsync,
             PollerOptions = poller,
         });
@@ -655,7 +664,7 @@ if (cancelBooking.IsGranted)
         }
         return Pretty(new JsonObject
         {
-            ["approver"] = m.Approver,
+            ["person_server"] = m.PersonServer,
             ["s256"] = m.S256,
             ["approved_tools"] = tools,
         });

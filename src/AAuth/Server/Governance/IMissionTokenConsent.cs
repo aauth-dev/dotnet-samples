@@ -112,8 +112,8 @@ public sealed record MissionTokenConsentContext
     public required string Scope { get; init; }
     public System.Text.Json.Nodes.JsonObject? ResourceContext { get; init; }
 
-    /// <summary>The mission governing the request.</summary>
-    public required MissionClaim Mission { get; init; }
+    /// <summary>The mission governing the request (<c>mission_s256</c>).</summary>
+    public required string MissionS256 { get; init; }
 
     /// <summary>Which step of the gate this review is.</summary>
     public MissionTokenConsentStage Stage { get; init; }

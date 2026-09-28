@@ -35,6 +35,7 @@ public class TokenRequestParamsTests
 
         await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource, new TokenExchangeRequest
         {
+            PresentedToken = "presented.person.token",
             Justification = "Booking a flight on your behalf.",
             LoginHint = "alice@example.com",
             Tenant = "contoso",
@@ -58,9 +59,10 @@ public class TokenRequestParamsTests
         JsonObject? captured = null;
         var client = BuildClient(new CaptureHandler(body => captured = body));
 
-        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource));
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => client.ExchangeAsync(Ps, TestTokens.Resource, "presented.person.token"));
 
         Assert.NotNull(captured);
+        Assert.Equal("presented.person.token", (string?)captured!["presented_token"]);
         Assert.False(captured!.ContainsKey("justification"));
         Assert.False(captured.ContainsKey("login_hint"));
         Assert.False(captured.ContainsKey("tenant"));

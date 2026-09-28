@@ -30,14 +30,23 @@ public sealed class AccessServerRequest
     /// </summary>
     public required string AgentToken { get; init; }
 
+    /// <summary>
+    /// The token named by the resource token's <c>presented_jti</c> (a person token
+    /// or auth token), passed through as <c>presented_token</c>. Its <c>exp</c>
+    /// bounds the auth token the AS issues.
+    /// </summary>
+    public required string PresentedToken { get; init; }
+
+    /// <summary>The verified <c>exp</c> of <see cref="PresentedToken"/> (Auth Token Delivery step 7).</summary>
+    public required DateTimeOffset PresentedTokenExpiresAt { get; set; }
+
     public string? SubagentToken { get; init; }
 
     public required DateTimeOffset AuthorizationExpiresAt { get; init; }
 
     /// <summary>
-    /// Optional upstream auth token for call-chaining scenarios. When provided,
-    /// included as <c>upstream_token</c> in the POST body so the AS can
-    /// construct nested <c>act</c> claims preserving the delegation chain.
+    /// Optional upstream person or auth token for call-chaining scenarios, passed
+    /// through as <c>upstream_token</c>.
     /// </summary>
     public string? UpstreamToken { get; init; }
 
@@ -48,24 +57,22 @@ public sealed class AccessServerRequest
     public required string ExpectedAudience { get; init; }
 
     /// <summary>
-    /// The agent identifier that submitted the request. Used by Auth Token
-    /// Delivery step 4 (<c>agent</c> / <c>act.agent</c> checks).
+    /// The directed <c>sub</c> the auth token must carry: the resource token's
+    /// <c>sub</c> (Auth Token Delivery step 5).
     /// </summary>
-    public required string ExpectedAgentId { get; init; }
+    public required string ExpectedSubject { get; init; }
+
+    /// <summary>The PS the auth token's <c>ps</c> must name (this Person Server).</summary>
+    public required string ExpectedPersonServer { get; init; }
 
     /// <summary>
     /// The agent's signing key, for the <c>cnf.jwk</c> binding check
-    /// (Auth Token Delivery step 5).
+    /// (Auth Token Delivery step 4).
     /// </summary>
     public required IAAuthKey AgentKey { get; init; }
 
-    /// <summary>
-    /// Optional act context for chain consistency (Auth Token Delivery step 6).
-    /// For direct authorization leave <see langword="null"/>; for call chaining
-    /// pass the complete expected act, including its immediate delegator.
-    /// </summary>
-    public JsonObject? ExpectedActContext { get; init; }
-    public MissionClaim? ExpectedMission { get; set; }
+    /// <summary>The <c>mission_s256</c> the auth token must carry (the resource token's), if any.</summary>
+    public string? ExpectedMissionS256 { get; set; }
     public string? Account { get; init; }
 
     /// <summary>
@@ -86,9 +93,8 @@ public sealed class AccessServerRequest
     /// <summary>
     /// Invoked when the AS returns <c>202 requirement=claims</c> (§Claims
     /// Required) to request identity claims it needs for a policy decision.
-    /// The callback receives the requested claim names and MUST return an
-    /// <see cref="ClaimsResponse"/> carrying a directed user identifier
-    /// (<see cref="ClaimsResponse.Subject"/>) plus the released claims;
+    /// The callback receives the requested claim names and returns a
+    /// <see cref="ClaimsResponse"/> carrying the released claims (never <c>sub</c>);
     /// <see cref="AccessServerClient.FederateAsync"/> POSTs them (signed) to
     /// the AS's pending <c>Location</c> URL and then resumes polling. If
     /// <see langword="null"/> and the AS returns <c>202 requirement=claims</c>,

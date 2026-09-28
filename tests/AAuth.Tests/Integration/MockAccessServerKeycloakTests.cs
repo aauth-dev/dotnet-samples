@@ -121,6 +121,7 @@ public class MockAccessServerKeycloakTests
         {
             ["agent_token"] = BuildAgentToken(agentKey, GuestAgentId),
             ["resource_token"] = BuildResourceToken(agentKey, AsIssuer, GuestAgentId, "wallet.read"),
+            ["presented_token"] = BuildPersonToken(agentKey),
         });
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -169,6 +170,7 @@ public class MockAccessServerKeycloakTests
         {
             ["agent_token"] = BuildAgentToken(agentKey, agentId),
             ["resource_token"] = BuildResourceToken(agentKey, AsIssuer, agentId, scope),
+            ["presented_token"] = BuildPersonToken(agentKey),
         });
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -240,6 +242,23 @@ public class MockAccessServerKeycloakTests
             PersonServer = PsIssuer,
         }.Build();
 
+    private const string PersonSubject = "person-1";
+    private const string PersonJti = "person-jti-1";
+
+    private static string BuildPersonToken(AAuthKey agentKey) =>
+        new PersonTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy,
+            Issuer = PsIssuer,
+            Audience = ResourceUrl,
+            Subject = PersonSubject,
+            TokenId = PersonJti,
+            ConfirmationKey = agentKey,
+            AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+            Key = PsKey,
+            KeyId = PsKid,
+        }.Build();
+
     private static string BuildResourceToken(AAuthKey agentKey, string audience, string agent, string scope) =>
         new ResourceTokenBuilder
         {
@@ -247,7 +266,9 @@ public class MockAccessServerKeycloakTests
             EgressPolicy = TestEgress.Policy,
             Issuer = ResourceUrl,
             Audience = audience,
-            Agent = agent,
+            PersonServer = PsIssuer,
+            Subject = PersonSubject,
+            PresentedJti = PersonJti,
             AgentJkt = agentKey.ComputeJwkThumbprint(),
             Key = ResourceKey,
             KeyId = ResourceKid,

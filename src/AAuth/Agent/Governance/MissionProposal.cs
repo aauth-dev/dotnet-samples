@@ -18,6 +18,12 @@ public sealed record MissionProposal(string Description)
     /// </summary>
     public IReadOnlyList<MissionTool> Tools { get; init; } = Array.Empty<MissionTool>();
 
+    /// <summary>
+    /// HTTPS resource identifiers the agent expects to access. The PS presents them
+    /// to the person and MAY issue a person token for each it approves. Optional.
+    /// </summary>
+    public IReadOnlyList<string> Resources { get; init; } = Array.Empty<string>();
+
     /// <summary>Render the proposal as the JSON request body.</summary>
     internal JsonObject ToJsonObject()
     {
@@ -36,6 +42,12 @@ public sealed record MissionProposal(string Description)
                 tools.Add(obj);
             }
             body["tools"] = tools;
+        }
+        if (Resources.Count > 0)
+        {
+            var resources = new JsonArray();
+            foreach (var resource in Resources) resources.Add(resource);
+            body["resources"] = resources;
         }
         return body;
     }

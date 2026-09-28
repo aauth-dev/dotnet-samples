@@ -24,11 +24,35 @@ public sealed class TokenVerifier
     /// <summary>Clock injection point.</summary>
     public Func<DateTimeOffset> Clock { get; init; } = () => DateTimeOffset.UtcNow;
 
-    /// <summary>Tolerance applied to <c>exp</c>/<c>iat</c> checks.</summary>
-    public TimeSpan ClockSkew { get; init; } = TimeSpan.FromSeconds(30);
+    /// <summary>
+    /// How far a JWT <c>iat</c> may be ahead of this verifier's clock before it is
+    /// refused with <c>clock_skew</c>. <c>exp</c> has no tolerance (§Common
+    /// Verification). Default: the 60-second signature validity window.
+    /// </summary>
+    public TimeSpan ClockSkew { get; init; } = TimeSpan.FromSeconds(60);
 
-    /// <summary>Maximum depth of nested <c>act</c> claims allowed.</summary>
-    public int MaxActDepth { get; init; } = 10;
+    /// <summary>
+    /// Optional resolver for the verifier's own issuer keys, by (<c>iss</c>, <c>kid</c>).
+    /// A server verifying person or auth tokens it issued itself (a PS checking a
+    /// presented person token) resolves them here instead of fetching its own JWKS.
+    /// Returns <see langword="null"/> for any other issuer.
+    /// </summary>
+    public Func<string, string, IAAuthKey?>? LocalIssuerKeys { get; init; }
+
+    /// <summary>Copy this verifier's policy, clock and skew, resolving <paramref name="issuer"/>'s keys locally.</summary>
+    public TokenVerifier WithLocalIssuer(string issuer, IReadOnlyDictionary<string, IAAuthKey> keys)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(issuer);
+        ArgumentNullException.ThrowIfNull(keys);
+        return new TokenVerifier
+        {
+            EgressPolicy = EgressPolicy,
+            Clock = Clock,
+            ClockSkew = ClockSkew,
+            LocalIssuerKeys = (iss, kid) => string.Equals(iss, issuer, StringComparison.Ordinal)
+                && keys.TryGetValue(kid, out var key) ? key : LocalIssuerKeys?.Invoke(iss, kid),
+        };
+    }
 
     /// <summary>Parsed claims from a verified token.</summary>
     public sealed record VerifiedToken(
@@ -47,12 +71,12 @@ public sealed class TokenVerifier
             catch (ArgumentOutOfRangeException ex) { throw new TokenVerificationException("Token 'exp' is out of range.", ex); }
         }
 
-        /// <summary>
-        /// The <c>mission</c> claim ({approver, s256}) when present, otherwise
-        /// <see langword="null"/> (§Resource Token, §Auth Token).
-        /// </summary>
+        /// <summary>The <c>mission_s256</c> claim when present, otherwise <see langword="null"/>.</summary>
         public AAuthEgressPolicy EgressPolicy { get; init; } = AAuthEgressPolicy.Production;
-        public MissionClaim? Mission => MissionClaim.FromPayload(Payload, EgressPolicy);
+        public string? MissionS256 => MissionReference.Read(Payload);
+        public string Jti => (string?)Payload["jti"] ?? throw new TokenVerificationException("Token is missing 'jti'.");
+        public string? Subject => (string?)Payload["sub"];
+        public string? Tenant => (string?)Payload["tenant"];
         public string? Account => AccountBinding.TryRead(Payload, out var account)
             ? account : throw new TokenVerificationException("Token account must be a non-empty string without control characters.");
     }
@@ -112,14 +136,14 @@ public sealed class TokenVerifier
             throw new TokenVerificationException("JWT signature verification failed.");
         }
 
-        // Temporal claims.
+        // Temporal claims (§Common Verification): exp has no tolerance; a future
+        // iat beyond the window is clock_skew, not an invalid token.
         var now = Clock();
         var nowUnix = now.ToUnixTimeSeconds();
-        var skew = (long)ClockSkew.TotalSeconds;
 
         if (TryGetUnixTime(payload, "exp", out var exp))
         {
-            if (exp + skew < nowUnix)
+            if (exp <= nowUnix)
             {
                 throw new TokenVerificationException(AAuth.Errors.SignatureErrorCode.ExpiredJwt, $"Token expired at {exp} (now={nowUnix}).");
             }
@@ -131,9 +155,9 @@ public sealed class TokenVerifier
 
         if (TryGetUnixTime(payload, "iat", out var iat))
         {
-            if (iat - skew > nowUnix)
+            if (iat - (long)ClockSkew.TotalSeconds > nowUnix)
             {
-                throw new TokenVerificationException($"Token 'iat'={iat} is in the future (now={nowUnix}).");
+                throw new TokenVerificationException(AAuth.Errors.SignatureErrorCode.ClockSkew, $"Token 'iat'={iat} is ahead of the verifier clock (now={nowUnix}).");
             }
         }
 
@@ -155,7 +179,7 @@ public sealed class TokenVerifier
             throw new TokenVerificationException("Token 'iss' must be an absolute https:// URL (or http://localhost).");
         }
 
-        if (typ == AgentTokenBuilder.TokenType)
+        if (typ is AgentTokenBuilder.TokenType or PersonTokenBuilder.TokenType or AuthTokenBuilder.TokenType)
         {
             try { SignatureKeyParser.Confirmation(payload); }
             catch (AAuthVerificationException exception)
@@ -165,130 +189,61 @@ public sealed class TokenVerifier
     }
 
     /// <summary>
-    /// Verify an auth token with full PoP binding enforcement per §Auth Token Verification.
+    /// Verify an auth token with PoP binding per §Auth Token Verification. The
+    /// person is identified by <c>(iss, sub)</c>; the token names no agent.
     /// </summary>
     /// <param name="jwt">Compact JWT (<c>aa-auth+jwt</c>).</param>
     /// <param name="issuerKey">Issuer's public signing key (PS or AS).</param>
     /// <param name="expectedAudience">Expected <c>aud</c> (resource's own identifier).</param>
-    /// <param name="httpSignatureKey">The public key used to sign the HTTP request (from <c>cnf.jwk</c> of the carrier token).</param>
-    /// <param name="expectedAgentId">Expected agent identifier (from the request's signing context).</param>
+    /// <param name="httpSignatureKey">The key that signed the HTTP request; must match <c>cnf.jwk</c>.</param>
     /// <param name="expectedDwk">
-    /// Expected <c>dwk</c> value. If null, accepts either <c>aauth-person.json</c> or
-    /// <c>aauth-access.json</c> (dual-dwk mode for resource verifiers that don't know which issued the token).
+    /// Expected <c>dwk</c>. If null, accepts <c>aauth-person.json</c> or <c>aauth-access.json</c>.
     /// </param>
-    /// <param name="expectedMaxScope">
-    /// If non-null, verifies that the auth token's scope is a subset of this value
-    /// (scope narrowing: auth-token scope ⊆ resource-token scope).
-    /// </param>
+    /// <param name="expectedMaxScope">When set, the token's scope must be a subset of it.</param>
     public VerifiedToken VerifyAuthToken(
         string jwt,
         IAAuthKey issuerKey,
         string expectedAudience,
         IAAuthKey httpSignatureKey,
-        string expectedAgentId,
         string? expectedDwk = null,
         string? expectedMaxScope = null,
         AccountExpectation? accountExpectation = null)
     {
+        ArgumentNullException.ThrowIfNull(httpSignatureKey);
+        return VerifyAuthToken(jwt, issuerKey, expectedAudience, httpSignatureKey.ComputeJwkThumbprint(),
+            expectedDwk, expectedMaxScope, accountExpectation);
+    }
+
+    internal VerifiedToken VerifyAuthToken(
+        string jwt,
+        IAAuthKey issuerKey,
+        string expectedAudience,
+        string confirmationThumbprint,
+        string? expectedDwk,
+        string? expectedMaxScope,
+        AccountExpectation? accountExpectation)
+    {
         ArgumentException.ThrowIfNullOrEmpty(jwt);
         ArgumentNullException.ThrowIfNull(issuerKey);
         ArgumentException.ThrowIfNullOrEmpty(expectedAudience);
-        ArgumentNullException.ThrowIfNull(httpSignatureKey);
-        ArgumentException.ThrowIfNullOrEmpty(expectedAgentId);
+        ArgumentException.ThrowIfNullOrEmpty(confirmationThumbprint);
 
-        // Determine which dwk to expect.
-        string actualDwk;
-        if (expectedDwk is not null)
-        {
-            actualDwk = expectedDwk;
-        }
-        else
-        {
-            // Peek at the dwk claim to decide.
-            var segments = jwt.Split('.');
-            if (segments.Length != 3)
-                throw new TokenVerificationException("JWT is not a compact JWS.");
-            var peekPayload = DecodeJsonSegment(segments[1], "payload");
-            ValidateStructure(DecodeJsonSegment(segments[0], "header"), peekPayload, AuthTokenBuilder.TokenType, EgressPolicy, MaxActDepth);
-            actualDwk = (string?)peekPayload["dwk"]
-                ?? throw new TokenVerificationException("Token is missing 'dwk'.");
-            if (actualDwk != AuthTokenBuilder.PersonDwk && actualDwk != AuthTokenBuilder.AccessDwk)
-            {
-                throw new TokenVerificationException(
-                    $"Auth token 'dwk' must be '{AuthTokenBuilder.PersonDwk}' or '{AuthTokenBuilder.AccessDwk}', got '{actualDwk}'.");
-            }
-        }
+        var (_, peekPayload) = ReadStructure(jwt, AuthTokenBuilder.TokenType);
+        var actualDwk = expectedDwk ?? (string?)peekPayload["dwk"];
+        if (actualDwk is not (AuthTokenBuilder.PersonDwk or AuthTokenBuilder.AccessDwk))
+            throw new TokenVerificationException(
+                $"Auth token 'dwk' must be '{AuthTokenBuilder.PersonDwk}' or '{AuthTokenBuilder.AccessDwk}', got '{actualDwk}'.");
 
         var verified = Verify(jwt, issuerKey, AuthTokenBuilder.TokenType, actualDwk, expectedAudience);
         if (accountExpectation is not null && !AccountBinding.Matches(accountExpectation.Account, verified.Account))
             throw new TokenVerificationException("Auth token account does not match the resource's expected account.");
+        RequireConfirmation(verified.Payload, confirmationThumbprint, "Auth token");
 
-        // §Auth Token Verification step 6: agent matches signing context.
-        var agent = (string?)verified.Payload["agent"];
-        if (agent != expectedAgentId)
-        {
-            throw new TokenVerificationException(
-                $"Auth token 'agent' does not match expected agent (expected '{expectedAgentId}', got '{agent}').");
-        }
-
-        // §Request-Context Binding step 7: cnf.jwk is REQUIRED, with ordered failure
-        // classification — structural completeness is checked BEFORE key decoding.
-        var cnf = verified.Payload["cnf"] as JsonObject;
-        var jwk = cnf?["jwk"] as JsonObject;
-        if (jwk is null || !IsStructurallyCompleteJwk(jwk))
-        {
-            throw new TokenVerificationException(
-                "Auth token 'cnf.jwk' is absent or structurally incomplete (missing 'kty' or the members required for its key type).");
-        }
-        // Parseable as a supported public key? If not, it is invalid key material.
-        var tokenKey = KeyFactory.TryFromJwk(jwk)
-            ?? throw new TokenVerificationException("Auth token 'cnf.jwk' is not parseable as a supported public key (invalid key material).");
-        // PoP binding — algorithm-agnostic JWK thumbprint comparison.
-        var tokenKeyThumbprint = tokenKey.ComputeJwkThumbprint();
-        var httpKeyThumbprint = httpSignatureKey.ComputeJwkThumbprint();
-        if (tokenKeyThumbprint != httpKeyThumbprint)
-        {
-            throw new TokenVerificationException(
-                "Auth token 'cnf.jwk' does not match the HTTP signature key (PoP binding mismatch).");
-        }
-
-        // §Request-Context Binding step 8: act is OPTIONAL (§Delegation Chain) —
-        // absent for direct authorization. When present, act.agent identifies the
-        // immediate upstream agent (the delegator), NOT the presenter (whose identity
-        // is the top-level `agent` claim). Verify it is a valid agent identifier and
-        // the chain is well-formed within the depth limit.
-        var act = verified.Payload["act"] as JsonObject;
-        if (verified.Payload.ContainsKey("act") && act is null)
-            throw new TokenVerificationException("invalid_act_chain: 'act' must be an object.");
-        if (act is not null)
-        {
-            var actAgent = (string?)act["agent"];
-            if (string.IsNullOrEmpty(actAgent) || !AgentId.TryParse(actAgent, out _, out _, EgressPolicy))
-            {
-                throw new TokenVerificationException(
-                    "Auth token 'act.agent' is missing or not a valid AAuth agent identifier.");
-            }
-            if (!ActChainBuilder.ValidateChain(act, MaxActDepth, EgressPolicy))
-            {
-                throw new TokenVerificationException(
-                    "invalid_act_chain: auth token 'act' must contain only valid agent identities within the depth limit.");
-            }
-        }
-
-        // §Auth Token Verification step 9: at least one of sub or scope.
-        var sub = (string?)verified.Payload["sub"];
         var scope = (string?)verified.Payload["scope"];
-        if (sub is null && string.IsNullOrEmpty(scope))
-        {
-            throw new TokenVerificationException("Auth token must contain at least one of 'sub' or 'scope'.");
-        }
-
-        // Scope narrowing check.
         if (expectedMaxScope is not null && !string.IsNullOrEmpty(scope))
         {
             var allowedScopes = new HashSet<string>(expectedMaxScope.Split(' ', StringSplitOptions.RemoveEmptyEntries));
-            var tokenScopes = scope.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            foreach (var s in tokenScopes)
+            foreach (var s in scope.Split(' ', StringSplitOptions.RemoveEmptyEntries))
             {
                 if (!allowedScopes.Contains(s))
                 {
@@ -302,55 +257,157 @@ public sealed class TokenVerifier
     }
 
     /// <summary>
-    /// Verify an auth token using JWKS discovery (dual-dwk supported).
-    /// Resolves the issuer's JWKS from the token's <c>dwk</c> and verifies PoP binding.
+    /// Verify a person token per §Person Token Verification: <c>typ</c>
+    /// <c>aa-person+jwt</c>, <c>dwk</c> <c>aauth-person.json</c>, <c>aud</c> is the
+    /// recipient, and <c>cnf.jwk</c> matches the key that signed the request.
     /// </summary>
-    public async Task<VerifiedToken> VerifyAuthTokenWithJwksAsync(
+    public VerifiedToken VerifyPersonToken(string jwt, IAAuthKey issuerKey, string expectedAudience, IAAuthKey httpSignatureKey)
+    {
+        ArgumentNullException.ThrowIfNull(httpSignatureKey);
+        return VerifyPersonToken(jwt, issuerKey, expectedAudience, httpSignatureKey.ComputeJwkThumbprint());
+    }
+
+    internal VerifiedToken VerifyPersonToken(string jwt, IAAuthKey issuerKey, string expectedAudience, string? confirmationThumbprint)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(expectedAudience);
+        var verified = Verify(jwt, issuerKey, PersonTokenBuilder.TokenType, PersonTokenBuilder.PersonDwk, expectedAudience);
+        if (confirmationThumbprint is not null)
+            RequireConfirmation(verified.Payload, confirmationThumbprint, "Person token");
+        return verified;
+    }
+
+    /// <summary>Verify a person token, resolving the PS key from <c>{iss}/.well-known/aauth-person.json</c>.</summary>
+    public Task<VerifiedToken> VerifyPersonTokenWithJwksAsync(
         string jwt,
         MetadataClient metadata,
         JwksClient jwks,
         string expectedAudience,
         IAAuthKey httpSignatureKey,
-        string expectedAgentId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(httpSignatureKey);
+        var thumbprint = httpSignatureKey.ComputeJwkThumbprint();
+        return VerifyWithIssuerKeyAsync(jwt, PersonTokenBuilder.TokenType, metadata, jwks,
+            key => VerifyPersonToken(jwt, key, expectedAudience, thumbprint), cancellationToken);
+    }
+
+    /// <summary>
+    /// Verify an auth token using JWKS discovery (dual-dwk supported).
+    /// Resolves the issuer's JWKS from the token's <c>dwk</c> and verifies PoP binding.
+    /// </summary>
+    public Task<VerifiedToken> VerifyAuthTokenWithJwksAsync(
+        string jwt,
+        MetadataClient metadata,
+        JwksClient jwks,
+        string expectedAudience,
+        IAAuthKey httpSignatureKey,
         string? expectedMaxScope = null,
         CancellationToken cancellationToken = default,
         AccountExpectation? accountExpectation = null)
     {
+        ArgumentNullException.ThrowIfNull(httpSignatureKey);
+        var thumbprint = httpSignatureKey.ComputeJwkThumbprint();
+        return VerifyWithIssuerKeyAsync(jwt, AuthTokenBuilder.TokenType, metadata, jwks,
+            key => VerifyAuthToken(jwt, key, expectedAudience, thumbprint, null, expectedMaxScope, accountExpectation),
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Verify the <c>presented_token</c> of a token request against its verified
+    /// resource token (§Resource Token Verification step 3): by <c>typ</c>, as a
+    /// person token or auth token whose <c>aud</c> is the resource token's
+    /// <c>iss</c> and whose <c>cnf.jwk</c> matches <c>agent_jkt</c>; then its
+    /// <c>jti</c>, issuing PS, <c>sub</c>, <c>mission_s256</c> and <c>tenant</c> must
+    /// match. A failure of the token itself carries <see cref="TokenCredential.Presented"/>;
+    /// a pair mismatch carries <see cref="TokenCredential.Resource"/>.
+    /// </summary>
+    public async Task<VerifiedToken> VerifyPresentedTokenAsync(
+        string presentedToken,
+        VerifiedToken resourceToken,
+        MetadataClient metadata,
+        JwksClient jwks,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(resourceToken);
+        if (string.IsNullOrWhiteSpace(presentedToken))
+            throw new TokenVerificationException("presented_token is required.") { Credential = TokenCredential.Presented };
+        var resourceIssuer = resourceToken.Issuer;
+        var agentJkt = (string?)resourceToken.Payload["agent_jkt"]
+            ?? throw new TokenVerificationException("Resource token is missing 'agent_jkt'.") { Credential = TokenCredential.Resource };
+        string? typ;
+        try { typ = (string?)DecodeJsonSegment(presentedToken.Split('.')[0], "header")["typ"]; }
+        catch (Exception exception) when (exception is TokenVerificationException or IndexOutOfRangeException)
+        { throw new TokenVerificationException("presented_token is not a compact JWS.") { Credential = TokenCredential.Presented }; }
+
+        VerifiedToken presented;
+        try
+        {
+            presented = typ switch
+            {
+                PersonTokenBuilder.TokenType => await VerifyWithIssuerKeyAsync(presentedToken, typ, metadata, jwks,
+                    key => VerifyPersonToken(presentedToken, key, resourceIssuer, agentJkt), cancellationToken).ConfigureAwait(false),
+                AuthTokenBuilder.TokenType => await VerifyWithIssuerKeyAsync(presentedToken, typ, metadata, jwks,
+                    key => VerifyAuthToken(presentedToken, key, resourceIssuer, agentJkt, null, null, null), cancellationToken).ConfigureAwait(false),
+                _ => throw new TokenVerificationException("presented_token must be a person token or an auth token."),
+            };
+        }
+        catch (TokenVerificationException exception)
+        { throw new TokenVerificationException(exception.Message, exception) { Credential = TokenCredential.Presented }; }
+
+        var presentedPersonServer = typ == PersonTokenBuilder.TokenType ? presented.Issuer : (string?)presented.Payload["ps"];
+        if (presented.Jti != (string?)resourceToken.Payload["presented_jti"]
+            || presentedPersonServer != (string?)resourceToken.Payload["ps"]
+            || presented.Subject != resourceToken.Subject
+            || presented.MissionS256 != resourceToken.MissionS256
+            || presented.Tenant != resourceToken.Tenant)
+            throw new TokenVerificationException("Resource token does not match its presented token.") { Credential = TokenCredential.Resource };
+        return presented;
+    }
+
+    private static void RequireConfirmation(JsonObject payload, string expectedThumbprint, string label)
+    {
+        var jwk = (payload["cnf"] as JsonObject)?["jwk"] as JsonObject;
+        if (jwk is null || !IsStructurallyCompleteJwk(jwk))
+            throw new TokenVerificationException(
+                $"{label} 'cnf.jwk' is absent or structurally incomplete (missing 'kty' or the members required for its key type).");
+        var tokenKey = KeyFactory.TryFromJwk(jwk)
+            ?? throw new TokenVerificationException($"{label} 'cnf.jwk' is not parseable as a supported public key (invalid key material).");
+        if (tokenKey.ComputeJwkThumbprint() != expectedThumbprint)
+            throw new TokenVerificationException($"{label} 'cnf.jwk' does not match the signing key (PoP binding mismatch).");
+    }
+
+    // Resolve the issuer key named by the token's iss/dwk/kid, verify, and retry
+    // once after a forced JWKS refresh only if the key material rotated.
+    private async Task<VerifiedToken> VerifyWithIssuerKeyAsync(string jwt, string tokenType,
+        MetadataClient metadata, JwksClient jwks, Func<IAAuthKey, VerifiedToken> verify, CancellationToken cancellationToken)
+    {
         ArgumentException.ThrowIfNullOrEmpty(jwt);
         ArgumentNullException.ThrowIfNull(metadata);
         ArgumentNullException.ThrowIfNull(jwks);
-
-        var (header, payload) = ReadStructure(jwt, AuthTokenBuilder.TokenType);
+        var (header, payload) = ReadStructure(jwt, tokenType);
         var alg = (string?)header["alg"];
         if (alg is null || (alg != AAuthKey.Ed25519Algorithm && alg != EcdsaAAuthKey.Alg))
             throw new TokenVerificationException($"Unsupported 'alg' '{alg}'. Supported: {AAuthKey.Ed25519Algorithm}, {EcdsaAAuthKey.Alg}.");
-        var typ = (string?)header["typ"];
-        if (typ != AuthTokenBuilder.TokenType)
-            throw new TokenVerificationException($"Unexpected 'typ' (expected '{AuthTokenBuilder.TokenType}', got '{typ}').");
-        var dwk = (string?)payload["dwk"];
-        if (dwk != AuthTokenBuilder.PersonDwk && dwk != AuthTokenBuilder.AccessDwk)
-            throw new TokenVerificationException(
-                $"Auth token 'dwk' must be '{AuthTokenBuilder.PersonDwk}' or '{AuthTokenBuilder.AccessDwk}', got '{dwk}'.");
-
-        var iss = (string?)payload["iss"]
-            ?? throw new TokenVerificationException("Token is missing 'iss'.");
+        if ((string?)header["typ"] != tokenType)
+            throw new TokenVerificationException($"Unexpected 'typ' (expected '{tokenType}', got '{(string?)header["typ"]}').");
+        var dwk = (string?)payload["dwk"] ?? throw new TokenVerificationException("Token is missing 'dwk'.");
+        if (tokenType == PersonTokenBuilder.TokenType ? dwk != PersonTokenBuilder.PersonDwk
+            : dwk is not (AuthTokenBuilder.PersonDwk or AuthTokenBuilder.AccessDwk))
+            throw new TokenVerificationException($"Unexpected 'dwk' '{dwk}' for {tokenType}.");
+        var iss = (string?)payload["iss"] ?? throw new TokenVerificationException("Token is missing 'iss'.");
         if (!metadata.Policy.IsValidIdentifier(iss))
             throw new TokenVerificationException("Token 'iss' must be an absolute https:// URL (or http://localhost).");
+        var kid = (string?)header["kid"] ?? throw new TokenVerificationException("Token header is missing 'kid'.");
 
-        var kid = (string?)header["kid"]
-            ?? throw new TokenVerificationException("Token header is missing 'kid'.");
+        // A PS or AS verifying a person or auth token it issued uses its own key.
+        if (LocalIssuerKeys?.Invoke(iss, kid) is { } localKey)
+            return verify(localKey);
 
         var metadataUrl = metadata.GetUrl(iss, dwk);
         JsonObject metadataDoc;
-        try
-        {
-            metadataDoc = await metadata.FetchAsync(metadataUrl, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            throw new TokenVerificationException($"Failed to fetch issuer metadata from {metadataUrl}.", ex);
-        }
-
+        try { metadataDoc = await metadata.FetchAsync(metadataUrl, cancellationToken).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        { throw new TokenVerificationException($"Failed to fetch issuer metadata from {metadataUrl}.", ex); }
         var jwksUriRaw = (string?)metadataDoc["jwks_uri"]
             ?? throw new TokenVerificationException($"Issuer metadata at {metadataUrl} is missing 'jwks_uri'.");
         if (!Uri.TryCreate(jwksUriRaw, UriKind.Absolute, out var jwksUri))
@@ -358,27 +415,15 @@ public sealed class TokenVerifier
         metadata.Policy.ValidateJwksUrl(jwksUriRaw, iss);
 
         var issuerKey = await jwks.ResolveKeyAsync(jwksUri, kid, iss, cancellationToken).ConfigureAwait(false)
-            ?? throw new TokenVerificationException($"No key with kid '{kid}' at {jwksUri}.");
-
-        try
-        {
-            return VerifyAuthToken(jwt, issuerKey, expectedAudience, httpSignatureKey, expectedAgentId,
-                expectedDwk: dwk, expectedMaxScope: expectedMaxScope, accountExpectation: accountExpectation);
-        }
+            ?? throw new TokenVerificationException(AAuth.Errors.SignatureErrorCode.UnknownKey, $"No key with kid '{kid}' at {jwksUri}.");
+        try { return verify(issuerKey); }
         catch (TokenVerificationException)
         {
-            // Silent re-keying ([@!I-D.hardt-httpbis-signature-key]): force one
-            // rate-limited JWKS refresh and retry only if the key material rotated
-            // under the same kid; otherwise re-throw the original failure.
             var refreshed = await jwks.ForceRefreshKeyAsync(jwksUri, kid, iss, cancellationToken).ConfigureAwait(false);
             if (refreshed is null)
                 throw new TokenVerificationException(AAuth.Errors.SignatureErrorCode.UnknownKey, $"No key with kid '{kid}' after JWKS refresh.");
-            if (refreshed.ComputeJwkThumbprint() == issuerKey.ComputeJwkThumbprint())
-            {
-                throw;
-            }
-            return VerifyAuthToken(jwt, refreshed, expectedAudience, httpSignatureKey, expectedAgentId,
-                expectedDwk: dwk, expectedMaxScope: expectedMaxScope, accountExpectation: accountExpectation);
+            if (refreshed.ComputeJwkThumbprint() == issuerKey.ComputeJwkThumbprint()) throw;
+            return verify(refreshed);
         }
     }
 
@@ -488,63 +533,41 @@ public sealed class TokenVerifier
     }
 
     /// <summary>
-    /// Verify a resource token (<c>aa-resource+jwt</c>) presented by an agent,
-    /// per §"Resource Token Verification". Resolves the issuing resource's JWKS
-    /// from <c>{iss}/.well-known/aauth-resource.json</c> and enforces the recipient
-    /// checks: <c>typ</c>, <c>dwk</c>, signature, <c>exp</c>/<c>iat</c>, <c>aud</c>
-    /// (steps 1–4 via <see cref="VerifyWithJwksAsync"/>), then <c>agent</c>,
-    /// <c>agent_jkt</c>, and the optional <c>mission.approver</c> (steps 5–7).
+    /// Verify a resource token (<c>aa-resource+jwt</c>) per §Resource Token
+    /// Verification. Resolves the issuing resource's JWKS from
+    /// <c>{iss}/.well-known/aauth-resource.json</c>, checks <c>typ</c>, <c>dwk</c>,
+    /// signature, <c>exp</c> and <c>aud</c>, then <c>agent_jkt</c> and, when given,
+    /// <c>ps</c>. Pair it with <see cref="VerifyPresentedTokenAsync"/> on a PS or AS.
     /// </summary>
     /// <param name="jwt">The compact resource token.</param>
-    /// <param name="expectedAudience">
-    /// The recipient's own identifier — the resource token's <c>aud</c> must match
-    /// (e.g. the Person Server's issuer).
-    /// </param>
-    /// <param name="expectedAgentId">
-    /// The agent identifier from the verified HTTP-signature context — must equal
-    /// the token's <c>agent</c>.
-    /// </param>
+    /// <param name="expectedAudience">The recipient's own identifier (PS or AS).</param>
     /// <param name="expectedAgentJkt">
-    /// The JWK thumbprint of the agent's signing key from the verified HTTP
-    /// signature — must equal the token's <c>agent_jkt</c>.
+    /// JWK thumbprint of the signing agent's key; <c>agent_jkt</c> must equal it.
     /// </param>
     /// <param name="metadata">Metadata client for issuer discovery.</param>
     /// <param name="jwks">JWKS client for key resolution.</param>
-    /// <param name="expectedApprover">
-    /// When a mission is present, a verifying recipient must supply the PS
-    /// identifier for the <c>mission.approver</c> check (step 7): the PS's own
-    /// identifier for PS-local issuance, or the authenticated sending PS at an AS.
-    /// Pass <c>null</c> only when no mission is present, or when the caller is
-    /// performing challenge verification as an agent rather than recipient verification.
-    /// </param>
     /// <param name="subagentAgentJkt">
-    /// For a parent-mediated sub-agent authorization (§Sub-Agents): the JWK
-    /// thumbprint of the <b>sub-agent's</b> key (from the <c>subagent_token</c>'s
-    /// <c>cnf.jwk</c>). When set, step 6 verifies <c>agent_jkt</c> against this value
-    /// instead of <paramref name="expectedAgentJkt"/>, because the <b>parent</b> —
-    /// not the sub-agent — signs the HTTP request. When <see langword="null"/>
-    /// (the common case), step 6 checks <paramref name="expectedAgentJkt"/>.
+    /// For parent-mediated sub-agent authorization, the sub-agent's key thumbprint;
+    /// <c>agent_jkt</c> is checked against it instead, because the parent signs.
     /// </param>
+    /// <param name="expectedPersonServer">When set, <c>ps</c> must equal it.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     public async Task<VerifiedToken> VerifyResourceTokenAsync(
         string jwt,
         string expectedAudience,
-        string expectedAgentId,
         string expectedAgentJkt,
         MetadataClient metadata,
         JwksClient jwks,
-        string? expectedApprover = null,
         string? subagentAgentJkt = null,
+        string? expectedPersonServer = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(jwt);
         ArgumentException.ThrowIfNullOrEmpty(expectedAudience);
-        ArgumentException.ThrowIfNullOrEmpty(expectedAgentId);
         ArgumentException.ThrowIfNullOrEmpty(expectedAgentJkt);
         ArgumentNullException.ThrowIfNull(metadata);
         ArgumentNullException.ThrowIfNull(jwks);
 
-        // Steps 1–4: typ + dwk + signature (via resource JWKS) + exp/iat + aud.
         var verified = await VerifyWithJwksAsync(
             jwt,
             metadata,
@@ -554,40 +577,34 @@ public sealed class TokenVerifier
             expectedAudience,
             cancellationToken).ConfigureAwait(false);
 
-        // Step 5: agent matches the signing agent.
-        var agent = (string?)verified.Payload["agent"];
-        if (agent != expectedAgentId)
-        {
-            throw new TokenVerificationException(
-                $"Resource token 'agent' does not match the signing agent (expected '{expectedAgentId}', got '{agent}').");
-        }
-
-        // Step 6: agent_jkt matches the agent's signing key thumbprint. For a
-        // parent-mediated sub-agent authorization the parent signs the request, so
-        // agent_jkt must match the sub-agent's key (from subagent_token.cnf.jwk),
-        // not the signing (parent) key (§Resource Token Verification step 6).
         var expectedJkt = subagentAgentJkt ?? expectedAgentJkt;
-        var agentJkt = (string?)verified.Payload["agent_jkt"];
-        if (agentJkt != expectedJkt)
+        if ((string?)verified.Payload["agent_jkt"] != expectedJkt)
         {
             throw new TokenVerificationException(
                 subagentAgentJkt is null
                     ? "Resource token 'agent_jkt' does not match the agent's HTTP signature key (PoP binding mismatch)."
                     : "Resource token 'agent_jkt' does not match the sub-agent's key (sub-agent PoP binding mismatch).");
         }
-
-        // Step 7: optional mission.approver constraint.
-        if (expectedApprover is not null && verified.Payload["mission"] is JsonObject mission)
+        if (expectedPersonServer is not null && (string?)verified.Payload["ps"] != expectedPersonServer)
         {
-            var approver = (string?)mission["approver"];
-            if (approver != expectedApprover)
-            {
-                throw new TokenVerificationException(
-                    $"Resource token 'mission.approver' does not match expected approver (expected '{expectedApprover}', got '{approver}').");
-            }
+            throw new TokenVerificationException(
+                $"Resource token 'ps' does not name the expected Person Server (expected '{expectedPersonServer}').");
         }
+        _ = verified.MissionS256;
 
         return verified;
+    }
+
+    // §Agent Response to Clarification: an updated_request keeps the original's
+    // iss, ps, sub, agent_jkt, mission_s256 and tenant; presented_jti MAY differ.
+    internal static void RequireSameResourceRequest(JsonObject original, JsonObject replacement)
+    {
+        foreach (var claim in new[] { "iss", "ps", "sub", "agent_jkt", "mission_s256", "tenant" })
+        {
+            if (!JsonNode.DeepEquals(original[claim], replacement[claim]))
+                throw new TokenVerificationException($"Replacement resource token changes '{claim}'.")
+                { Credential = TokenCredential.Resource };
+        }
     }
 
     // §Request-Context Binding step 7: a cnf.jwk is structurally complete when it
@@ -609,12 +626,13 @@ public sealed class TokenVerifier
         };
     }
 
-    internal static void ValidateStructure(JsonObject header, JsonObject payload, string? tokenType, AAuthEgressPolicy policy, int maxActDepth = 10)
+    internal static void ValidateStructure(JsonObject header, JsonObject payload, string? tokenType, AAuthEgressPolicy policy)
     {
         foreach (var name in new[] { "alg", "typ", "kid" }) RequireText(header, name);
         RequireText(payload, "iss");
         RequireText(payload, "dwk");
-        var builtin = tokenType is AgentTokenBuilder.TokenType or ResourceTokenBuilder.TokenType or AuthTokenBuilder.TokenType;
+        var builtin = tokenType is AgentTokenBuilder.TokenType or ResourceTokenBuilder.TokenType
+            or AuthTokenBuilder.TokenType or PersonTokenBuilder.TokenType;
         foreach (var name in new[] { "exp", "iat" })
         {
             if (name == "iat" && !builtin && !payload.ContainsKey(name)) continue;
@@ -625,27 +643,19 @@ public sealed class TokenVerifier
         }
         if (builtin || payload.ContainsKey("jti")) RequireText(payload, "jti");
         if (!builtin) return;
-        if (tokenType == AuthTokenBuilder.TokenType
+        if (tokenType is AuthTokenBuilder.TokenType or PersonTokenBuilder.TokenType
             && payload["exp"]!.GetValue<long>() - payload["iat"]!.GetValue<long>() > 3600)
-            throw new TokenVerificationException("Auth token lifetime must not exceed one hour.");
+            throw new TokenVerificationException("Person and auth token lifetime must not exceed one hour.");
         if (!policy.IsValidIdentifier(SignatureKeyParser.Text(payload, "iss")))
             throw new TokenVerificationException("JWT 'iss' must be a valid server identifier.");
         if (!AccountBinding.TryRead(payload, out _))
             throw new TokenVerificationException("Token account must be a non-empty string without control characters.");
-        foreach (var name in new[] { "aud", "sub", "agent", "agent_jkt", "scope", "parent_agent", "ps" })
+        foreach (var name in new[] { "aud", "sub", "agent_jkt", "scope", "parent_agent", "ps", "presented_jti", "tenant", "login_hint" })
             if (payload.ContainsKey(name)) RequireText(payload, name, allowEmpty: name == "scope" && tokenType == ResourceTokenBuilder.TokenType);
-        foreach (var name in new[] { "act", "cnf", "mission", "interaction" })
+        foreach (var name in new[] { "cnf", "interaction" })
             if (payload.ContainsKey(name) && payload[name] is not JsonObject)
                 throw new TokenVerificationException($"JWT claim '{name}' must be an object.");
-        if (payload["act"] is JsonObject act && !ActChainBuilder.ValidateChain(act, maxActDepth, policy))
-            throw new TokenVerificationException("invalid_act_chain: JWT requires a valid delegation chain.");
-        if (payload["mission"] is JsonObject mission)
-        {
-            RequireText(mission, "approver");
-            RequireText(mission, "s256");
-            if (MissionClaim.FromPayload(payload, policy) is null)
-                throw new TokenVerificationException("JWT requires a valid mission reference.");
-        }
+        _ = MissionReference.Read(payload);
         if (tokenType == AgentTokenBuilder.TokenType)
         {
             var subject = RequireText(payload, "sub");
@@ -661,11 +671,17 @@ public sealed class TokenVerifier
         {
             if (!policy.IsValidIdentifier(RequireText(payload, "aud")))
                 throw new TokenVerificationException("JWT 'aud' must be a valid server identifier.");
-            ValidateAgent(RequireText(payload, "agent"), "agent", policy);
+            RequireText(payload, "sub");
         }
+        if (tokenType is ResourceTokenBuilder.TokenType or AuthTokenBuilder.TokenType
+            && !policy.IsValidIdentifier(RequireText(payload, "ps")))
+            throw new TokenVerificationException("JWT 'ps' must be a valid server identifier.");
+        if (tokenType == PersonTokenBuilder.TokenType && (payload.ContainsKey("scope") || payload.ContainsKey("account")))
+            throw new TokenVerificationException("Person token MUST NOT carry 'scope' or 'account'.");
         if (tokenType == ResourceTokenBuilder.TokenType)
         {
             RequireText(payload, "agent_jkt");
+            RequireText(payload, "presented_jti");
             if (!payload.ContainsKey("scope"))
             {
                 var uri = RequireText(payload, "r3_uri");
@@ -688,8 +704,6 @@ public sealed class TokenVerifier
         }
         else if (payload["cnf"] is not JsonObject confirmation || confirmation["jwk"] is not JsonObject)
             throw new TokenVerificationException("JWT requires 'cnf.jwk'.");
-        if (tokenType == AuthTokenBuilder.TokenType && !payload.ContainsKey("sub") && !payload.ContainsKey("scope"))
-            throw new TokenVerificationException("Auth token must contain at least one of 'sub' or 'scope'.");
     }
 
     private static string RequireText(JsonObject document, string name, bool allowEmpty = false)
@@ -724,7 +738,7 @@ public sealed class TokenVerifier
             throw new TokenVerificationException("JWT is not a compact JWS.");
         var header = DecodeJsonSegment(segments[0], "header");
         var payload = DecodeJsonSegment(segments[1], "payload");
-        ValidateStructure(header, payload, tokenType, EgressPolicy, MaxActDepth);
+        ValidateStructure(header, payload, tokenType, EgressPolicy);
         var signature = DecodeSegment(segments[2], "signature");
         if ((string?)header["alg"] is AAuthKey.Ed25519Algorithm or EcdsaAAuthKey.Alg && signature.Length != 64)
             throw new TokenVerificationException("JWT signature must contain 64 bytes for Ed25519 or ES256.");
@@ -760,7 +774,7 @@ public sealed class TokenVerifier
     }
 }
 
-public enum TokenCredential { Agent, Resource, Subagent, Upstream }
+public enum TokenCredential { Agent, Resource, Subagent, Upstream, Presented }
 
 /// <summary>Thrown when AAuth JWT verification fails for any reason.</summary>
 public sealed class TokenVerificationException : Exception

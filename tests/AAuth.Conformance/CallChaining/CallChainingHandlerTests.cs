@@ -76,7 +76,7 @@ public class CallChainingHandlerTests
         try
         {
             await chainHandler.ExchangeForDownstreamAsync(
-                upstreamToken, TestTokens.Resource,
+                upstreamToken, TestTokens.Resource, PresentedToken,
                 onInteractionRequired: (interaction, ct) =>
                 {
                     callbackInvoked = true;
@@ -132,7 +132,7 @@ public class CallChainingHandlerTests
         var upstreamToken = BuildTokenWithIss("http://localhost:7777");
 
         await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => chainHandler.ExchangeForDownstreamAsync(
-            upstreamToken, TestTokens.Resource,
+            upstreamToken, TestTokens.Resource, PresentedToken,
             pollerOptions: new DeferredPollerOptions { PreferWaitSeconds = 30 }));
         Assert.Equal("wait=30", capturedPrefer);
     }
@@ -172,7 +172,40 @@ public class CallChainingHandlerTests
 
         // Call without optional params (backward compatible)
         await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => chainHandler.ExchangeForDownstreamAsync(
-            upstreamToken, TestTokens.Resource));
+            upstreamToken, TestTokens.Resource, PresentedToken));
+    }
+
+    [Fact(DisplayName = "ExchangeForDownstreamAsync — presented_token and upstream_token are both sent")]
+    public async Task ExchangeForDownstreamAsync_SendsPresentedAndUpstreamTokens()
+    {
+        JsonObject? body = null;
+        var handler = new CapturingHandler(req =>
+        {
+            if (req.RequestUri?.AbsolutePath.Contains("well-known") == true)
+            {
+                var origin = req.RequestUri.GetLeftPart(UriPartial.Authority);
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(new JsonObject { ["issuer"] = origin, ["auth_token_endpoint"] = $"{origin}/token" }
+                        .ToJsonString(), Encoding.UTF8, "application/json"),
+                };
+            }
+            body = JsonNode.Parse(req.Content!.ReadAsStringAsync().GetAwaiter().GetResult())!.AsObject();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(new JsonObject { ["auth_token"] = "token" }.ToJsonString(), Encoding.UTF8, "application/json"),
+            };
+        });
+        var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(handler), new MetadataClient(new InProcessHttpClient(handler)));
+        var chainHandler = new CallChainingHandler(exchangeClient, CreateOptions());
+        var upstreamToken = BuildPersonToken("http://localhost:7777");
+
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() =>
+            chainHandler.ExchangeForDownstreamAsync(upstreamToken, TestTokens.Resource, PresentedToken));
+
+        Assert.Equal(PresentedToken, (string?)body!["presented_token"]);
+        Assert.Equal(upstreamToken, (string?)body["upstream_token"]);
+        Assert.Equal(TestTokens.Resource, (string?)body["resource_token"]);
     }
 
     [Fact(DisplayName = "ExchangeForDownstreamAsync — delegates routing to CallChainingRouter")]
@@ -208,15 +241,17 @@ public class CallChainingHandlerTests
         var options = CreateOptions();
         var chainHandler = new CallChainingHandler(exchangeClient, options);
 
-        // Token with mission.approver → should route to approver
-        var upstreamToken = BuildTokenWithMissionApprover("http://localhost:8888");
+        // An upstream auth token routes to its ps, not its iss.
+        var upstreamToken = BuildAuthToken("http://localhost:5555", "http://localhost:8888");
 
-        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => chainHandler.ExchangeForDownstreamAsync(upstreamToken, TestTokens.Resource));
+        await Assert.ThrowsAsync<AAuth.Tokens.TokenVerificationException>(() => chainHandler.ExchangeForDownstreamAsync(upstreamToken, TestTokens.Resource, PresentedToken));
 
         Assert.Equal("http://localhost:8888", capturedOrigin);
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
+
+    private const string PresentedToken = "presented.person.token";
 
     private static CallChainingOptions CreateOptions()
     {
@@ -228,34 +263,26 @@ public class CallChainingHandlerTests
         };
     }
 
-    private static string BuildTokenWithIss(string iss)
-    {
-        var payload = new JsonObject
-        {
-            ["iss"] = iss,
-            ["aud"] = "http://localhost:6000",
-            ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["agent"] = "agent-1" },
-        };
-        return BuildToken(payload);
-    }
+    private static string BuildTokenWithIss(string iss) => BuildPersonToken(iss);
 
-    private static string BuildTokenWithMissionApprover(string approver)
+    private static string BuildPersonToken(string iss) => BuildToken("aa-person+jwt", new JsonObject
     {
-        var payload = new JsonObject
-        {
-            ["iss"] = "http://localhost:5555",
-            ["aud"] = "http://localhost:6000",
-            ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["agent"] = "agent-1" },
-            ["mission"] = new JsonObject { ["approver"] = approver },
-        };
-        return BuildToken(payload);
-    }
+        ["iss"] = iss,
+        ["aud"] = "http://localhost:6000",
+        ["sub"] = "user-1",
+    });
 
-    private static string BuildToken(JsonObject payload)
+    private static string BuildAuthToken(string iss, string personServer) => BuildToken("aa-auth+jwt", new JsonObject
     {
-        var header = new JsonObject { ["alg"] = "Ed25519", ["typ"] = "aa-auth+jwt", ["kid"] = "k1" };
+        ["iss"] = iss,
+        ["ps"] = personServer,
+        ["aud"] = "http://localhost:6000",
+        ["sub"] = "user-1",
+    });
+
+    private static string BuildToken(string typ, JsonObject payload)
+    {
+        var header = new JsonObject { ["alg"] = "Ed25519", ["typ"] = typ, ["kid"] = "k1" };
         var h = Base64UrlEncoder.Encode(Encoding.UTF8.GetBytes(header.ToJsonString()));
         var p = Base64UrlEncoder.Encode(Encoding.UTF8.GetBytes(payload.ToJsonString()));
         return $"{h}.{p}.fake-sig";

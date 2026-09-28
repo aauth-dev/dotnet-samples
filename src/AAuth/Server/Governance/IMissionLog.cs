@@ -20,6 +20,9 @@ public enum MissionLogEntryKind
     /// <summary>An interaction relayed through the PS.</summary>
     Interaction,
 
+    /// <summary>An accepted mission update (§Mission Update).</summary>
+    Update,
+
     /// <summary>A clarification chat exchange during review.</summary>
     Clarification,
 }

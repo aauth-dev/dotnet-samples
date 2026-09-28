@@ -29,7 +29,8 @@ public static class NamingTokenVerifier
         return new(durable, confirmation, issuer, expires);
     }
 
-    internal static DateTimeOffset ValidateTime(JsonObject payload, DateTimeOffset now, TimeSpan skew, bool requireIssuedAt)
+    internal static DateTimeOffset ValidateTime(JsonObject payload, DateTimeOffset now, TimeSpan skew, bool requireIssuedAt,
+        TimeSpan? issuedAtWindow = null)
     {
         if (payload["exp"] is not JsonValue expiration || !expiration.TryGetValue<long>(out var expires))
             throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires integer exp.");
@@ -43,8 +44,10 @@ public static class NamingTokenVerifier
         {
             if (payload["iat"] is not JsonValue issuance || !issuance.TryGetValue<long>(out var issued)
                 || issued < DateTimeOffset.MinValue.ToUnixTimeSeconds() || issued > DateTimeOffset.MaxValue.ToUnixTimeSeconds()
-                || issued > (now + skew).ToUnixTimeSeconds() || issued >= expires)
-                throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires a valid, nonfuture iat before exp.");
+                || issued >= expires)
+                throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires a valid iat before exp.");
+            if (issued > (now + (issuedAtWindow ?? skew)).ToUnixTimeSeconds())
+                throw new AAuthVerificationException(SignatureErrorCode.ClockSkew, "JWT iat is ahead of the verifier clock.");
         }
         return expiresAt;
     }

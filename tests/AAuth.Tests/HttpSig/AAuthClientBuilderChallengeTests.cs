@@ -103,7 +103,9 @@ public class AAuthClientBuilderChallengeTests
         {
             Issuer = "https://other-resource.example",
             Audience = "https://ps.example",
-            Agent = "aauth:test@example.com",
+            PersonServer = "https://ps.example",
+            Subject = "person",
+            PresentedJti = "person-jti",
             AgentJkt = _key.ComputeJwkThumbprint(),
             Key = _key,
             KeyId = "resource-key",

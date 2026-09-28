@@ -46,10 +46,8 @@ public class MockPersonServerFederationTests
         using var http = BuildSignedAgentClient(factory, agentKey, AgentId);
 
         // Resource token audience is the ACCESS SERVER, not the PS → federate.
-        var resourceToken = BuildResourceToken(AgentId, agentKey, audience: AsIssuer, scope: "wallet.read");
-
         using var response = await http.PostAsJsonAsync("/token",
-            new JsonObject { ["resource_token"] = resourceToken });
+            await TokenRequestAsync(http, agentKey, audience: AsIssuer, scope: "wallet.read"));
 
         Assert.True(response.IsSuccessStatusCode,
             $"Status={(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
@@ -60,9 +58,10 @@ public class MockPersonServerFederationTests
         // The returned token was minted by the AS, not the PS: iss=AS, dwk=access.
         var payload = DecodePayload(authTokenJwt!);
         Assert.Equal(AsIssuer, (string?)payload["iss"]);
+        Assert.Equal(PsIssuer, (string?)payload["ps"]);
         Assert.Equal(ResourceUrl, (string?)payload["aud"]);
         Assert.Equal(AuthTokenBuilder.AccessDwk, (string?)payload["dwk"]);
-        Assert.Equal(AgentId, (string?)payload["agent"]);
+        Assert.Null(payload["agent"]);
     }
 
     [Fact]
@@ -73,11 +72,8 @@ public class MockPersonServerFederationTests
         using var http = BuildSignedAgentClient(factory, agentKey, AgentId);
 
         // aud is some other Access Server the PS has no federation trust with.
-        var resourceToken = BuildResourceToken(AgentId, agentKey,
-            audience: "https://untrusted-as.test", scope: "wallet.read");
-
         using var response = await http.PostAsJsonAsync("/token",
-            new JsonObject { ["resource_token"] = resourceToken });
+            await TokenRequestAsync(http, agentKey, audience: "https://untrusted-as.test", scope: "wallet.read"));
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
@@ -93,10 +89,8 @@ public class MockPersonServerFederationTests
         using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read");
         using var http = BuildSignedAgentClient(factory, agentKey, AgentId);
 
-        var resourceToken = BuildResourceToken(AgentId, agentKey, audience: PsIssuer, scope: "wallet.read");
-
         using var response = await http.PostAsJsonAsync("/token",
-            new JsonObject { ["resource_token"] = resourceToken });
+            await TokenRequestAsync(http, agentKey, audience: PsIssuer, scope: "wallet.read"));
 
         Assert.True(response.IsSuccessStatusCode,
             $"Status={(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
@@ -121,10 +115,8 @@ public class MockPersonServerFederationTests
         using var factory = BuildFactory(agentKey, AgentId, scope: "wallet.read", interactive: stubState);
         using var http = BuildSignedAgentClient(factory, agentKey, AgentId);
 
-        var resourceToken = BuildResourceToken(AgentId, agentKey, audience: AsIssuer, scope: "wallet.read");
-
         using var post = await http.PostAsJsonAsync("/token",
-            new JsonObject { ["resource_token"] = resourceToken });
+            await TokenRequestAsync(http, agentKey, audience: AsIssuer, scope: "wallet.read"));
 
         // The PS relays the AS interaction as its own 202.
         Assert.Equal(HttpStatusCode.Accepted, post.StatusCode);
@@ -215,19 +207,27 @@ public class MockPersonServerFederationTests
         return new InProcessHttpClient(signing) { BaseAddress = new Uri(PsIssuer) };
     }
 
-    private static string BuildResourceToken(string agent, AAuthKey agentKey, string audience, string scope)
-        => new ResourceTokenBuilder
+    // §Person Token Endpoint, then a resource token naming that person token.
+    private static async Task<JsonObject> TokenRequestAsync(HttpClient http, AAuthKey agentKey, string audience, string scope)
+    {
+        var personToken = await PersonTokenFlow.RequestAsync(http, ResourceUrl);
+        var person = DecodePayload(personToken);
+        var resourceToken = new ResourceTokenBuilder
         {
             ScopeDescriptions = TestScopeDefinitions.Resource,
             EgressPolicy = TestEgress.Policy,
             Issuer = ResourceUrl,
             Audience = audience,
-            Agent = agent,
+            PersonServer = (string)person["iss"]!,
+            Subject = (string)person["sub"]!,
+            PresentedJti = (string)person["jti"]!,
             AgentJkt = agentKey.ComputeJwkThumbprint(),
             Key = ResourceStub.Key,
             KeyId = ResourceStub.Kid,
             Scope = scope,
         }.Build();
+        return PersonTokenFlow.Body(resourceToken, personToken);
+    }
 
     private static JsonObject DecodePayload(string jwt)
     {
@@ -264,6 +264,8 @@ public class MockPersonServerFederationTests
         private readonly string _scope;
         private readonly InteractiveAsState? _interactive;
         private DateTimeOffset _agentTokenExpiresAt;
+        private DateTimeOffset _presentedExpiresAt;
+        private string _subject = "";
 
         public FederatedStub(AAuthKey agentKey, string agentId, string scope, InteractiveAsState? interactive = null)
         {
@@ -284,6 +286,9 @@ public class MockPersonServerFederationTests
                 var body = await request.Content!.ReadFromJsonAsync<JsonObject>(cancellationToken: cancellationToken);
                 _agentTokenExpiresAt = new TokenVerifier { EgressPolicy = TestEgress.Policy }.Verify((string)body!["agent_token"]!, _agentKey,
                     AgentTokenBuilder.TokenType, AgentTokenBuilder.AgentDwk).ExpiresAt;
+                var presented = DecodePayload((string)body["presented_token"]!);
+                _subject = (string)presented["sub"]!;
+                _presentedExpiresAt = DateTimeOffset.FromUnixTimeSeconds((long)presented["exp"]!);
                 // Interactive AS: defer with a 202 requirement=interaction.
                 if (_interactive is not null)
                 {
@@ -365,15 +370,16 @@ public class MockPersonServerFederationTests
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = _agentTokenExpiresAt,
+            AuthorizationExpiresAt = _presentedExpiresAt,
             Issuer = AsIssuer,
             Audience = ResourceUrl,
-            Agent = _agentId,
+            PersonServer = PsIssuer,
             AgentConfirmationKey = _agentKey,
             Key = AsKey,
             KeyId = AsKid,
             Dwk = AuthTokenBuilder.AccessDwk,
             Scope = _scope,
-            Subject = "pairwise-sub",
+            Subject = _subject,
         }.Build();
 
         private static HttpResponseMessage Json(JsonObject body) =>

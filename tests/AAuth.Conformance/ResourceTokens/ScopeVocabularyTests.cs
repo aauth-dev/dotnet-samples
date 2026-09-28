@@ -17,7 +17,8 @@ public class ScopeVocabularyTests
         var key = AAuthKey.Generate();
         var builder = new ResourceTokenBuilder
         {
-            Issuer = "https://catalog.test", Audience = "https://as.test", Agent = "aauth:client@ap.test",
+            Issuer = "https://catalog.test", Audience = "https://as.test", PersonServer = "https://ps.test",
+            Subject = "person-1", PresentedJti = "person-token-1",
             AgentJkt = key.ComputeJwkThumbprint(), Key = key, KeyId = "key", Scope = scope,
             ScopeDescriptions = new Dictionary<string, string> { ["catalog.read"] = "Read catalog", ["catalog.empty"] = "" },
             PersonServerScopesSupported = ["email"],

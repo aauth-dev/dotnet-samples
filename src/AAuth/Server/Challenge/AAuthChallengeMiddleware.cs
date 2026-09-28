@@ -90,14 +90,13 @@ public sealed class AAuthChallengeMiddleware
             return;
         }
 
-        // §Agent Token Required: this resource specifically wants an AAuth agent
-        // token, distinct from any other URI-identified key. Pass through when an
-        // AAuth token (agent or auth) is present — identity is established;
-        // otherwise challenge with a bare requirement=agent-token (no PS/AS, no
-        // resource token — the agent need only present the token it already holds).
+        // §Agent Token Required: this resource specifically wants AAuth identity,
+        // distinct from any other URI-identified key. Pass through when an AAuth
+        // token (agent, person or auth) is present; otherwise challenge with a
+        // bare requirement=agent-token.
         if (_options.AccessMode == AAuthAccessMode.AgentTokenRequired)
         {
-            if (tokenType is AAuthTokenType.AgentToken or AAuthTokenType.AuthToken)
+            if (tokenType is AAuthTokenType.AgentToken or AAuthTokenType.PersonToken or AAuthTokenType.AuthToken)
             {
                 await _next(context).ConfigureAwait(false);
                 return;
@@ -123,10 +122,19 @@ public sealed class AAuthChallengeMiddleware
             return;
         }
 
-        // Agent token → challenge.
+        // §Person Token Required: a resource issues a resource token only after it
+        // verifies a person token (or an auth token) on the request.
         if (tokenType == AAuthTokenType.AgentToken)
         {
-            await IssueChallenge(context, result, parsedInfo).ConfigureAwait(false);
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            context.Response.Headers[AAuthRequirementHeader.Name] = AAuthRequirementHeader.FormatPersonToken();
+            return;
+        }
+
+        if (tokenType == AAuthTokenType.PersonToken
+            && context.Features.Get<AAuthVerifiedAssertion>() is { } presented)
+        {
+            await IssueChallenge(context, presented, parsedInfo).ConfigureAwait(false);
             return;
         }
 
@@ -134,99 +142,71 @@ public sealed class AAuthChallengeMiddleware
         await _next(context).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Build a resource token from a verified person or auth token: <c>ps</c>,
+    /// <c>sub</c>, <c>presented_jti</c>, <c>mission_s256</c> and <c>tenant</c> come
+    /// from it; <c>aud</c> is the resource's AS (four-party) or the person's PS.
+    /// </summary>
+    public static string BuildResourceToken(ChallengeOptions options, AAuthVerifiedAssertion presented,
+        string? scope, string? account = null, IReadOnlyDictionary<string, string>? scopeDescriptions = null,
+        IReadOnlyCollection<string>? personServerScopes = null, Interaction? interaction = null, string? loginHint = null)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(presented);
+        if (options.ResourceSigningKey is null || !options.ResourceSigningKey.HasPrivateKey)
+            throw new InvalidOperationException("ChallengeOptions.ResourceSigningKey must be set with a private key for RequireAuthToken mode.");
+        if (string.IsNullOrEmpty(options.ResourceKeyId))
+            throw new InvalidOperationException("ChallengeOptions.ResourceKeyId must be set for RequireAuthToken mode.");
+        if (string.IsNullOrEmpty(options.ResourceIdentifier))
+            throw new InvalidOperationException("ChallengeOptions.ResourceIdentifier must be set for RequireAuthToken mode.");
+        var token = presented.Token;
+        var personServer = PersonServerOf(token);
+        return new ResourceTokenBuilder
+        {
+            EgressPolicy = options.EgressPolicy,
+            Issuer = options.ResourceIdentifier,
+            Audience = options.AccessServer ?? personServer,
+            PersonServer = personServer,
+            Subject = token.Subject ?? throw new TokenVerificationException("Presented token is missing 'sub'."),
+            PresentedJti = token.Jti,
+            AgentJkt = presented.HttpSigningKey.ComputeJwkThumbprint(),
+            MissionS256 = token.MissionS256,
+            Tenant = token.Tenant,
+            Key = options.ResourceSigningKey,
+            KeyId = options.ResourceKeyId,
+            Scope = scope,
+            Account = account,
+            ScopeDescriptions = scopeDescriptions,
+            PersonServerScopesSupported = personServerScopes,
+            Interaction = interaction,
+            LoginHint = loginHint,
+        }.Build();
+    }
+
+    // The PS the presented token names: a person token's iss, an auth token's ps.
+    private static string PersonServerOf(TokenVerifier.VerifiedToken token)
+        => token.TokenType == AuthTokenBuilder.TokenType
+            ? (string?)token.Payload["ps"] ?? throw new TokenVerificationException("Auth token is missing 'ps'.")
+            : token.Issuer;
+
     private async Task IssueChallenge(
         HttpContext context,
-        VerificationResult? result,
+        AAuthVerifiedAssertion presented,
         SignatureKeyParser.ParsedSignatureKeyInfo? parsedInfo)
     {
-        // Resolve agent ID and agent_jkt from verification result or parsed info.
-        var agent = result?.Agent
-            ?? (string?)parsedInfo?.Payload?["sub"]
-            ?? (string?)parsedInfo?.Payload?["agent"]
-            ?? "unknown";
-
-        var agentJkt = parsedInfo?.ConfirmationKey?.ComputeJwkThumbprint()
-            ?? result?.Subject  // fallback, though not ideal
-            ?? throw new InvalidOperationException(
-                "Cannot issue challenge: unable to determine agent key thumbprint.");
-
-        // Resolve audience:
-        // 1. Explicit PersonServerAudience (covers four-party where resource has own AS).
-        // 2. Agent token's `ps` claim (three-party standard path).
-        // 3. If neither → cannot challenge (resource must handle auth itself).
-        var audience = _options.PersonServerAudience;
-        if (string.IsNullOrEmpty(audience))
-        {
-            audience = (string?)parsedInfo?.Payload?["ps"];
-        }
-
-        if (string.IsNullOrEmpty(audience))
-        {
-            // No PS available and no explicit audience configured.
-            // Return 401 without resource token — the resource cannot issue a valid challenge.
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            context.Response.Headers[AAuthConstants.Headers.AAuthError] =
-                "Auth token required but no Person Server audience could be resolved.";
-            return;
-        }
-
-        // Validate that required options are present for challenge issuance.
-        if (_options.ResourceSigningKey is null || !_options.ResourceSigningKey.HasPrivateKey)
-        {
-            throw new InvalidOperationException(
-                "ChallengeOptions.ResourceSigningKey must be set with a private key for RequireAuthToken mode.");
-        }
-        if (string.IsNullOrEmpty(_options.ResourceKeyId))
-        {
-            throw new InvalidOperationException(
-                "ChallengeOptions.ResourceKeyId must be set for RequireAuthToken mode.");
-        }
-        if (string.IsNullOrEmpty(_options.ResourceIdentifier))
-        {
-            throw new InvalidOperationException(
-                "ChallengeOptions.ResourceIdentifier must be set for RequireAuthToken mode.");
-        }
-
-        // §Terminology / §Mission Request Header: a mission-aware resource copies
-        // the mission object from a valid AAuth-Mission header (verified as a
-        // signed component upstream) into the resource token it issues, so the
-        // mission context (approver + s256) reaches the PS.
-        MissionClaim? mission = null;
-        if (_options.MissionAware
-            && AAuthMissionHeader.TryParseStructured(
-                context.Request.Headers[AAuthMissionHeader.Name],
-                out var missionApprover, out var missionS256, _options.EgressPolicy))
-        {
-            mission = new MissionClaim(missionApprover!, missionS256!);
-        }
-
         var definitions = _options.ScopeDescriptions
             ?? context.RequestServices?.GetService<AAuthResourceMetadataOptions>()?.ScopeDescriptions;
         IReadOnlyCollection<string>? identityScopes = null;
         var requestedScopes = (_options.DefaultScopes ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (requestedScopes.Any(scope => definitions?.ContainsKey(scope) != true)
-            && (string?)parsedInfo?.Payload?["ps"] is { } personServer)
+        if (requestedScopes.Any(scope => definitions?.ContainsKey(scope) != true))
         {
             var metadata = context.RequestServices!.GetRequiredService<MetadataClient>();
-            var person = await metadata.FetchAsync(metadata.GetUrl(personServer, AAuthConstants.DwkFiles.Person), context.RequestAborted);
+            var person = await metadata.FetchAsync(metadata.GetUrl(PersonServerOf(presented.Token), AAuthConstants.DwkFiles.Person), context.RequestAborted);
             identityScopes = (person["scopes_supported"] as System.Text.Json.Nodes.JsonArray)?
                 .Select(scope => scope?.GetValue<string>() ?? "").ToArray();
         }
-        var resourceToken = new ResourceTokenBuilder
-        {
-            EgressPolicy = _options.EgressPolicy,
-            Issuer = _options.ResourceIdentifier,
-            Audience = audience,
-            Agent = agent,
-            AgentJkt = agentJkt,
-            Key = _options.ResourceSigningKey,
-            KeyId = _options.ResourceKeyId,
-            Scope = _options.DefaultScopes,
-            Account = _options.RequestedAccount?.Invoke(context),
-            ScopeDescriptions = definitions,
-            PersonServerScopesSupported = identityScopes,
-            Mission = mission,
-        }.Build();
+        var resourceToken = BuildResourceToken(_options, presented, _options.DefaultScopes,
+            _options.RequestedAccount?.Invoke(context), definitions, identityScopes);
 
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
         context.Response.Headers[AAuthRequirementHeader.Name] =

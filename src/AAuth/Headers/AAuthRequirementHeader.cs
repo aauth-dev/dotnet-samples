@@ -29,6 +29,12 @@ public static class AAuthRequirementHeader
     /// <summary>Requirement type: <c>agent-token</c> (§Agent Token Required).</summary>
     public const string AgentTokenRequirement = "agent-token";
 
+    /// <summary>Requirement type: <c>person-token</c> (§Person Token Required). Takes no parameters.</summary>
+    public const string PersonTokenRequirement = "person-token";
+
+    /// <summary>Build a <c>person-token</c> requirement header value.</summary>
+    public static string FormatPersonToken() => $"requirement={PersonTokenRequirement}";
+
     /// <summary>The parameter name carrying the resource token.</summary>
     public const string ResourceTokenParameter = "resource-token";
 

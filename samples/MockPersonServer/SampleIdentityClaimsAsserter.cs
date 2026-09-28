@@ -53,7 +53,11 @@ public sealed class SampleIdentityClaimsAsserter : IIdentityClaimsAsserter
         var roles = isAdmin ? _demoRoles : null;
         var groups = isAdmin ? _demoGroups : null;
         var subject = DirectedSubject(request.ResourceUrl);
-        if (request.Mission is null && _requireConsent
+        // Person token request: the demo PS acts for one person, so it names them
+        // at once. The resource decides what identity alone is worth.
+        if (request.PersonTokenRequest)
+            return Task.FromResult(IdentityAssertion.Assert(subject));
+        if (request.MissionS256 is null && _requireConsent
             && !_consent.IsConsented(request.AgentId, request.ResourceUrl, request.Scope, request.Account, request.AgentKeyThumbprint))
             return Task.FromResult(IdentityAssertion.NeedsConsent());
 
@@ -72,7 +76,7 @@ public sealed class SampleIdentityClaimsAsserter : IIdentityClaimsAsserter
 
         // Mission request: identity only — the mission gate decision is the
         // ScriptMissionTokenConsent seam's job. No PS consent gate here.
-        if (request.Mission is not null)
+        if (request.MissionS256 is not null)
         {
             return Task.FromResult(IdentityAssertion.Assert(subject, roles: roles, groups: groups));
         }

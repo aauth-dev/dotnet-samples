@@ -182,7 +182,9 @@ public class TokenVerifierTests
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://resource.example",
             Audience = "https://ps.example",
-            Agent = "aauth:a@ap.example",
+            PersonServer = "https://ps.example",
+            Subject = "person-1",
+            PresentedJti = "person-token-1",
             AgentJkt = key.ComputeJwkThumbprint(),
             Key = rkey,
             KeyId = "r",
@@ -232,7 +234,7 @@ public class TokenVerifierTests
     private static string BuildResourceToken(
         AAuthKey signingKey,
         AAuthKey agentKey,
-        string agent = AgentId,
+        string personServer = PsAud,
         string audience = PsAud,
         DateTimeOffset? issuedAt = null,
         TimeSpan? lifetime = null)
@@ -242,7 +244,9 @@ public class TokenVerifierTests
             EgressPolicy = TestEgress.Policy,
             Issuer = ResIss,
             Audience = audience,
-            Agent = agent,
+            PersonServer = personServer,
+            Subject = "person-1",
+            PresentedJti = "person-token-1",
             AgentJkt = agentKey.ComputeJwkThumbprint(),
             Key = signingKey,
             KeyId = ResKid,
@@ -261,11 +265,13 @@ public class TokenVerifierTests
 
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         var verified = await verifier.VerifyResourceTokenAsync(
-            jwt, PsAud, AgentId, agentKey.ComputeJwkThumbprint(), meta, jwks);
+            jwt, PsAud, agentKey.ComputeJwkThumbprint(), meta, jwks, expectedPersonServer: PsAud);
 
         Assert.Equal(ResourceTokenBuilder.TokenType, verified.TokenType);
         Assert.Equal(ResIss, verified.Issuer);
-        Assert.Equal(AgentId, (string?)verified.Payload["agent"]);
+        Assert.Equal(PsAud, (string?)verified.Payload["ps"]);
+        Assert.Equal("person-1", verified.Subject);
+        Assert.Null(verified.Payload["agent"]);
     }
 
     [Fact]
@@ -281,7 +287,7 @@ public class TokenVerifierTests
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
-                jwt, PsAud, AgentId, agentKey.ComputeJwkThumbprint(), meta, jwks));
+                jwt, PsAud, agentKey.ComputeJwkThumbprint(), meta, jwks));
     }
 
     [Fact]
@@ -296,7 +302,7 @@ public class TokenVerifierTests
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, Clock = () => issued.AddHours(1) };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
-                jwt, PsAud, AgentId, agentKey.ComputeJwkThumbprint(), meta, jwks));
+                jwt, PsAud, agentKey.ComputeJwkThumbprint(), meta, jwks));
     }
 
     [Fact]
@@ -310,21 +316,21 @@ public class TokenVerifierTests
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
-                jwt, "https://other-ps.example", AgentId, agentKey.ComputeJwkThumbprint(), meta, jwks));
+                jwt, "https://other-ps.example", agentKey.ComputeJwkThumbprint(), meta, jwks));
     }
 
     [Fact]
-    public async Task VerifyResourceTokenAsync_RejectsWrongAgent()
+    public async Task VerifyResourceTokenAsync_RejectsWrongPersonServer()
     {
         var resKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
-        var jwt = BuildResourceToken(resKey, agentKey, agent: AgentId);
+        var jwt = BuildResourceToken(resKey, agentKey, personServer: "https://other-ps.example");
         var (meta, jwks) = Discovery(resKey);
 
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
-                jwt, PsAud, "aauth:someone-else@ap.example", agentKey.ComputeJwkThumbprint(), meta, jwks));
+                jwt, PsAud, agentKey.ComputeJwkThumbprint(), meta, jwks, expectedPersonServer: PsAud));
     }
 
     [Fact]
@@ -340,7 +346,7 @@ public class TokenVerifierTests
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
-                jwt, PsAud, AgentId, otherAgentKey.ComputeJwkThumbprint(), meta, jwks));
+                jwt, PsAud, otherAgentKey.ComputeJwkThumbprint(), meta, jwks));
     }
 
     [Fact]
@@ -363,7 +369,7 @@ public class TokenVerifierTests
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
-                notAResourceToken, PsAud, AgentId, agentKey.ComputeJwkThumbprint(), meta, jwks));
+                notAResourceToken, PsAud, agentKey.ComputeJwkThumbprint(), meta, jwks));
     }
 
     /// <summary>

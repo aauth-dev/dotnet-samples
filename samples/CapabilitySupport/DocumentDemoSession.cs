@@ -12,7 +12,7 @@ public sealed class DocumentDemoSession(string provider, string person, string r
     private readonly AAuthKey _key = AAuthKey.Generate();
     private readonly HttpClient _http = AAuthHttpTransport.CreateClient(SampleEgress.Policy);
     private string? _agentToken;
-    private string? _agentId;
+    private string? _personToken;
     private string? _resourceToken;
     private string? _authToken;
     public int Step { get; private set; }
@@ -31,19 +31,27 @@ public sealed class DocumentDemoSession(string provider, string person, string r
                 var enrolled = await AAuthClientBuilder.Bootstrap(provider + "/enrol").WithKey(_key)
                     .WithKeyStore(new InMemoryKeyStore()).WithPersonServer(person).WithEgressPolicy(SampleEgress.Policy).EnrolAsync(cancellationToken);
                 _agentToken = enrolled.AgentToken;
-                _agentId = enrolled.AgentId;
                 break;
             case 1:
                 using (var agent = Signed(_agentToken!))
                 using (var metadata = new MetadataClient(_http))
                 using (var jwks = new JwksClient(_http))
-                using (var response = await agent.GetAsync(resource + "/document", cancellationToken))
                 {
+                    // §Person Token Required: the resource first asks who the agent acts for.
+                    using (var prerequisite = await agent.GetAsync(resource + "/document", cancellationToken))
+                    {
+                        if (AAuthRequirementHeader.Parse(prerequisite.Headers.GetValues(AAuthRequirementHeader.Name).Single()).Requirement
+                            != AAuthRequirementHeader.PersonTokenRequirement)
+                            throw new InvalidOperationException("Expected a person-token requirement.");
+                    }
+                    _personToken = await new TokenExchangeClient(agent, metadata).RequestPersonTokenAsync(person, resource, cancellationToken);
+                    using var personClient = Signed(_personToken);
+                    using var response = await personClient.GetAsync(resource + "/document", cancellationToken);
                     if (response.StatusCode != HttpStatusCode.Unauthorized) throw new InvalidOperationException("Expected document authorization challenge.");
                     _resourceToken = AAuthRequirementHeader.Parse(response.Headers.GetValues(AAuthRequirementHeader.Name).Single()).ResourceToken!;
                     var verified = await new TokenVerifier { EgressPolicy = SampleEgress.Policy }.VerifyResourceTokenAsync(
-                        _resourceToken, person, _agentId!, _key.ComputeJwkThumbprint(), metadata, jwks,
-                        expectedApprover: person, cancellationToken: cancellationToken);
+                        _resourceToken, person, _key.ComputeJwkThumbprint(), metadata, jwks,
+                        expectedPersonServer: person, cancellationToken: cancellationToken);
                     if (verified.Issuer != resource || verified.Account != "work")
                         throw new TokenVerificationException("Document request context mismatch.");
                     Result = verified.Payload.ToJsonString(WalletDemoSession.Pretty);
@@ -57,6 +65,7 @@ public sealed class DocumentDemoSession(string provider, string person, string r
                     {
                         _authToken = await new TokenExchangeClient(agent, metadata).ExchangeAsync(person, _resourceToken!, new TokenExchangeRequest
                         {
+                            PresentedToken = _personToken,
                             Account = "work",
                             OnInteractionRequired = async (interaction, _) =>
                             {

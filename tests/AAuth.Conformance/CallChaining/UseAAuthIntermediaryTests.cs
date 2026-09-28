@@ -60,7 +60,7 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
         if (_metadataHost is not null) { await _metadataHost.StopAsync(); _metadataHost.Dispose(); }
     }
 
-    [Fact(DisplayName = "UseAAuthIntermediary — rejects agent token with 401 + resource token challenge")]
+    [Fact(DisplayName = "UseAAuthIntermediary — rejects agent token with 401 + person-token challenge")]
     public async Task RejectsAgentToken_With401Challenge()
     {
         var agentToken = BuildAgentToken();
@@ -71,8 +71,26 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
 
         var headerValue = string.Join("", response.Headers.GetValues(AAuthRequirementHeader.Name));
         var parsed = AAuthRequirementHeader.Parse(headerValue);
+        Assert.Equal(AAuthRequirementHeader.PersonTokenRequirement, parsed.Requirement);
+        Assert.Null(parsed.ResourceToken);
+    }
+
+    [Fact(DisplayName = "UseAAuthIntermediary — a person token gets a resource token naming it")]
+    public async Task ChallengesPersonToken_WithResourceToken()
+    {
+        var personToken = BuildPersonToken();
+        var response = await SendSigned(personToken);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var parsed = AAuthRequirementHeader.Parse(string.Join("", response.Headers.GetValues(AAuthRequirementHeader.Name)));
         Assert.Equal(AAuthRequirementHeader.AuthTokenRequirement, parsed.Requirement);
-        Assert.NotNull(parsed.ResourceToken);
+        var resource = TokenVerifier.DecodeJsonSegment(parsed.ResourceToken!.Split('.')[1], "payload");
+        var person = TokenVerifier.DecodeJsonSegment(personToken.Split('.')[1], "payload");
+        Assert.Equal(PsIssuer, (string?)resource["ps"]);
+        Assert.Equal(PsIssuer, (string?)resource["aud"]);
+        Assert.Equal((string?)person["sub"], (string?)resource["sub"]);
+        Assert.Equal((string?)person["jti"], (string?)resource["presented_jti"]);
+        Assert.Equal(_agentKey.ComputeJwkThumbprint(), (string?)resource["agent_jkt"]);
     }
 
     [Fact(DisplayName = "UseAAuthIntermediary — passes auth token through to handler")]
@@ -213,6 +231,19 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
         }.Build();
     }
 
+    private string BuildPersonToken() => new PersonTokenBuilder
+    {
+        EgressPolicy = TestEgress.Policy,
+        Issuer = PsIssuer,
+        Audience = ResourceId,
+        Subject = "pairwise-sub",
+        ConfirmationKey = _agentKey,
+        AgentTokenExpiresAt = FixedClock.AddHours(1),
+        Key = _psKey,
+        KeyId = "ps-key-1",
+        IssuedAt = FixedClock,
+    }.Build();
+
     private string BuildAuthToken()
     {
         return new AuthTokenBuilder
@@ -221,7 +252,7 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = PsIssuer,
             Audience = ResourceId,
-            Agent = AgentId,
+            PersonServer = PsIssuer,
             AgentConfirmationKey = _agentKey,
             Key = _psKey,
             KeyId = "ps-key-1",

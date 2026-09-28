@@ -41,6 +41,7 @@ public class InteractionChainingTests
                 PsUrl, TestTokens.Resource,
                 new TokenExchangeRequest
                 {
+                    PresentedToken = "presented",
                     OnInteractionRequired = (interaction, _) =>
                     {
                         captured = interaction;
@@ -72,6 +73,7 @@ public class InteractionChainingTests
             PsUrl, TestTokens.Resource,
             new TokenExchangeRequest
             {
+                PresentedToken = "presented",
                 OnInteractionRequired = (_, _) => Task.CompletedTask,
             }));
         Assert.True(handler.PendingPolled);
@@ -85,7 +87,7 @@ public class InteractionChainingTests
         var exchangeClient = new TokenExchangeClient(new InProcessHttpClient(handler), metaClient);
 
         var ex = await Assert.ThrowsAsync<AAuthTokenExchangeException>(
-            () => exchangeClient.ExchangeAsync(PsUrl, TestTokens.Resource));
+            () => exchangeClient.ExchangeAsync(PsUrl, TestTokens.Resource, "presented"));
 
         Assert.Equal("user_unreachable", ex.ErrorCode);
         Assert.Equal(403, ex.StatusCode);

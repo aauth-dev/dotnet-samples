@@ -195,7 +195,7 @@ public sealed class SampleAuditSink : IAuditSink
 
     public Task RecordAsync(AuditRecord record, CancellationToken ct = default)
         => _log.AppendAsync(
-            new MissionLogEntry(record.Mission.S256, MissionLogEntryKind.Audit, DateTimeOffset.UtcNow)
+            new MissionLogEntry(record.MissionS256, MissionLogEntryKind.Audit, DateTimeOffset.UtcNow)
             {
                 Action = record.Action.Name,
                 Detail = record.Description,
@@ -312,9 +312,6 @@ public sealed class MissionPendingEntry
     /// <summary>The agent's confirmation key, captured to mint the auth token.</summary>
     public IAAuthKey? ConfirmationKey { get; init; }
 
-    /// <summary>Any upstream act claim to carry into the issued auth token.</summary>
-    public JsonObject? UpstreamAct { get; init; }
-
     /// <summary>The clarification question (when started in clarification).</summary>
     public string? Question { get; init; }
 
@@ -327,9 +324,6 @@ public sealed class MissionPendingEntry
     /// <see langword="false"/> on deny. Ignored in scripted mode.
     /// </summary>
     public bool? Decision { get; set; }
-
-    /// <summary>The mission claim to embed in the issued auth token.</summary>
-    public MissionClaim MissionClaim => new(Approver, S256);
 }
 
 /// <summary>In-memory store of parked mission-governance requests.</summary>

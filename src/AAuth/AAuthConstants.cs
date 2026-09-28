@@ -21,9 +21,6 @@ public static class AAuthConstants
         /// <summary>AAuth requirement challenge header.</summary>
         public const string AAuthRequirement = "AAuth-Requirement";
 
-        /// <summary>AAuth mission header.</summary>
-        public const string AAuthMission = "AAuth-Mission";
-
         /// <summary>AAuth capabilities header.</summary>
         public const string AAuthCapabilities = "AAuth-Capabilities";
 
@@ -83,6 +80,9 @@ public static class AAuthConstants
 
         /// <summary>Auth token type.</summary>
         public const string AuthToken = "aa-auth+jwt";
+
+        /// <summary>Person token type.</summary>
+        public const string PersonToken = "aa-person+jwt";
 
         /// <summary>Resource token type.</summary>
         public const string ResourceToken = "aa-resource+jwt";

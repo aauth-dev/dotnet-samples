@@ -6,7 +6,7 @@ namespace AAuth.Agent;
 /// Mutable single-value carrier-token holder shared between an
 /// <see cref="HttpSig.AAuthSigningHandler"/> and a <see cref="ChallengeHandler"/>.
 /// Lets the challenge handler swap the active carrier token (agent token →
-/// auth token) without rebuilding the HttpClient pipeline.
+/// person token → auth token) without rebuilding the HttpClient pipeline.
 /// </summary>
 /// <remarks>
 /// Not thread-safe by design. The current sample agents are single-threaded.
@@ -56,15 +56,13 @@ public sealed class AAuthTokenHolder
         if (carrier.AgentToken is not null && carrier.AgentToken != agentToken) return agentToken;
         request.Options.TryGetValue(MissionForwardingHandler.UpstreamAuthorization, out var upstream);
         if (!string.Equals(carrier.Upstream, upstream, StringComparison.Ordinal)
-            || !string.Equals(carrier.Mission, MissionHeader(request), StringComparison.Ordinal))
+            || !string.Equals(carrier.Mission, AAuthRequestOptions.GetMissionS256(request), StringComparison.Ordinal))
             return agentToken;
         var payload = TokenRefreshHandler.ReadPayloadUnsafe(token);
-        var agent = TokenRefreshHandler.ReadPayloadUnsafe(agentToken);
         var audience = request.Options.TryGetValue(AAuthRequestOptions.ResourceIdentifier, out var resource)
             ? resource : request.RequestUri?.GetLeftPart(UriPartial.Authority);
         if (!AAuth.Tokens.AccountBinding.Matches(AAuthRequestOptions.GetAccount(request), AAuth.Tokens.AccountBinding.Read(payload))
             || (string?)payload["aud"] != audience
-            || (string?)payload["agent"] != (string?)agent["sub"]
             || (long?)payload["exp"] is not { } expiration || expiration <= DateTimeOffset.UtcNow.ToUnixTimeSeconds()
             || AAuth.HttpSig.SignatureKeyParser.Confirmation(payload).ComputeJwkThumbprint() != signingKeyThumbprint)
             return agentToken;
@@ -83,9 +81,6 @@ public sealed class AAuthTokenHolder
         ArgumentException.ThrowIfNullOrEmpty(token);
         request.Options.TryGetValue(MissionForwardingHandler.UpstreamAuthorization, out var upstream);
         request.Options.TryGetValue(SourceToken, out var agentToken);
-        _carrier = new(token, upstream, MissionHeader(request), agentToken);
+        _carrier = new(token, upstream, AAuthRequestOptions.GetMissionS256(request), agentToken);
     }
-
-    private static string? MissionHeader(System.Net.Http.HttpRequestMessage request)
-        => request.Headers.TryGetValues(AAuthMissionHeader.Name, out var values) ? string.Join(",", values) : null;
 }

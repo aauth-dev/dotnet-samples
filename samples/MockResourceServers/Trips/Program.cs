@@ -98,23 +98,19 @@ app.MapGet("/", () => Results.Ok(new
 app.MapGet("/trips", (HttpContext ctx) =>
 {
     var result = ctx.GetAAuthVerification()!;
-    var parsed = ctx.GetAAuthParsedKey()!;
-    var mission = parsed.Payload?["mission"];
 
     return Results.Ok(new
     {
         accessMode = "three-party",
         scheme = "jwt",
         access = "mission",
-        agent = result.Agent,
+        ps = result.PersonServer,
         sub = result.Subject,
         scope = result.Scopes,
         iss = result.Issuer,
-        mission,
-        missionAware = true,
-        act = parsed.Payload?["act"],
+        mission_s256 = result.MissionS256,
     });
-}).RequireAAuth(scope: ScopeRead, missionAware: true);
+}).RequireAAuth(scope: ScopeRead);
 
 // GET /trips/book — out-of-mission elevated scope. Identical mission mechanics,
 // but it requires `trips.book`. When the agent operates under a mission whose
@@ -123,23 +119,19 @@ app.MapGet("/trips", (HttpContext ctx) =>
 app.MapGet("/trips/book", (HttpContext ctx) =>
 {
     var result = ctx.GetAAuthVerification()!;
-    var parsed = ctx.GetAAuthParsedKey()!;
-    var mission = parsed.Payload?["mission"];
 
     return Results.Ok(new
     {
         accessMode = "three-party",
         scheme = "jwt",
         access = "mission-elevated",
-        agent = result.Agent,
+        ps = result.PersonServer,
         sub = result.Subject,
         scope = result.Scopes,
         iss = result.Issuer,
-        mission,
-        missionAware = true,
-        act = parsed.Payload?["act"],
+        mission_s256 = result.MissionS256,
     });
-}).RequireAAuth(scope: ScopeBook, missionAware: true);
+}).RequireAAuth(scope: ScopeBook);
 
 app.Run();
 

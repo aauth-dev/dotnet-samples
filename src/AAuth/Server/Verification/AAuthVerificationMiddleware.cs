@@ -77,7 +77,6 @@ public sealed class AAuthVerificationMiddleware
         return new TokenVerifier
         {
             EgressPolicy = options.EgressPolicy,
-            MaxActDepth = options.MaxActDepth,
             ClockSkew = options.ClockSkew,
             Clock = options.Clock ?? (() => DateTimeOffset.UtcNow),
         };
@@ -105,7 +104,7 @@ public sealed class AAuthVerificationMiddleware
         try
         {
             _verifier.ValidateInput(signatureInput, label, req.Headers.Authorization.FirstOrDefault(),
-                req.Headers[AAuthMissionHeader.Name].FirstOrDefault(), _options.RequiredComponents);
+                _options.RequiredComponents);
             var scheme = SignatureKeyHeader.Parse(signatureKey, label).Scheme;
             if (!_options.AcceptedSchemes.Contains(scheme, StringComparer.Ordinal))
                 throw new AAuthVerificationException(SignatureErrorCode.UnsupportedScheme, "Scheme is not accepted by this endpoint.");
@@ -129,7 +128,6 @@ public sealed class AAuthVerificationMiddleware
                 signatureHeader: signature,
                 publicKey: publicKey,
                 authorization: req.Headers.Authorization.FirstOrDefault(),
-                mission: req.Headers[AAuthMissionHeader.Name].FirstOrDefault(),
                 label: label,
                 fields: req.Headers.ToDictionary(header => header.Key.ToLowerInvariant(), header => string.Join(", ", header.Value.ToArray())),
                 requiredComponents: _options.RequiredComponents,
@@ -187,7 +185,8 @@ public sealed class AAuthVerificationMiddleware
         // Reject one smuggled through a self-anchored/pseudonymous scheme (jkt-jwt)
         // or a keyless inline scheme, which carry no externally-verified issuer.
         var presentedTyp = (string?)parsedInfo.Header?["typ"];
-        if ((presentedTyp == AgentTokenBuilder.TokenType || presentedTyp == AuthTokenBuilder.TokenType)
+        if ((presentedTyp == AgentTokenBuilder.TokenType || presentedTyp == AuthTokenBuilder.TokenType
+                || presentedTyp == PersonTokenBuilder.TokenType)
             && parsedInfo.Scheme != AAuthConstants.Schemes.Jwt)
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
@@ -234,11 +233,17 @@ public sealed class AAuthVerificationMiddleware
                         throw new TokenVerificationException("Auth token issuer is not trusted by policy.");
                     var audience = _options.ResourceIdentifier ?? SignatureKeyParser.Text(resolution.VerifiedToken.Payload, "aud")
                         ?? throw new TokenVerificationException("Auth token requires aud.");
-                    var agent = SignatureKeyParser.Text(resolution.VerifiedToken.Payload, "agent")
-                        ?? throw new TokenVerificationException("Auth token requires agent.");
-                    _tokenVerifier.VerifyAuthToken(parsedInfo.Jwt, resolution.IssuerKey!, audience, publicKey, agent,
+                    _tokenVerifier.VerifyAuthToken(parsedInfo.Jwt, resolution.IssuerKey!, audience, publicKey,
                         accountExpectation: _options.ResourceIdentifier is null ? null
                             : new AccountExpectation(_options.ExpectedAccount?.Invoke(context)));
+                }
+                else if (typ == PersonTokenBuilder.TokenType)
+                {
+                    if (!IssuerTrust.IsTrusted(_options.TrustedAuthTokenIssuers, _options.IsTrustedAuthTokenIssuer, resolution.VerifiedToken.Issuer))
+                        throw new TokenVerificationException("Person token issuer is not trusted by policy.");
+                    var audience = _options.ResourceIdentifier ?? SignatureKeyParser.Text(resolution.VerifiedToken.Payload, "aud")
+                        ?? throw new TokenVerificationException("Person token requires aud.");
+                    _tokenVerifier.VerifyPersonToken(parsedInfo.Jwt, resolution.IssuerKey!, audience, publicKey);
                 }
                 // Other token types require different trust chains and are not
                 // verified at this layer.
@@ -266,13 +271,21 @@ public sealed class AAuthVerificationMiddleware
 
         // Store both the parsed info and the verification result.
         var trustedPayload = resolution.VerifiedToken?.Payload;
+        var tokenType = (string?)parsedInfo.Header?["typ"];
+        var agentIdentifier = tokenType == AgentTokenBuilder.TokenType ? SignatureKeyParser.Text(trustedPayload, "sub") : null;
+        var personServer = tokenType switch
+        {
+            PersonTokenBuilder.TokenType => resolution.VerifiedToken?.Issuer,
+            AuthTokenBuilder.TokenType => SignatureKeyParser.Text(trustedPayload, "ps"),
+            _ => null,
+        };
         context.Items[ParsedInfoItemKey] = parsedInfo;
         context.Items[ContextItemKey] = new VerificationResult
         {
             Scheme = parsedInfo.Scheme,
-            TokenType = (string?)parsedInfo.Header?["typ"],
+            TokenType = tokenType,
             Issuer = resolution.VerifiedIdentifier,
-            Agent = SignatureKeyParser.Text(trustedPayload, "agent"),
+            Agent = agentIdentifier,
             Subject = SignatureKeyParser.Text(trustedPayload, "sub"),
             Scope = SignatureKeyParser.Text(trustedPayload, "scope"),
             IssuerVerified = resolution.VerifiedToken is not null,
@@ -280,14 +293,12 @@ public sealed class AAuthVerificationMiddleware
 
         // Store typed verification result in HttpContext.Features for
         // AAuthAuthenticationHandler and authorization policies.
-        var tokenType = (string?)parsedInfo.Header?["typ"];
         var tokenTypeEnum = AAuthTokenTypeExtensions.ParseTokenType(tokenType);
         var level = DetermineLevel(parsedInfo.Scheme, tokenType);
         var scopeString = SignatureKeyParser.Text(trustedPayload, "scope");
         var scopes = ParseScopes(scopeString);
         var roles = ParseStringArray(trustedPayload?["roles"]);
         var groups = ParseStringArray(trustedPayload?["groups"]);
-        var actAgent = SignatureKeyParser.Text(trustedPayload?["act"] as JsonObject, "agent");
 
         context.Features.Set(new AAuthVerificationResult
         {
@@ -297,17 +308,17 @@ public sealed class AAuthVerificationMiddleware
             Scheme = parsedInfo.Scheme,
             TokenType = tokenTypeEnum,
             Issuer = resolution.VerifiedIdentifier,
-            Agent = tokenType == AuthTokenBuilder.TokenType
-                ? SignatureKeyParser.Text(trustedPayload, "agent")
-                : SignatureKeyParser.Text(trustedPayload, "sub"),
+            Agent = agentIdentifier,
             Subject = SignatureKeyParser.Text(trustedPayload, "sub"),
+            PersonServer = personServer,
+            MissionS256 = personServer is null ? null : SignatureKeyParser.Text(trustedPayload, MissionReference.ClaimName),
+            Tenant = personServer is null ? null : SignatureKeyParser.Text(trustedPayload, "tenant"),
             Scopes = scopes,
             Account = tokenType == AuthTokenBuilder.TokenType ? AccountBinding.Read(trustedPayload) : null,
             AccountVerified = tokenType == AuthTokenBuilder.TokenType && _options.ResourceIdentifier is not null
                 && AccountBinding.Read(trustedPayload) is not null,
             Roles = roles,
             Groups = groups,
-            ActorAgent = actAgent,
             // For jkt-jwt the stable pseudonym is the DURABLE key's thumbprint
             // (parsedInfo.Jkt), per draft-05 §7.1 — not the rotating ephemeral
             // cnf.jwk. Other schemes report the confirmation-key thumbprint.
@@ -317,10 +328,10 @@ public sealed class AAuthVerificationMiddleware
             IssuerVerified = resolution.VerifiedToken is not null,
         });
 
-        // Set UpstreamAuthTokenFeature for aa-auth+jwt tokens so that
+        // Set UpstreamAuthTokenFeature for person and auth tokens so that
         // call-chaining middleware can read the verified upstream token
         // without re-parsing Signature-Key.
-        if (tokenType == AuthTokenBuilder.TokenType &&
+        if (tokenType is AuthTokenBuilder.TokenType or PersonTokenBuilder.TokenType &&
             parsedInfo.Jwt is not null &&
             resolution.VerifiedToken is not null &&
             parsedInfo.Scheme is AAuthConstants.Schemes.Jwt)
@@ -338,11 +349,8 @@ public sealed class AAuthVerificationMiddleware
             activity.SetTag(AAuthDiagnostics.TagTokenType, tokenType);
             if (resolution.VerifiedIdentifier is not null)
                 activity.SetTag(AAuthDiagnostics.TagIssuer, resolution.VerifiedIdentifier);
-            var agent = tokenType == AuthTokenBuilder.TokenType
-                ? SignatureKeyParser.Text(trustedPayload, "agent")
-                : SignatureKeyParser.Text(trustedPayload, "sub");
-            if (agent is not null)
-                activity.SetTag(AAuthDiagnostics.TagAgent, agent);
+            if (agentIdentifier is not null)
+                activity.SetTag(AAuthDiagnostics.TagAgent, agentIdentifier);
             if (scopeString is not null)
                 activity.SetTag(AAuthDiagnostics.TagScope, scopeString);
             activity.SetTag(AAuthDiagnostics.TagIssuerVerified,

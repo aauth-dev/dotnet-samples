@@ -10,13 +10,40 @@ public static class AAuthProblemDetails
         Tokens.TokenCredential credential = Tokens.TokenCredential.Agent)
     {
         var expired = exception.Code == Errors.SignatureErrorCode.ExpiredJwt;
-        var error = (exception.Credential ?? credential) switch
+        var skew = exception.Code == Errors.SignatureErrorCode.ClockSkew;
+        var revoked = exception.Code == Errors.SignatureErrorCode.RevokedJwt;
+        var parameter = (exception.Credential ?? credential) switch
         {
-            Tokens.TokenCredential.Resource => expired ? "expired_resource_token" : "invalid_resource_token",
-            Tokens.TokenCredential.Upstream => "invalid_upstream_token",
-            _ => expired ? "expired_agent_token" : "invalid_agent_token",
+            Tokens.TokenCredential.Resource => "resource",
+            Tokens.TokenCredential.Upstream => "upstream",
+            Tokens.TokenCredential.Subagent => "subagent",
+            Tokens.TokenCredential.Presented => "presented",
+            _ => "agent",
         };
+        var error = skew ? "clock_skew" : $"{(expired ? "expired" : revoked ? "revoked" : "invalid")}_{parameter}_token";
         return Create(error, exception.Message);
+    }
+
+    /// <summary>
+    /// A source token failed registration on a first request (#token-revocation): a
+    /// parameter token is 400 <c>revoked_&lt;parameter&gt;_token</c>; the
+    /// <c>Signature-Key</c> token is 401 <c>Signature-Error: error=revoked_jwt</c>.
+    /// </summary>
+    public static IResult SourceRevoked(Tokens.TokenVerificationException exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        if (exception.Credential is { } credential) return TokenFailure(exception, credential);
+        return new SignatureErrorResult(Errors.SignatureError.Format(Errors.SignatureErrorCode.RevokedJwt));
+    }
+
+    private sealed class SignatureErrorResult(string header) : IResult
+    {
+        public Task ExecuteAsync(HttpContext httpContext)
+        {
+            httpContext.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            httpContext.Response.Headers[Errors.SignatureError.HeaderName] = header;
+            return Task.CompletedTask;
+        }
     }
 
     public static IResult Create(

@@ -195,20 +195,6 @@ public sealed record R3EnforcementDecision(R3EnforcementDecisionKind Kind, strin
         };
     }
 
-    public IResult ToResult(HttpContext context, R3Challenge challenge, string agent, string agentJkt, string? scope = null)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(challenge);
-
-        if (Kind != R3EnforcementDecisionKind.Conditional)
-        {
-            return ToResult();
-        }
-        var proposal = RequireConditionalProposal();
-        var resourceToken = challenge.BuildResourceToken(agent, agentJkt, proposal.Uri, proposal.S256, scope, Account);
-        return ToConditionalChallengeResult(context, resourceToken);
-    }
-
     public IResult ToResult(HttpContext context, R3Challenge challenge, TokenVerifier.VerifiedToken verifiedAuthToken, string? scope = null)
     {
         ArgumentNullException.ThrowIfNull(context);

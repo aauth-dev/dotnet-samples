@@ -54,8 +54,14 @@ public sealed class AAuthAuthenticationHandler : AuthenticationHandler<Authentic
     /// <summary>Claim type for individual groups (one claim per group).</summary>
     public const string GroupClaimType = "aauth:group";
 
-    /// <summary>Claim type for the upstream actor agent (<c>act.agent</c>).</summary>
-    public const string ActorAgentClaimType = "aauth:act_agent";
+    /// <summary>Claim type for the person's PS (<c>ps</c>).</summary>
+    public const string PersonServerClaimType = "aauth:ps";
+
+    /// <summary>Claim type for the mission a request is under (<c>mission_s256</c>).</summary>
+    public const string MissionClaimType = "aauth:mission_s256";
+
+    /// <summary>Claim type for the organization context (<c>tenant</c>).</summary>
+    public const string TenantClaimType = "aauth:tenant";
 
     /// <summary>Create the handler.</summary>
     public AAuthAuthenticationHandler(
@@ -117,9 +123,19 @@ public sealed class AAuthAuthenticationHandler : AuthenticationHandler<Authentic
             claims.Add(new Claim(IssuerClaimType, result.Issuer));
         }
 
-        if (result.ActorAgent is not null)
+        if (result.PersonServer is not null)
         {
-            claims.Add(new Claim(ActorAgentClaimType, result.ActorAgent));
+            claims.Add(new Claim(PersonServerClaimType, result.PersonServer));
+        }
+
+        if (result.MissionS256 is not null)
+        {
+            claims.Add(new Claim(MissionClaimType, result.MissionS256, ClaimValueTypes.String, assertingIssuer));
+        }
+
+        if (result.Tenant is not null)
+        {
+            claims.Add(new Claim(TenantClaimType, result.Tenant, ClaimValueTypes.String, assertingIssuer));
         }
 
         foreach (var scope in result.Scopes)

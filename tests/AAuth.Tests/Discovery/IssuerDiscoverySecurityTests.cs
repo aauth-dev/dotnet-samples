@@ -104,7 +104,7 @@ public class IssuerDiscoverySecurityTests
         {
             var jwt = new AuthTokenBuilder
             {
-                Issuer = Issuer, Audience = Audience, Agent = Agent, Scope = "read",
+                Issuer = Issuer, Audience = Audience, PersonServer = Issuer, Subject = "person", Scope = "read",
                 AgentConfirmationKey = _agent, AgentTokenExpiresAt = Start.AddHours(1),
                 Key = Handler.Key, KeyId = Handler.Kid, Dwk = AuthTokenBuilder.AccessDwk,
             }.Build();
@@ -115,14 +115,14 @@ public class IssuerDiscoverySecurityTests
                         AuthTokenBuilder.AccessDwk, Audience);
                     return true;
                 case "auth":
-                    await _verifier.VerifyAuthTokenWithJwksAsync(jwt, _metadata, _jwks, Audience, _agent, Agent);
+                    await _verifier.VerifyAuthTokenWithJwksAsync(jwt, _metadata, _jwks, Audience, _agent);
                     return true;
                 case "upstream":
                     return (await new UpstreamTokenValidator(_metadata, _jwks, _verifier)
-                        .ValidateAsync(jwt, Audience, issuer => issuer == Issuer)).IsValid;
+                        .ValidateAsync(jwt, Audience, Issuer, issuer => issuer == Issuer)).IsValid;
                 case "delivery":
                     return (await new AuthTokenResponseValidator(_metadata, _jwks, _verifier)
-                        .ValidateAsync(jwt, Issuer, Audience, Agent, _agent)).IsValid;
+                        .ValidateAsync(jwt, Issuer, Audience, "person", Issuer, _agent, Start.AddHours(2))).IsValid;
                 default:
                     var segments = jwt.Split('.');
                     if (path == "self-jwt")

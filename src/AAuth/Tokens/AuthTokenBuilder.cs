@@ -8,8 +8,8 @@ namespace AAuth.Tokens;
 /// <summary>
 /// Builds and signs an <c>aa-auth+jwt</c> per the AAuth protocol spec
 /// (§Auth Token Structure). Used by Person Servers (three-party) and Access
-/// Servers (four-party). The current consumers are the in-process mock PS
-/// in the integration tests and the future <c>samples/MockPersonServer/</c>.
+/// Servers (four-party). The token names the person (<c>ps</c>, <c>sub</c>) and
+/// the agent's key (<c>cnf</c>), never an agent identifier.
 /// </summary>
 public sealed class AuthTokenBuilder
 {
@@ -25,14 +25,16 @@ public sealed class AuthTokenBuilder
 
     private static readonly HashSet<string> ReservedClaims = new(StringComparer.Ordinal)
     {
-        "iss", "dwk", "aud", "jti", "agent", "cnf", "iat", "exp", "nbf",
-        "sub", "scope", "act", "mission", "account", "tenant", "roles", "groups",
+        "iss", "dwk", "aud", "jti", "ps", "cnf", "iat", "exp", "nbf",
+        "sub", "scope", "mission_s256", "account", "tenant", "roles", "groups",
+        // An auth token carries no agent identifier or delegation chain.
+        "agent", "act", "mission",
     };
 
     public static bool IsReservedClaim(string name) => ReservedClaims.Contains(name);
 
     public static bool IsIdentityClaimAllowed(string name) => !IsReservedClaim(name)
-        || name is "sub" or "tenant" or "roles" or "groups";
+        || name is "tenant" or "roles" or "groups";
 
     /// <summary>HTTPS URL of the PS/AS that issues this token (<c>iss</c>).</summary>
     public required string Issuer { get; init; }
@@ -40,10 +42,13 @@ public sealed class AuthTokenBuilder
     /// <summary>Audience — the resource URL (<c>aud</c>).</summary>
     public required string Audience { get; init; }
 
-    /// <summary>Agent identifier (<c>agent</c>).</summary>
-    public required string Agent { get; init; }
+    /// <summary>The person's PS (<c>ps</c>): the issuer in three-party, the federating PS in four-party.</summary>
+    public required string PersonServer { get; init; }
 
-    /// <summary>The agent's public confirmation key (<c>cnf.jwk</c>).</summary>
+    /// <summary>The directed subject copied from the resource token (<c>sub</c>).</summary>
+    public required string Subject { get; init; }
+
+    /// <summary>The agent's public confirmation key (<c>cnf.jwk</c>); the sub-agent's for a sub-agent.</summary>
     public required IAAuthKey AgentConfirmationKey { get; init; }
 
     public required DateTimeOffset AgentTokenExpiresAt { get; init; }
@@ -80,21 +85,12 @@ public sealed class AuthTokenBuilder
     /// </summary>
     public IReadOnlyList<string>? Groups { get; init; }
 
-    /// <summary>Pairwise pseudonymous user identifier.</summary>
-    public string? Subject { get; init; }
+    /// <summary><c>mission_s256</c> copied from the resource token, when present.</summary>
+    public string? MissionS256 { get; init; }
 
     /// <summary>
-    /// Mission claim (<c>mission</c>) — present when the auth token was issued in
-    /// the context of a mission (§Auth Token Structure). Carries only <c>approver</c>
-    /// and <c>s256</c>; the mission content stays at the PS.
-    /// </summary>
-    public MissionClaim? Mission { get; init; }
-
-    /// <summary>
-    /// Enterprise <c>tenant</c> claim (§Auth Token, OpenID Connect for
-    /// Enterprise) — identifies the principal's tenant/organization within the
-    /// issuer. Combined with <c>iss</c> and <c>sub</c> it forms the globally
-    /// unique <c>(iss, tenant, sub)</c> identity. Emitted when non-empty.
+    /// Enterprise <c>tenant</c> claim copied from the resource token: organization
+    /// context, not part of the person identifier <c>(iss, sub)</c>.
     /// </summary>
     public string? Tenant { get; init; }
 
@@ -106,17 +102,6 @@ public sealed class AuthTokenBuilder
 
     /// <summary>Token id. Defaults to a fresh GUID.</summary>
     public string? TokenId { get; init; }
-
-    /// <summary>
-    /// The complete <c>act</c> delegation-chain node (§Delegation Chain), emitted
-    /// verbatim. OPTIONAL — leave <see langword="null"/> for direct authorization
-    /// (the token then carries no <c>act</c>). When chaining or issuing to a
-    /// sub-agent, build it with <see cref="ActChainBuilder.BuildNestedAct"/>:
-    /// <c>act.agent</c> names the immediate upstream agent (the delegator), with the
-    /// upstream's own chain nested as <c>act.act</c>. The presenter's identity is in
-    /// the top-level <c>agent</c> claim and is not repeated inside <c>act</c>.
-    /// </summary>
-    public JsonObject? Act { get; init; }
 
     /// <summary>
     /// Additional identity claims to merge into the payload — used by an
@@ -131,11 +116,12 @@ public sealed class AuthTokenBuilder
     {
         Require(Issuer, nameof(Issuer));
         Require(Audience, nameof(Audience));
-        Require(Agent, nameof(Agent));
+        Require(PersonServer, nameof(PersonServer));
+        Require(Subject, nameof(Subject));
         Require(KeyId, nameof(KeyId));
         AccountBinding.Validate(Account);
-        if (Act is not null && !ActChainBuilder.ValidateChain(Act, int.MaxValue, EgressPolicy))
-            throw new InvalidOperationException("Act must contain only valid agent identities, never person identifiers.");
+        if (MissionS256 is not null && !MissionReference.IsValid(MissionS256))
+            throw new InvalidOperationException("MissionS256 must be an unpadded base64url SHA-256 digest.");
         // `required` is a compile-time hint; reflection / default! callers
         // can still pass null. Fail explicitly so the diagnostic points at
         // the configuration rather than surfacing as a NullReferenceException
@@ -160,33 +146,11 @@ public sealed class AuthTokenBuilder
         {
             throw new InvalidOperationException("Audience must be an absolute https:// URL (or http://localhost).");
         }
-        if (Lifetime <= TimeSpan.Zero || Lifetime > TimeSpan.FromHours(1))
+        if (!AAuthUrl.IsHttpsOrLoopback(PersonServer, EgressPolicy))
         {
-            throw new InvalidOperationException("Auth token Lifetime must be positive and must not exceed 1 hour.");
+            throw new InvalidOperationException("PersonServer must be an absolute https:// URL (or http://localhost).");
         }
-        if (Subject is null && string.IsNullOrEmpty(Scope))
-        {
-            // Spec: at least one of `sub` or `scope` MUST be present.
-            throw new InvalidOperationException("At least one of Subject or Scope must be set.");
-        }
-
-        var iat = IssuedAt ?? TimeProvider.GetUtcNow();
-        var ceiling = AuthorizationExpiresAt is { } authorizationExpiry && authorizationExpiry < AgentTokenExpiresAt
-            ? authorizationExpiry : AgentTokenExpiresAt;
-        var now = TimeProvider.GetUtcNow();
-        if (ceiling.ToUnixTimeSeconds() <= now.ToUnixTimeSeconds())
-        {
-            throw new AuthTokenExpiredException();
-        }
-        var exp = iat + Lifetime;
-        if (exp > ceiling)
-        {
-            exp = ceiling;
-        }
-        if (exp.ToUnixTimeSeconds() <= iat.ToUnixTimeSeconds() || exp.ToUnixTimeSeconds() <= now.ToUnixTimeSeconds())
-        {
-            throw new AuthTokenExpiredException();
-        }
+        var (iat, exp) = TokenClaims.Lifetime(IssuedAt, Lifetime, AgentTokenExpiresAt, AuthorizationExpiresAt, TimeProvider);
         var jti = TokenId ?? Guid.NewGuid().ToString("N");
 
         var header = new JsonObject
@@ -196,33 +160,20 @@ public sealed class AuthTokenBuilder
             ["kid"] = KeyId,
         };
 
-        // The act claim is OPTIONAL (§Delegation Chain) — absent for direct
-        // authorization. When present (call chaining or sub-agent issuance), it is
-        // the complete node: act.agent is the immediate upstream agent (delegator),
-        // not the presenter, whose identity is in the top-level `agent` claim.
         var payload = new JsonObject
         {
             ["iss"] = Issuer,
             ["dwk"] = Dwk,
             ["aud"] = Audience,
             ["jti"] = jti,
-            ["agent"] = Agent,
+            ["ps"] = PersonServer,
+            ["sub"] = Subject,
             ["cnf"] = new JsonObject { ["jwk"] = AgentConfirmationKey.ToPublicJwk() },
             ["iat"] = iat.ToUnixTimeSeconds(),
             ["exp"] = exp.ToUnixTimeSeconds(),
         };
 
         if (Account is not null) payload["account"] = Account;
-
-        if (Act is not null)
-        {
-            payload["act"] = Act.DeepClone();
-        }
-
-        if (Subject is not null)
-        {
-            payload["sub"] = Subject;
-        }
         if (!string.IsNullOrEmpty(Tenant))
         {
             payload["tenant"] = Tenant;
@@ -239,9 +190,9 @@ public sealed class AuthTokenBuilder
         {
             payload["groups"] = ToJsonArray(Groups);
         }
-        if (Mission is not null)
+        if (MissionS256 is not null)
         {
-            payload["mission"] = Mission.ToJsonObject();
+            payload[MissionReference.ClaimName] = MissionS256;
         }
         if (AdditionalClaims is not null)
         {

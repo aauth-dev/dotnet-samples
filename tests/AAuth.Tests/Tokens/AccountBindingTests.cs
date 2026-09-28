@@ -21,14 +21,14 @@ public class AccountBindingTests
         var refreshed = AgentToken();
         var auth = new AuthTokenBuilder
         {
-            Issuer = "https://ps.example", Audience = "https://resource.example", Agent = "aauth:agent@ap.example",
+            Issuer = "https://ps.example", Audience = "https://resource.example", PersonServer = "https://ps.example",
             Key = key, KeyId = "ps-key", AgentConfirmationKey = key, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10),
             Subject = "person", Account = "personal",
         }.Build();
         var holder = new AAuth.Agent.AAuthTokenHolder();
         using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "https://resource.example/data");
         request.Options.Set(AAuth.Agent.AAuthRequestOptions.Account, "personal");
-        request.Headers.TryAddWithoutValidation("AAuth-Mission", "mission-a");
+        request.Options.Set(AAuth.Agent.AAuthRequestOptions.MissionS256, "mission-a");
         Assert.Equal(original, holder.SelectForRequest(request, original, key.ComputeJwkThumbprint()));
         holder.UpdateFromExchange(auth, request);
         Assert.Equal(auth, holder.SelectForRequest(request, original, key.ComputeJwkThumbprint()));
@@ -37,8 +37,7 @@ public class AccountBindingTests
         request.Options.Set(AAuth.Agent.AAuthRequestOptions.Account, "work");
         Assert.Equal(original, holder.SelectForRequest(request, original, key.ComputeJwkThumbprint()));
         request.Options.Set(AAuth.Agent.AAuthRequestOptions.Account, "personal");
-        request.Headers.Remove("AAuth-Mission");
-        request.Headers.TryAddWithoutValidation("AAuth-Mission", "mission-b");
+        request.Options.Set(AAuth.Agent.AAuthRequestOptions.MissionS256, "mission-b");
         Assert.Equal(original, holder.SelectForRequest(request, original, key.ComputeJwkThumbprint()));
     }
 
@@ -76,7 +75,7 @@ public class AccountBindingTests
         var authToken = new AuthTokenBuilder
         {
             Issuer = "https://ps.example", Audience = "https://resource.example",
-            Agent = "aauth:demo@ap.example", AgentConfirmationKey = agentKey,
+            PersonServer = "https://ps.example", AgentConfirmationKey = agentKey,
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
             Key = issuerKey, KeyId = "ps1", Subject = "person", Account = tokenAccount,
         }.Build();
@@ -121,7 +120,7 @@ public class AccountBindingTests
         var jwt = new AuthTokenBuilder
         {
             Issuer = "https://ps.example", Audience = "https://resource.example",
-            Agent = "aauth:demo@ap.example", AgentConfirmationKey = agent,
+            PersonServer = "https://ps.example", AgentConfirmationKey = agent,
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
             Key = issuer, KeyId = "ps1", Subject = "person", Account = actual,
         }.Build();
@@ -129,7 +128,7 @@ public class AccountBindingTests
         Assert.Equal(actual is not null, payload.ContainsKey("account"));
         var verifier = new TokenVerifier();
         TokenVerifier.VerifiedToken Verify() => verifier.VerifyAuthToken(jwt, issuer,
-            "https://resource.example", agent, "aauth:demo@ap.example",
+            "https://resource.example", agent,
             accountExpectation: new AccountExpectation(expected));
         if (accepted) Assert.Equal(actual, Verify().Account);
         else Assert.Throws<TokenVerificationException>(Verify);

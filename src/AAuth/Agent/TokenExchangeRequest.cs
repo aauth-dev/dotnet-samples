@@ -7,13 +7,27 @@ using AAuth.Headers;
 namespace AAuth.Agent;
 
 /// <summary>
-/// Optional parameters for <see cref="TokenExchangeClient.ExchangeAsync(string, string, TokenExchangeRequest, CancellationToken)"/>.
+/// Optional parameters for <see cref="TokenExchangeClient.ExchangeAsync(string, string, TokenExchangeRequest, CancellationToken)"/>
+/// and <see cref="TokenExchangeClient.RequestPersonTokenAsync"/>.
 /// Groups the deferred-consent, call-chaining, and capability/prompt options so
 /// the public surface stays stable as new exchange parameters are added.
 /// </summary>
 public sealed class TokenExchangeRequest
 {
     public string? Account { get; init; }
+
+    /// <summary>
+    /// The person token or auth token presented to the resource that issued the
+    /// resource token (<c>presented_token</c>). REQUIRED for an auth token request;
+    /// ignored when requesting a person token.
+    /// </summary>
+    public string? PresentedToken { get; init; }
+
+    /// <summary>
+    /// The mission to request a person token under (<c>mission_s256</c>). The PS
+    /// copies it into the person token and the resource copies it from there.
+    /// </summary>
+    public string? MissionS256 { get; init; }
     /// <summary>
     /// Invoked when the PS returns <c>202</c> with an interaction requirement,
     /// before polling begins. Callers display the user-facing URL/code via
@@ -27,18 +41,15 @@ public sealed class TokenExchangeRequest
     public DeferredPollerOptions? PollerOptions { get; init; }
 
     /// <summary>
-    /// Optional upstream auth token for call-chaining scenarios. When provided,
-    /// included as <c>upstream_token</c> in the POST body so the PS/AS can
-    /// construct nested <c>act</c> claims preserving the delegation chain.
+    /// Optional upstream token for call chaining: the person token or auth token
+    /// the calling agent presented to this intermediary (<c>upstream_token</c>).
     /// </summary>
     public string? UpstreamToken { get; init; }
 
     /// <summary>
     /// Optional sub-agent agent token (<c>subagent_token</c>) for parent-mediated
-    /// authorization (§Sub-Agents). When set, the signing agent is the parent and
-    /// the PS/AS issues an auth token bound to the sub-agent's key, recording the
-    /// parent in the <c>act</c> chain. The parent MUST be named by the
-    /// <c>subagent_token</c>'s <c>parent_agent</c> claim.
+    /// authorization (§Sub-Agents). The signing agent is the parent; the issued
+    /// token is bound to the sub-agent's key and names neither agent.
     /// </summary>
     public string? SubagentToken { get; init; }
 

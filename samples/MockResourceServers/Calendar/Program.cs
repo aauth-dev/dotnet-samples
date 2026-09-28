@@ -98,20 +98,18 @@ app.MapGet("/", () => Results.Ok(new
 app.MapGet("/events", (HttpContext ctx) =>
 {
     var result = ctx.GetAAuthVerification()!;
-    var parsed = ctx.GetAAuthParsedKey()!;
 
     return Results.Ok(new
     {
         accessMode = "three-party",
         scheme = "jwt",
-        agent = result.Agent,
+        ps = result.PersonServer,
         sub = result.Subject,
         scope = result.Scopes,
         iss = result.Issuer,
-        // The canonical user identity is the (iss, sub) pair: the same `sub`
+        // The canonical user identity is the (ps, sub) pair: the same `sub`
         // asserted by a different Person Server is a different user.
-        userKey = result.Issuer is null ? null : $"{result.Issuer}|{result.Subject}",
-        act = parsed.Payload?["act"],
+        userKey = result.PersonServer is null ? null : $"{result.PersonServer}|{result.Subject}",
     });
 }).RequireAAuth(scope: ScopeRead);
 
@@ -125,7 +123,7 @@ app.MapGet("/events/write", (HttpContext ctx) =>
         accessMode = "three-party",
         scheme = "jwt",
         access = "write",
-        agent = result.Agent,
+        ps = result.PersonServer,
         sub = result.Subject,
         scope = result.Scopes,
         iss = result.Issuer,
@@ -143,7 +141,7 @@ app.MapGet("/events/admin", (HttpContext ctx) =>
         accessMode = "three-party",
         scheme = "jwt",
         access = "admin",
-        agent = result.Agent,
+        ps = result.PersonServer,
         sub = result.Subject,
         roles = result.Roles,
         groups = result.Groups,

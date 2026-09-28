@@ -50,8 +50,8 @@ public sealed record InteractionRequest(InteractionType Type)
     /// </summary>
     public int? MaxWait { get; init; }
 
-    /// <summary>Mission binding (<c>approver</c> + <c>s256</c>). Optional.</summary>
-    public MissionClaim? Mission { get; init; }
+    /// <summary>The mission (<c>mission_s256</c>). Optional.</summary>
+    public string? MissionS256 { get; init; }
 
     /// <summary>The wire value for <see cref="Type"/>.</summary>
     internal string TypeValue => Type switch
@@ -73,7 +73,7 @@ public sealed record InteractionRequest(InteractionType Type)
         if (!string.IsNullOrEmpty(Question)) { body["question"] = Question; }
         if (!string.IsNullOrEmpty(Summary)) { body["summary"] = Summary; }
         if (MaxWait is { } maxWait) { body["max_wait"] = maxWait; }
-        if (Mission is not null) { body["mission"] = Mission.ToJsonObject(); }
+        if (MissionS256 is not null) { body["mission_s256"] = MissionS256; }
         return body;
     }
 }

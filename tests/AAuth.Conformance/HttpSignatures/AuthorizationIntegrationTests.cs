@@ -151,7 +151,8 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
                 subject = user.FindFirst(ClaimTypes.NameIdentifier)?.Value,
                 subjectIssuer = user.FindFirst(ClaimTypes.NameIdentifier)?.Issuer,
                 subIss = user.FindFirst(AAuthAuthenticationHandler.SubjectIssuerClaimType)?.Value,
-                actAgent = user.FindFirst(AAuthAuthenticationHandler.ActorAgentClaimType)?.Value,
+                ps = user.FindFirst(AAuthAuthenticationHandler.PersonServerClaimType)?.Value,
+                mission = user.FindFirst(AAuthAuthenticationHandler.MissionClaimType)?.Value,
                 scopes = user.FindAll(AAuthAuthenticationHandler.ScopeClaimType)
                     .Select(c => c.Value).ToArray(),
             });
@@ -177,7 +178,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
         }.Build();
     }
 
-    private string BuildAuthToken(string scope = "whoami", JsonObject? act = null)
+    private string BuildAuthToken(string scope = "whoami", string? missionS256 = null)
     {
         return new AuthTokenBuilder
         {
@@ -185,13 +186,13 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = PsIssuer,
             Audience = ResourceId,
-            Agent = AgentId,
+            PersonServer = PsIssuer,
             AgentConfirmationKey = _agentKey,
             Key = _psKey,
             KeyId = "ps-key-1",
             Subject = "pairwise-sub-123",
             Scope = scope,
-            Act = act,
+            MissionS256 = missionS256,
             IssuedAt = FixedClock,
         }.Build();
     }
@@ -268,7 +269,9 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
         Assert.Equal(true, (bool?)json["isAuthenticated"]);
         Assert.Equal("Authorized", (string?)json["level"]);
-        Assert.Equal(AgentId, (string?)json["agent"]);
+        // An auth token names the person, not the agent.
+        Assert.Null((string?)json["agent"]);
+        Assert.Equal(PsIssuer, (string?)json["ps"]);
         Assert.Equal(ApIssuer, (string?)json["issuer"]);  // auth token issuer = PS
         Assert.Equal("pairwise-sub-123", (string?)json["subject"]);
         // §G8 — the subject claim is namespaced by the asserting PS, and the
@@ -366,16 +369,15 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
         Assert.Contains("data:read", scopes);
     }
 
-    [Fact(DisplayName = "§Auth — delegated auth token carries act.agent as claim")]
-    public async Task AuthTokenCarriesActAgent()
+    [Fact(DisplayName = "§Auth — an auth token's mission_s256 is surfaced as a claim")]
+    public async Task AuthTokenCarriesMission()
     {
-        // A delegated auth token names the immediate upstream agent in act.agent.
-        const string upstreamAgent = "aauth:orchestrator@ap.example";
-        var token = BuildAuthToken(act: ActChainBuilder.BuildNestedAct(upstreamAgent));
+        const string mission = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        var token = BuildAuthToken(missionS256: mission);
         var response = await SendSigned(token, "/claims");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var json = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
-        Assert.Equal(upstreamAgent, (string?)json["actAgent"]);
+        Assert.Equal(mission, (string?)json["mission"]);
     }
 }

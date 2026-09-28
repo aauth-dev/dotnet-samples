@@ -20,7 +20,9 @@ public class ResourceTokenBuilderTests
         {
             Issuer = "https://resource.example",
             Audience = "https://ps.example",
-            Agent = "aauth:demo@ap.example",
+            PersonServer = "https://ps.example",
+            Subject = "person-1",
+            PresentedJti = "person-token-1",
             AgentJkt = "thumbprint-here",
             Key = AAuthKey.Generate(),
             KeyId = "r1",
@@ -39,7 +41,9 @@ public class ResourceTokenBuilderTests
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://resource.example",
             Audience = "https://ps.example",
-            Agent = "aauth:demo@ap.example",
+            PersonServer = "https://ps.example",
+            Subject = "person-1",
+            PresentedJti = "person-token-1",
             AgentJkt = "thumbprint-here",
             Key = resourceKey,
             KeyId = "r1",
@@ -60,7 +64,10 @@ public class ResourceTokenBuilderTests
         Assert.Equal("https://resource.example", (string?)payload["iss"]);
         Assert.Equal("aauth-resource.json", (string?)payload["dwk"]);
         Assert.Equal("https://ps.example", (string?)payload["aud"]);
-        Assert.Equal("aauth:demo@ap.example", (string?)payload["agent"]);
+        Assert.Equal("https://ps.example", (string?)payload["ps"]);
+        Assert.Equal("person-1", (string?)payload["sub"]);
+        Assert.Equal("person-token-1", (string?)payload["presented_jti"]);
+        Assert.Null(payload["agent"]);
         Assert.Equal("thumbprint-here", (string?)payload["agent_jkt"]);
         Assert.Equal("whoami", (string?)payload["scope"]);
         Assert.NotNull(payload["jti"]);
@@ -78,7 +85,9 @@ public class ResourceTokenBuilderTests
             EgressPolicy = TestEgress.Policy,
             Issuer = "https://r.example",
             Audience = "https://ps.example",
-            Agent = "aauth:a@ap.example",
+            PersonServer = "https://ps.example",
+            Subject = "person-1",
+            PresentedJti = "person-token-1",
             AgentJkt = "thumb",
             Key = key,
             KeyId = "k",
@@ -96,7 +105,9 @@ public class ResourceTokenBuilderTests
             EgressPolicy = TestEgress.Policy,
             Issuer = "http://r.example",
             Audience = "https://ps.example",
-            Agent = "aauth:a@ap.example",
+            PersonServer = "https://ps.example",
+            Subject = "person-1",
+            PresentedJti = "person-token-1",
             AgentJkt = "t",
             Key = key,
             KeyId = "k",

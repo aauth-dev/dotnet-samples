@@ -45,7 +45,10 @@ public class RevocationLifecycleTests
         Assert.Contains(graph.Revocations, entry => entry.Token.TokenId == (string?)Decode(child)["jti"]);
         Assert.Contains(graph.Revocations, entry => entry.Token.TokenId == (string?)Decode(grandchild)["jti"]);
         using var extension = await graph.RequestAsync(second, SecondResource, false, grandchild);
-        Assert.Equal(HttpStatusCode.BadRequest, extension.StatusCode);
+        // §Upstream Token Verification / §Token Endpoint Error Codes: a revoked upstream token is 400 revoked_upstream_token.
+        var extensionBody = await extension.Content.ReadAsStringAsync();
+        Assert.True(extension.StatusCode == HttpStatusCode.BadRequest, $"Status={(int)extension.StatusCode} {extensionBody}");
+        Assert.Contains("revoked_upstream_token", extensionBody);
     }
 
     [Theory]
@@ -60,8 +63,11 @@ public class RevocationLifecycleTests
         Assert.Equal(HttpStatusCode.OK, await new RevocationClient(issuer).RevokeAsync(new Uri(Person + "/revoke"),
             new TokenKey(Person, (string)Decode(upstream)["jti"]!)));
         using var blocked = await graph.RequestAsync(agent, FirstResource, federated, upstream);
-        Assert.Equal(HttpStatusCode.BadRequest, blocked.StatusCode);
-        Assert.False((await blocked.Content.ReadFromJsonAsync<JsonObject>())!.ContainsKey("auth_token"));
+        var blockedBody = await blocked.Content.ReadAsStringAsync();
+        Assert.True(blocked.StatusCode == HttpStatusCode.BadRequest, $"Status={(int)blocked.StatusCode} {blockedBody}");
+        var blockedJson = JsonNode.Parse(blockedBody)!.AsObject();
+        Assert.Equal("revoked_upstream_token", (string?)blockedJson["error"]);
+        Assert.False(blockedJson.ContainsKey("auth_token"));
     }
 
     [Fact]
@@ -79,8 +85,11 @@ public class RevocationLifecycleTests
         graph.Pending.MarkAllowed(initial.Headers.Location!.ToString().Split('/').Last(), "person");
         using var client = graph.AgentClient(agent);
         using var result = await client.GetAsync(Person + initial.Headers.Location);
-        Assert.Equal(HttpStatusCode.BadRequest, result.StatusCode);
-        Assert.False((await result.Content.ReadFromJsonAsync<JsonObject>())!.ContainsKey("auth_token"));
+        // §Polling Error Codes: a pending request whose upstream token was revoked is 403 revoked.
+        Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
+        var body = (await result.Content.ReadFromJsonAsync<JsonObject>())!;
+        Assert.Equal("revoked", (string?)body["error"]);
+        Assert.False(body.ContainsKey("auth_token"));
     }
 
     [Theory]
@@ -158,9 +167,10 @@ public class RevocationLifecycleTests
         var fresh = graph.AgentToken(FirstProvider, "fresh");
         using var agent = graph.AgentClient(fresh);
         using var poll = await agent.GetAsync(Person + pendingPath);
-        Assert.Equal(HttpStatusCode.BadRequest, poll.StatusCode);
+        // §Polling Error Codes: the agent token that started the request was revoked.
+        Assert.Equal(HttpStatusCode.Forbidden, poll.StatusCode);
         var body = await poll.Content.ReadFromJsonAsync<JsonObject>();
-        Assert.Equal("invalid_agent_token", (string?)body!["error"]);
+        Assert.Equal("revoked", (string?)body!["error"]);
         Assert.False(body.ContainsKey("auth_token"));
     }
 
@@ -300,10 +310,18 @@ public class RevocationLifecycleTests
 
         public string AuthToken(string issuer, string tokenId) => new AuthTokenBuilder
         {
-            EgressPolicy = TestEgress.Policy, Issuer = issuer, Audience = FirstResource,
-            Agent = Agent, AgentConfirmationKey = _agentKey, Key = _keys[issuer], KeyId = "key", Subject = "person",
+            EgressPolicy = TestEgress.Policy, Issuer = issuer, Audience = FirstResource, PersonServer = Person,
+            AgentConfirmationKey = _agentKey, Key = _keys[issuer], KeyId = "key", Subject = "person",
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1), TokenId = tokenId,
             Dwk = issuer == Access ? AuthTokenBuilder.AccessDwk : AuthTokenBuilder.PersonDwk,
+        }.Build();
+
+        // The person token this PS issued the agent for the resource (the presented token).
+        public string PersonToken(string agentToken, string resource) => new PersonTokenBuilder
+        {
+            EgressPolicy = TestEgress.Policy, Issuer = Person, Audience = resource, Subject = "person",
+            ConfirmationKey = AgentKey(agentToken), AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+            Key = _keys[Person], KeyId = "key",
         }.Build();
 
         public HttpClient Signed(string issuer, string dwk) => new InProcessHttpClient(new AAuthSigningHandler(_keys[issuer],
@@ -320,13 +338,16 @@ public class RevocationLifecycleTests
 
         public async Task<HttpResponseMessage> RequestAsync(string agentToken, string resource, bool federated, string? upstream = null)
         {
+            var personToken = PersonToken(agentToken, resource);
+            var person = Decode(personToken);
             var request = new ResourceTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy, Issuer = resource, Audience = federated ? Access : Person,
-                Agent = (string)Decode(agentToken)["sub"]!, AgentJkt = AgentKey(agentToken).ComputeJwkThumbprint(), Key = _keys[resource], KeyId = "key",
+                PersonServer = Person, Subject = (string)person["sub"]!, PresentedJti = (string)person["jti"]!,
+                AgentJkt = AgentKey(agentToken).ComputeJwkThumbprint(), Key = _keys[resource], KeyId = "key",
             }.Build();
             using var client = AgentClient(agentToken);
-            return await client.PostAsJsonAsync(Person + "/token", new { resource_token = request, upstream_token = upstream });
+            return await client.PostAsJsonAsync(Person + "/token", new { resource_token = request, presented_token = personToken, upstream_token = upstream });
         }
 
         public async Task<string> GrantAsync(string agentToken, string resource, bool federated, string? upstream = null)
@@ -380,7 +401,7 @@ public class RevocationLifecycleTests
         private sealed class AllowPolicy : IAccessPolicy
         {
             public Task<AccessDecision> EvaluateAsync(AccessPolicyRequest request, CancellationToken ct = default)
-                => Task.FromResult(AccessDecision.Allow("person"));
+                => Task.FromResult(AccessDecision.Allow());
         }
     }
 }

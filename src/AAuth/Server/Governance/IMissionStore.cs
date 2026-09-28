@@ -22,6 +22,13 @@ public sealed record StoredMission(
 {
     /// <summary>The mission lifecycle state (§Mission Management). Defaults to active.</summary>
     public MissionState State { get; init; } = MissionState.Active;
+
+    /// <summary>
+    /// The approved mission's <c>expires_at</c>, when set. Tokens carrying this
+    /// mission's <c>mission_s256</c> MUST NOT outlive it, and the mission is no
+    /// longer active once it passes.
+    /// </summary>
+    public DateTimeOffset? ExpiresAt { get; init; }
 }
 
 /// <summary>

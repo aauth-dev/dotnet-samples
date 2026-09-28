@@ -46,7 +46,6 @@ public sealed class AAuthVerifier
     /// <param name="signatureHeader">Verbatim <c>Signature</c> header value.</param>
     /// <param name="publicKey">Public key for HTTP-signature verification (resolved from scheme).</param>
     /// <param name="authorization">Verbatim <c>Authorization</c> header value, or null if absent.</param>
-    /// <param name="mission">Verbatim <c>AAuth-Mission</c> header value, or null if absent.</param>
     /// <exception cref="AAuthVerificationException">If any check fails.</exception>
     public string Verify(
         string method,
@@ -57,7 +56,6 @@ public sealed class AAuthVerifier
         string signatureHeader,
         IAAuthKey publicKey,
         string? authorization = null,
-        string? mission = null,
         string label = "sig",
         IReadOnlyDictionary<string, string>? fields = null,
         IReadOnlyCollection<string>? requiredComponents = null,
@@ -68,7 +66,7 @@ public sealed class AAuthVerifier
         string? requestTarget = null)
     {
         ArgumentNullException.ThrowIfNull(publicKey);
-        var input = ValidateInput(signatureInput, label, authorization, mission, requiredComponents);
+        var input = ValidateInput(signatureInput, label, authorization, requiredComponents);
         SignatureKeyHeader.Parse(signatureKey, label);
         if (input.Parameters.TryGetValue("keyid", out var keyIdValue)
             && (keyIdValue is not string suppliedId || suppliedId != (keyId ?? publicKey.ComputeJwkThumbprint())))
@@ -96,7 +94,6 @@ public sealed class AAuthVerifier
                 "@target-uri" => requestScheme is null ? null : requestScheme.ToLowerInvariant() + "://" + normalizedAuthority + path + query,
                 "signature-key" => signatureKey,
                 "authorization" => authorization,
-                "aauth-mission" => mission,
                 _ when name.StartsWith('@') => null,
                 _ => fields is not null && fields.TryGetValue(name, out var field) ? field : null,
             };
@@ -116,7 +113,7 @@ public sealed class AAuthVerifier
     }
 
     internal ParsedItem ValidateInput(string signatureInput, string label, string? authorization = null,
-        string? mission = null, IReadOnlyCollection<string>? requiredComponents = null)
+        IReadOnlyCollection<string>? requiredComponents = null)
     {
         var input = StructuredFields.Member(signatureInput, label);
         if (input.Value is not IReadOnlyList<ParsedItem> components || components.Count == 0)
@@ -133,7 +130,6 @@ public sealed class AAuthVerifier
         }
         var required = AAuthSigningHandler.CoveredComponents.Concat(requiredComponents ?? []).ToHashSet(StringComparer.Ordinal);
         if (authorization is not null) required.Add("authorization");
-        if (mission is not null) required.Add("aauth-mission");
         if (!required.IsSubsetOf(names))
             throw new AAuthVerificationException(SignatureErrorCode.InvalidInput, "Required covered components are missing.");
         if (!input.Parameters.TryGetValue("created", out var createdValue) || createdValue is not long created)

@@ -18,12 +18,11 @@ public static class TestTokens
         where credentialField != "resource_token" || variant != "recently-expired"
         select new object[] { credentialField, variant, CredentialError(credentialField, variant) };
 
+    // §Token Endpoint Error Codes: <invalid|expired>_<parameter>_token.
     public static string CredentialError(string field, string variant) => variant switch
     {
         "object" or "array" or "number" or "boolean" => "invalid_request",
-        _ when field == "upstream_token" => "invalid_upstream_token",
-        _ => (variant is "expired" or "recently-expired" ? "expired_" : "invalid_")
-            + (field == "resource_token" ? "resource_token" : "agent_token"),
+        _ => (variant is "expired" or "recently-expired" ? "expired_" : "invalid_") + field,
     };
 
     public static JsonNode MalformedCredential(string jwt, IAAuthKey key, string variant)
@@ -59,10 +58,11 @@ public static class TestTokens
     }
 
     public static IEnumerable<object[]> InvalidRequiredClaims =>
-        new[] { AgentTokenBuilder.TokenType, ResourceTokenBuilder.TokenType, AuthTokenBuilder.TokenType }
+        new[] { AgentTokenBuilder.TokenType, ResourceTokenBuilder.TokenType, AuthTokenBuilder.TokenType, PersonTokenBuilder.TokenType }
         .SelectMany(type => new[] { "header.alg", "header.typ", "header.kid", "iss", "dwk", "jti", "iat", "exp" }
             .Concat(type == AgentTokenBuilder.TokenType ? ["sub", "cnf"]
-                : type == ResourceTokenBuilder.TokenType ? ["aud", "agent", "agent_jkt", "scope"] : ["aud", "agent", "cnf"])
+                : type == ResourceTokenBuilder.TokenType ? ["aud", "ps", "sub", "presented_jti", "agent_jkt", "scope"]
+                : type == PersonTokenBuilder.TokenType ? ["aud", "sub", "cnf"] : ["aud", "ps", "sub", "cnf"])
             .SelectMany(claim => new[] { "absent", "null", "blank", "number", "array", "boolean" }
                 .Where(mutation => mutation != "number" || claim is not ("iat" or "exp"))
                 .Where(mutation => mutation != "blank" || claim != "scope")
@@ -81,10 +81,18 @@ public static class TestTokens
         else
         {
             payload["aud"] = "https://resource.example";
-            payload["agent"] = "aauth:wire@issuer.example";
-            payload["scope"] = "read";
+            payload["sub"] = "person-1";
+            if (type != PersonTokenBuilder.TokenType)
+            {
+                payload["ps"] = "https://issuer.example";
+                payload["scope"] = "read";
+            }
         }
-        if (type == ResourceTokenBuilder.TokenType) payload["agent_jkt"] = key.ComputeJwkThumbprint();
+        if (type == ResourceTokenBuilder.TokenType)
+        {
+            payload["agent_jkt"] = key.ComputeJwkThumbprint();
+            payload["presented_jti"] = "person-token-1";
+        }
         else payload["cnf"] = new JsonObject { ["jwk"] = key.ToPublicJwk() };
         mutate?.Invoke(header, payload);
         var input = Base64UrlEncoder.Encode(header.ToJsonString()) + "." + Base64UrlEncoder.Encode(payload.ToJsonString());
@@ -106,7 +114,8 @@ public static class TestTokens
     private static string BuildResource() => new ResourceTokenBuilder
     {
         Issuer = "https://resource.test", Audience = "https://ps.test",
-        Agent = "aauth:demo@ap.test", AgentJkt = "fixture-key",
+        PersonServer = "https://ps.test", Subject = "person-1", PresentedJti = "person-token-1",
+        AgentJkt = "fixture-key",
         Key = AAuthKey.Generate(), KeyId = "resource-1",
     }.Build();
 }

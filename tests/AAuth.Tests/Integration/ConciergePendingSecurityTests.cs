@@ -37,7 +37,7 @@ public class ConciergePendingSecurityTests
         });
         string Token(AAuthKey key, string agent) => new AuthTokenBuilder
         {
-            Issuer = person, Audience = resource, Agent = agent, AgentConfirmationKey = key,
+            Issuer = person, Audience = resource, PersonServer = person, Subject = agent, AgentConfirmationKey = key,
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10), Key = issuerKey, KeyId = "ps-key", Scope = "concierge",
         }.Build();
         const string agent = "aauth:owner@ap.example";

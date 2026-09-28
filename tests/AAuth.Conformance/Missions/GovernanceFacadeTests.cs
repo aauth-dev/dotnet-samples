@@ -29,8 +29,7 @@ public class GovernanceFacadeTests
 {
     private const string Ps = "http://localhost:5555";
 
-    private static readonly MissionClaim TestMission =
-        new(Ps, "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk");
+    private const string TestMissionS256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 
     private static AAuthGovernanceClient BuildFacade(HttpMessageHandler handler)
         => new(
@@ -69,10 +68,10 @@ public class GovernanceFacadeTests
         Assert.Equal("aauth:assistant@agent.example", mission.Agent);
 
         var permission = await facade.Permission.RequestAsync(
-            new PermissionRequest(new MissionAction("SendEmail")) { Mission = TestMission });
+            new PermissionRequest(new MissionAction("SendEmail")) { MissionS256 = TestMissionS256 });
         Assert.True(permission.IsGranted);
 
-        await facade.Audit.RecordAsync(new AuditRecord(TestMission, new MissionAction("WebSearch")));
+        await facade.Audit.RecordAsync(new AuditRecord(TestMissionS256, new MissionAction("WebSearch")));
         Assert.True(handler.AuditCalled);
 
         var answer = await facade.Interaction.AskQuestionAsync("Refundable option?");
@@ -192,13 +191,15 @@ public class GovernanceFacadeTests
                 });
             }
 
+            if (path.StartsWith("/mission/", StringComparison.Ordinal))
+                return Json(HttpStatusCode.OK, new JsonObject { ["mission_status"] = "terminated" });
+
             switch (path)
             {
                 case "/mission":
                 {
                     var blob = new JsonObject
                     {
-                        ["approver"] = Ps,
                         ["agent"] = "aauth:assistant@agent.example",
                         ["approved_at"] = "2026-04-07T14:30:00Z",
                         ["description"] = "# Plan a trip",
@@ -209,15 +210,11 @@ public class GovernanceFacadeTests
                     };
                     var bytes = Encoding.UTF8.GetBytes(blob.ToJsonString());
                     var s256 = Base64UrlEncoder.Encode(SHA256.HashData(bytes));
-                    var resp = new HttpResponseMessage(HttpStatusCode.OK)
+                    return Json(HttpStatusCode.OK, new JsonObject
                     {
-                        Content = new ByteArrayContent(bytes),
-                    };
-                    resp.Content.Headers.ContentType =
-                        new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
-                    resp.Headers.TryAddWithoutValidation(
-                        "AAuth-Mission", $"approver=\"{Ps}\"; s256=\"{s256}\"");
-                    return resp;
+                        ["s256"] = s256,
+                        ["mission"] = Base64UrlEncoder.Encode(bytes),
+                    });
                 }
 
                 case "/permission":

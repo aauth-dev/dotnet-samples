@@ -43,7 +43,7 @@ public class TokenRefreshHandlerTests
     {
         string Token(string? account, int seconds) => new AuthTokenBuilder
         {
-            Issuer = "https://ps.example", Audience = "https://resource.example", Agent = "aauth:test@example.com",
+            Issuer = "https://ps.example", Audience = "https://resource.example", PersonServer = "https://ps.example",
             AgentConfirmationKey = _key, Key = _key, KeyId = "ps-1", Subject = "person",
             AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10), Lifetime = TimeSpan.FromSeconds(seconds), Account = account,
         }.Build();

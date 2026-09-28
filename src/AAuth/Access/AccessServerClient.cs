@@ -76,8 +76,10 @@ public sealed class AccessServerClient
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrEmpty(request.ResourceToken);
         ArgumentException.ThrowIfNullOrEmpty(request.AgentToken);
+        ArgumentException.ThrowIfNullOrEmpty(request.PresentedToken);
         ArgumentException.ThrowIfNullOrEmpty(request.ExpectedAudience);
-        ArgumentException.ThrowIfNullOrEmpty(request.ExpectedAgentId);
+        ArgumentException.ThrowIfNullOrEmpty(request.ExpectedSubject);
+        ArgumentException.ThrowIfNullOrEmpty(request.ExpectedPersonServer);
         ArgumentNullException.ThrowIfNull(request.AgentKey);
 
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -116,6 +118,7 @@ public sealed class AccessServerClient
         {
             ["resource_token"] = request.ResourceToken,
             ["agent_token"] = request.AgentToken,
+            ["presented_token"] = request.PresentedToken,
         };
         if (!string.IsNullOrEmpty(request.UpstreamToken))
         {
@@ -208,14 +211,6 @@ public sealed class AccessServerClient
                     var claimsResponse = await request.OnClaimsRequired(claimsRequirement, cancellationToken).ConfigureAwait(false)
                         ?? throw new InvalidOperationException(
                             "AccessServerRequest.OnClaimsRequired returned null; expected a ClaimsResponse.");
-                    if (string.IsNullOrWhiteSpace(claimsResponse.Subject))
-                    {
-                        // §Claims Required: the recipient MUST provide a directed
-                        // user identifier as `sub`. Fail fast on a PS bug rather
-                        // than pushing an unusable claim set to the AS.
-                        throw new InvalidOperationException(
-                            "AccessServerRequest.OnClaimsRequired must return a directed user identifier as Subject (the pushed 'sub'; §Claims Required).");
-                    }
 
                     var pushResponse = await PushClaimsAsync(claimsPendingUrl, claimsResponse.ToJson(), cancellationToken).ConfigureAwait(false);
                     if (pushResponse.StatusCode == HttpStatusCode.Accepted && !IsActionable(pushResponse, deliveredInteraction))
@@ -277,9 +272,10 @@ public sealed class AccessServerClient
                 authToken,
                 expectedIssuer: accessServer,
                 expectedAudience: request.ExpectedAudience,
-                expectedAgentId: request.ExpectedAgentId,
+                expectedSubject: request.ExpectedSubject,
+                expectedPersonServer: request.ExpectedPersonServer,
                 agentKey: request.AgentKey,
-                expectedActContext: request.ExpectedActContext,
+                presentedTokenExpiresAt: request.PresentedTokenExpiresAt,
                 requestedScope: request.RequestedScope,
                 ct: cancellationToken,
                 expectedAccount: request.Account).ConfigureAwait(false);
@@ -290,7 +286,7 @@ public sealed class AccessServerClient
                     $"Auth token delivery verification failed: {delivery.Error}");
             }
 
-            if (!JsonNode.DeepEquals(request.ExpectedMission?.ToJsonObject(), delivery.Verified!.Payload["mission"]))
+            if (delivery.Verified!.MissionS256 != request.ExpectedMissionS256)
                 throw new TokenVerificationException("Auth token delivery mission differs from the resource request.");
 
             if (delivery.Verified!.ExpiresAt > request.AuthorizationExpiresAt

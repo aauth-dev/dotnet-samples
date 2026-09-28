@@ -152,7 +152,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = PsIssuer,
             Audience = ResourceId,
-            Agent = AgentId,
+            PersonServer = PsIssuer,
             AgentConfirmationKey = _agentKey,
             Key = _psKey,
             KeyId = "ps-key-1",
@@ -339,7 +339,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = PsIssuer,
             Audience = ResourceId,
-            Agent = AgentId,
+            PersonServer = PsIssuer,
             AgentConfirmationKey = _agentKey,
             Key = forgerKey, // Wrong key — not in PS JWKS
             KeyId = "ps-key-1",
@@ -361,7 +361,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = PsIssuer,
             Audience = "https://wrong-resource.example", // Wrong audience
-            Agent = AgentId,
+            PersonServer = PsIssuer,
             AgentConfirmationKey = _agentKey,
             Key = _psKey,
             KeyId = "ps-key-1",
@@ -507,12 +507,9 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-    [Fact(DisplayName = "§Verification — accepts direct-auth token without act claim")]
+    [Fact(DisplayName = "§Verification — accepts an auth token naming ps and sub (no agent, no act)")]
     public async Task AcceptsDirectAuthTokenWithoutAct()
     {
-        // Manually construct a token without the act claim. In draft-08 `act` is
-        // OPTIONAL (§Delegation Chain) — absent for direct authorization — so the
-        // verifier MUST accept it.
         var header = new JsonObject
         {
             ["alg"] = AAuthKey.Ed25519Algorithm,
@@ -525,9 +522,8 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             ["dwk"] = AuthTokenBuilder.PersonDwk,
             ["aud"] = ResourceId,
             ["jti"] = Guid.NewGuid().ToString("N"),
-            ["agent"] = AgentId,
+            ["ps"] = PsIssuer,
             ["cnf"] = new JsonObject { ["jwk"] = _agentKey.ToPublicJwk() },
-            // No act claim — direct authorization.
             ["sub"] = "pairwise-sub",
             ["scope"] = "whoami",
             ["iat"] = FixedClock.ToUnixTimeSeconds(),

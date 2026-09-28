@@ -1,7 +1,6 @@
 using System;
 using System.Net;
 using System.Net.Http;
-using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -9,12 +8,7 @@ using System.Threading.Tasks;
 using AAuth.Agent;
 using AAuth.Crypto;
 using AAuth.Discovery;
-using AAuth.Server;
-using AAuth.Server.Authorization;
 using AAuth.Server.CallChaining;
-using AAuth.Server.Challenge;
-using AAuth.Server.Metadata;
-using AAuth.Server.Verification;
 using AAuth.Tokens;
 using Microsoft.IdentityModel.Tokens;
 using Xunit;
@@ -22,22 +16,19 @@ using Xunit;
 namespace AAuth.Conformance.AuthTokens;
 
 /// <summary>
-/// Conformance tests for call-chaining (Gap 11): upstream_token exchange,
-/// act chain construction, routing logic, and TokenVerifier nested act validation.
+/// Conformance tests for call chaining (§Call Chaining): the upstream_token and
+/// presented_token parameters of a downstream token request, and routing to the
+/// person server the upstream token names.
 /// </summary>
 public class CallChainingTests
 {
     // ── upstream_token Exchange ─────────────────────────────────────────────
 
-    [Fact(DisplayName = "§CallChaining — upstream_token included in POST body when provided")]
+    [Fact(DisplayName = "§CallChaining — upstream_token and presented_token included in POST body")]
     public async Task UpstreamTokenIncludedInPostBody()
     {
-        // Capture what the exchange client sends.
         JsonObject? capturedBody = null;
-        var handler = new MockTokenEndpointHandler(req =>
-        {
-            capturedBody = JsonNode.Parse(req)?.AsObject();
-        });
+        var handler = new MockTokenEndpointHandler(req => capturedBody = JsonNode.Parse(req)?.AsObject());
         var psKey = AAuthKey.Generate();
         var agentKey = AAuthKey.Generate();
 
@@ -46,18 +37,21 @@ public class CallChainingTests
         var exchangeClient = new TokenExchangeClient(httpClient, metadataClient);
 
         var resourceToken = BuildResourceToken();
-        var upstreamToken = BuildAuthToken(psKey, agentKey, "agent-1", "http://localhost:5555");
+        var presentedToken = BuildPersonToken(psKey, agentKey, "http://localhost:5555");
+        var upstreamToken = BuildAuthToken(psKey, agentKey, "http://localhost:5555", "http://localhost:5555");
 
         await Assert.ThrowsAsync<TokenVerificationException>(() => exchangeClient.ExchangeAsync(
             "http://localhost:5555",
             resourceToken,
             new TokenExchangeRequest
             {
+                PresentedToken = presentedToken,
                 UpstreamToken = upstreamToken,
             }));
 
         Assert.NotNull(capturedBody);
         Assert.Equal(resourceToken, (string?)capturedBody!["resource_token"]);
+        Assert.Equal(presentedToken, (string?)capturedBody["presented_token"]);
         Assert.Equal(upstreamToken, (string?)capturedBody["upstream_token"]);
     }
 
@@ -65,10 +59,7 @@ public class CallChainingTests
     public async Task UpstreamTokenOmittedWhenNull()
     {
         JsonObject? capturedBody = null;
-        var handler = new MockTokenEndpointHandler(req =>
-        {
-            capturedBody = JsonNode.Parse(req)?.AsObject();
-        });
+        var handler = new MockTokenEndpointHandler(req => capturedBody = JsonNode.Parse(req)?.AsObject());
 
         var httpClient = new InProcessHttpClient(handler) { BaseAddress = new Uri("http://localhost:5555") };
         var metadataClient = new MetadataClient(new InProcessHttpClient(new MockMetadataHandler()));
@@ -76,197 +67,83 @@ public class CallChainingTests
 
         await Assert.ThrowsAsync<TokenVerificationException>(() => exchangeClient.ExchangeAsync(
             "http://localhost:5555",
-            BuildResourceToken()));
+            BuildResourceToken(),
+            BuildPersonToken(AAuthKey.Generate(), AAuthKey.Generate(), "http://localhost:5555")));
 
         Assert.NotNull(capturedBody);
         Assert.Null(capturedBody!["upstream_token"]);
+        Assert.NotNull(capturedBody["presented_token"]);
     }
 
-    // ── Act Chain Construction ──────────────────────────────────────────────
-
-    [Fact(DisplayName = "§CallChaining — AuthTokenBuilder emits the act delegation node verbatim")]
-    public void AuthTokenBuilderNestsUpstreamAct()
+    [Fact(DisplayName = "§PS Token Endpoint — an auth token request without presented_token is refused locally")]
+    public async Task PresentedTokenRequired()
     {
-        var psKey = AAuthKey.Generate();
-        var agentKey = AAuthKey.Generate();
+        var called = false;
+        var handler = new MockTokenEndpointHandler(_ => called = true);
+        var httpClient = new InProcessHttpClient(handler) { BaseAddress = new Uri("http://localhost:5555") };
+        var exchangeClient = new TokenExchangeClient(httpClient, new MetadataClient(new InProcessHttpClient(new MockMetadataHandler())));
 
-        // Complete act node (§Delegation Chain): act.agent names the immediate upstream
-        // (delegator), nesting the upstream's own chain under act.act.
-        var act = ActChainBuilder.BuildNestedAct(
-            "aauth:resource@example",
-            new JsonObject { ["agent"] = "aauth:upstream@example" });
-
-        var token = new AuthTokenBuilder
-        {
-            EgressPolicy = TestEgress.Policy,
-            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
-            Issuer = "http://localhost:5555",
-            Audience = "http://localhost:6000",
-            Agent = "resource-as-agent",
-            AgentConfirmationKey = agentKey,
-            Key = psKey,
-            KeyId = "ps-1",
-            Subject = "user-1",
-            Scope = "read",
-            Act = act,
-        }.Build();
-
-        // Decode and verify the act chain is emitted verbatim.
-        var payload = DecodePayload(token);
-        var decodedAct = payload["act"] as JsonObject;
-        Assert.NotNull(decodedAct);
-        Assert.Equal("aauth:resource@example", (string?)decodedAct!["agent"]);
-
-        // Nested act from upstream.
-        var nestedAct = decodedAct["act"] as JsonObject;
-        Assert.NotNull(nestedAct);
-        Assert.Equal("aauth:upstream@example", (string?)nestedAct!["agent"]);
+        await Assert.ThrowsAsync<ArgumentException>(() => exchangeClient.ExchangeAsync(
+            "http://localhost:5555", BuildResourceToken(), new TokenExchangeRequest()));
+        Assert.False(called);
     }
 
-    [Fact(DisplayName = "§CallChaining — AuthTokenBuilder without Act omits act (direct authorization)")]
-    public void AuthTokenBuilderWithoutUpstreamActProducesFlatAct()
+    [Fact(DisplayName = "§CallChaining — an auth token carries no act delegation chain")]
+    public void AuthTokenBuilderEmitsNoAct()
     {
-        var psKey = AAuthKey.Generate();
-        var agentKey = AAuthKey.Generate();
-
-        var token = new AuthTokenBuilder
-        {
-            EgressPolicy = TestEgress.Policy,
-            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
-            Issuer = "http://localhost:5555",
-            Audience = "http://localhost:6000",
-            Agent = "my-agent",
-            AgentConfirmationKey = agentKey,
-            Key = psKey,
-            KeyId = "ps-1",
-            Subject = "user-1",
-            Scope = "read",
-        }.Build();
-
-        var payload = DecodePayload(token);
-        // act is OPTIONAL — a direct-auth token carries no act.
+        var payload = DecodePayload(BuildAuthToken(AAuthKey.Generate(), AAuthKey.Generate(), "http://localhost:5555", "http://localhost:5555"));
         Assert.Null(payload["act"]);
-    }
-
-    [Fact(DisplayName = "§CallChaining — nested act chain verified by TokenVerifier")]
-    public void ThreeLevelActChainVerified()
-    {
-        var psKey = AAuthKey.Generate();
-        var agentKey = AAuthKey.Generate();
-
-        // Delegation chain: original-agent → intermediate-resource → final-resource (presenter).
-        // The presenter is the top-level `agent`; act names the immediate upstream and nests its chain.
-        var level1Act = new JsonObject { ["agent"] = "aauth:original@example" };
-        var level2Act = new JsonObject { ["agent"] = "aauth:intermediate@example", ["act"] = level1Act };
-
-        var token = new AuthTokenBuilder
-        {
-            EgressPolicy = TestEgress.Policy,
-            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
-            Issuer = "http://localhost:5555",
-            Audience = "http://localhost:7000",
-            Agent = "aauth:final@example",
-            AgentConfirmationKey = agentKey,
-            Key = psKey,
-            KeyId = "ps-1",
-            Subject = "user-1",
-            Scope = "read",
-            Act = level2Act,
-        }.Build();
-
-        // Verify: TokenVerifier validates act chain depth.
-        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
-        var result = verifier.VerifyAuthToken(
-            token, psKey, "http://localhost:7000", agentKey,
-            expectedAgentId: "aauth:final@example");
-
-        Assert.Equal("http://localhost:5555", result.Issuer);
-
-        // Validate the full chain: act.agent = intermediate, act.act.agent = original.
-        var payload = DecodePayload(token);
-        var act = payload["act"]!.AsObject();
-        Assert.Equal("aauth:intermediate@example", (string?)act["agent"]);
-        var nested1 = act["act"]!.AsObject();
-        Assert.Equal("aauth:original@example", (string?)nested1["agent"]);
-    }
-
-    [Fact(DisplayName = "§CallChaining — act chain exceeding max depth rejected")]
-    public void ActChainExceedingMaxDepthRejected()
-    {
-        var psKey = AAuthKey.Generate();
-        var agentKey = AAuthKey.Generate();
-
-        // Build a deeply nested act chain (depth > 10).
-        JsonObject deepAct = new JsonObject { ["agent"] = "aauth:deep0@example" };
-        for (int i = 1; i <= 11; i++)
-        {
-            deepAct = new JsonObject { ["agent"] = $"aauth:deep{i}@example", ["act"] = deepAct };
-        }
-
-        var token = new AuthTokenBuilder
-        {
-            EgressPolicy = TestEgress.Policy,
-            AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
-            Issuer = "http://localhost:5555",
-            Audience = "http://localhost:7000",
-            Agent = "surface-agent",
-            AgentConfirmationKey = agentKey,
-            Key = psKey,
-            KeyId = "ps-1",
-            Subject = "user-1",
-            Scope = "read",
-            Act = deepAct,
-        }.Build();
-
-        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
-        Assert.Throws<TokenVerificationException>(() =>
-            verifier.VerifyAuthToken(token, psKey, "http://localhost:7000", agentKey,
-                expectedAgentId: "surface-agent"));
+        Assert.Null(payload["agent"]);
     }
 
     // ── Routing Logic ───────────────────────────────────────────────────────
 
-    [Fact(DisplayName = "§CallChaining — routes to mission.approver when present")]
-    public void RoutesToMissionApprover()
+    [Fact(DisplayName = "§CallChaining — an upstream auth token routes to its ps, not its iss")]
+    public void RoutesToAuthTokenPersonServer()
     {
-        var psKey = AAuthKey.Generate();
-        var agentKey = AAuthKey.Generate();
-
-        // Build auth token with mission.approver.
-        var token = BuildAuthTokenWithMission(psKey, agentKey, "http://localhost:8888");
+        var token = BuildAuthToken(AAuthKey.Generate(), AAuthKey.Generate(), "http://localhost:5300", "http://localhost:8888");
 
         var server = CallChainingRouter.ResolveDownstreamServer(token, TestEgress.Policy);
         Assert.Equal("http://localhost:8888", server);
     }
 
-    [Fact(DisplayName = "§CallChaining — routes to iss when no mission")]
-    public void RoutesToIssWhenNoMission()
+    [Fact(DisplayName = "§CallChaining — an upstream person token routes to its iss")]
+    public void RoutesToPersonTokenIssuer()
     {
-        var psKey = AAuthKey.Generate();
-        var agentKey = AAuthKey.Generate();
-
-        var token = BuildAuthToken(psKey, agentKey, "agent-1", "http://localhost:5555");
+        var token = BuildPersonToken(AAuthKey.Generate(), AAuthKey.Generate(), "http://localhost:5555");
 
         var server = CallChainingRouter.ResolveDownstreamServer(token, TestEgress.Policy);
         Assert.Equal("http://localhost:5555", server);
     }
 
-    [Fact(DisplayName = "§CallChaining — rejects non-https iss in upstream token")]
-    public void RejectsNonHttpsIss()
+    [Theory(DisplayName = "§CallChaining — rejects an upstream token naming a non-https person server")]
+    [InlineData(PersonTokenBuilder.TokenType, "iss")]
+    [InlineData(AuthTokenBuilder.TokenType, "ps")]
+    public void RejectsNonHttpsPersonServer(string typ, string claim)
     {
-        // Manually build a token with http (non-localhost) iss.
-        var header = new JsonObject { ["alg"] = "Ed25519", ["typ"] = "aa-auth+jwt", ["kid"] = "k1" };
+        var header = new JsonObject { ["alg"] = "Ed25519", ["typ"] = typ, ["kid"] = "k1" };
         var payload = new JsonObject
         {
-            ["iss"] = "http://external-server.com",
+            ["iss"] = "https://ps.example",
+            ["ps"] = "https://ps.example",
             ["aud"] = "http://localhost:6000",
-            ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["agent"] = "agent-1" },
+            [claim] = "http://external-server.com",
         };
         var token = EncodeUnsignedJwt(header, payload);
 
         Assert.Throws<InvalidOperationException>(() =>
             CallChainingHandler.ResolveDownstreamServer(token));
+    }
+
+    [Fact(DisplayName = "§CallChaining — an agent or resource token is not an upstream token")]
+    public void RejectsOtherTokenTypes()
+    {
+        foreach (var typ in new[] { AgentTokenBuilder.TokenType, ResourceTokenBuilder.TokenType })
+        {
+            var token = EncodeUnsignedJwt(new JsonObject { ["alg"] = "Ed25519", ["typ"] = typ, ["kid"] = "k1" },
+                new JsonObject { ["iss"] = "https://ps.example", ["ps"] = "https://ps.example" });
+            Assert.Throws<InvalidOperationException>(() => CallChainingRouter.ResolveDownstreamServer(token));
+        }
     }
 
     // ── AuthTokenBuilder uses Key.Algorithm ─────────────────────────────────
@@ -283,7 +160,7 @@ public class CallChainingTests
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = "http://localhost:5555",
             Audience = "http://localhost:6000",
-            Agent = "aauth:ec-agent@ap.example",
+            PersonServer = "http://localhost:5555",
             AgentConfirmationKey = agentKey,
             Key = ecKey,
             KeyId = "ec-1",
@@ -294,7 +171,6 @@ public class CallChainingTests
         var header = DecodeHeader(token);
         Assert.Equal("ES256", (string?)header["alg"]);
 
-        // Verify with the EC key.
         var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy };
         var result = verifier.Verify(token, ecKey, AuthTokenBuilder.TokenType, AuthTokenBuilder.PersonDwk);
         Assert.Equal("http://localhost:5555", result.Issuer);
@@ -312,7 +188,9 @@ public class CallChainingTests
             EgressPolicy = TestEgress.Policy,
             Issuer = "http://localhost:6000",
             Audience = "http://localhost:5555",
-            Agent = "agent-1",
+            PersonServer = "http://localhost:5555",
+            Subject = "user-1",
+            PresentedJti = "person-token-1",
             AgentJkt = agentKey.ComputeJwkThumbprint(),
             Key = key,
             KeyId = "res-1",
@@ -320,57 +198,34 @@ public class CallChainingTests
         }.Build();
     }
 
-    private static string BuildAuthToken(AAuthKey psKey, AAuthKey agentKey, string agent, string issuer)
+    private static string BuildPersonToken(AAuthKey psKey, AAuthKey agentKey, string issuer) => new PersonTokenBuilder
+    {
+        EgressPolicy = TestEgress.Policy,
+        Issuer = issuer,
+        Audience = "http://localhost:6000",
+        Subject = "user-1",
+        ConfirmationKey = agentKey,
+        AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+        Key = psKey,
+        KeyId = "ps-1",
+    }.Build();
+
+    private static string BuildAuthToken(AAuthKey key, AAuthKey agentKey, string issuer, string personServer)
     {
         return new AuthTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
             AgentTokenExpiresAt = System.DateTimeOffset.UtcNow.AddHours(1),
             Issuer = issuer,
+            Dwk = issuer == personServer ? AuthTokenBuilder.PersonDwk : AuthTokenBuilder.AccessDwk,
             Audience = "http://localhost:6000",
-            Agent = agent,
+            PersonServer = personServer,
             AgentConfirmationKey = agentKey,
-            Key = psKey,
+            Key = key,
             KeyId = "ps-1",
             Subject = "user-1",
             Scope = "read",
         }.Build();
-    }
-
-    private static string BuildAuthTokenWithMission(AAuthKey psKey, AAuthKey agentKey, string approverUrl)
-    {
-        // Build manually since AuthTokenBuilder doesn't have mission support yet.
-        var header = new JsonObject
-        {
-            ["alg"] = "Ed25519",
-            ["typ"] = "aa-auth+jwt",
-            ["kid"] = "ps-1",
-        };
-        var now = DateTimeOffset.UtcNow;
-        var payload = new JsonObject
-        {
-            ["iss"] = "http://localhost:5555",
-            ["dwk"] = "aauth-person.json",
-            ["aud"] = "http://localhost:6000",
-            ["jti"] = Guid.NewGuid().ToString("N"),
-            ["agent"] = "agent-1",
-            ["act"] = new JsonObject { ["agent"] = "agent-1" },
-            ["cnf"] = new JsonObject { ["jwk"] = agentKey.ToPublicJwk() },
-            ["iat"] = now.ToUnixTimeSeconds(),
-            ["exp"] = now.AddMinutes(60).ToUnixTimeSeconds(),
-            ["sub"] = "user-1",
-            ["scope"] = "read",
-            ["mission"] = new JsonObject { ["approver"] = approverUrl },
-        };
-        return SignJwt(header, payload, psKey);
-    }
-
-    private static string SignJwt(JsonObject header, JsonObject payload, IAAuthKey key)
-    {
-        var h = Base64UrlEncoder.Encode(Encoding.UTF8.GetBytes(header.ToJsonString()));
-        var p = Base64UrlEncoder.Encode(Encoding.UTF8.GetBytes(payload.ToJsonString()));
-        var sig = key.Sign(Encoding.ASCII.GetBytes($"{h}.{p}"));
-        return $"{h}.{p}.{Base64UrlEncoder.Encode(sig)}";
     }
 
     private static string EncodeUnsignedJwt(JsonObject header, JsonObject payload)
@@ -412,7 +267,7 @@ public class CallChainingTests
         }
     }
 
-    /// <summary>Mock handler that captures the POST body and returns a valid auth token response.</summary>
+    /// <summary>Mock handler that captures the POST body and returns a fake auth token response.</summary>
     private sealed class MockTokenEndpointHandler : HttpMessageHandler
     {
         private readonly Action<string> _onBody;
@@ -434,7 +289,6 @@ public class CallChainingTests
                 };
             }
 
-            // Token endpoint — capture body and return a fake auth_token.
             var body = await request.Content!.ReadAsStringAsync(ct);
             _onBody(body);
 
