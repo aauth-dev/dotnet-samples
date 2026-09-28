@@ -13,7 +13,7 @@ R3) live under [MockAccessServers/](MockAccessServers/).
 | [Wallet](MockResourceServers/Wallet/) | 5003 | Federated (four-party) resource server — `/wallet` (`wallet.read`), `/wallet/charge` (`wallet.charge`) |
 | [Inbox](MockResourceServers/Inbox/) | 5004 | Resource-Managed (two-party) resource server — manages authorization itself via its own consent page; issues an opaque `AAuth-Access` token (`GET /messages`, `POST /authorize`) |
 | [Bookings](MockResourceServers/Bookings/) | 5005 | Rich Resource Requests (R3, four-party) resource server — dining & experiences reservations via the **OpenAPI** vocabulary; `searchAvailability`/`holdReservation` → `r3_granted`, `confirmReservation` → `r3_per_call` (per-call proposal) |
-| [Catalog](MockResourceServers/Catalog/README.md) | 5006 | Travel catalog reads with service-qualified R3 grants and colliding operation IDs |
+| [Catalog](MockResourceServers/Catalog/README.md) | 5006 | Travel catalog reads through one merged OpenAPI definition with renamed colliding operation IDs |
 | [Documents](MockResourceServers/Documents/README.md) | 5007 | Resource release permission before PS consent, with account-bound signed download |
 | [Concierge](Concierge/) | 5200 | Intermediate service — call chaining with nested `act` delegation |
 | [MissionAgent](MissionAgent/) | — | CLI agent — drives the optional, orthogonal **agent governance** layer: proposes a mission, asks per-action permission, records audit, and relays interactions through a PS (§Agent Governance) |

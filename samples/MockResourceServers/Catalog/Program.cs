@@ -19,16 +19,17 @@ var catalog = new Dictionary<string, string[]>(StringComparer.Ordinal)
     ["destinations"] = ["Kyoto", "Lisbon", "Montreal"],
     ["experiences"] = ["Museum visit", "City walking tour", "Cooking class"],
 };
-var metadata = R3Metadata.AddVocabularies(new JsonObject(), new Dictionary<string, JsonNode?>
+// Both backends expose `list`; R3 -11 requires one merged definition with unique operationIds.
+static string OperationId(string service) => "list" + char.ToUpperInvariant(service[0]) + service[1..];
+var metadata = R3Metadata.AddVocabularies(new JsonObject(), new Dictionary<string, string>
 {
-    [Vocabulary.OpenApiGateway] = new JsonObject(catalog.Keys.Select(service =>
-        KeyValuePair.Create<string, JsonNode?>(service, JsonValue.Create($"{issuer}/definitions/{service}")))),
+    [Vocabulary.OpenApi] = $"{issuer}/openapi.json",
 });
 var documents = new R3ProposalStore();
 var descriptions = catalog.Keys.ToDictionary(service => service, service => documents.AddBytes(new R3Document
 {
-    Vocabulary = Vocabulary.OpenApiGateway,
-    Operations = [R3Operation.OpenApiGateway(service, "list")],
+    Vocabulary = Vocabulary.OpenApi,
+    Operations = [R3Operation.OpenApi(OperationId(service))],
     Display = new R3Display { Summary = $"Read the {service} travel catalog" },
 }.ToUtf8Bytes(), new Uri(issuer), "/r3"));
 builder.Services.AddAAuthResource(options =>
@@ -39,18 +40,16 @@ builder.Services.AddAAuthResource(options =>
 });
 var app = builder.Build();
 app.MapAAuthWellKnown();
-app.MapGet("/definitions/{service}", (string service) => catalog.ContainsKey(service)
-    ? Results.Json(new JsonObject
-    {
-        ["openapi"] = "3.1.0", ["info"] = new JsonObject { ["title"] = service, ["version"] = "1.0.0" },
-        ["paths"] = new JsonObject
+app.MapGet("/openapi.json", () => Results.Json(new JsonObject
+{
+    ["openapi"] = "3.1.0", ["info"] = new JsonObject { ["title"] = "Travel Catalog", ["version"] = "1.0.0" },
+    ["paths"] = new JsonObject(catalog.Keys.Select(service => KeyValuePair.Create<string, JsonNode?>(
+        $"/catalog/{service}", new JsonObject { ["get"] = new JsonObject
         {
-            [$"/catalog/{service}"] = new JsonObject { ["get"] = new JsonObject
-            {
-                ["operationId"] = "list", ["responses"] = new JsonObject { ["200"] = new JsonObject { ["description"] = "Catalog entries" } },
-            } },
-        },
-    }) : Results.NotFound());
+            ["operationId"] = OperationId(service),
+            ["responses"] = new JsonObject { ["200"] = new JsonObject { ["description"] = $"{service} entries" } },
+        } }))),
+}));
 app.MapR3Document("/r3/{hash}", context => documents.TryGet((string)context.Request.RouteValues["hash"]!, out var bytes) ? bytes : null,
     new R3DocumentReaderPolicy(access, [person], SampleEgress.Policy));
 app.UseWhen(context => context.Request.Path.StartsWithSegments("/catalog"), branch => branch.UseAAuthVerification(new AAuthVerificationOptions
@@ -63,10 +62,11 @@ app.MapGet("/catalog/{service}", (string service, HttpContext context) =>
 {
     if (!catalog.TryGetValue(service, out var entries)) return Results.NotFound();
     var identity = context.GetAAuthVerification()!;
+    var operation = new R3OperationIdentity(Vocabulary.OpenApi, R3Operation.OpenApi(OperationId(service)));
     if (identity.TokenType is AAuthTokenType.AgentToken or AAuthTokenType.PersonToken)
     {
-        var request = new R3Operations { Vocabulary = Vocabulary.OpenApiGateway, Operations = [R3Operation.OpenApiGateway(service, "list")] };
-        var definitions = catalog.Keys.Select(name => new R3OperationIdentity(Vocabulary.OpenApiGateway, R3Operation.OpenApiGateway(name, "list")));
+        var request = new R3Operations { Vocabulary = Vocabulary.OpenApi, Operations = [operation.Operation] };
+        var definitions = catalog.Keys.Select(name => new R3OperationIdentity(Vocabulary.OpenApi, R3Operation.OpenApi(OperationId(name))));
         R3Metadata.ValidateOperations(request, metadata, definitions);
         var document = descriptions[service];
         // Agent token -> person-token requirement; person token -> R3 resource token naming it.
@@ -74,10 +74,9 @@ app.MapGet("/catalog/{service}", (string service, HttpContext context) =>
             .Challenge(context, document.Uri, document.S256);
     }
     var payload = context.GetAAuthParsedKey()!.Payload!;
-    var decision = new R3Enforcement(documents, new Uri(issuer)).Evaluate(payload,
-        new R3OperationIdentity(Vocabulary.OpenApiGateway, R3Operation.OpenApiGateway(service, "list")));
+    var decision = new R3Enforcement(documents, new Uri(issuer)).Evaluate(payload, operation);
     return decision.Kind == R3EnforcementDecisionKind.Granted
-        ? Results.Json(new { service, operationId = "list", entries, sub = identity.Subject, issuer = identity.Issuer,
+        ? Results.Json(new { service, operationId = OperationId(service), entries, sub = identity.Subject, issuer = identity.Issuer,
             grant = payload["r3_granted"] })
         : decision.ToResult();
 });

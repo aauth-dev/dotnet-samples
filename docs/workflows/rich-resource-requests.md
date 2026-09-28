@@ -106,9 +106,9 @@ ID, venue, date, party size, deposit, and cancellation policy.
 
 ## Vocabulary and API contracts
 
-All eight standard vocabularies have validated operation shapes. Gateway discovery
-is a service-label map, and Gateway operation identity is the pair of `service`
-and `operationId`. `R3OperationIdentity` also includes the vocabulary and every
+All seven standard vocabularies have validated operation shapes. OpenAPI
+operation identity is the vocabulary plus `operationId`; WSDL may add an optional
+`service` member. `R3OperationIdentity` also includes the vocabulary and every
 optional member; bare-ID matching is not supported. Third-party schemas are
 explicitly supplied through a consumer-local `R3VocabularySchemas` instance.
 
@@ -137,8 +137,8 @@ still size-limited and hash-verified by the SDK.
 Bookings uses AsyncAPI `receive` grants to issue protected subscription tickets.
 The [Events workflow](events.md) exercises registration, self-jwt delivery,
 durable AP acceptance and independent agent receipt verification. The separate
-[Catalog Gateway](catalog-gateway.md) demonstrates service-qualified operations
-with colliding operation IDs. Native MCP, gRPC, GraphQL, WSDL and OData hosting
+[Travel Catalog](catalog-gateway.md) demonstrates one merged OpenAPI definition
+that renames colliding operation IDs. Native MCP, gRPC, GraphQL, WSDL and OData hosting
 is not implied by the SDK's typed vocabulary support.
 
 ## Person-Server trust (spec default)

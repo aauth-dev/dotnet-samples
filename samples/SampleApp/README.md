@@ -10,8 +10,8 @@ naming-JWT signatures; they are not alternative AAuth resource carriers.
 
 - [Wallet Protocol](../../docs/workflows/wallet-protocol.md): `/wallet-protocol`,
   with AS clarification/cancel, direct-AS chaining and revocation/recovery
-- [Catalog Gateway](../../docs/workflows/catalog-gateway.md): `/catalog-gateway`,
-  service-qualified grants and sibling-service rejection
+- [Travel Catalog](../../docs/workflows/catalog-gateway.md): `/catalog-gateway`,
+  one merged OpenAPI definition and sibling-operation rejection
 - [Document Release](../../docs/workflows/document-release.md): `/documents`,
   resource permission before PS consent, approval/download and denial
 - [Events](../../docs/workflows/events.md): `/events`, public/protected account

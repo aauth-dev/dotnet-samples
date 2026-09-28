@@ -24,18 +24,7 @@ public static class R3Metadata
         foreach (var (vocabulary, discoveryEndpoint) in vocabularies)
         {
             (schemas ?? R3VocabularySchemas.Standard).ValidateVocabulary(vocabulary);
-            if (vocabulary == Vocabulary.OpenApiGateway)
-            {
-                if (discoveryEndpoint is not JsonObject services || services.Count == 0)
-                    throw new InvalidOperationException("Gateway discovery requires a nonempty service map.");
-                foreach (var service in services)
-                {
-                    if (string.IsNullOrWhiteSpace(service.Key))
-                        throw new InvalidOperationException("Gateway service labels must be nonempty.");
-                    ValidateEndpoint(service.Value);
-                }
-            }
-            else ValidateEndpoint(discoveryEndpoint);
+            ValidateEndpoint(discoveryEndpoint);
             values[vocabulary] = discoveryEndpoint!.DeepClone();
         }
         metadata[VocabulariesProperty] = values;
@@ -52,9 +41,6 @@ public static class R3Metadata
         var authoritative = authoritativeOperations.ToArray();
         foreach (var operation in request.Operations)
         {
-            if (request.Vocabulary == Vocabulary.OpenApiGateway &&
-                ((JsonObject)vocabularies[request.Vocabulary]!).ContainsKey(operation.Service!) == false)
-                throw new InvalidOperationException("Gateway service is not advertised by this resource.");
             if (!authoritative.Any(identity => identity.Matches(request.Vocabulary, operation)))
                 throw new InvalidOperationException("Requested operation is not in the authoritative definition.");
         }

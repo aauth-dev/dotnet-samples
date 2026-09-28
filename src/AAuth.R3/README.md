@@ -10,13 +10,13 @@ of access *means*; tokens carry `r3_uri`, `r3_s256`, `r3_granted`, and
 > ships separately from `AAuth` and may change with the draft. It tracks the `AAuth`
 > package version.
 
-Current target: R3 draft-01 from the protocol draft-10 snapshot, alongside
-Signature Keys draft-08. Supported vocabulary models do not imply native
-protocol hosting; runnable integrations use OpenAPI, OpenAPI Gateway and AsyncAPI.
+Current target: the R3 editor's copy vendored with protocol draft-11 (aauth-spec/v11),
+alongside Signature Keys draft-09. Supported vocabulary models do not imply native
+protocol hosting; runnable integrations use OpenAPI and AsyncAPI.
 
 ## What's inside
 
-- R3 models for all eight standard vocabularies: MCP, OpenAPI, OpenAPI Gateway,
+- R3 models for all seven standard vocabularies: MCP, OpenAPI,
   gRPC, GraphQL, AsyncAPI, WSDL, and OData. Required and optional members are
   validated against the selected vocabulary. `R3VocabularySchemas` admits
   third-party URI schemas explicitly per consumer, without global registration.
@@ -30,22 +30,21 @@ protocol hosting; runnable integrations use OpenAPI, OpenAPI Gateway and AsyncAP
 ## Qualified identity
 
 ```csharp
-var operation = new R3OperationIdentity(Vocabulary.OpenApiGateway,
-    R3Operation.OpenApiGateway("calendar", "createEvent"));
+var operation = new R3OperationIdentity(Vocabulary.Wsdl,
+    R3Operation.Wsdl("Search", "Calendar"));
 var granted = new R3Grant
 {
-    Vocabulary = Vocabulary.OpenApiGateway,
+    Vocabulary = Vocabulary.Wsdl,
     Operations = [operation.Operation],
 };
 bool authorized = granted.Contains(operation);
 ```
 
-Identity includes the vocabulary, member names, service qualifier, and optional
-members. An omitted optional member is not a wildcard. OData method-array order
+Identity includes the vocabulary, member names, and optional members such as the
+WSDL `service` qualifier. An omitted optional member is not a wildcard. OData method-array order
 does not change identity. `R3Metadata.ValidateOperations` checks an operation
 against advertised discovery and a resource-supplied authoritative definition;
 it does not fetch or parse arbitrary API definitions on the resource's behalf.
-Gateway discovery uses a JSON service-label-to-OpenAPI-URL map.
 
 ## Issuance and storage
 
@@ -95,4 +94,5 @@ alone does not provide an AP transport or durable receipt store.
 
 Preview. The AAuth samples show a runnable end-to-end R3 flow (the **Bookings**
 resource, guarded by a dedicated R3 Access Server, using the OpenAPI vocabulary)
-and a Catalog Gateway with service-qualified grants and sibling-service rejection.
+and a Travel Catalog whose merged OpenAPI definition renames colliding operations,
+with sibling-operation rejection.

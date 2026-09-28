@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 133 changed public-source files, 230 added/replacement declarations, 132 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 137 changed public-source files, 231 added/replacement declarations, 135 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -89,7 +89,10 @@ Generated from all current SDK source files, including untracked additions, and 
 
 Concept/decision: [sample-runtime](#sample-runtime). Source: [CatalogDemoSession.cs](../../../samples/CapabilitySupport/CatalogDemoSession.cs).
 
-Public signatures unchanged (11); behavior reviewed under sample-runtime.
+```diff
+- AAuth.Samples.Capabilities.CatalogDemoSession: public static string [  ] Steps { get ; } = [ "Discover catalog services" , "Authorize selected service" , "Read selected catalog" , "Reject a sibling-service grant" , "Authorize sibling and recover" ]
++ AAuth.Samples.Capabilities.CatalogDemoSession: public static string [  ] Steps { get ; } = [ "Discover catalog definition" , "Authorize selected operation" , "Read selected catalog" , "Reject a sibling-operation grant" , "Authorize sibling and recover" ]
+```
 
 Public owners: `AAuth.Samples.Capabilities.CatalogDemoSession`, `AAuth.Samples.Capabilities`.
 
@@ -400,6 +403,16 @@ Public signatures unchanged (7); behavior reviewed under r3.
 
 Public owners: `AAuth.R3.Model.R3Grant`, `AAuth.R3.Model`.
 
+### src/AAuth.R3/Model/R3Operation.cs
+
+Concept/decision: [r3](#r3). Source: [R3Operation.cs](../../../src/AAuth.R3/Model/R3Operation.cs).
+
+```diff
+- AAuth.R3.Model.R3Operation: public static R3Operation OpenApiGateway ( string service , string operationId )
+```
+
+Public owners: `AAuth.R3.Model.R3OperationConverter`, `AAuth.R3.Model.R3Operation`, `AAuth.R3.Model`.
+
 ### src/AAuth.R3/Model/R3ProposalDocument.cs
 
 Concept/decision: [r3](#r3). Source: [R3ProposalDocument.cs](../../../src/AAuth.R3/Model/R3ProposalDocument.cs).
@@ -409,6 +422,24 @@ Concept/decision: [r3](#r3). Source: [R3ProposalDocument.cs](../../../src/AAuth.
 ```
 
 Public owners: `AAuth.R3.Model.R3ProposalDocument`, `AAuth.R3.Model`.
+
+### src/AAuth.R3/Model/R3VocabularySchemas.cs
+
+Concept/decision: [r3](#r3). Source: [R3VocabularySchemas.cs](../../../src/AAuth.R3/Model/R3VocabularySchemas.cs).
+
+Public signatures unchanged (8); behavior reviewed under r3.
+
+Public owners: `AAuth.R3.Model.R3VocabularySchemas`, `AAuth.R3.Model`.
+
+### src/AAuth.R3/Model/Vocabulary.cs
+
+Concept/decision: [r3](#r3). Source: [Vocabulary.cs](../../../src/AAuth.R3/Model/Vocabulary.cs).
+
+```diff
+- AAuth.R3.Model.Vocabulary: public const string OpenApiGateway = "urn:aauth:vocabulary:openapi-gateway" ;
+```
+
+Public owners: `AAuth.R3.Model.Vocabulary`, `AAuth.R3.Model`.
 
 ### src/AAuth.R3/R3AccessTokenEndpoint.cs
 
@@ -472,6 +503,14 @@ Concept/decision: [r3](#r3). Source: [R3Enforcement.cs](../../../src/AAuth.R3/R3
 ```
 
 Public owners: `AAuth.R3.R3EnforcementDecisionKind`, `AAuth.R3.R3EnforcementDecision`, `AAuth.R3.R3Enforcement`, `AAuth.R3`.
+
+### src/AAuth.R3/R3Metadata.cs
+
+Concept/decision: [r3](#r3). Source: [R3Metadata.cs](../../../src/AAuth.R3/R3Metadata.cs).
+
+Public signatures unchanged (6); behavior reviewed under r3.
+
+Public owners: `AAuth.R3.R3Metadata`, `AAuth.R3`.
 
 ### src/AAuth/AAuthClientBuilder.cs
 

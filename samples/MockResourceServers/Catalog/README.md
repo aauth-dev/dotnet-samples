@@ -1,12 +1,12 @@
 # Catalog Resource
 
-Catalog reads destination and experience catalogs on port 5006. Both service
-definitions use `operationId=list`; authorization retains the service label so
-a grant for one cannot read the other. The resource has no payment, Events or
-unrelated administrative behavior.
+Catalog reads destination and experience catalogs on port 5006. Both backends
+expose a `list` operation, so the resource publishes one merged OpenAPI definition
+that renames them `listDestinations` and `listExperiences`; a grant for one cannot
+read the other. The resource has no payment, Events or unrelated administrative behavior.
 
-Run `make demo` from the repository root. Choose Catalog Gateway in either
-primary app, select a service, complete consent, and observe the sibling-service
+Run `make demo` from the repository root. Choose Travel Catalog in either
+primary app, select a catalog, complete consent, and observe the sibling-operation
 403 followed by explicit reauthorization. The stack includes the existing R3 AS
 at port 5501 and PS at port 5100. Direct starts use
 `dotnet run --project samples/MockResourceServers/Catalog` but require the other

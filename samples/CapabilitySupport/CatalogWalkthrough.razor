@@ -7,20 +7,22 @@
 @inject IConfiguration Configuration
 @implements IDisposable
 
-<section class="catalog-view @(GuidedTour ? "guided-tour-flow" : null)" aria-label="Catalog gateway walkthrough" data-step="@_session.Step">
+<section class="catalog-view @(GuidedTour ? "guided-tour-flow" : null)" aria-label="Catalog walkthrough" data-step="@_session.Step">
     <SyntaxHighlight Trigger="_session.Step" />
-    <header><h1>Travel Catalog Gateway</h1><output>@_session.Step / 5 complete</output></header>
+    <header><h1>Travel Catalog</h1><output>@_session.Step / 5 complete</output></header>
     <details class="scenario-narrative" open>
         <summary>📖 What Aria is trying to do</summary>
         <p>
-            Aria is comparing where to go and what to do there. One travel gateway fronts
-            a <strong>Destinations</strong> catalog and an <strong>Experiences</strong>
-            catalog, and both expose an operation called <code>list</code>.
+            Aria is comparing where to go and what to do there. The Travel Catalog serves
+            a <strong>Destinations</strong> backend and an <strong>Experiences</strong>
+            backend, and both expose an operation called <code>list</code>.
         </p>
         <p>
-            The grant must therefore identify the service as well as the operation. This
-            walkthrough authorizes one catalog, proves that the sibling catalog rejects
-            that grant, then obtains the correctly qualified authorization.
+            R3 draft-11 removed the gateway vocabulary, so the catalog publishes one merged
+            OpenAPI definition and renames the colliding operations to
+            <code>listDestinations</code> and <code>listExperiences</code>. This walkthrough
+            authorizes one, proves that the sibling rejects that grant, then obtains
+            authorization for the sibling.
         </p>
     </details>
     <label for="catalog-service">Catalog service</label>
@@ -68,7 +70,7 @@
                 <pre>@JsonSerializer.Serialize(exchange, WalletDemoSession.Pretty)</pre></details>
         }
     </section>
-    <details open class="catalog-code"><summary>C# service-qualified enforcement</summary><pre><code class="language-csharp">@Example</code></pre></details>
+    <details open class="catalog-code"><summary>C# operation enforcement</summary><pre><code class="language-csharp">@Example</code></pre></details>
 </section>
 
 @code {
@@ -81,24 +83,24 @@
     ];
     private static readonly ProtocolMessage[] CatalogSequence =
     [
-        ProtocolMessage.Http(1, "network", "agent", "catalog", "Discover gateway services", responseLabel: "200"),
+        ProtocolMessage.Http(1, "network", "agent", "catalog", "Discover the merged OpenAPI definition", responseLabel: "200"),
         ProtocolMessage.Http(1, "setup", "agent", "ap", "Enroll and receive agent JWT", responseLabel: "200"),
         ProtocolMessage.Http(2, "network", "agent", "catalog", "Request selected catalog; receive challenge", responseLabel: "401"),
-        ProtocolMessage.Http(2, "network", "agent", "ps", "Exchange selected-service resource token", "200"),
-        ProtocolMessage.Http(2, "network", "ps", "as", "Federate service-qualified authorization", "200"),
+        ProtocolMessage.Http(2, "network", "agent", "ps", "Exchange selected-operation resource token", "200"),
+        ProtocolMessage.Http(2, "network", "ps", "as", "Federate the selected operation's authorization", "200"),
         ProtocolMessage.Http(2, "network", "as", "catalog", "Fetch and verify the R3 definition", responseLabel: "200"),
         ProtocolMessage.Http(3, "network", "agent", "catalog", "Read selected catalog", responseLabel: "200"),
-        ProtocolMessage.Http(4, "network", "agent", "catalog", "Sibling service rejects mismatched grant", responseLabel: "403"),
-        ProtocolMessage.Http(5, "network", "agent", "catalog", "Request sibling-service challenge", responseLabel: "401"),
-        ProtocolMessage.Http(5, "network", "agent", "ps", "Exchange sibling-service resource token", "200"),
-        ProtocolMessage.Http(5, "network", "ps", "as", "Authorize the qualified sibling operation", "200"),
+        ProtocolMessage.Http(4, "network", "agent", "catalog", "Sibling operation rejects mismatched grant", responseLabel: "403"),
+        ProtocolMessage.Http(5, "network", "agent", "catalog", "Request sibling-operation challenge", responseLabel: "401"),
+        ProtocolMessage.Http(5, "network", "agent", "ps", "Exchange sibling-operation resource token", "200"),
+        ProtocolMessage.Http(5, "network", "ps", "as", "Authorize the sibling operation", "200"),
         ProtocolMessage.Http(5, "network", "agent", "catalog", "Read sibling catalog with fresh grant", responseLabel: "200"),
     ];
     public const string Example = """
         public static R3EnforcementDecision AuthorizeCatalog(R3Enforcement enforcement,
-            JsonObject verifiedAuthToken, string service)
+            JsonObject verifiedAuthToken, string operationId)
             => enforcement.Evaluate(verifiedAuthToken,
-                new R3OperationIdentity(Vocabulary.OpenApiGateway, R3Operation.OpenApiGateway(service, "list")));
+                new R3OperationIdentity(Vocabulary.OpenApi, R3Operation.OpenApi(operationId)));
         """;
     private CatalogDemoSession _session = null!;
     private readonly CancellationTokenSource _cancellation = new();

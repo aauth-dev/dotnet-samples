@@ -20,8 +20,8 @@ public sealed class CatalogDemoSession(string provider, string person, string re
     public string? Result { get; private set; }
     public Func<Task>? Changed { get; set; }
     public List<ScenarioExchange> Exchanges { get; } = [];
-    public static string[] Steps { get; } = ["Discover catalog services", "Authorize selected service", "Read selected catalog",
-        "Reject a sibling-service grant", "Authorize sibling and recover"];
+    public static string[] Steps { get; } = ["Discover catalog definition", "Authorize selected operation", "Read selected catalog",
+        "Reject a sibling-operation grant", "Authorize sibling and recover"];
 
     public async Task NextAsync(CancellationToken cancellationToken)
     {
@@ -31,16 +31,17 @@ public sealed class CatalogDemoSession(string provider, string person, string re
                 using (var metadata = new MetadataClient(_http))
                 {
                     var document = await metadata.FetchAsync(metadata.GetUrl(resource, "aauth-resource.json"), cancellationToken);
-                    var services = document["r3_vocabularies"]!["urn:aauth:vocabulary:openapi-gateway"]!.AsObject();
-                    var definitions = new JsonObject();
-                    foreach (var service in services)
+                    var definition = (string)document["r3_vocabularies"]!["urn:aauth:vocabulary:openapi"]!;
+                    using (var request = new HttpRequestMessage(HttpMethod.Get, definition))
+                    using (var response = await AAuthHttpTransport.SendAsync(_http, request, cancellationToken))
                     {
-                        using var request = new HttpRequestMessage(HttpMethod.Get, (string)service.Value!);
-                        using var response = await AAuthHttpTransport.SendAsync(_http, request, cancellationToken);
                         response.EnsureSuccessStatusCode();
-                        definitions[service.Key] = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+                        Result = new JsonObject
+                        {
+                            ["metadata"] = document,
+                            ["definition"] = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken)),
+                        }.ToJsonString(WalletDemoSession.Pretty);
                     }
-                    Result = new JsonObject { ["metadata"] = document, ["definitions"] = definitions }.ToJsonString(WalletDemoSession.Pretty);
                 }
                 var enrolled = await AAuthClientBuilder.Bootstrap(provider + "/enrol").WithKey(_key)
                     .WithKeyStore(new InMemoryKeyStore()).WithPersonServer(person).WithEgressPolicy(SampleEgress.Policy).EnrolAsync(cancellationToken);

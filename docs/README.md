@@ -38,7 +38,7 @@ modes. Generic signing demonstrations are separate from AAuth resource access.
 - [Rich Resource Requests (R3)](workflows/rich-resource-requests.md) — preview; ships in the separate [`AAuth.R3`](../src/AAuth.R3/) package
 - [Events](workflows/events.md) - subscribe tokens, durable AP inbox delivery and verified agent receipts in `AAuth.Events`
 - [Wallet Protocol](workflows/wallet-protocol.md) - AS clarification, direct-AS chaining and federated revocation
-- [Catalog Gateway](workflows/catalog-gateway.md) - service-qualified R3 grants, sibling rejection and recovery
+- [Travel Catalog](workflows/catalog-gateway.md) - merged OpenAPI definition, sibling rejection and recovery
 - [Document Release](workflows/document-release.md) - resource permission before PS consent, with signed download or denial
 
 ## Server Implementation

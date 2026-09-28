@@ -24,7 +24,7 @@
             <li><span class="srv srv--trips">Trips</span> browsing and booking trips (mission-governed)</li>
             <li><span class="srv srv--wallet">Wallet</span> paying for a booking (federated, four-party)</li>
             <li><span class="srv srv--bookings">Bookings</span> reserving dining &amp; experiences (Rich Resource Requests, R3, four-party)</li>
-            <li><span class="srv srv--catalog">Catalog</span> comparing destinations and experiences behind one gateway</li>
+            <li><span class="srv srv--catalog">Catalog</span> comparing destinations and experiences in one merged OpenAPI definition</li>
             <li><span class="srv srv--documents">Documents</span> releasing a travel brief after resource and person approval</li>
         </ul>
         <h3 class="intro__label">All supporting services and participant roles</h3>
@@ -135,8 +135,8 @@
         new(14, "/documents", "Document Release — Resource Permission First",
             "Aria requests a work travel brief. The document owner decides whether it may be released before the Person Server asks you to authorize the download.",
             new[] { "Agent + Documents + PS", "4 steps", "approve / deny" }),
-        new(15, "/catalog-gateway", "Travel Catalog — Service-Qualified Access",
-            "Aria compares destination and experience catalogs behind one gateway. A grant for one service cannot be reused for the other service's identically named list operation.",
-            new[] { "Agent + Catalog + PS + R3 AS", "5 steps", "OpenAPI Gateway" }),
+        new(15, "/catalog-gateway", "Travel Catalog — Merged OpenAPI Definition",
+            "Aria compares destination and experience catalogs. Both backends define list, so the merged OpenAPI definition renames them and a grant for one cannot read the other.",
+            new[] { "Agent + Catalog + PS + R3 AS", "5 steps", "OpenAPI" }),
     };
 }

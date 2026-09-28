@@ -135,7 +135,6 @@ public class R3VocabularyTests
     {
         { Vocabulary.Mcp, R3Operation.Mcp("search") },
         { Vocabulary.OpenApi, R3Operation.OpenApi("search") },
-        { Vocabulary.OpenApiGateway, R3Operation.OpenApiGateway("calendar", "search") },
         { Vocabulary.Grpc, R3Operation.Grpc("calendar.Service/Search") },
         { Vocabulary.GraphQl, R3Operation.GraphQl("Search", "query") },
         { Vocabulary.AsyncApi, R3Operation.AsyncApi("search") },
@@ -236,7 +235,7 @@ public class R3VocabularyTests
     [Theory]
     [InlineData(Vocabulary.OpenApi, "{\"tool\":\"search\"}")]
     [InlineData(Vocabulary.OpenApi, "{\"operationId\":\"search\",\"service\":\"calendar\"}")]
-    [InlineData(Vocabulary.OpenApiGateway, "{\"operationId\":\"search\"}")]
+    [InlineData("urn:aauth:vocabulary:openapi-gateway", "{\"operationId\":\"search\",\"service\":\"calendar\"}")]
     [InlineData(Vocabulary.GraphQl, "{\"operation\":\"search\"}")]
     [InlineData(Vocabulary.Grpc, "{\"method\":\"Search\"}")]
     [InlineData(Vocabulary.OData, "{\"operation\":\"Events/Cancel\",\"methods\":[\"POST\"]}")]
@@ -248,36 +247,32 @@ public class R3VocabularyTests
     }
 
     [Fact]
-    public void GatewayDiscoveryAndServiceCollision_AreScoped()
+    public void MergedDefinition_RenamedCollidingOperationsAreDistinct()
     {
-        var metadata = R3Metadata.AddVocabularies(new JsonObject(), new Dictionary<string, JsonNode?>
+        var metadata = R3Metadata.AddVocabularies(new JsonObject(), new Dictionary<string, string>
         {
-            [Vocabulary.OpenApiGateway] = new JsonObject { ["calendar"] = "https://gateway.test/calendar.json", ["billing"] = "https://gateway.test/billing.json" },
+            [Vocabulary.OpenApi] = "https://catalog.test/openapi.json",
         });
-        var calendar = new R3OperationIdentity(Vocabulary.OpenApiGateway, R3Operation.OpenApiGateway("calendar", "create"));
-        var billing = new R3OperationIdentity(Vocabulary.OpenApiGateway, R3Operation.OpenApiGateway("billing", "create"));
-        var request = new R3Operations { Vocabulary = calendar.Vocabulary, Operations = [calendar.Operation, billing.Operation] };
-        R3Metadata.ValidateOperations(request, metadata, [calendar, billing]);
-        var grant = new R3Grant { Vocabulary = calendar.Vocabulary, Operations = [calendar.Operation] };
-        Assert.True(grant.Contains(calendar));
-        Assert.False(grant.Contains(billing));
-        Assert.False(grant.Contains(R3OperationIdentity.OpenApi("create")));
-        Assert.Throws<InvalidOperationException>(() => R3Metadata.ValidateOperations(request, metadata, [calendar]));
-        var unknown = new R3OperationIdentity(Vocabulary.OpenApiGateway, R3Operation.OpenApiGateway("unknown", "create"));
-        Assert.Throws<InvalidOperationException>(() => R3Metadata.ValidateOperations(request with { Operations = [unknown.Operation] }, metadata, [unknown]));
+        var destinations = R3OperationIdentity.OpenApi("listDestinations");
+        var experiences = R3OperationIdentity.OpenApi("listExperiences");
+        var request = new R3Operations { Vocabulary = Vocabulary.OpenApi, Operations = [destinations.Operation, experiences.Operation] };
+        R3Metadata.ValidateOperations(request, metadata, [destinations, experiences]);
+        var grant = new R3Grant { Vocabulary = Vocabulary.OpenApi, Operations = [destinations.Operation] };
+        Assert.True(grant.Contains(destinations));
+        Assert.False(grant.Contains(experiences));
+        Assert.Throws<InvalidOperationException>(() => R3Metadata.ValidateOperations(request, metadata, [destinations]));
     }
 
     [Theory]
-    [InlineData("null")]
-    [InlineData("{}")]
-    [InlineData("[]")]
-    [InlineData("\"https://gateway.test/openapi.json\"")]
-    [InlineData("{\"\":\"https://gateway.test/openapi.json\"}")]
-    [InlineData("{\"calendar\":null}")]
-    [InlineData("{\"calendar\":[]}")]
-    public void MalformedGatewayDiscoveryFails(string json) =>
+    [InlineData("urn:aauth:vocabulary:openapi", "null")]
+    [InlineData("urn:aauth:vocabulary:openapi", "{}")]
+    [InlineData("urn:aauth:vocabulary:openapi", "[]")]
+    [InlineData("urn:aauth:vocabulary:openapi", "{\"calendar\":\"https://catalog.test/calendar.json\"}")]
+    [InlineData("urn:aauth:vocabulary:openapi-gateway", "{\"calendar\":\"https://catalog.test/calendar.json\"}")]
+    [InlineData("urn:aauth:vocabulary:openapi-gateway", "\"https://catalog.test/openapi.json\"")]
+    public void MalformedOrRemovedDiscoveryFails(string vocabulary, string json) =>
         Assert.Throws<InvalidOperationException>(() => R3Metadata.AddVocabularies(new JsonObject(),
-            new Dictionary<string, JsonNode?> { [Vocabulary.OpenApiGateway] = JsonNode.Parse(json) }));
+            new Dictionary<string, JsonNode?> { [vocabulary] = JsonNode.Parse(json) }));
 
     [Theory]
     [InlineData("{\"task\":\"read\",\"region\":\"west\"}")]
@@ -326,15 +321,15 @@ public class R3VocabularyTests
     [Fact]
     public void QualifiedPerCallRetry_RejectsOtherServiceAndVocabulary()
     {
-        var operation = R3Operation.OpenApiGateway("calendar", "create");
-        var identity = new R3OperationIdentity(Vocabulary.OpenApiGateway, operation);
+        var operation = R3Operation.Wsdl("create", "calendar");
+        var identity = new R3OperationIdentity(Vocabulary.Wsdl, operation);
         var initial = new R3ClaimReader.AuthTokenClaims("https://resource.test/r3/doc", "hash",
             new R3Grant { Vocabulary = identity.Vocabulary, Operations = [] },
             new R3Grant { Vocabulary = identity.Vocabulary, Operations = [operation] });
         var store = new R3ProposalStore();
         var enforcement = new R3Enforcement(store, new Uri("https://resource.test"));
         var parameters = new Dictionary<string, R3Parameter> { ["value"] = R3Parameter.Inline(JsonValue.Create(1)!) };
-        var billing = new R3OperationIdentity(identity.Vocabulary, R3Operation.OpenApiGateway("billing", "create"));
+        var billing = new R3OperationIdentity(identity.Vocabulary, R3Operation.Wsdl("create", "billing"));
         Assert.Equal(R3EnforcementDecisionKind.Rejected, enforcement.Evaluate(initial, billing, parameters).Kind);
         Assert.Equal(R3EnforcementDecisionKind.Rejected, enforcement.Evaluate(initial, R3OperationIdentity.OpenApi("create"), parameters).Kind);
         var challenge = enforcement.Evaluate(initial, identity, parameters);
