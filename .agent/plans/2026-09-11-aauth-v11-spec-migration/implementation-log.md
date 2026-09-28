@@ -499,6 +499,12 @@ AAuth issue #199 is excluded and stays an open upstream question. Boxes were
 ticked only where a named, passing test backs them; 29 are ticked and 57 are
 open. The plan gained a closing-out section for when every box is ticked.
 
+### [2026-09-28] [Phase 3, 5-10] Correction: all 12 items are in the plan
+
+CORRECTED. The previous entry says "Eleven". The gap review listed 12 items,
+with AAuth issue #199 listed separately, and all 12 were folded in as the list
+above shows. No plan change was needed.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate
