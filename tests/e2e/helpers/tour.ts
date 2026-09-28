@@ -44,37 +44,44 @@ export async function openTour(page: Page): Promise<void> {
   await waitForInteractive(page, 'button.primary');
 }
 
-/** Planned step counts per flow (AP + PS + Concierge all configured). */
+/**
+ * Planned step counts per flow (AP + PS + Concierge all configured). Every
+ * Person Server flow includes the draft-11 person-token leg: signed GET → 401
+ * requirement=person-token, POST /person → person token, and the resource's
+ * requirement=auth-token challenge naming that token (presented_jti).
+ */
 const PLAN_STEPS: Record<TourMode, number> = {
   Bootstrap: 3,
   Identity: 2,
   // Resource-managed (two-party): signed GET → 202 → consent → poll → replay.
   ResourceManaged: 6,
-  Autonomous: 6,
-  Deferred: 9,
-  CallChain: 7,
-  // Four-party federated: the plan shows 7 steps at selection time; once the
-  // exchange returns 202 (the AS requires consent — its own stub screen or
-  // Keycloak) the plan expands to 10 (consent + poll), mirroring deferred.
-  Federated: 7,
-  // Rich Resource Requests (R3, four-party): a single, always-full 14-step
+  Autonomous: 8,
+  Deferred: 11,
+  // Call chain: 9 at selection time; the plan expands to 15 once the hop-1
+  // exchange returns 202 (two consent + poll cycles).
+  CallChain: 9,
+  // Four-party federated: the plan shows 9 steps at selection time; once the
+  // exchange returns 202 (PS and/or AS consent) the plan expands to 12
+  // (consent + poll), mirroring deferred.
+  Federated: 9,
+  // Rich Resource Requests (R3, four-party): a single, always-full 16-step
   // linear plan (no branch). The R3 Access Server sets RequireProposalConsent,
-  // so confirm_reservation always needs a per-call consent; the plan shows 14
+  // so confirm_reservation always needs a per-call consent; the plan shows 16
   // at selection time and never expands.
-  RichRequests: 14,
-  // Mission (PS-governed): 20 steps across three consent cycles — mission
-  // creation (4/5), the out-of-mission elevated scope token (12/13), and the
-  // out-of-scope cancel_booking permission (18/19).
-  Mission: 20,
+  RichRequests: 16,
+  // Mission (PS-governed): 21 steps across three consent cycles — mission
+  // creation (4/5), the out-of-mission elevated scope token (13/14), and the
+  // out-of-scope cancel_booking permission (19/20).
+  Mission: 21,
   // Mission + Call Chain: one mission governs a clarified elevated-scope
-  // grant (creation 4/5, elevated 10/11 with a clarification chat at 7/8) and
-  // a silent mission-forwarded call chain (Agent → Concierge → Trips).
-  MissionCallChain: 14,
-  // Sub-Agents (parent-mediated worker): 7 in-process steps — parent + worker
-  // identities, the worker's resource token, the parent-mediated exchange, the
-  // PS token return + handoff, and the worker's resource call. Runs entirely
-  // in-process (no live servers).
-  SubAgent: 7,
+  // grant (creation 4/5, elevated 11/12 with a clarification chat at 8/9) and
+  // a silent mission-governed call chain (Agent → Concierge → Trips).
+  MissionCallChain: 15,
+  // Sub-Agents (parent-mediated worker): 8 steps against the live PS, AS and
+  // Wallet — parent + worker identities, the upstream grant, the worker's
+  // person token (via the parent) and resource token, the parent-mediated
+  // exchange, the handoff, and the worker's resource call.
+  SubAgent: 8,
 };
 
 /** Select a flow in the `#flow-select` picker and wait for the timeline to reset. */

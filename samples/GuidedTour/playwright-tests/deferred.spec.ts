@@ -10,15 +10,16 @@ import {
   TourMode,
 } from '../../../tests/e2e/helpers/tour';
 import { approveInPopup, denyInPopup } from '../../../tests/e2e/helpers/consent';
-import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
+import { Urls } from '../../../tests/e2e/helpers/agents';
 import { directedSubject } from '../../../tests/e2e/helpers/consent';
 
 /**
- * PS-Asserted (Deferred) — three-party flow requiring human approval, 9 steps.
- * The agent has no standing consent, so POST /token returns 202 with an
- * interaction URL. "Run all" parks on step 6 and surfaces the consent link; the
- * user opens the PS consent page in a new tab and Approves/Denies while the
- * agent polls the pending URL. Generous timeout covers the poll loop.
+ * PS-Asserted (Deferred) — three-party flow requiring human approval, 11 steps.
+ * After the person-token leg (steps 2–6) the agent has no standing consent, so
+ * POST /token returns 202 with an interaction URL. "Run all" parks on step 8
+ * and surfaces the consent link; the user opens the PS consent page in a new
+ * tab and Approves/Denies while the agent polls the pending URL. Generous
+ * timeout covers the poll loop.
  *
  * This exercises granting consent dynamically via the PS consent URL (rather
  * than the admin backdoor).
@@ -35,6 +36,7 @@ test.describe('Deferred (Guided Tour)', () => {
     // Parked on the user-approval step: the consent link is shown.
     const link = page.locator('a.primary.approve');
     await expect(link).toBeVisible();
+    await expect(doneSteps(page)).toHaveCount(8);
 
     // Opening the link starts the background poll loop and opens the PS
     // consent page in a new tab.
@@ -44,29 +46,34 @@ test.describe('Deferred (Guided Tour)', () => {
     ]);
     await approveInPopup(popup);
 
-    // The poll loop resolves and records the auth_token step (8 of 9). The
-    // final replay step (9) still requires an explicit "Run step" click — the
+    // The poll loop resolves and records the auth_token step (10 of 11). The
+    // final replay step (11) still requires an explicit "Run step" click — the
     // consent link is replaced by the primary button again once polling ends.
-    await expect(doneSteps(page)).toHaveCount(8, { timeout: 120_000 });
+    await expect(doneSteps(page)).toHaveCount(10, { timeout: 120_000 });
     const primary = page.locator('button.primary');
     await expect(primary).toBeEnabled();
     await primary.click();
 
-    await expect(doneSteps(page)).toHaveCount(9, { timeout: 30_000 });
+    await expect(doneSteps(page)).toHaveCount(11, { timeout: 30_000 });
 
-    // Step 9 ("Replay GET /events with auth_token") is the resource result.
-    await selectStep(page, 8);
+    // Step 4 ("POST /person → person token"): 200 with the aa-person+jwt.
+    await selectStep(page, 3);
+    await expectResponse(page, 200, ['person_token']);
+
+    // Step 11 ("Replay GET /events with auth_token") is the resource result.
+    await selectStep(page, 10);
     await expectResponse(page, 200, ['three-party']);
 
     const json = (await readResponseJson(page)) as Record<string, unknown>;
     expect(json.accessMode).toBe('three-party');
     expect(json.scheme).toBe('jwt');
-    expect(json.agent).toBe(Agents.tour);
+    expect(json.ps).toBe(Urls.personServer);
     expect(json.sub).toBe(directedSubject(Urls.calendar));
     expect(json.scope).toEqual(['calendar.read']);
     expect(json.iss).toBe(Urls.personServer);
-    // Direct authorization (deferred consent) — no act chain.
-    expect(json.act).toBeFalsy();
+    // The auth token names the person, not the agent; there is no act chain.
+    expect(json).not.toHaveProperty('agent');
+    expect(json).not.toHaveProperty('act');
   });
 
   test('deny at the PS consent page aborts the flow', async ({ page, context }) => {

@@ -113,6 +113,7 @@ internal static class DocumentationSnippetContext
         private Func<JsonObject, bool> validateSubscriptionParameters = null!;
         private TokenExchangeClient originalExchange = null!;
         private string intermediaryResourceToken = "held-resource-token", workerToken = "held-child-token", parentToken = "held-parent-token";
+        private string personToken = "held-person-token", workerPersonToken = "held-person-token";
         private AAuthKey parentKey = null!;
         private TokenExchangeRequest consentOptions = null!;
         private HttpClient workerClient = null!;

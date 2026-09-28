@@ -21,7 +21,7 @@ test('step inspector shows a selected step, then Reset clears the timeline', asy
   await selectFlow(page, TourMode.Autonomous);
 
   await runAll(page);
-  await expect(doneSteps(page)).toHaveCount(6);
+  await expect(doneSteps(page)).toHaveCount(8);
 
   // Selecting step 1 renders its inspector pane.
   await selectStep(page, 0);
@@ -30,6 +30,6 @@ test('step inspector shows a selected step, then Reset clears the timeline', asy
   // Reset clears all executed steps and restores the "run a step" hint.
   await page.getByRole('button', { name: 'Reset' }).click();
   await expect(doneSteps(page)).toHaveCount(0);
-  await expect(steps(page)).toHaveCount(6); // plan still rendered
+  await expect(steps(page)).toHaveCount(8); // plan still rendered
   await expect(page.locator('section.payload')).toContainText('Run a step');
 });

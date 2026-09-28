@@ -2,13 +2,15 @@ import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { openTour, selectFlow, doneSteps, selectStep, TourMode } from '../../../tests/e2e/helpers/tour';
 import { waitForInteractive } from '../../../tests/e2e/helpers/blazor';
 import { completeWorkerConsent } from '../../../tests/e2e/helpers/worker-consent';
+import { Urls } from '../../../tests/e2e/helpers/agents';
 
 /**
- * Sub-Agents — parent-mediated workers, 7 steps through the live PS and AS.
+ * Sub-Agents — parent-mediated workers, 8 steps through the live PS and AS.
  * Assert the wire artifacts the steps surface:
- * the sub-agent's `parent_agent` claim (step 2), the issued auth token bound to
- * the worker with a nested `act` (step 5), and the worker calling the resource
- * with that token (step 7).
+ * the sub-agent's `parent_agent` claim (step 2), the worker's person token
+ * obtained by the parent with cnf = the worker key (step 4), the issued auth
+ * token bound to the worker and naming the person rather than any agent
+ * (step 6), and the worker calling the resource with that token (step 8).
  */
 test.describe.configure({ timeout: 60_000 });
 
@@ -23,7 +25,7 @@ async function decodedPayload(page: import('@playwright/test').Page): Promise<Re
 }
 
 for (const entry of ['picker', 'deep link'] as const) {
-test(`sub-agent flow via ${entry} binds parent_agent, the worker cnf, and a nested act`, async ({ page }) => {
+test(`sub-agent flow via ${entry} binds parent_agent and the worker cnf with no agent claims`, async ({ page }) => {
   if (entry === 'picker') {
     await openTour(page);
     await selectFlow(page, TourMode.SubAgent);
@@ -42,7 +44,7 @@ test(`sub-agent flow via ${entry} binds parent_agent, the worker cnf, and a nest
   await completeWorkerConsent(
     page,
     'a.worker-consent',
-    async () => (await doneSteps(page).count()) === 7,
+    async () => (await doneSteps(page).count()) === 8,
     async (_, round) => { labels.push(await consent.innerText()); },
   );
   expect(labels).toEqual([
@@ -51,8 +53,8 @@ test(`sub-agent flow via ${entry} binds parent_agent, the worker cnf, and a nest
     'Approve federated access at Access Server (3 of 3)',
   ]);
 
-  // Complete the live consent/poll round and all seven displayed steps.
-  await expect(doneSteps(page)).toHaveCount(7);
+  // Complete the live consent/poll round and all eight displayed steps.
+  await expect(doneSteps(page)).toHaveCount(8);
   await expect(page.locator('button.primary')).toHaveText('Done');
 
   // Step 2 — the worker's agent token carries the authoritative `parent_agent`
@@ -63,24 +65,32 @@ test(`sub-agent flow via ${entry} binds parent_agent, the worker cnf, and a nest
   expect(workerToken.sub).toBe('aauth:aria+worker1@localhost');
   expect(workerToken.cnf).toBeTruthy();
 
-  // Step 5 — the PS returns the AS token bound to the SUB-AGENT (agent + cnf).
-  // The sub-agent is the top-level `agent`; act.agent names the parent that
-  // mediated, followed by the original caller's upstream context.
-  await selectStep(page, 4);
+  // Step 4 — the parent obtained the worker's person token: the PS bound it to
+  // the worker's key (cnf) and directed it at the Wallet.
+  await selectStep(page, 3);
+  const personToken = await decodedPayload(page);
+  expect(personToken.iss).toBe(Urls.personServer);
+  expect(personToken.aud).toBe(Urls.wallet);
+  expect(personToken.cnf).toEqual(workerToken.cnf);
+  expect(personToken).not.toHaveProperty('scope');
+
+  // Step 6 — the PS returns the AS token bound to the SUB-AGENT's key. It names
+  // the person (ps, sub) and carries no agent or act claim.
+  await selectStep(page, 5);
   const authToken = await decodedPayload(page);
-  expect(authToken.agent).toBe('aauth:aria+worker1@localhost');
-  expect(authToken.cnf).toBeTruthy();
-  const act = authToken.act as Record<string, unknown>;
-  expect(act.agent).toBe('aauth:aria@localhost');
-  expect((act.act as Record<string, unknown>).agent).toBe('aauth:original@localhost');
-  expect(authToken.iss).toBe('http://localhost:5500');
+  expect(authToken.cnf).toEqual(workerToken.cnf);
+  expect(authToken.ps).toBe(Urls.personServer);
+  expect(authToken.sub).toBe(personToken.sub);
+  expect(authToken).not.toHaveProperty('agent');
+  expect(authToken).not.toHaveProperty('act');
+  expect(authToken.iss).toBe(Urls.accessServer);
   expect(authToken.dwk).toBe('aauth-access.json');
 
-  // Step 7 — the sub-agent calls the resource itself with the issued token.
-  await selectStep(page, 6);
+  // Step 8 — the sub-agent calls the resource itself with the issued token.
+  await selectStep(page, 7);
   await expect(page.locator('section.payload article.inspector h2')).toHaveText(
     /Sub-agent calls the resource with the token/,
   );
-  await expect(page.locator('section.payload article.inspector')).toContainText('aauth:aria+worker1@localhost');
+  await expect(page.locator('section.payload article.inspector')).toContainText('four-party');
 });
 }

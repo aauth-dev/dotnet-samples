@@ -60,6 +60,12 @@ public sealed class FederatedWorkerScenario(IAAuthKey providerKey, string provid
     // presents it for the Wallet's resource token.
     public async Task ObtainResourceAsync(CancellationToken ct = default)
     {
+        await ObtainWorkerPersonTokenAsync(ct);
+        await PresentWorkerPersonTokenAsync(ct);
+    }
+
+    public async Task ObtainWorkerPersonTokenAsync(CancellationToken ct = default)
+    {
         var walletUrl = wallet.TrimEnd('/') + "/wallet";
         using (var worker = new AAuthClientBuilder(_workerKey).UseJwt(WorkerToken!).WithEgressPolicy(SampleEgress.Policy).Build())
         using (var prerequisite = await worker.GetAsync(walletUrl, ct))
@@ -67,14 +73,16 @@ public sealed class FederatedWorkerScenario(IAAuthKey providerKey, string provid
             if (prerequisite.StatusCode != HttpStatusCode.Unauthorized)
                 throw new InvalidOperationException("Worker expected a Wallet person-token requirement.");
         }
-        using (var parent = new AAuthClientBuilder(_parentKey).UseJwt(ParentToken!).WithEgressPolicy(SampleEgress.Policy).Build())
-        {
-            WorkerPersonToken = await new TokenExchangeClient(parent, new MetadataClient(_discovery)).RequestPersonTokenAsync(
-                personServer, new Uri(wallet).GetLeftPart(UriPartial.Authority),
-                new TokenExchangeRequest { SubagentToken = WorkerToken, UpstreamToken = UpstreamToken, OnInteractionRequired = InteractAsync }, ct);
-        }
-        using var client = new AAuthClientBuilder(_workerKey).UseJwt(WorkerPersonToken).WithEgressPolicy(SampleEgress.Policy).Build();
-        using var response = await client.GetAsync(walletUrl, ct);
+        using var parent = new AAuthClientBuilder(_parentKey).UseJwt(ParentToken!).WithEgressPolicy(SampleEgress.Policy).Build();
+        WorkerPersonToken = await new TokenExchangeClient(parent, new MetadataClient(_discovery)).RequestPersonTokenAsync(
+            personServer, new Uri(wallet).GetLeftPart(UriPartial.Authority),
+            new TokenExchangeRequest { SubagentToken = WorkerToken, UpstreamToken = UpstreamToken, OnInteractionRequired = InteractAsync }, ct);
+    }
+
+    public async Task PresentWorkerPersonTokenAsync(CancellationToken ct = default)
+    {
+        using var client = new AAuthClientBuilder(_workerKey).UseJwt(WorkerPersonToken!).WithEgressPolicy(SampleEgress.Policy).Build();
+        using var response = await client.GetAsync(wallet.TrimEnd('/') + "/wallet", ct);
         if (response.StatusCode != HttpStatusCode.Unauthorized)
             throw new InvalidOperationException("Worker expected a Wallet authorization challenge.");
         ResourceToken = AAuthRequirementHeader.Parse(response.Headers.GetValues(AAuthRequirementHeader.Name).Single()).ResourceToken

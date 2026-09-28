@@ -181,9 +181,14 @@
                     consent earlier, it never has to interrupt you.<br /><br />
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — required for all
                     Person Server flows.
-                    The agent already has standing consent at the Person Server. <code>POST /token</code>
-                    returns <code>200</code> immediately with an <code>auth_token</code>; the agent retries the
-                    resource and gets <code>200</code>. <strong>No human in the loop.</strong>
+                    The Calendar first asks <em>which person</em> the agent acts for
+                    (<code>requirement=person-token</code>); the agent gets an <code>aa-person+jwt</code>
+                    from <code>POST /person</code> and presents it, and the Calendar answers with a
+                    resource token. The agent already has standing consent at the Person Server, so
+                    <code>POST /token</code> (resource token + <code>presented_token</code>)
+                    returns <code>200</code> immediately with an <code>auth_token</code> naming the person
+                    (<code>ps</code>, <code>sub</code>); the agent retries the resource and gets
+                    <code>200</code>. <strong>No human in the loop.</strong>
                 </text>
                 break;
             case TourMode.Deferred:
@@ -193,7 +198,9 @@
                     yet — so it pauses and waits for your one-time approval.<br /><br />
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — required for all
                     Person Server flows.
-                    The agent has <em>no</em> consent yet. <code>POST /token</code> returns <code>202 Accepted</code>
+                    The agent gets a person token from <code>POST /person</code>, presents it, and receives
+                    a resource token — but it has <em>no</em> consent yet. <code>POST /token</code> returns
+                    <code>202 Accepted</code>
                     with an interaction URL; the user signs in and submits <strong>Approve</strong> at the PS's consent page in
                     a new tab; the agent polls a pending URL until the PS mints the <code>auth_token</code>.
                     <strong>Human approval required.</strong>
@@ -206,16 +213,16 @@
                     service that reads it on Aria's behalf, so you consent once for each hop.<br /><br />
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — multi-agent delegation.
                     The agent calls a <strong>Concierge</strong> (an intermediate service) which itself calls
-                    a downstream resource (Calendar). The Concierge passes the agent's auth_token as
-                    <code>upstream_token</code> during its own PS exchange, producing a <strong>nested <code>act</code>
-                    claim</strong> that records the full delegation chain. The final resource sees exactly who
-                    acted on whose behalf. <strong>Human approval required — two consents:</strong> first
+                    a downstream resource (Calendar). The agent presents a person token for the Concierge,
+                    then an auth token. The Concierge, acting as an agent, passes that auth_token as
+                    <code>upstream_token</code> when it requests its own Calendar person token and auth token,
+                    so the PS issues them for the <strong>same person</strong>: the same <code>ps</code>, with a
+                    <code>sub</code> directed at Calendar. Auth tokens name the person, not the agents — there
+                    is no <code>act</code> chain. <strong>Human approval required — two consents:</strong> first
                     for <em>Agent → Concierge</em>, then for the Concierge's chained
                     <em>Concierge → Calendar</em> hop. Each surfaces its own interaction URL and pending poll.
-                    This demo uses the upstream PS. A no-mission AS-issued upstream instead
-                    uses access-server metadata and a direct agent-signed AS exchange.
-                    A mission routes through its PS, whose shared mission gate runs before federation
-                    or claims release. Changing upstream authorization cannot reuse a previous caller's grant.
+                    A mission in the upstream token governs the downstream hop at the same PS.
+                    Changing upstream authorization cannot reuse a previous caller's grant.
                 </text>
                 break;
             case TourMode.Federated:
@@ -225,12 +232,14 @@
                     financial provider that makes the final call on the payment.<br /><br />
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — four-party
                     federation.
-                    The resource's <code>/wallet</code> branch challenges with a resource_token
+                    The Wallet first requires a person token; presented with one, its <code>/wallet</code>
+                    branch challenges with a resource_token
                     whose <code>aud</code> is an <strong>Access Server</strong> (not the Person Server).
-                    The agent forwards it to its PS unchanged; the PS notices <code>aud ≠ self</code>,
-                    federates to the AS, and the <strong>Access Server</strong> evaluates policy and
-                    mints the <code>aa-auth+jwt</code> (<code>dwk=aauth-access.json</code>). The resource
-                    verifies it against the AS's JWKS. <strong>Interactive consent at the Access
+                    The agent forwards it (with the person token as <code>presented_token</code>) to its PS;
+                    the PS notices <code>aud ≠ self</code>, federates to the AS, and the <strong>Access Server</strong>
+                    evaluates policy and mints the <code>aa-auth+jwt</code> (<code>dwk=aauth-access.json</code>)
+                    naming the person by <code>ps</code> + <code>sub</code>. The resource verifies it against the
+                    AS's JWKS and trusts the PS only for person tokens. <strong>Interactive consent at the PS, then the Access
                     Server</strong> — you'll either approve at the stub AS's own Approve/Deny
                     screen (<code>make demo</code>) or sign in at a Keycloak login
                     (<code>make demo-keycloak</code>).
@@ -266,7 +275,9 @@
                     <strong>Signing mode: Agent Token (<code>sig=jwt</code>)</strong> — the Person Server
                     acts as the <strong>policy-enforcement point</strong>. The agent first proposes a durable
                     <strong>mission</strong> (description + pre-approved tools) which the user approves once;
-                    every later request is then checked against it. An <em>in-scope</em> token (<code>trips.read</code>)
+                    it then names the mission's <code>mission_s256</code> when it requests its person token, and
+                    the resource token and auth token carry it, so every later request is checked against it.
+                    An <em>in-scope</em> token (<code>trips.read</code>)
                     is minted <strong>silently</strong>; an <em>out-of-mission</em> scope (<code>trips.book</code>)
                     <strong>prompts</strong>; a <em>pre-approved</em> tool (<code>add_to_calendar</code>) is
                     resolved <strong>locally</strong> with no PS call; and an <em>out-of-scope</em> action
@@ -283,10 +294,11 @@
                     <strong>mission</strong> governs two very different kinds of access. An
                     <em>out-of-mission</em> elevated scope (<code>trips.book</code>) first triggers a
                     <strong>clarification chat</strong> — the PS asks <em>why</em>, the agent answers — and only
-                    then prompts the user to approve. After that, a <strong>mission-forwarded call chain</strong>
-                    (Agent → Concierge → Trips) flows <strong>silently</strong>: because both hops
-                    (<code>concierge</code>, <code>trips.read</code>) are in the mission's scope, the Concierge
-                    forwards the <code>AAuth-Mission</code> header downstream and no prompt is needed.
+                    then prompts the user to approve. After that, a <strong>mission-governed call chain</strong>
+                    (Agent → Concierge → Trips) flows <strong>silently</strong>: the agent's person token and
+                    auth token for the Concierge carry <code>mission_s256</code>, the Concierge chains with that
+                    auth token as <code>upstream_token</code>, and both hops (<code>concierge</code>,
+                    <code>trips.read</code>) are in the mission's scope, so no prompt is needed.
                     <strong>Two human approvals</strong> (mission creation, the clarified elevated scope) frame an
                     otherwise-silent multi-agent chain, and the PS's <strong>mission log</strong> records it all.
                 </text>
@@ -303,13 +315,16 @@
                     Aria can impersonate it), but it never talks to your Person Server directly:
                     <strong>Aria mediates</strong> on its behalf.<br /><br />
                     The worker's agent token carries a <code>parent_agent</code> claim naming Aria. The
-                    worker obtains a <code>resource_token</code> bound to <em>its own</em> key and hands it up
-                    to the parent; Aria then signs <code>POST /token</code> with the <strong>parent's</strong>
-                    key, including <code>subagent_token</code> and the original caller's <code>upstream_token</code>. The Access Server binds
-                    the issued <code>auth_token</code> to the <strong>worker</strong> (nesting the
-                    <code>act</code> claim <code>{ agent: parent, act: { agent: original } }</code> for audit) and
-                    returns it to the <strong>parent</strong> — which <strong>hands it down</strong> to the
-                    worker, the only party whose key can use it.
+                    Wallet asks the worker for a person token; Aria requests it at <code>POST /person</code>
+                    with <code>subagent_token</code> (so its <code>cnf</code> is the <em>worker's</em> key), and
+                    the worker presents it to obtain a <code>resource_token</code> bound to <em>its own</em> key,
+                    which it hands up to the parent. Aria then signs <code>POST /token</code> with the
+                    <strong>parent's</strong> key, including the worker's person token as
+                    <code>presented_token</code>, <code>subagent_token</code> and the original caller's
+                    <code>upstream_token</code>. The Access Server binds the issued <code>auth_token</code> to the
+                    <strong>worker</strong> — it names the person (<code>ps</code>, <code>sub</code>), not the
+                    agents — and returns it to the <strong>parent</strong>, which <strong>hands it down</strong>
+                    to the worker, the only party whose key can use it.
                     Delegation stays <strong>one level deep</strong> — a sub-agent can't spawn its own
                     sub-agents.<br /><br />
                     <em>Live PS, AS and Wallet endpoints.</em> Consent is evaluated independently

@@ -39,15 +39,20 @@ switchable at runtime from the topbar **Mode** picker:
   `AAuth-Requirement` pointing at the Inbox's own consent page; after you
   approve there, the Inbox issues an opaque `AAuth-Access` token bound to
   the agent's signature, which the agent replays to read the inbox.
-* **PS-Asserted (Direct Grant)** (6 steps) — three-party flow where the
-  PS mints the `auth_token` synchronously; no user interaction.
-* **PS-Asserted (Deferred)** (9 steps) — three-party flow where the PS
-  parks the request on `202 Accepted` and asks the user to consent before
-  the `auth_token` is issued.
-* **Call Chain / Multi-Agent** (7 steps) — the agent calls a Concierge
-  (intermediate service) which chains downstream to a Resource, producing
-  nested `act` claims that record the full delegation path.
-* **Federated (Four-Party)** (7 steps; 10 on the interactive path) — the
+* **PS-Asserted (Direct Grant)** (8 steps) — three-party flow: the resource
+  answers the agent token with `requirement=person-token`, the agent gets an
+  `aa-person+jwt` from the PS's `person_token_endpoint` and presents it, and
+  the resource returns a resource token naming it (`presented_jti`). The PS
+  mints the `auth_token` synchronously; no user interaction.
+* **PS-Asserted (Deferred)** (11 steps) — the same person-token leg, then the
+  PS parks the token request on `202 Accepted` and asks the user to consent
+  before the `auth_token` is issued.
+* **Call Chain / Multi-Agent** (9 steps; 15 when both hops need consent) — the
+  agent calls a Concierge (intermediate service) which chains downstream to a
+  Resource with the agent's auth token as `upstream_token`. Both grants name
+  the same person (`ps`), each resource with its own directed `sub`; auth
+  tokens carry no `agent` or `act` claim.
+* **Federated (Four-Party)** (9 steps; 12 on the interactive path) — the
   resource has its own **Access Server**. The resource token's `aud` is the
   AS, so the PS federates to the AS, which evaluates policy and mints the
   `aa-auth+jwt` (`dwk=aauth-access.json`). A dedicated red **Access Server**
@@ -56,18 +61,18 @@ switchable at runtime from the topbar **Mode** picker:
   Keycloak login URL. Requires an Access Server URL (`AccessServerUrl`);
   run it with `make demo-keycloak` (Keycloak) or `make demo`
   (stub AS, no Docker).
-* **Mission (PS-Governed)** (20 steps; three prompts) — the optional,
+* **Mission (PS-Governed)** (21 steps; three prompts) — the optional,
   orthogonal **agent governance** layer (§Agent Governance). The agent
-  proposes a human-approved mission, then asks the PS for permission on
-  each action, records audit, and relays interactions — the PS is the
-  contextual policy point. A mission-aware Resource copies the
-  `AAuth-Mission` claim into its resource token. Requires a Person Server
-  URL; drive the same flow from the CLI with `make demo-mission`.
-* **Mission + Call Chain** (14 steps; two prompts) — one durable mission
+  proposes a human-approved mission, then names its `mission_s256` when it
+  requests a person token; the resource copies it into the resource token and
+  the PS evaluates every token, permission and audit request against the
+  mission. Requires a Person Server URL; drive the same flow from the CLI with
+  `make demo-mission`.
+* **Mission + Call Chain** (15 steps; two prompts) — one durable mission
   governs two very different kinds of access. An out-of-mission elevated
   scope first triggers a **clarification chat** (the PS asks *why*, the
-  agent answers) before the user approves it; then a **mission-forwarded
-  call chain** (Agent → Concierge → Calendar) flows **silently** because
+  agent answers) before the user approves it; then a **mission-governed
+  call chain** (Agent → Concierge → Trips) flows **silently** because
   both hops are in the mission's scope. The PS's mission log records the
   whole trail. Requires a Person Server and a Concierge URL.
 
@@ -153,33 +158,40 @@ no token exchange; the **Inbox** manages authorization itself.
    messages (scope `inbox.read`). The signature covers the `authorization`
    header, proving the token is bound to the agent's key.
 
-### PS-Asserted / Direct Grant (6 steps)
+### PS-Asserted / Direct Grant (8 steps)
 
 Assumes the agent is already bootstrapped.
 
 1. Discover resource metadata — unsigned `GET /.well-known/aauth-resource.json`.
-2. Signed `GET /events` → **`401`** with a `resource_token` + `AAuth-Requirement`.
-3. Parse the 401 challenge (decode header + `resource_token` claims).
-4. Discover Person Server — unsigned `GET /.well-known/aauth-person.json`.
-5. Signed `POST /token` (exchange) → **`200`** + `auth_token`.
-6. Signed `GET /events` carrying the `auth_token` → 200 + claims.
+2. Signed `GET /events` with the agent token → **`401`** with
+   `AAuth-Requirement: requirement=person-token` (no resource token).
+3. Discover Person Server — unsigned `GET /.well-known/aauth-person.json`
+   (`person_token_endpoint` + `auth_token_endpoint`).
+4. Signed `POST /person {resource}` → **`200`** + `person_token`
+   (`aa-person+jwt`: `aud` = Calendar, directed `sub`, `cnf` = agent key).
+5. Signed `GET /events` presenting the person token → **`401`**
+   `requirement=auth-token` with a `resource_token`.
+6. Parse the resource token (`ps`, `sub`, `presented_jti`, `agent_jkt`).
+7. Signed `POST /token {resource_token, presented_token}` → **`200`** +
+   `auth_token` naming the person (`ps`, `sub`).
+8. Signed `GET /events` carrying the `auth_token` → 200 + claims.
 
-### PS-Asserted / Deferred (9 steps)
+### PS-Asserted / Deferred (11 steps)
 
-Steps 1–4 are the same as **Direct Grant**. From step 5 onward:
+Steps 1–6 are the same as **Direct Grant**. From step 7 onward:
 
 <!-- markdownlint-disable-next-line MD029 -->
-5. Signed `POST /token` → **`202 Accepted`** with `Location: /pending/{id}`
+7. Signed `POST /token` → **`202 Accepted`** with `Location: /pending/{id}`
    and interaction URL + single-use code.
-6. Agent surfaces the user-facing `{url}?code={code}` link.
-7. **User opens the PS's consent page.** The "Open consent page ↗"
+8. Agent surfaces the user-facing `{url}?code={code}` link.
+9. **User opens the PS's consent page.** The "Open consent page ↗"
    button opens `{url}?code={code}` in a new browser tab. The Person
    Server renders its own consent screen (agent + resource + scope); the
    user clicks **Approve** or **Deny** there and the PS records the
    choice. The agent is not on this channel. A "Simulate deny" button in
    the tour topbar is wired to the same denial endpoint for quick
    exercising of the denial path.
-8. Agent polls `Location` with a signed `GET`. While polling, the
+10. Agent polls `Location` with a signed `GET`. While polling, the
    sequence diagram shows a loop box with a live spinner and poll count.
    The loop resolves in one of three ways:
     * **Approve** → 200 + `auth_token`; the loop box turns solid green.
@@ -187,28 +199,37 @@ Steps 1–4 are the same as **Direct Grant**. From step 5 onward:
       `AAuthInteractionDeniedException`; the loop box turns red.
     * **Polling budget expires** (5 minutes by default) → SDK throws
       `AAuthInteractionTimeoutException`; the loop box turns amber.
-9. Signed `GET /events` carrying the `auth_token` → 200 + claims (only on the
+11. Signed `GET /events` carrying the `auth_token` → 200 + claims (only on the
    approve path).
 
-### Call Chain / Multi-Agent (7 steps)
+### Call Chain / Multi-Agent (9 steps)
 
 Demonstrates multi-agent delegation. The agent calls a Concierge
 (an intermediate AAuth-protected service) which itself calls a downstream
-Resource (Calendar), forwarding the caller's auth_token as `upstream_token`
-to produce a nested `act` claim.
+Resource (Calendar), passing the caller's auth_token as `upstream_token` on
+its own person token and auth token requests. The PS issues the downstream
+grant for the same person (`ps`) with a `sub` directed at Calendar; auth tokens
+name the person, not the agents.
 
 1. Discover Concierge metadata — unsigned `GET /.well-known/aauth-resource.json`.
-2. Signed `GET /` → **`401`** (agent token challenge from Concierge).
-3. Parse the Concierge's 401 challenge (resource_token).
-4. Discover Person Server — unsigned `GET /.well-known/aauth-person.json`.
-5. Signed `POST /token` (exchange) → **`200`** + `auth_token` scoped to
-   the Concierge.
-6. Signed `GET /` carrying the `auth_token` → **`200`**. Internally the
-   Concierge performs its own challenge/exchange/retry cycle against
-   Calendar's `GET /events` endpoint, shown as sub-step arrows in the sequence
-   diagram.
-7. Inspect multi-agent result — view the combined response with nested
-   `act` claims proving the full Agent → Concierge → Resource chain.
+2. Signed `GET /` → **`401`** `requirement=person-token`.
+3. Discover Person Server — unsigned `GET /.well-known/aauth-person.json`.
+4. Signed `POST /person {resource: Concierge}` → **`200`** + `person_token`.
+5. Signed `GET /` presenting the person token → **`401`** + `resource_token`.
+6. Parse the Concierge's resource token.
+7. Signed `POST /token` (exchange, with `presented_token`) → **`200`** +
+   `auth_token` scoped to the Concierge.
+8. Signed `GET /` carrying the `auth_token` → **`200`**. Internally the
+   Concierge performs its own person-token/challenge/exchange/retry cycle
+   against Calendar's `GET /events` endpoint, shown as sub-step arrows in the
+   sequence diagram.
+9. Inspect multi-agent result — the upstream and downstream grants share the
+   same `ps`, each with its own directed `sub`.
+
+When neither hop has standing consent the flow grows to 15 steps: the
+exchange at step 7 returns `202` (hop 1 consent + poll), and the retry returns
+the Concierge's own `202` for the Concierge → Calendar hop (hop 2 consent +
+poll of the Concierge's pending URL).
 
 > [!TIP]
 > The PS-Asserted (Deferred) flow only fires when the Person Server is
