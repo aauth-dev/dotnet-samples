@@ -64,6 +64,9 @@ public sealed class DeferredConsent
     /// <summary>The approver's mission <c>expires_at</c>, applied when the user approves a parked proposal.</summary>
     public DateTimeOffset? MissionExpiresAt { get; init; }
 
+    /// <summary>The approver's approved subset of the proposed resources; <see langword="null"/> for all.</summary>
+    public IReadOnlyList<string>? MissionApprovedResources { get; init; }
+
     /// <summary>The permission request (set when <see cref="Kind"/> is <see cref="DeferredConsentKind.Permission"/>).</summary>
     public PermissionRequest? Permission { get; init; }
 

@@ -4351,6 +4351,8 @@ public sealed class TourSession : IAsyncDisposable
                 new { name = "compare_options", description = "Compare flight and hotel options" },
                 new { name = "add_to_calendar", description = "Add an itinerary item to the calendar" },
             },
+            // Naming the resource lets the PS return a person token for it with the approval.
+            resources = new[] { _options.TripsUrl.TrimEnd('/') },
         }, ct);
 
         var ex = capture.Last!;
@@ -4365,7 +4367,9 @@ public sealed class TourSession : IAsyncDisposable
             Narrative =
                 "The agent signs a `POST /mission` with its agent token (`sig=jwt`, MUST " +
                 "per spec) carrying the proposed mission description and the local tools it " +
-                "wants pre-approved (`compare_options`, `add_to_calendar`). Mission approval is the " +
+                "wants pre-approved (`compare_options`, `add_to_calendar`), and names the Trips " +
+                "resource in `resources` so the approval can return a person token for it " +
+                "(`person_tokens`). Mission approval is the " +
                 "**most important consent in the model**, so this PS parks the proposal " +
                 "and returns `202 Accepted` + a `Location` (the mission-pending URL) and " +
                 "an `AAuth-Requirement: requirement=interaction` header pointing the user " +

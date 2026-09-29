@@ -122,8 +122,10 @@ public static class GovernanceEndpoints
     /// Parse a mission proposal body (§Mission Creation) into a
     /// <see cref="MissionProposal"/>.
     /// </summary>
-    /// <exception cref="FormatException">The required <c>description</c> is missing.</exception>
-    public static MissionProposal ParseMissionProposal(JsonObject body)
+    /// <param name="body">The proposal JSON body.</param>
+    /// <param name="egressPolicy">Validates each <c>resources</c> identifier; defaults to the production (HTTPS-only) policy.</param>
+    /// <exception cref="FormatException">The required <c>description</c> is missing, or a <c>resources</c> entry is not a valid server identifier.</exception>
+    public static MissionProposal ParseMissionProposal(JsonObject body, AAuth.Discovery.AAuthEgressPolicy? egressPolicy = null)
     {
         ArgumentNullException.ThrowIfNull(body);
         var description = (string?)body["description"]
@@ -131,17 +133,17 @@ public static class GovernanceEndpoints
         return new MissionProposal(description)
         {
             Tools = ParseTools(body["tools"] as JsonArray),
-            Resources = ParseResources(body["resources"] as JsonArray),
+            Resources = ParseResources(body["resources"] as JsonArray, egressPolicy),
         };
     }
 
-    private static IReadOnlyList<string> ParseResources(JsonArray? resources)
+    private static IReadOnlyList<string> ParseResources(JsonArray? resources, AAuth.Discovery.AAuthEgressPolicy? egressPolicy)
     {
         var result = new List<string>();
         foreach (var node in resources ?? [])
         {
             if (node is not JsonValue value || !value.TryGetValue<string>(out var resource)
-                || !AAuthUrl.IsHttpsOrLoopback(resource))
+                || !AAuthUrl.IsHttpsOrLoopback(resource, egressPolicy))
                 throw new FormatException("Mission proposal 'resources' must be HTTPS server identifiers.");
             result.Add(resource);
         }

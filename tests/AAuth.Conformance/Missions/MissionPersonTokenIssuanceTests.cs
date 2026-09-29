@@ -162,6 +162,35 @@ public class MissionPersonTokenIssuanceTests
         Assert.Empty(Mission.FromApprovalResponse(System.Text.Encoding.UTF8.GetBytes(body.ToJsonString()), PsIssuer).PersonTokens);
     }
 
+    [Theory(DisplayName = "§Mission Approval — a partial resource approval limits approved_resources and person_tokens")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PartialResourceApproval_LimitsApprovedResourcesAndPersonTokens(bool deferred)
+    {
+        var decision = (deferred ? MissionApprovalDecision.Defer() : MissionApprovalDecision.Approve([]))
+            with { ApprovedResources = [Calendar, "https://not-proposed.example"] };
+        using var host = await BuildHostAsync(new StubApprover(decision), deferred);
+        var agentKey = AAuthKey.Generate();
+        using var http = SignedAgentClient(host, agentKey, AgentToken(agentKey));
+
+        var response = await http.PostAsJsonAsync("/mission", Proposal(Whoami, Calendar));
+        if (deferred)
+        {
+            var location = response.Headers.Location!.ToString();
+            await host.Services.GetRequiredService<IDeferredConsentStore>().ResolveAsync(location.Split('/').Last(), true);
+            response.Dispose();
+            response = await http.GetAsync(location);
+        }
+
+        using (response)
+        {
+            Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+            var mission = Mission.FromApprovalResponse(await response.Content.ReadAsByteArrayAsync(), PsIssuer);
+            Assert.Equal(new[] { Calendar }, mission.ApprovedResources);
+            Assert.Equal(new[] { Calendar }, mission.PersonTokens.Keys);
+        }
+    }
+
     [Fact(DisplayName = "§Mission Approval — a deferred approval returns person_tokens once the person approves")]
     public async Task DeferredApproval_ReturnsPersonTokens()
     {

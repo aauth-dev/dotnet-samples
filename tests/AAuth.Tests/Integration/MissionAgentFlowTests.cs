@@ -73,6 +73,23 @@ public class MissionAgentFlowTests : IClassFixture<WebApplicationFactory<MockPer
     }
 
     [Fact]
+    public async Task MissionNamingResources_ApprovalCarriesPersonTokens()
+    {
+        var agent = NewAgent();
+        await ScriptAsync(agent, new JsonObject { ["reset"] = true });
+
+        var mission = await MissionClientFor(agent).ProposeAsync(
+            new MissionProposal("mission naming a resource") { Resources = [ResourceUrl] });
+
+        var token = Assert.Single(mission.PersonTokens);
+        Assert.Equal(ResourceUrl, token.Key);
+        var payload = PersonTokenFlow.Payload(token.Value);
+        Assert.Equal(mission.S256, (string?)payload["mission_s256"]);
+        Assert.Equal(PsIssuer, (string?)payload["iss"]);
+        Assert.Equal(ResourceUrl, (string?)payload["aud"]);
+    }
+
+    [Fact]
     public async Task Row02_MissionDenied_Aborts()
     {
         var agent = NewAgent();

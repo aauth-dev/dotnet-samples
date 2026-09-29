@@ -275,7 +275,7 @@ app.MapPost("/mission", async (
     MissionProposal proposal;
     try
     {
-        proposal = GovernanceEndpoints.ParseMissionProposal(body);
+        proposal = GovernanceEndpoints.ParseMissionProposal(body, SampleEgress.Policy);
     }
     catch (FormatException)
     {
@@ -321,7 +321,8 @@ app.MapPost("/mission", async (
     await missions.SaveAsync(new StoredMission(s256, psIssuer, agentId, blob));
     policy.Record(s256, proposal.Description, approvedTools, script.InScopeSnapshot());
 
-    return Results.Json(MissionApprovalBuilder.Response(blob, s256));
+    var personTokens = await ctx.IssueMissionPersonTokensAsync(psIssuer, s256, proposal.Resources);
+    return Results.Json(MissionApprovalBuilder.Response(blob, s256, personTokens: personTokens));
 });
 
 // Interactive mission-creation resolution (§Mission Creation). The agent polls
@@ -370,7 +371,8 @@ app.MapMethods("/mission-create-pending/{id}", ["GET", "DELETE"], async (
             approvedResources: proposal.Resources);
         await missions.SaveAsync(new StoredMission(s256, psIssuer, entry.AgentId, blob));
         policy.Record(s256, proposal.Description, approvedTools, script.InScopeSnapshot());
-        return Results.Json(MissionApprovalBuilder.Response(blob, s256));
+        var personTokens = await ctx.IssueMissionPersonTokensAsync(psIssuer, s256, proposal.Resources);
+        return Results.Json(MissionApprovalBuilder.Response(blob, s256, personTokens: personTokens));
     });
 });
 

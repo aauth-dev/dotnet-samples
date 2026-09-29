@@ -140,6 +140,20 @@ public class GovernanceServerTests
         Assert.Equal("WebSearch", proposal.Tools[0].Name);
     }
 
+    [Fact(DisplayName = "§Mission Creation — loopback resources parse only under an explicit development egress policy")]
+    public void ParseMissionProposal_LoopbackResourcesNeedDevelopmentPolicy()
+    {
+        var body = new JsonObject
+        {
+            ["description"] = "# Plan a trip",
+            ["resources"] = new JsonArray { "http://localhost:5002" },
+        };
+
+        Assert.Throws<FormatException>(() => GovernanceEndpoints.ParseMissionProposal(body));
+        var proposal = GovernanceEndpoints.ParseMissionProposal(body, AAuth.Testing.TestEgress.Policy);
+        Assert.Equal(new[] { "http://localhost:5002" }, proposal.Resources);
+    }
+
     // ---- §Mission Status Errors ----
 
     [Fact(DisplayName = "§Mission Status Errors — helper emits the spec 403 body")]

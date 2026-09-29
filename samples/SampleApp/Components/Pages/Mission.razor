@@ -62,9 +62,9 @@ using var signed = new AAuthClientBuilder(identity.Key)
 var governance = new AAuthGovernanceClient(signed, metadata, personServer, governanceOptions);
 
 // 1. Propose a mission (PROMPT — the human approves intent + tools).
-//    A proposal carries a Markdown description + an optional `tools`
-//    list ONLY. It declares NO scopes — scopes are never pre-listed
-//    on a mission (§Mission Creation).
+//    A proposal carries a Markdown description, an optional `tools`
+//    list and the `resources` it will use. It declares NO scopes —
+//    scopes are never pre-listed on a mission (§Mission Creation).
 var addToCalendarTool = new MissionTool("add_to_calendar", "Add to calendar");
 var session = await governance.ProposeMissionAsync(
     new MissionProposal("Plan my weekend trip to Seattle.")
@@ -74,6 +74,7 @@ var session = await governance.ProposeMissionAsync(
             addToCalendarTool,
             new MissionTool("compare_options", "Compare options"),
         },
+        Resources = new[] { resourceOrigin }, // approval returns person_tokens for these
     });
 var mission = session.Mission; // session threads mission_s256 + PS for you
 
@@ -81,10 +82,13 @@ var mission = session.Mission; // session threads mission_s256 + PS for you
 //    fits the mission intent). The client calls the resource directly;
 //    the SDK only mints the tokens:
 //
-//    a) Ask the PS for a person token for the resource under the mission
-//       (§Person Token Request). It carries mission_s256.
-var personToken = await exchange.RequestPersonTokenAsync(personServer, resourceOrigin,
-    new TokenExchangeRequest { MissionS256 = mission.S256 });
+//    a) Use the person token the approval issued for the resource, or ask
+//       the PS for one under the mission (§Person Token Request). Either
+//       way it carries mission_s256.
+var personToken = mission.PersonTokens.TryGetValue(resourceOrigin, out var approved)
+    ? approved
+    : await exchange.RequestPersonTokenAsync(personServer, resourceOrigin,
+        new TokenExchangeRequest { MissionS256 = mission.S256 });
 
 //    b) GET the resource presenting the person token. Having no auth token
 //       yet, the resource answers 401 with a resource token (aud = the PS)
@@ -402,6 +406,8 @@ if (cancelBooking.IsGranted)
                     addToCalendarTool,
                     new MissionTool("compare_options", "Compare flight and hotel options"),
                 },
+                // The approval returns a person token for each named resource (person_tokens).
+                Resources = new[] { resourceOrigin },
             });
             // The session wraps the approved mission and threads its claim + PS
             // into every subsequent permission / audit / interaction call.
@@ -562,13 +568,15 @@ if (cancelBooking.IsGranted)
         // Refresh the agent token for a fresh jti before each resource access.
         _agentToken = MintAgentToken(personServer);
 
-        var personToken = await exchange.RequestPersonTokenAsync(personServer,
-            new Uri(resourceUrl).GetLeftPart(UriPartial.Authority), new TokenExchangeRequest
-            {
-                MissionS256 = mission.S256,
-                OnInteractionRequired = SurfaceInteractionAsync,
-                PollerOptions = poller,
-            });
+        var personToken = mission.PersonTokens.TryGetValue(new Uri(resourceUrl).GetLeftPart(UriPartial.Authority), out var approved)
+            ? approved
+            : await exchange.RequestPersonTokenAsync(personServer,
+                new Uri(resourceUrl).GetLeftPart(UriPartial.Authority), new TokenExchangeRequest
+                {
+                    MissionS256 = mission.S256,
+                    OnInteractionRequired = SurfaceInteractionAsync,
+                    PollerOptions = poller,
+                });
         var personHandler = new AAuthSigningHandler(_identity.Key, () => personToken)
             { InnerHandler = AAuth.Discovery.AAuthHttpTransport.CreateHandler(SampleEgress.Policy) };
         using var personClient = new SampleHttpClient(personHandler);
