@@ -186,6 +186,50 @@ public class ChallengeHandlerTests
         }
     }
 
+    [Theory(DisplayName = "ChallengeHandler — wire: an agent token gets a person-token prerequisite; an auth token is stepped up with itself as presented_token")]
+    [InlineData("prerequisite")]
+    [InlineData("step-up")]
+    public async Task PrerequisiteAndStepUp_WireBodies(string leg)
+    {
+        const string authJti = "auth-jti-1";
+        var authToken = BuildTokenWithPayload(new JsonObject
+        {
+            ["iss"] = PsUrl, ["aud"] = ResourceUrl, ["sub"] = PersonSubject, ["jti"] = authJti,
+        });
+        var stepUpResourceToken = BuildResourceToken(presentedJti: authJti);
+        var posts = new List<(string Path, JsonObject Body)>();
+        var exchangeHandler = new CapturingExchangeHandler(req =>
+            posts.Add((req.RequestUri!.AbsolutePath, JsonNode.Parse(req.Content!.ReadAsStringAsync().Result)!.AsObject())));
+        var metaClient = new MetadataClient(new InProcessHttpClient(exchangeHandler));
+        var challengeHandler = new ChallengeHandler(
+            new TokenExchangeClient(new InProcessHttpClient(exchangeHandler), metaClient), new AAuthTokenHolder(AgentToken),
+            new TokenVerifier { EgressPolicy = TestEgress.Policy }, metaClient, new JwksClient(new InProcessHttpClient(exchangeHandler)),
+            personServer: PsUrl, onInteractionRequired: null, pollerOptions: null)
+        {
+            InnerHandler = leg == "prerequisite" ? SignedResource() : SignedResource(stepUpResourceToken, authToken),
+        };
+        using var client = new InProcessHttpClient(challengeHandler) { BaseAddress = new Uri(ResourceUrl) };
+
+        await Assert.ThrowsAsync<TokenVerificationException>(() => client.GetAsync("/data"));
+
+        var (path, body) = Assert.Single(posts);
+        if (leg == "prerequisite")
+        {
+            // §Person Token Required: the agent asks /person for the resource, carrying no resource or presented token.
+            Assert.Equal("/person", path);
+            Assert.Equal(ResourceUrl, (string?)body["resource"]);
+            Assert.False(body.ContainsKey("resource_token"));
+            Assert.False(body.ContainsKey("presented_token"));
+        }
+        else
+        {
+            // §Auth Token Required step-up: the new resource token names the auth token, which is presented as-is.
+            Assert.Equal("/token", path);
+            Assert.Equal(stepUpResourceToken, (string?)body["resource_token"]);
+            Assert.Equal(authToken, (string?)body["presented_token"]);
+        }
+    }
+
     [Fact(DisplayName = "ChallengeHandler — upstream token takes precedence over personServer")]
     public async Task UpstreamToken_TakesPrecedenceOverPersonServer()
     {
@@ -788,14 +832,14 @@ public class ChallengeHandlerTests
         Key = SigningKey, KeyId = "ps-key",
     }.Build();
 
-    private static string BuildResourceToken(string? missionS256 = null, string? failure = null, string personServer = PsUrl) => new ResourceTokenBuilder
+    private static string BuildResourceToken(string? missionS256 = null, string? failure = null, string personServer = PsUrl, string presentedJti = PersonJti) => new ResourceTokenBuilder
     {
         EgressPolicy = TestEgress.Policy,
         Issuer = failure == "origin" ? "https://other.example" : ResourceUrl,
         Audience = personServer,
         PersonServer = failure == "ps" ? "https://other-ps.example" : personServer,
         Subject = failure == "sub" ? "other-person" : PersonSubject,
-        PresentedJti = failure == "presented" ? "other-jti" : PersonJti,
+        PresentedJti = failure == "presented" ? "other-jti" : presentedJti,
         AgentJkt = failure == "key" ? "wrong-key" : SigningKey.ComputeJwkThumbprint(),
         Key = failure == "signature" ? AAuthKey.Generate() : SigningKey,
         KeyId = "resource-key",

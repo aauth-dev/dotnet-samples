@@ -894,6 +894,54 @@ checks:
 
 Conformance 1183 passed.
 
+### [2026-09-29] [Phase 4] Wire tests for the prerequisite and step-up legs
+
+RESOLVED (test only). The exchange legs already had wire tests:
+
+- agent to PS: `UpstreamTokenIncludedInPostBody` checks `resource_token`,
+  `presented_token` and `upstream_token`;
+- PS to AS: `FederateAsync_ReturnsVerifiedAuthToken_OnSuccess` checks
+  `resource_token` and `agent_token`; `FederateAsync_IncludesUpstreamToken_WhenProvided`
+  and `FederateAsync_ForwardsChildToken` check `upstream_token`,
+  `subagent_token` and `presented_token`.
+
+The agent side of the prerequisite and of step-up (L641) had no wire test.
+`PrerequisiteAndStepUp_WireBodies` covers both:
+
+- **prerequisite:** an agent-token request is answered `requirement=person-token`.
+  The agent sends exactly one `/person` POST, naming the resource and carrying
+  no resource or presented token;
+- **step-up:** an auth-token request is answered `requirement=auth-token` with a
+  resource token naming that auth token's `jti`. The agent sends exactly one
+  `/token` POST, with that resource token and the auth token itself as
+  `presented_token`.
+
+The resource side of step-up is covered by
+`Enforcement_PerCallChallengeResultEmitsAAuthRequirementWithProposalResourceToken`
+(`presented_jti` equals the verified auth token's `jti`).
+
+### [2026-09-29] [Phase 4] Identity overwrite fails at PS and at AS
+
+RESOLVED (test only). Stripping and substitution had tests at both servers.
+Overwritten identity fields did not:
+
+- PS: only `sub`, `presented_jti` and `ps` were tested, through MockPersonServer;
+- AS: only `ps`, `subject` and the presented key were tested.
+
+Each server now has its own theory. A resource token with one binding
+overwritten (`ps`, `sub`, `presented_jti`, `mission_s256`, `tenant`,
+`agent_jkt`) is rejected `invalid_resource_token`:
+
+- PS: `TokenRequest_OverwrittenIdentity_Rejected` also checks the asserter was
+  never called;
+- AS: `AsRejectsResourceTokenNotNamingTheSigningPsOrPresentedToken` also checks
+  the access policy was never called.
+
+Stripping is covered by `TokenRequest_MissingPresentedToken_Rejected` (PS) and
+`AsRequiresAgentResourceAndPresentedTokens` (AS). Substitution is covered by
+`TokenRequest_MismatchedPresentedToken_Rejected` (PS) and the AS
+`presented-key` case.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate

@@ -126,7 +126,7 @@ public class PersonServerMapperTests
     // The resource token naming the presented person token (ps/sub/presented_jti/mission_s256).
     private static string ResourceToken(
         AAuthKey agentKey, string presentedToken, string audience, string scope = "whoami", string? account = null,
-        Interaction? interaction = null)
+        Interaction? interaction = null, string? overwrite = null)
     {
         var presented = DecodePayload(presentedToken);
         return new ResourceTokenBuilder
@@ -135,12 +135,12 @@ public class PersonServerMapperTests
             EgressPolicy = TestEgress.Policy,
             Issuer = ResourceUrl,
             Audience = audience,
-            PersonServer = PsIssuer,
-            Subject = (string)presented["sub"]!,
-            PresentedJti = (string)presented["jti"]!,
-            MissionS256 = (string?)presented["mission_s256"],
-            Tenant = (string?)presented["tenant"],
-            AgentJkt = agentKey.ComputeJwkThumbprint(),
+            PersonServer = overwrite == "ps" ? "https://other-ps.example" : PsIssuer,
+            Subject = overwrite == "sub" ? "someone-else" : (string)presented["sub"]!,
+            PresentedJti = overwrite == "presented_jti" ? "other-jti" : (string)presented["jti"]!,
+            MissionS256 = overwrite == "mission" ? "Q7cOX4Oq4Fmc5L8FJbfyLmXDVz-lEVJbzsUNr8dlc2E" : (string?)presented["mission_s256"],
+            Tenant = overwrite == "tenant" ? "other-tenant" : (string?)presented["tenant"],
+            AgentJkt = (overwrite == "agent_jkt" ? AAuthKey.Generate() : agentKey).ComputeJwkThumbprint(),
             Key = ResourceKey,
             KeyId = ResKid,
             Scope = scope,
@@ -322,6 +322,35 @@ public class PersonServerMapperTests
         var problem = await response.Content.ReadFromJsonAsync<JsonObject>();
         Assert.Equal("invalid_request", (string?)problem!["error"]);
         Assert.Equal("missing presented_token", (string?)problem["detail"]);
+        await host.StopAsync();
+    }
+
+    [Theory(DisplayName = "§Resource Token Verification — the PS rejects a resource token whose identity binding was overwritten")]
+    [InlineData("ps")]
+    [InlineData("sub")]
+    [InlineData("presented_jti")]
+    [InlineData("mission")]
+    [InlineData("tenant")]
+    [InlineData("agent_jkt")]
+    public async Task TokenRequest_OverwrittenIdentity_Rejected(string overwrite)
+    {
+        var agentKey = AAuthKey.Generate();
+        var asserter = new CapturingAsserter();
+        using var host = await BuildHostAsync(asserter);
+        using var http = SignedAgentClient(host, agentKey, AgentId);
+        var personToken = PersonToken(agentKey);
+        var body = new JsonObject
+        {
+            ["resource_token"] = ResourceToken(agentKey, personToken, PsIssuer, overwrite: overwrite),
+            ["presented_token"] = personToken,
+        };
+
+        using var response = await http.PostAsJsonAsync("/token", body);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonObject>();
+        Assert.Equal("invalid_resource_token", (string?)problem!["error"]);
+        Assert.Null(asserter.Last);
         await host.StopAsync();
     }
 

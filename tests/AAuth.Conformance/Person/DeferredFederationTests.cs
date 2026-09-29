@@ -409,6 +409,10 @@ public class DeferredFederationTests
     [InlineData("ps")]
     [InlineData("subject")]
     [InlineData("presented-key")]
+    [InlineData("presented_jti")]
+    [InlineData("mission")]
+    [InlineData("tenant")]
+    [InlineData("key")]
     public async Task AsRejectsResourceTokenNotNamingTheSigningPsOrPresentedToken(string variant)
     {
         await using var fixture = await Fixture.CreateAsync("immediate");
@@ -1094,8 +1098,9 @@ public class DeferredFederationTests
                 Audience = AsIssuer,
                 PersonServer = variant == "ps" ? "https://other-ps.test" : PsIssuer,
                 Subject = variant == "subject" ? "someone-else" : (string)presented["sub"]!,
-                PresentedJti = (string)presented["jti"]!,
-                MissionS256 = mission,
+                PresentedJti = variant == "presented_jti" ? "other-jti" : (string)presented["jti"]!,
+                MissionS256 = variant == "mission" ? MissionS256 : mission,
+                Tenant = variant == "tenant" ? "other-tenant" : null,
                 AgentJkt = (variant == "key" ? AAuthKey.Generate() : agentKey ?? AgentKey).ComputeJwkThumbprint(),
                 Key = ResourceKey,
                 KeyId = "key",

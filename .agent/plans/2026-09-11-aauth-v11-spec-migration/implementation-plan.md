@@ -350,8 +350,8 @@ Phase rule: resource/auth identity is ps/sub/key based; no agent/act/mission fal
 
 ### Definition of Done
 
-- [ ] Independent wire tests cover prerequisite, step-up and both exchange legs.
-- [ ] Substitution/stripping/identity overwrite fails independently at PS and AS.
+- [x] Independent wire tests cover prerequisite, step-up and both exchange legs.
+- [x] Substitution/stripping/identity overwrite fails independently at PS and AS.
 - [x] Removed identity/mission fields are absent from active core producers/consumers.
 - [ ] Missing body coverage/tampering fails before policy or consent mutation.
 - [ ] Immediate/deferred expiry and AS error mapping tests pass.
