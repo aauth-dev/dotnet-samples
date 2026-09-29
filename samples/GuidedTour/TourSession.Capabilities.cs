@@ -935,6 +935,21 @@ public sealed partial class TourSession
         var entry = CapPlan[Steps.Count];
         var resourceFirst = userUrl.Contains("/interaction/resource", StringComparison.Ordinal);
         var authority = ApprovalAuthority(entry);
+        if (IsPersonServerConsent)
+        {
+            Steps.Add(new StepRecord
+            {
+                Number = Steps.Count + 1,
+                Title = $"User decides at the {authority}",
+                From = entry.From,
+                To = entry.To,
+                Narrative = DashboardLead + "The user signs in there and submits a session-bound, CSRF-protected " +
+                    "**Approve** or **Deny**. Opening a page does not approve anything. The agent is not on this " +
+                    "browser channel; it learns the decision on its next poll.",
+                TokenDecoded = PersonServerDecision(userUrl),
+            });
+            return;
+        }
         Steps.Add(new StepRecord
         {
             Number = Steps.Count + 1,

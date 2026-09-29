@@ -297,10 +297,10 @@ decision flows through one service. There is no user-visible change.
 
 **Definition of Done**
 
-- [ ] Polling starts on arrival at the waiting step for PS-hosted interactions,
+- [x] Polling starts on arrival at the waiting step for PS-hosted interactions,
       including the capability modes.
-- [ ] "Run all" runs through PS-hosted consent without stopping.
-- [ ] GuidedTour E2E specs green, including the unchanged AS/resource specs.
+- [x] "Run all" runs through PS-hosted consent without stopping.
+- [x] GuidedTour E2E specs green, including the unchanged AS/resource specs.
 
 ## Phase 5 — CLIs and Makefile
 

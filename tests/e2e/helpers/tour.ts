@@ -1,5 +1,6 @@
 import { Page, Locator, expect } from '@playwright/test';
-import { authenticateConsent } from './consent';
+import { approveInPopup, authenticateConsent, denyInPopup } from './consent';
+import { isDashboard, decideHighlighted } from './dashboard';
 import { waitForInteractive } from './blazor';
 
 /**
@@ -126,17 +127,46 @@ export async function selectSigningMode(page: Page, mode: SigningMode): Promise<
 }
 
 /**
- * Click "Run all" and wait until the flow either completes (Done) or parks on a
- * user-approval / aborted state. Returns when the primary button is no longer
- * "Running…".
+ * Click "Run all" and wait until the flow completes (Done), aborts, parks on an
+ * Access Server or resource consent link, or waits on a Person Server prompt.
+ * Person Server consent does not park the run: the agent polls on arrival and
+ * "Run all" continues once the person decides.
  */
 export async function runAll(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Run all' }).click();
-  // The flow is busy while any control shows "Running…"; it settles to Done /
-  // Aborted, or a consent link replaces the primary button. Wait until no
-  // "Running…" indicator remains anywhere, which is a single deterministic
-  // signal regardless of which control hosted it.
-  await expect(page.getByText('Running…')).toHaveCount(0, { timeout: 30_000 });
+  await expect.poll(async () =>
+    await page.getByText('Running…').count() === 0 || await page.locator('[data-consent-prompt]').first().isVisible(),
+    { timeout: 30_000 }).toBe(true);
+}
+
+/** The dashboard link of the tour's Person Server prompt (polling banner). */
+export function personServerPrompt(page: Page): Locator {
+  return page.locator('section.polling [data-consent-prompt="dashboard"] a.ps-dashboard');
+}
+
+/**
+ * Decide the next Person Server prompt on the dashboard it opens. Waits for a
+ * request other than `previous` (the href returned by the last call), asserts
+ * the agent is already polling and, when given, the executed step count. Returns
+ * this prompt's href.
+ */
+export async function decidePersonServerPrompt(
+  page: Page,
+  action: 'approve' | 'deny',
+  options: { previous?: string; done?: number } = {},
+): Promise<string> {
+  const link = personServerPrompt(page);
+  await expect(link).toBeVisible({ timeout: 60_000 });
+  if (options.previous) await expect(link).not.toHaveAttribute('href', options.previous, { timeout: 60_000 });
+  const href = (await link.getAttribute('href'))!;
+  // Poll on arrival: the loop is live before the person does anything.
+  await expect(page.locator('section.polling .polling__detail')).toContainText(/[1-9]\d* polls? so far/, { timeout: 15_000 });
+  if (options.done !== undefined) await expect(doneSteps(page)).toHaveCount(options.done);
+  await expect(page.locator('header.topbar .error')).toHaveCount(0);
+  const [popup] = await Promise.all([page.context().waitForEvent('page'), link.click()]);
+  if (action === 'approve') await approveInPopup(popup);
+  else await denyInPopup(popup);
+  return href;
 }
 
 /** The left step-list <li> elements (one per planned step). */
@@ -219,9 +249,10 @@ export async function readResponseJson(page: Page): Promise<unknown> {
 
 /**
  * Drive the selected flow to its end, answering every consent link it surfaces.
- * "Run all" parks on each user decision; `decide` handles the popup (PS, AS or
- * resource page) and the loop resumes once the poll resolves. Returns the
- * number of decisions made.
+ * "Run all" parks on Access Server and resource links and keeps running through
+ * Person Server prompts (the agent polls on arrival). `decide` handles each
+ * popup (PS dashboard, AS or resource page) once. Returns the number of
+ * decisions made.
  */
 export async function driveTour(
   page: Page,
@@ -229,25 +260,36 @@ export async function driveTour(
   maxDecisions = 8,
 ): Promise<number> {
   const primary = page.locator('button.primary');
-  const consent = page.locator('a.primary.approve');
+  const links = page.locator('[data-consent-prompt] :is(a.ps-dashboard, a.ps-external-link), a.primary.approve');
+  const decided = new Set<string>();
+  const fresh = async (): Promise<Locator | null> => {
+    for (const link of await links.all()) {
+      const href = await link.getAttribute('href').catch(() => null);
+      if (href && !decided.has(href) && await link.isVisible().catch(() => false)) return link;
+    }
+    return null;
+  };
   let rounds = 0;
   for (let turn = 0; turn < 60; turn++) {
     await expect.poll(async () => {
-      if (await consent.isVisible()) return 'consent';
+      if (await fresh()) return 'consent';
       if (await page.getByText('Running…').count()) return 'busy';
       return await primary.isVisible() ? 'ready' : 'busy';
     }, { timeout: 150_000 }).not.toBe('busy');
-    if (await consent.isVisible()) {
+    const consent = await fresh();
+    if (consent) {
       if (++rounds > maxDecisions) throw new Error(`More than ${maxDecisions} user decisions were requested.`);
+      decided.add((await consent.getAttribute('href'))!);
       const [popup] = await Promise.all([page.context().waitForEvent('page'), consent.click()]);
       await decide(popup, rounds);
-      await popup.close();
+      if (!popup.isClosed()) await popup.close();
       continue;
     }
     const label = (await primary.innerText()).trim();
     if (label === 'Done' || label === 'Aborted') return rounds;
     await page.getByRole('button', { name: 'Run all' }).click();
-    await expect(page.getByText('Running…')).toHaveCount(0, { timeout: 150_000 });
+    await expect.poll(async () => await page.getByText('Running…').count() === 0 || await fresh() !== null,
+      { timeout: 150_000 }).toBe(true);
   }
   throw new Error('The flow did not finish.');
 }
@@ -258,6 +300,12 @@ export async function driveTour(
  * screen. `approve=false` declines at the first decision offered.
  */
 export async function decideConsent(popup: Page, approve = true): Promise<void> {
+  if (await isDashboard(popup)) {
+    // A four-party request may re-advertise the PS while the AS works; that
+    // link has nothing to decide.
+    await decideHighlighted(popup, approve ? 'approve' : 'deny');
+    return;
+  }
   for (let transition = 0; transition < 8; transition++) {
     let state = 'pending';
     await expect.poll(async () => {

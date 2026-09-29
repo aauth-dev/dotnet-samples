@@ -87,7 +87,8 @@ public sealed partial class TourSession : IAsyncDisposable
     // identity; later steps obtain the worker's person token through the parent,
     // bind the resource token to the worker, and drive the parent-mediated exchange.
     private FederatedWorkerScenario? _workerScenario;
-    public string? WorkerConsentUrl { get; private set; }
+    public Interaction? WorkerConsent { get; private set; }
+    public string? WorkerConsentUrl => WorkerConsent?.BuildUserUrl();
     public int WorkerConsentRound { get; private set; }
     public const int WorkerConsentRounds = 3;
 
@@ -698,9 +699,22 @@ public sealed partial class TourSession : IAsyncDisposable
         && Steps.Count + 1 == UserApprovalStepNumber && !_userApproved;
 
     /// <summary>The user-facing interaction URL captured from the latest interaction requirement.</summary>
-    public string? UserInteractionUrl => _interactionUrl is null || _interactionCode is null
+    public string? UserInteractionUrl => CurrentInteraction?.BuildUserUrl();
+
+    /// <summary>The latest interaction requirement the agent received.</summary>
+    public Interaction? CurrentInteraction => _interactionUrl is null || _interactionCode is null
         ? null
-        : new AAuth.Headers.Interaction(_interactionUrl, _interactionCode).BuildUserUrl();
+        : new Interaction(_interactionUrl, _interactionCode);
+
+    /// <summary>The Person Server the agent asks, or null when the flow has none.</summary>
+    public string? PersonServer => string.IsNullOrWhiteSpace(_options.PersonServerUrl) ? null : _options.PersonServerUrl;
+
+    /// <summary>
+    /// True when the latest interaction is the Person Server's own consent page, so
+    /// the person can decide it on the PS dashboard and the agent polls at once.
+    /// </summary>
+    public bool IsPersonServerConsent =>
+        CurrentInteraction is { } interaction && ConsentSupport.PersonServerConsent.IsPersonServerHosted(PersonServer, interaction);
 
     /// <summary>Path portion of the pending URL (for compact UI display).</summary>
     public string? PendingUrlPath
@@ -797,7 +811,7 @@ public sealed partial class TourSession : IAsyncDisposable
         _missionChainResponseBody = null;
         _workerScenario?.Dispose();
         _workerScenario = null;
-        WorkerConsentUrl = null;
+        WorkerConsent = null;
         WorkerConsentRound = 0;
         ResetCapabilityState();
     }
@@ -874,8 +888,23 @@ public sealed partial class TourSession : IAsyncDisposable
         ResetCapabilityState();
     }
 
-    /// <summary>Run the next pending step and capture its <see cref="StepRecord"/>.</summary>
+    /// <summary>
+    /// Run the next pending step and capture its <see cref="StepRecord"/>. When
+    /// the step leaves the agent waiting on Person Server consent, the agent starts
+    /// polling at once: the person may decide on the PS dashboard at any time, so
+    /// nothing waits for a click in this tab.
+    /// </summary>
     public async Task RunNextAsync(CancellationToken ct = default)
+    {
+        await RunNextStepAsync(ct);
+        if (AwaitingUserApproval && IsPersonServerConsent)
+        {
+            await RecordUserApprovalOpenedAsync(ct);
+            _ = StartPendingPollAsync();
+        }
+    }
+
+    private async Task RunNextStepAsync(CancellationToken ct)
     {
         // ── Bootstrap flow ───────────────────────────────────────────────
         if (IsBootstrapMode)
@@ -1307,7 +1336,7 @@ public sealed partial class TourSession : IAsyncDisposable
             return Task.CompletedTask;
         }
 
-        if (IsFederatedMode)
+        if (IsFederatedMode && !IsPersonServerConsent)
         {
             Steps.Add(new StepRecord
             {
@@ -1372,19 +1401,18 @@ public sealed partial class TourSession : IAsyncDisposable
                 ? "User approves the mission at the PS"
                 : "User approves the elevated scope at the PS";
             var narrative = isCreation
-                ? "The tour opened the PS's mission-approval page in a new browser tab. " +
-                  "The Person Server rendered its consent screen showing the proposed " +
-                  "**mission** description and the tools it may use. The user clicked " +
-                  "**Approve**, and the PS recorded the durable mission via " +
-                  "`POST /interaction/approve`. Every later request — including the " +
+                ? DashboardLead +
+                  "The PS consent screen shows the proposed " +
+                  "**mission** description and the tools it may use. When the user clicks " +
+                  "**Approve**, the PS records the durable mission. Every later request — including the " +
                   "mission-governed call chain — is checked against this mission. The agent " +
                   "discovers the approval envelope on its next poll."
-                : "The tour opened the PS's consent page in a new browser tab. After the " +
-                  "clarification chat resolved, the Person Server showed that the agent is " +
+                : DashboardLead +
+                  "After the clarification chat resolved, the Person Server shows that the agent is " +
                   "requesting the elevated **trips.book** \u2014 a scope that " +
-                  "falls **outside** the mission's natural-language intent. The user clicked " +
-                  "**Approve**, and the PS recorded the consent against the mission via " +
-                  "`POST /interaction/approve`; the decision now accrues to the mission. " +
+                  "falls **outside** the mission's natural-language intent. When the user clicks " +
+                  "**Approve**, the PS records the consent against the mission; " +
+                  "the decision accrues to the mission. " +
                   "The agent learns the verdict on its next poll. (A **Deny** here yields " +
                   "`denied`.)";
             Steps.Add(new StepRecord
@@ -1394,12 +1422,7 @@ public sealed partial class TourSession : IAsyncDisposable
                 From = Actor.PersonServer,
                 To = Actor.PersonServer,
                 Narrative = narrative,
-                TokenDecoded =
-                    $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
-                    "User performed (browser → PS):\n" +
-                    $"  GET  /interaction?code={_interactionCode}\n" +
-                    "  Sign in; consume code once; open decision session\n" +
-                    "  POST /interaction/approve  (session + CSRF, no code)",
+                TokenDecoded = PersonServerDecision(userUrl),
             });
             return Task.CompletedTask;
         }
@@ -1415,29 +1438,28 @@ public sealed partial class TourSession : IAsyncDisposable
                     ? "User approves the elevated scope at the PS"
                     : "User approves cancel_booking at the PS";
             var narrative = isCreation
-                ? "The tour opened the PS's mission-approval page in a new browser tab. " +
-                  "The Person Server rendered its consent screen showing the proposed " +
-                  "**mission** description and the tools it may use. The user clicked " +
-                  "**Approve**, and the PS recorded the durable mission via " +
-                  "`POST /interaction/approve`. This is the single most important " +
+                ? DashboardLead +
+                  "The PS consent screen shows the proposed " +
+                  "**mission** description and the tools it may use. When the user clicks " +
+                  "**Approve**, the PS records the durable mission. This is the single most important " +
                   "consent in the model: every later request is checked against this " +
                   "mission. The agent discovers the approval envelope on its next poll."
                 : isElevated
-                    ? "The tour opened the PS's consent page in a new browser tab. The " +
-                      "Person Server showed that the agent is requesting the elevated " +
+                    ? DashboardLead +
+                      "The Person Server shows that the agent is requesting the elevated " +
                       "**trips.book** \u2014 a scope that falls **outside** the " +
                       "mission's natural-language intent, so it could not be granted " +
-                      "silently. The user clicked **Approve**, and the PS recorded the " +
-                      "consent against the mission via `POST /interaction/approve`; the " +
-                      "decision now accrues to the mission, so the agent may reuse this " +
+                      "silently. When the user clicks **Approve**, the PS records the " +
+                      "consent against the mission; the " +
+                      "decision accrues to the mission, so the agent may reuse this " +
                       "scope for the rest of the session. The agent learns the verdict on " +
                       "its next poll. (A **Deny** here yields `denied`.)"
-                    : "The tour opened the PS's permission page in a new browser tab. The " +
-                      "Person Server showed that the agent wants to run **cancel_booking** \u2014 " +
+                    : DashboardLead +
+                      "The Person Server shows that the agent wants to run **cancel_booking** \u2014 " +
                       "an action that is **not** among the mission's pre-approved tools \u2014 " +
-                      "under the existing mission. The user clicked **Approve**, and the PS " +
-                      "recorded the decision against the mission log via " +
-                      "`POST /interaction/approve`. The agent learns the verdict on its next poll. " +
+                      "under the existing mission. When the user clicks **Approve**, the PS " +
+                      "records the decision against the mission log. " +
+                      "The agent learns the verdict on its next poll. " +
                       "Note: this returns a *decision*, not a token \u2014 the gate-2 auth token is unaffected.";
             Steps.Add(new StepRecord
             {
@@ -1446,12 +1468,7 @@ public sealed partial class TourSession : IAsyncDisposable
                 From = Actor.PersonServer,
                 To = Actor.PersonServer,
                 Narrative = narrative,
-                TokenDecoded =
-                    $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
-                    "User performed (browser → PS):\n" +
-                    $"  GET  /interaction?code={_interactionCode}\n" +
-                    "  Sign in; consume code once; open decision session\n" +
-                    "  POST /interaction/approve  (session + CSRF, no code)",
+                TokenDecoded = PersonServerDecision(userUrl),
             });
             return Task.CompletedTask;
         }
@@ -1467,12 +1484,12 @@ public sealed partial class TourSession : IAsyncDisposable
             From = Actor.PersonServer,
             To = Actor.PersonServer,
             Narrative =
-                "The tour opened the PS's interaction URL in a new browser tab. " +
-                "The Person Server rendered its consent screen (the agent + resource + " +
-                "scope of this request). The user must sign in and submit a CSRF-protected " +
-                "decision via `POST /interaction/approve`; the code is correlation only. " +
+                DashboardLead +
+                "The PS consent screen shows the agent, resource and " +
+                "scope of this request. The user must sign in and submit a CSRF-protected " +
+                "decision; the code only correlates the request. " +
                 "All of that happens in the user's browser → PS channel — the agent " +
-                "is not on this path. The agent will discover the result on its next " +
+                "is not on this path. The agent discovers the result on its next " +
                 "poll of the pending URL." +
                 (IsCallChainPending && Steps.Count + 1 == CallChainHop2ApprovalStep
                     ? "\n\nThis is the **second** of two approvals: it consents to the " +
@@ -1480,15 +1497,26 @@ public sealed partial class TourSession : IAsyncDisposable
                       "is keyed to the Concierge's identity, not yours — the agent " +
                       "never sees the chained credential."
                     : ""),
-            TokenDecoded =
-                $"Interaction URL opened in new tab:\n  {userUrl}\n\n" +
-                "User performed (browser → PS):\n" +
-                $"  GET  /interaction?code={_interactionCode}\n" +
-                "  Sign in; consume code once; open decision session\n" +
-                "  POST /interaction/approve  (session + CSRF, no code)",
+            TokenDecoded = PersonServerDecision(userUrl),
         });
         return Task.CompletedTask;
     }
+
+    private const string DashboardLead =
+        "The agent started polling the pending URL as soon as it surfaced this request. " +
+        "The user decides on the Person Server **dashboard**, which lists every request " +
+        "waiting for them, or opens this one request directly. ";
+
+    private string PersonServerDecision(string userUrl) =>
+        $"Person Server dashboard (every request waiting for you):\n  {ConsentSupport.PersonServerConsent.DashboardUrl(PersonServer!, _interactionCode)}\n" +
+        $"Or this request directly:\n  {userUrl}\n\n" +
+        "User decides (browser → PS) on the dashboard:\n" +
+        $"  GET  /dashboard?code={_interactionCode}   sign in; this request is highlighted\n" +
+        "  POST /dashboard/requests/{id}/approve  (X-CSRF-Token)\n" +
+        "Or directly:\n" +
+        $"  GET  /interaction?code={_interactionCode}\n" +
+        "  Sign in; consume code once; open decision session\n" +
+        "  POST /interaction/approve  (session + CSRF, no code)";
 
     /// <summary>
     /// Ensure MockPersonServer's consent store matches what this mode
@@ -1771,7 +1799,7 @@ public sealed partial class TourSession : IAsyncDisposable
                 var consentUrl = interaction.BuildUserUrl();
                 if (!string.Equals(WorkerConsentUrl, consentUrl, StringComparison.Ordinal))
                 {
-                    WorkerConsentUrl = consentUrl;
+                    WorkerConsent = interaction;
                     WorkerConsentRound++;
                 }
                 StateChanged?.Invoke();
@@ -1830,7 +1858,7 @@ public sealed partial class TourSession : IAsyncDisposable
                 snippet = "await workerClient.GetAsync(wallet + \"/wallet\");"; from = Actor.SubAgent; to = Actor.Resource; break;
             default: return;
         }
-        WorkerConsentUrl = null;
+        WorkerConsent = null;
         Steps.Add(new StepRecord
         {
             Number = step, Title = title, Narrative = narrative, From = from, To = to,
@@ -2685,7 +2713,7 @@ public sealed partial class TourSession : IAsyncDisposable
                         var interaction = Interaction.FromRequirement(requirement, SampleEgress.Policy);
                         if (interaction is not null && interaction.BuildUserUrl() != UserInteractionUrl)
                         {
-                            WorkerConsentUrl = interaction.BuildUserUrl();
+                            WorkerConsent = interaction;
                             _interactionUrl = interaction.Url;
                             _interactionCode = interaction.Code;
                         }
@@ -2741,7 +2769,7 @@ public sealed partial class TourSession : IAsyncDisposable
         {
             terminal?.Dispose();
             IsPolling = false;
-            WorkerConsentUrl = null;
+            WorkerConsent = null;
             StateChanged?.Invoke();
         }
     }
@@ -3964,7 +3992,7 @@ public sealed partial class TourSession : IAsyncDisposable
                     PresentedToken = _presentedToken,
                     OnInteractionRequired = (interaction, _) =>
                     {
-                        WorkerConsentUrl = interaction.BuildUserUrl();
+                        WorkerConsent = interaction;
                         StateChanged?.Invoke();
                         return Task.CompletedTask;
                     },
@@ -3972,7 +4000,7 @@ public sealed partial class TourSession : IAsyncDisposable
         }
         finally
         {
-            WorkerConsentUrl = null;
+            WorkerConsent = null;
             StateChanged?.Invoke();
         }
         _r3ClassAuthToken = _authToken;

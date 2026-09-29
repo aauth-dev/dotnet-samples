@@ -7,11 +7,12 @@ import {
   expectResponse,
   readResponseJson,
   doneSteps,
+  decidePersonServerPrompt,
   TourMode,
 } from '../../../tests/e2e/helpers/tour';
 import { decideAccessConsent } from '../../../tests/e2e/helpers/consent';
 import { Urls } from '../../../tests/e2e/helpers/agents';
-import { approvePersonConsent, directedSubject } from '../../../tests/e2e/helpers/consent';
+import { directedSubject } from '../../../tests/e2e/helpers/consent';
 
 /**
  * Federated (four-party) — Guided Tour, interactive consent path.
@@ -43,12 +44,11 @@ test.describe('Federated (Guided Tour)', () => {
     await expect(page.locator('.lanes .lane.ps')).toContainText('Person Server');
     await expect(page.locator('.lanes .lane.as')).toContainText('Access Server');
 
-    // Run all: the exchange returns 202, the plan expands to 12 steps and parks
-    // on the user-approval step (8 done); the PS consent comes first, then the
-    // AS interaction link is shown.
+    // Run all: the exchange returns 202, the plan expands to 12 steps and the
+    // agent polls from the waiting step (9 done). The PS consent comes first
+    // (decided on the PS dashboard), then the AS interaction link is shown.
     await runAll(page);
-    await expect(doneSteps(page)).toHaveCount(8);
-    await approvePersonConsent(page, 'a.primary.approve');
+    await decidePersonServerPrompt(page, 'approve', { done: 9 });
     const link = page.locator('a.worker-consent');
     await expect(link).toBeVisible();
 
@@ -61,11 +61,9 @@ test.describe('Federated (Guided Tour)', () => {
     // The AS consent screen is unmistakably badged "Access Server".
     await decideAccessConsent(popup);
 
-    // The poll loop resolves and records the auth_token step (10 of 12). Running
-    // again finishes the replay (11) and inspect (12) steps.
-    await expect(doneSteps(page)).toHaveCount(10, { timeout: 120_000 });
-    await runAll(page);
-    await expect(doneSteps(page)).toHaveCount(12, { timeout: 30_000 });
+    // The poll loop resolves the auth_token step (10) and "Run all" finishes
+    // the replay (11) and inspect (12) steps.
+    await expect(doneSteps(page)).toHaveCount(12, { timeout: 120_000 });
 
     // Step 5 ("GET /wallet with person token → 401"): the Wallet verified the
     // person token and issued a resource token for the Access Server.
@@ -96,7 +94,7 @@ test.describe('Federated (Guided Tour)', () => {
     await selectFlow(page, TourMode.Federated);
 
     await runAll(page);
-    await approvePersonConsent(page, 'a.primary.approve');
+    await decidePersonServerPrompt(page, 'approve');
     const link = page.locator('a.worker-consent');
     await expect(link).toBeVisible();
 

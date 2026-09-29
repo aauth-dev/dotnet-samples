@@ -7,9 +7,9 @@ import {
   expectResponse,
   readResponseJson,
   doneSteps,
+  decidePersonServerPrompt,
   TourMode,
 } from '../../../tests/e2e/helpers/tour';
-import { approveInPopup } from '../../../tests/e2e/helpers/consent';
 import { Urls } from '../../../tests/e2e/helpers/agents';
 import { directedSubject } from '../../../tests/e2e/helpers/consent';
 
@@ -39,47 +39,23 @@ import { directedSubject } from '../../../tests/e2e/helpers/consent';
 test.describe('Call Chain (Guided Tour)', () => {
   test.describe.configure({ timeout: 180_000 });
 
-  test('two approvals replay through the concierge to a three-party 200', async ({ page, context }) => {
+  test('two approvals replay through the concierge to a three-party 200', async ({ page }) => {
     await openTour(page);
     await selectFlow(page, TourMode.CallChain);
 
+    // One "Run all" drives both hops; each waiting step is recorded on arrival
+    // and the agent polls while the person decides on the PS dashboard.
     await runAll(page);
 
-    // Hop 1 — parked on the Agent → Concierge approval (8 steps done).
-    const hop1Link = page.locator('a.primary.approve');
-    await expect(hop1Link).toBeVisible();
-    await expect(doneSteps(page)).toHaveCount(8);
-    const [hop1Popup] = await Promise.all([
-      context.waitForEvent('page'),
-      hop1Link.click(),
-    ]);
-    await approveInPopup(hop1Popup);
+    // Hop 1 — Agent → Concierge (8 steps + the waiting step).
+    const hop1 = await decidePersonServerPrompt(page, 'approve', { done: 9 });
 
-    // The background poll resolves the Concierge-audience auth_token (10 of
-    // 15 steps done: user-approval + poll).
-    await expect(doneSteps(page)).toHaveCount(10, { timeout: 120_000 });
+    // Hop 2 — the Concierge's chained 202 for Concierge → Calendar (12 + 1).
+    await decidePersonServerPrompt(page, 'approve', { previous: hop1, done: 13 });
 
-    // "Run all" advances the hop-2 retry (the Concierge re-emits its own
-    // 202) and the direct-user step, then parks on the second approval.
-    await runAll(page);
-
-    // Hop 2 — parked on the Concierge → Calendar approval (12 steps done).
-    const hop2Link = page.locator('a.primary.approve');
-    await expect(hop2Link).toBeVisible();
-    await expect(doneSteps(page)).toHaveCount(12);
-    const [hop2Popup] = await Promise.all([
-      context.waitForEvent('page'),
-      hop2Link.click(),
-    ]);
-    await approveInPopup(hop2Popup);
-
-    // The background poll of the Concierge pending URL resolves the chained
-    // 200 (14 of 15 steps done: user-approval + poll).
-    await expect(doneSteps(page)).toHaveCount(14, { timeout: 120_000 });
-
-    // The final inspect step still needs an explicit "Run all" click.
-    await runAll(page);
-    await expect(doneSteps(page)).toHaveCount(15, { timeout: 30_000 });
+    // The Concierge pending URL resolves the chained 200 and the inspect step runs.
+    await expect(doneSteps(page)).toHaveCount(15, { timeout: 120_000 });
+    await expect(page.locator('button.primary')).toHaveText('Done');
 
     // Step 14 ("Poll Concierge pending → 200") holds the combined result.
     await selectStep(page, 13);

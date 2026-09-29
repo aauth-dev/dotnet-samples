@@ -46,16 +46,28 @@ export async function signInToDashboard(page: Page): Promise<void> {
 
 /**
  * Decide the request a prompt deep-linked to (the `?code=` highlight) on a
- * dashboard popup, then close it so the next prompt opens a fresh tab.
+ * dashboard popup, then close it so the next prompt opens a fresh tab. A link
+ * with nothing to decide (a four-party request the Access Server is working
+ * on) shows the settled note instead; that is returned as `false`.
  */
-export async function decideHighlighted(popup: Page, action: 'approve' | 'deny'): Promise<void> {
+export async function decideHighlighted(popup: Page, action: 'approve' | 'deny'): Promise<boolean> {
   await signInToDashboard(popup);
   const card = popup.locator('#pending article.card.highlight');
-  await expect(card.locator('button.' + action)).toBeVisible({ timeout: 30_000 });
+  let state = 'wait';
+  await expect.poll(async () => {
+    if (await card.locator('button.' + action).isVisible()) return state = 'decide';
+    if (await popup.locator('#settled').isVisible()) return state = 'settled';
+    return state = 'wait';
+  }, { timeout: 30_000 }).not.toBe('wait');
+  if (state === 'settled') {
+    await popup.close();
+    return false;
+  }
   const id = await card.getAttribute('data-id');
   await popup.locator(`#pending article.card[data-id=${JSON.stringify(id)}] button.${action}`).click();
   await expect(popup.locator(`#history article.card[data-id=${JSON.stringify(id)}]`)).toBeVisible();
   await popup.close();
+  return true;
 }
 
 /** Open (or reuse) this context's dashboard tab, signing in once per context. */

@@ -272,6 +272,54 @@ PROCEEDED.
 - **Verification.** Full Playwright suite: 75 passed and 2 failed before the
   fix. The two failing specs passed after it.
 
+### [2026-09-29] [Phase 4] GuidedTour poll on arrival
+
+PROCEEDED.
+- **One hook.** Poll-on-arrival lives in the public `RunNextAsync`. After any
+  step leaves `AwaitingUserApproval` true and `IsPersonServerConsent`
+  (`PersonServerConsent.IsPersonServerHosted` on the current interaction), it
+  records the waiting step and starts the background poll. Every mode is
+  covered without per-mode branches, including the capability modes, the
+  federated PS step, and both call-chain hops. `/interaction/resource`
+  (Documents) and AS/Inbox URLs are not PS-hosted, so they keep the
+  click-driven path. `StepUserApprovesPlaceholder` is unchanged because PS
+  consent no longer reaches it.
+- **Run all.** "Run all" continues because the next (poll) step awaits the
+  in-flight poll. While it waits, Reset stays enabled; a run counter stops the
+  loop after a reset.
+- **UI.**
+  - The PS prompt renders in the polling banner.
+  - Worker consent (sub-agent, federated AS, R3 person token) now stores an
+    `Interaction` and renders through the same prompt. The sub-agent round
+    label moved to `.worker-round`.
+- **Narratives.** The waiting steps now teach "the agent polls already; decide
+  on the dashboard or through the direct link". `CodeSnippets.DirectUserToInteraction`
+  starts the poll before showing the link.
+- **Deviation (dashboard).** Wallet Protocol's AS-clarification scenario
+  exposed an SDK behaviour. After the agent answers an AS clarification, a
+  four-party PS entry calls `Browser.Renew()` and its 202 advertises a *fresh
+  PS interaction code*, although the PS consent is already given
+  (`AAuthPersonServerEndpoints` pending GET, four-party branch, which falls
+  through to `Pending202`). The per-request page previously showed a status
+  for that code. The dashboard found no pending card and gave no feedback.
+  - Fix: the dashboard now highlights the record for any current code and
+    shows a "Nothing to decide for this link" note (`settled`).
+  - Covered by `MockPersonServerDashboardTests`.
+  - The SDK behaviour (advertising `requirement=interaction` when nothing is
+    asked of the person) is logged for the SDK API surface plan. It is not
+    changed here.
+- **Verification.**
+  - Build clean; AAuth.Tests 1691 passed.
+  - GuidedTour project 43/43.
+  - Full Playwright suite 78 passed, 1 skipped (Keycloak), `--retries=0`.
+  - Browser check against `make demo`: Deferred "Run all" reached the prompt
+    with polls counting, a dashboard approval was delivered, and the SampleApp
+    Deferred prompt showed a live poll count.
+- **Notes for the final UX pass:**
+  - The tour banner shows two spinners (banner plus prompt).
+  - The SampleApp prompt could not be screenshotted while it re-renders every
+    second; use a wait or disable animations.
+
 ## Open questions / inputs needed
 
 _None yet._

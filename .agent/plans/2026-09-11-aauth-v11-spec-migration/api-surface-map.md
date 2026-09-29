@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 160 changed public-source files, 413 added/replacement declarations, 153 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 160 changed public-source files, 419 added/replacement declarations, 154 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -324,7 +324,13 @@ Public owners: `GuidedTour.TourSession`, `GuidedTour`.
 Concept/decision: [sample-runtime](#sample-runtime). Source: [TourSession.cs](../../../samples/GuidedTour/TourSession.cs).
 
 ```diff
+- GuidedTour.TourSession: public string ? WorkerConsentUrl { get ; private set ; }
 - GuidedTour: public sealed class TourSession : IAsyncDisposable
++ GuidedTour.TourSession: public Interaction ? CurrentInteraction
++ GuidedTour.TourSession: public Interaction ? WorkerConsent { get ; private set ; }
++ GuidedTour.TourSession: public bool IsPersonServerConsent
++ GuidedTour.TourSession: public string ? PersonServer
++ GuidedTour.TourSession: public string ? WorkerConsentUrl
 + GuidedTour: public sealed partial class TourSession : IAsyncDisposable
 ```
 
@@ -438,6 +444,7 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [ConsentRegistry.cs
 + MockPersonServer.ConsentRecord: public string AgentId
 + MockPersonServer.ConsentRecord: public string Id
 + MockPersonServer.ConsentRegistry: public ConsentRecord ? Find ( string id )
++ MockPersonServer.ConsentRegistry: public ConsentRecord ? FindByCode ( string code )
 + MockPersonServer.ConsentRegistry: public ConsentRecord ? FindPendingByCode ( string code )
 + MockPersonServer.ConsentRegistry: public IReadOnlyList < ConsentRecord > Snapshot ( )
 + MockPersonServer.ConsentRegistry: public const int Capacity = 500 ;

@@ -175,10 +175,18 @@ public sealed class ConsentRegistry(MissionPolicyStore policy)
 
     /// <summary>Read-only lookup of a pending request by its current code; never consumes it.</summary>
     public ConsentRecord? FindPendingByCode(string code)
+        => FindByCode(code) is { IsDecidable: true } record ? record : null;
+
+    /// <summary>
+    /// Read-only lookup of any listed request by its current code. A four-party
+    /// request keeps advertising a fresh PS code while the Access Server works, so
+    /// the dashboard can say there is nothing to decide.
+    /// </summary>
+    public ConsentRecord? FindByCode(string code)
     {
         var normalized = AAuth.Headers.InteractionCode.Normalize(code);
         if (string.IsNullOrEmpty(normalized)) return null;
-        return Snapshot().FirstOrDefault(record => record.IsDecidable && record.Browser.Code == normalized);
+        return Snapshot().FirstOrDefault(record => record.Browser.Code == normalized);
     }
 
     /// <summary>Listed records, newest first.</summary>

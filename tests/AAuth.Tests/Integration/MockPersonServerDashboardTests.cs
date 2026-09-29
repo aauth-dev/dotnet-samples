@@ -57,6 +57,7 @@ public class MockPersonServerDashboardTests : IClassFixture<MockPersonServerCons
 
         var listing = await dashboard.ListAsync("agent", parked.Code);
         Assert.Equal(parked.Id, (string?)listing["highlight"]);
+        Assert.False((bool)listing["settled"]!);
         var group = listing["pending"]!.AsArray().Single(g => (string?)g!["key"] == parked.AgentId)!;
         var record = group["records"]!.AsArray().Single(r => (string?)r!["id"] == parked.Id)!;
         Assert.True((bool)record["decidable"]!);
@@ -76,6 +77,11 @@ public class MockPersonServerDashboardTests : IClassFixture<MockPersonServerCons
             .SelectMany(g => g!["records"]!.AsArray()).Single(r => (string?)r!["id"] == parked.Id)!;
         Assert.Equal("Delivered", (string?)history["status"]);
         Assert.Equal("Dashboard", (string?)history["decided_by"]);
+
+        // The old link still names the request, which has nothing left to decide.
+        var linked = await dashboard.ListAsync("none", parked.Code);
+        Assert.Equal(parked.Id, (string?)linked["highlight"]);
+        Assert.True((bool)linked["settled"]!);
     }
 
     [Fact]
@@ -92,11 +98,12 @@ public class MockPersonServerDashboardTests : IClassFixture<MockPersonServerCons
     }
 
     [Fact]
-    public async Task UnknownCodeHighlight_IsIgnored()
+    public async Task UnknownCodeHighlight_IsSettled()
     {
         var dashboard = await SignInAsync();
         var listing = await dashboard.ListAsync("none", "ABCDEFGHJKMNPQRSTVWXYZ0123");
         Assert.Null(listing["highlight"]);
+        Assert.True((bool)listing["settled"]!);
     }
 
     [Fact]

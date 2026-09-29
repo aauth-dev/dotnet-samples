@@ -36,16 +36,19 @@ test(`sub-agent flow via ${entry} binds parent_agent and the worker cnf with no 
   }
 
   await page.getByRole('button', { name: 'Run all' }).click();
+  // Person Server rounds open the PS dashboard; the Access Server round opens
+  // its own page. The round label names each decision.
   const consent = page.locator('a.primary.approve.worker-consent');
-  await expect(consent).toHaveText('Approve original caller at Person Server (1 of 3)');
-  await expect(consent).toHaveAttribute('target', '_blank');
+  const round = page.locator('.worker-round');
+  await expect(round).toHaveText('Approve original caller at Person Server (1 of 3)');
+  await expect(consent).toHaveAttribute('href', /\/dashboard\?code=/);
   await expect(page.getByText(/Consent 1 of 3/)).toBeVisible();
   const labels: string[] = [];
   await completeWorkerConsent(
     page,
     'a.worker-consent',
     async () => (await doneSteps(page).count()) === 8,
-    async (_, round) => { labels.push(await consent.innerText()); },
+    async () => { labels.push(await round.innerText()); },
   );
   expect(labels).toEqual([
     'Approve original caller at Person Server (1 of 3)',

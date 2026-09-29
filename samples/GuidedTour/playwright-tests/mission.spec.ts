@@ -7,9 +7,10 @@ import {
   expectResponse,
   readResponseJson,
   doneSteps,
+  decidePersonServerPrompt,
   TourMode,
 } from '../../../tests/e2e/helpers/tour';
-import { approveInPopup, denyInPopup, directedSubject } from '../../../tests/e2e/helpers/consent';
+import { directedSubject } from '../../../tests/e2e/helpers/consent';
 import { Urls } from '../../../tests/e2e/helpers/agents';
 
 /**
@@ -36,58 +37,21 @@ import { Urls } from '../../../tests/e2e/helpers/agents';
 test.describe('Mission (Guided Tour)', () => {
   test.describe.configure({ timeout: 240_000 });
 
-  test('three approvals govern the full mission lifecycle to a 200', async ({ page, context }) => {
+  test('three approvals govern the full mission lifecycle to a 200', async ({ page }) => {
     await openTour(page);
     await selectFlow(page, TourMode.Mission);
 
-    // ---- Cycle 1: mission creation (PROMPT) ------------------------------
+    // One "Run all" drives every gate; the agent polls on arrival at each
+    // waiting step while the person decides on the PS dashboard.
     await runAll(page);
-    // Parked on the mission-approval step (3 done: discover, propose, direct-user).
-    await expect(doneSteps(page)).toHaveCount(3);
-    const createLink = page.locator('a.primary.approve');
-    await expect(createLink).toBeVisible();
-    const [createPopup] = await Promise.all([
-      context.waitForEvent('page'),
-      createLink.click(),
-    ]);
-    await approveInPopup(createPopup);
-    // user-approval + create poll resolve (5 of 21).
-    await expect(doneSteps(page)).toHaveCount(5, { timeout: 120_000 });
-
-    // ---- Silent gate 2 token + cycle 2: elevated scope (PROMPT) ----------
-    await runAll(page);
-    // Steps 6 (mission person token), 7 (challenge), 8 (exchange SILENT),
-    // 9 (replay), 10 (elevated challenge), 11 (elevated exchange → 202),
-    // 12 (direct-user) run, parking on the elevated-scope approval (12 done).
-    await expect(doneSteps(page)).toHaveCount(12, { timeout: 60_000 });
-    const elevatedLink = page.locator('a.primary.approve');
-    await expect(elevatedLink).toBeVisible();
-    const [elevatedPopup] = await Promise.all([
-      context.waitForEvent('page'),
-      elevatedLink.click(),
-    ]);
-    await approveInPopup(elevatedPopup);
-    // user-approval + elevated poll resolve (14 of 21).
-    await expect(doneSteps(page)).toHaveCount(14, { timeout: 120_000 });
-
-    // ---- Silent gate 4 tool + cycle 3: cancel_booking (PROMPT) -------------
-    await runAll(page);
-    // Steps 15 (elevated replay), 16 (add_to_calendar SILENT), 17 (permission →
-    // 202), 18 (direct-user) run, parking on the cancel_booking approval (18).
-    await expect(doneSteps(page)).toHaveCount(18, { timeout: 60_000 });
-    const deleteLink = page.locator('a.primary.approve');
-    await expect(deleteLink).toBeVisible();
-    const [deletePopup] = await Promise.all([
-      context.waitForEvent('page'),
-      deleteLink.click(),
-    ]);
-    await approveInPopup(deletePopup);
-    // user-approval + permission poll resolve (20 of 21).
-    await expect(doneSteps(page)).toHaveCount(20, { timeout: 120_000 });
-
-    // ---- Final inspect step still needs an explicit "Run all" ------------
-    await runAll(page);
-    await expect(doneSteps(page)).toHaveCount(21, { timeout: 30_000 });
+    // Cycle 1: mission creation (discover, propose, direct-user + waiting step).
+    const create = await decidePersonServerPrompt(page, 'approve', { done: 4 });
+    // Silent gate 2, then cycle 2: the elevated scope (12 + waiting step).
+    const elevatedPrompt = await decidePersonServerPrompt(page, 'approve', { previous: create, done: 13 });
+    // Silent gate 4, then cycle 3: cancel_booking (18 + waiting step).
+    await decidePersonServerPrompt(page, 'approve', { previous: elevatedPrompt, done: 19 });
+    await expect(doneSteps(page)).toHaveCount(21, { timeout: 120_000 });
+    await expect(page.locator('button.primary')).toHaveText('Done');
 
     // Step 5 ("Poll → 200 mission approval"): the approval envelope's s256.
     await selectStep(page, 4);
@@ -123,30 +87,14 @@ test.describe('Mission (Guided Tour)', () => {
     expect(elevated.mission_s256).toBe(missionS256);
   });
 
-  test('deny at the elevated-scope gate yields denied', async ({ page, context }) => {
+  test('deny at the elevated-scope gate yields denied', async ({ page }) => {
     await openTour(page);
     await selectFlow(page, TourMode.Mission);
 
-    // Cycle 1: approve the mission.
+    // Approve the mission, then DENY the elevated-scope gate.
     await runAll(page);
-    const createLink = page.locator('a.primary.approve');
-    await expect(createLink).toBeVisible();
-    const [createPopup] = await Promise.all([
-      context.waitForEvent('page'),
-      createLink.click(),
-    ]);
-    await approveInPopup(createPopup);
-    await expect(doneSteps(page)).toHaveCount(5, { timeout: 120_000 });
-
-    // Advance to the elevated-scope gate and DENY it.
-    await runAll(page);
-    const elevatedLink = page.locator('a.primary.approve');
-    await expect(elevatedLink).toBeVisible();
-    const [elevatedPopup] = await Promise.all([
-      context.waitForEvent('page'),
-      elevatedLink.click(),
-    ]);
-    await denyInPopup(elevatedPopup);
+    const create = await decidePersonServerPrompt(page, 'approve', { done: 4 });
+    await decidePersonServerPrompt(page, 'deny', { previous: create, done: 13 });
 
     // The flow aborts: the primary button locks to "Aborted" and the poll loop
     // records a terminal denied step (403 denied).

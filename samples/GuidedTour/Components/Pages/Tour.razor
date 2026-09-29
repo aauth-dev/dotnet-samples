@@ -118,14 +118,15 @@
         }
     }
     <div class="flow-picker__actions">
-        @if (Session.WorkerConsentUrl is { } workerConsent)
+        @if (Session.WorkerConsent is { } workerConsent)
         {
-            <a @key="workerConsent" class="primary approve worker-consent" href="@workerConsent" target="_blank" rel="noopener">
-                @(Session.IsSubAgentMode ? WorkerConsentAction() : "Open consent page")
-            </a>
+            <ConsentSupport.PersonServerApprovalPrompt @key="workerConsent.Code" PersonServer="@Session.PersonServer" Interaction="workerConsent"
+                                                       ExternalLabel="@(Session.IsSubAgentMode ? WorkerConsentAction() : "Open consent page")"
+                                                       LinkClass="primary approve worker-consent" />
             @if (Session.IsSubAgentMode)
             {
                 <span class="flow-picker__action-hint">
+                    <span class="worker-round">@WorkerConsentAction()</span>.
                     Consent @Session.WorkerConsentRound of @TourSession.WorkerConsentRounds. Complete it in the new tab, then return here for the next decision.
                 </span>
             }
@@ -144,7 +145,7 @@
             </button>
         }
         <button @onclick="RunAllAsync" disabled="@(Session.IsComplete || _busy)">Run all</button>
-        <button @onclick="ResetAsync" disabled="@_busy">Reset</button>
+        <button @onclick="ResetAsync" disabled="@(_busy && !Session.IsPolling)">Reset</button>
     </div>
     <details class="flow-picker__desc" open>
         <summary>📖 What Aria is trying to do — and how</summary>
@@ -440,10 +441,17 @@
                 <strong>@Session.PollCount</strong> @(Session.PollCount == 1 ? "poll" : "polls") so far ·
                 elapsed <strong>@ElapsedPolling()</strong>
             </div>
-            <div class="polling__hint">
-                Waiting for you to complete the @(Session.IsCapabilityMode ? "decision in the consent" : Session.IsFederatedMode ? "Access Server consent" : Session.IsRichRequestsMode ? "R3 Access Server consent" : Session.IsResourceManagedMode ? "Approve on the Inbox consent" : "Approve or Deny on the PS consent")
-                tab. You can come back here anytime — the poll loop is live.
-            </div>
+            @if (Session.WorkerConsent is null && Session.IsPersonServerConsent && Session.CurrentInteraction is { } interaction)
+            {
+                <ConsentSupport.PersonServerApprovalPrompt @key="interaction.Code" PersonServer="@Session.PersonServer" Interaction="interaction" />
+            }
+            else
+            {
+                <div class="polling__hint">
+                    Waiting for you to complete the @(Session.IsCapabilityMode ? "decision in the consent" : Session.IsFederatedMode ? "Access Server consent" : Session.IsRichRequestsMode ? "R3 Access Server consent" : Session.IsResourceManagedMode ? "Approve on the Inbox consent" : "Approve or Deny on the PS consent")
+                    tab. You can come back here anytime — the poll loop is live.
+                </div>
+            }
         </div>
     </section>
 }
@@ -480,6 +488,7 @@
 @code {
     private int _selected = -1;
     private bool _busy;
+    private int _run;
     private string? _error;
     private bool _initialized;
 
@@ -748,11 +757,12 @@
         _error = null;
         try
         {
-            // The <a target="_blank"> element opens the PS's interaction
-            // page natively (no popup-blocker friction). This handler
-            // records the user-approval step in the timeline and immediately kicks off
-            // the background poll so the spinner is live while the
-            // user is in the other tab.
+            // The <a target="_blank"> element opens the Access Server or
+            // resource page natively (no popup-blocker friction). Person
+            // Server consent never reaches this handler: the session already
+            // polls. This records the user-approval step and starts the
+            // background poll so the spinner is live while the user is in
+            // the other tab.
             await Session.RecordUserApprovalOpenedAsync();
             _ = Session.StartPendingPollAsync();
             _selected = Session.Steps.Count - 1;
@@ -766,29 +776,30 @@
 
     private async Task RunAllAsync()
     {
+        var run = ++_run;
         _busy = true;
         _error = null;
         try
         {
-            while (!Session.IsComplete)
+            while (!Session.IsComplete && run == _run)
             {
                 if (Session.AwaitingUserApproval)
                 {
-                    // "Run all" cannot do user interaction on the user's
-                    // behalf — surface the URL and stop so the user can
-                    // click the consent link themselves.
+                    // Person Server consent never parks here: the session polls on
+                    // arrival and the next step awaits that poll. Access Server and
+                    // resource pages still need the user to open the link first.
                     _error = Session.IsCapabilityMode
                         ? "Stopped: the next step needs your decision in the browser. Click the consent link above, then return here."
                         : Session.IsFederatedMode
                         ? "Stopped: the next step requires you to open the Access Server login (Keycloak) and sign in. Click the green link above."
                         : Session.IsRichRequestsMode
                         ? "Stopped: the next step requires you to open the R3 Access Server consent screen and approve this reservation. Click the green link above."
-                        : "Stopped: the next step requires you to open the PS consent page and click Approve. Click the green link above.";
+                        : "Stopped: the next step needs your decision on the consent page. Click the green link above.";
                     break;
                 }
                 await Session.RunNextAsync();
+                if (run == _run) _selected = Session.Steps.Count - 1;
             }
-            _selected = Session.Steps.Count - 1;
         }
         catch (Exception ex)
         {
@@ -799,6 +810,8 @@
 
     private async Task ResetAsync()
     {
+        // A Run all awaiting a poll stops at its next iteration.
+        _run++;
         Session.Reset();
         _selected = -1;
         _error = null;

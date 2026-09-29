@@ -183,9 +183,14 @@ internal static class CodeSnippets
         var userUrl = interaction.BuildUserUrl();
         // → "https://ps.example/interaction?code=ABCD1234"
 
+        // Start polling now. The person may decide on the Person Server's
+        // dashboard without ever opening this link.
+        var decision = new DeferredPoller(signedClient).PollAsync(pendingUri);
+
         // Present to user via browser, QR code, notification, etc.
         Process.Start(new ProcessStartInfo(userUrl)
             { UseShellExecute = true });
+        var result = await decision;
         """;
 
     public const string PollPending = """

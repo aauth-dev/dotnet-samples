@@ -82,9 +82,14 @@ export async function resetConsent(request: APIRequestContext): Promise<void> {
   }
 }
 
+/** Explicit approve/deny helpers expect the dashboard link to name a decidable request. */
+function requireDecision(decided: boolean): void {
+  if (!decided) throw new Error('The dashboard link named a request with nothing to decide.');
+}
+
 /** On the PS interaction popup (or the PS dashboard it deep-linked to), approve. */
 export async function approveInPopup(popup: Page): Promise<void> {
-  if (await isDashboard(popup)) return decideHighlighted(popup, 'approve');
+  if (await isDashboard(popup)) return requireDecision(await decideHighlighted(popup, 'approve'));
   await authenticateConsent(popup);
   await popup.locator('button.approve').click();
   await popup.getByText('Approved', { exact: false }).first().waitFor();
@@ -92,7 +97,7 @@ export async function approveInPopup(popup: Page): Promise<void> {
 
 /** On the PS interaction popup (or the PS dashboard it deep-linked to), deny. */
 export async function denyInPopup(popup: Page): Promise<void> {
-  if (await isDashboard(popup)) return decideHighlighted(popup, 'deny');
+  if (await isDashboard(popup)) return requireDecision(await decideHighlighted(popup, 'deny'));
   await authenticateConsent(popup);
   await popup.locator('button.deny').click();
   await popup.getByText('Denied', { exact: false }).first().waitFor();

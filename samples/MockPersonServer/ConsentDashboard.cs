@@ -113,10 +113,13 @@ public static class ConsentDashboard
                 return ConsentDashboardSessions.Problem("denied", "Sign in to the dashboard.", 401);
             var grouping = group is "mission" or "agent" ? group : "none";
             var records = registry.Snapshot();
+            var linked = code is null ? null : registry.FindByCode(code);
             return Results.Json(new JsonObject
             {
                 ["group"] = grouping,
-                ["highlight"] = code is null ? null : registry.FindPendingByCode(code)?.Id,
+                ["highlight"] = linked?.Id,
+                // The agent's link names a request with nothing for the person to do now.
+                ["settled"] = code is not null && linked is not { IsDecidable: true },
                 ["pending"] = Groups(records.Where(record => record.Status == ConsentStatus.Pending), grouping),
                 ["history"] = Groups(records.Where(record => record.Status != ConsentStatus.Pending), grouping),
             });
@@ -244,6 +247,8 @@ public static class ConsentDashboard
         + "<button type=button data-group=agent aria-pressed=false>Agent</button>"
         + "<span id=status class=muted aria-live=polite></span></div>"
         + "<p id=notice class=error role=alert></p>"
+        + "<p id=settled class=info role=status hidden>Nothing to decide for this link right now. "
+        + "The request it names is not waiting for you; any other pending requests are listed below.</p>"
         + "<section aria-labelledby=pending-h><h2 id=pending-h>Pending <span id=pending-count class=count>0</span></h2>"
         + "<div id=pending><p class=empty>No pending requests.</p></div></section>"
         + "<section aria-labelledby=history-h><h2 id=history-h>History</h2>"
@@ -279,12 +284,14 @@ public static class ConsentDashboard
         + ".s-Approved,.s-Delivered{background:#dcfce7;color:#166534}.s-Denied{background:#fee2e2;color:#991b1b}"
         + ".s-Expired,.s-Withdrawn{background:#e2e8f0;color:#475569}.s-Pending{background:#dbeafe;color:#1e40af}"
         + ".note{font-size:.85rem;color:#64748b}.error{color:#b91c1c;font-size:.9rem;margin:.5rem 0 0}.error:empty{display:none}"
+        + ".info{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;border-radius:.4rem;padding:.5rem .8rem;font-size:.9rem;margin:.75rem 0 0}"
         + "@media (max-width:40rem){.card{grid-template-columns:1fr}.actions{justify-content:flex-start}}";
 
     private const string Script = """
         const csrf = document.querySelector('meta[name=csrf]').content;
         const code = new URLSearchParams(location.search).get('code');
         let group = 'none', highlighted = false, busy = false;
+        const decidedHere = new Set();
         const labels = {
           Token: 'Access to a resource', PersonToken: 'Share your identity with a resource',
           MissionToken: 'Extra access under a mission', MissionCreation: 'Start a new mission',
@@ -361,7 +368,8 @@ public static class ConsentDashboard
             document.getElementById('pending-count').textContent = pending;
             document.title = (pending ? '(' + pending + ') ' : '') + 'Consent dashboard — Person Server';
             render('pending', data.pending, 'No pending requests.', data.highlight);
-            render('history', data.history, 'Nothing decided yet.', null);
+            render('history', data.history, 'Nothing decided yet.', data.highlight);
+            document.getElementById('settled').hidden = !data.settled || decidedHere.has(data.highlight);
             document.getElementById('status').textContent = 'Updated ' + new Date().toLocaleTimeString();
             if (data.highlight && !highlighted) {
               highlighted = true;
@@ -382,7 +390,7 @@ public static class ConsentDashboard
               notice.textContent = problem.error === 'already_decided'
                 ? 'That request was already decided elsewhere.'
                 : 'Could not ' + action + ' the request: ' + (problem.detail || problem.error || response.status);
-            }
+            } else decidedHere.add(id);
           } finally { busy = false; await refresh(); }
         }
         document.querySelectorAll('[data-group]').forEach(b => b.addEventListener('click', () => {
