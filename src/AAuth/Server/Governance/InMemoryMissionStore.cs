@@ -18,7 +18,12 @@ public sealed class InMemoryMissionStore : IMissionStore
     public Task SaveAsync(StoredMission mission, CancellationToken ct = default)
     {
         System.ArgumentNullException.ThrowIfNull(mission);
-        _missions[mission.S256] = mission;
+        _missions.AddOrUpdate(mission.S256, mission, (_, existing) => mission with
+        {
+            // A replacement never revives a terminated mission or extends its expiry.
+            State = existing.State == MissionState.Terminated ? MissionState.Terminated : mission.State,
+            ExpiresAt = Earliest(existing.ExpiresAt, mission.ExpiresAt),
+        });
         return Task.CompletedTask;
     }
 
@@ -34,10 +39,15 @@ public sealed class InMemoryMissionStore : IMissionStore
     public Task SetStateAsync(string s256, MissionState state, CancellationToken ct = default)
     {
         System.ArgumentException.ThrowIfNullOrEmpty(s256);
-        if (_missions.TryGetValue(s256, out var existing))
+        while (_missions.TryGetValue(s256, out var existing)
+            && existing.State != MissionState.Terminated
+            && existing.State != state
+            && !_missions.TryUpdate(s256, existing with { State = state }, existing))
         {
-            _missions[s256] = existing with { State = state };
         }
         return Task.CompletedTask;
     }
+
+    private static System.DateTimeOffset? Earliest(System.DateTimeOffset? a, System.DateTimeOffset? b)
+        => a is null ? b : b is null ? a : a < b ? a : b;
 }

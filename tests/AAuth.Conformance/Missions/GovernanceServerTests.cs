@@ -188,6 +188,61 @@ public class GovernanceServerTests
     public async Task MissionStore_Absent_ReturnsNull()
         => Assert.Null(await new InMemoryMissionStore().GetAsync("nope"));
 
+    [Fact(DisplayName = "§Mission Management — a terminated mission never returns to active, by transition or replacement")]
+    public async Task MissionStore_TerminatedIsFinal()
+    {
+        var store = new InMemoryMissionStore();
+        var mission = new StoredMission(S256, "https://ps.example", "aauth:a@x.example", new byte[] { 1 });
+        await store.SaveAsync(mission);
+        await store.SetStateAsync(S256, MissionState.Terminated);
+
+        await store.SetStateAsync(S256, MissionState.Active);
+        Assert.Equal(MissionState.Terminated, (await store.GetAsync(S256))!.State);
+
+        await store.SaveAsync(mission);
+        Assert.Equal(MissionState.Terminated, (await store.GetAsync(S256))!.State);
+    }
+
+    [Fact(DisplayName = "§Mission Approval — replacing a mission never extends its expires_at")]
+    public async Task MissionStore_ReplacementKeepsEarliestExpiry()
+    {
+        var store = new InMemoryMissionStore();
+        var expiresAt = DateTimeOffset.UtcNow.AddHours(1);
+        var mission = new StoredMission(S256, "https://ps.example", "aauth:a@x.example", new byte[] { 1 }) { ExpiresAt = expiresAt };
+        await store.SaveAsync(mission);
+
+        await store.SaveAsync(mission with { ExpiresAt = null });
+        Assert.Equal(expiresAt, (await store.GetAsync(S256))!.ExpiresAt);
+        await store.SaveAsync(mission with { ExpiresAt = expiresAt.AddDays(1) });
+        Assert.Equal(expiresAt, (await store.GetAsync(S256))!.ExpiresAt);
+        await store.SetStateAsync(S256, MissionState.Terminated);
+        Assert.Equal(expiresAt, (await store.GetAsync(S256))!.ExpiresAt);
+    }
+
+    [Fact(DisplayName = "§Mission Management — concurrent transitions and replacements cannot revive a terminated mission")]
+    public async Task MissionStore_ConcurrentMutationKeepsTerminal()
+    {
+        for (var round = 0; round < 50; round++)
+        {
+            var store = new InMemoryMissionStore();
+            var mission = new StoredMission(S256, "https://ps.example", "aauth:a@x.example", new byte[] { 1 });
+            await store.SaveAsync(mission);
+            var tasks = new List<Task>();
+            for (var i = 0; i < 16; i++)
+            {
+                var n = i;
+                tasks.Add(Task.Run(() => n switch
+                {
+                    0 => store.SetStateAsync(S256, MissionState.Terminated),
+                    _ when n % 2 == 0 => store.SetStateAsync(S256, MissionState.Active),
+                    _ => store.SaveAsync(mission),
+                }));
+            }
+            await Task.WhenAll(tasks);
+            Assert.Equal(MissionState.Terminated, (await store.GetAsync(S256))!.State);
+        }
+    }
+
     // ---- §Mission Log ----
 
     [Fact(DisplayName = "§Mission Log — entries are appended and read in order")]

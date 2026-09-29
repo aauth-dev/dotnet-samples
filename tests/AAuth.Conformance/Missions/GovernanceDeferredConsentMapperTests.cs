@@ -755,9 +755,16 @@ public class GovernanceDeferredConsentMapperTests
         else
         {
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.False(string.IsNullOrEmpty((string?)(await ReadJson(response))?["s256"]));
-            Assert.Contains(await host.Services.GetRequiredService<IMissionLog>().ReadAsync(s256),
+            var updateS256 = (string?)(await ReadJson(response))?["s256"];
+            var update = Assert.Single(await host.Services.GetRequiredService<IMissionLog>().ReadAsync(s256),
                 entry => entry.Kind == MissionLogEntryKind.Update);
+            // The returned s256 is the digest of the update bytes exactly as the PS retained them.
+            Assert.Equal(Mission.ComputeS256(System.Text.Encoding.UTF8.GetBytes(update.Detail!)), updateS256);
+            Assert.Equal("Also book a hotel.", (string?)JsonNode.Parse(update.Detail!)!["description"]);
+            // The mission itself is unchanged: same identity, same blob, still active.
+            var stored = await host.Services.GetRequiredService<IMissionStore>().GetAsync(s256);
+            Assert.Equal(new byte[] { 1, 2, 3 }, stored!.Blob.ToArray());
+            Assert.Equal(MissionState.Active, stored.State);
         }
         await host.StopAsync();
     }

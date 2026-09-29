@@ -38,7 +38,11 @@ public sealed record StoredMission(
 /// </summary>
 public interface IMissionStore
 {
-    /// <summary>Persist (or replace) a mission keyed by its <c>s256</c>.</summary>
+    /// <summary>
+    /// Persist (or replace) a mission keyed by its <c>s256</c>. Replacing a
+    /// terminated mission MUST keep it terminated, and a replacement MUST NOT
+    /// extend a stored <see cref="StoredMission.ExpiresAt"/> (§Mission Management).
+    /// </summary>
     Task SaveAsync(StoredMission mission, CancellationToken ct = default);
 
     /// <summary>Look up a mission by its <c>s256</c>. Returns <see langword="null"/> when absent.</summary>
@@ -46,7 +50,8 @@ public interface IMissionStore
 
     /// <summary>
     /// Transition a mission to <paramref name="state"/> (e.g. on completion or
-    /// revocation). No-op when the mission is absent.
+    /// revocation). No-op when the mission is absent. A terminated mission MUST
+    /// NOT return to active, even under concurrent transitions (§Mission Management).
     /// </summary>
     Task SetStateAsync(string s256, MissionState state, CancellationToken ct = default);
 }

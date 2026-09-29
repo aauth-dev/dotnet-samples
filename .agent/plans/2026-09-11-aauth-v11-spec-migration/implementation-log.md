@@ -860,6 +860,40 @@ capabilities stay outside the mission hash is covered by
 Gates: build 0 warnings; AAuth.Tests 1667, Conformance 1180, R3 323, Events 80;
 API and docs maps refreshed; snippet and link tests 108.
 
+### [2026-09-29] [Phase 3] Mission store keeps terminal state and expiry
+
+RESOLVED (SDK fix). `InMemoryMissionStore` broke two §Mission Management rules
+("A terminated mission MUST NOT return to `active`", L1516):
+
+- `SaveAsync` overwrote a stored mission, so re-saving a terminated mission
+  revived it and could drop or extend `ExpiresAt`;
+- `SetStateAsync` read then wrote, so a concurrent `Active` could overwrite
+  `Terminated`, and `SetStateAsync(Active)` reopened a terminated mission.
+
+`SaveAsync` now merges atomically: terminated stays terminated and the
+earliest expiry wins. `SetStateAsync` uses compare-and-swap and ignores any
+transition out of `Terminated`. `IMissionStore` documents both rules for
+custom stores.
+
+Evidence: `MissionStore_TerminatedIsFinal`,
+`MissionStore_ReplacementKeepsEarliestExpiry` and
+`MissionStore_ConcurrentMutationKeepsTerminal` (50 rounds of 16 racing
+transitions and saves).
+
+### [2026-09-29] [Phase 3] Accepted updates keep exact bytes
+
+RESOLVED (test only). §Mission Update (L1471, L1479) returns `s256` over the
+update's persisted bytes and leaves the mission unchanged. The existing test
+only checked that `s256` was non-empty. `MissionUpdate_OwnedMissionOnly` now
+checks:
+
+- the returned `s256` equals `Mission.ComputeS256` of the logged entry's bytes;
+- the entry retains the description;
+- the stored mission keeps its blob and `Active` state under the same
+  `mission_s256`.
+
+Conformance 1183 passed.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate

@@ -290,8 +290,8 @@ Phase rule: exact blob bytes and mission_s256, no legacy header compatibility.
 
 - [x] Envelope formatting does not affect digest; modified blob bytes fail.
 - [x] Capabilities are outside the hash and partial resource approvals work.
-- [ ] Expiry and terminal-state invariants survive store mutation/races.
-- [ ] Accepted updates have retained exact bytes without changing mission identity.
+- [x] Expiry and terminal-state invariants survive store mutation/races.
+- [x] Accepted updates have retained exact bytes without changing mission identity.
 - [x] Agents reject an approval whose blob bytes do not match `mission_s256`.
 - [x] Compiled callers and focused governance/build checks pass.
 - [x] Approval issues `person_tokens` for asserted resources, omits the rest, and tracks each as an agent-token grant.

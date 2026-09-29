@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 145 changed public-source files, 268 added/replacement declarations, 140 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 146 changed public-source files, 268 added/replacement declarations, 140 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -1415,6 +1415,14 @@ Concept/decision: [consent](#consent). Source: [IMissionTokenConsent.cs](../../.
 ```
 
 Public owners: `AAuth.Server.Governance.IMissionTokenConsent`, `AAuth.Server.Governance.MissionTokenConsentContext`, `AAuth.Server.Governance.MissionTokenConsentDecision`, `AAuth.Server.Governance.MissionTokenConsentKind`, `AAuth.Server.Governance.MissionTokenConsentStage`, `AAuth.Server.Governance`.
+
+### src/AAuth/Server/Governance/InMemoryMissionStore.cs
+
+Concept/decision: [governance](#governance). Source: [InMemoryMissionStore.cs](../../../src/AAuth/Server/Governance/InMemoryMissionStore.cs).
+
+Public signatures unchanged (4); behavior reviewed under governance.
+
+Public owners: `AAuth.Server.Governance.InMemoryMissionStore`, `AAuth.Server.Governance`.
 
 ### src/AAuth/Server/Governance/MissionApprovalBuilder.cs
 
