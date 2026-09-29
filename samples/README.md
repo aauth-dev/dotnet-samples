@@ -129,10 +129,12 @@ The fastest way to run all samples together:
 make demo
 ```
 
-The `demo`, `demo-mission` and `demo-keycloak` targets keep persistent draft-10
+The `demo`, `demo-mission` and `demo-keycloak` targets keep persistent
 sample keys, enrollment records and databases under
-`$XDG_DATA_HOME/aauth-samples/v10/home` (or
-`~/.local/share/aauth-samples/v10/home` when `XDG_DATA_HOME` is unset).
+`$XDG_DATA_HOME/aauth-samples/demo-home` (or
+`~/.local/share/aauth-samples/demo-home` when `XDG_DATA_HOME` is unset).
+State left at the earlier `aauth-samples/v10/home` location is moved there on
+the first run.
 They set the services' `HOME` and `XDG_DATA_HOME` to that isolated location while
 reusing your existing .NET and NuGet caches. Earlier `~/.aauth` keys are left
 untouched; keys created before the required JWK `alg` member was introduced are

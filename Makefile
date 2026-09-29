@@ -45,10 +45,11 @@ KEYCLOAK_URL   := http://localhost:8080
 KEYCLOAK_IMAGE := quay.io/keycloak/keycloak:26.0
 KEYCLOAK_REALM := samples/MockAccessServers/Federated/keycloak
 
-# Keep draft-10 demo credentials separate from keys created by earlier drafts.
+# Keep demo credentials separate from keys created outside the demo targets.
 USER_HOME := $(HOME)
 USER_DATA_HOME := $(or $(XDG_DATA_HOME),$(USER_HOME)/.local/share)
-DEMO_HOME ?= $(USER_DATA_HOME)/aauth-samples/v10/home
+DEMO_HOME ?= $(USER_DATA_HOME)/aauth-samples/demo-home
+LEGACY_DEMO_HOME := $(USER_DATA_HOME)/aauth-samples/v10/home
 DEMO_DOTNET_HOME := $(or $(DOTNET_CLI_HOME),$(USER_HOME))
 DEMO_NUGET_PACKAGES := $(or $(NUGET_PACKAGES),$(USER_HOME)/.nuget/packages)
 
@@ -90,6 +91,11 @@ demo demo-mission demo-keycloak: demo-state
 
 .PHONY: demo-state
 demo-state:
+	@if [ ! -e "$(DEMO_HOME)" ] && [ -d "$(LEGACY_DEMO_HOME)" ]; then \
+		mkdir -p "$(dir $(DEMO_HOME))" && mv "$(LEGACY_DEMO_HOME)" "$(DEMO_HOME)" && \
+		rmdir "$(dir $(LEGACY_DEMO_HOME))" 2>/dev/null; \
+		echo "Moved demo state from $(LEGACY_DEMO_HOME)"; \
+	fi
 	@mkdir -p "$(DEMO_HOME)" "$(DEMO_HOME)/.local/share"
 	@chmod 700 "$(DEMO_HOME)" "$(DEMO_HOME)/.local/share"
 	@echo "Demo state: $(DEMO_HOME) (override with DEMO_HOME=...)"

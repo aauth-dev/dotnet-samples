@@ -1663,6 +1663,21 @@ under its interim ruling.
 Nothing has been pushed, tagged or released. That needs separate
 authorization.
 
+### [2026-09-29] [Closure] Demo state folder renamed
+
+This supersedes the Phase 11 note that left `aauth-samples/v10/home` in place.
+The user asked for a version-neutral name. The Makefile `DEMO_HOME` default is
+now `$(USER_DATA_HOME)/aauth-samples/demo-home`.
+
+`demo-state` moves an existing `aauth-samples/v10/home` to the new location
+when no state exists there yet. That keeps users' demo keys and satisfies Q12
+(no destructive reset). An explicit `DEMO_HOME=...` is never touched unless the
+legacy folder exists and the target does not.
+
+Running `make demo-state` here moved `/root/.local/share/aauth-samples/v10/home`
+to `demo-home` and removed the empty `v10` folder. A second run was a no-op.
+`samples/README.md` now describes the new path and the one-time move.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate
