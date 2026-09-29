@@ -49,23 +49,134 @@ All verdicts are scoped source observations, not runtime test results.
 
 | Requirement | Governing clause | Current verdict | Disposition |
 |---|---|---|---|
-| Person token no scope/account | [P633](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L633), `#person-token-structure` | VACUOUS absent issuer | Reserved claims and negative verification, F02 |
-| Person cannot replace required auth | [P659](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L659), `#person-token-verification` | Unsupported type rejected; new acceptance path unimplemented | Explicit typed policy separation, F02/F06 |
-| Agent-only request cannot mint challenge | [P781](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L781), `#requirement-auth-token` | UNENFORCED v11 prerequisite | Verified person/auth context, F03 |
-| No substituted or stripped identity/mission | [P903](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L903), `#resource-token-verification` | UNENFORCED new paired-token check | Compare exact named credential at PS/AS, F04 |
-| No resource-visible agent/act | [P1884](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1884), `#auth-token-structure` | UNENFORCED v11 producer contract | Remove core issuance, preserve AP/Events identities, F01/F20 |
-| Auth cannot outlive source agent | [P1882](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1882), `#auth-token-structure` | ENFORCED builder ceiling; UNENFORCEABLE independently without source at resource | Preserve issuer bound; add presented/mission, F12 |
-| Terminal mission cannot reactivate | [P1613](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1613), `#mission-management` | UNENFORCED store mutation/replacement | Atomic terminal state, F09 |
-| No mission disclosure before owner authorization | [P1637](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1637), `#mission-endpoint-errors` | Owner rejection exists; equivalence UNVERIFIED | Equal responses and measured timing, F09 |
-| Worker cannot authorize itself | [P2011](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2011), `#sub-agents` | ENFORCED PS auth parent check | Apply to person endpoint, F11 |
-| Caller cannot select another revocation issuer | [P2400](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2400), `#token-revocation` | UNENFORCED with existing cross-issuer override | Signer-derived namespace, F14 |
-| Revoked resource token cannot mint auth | [P2448](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2448), `#token-revocation` | UNENFORCED new source tracking | Withdrawal edge distinct from expiry ceiling, F15 |
-| One per-call grant cannot execute twice | [R702](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L702), `#per-call-flow` | UNENFORCED R3 execution boundary | Atomic consumption/result retention, F17 |
-| Event self-JWT no cnf | [E368](../../../aauth-spec/v11/draft-hardt-aauth-events.md#L368), `#event-token` | ENFORCED EventsTokens rejection | Preserve companion profile, F20 |
-| Link cannot direct arbitrary fetch/key trust | [P2832](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2832), `#resource-metadata-link` | VACUOUS absent consumer | Validate before fetch; exclude key resolver, F05 |
-| 403 no signature error/negotiation headers | [P2584](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2584), `#verification` | ENFORCED inspected SDK signature paths, not arbitrary host middleware | Regress new polling/AS/issuer-admission errors, F16 |
-| No pre-execution of billed/metered/audited work | [R722](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L722), `#release-gating` | VACUOUS absent capability; side effects UNENFORCEABLE from JSON alone | Explicit host policy, default disabled, F21 |
-| Consumption plus reservations cannot exceed budget | [B861](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L861), `#overshoot` | VACUOUS absent metering | Separate selected capability, F22 |
+| Person token no scope/account | [P898](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L898), `#person-token-structure` | VACUOUS absent issuer | Reserved claims and negative verification, F02 |
+| Person cannot replace required auth | [P920](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L920), `#person-token-verification` | Unsupported type rejected; new acceptance path unimplemented | Explicit typed policy separation, F02/F06 |
+| Agent-only request cannot mint challenge | [P637](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L637), `#requirement-auth-token` | UNENFORCED v11 prerequisite | Verified person/auth context, F03 |
+| No substituted or stripped identity/mission | [P767](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L767), `#resource-token-verification` | UNENFORCED new paired-token check | Compare exact named credential at PS/AS, F04 |
+| No resource-visible agent/act | [P1781](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1781), `#auth-token-structure` | UNENFORCED v11 producer contract | Remove core issuance, preserve AP/Events identities, F01/F20 |
+| Auth cannot outlive source agent | [P1775](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1775), `#auth-token-structure` | ENFORCED builder ceiling; UNENFORCEABLE independently without source at resource | Preserve issuer bound; add presented/mission, F12 |
+| Terminal mission cannot reactivate | [P1516](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1516), `#mission-management` | UNENFORCED store mutation/replacement | Atomic terminal state, F09 |
+| No mission disclosure before owner authorization | [P1540](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1540), `#mission-endpoint-errors` | Owner rejection exists; equivalence UNVERIFIED | Equal responses and measured timing, F09 |
+| Worker cannot authorize itself | [P1917](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1917), `#sub-agents` | ENFORCED PS auth parent check | Apply to person endpoint, F11 |
+| Caller cannot select another revocation issuer | [P2690](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2690), `#token-revocation` | UNENFORCED with existing cross-issuer override | Signer-derived namespace, F14 |
+| Revoked resource token cannot mint auth | [P2753](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2753), `#token-revocation` | UNENFORCED new source tracking | Withdrawal edge distinct from expiry ceiling, F15 |
+| One per-call grant cannot execute twice | [R676](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L676), `#per-call-flow` | UNENFORCED R3 execution boundary | Atomic consumption/result retention, F17 |
+| Event self-JWT no cnf | [E367](../../../aauth-spec/v11/draft-hardt-aauth-events.md#L367), `#event-token` | ENFORCED EventsTokens rejection | Preserve companion profile, F20 |
+| Link cannot direct arbitrary fetch/key trust | [P2154](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2154), `#resource-metadata-link` | VACUOUS absent consumer | Validate before fetch; exclude key resolver, F05 |
+| 403 no signature error/negotiation headers | [P2254](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2254), `#verification` | ENFORCED inspected SDK signature paths, not arbitrary host middleware | Regress new polling/AS/issuer-admission errors, F16 |
+| No pre-execution of billed/metered/audited work | [R696](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L696), `#release-gating` | VACUOUS absent capability; side effects UNENFORCEABLE from JSON alone | Explicit host policy, default disabled, F21 |
+| Consumption plus reservations cannot exceed budget | [B871](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L871), `#overshoot` | VACUOUS absent metering | Separate selected capability, F22 |
+
+## Finding owners and executed checks
+
+Recorded 2026-09-29, after implementation. The tables above keep the
+pre-implementation source audit. This table names the component that owns each
+finding and the tests that now discriminate it. Every test name was confirmed
+in `tests/` by grep. The implementation log records each test's rerun
+evidence.
+
+| F | Owner | Phase | Executed discriminatory checks |
+|---|---|---|---|
+| F01 | `AuthTokenBuilder` | 4 | `AuthTokenStructureTests.PayloadNamesPersonNotAgent`, `.PayloadAct_Omitted`, `.ReservedClaims_RejectedInAdditionalClaims`, `.Builder_RejectsMissingSubjectOrPersonServer` |
+| F02 | `PersonTokenBuilder`, `TokenVerifier`, `AAuthPersonServerEndpoints` | 2, 3, 5 | `PersonServerMapperTests.PersonTokenEndpoint_IssuesPersonToken`, `.PersonTokenEndpoint_LifetimeIsCappedByEveryBound`; `SignatureV10AdversarialTests.RawMalformedValuesHaveTypedErrorsWithoutTrustedContext` (person `scope`/`account`); `AuthTokenVerificationTests.Rejects_PersonToken`; `AccountBindingTests.CachedPersonToken_IsSelectedForAnyAccount` |
+| F03 | `AAuthChallengeMiddleware` | 4 | `ChallengeMiddlewareTests.ChallengesAgentTokenWithPersonTokenRequirement`, `.ChallengesPersonTokenWithResourceToken`; `ChallengeHandlerTests.PrerequisiteAndStepUp_WireBodies` |
+| F04 | `TokenVerifier.VerifyPresentedTokenAsync`, PS and AS token endpoints | 4, 5 | `PersonServerMapperTests.TokenRequest_MissingPresentedToken_Rejected`, `.TokenRequest_MismatchedPresentedToken_Rejected`, `.TokenRequest_OverwrittenIdentity_Rejected`, `.Clarification_ReplacementIsVerifiedAndChangesConsentScope`; `DeferredFederationTests.AsRejectsResourceTokenNotNamingTheSigningPsOrPresentedToken`; `ChallengeHandlerTests.PresentedToken_SurvivesHolderRefresh` |
+| F05 | `MetadataClient`, `WellKnownEndpoints` | 1, 2, 5 | `AllRolesWellKnownMetadataTests.PsMetadata_RequiresPersonTokenEndpoint`; `ResourceAccessModeMetadataTests.AgentReadsDraft11PersonServerEndpoints`, `.RejectsRenamedAccessMode`, `.AgentParsesOnlyKnownAccessModes`. Algorithm lists and `aauth-resource` links are excluded optional items (see below). |
+| F06 | `AAuthVerificationMiddleware`, `IssuerTrust`, `IJtiStore` keys | 4, 9 | `ChallengeMiddlewareTests.PersonTokenIssuerTrustIsIndependent`; `TokenInventoryTests.SameIdFromTwoIssuers_IsolatedIncludingGrants`; `RevocationLifecycleTests.ResourceMiddleware_SameAuthJtiFromTwoIssuers_RemainsIsolated`; `AuthTokenDeliveryTests.AccountDelivery_MatchesExactResourceExpectation` |
+| F07 | `Mission`, `MissionProposal`, governance endpoints | 3, 4 | `MissionS256Tests.RawBytes_AreVerbatim`, `.Envelope_RejectsMismatchedS256`; `GovernanceDeferredConsentMapperTests.Mission_DefaultApprover_ReturnsApprovedBlob` (no `AAuth-Mission` header), `.MissionUpdate_OwnedMissionOnly` (update bytes and hash) |
+| F08 | `MissionTokenConsentContext`, PS mission review | 3, 6 | `PersonServerMapperTests.AcceptedUpdate_ReachesConsentAndResetsFastPath`; `GovernanceDeferredConsentMapperTests.AcceptedUpdate_ReachesPermissionDecision`, `.MissionUpdate_OwnedMissionOnly` |
+| F09 | `InMemoryMissionStore`, `GovernanceEndpoints` | 3, 6, 9 | `GovernanceServerTests.MissionStore_TerminatedIsFinal`, `.MissionStore_ConcurrentMutationKeepsTerminal`, `.MissionStore_ReplacementKeepsEarliestExpiry`; `GovernanceEndpointMapperTests.MissionAuthorization_RejectsInvalidContext`; `PersonServerMapperTests.Mission_Terminated_Rejected` |
+| F10 | `AgentAssertedContent`, PS consent context | 4, 6 | `PersonServerMapperTests.AgentAssertedContent_ReachesAsserterApartFromResourceContext`; `MockPersonServerTests.Interaction_ConsentPage_AttributesAgentAssertedContentApartFromResource`; `DeferredFederationTests.ClaimsPushPreservesRequestedCredentialNamedIdentity` |
+| F11 | `CallChainingRouter`, `UpstreamTokenValidator`, `AgentIssuanceContext` | 6 | `PersonServerMapperTests.CallChaining_UpstreamAudienceMustBeIntermediaryIssuer`, `.SubAgent_DirectRequest_Rejected`; `DeferredFederationTests.FourPartyUsesDistinctChildKeyAndUpstreamBounds`, `.SubagentTokenFromAnotherIssuerOrParent_IsInvalidSubagentToken` |
+| F12 | `TokenVerifier`, `AuthTokenBuilder`, `TokenRefreshHandler` | 2, 4, 5 | `IssuanceBoundsTests.DirectAndDeferred_UseOriginalAgentAndParentBounds`, `.Deferred_RejectsOriginalExpiryDespiteFreshPollCarrier`; `PersonServerMapperTests.AuthToken_IsCappedByMissionExpiry`; `TokenRefreshHandlerTests.DefaultMargin_IsFiveMinutes`, `.ConcurrentRequests_OnlyRefreshOnce` |
+| F13 | `AAuthVerifier`, `AAuthSigningHandler`, `AAuthVerificationMiddleware` | 1, 4, 9 | `SignatureErrorTests.CreatedOutsideWindow_ReturnsDistinctCodes`; `PersonServerMapperTests.PsBody_UncoveredOrTampered_FailsBeforeAsserter`; `DeferredFederationTests.AsBodyUncoveredOrTampered_FailsBeforePolicyOrPendingState`; `JtiStoreAndRevocationTests.Revocation_RequiresBodyCoverageAtEveryRecipient` |
+| F14 | `RevocationEndpoint`, `InMemoryJtiStore` | 7 | `JtiStoreAndRevocationTests.Revocation_IssuerCannotRevokeOtherIssuerWithSameId`, `.Revocation_RejectsMalformedRequest`; `TokenInventoryTests.UnseenRevocation_IsRetainedUntilItsExpiryPlusRetention` |
+| F15 | `AuthTokenResponse`, `IJtiStore` grants, PS and AS token endpoints | 7 | `PersonServerMapperTests.ResourceTokenLifetime_DoesNotCapAuthTokenOrGrant`, `.RevokedResourceToken_RejectedAndEndsPending`; `DeferredFederationTests.AsRefusesWithdrawnResourceToken`; `TokenInventoryTests.MissingOrRevokedSource_CannotCreateGrant`; `RevocationLifecycleTests.UpstreamRevokedDuringConsentCannotMintAfterApproval` |
+| F16 | `SignatureErrorResult`, `AAuthProblemDetails`, `PollingErrorException` | 1, 4, 5, 7 | `ReplayDetectionMiddlewareTests.RevokedAuthToken_Rejected`; `PollingErrorTests.TerminalCodes_AreDistinctWithDetail`; `ChallengeHandlerTests.Exchange_EveryPublishedError_IsDistinct`; `DeferredFederationTests.AsOutcomesMapSeparatelyFromLocalCancellation` |
+| F17 | `AAuthHeldInvocations`, `AAuthSingleUseGrants`, `ChallengeHandler` | 5, 8 | `ChallengeHandlerTests.DeferredAuthToken_PollsPendingUrlWithoutResendingBody`; `HeldInvocationTests.SingleUseGrant_ExecutesOncePerJti`; `BookingsPolicyTests.EveryRoute_EnforcesGrantedPerCallRejectedAndApprovedParameters` |
+| F18 | R3 model and vocabularies | 1, 8 | `TokenClaimTests.Draft11WireNames_PerCallClaimAndNoDocumentVersion`; `R3VocabularyTests.MalformedOrRemovedDiscoveryFails`, `.MergedDefinition_RenamedCollidingOperationsAreDistinct`; `R3Draft11FixtureTests.Annotations_ApplySpecRules` |
+| F19 | `R3DocumentReaderPolicy`, R3 AS token endpoint | 4, 8 | `BookingsPolicyTests.PersonServerEvaluator_ReadsOnlyDocumentsItIsEntitledTo`; `AccessEndpointR3Tests.UncoveredOrTamperedBodyFailsBeforeDocumentPolicyOrAudit`, `.TokenEndpoint_DoesNotReleaseTokenThatExpiresDuringAudit`; `R3SqliteAuditTests.Commit_SurvivesRestartAndConcurrentIssuance` |
+| F20 | `EventsTokens`, subscription tickets | 4, 8 | `EventHttpTests.ForeignIssuerCannotSpendVictimTicketOrInjectSubscription`; `EventPersistenceTests.TicketRedemptionIsAtomicAndPreservesAccount`, `.AgentContextPersistsAndEventsDedupeOnIssuerAndJti`; `EventsTokenTests.InvalidEventClaimsFail` (`cnf`) |
+| F21 | `R3ProposalDocument` | 8 | `R3Draft11FixtureTests.ResultBearingProposal_FailsClosedInsteadOfBecomingAnExecutionApproval`. Release gating is unsupported and fails closed. |
+| F22 | None (Budgets) | Separate | Excluded: the SDK meters nothing and claims no Budgets support. Re-entry needs its own plan. |
+| F23 | `AAuthClientBuilder` bootstrap | 6 | `AAuthClientBuilderBootstrapTests.Enrolled_ResourceManagedAccess_ComposesBeforeInteractionHandling`. No delayed verifier exists, so live acceptance is unchanged. Delayed verification stays separate work. |
+| F24 | `tools/ApiSurface`, documentation tests, e2e | 1, 9-11 | `SnippetCompilationTests.Documentation_FrozenSurface`; `DocumentationLinkTests`; the full Playwright run (76 passed, 1 skipped, 2026-09-29) |
+
+## Negative requirements: execution evidence
+
+Recorded 2026-09-29. The verdicts in the audit above describe the source before
+implementation. This table records each negative's execution evidence, or its
+explicit conditional disposition.
+
+| Requirement | Evidence or disposition |
+|---|---|
+| Person token no scope/account | `SignatureV10AdversarialTests.RawMalformedValuesHaveTypedErrorsWithoutTrustedContext` (`aa-person+jwt` with `scope` or `account` is `invalid_jwt`) |
+| Person cannot replace required auth | `AuthTokenVerificationTests.Rejects_PersonToken` |
+| Agent-only request cannot mint challenge | `ChallengeMiddlewareTests.ChallengesAgentTokenWithPersonTokenRequirement` (bare `requirement=person-token`, no resource token) |
+| No substituted or stripped identity/mission | `PersonServerMapperTests.TokenRequest_OverwrittenIdentity_Rejected`, `.TokenRequest_MismatchedPresentedToken_Rejected`; `DeferredFederationTests.AsRejectsResourceTokenNotNamingTheSigningPsOrPresentedToken` |
+| No resource-visible agent/act | `AuthTokenStructureTests.PayloadNamesPersonNotAgent`, `.PayloadAct_Omitted`, `.ReservedClaims_RejectedInAdditionalClaims` |
+| Auth cannot outlive source agent | `IssuanceBoundsTests.DirectAndDeferred_UseOriginalAgentAndParentBounds`; `PersonServerMapperTests.AuthToken_IsCappedByMissionExpiry`. A resource cannot check the agent ceiling itself, since it never sees the agent token. The issuer owns that bound. |
+| Terminal mission cannot reactivate | `GovernanceServerTests.MissionStore_TerminatedIsFinal`, `.MissionStore_ConcurrentMutationKeepsTerminal` |
+| No mission disclosure before owner authorization | `GovernanceEndpointMapperTests.MissionAuthorization_RejectsInvalidContext` (foreign equals missing: `404 mission_not_found`, nothing logged). Conditional: equal timing is a property of the `IMissionStore` implementation. The in-memory store does one keyed lookup for both cases; a deployment's store owns its own timing. |
+| Worker cannot authorize itself | `PersonServerMapperTests.SubAgent_DirectRequest_Rejected` |
+| Caller cannot select another revocation issuer | `JtiStoreAndRevocationTests.Revocation_IssuerCannotRevokeOtherIssuerWithSameId` |
+| Revoked resource token cannot mint auth | `PersonServerMapperTests.RevokedResourceToken_RejectedAndEndsPending`; `DeferredFederationTests.AsRefusesWithdrawnResourceToken` (added 2026-09-29, after this audit found the check missing) |
+| One per-call grant cannot execute twice | `HeldInvocationTests.SingleUseGrant_ExecutesOncePerJti`; `BookingsPolicyTests.EveryRoute_EnforcesGrantedPerCallRejectedAndApprovedParameters` |
+| Event self-JWT no cnf | `EventsTokenTests.InvalidEventClaimsFail` (`cnf` present fails) |
+| Link cannot direct arbitrary fetch/key trust | Conditional: no `aauth-resource` link consumer exists (AG-03 excluded). Selecting AG-03 requires validation before fetch. |
+| 403 no signature error/negotiation headers | `SignatureV10AdversarialTests.AuthorizationDenialHasNoSignatureHeaders`; `GovernanceEndpointMapperTests.MissionAuthorization_RejectsInvalidContext` |
+| No pre-execution of billed/metered/audited work | Conditional: release gating is unsupported. `R3Draft11FixtureTests.ResultBearingProposal_FailsClosedInsteadOfBecomingAnExecutionApproval` proves a release request never becomes an execute approval. |
+| Consumption plus reservations cannot exceed budget | Conditional: Budgets is excluded (F22). No metering exists to overshoot. |
+
+## Upgrade checklist ownership
+
+Recorded 2026-09-29. Every ID in
+[upgrade-10-to-11](../../../aauth-spec/v11/upgrade-10-to-11/README.md) is listed
+here: 55 PS, 33 RS, 30 AG, 7 AP and 22 AS. Each has one owning phase or a
+recorded optional disposition.
+
+| Role | Phase | IDs |
+|---|---|---|
+| PS | 1 | PS-01, PS-100, PS-101, PS-102, PS-103, PS-104 |
+| PS | 2 | PS-02, PS-10, PS-11, PS-12, PS-13, PS-20, PS-95 |
+| PS | 3 | PS-04, PS-80, PS-81, PS-82, PS-83, PS-84, PS-85, PS-86 |
+| PS | 4 | PS-30, PS-31, PS-32, PS-33, PS-34, PS-35, PS-36, PS-40, PS-50, PS-51, PS-52, PS-53, PS-54, PS-55 |
+| PS | 6 | PS-60, PS-61, PS-62, PS-63, PS-64, PS-70, PS-71 |
+| PS | 7 | PS-03, PS-110, PS-111, PS-112, PS-113, PS-114, PS-115 |
+| RS | 1 | RS-01, RS-02, RS-50, RS-51, RS-52 |
+| RS | 2 | RS-10, RS-11, RS-12 |
+| RS | 4 | RS-20, RS-21, RS-30, RS-31, RS-32, RS-33, RS-34, RS-40, RS-41, RS-42 |
+| RS | 6 | RS-70, RS-71, RS-72, RS-73, RS-74, RS-75 |
+| RS | 7 | RS-03, RS-43, RS-60, RS-61 |
+| AG | 1 | AG-01, AG-02, AG-52 |
+| AG | 2 | AG-10 |
+| AG | 3 | AG-30, AG-31, AG-32, AG-33, AG-34 |
+| AG | 4 | AG-20, AG-21, AG-22, AG-23, AG-24, AG-25 |
+| AG | 5 | AG-11, AG-12, AG-26, AG-50, AG-51, AG-60, AG-61, AG-62, AG-63, AG-64, AG-70 |
+| AG | 6 | AG-40 |
+| AP | 1 | AP-01, AP-03, AP-04, AP-05 |
+| AP | 6 | AP-02 |
+| AP | 7 | AP-07 |
+| AS | 1 | AS-01, AS-30, AS-31, AS-32 |
+| AS | 4 | AS-10, AS-11, AS-15, AS-16, AS-17, AS-20, AS-21, AS-22 |
+| AS | 6 | AS-12, AS-13, AS-14 |
+| AS | 7 | AS-02, AS-40, AS-41, AS-42, AS-43, AS-44 |
+
+Optional items:
+
+| ID | Disposition | Evidence |
+|---|---|---|
+| PS-05, RS-04, AP-06, AS-03 | Excluded: no `accept_signature_algs` advertisement. Verifiers still enforce their algorithm set. | No `accept_signature_algs` in `src/` |
+| RS-04 (link), AG-03 | Excluded: no `aauth-resource` link publishing or discovery | No link consumer in `src/` |
+| RS-13 | Excluded as a dedicated mode. Identity-only endpoints pass verified person tokens, and metadata can declare `access_mode: person-token`. No per-endpoint step-up helper exists for person-identity resources. | `ResourceAccessModeMetadataTests.EmitsEachAccessMode` |
+| RS-35 | Selected (Phase 4) | `ResourceTokenBuilder.LoginHint`; `PersonServerMapperTests.PersonTokenRequest_CapabilitiesAndLoginHintReachAsserter` |
+| RS-36 | Selected (Phase 5) | `AAuthHeldInvocations`; `HeldInvocationTests`; `ChallengeHandlerTests.DeferredAuthToken_PollsPendingUrlWithoutResendingBody` |
+| RS-62 | Selected (Phase 7): resources revoke with the generic `RevocationClient`. PS and AS recipients enforce PS-112 and AS-42. | `DeferredFederationTests.AsRefusesWithdrawnResourceToken` (signed as the resource) |
+| PS-87, AG-35 | Selected (Phase 3) | `MissionClient.UpdateAsync`; `GovernanceDeferredConsentMapperTests.MissionUpdate_OwnedMissionOnly` |
+| PS-88, AG-36 | Selected (Phase 3) | `MissionProposal` `resources`; `MissionPersonTokenIssuanceTests.PartialResourceApproval_LimitsApprovedResourcesAndPersonTokens` |
+| PS-89 | Selected (Phase 3) | `GovernanceServerTests.MissionStore_ReplacementKeepsEarliestExpiry`; `PersonServerMapperTests.Mission_Terminated_Rejected` (expired) |
+| PS-90 | Partly selected (Phase 3): the SDK reports `termination_reason: expired`. `IMissionStore` records no other reasons, so they are omitted. | `PersonServerMapperTests.Mission_Terminated_Rejected`; `GovernanceEndpointMapperTests.MissionAuthorization_RejectsInvalidContext` |
+| PS-96 | Host capability: a PS completes a hosted interaction over its own channel by calling `IPersonPendingStore.MarkAllowed` or `MarkDenied`. No sample demonstrates a non-browser channel. | `IPersonPendingStore` |
 
 ## Evidence state
 

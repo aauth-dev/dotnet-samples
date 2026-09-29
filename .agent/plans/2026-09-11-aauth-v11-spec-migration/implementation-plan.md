@@ -160,9 +160,9 @@ semantics, no compatibility shims or silent trust-boundary interpretations.
 - [x] Every Q1-Q14 has a recorded ruling in the implementation log.
 - [x] Implementation authorization, scope and affected-capability blocks are explicit.
 - [x] Rebased baseline tree, pins, environment and failures are recorded.
-- [ ] Research, ledger and map citations resolve to published draft-11 lines.
-- [ ] Every F01-F24 has an owner, phase and discriminatory check.
-- [ ] Every upgrade-checklist ID has an owning phase or a recorded optional exclusion.
+- [x] Research, ledger and map citations resolve to published draft-11 lines.
+- [x] Every F01-F24 has an owner, phase and discriminatory check.
+- [x] Every upgrade-checklist ID has an owning phase or a recorded optional exclusion.
 
 ## Phase 1 - tooling and isolated vocabulary contracts
 
@@ -583,7 +583,7 @@ Phase rule: PerCall and seven standard vocabularies, no gateway/conditional alia
 - [x] Foreign valid PS cannot read unentitled R3 documents.
 - [x] Protected Events tickets reject a different key; deliveries dedupe on `(iss, jti)`.
 - [x] Optional result/Budgets behavior cannot imply unimplemented enforcement.
-- [ ] Full R3/Events tests, solution build and both-app scenarios pass.
+- [x] Full R3/Events tests, solution build and both-app scenarios pass.
 
 ## Phase 9 - security reconciliation and API freeze
 
@@ -603,7 +603,7 @@ Phase rule: report only verified checks; preserve generic and deployed-profile b
 
 ### Definition of Done
 
-- [ ] Ledger negatives have execution evidence or explicit conditional/deployment dispositions.
+- [x] Ledger negatives have execution evidence or explicit conditional/deployment dispositions.
 - [ ] High-stakes R findings are directly reproduced at their controlling code.
 - [ ] API map has no unmapped changed public-source files; historical maps untouched.
 - [x] Release/full solution, explicit R3/Events and TypeScript gates pass.

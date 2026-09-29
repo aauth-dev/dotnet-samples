@@ -7,10 +7,14 @@ description: Draft-11 WIP breaking-change research against the current draft-10 
 > **Update (2026-09):** Draft-11 was published on 2026-09-25, and
 > [`aauth-spec/v11/`](../../../aauth-spec/v11/) now holds the tagged snapshot
 > (commit `178e9e6`) with HTTP Signature Keys draft-09. The `v11` line citations
-> below refer to the WIP capture, readable at git commit `e6d18a3`. They must be
-> re-derived against the published text. [AAuth PR #162](https://github.com/dickhardt/AAuth/pull/162)
-> answered all 18 upstream questions; the findings and Q1-Q14 have not yet been
-> re-assessed against those answers.
+> below were written against the WIP capture (git commit `e6d18a3`) and were
+> re-derived against the published text on 2026-09-29: each now points at the
+> published line that carries the cited requirement. Where the published text
+> changed the requirement itself, the implementation log's Phase 0 citation
+> entry records it. Labels such as `v10 P1449` deliberately cite draft-10.
+> [AAuth PR #162](https://github.com/dickhardt/AAuth/pull/162)
+> answered all 18 upstream questions; the implementation log records the
+> Q1-Q14 rulings made against those answers.
 
 ## Status and scope
 
@@ -34,10 +38,12 @@ or dual-format parsing. Unresolved WIP requirements receive explicit rulings.
   [Budgets](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md), and the
   [interop profile](../../../aauth-spec/v11/interop-demo-profile.md) are pinned to
   AAuth commit `55ae44cc3a07da29c4d6821c3800569ac77b9441` (2026-09-08).
-- [Signature Keys working source](../../../aauth-spec/v11/draft-hardt-httpbis-signature-key.md)
-  is pinned to `10a7563beecb2a461d5b412549a69d49f97f500c` (2026-09-03).
-  [Published draft-08](../../../aauth-spec/v11/draft-hardt-httpbis-signature-key-08.txt)
-  is retained separately. The protocol's dependency reference is unversioned.
+  The published draft-11 replaced these files in place; see the note above.
+- The Signature Keys working source (`draft-hardt-httpbis-signature-key.md`,
+  pinned to `10a7563beecb2a461d5b412549a69d49f97f500c`, 2026-09-03) and
+  published draft-08 were superseded by
+  [published draft-09](../../../aauth-spec/v11/draft-hardt-httpbis-signature-key-09.txt);
+  both are readable at git commit `e6d18a3`.
 - [Draft-10 migration research](../2026-09-08-aauth-v10-spec-migration/research.md)
   supplies the document pattern, not evidence of today's defects. Its original
   code findings describe a baseline that the completed migration replaced.
@@ -109,13 +115,13 @@ not just a vocabulary constant (F18).
 P1 migration risk; draft-11 delta; directly reverified.
 
 Draft-11 requires `ps` and `sub` at
-[protocol L1878](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1878)
+[protocol L1779](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1779)
 (`#auth-token-structure`) and
-[L1879](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1879).
+[L1780](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1780).
 It removes the agent identifier and delegation chain at
-[L1884](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1884),
+[L1781](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1781),
 and carries the mission hash as `mission_s256` at
-[L1889](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1889).
+[L1786](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1786).
 
 The current [AuthTokenBuilder](../../../src/AAuth/Tokens/AuthTokenBuilder.cs#L44)
 requires `Agent`, exposes optional `Subject`, and accepts a
@@ -133,20 +139,20 @@ claims from an unverified JWT or by inventing an agent identity from `sub`.
 
 ### F02 - Person-token issuance, verification, and caching are absent
 
-P1; DELTA; R. [P937](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L937)
+P1; DELTA; R. [P803](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L803)
 (`#person-token-endpoint`) requires every PS to issue person tokens;
-[P603](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L603)
+[P863](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L863)
 (`#person-token-structure`) bounds expiry, and
-[P633](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L633)
+[P898](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L898)
 forbids `scope` and `account` in them.
 [DefaultSignatureKeyResolver L70](../../../src/AAuth/HttpSig/DefaultSignatureKeyResolver.cs#L70)
 rejects unrecognized JWT types; there is no built-in person-token lifecycle.
 Adding an enum alone cannot establish issuer trust or prevent person tokens
 being accepted where an auth token is required.
 
-[P977](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L977)
+[P844](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L844)
 (`#person-token-endpoint`) requires issuance records for revocation;
-[P979](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L979)
+[P846](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L846)
 describes resource/mission caching and lazy re-acquisition after key rotation.
 [AAuthTokenHolder](../../../src/AAuth/Agent/AAuthTokenHolder.cs#L25)
 holds one current carrier, not a collection of person tokens. Proposed cache
@@ -157,9 +163,9 @@ credential, never the current resource-facing person/auth credential.
 ### F03 - Resource tokens need verified presented identity
 
 P1; DELTA, WIP-AMBIGUITY; R.
-[P781](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L781)
+[P637](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L637)
 (`#requirement-auth-token`) forbids issuing an auth-token challenge to an
-agent-only request. [P688](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L688)
+agent-only request. [P667](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L667)
 (`#authorization-endpoint-request`) requires a person token at that endpoint.
 [AAuthChallengeMiddleware L127](../../../src/AAuth/Server/Challenge/AAuthChallengeMiddleware.cs#L127)
 currently starts resource-token issuance from an agent token;
@@ -168,19 +174,19 @@ emits the agent identifier. The future issuance context must retain verified
 `ps`, `sub`, `presented_jti`, key thumbprint, mission, and tenant.
 
 The broad person-only statement at
-[P674](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L674)
+[P854](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L854)
 (`#resource-tokens`) conflicts with the explicit person-or-auth step-up rule at
-[P858](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L858)
+[P729](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L729)
 (`#resource-token`). Q2 records the proposed initial-person/runtime-step-up distinction.
 
 ### F04 - Every exchange needs the exact presented token
 
-P1; DELTA; R. [P1004](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1004)
+P1; DELTA; R. [P941](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L941)
 (`#ps-token-endpoint`) makes `presented_token` required;
-[P903](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L903)
+[P767](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L767)
 (`#resource-token-verification`) defines the signature, audience, key, `jti`,
 PS, subject, mission, and tenant correspondence; the AS repeats the check at
-[P1688](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1688)
+[P1591](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1591)
 (`#ps-to-as-token-request`).
 [TokenExchangeClient L104](../../../src/AAuth/Agent/TokenExchangeClient.cs#L104)
 starts with only `resource_token`;
@@ -194,7 +200,7 @@ that provenance. Resource-token binding changes are independent of the old
 resource signature and key checks, which remain necessary.
 
 Clarification replacement is a separate WIP ambiguity, not a rule to retain
-the original credential forever. [P1194](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1194)
+the original credential forever. [P1117](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1117)
 (`#updated-request`) constrains replacement `iss/ps/sub/agent_jkt`, but not
 `presented_jti`. The new resource token can therefore name a different presented
 credential. [ClarificationResponse.Update L63](../../../src/AAuth/Agent/ClarificationExchange.cs#L63)
@@ -206,9 +212,9 @@ presented token with a resource token naming a refreshed one.
 ### F05 - Metadata and access-mode contracts break
 
 P2; DELTA, OPTIONAL; R.
-[P2737](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2737)
+[P2060](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2060)
 (`#ps-metadata`) starts the new auth/person endpoint requirements;
-[P2807](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2807)
+[P2129](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2129)
 (`#resource-metadata`) defines person/session modes and unknown-mode fallback.
 [ServerMetadata L84](../../../src/AAuth/Discovery/ServerMetadata.cs#L84)
 reads `token_endpoint`, and
@@ -216,20 +222,20 @@ reads `token_endpoint`, and
 emits it. Public properties, option validation, serializers, consumers, and
 fixtures need the same cutover. Keycloak's OIDC `token_endpoint` is unrelated.
 
-[P2667](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2667)
+[P1989](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1989)
 (`#metadata-documents`) defines optional `accept_signature_algs`;
-[P2832](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2832)
+[P2154](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2154)
 (`#resource-metadata-link`) constrains discovery links before fetching, and
-[P2836](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2836)
+[P2158](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2158)
 excludes links from verifier key discovery. Link discovery and algorithm
 advertisement are explicit optional capabilities, not trust shortcuts.
 
 ### F06 - Resource authorization must stop depending on agent claims
 
 P1; DELTA with ALREADY controls; R.
-[P1920](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1920)
+[P1814](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1814)
 (`#request-context-binding`) establishes resource identity by `(iss, sub)`;
-[P2959](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2959)
+[P2890](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2890)
 (`#person-token-org-policy`) excludes tenant from that person identifier.
 [AAuthAuthenticationHandler L98](../../../src/AAuth/Server/Verification/AAuthAuthenticationHandler.cs#L98)
 already qualifies person identity by issuer; preserve it.
@@ -243,9 +249,9 @@ Agent identity remains valid on agent-token/AP/PS paths; blanket removal is wron
 ### F07 - Mission approval becomes an exact-byte envelope
 
 P2; DELTA with ALREADY byte preservation; R.
-[P1509](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1509)
+[P1413](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1413)
 (`#mission-approval`) encodes the blob, and
-[P1534](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1534)
+[P1437](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1437)
 (`#mission-identifier`) hashes the persisted bytes.
 [MissionClient L73](../../../src/AAuth/Agent/Governance/MissionClient.cs#L73)
 parses the entire response as the mission;
@@ -255,7 +261,7 @@ session `capabilities`, and optional resource-keyed `person_tokens`.
 Existing `Mission.RawBytes` and `StoredMission.Blob` are useful preservation
 boundaries. Envelope formatting must not affect the mission digest.
 
-[P886](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L886)
+[P755](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L755)
 (`#resource-token-structure`) requires mission-hash copying from the presented
 token. [AAuthChallengeMiddleware L195](../../../src/AAuth/Server/Challenge/AAuthChallengeMiddleware.cs#L195)
 currently gates parsed `AAuth-Mission` propagation on `MissionAware`.
@@ -265,11 +271,11 @@ code snippets and forwarding middleware, not just the header parser.
 ### F08 - Mission updates and completion change routes and policy state
 
 P1; DELTA; R.
-[P1414](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1414)
+[P1319](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1319)
 (`#missions`) defines update/completion action routes;
-[P1568](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1568)
+[P1471](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1471)
 (`#mission-update`) binds accepted update bytes; at
-[P1578](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1578)
+[P1481](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1481)
 auditing must include both blob and updates.
 [MissionSession L139](../../../src/AAuth/Agent/Governance/MissionSession.cs#L139)
 currently proposes completion through interaction.
@@ -283,16 +289,16 @@ Existing deferred consent and person-accepted completion should be reused.
 ### F09 - Mission expiry, irreversibility, and owner privacy
 
 P1; DELTA and PRE-EXISTING API risk; R.
-[P1522](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1522)
+[P1425](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1425)
 (`#mission-approval`) applies expiry to every PS decision;
-[P1637](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1637)
+[P1540](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1540)
 (`#mission-endpoint-errors`) requires equivalent missing/foreign responses,
 including observable timing.
 [GovernanceEndpoints L33](../../../src/AAuth/Server/Governance/GovernanceEndpoints.cs#L33)
 checks owner and state, but not the new expiry field. Deferred and resumed
 decisions need the same clock-aware checks.
 
-[P1613](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1613)
+[P1516](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1516)
 (`#mission-management`) forbids reactivation, while
 [InMemoryMissionStore L39](../../../src/AAuth/Server/Governance/InMemoryMissionStore.cs#L39)
 permits assigning another state; saving a replacement record is another path.
@@ -305,9 +311,9 @@ cannot be claimed from equal status codes or an unexecuted unit-test proposal.
 ### F10 - Consent evidence needs provenance through extension hooks
 
 P1; DELTA, OPTIONAL supervision extension; R.
-[P1111](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1111)
+[P1039](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1039)
 (`#consent-presentation`) requires visual distinction and attribution;
-[P1113](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1113)
+[P1039](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1039)
 forbids relying solely on agent assertions when resource evidence is available.
 [MissionTokenConsentContext L122](../../../src/AAuth/Server/Governance/IMissionTokenConsent.cs#L122)
 does not separate the new evidence classes, and
@@ -315,7 +321,7 @@ does not separate the new evidence classes, and
 renders a limited agent/resource/scope view. The API needs resource descriptions,
 R3 display, justification, and accumulated mission context with their sources,
 without treating sanitized Markdown as trustworthy authorization evidence.
-[P456](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L456)
+[P444](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L444)
 (`#roles`) leaves delegated supervision to a companion; it does not define a
 new on-wire SS role. Existing policy/consent hooks are the appropriate extension.
 
@@ -323,20 +329,20 @@ new on-wire SS role. Existing policy/consent hooks are the appropriate extension
 
 P1; DELTA and WIP-AMBIGUITY, partly PRE-EXISTING; D for upstream ambiguity,
 R for parent and mission paths.
-[P2020](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2020)
+[P1926](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1926)
 (`#sub-agents`) begins with the parent obtaining the worker's person token;
 [FederatedWorkerScenario L52](../../../samples/FederatedWorkerScenario.cs#L52)
 currently presents the worker agent token directly.
-[P1951](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1951)
+[P1848](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1848)
 (`#call-chaining`) routes via upstream `ps` rather than the current router's
 [issuer fallback](../../../src/AAuth/Server/CallChaining/CallChainingRouter.cs#L96).
 Removing `act` must not remove authenticated parent/delegation evidence at PS/AS.
 
 The spec imports resource-context verification at
-[P1936](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1936)
+[P1832](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1832)
 (`#upstream-token-verification`), but requires intermediary audience at
-[P1938](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1938).
-[P1955](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1955)
+[P1834](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1834).
+[P1856](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1856)
 says the upstream token's `cnf` is the intermediary key, although the caller's
 received auth token normally binds the caller key.
 [UpstreamTokenValidator L120](../../../src/AAuth/Tokens/UpstreamTokenValidator.cs#L120)
@@ -347,18 +353,18 @@ and [P1796](../../../aauth-spec/v10/draft-hardt-oauth-aauth-protocol.md#L1796).
 This requires Q3, not a silent weakening or a fabricated normative rule.
 
 Mission ownership at
-[P944](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L944)
+[P810](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L810)
 (`#person-token-endpoint`) and upstream person resolution at
-[P948](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L948)
+[P842](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L842)
 need explicit delegated context. Downstream `sub` must be independently derived,
 not copied, under
-[P1965](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1965)
+[P1874](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1874)
 (`#directed-sub-chaining`). Q4 covers evidence and consent-cache isolation.
 
 ### F12 - Strict expiry and refresh coordination
 
 P1; DELTA with ALREADY issuance bounds; R.
-[P1386](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1386)
+[P2317](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2317)
 (`#refresh-margin`) removes verifier expiry tolerance and makes a future-`iat`
 bound optional. [TokenVerifier L122](../../../src/AAuth/Tokens/TokenVerifier.cs#L122)
 uses `exp + skew`, while
@@ -366,33 +372,33 @@ uses `exp + skew`, while
 also admits expiry skew. Both header and body paths matter. Agent expiry and
 the one-hour auth limit are already checked; the new presented-token and
 mission ceilings augment them, as required by
-[P1882](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1882)
+[P1775](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1775)
 (`#auth-token-structure`).
 
 [TokenRefreshHandler L34](../../../src/AAuth/Agent/TokenRefreshHandler.cs#L34)
 defaults to a one-minute threshold. The five-minute recommendation and top-down
-refresh at [P1390](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1390)
-and [P1398](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1398)
+refresh at [P1301](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1301)
+and [P1303](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1303)
 (`#refresh-margin`) require coordinated agent/person/auth caches.
 It is not a rule to reject all five-minute resource tokens; Q7 records this
 ambiguity and the permitted idempotent reactive renewal exception at
-[P1400](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1400).
+[P1305](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1305).
 
 ### F13 - Role-specific body signatures and time errors
 
 P1; DELTA with ALREADY server identity; R.
-[P2535](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2535)
+[P2211](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2211)
 (`#covered-components`) requires PS/AS body digest and content-type coverage.
 [AAuthSigningHandler L145](../../../src/AAuth/HttpSig/AAuthSigningHandler.cs#L145)
 digests only when configured; verification options default to no extra required
 components. Correctly signed malformed JSON remains a body error, while missing
 coverage or changed bytes fails authentication before policy runs.
 
-[P2501](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2501)
+[P2187](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2187)
 (`#keying-material`) fixes server signing as `jwks_uri`; current
 [federation registration L65](../../../src/AAuth/DependencyInjection/AAuthFederationServiceCollectionExtensions.cs#L65)
 already uses the PS issuer and role document.
-[P2572](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2572)
+[P2246](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2246)
 (`#verification`) distinguishes future `created` as `clock_skew`; current
 [AAuthVerifier L149](../../../src/AAuth/HttpSig/AAuthVerifier.cs#L149)
 combines past/future rejection and uses a different future allowance.
@@ -401,9 +407,9 @@ Generic signing and Events profiles must remain separate from these role rules.
 ### F14 - Revocation wire authority and unknown-token behavior change
 
 P1; DELTA; R for endpoint/client, D for store.
-[P2400](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2400)
+[P2690](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2690)
 (`#token-revocation`) derives issuer from the verified caller;
-[P2430](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2430)
+[P2703](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2703)
 requires recorded revocation to return 200 even without a token record.
 [RevocationClient L28](../../../src/AAuth/Server/RevocationClient.cs#L28)
 sends `iss/jti`, while
@@ -416,16 +422,16 @@ Retain the internal `TokenKey(iss,jti)` model and collision protection.
 ### F15 - Revocation dependencies are not all lifetime ceilings
 
 P1; DELTA; D.
-[P2447](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2447)
-and [P2448](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2448)
+[P2752](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2752)
+and [P2753](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2753)
 (`#token-revocation`) add person/resource-token withdrawal and cascades.
 [InMemoryJtiStore L112](../../../src/AAuth/Server/InMemoryJtiStore.cs#L112)
 requires every source record to outlive the issued grant. Reusing that rule for
 resource-token ancestry would incorrectly cap auth tokens at resource-token
 expiry. Resource-token lifetime is explicitly independent of mission lifetime at
-[P892](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L892)
+[P759](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L759)
 (`#resource-token-structure`); auth ceilings are separately enumerated at
-[P1882](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1882).
+[P1775](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1775).
 
 The model needs distinct revocation edges and verified expiry bounds, including
 person-token destination/AS records, step-up ancestry, pending issuance, and
@@ -436,12 +442,12 @@ recording, retryable delivery, and retention are separate responsibilities.
 ### F16 - Error taxonomy and AS failure propagation
 
 P2; DELTA with ALREADY typed carriage; R.
-[P2461](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2461)
+[P2764](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2764)
 (`#token-revocation`) uses header `revoked_jwt`, body revoked-token codes, and
 pending `revoked`; current
 [verification middleware L262](../../../src/AAuth/Server/Verification/AAuthVerificationMiddleware.cs#L262)
 returns `InvalidJwt` for revocation.
-[P1755](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1755)
+[P1658](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1658)
 (`#auth-token-delivery`) relays AS terminal error/status and maps unavailable
 or unverifiable results to `as_unreachable` (502).
 [PS endpoints L1458](../../../src/AAuth/Person/AAuthPersonServerEndpoints.cs#L1458)
@@ -452,22 +458,22 @@ error enums, problem mapping, pending results and client recovery without
 reintroducing body-token failures as signature 401s. Clock skew calls for wait
 or surfacing, not automatic token refresh; revoked resource tokens must not be
 resubmitted. The 403 signature-header prohibition remains unchanged at
-[P2584](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2584)
+[P2254](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2254)
 (`#verification`). Signature Keys does not yet define the new two header codes:
 Q1 is a conformance gate, not an excuse to invent dependency text.
 
 ### F17 - Deferred auth challenges require an execute-once state machine
 
 P1; DELTA, conditional resource capability; D for R3 consumer, R for agent loop.
-[P812](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L812)
+[P663](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L663)
 (`#deferred-auth-token`) requires agents to support 401 and 202 delivery;
-[P810](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L810)
+[P661](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L661)
 requires retained results for repeated presentation.
 [ChallengeHandler L197](../../../src/AAuth/Agent/ChallengeHandler.cs#L197)
 handles only 401 auth challenges. Existing interaction polling alone is not
 auth-token exchange followed by signed GET completion.
 
-[R702](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L702)
+[R676](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L676)
 (`#per-call-flow`) requires single-use per-call grants on either delivery.
 [R3Enforcement L142](../../../src/AAuth.R3/R3Enforcement.cs#L142)
 checks grant/proposal/parameters then returns `Granted`, with no consumption
@@ -475,14 +481,14 @@ transaction. Per-signature replay protection does not prevent a second freshly
 signed request under the same grant. Immutable proposal bytes and mutable
 invocation/result state need separate identities and atomic ownership.
 Generic pending-URL terminal 410 wording at
-[P2909](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2909)
+[P2840](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2840)
 (`#pending-url-security`) conflicts with retained-result repetition: Q8 applies.
 
 ### F18 - R3 per-call APIs and OpenAPI Gateway removal
 
 P2; DELTA with ALREADY hashing/proposals; D for vocabulary and hash comparison,
 R for all public consumers.
-[R596](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L596)
+[R570](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L570)
 (`#auth-token-extensions`) defines `r3_per_call`;
 [R3AuthClaims L12](../../../src/AAuth.R3/R3AuthClaims.cs#L12)
 still defines `r3_conditional`. The document fields at
@@ -513,17 +519,17 @@ Neither requires introducing canonicalization.
 ### F19 - R3 person provenance, readership, and operation annotations
 
 P1; DELTA, PRE-EXISTING readership risk, OPTIONAL annotation capability; R.
-[R504](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L504) and
-[R506](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L506)
+[R499](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L499) and
+[R499](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L499)
 (`#resource-token-extensions`) follows presented identity;
-[R561](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L561)
+[R548](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L548)
 (`#r3-processing`) identifies audit fields from verified resource/agent tokens.
 [R3Challenge L65](../../../src/AAuth.R3/R3Challenge.cs#L65)
 still emits `agent`; R3 AS policy can supply a subject independently of the
 future presented identity. Shared exchange validation must cover R3 endpoints,
 not only the core AS mapper.
 
-[R754](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L754)
+[R728](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L728)
 (`#r3-document-access-restriction`) identifies the entitled PS through the
 resource token. [R3DocumentReaderPolicy L22](../../../src/AAuth.R3/R3DocumentReaderPolicy.cs#L22)
 uses a global PS allowlist. Document-specific entitlement is necessary in
@@ -538,15 +544,15 @@ MCP/OpenAPI/AsyncAPI/OData have encodings, not gRPC/GraphQL/WSDL.
 Budget annotations are hints, never proof of metering. The rationale at
 [R314](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L314)
 mentions agent tokens on every request, contrary to person presentation at
-[P637](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L637)
+[P902](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L902)
 (`#person-token-usage`); it does not authorize stacking credentials.
 
 ### F20 - Unchanged Events breaks through protected ticket identity
 
 P1; DELTA through dependency, WIP-AMBIGUITY; D.
-[Events L607](../../../aauth-spec/v11/draft-hardt-aauth-events.md#L607)
+[Events L603](../../../aauth-spec/v11/draft-hardt-aauth-events.md#L603)
 (`#pre-authorized-subscription-url-security`) binds tickets to the originating
-agent, but [P1884](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1884)
+agent, but [P1781](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1781)
 (`#auth-token-structure`) removes that identity at resources.
 [BookingsEvents L23](../../../samples/EventSupport/BookingsEvents.cs#L23)
 requires `authorization.Payload["agent"]` to issue a ticket;
@@ -558,36 +564,36 @@ SQLite schema transition before claiming protected Events compatibility.
 
 The Events source itself is byte-identical to v10. AP-issued subscribe-token
 `sub`, event audience, and the `self-jwt` event-token no-`cnf` rule at
-[Events L368](../../../aauth-spec/v11/draft-hardt-aauth-events.md#L368)
+[Events L367](../../../aauth-spec/v11/draft-hardt-aauth-events.md#L367)
 (`#event-token`) remain distinct; do not remove those while deleting core `agent`.
 
 ### F21 - Result-release approval is optional but changes R3 policy inputs
 
 P1 when enabled; DELTA model, OPTIONAL execution, WIP-AMBIGUITY; R.
-[R675](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L675)
+[R649](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L649)
 (`#proposal-document`) adds optional `result`; current
 [R3ProposalDocument](../../../src/AAuth.R3/Model/R3ProposalDocument.cs#L16)
 does not expose it to policy.
-[R720](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L720)
+[R694](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L694)
 (`#release-gating`) requires truthful display for already-executed operations;
-[R722](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L722)
+[R696](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L696)
 forbids executing first where execution is audited, metered, or billed.
 It is unsafe to treat a missing policy field as an ordinary execute approval.
 The conservative default is to expose the shape and reject unsupported release
 requests explicitly, unless a complete scenario is selected.
 
-[R745](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L745)
+[R719](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L719)
 discusses unresolved executed-but-unreleased budget accounting. The pinned
-[Budgets L867](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L867)
+[Budgets L877](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L877)
 (`#failed-calls`) instead delegates failed-call accounting to resource policy.
 This is a cross-companion decision, not permission to ignore the prohibition.
 
 ### F22 - Budgets is a separate optional capability, not claim passthrough
 
 P1 if enabled; OPTIONAL, WIP-AMBIGUITY; R.
-[Budgets L560](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L560)
+[Budgets L562](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L562)
 (`#as-token-endpoint`) forbids AS budget issuance when the PS omitted it;
-[L861](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L861)
+[L871](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L871)
 (`#overshoot`) requires atomic reservation/consumption bounds.
 No built-in budget implementation was found; `AdditionalClaims` is not a
 metering implementation. Required scope if selected includes amounts/units and
@@ -596,21 +602,21 @@ settlement, issuer/person/resource isolation, headers/trailers, exhaustion,
 cache/denomination rules, persistent records, and signed usage access.
 
 Unresolved examples include no-drawdown refusal at
-[L710](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L710)
+[L712](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L712)
 (`#exhaustion`) versus positive cost at
-[L722](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L722), and identifier
-audience at [L942](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L942)
+[L724](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L724), and identifier
+audience at [L952](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L952)
 (`#usage-response`) versus key-URL audience at
-[L1007](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L1007)
+[L1017](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L1017)
 (`#usage-authorization`). Q10 defaults to a separately planned capability, with
 explicit no-budget support rather than inert budget claims or sample promises.
 
 ### F23 - Bootstrap and generic signatures must retain their boundaries
 
 P3; OPTIONAL additions, ALREADY generic support; R.
-[Bootstrap L133](../../../aauth-spec/v11/draft-hardt-aauth-bootstrap.md#L133)
+[Bootstrap L131](../../../aauth-spec/v11/draft-hardt-aauth-bootstrap.md#L131)
 (`#conventions-and-definitions`) is informational, and
-[L366](../../../aauth-spec/v11/draft-hardt-aauth-bootstrap.md#L366)
+[L364](../../../aauth-spec/v11/draft-hardt-aauth-bootstrap.md#L364)
 (`#sub-agent-tokens`) defines no hosted enrollment endpoint. New guidance covers
 one operator/AP with multiple separately keyed agents and hosted/self-hosted
 worker issuance. Current
@@ -620,10 +626,10 @@ The concrete-key [BootstrapBuilder L42](../../../src/AAuth/BootstrapBuilder.cs#L
 limitation is pre-existing, not a draft-11 blocker.
 
 Generic `hwk`, `jwks`, `self-jwt`, and naming-JWT APIs are not obsolete.
-[P2596](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2596)
+[P2266](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2266)
 (`#scheme-rejection`) permits resources to serve non-AAuth clients too.
 The delayed-verifier capability at
-[P2604](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2604)
+[P2274](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2274)
 (`#freshness-and-replay`) needs an explicit offline/delayed policy and a cache
 covering accepted delay; it must not weaken the normal online verifier.
 
@@ -679,7 +685,7 @@ conformance claim; they do not block recording unrelated research.
 | Q8 | Execute-once result retention versus generic terminal 410 | Specific per-call/held-invocation retained-result rule wins for authenticated repeat completion until required retention ends; unrelated terminal pending URLs retain 410. Record atomicity, credential binding, concurrent behavior, and response-size limits (F17). |
 | Q9 | Revocation store and delivery ownership | Separate expiry bounds from revocation edges; bounded unseen-token recording; acknowledge after local durability, track retryable outbound delivery independently. Confirm production store obligations and fail-before-issuance races (F14/F15). |
 | Q10 | Full Budgets, release accounting, usage audience | Separate Budgets initiative by default. Release execution remains disabled unless its safety and accounting semantics are selected explicitly (F21/F22). |
-| Q11 | Claims push versus fixed directed subject | Additional claims cannot replace verified `ps/sub/tenant/mission` provenance. A repeated `sub` must match, reconciling [P1686](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1686) (`#ps-to-as-token-request`) with [P1777](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1777) (`#requirement-claims`). |
+| Q11 | Claims push versus fixed directed subject | Additional claims cannot replace verified `ps/sub/tenant/mission` provenance. A repeated `sub` must match, reconciling [P1589](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1589) (`#ps-to-as-token-request`) with [P1680](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1680) (`#requirement-claims`). |
 | Q12 | Persistence and public API ownership | Reuse established keys, transports, clocks and stores; no package upgrade or parallel builder hierarchy by default. Choose explicit format isolation or migration for old mission/ticket/result stores without deleting user data (F07/F20/F24). |
 | Q13 | Clarification replacement token pair | Confirm the `updated_request` body and PS-to-AS continuation contract when `presented_jti` changes. Verify a new pair before atomic replacement; never mix credentials across requests (F04). |
 | Q14 | Revoked-auth challenge recovery | Clarify how a fresh resource token naming a revoked auth token can be redeemed while revoked presented tokens are refused. Proposed restart from fresh person token where necessary; no bypass of revocation (F16). |
@@ -688,9 +694,9 @@ Additional non-controlling inconsistencies remain visible: the profile's
 [L52](../../../aauth-spec/v11/interop-demo-profile.md#L52) and
 [L75](../../../aauth-spec/v11/interop-demo-profile.md#L75) omit explicit presented
 token carriage, unlike P1004 (`#ps-token-endpoint`); and the identity exposure
-prose at [P2947](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2947)
+prose at [P2878](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2878)
 (`#person-token-exposure`) says no access while
-[P576](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L576)
+[P850](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L850)
 (`#person-tokens`) explains that identity-only resources may grant access.
 Samples must teach the governing flow and actual resource policy, not repeat
 misleading prose. The source snapshot remains unchanged.
@@ -707,9 +713,9 @@ listed so the questions remain useful when upstream line numbers move.
 
 1. Which Signature Keys revision should draft-11 implementations target for
   `clock_skew` and `revoked_jwt`? The protocol uses them at
-  [P1388](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1388)
+  [P2320](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2320)
   (`#refresh-margin`) and
-  [P2461](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2461)
+  [P2764](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2764)
   (`#token-revocation`), but neither published draft-08 nor the pinned working
   source defines them. Should they be treated as provisional AAuth extensions
   until a matching dependency revision is available? Related gate: Q1.
@@ -717,11 +723,11 @@ listed so the questions remain useful when upstream line numbers move.
 2. In call chaining, whose key is in `upstream_token.cnf`, and what exactly must
   the PS/AS compare it with? The received upstream auth token normally binds
   the original caller's key, but
-  [P1955](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1955)
+  [P1856](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1856)
   (`#call-chaining`) says the intermediary's key. Meanwhile
-  [P1936](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1936)
+  [P1832](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1832)
   imports full resource verification and
-  [P1938](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1938)
+  [P1834](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1834)
   (`#upstream-token-verification`) binds audience to intermediary agent-token
   `iss`, which otherwise identifies its AP. Must intermediaries be their own
   AP, or is another authenticated resource-to-agent binding intended? Q3.
@@ -729,59 +735,59 @@ listed so the questions remain useful when upstream line numbers move.
 3. How does downstream person-token issuance prove delegated person and mission
   authority after `act` is removed? In four-party access the upstream auth
   token is AS-issued, while
-  [P948](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L948)
+  [P842](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L842)
   (`#person-token-endpoint`) says the upstream subject must have been issued
   by this PS. Does that mean a PS-derived subject copied into the AS token,
   resolved through retained federation records? Also, how does the intermediary
   satisfy mission ownership at
-  [P944](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L944)
+  [P810](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L810)
   when it acts under the caller's mission per
-  [P1953](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1953)
+  [P1854](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1854)
   (`#call-chaining`)? Q4.
 
 4. What trusted identity binds a protected Events subscription ticket when the
   resource no longer receives an agent ID? Events requires the originating
   agent binding at
-  [E607](../../../aauth-spec/v11/draft-hardt-aauth-events.md#L607)
+  [E603](../../../aauth-spec/v11/draft-hardt-aauth-events.md#L603)
   (`#pre-authorized-subscription-url-security`), but core auth tokens explicitly
   omit agent identity at
-  [P1884](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1884)
+  [P1781](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1781)
   (`#auth-token-structure`). Is a key-bound ticket followed by AP-verified
   subscribe-token identity at redemption intended, and are there extra binding
   requirements? We will not substitute person `sub` for the agent ID. Q5.
 
 5. Should clarification `updated_request` carry a replacement `presented_token`
   when the new resource token names a different `presented_jti`? The replacement
-  rule at [P1194](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1194)
+  rule at [P1117](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1117)
   (`#updated-request`) does not require the old `presented_jti`, but verification
-  at [P903](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L903)
+  at [P767](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L767)
   (`#resource-token-verification`) requires an exact match. Please specify the
   agent-to-PS and PS-to-AS pending-update bodies and which identity/mission
   fields must remain unchanged when the pair is replaced. Q13.
 
 6. Is the intended prerequisite person-token-only at the authorization endpoint
   and initial grant, but person-or-auth at runtime step-up/per-call challenges?
-  [P674](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L674)
+  [P854](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L854)
   (`#resource-tokens`) broadly requires a verified person token; the more specific
-  [P858](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L858)
+  [P729](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L729)
   (`#resource-token`) allows either. We propose that specific distinction rather
   than requiring a resource to retain an earlier person token. Q2.
 
 7. Does the retained-result rule explicitly override generic terminal pending
-  URL behavior? [P810](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L810)
+  URL behavior? [P661](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L661)
   (`#deferred-auth-token`) and
-  [R702](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L702)
+  [R676](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L676)
   (`#per-call-flow`) require repeat completion to return the original result,
-  whereas [P2909](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2909)
+  whereas [P2840](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2840)
   (`#pending-url-security`) requires 410 after a terminal response. Is retention
   keyed by the individual auth grant/invocation rather than proposal hash when
   multiple grants approve identical proposal bytes? Q8.
 
 8. How should a revoked auth token recover through the fresh resource-token
   challenge recommended at
-  [P2461](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2461)
+  [P2764](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2764)
   (`#token-revocation`)? That challenge names the revoked token as presented,
-  but [P2353](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2353)
+  but [P2590](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2590)
   (`#token-endpoint-error-codes`) rejects a revoked presented token and directs
   the agent to obtain a fresh person token, then a fresh resource token.
   Should the client instead obtain a fresh person token and new resource token,
@@ -791,18 +797,18 @@ listed so the questions remain useful when upstream line numbers move.
 ### Time and identity clarifications
 
 9. Does the five-minute non-presentation recommendation exclude resource tokens?
-  [P1390](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1390)
+  [P1301](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1301)
   (`#refresh-margin`) says an agent should not present a token inside the margin,
   but resource tokens should live at most five minutes at
-  [P892](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L892)
+  [P759](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L759)
   (`#resource-token-structure`). We propose applying the margin to agent/person/
   reusable auth credentials, with the explicit reactive exception, rather than
   making freshly issued resource tokens immediately unsuitable. Q7.
 
 10. Are agent/resource maximum lifetimes mandatory verifier ceilings or issuance
-   recommendations? [P1388](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1388)
+   recommendations? [P2320](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L2320)
    (`#refresh-margin`) says `exp - iat` MUST NOT exceed the type ceiling, while
-   [P545](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L545)
+   [P517](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L517)
    (`#agent-token-structure`) and P892 use SHOULD NOT for 24 hours/five minutes.
    Also confirm whether the future-`iat` check remains optional despite its
    inclusion in the verification error list. Q7.
@@ -810,9 +816,9 @@ listed so the questions remain useful when upstream line numbers move.
 11. Can an AS request `sub` again in `requirement=claims`, and must any repeated
    value exactly match the verified presented-token subject? The federation
    description at
-   [P1686](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1686)
+   [P1589](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1589)
    (`#ps-to-as-token-request`) reserves claims requests for additional identity
-   claims, while [P1777](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1777)
+   claims, while [P1680](../../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#L1680)
    (`#requirement-claims`) still says to include directed `sub`. We propose
    rejecting conflicting repeats, never replacing the verified identity. Q11.
 
@@ -823,19 +829,19 @@ listed so the questions remain useful when upstream line numbers move.
    Q10 records them as optional capability gates.
 
    - R3 forbids pre-execution when execution is billed/metered/audited at
-    [R722](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L722)
+    [R696](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L696)
     (`#release-gating`), but discusses metered executed-but-unreleased calls at
-    [R745](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L745). Is that discussion
+    [R719](../../../aauth-spec/v11/draft-hardt-aauth-r3.md#L719). Is that discussion
     only future work outside the currently permitted release-gating behavior?
    - Budgets says refusal must not draw down a grant at
-    [B710](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L710)
+    [B712](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L712)
     (`#exhaustion`), but its example at
-    [B722](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L722)
+    [B724](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L724)
     includes positive `cost`. What should the refused-response usage fields mean?
    - Is a signed usage response's `aud` the caller's server identifier, as at
-    [B942](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L942)
+    [B952](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L952)
     (`#usage-response`), or its JWKS URL, as at
-    [B1007](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L1007)
+    [B1017](../../../aauth-spec/v11/draft-hardt-aauth-budgets.md#L1017)
     (`#usage-authorization`)? These are different identifiers.
 
 SDK choices such as public .NET names, cache ownership, persistence backend,

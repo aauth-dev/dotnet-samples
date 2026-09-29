@@ -1299,6 +1299,176 @@ The existing `Annotations_ApplySpecRules` covers the budget floor.
 Gates: AAuth.Tests 1678, Conformance 1250, R3 327, Events 80; API and docs maps
 refreshed. The both-app scenario box waits for the final full Playwright run.
 
+### [2026-09-29] [Phase 8] Full R3, Events and both-app run
+
+Full Playwright run on the stub profile with `--retries=0`, both apps, desktop
+and mobile: 76 passed, 1 skipped (the Keycloak-only case), 0 failed, 0 flaky.
+R3 327 and Events 80 pass, and the Release solution builds with 0 warnings. This
+evidence ticks the last Phase 8 box.
+
+### [2026-09-29] [Phase 0] Citations re-derived against published draft-11
+
+The deviation logged on 2026-09-25 is resolved. Research was written against
+the WIP spec in `e6d18a3`, and `5f15f87` re-vendored the published text in
+place. That commit rewrote 2,529 protocol lines, so every early citation had
+drifted. Some drifted into unrelated sections; for example, "P937
+`#person-token-endpoint`" had landed in `#ps-token-endpoint`.
+
+Method:
+
+1. Each citation's introducing commit came from `git blame`. Citations from
+   before `5f15f87` were mapped from the old line's text to the published line:
+   first by `difflib` equal blocks, then by exact text, then by fragment
+   matching.
+2. Every match under 0.75 similarity (44 lines) was resolved by hand, by
+   grepping the requirement text. One 0.86 fuzzy match was also wrong (Budgets
+   L722 to L603, an unrelated example) and was corrected to L724.
+3. The rewritten lines were checked to equal the computed targets (0
+   mismatches).
+4. A checker now reports 184 v11 citations across research, the ledger, the
+   plan and the capability scenarios, with no blank or out-of-range target.
+
+Result: 123 research lines and 17 ledger lines were rewritten, and the plan's
+own 26 citations were already correct. The six `v10` citations in research are
+deliberate draft-10 baselines, labelled as such. `spec-open-questions.md` is
+left as a historical record: its header already says its snapshot lines are
+read at `e6d18a3`. Research's links to the superseded Signature Keys working
+source and draft-08 now point at draft-09.
+
+The published text changed these requirements, and the research prose predates
+the change:
+
+- P1117: an `updated_request` now carries `presented_token` and is
+  re-verified with step 3. This closes the `presented_jti` gap research raised
+  at P1194.
+- P2840: `410 Gone` now has an exception for flows that repeat a presentation.
+  This settles Q8.
+- R719: metered or billed calls are never candidates for release gating. The
+  "unresolved accounting" paragraph at R745 is gone.
+- R499: R3 no longer restates base claims (R504 and R506).
+- E603: tickets bind to the signing key (Q5).
+- P2317 and P2320: expiry and `iat` skew moved to common verification.
+- B724 and B1017: the budget example drops `cost`, and callers are named by
+  the Signature-Key `id` and `dwk`.
+- P1680: a claims push no longer carries `sub` (PS-55).
+- Interop L52 and L75: both flows now send `presented_token`.
+
+### [2026-09-29] [Phase 0] Finding owners, checklist ownership and negative evidence
+
+[conformance-ledger.md](conformance-ledger.md) gained three sections:
+
+- **Finding owners and executed checks:** F01-F24 each have an owning
+  component, a phase and named discriminatory tests.
+- **Negative requirements: execution evidence:** 17 rows, each with executed
+  tests or an explicit conditional disposition.
+- **Upgrade checklist ownership:** all 147 IDs. 131 have an owning phase and
+  16 optional items have a disposition.
+
+Checks:
+
+- Every test name in these sections resolves to a method or class in
+  `tests/`, and every owner symbol resolves in `src/`.
+- `comm` between the table and the checklist files shows no missing and no
+  extra IDs.
+
+Two subagent drafts were used as leads only. The F-map draft cited
+non-existent owner paths, and the checklist draft marked PS-90 as implemented.
+
+Building the checklist table found two real gaps, each fixed in the next
+entries:
+
+- PS-112 and AS-42: withdrawn resource tokens were never checked.
+- AG-34 and PS-90: `termination_reason` was absent, and `mission_status`
+  carried a non-spec `expired` value.
+
+### [2026-09-29] [Phase 3, 5] `mission_terminated` carries `termination_reason`
+
+§Mission Status Errors (P1548 to P1567) fixes `mission_status` at
+`terminated` and adds an OPTIONAL `termination_reason`. The agent reads it to
+decide whether to propose again: `expired` invites a new proposal, `revoked`
+does not.
+
+Before this fix:
+
+- The PS answered an expired mission with `mission_status: "expired"`, a
+  value the spec does not define.
+- Four PS paths rethrew `mission_terminated` through the generic problem
+  writer, so the body had no `mission_status` at all.
+- The agent did not read `termination_reason` (AG-34).
+
+Changes:
+
+- `GovernanceEndpoints.MissionTerminated(string? terminationReason)` and
+  `MissionTerminatedBody(...)` always emit `mission_status: terminated`, and
+  add `termination_reason` when one is given. The parameter was renamed from
+  `missionStatus`, a public signature change recorded in the API map.
+- `GovernanceEndpoints.Authorize` reports `expired` for a mission past
+  `expires_at`.
+- The PS's local `ExchangeFailure` routes every `mission_terminated` through
+  `GovernanceEndpoints.MissionTerminated`. A mission found expired throws with
+  `expired`.
+- `AAuthMissionTerminatedException.TerminationReason` is new, and
+  `DeferredExchange` and `ClarificationExchange` populate it.
+- `docs/advanced/error-handling.md` shows the property, and the docs inventory
+  was refreshed.
+
+PS-90 is only partly selected: `IMissionStore` records no reason, so the SDK
+reports `expired` and omits the others.
+
+Evidence:
+
+- `Mission_Terminated_Rejected`: all four cases assert `mission_status` and
+  the reason.
+- `MissionAuthorization_RejectsInvalidContext` asserts the terminated and
+  expired bodies on the governance endpoints.
+- `MissionTerminatedBody_MatchesSpec` covers the body builder.
+- `MissionTerminated_OnTokenRequest_Throws` and
+  `MissionTerminated_DuringPolling_Throws` assert `TerminationReason`.
+
+With the PS source changes stashed, all four `Mission_Terminated_Rejected`
+cases fail.
+
+### [2026-09-29] [Phase 7] Withdrawn resource tokens (PS-112, AS-42)
+
+P2753 (#token-revocation) says a PS or AS that receives a resource-token
+revocation MUST NOT issue an auth token against that token. It rejects a
+request naming it with `revoked_resource_token`, and SHOULD end a pending
+request with polling `revoked`. Before this fix, the revocation endpoints
+recorded `(resource, jti)`, but neither token endpoint ever consulted it. The
+resource token is deliberately not a grant source, because it must not cap the
+auth token (`ResourceTokenLifetime_DoesNotCapAuthTokenOrGrant`), so the
+existing source check never covered it.
+
+Changes:
+
+- **Request time:** the PS `VerifyPairAsync` and the AS resource-token step
+  check `IJtiStore.IsRevokedAsync(iss, jti)` and fail with the resource
+  credential, so the response is `400 revoked_resource_token` before policy
+  runs.
+- **Pending requests:** both pending-poll handlers check the same key first.
+  The AS reads it from the retained `ResourceContext`. A hit is
+  `403 revoked`, with the detail "The resource token was revoked.", and the PS
+  cancels any federation.
+
+Evidence:
+
+- `RevokedResourceToken_RejectedAndEndsPending` covers the PS, immediate and
+  pending.
+- `AsRefusesWithdrawnResourceToken` covers the AS, immediate and pending. The
+  resource revokes through the AS's real `/revoke` endpoint, signed as the
+  resource, which also exercises RS-62.
+
+All four cases fail with the source changes stashed.
+
+A first version registered an `IJtiStore` in the AS fixture's DI. That turned
+on request replay detection for the whole fixture and broke two clarification
+tests that repeat identical signed POSTs, so the test now revokes over HTTP
+instead.
+
+Gates: Release build 0 warnings; AAuth.Tests 1678, Conformance 1254, R3 327,
+Events 80; ApiSurface rewritten (0 unmapped); docs inventory refreshed; snippet
+and link tests 108.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate
