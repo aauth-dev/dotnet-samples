@@ -168,4 +168,21 @@ public sealed class HeldInvocationTests
         using var owner = await client.SendAsync(Poll(held.Headers.Location!, clock, "auth-2"));
         Assert.Equal(HttpStatusCode.Created, owner.StatusCode);
     }
+
+    [Fact(DisplayName = "R3 per-call single use — concurrent presentations of one grant execute once and share the retained result")]
+    public async Task SingleUseGrant_ExecutesOncePerJti()
+    {
+        var grants = new AAuthSingleUseGrants();
+        var executions = 0;
+        Task<HeldInvocationResult> Execute(System.Threading.CancellationToken _)
+            => Task.FromResult(HeldInvocationResult.Json(new { run = System.Threading.Interlocked.Increment(ref executions) }));
+        var expiry = DateTimeOffset.UtcNow.AddMinutes(5);
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => grants.ExecuteOnceAsync("grant-1", expiry, Execute)));
+        var other = await grants.ExecuteOnceAsync("grant-2", expiry, Execute);
+
+        Assert.All(results, result => Assert.Same(results[0], result));
+        Assert.NotSame(results[0], other);
+        Assert.Equal(2, executions);
+    }
 }

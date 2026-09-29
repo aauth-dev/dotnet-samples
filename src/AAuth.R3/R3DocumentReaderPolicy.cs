@@ -20,4 +20,13 @@ public sealed class R3DocumentReaderPolicy
     public bool Allows(R3VerifiedFetcher fetcher) => fetcher.Scheme == AAuthConstants.Schemes.JwksUri &&
         (fetcher.Identifier == _accessServer && fetcher.ParsedKey.Dwk == AAuthConstants.DwkFiles.Access ||
          _personServers.Contains(fetcher.Identifier) && fetcher.ParsedKey.Dwk == AAuthConstants.DwkFiles.Person);
+
+    /// <summary>
+    /// Per-document entitlement for a Person Server evaluator: given the request and
+    /// the PS identifier, whether this PS may read the requested document (for
+    /// example, the PS named by the resource token that references it). When set, a
+    /// configured evaluator that is not entitled gets <c>404</c>. The designated
+    /// Access Server is not affected.
+    /// </summary>
+    public Func<Microsoft.AspNetCore.Http.HttpContext, string, bool>? IsEntitledPersonServer { get; init; }
 }

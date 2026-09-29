@@ -26,6 +26,63 @@ public sealed record HeldInvocationResult(int StatusCode, string? ContentType, b
     /// <summary>A JSON result with the given status.</summary>
     public static HeldInvocationResult Json(object value, int statusCode = StatusCodes.Status200OK)
         => new(statusCode, "application/json", System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(value));
+
+    /// <summary>Write this exact result as the HTTP response.</summary>
+    public IResult ToResult() => new RetainedResult(this);
+}
+
+/// <summary>
+/// Runs an invocation at most once per grant — the auth token's <c>jti</c> — and
+/// answers a repeated presentation of that token from the retained result until
+/// the token's <c>exp</c> (R3 per-call single use; §Deferred Delivery). A fresh
+/// signature over the same token does not execute again.
+/// </summary>
+/// <remarks>In-memory; state is lost on restart.</remarks>
+public sealed class AAuthSingleUseGrants(TimeProvider? timeProvider = null)
+{
+    private readonly ConcurrentDictionary<string, Record> _records = new(StringComparer.Ordinal);
+    private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
+
+    /// <summary>
+    /// Execute under the grant <paramref name="jti"/> once; later calls with the
+    /// same <paramref name="jti"/> before <paramref name="expiresAt"/> get the same result.
+    /// </summary>
+    public async Task<HeldInvocationResult> ExecuteOnceAsync(string jti, DateTimeOffset expiresAt,
+        Func<CancellationToken, Task<HeldInvocationResult>> execute, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(jti);
+        ArgumentNullException.ThrowIfNull(execute);
+        var now = _time.GetUtcNow();
+        foreach (var (key, stale) in _records)
+            if (stale.Result is not null && stale.ExpiresAt <= now) _records.TryRemove(key, out _);
+        var record = _records.GetOrAdd(jti, _ => new Record(expiresAt));
+        await record.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return record.Result ??= await execute(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            record.Gate.Release();
+        }
+    }
+
+    private sealed class Record(DateTimeOffset expiresAt)
+    {
+        public DateTimeOffset ExpiresAt { get; } = expiresAt;
+        public SemaphoreSlim Gate { get; } = new(1, 1);
+        public HeldInvocationResult? Result { get; set; }
+    }
+}
+
+internal sealed class RetainedResult(HeldInvocationResult result) : IResult
+{
+    public Task ExecuteAsync(HttpContext httpContext)
+    {
+        httpContext.Response.StatusCode = result.StatusCode;
+        if (result.ContentType is not null) httpContext.Response.ContentType = result.ContentType;
+        return httpContext.Response.Body.WriteAsync(result.Body).AsTask();
+    }
 }
 
 /// <summary>
@@ -167,16 +224,6 @@ public sealed class AAuthHeldInvocations
             httpContext.Response.Headers.CacheControl = "no-store";
             httpContext.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuthRequirementHeader.FormatAuthToken(resourceToken);
             return httpContext.Response.WriteAsJsonAsync(new { status = "pending" });
-        }
-    }
-
-    private sealed class RetainedResult(HeldInvocationResult result) : IResult
-    {
-        public Task ExecuteAsync(HttpContext httpContext)
-        {
-            httpContext.Response.StatusCode = result.StatusCode;
-            if (result.ContentType is not null) httpContext.Response.ContentType = result.ContentType;
-            return httpContext.Response.Body.WriteAsync(result.Body).AsTask();
         }
     }
 }

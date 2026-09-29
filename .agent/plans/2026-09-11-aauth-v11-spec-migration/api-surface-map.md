@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 150 changed public-source files, 289 added/replacement declarations, 141 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 152 changed public-source files, 295 added/replacement declarations, 141 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -584,6 +584,16 @@ Public signatures unchanged (11); behavior reviewed under r3.
 
 Public owners: `AAuth.R3.R3DocumentEndpoint`, `AAuth.R3.R3FetchVerificationException`, `AAuth.R3.R3UntrustedJwksUriException`, `AAuth.R3`.
 
+### src/AAuth.R3/R3DocumentReaderPolicy.cs
+
+Concept/decision: [r3](#r3). Source: [R3DocumentReaderPolicy.cs](../../../src/AAuth.R3/R3DocumentReaderPolicy.cs).
+
+```diff
++ AAuth.R3.R3DocumentReaderPolicy: public Func < Microsoft . AspNetCore . Http . HttpContext , string , bool > ? IsEntitledPersonServer { get ; init ; }
+```
+
+Public owners: `AAuth.R3.R3DocumentReaderPolicy`, `AAuth.R3`.
+
 ### src/AAuth.R3/R3Enforcement.cs
 
 Concept/decision: [r3](#r3). Source: [R3Enforcement.cs](../../../src/AAuth.R3/R3Enforcement.cs).
@@ -605,6 +615,17 @@ Concept/decision: [r3](#r3). Source: [R3Metadata.cs](../../../src/AAuth.R3/R3Met
 Public signatures unchanged (6); behavior reviewed under r3.
 
 Public owners: `AAuth.R3.R3Metadata`, `AAuth.R3`.
+
+### src/AAuth.R3/R3ProposalStore.cs
+
+Concept/decision: [r3](#r3). Source: [R3ProposalStore.cs](../../../src/AAuth.R3/R3ProposalStore.cs).
+
+```diff
++ AAuth.R3.R3ProposalStore: public bool IsEntitled ( string s256 , string personServer )
++ AAuth.R3.R3ProposalStore: public void Entitle ( string s256 , string personServer )
+```
+
+Public owners: `AAuth.R3.R3ProposalStore`, `AAuth.R3`.
 
 ### src/AAuth/AAuthClientBuilder.cs
 
@@ -1494,13 +1515,16 @@ Concept/decision: [server-contracts](#server-contracts). Source: [HeldInvocation
 + AAuth.Server.AAuthHeldInvocations: public TimeSpan PendingLifetime { get ; }
 + AAuth.Server.AAuthHeldInvocations: public async Task < IResult > PollAsync ( HttpContext context , string id )
 + AAuth.Server.AAuthHeldInvocations: public string PathPrefix { get ; }
++ AAuth.Server.AAuthSingleUseGrants: public async Task < HeldInvocationResult > ExecuteOnceAsync ( string jti , DateTimeOffset expiresAt , Func < CancellationToken , Task < HeldInvocationResult > > execute , CancellationToken cancellationToken = default )
++ AAuth.Server.HeldInvocationResult: public IResult ToResult ( )
 + AAuth.Server.HeldInvocationResult: public static HeldInvocationResult Json ( object value , int statusCode = StatusCodes . Status200OK )
 + AAuth.Server: public sealed class AAuthHeldInvocations
++ AAuth.Server: public sealed class AAuthSingleUseGrants ( TimeProvider ? timeProvider = null )
 + AAuth.Server: public sealed record HeldInvocationResult ( int StatusCode , string ? ContentType , byte [  ] Body )
 + AAuth.Server: public static class AAuthHeldInvocationExtensions
 ```
 
-Public owners: `AAuth.Server.AAuthHeldInvocationExtensions`, `AAuth.Server.AAuthHeldInvocations`, `AAuth.Server.HeldInvocationResult`, `AAuth.Server`.
+Public owners: `AAuth.Server.AAuthHeldInvocationExtensions`, `AAuth.Server.AAuthHeldInvocations`, `AAuth.Server.AAuthSingleUseGrants`, `AAuth.Server.HeldInvocationResult`, `AAuth.Server`.
 
 ### src/AAuth/Server/IJtiStore.cs
 

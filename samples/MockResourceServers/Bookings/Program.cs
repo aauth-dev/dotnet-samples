@@ -49,7 +49,11 @@ var accounts = builder.Configuration.GetSection("Bookings:Accounts").Get<Diction
         ["work"] = "Work reservations",
     };
 var readerPolicy = new R3DocumentReaderPolicy(accessServerUrl,
-    builder.Configuration.GetSection("Bookings:PersonServerEvaluators").Get<string[]>(), SampleEgress.Policy);
+    builder.Configuration.GetSection("Bookings:PersonServerEvaluators").Get<string[]>(), SampleEgress.Policy)
+{
+    IsEntitledPersonServer = (ctx, personServer) => ctx.Request.RouteValues["hash"] is string hash
+        && ctx.RequestServices.GetRequiredService<R3ProposalStore>().IsEntitled(hash, personServer),
+};
 var discoveryMetadata = R3Metadata.AddVocabularies(new JsonObject(), new Dictionary<string, string>
 {
     [Vocabulary.OpenApi] = $"{resourceUrl}/openapi.json",
@@ -90,6 +94,9 @@ var eventStore = new SqliteEventStore(builder.Configuration["Events:Database"] ?
     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".aauth", "bookings-events.db"));
 var bookingEvents = new BookingsEvents(resourceUrl, resourceKey, ResourceKid, eventProtocol, eventStore);
 bookingEvents.Map(app);
+// R3 per-call single use: a proposal-approved auth token executes once, and a repeat
+// of the same token (even freshly signed) gets the retained result.
+var perCallGrants = new AAuthSingleUseGrants();
 
 // Resource well-known (aauth-resource.json + jwks.json) from the DI-registered
 // metadata options — including R3's r3_vocabularies via the AdditionalMetadata seam.
@@ -162,7 +169,7 @@ app.MapPost("/authorize", async (HttpContext ctx, R3ProposalStore documents) =>
         return AAuth.Server.AAuthProblemDetails.Create("invalid_r3_operations", ex.Message, statusCode: StatusCodes.Status400BadRequest);
     }
 
-    var stored = StoreR3Document(documents, operations.Operations.Select(op => op.Id), account);
+    var stored = StoreR3Document(documents, operations.Operations.Select(op => op.Id), account, presenter.Person.Issuer);
     var resourceToken = BuildResourceToken(presenter.Person, presenter.ConfirmationKey.ComputeJwkThumbprint(), stored.Uri, stored.S256, account);
     ctx.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatAuthToken(resourceToken);
     return Results.Ok(new
@@ -195,7 +202,7 @@ app.MapMethods("/search_availability", ["GET", "POST"], async (HttpContext ctx) 
     var decision = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload);
     var enforcement = await EnforceOperationAsync(ctx, auth.Verified, SearchAvailability);
     if (enforcement.Result is not null) return enforcement.Result;
-    return Results.Ok(new
+    return await CompleteAsync(auth.Verified!, enforcement.IsProposal, () => new
     {
         accessMode = "four-party-r3",
         operationId = HttpMethods.IsGet(ctx.Request.Method) ? SearchAvailability : SearchAvailability + "Post",
@@ -222,7 +229,7 @@ app.MapMethods("/hold_reservation", ["GET", "POST"], async (HttpContext ctx) =>
     var claims = R3ClaimReader.ReadAuthToken(auth.Verified!.Payload);
     var enforcement = await EnforceOperationAsync(ctx, auth.Verified, HoldReservation);
     if (enforcement.Result is not null) return enforcement.Result;
-    return Results.Ok(new
+    return await CompleteAsync(auth.Verified!, enforcement.IsProposal, () => new
     {
         accessMode = "four-party-r3",
         operationId = HttpMethods.IsGet(ctx.Request.Method) ? HoldReservation : HoldReservation + "Post",
@@ -245,7 +252,7 @@ app.MapPost("/confirm_reservation", async (HttpContext ctx) =>
     var enforcement = await EnforceOperationAsync(ctx, auth.Verified, ConfirmReservation);
     if (enforcement.Result is not null) return enforcement.Result;
     var parameters = enforcement.Parameters!;
-    return Results.Ok(new
+    return await CompleteAsync(auth.Verified!, enforcement.IsProposal, () => new
         {
             accessMode = "four-party-r3",
             operationId = ConfirmReservation,
@@ -265,7 +272,12 @@ app.MapPost("/confirm_reservation", async (HttpContext ctx) =>
 
 app.Run();
 
-StoredR3Proposal StoreR3Document(R3ProposalStore store, IEnumerable<string> requestedOperations, string? account)
+async Task<IResult> CompleteAsync(TokenVerifier.VerifiedToken token, bool perCall, Func<object> execute) => !perCall
+    ? Results.Ok(execute())
+    : (await perCallGrants.ExecuteOnceAsync((string)token.Payload["jti"]!, token.ExpiresAt,
+        _ => Task.FromResult(HeldInvocationResult.Json(execute())))).ToResult();
+
+StoredR3Proposal StoreR3Document(R3ProposalStore store, IEnumerable<string> requestedOperations, string? account, string personServer)
 {
     var requested = requestedOperations.ToHashSet(StringComparer.Ordinal);
     var ordered = supportedOperations.Where(requested.Contains).Select(R3Operation.OpenApi).ToArray();
@@ -287,7 +299,10 @@ StoredR3Proposal StoreR3Document(R3ProposalStore store, IEnumerable<string> requ
         // Access Server — not the resource — decides which operations are per-call
         // (r3 §Auth Token Extensions); Bookings signals irreversibility via `display`.
     };
-    return store.AddBytes(doc.ToUtf8Bytes(), new Uri(resourceUrl), "/r3");
+    var stored = store.AddBytes(doc.ToUtf8Bytes(), new Uri(resourceUrl), "/r3");
+    // Only the PS the resource token names may read the document (besides the AS).
+    store.Entitle(stored.S256, personServer);
+    return stored;
 }
 
 R3Challenge Challenger() => new()
@@ -354,7 +369,7 @@ async Task<AuthOutcome> VerifyAuthOrChallengeAsync(HttpContext ctx, IReadOnlyCol
         {
             var presenter = await VerifyPresenterAsync(ctx, fetcher);
             if (presenter.Person is null) return new AuthOutcome(null, PersonTokenRequired(ctx));
-            var stored = StoreR3Document(ctx.RequestServices.GetRequiredService<R3ProposalStore>(), fallbackTools, account);
+            var stored = StoreR3Document(ctx.RequestServices.GetRequiredService<R3ProposalStore>(), fallbackTools, account, presenter.Person.Issuer);
             var resourceToken = BuildResourceToken(presenter.Person, presenter.ConfirmationKey.ComputeJwkThumbprint(), stored.Uri, stored.S256, account);
             ctx.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatAuthToken(resourceToken);
             return new AuthOutcome(null, AAuth.Server.AAuthProblemDetails.Create("auth_token_required",
@@ -542,6 +557,7 @@ async Task<OperationOutcome> EnforceOperationAsync(HttpContext context, TokenVer
         if (decision.Kind == R3EnforcementDecisionKind.Granted) return new(parameters, isProposal, null);
         if (decision.Kind == R3EnforcementDecisionKind.PerCall)
         {
+            proposals.Entitle(decision.ProposalS256!, (string)token.Payload["ps"]!);
             var resourceToken = BuildProposalResourceToken(token, decision.ProposalUri!, decision.ProposalS256!);
             context.Response.Headers[AAuthConstants.Headers.AAuthRequirement] = AAuth.Headers.AAuthRequirementHeader.FormatAuthToken(resourceToken);
             return new(parameters, false, AAuthProblemDetails.Create("r3_approval_required", statusCode: 401,

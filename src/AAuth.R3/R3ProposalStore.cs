@@ -8,7 +8,23 @@ namespace AAuth.R3;
 public sealed class R3ProposalStore
 {
     private readonly ConcurrentDictionary<string, byte[]> _bytesByHash = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, bool>> _readers = new(StringComparer.Ordinal);
     private readonly int _maxEntries;
+
+    /// <summary>
+    /// Entitle <paramref name="personServer"/> to read the content <paramref name="s256"/>:
+    /// the PS a resource token referencing it names in <c>ps</c>.
+    /// </summary>
+    public void Entitle(string s256, string personServer)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(s256);
+        ArgumentException.ThrowIfNullOrEmpty(personServer);
+        _readers.GetOrAdd(s256, _ => new(StringComparer.Ordinal))[personServer] = true;
+    }
+
+    /// <summary>Whether <paramref name="personServer"/> was entitled to read <paramref name="s256"/>.</summary>
+    public bool IsEntitled(string s256, string personServer)
+        => _readers.TryGetValue(s256, out var readers) && readers.ContainsKey(personServer);
 
     public R3ProposalStore(int maxEntries = 1024)
     {

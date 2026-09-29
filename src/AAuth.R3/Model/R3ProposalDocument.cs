@@ -64,6 +64,11 @@ public sealed record R3ProposalDocument
     {
         using var json = JsonDocument.Parse(bytes.ToArray());
         R3Json.ValidateUniqueMembers(json.RootElement);
+        // R3 release gating: a `result` means the call already ran and approval is for
+        // releasing its result. This SDK does not implement release gating, so fail
+        // closed rather than read the proposal as an ordinary execution approval.
+        if (json.RootElement.ValueKind == JsonValueKind.Object && json.RootElement.TryGetProperty("result", out _))
+            throw new InvalidOperationException("R3 proposals with a result (release gating) are not supported.");
         AAuth.Tokens.AccountBinding.Read(System.Text.Json.Nodes.JsonNode.Parse(bytes) as System.Text.Json.Nodes.JsonObject);
         var doc = json.RootElement.Deserialize<R3ProposalDocument>((schemas ?? R3VocabularySchemas.Standard).ReadOptions(json.RootElement, options))
             ?? throw new InvalidOperationException("R3 proposal JSON did not deserialize to an object.");

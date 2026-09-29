@@ -1239,6 +1239,66 @@ RESOLVED (tests only; the production behavior was already right).
    (`Revocation_SlowCascade_DefersAndOnlyTheRevokerPolls`) is driven by a
    test-controlled completion rather than wall-clock waits.
 
+### [2026-09-29] [Phase 8] Per-call single use, R3 readership and release gating
+
+Checked the three open Phase 8 boxes against the code. All three were real
+gaps.
+
+**Single use (SDK and sample fix).** R3 #per-call-flow step 4 (r3 L676): a
+resource MUST NOT execute more than one invocation under one per-call auth
+token, and repeats are answered from the retained result keyed by `jti`.
+Bookings ran every proposal-approved call again for each freshly signed
+presentation of the same token. Changes:
+
+- new SDK `AAuthSingleUseGrants.ExecuteOnceAsync(jti, exp, execute)` runs once
+  per grant under a per-grant gate and retains the result until `exp`;
+- `HeldInvocationResult.ToResult()` replays the exact bytes;
+- Bookings routes every proposal-approved call through it.
+
+Disposition on "mark the stored proposal consumed": consumption is keyed by
+the grant (`jti`), not the proposal hash. Proposals are content-addressed, so
+an identical re-approval gets the same `r3_s256`; per-proposal consumption
+would make a legitimately re-approved identical call impossible. This follows
+the plan's rule to separate same-content proposal identity from per-grant
+execution.
+
+Evidence:
+
+- `EveryRoute_EnforcesGrantedPerCallRejectedAndApprovedParameters` (all five
+  routes) now re-presents the approved token with a fresh signature after
+  1.1 s and gets the byte-identical retained body. The hold route's
+  `expires_at` would otherwise differ.
+- `SingleUseGrant_ExecutesOncePerJti` sends 16 concurrent presentations; they
+  execute once and share one result.
+
+**Per-document readership (SDK and sample fix).** `R3DocumentReaderPolicy`
+let any configured PS evaluator read every document. Changes:
+
+- `R3ProposalStore.Entitle` and `IsEntitled` record which PS may read which
+  content;
+- `R3DocumentReaderPolicy.IsEntitledPersonServer` is consulted by
+  `MapR3Document`, and an unentitled evaluator gets `404`;
+- Bookings entitles the PS named by the resource token (the presenter's `iss`,
+  or the auth token's `ps` for proposals).
+
+Evidence: `PersonServerEvaluator_ReadsOnlyDocumentsItIsEntitledTo` (two valid,
+configured PSes: the named one reads `200`, the foreign one gets `404`, the AS
+still reads `200`).
+
+**Result and Budgets cannot imply enforcement (SDK fix).** R3 `result` (r3
+L649) marks a release-gated proposal. `R3ProposalDocument.FromUtf8Bytes`
+ignored the unknown member, so the R3 AS would have treated a release approval
+as an execution approval. It now fails closed (`InvalidOperationException`,
+which the R3 AS answers `400 r3_evaluation_failed`). The Budget annotation is
+documented as annotation-only; it only raises the access-mode floor, and no
+metadata or API claims budget accounting.
+
+Evidence: `ResultBearingProposal_FailsClosedInsteadOfBecomingAnExecutionApproval`.
+The existing `Annotations_ApplySpecRules` covers the budget floor.
+
+Gates: AAuth.Tests 1678, Conformance 1250, R3 327, Events 80; API and docs maps
+refreshed. The both-app scenario box waits for the final full Playwright run.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate

@@ -47,6 +47,25 @@ public class R3Draft11FixtureTests
     }
 
     [Fact]
+    public void ResultBearingProposal_FailsClosedInsteadOfBecomingAnExecutionApproval()
+    {
+        var proposal = new R3ProposalDocument
+        {
+            Vocabulary = Vocabulary.Mcp, Operations = [R3Operation.Mcp("run_query")],
+            Parameters = new Dictionary<string, R3Parameter> { ["query"] = R3Parameter.Inline(JsonValue.Create("select *")!) },
+            Display = new R3Display { Summary = "Release the result of a query" },
+        };
+        var node = JsonNode.Parse(proposal.ToUtf8Bytes())!.AsObject();
+        Assert.NotNull(R3ProposalDocument.FromUtf8Bytes(System.Text.Encoding.UTF8.GetBytes(node.ToJsonString())));
+
+        // R3 release gating: the call already ran; approval would be for releasing its result.
+        node["result"] = new JsonObject { ["rows"] = 214 };
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            R3ProposalDocument.FromUtf8Bytes(System.Text.Encoding.UTF8.GetBytes(node.ToJsonString())));
+        Assert.Contains("release gating", error.Message);
+    }
+
+    [Fact]
     public void SpecAnnotationExamples_ReadAsPerCallWithBudget()
     {
         var openApi = JsonNode.Parse("""

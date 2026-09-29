@@ -6,7 +6,9 @@ namespace AAuth.R3;
 
 /// <summary>An operation access annotation: the credential one operation requires and whether it draws down a budget.</summary>
 /// <param name="AccessMode">An <c>access_mode</c> value, or <see langword="null"/> to take the resource default.</param>
-/// <param name="Budget">Whether invoking the operation draws down a budget.</param>
+/// <param name="Budget">Whether invoking the operation draws down a budget. Read and written as an
+/// annotation only; this SDK does not implement budget accounting or enforcement, so a flagged
+/// operation only raises its access-mode floor to <c>auth-token</c>.</param>
 public sealed record R3OperationAccess(string? AccessMode, bool Budget = false);
 
 /// <summary>

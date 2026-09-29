@@ -17,7 +17,13 @@ public static class R3DocumentEndpoint
         string pattern, Func<HttpContext, byte[]?> getBytes, R3DocumentReaderPolicy readerPolicy)
     {
         ArgumentNullException.ThrowIfNull(readerPolicy);
-        return endpoints.MapR3Document(pattern, getBytes, readerPolicy.Allows);
+        ArgumentNullException.ThrowIfNull(getBytes);
+        // A PS evaluator reads only the documents it is entitled to; others look absent.
+        return endpoints.MapR3Document(pattern, context =>
+            readerPolicy.IsEntitledPersonServer is { } entitled
+                && context.GetAAuthParsedKey() is { Dwk: AAuthConstants.DwkFiles.Person, Identifier: { } personServer }
+                && !entitled(context, personServer)
+                ? null : getBytes(context), readerPolicy.Allows);
     }
 
     public static IEndpointRouteBuilder MapR3Document(

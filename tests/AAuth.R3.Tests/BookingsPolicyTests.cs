@@ -37,6 +37,12 @@ public class BookingsPolicyTests
         var approved = fixture.AuthToken(proposal, R3Grant.OpenApi(operation));
         using var retry = await fixture.CallAsync(approved, path, method, parameters);
         Assert.Equal(HttpStatusCode.OK, retry.StatusCode);
+        // R3 per-call single use: the same grant, freshly signed, gets the retained result, not a second execution.
+        var executed = await retry.Content.ReadAsStringAsync();
+        await Task.Delay(1100);
+        using var repeat = await fixture.CallAsync(approved, path, method, parameters);
+        Assert.Equal(HttpStatusCode.OK, repeat.StatusCode);
+        Assert.Equal(executed, await repeat.Content.ReadAsStringAsync());
         var changed = parameters.DeepClone().AsObject();
         changed[operation.StartsWith("searchAvailability", StringComparison.Ordinal) ? "venue" : "reservation_id"] = "different";
         using var tampered = await fixture.CallAsync(approved, path, method, changed);
@@ -115,6 +121,26 @@ public class BookingsPolicyTests
     }
 
     [Fact]
+    public async Task PersonServerEvaluator_ReadsOnlyDocumentsItIsEntitledTo()
+    {
+        // Both PSes are configured evaluators and both are valid signers.
+        using var fixture = new Fixture(R3TestData.PsIssuer, Fixture.ForeignPs);
+        var document = await fixture.AuthorizeAsync(R3Operations.OpenApi("searchAvailability"));
+
+        using var entitled = fixture.SignedServer(fixture.PsKey, R3TestData.PsIssuer, AAuthConstants.DwkFiles.Person, R3TestData.PsKid);
+        using var own = await entitled.GetAsync(document.Uri);
+        Assert.Equal(HttpStatusCode.OK, own.StatusCode);
+
+        // The resource token for this document names the other PS, so the foreign PS cannot read it.
+        using var foreign = fixture.SignedServer(fixture.ForeignPsKey, Fixture.ForeignPs, AAuthConstants.DwkFiles.Person, R3TestData.PsKid);
+        using var denied = await foreign.GetAsync(document.Uri);
+        Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
+
+        using var access = fixture.SignedServer(fixture.AsKey, R3TestData.AsIssuer, AAuthConstants.DwkFiles.Access, R3TestData.AsKid);
+        Assert.Equal(HttpStatusCode.OK, (await access.GetAsync(document.Uri)).StatusCode);
+    }
+
+    [Fact]
     public async Task Authorize_AgentTokenGetsPersonTokenRequirement_PersonTokenGetsResourceTokenNamingIt()
     {
         using var fixture = new Fixture();
@@ -146,13 +172,15 @@ public class BookingsPolicyTests
     {
         public AAuthKey AsKey { get; } = AAuthKey.Generate();
         public AAuthKey PsKey { get; } = AAuthKey.Generate();
+        public AAuthKey ForeignPsKey { get; } = AAuthKey.Generate();
+        public const string ForeignPs = "https://foreign-ps.test";
         private AAuthKey ApKey { get; } = AAuthKey.Generate();
         private AAuthKey AgentKey { get; } = AAuthKey.Generate();
         private WebApplicationFactory<Bookings.Entry> App { get; }
         public string AgentToken { get; }
         public string PersonToken { get; }
 
-        public Fixture()
+        public Fixture(params string[] personServerEvaluators)
         {
             AgentToken = R3TestData.AgentToken(ApKey, AgentKey);
             PersonToken = R3TestData.PersonToken(PsKey, AgentKey);
@@ -163,13 +191,17 @@ public class BookingsPolicyTests
                 .AddJson(R3TestData.AsIssuer + "/.well-known/aauth-person.json", R3TestData.Metadata(R3TestData.AsIssuer, AuthTokenBuilder.PersonDwk))
                 .AddJson(R3TestData.AsIssuer + "/.well-known/jwks.json", R3TestData.Jwks(R3TestData.AsKid, AsKey))
                 .AddJson(R3TestData.PsIssuer + "/.well-known/aauth-person.json", R3TestData.Metadata(R3TestData.PsIssuer, AuthTokenBuilder.PersonDwk))
-                .AddJson(R3TestData.PsIssuer + "/.well-known/jwks.json", R3TestData.Jwks(R3TestData.PsKid, PsKey));
+                .AddJson(R3TestData.PsIssuer + "/.well-known/jwks.json", R3TestData.Jwks(R3TestData.PsKid, PsKey))
+                .AddJson(ForeignPs + "/.well-known/aauth-person.json", R3TestData.Metadata(ForeignPs, AuthTokenBuilder.PersonDwk))
+                .AddJson(ForeignPs + "/.well-known/jwks.json", R3TestData.Jwks(R3TestData.PsKid, ForeignPsKey));
+            var evaluators = personServerEvaluators.Length == 0 ? ["https://disabled.test"] : personServerEvaluators;
             App = new WebApplicationFactory<Bookings.Entry>().WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("AAuth:Issuer", R3TestData.ResourceIssuer);
                 builder.UseSetting("AAuth:AccessServer", R3TestData.AsIssuer);
                 builder.UseSetting("AAuth:PersonServer", R3TestData.PsIssuer);
-                builder.UseSetting("Bookings:PersonServerEvaluators:0", "https://disabled.test");
+                for (var i = 0; i < evaluators.Length; i++)
+                    builder.UseSetting($"Bookings:PersonServerEvaluators:{i}", evaluators[i]);
                 builder.ConfigureServices(services =>
                 {
                     services.RemoveAll<MetadataClient>();
