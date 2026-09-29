@@ -531,7 +531,7 @@ Phase rule: caller's namespace only; no old issuer override or unknown-token 404
 - [x] Requests are `{jti, exp}` keyed by the verified caller; body `iss` is ignored and `unsupported_iss` is enforced.
 - [x] Every revocation endpoint rejects a request whose signature omits `content-digest` or `content-type`.
 - [ ] One accepted issuer cannot exceed its entry or rate bound without `429 rate_limited` and `Retry-After`.
-- [ ] The PS revokes a person token only at the Access Servers it was presented to, and the sample route uses those records.
+- [x] The PS revokes a person token only at the Access Servers it was presented to, and the sample route uses those records.
 
 ## Phase 8 - R3 execution, Catalog and Events
 

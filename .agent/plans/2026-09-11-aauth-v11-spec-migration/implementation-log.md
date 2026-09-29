@@ -698,6 +698,27 @@ this flow `DirectAs`".
 Evidence: Wallet e2e 9/9 passed, the snippet tests pass, and a grep finds no
 `DirectAs` or "direct-AS" in the samples, docs or tests.
 
+### [2026-09-28] [Phase 7] PS revokes only where a person token was presented (post-cutover item 9)
+
+RESOLVED. The SDK cascade already works this way: an auth token an AS issued
+against a PS person token is recorded as that token's grant. Revocation
+revokes the person token at each such AS once, and never at an AS with no
+record.
+
+The MockPersonServer demo route `/local/wallet/revoke` revoked at every
+configured Access Server instead. The sample now passes `TokenInventory` and
+revokes only at the trusted Access Servers recorded as issuers of the person
+token's grants.
+
+Evidence:
+
+- the SDK path: `ProviderRevoke_BlocksSourceAndCascadesExactIssuedOrProvidedGrants`
+  and `UpstreamRevocationCascadesToDownstreamGrant` (federated), which assert
+  exactly the AS revocations;
+- the sample route: Wallet e2e Revocation (9/9). The PS revocation's result
+  names the AS and its downstream Wallet. That result can only come from the
+  recorded presentation.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate

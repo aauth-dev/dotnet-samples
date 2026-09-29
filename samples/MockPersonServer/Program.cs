@@ -154,10 +154,12 @@ app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
 // skips signature verification for it.
 var browserConsent = new AAuth.Server.BrowserConsentSessions("AAuth.Person.Consent",
     builder.Configuration.GetValue<bool>("AAuth:EnableIsolatedDemoConsent") ? "isolated-person-demo" : null);
+var tokenInventory = new InMemoryJtiStore();
 app.MapAAuthPersonServer(new AAuthPersonServerOptions
 {
     EgressPolicy = SampleEgress.Policy,
     Issuer = psIssuer,
+    TokenInventory = tokenInventory,
     SigningKeys = new Dictionary<string, IAAuthKey> { [PsKid] = psKey },
     DefaultScope = PsScope,
     TrustedAccessServers = trustedAccessServers,
@@ -199,9 +201,12 @@ app.MapPost("/local/wallet/revoke", async (HttpContext context, MetadataClient m
     using var signed = new AAuthClientBuilder(psKey).UseJwksUri(psIssuer, AuthTokenBuilder.PersonDwk, PsKid)
         .WithEgressPolicy(SampleEgress.Policy).Build();
     var jti = (string)verified.Payload["jti"]!;
+    // Only the Access Servers this person token was presented to: each recorded an auth token as its grant.
+    var presentedTo = (await tokenInventory.GetGrantsAsync(new TokenKey(psIssuer, jti), context.RequestAborted))
+        .Select(grant => grant.Token.Issuer).Where(trustedAccessServers.Contains).Distinct(StringComparer.Ordinal);
     var results = new JsonArray();
     var recorded = true;
-    foreach (var accessServer in trustedAccessServers)
+    foreach (var accessServer in presentedTo)
     {
         var endpoint = (await metadata.FetchAccessServerMetadataAsync(accessServer, context.RequestAborted)).RevocationEndpoint;
         if (endpoint is null) { recorded = false; continue; }
