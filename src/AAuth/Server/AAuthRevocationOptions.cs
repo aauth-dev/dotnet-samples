@@ -39,6 +39,12 @@ public sealed class AAuthRevocationOptions
     public RevocationLimits? Limits { get; set; } = new();
 
     /// <summary>
+    /// How long to hold a revocation whose cascade is still running before answering <c>202</c>
+    /// with a pending URL. A caller's <c>Prefer: wait</c> can shorten it. Default 20 seconds.
+    /// </summary>
+    public TimeSpan DeferAfter { get; set; } = TimeSpan.FromSeconds(20);
+
+    /// <summary>
     /// Report the cascade in the <c>200</c> body's <c>downstream</c> array (an AS to a PS).
     /// A PS sets this to <see langword="false"/>: it answers an agent provider with an empty body.
     /// </summary>

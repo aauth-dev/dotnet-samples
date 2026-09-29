@@ -42,10 +42,32 @@ public sealed class RevocationClient
             Content = JsonContent.Create(new JsonObject { ["jti"] = jti, ["exp"] = expiresAt.ToUnixTimeSeconds() }),
         };
         request.Options.Set(HttpSig.AAuthSigningHandler.AdditionalComponentsKey, CoveredContent);
-        using var response = await AAuthHttpTransport.SendAsync(_signedHttp, request, cancellationToken);
-        var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        return Parse(response.StatusCode, response.Content.Headers.ContentType?.MediaType, body);
+        var response = await AAuthHttpTransport.SendAsync(_signedHttp, request, cancellationToken);
+        var deadline = DateTimeOffset.UtcNow + MaxPollDuration;
+        // A deferred recipient answers 202; poll its pending URL under the same identity.
+        while (response.StatusCode == HttpStatusCode.Accepted && response.Headers.Location is { } location)
+        {
+            var pendingUrl = new Uri(endpoint, location);
+            var delay = response.Headers.RetryAfter?.Delta ?? TimeSpan.Zero;
+            response.Dispose();
+            if (pendingUrl.GetLeftPart(UriPartial.Authority) != endpoint.GetLeftPart(UriPartial.Authority)
+                || DateTimeOffset.UtcNow + delay >= deadline)
+                return new() { StatusCode = HttpStatusCode.Accepted, Failure = RevocationDownstreamError.RevocationUnavailable };
+            if (delay > TimeSpan.Zero) await Task.Delay(delay, cancellationToken);
+            using var poll = new HttpRequestMessage(HttpMethod.Get, pendingUrl);
+            poll.Headers.TryAddWithoutValidation("Prefer",
+                $"wait={(int)Math.Clamp((deadline - DateTimeOffset.UtcNow).TotalSeconds, 1, 20)}");
+            response = await AAuthHttpTransport.SendAsync(_signedHttp, poll, cancellationToken);
+        }
+        using (response)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            return Parse(response.StatusCode, response.Content.Headers.ContentType?.MediaType, body);
+        }
     }
+
+    /// <summary>How long to keep polling a recipient that deferred with <c>202</c>. Default two minutes.</summary>
+    public TimeSpan MaxPollDuration { get; init; } = TimeSpan.FromMinutes(2);
 
     internal static RevocationResult Parse(HttpStatusCode status, string? mediaType, string body)
     {

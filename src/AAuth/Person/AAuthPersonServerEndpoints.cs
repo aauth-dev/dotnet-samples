@@ -248,7 +248,7 @@ public static class AAuthPersonServerEndpoints
         //    surfaces the PS declares (e.g. its own consent/admin page).
         app.UseWhen(
             ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
-                && ctx.Request.Path != options.RevocationPath
+                && !ctx.Request.Path.StartsWithSegments(options.RevocationPath)
                 && !ctx.Request.Path.StartsWithSegments(interactionPrefix)
                 && !unsignedPrefixes.Any(p => ctx.Request.Path.StartsWithSegments(p)),
             branch => branch.UseAAuthVerification(new AAuthVerificationOptions { EgressPolicy = options.EgressPolicy,

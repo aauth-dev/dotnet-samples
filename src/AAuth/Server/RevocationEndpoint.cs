@@ -61,6 +61,14 @@ public static class RevocationEndpoint
                     RequiredComponents = ["content-type", "content-digest"],
                     Clock = () => clock.GetUtcNow(),
                 }).InvokeAsync));
+        // Deferred-revocation polls are bodyless signed GETs.
+        app.UseWhen(context => context.Request.Path.StartsWithSegments(path.TrimEnd('/') + "/pending"), branch => branch.Use(next =>
+            new AAuthVerificationMiddleware(next, app.Services.GetService<AAuth.HttpSig.AAuthVerifier>() ?? new(),
+                resolver, metadata, jwks, new AAuthVerificationOptions
+                {
+                    EgressPolicy = egressPolicy, AcceptedSchemes = ["jwks_uri", "jwks", "self-jwt"],
+                    Clock = () => clock.GetUtcNow(),
+                }).InvokeAsync));
 
         async Task<RevocationDownstreamError?> RevokeAtAsync(TokenGrant grant, string recipientDwk, CancellationToken cancellationToken)
         {
@@ -122,6 +130,10 @@ public static class RevocationEndpoint
         var options = new AAuthRevocationOptions();
         configure?.Invoke(options);
         var limiter = options.Limits is { } limits ? new RevocationIssuerLimiter(limits, options.Clock) : null;
+        var pending = new RevocationPendingStore(options.Clock);
+        var stopping = endpoints.ServiceProvider.GetService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>()?.ApplicationStopping
+            ?? CancellationToken.None;
+        var pendingPath = path.TrimEnd('/') + "/pending";
 
         endpoints.MapPost(path, async (HttpContext context) =>
         {
@@ -185,6 +197,36 @@ public static class RevocationEndpoint
                 return Error(RevocationErrorCode.ServerError, "the revocation could not be recorded.");
             }
 
+            // A recipient with nothing downstream MUST NOT answer 202.
+            if ((await jtiStore.GetGrantsAsync(token, cancellationToken)).Count == 0)
+                return Results.Ok();
+            // The cascade outlives the request when it is deferred.
+            var cascade = CascadeAsync(token, expiresAt, stopping);
+            if (await HoldAsync(cascade, context, options.DeferAfter)) return await cascade;
+            return Pending(context, pendingPath + "/" + pending.Add(callerId, cascade));
+        }).WithMetadata(new AAuth.Server.Endpoints.AAuthEndpointRequirement
+        {
+            Mode = AAuthAccessMode.IdentityOnly,
+            AcceptedSchemes = ["jwt", "jwks_uri", "jwks", "self-jwt"],
+        });
+
+        // The poller signs a bodyless GET under the identity that made the revocation; any other gets 404.
+        endpoints.MapGet(pendingPath + "/{id}", async (HttpContext context, string id) =>
+        {
+            var verified = context.Features.Get<AAuthVerificationResult>();
+            var callerId = verified?.Scheme is "jwks_uri" or "jwks" or "self-jwt" ? verified.Issuer : null;
+            if (callerId is null || pending.Find(id, callerId) is not { } cascade)
+                return AAuthProblemDetails.Create("not_found", statusCode: StatusCodes.Status404NotFound);
+            if (await HoldAsync(cascade, context, options.DeferAfter)) return await cascade;
+            return Pending(context, pendingPath + "/" + id);
+        }).WithMetadata(new AAuth.Server.Endpoints.AAuthEndpointRequirement
+        {
+            Mode = AAuthAccessMode.IdentityOnly,
+            AcceptedSchemes = ["jwks_uri", "jwks", "self-jwt"],
+        });
+
+        async Task<IResult> CascadeAsync(TokenKey token, DateTimeOffset expiresAt, CancellationToken cancellationToken)
+        {
             var outcomes = new Dictionary<string, RevocationDownstreamError?>(StringComparer.Ordinal);
             var visited = new HashSet<TokenKey> { token };
             var federated = new HashSet<(TokenKey, string)>();
@@ -218,13 +260,34 @@ public static class RevocationEndpoint
                 downstream.Add(entry);
             }
             return Results.Json(new JsonObject { ["downstream"] = downstream }, statusCode: StatusCodes.Status200OK);
-        }).WithMetadata(new AAuth.Server.Endpoints.AAuthEndpointRequirement
-        {
-            Mode = AAuthAccessMode.IdentityOnly,
-            AcceptedSchemes = ["jwt", "jwks_uri", "jwks", "self-jwt"],
-        });
+        }
 
         return endpoints;
+    }
+
+    // Hold for the caller's Prefer: wait, capped at the recipient's own hold.
+    private static async Task<bool> HoldAsync(Task<IResult> cascade, HttpContext context, TimeSpan maximum)
+    {
+        var hold = PreferWait(context.Request.Headers["Prefer"].ToString()) is { } wait && wait < maximum ? wait : maximum;
+        try { await cascade.WaitAsync(hold, context.RequestAborted); return true; }
+        catch (TimeoutException) { return false; }
+    }
+
+    internal static TimeSpan? PreferWait(string prefer)
+    {
+        foreach (var preference in prefer.Split(',', StringSplitOptions.TrimEntries))
+            if (preference.StartsWith("wait=", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(preference.AsSpan(5), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+                return TimeSpan.FromSeconds(seconds);
+        return null;
+    }
+
+    private static IResult Pending(HttpContext context, string location)
+    {
+        context.Response.Headers.Location = location;
+        context.Response.Headers.RetryAfter = "0";
+        context.Response.Headers.CacheControl = "no-store";
+        return Results.Json(new JsonObject { ["status"] = "pending" }, statusCode: StatusCodes.Status202Accepted);
     }
 
     private static readonly TimeSpan ClockSkew = TimeSpan.FromMinutes(5);

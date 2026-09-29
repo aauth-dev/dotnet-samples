@@ -197,7 +197,7 @@ public static class AAuthAccessServerEndpoints
         //    endpoints carry no signature, so exclude them.
         app.UseWhen(
             ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
-                && ctx.Request.Path != options.RevocationPath
+                && !ctx.Request.Path.StartsWithSegments(options.RevocationPath)
                 && !ctx.Request.Path.StartsWithSegments(interactionPrefix),
             branch => branch.UseAAuthVerification(new AAuthVerificationOptions { EgressPolicy = options.EgressPolicy, AcceptedSchemes = ["jwks_uri"], Clock = () => options.TimeProvider.GetUtcNow() }));
 

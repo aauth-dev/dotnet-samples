@@ -157,6 +157,35 @@ public class RevocationLifecycleTests
         Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(await graph.GrantAsync(other, SecondResource, federated), SecondResource));
     }
 
+    [Fact(DisplayName = "§Token Revocation — a PS whose cascade outlasts its hold answers 202 and the revoker polls its pending URL to 200")]
+    public async Task SlowDownstream_PersonServerDefersAndCompletesOnPoll()
+    {
+        await using var graph = await Graph.CreateAsync();
+        var agent = graph.AgentToken(FirstProvider, "slow-agent");
+        await graph.GrantAsync(agent, FirstResource, false);
+        graph.Failing[FirstResource] = "slow";
+        using var ap = graph.Signed(FirstProvider, "aauth-agent.json");
+        using var request = new HttpRequestMessage(HttpMethod.Post, Person + "/revoke")
+        {
+            Content = JsonContent.Create(new JsonObject { ["jti"] = "slow-agent", ["exp"] = (long)Decode(agent)["exp"]! }),
+        };
+        request.Options.Set(AAuth.HttpSig.AAuthSigningHandler.AdditionalComponentsKey, ["content-type", "content-digest"]);
+
+        var response = await ap.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var pendingUrl = new Uri(new Uri(Person), response.Headers.Location!);
+        for (var attempt = 0; response.StatusCode == HttpStatusCode.Accepted && attempt < 20; attempt++)
+        {
+            response.Dispose();
+            response = await ap.GetAsync(pendingUrl);
+        }
+        Assert.True(response.StatusCode == HttpStatusCode.OK,
+            $"{(int)response.StatusCode} {response.Headers} {await response.Content.ReadAsStringAsync()}");
+        Assert.Contains(graph.Revocations, entry => entry.Resource == FirstResource);
+        response.Dispose();
+    }
+
     private const string Person = "https://person.example";
     private const string Access = "https://access.example";
     private const string FirstProvider = "https://first-ap.example";
@@ -386,6 +415,7 @@ public class RevocationLifecycleTests
             person.MapAAuthPersonServer(new AAuthPersonServerOptions
             {
                 EgressPolicy = TestEgress.Policy, Issuer = Person, TokenInventory = graph.PersonInventory,
+                ConfigureRevocation = revocation => revocation.DeferAfter = TimeSpan.FromMilliseconds(200),
                 SigningKeys = new Dictionary<string, IAAuthKey> { ["key"] = graph._keys[Person] },
             });
             person.MapAAuthGovernance(options => options.PersonServer = Person);
@@ -425,6 +455,7 @@ public class RevocationLifecycleTests
             {
                 if (context.Request.Path == "/revoke")
                 {
+                    if (Failing.GetValueOrDefault(issuer) == "slow") await Task.Delay(TimeSpan.FromSeconds(1));
                     if (Failing.GetValueOrDefault(issuer) == "unavailable")
                     {
                         context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;

@@ -20,6 +20,26 @@ public sealed class RevocationLimits
     public TimeSpan Window { get; set; } = TimeSpan.FromMinutes(1);
 }
 
+internal sealed class RevocationPendingStore(TimeProvider clock)
+{
+    private static readonly TimeSpan Retention = TimeSpan.FromMinutes(10);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Caller, System.Threading.Tasks.Task<Microsoft.AspNetCore.Http.IResult> Cascade, DateTimeOffset ExpiresAt)> _entries = new(StringComparer.Ordinal);
+
+    public string Add(string caller, System.Threading.Tasks.Task<Microsoft.AspNetCore.Http.IResult> cascade)
+    {
+        var now = clock.GetUtcNow();
+        foreach (var expired in _entries.Where(entry => entry.Value.ExpiresAt <= now).Select(entry => entry.Key).ToArray())
+            _entries.TryRemove(expired, out _);
+        var id = AAuth.Headers.InteractionCode.Generate(26);
+        _entries[id] = (caller, cascade, now + Retention);
+        return id;
+    }
+
+    public System.Threading.Tasks.Task<Microsoft.AspNetCore.Http.IResult>? Find(string id, string caller)
+        => _entries.TryGetValue(id, out var entry) && entry.Caller == caller && entry.ExpiresAt > clock.GetUtcNow()
+            ? entry.Cascade : null;
+}
+
 internal sealed class RevocationIssuerLimiter(RevocationLimits limits, TimeProvider clock)
 {
     private readonly object _gate = new();

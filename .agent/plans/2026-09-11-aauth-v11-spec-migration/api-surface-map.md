@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 144 changed public-source files, 260 added/replacement declarations, 139 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 144 changed public-source files, 262 added/replacement declarations, 139 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -1202,6 +1202,7 @@ Concept/decision: [revocation](#revocation). Source: [AAuthRevocationOptions.cs]
 + AAuth.Server.AAuthRevocationOptions: public Func < TokenGrant , CancellationToken , Task < RevocationDownstreamError ? > > ? RevokeGrantAsync { get ; set ; }
 + AAuth.Server.AAuthRevocationOptions: public Func < string , bool > ? IsAcceptedIssuer { get ; set ; }
 + AAuth.Server.AAuthRevocationOptions: public RevocationLimits ? Limits { get ; set ; } = new ( )
++ AAuth.Server.AAuthRevocationOptions: public TimeSpan DeferAfter { get ; set ; } = TimeSpan . FromSeconds ( 20 )
 + AAuth.Server.AAuthRevocationOptions: public TimeSpan MaxTokenLifetime { get ; set ; } = TimeSpan . FromHours ( 24 )
 + AAuth.Server.AAuthRevocationOptions: public bool ReportDownstream { get ; set ; } = true
 ```
@@ -1491,6 +1492,7 @@ Concept/decision: [revocation](#revocation). Source: [RevocationClient.cs](../..
 
 ```diff
 - AAuth.Server.RevocationClient: public async Task < HttpStatusCode > RevokeAsync ( Uri endpoint , TokenKey token , CancellationToken cancellationToken = default )
++ AAuth.Server.RevocationClient: public TimeSpan MaxPollDuration { get ; init ; } = TimeSpan . FromMinutes ( 2 )
 + AAuth.Server.RevocationClient: public async Task < RevocationResult > RevokeAsync ( Uri endpoint , string jti , DateTimeOffset expiresAt , CancellationToken cancellationToken = default )
 ```
 

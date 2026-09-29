@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using AAuth.Errors;
 using AAuth.HttpSig;
 using AAuth.Server;
 using AAuth.Server.Verification;
@@ -328,6 +329,75 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
         Assert.False(await _jtiStore.IsRevokedAsync(new TokenKey(ApIssuer, "rate-b")));
     }
 
+    [Fact(DisplayName = "§Token Revocation — a slow cascade answers 202; only the revoker's identity can poll, and the poll ends with the synchronous result")]
+    public async Task Revocation_SlowCascade_DefersAndOnlyTheRevokerPolls()
+    {
+        var release = new TaskCompletionSource<RevocationDownstreamError?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await StartDeferringHost(release, TimeSpan.FromMilliseconds(200));
+
+        using var deferred = await SendSignedRevoke("slow");
+
+        Assert.Equal(HttpStatusCode.Accepted, deferred.StatusCode);
+        var location = deferred.Headers.Location!.ToString();
+        Assert.StartsWith("/revoke/pending/", location);
+        Assert.Equal(TimeSpan.Zero, deferred.Headers.RetryAfter?.Delta);
+        Assert.True(deferred.Headers.CacheControl?.NoStore);
+        Assert.False(deferred.Headers.Contains("AAuth-Requirement"));
+        using (var agent = SignedClient(asAgent: true))
+            Assert.Equal(HttpStatusCode.NotFound, (await agent.GetAsync(location)).StatusCode);
+        using var revoker = SignedClient();
+        using (var stillPending = new HttpRequestMessage(HttpMethod.Get, location))
+        {
+            stillPending.Headers.TryAddWithoutValidation("Prefer", "wait=0");
+            Assert.Equal(HttpStatusCode.Accepted, (await revoker.SendAsync(stillPending)).StatusCode);
+        }
+
+        release.SetResult(null);
+        using var done = await revoker.GetAsync(location);
+
+        Assert.Equal(HttpStatusCode.OK, done.StatusCode);
+        Assert.Equal(new System.Collections.Generic.Dictionary<string, string?> { ["https://downstream.example"] = null },
+            Downstream(await done.Content.ReadFromJsonAsync<JsonObject>()));
+    }
+
+    [Fact(DisplayName = "§Token Revocation — a recipient with nothing downstream never answers 202")]
+    public async Task Revocation_NothingDownstream_NeverDefers()
+    {
+        await StartRevocationHost(options => { options.IsAcceptedIssuer = AAuthTrust.Any; options.DeferAfter = TimeSpan.Zero; });
+        Assert.Equal(HttpStatusCode.OK, (await SendSignedRevoke("lonely")).StatusCode);
+    }
+
+    [Fact(DisplayName = "§Token Revocation — RevocationClient polls a deferred recipient to its terminal result")]
+    public async Task RevocationClient_FollowsDeferredRecipient()
+    {
+        var release = new TaskCompletionSource<RevocationDownstreamError?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await StartDeferringHost(release, TimeSpan.FromMilliseconds(100));
+        using var signed = new AAuthClientBuilder(_apKey).UseJwksUri(ApIssuer, "aauth-agent.json", "ap-key-1")
+            .WithEgressPolicy(TestEgress.Policy)
+            .WithInnerHandler(_host!.GetTestServer().CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
+        _ = Task.Delay(TimeSpan.FromMilliseconds(400)).ContinueWith(_ => release.SetResult(RevocationDownstreamError.RevocationUnsupported));
+
+        var result = await new RevocationClient(signed).RevokeAsync(new Uri("http://localhost/revoke"), "slow", DateTimeOffset.UtcNow.AddMinutes(5));
+
+        Assert.Equal(HttpStatusCode.OK, result.StatusCode);
+        Assert.Null(result.Failure);
+        Assert.Equal(RevocationDownstreamError.RevocationUnsupported, Assert.Single(result.Downstream).Error);
+    }
+
+    private async Task StartDeferringHost(TaskCompletionSource<RevocationDownstreamError?> release, TimeSpan deferAfter)
+    {
+        await StartRevocationHost(options =>
+        {
+            options.IsAcceptedIssuer = AAuthTrust.Any;
+            options.DeferAfter = deferAfter;
+            options.RevokeGrantAsync = (_, _) => release.Task;
+        });
+        var source = new TokenKey(ApIssuer, "slow");
+        Assert.True(await _jtiStore.RegisterAsync(source, DateTimeOffset.UtcNow.AddMinutes(10)));
+        Assert.True(await _jtiStore.RegisterGrantAsync([source],
+            new TokenGrant(new TokenKey("https://self.example", "child"), "https://downstream.example", DateTimeOffset.UtcNow.AddMinutes(9))));
+    }
+
     [Fact(DisplayName = "§Token Revocation — a body 'iss' is ignored: the caller revokes only its own token")]
     public async Task Revocation_IssuerCannotRevokeOtherIssuerWithSameId()
     {
@@ -565,6 +635,14 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
 
     private async Task<HttpResponseMessage> PostSignedRevoke(HttpContent content, bool asAgent = false, bool coverContent = true)
     {
+        using var client = SignedClient(asAgent);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/revoke") { Content = content };
+        if (coverContent) request.Options.Set(AAuthSigningHandler.AdditionalComponentsKey, ["content-type", "content-digest"]);
+        return await client.SendAsync(request);
+    }
+
+    private HttpClient SignedClient(bool asAgent = false)
+    {
         var agentToken = new AgentTokenBuilder
         {
             EgressPolicy = TestEgress.Policy,
@@ -583,10 +661,7 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
         {
             InnerHandler = _host!.GetTestServer().CreateHandler(),
         };
-        using var client = new HttpClient(signing) { BaseAddress = new Uri("http://localhost") };
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/revoke") { Content = content };
-        if (coverContent) request.Options.Set(AAuthSigningHandler.AdditionalComponentsKey, ["content-type", "content-digest"]);
-        return await client.SendAsync(request);
+        return new HttpClient(signing) { BaseAddress = new Uri("http://localhost") };
     }
 
     private async Task<IHost> StartMetadataServer()

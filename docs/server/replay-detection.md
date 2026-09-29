@@ -150,6 +150,7 @@ in order:
 | The issuer is over its entry or rate bound | `429 Too Many Requests` (`rate_limited`) with `Retry-After` |
 | The revocation cannot be recorded (inventory full) | `500 Internal Server Error` (`server_error`) |
 | Recorded, seen or not, including repeated revocation | `200 OK` once every downstream revocation is terminal |
+| The cascade outlasts `DeferAfter` (default 20 s; `Prefer: wait` can shorten it) | `202 Accepted` with `Location: /revoke/pending/{id}`; the revoker polls it with a signed `GET` under the same identity (others get `404`) until the `200` |
 
 There is no "not found". A recipient that cascades reports each recipient it
 revoked at; `error` is present only when that revocation did not succeed:

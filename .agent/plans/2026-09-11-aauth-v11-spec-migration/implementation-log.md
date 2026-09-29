@@ -744,6 +744,45 @@ Evidence: `Revocation_EntryBound_IsRateLimited` and
 `Revocation_RateBound_IsRateLimited` (429 `rate_limited` with `Retry-After`,
 and the token is not recorded). Conformance 1168 passed.
 
+### [2026-09-29] [Phase 7] Deferred `202` revocation (post-cutover item 6)
+
+RESOLVED. Revocation follows L2728-L2730. When the cascade outlasts
+`AAuthRevocationOptions.DeferAfter` (default 20 s, which a caller's
+`Prefer: wait` can shorten), the recipient answers `202` with:
+
+- `Location: {path}/pending/{id}`;
+- `Retry-After: 0` and `Cache-Control: no-store`;
+- a `{"status":"pending"}` body and no `AAuth-Requirement`.
+
+The poll is a bodyless signed `GET`. Only the verified identity that made the
+revocation gets an answer; any other gets `404`. The terminal answer is what
+the synchronous path would have returned. A recipient with nothing downstream
+never answers `202`. The cascade runs on the host's stopping token, not on the
+aborted request.
+
+`RevocationClient` now follows a `202`. It polls the same-origin pending URL
+under its own signing identity, with `Prefer: wait`, until a terminal answer or
+`MaxPollDuration` (2 min). After that the downstream is
+`revocation_unavailable`.
+
+BUG found and fixed: the PS and AS agent-verification branches excluded only
+the exact revocation path, so a poll of `/revoke/pending/{id}` was verified as
+an agent request and got `unsupported_scheme`. Both now exclude by path
+prefix, and `MapAAuthIssuerRevocation` adds a verification branch for the
+pending route that requires no body components.
+
+Evidence:
+
+- `Revocation_SlowCascade_DefersAndOnlyTheRevokerPolls`: 202 headers; the
+  agent identity gets 404; `Prefer: wait=0` still gets 202; the terminal 200
+  carries `downstream`;
+- `Revocation_NothingDownstream_NeverDefers`;
+- `RevocationClient_FollowsDeferredRecipient`;
+- `SlowDownstream_PersonServerDefersAndCompletesOnPoll`, end to end through the
+  PS.
+
+Conformance 1172 passed.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate
