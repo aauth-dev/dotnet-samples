@@ -42,7 +42,7 @@ public static class GovernanceEndpoints
         }
         if (mission.State == MissionState.Terminated) return MissionTerminated();
         return mission.ExpiresAt is { } expiresAt && expiresAt <= DateTimeOffset.UtcNow
-            ? MissionTerminated("expired") : null;
+            ? MissionTerminated(AAuthConstants.MissionTerminationReasons.Expired) : null;
     }
 
     private static string? ReadMission(JsonObject body)

@@ -146,15 +146,15 @@ Cheap and isolated.
 
 ### Definition of Done
 
-- [ ] `MissionTerminationReasons` constants exist and are used at every
+- [x] `MissionTerminationReasons` constants exist and are used at every
       termination call site. No string literal `"expired"`/`"revoked"`/...
       remains (grep evidence in the log).
-- [ ] Tests: the constants match the spec table, and an unknown reason
+- [x] Tests: the constants match the spec table, and an unknown reason
       round-trips through `AAuthMissionTerminatedException`.
-- [ ] #199 labels are corrected in code comments and docs.
-- [ ] Dead `AddHttpClient()` calls are removed.
-- [ ] The PS well-known ruling is logged; the code is changed if applicable.
-- [ ] Gates pass.
+- [x] #199 labels are corrected in code comments and docs.
+- [x] Dead `AddHttpClient()` calls are removed.
+- [x] The PS well-known ruling is logged; the code is changed if applicable.
+- [x] Gates pass.
 
 ## Phase 2 — Shared options foundations (F-X2, F-X3, F-X4; Q1, Q13, Q14)
 

@@ -70,6 +70,28 @@ public class MissionTerminatedTests
         Assert.Equal("mission_terminated", new TokenErrorResponse(code).ErrorCode);
     }
 
+    [Fact(DisplayName = "§Mission Management — termination reason constants match the spec table")]
+    public void TerminationReasons_MatchSpecTable()
+    {
+        Assert.Equal("completed", AAuthConstants.MissionTerminationReasons.Completed);
+        Assert.Equal("revoked", AAuthConstants.MissionTerminationReasons.Revoked);
+        Assert.Equal("expired", AAuthConstants.MissionTerminationReasons.Expired);
+        Assert.Equal("superseded", AAuthConstants.MissionTerminationReasons.Superseded);
+        Assert.Equal("administrative", AAuthConstants.MissionTerminationReasons.Administrative);
+    }
+
+    [Fact(DisplayName = "§Mission Management — an unrecognized termination reason round-trips as an opaque value")]
+    public async Task UnknownTerminationReason_RoundTrips()
+    {
+        var client = BuildClient(new TerminatedHandler(deferUntilPoll: false, reason: "budget_exhausted"));
+
+        var ex = await Assert.ThrowsAsync<AAuthMissionTerminatedException>(() =>
+            client.ExchangeAsync(Ps, TestTokens.Resource, "presented.person.token"));
+
+        Assert.Equal("terminated", ex.MissionStatus);
+        Assert.Equal("budget_exhausted", ex.TerminationReason);
+    }
+
     /// <summary>
     /// PS mock that returns <c>403 mission_terminated</c> — either immediately on
     /// the token request, or after an interaction deferral on the polled pending URL.
@@ -77,7 +99,12 @@ public class MissionTerminatedTests
     private sealed class TerminatedHandler : HttpMessageHandler
     {
         private readonly bool _deferUntilPoll;
-        public TerminatedHandler(bool deferUntilPoll) => _deferUntilPoll = deferUntilPoll;
+        private readonly string _reason;
+        public TerminatedHandler(bool deferUntilPoll, string reason = AAuthConstants.MissionTerminationReasons.Expired)
+        {
+            _deferUntilPoll = deferUntilPoll;
+            _reason = reason;
+        }
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken ct)
@@ -111,12 +138,12 @@ public class MissionTerminatedTests
             return Task.FromResult(Terminated());
         }
 
-        private static HttpResponseMessage Terminated()
+        private HttpResponseMessage Terminated()
             => Json(HttpStatusCode.Forbidden, new JsonObject
             {
                 ["error"] = "mission_terminated",
                 ["mission_status"] = "terminated",
-                ["termination_reason"] = "expired",
+                ["termination_reason"] = _reason,
             });
 
         private static HttpResponseMessage Json(HttpStatusCode status, JsonObject body)

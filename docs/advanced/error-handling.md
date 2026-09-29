@@ -108,8 +108,8 @@ namespace AAuth.Errors;
 public enum TokenErrorCode
 {
     InvalidRequest,         // Malformed request body
-    InvalidAgentToken,      // Draft-10 code; removed at the draft-11 exchange cutover
-    ExpiredAgentToken,      // Draft-10 code; removed at the draft-11 exchange cutover
+    InvalidAgentToken,      // agent_token parameter; kept pending AAuth #199 interim ruling
+    ExpiredAgentToken,      // agent_token parameter; kept pending AAuth #199 interim ruling
     InvalidResourceToken,   // Resource token fails validation
     ExpiredResourceToken,   // Resource token exp has passed
     RevokedResourceToken,   // The issuing resource withdrew it; do not resubmit

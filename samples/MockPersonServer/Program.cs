@@ -43,7 +43,6 @@ var builder = WebApplication.CreateBuilder(args);
 var psKey = AAuthKey.Generate();
 const string PsKid = "ps-1";
 const string PsScope = "calendar.read";
-const string PsAdminScope = "calendar.write";
 // Demo identity claims the mock PS asserts about the user. A production PS
 // would resolve these from the signed-in user's directory entry. These let
 // the Calendar `/events/admin` (RBAC) endpoint succeed end-to-end.
@@ -133,24 +132,11 @@ builder.Services.AddAAuthFederation(psKey, psIssuer, PsKid);
 var app = builder.Build();
 
 // -----------------------------------------------------------------------
-// Well-known endpoints — served BEFORE the verification middleware so the
-// metadata document and JWKS are reachable without an AAuth signature.
+// Well-known endpoints: MapAAuthPersonServer (below) publishes the PS
+// metadata and JWKS before its verification middleware, so they are
+// reachable without an AAuth signature. The PS is not a resource, so it
+// publishes no aauth-resource.json.
 // -----------------------------------------------------------------------
-
-// JWKS (reused from the shared resource helper — same shape).
-app.MapAAuthResourceWellKnown(new AAuthResourceMetadataOptions
-{
-    EgressPolicy = SampleEgress.Policy,
-    Issuer = psIssuer,
-    Name = "Mock Person Server",
-    SigningKeys = new Dictionary<string, IAAuthKey> { [PsKid] = psKey },
-    ScopeDescriptions = new Dictionary<string, string>
-    {
-        [PsScope] = "Issue AAuth auth tokens for the Calendar",
-        [PsAdminScope] = "Issue elevated (write) AAuth auth tokens for the Calendar",
-    },
-    SignatureWindow = signatureWindowSeconds,
-});
 
 // Person Server token endpoint + pending polls + PS metadata, in one call. The
 // SDK owns verification, the three-/four-party mint, PS→AS federation, and the

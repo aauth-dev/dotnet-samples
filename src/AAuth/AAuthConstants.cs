@@ -75,6 +75,29 @@ public static class AAuthConstants
         public const string PerCall = "per-call";
     }
 
+    /// <summary>
+    /// Mission termination reasons (#mission-management). The set is open: a recipient
+    /// that does not recognize a reason keeps the <c>terminated</c> state and treats the
+    /// reason as an opaque audit value, so reasons stay plain strings.
+    /// </summary>
+    public static class MissionTerminationReasons
+    {
+        /// <summary>The person accepted the agent's completion proposal.</summary>
+        public const string Completed = "completed";
+
+        /// <summary>The person, the owning agent, or an authorized administrator withdrew the mission.</summary>
+        public const string Revoked = "revoked";
+
+        /// <summary>The mission reached its <c>expires_at</c>.</summary>
+        public const string Expired = "expired";
+
+        /// <summary>Another approved mission replaced this one.</summary>
+        public const string Superseded = "superseded";
+
+        /// <summary>An authorized administrator ended the mission under local policy.</summary>
+        public const string Administrative = "administrative";
+    }
+
     /// <summary>Token type (<c>typ</c> header) values.</summary>
     public static class TokenTypes
     {

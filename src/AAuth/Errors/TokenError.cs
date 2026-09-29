@@ -11,12 +11,13 @@ public enum TokenErrorCode
     InvalidRequest,
 
     /// <summary>
-    /// Draft-10 agent-token parameter failure. Draft-11 answers a failing agent
-    /// token with <c>Signature-Error</c>; the exchange cutover removes this code.
+    /// Agent-token parameter failure. Draft-11 answers a failing <c>Signature-Key</c>
+    /// agent token with <c>Signature-Error</c>; this code is kept for the AS/R3
+    /// <c>agent_token</c> parameter pending the AAuth #199 interim ruling.
     /// </summary>
     InvalidAgentToken,
 
-    /// <summary>Draft-10 agent-token parameter expiry; removed with <see cref="InvalidAgentToken"/>.</summary>
+    /// <summary>Agent-token parameter expiry; kept with <see cref="InvalidAgentToken"/> pending the AAuth #199 interim ruling.</summary>
     ExpiredAgentToken,
 
     /// <summary>Resource token malformed or signature verification failed.</summary>

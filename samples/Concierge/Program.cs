@@ -40,7 +40,6 @@ var agentId = builder.Configuration["AAuth:AgentId"] ?? "aauth:concierge@localho
 builder.Services.AddSingleton(conciergeKey);
 builder.Services.AddSingleton(new TokenVerifier { EgressPolicy = SampleEgress.Policy });
 builder.Services.AddSingleton<PendingStore>();
-builder.Services.AddHttpClient();
 
 // Resource role: verifier, discovery clients (pooled handler), JTI store, and the
 // published metadata — no manual HttpClient/discovery wiring.

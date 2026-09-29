@@ -429,7 +429,8 @@ public static class AAuthPersonServerEndpoints
         }
 
         static IReadOnlyList<TokenKey> Keys(IReadOnlyList<TokenRegistration> sources) => sources.Select(source => source.Token).ToArray();
-        IResult? MissionExpired(string? missionS256) => missionS256 is null ? null : GovernanceEndpoints.MissionTerminated("expired");
+        IResult? MissionExpired(string? missionS256) => missionS256 is null ? null
+            : GovernanceEndpoints.MissionTerminated(AAuthConstants.MissionTerminationReasons.Expired);
 
         // §Mission Status Errors: every mission_terminated carries mission_status,
         // and termination_reason when the PS knows it (the detail of its own throw).
@@ -823,7 +824,8 @@ public static class AAuthPersonServerEndpoints
                 throw new AAuthTokenExchangeException("mission_terminated", null, StatusCodes.Status403Forbidden, true);
             // The detail carries the termination_reason ExchangeFailure reports.
             if (stored.ExpiresAt is { } expiresAt && expiresAt.ToUnixTimeSeconds() <= options.TimeProvider.GetUtcNow().ToUnixTimeSeconds())
-                throw new AAuthTokenExchangeException("mission_terminated", "expired", StatusCodes.Status403Forbidden, true);
+                throw new AAuthTokenExchangeException("mission_terminated", AAuthConstants.MissionTerminationReasons.Expired,
+                    StatusCodes.Status403Forbidden, true);
             return stored;
         }
 

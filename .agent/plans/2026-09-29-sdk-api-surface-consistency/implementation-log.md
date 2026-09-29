@@ -194,6 +194,48 @@ PROCEEDED.
   `git show 0ba8f78:.agent/plans/2026-09-11-aauth-v11-spec-migration/api-surface-map.md`
   (160 files, +420/-154 declarations against `v0.10.0-alpha.1`).
 
+### [2026-09-29] [Phase 1] Constants, labels, dead code
+
+PROCEEDED.
+- **Termination reasons.** `AAuthConstants.MissionTerminationReasons` defines
+  `Completed`, `Revoked`, `Expired`, `Superseded` and `Administrative`
+  (v11 #mission-management L1522-L1526, verified with `sed -n`). The type
+  follows the `AccessModes` const convention, and `TerminationReason` stays
+  `string?`.
+  - The three SDK termination sites now use `Expired`:
+    - `GovernanceEndpoints`: the expired-mission check;
+    - `AAuthPersonServerEndpoints`: `MissionExpired`;
+    - `AAuthPersonServerEndpoints`: the stored-mission expiry throw.
+  - Grep evidence: `MissionTerminated("` and `"mission_terminated", "`
+    match only two doc comments in `src`. Samples never pass a reason;
+    MockPersonServer terminates without one.
+  - The other `"expired"`/`"revoked"` literals in `src` are error codes
+    (`AAuthProblemDetails`, `PollingError`, `DeferredState`), not
+    termination reasons.
+- **Tests.** `MissionTerminatedTests` gained:
+  - `TerminationReasons_MatchSpecTable`;
+  - `UnknownTerminationReason_RoundTrips` (`budget_exhausted` surfaces
+    unchanged on `AAuthMissionTerminatedException`).
+- **#199 labels.** `TokenError.cs` and `docs/advanced/error-handling.md` now
+  say the agent-token codes are kept for the AS/R3 `agent_token` parameter
+  pending the AAuth #199 interim ruling.
+- **Dead code.** The `AddHttpClient()` calls in `SampleApp/Program.cs` and
+  `Concierge/Program.cs` are deleted. Neither host nor any SDK registration
+  it uses resolves `IHttpClientFactory`.
+- **PS well-known ruling: unintended, removed.** MockPersonServer mapped
+  `MapAAuthResourceWellKnown` with calendar scope descriptions, but nothing
+  consumes `{ps}/.well-known/aauth-resource.json`. Test grep found only stub
+  resources (Wallet, Calendar) serving that path. `MapAAuthPersonServer`
+  already publishes `aauth-person.json` and the shared JWKS. The call and the
+  now-unused `PsAdminScope` constant are removed.
+- **Gates.**
+  - Build clean.
+  - Test projects: AAuth.Tests 1691, AAuth.Conformance 1256 (+2),
+    AAuth.R3.Tests 327, AAuth.Events.Tests 80.
+  - ApiSurface: +6 declarations.
+  - Docs inventory refreshed; e2e typecheck clean.
+  - Full Playwright: 78 passed, 1 skipped (Keycloak), `--retries=0`.
+
 ## Deviations from plan
 
 None yet.
