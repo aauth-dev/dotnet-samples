@@ -199,7 +199,11 @@ public static class ConsentDashboard
             ["action"] = record.Action,
             ["mission_s256"] = record.MissionS256,
             ["mission"] = record.MissionDescription,
-            ["external_url"] = record.ExternalInteractionUrl,
+            // The SDK egress policy already validated this relayed AS URL; only
+            // http(s) ever reaches an href.
+            ["external_url"] = Uri.TryCreate(record.ExternalInteractionUrl, UriKind.Absolute, out var external)
+                && (external.Scheme == Uri.UriSchemeHttps || external.Scheme == Uri.UriSchemeHttp)
+                ? record.ExternalInteractionUrl : null,
             ["created_at"] = record.CreatedAt,
             ["expires_at"] = record.ExpiresAt,
             ["decided_at"] = record.DecidedAt,

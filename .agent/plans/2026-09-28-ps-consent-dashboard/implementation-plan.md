@@ -358,9 +358,9 @@ for the SDK API surface plan:
 
 **Definition of Done**
 
-- [ ] Review completed. Every High or Medium finding is fixed or logged as a
+- [x] Review completed. Every High or Medium finding is fixed or logged as a
       ruling.
-- [ ] Final build and test status recorded in the log.
+- [x] Final build and test status recorded in the log.
 
 ## Out of scope
 

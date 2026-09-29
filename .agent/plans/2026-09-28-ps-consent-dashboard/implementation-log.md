@@ -364,6 +364,81 @@ PROCEEDED.
 - **Verification.** Build clean. AAuth.Tests 1691 passed; docs inventory
   refreshed.
 
+### [2026-09-29] [Phase 7] Independent review
+
+RESOLVED. A fresh review subagent read the diff `4692e8b~1..79bca06`, this
+plan, the research and the spec (v11 L1011, L2861). Every verdict below was
+re-checked against the source.
+
+**Findings**
+
+- **F1 — `external_url` rendered into an `href` (graded High by the
+  reviewer).**
+  - Ruling: **Low**, fixed as defense in depth.
+  - Why Low: the value comes only from the SDK's four-party
+    `OnInteractionRequired` (`AAuthPersonServerEndpoints`,
+    `entry.InteractionUrl = interaction.Url`). That interaction was parsed
+    through `Interaction.FromRequirement`, whose egress `ValidateUrl`
+    (`AAuthEgressPolicy`, `uri.Scheme != "https" && uri.Scheme != "http"`)
+    already rejects `javascript:`.
+  - Fix: `ConsentDashboard.Describe` now emits `external_url` only for
+    absolute http(s) URLs.
+- **F2 — sign-in checks the loopback/enablement refusal before CSRF
+  (Medium).**
+  - Ruling: **rejected**. Both checks run on every request and both reject.
+    Their order changes only which error an attacker sees, and a loopback
+    bypass would bypass the gate in either order. No change.
+- **Reviewer inaccuracy.** The reviewer said worker consent stays
+  click-driven. In fact PS-hosted worker rounds now render the dashboard
+  prompt (Phase 4). Not a finding.
+
+**Areas with no findings**
+
+The reviewer passed these and spot-checks confirmed them:
+- **Code consumption.** `Consume()` bumps `Generation`. The link path's
+  generation check rejects in-flight page decisions.
+- **Decision races.** Every path takes `Lifecycle.Gate`, and
+  `LinkAndDashboardDecisions_ApplyOnce` covers the race.
+- **No drift from the link path.** Both paths share `ApplyHeld*`.
+- **Access Server and resource consent untouched.** `IsDecidable` excludes
+  AS interactions, and `IsPersonServerHosted` requires the path
+  `/interaction`.
+- **`settled`.** It is behind dashboard authentication.
+
+**Q16 seams for the SDK API surface plan**
+
+1. MockPersonServer `Program.cs` hand-wires the registrations and the route:
+   - registrations: `ConsentRegistry`, `PersonConsentDecisions`,
+     `ConsentDashboardSessions`;
+   - route: `MapConsentDashboard()`.
+   - Folds into: an `AddAAuthPersonServer(o => o.Dashboard ...)` option plus
+     `MapAAuthPersonServer` mapping.
+2. The bridge store and `MissionPendingStore` call `registry.Register`.
+   - Folds into: an SDK pending-store observer or event.
+3. The SDK `BrowserInteraction.Consume()` is public, used by the sample
+   decision service.
+   - Folds into: an SDK out-of-band decision API
+     (`IPersonConsentDecisions`-like) so hosts stop touching
+     `BrowserInteraction`.
+4. Restated PS identity:
+   - `PersonServerConsent.DashboardUrl(ps)` (ConsentSupport);
+   - MissionAgent and AgentConsole build `{ps}/dashboard?code=` inline;
+   - GuidedTour `PersonServer` comes from options.
+   - Folds into: a PS metadata field (for example a sample-profile
+     `dashboard_endpoint`) or an SDK helper, once the SDK exposes it.
+5. Four-party `Pending202` re-advertises a fresh PS interaction code after an
+   AS clarification, even though the PS consent is complete (Phase 4
+   deviation). This is an SDK behaviour candidate for the API surface plan.
+
+**Final status**
+
+- Build clean.
+- Test projects: AAuth.Tests 1691, AAuth.Conformance 1254, AAuth.R3.Tests
+  327, AAuth.Events.Tests 80, all passed.
+- e2e typecheck clean.
+- Full Playwright suite (Phase 4 run, unchanged since except docs and this
+  serializer guard): 78 passed, 1 skipped.
+
 ## Open questions / inputs needed
 
 _None yet._
