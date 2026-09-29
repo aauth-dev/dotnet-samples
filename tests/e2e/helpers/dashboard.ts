@@ -19,6 +19,45 @@ export interface DashboardMatch {
 
 const dashboards = new WeakMap<BrowserContext, Page>();
 
+/**
+ * The primary action of the shared agent-side prompt (samples/ConsentSupport):
+ * the PS dashboard for PS-hosted consent, otherwise the Access Server or
+ * resource page.
+ */
+export const CONSENT_ACTION = '[data-consent-prompt] :is(a.ps-dashboard, a.ps-external-link)';
+
+/** The prompt's secondary per-request link (PS-hosted consent only). */
+export const CONSENT_DIRECT_LINK = '[data-consent-prompt] a.ps-direct-link';
+
+/** Whether a popup opened from a consent prompt is the PS dashboard. */
+export async function isDashboard(popup: Page): Promise<boolean> {
+  await popup.waitForLoadState('domcontentloaded');
+  return new URL(popup.url()).pathname === '/dashboard';
+}
+
+/** Sign in to a dashboard tab if its sign-in form is showing. */
+export async function signInToDashboard(page: Page): Promise<void> {
+  const signIn = page.locator('button.demo-login');
+  const heading = page.getByRole('heading', { name: 'Consent requests', exact: true });
+  await expect(signIn.or(heading).first()).toBeVisible({ timeout: 30_000 });
+  if (await signIn.isVisible()) await signIn.click();
+  await expect(heading).toBeVisible();
+}
+
+/**
+ * Decide the request a prompt deep-linked to (the `?code=` highlight) on a
+ * dashboard popup, then close it so the next prompt opens a fresh tab.
+ */
+export async function decideHighlighted(popup: Page, action: 'approve' | 'deny'): Promise<void> {
+  await signInToDashboard(popup);
+  const card = popup.locator('#pending article.card.highlight');
+  await expect(card.locator('button.' + action)).toBeVisible({ timeout: 30_000 });
+  const id = await card.getAttribute('data-id');
+  await popup.locator(`#pending article.card[data-id=${JSON.stringify(id)}] button.${action}`).click();
+  await expect(popup.locator(`#history article.card[data-id=${JSON.stringify(id)}]`)).toBeVisible();
+  await popup.close();
+}
+
 /** Open (or reuse) this context's dashboard tab, signing in once per context. */
 export async function openDashboard(context: BrowserContext, code?: string): Promise<Page> {
   let page = dashboards.get(context);
@@ -28,11 +67,7 @@ export async function openDashboard(context: BrowserContext, code?: string): Pro
   }
   const url = `${Urls.personServer}/dashboard${code ? '?code=' + encodeURIComponent(code) : ''}`;
   if (page.url() !== url) await page.goto(url);
-  const signIn = page.locator('button.demo-login');
-  const heading = page.getByRole('heading', { name: 'Consent requests', exact: true });
-  await expect(signIn.or(heading).first()).toBeVisible();
-  if (await signIn.isVisible()) await signIn.click();
-  await expect(heading).toBeVisible();
+  await signInToDashboard(page);
   return page;
 }
 

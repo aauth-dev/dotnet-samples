@@ -287,24 +287,16 @@ if (cancelBooking.IsGranted)
     </div>
 }
 
-@if (_waitingForApproval)
+@if (_waitingForApproval && _interaction is not null)
 {
     <div class="mt-3 alert alert-warning">
         <h5>User Approval Required — @_currentGate</h5>
         <p>
             The gates above have run in order. This one fell <strong>outside</strong> the
-            mission, so the Person Server returned <code>202 Accepted</code> and is waiting
-            for the user to approve before the flow continues.
+            mission, so the Person Server returned <code>202 Accepted</code>. The SDK is already
+            polling while it waits for your decision.
         </p>
-        <p>
-            <a class="btn btn-warning" href="@_interactionUrl" target="_blank" rel="noopener">Open mission approval page</a>
-        </p>
-        <p class="text-muted">
-            Open the link in a new tab and click <strong>Approve</strong>. The SDK is polling
-            the pending endpoint&hellip;
-            <span class="spinner-border spinner-border-sm" role="status"></span>
-            (@_pollCount polls)
-        </p>
+        <PersonServerApprovalPrompt PersonServer="@Config["AAuth:PersonServer"]" Interaction="_interaction" PollCount="_pollCount" />
     </div>
 }
 
@@ -321,7 +313,7 @@ if (cancelBooking.IsGranted)
     private bool _running;
     private bool _waitingForApproval;
     private string? _currentGate;
-    private string? _interactionUrl;
+    private Interaction? _interaction;
     private int _pollCount;
     private string? _resourceJson;
     private string? _error;
@@ -357,7 +349,7 @@ if (cancelBooking.IsGranted)
         _steps.Clear();
         _resourceJson = null;
         _error = null;
-        _interactionUrl = null;
+        _interaction = null;
         _waitingForApproval = false;
         _pollCount = 0;
 
@@ -621,7 +613,7 @@ if (cancelBooking.IsGranted)
     // Surface the PS interaction URL in the UI and start a poll counter.
     private async Task SurfaceInteractionAsync(Interaction interaction, CancellationToken ct)
     {
-        _interactionUrl = interaction.BuildUserUrl();
+        _interaction = interaction;
         _waitingForApproval = true;
         _pollCount = 0;
         _ = Task.Run(async () =>
@@ -639,7 +631,7 @@ if (cancelBooking.IsGranted)
     private void ClearWaiting()
     {
         _waitingForApproval = false;
-        _interactionUrl = null;
+        _interaction = null;
     }
 
     private async Task ConfigurePersonServerAsync(string personServer, string resourceOrigin)

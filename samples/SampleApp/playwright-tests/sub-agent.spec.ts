@@ -2,6 +2,7 @@ import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/blazor';
 import { completeWorkerConsent } from '../../../tests/e2e/helpers/worker-consent';
 import { Urls } from '../../../tests/e2e/helpers/agents';
+import { CONSENT_ACTION } from '../../../tests/e2e/helpers/dashboard';
 
 /**
  * Sub-Agents — parent-mediated workers. Unlike the other SampleApp pages this
@@ -26,7 +27,7 @@ test('sub-agent flow shows parent_agent and a worker-bound auth token', async ({
   // The flow list records each step of the parent-mediated exchange, including
   // the PS returning the token to the parent, the parent handing it down, and
   // the sub-agent calling the resource itself.
-  await completeWorkerConsent(page, '.alert-warning a', async () => (await page.locator('.list-group-item').count()) === 7);
+  await completeWorkerConsent(page, `.alert-warning ${CONSENT_ACTION}`, async () => (await page.locator('.list-group-item').count()) === 7);
   await expect(page.locator('.list-group-item')).toHaveCount(7);
   await expect(page.getByText('PS returns the AS auth token to the parent')).toBeVisible();
   await expect(page.getByText('Parent hands the token to the worker')).toBeVisible();

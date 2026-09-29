@@ -16,7 +16,8 @@ public sealed class CatalogDemoSession(string provider, string person, string re
     public int Step { get; private set; }
     public string Service { get; set; } = "destinations";
     public string OtherService => Service == "destinations" ? "experiences" : "destinations";
-    public string? ConsentUrl { get; private set; }
+    public Interaction? Consent { get; private set; }
+    public string? ConsentUrl => Consent?.BuildUserUrl();
     public string? Result { get; private set; }
     public Func<Task>? Changed { get; set; }
     public List<ScenarioExchange> Exchanges { get; } = [];
@@ -66,7 +67,7 @@ public sealed class CatalogDemoSession(string provider, string person, string re
         var exchange = new TokenExchangeClient(signed, metadata);
         async Task Surface(Interaction interaction, CancellationToken _)
         {
-            ConsentUrl = interaction.BuildUserUrl();
+            Consent = interaction;
             if (Changed is not null) await Changed();
         }
         string grant;
@@ -92,7 +93,7 @@ public sealed class CatalogDemoSession(string provider, string person, string re
         }
         finally
         {
-            ConsentUrl = null;
+            Consent = null;
             if (Changed is not null) await Changed();
         }
         Result = ScenarioWireHandler.Claims(grant).ToJsonString(WalletDemoSession.Pretty);

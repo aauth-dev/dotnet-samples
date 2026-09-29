@@ -3,6 +3,7 @@ import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/
 import { readResponseJson, expectStatus } from '../../../tests/e2e/helpers/json';
 import { grantConsent, approveInPopup, directedSubject } from '../../../tests/e2e/helpers/consent';
 import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
+import { CONSENT_ACTION } from '../../../tests/e2e/helpers/dashboard';
 
 /**
  * Call Chain — multi-hop delegation Agent → Concierge → Calendar, asserting the
@@ -29,7 +30,7 @@ test('the page resets standing consent so both hops still prompt', async ({ page
   await expect(page.locator('h2')).toContainText('Call Chain');
   await waitForInteractive(page, 'button.btn-primary');
 
-  const link = page.locator('a.btn[href*="/interaction"][target="_blank"]');
+  const link = page.locator(CONSENT_ACTION);
   const heading = page.locator('.alert .badge', { hasText: /Approval/ });
 
   // First click on a cold circuit can be dropped — confirm hop 1 surfaced. The

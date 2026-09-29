@@ -5,6 +5,10 @@
 @using System.Text.Json
 @using AAuth.Samples.Shared
 @inject IConfiguration Configuration
+
+@code {
+    private string PersonServerUrl => Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
+}
 @implements IDisposable
 
 <section class="catalog-view" aria-label="Catalog walkthrough" data-step="@_session.Step">
@@ -38,7 +42,11 @@
             <img src="_content/EventSupport/rotate-ccw.svg" width="18" height="18" alt="" />
         </button>
     </div>
-    @if (_session.ConsentUrl is { } consent) { <a class="catalog-consent" href="@consent" target="_blank" rel="noopener">Review catalog authorization</a> }
+    @if (_session.Consent is { } consent)
+    {
+        <ConsentSupport.PersonServerApprovalPrompt PersonServer="@PersonServerUrl" Interaction="consent" LinkClass="catalog-consent"
+                                                   ExternalLabel="Review catalog authorization" />
+    }
     @if (_error is not null) { <p role="alert">@_error</p> }
     <ol class="catalog-steps" aria-label="Protocol steps">
         @for (var index = 0; index < CatalogDemoSession.Steps.Length; index++)

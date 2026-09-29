@@ -121,20 +121,16 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
 {
     <div class="mt-3 alert alert-warning">
         <h5>@(IsPersonConsent ? "Person Server Consent Required" : "Access Server Interaction Required")</h5>
-        <ConsentProgress ConsentPath="@(IsPersonConsent ? "/interaction" : "/interaction/login")" />
+        <ConsentProgress Dashboard="IsPersonConsent" ConsentPath="@(IsPersonConsent ? "/interaction" : "/interaction/login")" />
         <p>
             The current authority is waiting for authenticated consent. PS consent
             is evaluated before federation; an AS interaction can follow independently.
         </p>
-        <p>
-            <a class="btn btn-warning" href="@_interactionUrl" target="_blank" rel="noopener">@(IsPersonConsent ? "Open Person Server consent page" : "Open Access Server interaction")</a>
-        </p>
-        <p class="text-muted">
-            Open the link above in a new tab and complete the login / consent.
-            The SDK is polling the pending endpoint in the background&hellip;
-            <span class="spinner-border spinner-border-sm" role="status"></span>
-            (@_pollCount polls)
-        </p>
+        @if (_interaction is not null)
+        {
+            <PersonServerApprovalPrompt PersonServer="@Config["AAuth:PersonServer"]" Interaction="_interaction" PollCount="_pollCount"
+                                        ExternalLabel="Open Access Server interaction" />
+        }
     </div>
 }
 
@@ -161,6 +157,7 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
     private bool _loading;
     private bool _waitingForApproval;
     private string? _interactionUrl;
+    private AAuth.Headers.Interaction? _interaction;
     private int _pollCount;
     private string? _response;
     private string? _error;
@@ -207,6 +204,7 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
                     opts.OnInteractionRequired = async (interaction, ct) =>
                     {
                         _interactionUrl = interaction.BuildUserUrl();
+                        _interaction = interaction;
                         _waitingForApproval = true;
                         await InvokeAsync(StateHasChanged);
                     };

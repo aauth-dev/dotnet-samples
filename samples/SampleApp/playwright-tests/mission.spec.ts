@@ -2,6 +2,7 @@ import type { Page, BrowserContext } from '@playwright/test';
 import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/blazor';
 import { approveInPopup, denyInPopup } from '../../../tests/e2e/helpers/consent';
+import { CONSENT_ACTION } from '../../../tests/e2e/helpers/dashboard';
 
 /**
  * Mission (PS-Governed) — the Person Server is the policy-enforcement point for
@@ -33,7 +34,7 @@ test.describe('Mission (SampleApp)', () => {
 
   /** The PS consent link surfaced while a gate is parked on user approval. */
   function approvalLink(page: Page) {
-    return page.locator('.alert-warning a[target="_blank"]');
+    return page.locator(`.alert-warning ${CONSENT_ACTION}`);
   }
 
   /** A gate-outcome card by its 1-based gate number (cards render in order). */

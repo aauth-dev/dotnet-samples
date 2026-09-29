@@ -177,21 +177,15 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
     </div>
 }
 
-@if (_waitingForApproval)
+@if (_waitingForApproval && _interaction is not null)
 {
     <div class="mt-3 alert alert-warning">
         <h5>User Approval Required — @_currentGate</h5>
         <p>
             This step fell <strong>outside</strong> the mission, so the Person Server returned
-            <code>202 Accepted</code> and is waiting for the user to approve before the flow continues.
+            <code>202 Accepted</code>. The SDK is already polling while it waits for your decision.
         </p>
-        <p>
-            <a class="btn btn-warning" href="@_interactionUrl" target="_blank" rel="noopener">Open mission approval page</a>
-        </p>
-        <p class="text-muted">
-            Open the link in a new tab and click <strong>Approve</strong>. The SDK is polling&hellip;
-            <span class="spinner-border spinner-border-sm" role="status"></span>
-        </p>
+        <PersonServerApprovalPrompt PersonServer="@Config["AAuth:PersonServer"]" Interaction="_interaction" />
     </div>
 }
 
@@ -238,7 +232,7 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
     private bool _running;
     private bool _waitingForApproval;
     private string? _currentGate;
-    private string? _interactionUrl;
+    private Interaction? _interaction;
     private string? _clarification;
     private string? _clarificationAnswer;
     private IReadOnlyList<LogEntry>? _missionLog;
@@ -464,7 +458,7 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
             })
             .WithInteractionHandling(opts =>
             {
-                opts.OnInteractionRequired = (userUrl, code, ct) => SurfaceInteraction(userUrl, ct);
+                opts.OnInteractionRequired = (userUrl, code, ct) => SurfaceInteraction(PersonServerConsent.FromUserUrl(userUrl, code), ct);
                 opts.PollingTimeout = TimeSpan.FromMinutes(2);
                 opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
             })
@@ -524,11 +518,11 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
         => _ = SurfaceClarificationAsync(question);
 
     private async Task SurfaceInteractionAsync(Interaction interaction, CancellationToken ct)
-        => await SurfaceInteraction(interaction.BuildUserUrl(), ct);
+        => await SurfaceInteraction(interaction, ct);
 
-    private async Task SurfaceInteraction(string userUrl, CancellationToken ct)
+    private async Task SurfaceInteraction(Interaction interaction, CancellationToken ct)
     {
-        _interactionUrl = userUrl;
+        _interaction = interaction;
         _waitingForApproval = true;
         // Surface the approval banner with a single render. We deliberately do
         // NOT spin up a per-second "poll count" timer here: while the user is in
@@ -544,7 +538,7 @@ var response = await chain.GetAsync($"{concierge}/mission");</code></pre>
     private void ClearWaiting()
     {
         _waitingForApproval = false;
-        _interactionUrl = null;
+        _interaction = null;
     }
 
     private async Task ConfigurePersonServerAsync(

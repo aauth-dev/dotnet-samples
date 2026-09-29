@@ -142,7 +142,7 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
     </p>
 }
 
-@if (_waitingForApproval)
+@if (_waitingForApproval && _interaction is not null)
 {
     @* Hop 1 = blue (primary), Hop 2 = purple-ish (info) so the two distinct
        approvals are visually obvious. *@
@@ -153,24 +153,11 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
             </span>
             @_currentHop
         </h5>
-        <p>A <code>202 Accepted</code> was returned and is waiting for you to approve.</p>
-        <p>
-            <a class="btn btn-warning" href="@_interactionUrl" target="_blank" rel="noopener">Open consent page for approval @_currentHopNumber</a>
-        </p>
-        <p class="text-muted">
-            Open the link above in a new tab and click <strong>Approve</strong>.
-            @if (_currentHopNumber == 1)
-            {
-                <text>Then come back — a <strong>second</strong> approval (hop 2) will appear here.</text>
-            }
-            else
-            {
-                <text>This is the <strong>second and final</strong> approval; the chain completes after it.</text>
-            }
-            The SDK is polling in the background&hellip;
-            <span class="spinner-border spinner-border-sm" role="status"></span>
-            (@_pollCount polls)
-        </p>
+        <p>A <code>202 Accepted</code> was returned and the SDK is already polling for your decision.</p>
+        <PersonServerApprovalPrompt PersonServer="@Config["AAuth:PersonServer"]" Interaction="_interaction!" PollCount="_pollCount"
+                                    Lead="@(_currentHopNumber == 1
+                                        ? $"Approval {_currentHopNumber} of 2. Decide it on your Person Server; a second approval (hop 2) follows."
+                                        : $"Approval {_currentHopNumber} of 2, the last one. The chain completes after it.")" />
     </div>
 }
 
@@ -203,7 +190,7 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
 
     private bool _loading;
     private bool _waitingForApproval;
-    private string? _interactionUrl;
+    private AAuth.Headers.Interaction? _interaction;
     private string? _currentHop;
     private int _currentHopNumber;
     private readonly List<string> _approvedHops = new();
@@ -224,7 +211,7 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
         _response = null;
         _error = null;
         _waitingForApproval = false;
-        _interactionUrl = null;
+        _interaction = null;
         _currentHop = null;
         _currentHopNumber = 0;
         _approvedHops.Clear();
@@ -253,7 +240,7 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
             // Surfaces a consent URL to the UI. Hop 1 (PS exchange 202) arrives
             // via the challenge pipeline; hop 2 (the Concierge's chained 202)
             // arrives via the top-level interaction pipeline. Both funnel here.
-            async Task SurfaceInteraction(string userUrl)
+            async Task SurfaceInteraction(AAuth.Headers.Interaction interaction)
             {
                 if (_currentHop is not null)
                 {
@@ -264,7 +251,7 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
                 _currentHop = hopIndex == 1
                     ? "Hop 1: Agent → Concierge (concierge)"
                     : "Hop 2: Concierge → Calendar (calendar.read, chained)";
-                _interactionUrl = userUrl;
+                _interaction = interaction;
                 _waitingForApproval = true;
                 await InvokeAsync(StateHasChanged);
             }
@@ -279,14 +266,14 @@ app.MapGet("/", async (HttpContext ctx, PendingStore pending) =&gt;
                 .WithChallengeHandling(opts =>
                 {
                     opts.OnInteractionRequired = (interaction, ct) =>
-                        SurfaceInteraction(interaction.BuildUserUrl());
+                        SurfaceInteraction(interaction);
                     opts.PollingTimeout = TimeSpan.FromMinutes(2);
                     opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
                 })
                 .WithInteractionHandling(opts =>
                 {
                     opts.OnInteractionRequired = (userUrl, code, ct) =>
-                        SurfaceInteraction(userUrl);
+                        SurfaceInteraction(PersonServerConsent.FromUserUrl(userUrl, code));
                     opts.PollingTimeout = TimeSpan.FromMinutes(2);
                     opts.DefaultPollInterval = TimeSpan.FromSeconds(1);
                 })

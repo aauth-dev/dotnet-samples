@@ -1,6 +1,7 @@
 import { APIRequestContext, Page, expect } from '@playwright/test';
 import { Agents, Urls } from './agents';
 import { createHash } from 'node:crypto';
+import { decideHighlighted, isDashboard, signInToDashboard } from './dashboard';
 
 export function directedSubject(resource: string): string {
   return createHash('sha256').update('isolated-demo-person\0' + resource).digest('hex');
@@ -81,21 +82,24 @@ export async function resetConsent(request: APIRequestContext): Promise<void> {
   }
 }
 
-/** On the PS interaction popup, click Approve. */
+/** On the PS interaction popup (or the PS dashboard it deep-linked to), approve. */
 export async function approveInPopup(popup: Page): Promise<void> {
+  if (await isDashboard(popup)) return decideHighlighted(popup, 'approve');
   await authenticateConsent(popup);
   await popup.locator('button.approve').click();
   await popup.getByText('Approved', { exact: false }).first().waitFor();
 }
 
-/** On the PS interaction popup, click Deny. */
+/** On the PS interaction popup (or the PS dashboard it deep-linked to), deny. */
 export async function denyInPopup(popup: Page): Promise<void> {
+  if (await isDashboard(popup)) return decideHighlighted(popup, 'deny');
   await authenticateConsent(popup);
   await popup.locator('button.deny').click();
   await popup.getByText('Denied', { exact: false }).first().waitFor();
 }
 
 export async function authenticateConsent(popup: Page): Promise<void> {
+  if (await isDashboard(popup)) return signInToDashboard(popup);
   let state = 'pending';
   await expect.poll(async () => {
     if (await popup.locator('button.demo-login, button.approve').first().isVisible()) return state = 'ready';

@@ -3,6 +3,7 @@
     <Project Path="samples/AgentConsole/AgentConsole.csproj" />
     <Project Path="samples/CapabilitySupport/CapabilitySupport.csproj" />
     <Project Path="samples/Concierge/Concierge.csproj" />
+    <Project Path="samples/ConsentSupport/ConsentSupport.csproj" />
     <Project Path="samples/EventAgent/EventAgent.csproj" />
     <Project Path="samples/EventSupport/EventSupport.csproj" />
     <Project Path="samples/GuidedTour/GuidedTour.csproj" />

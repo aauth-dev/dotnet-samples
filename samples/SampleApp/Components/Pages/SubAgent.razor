@@ -125,12 +125,13 @@ var authToken = await exchange.ExchangeAsync(
     @(_loading ? "Running..." : "Run the parent-mediated sub-agent flow")
 </button>
 
-@if (_interactionUrl is not null && _loading)
+@if (_interaction is not null && _loading)
 {
     <div class="alert alert-warning mt-3">
         <h5>Consent Required</h5>
         <p>The parent-mediated exchange is paused until you complete the current consent step.</p>
-        <a class="btn btn-warning" href="@_interactionUrl" target="_blank" rel="noopener">Open consent page</a>
+        <PersonServerApprovalPrompt PersonServer="@(Config["AAuth:PersonServer"] ?? "http://localhost:5100")" Interaction="_interaction"
+                                    ExternalLabel="Open Access Server consent page" />
     </div>
 }
 
@@ -200,19 +201,20 @@ var authToken = await exchange.ExchangeAsync(
     private string? _authClaims;
     private bool _cnfBound;
     private string? _error;
-    private string? _interactionUrl;
+    private AAuth.Headers.Interaction? _interaction;
     private string? _resourceResponse;
 
     private async Task RunLiveDemo()
     {
         _loading = true;
         _steps.Clear();
-        _error = _subAgentClaims = _authClaims = _resourceResponse = _interactionUrl = null;
+        _error = _subAgentClaims = _authClaims = _resourceResponse = null;
+        _interaction = null;
         using var flow = new FederatedWorkerScenario(_identity.Key, _identity.KeyId, _identity.Issuer,
             Config["AAuth:PersonServer"] ?? "http://localhost:5100", Config["AAuth:Wallet"] ?? "http://localhost:5003");
         flow.OnInteraction = async (interaction, _) =>
         {
-            _interactionUrl = interaction.BuildUserUrl();
+            _interaction = interaction;
             await InvokeAsync(StateHasChanged);
         };
         try

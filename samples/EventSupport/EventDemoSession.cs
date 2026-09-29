@@ -30,7 +30,8 @@ public sealed class EventDemoSession : IDisposable
     public bool Protected { get; set; } = true;
     public int Step { get; private set; }
     public string? Eid { get; private set; }
-    public string? ConsentUrl { get; private set; }
+    public AAuth.Headers.Interaction? Consent { get; private set; }
+    public string? ConsentUrl => Consent?.BuildUserUrl();
     public List<EventDemoEvidence> Evidence { get; } = [];
     public string? Payload { get; private set; }
     public string? Context { get; private set; }
@@ -82,7 +83,7 @@ public sealed class EventDemoSession : IDisposable
                         using var client = new AAuthClientBuilder(_key).WithEgressPolicy(AAuthHttpTransport.GetPolicy(_http)).UseJwt(_agentToken!)
                             .WithChallengeHandling(_person, options => options.OnInteractionRequired = async (interaction, _) =>
                             {
-                                ConsentUrl = interaction.BuildUserUrl();
+                                Consent = interaction;
                                 if (Changed is not null) await Changed();
                             }).Build();
                         using var search = new HttpRequestMessage(HttpMethod.Get, _resource + "/search_availability?account=" + Uri.EscapeDataString(Account));
@@ -95,7 +96,7 @@ public sealed class EventDemoSession : IDisposable
                     }
                     finally
                     {
-                        ConsentUrl = null;
+                        Consent = null;
                         if (Changed is not null) await Changed();
                     }
                 }

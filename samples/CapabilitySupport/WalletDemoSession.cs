@@ -24,7 +24,8 @@ public sealed class WalletDemoSession(string provider, string person, string wal
     public WalletFlow Flow { get; set; }
     public int Step { get; private set; }
     public string? Agent { get; private set; }
-    public string? ConsentUrl { get; private set; }
+    public Interaction? Consent { get; private set; }
+    public string? ConsentUrl => Consent?.BuildUserUrl();
     public string? Question { get; private set; }
     public bool Cancelled { get; private set; }
     public string? Result { get; private set; }
@@ -56,7 +57,7 @@ public sealed class WalletDemoSession(string provider, string person, string wal
                 try { _authToken = await ExchangeAsync(cancellationToken); }
                 catch (AAuthClarificationCancelledException)
                 {
-                    Cancelled = true; Question = null; ConsentUrl = null;
+                    Cancelled = true; Question = null; Consent = null;
                     Result = "Request cancelled. No auth token was issued.";
                     return;
                 }
@@ -121,7 +122,7 @@ public sealed class WalletDemoSession(string provider, string person, string wal
                 PresentedToken = _personToken,
                 OnInteractionRequired = async (interaction, _) =>
                 {
-                    ConsentUrl = interaction.BuildUserUrl();
+                    Consent = interaction;
                     if (Changed is not null) await Changed();
                 },
                 OnClarificationRequired = async (question, token) =>
@@ -137,7 +138,7 @@ public sealed class WalletDemoSession(string provider, string person, string wal
         }
         finally
         {
-            ConsentUrl = null;
+            Consent = null;
             if (Changed is not null) await Changed();
         }
         Result = ScenarioWireHandler.Claims(result).ToJsonString(Pretty);
@@ -164,14 +165,14 @@ public sealed class WalletDemoSession(string provider, string person, string wal
                     {
                         OnInteractionRequired = async (interaction, _) =>
                         {
-                            ConsentUrl = interaction.BuildUserUrl();
+                            Consent = interaction;
                             if (Changed is not null) await Changed();
                         },
                     }, cancellationToken);
             }
             finally
             {
-                ConsentUrl = null;
+                Consent = null;
                 if (Changed is not null) await Changed();
             }
         }
@@ -190,9 +191,9 @@ public sealed class WalletDemoSession(string provider, string person, string wal
         using var client = new AAuthClientBuilder(_key).UseJwt(_authToken!).WithEgressPolicy(SampleEgress.Policy)
             .WithInteractionHandling(options =>
             {
-                options.OnInteractionRequired = async (url, _, _) =>
+                options.OnInteractionRequired = async (url, code, _) =>
                 {
-                    ConsentUrl = url;
+                    Consent = ConsentSupport.PersonServerConsent.FromUserUrl(url, code);
                     if (Changed is not null) await Changed();
                 };
                 options.PollingTimeout = TimeSpan.FromMinutes(2);
@@ -208,7 +209,7 @@ public sealed class WalletDemoSession(string provider, string person, string wal
         }
         finally
         {
-            ConsentUrl = null;
+            Consent = null;
             if (Changed is not null) await Changed();
         }
     }

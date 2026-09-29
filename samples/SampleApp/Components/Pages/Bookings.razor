@@ -151,17 +151,15 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
 {
     <div class="mt-3 alert alert-warning">
         <h5>@(IsPersonConsent ? "Person Server Consent Required" : "Per-call Approval Required")</h5>
-        <ConsentProgress ConsentPath="@(IsPersonConsent ? "/interaction" : "/interaction/consent")" DecisionPath="@(IsPersonConsent ? "/interaction/approve" : "/interaction/consent")" />
+        <ConsentProgress Dashboard="IsPersonConsent" ConsentPath="@(IsPersonConsent ? "/interaction" : "/interaction/consent")" DecisionPath="@(IsPersonConsent ? "/interaction/approve" : "/interaction/consent")" />
         <p>
             @(IsPersonConsent ? "The Person Server is waiting for consent before federation." : "The R3 Access Server is waiting for approval of this specific reservation.")
         </p>
-        <p>
-            <a class="btn btn-warning" href="@_interactionUrl" target="_blank" rel="noopener">@(IsPersonConsent ? "Open Person Server consent page" : "Open per-call approval page")</a>
-        </p>
-        <p class="text-muted">
-            The SDK is polling in the background&hellip;
-            <span class="spinner-border spinner-border-sm" role="status"></span>
-        </p>
+        @if (_interaction is not null)
+        {
+            <PersonServerApprovalPrompt PersonServer="@Config["AAuth:PersonServer"]" Interaction="_interaction"
+                                        ExternalLabel="Open per-call approval page" />
+        }
     </div>
 }
 
@@ -189,6 +187,7 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
     private bool _waitingForApproval;
     private bool IsPersonConsent => _interactionUrl?.StartsWith(Config["AAuth:PersonServer"]!.TrimEnd('/') + "/", StringComparison.Ordinal) == true;
     private string? _interactionUrl;
+    private AAuth.Headers.Interaction? _interaction;
     private string? _response;
     private string? _error;
     private string? _statusCode;
@@ -292,6 +291,7 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
                     opts.OnInteractionRequired = async (interaction, _) =>
                     {
                         _interactionUrl = interaction.BuildUserUrl();
+                        _interaction = interaction;
                         _waitingForApproval = true;
                         await InvokeAsync(StateHasChanged);
                     };

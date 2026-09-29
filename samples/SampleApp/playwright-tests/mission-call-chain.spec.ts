@@ -3,6 +3,7 @@ import { test, expect } from '../../../tests/e2e/helpers/fixtures';
 import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/blazor';
 import { approveInPopup, directedSubject } from '../../../tests/e2e/helpers/consent';
 import { Urls } from '../../../tests/e2e/helpers/agents';
+import { CONSENT_ACTION } from '../../../tests/e2e/helpers/dashboard';
 
 /**
  * Mission Call Chain (SampleApp) — one human-approved mission governs three
@@ -26,7 +27,7 @@ test.describe('Mission Call Chain (SampleApp)', () => {
 
   /** The PS consent link surfaced while a step is parked on user approval. */
   function approvalLink(page: Page) {
-    return page.locator('.alert-warning a[target="_blank"]');
+    return page.locator(`.alert-warning ${CONSENT_ACTION}`);
   }
 
   /** A step-outcome card by its 1-based number (cards render in order). */

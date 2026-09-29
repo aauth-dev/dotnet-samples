@@ -4,6 +4,7 @@ import { readResponseJson, expectStatus } from '../../../tests/e2e/helpers/json'
 import { keycloakLogin } from '../../../tests/e2e/helpers/consent';
 import { Agents, Urls } from '../../../tests/e2e/helpers/agents';
 import { approvePersonConsent } from '../../../tests/e2e/helpers/consent';
+import { CONSENT_ACTION } from '../../../tests/e2e/helpers/dashboard';
 
 /**
  * Federated (four-party) — interactive Keycloak path.
@@ -31,11 +32,11 @@ test.describe('Federated (interactive Keycloak)', () => {
 
     // The PS consent link comes first (draft-11 person token and consent), then
     // the same element carries the AS interaction URL.
-    const link = page.locator('a.btn[target="_blank"][href*="/interaction"]');
+    const link = page.locator(CONSENT_ACTION);
     await clickAndConfirm(page, 'button.btn-primary', () => link.isVisible());
     await expect(link).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator('.spinner-border')).toBeVisible();
-    await approvePersonConsent(page, 'a[target="_blank"][href*="/interaction"]');
+    await expect(page.locator('.ps-spinner')).toBeVisible();
+    await approvePersonConsent(page, CONSENT_ACTION);
     await expect(link).toHaveAttribute('href', /localhost:5500/);
 
     // The interaction URL is the AS login-start → Keycloak OIDC login.

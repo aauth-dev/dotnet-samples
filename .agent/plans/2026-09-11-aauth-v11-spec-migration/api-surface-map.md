@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 158 changed public-source files, 401 added/replacement declarations, 149 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 160 changed public-source files, 413 added/replacement declarations, 153 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -91,7 +91,10 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [CatalogDemoSession
 
 ```diff
 - AAuth.Samples.Capabilities.CatalogDemoSession: public static string [  ] Steps { get ; } = [ "Discover catalog services" , "Authorize selected service" , "Read selected catalog" , "Reject a sibling-service grant" , "Authorize sibling and recover" ]
+- AAuth.Samples.Capabilities.CatalogDemoSession: public string ? ConsentUrl { get ; private set ; }
++ AAuth.Samples.Capabilities.CatalogDemoSession: public Interaction ? Consent { get ; private set ; }
 + AAuth.Samples.Capabilities.CatalogDemoSession: public static string [  ] Steps { get ; } = [ "Discover catalog definition" , "Authorize selected operation" , "Read selected catalog" , "Reject a sibling-operation grant" , "Authorize sibling and recover" ]
++ AAuth.Samples.Capabilities.CatalogDemoSession: public string ? ConsentUrl
 ```
 
 Public owners: `AAuth.Samples.Capabilities.CatalogDemoSession`, `AAuth.Samples.Capabilities`.
@@ -100,7 +103,11 @@ Public owners: `AAuth.Samples.Capabilities.CatalogDemoSession`, `AAuth.Samples.C
 
 Concept/decision: [sample-runtime](#sample-runtime). Source: [DocumentDemoSession.cs](../../../samples/CapabilitySupport/DocumentDemoSession.cs).
 
-Public signatures unchanged (10); behavior reviewed under sample-runtime.
+```diff
+- AAuth.Samples.Capabilities.DocumentDemoSession: public string ? ConsentUrl { get ; private set ; }
++ AAuth.Samples.Capabilities.DocumentDemoSession: public Interaction ? Consent { get ; private set ; }
++ AAuth.Samples.Capabilities.DocumentDemoSession: public string ? ConsentUrl
+```
 
 Public owners: `AAuth.Samples.Capabilities.DocumentDemoSession`, `AAuth.Samples.Capabilities`.
 
@@ -109,7 +116,10 @@ Public owners: `AAuth.Samples.Capabilities.DocumentDemoSession`, `AAuth.Samples.
 Concept/decision: [sample-runtime](#sample-runtime). Source: [WalletDemoSession.cs](../../../samples/CapabilitySupport/WalletDemoSession.cs).
 
 ```diff
+- AAuth.Samples.Capabilities.WalletDemoSession: public string ? ConsentUrl { get ; private set ; }
 - AAuth.Samples.Capabilities.WalletFlow: DirectAs
++ AAuth.Samples.Capabilities.WalletDemoSession: public Interaction ? Consent { get ; private set ; }
++ AAuth.Samples.Capabilities.WalletDemoSession: public string ? ConsentUrl
 + AAuth.Samples.Capabilities.WalletFlow: AsGrantChaining
 ```
 
@@ -221,6 +231,19 @@ Public signatures unchanged (1); behavior reviewed under sample-runtime.
 
 Public owners: `Concierge`.
 
+### samples/ConsentSupport/PersonServerConsent.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [PersonServerConsent.cs](../../../samples/ConsentSupport/PersonServerConsent.cs).
+
+```diff
++ ConsentSupport.PersonServerConsent: public static Interaction FromUserUrl ( string userUrl , string code )
++ ConsentSupport.PersonServerConsent: public static bool IsPersonServerHosted ( string ? personServer , Interaction interaction )
++ ConsentSupport.PersonServerConsent: public static string DashboardUrl ( string personServer , string ? code = null )
++ ConsentSupport: public static class PersonServerConsent
+```
+
+Public owners: `ConsentSupport.PersonServerConsent`, `ConsentSupport`.
+
 ### samples/EventSupport/BookingsEvents.cs
 
 Concept/decision: [sample-runtime](#sample-runtime). Source: [BookingsEvents.cs](../../../samples/EventSupport/BookingsEvents.cs).
@@ -228,6 +251,18 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [BookingsEvents.cs]
 Public signatures unchanged (6); behavior reviewed under sample-runtime.
 
 Public owners: `AAuth.Samples.Events.BookingsEvents`, `AAuth.Samples.Events`.
+
+### samples/EventSupport/EventDemoSession.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [EventDemoSession.cs](../../../samples/EventSupport/EventDemoSession.cs).
+
+```diff
+- AAuth.Samples.Events.EventDemoSession: public string ? ConsentUrl { get ; private set ; }
++ AAuth.Samples.Events.EventDemoSession: public AAuth . Headers . Interaction ? Consent { get ; private set ; }
++ AAuth.Samples.Events.EventDemoSession: public string ? ConsentUrl
+```
+
+Public owners: `AAuth.Samples.Events.EventDemoSession`, `AAuth.Samples.Events`.
 
 ### samples/EventSupport/SqliteEventStore.cs
 

@@ -3,6 +3,7 @@ import { waitForInteractive, clickAndConfirm } from '../../../tests/e2e/helpers/
 import { readResponseJson, expectStatus, expectError } from '../../../tests/e2e/helpers/json';
 import { approveInPopup, denyInPopup, directedSubject } from '../../../tests/e2e/helpers/consent';
 import { Urls } from '../../../tests/e2e/helpers/agents';
+import { CONSENT_ACTION } from '../../../tests/e2e/helpers/dashboard';
 
 /**
  * Call Chain (deferred) — genuine Interaction Chaining with two human consent
@@ -28,7 +29,7 @@ test.describe('Call Chain (deferred)', () => {
     await expect(page.locator('h2')).toContainText('Call Chain');
     await waitForInteractive(page, 'button.btn-primary');
 
-    const link = page.locator('a.btn[href*="/interaction"][target="_blank"]');
+    const link = page.locator(CONSENT_ACTION);
     const heading = page.locator('.alert .badge', { hasText: /Approval/ });
 
     // First click on a cold circuit can be dropped — confirm hop 1 surfaced.
@@ -37,7 +38,7 @@ test.describe('Call Chain (deferred)', () => {
     // --- Hop 1: Agent → Concierge (concierge) ---
     await expect(heading).toContainText('Approval 1 of 2', { timeout: 30_000 });
     await expect(link).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator('.spinner-border')).toBeVisible();
+    await expect(page.locator('.ps-spinner')).toBeVisible();
 
     const [popup1] = await Promise.all([
       context.waitForEvent('page'),
@@ -92,7 +93,7 @@ test.describe('Call Chain (deferred)', () => {
     await page.goto('/call-chain');
     await waitForInteractive(page, 'button.btn-primary');
 
-    const link = page.locator('a.btn[href*="/interaction"][target="_blank"]');
+    const link = page.locator(CONSENT_ACTION);
     const heading = page.locator('.alert .badge', { hasText: /Approval/ });
 
     await clickAndConfirm(page, 'button.btn-primary', () => link.isVisible());

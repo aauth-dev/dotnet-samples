@@ -1,21 +1,12 @@
 <ol class="consent-progress" aria-label="Consent state" data-consent-stage="decision-pending">
     <li>Authorization request verified</li>
-    <li aria-current="step">Authenticated browser decision pending</li>
+    <li aria-current="step">Authenticated decision pending (agent already polling)</li>
     <li>Owner-bound delivery pending</li>
 </ol>
 <details>
     <summary>Browser and pending exchange</summary>
-    <pre><code class="language-http">GET @(ConsentPath)?code=...
-Sign in with the configured identity
-302 Location: @(ConsentPath)?session=...
-POST @(DecisionPath)/approve
-Content-Type: application/x-www-form-urlencoded
-
-session=...&amp;csrf=...
-
-GET /pending/... (signed by the original owner and key)
-200 (one delivery), 403 (denied), or 408 (expired)
-Subsequent polls: 410 Gone</code></pre>
+    @* highlight.js rewrites the code element, so re-create it rather than diff inside it. *@
+    <pre @key="Exchange"><code class="language-http">@Exchange</code></pre>
 </details>
 
 <style>
@@ -27,4 +18,25 @@ Subsequent polls: 410 Gone</code></pre>
 @code {
     [Parameter] public string ConsentPath { get; set; } = "/interaction";
     [Parameter] public string DecisionPath { get; set; } = "/interaction";
+
+    /// <summary>Whether the Person Server dashboard can decide this request.</summary>
+    [Parameter] public bool Dashboard { get; set; } = true;
+
+    private string Exchange =>
+        (Dashboard
+            ? "Dashboard (all your pending requests):\n"
+              + "GET /dashboard?code=...          sign in; this request is highlighted\n"
+              + "POST /dashboard/requests/{id}/approve\n"
+              + "X-CSRF-Token: ...\n\n"
+              + "Or this one request:\n"
+            : "")
+        + $"GET {ConsentPath}?code=...\n"
+        + "Sign in with the configured identity\n"
+        + $"302 Location: {ConsentPath}?session=...\n"
+        + $"POST {DecisionPath}/approve\n"
+        + "Content-Type: application/x-www-form-urlencoded\n\n"
+        + "session=...&csrf=...\n\n"
+        + "GET /pending/... (signed by the original owner and key, polled from the start)\n"
+        + "200 (one delivery), 403 (denied), or 408 (expired)\n"
+        + "Subsequent polls: 410 Gone";
 }

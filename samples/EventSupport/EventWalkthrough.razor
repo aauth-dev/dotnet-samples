@@ -4,6 +4,10 @@
 @using Microsoft.Extensions.Configuration
 @using AAuth.Samples.Shared
 @inject IConfiguration Configuration
+
+@code {
+    private string PersonServerUrl => Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
+}
 @implements IDisposable
 
 <section class="events-view" aria-label="Events walkthrough" data-step="@_session.Step" data-channel="@(_session.Protected ? "protected" : "public")">
@@ -48,11 +52,12 @@
             <img src="_content/EventSupport/rotate-ccw.svg" width="18" height="18" alt="" />
         </button>
     </div>
-    @if (_session.ConsentUrl is { } consent)
+    @if (_session.Consent is { } consent)
     {
         <aside class="events-consent" role="status">
             <h2>Person Server consent</h2>
-            <a class="events-consent-action" href="@consent" target="_blank" rel="noopener">Open account authorization</a>
+            <ConsentSupport.PersonServerApprovalPrompt PersonServer="@PersonServerUrl" Interaction="consent" LinkClass="events-consent-action"
+                                                       ExternalLabel="Open account authorization" />
         </aside>
     }
     @if (_error is not null)

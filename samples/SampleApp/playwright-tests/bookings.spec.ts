@@ -4,6 +4,7 @@ import { readResponseJson, expectStatus } from '../../../tests/e2e/helpers/json'
 import { approveInPopup, denyInPopup, authenticateConsent } from '../../../tests/e2e/helpers/consent';
 import { Urls } from '../../../tests/e2e/helpers/agents';
 import { approvePersonConsent } from '../../../tests/e2e/helpers/consent';
+import { CONSENT_ACTION } from '../../../tests/e2e/helpers/dashboard';
 
 /**
  * Rich Resource Requests (R3) — four-party, Bookings resource.
@@ -33,8 +34,8 @@ test.describe('Rich Resource Requests (R3)', () => {
       await expect(page.locator('#bookings-account')).toHaveAttribute('data-account', 'personal', { timeout: 2_000 });
     }).toPass({ timeout: 20_000 });
     await clickAndConfirm(page, 'button.btn-primary', async () =>
-      (await page.locator('a[target="_blank"][href*="/interaction"], div.alert-danger').count()) > 0);
-    await approvePersonConsent(page, 'a[target="_blank"][href*="/interaction"]');
+      (await page.locator(`${CONSENT_ACTION}, div.alert-danger`).count()) > 0);
+    await approvePersonConsent(page, CONSENT_ACTION);
     await expectStatus(page, 200, 60_000);
     const personal = await readResponseJson(page) as Record<string, unknown>;
     expect(personal.account).toBe('personal');
@@ -44,7 +45,7 @@ test.describe('Rich Resource Requests (R3)', () => {
     await expectStatus(page, 401);
     await expect(page.locator('div.alert-danger')).toHaveCount(0);
     await page.getByRole('button', { name: 'Search availability (r3_granted)', exact: true }).click();
-    const link = page.locator('a[target="_blank"][href*="/interaction"]');
+    const link = page.locator(CONSENT_ACTION);
     await expect(link).toBeVisible();
     const [denial] = await Promise.all([context.waitForEvent('page'), link.click()]);
     await authenticateConsent(denial);
@@ -54,7 +55,7 @@ test.describe('Rich Resource Requests (R3)', () => {
     await expect(page.locator('div.alert-danger')).toContainText(/denied/i);
 
     await page.getByRole('button', { name: 'Search availability (r3_granted)', exact: true }).click();
-    await approvePersonConsent(page, 'a[target="_blank"][href*="/interaction"]');
+    await approvePersonConsent(page, CONSENT_ACTION);
     await expectStatus(page, 200, 60_000);
     const work = await readResponseJson(page) as Record<string, unknown>;
     expect(work.account).toBe('work');
@@ -77,9 +78,9 @@ test.describe('Rich Resource Requests (R3)', () => {
     await clickAndConfirm(
       page,
       'button.btn-primary',
-      async () => (await page.locator('a[target="_blank"][href*="/interaction"], pre code.language-json, div.alert-danger').count()) > 0,
+      async () => (await page.locator(`${CONSENT_ACTION}, pre code.language-json, div.alert-danger`).count()) > 0,
     );
-    await approvePersonConsent(page, 'a[target="_blank"][href*="/interaction"]');
+    await approvePersonConsent(page, CONSENT_ACTION);
 
     await expect(page.locator('div.alert-danger')).toHaveText([]);
     await expectStatus(page, 200, 60_000);
@@ -104,13 +105,13 @@ test.describe('Rich Resource Requests (R3)', () => {
     // resource challenges the concrete call with a per-call proposal carrying the
     // parameters (r3 §Per-Call Proposals); the R3 Access Server then asks the user to
     // approve that specific reservation. The SampleApp surfaces the R3 AS interaction URL.
-    const link = page.locator('a.btn[href*="/interaction"][target="_blank"]');
+    const link = page.locator(CONSENT_ACTION);
     await clickAndConfirm(page, 'button.btn-outline-primary', async () =>
       await link.isVisible() || await page.locator('div.alert-danger').isVisible());
     await expect(page.locator('div.alert-danger')).toHaveText([]);
     await expect(link).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator('.spinner-border')).toBeVisible();
-    await approvePersonConsent(page, 'a[target="_blank"][href*="/interaction"]');
+    await expect(page.locator('.ps-spinner')).toBeVisible();
+    await approvePersonConsent(page, CONSENT_ACTION);
     await expect(link).toHaveAttribute('href', /localhost:5501/);
 
     // The interaction URL is the R3 Access Server's own per-call consent screen.

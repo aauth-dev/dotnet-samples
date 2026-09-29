@@ -248,6 +248,30 @@ PROCEEDED.
   - "Delivered" is jargon.
   - Pending cards show no expiry.
 
+### [2026-09-29] [Phase 3] Agent-side prompt details
+
+PROCEEDED.
+- **References.** `ConsentSupport` is referenced once, from EventSupport.
+  CapabilitySupport, SampleApp and GuidedTour reach it transitively, which
+  avoids four duplicate references.
+- **Interaction, not URL.** Pages and walkthrough sessions store the
+  `Interaction`. Callbacks that only receive a built URL (CallChain hop 2,
+  the Wallet raw challenge path) recover it with
+  `PersonServerConsent.FromUserUrl`.
+- **Named target.** The dashboard button opens in the named window
+  `aauth-ps-dashboard`, so repeated prompts reuse one dashboard tab.
+- **E2E helpers.** `approveInPopup`, `denyInPopup` and `authenticateConsent`
+  detect a dashboard popup and decide the highlighted card. Existing specs
+  therefore exercise the dashboard with no per-spec branching. The specs
+  select the prompt through `CONSENT_ACTION`.
+- **Fix.** `ConsentProgress` first rendered its code sample with a
+  conditional block inside `<pre><code>`. highlight.js rewrites that element,
+  so the Blazor diff crashed the circuit (`removeChild` of null) when the
+  authority changed mid-flow (bookings and federated PS-to-AS). The sample is
+  now one keyed string.
+- **Verification.** Full Playwright suite: 75 passed and 2 failed before the
+  fix. The two failing specs passed after it.
+
 ## Open questions / inputs needed
 
 _None yet._

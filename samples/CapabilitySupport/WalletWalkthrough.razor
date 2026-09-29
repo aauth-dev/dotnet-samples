@@ -5,6 +5,10 @@
 @using System.Text.Json
 @using AAuth.Samples.Shared
 @inject IConfiguration Configuration
+
+@code {
+    private string PersonServerUrl => Configuration["AAuth:PersonServer"] ?? "http://localhost:5100";
+}
 @implements IDisposable
 
 <section class="wallet-walkthrough" aria-label="Wallet protocol walkthrough" data-step="@_session.Step" data-flow="@_session.Flow">
@@ -49,9 +53,12 @@
             <button @onclick="_session.Cancel">Cancel request</button>
         </section>
     }
-    @if (_session.ConsentUrl is { } consent)
+    @if (_session.Consent is { } consent)
     {
-        <aside role="status"><a class="wallet-consent" href="@consent" target="_blank" rel="noopener">Review authorization</a></aside>
+        <aside role="status">
+            <ConsentSupport.PersonServerApprovalPrompt PersonServer="@PersonServerUrl" Interaction="consent" LinkClass="wallet-consent"
+                                                       ExternalLabel="Review authorization" />
+        </aside>
     }
     @if (_error is not null) { <p role="alert">@_error</p> }
     @if (_session.Cancelled) { <p role="status" data-testid="wallet-cancelled">Request cancelled. No auth token was issued.</p> }

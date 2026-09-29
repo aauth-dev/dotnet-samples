@@ -17,7 +17,8 @@ public sealed class DocumentDemoSession(string provider, string person, string r
     private string? _authToken;
     public int Step { get; private set; }
     public bool Denied { get; private set; }
-    public string? ConsentUrl { get; private set; }
+    public Interaction? Consent { get; private set; }
+    public string? ConsentUrl => Consent?.BuildUserUrl();
     public string? Result { get; private set; }
     public Func<Task>? Changed { get; set; }
     public List<ScenarioExchange> Exchanges { get; } = [];
@@ -69,14 +70,14 @@ public sealed class DocumentDemoSession(string provider, string person, string r
                             Account = "work",
                             OnInteractionRequired = async (interaction, _) =>
                             {
-                                ConsentUrl = interaction.BuildUserUrl();
+                                Consent = interaction;
                                 if (Changed is not null) await Changed();
                             },
                         }, cancellationToken);
                         Result = ScenarioWireHandler.Claims(_authToken).ToJsonString(WalletDemoSession.Pretty);
                     }
                     catch (AAuthInteractionDeniedException) { Denied = true; }
-                    finally { ConsentUrl = null; }
+                    finally { Consent = null; }
                 }
                 break;
             case 3:

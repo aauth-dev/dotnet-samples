@@ -249,10 +249,10 @@ decision flows through one service. There is no user-visible change.
 
 **Definition of Done**
 
-- [ ] `ConsentSupport` builds and is referenced by the four projects.
-- [ ] Every PS-hosted consent surface in SampleApp and the shared walkthroughs
+- [x] `ConsentSupport` builds and is referenced by the four projects.
+- [x] Every PS-hosted consent surface in SampleApp and the shared walkthroughs
       uses the prompt component. AS- and resource-hosted surfaces are unchanged.
-- [ ] Migrated SampleApp E2E specs are green, plus direct-link and
+- [x] Migrated SampleApp E2E specs are green, plus direct-link and
       stale-link specs.
 
 ## Phase 4 — GuidedTour: poll on arrival, "Run all" continues
