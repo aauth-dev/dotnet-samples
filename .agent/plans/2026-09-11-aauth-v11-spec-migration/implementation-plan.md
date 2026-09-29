@@ -1,18 +1,17 @@
 ---
-description: Proposed phased SDK, API, sample and docs migration to published AAuth draft-11.
+description: Completed phased SDK, API, sample and docs migration to published AAuth draft-11.
 ---
 
 # Implementation plan - AAuth draft-11
 
 Created 2026-09-11 against the draft-11 WIP; retargeted 2026-09 to the published
 draft. Companion to [research.md](research.md), based on SDK
-`94576a3ebcba8cd1d167923e50c8796132057600`. Implementation was authorized on
-2026-09-28 and is in progress on `wip/aauth-draft-11`; decisions and evidence
-are in [implementation-log.md](implementation-log.md). A box is ticked only when
-a named, passing test or gate backs it. The SDK and both apps now run the
-draft-11 identity model, exchange and revocation contracts. The open boxes, and
-the post-cutover items added to Phases 3 and 5-10, are what remains before
-[closing out the plan](#closing-out-the-plan).
+`94576a3ebcba8cd1d167923e50c8796132057600`. Status: **complete** (2026-09-29, on
+`wip/aauth-draft-11`; not pushed or released). Implementation was authorized on
+2026-09-28. Decisions and evidence are in [implementation-log.md](implementation-log.md),
+whose closure entry records the final gates. A box is ticked only when a named,
+passing test or gate backs it. Every phase's Definition of Done is ticked, and
+the SDK and both apps target draft-11.
 
 ## Target pins
 
@@ -660,7 +659,7 @@ Phase rule: fresh spec-grounded review; no implicit acceptance of unresolved tru
 - [x] No unresolved P1/P2 findings remain in claimed supported scope.
 - [x] Each finding is fixed with rerun evidence or explicitly excluded by approval.
 - [x] Q1-Q14 and subsequent ambiguities have current recorded dispositions.
-- [ ] Final maps, ledger/log and release/browser evidence match the actual source.
+- [x] Final maps, ledger/log and release/browser evidence match the actual source.
 - [x] External limits and published-draft target language remain accurate.
 
 ## Closing out the plan

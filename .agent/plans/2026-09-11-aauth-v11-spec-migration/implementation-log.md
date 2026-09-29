@@ -1,12 +1,11 @@
 ---
-description: Seeded decision gate for the AAuth draft-11 migration; implementation has not begun.
+description: Decisions, evidence and closure record for the completed AAuth draft-11 migration.
 ---
 
 # Implementation log - AAuth draft-11
 
-Append-only log. Research defaults do not grant implementation authorization.
-No SDK runtime gates have been run for this initiative. Prior plans and existing
-vendoring changes remain intact.
+Append-only log. Status: **complete** (2026-09-29); see the closure entry at the
+end of "Decisions taken". Earlier entries keep their original context.
 
 ## Decisions taken
 
@@ -1624,6 +1623,45 @@ would orphan users' existing demo keys (Q12: no destructive reset).
 
 AAuth issue #199 remains the only open upstream question, under its interim
 ruling.
+
+### [2026-09-29] [Closure] Draft-11 migration complete
+
+Every phase's Definition of Done is ticked. Final gates were run on a clean
+tree at `815b1dd`, with `git status` empty before and after:
+
+- Release build: 0 warnings, 0 errors.
+- Tests: AAuth.Tests 1678, Conformance 1254, R3 327 and Events 80, all
+  passing. AAuth.Tests includes `Documentation_FrozenSurface`, so the docs
+  inventory is current (174 files, 662 blocks).
+- `tools/ApiSurface`: current, with 153 changed public-source files and 0
+  unmapped.
+- `npm --prefix tests/e2e run typecheck`: clean.
+- Full Playwright run, stub profile, both apps, `--retries=0`: 76 passed and
+  1 skipped (the Keycloak-gated spec).
+- Keycloak 26.0 profile (federated and Wallet specs, `KEYCLOAK_E2E=1`,
+  `--retries=0`): 13 passed at the Phase 11 commit.
+
+Exclusions:
+
+- Budgets (F22).
+- R3 release gating: unsupported, and it fails closed.
+- `accept_signature_algs` advertisement (PS-05, RS-04, AP-06, AS-03).
+- `aauth-resource` links (RS-04, AG-03).
+- A dedicated person-identity mode helper (RS-13).
+- `termination_reason` values other than `expired` (PS-90, partial).
+- Delayed verification and hosted child provisioning.
+- X.509 and cached carriers, and third-party login hosting.
+
+Deployment responsibilities: production stores, including `IMissionStore`
+timing equivalence; admission and transport policy; and platform attestation.
+
+Not run: external interop against third-party draft-11 deployments.
+
+Open upstream question: AAuth issue #199 (AS verification of `agent_token`),
+under its interim ruling.
+
+Nothing has been pushed, tagged or released. That needs separate
+authorization.
 
 ## Open questions
 
