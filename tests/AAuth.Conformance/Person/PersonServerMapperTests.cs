@@ -11,6 +11,7 @@ using AAuth.Discovery;
 using AAuth.Headers;
 using AAuth.HttpSig;
 using AAuth.Person;
+using AAuth.Server;
 using AAuth.Server.Governance;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Builder;
@@ -53,7 +54,8 @@ public class PersonServerMapperTests
     // the supplied asserter (default asserts a fixed sub) and optional mission
     // consent seam (default = the conservative DefaultMissionTokenConsent).
     private static async Task<IHost> BuildHostAsync(
-        IIdentityClaimsAsserter? asserter = null, IMissionTokenConsent? consent = null, bool demoResource = false)
+        IIdentityClaimsAsserter? asserter = null, IMissionTokenConsent? consent = null, bool demoResource = false,
+        IJtiStore? inventory = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
@@ -81,6 +83,7 @@ public class PersonServerMapperTests
             SigningKeys = new System.Collections.Generic.Dictionary<string, IAAuthKey> { [PsKid] = PsKey },
             TrustedAccessServers = new[] { AsIssuer },
             ResourceInteractionSessions = demoResource ? new AAuth.Server.BrowserConsentSessions("resource-tests", "demo-person", isolatedDemoAccess: _ => true) : null,
+            TokenInventory = inventory,
         });
         await app.StartAsync();
         await app.Services.GetRequiredService<IMissionStore>().SaveAsync(new StoredMission(
@@ -818,6 +821,38 @@ public class PersonServerMapperTests
             Assert.Equal(HttpStatusCode.OK, again.StatusCode);
         Assert.Equal(2, reviews.Count);
         await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Token Revocation — the five-minute resource token does not cap the auth token or its revocable grant")]
+    public async Task ResourceTokenLifetime_DoesNotCapAuthTokenOrGrant()
+    {
+        var clock = new InventoryClock();
+        var inventory = new InMemoryJtiStore(clock);
+        var agentKey = AAuthKey.Generate();
+        using var host = await BuildHostAsync(inventory: inventory);
+        using var http = SignedAgentClient(host, agentKey, AgentId);
+        var request = TokenRequest(agentKey);
+        var resourceExp = (long)DecodePayload((string)request["resource_token"]!)["exp"]!;
+        var person = DecodePayload((string)request["presented_token"]!);
+
+        using var response = await http.PostAsJsonAsync("/token", request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var auth = DecodePayload((string)(await response.Content.ReadFromJsonAsync<JsonObject>())!["auth_token"]!);
+        Assert.True((long)auth["exp"]! - resourceExp > 30 * 60, "The auth token must not be capped at the resource token's expiry.");
+
+        // Past the resource token's expiry, the grant is still tracked: revoking its source reaches it.
+        clock.Now = DateTimeOffset.FromUnixTimeSeconds(resourceExp).AddMinutes(1);
+        inventory.Cleanup();
+        await inventory.RevokeAsync(new TokenKey(PsIssuer, (string)person["jti"]!), DateTimeOffset.FromUnixTimeSeconds((long)person["exp"]!));
+        Assert.True(await inventory.IsRevokedAsync(new TokenKey(PsIssuer, (string)auth["jti"]!)));
+        await host.StopAsync();
+    }
+
+    private sealed class InventoryClock : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = DateTimeOffset.UtcNow;
+        public override DateTimeOffset GetUtcNow() => Now;
     }
 
     [Theory]

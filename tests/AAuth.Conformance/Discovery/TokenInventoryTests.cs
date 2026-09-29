@@ -117,6 +117,36 @@ public class TokenInventoryTests
         Assert.True(await store.IsRevokedAsync(token));
     }
 
+    [Fact(DisplayName = "§Revocation Cascade — a cascaded descendant stays revoked until its own exp plus retention, on a controlled clock")]
+    public async Task CascadedDescendant_IsRetainedOnItsOwnExpiry()
+    {
+        var clock = new MutableClock();
+        var store = new InMemoryJtiStore(clock, retention: TimeSpan.FromMinutes(1));
+        var root = new TokenKey("https://ps.example", "person");
+        var child = new TokenKey("https://ps.example", "auth");
+        var rootExpiry = clock.GetUtcNow().AddMinutes(10);
+        var childExpiry = clock.GetUtcNow().AddMinutes(5);
+        Assert.True(await store.RegisterAsync(root, rootExpiry));
+        Assert.True(await store.RegisterGrantAsync([root], new TokenGrant(child, "https://resource.example", childExpiry)));
+
+        await store.RevokeAsync(root, rootExpiry);
+        Assert.True(await store.IsRevokedAsync(child));
+
+        // The child outlives nothing: past its exp but inside retention it is still refused.
+        clock.Now = childExpiry.AddSeconds(30);
+        store.Cleanup();
+        Assert.True(await store.IsRevokedAsync(child));
+        Assert.True(await store.IsRevokedAsync(root));
+
+        // Past the child's exp plus retention it is purged; the root, whose exp is later, is not.
+        clock.Now = childExpiry.AddMinutes(2);
+        store.Cleanup();
+        Assert.False(await store.IsRevokedAsync(child));
+        Assert.True(await store.IsRevokedAsync(root));
+        Assert.False(await store.RegisterGrantAsync([root], new TokenGrant(new TokenKey("https://ps.example", "late"),
+            "https://resource.example", rootExpiry)));
+    }
+
     private sealed class MutableClock : TimeProvider
     {
         public DateTimeOffset Now { get; set; } = DateTimeOffset.UtcNow;

@@ -1205,6 +1205,40 @@ Evidence per box:
 Gates: AAuth.Tests 1678, Conformance 1247, R3 325, Events 80; API and docs maps
 refreshed.
 
+### [2026-09-29] [Phase 7] Revocation dependency, races and retention clocks
+
+RESOLVED (tests only; the production behavior was already right).
+
+1. **The resource token does not cap the auth token.** The PS registers the
+   agent, sub-agent, upstream and presented tokens as sources, never the
+   five-minute resource token (`RegisterSourcesAsync`). The auth-token ceiling
+   is the agent and presented expiry. New
+   `ResourceTokenLifetime_DoesNotCapAuthTokenOrGrant` (with an inventory on a
+   controlled clock) checks that:
+   - the auth token outlives the resource token by more than 30 minutes;
+   - one minute past the resource token's `exp` and after `Cleanup`, revoking
+     the presented person token still reaches the auth-token grant.
+2. **Races:**
+   - consent completion: `UpstreamRevokedDuringConsentCannotMintAfterApproval`
+     (a revocation while consent is pending ends the poll `403 revoked` with no
+     token);
+   - registration: `RevokedAncestorBlocksEveryDescendantAndConcurrentExtension`
+     (40 grant registrations racing a root revocation: every accepted one ends
+     revoked; the revoked `jti` cannot be registered again; minting checks
+     ancestry first).
+3. **Cascades, notification failure, retention on controlled clocks.**
+   Retention: `UnseenRevocation_IsRetainedUntilItsExpiryPlusRetention` and
+   `ExpiredKnownToken_RemainsIdempotentUntilBoundedCleanup` on a mutable clock.
+   New `CascadedDescendant_IsRetainedOnItsOwnExpiry`: a descendant cascaded from
+   a later-expiring root stays refused through its own `exp` plus retention,
+   then is purged while the root stays revoked and still blocks new grants.
+   Cascades: `ThreeGenerationsRevokeAndNotifyAllLocalDescendants` and
+   `UpstreamRevocationCascadesToDownstreamGrant`. Notification failure:
+   `AccessServer_ReportsDownstreamOutcome_AndRetriesOnRepeat` (injected
+   failure, then retried). The slow-recipient path
+   (`Revocation_SlowCascade_DefersAndOnlyTheRevokerPolls`) is driven by a
+   test-controlled completion rather than wall-clock waits.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate

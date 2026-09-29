@@ -524,9 +524,9 @@ Phase rule: caller's namespace only; no old issuer override or unknown-token 404
 
 - [x] Valid unseen/repeated revocation returns 200 and blocks presentation.
 - [x] Namespace collisions, injected issuer, forbidden roles and malformed expiry fail safely.
-- [ ] Resource dependency does not impose a five-minute auth expiry.
-- [ ] Registration, consent completion and revocation races are covered.
-- [ ] Cascades, notification failure and retention have controlled-clock tests.
+- [x] Resource dependency does not impose a five-minute auth expiry.
+- [x] Registration, consent completion and revocation races are covered.
+- [x] Cascades, notification failure and retention have controlled-clock tests.
 - [x] `downstream` outcomes, `202` polling identity and `rate_limited` have wire tests.
 - [x] Requests are `{jti, exp}` keyed by the verified caller; body `iss` is ignored and `unsupported_iss` is enforced.
 - [x] Every revocation endpoint rejects a request whose signature omits `content-digest` or `content-type`.
