@@ -237,6 +237,20 @@ it. A revoked upstream token is `400 revoked_upstream_token` on a new request,
 and a pending downstream request whose upstream token expires ends with
 `408 expired` (or `403 revoked` if it is revoked while pending).
 
+The PS also answers `revoked_upstream_token` when it has revoked the calling
+agent (the agent it issued the upstream token to): its agent token, or its
+agent-person binding. Every token the PS issues directly to an agent is recorded
+against that agent's binding, so revoking the binding blocks the agent, even
+after it refreshes its agent token, and every chain that started from it. Pass
+the inventory as `AAuthPersonServerOptions.TokenInventory` so the host holds it:
+
+```csharp
+var inventory = new InMemoryJtiStore();   // use a durable IJtiStore in production
+
+// Later, when the person unlinks the agent:
+await AgentPersonBinding.RevokeAsync(inventory, psIssuer, "https://ap.example", "aauth:assistant@ap.example");
+```
+
 ### Downstream Auth Tokens Carry No Delegation Chain
 
 A chained auth token looks like any other auth token. It names the person

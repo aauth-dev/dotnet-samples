@@ -30,6 +30,12 @@ public sealed class AAuthPersonServerOptions
 {
     public AAuthEgressPolicy EgressPolicy { get; init; } = AAuthEgressPolicy.Production;
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+
+    /// <summary>
+    /// The PS token inventory; defaults to the DI <see cref="IJtiStore"/> or a new in-memory store.
+    /// Hold the same instance to revoke agent-person bindings (<see cref="AgentPersonBinding.RevokeAsync"/>).
+    /// </summary>
+    public IJtiStore? TokenInventory { get; init; }
     public Func<PersonPendingEntry, ClarificationRequirement, System.Threading.CancellationToken, Task<ClarificationResponse?>>? TriageClarificationAsync { get; init; }
 
     /// <summary>HTTPS URL of this Person Server (<c>iss</c> of minted auth tokens).</summary>
@@ -196,7 +202,7 @@ public static class AAuthPersonServerEndpoints
                 // A PS answers an agent provider's revocation with an empty 200.
                 revocation.ReportDownstream = false;
                 options.ConfigureRevocation?.Invoke(revocation);
-            });
+            }, options.TokenInventory);
         var interactionPath = "/" + options.InteractionPath.Trim('/');
         var interactionPrefix = interactionPath.Split('/', StringSplitOptions.RemoveEmptyEntries) is { Length: > 0 } seg
             ? "/" + seg[0]
@@ -401,6 +407,8 @@ public static class AAuthPersonServerEndpoints
         {
             var registrations = new List<TokenRegistration>(issuance.SourceTokens);
             if (presented is not null) registrations.Add(TokenRegistration.FromVerified(presented, TokenCredential.Presented));
+            // A chained request neither uses nor establishes a binding (#agent-person-binding).
+            if (issuance.Upstream is null) registrations.Add(AgentPersonBinding.Registration(issuer, issuance.AgentIssuer, issuance.AgentId));
             try { await TokenRegistration.RegisterAsync(inventory, registrations, ct); return (registrations, null); }
             catch (TokenVerificationException ex) { return (null, AAuthProblemDetails.SourceRevoked(ex)); }
         }
@@ -424,7 +432,11 @@ public static class AAuthPersonServerEndpoints
             if (request.PersonServer != issuer || request.SourceTokens.Count == 0 || !MissionReference.IsValid(request.MissionS256))
                 return tokens;
             IReadOnlyList<TokenKey> sources;
-            try { sources = await TokenRegistration.RegisterAsync(inventory, request.SourceTokens, ct); }
+            try
+            {
+                sources = await TokenRegistration.RegisterAsync(inventory, [.. request.SourceTokens,
+                    AgentPersonBinding.Registration(issuer, request.SourceTokens[0].Token.Issuer, request.AgentId)], ct);
+            }
             catch (TokenVerificationException) { return tokens; }
             var ceiling = request.MissionExpiresAt is { } missionExpiry
                 ? Earliest(request.AgentTokenExpiresAt, missionExpiry) : request.AgentTokenExpiresAt;

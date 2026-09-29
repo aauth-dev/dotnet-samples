@@ -131,6 +131,32 @@ public class RevocationLifecycleTests
         Assert.Equal("revoked_upstream_token", (string?)JsonNode.Parse(body)!["error"]);
     }
 
+    [Theory(DisplayName = "§Upstream Token Verification step 4 — a revoked agent-person binding makes the upstream token revoked_upstream_token and survives agent-token refresh")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UpstreamFromRevokedBinding_IsRevokedUpstreamToken(bool federated)
+    {
+        await using var graph = await Graph.CreateAsync();
+        var caller = graph.AgentToken(FirstProvider, "caller");
+        var intermediary = graph.AgentToken(FirstResource, "intermediary", distinctKey: true);
+        var upstream = await graph.GrantAsync(caller, FirstResource, false);
+        Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(upstream, FirstResource));
+
+        await AgentPersonBinding.RevokeAsync(graph.PersonInventory, Person, FirstProvider, "aauth:demo@first-ap.example");
+
+        // The agent token itself is not revoked; only the binding is.
+        using var blocked = await graph.RequestAsync(intermediary, SecondResource, federated, upstream);
+        var body = await blocked.Content.ReadAsStringAsync();
+        Assert.True(blocked.StatusCode == HttpStatusCode.BadRequest, $"Status={(int)blocked.StatusCode} {body}");
+        Assert.Equal("revoked_upstream_token", (string?)JsonNode.Parse(body)!["error"]);
+        // A refreshed agent token (new jti) for the same agent stays unbound.
+        using var refreshed = await graph.RequestAsync(graph.AgentToken(FirstProvider, "caller-refreshed"), SecondResource, federated);
+        Assert.NotEqual(HttpStatusCode.OK, refreshed.StatusCode);
+        // Another agent at the same provider is unaffected.
+        var other = graph.AgentToken(SecondProvider, "other");
+        Assert.Equal(HttpStatusCode.OK, await graph.UseAsync(await graph.GrantAsync(other, SecondResource, federated), SecondResource));
+    }
+
     private const string Person = "https://person.example";
     private const string Access = "https://access.example";
     private const string FirstProvider = "https://first-ap.example";
@@ -325,6 +351,7 @@ public class RevocationLifecycleTests
         public InMemoryPersonPendingStore Pending { get; } = new();
         public Asserter Consent { get; } = new(false);
         public List<(string Resource, TokenKey Token)> Revocations { get; } = [];
+        public InMemoryJtiStore PersonInventory { get; } = new();
         public Dictionary<string, string> Failing { get; } = new();
 
         public static async Task<Graph> CreateAsync(bool consent = false)
@@ -358,7 +385,7 @@ public class RevocationLifecycleTests
             var person = personBuilder.Build();
             person.MapAAuthPersonServer(new AAuthPersonServerOptions
             {
-                EgressPolicy = TestEgress.Policy, Issuer = Person,
+                EgressPolicy = TestEgress.Policy, Issuer = Person, TokenInventory = graph.PersonInventory,
                 SigningKeys = new Dictionary<string, IAAuthKey> { ["key"] = graph._keys[Person] },
             });
             person.MapAAuthGovernance(options => options.PersonServer = Person);

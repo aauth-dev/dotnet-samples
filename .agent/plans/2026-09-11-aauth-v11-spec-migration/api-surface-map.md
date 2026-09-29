@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 141 changed public-source files, 247 added/replacement declarations, 136 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 142 changed public-source files, 252 added/replacement declarations, 137 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -1090,10 +1090,23 @@ Public owners: `AAuth.Identifiers.AgentId`, `AAuth.Identifiers`.
 Concept/decision: [consent](#consent). Source: [AAuthPersonServerEndpoints.cs](../../../src/AAuth/Person/AAuthPersonServerEndpoints.cs).
 
 ```diff
++ AAuth.Person.AAuthPersonServerOptions: public IJtiStore ? TokenInventory { get ; init ; }
 + AAuth.Person.AAuthPersonServerOptions: public string PersonTokenPath { get ; init ; } = "/person"
 ```
 
 Public owners: `AAuth.Person.AAuthPersonServerEndpoints`, `AAuth.Person.AAuthPersonServerOptions`, `AAuth.Person`.
+
+### src/AAuth/Person/AgentPersonBinding.cs
+
+Concept/decision: [consent](#consent). Source: [AgentPersonBinding.cs](../../../src/AAuth/Person/AgentPersonBinding.cs).
+
+```diff
++ AAuth.Person.AgentPersonBinding: public static Task RevokeAsync ( IJtiStore inventory , string personServer , string agentIssuer , string agentId , CancellationToken cancellationToken = default )
++ AAuth.Person.AgentPersonBinding: public static TokenKey Key ( string personServer , string agentIssuer , string agentId )
++ AAuth.Person: public static class AgentPersonBinding
+```
+
+Public owners: `AAuth.Person.AgentPersonBinding`, `AAuth.Person`.
 
 ### src/AAuth/Person/IIdentityClaimsAsserter.cs
 
@@ -1448,7 +1461,10 @@ Public owners: `AAuth.Server.RevocationClient`, `AAuth.Server`.
 
 Concept/decision: [revocation](#revocation). Source: [RevocationEndpoint.cs](../../../src/AAuth/Server/RevocationEndpoint.cs).
 
-Public signatures unchanged (4); behavior reviewed under revocation.
+```diff
+- AAuth.Server.RevocationEndpoint: public static IJtiStore MapAAuthIssuerRevocation ( this WebApplication app , string issuer , string dwk , AAuth . Crypto . IAAuthKey signingKey , string signingKid , string path , AAuth . Discovery . AAuthEgressPolicy egressPolicy , TimeProvider clock , Action < AAuthRevocationOptions > ? configure )
++ AAuth.Server.RevocationEndpoint: public static IJtiStore MapAAuthIssuerRevocation ( this WebApplication app , string issuer , string dwk , AAuth . Crypto . IAAuthKey signingKey , string signingKid , string path , AAuth . Discovery . AAuthEgressPolicy egressPolicy , TimeProvider clock , Action < AAuthRevocationOptions > ? configure , IJtiStore ? inventory = null )
+```
 
 Public owners: `AAuth.Server.RevocationEndpoint`, `AAuth.Server`.
 

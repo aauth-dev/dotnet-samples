@@ -27,9 +27,10 @@ public static class RevocationEndpoint
     /// </summary>
     public static IJtiStore MapAAuthIssuerRevocation(this WebApplication app, string issuer, string dwk,
         AAuth.Crypto.IAAuthKey signingKey, string signingKid, string path,
-        AAuth.Discovery.AAuthEgressPolicy egressPolicy, TimeProvider clock, Action<AAuthRevocationOptions>? configure)
+        AAuth.Discovery.AAuthEgressPolicy egressPolicy, TimeProvider clock, Action<AAuthRevocationOptions>? configure,
+        IJtiStore? inventory = null)
     {
-        var inventory = app.Services.GetService<IJtiStore>() ?? new InMemoryJtiStore(clock);
+        inventory ??= app.Services.GetService<IJtiStore>() ?? new InMemoryJtiStore(clock);
         var metadata = app.Services.GetRequiredService<AAuth.Discovery.MetadataClient>();
         var client = app.Services.GetService<RevocationClient>();
         if (client is null)

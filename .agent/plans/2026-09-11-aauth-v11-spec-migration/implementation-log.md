@@ -613,6 +613,48 @@ The ticket-key half of the box was already covered by
 `TicketRedemptionIsAtomicAndPreservesAccount`. Events tests 80 passed; Events
 e2e 4/4.
 
+### [2026-09-28] [Phase 6] Agent-person binding half of step 4 (post-cutover item 3)
+
+RESOLVED. L1835 step 4 requires the PS to answer `revoked_upstream_token`
+when it has revoked the calling agent's agent token or its binding to the
+person.
+
+DECISION: the binding is an entry in the PS token inventory,
+`AgentPersonBinding.Key(ps, agentIss, agentSub)`. It is keyed by the agent
+identity, not by an agent-token `jti`, so it survives agent-token refresh.
+Every token the PS issues directly to an agent is recorded as a grant of that
+binding: direct token requests and mission `person_tokens`. Chained requests
+are not, because L2918 says a chained request neither uses nor establishes a
+binding.
+
+Revoking the binding with `AgentPersonBinding.RevokeAsync` has three effects
+through the existing ancestor check:
+
+- any upstream token issued under it becomes a revoked ancestor, so a chained
+  request gets `400 revoked_upstream_token`;
+- the agent's own requests fail source registration (`401 revoked_jwt`), even
+  with a refreshed agent token;
+- other agents are unaffected.
+
+DECISION: the binding entry uses a fixed far expiry. A binding has no natural
+expiry, and `RegisterAsync` rejects an existing key registered with a different
+expiry.
+
+Not done: revoking a binding does not cascade downstream revocation calls.
+Only the rejection is a MUST.
+
+ISSUE: the first test registered `IJtiStore` in the PS's DI container. That
+switched on PS request replay detection, and the harness resends identical
+signatures, so 7 unrelated tests failed. Hosts now pass the inventory through
+the new `AAuthPersonServerOptions.TokenInventory`, and
+`MapAAuthIssuerRevocation` takes an optional `inventory`.
+
+Evidence: `UpstreamFromRevokedBinding_IsRevokedUpstreamToken` (three- and
+four-party). The agent token is not revoked; the chained request is `400
+revoked_upstream_token`; the refreshed agent token is refused; another agent is
+unaffected. Conformance 1165 passed. The call-chaining docs have a
+compile-checked snippet.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate

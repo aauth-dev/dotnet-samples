@@ -466,7 +466,7 @@ Phase rule: no act-derived authority or direct-AS agent routing; explicit trust 
 - [ ] Direct-worker and wrong-parent PS requests fail.
 - [x] Both apps' sequences and payload assertions use PS-recorded delegation.
 - [x] An upstream token issued from a revoked calling agent's agent token is `revoked_upstream_token`.
-- [ ] A host-revoked agent-person binding makes the upstream token `revoked_upstream_token`.
+- [x] A host-revoked agent-person binding makes the upstream token `revoked_upstream_token`.
 
 ## Phase 7 - revocation authority and dependency graph
 
