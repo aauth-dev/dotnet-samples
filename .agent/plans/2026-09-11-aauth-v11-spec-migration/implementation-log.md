@@ -687,6 +687,17 @@ Evidence: `Mission_Prompt_ApprovalKeepsApproverExpiry`. The mission parsed from
 the completed poll has the approver's `expires_at`. Governance mapper tests: 37
 passed.
 
+### [2026-09-28] [Phase 10] Wallet `DirectAs` renamed (post-cutover item 12)
+
+RESOLVED. Draft-11 has no direct agent-to-AS path, so the Wallet flow is now
+`WalletFlow.AsGrantChaining` (UI label "Chaining an AS-issued grant"), with
+`WalletScenarioCode.AsGrantChaining`. The e2e flow names, the docs and the
+three READMEs follow. The wallet guide no longer says "The sample still labels
+this flow `DirectAs`".
+
+Evidence: Wallet e2e 9/9 passed, the snippet tests pass, and a grep finds no
+`DirectAs` or "direct-AS" in the samples, docs or tests.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate

@@ -635,7 +635,7 @@ Phase rule: current-format live guidance; preserve intentional generic/OIDC/hist
 - [ ] No unexplained old wire/API name remains in live guidance.
 - [ ] Both apps' real traces and static instructions agree for selected flows.
 - [ ] Stub/Keycloak browser results and external/unavailable limits are recorded separately.
-- [ ] No Wallet flow is labelled as a direct agent-to-AS exchange.
+- [x] No Wallet flow is labelled as a direct agent-to-AS exchange.
 
 ## Phase 11 - independent internal review and closure
 

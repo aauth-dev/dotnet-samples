@@ -4,7 +4,7 @@ public static class WalletScenarioCode
 {
     public static string For(WalletFlow flow) => flow switch
     {
-        WalletFlow.DirectAs => DirectAs,
+        WalletFlow.AsGrantChaining => AsGrantChaining,
         WalletFlow.Revocation => Revocation,
         _ => Clarification,
     };
@@ -28,7 +28,7 @@ public static class WalletScenarioCode
         public static ClarificationResponse Cancel() => ClarificationResponse.Cancel();
         """;
 
-    public const string DirectAs = """
+    public const string AsGrantChaining = """
         public static async Task<string> ReadWalletAsync(IAAuthKey key, string issuer, string agent,
             string kid, string upstreamToken, string wallet, AAuthEgressPolicy egress,
             CancellationToken cancellationToken)

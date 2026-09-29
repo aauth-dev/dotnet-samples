@@ -9,7 +9,7 @@ requests. Profile pages explicitly demonstrate generic HWK, direct JWKS and
 naming-JWT signatures; they are not alternative AAuth resource carriers.
 
 - [Wallet Protocol](../../docs/workflows/wallet-protocol.md): `/wallet-protocol`,
-  with AS clarification/cancel, direct-AS chaining and revocation/recovery
+  with AS clarification/cancel, chaining an AS-issued grant and revocation/recovery
 - [Travel Catalog](../../docs/workflows/catalog-gateway.md): `/catalog-gateway`,
   one merged OpenAPI definition and sibling-operation rejection
 - [Document Release](../../docs/workflows/document-release.md): `/documents`,

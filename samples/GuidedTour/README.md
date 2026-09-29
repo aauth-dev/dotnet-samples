@@ -90,7 +90,7 @@ demonstrations. AAuth resource flows use `jwt`, including Inbox's two-party flow
 
 Additional overview/navigation entries run shared scenarios:
 
-- `/wallet-protocol`: AS clarification with answer/cancel, direct-AS chaining,
+- `/wallet-protocol`: AS clarification with answer/cancel, chaining an AS-issued grant,
    and federated revocation/recovery. [Steps and sequence](../../docs/workflows/wallet-protocol.md)
 - `/catalog-gateway`: five steps covering the merged OpenAPI definition, renamed
    colliding `list` operations, sibling rejection and recovery. [Catalog guide](../../docs/workflows/catalog-gateway.md)

@@ -422,7 +422,7 @@ public sealed class SnippetCompilationTests
 
     [Theory]
     [InlineData(AAuth.Samples.Capabilities.WalletFlow.Clarification)]
-    [InlineData(AAuth.Samples.Capabilities.WalletFlow.DirectAs)]
+    [InlineData(AAuth.Samples.Capabilities.WalletFlow.AsGrantChaining)]
     [InlineData(AAuth.Samples.Capabilities.WalletFlow.Revocation)]
     public void Wallet_ExactDisplayedSnippetCompiles(AAuth.Samples.Capabilities.WalletFlow flow)
         => Compile(flow.ToString(), AAuth.Samples.Capabilities.WalletScenarioCode.For(flow), member: true);

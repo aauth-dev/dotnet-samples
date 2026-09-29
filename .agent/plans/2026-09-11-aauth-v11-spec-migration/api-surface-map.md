@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 143 changed public-source files, 253 added/replacement declarations, 137 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 143 changed public-source files, 255 added/replacement declarations, 139 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -108,7 +108,10 @@ Public owners: `AAuth.Samples.Capabilities.DocumentDemoSession`, `AAuth.Samples.
 
 Concept/decision: [sample-runtime](#sample-runtime). Source: [WalletDemoSession.cs](../../../samples/CapabilitySupport/WalletDemoSession.cs).
 
-Public signatures unchanged (20); behavior reviewed under sample-runtime.
+```diff
+- AAuth.Samples.Capabilities.WalletFlow: DirectAs
++ AAuth.Samples.Capabilities.WalletFlow: AsGrantChaining
+```
 
 Public owners: `AAuth.Samples.Capabilities.WalletDemoSession`, `AAuth.Samples.Capabilities.WalletFlow`, `AAuth.Samples.Capabilities`.
 
@@ -132,6 +135,19 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [WalletScenarioCode
 
         public static ClarificationResponse Cancel() => ClarificationResponse.Cancel();
         """ ;
+- AAuth.Samples.Capabilities.WalletScenarioCode: public const string DirectAs = """
+        public static async Task<string> ReadWalletAsync(IAAuthKey key, string issuer, string agent,
+            string kid, string upstreamToken, string wallet, AAuthEgressPolicy egress,
+            CancellationToken cancellationToken)
+        {
+            using var client = AAuthClientBuilder.SelfIssuing(key).As(issuer, agent).WithKid(kid)
+                .WithEgressPolicy(egress).WithCallChaining(upstreamToken)
+                .WithChallengeHandling(options => options.Capabilities = Array.Empty<string>()).Build();
+            using var response = await client.GetAsync(wallet + "/wallet", cancellationToken);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadAsStringAsync(cancellationToken);
+        }
+        """ ;
 - AAuth.Samples.Capabilities.WalletScenarioCode: public const string Revocation = """
         public static Task<HttpStatusCode> RevokeAsync(HttpClient signedPersonServer,
             Uri resourceRevocationEndpoint, string issuer, string tokenId, CancellationToken cancellationToken)
@@ -143,6 +159,19 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [WalletScenarioCode
             Func<Interaction, CancellationToken, Task> consent, CancellationToken cancellationToken)
             => new TokenExchangeClient(signedAgent, metadata).ExchangeAsync(personServer, freshResourceToken,
                 new TokenExchangeRequest { OnInteractionRequired = consent }, cancellationToken);
+        """ ;
++ AAuth.Samples.Capabilities.WalletScenarioCode: public const string AsGrantChaining = """
+        public static async Task<string> ReadWalletAsync(IAAuthKey key, string issuer, string agent,
+            string kid, string upstreamToken, string wallet, AAuthEgressPolicy egress,
+            CancellationToken cancellationToken)
+        {
+            using var client = AAuthClientBuilder.SelfIssuing(key).As(issuer, agent).WithKid(kid)
+                .WithEgressPolicy(egress).WithCallChaining(upstreamToken)
+                .WithChallengeHandling(options => options.Capabilities = Array.Empty<string>()).Build();
+            using var response = await client.GetAsync(wallet + "/wallet", cancellationToken);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadAsStringAsync(cancellationToken);
+        }
         """ ;
 + AAuth.Samples.Capabilities.WalletScenarioCode: public const string Clarification = """
         public static Task<string> ClarifyAsync(HttpClient signedAgent, MetadataClient metadata,

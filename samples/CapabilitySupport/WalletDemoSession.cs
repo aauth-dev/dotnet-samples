@@ -10,7 +10,7 @@ using AAuth.Server;
 
 namespace AAuth.Samples.Capabilities;
 
-public enum WalletFlow { Clarification, DirectAs, Revocation }
+public enum WalletFlow { Clarification, AsGrantChaining, Revocation }
 
 public sealed class WalletDemoSession(string provider, string person, string wallet, string concierge) : IDisposable
 {
@@ -33,10 +33,10 @@ public sealed class WalletDemoSession(string provider, string person, string wal
     public string[] Steps => Flow switch
     {
         WalletFlow.Clarification => ["Enroll agent", "Request wallet review", "Answer AS clarification and consent", "Read approved wallet review", "Reject a charge outside the grant"],
-        WalletFlow.DirectAs => ["Enroll agent", "Request concierge wallet access", "Approve upstream AS grant", "Delegate wallet read through the PS", "Reject upstream token at Wallet", "Repeat the delegated read"],
+        WalletFlow.AsGrantChaining => ["Enroll agent", "Request concierge wallet access", "Approve upstream AS grant", "Delegate wallet read through the PS", "Reject upstream token at Wallet", "Repeat the delegated read"],
         _ => ["Enroll agent", "Request wallet access", "Approve wallet grant", "Read wallet", "Reject agent as revoker", "PS revokes its person token at the AS", "Reject revoked grant", "Approve a fresh grant and recover"],
     };
-    private string Resource => Flow == WalletFlow.DirectAs ? concierge : wallet;
+    private string Resource => Flow == WalletFlow.AsGrantChaining ? concierge : wallet;
     private string Path => Flow == WalletFlow.Clarification ? "/wallet/review" : "/wallet";
 
     public async Task NextAsync(CancellationToken cancellationToken)
@@ -61,13 +61,13 @@ public sealed class WalletDemoSession(string provider, string person, string wal
                     return;
                 }
                 break;
-            case 3 when Flow == WalletFlow.DirectAs: await DelegateAsync(cancellationToken); break;
+            case 3 when Flow == WalletFlow.AsGrantChaining: await DelegateAsync(cancellationToken); break;
             case 3: await AccessAsync(Resource + Path, _authToken!, HttpStatusCode.OK, cancellationToken); break;
             case 4 when Flow == WalletFlow.Clarification:
                 await AccessAsync(wallet + "/wallet/charge", _authToken!, HttpStatusCode.Forbidden, cancellationToken); break;
-            case 4 when Flow == WalletFlow.DirectAs:
+            case 4 when Flow == WalletFlow.AsGrantChaining:
                 await AccessAsync(wallet + "/wallet", _authToken!, HttpStatusCode.Unauthorized, cancellationToken); break;
-            case 5 when Flow == WalletFlow.DirectAs:
+            case 5 when Flow == WalletFlow.AsGrantChaining:
                 await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
                 await AccessAsync(concierge + "/wallet", _authToken!, HttpStatusCode.OK, cancellationToken); break;
             case 4:

@@ -54,8 +54,8 @@ sequenceDiagram
 
 Draft-11 has no direct agent-to-AS path: every token request goes to a PS, and
 an intermediary routes to the PS its upstream token names (an auth token's
-`ps`), which federates with the Wallet's AS. The sample still labels this flow
-`DirectAs`.
+`ps`), which federates with the Wallet's AS. The sample calls this flow
+`AsGrantChaining`.
 
 1. Enroll a new agent.
 2. Request Concierge Wallet access and retain the AS-audience resource token.

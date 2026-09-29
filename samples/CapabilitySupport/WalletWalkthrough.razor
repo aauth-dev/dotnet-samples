@@ -27,7 +27,7 @@
     <label for="wallet-flow">Flow</label>
     <select id="wallet-flow" @bind="_session.Flow" disabled="@(_busy || _session.Step > 0)">
         <option value="Clarification">AS clarification</option>
-        <option value="DirectAs">Direct AS chaining</option>
+        <option value="AsGrantChaining">Chaining an AS-issued grant</option>
         <option value="Revocation">Federated revocation</option>
     </select>
     <div class="wallet-actions">
@@ -117,13 +117,13 @@
         ProtocolMessage.Http(4, "network", "agent", "wallet", "Read approved wallet review", responseLabel: "200"),
         ProtocolMessage.Http(5, "network", "agent", "wallet", "Reject charge outside the grant", responseLabel: "403"),
     ];
-    private static readonly ProtocolParticipant[] DirectAsParticipants =
+    private static readonly ProtocolParticipant[] ChainingParticipants =
     [
         new("agent", "Agent"), new("ap", "Agent Provider"), new("concierge", "Concierge"),
         new("wallet", "Wallet"), new("ps", "Person Server"), new("as", "Access Server"),
         new("user", "User / Browser"),
     ];
-    private static readonly ProtocolMessage[] DirectAsSequence =
+    private static readonly ProtocolMessage[] ChainingSequence =
     [
         ProtocolMessage.Http(1, "setup", "agent", "ap", "Enroll and receive agent JWT", responseLabel: "200"),
         ProtocolMessage.Http(2, "network", "agent", "ps", "Obtain Concierge person token", responseLabel: "200"),
@@ -164,13 +164,13 @@
     ];
     private IReadOnlyList<ProtocolParticipant> WalletParticipants => _session.Flow switch
     {
-        WalletFlow.DirectAs => DirectAsParticipants,
+        WalletFlow.AsGrantChaining => ChainingParticipants,
         WalletFlow.Revocation => RevocationParticipants,
         _ => ClarificationParticipants,
     };
     private IReadOnlyList<ProtocolMessage> WalletSequence => _session.Flow switch
     {
-        WalletFlow.DirectAs => DirectAsSequence,
+        WalletFlow.AsGrantChaining => ChainingSequence,
         WalletFlow.Revocation => RevocationSequence,
         _ => ClarificationSequence,
     };

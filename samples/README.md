@@ -29,7 +29,7 @@ R3) live under [MockAccessServers/](MockAccessServers/).
 
 ## Quick Start
 
-Both primary apps expose `/wallet-protocol` (AS clarification, direct-AS chaining,
+Both primary apps expose `/wallet-protocol` (AS clarification, chaining an AS-issued grant,
 federated revocation), `/catalog-gateway`, `/documents` and `/events`. See the
 [Wallet guide](../docs/workflows/wallet-protocol.md),
 [Document Release guide](../docs/workflows/document-release.md),
