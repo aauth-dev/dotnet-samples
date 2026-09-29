@@ -55,8 +55,11 @@ app.MapR3Document("/r3/{hash}", context => documents.TryGet((string)context.Requ
 app.UseWhen(context => context.Request.Path.StartsWithSegments("/catalog"), branch => branch.UseAAuthVerification(new AAuthVerificationOptions
 {
     EgressPolicy = SampleEgress.Policy, ResourceIdentifier = issuer, AcceptedSchemes = ["jwt"],
-    TrustedAuthTokenIssuers = new HashSet<string> { access },
-    TrustedPersonServers = new HashSet<string> { person },
+    Trust =
+    {
+        AuthTokenIssuers = { Allowed = new HashSet<string> { access } },
+        PersonServers = { Allowed = new HashSet<string> { person } },
+    },
 }));
 app.MapGet("/catalog/{service}", (string service, HttpContext context) =>
 {

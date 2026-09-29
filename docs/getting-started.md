@@ -254,9 +254,9 @@ The resource verifies the auth token:
 - Checks `aud` matches its own identifier
 - Confirms `cnf.jwk` matches the key used to sign the HTTP request (proof-of-possession)
 - Evaluates the granted `scope` against the requested operation
-- Optionally checks the issuer is in `TrustedAuthTokenIssuers`
+- Optionally checks the issuer against `Trust.AuthTokenIssuers`
 
-Per the spec, any PS can assert identity claims to any resource without bilateral setup — the resource namespaces claims by the PS's issuer URL (the same `sub` from a different PS is a different subject). Resources that want to restrict which PSes they accept set `TrustedAuthTokenIssuers`.
+Per the spec, any PS can assert identity claims to any resource without bilateral setup — the resource namespaces claims by the PS's issuer URL (the same `sub` from a different PS is a different subject). Resources that want to restrict which PSes they accept configure `Trust.AuthTokenIssuers`.
 
 ### Self-Hosted Agent Example
 
@@ -327,11 +327,11 @@ app.MapAAuthWellKnown();
 // signature and, when an endpoint needs an auth token, challenges for one.
 // Restrict which Person Servers this resource trusts — the resource verifies
 // auth tokens against the PS's JWKS (discovered at
-// {iss}/.well-known/aauth-person.json). Omit TrustedAuthTokenIssuers (or assign
-// AAuthTrust.Any) to accept any *verifiable* PS dynamically — claims are
+// {iss}/.well-known/aauth-person.json). Leave Trust.AuthTokenIssuers unset (or assign
+// AAuthTrust.Any to its Predicate) to accept any *verifiable* PS dynamically — claims are
 // namespaced by issuer; leaving it open logs a startup warning.
 app.UseRouting();
-app.UseAAuth(o => o.TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" });
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { "https://ps.example" });
 app.UseAuthentication();
 app.UseAuthorization();
 

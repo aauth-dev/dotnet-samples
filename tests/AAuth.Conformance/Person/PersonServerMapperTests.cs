@@ -81,7 +81,7 @@ public class PersonServerMapperTests
             EgressPolicy = new AAuthEgressPolicy(dnsResolver: new PublicDns()),
             Issuer = PsIssuer,
             SigningKeys = new System.Collections.Generic.Dictionary<string, IAAuthKey> { [PsKid] = PsKey },
-            TrustedAccessServers = new[] { AsIssuer },
+            Trust = { AccessServers = { Allowed = new System.Collections.Generic.HashSet<string> { AsIssuer } } },
             ResourceInteractionSessions = demoResource ? new AAuth.Server.BrowserConsentSessions("resource-tests", "demo-person", isolatedDemoAccess: _ => true) : null,
             TokenInventory = inventory,
         });

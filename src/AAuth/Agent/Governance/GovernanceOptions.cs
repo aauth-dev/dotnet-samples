@@ -19,7 +19,7 @@ public sealed class GovernanceOptions
     /// must relay the URL/code to the user. When <see langword="null"/> and the
     /// PS defers with an interaction requirement, the request fails.
     /// </summary>
-    public Func<Interaction, CancellationToken, Task>? OnInteractionRequired { get; init; }
+    public Func<Interaction, CancellationToken, Task>? OnInteractionRequired { get; set; }
 
     /// <summary>
     /// Invoked when the PS returns <c>requirement=clarification</c> during review
@@ -27,13 +27,13 @@ public sealed class GovernanceOptions
     /// cancel). When <see langword="null"/> and the PS asks for clarification,
     /// the request fails.
     /// </summary>
-    public Func<ClarificationRequirement, CancellationToken, Task<ClarificationResponse>>? OnClarificationRequired { get; init; }
+    public Func<ClarificationRequirement, CancellationToken, Task<ClarificationResponse>>? OnClarificationRequired { get; set; }
 
     /// <summary>Maximum clarification rounds before the exchange aborts (default 5).</summary>
-    public int MaxClarificationRounds { get; init; } = ClarificationExchange.DefaultMaxRounds;
+    public int MaxClarificationRounds { get; set; } = ClarificationExchange.DefaultMaxRounds;
 
     /// <summary>Optional polling tuning for deferred responses.</summary>
-    public DeferredPollerOptions? PollerOptions { get; init; }
+    public DeferredPollerOptions? PollerOptions { get; set; }
 
     internal GovernanceOptions ForMission(Mission mission) => new()
     {

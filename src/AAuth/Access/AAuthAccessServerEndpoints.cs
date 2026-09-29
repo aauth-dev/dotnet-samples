@@ -24,25 +24,25 @@ namespace AAuth.Access;
 /// </summary>
 public sealed class AAuthAccessServerOptions
 {
-    public AAuthEgressPolicy EgressPolicy { get; init; } = AAuthEgressPolicy.Production;
-    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+    public AAuthEgressPolicy EgressPolicy { get; set; } = AAuthEgressPolicy.Production;
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 
     /// <summary>HTTPS URL of this Access Server (<c>iss</c> of minted auth tokens).</summary>
-    public required string Issuer { get; init; }
+    public required string Issuer { get; set; }
 
     /// <summary>
     /// The AS signing keys, keyed by <c>kid</c>. Published at the JWKS and used
     /// to sign minted auth tokens (the first entry signs).
     /// </summary>
-    public required IReadOnlyDictionary<string, IAAuthKey> SigningKeys { get; init; }
+    public required IReadOnlyDictionary<string, IAAuthKey> SigningKeys { get; set; }
 
     /// <summary>The token endpoint path. Default <c>/token</c>.</summary>
-    public string TokenPath { get; init; } = "/token";
-    public string RevocationPath { get; init; } = "/revoke";
-    public Action<AAuthRevocationOptions>? ConfigureRevocation { get; init; }
+    public string TokenPath { get; set; } = "/token";
+    public string RevocationPath { get; set; } = "/revoke";
+    public Action<AAuthRevocationOptions>? ConfigureRevocation { get; set; }
 
     /// <summary>The pending (poll/push) path prefix. Default <c>/pending</c>.</summary>
-    public string PendingPathPrefix { get; init; } = "/pending";
+    public string PendingPathPrefix { get; set; } = "/pending";
 
     /// <summary>
     /// The fallback scope when the resource token carries none. Default empty:
@@ -50,40 +50,30 @@ public sealed class AAuthAccessServerOptions
     /// a scopeless auth token (still valid via its <c>sub</c>) rather than
     /// injecting an arbitrary scope.
     /// </summary>
-    public string DefaultScope { get; init; } = "";
+    public string DefaultScope { get; set; } = "";
 
     /// <summary>
-    /// Person Server allow-list this AS will broker for, matched on the caller's
-    /// <c>jwks_uri</c> host. <b>Open by default (spec-compliant):</b> when
-    /// <c>null</c>, any validly-signed PS is brokered — §PS-AS Trust Establishment
-    /// requires no separate registration step. An <b>empty</b> set denies all; a
-    /// non-empty set restricts (pre-established trust). Composed by AND with
-    /// <see cref="IsTrustedPersonServer"/>.
+    /// Trust for this Access Server. <see cref="AAuthTrustOptions.PersonServers"/> is
+    /// matched on the calling Person Server's identifier. <b>Open by default
+    /// (spec-compliant):</b> any validly-signed PS is brokered; §PS-AS Trust
+    /// Establishment requires no separate registration step. An <b>empty</b>
+    /// <see cref="AAuthTrustRule.Allowed"/> set denies all.
     /// </summary>
-    public IReadOnlyCollection<string>? TrustedPersonServers { get; init; }
-
-    /// <summary>
-    /// Optional trust policy for Person Servers, evaluated per caller
-    /// <c>jwks_uri</c> host and composed by AND with
-    /// <see cref="TrustedPersonServers"/>. <c>null</c> ⇒ no policy constraint.
-    /// Assign <see cref="AAuth.Server.AAuthTrust.Any"/> to state intentional open
-    /// trust explicitly.
-    /// </summary>
-    public Func<string, bool>? IsTrustedPersonServer { get; init; }
+    public AAuthTrustOptions Trust { get; set; } = new();
 
     /// <summary>
     /// Optional hook deriving baseline policy claims from the verified agent id
     /// (e.g. a demo admin-role convention). A production AS receives the
     /// principal's claims via the §Claims Required push instead.
     /// </summary>
-    public Func<string, JsonObject?>? DeriveAgentClaims { get; init; }
+    public Func<string, JsonObject?>? DeriveAgentClaims { get; set; }
 
     /// <summary>
     /// The AS-hosted login path advertised on <c>requirement=interaction</c>.
     /// Default <c>/interaction/login</c>. The caller maps this endpoint and
     /// resolves the verdict against the shared <see cref="IAccessPendingStore"/>.
     /// </summary>
-    public string InteractionLoginPath { get; init; } = "/interaction/login";
+    public string InteractionLoginPath { get; set; } = "/interaction/login";
 }
 
 /// <summary>
@@ -131,12 +121,12 @@ public static class AAuthAccessServerEndpoints
             throw new InvalidOperationException(
                 "AAuthAccessServerOptions.InteractionLoginPath must not contain a query or fragment.");
         }
-        foreach (var trustedPs in options.TrustedPersonServers ?? Array.Empty<string>())
+        foreach (var trustedPs in options.Trust.PersonServers.Allowed ?? new HashSet<string>())
         {
             if (!AAuth.AAuthUrl.IsHttpsOrLoopback(trustedPs, options.EgressPolicy))
             {
                 throw new InvalidOperationException(
-                    $"AAuthAccessServerOptions.TrustedPersonServers entry '{trustedPs}' must be an absolute https URL " +
+                    $"AAuthAccessServerOptions.Trust.PersonServers entry '{trustedPs}' must be an absolute https URL " +
                     "(loopback http allowed for development).");
             }
         }
@@ -158,28 +148,14 @@ public static class AAuthAccessServerEndpoints
             ? "/" + seg[0]
             : loginPath;
 
-        var trustedPsHosts = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var ps in options.TrustedPersonServers ?? Array.Empty<string>())
-        {
-            if (Uri.TryCreate(ps, UriKind.Absolute, out var psUri))
-            {
-                trustedPsHosts.Add(ps);
-            }
-        }
-
-        // Preserve null (open: broker any verifiable PS) vs. empty (deny all). The
-        // host set drives membership; the nullable form drives the open/empty split.
-        IReadOnlyCollection<string>? trustedPsHostsOrNull =
-            options.TrustedPersonServers is null ? null : trustedPsHosts;
-
         // Startup footgun guard (diagnostics only): warn when brokering is open by
         // default. Suppressed by any explicit policy (including AAuthTrust.Any).
         TrustConfigDiagnostics.WarnIfOpenFederation(
             app.Services.GetService<ILoggerFactory>()?.CreateLogger("AAuth.AccessServer"),
-            trustConfigured: options.TrustedPersonServers is not null || options.IsTrustedPersonServer is not null,
+            trustConfigured: options.Trust.IsConfigured(AAuthTrustedParty.PersonServer, app.Services),
             "MapAAuthAccessServer",
-            "this Access Server brokers for any verifiable Person Server because no TrustedPersonServers / " +
-            "IsTrustedPersonServer policy is configured (the AAuth spec default). Configure a policy to " +
+            "this Access Server brokers for any verifiable Person Server because no Trust.PersonServers " +
+            "policy is configured (the AAuth spec default). Configure a policy to " +
             "restrict, or assign AAuthTrust.Any to declare intentional open brokering and silence this warning.");
 
         // 1. Well-known metadata + JWKS (reachable without a signature).
@@ -220,7 +196,7 @@ public static class AAuthAccessServerEndpoints
         // scheme, its host MUST be trusted (when a trust set is configured),
         // and it MUST be the same Person Server that parked the entry. Returns
         // a failure result, or null when authorized.
-        IResult? AuthorizePsCaller(HttpContext c, AccessPendingEntry entry)
+        async Task<IResult?> AuthorizePsCallerAsync(HttpContext c, AccessPendingEntry entry)
         {
             var parsedKey = c.GetAAuthParsedKey();
             if (parsedKey is null || parsedKey.Scheme != AAuthConstants.Schemes.JwksUri)
@@ -233,7 +209,8 @@ public static class AAuthAccessServerEndpoints
                 return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", "A verified Person Server metadata role is required.", statusCode: StatusCodes.Status403Forbidden);
             }
 
-            if (!IssuerTrust.IsTrusted(trustedPsHostsOrNull, options.IsTrustedPersonServer, parsedKey.Identifier!))
+            if (!await options.Trust.IsTrustedAsync(parsedKey.Identifier!, AAuthTrustedParty.PersonServer,
+                    c.RequestServices, c, cancellationToken: c.RequestAborted).ConfigureAwait(false))
             {
                 return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", $"jwks_uri '{parsedKey.JwksUri}' is not a trusted Person Server", statusCode: StatusCodes.Status403Forbidden);
             }
@@ -298,7 +275,8 @@ public static class AAuthAccessServerEndpoints
             {
                 return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", "A verified Person Server metadata role is required.", statusCode: StatusCodes.Status403Forbidden);
             }
-            if (!IssuerTrust.IsTrusted(trustedPsHostsOrNull, options.IsTrustedPersonServer, personServer))
+            if (!await options.Trust.IsTrustedAsync(personServer, AAuthTrustedParty.PersonServer,
+                    ctx.RequestServices, ctx, cancellationToken: ctx.RequestAborted).ConfigureAwait(false))
             {
                 return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", $"jwks_uri '{parsed.JwksUri}' is not a trusted Person Server", statusCode: StatusCodes.Status403Forbidden);
             }
@@ -330,7 +308,7 @@ public static class AAuthAccessServerEndpoints
             {
                 issuance = await AgentIssuanceContext.VerifyAsync(
                     agentTokenJwt, StringMember(body, "subagent_token"), StringMember(body, "upstream_token"), personServer,
-                    tokenVerifier, metadataClient, jwksClient, static _ => true, ctx.RequestAborted, TokenCredential.Agent);
+                    tokenVerifier, metadataClient, jwksClient, static (_, _) => ValueTask.FromResult(true), ctx.RequestAborted, TokenCredential.Agent);
             }
             catch (TokenVerificationException ex)
             {
@@ -482,7 +460,7 @@ public static class AAuthAccessServerEndpoints
                 return DeferredState.Missing(id);
             }
 
-            if (AuthorizePsCaller(ctx, entry) is { } pollFailure)
+            if (await AuthorizePsCallerAsync(ctx, entry) is { } pollFailure)
             {
                 return pollFailure;
             }
@@ -548,7 +526,7 @@ public static class AAuthAccessServerEndpoints
                 return DeferredState.Missing(id);
             }
 
-            if (AuthorizePsCaller(ctx, entry) is { } pushFailure)
+            if (await AuthorizePsCallerAsync(ctx, entry) is { } pushFailure)
             {
                 return pushFailure;
             }
@@ -702,7 +680,7 @@ public static class AAuthAccessServerEndpoints
         {
             var entry = pending.Get(id);
             if (entry is null) return DeferredState.Missing(id);
-            if (AuthorizePsCaller(ctx, entry) is { } failure) return failure;
+            if (await AuthorizePsCallerAsync(ctx, entry) is { } failure) return failure;
             return await entry.Lifecycle.ExecuteAsync(ctx, entry.PendingExpiresAt, options.TimeProvider, () =>
             {
                 entry.Lifecycle.Cancel();

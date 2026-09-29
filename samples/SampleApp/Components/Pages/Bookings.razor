@@ -93,7 +93,7 @@ app.MapR3AccessTokenEndpoint(new R3AccessTokenEndpointOptions
     EgressPolicy = SampleEgress.Policy,
     Issuer = issuer,
     SigningKeys = signingKeys,
-    TrustedPersonServers = trustedPersonServers,
+    Trust = { PersonServers = { Allowed = new HashSet&lt;string&gt;(trustedPersonServers) } },
     // confirmReservation charges a deposit → per-call.
     IsPerCallOperation = operation =&gt;
         operation.Matches(Vocabulary.OpenApi,

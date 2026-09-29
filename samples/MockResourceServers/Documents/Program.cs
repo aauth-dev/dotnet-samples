@@ -33,7 +33,7 @@ app.UseWhen(context => context.Request.Path == "/document", branch => branch.Use
 {
     EgressPolicy = SampleEgress.Policy, ResourceIdentifier = issuer, AcceptedSchemes = ["jwt"],
     ExpectedAccount = _ => "work",
-    TrustedAuthTokenIssuers = new HashSet<string> { person },
+    Trust = { AuthTokenIssuers = { Allowed = new HashSet<string> { person } } },
 }));
 var challenge = new ChallengeOptions
 {

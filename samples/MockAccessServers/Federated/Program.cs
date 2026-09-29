@@ -124,7 +124,7 @@ app.MapAAuthAccessServer(new AAuthAccessServerOptions
     Issuer = asIssuer,
     SigningKeys = new Dictionary<string, IAAuthKey> { [AsKid] = asKey },
     DefaultScope = AsScope,
-    TrustedPersonServers = trustedPersonServers,
+    Trust = { PersonServers = { Allowed = new HashSet<string>(trustedPersonServers) } },
     InteractionLoginPath = "/interaction/login",
     // Demo convention: an agent whose id starts with `aauth:demo@` is treated
     // as holding the admin role. A production AS would receive the principal's

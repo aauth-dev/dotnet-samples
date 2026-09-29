@@ -108,8 +108,8 @@ auditing but are not enforced by a built-in helper.
 > asserted by `https://ps-a.example` is therefore distinct from the same role
 > asserted by `https://ps-b.example`. Issuer trust is open by default: the
 > verification middleware honors auth tokens from any *verifiable* Person Server
-> (namespaced by `iss`) when `AAuthVerificationOptions.TrustedAuthTokenIssuers`
-> is unset; set the list (or the `IsTrustedAuthTokenIssuer` predicate) to
+> (namespaced by `iss`) when `AAuthVerificationOptions.Trust.AuthTokenIssuers`
+> is unset; set its `Allowed` list (or `Predicate`) to
 > restrict which issuers are honored (see
 > [verification-middleware.md](verification-middleware.md)).
 
@@ -164,7 +164,7 @@ var app = builder.Build();
 app.MapAAuthWellKnown();
 
 app.UseRouting();
-app.UseAAuth(o => o.TrustedAuthTokenIssuers = trustedPersonServers);
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.Allowed = trustedPersonServers);
 app.UseAuthentication();
 app.UseAuthorization();
 

@@ -374,10 +374,11 @@ var app = builder.Build();
 // POST /person, POST /token, and GET /pending/{id}.
 app.MapAAuthPersonServer(new AAuthPersonServerOptions
 {
-    Issuer               = psIssuer,
-    SigningKeys          = new Dictionary<string, IAAuthKey> { [PsKid] = psKey },
-    DefaultScope         = "calendar.read",
-    TrustedAccessServers = trustedAccessServers,   // null ⇒ federate to verified aud; empty ⇒ three-party only
+    Issuer       = psIssuer,
+    SigningKeys  = new Dictionary<string, IAAuthKey> { [PsKid] = psKey },
+    DefaultScope = "calendar.read",
+    // Unset ⇒ federate to verified aud; empty ⇒ three-party only.
+    Trust        = { AccessServers = { Allowed = trustedAccessServers } },
 });
 ```
 
@@ -393,8 +394,7 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
 | `PendingPathPrefix` | `string` | No | `/pending` | The deferred-consent poll path prefix |
 | `DefaultScope` | `string` | No | `""` | Scope assumed when the resource token omits one |
 | `InteractionPath` | `string` | No | `/interaction` | Path the host maps for the consent page |
-| `TrustedAccessServers` | `IReadOnlyCollection<string>?` | No | `null` | Access Server URLs the PS will federate to. `null` ⇒ federate to the AS named in a verified resource token's `aud` (the spec default); empty ⇒ three-party only (four-party disabled); non-empty ⇒ restrict to the listed Access Servers. AND-composed with `IsTrustedAccessServer`. |
-| `IsTrustedAccessServer` | `Func<string, bool>?` | No | `null` | Optional predicate AND-composed with `TrustedAccessServers`; assign `AAuthTrust.Any` to federate to any verifiable AS explicitly. |
+| `Trust` | `AAuthTrustOptions` | No | `new()` | `Trust.AccessServers` governs the Access Server URLs the PS will federate to. Unconfigured ⇒ federate to the AS named in a verified resource token's `aud` (the spec default); `Allowed` empty ⇒ three-party only (four-party disabled); non-empty ⇒ restrict to the listed Access Servers. `Predicate` AND-composes; assign `AAuthTrust.Any` to federate to any verifiable AS explicitly. |
 | `InteractionEndpoint` | `string?` | No | `null` | §Interaction Endpoint URL advertised in metadata (falls back to `InteractionPath`) |
 | `MissionEndpoint` | `string?` | No | `null` | Mission endpoint URL advertised in `aauth-person.json` (the PS maps the endpoint) |
 | `PermissionEndpoint` | `string?` | No | `null` | Permission endpoint URL advertised in `aauth-person.json` (the PS maps the endpoint) |

@@ -305,9 +305,9 @@ public static class WellKnownEndpoints
 /// </summary>
 public sealed class AAuthResourceMetadataOptions
 {
-    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; init; } = AAuth.Discovery.AAuthEgressPolicy.Production;
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
     /// <summary>HTTPS URL of this resource (<c>issuer</c>).</summary>
-    public required string Issuer { get; init; }
+    public required string Issuer { get; set; }
 
     /// <summary>
     /// Signing keys served via the JWKS endpoint, keyed by <c>kid</c>. Optional in
@@ -316,7 +316,7 @@ public sealed class AAuthResourceMetadataOptions
     /// that only verifies agent signatures MAY omit them, in which case no
     /// <c>jwks_uri</c> is advertised and no JWKS endpoint is mapped (§Resource Metadata).
     /// </summary>
-    public IReadOnlyDictionary<string, IAAuthKey>? SigningKeys { get; init; }
+    public IReadOnlyDictionary<string, IAAuthKey>? SigningKeys { get; set; }
 
     /// <summary>
     /// Optional advisory <c>access_mode</c> declaring the credential flow agents
@@ -325,44 +325,44 @@ public sealed class AAuthResourceMetadataOptions
     /// <c>AAuth-Requirement</c> remains authoritative. Omitted when <see langword="null"/>
     /// (the spec default is <c>agent-token</c>).
     /// </summary>
-    public string? AccessMode { get; init; }
+    public string? AccessMode { get; set; }
 
     /// <summary>Optional human-readable name (<c>name</c>).</summary>
-    public string? Name { get; init; }
+    public string? Name { get; set; }
 
     /// <summary>
     /// Optional Markdown <c>description</c> of the resource, for display to users
     /// (e.g. at a consent screen) (§Resource Metadata). Implementations MUST
     /// sanitize the Markdown before rendering.
     /// </summary>
-    public string? Description { get; init; }
+    public string? Description { get; set; }
 
     /// <summary>Optional logo URL (<c>logo_uri</c>).</summary>
-    public string? LogoUri { get; init; }
+    public string? LogoUri { get; set; }
 
     /// <summary>Optional dark-background logo URL (<c>logo_dark_uri</c>).</summary>
-    public string? LogoDarkUri { get; init; }
+    public string? LogoDarkUri { get; set; }
 
     /// <summary>Optional developer-documentation URL (<c>documentation_uri</c>).</summary>
-    public string? DocumentationUri { get; init; }
+    public string? DocumentationUri { get; set; }
 
     /// <summary>Optional terms-of-service URL (<c>tos_uri</c>).</summary>
-    public string? TosUri { get; init; }
+    public string? TosUri { get; set; }
 
     /// <summary>Optional privacy-policy URL (<c>policy_uri</c>).</summary>
-    public string? PolicyUri { get; init; }
+    public string? PolicyUri { get; set; }
 
     /// <summary>Optional scope description map (<c>scope_descriptions</c>).</summary>
-    public IReadOnlyDictionary<string, string>? ScopeDescriptions { get; init; }
+    public IReadOnlyDictionary<string, string>? ScopeDescriptions { get; set; }
 
     /// <summary>Optional signature-window override (<c>signature_window</c>, seconds).</summary>
-    public int? SignatureWindow { get; init; }
+    public int? SignatureWindow { get; set; }
 
     /// <summary>Optional resource-owned proactive authorization endpoint, not the PS/AS resource-token recipient.</summary>
-    public string? AuthorizationEndpoint { get; init; }
+    public string? AuthorizationEndpoint { get; set; }
 
     /// <summary>Optional revocation endpoint.</summary>
-    public string? RevocationEndpoint { get; init; }
+    public string? RevocationEndpoint { get; set; }
 
     /// <summary>
     /// Optional extension metadata merged verbatim into
@@ -374,7 +374,7 @@ public sealed class AAuthResourceMetadataOptions
     /// builder already emits are ignored (the typed field wins). Core attaches no
     /// meaning to these values.
     /// </summary>
-    public IReadOnlyDictionary<string, JsonNode?>? AdditionalMetadata { get; init; }
+    public IReadOnlyDictionary<string, JsonNode?>? AdditionalMetadata { get; set; }
 
     /// <summary>Whether this resource publishes signing keys (and thus a <c>jwks_uri</c>).</summary>
     internal bool HasSigningKeys => SigningKeys is { Count: > 0 };

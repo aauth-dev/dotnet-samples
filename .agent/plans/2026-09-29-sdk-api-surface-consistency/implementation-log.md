@@ -236,6 +236,56 @@ PROCEEDED.
   - Docs inventory refreshed; e2e typecheck clean.
   - Full Playwright: 78 passed, 1 skipped (Keycloak), `--retries=0`.
 
+### [2026-09-29] [Phase 2] Shared options foundations
+
+PROCEEDED.
+- **2a TimeProvider (`b59f110`).** Every `Func<DateTimeOffset>` clock is now a
+  `TimeProvider`: `TokenVerifier`, `AAuthVerifier`, `AAuthVerificationOptions`,
+  `AAuthResourceOptions`, `R3Challenge`, `JwksClient`, `MetadataClient`,
+  `DiscoveryCache`, `AAuthSigningHandler` and `EventsProtocol`. Tests use
+  `FakeTimeProvider`. `R3ChallengeTimeTests` closes the last clock-injection
+  gap.
+- **2b trust seam.** `AAuthTrustOptions` (rules `AuthTokenIssuers`,
+  `PersonServers`, `AgentProviders`, `AccessServers`, plus an optional
+  `Policy`) and `IAAuthTrustPolicy` replace every `Trusted*` member on the
+  server, verification, resource pipeline, PS, AS and R3 options.
+  - An `AAuthTrustRule` ANDs an allow-list, a sync predicate and an async
+    predicate. An unset rule stays open and still triggers the startup
+    warning. An empty set denies. `PersonServers` falls back to
+    `AuthTokenIssuers` until configured.
+  - Policy resolution: explicit `Policy`, then a DI-registered
+    `IAAuthTrustPolicy`, then the rules. `RequireAAuth(..., trust:)` overrides
+    per endpoint (`EndpointTrustOverride_BeatsResourceTrust`).
+  - `IssuerTrust` and its tests are deleted. `AgentIssuanceContext.VerifyAsync`
+    and `UpstreamTokenValidator.ValidateAsync` take an async issuer predicate.
+  - **Semantic change.** The PS upstream auth-token issuer check was "own
+    issuer OR in set OR predicate". It is now "own issuer OR (AccessServers
+    rule configured AND trusted)", so the parts AND-compose like every other
+    rule.
+  - Sample configuration keys (for example
+    `MockPersonServer:TrustedAccessServers`) are unchanged; only the code that
+    binds them moved to `Trust`.
+- **2c seam resolver.** Internal `AAuthSeams.Resolve<T>`: explicit, then
+  keyed (instance name), then unkeyed, then the default. `SeamResolverTests`
+  covers each step.
+- **2d settable options.** 143 `init` accessors on public `*Options` types are
+  now `set`. The internal `DeferredExchangeOptions` keeps `init`; `init`
+  remains only on non-options types (grep evidence).
+- **2e validators.** Internal `AAuthOptionsValidator<T>` and
+  `AddValidatedAAuthOptions<TOptions, TValidator>` (TryAddEnumerable plus
+  `ValidateOnStart`). Later phases adopt it per role.
+- **Finding for Phase 11.** `R3Challenge.BuildResourceToken(presented,
+  agentJkt, r3Uri, r3S256)` silently binds positionally to the auth-token
+  overload `(verifiedAuthToken, r3Uri, r3S256, scope)`, which then fails on
+  `cnf.jwk`. The test uses named arguments.
+- **Gates.**
+  - Build clean.
+  - Test projects: AAuth.Tests 1701, AAuth.Conformance 1257, AAuth.R3.Tests
+    328, AAuth.Events.Tests 80.
+  - ApiSurface: +597/-314 declarations cumulative against the baseline.
+  - Docs inventory refreshed; e2e typecheck clean.
+  - Full Playwright: 78 passed, 1 skipped (Keycloak), `--retries=0`.
+
 ## Deviations from plan
 
 None yet.

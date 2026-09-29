@@ -22,6 +22,9 @@ public sealed class AAuthEndpointRequirement
 
     /// <summary>Required role, enforced from the auth token's <c>roles</c> claim.</summary>
     public string? Role { get; init; }
+
+    /// <summary>Trust policy for this endpoint, replacing the resource's <see cref="AAuthServerOptions.Trust"/>.</summary>
+    public IAAuthTrustPolicy? Trust { get; init; }
 }
 
 /// <summary>
@@ -33,23 +36,8 @@ public sealed class AAuthEndpointRequirement
 /// </summary>
 public sealed class AAuthServerOptions
 {
-    /// <summary>Allow-list of trusted PS/AS auth-token issuers. Null ⇒ accept any verifiable issuer; empty ⇒ deny all.</summary>
-    public IReadOnlySet<string>? TrustedAuthTokenIssuers { get; set; }
-
-    /// <summary>Trust policy for PS/AS auth-token issuers, AND-composed with the allow-list.</summary>
-    public Func<string, bool>? IsTrustedAuthTokenIssuer { get; set; }
-
-    /// <summary>Allow-list of Person Servers for person tokens. Null (with no policy) ⇒ use the auth-token issuer trust.</summary>
-    public IReadOnlySet<string>? TrustedPersonServers { get; set; }
-
-    /// <summary>Trust policy for person-token issuers, AND-composed with the allow-list.</summary>
-    public Func<string, bool>? IsTrustedPersonServer { get; set; }
-
-    /// <summary>Allow-list of trusted Agent Provider issuers (for <c>aa-agent+jwt</c>).</summary>
-    public IReadOnlySet<string>? TrustedAgentProviderIssuers { get; set; }
-
-    /// <summary>Trust policy for Agent Provider issuers, AND-composed with the allow-list.</summary>
-    public Func<string, bool>? IsTrustedAgentProviderIssuer { get; set; }
+    /// <summary>Trust for auth-token, person-token and agent-token issuers. Open by default.</summary>
+    public AAuthTrustOptions Trust { get; set; } = new();
 
     /// <summary>
     /// Resource-token audience for four-party (federated) resources: the

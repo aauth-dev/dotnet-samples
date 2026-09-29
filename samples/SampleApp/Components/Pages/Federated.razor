@@ -89,7 +89,7 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
     EgressPolicy = SampleEgress.Policy,
     Issuer = psIssuer,
     SigningKeys = new Dictionary&lt;string, IAAuthKey&gt; { [PsKid] = psKey },
-    TrustedAccessServers = trustedAccessServers,
+    Trust = { AccessServers = { Allowed = new HashSet&lt;string&gt;(trustedAccessServers) } },
 });</code></pre>
 </div>
 </div>

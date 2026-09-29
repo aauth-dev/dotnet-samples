@@ -85,7 +85,7 @@ app.UseRouting();
 // intentionally open. This silences the startup open-trust warning, which would
 // otherwise false-positive here: the SDK can't tell at startup that no auth-token
 // endpoint exists. (AAuthTrust lives in AAuth.Server, already imported above.)
-app.UseAAuth(o => o.IsTrustedAuthTokenIssuer = AAuthTrust.Any);
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.Predicate = AAuthTrust.Any);
 
 // Sample inbox contents (illustrative; not spec-defined).
 string[] sampleMessages =

@@ -174,7 +174,7 @@ public class UseAAuthIntermediaryTests : IAsyncLifetime
             {
                 EgressPolicy = TestEgress.Policy,
                 ResourceIdentifier = ResourceId,
-                TrustedAuthTokenIssuers = new HashSet<string> { PsIssuer },
+                Trust = { AuthTokenIssuers = { Allowed = new HashSet<string> { PsIssuer } } },
             },
             new ChallengeOptions
             {

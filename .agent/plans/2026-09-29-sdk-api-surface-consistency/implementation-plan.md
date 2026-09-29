@@ -195,13 +195,13 @@ behaviour change.
 
 ### Definition of Done
 
-- [ ] `grep -rn 'Func<DateTimeOffset>' src` returns nothing; tests use
+- [x] `grep -rn 'Func<DateTimeOffset>' src` returns nothing; tests use
       `FakeTimeProvider`.
-- [ ] `AAuthTrustOptions` / `IAAuthTrustPolicy` is the single trust
+- [x] `AAuthTrustOptions` / `IAAuthTrustPolicy` is the single trust
       declaration. Grep evidence shows no other public `Trusted*` members.
-- [ ] Every public options type uses `{ get; set; }`.
-- [ ] Tests:
-  - [ ] `AAuthTrustPolicyTests`:
+- [x] Every public options type uses `{ get; set; }`.
+- [x] Tests:
+  - [x] `AAuthTrustPolicyTests`:
     - set AND predicate;
     - `null` open with the warning;
     - an empty set denies;
@@ -209,9 +209,9 @@ behaviour change.
     - a DI policy with a scoped dependency, both inside a request and from a
       background scope;
     - a per-endpoint override beats the role policy.
-  - [ ] `SeamResolverTests`: explicit beats keyed, keyed beats unkeyed,
+  - [x] `SeamResolverTests`: explicit beats keyed, keyed beats unkeyed,
         unkeyed beats default.
-  - [ ] Clock-injection tests for each migrated type.
+  - [x] Clock-injection tests for each migrated type.
 - [ ] Gates pass; `ApiSurface` diff reviewed.
 
 ## Phase 3 — Signing abstraction (F-X5; Q19)

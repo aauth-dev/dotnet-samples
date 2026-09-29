@@ -74,7 +74,7 @@ AAuth.Server.RevocationEndpoint.MapAAuthRevocationEndpoint(app,
 // challenges each matched endpoint from its metadata. Trust only the configured
 // Person Servers (fail-closed).
 app.UseRouting();
-app.UseAAuth(o => o.TrustedAuthTokenIssuers = trustedPersonServers);
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.Allowed = trustedPersonServers);
 
 app.UseAuthentication();
 app.UseAuthorization();

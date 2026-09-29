@@ -178,8 +178,11 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
             EgressPolicy = TestEgress.Policy,
             AcceptedSchemes = challengeOptions.AllowedSignatureKeySchemes?.ToArray() ?? ["jwt", "hwk"],
             ResourceIdentifier = ResourceId,
-            TrustedAuthTokenIssuers = trustedAuthTokenIssuers ?? new HashSet<string> { PsIssuer },
-            TrustedPersonServers = trustedPersonServers,
+            Trust =
+            {
+                AuthTokenIssuers = { Allowed = trustedAuthTokenIssuers ?? new HashSet<string> { PsIssuer } },
+                PersonServers = { Allowed = trustedPersonServers },
+            },
         });
         app.UseAAuthChallenge(challengeOptions);
         app.MapGet("/protected", () => Results.Ok("hello"));
@@ -235,7 +238,7 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         Tenant = tenant,
     }.Build();
 
-    private async Task<HttpRequestMessage> SignRequest(string token)
+    private async Task<HttpRequestMessage> SignRequest(string token, string path = "/protected")
     {
         var capture = new CaptureHandler();
         var provider = new JwtSignatureKeyProvider(() => token);
@@ -244,14 +247,14 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
             InnerHandler = capture,
         };
         using var client = new InProcessHttpClient(handler);
-        await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "http://localhost:5000/protected"));
+        await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "http://localhost:5000" + path));
         return capture.Captured!;
     }
 
-    private async Task<HttpResponseMessage> SendSigned(IHost host, string token)
+    private async Task<HttpResponseMessage> SendSigned(IHost host, string token, string path = "/protected")
     {
-        var signed = await SignRequest(token);
-        var relay = new HttpRequestMessage(HttpMethod.Get, "/protected");
+        var signed = await SignRequest(token, path);
+        var relay = new HttpRequestMessage(HttpMethod.Get, path);
         foreach (var h in signed.Headers)
             relay.Headers.TryAddWithoutValidation(h.Key, h.Value);
         relay.Headers.Host = "localhost:5000";
@@ -386,6 +389,48 @@ public class ChallengeMiddlewareTests : IAsyncLifetime
         var token = BuildAuthToken();
         var response = await SendSigned(_challengeHost!, token);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact(DisplayName = "UseAAuth — per-endpoint trust override beats the resource-wide trust")]
+    public async Task EndpointTrustOverride_BeatsResourceTrust()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton(new AAuthVerifier { TimeProvider = new FakeTimeProvider(FixedClock) });
+        builder.Services.AddSingleton<HttpClient>(_metadataHost!.GetTestClient());
+        builder.Services.AddSingleton(sp =>
+            new MetadataClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuthTransportContract.InProcessOnly));
+        builder.Services.AddSingleton(sp =>
+            new JwksClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuthTransportContract.InProcessOnly));
+        builder.Services.AddAAuthAuthentication();
+        builder.Services.AddAAuthAuthorization();
+        await using var app = builder.Build();
+        app.UseRouting();
+        app.UseAAuth(o =>
+        {
+            o.ResourceIdentifier = ResourceId;
+            o.ResourceSigningKey = _resourceKey;
+            o.ResourceKeyId = ResourceKid;
+            o.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { PsIssuer };
+        });
+        app.UseAuthentication();
+        app.UseAuthorization();
+        app.MapGet("/protected", () => Results.Ok("hello")).RequireAAuth(ResourceScope);
+        app.MapGet("/restricted", () => Results.Ok("hello")).RequireAAuth(ResourceScope, trust: new DenyAllTrust());
+        await app.StartAsync();
+
+        using var allowed = await SendSigned(app, BuildAuthToken());
+        using var overridden = await SendSigned(app, BuildAuthToken(), "/restricted");
+
+        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, overridden.StatusCode);
+        await app.StopAsync();
+    }
+
+    private sealed class DenyAllTrust : IAAuthTrustPolicy
+    {
+        public ValueTask<bool> IsTrustedAsync(AAuthTrustContext context, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(false);
     }
 
     [Fact(DisplayName = "§Challenge — IdentityOnly passes agent token through")]

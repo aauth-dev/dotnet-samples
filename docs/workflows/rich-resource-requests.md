@@ -144,9 +144,9 @@ is not implied by the SDK's typed vocabulary support.
 ## Person-Server trust (spec default)
 
 The R3 AS brokers for Person Servers using the same trust model as the core Access
-Server: an **unset** `TrustedPersonServers` list is **open** (broker any *verifiable*
-PS), an explicit list **narrows** (empty ⇒ deny-all), composed
-by AND with an optional `IsTrustedPersonServer` policy. The Bookings demo AS pins the
+Server: an **unset** `Trust.PersonServers` rule is **open** (broker any *verifiable*
+PS), an explicit `Allowed` list **narrows** (empty ⇒ deny-all), composed
+by AND with an optional `Predicate`. The Bookings demo AS pins the
 demo PS (:5100) as the documented four-party pattern.
 
 ## Try it

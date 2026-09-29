@@ -73,7 +73,7 @@ AAuth.Server.RevocationEndpoint.MapAAuthRevocationEndpoint(app,
 // presented person token's mission_s256, so the PS governs the exchange. Trust
 // only the configured Person Servers.
 app.UseRouting();
-app.UseAAuth(o => o.TrustedAuthTokenIssuers = trustedPersonServers);
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.Allowed = trustedPersonServers);
 
 app.UseAuthentication();
 app.UseAuthorization();

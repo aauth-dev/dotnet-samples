@@ -161,7 +161,7 @@ challenges for `calendar.write`.
 
 ```csharp
 app.UseRouting();
-app.UseAAuth(o => o.TrustedAuthTokenIssuers = trustedPersonServers);
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.Allowed = trustedPersonServers);
 app.UseAuthentication();
 app.UseAuthorization();
 

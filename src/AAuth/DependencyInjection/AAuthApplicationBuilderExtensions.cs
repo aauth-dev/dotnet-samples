@@ -55,8 +55,8 @@ public static class AAuthApplicationBuilderExtensions
         // throw on a configured-but-ignored trust policy; warn on implicit-open.
         TrustConfigDiagnostics.Validate(
             app.ApplicationServices.GetService<ILoggerFactory>()?.CreateLogger("AAuth.Verification"),
-            authTrustConfigured: resolvedOptions.TrustedAuthTokenIssuers is not null || resolvedOptions.IsTrustedAuthTokenIssuer is not null,
-            agentTrustConfigured: resolvedOptions.TrustedAgentProviderIssuers is not null || resolvedOptions.IsTrustedAgentProviderIssuer is not null,
+            authTrustConfigured: resolvedOptions.Trust.IsConfigured(AAuth.Server.AAuthTrustedParty.AuthTokenIssuer, app.ApplicationServices),
+            agentTrustConfigured: resolvedOptions.Trust.IsConfigured(AAuth.Server.AAuthTrustedParty.AgentProvider, app.ApplicationServices),
             contextLabel: "UseAAuthVerification");
 
         if (jtiStore is not null)
@@ -211,12 +211,7 @@ public static class AAuthApplicationBuilderExtensions
             EgressPolicy = metadataOptions.EgressPolicy,
             ResourceIdentifier = metadataOptions.Issuer,
             ExpectedAccount = pipelineOptions.AccountSelector,
-            TrustedAuthTokenIssuers = pipelineOptions.TrustedAuthTokenIssuers,
-            IsTrustedAuthTokenIssuer = pipelineOptions.IsTrustedAuthTokenIssuer,
-            TrustedPersonServers = pipelineOptions.TrustedPersonServers,
-            IsTrustedPersonServer = pipelineOptions.IsTrustedPersonServer,
-            TrustedAgentProviderIssuers = pipelineOptions.TrustedAgentProviderIssuers,
-            IsTrustedAgentProviderIssuer = pipelineOptions.IsTrustedAgentProviderIssuer,
+            Trust = pipelineOptions.Trust,
         });
 
         // 3. Challenge middleware (only if there's a signing key available)

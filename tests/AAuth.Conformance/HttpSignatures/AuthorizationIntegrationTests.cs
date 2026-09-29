@@ -122,7 +122,7 @@ public class AuthorizationIntegrationTests : IAsyncLifetime
             EgressPolicy = TestEgress.Policy,
             AcceptedSchemes = ["jwt", "hwk"],
             ResourceIdentifier = ResourceId,
-            TrustedAuthTokenIssuers = new HashSet<string> { PsIssuer },
+            Trust = { AuthTokenIssuers = { Allowed = new HashSet<string> { PsIssuer } } },
         });
         app.UseAuthentication();
         app.UseAuthorization();

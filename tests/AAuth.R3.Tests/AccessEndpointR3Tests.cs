@@ -1273,7 +1273,7 @@ public class AccessEndpointR3Tests
                 EgressPolicy = TestEgress.Policy,
                 Issuer = R3TestData.AsIssuer,
                 SigningKeys = new Dictionary<string, IAAuthKey> { [R3TestData.AsKid] = asKey },
-                TrustedPersonServers = openPersonServerTrust ? null : (trustedPersonServers ?? [R3TestData.PsIssuer]),
+                Trust = { PersonServers = { Allowed = openPersonServerTrust ? null : new HashSet<string>(trustedPersonServers ?? [R3TestData.PsIssuer]) } },
                 // AS policy: book_trip requires per-call approval (r3 §Auth Token Extensions —
                 // the AS decides granted vs per-call, not the R3 document).
                 IsPerCallOperation = op => op.Matches(Vocabulary.OpenApi, R3Operation.OpenApi("book_trip")),

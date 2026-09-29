@@ -16,25 +16,25 @@ namespace AAuth.Agent;
 /// </summary>
 public sealed record DeferredPollerOptions
 {
-    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
-    internal Func<TimeSpan, CancellationToken, Task>? DelayAsync { get; init; }
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
+    internal Func<TimeSpan, CancellationToken, Task>? DelayAsync { get; set; }
 
     /// <summary>Hard upper bound on total polling time.</summary>
-    public TimeSpan MaxTotalWait { get; init; } = TimeSpan.FromMinutes(5);
+    public TimeSpan MaxTotalWait { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
     /// Interval to wait between polls when the server does NOT send a
     /// <c>Retry-After</c> header. Per spec §Deferred Responses the default
     /// polling interval is 5 seconds.
     /// </summary>
-    public TimeSpan DefaultPollInterval { get; init; } = TimeSpan.FromSeconds(5);
+    public TimeSpan DefaultPollInterval { get; set; } = TimeSpan.FromSeconds(5);
 
     /// <summary>
     /// Minimum delay between polls — clamps a tiny <c>Retry-After: 0</c>
     /// from runaway tight-looping if the server is broken. Set to
     /// <see cref="TimeSpan.Zero"/> to honour the server verbatim.
     /// </summary>
-    public TimeSpan MinPollInterval { get; init; } = TimeSpan.FromMilliseconds(100);
+    public TimeSpan MinPollInterval { get; set; } = TimeSpan.FromMilliseconds(100);
 
     /// <summary>
     /// When set, sends a <c>Prefer: wait=N</c> header on each poll request,
@@ -42,13 +42,13 @@ public sealed record DeferredPollerOptions
     /// up to N seconds before receiving a response. Per RFC 7240 §4.3.
     /// When <see langword="null"/> (default), no <c>Prefer</c> header is sent.
     /// </summary>
-    public int? PreferWaitSeconds { get; init; }
+    public int? PreferWaitSeconds { get; set; }
 
     /// <summary>
     /// Optional callback invoked after each poll response. Useful for logging
     /// or progress UI during deferred exchanges.
     /// </summary>
-    public Action<HttpResponseMessage>? OnPoll { get; init; }
+    public Action<HttpResponseMessage>? OnPoll { get; set; }
 
     /// <summary>
     /// Optional predicate evaluated on each <c>202 Accepted</c> poll response.
@@ -62,7 +62,7 @@ public sealed record DeferredPollerOptions
     /// When <see langword="null"/> (default) every <c>202</c> is treated as
     /// "keep polling".
     /// </summary>
-    public Func<HttpResponseMessage, bool>? StopWhenAccepted { get; init; }
+    public Func<HttpResponseMessage, bool>? StopWhenAccepted { get; set; }
 }
 
 /// <summary>

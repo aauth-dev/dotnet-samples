@@ -324,15 +324,15 @@ receives, and the PS attributes the chain.
 When a PS receives an `upstream_token` parameter during a call-chaining request, it must validate the token per §Upstream Token Verification. Use `UpstreamTokenValidator`:
 
 > **Upstream trust is tight by default — the inverse of first-hop federation.**
-> First-hop PS→AS federation (`TrustedAccessServers` on the PS) is *open* by default:
-> a `null` policy lets the PS federate to the AS named in a verified resource token's
+> First-hop PS→AS federation (`Trust.AccessServers` on the PS) is *open* by default:
+> an unconfigured rule lets the PS federate to the AS named in a verified resource token's
 > `aud` (§PS-AS Trust Establishment). Call-chaining (§Upstream Token
 > Verification) is deliberately the opposite — **tight by default**: a PS accepts
 > an upstream person token only if it issued it, and an upstream auth token only
 > if it names this PS as `ps` and was issued by this PS or an AS this PS
 > federated with. Extending a *four-party* chain — trusting an upstream token an
-> AS issued — requires explicitly listing that AS in `TrustedAccessServers` or
-> accepting it via `IsTrustedAccessServer`.
+> AS issued — requires explicitly configuring `Trust.AccessServers` on the PS
+> (an `Allowed` list naming that AS, a `Predicate`, or a trust policy).
 
 ```csharp
 // Register in DI
@@ -348,7 +348,7 @@ var result = await validator.ValidateAsync(
     upstreamToken,
     intermediary: intermediaryResourceUrl,   // aud must equal the intermediary's agent-token iss
     expectedPersonServer: psIssuer,          // a person token's iss / an auth token's ps
-    isTrustedAuthTokenIssuer: iss => iss == psIssuer || trustedAccessServers.Contains(iss));
+    isTrustedAuthTokenIssuer: (iss, _) => ValueTask.FromResult(iss == psIssuer || trustedAccessServers.Contains(iss)));
 
 if (!result.IsValid)
     return AAuth.Server.AAuthProblemDetails.Create("invalid_upstream_token", result.Error);

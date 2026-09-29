@@ -89,7 +89,7 @@ public static class R3AccessTokenEndpoint
             R3VerifiedFetcher caller;
             try
             {
-                caller = await R3DocumentEndpoint.VerifyFetcherAsync(context, options.IsCallerTrustedPersonServer);
+                caller = await R3DocumentEndpoint.VerifyFetcherAsync(context, R3AccessTokenEndpointOptions.IsPersonServerFetcher);
             }
             catch (R3UntrustedJwksUriException)
             {
@@ -100,7 +100,7 @@ public static class R3AccessTokenEndpoint
                 return AAuth.Server.AAuthProblemDetails.Create("invalid_signature", ex.Message, statusCode: StatusCodes.Status401Unauthorized);
             }
 
-            if (!options.IsCallerTrustedPersonServer(caller))
+            if (!await options.IsCallerTrustedPersonServerAsync(context, caller))
             {
                 return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", statusCode: StatusCodes.Status403Forbidden);
             }
@@ -133,7 +133,7 @@ public static class R3AccessTokenEndpoint
             {
                 issuance = await AgentIssuanceContext.VerifyAsync(
                     agentToken, (string?)body?["subagent_token"], (string?)body?["upstream_token"], caller.Identifier,
-                    tokenVerifier, metadata, jwks, static _ => true, context.RequestAborted, TokenCredential.Agent);
+                    tokenVerifier, metadata, jwks, static (_, _) => ValueTask.FromResult(true), context.RequestAborted, TokenCredential.Agent);
             }
             catch (TokenVerificationException ex)
             {
@@ -261,8 +261,8 @@ public static class R3AccessTokenEndpoint
             string? pollerKey;
             try
             {
-                var poller = await R3DocumentEndpoint.VerifyFetcherAsync(context, options.IsCallerTrustedPersonServer);
-                if (!options.IsCallerTrustedPersonServer(poller))
+                var poller = await R3DocumentEndpoint.VerifyFetcherAsync(context, R3AccessTokenEndpointOptions.IsPersonServerFetcher);
+                if (!await options.IsCallerTrustedPersonServerAsync(context, poller))
                 {
                     return AAuth.Server.AAuthProblemDetails.Create("untrusted_person_server", statusCode: StatusCodes.Status403Forbidden);
                 }
@@ -650,27 +650,19 @@ public static class R3AccessTokenEndpoint
 
 public sealed class R3AccessTokenEndpointOptions
 {
-    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; init; } = AAuth.Discovery.AAuthEgressPolicy.Production;
-    public AAuth.Discovery.AAuthTransportContract? FetchTransportContract { get; init; }
-    public required string Issuer { get; init; }
-    public required IReadOnlyDictionary<string, IAAuthKey> SigningKeys { get; init; }
-    public string TokenPath { get; init; } = "/token";
+    public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
+    public AAuth.Discovery.AAuthTransportContract? FetchTransportContract { get; set; }
+    public required string Issuer { get; set; }
+    public required IReadOnlyDictionary<string, IAAuthKey> SigningKeys { get; set; }
+    public string TokenPath { get; set; } = "/token";
     /// <summary>
-    /// Person Servers this AS brokers for, by authority (or absolute URL). <c>null</c>
-    /// ⇒ broker any *verifiable* PS (the AAuth spec default); empty ⇒ deny-all;
-    /// entries narrow. Composed by AND with <see cref="IsTrustedPersonServer"/>.
+    /// Trust for this Access Server. <see cref="AAuthTrustOptions.PersonServers"/> is
+    /// matched on the calling PS's identifier. Open by default (broker any
+    /// <em>verifiable</em> PS, the AAuth spec default); an empty allow-list denies all.
     /// </summary>
-    public IReadOnlyCollection<string>? TrustedPersonServers { get; init; }
+    public AAuthTrustOptions Trust { get; set; } = new();
 
-    /// <summary>
-    /// Optional per-PS trust policy. Input: the caller PS's <c>jwks_uri</c> authority.
-    /// Composed by AND with <see cref="TrustedPersonServers"/> — each only narrows;
-    /// <c>null</c> ⇒ no policy constraint. Both unset ⇒ broker any verifiable PS.
-    /// See <see cref="AAuth.Server.Verification.IssuerTrust"/>.
-    /// </summary>
-    public Func<string, bool>? IsTrustedPersonServer { get; init; }
-
-    public Func<HttpContext, string, string, string, CancellationToken, Task<byte[]>>? FetchAndVerifyAsync { get; init; }
+    public Func<HttpContext, string, string, string, CancellationToken, Task<byte[]>>? FetchAndVerifyAsync { get; set; }
 
     /// <summary>
     /// Optional inner <see cref="HttpMessageHandler"/> for the AS's signed R3-document
@@ -678,17 +670,17 @@ public sealed class R3AccessTokenEndpointOptions
     /// this to a <c>TestServer</c> handler so the AS can fetch the resource's document
     /// over the loopback pipeline. Ignored when <see cref="FetchAndVerifyAsync"/> is set.
     /// </summary>
-    public HttpMessageHandler? FetchHttpMessageHandler { get; init; }
+    public HttpMessageHandler? FetchHttpMessageHandler { get; set; }
     /// <summary>
     /// Required audit persistence. Completion must mean the token association is committed;
     /// failure prevents token release. In-memory implementations are not crash-durable.
     /// </summary>
-    public required IR3AuditSink AuditSink { get; init; }
-    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
-    public R3VocabularySchemas VocabularySchemas { get; init; } = R3VocabularySchemas.Standard;
-    public Func<R3OperationIdentity, bool>? IsOperationAllowed { get; init; }
-    public Func<R3ProposalDocument, bool>? IsProposalAllowed { get; init; }
-    public Func<string, string, bool>? IsScopeAllowed { get; init; }
+    public required IR3AuditSink AuditSink { get; set; }
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
+    public R3VocabularySchemas VocabularySchemas { get; set; } = R3VocabularySchemas.Standard;
+    public Func<R3OperationIdentity, bool>? IsOperationAllowed { get; set; }
+    public Func<R3ProposalDocument, bool>? IsProposalAllowed { get; set; }
+    public Func<string, string, bool>? IsScopeAllowed { get; set; }
 
     /// <summary>
     /// AS policy deciding which R3 operations are <c>r3_per_call</c> (require
@@ -698,7 +690,7 @@ public sealed class R3AccessTokenEndpointOptions
     /// operation from the fetched document; return <c>true</c> ⇒ per-call.
     /// <c>null</c> (default) ⇒ grant every operation (<c>r3_per_call</c> is OPTIONAL).
     /// </summary>
-    public Func<R3OperationIdentity, bool>? IsPerCallOperation { get; init; }
+    public Func<R3OperationIdentity, bool>? IsPerCallOperation { get; set; }
 
     /// <summary>
     /// When <see langword="true"/>, a per-call proposal (r3 §Per-Call Proposals) is not
@@ -709,14 +701,14 @@ public sealed class R3AccessTokenEndpointOptions
     /// machine-evaluated is deployment policy (r3 §Per-Call Proposals). Default
     /// <see langword="false"/> (auto-mint) to preserve the non-interactive path.
     /// </summary>
-    public bool RequireProposalConsent { get; init; }
-    public BrowserConsentSessions? BrowserConsent { get; init; }
+    public bool RequireProposalConsent { get; set; }
+    public BrowserConsentSessions? BrowserConsent { get; set; }
 
     /// <summary>Browser consent-screen path for per-call proposals. Default <c>/interaction/consent</c>.</summary>
-    public string ConsentPath { get; init; } = "/interaction/consent";
+    public string ConsentPath { get; set; } = "/interaction/consent";
 
     /// <summary>Pending-poll path used to relay/mint after per-call consent. Default <c>/pending</c>.</summary>
-    public string PendingPath { get; init; } = "/pending";
+    public string PendingPath { get; set; } = "/pending";
 
     internal void Validate()
     {
@@ -759,20 +751,19 @@ public sealed class R3AccessTokenEndpointOptions
         throw new InvalidOperationException("At least one AS signing key is required.");
     }
 
-    // draft-08 PS-AS trust: `TrustedPersonServers` null ⇒ open (broker any *verifiable*
-    // Person Server — the spec default); empty ⇒ deny-all; entries narrow. Composed by
-    // AND with the optional `IsTrustedPersonServer` policy via the shared IssuerTrust
-    // helper (same decision path as the core Access Server).
-    internal bool IsCallerTrustedPersonServer(R3VerifiedFetcher fetcher)
-    {
+    // PS-AS trust: open by default (broker any *verifiable* Person Server, the spec
+    // default); the same Trust decision path as the core Access Server.
+    internal static bool IsPersonServerFetcher(R3VerifiedFetcher fetcher)
         // The PS authenticates via the jwks_uri scheme; a jwt-scheme (agent) caller is never a PS.
-        if (fetcher.Scheme != AAuthConstants.Schemes.JwksUri
-            || !string.Equals(fetcher.ParsedKey.Dwk, AAuthConstants.DwkFiles.Person, StringComparison.Ordinal))
-        {
-            return false;
-        }
+        => fetcher.Scheme == AAuthConstants.Schemes.JwksUri
+            && string.Equals(fetcher.ParsedKey.Dwk, AAuthConstants.DwkFiles.Person, StringComparison.Ordinal);
+
+    internal async ValueTask<bool> IsCallerTrustedPersonServerAsync(HttpContext context, R3VerifiedFetcher fetcher)
+    {
+        if (!IsPersonServerFetcher(fetcher)) return false;
         EgressPolicy.ValidateIdentifier(fetcher.Identifier);
-        foreach (var identifier in TrustedPersonServers ?? []) EgressPolicy.ValidateIdentifier(identifier);
-        return IssuerTrust.IsTrusted(TrustedPersonServers, IsTrustedPersonServer, fetcher.Identifier);
+        foreach (var identifier in Trust.PersonServers.Allowed ?? new HashSet<string>()) EgressPolicy.ValidateIdentifier(identifier);
+        return await Trust.IsTrustedAsync(fetcher.Identifier, AAuthTrustedParty.PersonServer,
+            context.RequestServices, context, cancellationToken: context.RequestAborted).ConfigureAwait(false);
     }
 }

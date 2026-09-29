@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 163 changed public-source files, 437 added/replacement declarations, 165 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 168 changed public-source files, 597 added/replacement declarations, 314 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -736,9 +736,46 @@ Public owners: `AAuth.R3.R3AccessAnnotations`, `AAuth.R3`.
 Concept/decision: [r3](#r3). Source: [R3AccessTokenEndpoint.cs](../../../src/AAuth.R3/R3AccessTokenEndpoint.cs).
 
 ```diff
+- AAuth.R3.R3AccessTokenEndpointOptions: public AAuth . Discovery . AAuthEgressPolicy EgressPolicy { get ; init ; } = AAuth . Discovery . AAuthEgressPolicy . Production
+- AAuth.R3.R3AccessTokenEndpointOptions: public AAuth . Discovery . AAuthTransportContract ? FetchTransportContract { get ; init ; }
+- AAuth.R3.R3AccessTokenEndpointOptions: public BrowserConsentSessions ? BrowserConsent { get ; init ; }
+- AAuth.R3.R3AccessTokenEndpointOptions: public Func < HttpContext , string , string , string , CancellationToken , Task < byte [  ] > > ? FetchAndVerifyAsync { get ; init ; }
 - AAuth.R3.R3AccessTokenEndpointOptions: public Func < R3OperationIdentity , bool > ? IsConditionalOperation { get ; init ; }
+- AAuth.R3.R3AccessTokenEndpointOptions: public Func < R3OperationIdentity , bool > ? IsOperationAllowed { get ; init ; }
+- AAuth.R3.R3AccessTokenEndpointOptions: public Func < R3ProposalDocument , bool > ? IsProposalAllowed { get ; init ; }
+- AAuth.R3.R3AccessTokenEndpointOptions: public Func < string , bool > ? IsTrustedPersonServer { get ; init ; }
+- AAuth.R3.R3AccessTokenEndpointOptions: public Func < string , string , bool > ? IsScopeAllowed { get ; init ; }
+- AAuth.R3.R3AccessTokenEndpointOptions: public HttpMessageHandler ? FetchHttpMessageHandler { get ; init ; }
+- AAuth.R3.R3AccessTokenEndpointOptions: public IReadOnlyCollection < string > ? TrustedPersonServers { get ; init ; }
+- AAuth.R3.R3AccessTokenEndpointOptions: public R3VocabularySchemas VocabularySchemas { get ; init ; } = R3VocabularySchemas . Standard
+- AAuth.R3.R3AccessTokenEndpointOptions: public TimeProvider TimeProvider { get ; init ; } = TimeProvider . System
+- AAuth.R3.R3AccessTokenEndpointOptions: public bool RequireProposalConsent { get ; init ; }
+- AAuth.R3.R3AccessTokenEndpointOptions: public required IR3AuditSink AuditSink { get ; init ; }
+- AAuth.R3.R3AccessTokenEndpointOptions: public required IReadOnlyDictionary < string , IAAuthKey > SigningKeys { get ; init ; }
+- AAuth.R3.R3AccessTokenEndpointOptions: public required string Issuer { get ; init ; }
+- AAuth.R3.R3AccessTokenEndpointOptions: public string ConsentPath { get ; init ; } = "/interaction/consent"
+- AAuth.R3.R3AccessTokenEndpointOptions: public string PendingPath { get ; init ; } = "/pending"
 - AAuth.R3.R3AccessTokenEndpointOptions: public string Subject { get ; init ; } = "pairwise-sub"
-+ AAuth.R3.R3AccessTokenEndpointOptions: public Func < R3OperationIdentity , bool > ? IsPerCallOperation { get ; init ; }
+- AAuth.R3.R3AccessTokenEndpointOptions: public string TokenPath { get ; init ; } = "/token"
++ AAuth.R3.R3AccessTokenEndpointOptions: public AAuth . Discovery . AAuthEgressPolicy EgressPolicy { get ; set ; } = AAuth . Discovery . AAuthEgressPolicy . Production
++ AAuth.R3.R3AccessTokenEndpointOptions: public AAuth . Discovery . AAuthTransportContract ? FetchTransportContract { get ; set ; }
++ AAuth.R3.R3AccessTokenEndpointOptions: public AAuthTrustOptions Trust { get ; set ; } = new ( )
++ AAuth.R3.R3AccessTokenEndpointOptions: public BrowserConsentSessions ? BrowserConsent { get ; set ; }
++ AAuth.R3.R3AccessTokenEndpointOptions: public Func < HttpContext , string , string , string , CancellationToken , Task < byte [  ] > > ? FetchAndVerifyAsync { get ; set ; }
++ AAuth.R3.R3AccessTokenEndpointOptions: public Func < R3OperationIdentity , bool > ? IsOperationAllowed { get ; set ; }
++ AAuth.R3.R3AccessTokenEndpointOptions: public Func < R3OperationIdentity , bool > ? IsPerCallOperation { get ; set ; }
++ AAuth.R3.R3AccessTokenEndpointOptions: public Func < R3ProposalDocument , bool > ? IsProposalAllowed { get ; set ; }
++ AAuth.R3.R3AccessTokenEndpointOptions: public Func < string , string , bool > ? IsScopeAllowed { get ; set ; }
++ AAuth.R3.R3AccessTokenEndpointOptions: public HttpMessageHandler ? FetchHttpMessageHandler { get ; set ; }
++ AAuth.R3.R3AccessTokenEndpointOptions: public R3VocabularySchemas VocabularySchemas { get ; set ; } = R3VocabularySchemas . Standard
++ AAuth.R3.R3AccessTokenEndpointOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
++ AAuth.R3.R3AccessTokenEndpointOptions: public bool RequireProposalConsent { get ; set ; }
++ AAuth.R3.R3AccessTokenEndpointOptions: public required IR3AuditSink AuditSink { get ; set ; }
++ AAuth.R3.R3AccessTokenEndpointOptions: public required IReadOnlyDictionary < string , IAAuthKey > SigningKeys { get ; set ; }
++ AAuth.R3.R3AccessTokenEndpointOptions: public required string Issuer { get ; set ; }
++ AAuth.R3.R3AccessTokenEndpointOptions: public string ConsentPath { get ; set ; } = "/interaction/consent"
++ AAuth.R3.R3AccessTokenEndpointOptions: public string PendingPath { get ; set ; } = "/pending"
++ AAuth.R3.R3AccessTokenEndpointOptions: public string TokenPath { get ; set ; } = "/token"
 ```
 
 Public owners: `AAuth.R3.R3AccessTokenEndpointOptions`, `AAuth.R3.R3AccessTokenEndpoint`, `AAuth.R3`.
@@ -876,7 +913,33 @@ Public owners: `AAuth.AAuthTokenTypeExtensions`, `AAuth.AAuthTokenType`, `AAuth`
 
 Concept/decision: [consent](#consent). Source: [AAuthAccessServerEndpoints.cs](../../../src/AAuth/Access/AAuthAccessServerEndpoints.cs).
 
-Public signatures unchanged (16); behavior reviewed under consent.
+```diff
+- AAuth.Access.AAuthAccessServerOptions: public AAuthEgressPolicy EgressPolicy { get ; init ; } = AAuthEgressPolicy . Production
+- AAuth.Access.AAuthAccessServerOptions: public Action < AAuthRevocationOptions > ? ConfigureRevocation { get ; init ; }
+- AAuth.Access.AAuthAccessServerOptions: public Func < string , JsonObject ? > ? DeriveAgentClaims { get ; init ; }
+- AAuth.Access.AAuthAccessServerOptions: public Func < string , bool > ? IsTrustedPersonServer { get ; init ; }
+- AAuth.Access.AAuthAccessServerOptions: public IReadOnlyCollection < string > ? TrustedPersonServers { get ; init ; }
+- AAuth.Access.AAuthAccessServerOptions: public TimeProvider TimeProvider { get ; init ; } = TimeProvider . System
+- AAuth.Access.AAuthAccessServerOptions: public required IReadOnlyDictionary < string , IAAuthKey > SigningKeys { get ; init ; }
+- AAuth.Access.AAuthAccessServerOptions: public required string Issuer { get ; init ; }
+- AAuth.Access.AAuthAccessServerOptions: public string DefaultScope { get ; init ; } = ""
+- AAuth.Access.AAuthAccessServerOptions: public string InteractionLoginPath { get ; init ; } = "/interaction/login"
+- AAuth.Access.AAuthAccessServerOptions: public string PendingPathPrefix { get ; init ; } = "/pending"
+- AAuth.Access.AAuthAccessServerOptions: public string RevocationPath { get ; init ; } = "/revoke"
+- AAuth.Access.AAuthAccessServerOptions: public string TokenPath { get ; init ; } = "/token"
++ AAuth.Access.AAuthAccessServerOptions: public AAuthEgressPolicy EgressPolicy { get ; set ; } = AAuthEgressPolicy . Production
++ AAuth.Access.AAuthAccessServerOptions: public AAuthTrustOptions Trust { get ; set ; } = new ( )
++ AAuth.Access.AAuthAccessServerOptions: public Action < AAuthRevocationOptions > ? ConfigureRevocation { get ; set ; }
++ AAuth.Access.AAuthAccessServerOptions: public Func < string , JsonObject ? > ? DeriveAgentClaims { get ; set ; }
++ AAuth.Access.AAuthAccessServerOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
++ AAuth.Access.AAuthAccessServerOptions: public required IReadOnlyDictionary < string , IAAuthKey > SigningKeys { get ; set ; }
++ AAuth.Access.AAuthAccessServerOptions: public required string Issuer { get ; set ; }
++ AAuth.Access.AAuthAccessServerOptions: public string DefaultScope { get ; set ; } = ""
++ AAuth.Access.AAuthAccessServerOptions: public string InteractionLoginPath { get ; set ; } = "/interaction/login"
++ AAuth.Access.AAuthAccessServerOptions: public string PendingPathPrefix { get ; set ; } = "/pending"
++ AAuth.Access.AAuthAccessServerOptions: public string RevocationPath { get ; set ; } = "/revoke"
++ AAuth.Access.AAuthAccessServerOptions: public string TokenPath { get ; set ; } = "/token"
+```
 
 Public owners: `AAuth.Access.AAuthAccessServerEndpoints`, `AAuth.Access.AAuthAccessServerOptions`, `AAuth.Access`.
 
@@ -980,7 +1043,22 @@ Public owners: `AAuth.Agent.ClarificationExchange`, `AAuth.Agent.ClarificationRe
 
 Concept/decision: [agent-clients](#agent-clients). Source: [DeferredPoller.cs](../../../src/AAuth/Agent/DeferredPoller.cs).
 
-Public signatures unchanged (12); behavior reviewed under agent-clients.
+```diff
+- AAuth.Agent.DeferredPollerOptions: public Action < HttpResponseMessage > ? OnPoll { get ; init ; }
+- AAuth.Agent.DeferredPollerOptions: public Func < HttpResponseMessage , bool > ? StopWhenAccepted { get ; init ; }
+- AAuth.Agent.DeferredPollerOptions: public TimeProvider TimeProvider { get ; init ; } = TimeProvider . System
+- AAuth.Agent.DeferredPollerOptions: public TimeSpan DefaultPollInterval { get ; init ; } = TimeSpan . FromSeconds ( 5 )
+- AAuth.Agent.DeferredPollerOptions: public TimeSpan MaxTotalWait { get ; init ; } = TimeSpan . FromMinutes ( 5 )
+- AAuth.Agent.DeferredPollerOptions: public TimeSpan MinPollInterval { get ; init ; } = TimeSpan . FromMilliseconds ( 100 )
+- AAuth.Agent.DeferredPollerOptions: public int ? PreferWaitSeconds { get ; init ; }
++ AAuth.Agent.DeferredPollerOptions: public Action < HttpResponseMessage > ? OnPoll { get ; set ; }
++ AAuth.Agent.DeferredPollerOptions: public Func < HttpResponseMessage , bool > ? StopWhenAccepted { get ; set ; }
++ AAuth.Agent.DeferredPollerOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
++ AAuth.Agent.DeferredPollerOptions: public TimeSpan DefaultPollInterval { get ; set ; } = TimeSpan . FromSeconds ( 5 )
++ AAuth.Agent.DeferredPollerOptions: public TimeSpan MaxTotalWait { get ; set ; } = TimeSpan . FromMinutes ( 5 )
++ AAuth.Agent.DeferredPollerOptions: public TimeSpan MinPollInterval { get ; set ; } = TimeSpan . FromMilliseconds ( 100 )
++ AAuth.Agent.DeferredPollerOptions: public int ? PreferWaitSeconds { get ; set ; }
+```
 
 Public owners: `AAuth.Agent.DeferredPollerOptions`, `AAuth.Agent.DeferredPoller`, `AAuth.Agent`.
 
@@ -994,6 +1072,23 @@ Concept/decision: [governance](#governance). Source: [AuditRecord.cs](../../../s
 ```
 
 Public owners: `AAuth.Agent.Governance.AuditRecord`, `AAuth.Agent.Governance`.
+
+### src/AAuth/Agent/Governance/GovernanceOptions.cs
+
+Concept/decision: [governance](#governance). Source: [GovernanceOptions.cs](../../../src/AAuth/Agent/Governance/GovernanceOptions.cs).
+
+```diff
+- AAuth.Agent.Governance.GovernanceOptions: public DeferredPollerOptions ? PollerOptions { get ; init ; }
+- AAuth.Agent.Governance.GovernanceOptions: public Func < ClarificationRequirement , CancellationToken , Task < ClarificationResponse > > ? OnClarificationRequired { get ; init ; }
+- AAuth.Agent.Governance.GovernanceOptions: public Func < Interaction , CancellationToken , Task > ? OnInteractionRequired { get ; init ; }
+- AAuth.Agent.Governance.GovernanceOptions: public int MaxClarificationRounds { get ; init ; } = ClarificationExchange . DefaultMaxRounds
++ AAuth.Agent.Governance.GovernanceOptions: public DeferredPollerOptions ? PollerOptions { get ; set ; }
++ AAuth.Agent.Governance.GovernanceOptions: public Func < ClarificationRequirement , CancellationToken , Task < ClarificationResponse > > ? OnClarificationRequired { get ; set ; }
++ AAuth.Agent.Governance.GovernanceOptions: public Func < Interaction , CancellationToken , Task > ? OnInteractionRequired { get ; set ; }
++ AAuth.Agent.Governance.GovernanceOptions: public int MaxClarificationRounds { get ; set ; } = ClarificationExchange . DefaultMaxRounds
+```
+
+Public owners: `AAuth.Agent.Governance.GovernanceOptions`, `AAuth.Agent.Governance`.
 
 ### src/AAuth/Agent/Governance/InteractionClient.cs
 
@@ -1201,8 +1296,11 @@ Public owners: `AAuth.AAuthResourceOptions`, `AAuth`.
 Concept/decision: [di](#di). Source: [AAuthResourcePipelineOptions.cs](../../../src/AAuth/DependencyInjection/AAuthResourcePipelineOptions.cs).
 
 ```diff
-+ AAuth.AAuthResourcePipelineOptions: public Func < string , bool > ? IsTrustedPersonServer { get ; set ; }
-+ AAuth.AAuthResourcePipelineOptions: public IReadOnlySet < string > ? TrustedPersonServers { get ; set ; }
+- AAuth.AAuthResourcePipelineOptions: public Func < string , bool > ? IsTrustedAgentProviderIssuer { get ; set ; }
+- AAuth.AAuthResourcePipelineOptions: public Func < string , bool > ? IsTrustedAuthTokenIssuer { get ; set ; }
+- AAuth.AAuthResourcePipelineOptions: public IReadOnlySet < string > ? TrustedAgentProviderIssuers { get ; set ; }
+- AAuth.AAuthResourcePipelineOptions: public IReadOnlySet < string > ? TrustedAuthTokenIssuers { get ; set ; }
++ AAuth.AAuthResourcePipelineOptions: public AAuth . Server . AAuthTrustOptions Trust { get ; set ; } = new ( )
 ```
 
 Public owners: `AAuth.AAuthResourcePipelineOptions`, `AAuth`.
@@ -1417,8 +1515,47 @@ Public owners: `AAuth.Identifiers.AgentId`, `AAuth.Identifiers`.
 Concept/decision: [consent](#consent). Source: [AAuthPersonServerEndpoints.cs](../../../src/AAuth/Person/AAuthPersonServerEndpoints.cs).
 
 ```diff
-+ AAuth.Person.AAuthPersonServerOptions: public IJtiStore ? TokenInventory { get ; init ; }
-+ AAuth.Person.AAuthPersonServerOptions: public string PersonTokenPath { get ; init ; } = "/person"
+- AAuth.Person.AAuthPersonServerOptions: public AAuthEgressPolicy EgressPolicy { get ; init ; } = AAuthEgressPolicy . Production
+- AAuth.Person.AAuthPersonServerOptions: public Action < AAuthRevocationOptions > ? ConfigureRevocation { get ; init ; }
+- AAuth.Person.AAuthPersonServerOptions: public BrowserConsentSessions ? ResourceInteractionSessions { get ; init ; }
+- AAuth.Person.AAuthPersonServerOptions: public Func < PersonPendingEntry , ClarificationRequirement , System . Threading . CancellationToken , Task < ClarificationResponse ? > > ? TriageClarificationAsync { get ; init ; }
+- AAuth.Person.AAuthPersonServerOptions: public Func < string , bool > ? IsTrustedAccessServer { get ; init ; }
+- AAuth.Person.AAuthPersonServerOptions: public IReadOnlyCollection < string > ? TrustedAccessServers { get ; init ; }
+- AAuth.Person.AAuthPersonServerOptions: public IReadOnlyCollection < string > ? UnsignedPathPrefixes { get ; init ; }
+- AAuth.Person.AAuthPersonServerOptions: public IReadOnlyList < string > ? ScopesSupported { get ; init ; }
+- AAuth.Person.AAuthPersonServerOptions: public TimeProvider TimeProvider { get ; init ; } = TimeProvider . System
+- AAuth.Person.AAuthPersonServerOptions: public required IReadOnlyDictionary < string , IAAuthKey > SigningKeys { get ; init ; }
+- AAuth.Person.AAuthPersonServerOptions: public required string Issuer { get ; init ; }
+- AAuth.Person.AAuthPersonServerOptions: public string ? AuditEndpoint { get ; init ; }
+- AAuth.Person.AAuthPersonServerOptions: public string ? InteractionEndpoint { get ; init ; }
+- AAuth.Person.AAuthPersonServerOptions: public string ? MissionEndpoint { get ; init ; }
+- AAuth.Person.AAuthPersonServerOptions: public string ? PermissionEndpoint { get ; init ; }
+- AAuth.Person.AAuthPersonServerOptions: public string DefaultScope { get ; init ; } = ""
+- AAuth.Person.AAuthPersonServerOptions: public string InteractionPath { get ; init ; } = "/interaction"
+- AAuth.Person.AAuthPersonServerOptions: public string PendingPathPrefix { get ; init ; } = "/pending"
+- AAuth.Person.AAuthPersonServerOptions: public string RevocationPath { get ; init ; } = "/revoke"
+- AAuth.Person.AAuthPersonServerOptions: public string TokenPath { get ; init ; } = "/token"
++ AAuth.Person.AAuthPersonServerOptions: public AAuthEgressPolicy EgressPolicy { get ; set ; } = AAuthEgressPolicy . Production
++ AAuth.Person.AAuthPersonServerOptions: public AAuthTrustOptions Trust { get ; set ; } = new ( )
++ AAuth.Person.AAuthPersonServerOptions: public Action < AAuthRevocationOptions > ? ConfigureRevocation { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public BrowserConsentSessions ? ResourceInteractionSessions { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public Func < PersonPendingEntry , ClarificationRequirement , System . Threading . CancellationToken , Task < ClarificationResponse ? > > ? TriageClarificationAsync { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public IJtiStore ? TokenInventory { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public IReadOnlyCollection < string > ? UnsignedPathPrefixes { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public IReadOnlyList < string > ? ScopesSupported { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
++ AAuth.Person.AAuthPersonServerOptions: public required IReadOnlyDictionary < string , IAAuthKey > SigningKeys { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public required string Issuer { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public string ? AuditEndpoint { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public string ? InteractionEndpoint { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public string ? MissionEndpoint { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public string ? PermissionEndpoint { get ; set ; }
++ AAuth.Person.AAuthPersonServerOptions: public string DefaultScope { get ; set ; } = ""
++ AAuth.Person.AAuthPersonServerOptions: public string InteractionPath { get ; set ; } = "/interaction"
++ AAuth.Person.AAuthPersonServerOptions: public string PendingPathPrefix { get ; set ; } = "/pending"
++ AAuth.Person.AAuthPersonServerOptions: public string PersonTokenPath { get ; set ; } = "/person"
++ AAuth.Person.AAuthPersonServerOptions: public string RevocationPath { get ; set ; } = "/revoke"
++ AAuth.Person.AAuthPersonServerOptions: public string TokenPath { get ; set ; } = "/token"
 ```
 
 Public owners: `AAuth.Person.AAuthPersonServerEndpoints`, `AAuth.Person.AAuthPersonServerOptions`, `AAuth.Person`.
@@ -1514,6 +1651,53 @@ Concept/decision: [revocation](#revocation). Source: [AAuthRevocationOptions.cs]
 
 Public owners: `AAuth.Server.AAuthRevocationOptions`, `AAuth.Server`.
 
+### src/AAuth/Server/AAuthTrust.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [AAuthTrust.cs](../../../src/AAuth/Server/AAuthTrust.cs).
+
+Public signatures unchanged (2); behavior reviewed under server-contracts.
+
+Public owners: `AAuth.Server.AAuthTrust`, `AAuth.Server`.
+
+### src/AAuth/Server/AAuthTrustPolicy.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [AAuthTrustPolicy.cs](../../../src/AAuth/Server/AAuthTrustPolicy.cs).
+
+```diff
++ AAuth.Server.AAuthTrustContext: public AAuthTrustContext ( string issuer , AAuthTrustedParty party , IServiceProvider services )
++ AAuth.Server.AAuthTrustContext: public AAuthTrustedParty Party { get ; }
++ AAuth.Server.AAuthTrustContext: public HttpContext ? HttpContext { get ; init ; }
++ AAuth.Server.AAuthTrustContext: public IServiceProvider Services { get ; }
++ AAuth.Server.AAuthTrustContext: public string ? TokenType { get ; init ; }
++ AAuth.Server.AAuthTrustContext: public string Issuer { get ; }
++ AAuth.Server.AAuthTrustOptions: public AAuthTrustRule AccessServers { get ; set ; } = new ( )
++ AAuth.Server.AAuthTrustOptions: public AAuthTrustRule AgentProviders { get ; set ; } = new ( )
++ AAuth.Server.AAuthTrustOptions: public AAuthTrustRule AuthTokenIssuers { get ; set ; } = new ( )
++ AAuth.Server.AAuthTrustOptions: public AAuthTrustRule PersonServers { get ; set ; } = new ( )
++ AAuth.Server.AAuthTrustOptions: public AAuthTrustRule RuleFor ( AAuthTrustedParty party )
++ AAuth.Server.AAuthTrustOptions: public IAAuthTrustPolicy ? Policy { get ; set ; }
++ AAuth.Server.AAuthTrustOptions: public ValueTask < bool > IsTrustedAsync ( AAuthTrustContext context , CancellationToken cancellationToken = default )
++ AAuth.Server.AAuthTrustOptions: public ValueTask < bool > IsTrustedAsync ( string issuer , AAuthTrustedParty party , IServiceProvider services , HttpContext ? httpContext = null , string ? tokenType = null , CancellationToken cancellationToken = default )
++ AAuth.Server.AAuthTrustOptions: public bool IsConfigured ( AAuthTrustedParty party , IServiceProvider ? services = null )
++ AAuth.Server.AAuthTrustRule: public Func < AAuthTrustContext , CancellationToken , ValueTask < bool > > ? PredicateAsync { get ; set ; }
++ AAuth.Server.AAuthTrustRule: public Func < string , bool > ? Predicate { get ; set ; }
++ AAuth.Server.AAuthTrustRule: public IReadOnlySet < string > ? Allowed { get ; set ; }
++ AAuth.Server.AAuthTrustRule: public async ValueTask < bool > EvaluateAsync ( AAuthTrustContext context , CancellationToken cancellationToken = default )
++ AAuth.Server.AAuthTrustRule: public bool IsConfigured
++ AAuth.Server.AAuthTrustedParty: AccessServer
++ AAuth.Server.AAuthTrustedParty: AgentProvider
++ AAuth.Server.AAuthTrustedParty: AuthTokenIssuer
++ AAuth.Server.AAuthTrustedParty: PersonServer
++ AAuth.Server.IAAuthTrustPolicy: ValueTask < bool > IsTrustedAsync ( AAuthTrustContext context , CancellationToken cancellationToken = default )
++ AAuth.Server: public enum AAuthTrustedParty
++ AAuth.Server: public interface IAAuthTrustPolicy
++ AAuth.Server: public sealed class AAuthTrustContext
++ AAuth.Server: public sealed class AAuthTrustOptions
++ AAuth.Server: public sealed class AAuthTrustRule
+```
+
+Public owners: `AAuth.Server.AAuthTrustContext`, `AAuth.Server.AAuthTrustOptions`, `AAuth.Server.AAuthTrustRule`, `AAuth.Server.AAuthTrustedParty`, `AAuth.Server.IAAuthTrustPolicy`, `AAuth.Server`.
+
 ### src/AAuth/Server/AuthTokenResponse.cs
 
 Concept/decision: [server-contracts](#server-contracts). Source: [AuthTokenResponse.cs](../../../src/AAuth/Server/AuthTokenResponse.cs).
@@ -1547,6 +1731,21 @@ Concept/decision: [governance](#governance). Source: [CallChainingHandler.cs](..
 
 Public owners: `AAuth.Server.CallChaining.CallChainingHandler`, `AAuth.Server.CallChaining`.
 
+### src/AAuth/Server/CallChaining/CallChainingOptions.cs
+
+Concept/decision: [governance](#governance). Source: [CallChainingOptions.cs](../../../src/AAuth/Server/CallChaining/CallChainingOptions.cs).
+
+```diff
+- AAuth.Server.CallChaining.CallChainingOptions: public Func < HttpClient > ? HttpClientFactory { get ; init ; }
+- AAuth.Server.CallChaining.CallChainingOptions: public required IAAuthKey AgentKey { get ; init ; }
+- AAuth.Server.CallChaining.CallChainingOptions: public required ISignatureKeyProvider SignatureKeyProvider { get ; init ; }
++ AAuth.Server.CallChaining.CallChainingOptions: public Func < HttpClient > ? HttpClientFactory { get ; set ; }
++ AAuth.Server.CallChaining.CallChainingOptions: public required IAAuthKey AgentKey { get ; set ; }
++ AAuth.Server.CallChaining.CallChainingOptions: public required ISignatureKeyProvider SignatureKeyProvider { get ; set ; }
+```
+
+Public owners: `AAuth.Server.CallChaining.CallChainingOptions`, `AAuth.Server.CallChaining`.
+
 ### src/AAuth/Server/CallChaining/CallChainingRouter.cs
 
 Concept/decision: [governance](#governance). Source: [CallChainingRouter.cs](../../../src/AAuth/Server/CallChaining/CallChainingRouter.cs).
@@ -1573,9 +1772,25 @@ Public owners: `AAuth.Server.Challenge.AAuthChallengeMiddleware`, `AAuth.Server.
 Concept/decision: [server-contracts](#server-contracts). Source: [ChallengeOptions.cs](../../../src/AAuth/Server/Challenge/ChallengeOptions.cs).
 
 ```diff
+- AAuth.Server.Challenge.ChallengeOptions: public AAuthAccessMode AccessMode { get ; init ; } = AAuthAccessMode . RequireAuthToken
+- AAuth.Server.Challenge.ChallengeOptions: public IAAuthKey ? ResourceSigningKey { get ; init ; }
+- AAuth.Server.Challenge.ChallengeOptions: public IReadOnlyDictionary < string , string > ? ScopeDescriptions { get ; init ; }
+- AAuth.Server.Challenge.ChallengeOptions: public IReadOnlySet < string > ? AllowedSignatureKeySchemes { get ; init ; }
+- AAuth.Server.Challenge.ChallengeOptions: public System . Func < Microsoft . AspNetCore . Http . HttpContext , string ? > ? RequestedAccount { get ; init ; }
 - AAuth.Server.Challenge.ChallengeOptions: public bool MissionAware { get ; init ; }
+- AAuth.Server.Challenge.ChallengeOptions: public string ? DefaultScopes { get ; init ; }
 - AAuth.Server.Challenge.ChallengeOptions: public string ? PersonServerAudience { get ; init ; }
-+ AAuth.Server.Challenge.ChallengeOptions: public string ? AccessServer { get ; init ; }
+- AAuth.Server.Challenge.ChallengeOptions: public string ? ResourceIdentifier { get ; init ; }
+- AAuth.Server.Challenge.ChallengeOptions: public string ? ResourceKeyId { get ; init ; }
++ AAuth.Server.Challenge.ChallengeOptions: public AAuthAccessMode AccessMode { get ; set ; } = AAuthAccessMode . RequireAuthToken
++ AAuth.Server.Challenge.ChallengeOptions: public IAAuthKey ? ResourceSigningKey { get ; set ; }
++ AAuth.Server.Challenge.ChallengeOptions: public IReadOnlyDictionary < string , string > ? ScopeDescriptions { get ; set ; }
++ AAuth.Server.Challenge.ChallengeOptions: public IReadOnlySet < string > ? AllowedSignatureKeySchemes { get ; set ; }
++ AAuth.Server.Challenge.ChallengeOptions: public System . Func < Microsoft . AspNetCore . Http . HttpContext , string ? > ? RequestedAccount { get ; set ; }
++ AAuth.Server.Challenge.ChallengeOptions: public string ? AccessServer { get ; set ; }
++ AAuth.Server.Challenge.ChallengeOptions: public string ? DefaultScopes { get ; set ; }
++ AAuth.Server.Challenge.ChallengeOptions: public string ? ResourceIdentifier { get ; set ; }
++ AAuth.Server.Challenge.ChallengeOptions: public string ? ResourceKeyId { get ; set ; }
 ```
 
 Public owners: `AAuth.Server.Challenge.ChallengeOptions`, `AAuth.Server.Challenge`.
@@ -1586,7 +1801,7 @@ Concept/decision: [server-contracts](#server-contracts). Source: [AAuthEndpointE
 
 ```diff
 - Microsoft.AspNetCore.Builder.AAuthEndpointExtensions: public static RouteHandlerBuilder RequireAAuth ( this RouteHandlerBuilder builder , string ? scope = null , string ? role = null , bool missionAware = false )
-+ Microsoft.AspNetCore.Builder.AAuthEndpointExtensions: public static RouteHandlerBuilder RequireAAuth ( this RouteHandlerBuilder builder , string ? scope = null , string ? role = null )
++ Microsoft.AspNetCore.Builder.AAuthEndpointExtensions: public static RouteHandlerBuilder RequireAAuth ( this RouteHandlerBuilder builder , string ? scope = null , string ? role = null , IAAuthTrustPolicy ? trust = null )
 ```
 
 Public owners: `Microsoft.AspNetCore.Builder.AAuthEndpointExtensions`, `Microsoft.AspNetCore.Builder`.
@@ -1597,9 +1812,13 @@ Concept/decision: [server-contracts](#server-contracts). Source: [AAuthEndpointR
 
 ```diff
 - AAuth.Server.Endpoints.AAuthEndpointRequirement: public bool MissionAware { get ; init ; }
+- AAuth.Server.Endpoints.AAuthServerOptions: public Func < string , bool > ? IsTrustedAgentProviderIssuer { get ; set ; }
+- AAuth.Server.Endpoints.AAuthServerOptions: public Func < string , bool > ? IsTrustedAuthTokenIssuer { get ; set ; }
+- AAuth.Server.Endpoints.AAuthServerOptions: public IReadOnlySet < string > ? TrustedAgentProviderIssuers { get ; set ; }
+- AAuth.Server.Endpoints.AAuthServerOptions: public IReadOnlySet < string > ? TrustedAuthTokenIssuers { get ; set ; }
 - AAuth.Server.Endpoints.AAuthServerOptions: public string ? PersonServerAudience { get ; set ; }
-+ AAuth.Server.Endpoints.AAuthServerOptions: public Func < string , bool > ? IsTrustedPersonServer { get ; set ; }
-+ AAuth.Server.Endpoints.AAuthServerOptions: public IReadOnlySet < string > ? TrustedPersonServers { get ; set ; }
++ AAuth.Server.Endpoints.AAuthEndpointRequirement: public IAAuthTrustPolicy ? Trust { get ; init ; }
++ AAuth.Server.Endpoints.AAuthServerOptions: public AAuthTrustOptions Trust { get ; set ; } = new ( )
 + AAuth.Server.Endpoints.AAuthServerOptions: public string ? AccessServer { get ; set ; }
 ```
 
@@ -1816,8 +2035,30 @@ Public owners: `AAuth.Server.InMemoryJtiStore`, `AAuth.Server`.
 Concept/decision: [resource-managed](#resource-managed). Source: [AAuthAccessServerMetadataOptions.cs](../../../src/AAuth/Server/Metadata/AAuthAccessServerMetadataOptions.cs).
 
 ```diff
+- AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public AAuth . Discovery . AAuthEgressPolicy EgressPolicy { get ; init ; } = AAuth . Discovery . AAuthEgressPolicy . Production
+- AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public required IReadOnlyDictionary < string , IAAuthKey > SigningKeys { get ; init ; }
+- AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public required string Issuer { get ; init ; }
 - AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public required string TokenEndpoint { get ; init ; }
-+ AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public required string AuthTokenEndpoint { get ; init ; }
+- AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public string ? Description { get ; init ; }
+- AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public string ? DocumentationUri { get ; init ; }
+- AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public string ? LogoDarkUri { get ; init ; }
+- AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public string ? LogoUri { get ; init ; }
+- AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public string ? Name { get ; init ; }
+- AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public string ? PolicyUri { get ; init ; }
+- AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public string ? RevocationEndpoint { get ; init ; }
+- AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public string ? TosUri { get ; init ; }
++ AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public AAuth . Discovery . AAuthEgressPolicy EgressPolicy { get ; set ; } = AAuth . Discovery . AAuthEgressPolicy . Production
++ AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public required IReadOnlyDictionary < string , IAAuthKey > SigningKeys { get ; set ; }
++ AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public required string AuthTokenEndpoint { get ; set ; }
++ AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public required string Issuer { get ; set ; }
++ AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public string ? Description { get ; set ; }
++ AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public string ? DocumentationUri { get ; set ; }
++ AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public string ? LogoDarkUri { get ; set ; }
++ AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public string ? LogoUri { get ; set ; }
++ AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public string ? Name { get ; set ; }
++ AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public string ? PolicyUri { get ; set ; }
++ AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public string ? RevocationEndpoint { get ; set ; }
++ AAuth.Server.Metadata.AAuthAccessServerMetadataOptions: public string ? TosUri { get ; set ; }
 ```
 
 Public owners: `AAuth.Server.Metadata.AAuthAccessServerMetadataOptions`, `AAuth.Server.Metadata`.
@@ -1827,7 +2068,29 @@ Public owners: `AAuth.Server.Metadata.AAuthAccessServerMetadataOptions`, `AAuth.
 Concept/decision: [server-contracts](#server-contracts). Source: [AAuthAgentMetadataOptions.cs](../../../src/AAuth/Server/Metadata/AAuthAgentMetadataOptions.cs).
 
 ```diff
+- AAuth.Server.Metadata.AAuthAgentMetadataOptions: public AAuth . Discovery . AAuthEgressPolicy EgressPolicy { get ; init ; } = AAuth . Discovery . AAuthEgressPolicy . Production
+- AAuth.Server.Metadata.AAuthAgentMetadataOptions: public required IReadOnlyDictionary < string , IAAuthKey > SigningKeys { get ; init ; }
+- AAuth.Server.Metadata.AAuthAgentMetadataOptions: public required string Issuer { get ; init ; }
+- AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? CallbackEndpoint { get ; init ; }
+- AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? Description { get ; init ; }
+- AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? DocumentationUri { get ; init ; }
 - AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? LoginEndpoint { get ; init ; }
+- AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? LogoDarkUri { get ; init ; }
+- AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? LogoUri { get ; init ; }
+- AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? Name { get ; init ; }
+- AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? PolicyUri { get ; init ; }
+- AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? TosUri { get ; init ; }
++ AAuth.Server.Metadata.AAuthAgentMetadataOptions: public AAuth . Discovery . AAuthEgressPolicy EgressPolicy { get ; set ; } = AAuth . Discovery . AAuthEgressPolicy . Production
++ AAuth.Server.Metadata.AAuthAgentMetadataOptions: public required IReadOnlyDictionary < string , IAAuthKey > SigningKeys { get ; set ; }
++ AAuth.Server.Metadata.AAuthAgentMetadataOptions: public required string Issuer { get ; set ; }
++ AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? CallbackEndpoint { get ; set ; }
++ AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? Description { get ; set ; }
++ AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? DocumentationUri { get ; set ; }
++ AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? LogoDarkUri { get ; set ; }
++ AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? LogoUri { get ; set ; }
++ AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? Name { get ; set ; }
++ AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? PolicyUri { get ; set ; }
++ AAuth.Server.Metadata.AAuthAgentMetadataOptions: public string ? TosUri { get ; set ; }
 ```
 
 Public owners: `AAuth.Server.Metadata.AAuthAgentMetadataOptions`, `AAuth.Server.Metadata`.
@@ -1837,9 +2100,41 @@ Public owners: `AAuth.Server.Metadata.AAuthAgentMetadataOptions`, `AAuth.Server.
 Concept/decision: [server-contracts](#server-contracts). Source: [AAuthPersonServerMetadataOptions.cs](../../../src/AAuth/Server/Metadata/AAuthPersonServerMetadataOptions.cs).
 
 ```diff
+- AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public AAuth . Discovery . AAuthEgressPolicy EgressPolicy { get ; init ; } = AAuth . Discovery . AAuthEgressPolicy . Production
+- AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public IReadOnlyList < string > ? ScopesSupported { get ; init ; }
+- AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public required IReadOnlyDictionary < string , IAAuthKey > SigningKeys { get ; init ; }
+- AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public required string Issuer { get ; init ; }
 - AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public required string TokenEndpoint { get ; init ; }
-+ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public required string AuthTokenEndpoint { get ; init ; }
-+ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public required string PersonTokenEndpoint { get ; init ; }
+- AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? AuditEndpoint { get ; init ; }
+- AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? Description { get ; init ; }
+- AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? DocumentationUri { get ; init ; }
+- AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? InteractionEndpoint { get ; init ; }
+- AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? LogoDarkUri { get ; init ; }
+- AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? LogoUri { get ; init ; }
+- AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? MissionEndpoint { get ; init ; }
+- AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? Name { get ; init ; }
+- AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? PermissionEndpoint { get ; init ; }
+- AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? PolicyUri { get ; init ; }
+- AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? RevocationEndpoint { get ; init ; }
+- AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? TosUri { get ; init ; }
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public AAuth . Discovery . AAuthEgressPolicy EgressPolicy { get ; set ; } = AAuth . Discovery . AAuthEgressPolicy . Production
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public IReadOnlyList < string > ? ScopesSupported { get ; set ; }
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public required IReadOnlyDictionary < string , IAAuthKey > SigningKeys { get ; set ; }
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public required string AuthTokenEndpoint { get ; set ; }
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public required string Issuer { get ; set ; }
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public required string PersonTokenEndpoint { get ; set ; }
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? AuditEndpoint { get ; set ; }
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? Description { get ; set ; }
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? DocumentationUri { get ; set ; }
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? InteractionEndpoint { get ; set ; }
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? LogoDarkUri { get ; set ; }
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? LogoUri { get ; set ; }
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? MissionEndpoint { get ; set ; }
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? Name { get ; set ; }
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? PermissionEndpoint { get ; set ; }
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? PolicyUri { get ; set ; }
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? RevocationEndpoint { get ; set ; }
++ AAuth.Server.Metadata.AAuthPersonServerMetadataOptions: public string ? TosUri { get ; set ; }
 ```
 
 Public owners: `AAuth.Server.Metadata.AAuthPersonServerMetadataOptions`, `AAuth.Server.Metadata`.
@@ -1848,7 +2143,40 @@ Public owners: `AAuth.Server.Metadata.AAuthPersonServerMetadataOptions`, `AAuth.
 
 Concept/decision: [server-contracts](#server-contracts). Source: [WellKnownEndpoints.cs](../../../src/AAuth/Server/Metadata/WellKnownEndpoints.cs).
 
-Public signatures unchanged (23); behavior reviewed under server-contracts.
+```diff
+- AAuth.Server.Metadata.AAuthResourceMetadataOptions: public AAuth . Discovery . AAuthEgressPolicy EgressPolicy { get ; init ; } = AAuth . Discovery . AAuthEgressPolicy . Production
+- AAuth.Server.Metadata.AAuthResourceMetadataOptions: public IReadOnlyDictionary < string , IAAuthKey > ? SigningKeys { get ; init ; }
+- AAuth.Server.Metadata.AAuthResourceMetadataOptions: public IReadOnlyDictionary < string , JsonNode ? > ? AdditionalMetadata { get ; init ; }
+- AAuth.Server.Metadata.AAuthResourceMetadataOptions: public IReadOnlyDictionary < string , string > ? ScopeDescriptions { get ; init ; }
+- AAuth.Server.Metadata.AAuthResourceMetadataOptions: public int ? SignatureWindow { get ; init ; }
+- AAuth.Server.Metadata.AAuthResourceMetadataOptions: public required string Issuer { get ; init ; }
+- AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? AccessMode { get ; init ; }
+- AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? AuthorizationEndpoint { get ; init ; }
+- AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? Description { get ; init ; }
+- AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? DocumentationUri { get ; init ; }
+- AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? LogoDarkUri { get ; init ; }
+- AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? LogoUri { get ; init ; }
+- AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? Name { get ; init ; }
+- AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? PolicyUri { get ; init ; }
+- AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? RevocationEndpoint { get ; init ; }
+- AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? TosUri { get ; init ; }
++ AAuth.Server.Metadata.AAuthResourceMetadataOptions: public AAuth . Discovery . AAuthEgressPolicy EgressPolicy { get ; set ; } = AAuth . Discovery . AAuthEgressPolicy . Production
++ AAuth.Server.Metadata.AAuthResourceMetadataOptions: public IReadOnlyDictionary < string , IAAuthKey > ? SigningKeys { get ; set ; }
++ AAuth.Server.Metadata.AAuthResourceMetadataOptions: public IReadOnlyDictionary < string , JsonNode ? > ? AdditionalMetadata { get ; set ; }
++ AAuth.Server.Metadata.AAuthResourceMetadataOptions: public IReadOnlyDictionary < string , string > ? ScopeDescriptions { get ; set ; }
++ AAuth.Server.Metadata.AAuthResourceMetadataOptions: public int ? SignatureWindow { get ; set ; }
++ AAuth.Server.Metadata.AAuthResourceMetadataOptions: public required string Issuer { get ; set ; }
++ AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? AccessMode { get ; set ; }
++ AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? AuthorizationEndpoint { get ; set ; }
++ AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? Description { get ; set ; }
++ AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? DocumentationUri { get ; set ; }
++ AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? LogoDarkUri { get ; set ; }
++ AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? LogoUri { get ; set ; }
++ AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? Name { get ; set ; }
++ AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? PolicyUri { get ; set ; }
++ AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? RevocationEndpoint { get ; set ; }
++ AAuth.Server.Metadata.AAuthResourceMetadataOptions: public string ? TosUri { get ; set ; }
+```
 
 Public owners: `AAuth.Server.Metadata.AAuthResourceMetadataOptions`, `AAuth.Server.Metadata.WellKnownEndpoints`, `AAuth.Server.Metadata`.
 
@@ -1960,14 +2288,31 @@ Concept/decision: [signatures](#signatures). Source: [AAuthVerificationOptions.c
 
 ```diff
 - AAuth.Server.Verification.AAuthVerificationOptions: public Func < DateTimeOffset > ? Clock { get ; init ; }
+- AAuth.Server.Verification.AAuthVerificationOptions: public Func < Microsoft . AspNetCore . Http . HttpContext , string ? > ? ExpectedAccount { get ; init ; }
+- AAuth.Server.Verification.AAuthVerificationOptions: public Func < string , bool > ? IsTrustedAgentProviderIssuer { get ; init ; }
+- AAuth.Server.Verification.AAuthVerificationOptions: public Func < string , bool > ? IsTrustedAuthTokenIssuer { get ; init ; }
+- AAuth.Server.Verification.AAuthVerificationOptions: public IReadOnlyCollection < string > RequiredComponents { get ; init ; } = [ ]
+- AAuth.Server.Verification.AAuthVerificationOptions: public IReadOnlyList < string > AcceptedSchemes { get ; init ; } = [ "jwt" ]
+- AAuth.Server.Verification.AAuthVerificationOptions: public IReadOnlySet < string > ? TrustedAgentProviderIssuers { get ; init ; }
+- AAuth.Server.Verification.AAuthVerificationOptions: public IReadOnlySet < string > ? TrustedAuthTokenIssuers { get ; init ; }
+- AAuth.Server.Verification.AAuthVerificationOptions: public TimeSpan ClockSkew { get ; init ; } = TimeSpan . FromSeconds ( 30 )
 - AAuth.Server.Verification.AAuthVerificationOptions: public TimeSpan MaxFutureSkew { get ; init ; } = TimeSpan . FromSeconds ( 5 )
+- AAuth.Server.Verification.AAuthVerificationOptions: public bool GenericSignatureKeys { get ; init ; }
 - AAuth.Server.Verification.AAuthVerificationOptions: public int MaxActDepth { get ; init ; } = 10
 - AAuth.Server.Verification.AAuthVerificationOptions: public static AAuthVerificationOptions Generic ( Func < DateTimeOffset > ? clock = null )
-+ AAuth.Server.Verification.AAuthVerificationOptions: public Func < string , bool > ? IsTrustedPersonServer { get ; init ; }
-+ AAuth.Server.Verification.AAuthVerificationOptions: public IReadOnlySet < string > ? TrustedPersonServers { get ; init ; }
-+ AAuth.Server.Verification.AAuthVerificationOptions: public TimeProvider TimeProvider { get ; init ; } = TimeProvider . System
-+ AAuth.Server.Verification.AAuthVerificationOptions: public bool RequireBodyCoverage { get ; init ; }
+- AAuth.Server.Verification.AAuthVerificationOptions: public string ? ResourceIdentifier { get ; init ; }
+- AAuth.Server.Verification.AAuthVerificationOptions: public string SignatureLabel { get ; init ; } = "sig"
++ AAuth.Server.Verification.AAuthVerificationOptions: public AAuthTrustOptions Trust { get ; set ; } = new ( )
++ AAuth.Server.Verification.AAuthVerificationOptions: public Func < Microsoft . AspNetCore . Http . HttpContext , string ? > ? ExpectedAccount { get ; set ; }
++ AAuth.Server.Verification.AAuthVerificationOptions: public IReadOnlyCollection < string > RequiredComponents { get ; set ; } = [ ]
++ AAuth.Server.Verification.AAuthVerificationOptions: public IReadOnlyList < string > AcceptedSchemes { get ; set ; } = [ "jwt" ]
++ AAuth.Server.Verification.AAuthVerificationOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
++ AAuth.Server.Verification.AAuthVerificationOptions: public TimeSpan ClockSkew { get ; set ; } = TimeSpan . FromSeconds ( 30 )
++ AAuth.Server.Verification.AAuthVerificationOptions: public bool GenericSignatureKeys { get ; set ; }
++ AAuth.Server.Verification.AAuthVerificationOptions: public bool RequireBodyCoverage { get ; set ; }
 + AAuth.Server.Verification.AAuthVerificationOptions: public static AAuthVerificationOptions Generic ( TimeProvider ? timeProvider = null )
++ AAuth.Server.Verification.AAuthVerificationOptions: public string ? ResourceIdentifier { get ; set ; }
++ AAuth.Server.Verification.AAuthVerificationOptions: public string SignatureLabel { get ; set ; } = "sig"
 ```
 
 Public owners: `AAuth.Server.Verification.AAuthVerificationOptions`, `AAuth.Server.Verification`.
@@ -1985,6 +2330,17 @@ Concept/decision: [signatures](#signatures). Source: [AAuthVerificationResult.cs
 ```
 
 Public owners: `AAuth.Server.Verification.AAuthVerificationResult`, `AAuth.Server.Verification`.
+
+### src/AAuth/Server/Verification/IssuerTrust.cs
+
+Concept/decision: [signatures](#signatures). Source: [IssuerTrust.cs](../../../src/AAuth/Server/Verification/IssuerTrust.cs).
+
+```diff
+- AAuth.Server.Verification.IssuerTrust: public static bool IsTrusted ( IReadOnlyCollection < string > ? set , Func < string , bool > ? policy , string id )
+- AAuth.Server.Verification: public static class IssuerTrust
+```
+
+Public owners: `AAuth.Server.Verification.IssuerTrust`, `AAuth.Server.Verification`.
 
 ### src/AAuth/Tokens/ActChainBuilder.cs
 
@@ -2033,7 +2389,7 @@ Concept/decision: [tokens](#tokens). Source: [AgentIssuanceContext.cs](../../../
 - AAuth.Tokens.AgentIssuanceContext: public void ValidateResourceContext ( JsonObject resource , string ? governingPersonServer = null )
 + AAuth.Tokens.AgentIssuanceContext: public bool SubAgent { get ; init ; }
 + AAuth.Tokens.AgentIssuanceContext: public required string AgentIssuer { get ; init ; }
-+ AAuth.Tokens.AgentIssuanceContext: public static async Task < AgentIssuanceContext > VerifyAsync ( string agentToken , string ? subagentToken , string ? upstreamToken , string personServer , TokenVerifier verifier , MetadataClient metadata , JwksClient jwks , Func < string , bool > isTrustedAuthTokenIssuer , CancellationToken cancellationToken = default , TokenCredential ? agentTokenCredential = null )
++ AAuth.Tokens.AgentIssuanceContext: public static async Task < AgentIssuanceContext > VerifyAsync ( string agentToken , string ? subagentToken , string ? upstreamToken , string personServer , TokenVerifier verifier , MetadataClient metadata , JwksClient jwks , Func < string , CancellationToken , ValueTask < bool > > isTrustedAuthTokenIssuer , CancellationToken cancellationToken = default , TokenCredential ? agentTokenCredential = null )
 + AAuth.Tokens.AgentIssuanceContext: public void ValidateResourceContext ( JsonObject resource )
 ```
 
@@ -2185,7 +2541,7 @@ Concept/decision: [tokens](#tokens). Source: [UpstreamTokenValidator.cs](../../.
 + AAuth.Tokens.UpstreamTokenValidationResult: public string ? PersonServer { get ; init ; }
 + AAuth.Tokens.UpstreamTokenValidationResult: public string ? Tenant { get ; init ; }
 + AAuth.Tokens.UpstreamTokenValidationResult: public string ? TokenType { get ; init ; }
-+ AAuth.Tokens.UpstreamTokenValidator: public async Task < UpstreamTokenValidationResult > ValidateAsync ( string upstreamToken , string intermediary , string expectedPersonServer , Func < string , bool > isTrustedAuthTokenIssuer , CancellationToken ct = default )
++ AAuth.Tokens.UpstreamTokenValidator: public async Task < UpstreamTokenValidationResult > ValidateAsync ( string upstreamToken , string intermediary , string expectedPersonServer , Func < string , CancellationToken , ValueTask < bool > > isTrustedAuthTokenIssuer , CancellationToken ct = default )
 ```
 
 Public owners: `AAuth.Tokens.UpstreamTokenValidationResult`, `AAuth.Tokens.UpstreamTokenValidator`, `AAuth.Tokens`.

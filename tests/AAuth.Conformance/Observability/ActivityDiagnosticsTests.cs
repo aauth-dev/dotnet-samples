@@ -357,7 +357,7 @@ public class ActivityDiagnosticsTests : IAsyncLifetime
         {
             EgressPolicy = TestEgress.Policy,
             ResourceIdentifier = ResourceId,
-            TrustedAuthTokenIssuers = new HashSet<string> { PsIssuer },
+            Trust = { AuthTokenIssuers = { Allowed = new HashSet<string> { PsIssuer } } },
         });
         app.MapGet("/check-tags", (HttpContext ctx) =>
         {

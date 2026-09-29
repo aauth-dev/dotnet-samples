@@ -57,22 +57,10 @@ public sealed class AAuthVerificationOptions
     public string SignatureLabel { get; init; } = "sig";
     public IReadOnlyCollection<string> RequiredComponents { get; init; } = [];
 
-    // Optional allow-list of trusted agent provider issuers.
-    // null = accept any verifiable AP; empty = deny all; non-empty = restrict.
-    public IReadOnlySet<string>? TrustedAgentProviderIssuers { get; init; }
-
-    // Optional predicate AND-composed with TrustedAgentProviderIssuers.
-    public Func<string, bool>? IsTrustedAgentProviderIssuer { get; init; }
-
-    // Allow-list of trusted auth token issuers (Person Servers / Access Servers).
-    // null = accept any *verifiable* PS (the spec default — the JWT signature
-    // still verifies against the issuer's JWKS); empty = deny all; non-empty =
-    // restrict to the listed issuers. AND-composed with IsTrustedAuthTokenIssuer.
-    public IReadOnlySet<string>? TrustedAuthTokenIssuers { get; init; }
-
-    // Optional predicate AND-composed with TrustedAuthTokenIssuers (each only
-    // narrows). Assign AAuthTrust.Any to trust any verifiable issuer explicitly.
-    public Func<string, bool>? IsTrustedAuthTokenIssuer { get; init; }
+    // Agent Provider, auth-token issuer and person-token issuer trust. Unset rules
+    // accept any *verifiable* issuer (the spec default — the JWT signature still
+    // verifies against the issuer's JWKS); an empty Allowed set denies all.
+    public AAuthTrustOptions Trust { get; init; } = new();
 
     // Tolerance for exp/iat validation (default: 30s)
     public TimeSpan ClockSkew { get; init; } = TimeSpan.FromSeconds(30);
@@ -95,19 +83,21 @@ public sealed class AAuthVerificationOptions
 > only *narrows* that verifiable floor — "accept any PS" means "any PS whose
 > signature verifies"; the policy never replaces verification.
 >
-> - `TrustedAuthTokenIssuers = null` (unset) ⇒ accept any *verifiable* Person
+> - `Trust.AuthTokenIssuers` unset ⇒ accept any *verifiable* Person
 >   Server, namespaced by `iss` (the AAuth spec default).
-> - empty set ⇒ deny all PS-asserted tokens (a deliberate kill-switch).
-> - non-empty set ⇒ restrict to the listed issuers.
-> - `IsTrustedAuthTokenIssuer` ⇒ a `Func<string, bool>` predicate AND-composed
+> - empty `Allowed` set ⇒ deny all PS-asserted tokens (a deliberate kill-switch).
+> - non-empty `Allowed` set ⇒ restrict to the listed issuers.
+> - `Predicate` / `PredicateAsync` ⇒ predicates AND-composed
 >   with the set (each only narrows). Assign `AAuthTrust.Any` to trust any
 >   verifiable issuer explicitly and suppress the open-trust startup warning.
+> - `Trust.Policy`, or an `IAAuthTrustPolicy` registered in DI, replaces the rules;
+>   `.RequireAAuth(scope, trust: policy)` replaces the resource-wide trust for one endpoint.
 >
 > ```csharp
 > app.UseAAuthVerification(new AAuthVerificationOptions
 > {
 >     ResourceIdentifier = "https://api.example.com",
->     TrustedAuthTokenIssuers = new HashSet<string> { "https://person.example.com" },
+>     Trust = { AuthTokenIssuers = { Allowed = new HashSet<string> { "https://person.example.com" } } },
 > });
 > ```
 >
@@ -119,7 +109,7 @@ public sealed class AAuthVerificationOptions
 > endpoints) and no auth-token trust policy still logs the open-trust `Warning` —
 > the SDK can't tell at startup whether any auth-token endpoint exists, so it warns
 > conservatively. It is benign. Suppress it by assigning any policy — e.g.
-> `o.IsTrustedAuthTokenIssuer = AAuthTrust.Any` — to declare the unused auth-token
+> `o.Trust.AuthTokenIssuers.Predicate = AAuthTrust.Any` — to declare the unused auth-token
 > path intentionally open.
 >
 > Generic HWK/direct-JWKS/naming-JWT/server-discovery profiles do not assert a
@@ -150,7 +140,7 @@ app.UseRouting();
 
 // One pipeline for every signing mode. Resource-level config is trust only;
 // key and issuer default from the DI-registered metadata.
-app.UseAAuth(o => o.TrustedAuthTokenIssuers = trustedPersonServers);
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.Allowed = trustedPersonServers);
 
 app.UseAuthentication();
 app.UseAuthorization();

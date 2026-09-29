@@ -227,12 +227,12 @@ public sealed class AAuthVerificationMiddleware
             {
                 if (typ == AgentTokenBuilder.TokenType)
                 {
-                    if (!IssuerTrust.IsTrusted(_options.TrustedAgentProviderIssuers, _options.IsTrustedAgentProviderIssuer, resolution.VerifiedToken.Issuer))
+                    if (!await IsTrustedAsync(context, resolution.VerifiedToken.Issuer, AAuthTrustedParty.AgentProvider, typ).ConfigureAwait(false))
                         throw new TokenVerificationException("Agent issuer is not trusted by policy.");
                 }
                 else if (typ == AuthTokenBuilder.TokenType)
                 {
-                    if (!IssuerTrust.IsTrusted(_options.TrustedAuthTokenIssuers, _options.IsTrustedAuthTokenIssuer, resolution.VerifiedToken.Issuer))
+                    if (!await IsTrustedAsync(context, resolution.VerifiedToken.Issuer, AAuthTrustedParty.AuthTokenIssuer, typ).ConfigureAwait(false))
                         throw new TokenVerificationException("Auth token issuer is not trusted by policy.");
                     var audience = _options.ResourceIdentifier ?? SignatureKeyParser.Text(resolution.VerifiedToken.Payload, "aud")
                         ?? throw new TokenVerificationException("Auth token requires aud.");
@@ -242,10 +242,7 @@ public sealed class AAuthVerificationMiddleware
                 }
                 else if (typ == PersonTokenBuilder.TokenType)
                 {
-                    var trusted = _options.TrustedPersonServers is null && _options.IsTrustedPersonServer is null
-                        ? IssuerTrust.IsTrusted(_options.TrustedAuthTokenIssuers, _options.IsTrustedAuthTokenIssuer, resolution.VerifiedToken.Issuer)
-                        : IssuerTrust.IsTrusted(_options.TrustedPersonServers, _options.IsTrustedPersonServer, resolution.VerifiedToken.Issuer);
-                    if (!trusted)
+                    if (!await IsTrustedAsync(context, resolution.VerifiedToken.Issuer, AAuthTrustedParty.PersonServer, typ).ConfigureAwait(false))
                         throw new TokenVerificationException("Person token issuer is not trusted by policy.");
                     var audience = _options.ResourceIdentifier ?? SignatureKeyParser.Text(resolution.VerifiedToken.Payload, "aud")
                         ?? throw new TokenVerificationException("Person token requires aud.");
@@ -387,6 +384,18 @@ public sealed class AAuthVerificationMiddleware
         => request.ContentLength > 0
             || request.ContentLength is null
                 && (request.ContentType is not null || request.Headers.ContainsKey("Transfer-Encoding"));
+
+    private ValueTask<bool> IsTrustedAsync(HttpContext context, string issuer, AAuthTrustedParty party, string? tokenType)
+    {
+        var trust = new AAuthTrustContext(issuer, party, context.RequestServices ?? AAuthTrustOptions.NoServices)
+        {
+            HttpContext = context,
+            TokenType = tokenType,
+        };
+        return context.GetEndpoint()?.Metadata.GetMetadata<AAuth.Server.Endpoints.AAuthEndpointRequirement>()?.Trust is { } endpoint
+            ? endpoint.IsTrustedAsync(trust, context.RequestAborted)
+            : _options.Trust.IsTrustedAsync(trust, context.RequestAborted);
+    }
 
     private void WriteFailure(HttpContext context, SignatureErrorCode code, IReadOnlyCollection<string>? requiredComponents = null)
     {

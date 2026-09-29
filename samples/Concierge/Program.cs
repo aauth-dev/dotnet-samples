@@ -93,7 +93,7 @@ app.UseWhen(
         {
             EgressPolicy = SampleEgress.Policy,
             ResourceIdentifier = conciergeUrl,
-            TrustedAuthTokenIssuers = new HashSet<string> { psUrl },
+            Trust = { AuthTokenIssuers = { Allowed = new HashSet<string> { psUrl } } },
         },
         new ChallengeOptions
         {
@@ -134,8 +134,11 @@ app.UseWhen(ctx => IsWalletPath(ctx.Request.Path), branch => branch.UseAAuthInte
     new AAuthVerificationOptions
     {
         EgressPolicy = SampleEgress.Policy, ResourceIdentifier = conciergeUrl,
-        TrustedAuthTokenIssuers = new HashSet<string> { accessServerUrl },
-        TrustedPersonServers = new HashSet<string> { psUrl },
+        Trust =
+        {
+            AuthTokenIssuers = { Allowed = new HashSet<string> { accessServerUrl } },
+            PersonServers = { Allowed = new HashSet<string> { psUrl } },
+        },
     },
     new ChallengeOptions
     {

@@ -154,7 +154,7 @@ builder.Services.AddAAuthAuthorization();
 var app = builder.Build();
 app.MapAAuthWellKnown(); // /.well-known/aauth-resource.json + /jwks.json
 app.UseRouting();
-app.UseAAuth(o => o.TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" });
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { "https://ps.example" });
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -163,9 +163,9 @@ app.MapGet("/data", (HttpContext ctx) => Results.Ok(ctx.GetAAuthVerification()!.
     .RequireAAuth(scope: "data:read");
 ```
 
-> `TrustedAuthTokenIssuers` is optional. Omit it (or assign `AAuthTrust.Any`) to
-> accept any *verifiable* Person Server — the spec default — with claims
-> namespaced by `iss`; pass a set or the `IsTrustedAuthTokenIssuer` predicate to
+> `Trust.AuthTokenIssuers` is optional. Leave it unset (or assign `AAuthTrust.Any` to its
+> `Predicate`) to accept any *verifiable* Person Server — the spec default — with claims
+> namespaced by `iss`; set `Allowed` or `Predicate` to
 > restrict. Leaving it unset while issuer verification is on logs an open-trust
 > `Warning` at startup.
 
@@ -213,7 +213,7 @@ builder.Services.AddAAuthAuthorization();    // scope handler + built-in policie
 
 var app = builder.Build();
 app.UseRouting();
-app.UseAAuth(o => o.TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" });
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.Allowed = new HashSet<string> { "https://ps.example" });
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -493,9 +493,10 @@ builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>()
 var app = builder.Build();
 app.MapAAuthPersonServer(new AAuthPersonServerOptions
 {
-    Issuer               = psIssuer,
-    SigningKeys          = new Dictionary<string, IAAuthKey> { [PsKid] = psKey },
-    TrustedAccessServers = trustedAccessServers,        // null ⇒ federate to verified aud; empty ⇒ three-party only
+    Issuer      = psIssuer,
+    SigningKeys = new Dictionary<string, IAAuthKey> { [PsKid] = psKey },
+    // Unset ⇒ federate to verified aud; empty ⇒ three-party only.
+    Trust       = { AccessServers = { Allowed = trustedAccessServers } },
 });
 ```
 

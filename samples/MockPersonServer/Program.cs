@@ -154,7 +154,7 @@ app.MapAAuthPersonServer(new AAuthPersonServerOptions
     TokenInventory = tokenInventory,
     SigningKeys = new Dictionary<string, IAAuthKey> { [PsKid] = psKey },
     DefaultScope = PsScope,
-    TrustedAccessServers = trustedAccessServers,
+    Trust = { AccessServers = { Allowed = new HashSet<string>(trustedAccessServers) } },
     // Governance endpoints (mapped below) advertised in aauth-person.json so the
     // agent's MissionClient / PermissionClient / AuditClient can resolve them.
     MissionEndpoint = $"{psIssuer.TrimEnd('/')}/mission",

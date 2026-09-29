@@ -76,8 +76,8 @@ AAuth.Server.RevocationEndpoint.MapAAuthRevocationEndpoint(app,
 app.UseRouting();
 app.UseAAuth(o =>
 {
-    o.TrustedAuthTokenIssuers = trustedAccessServers;
-    o.TrustedPersonServers = trustedPersonServers.ToHashSet();
+    o.Trust.AuthTokenIssuers.Allowed = trustedAccessServers;
+    o.Trust.PersonServers.Allowed = trustedPersonServers.ToHashSet();
     o.AccessServer = accessServerUrl;
 });
 

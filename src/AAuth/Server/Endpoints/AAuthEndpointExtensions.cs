@@ -30,10 +30,12 @@ public static class AAuthEndpointExtensions
     /// challenge metadata and an inline authorization policy — no named scope
     /// policy string to keep in sync.
     /// </summary>
+    /// <param name="trust">Trust policy for this endpoint only, replacing the resource-wide trust.</param>
     public static RouteHandlerBuilder RequireAAuth(
         this RouteHandlerBuilder builder,
         string? scope = null,
-        string? role = null)
+        string? role = null,
+        IAAuthTrustPolicy? trust = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
         builder.WithMetadata(new AAuthEndpointRequirement
@@ -41,6 +43,7 @@ public static class AAuthEndpointExtensions
             Mode = AAuthAccessMode.RequireAuthToken,
             Scope = scope,
             Role = role,
+            Trust = trust,
         });
         builder.RequireAuthorization(policy =>
         {
@@ -114,8 +117,8 @@ public static class AAuthEndpointExtensions
         // ignored trust policy; warn when auth-token endpoints are implicitly open.
         TrustConfigDiagnostics.Validate(
             app.ApplicationServices.GetService<ILoggerFactory>()?.CreateLogger("AAuth"),
-            authTrustConfigured: opts.TrustedAuthTokenIssuers is not null || opts.IsTrustedAuthTokenIssuer is not null,
-            agentTrustConfigured: opts.TrustedAgentProviderIssuers is not null || opts.IsTrustedAgentProviderIssuer is not null,
+            authTrustConfigured: opts.Trust.IsConfigured(AAuthTrustedParty.AuthTokenIssuer, app.ApplicationServices),
+            agentTrustConfigured: opts.Trust.IsConfigured(AAuthTrustedParty.AgentProvider, app.ApplicationServices),
             contextLabel: "UseAAuth");
 
         var verifier = app.ApplicationServices.GetRequiredService<AAuthVerifier>();
@@ -179,24 +182,14 @@ public static class AAuthEndpointExtensions
                 {
                     EgressPolicy = resourceMetadata?.EgressPolicy ?? metadataClient?.Policy ?? AAuth.Discovery.AAuthEgressPolicy.Production,
                     ResourceIdentifier = resourceIdentifier,
-                    TrustedAuthTokenIssuers = opts.TrustedAuthTokenIssuers,
-                    IsTrustedAuthTokenIssuer = opts.IsTrustedAuthTokenIssuer,
-                    TrustedPersonServers = opts.TrustedPersonServers,
-                    IsTrustedPersonServer = opts.IsTrustedPersonServer,
-                    TrustedAgentProviderIssuers = opts.TrustedAgentProviderIssuers,
-                    IsTrustedAgentProviderIssuer = opts.IsTrustedAgentProviderIssuer,
+                    Trust = opts.Trust,
                 }
                 : new AAuthVerificationOptions
                 {
                     EgressPolicy = resourceMetadata?.EgressPolicy ?? metadataClient?.Policy ?? AAuth.Discovery.AAuthEgressPolicy.Production,
                     AcceptedSchemes = req.AcceptedSchemes,
                     ResourceIdentifier = resourceIdentifier,
-                    TrustedAgentProviderIssuers = opts.TrustedAgentProviderIssuers,
-                    IsTrustedAgentProviderIssuer = opts.IsTrustedAgentProviderIssuer,
-                    TrustedAuthTokenIssuers = opts.TrustedAuthTokenIssuers,
-                    IsTrustedAuthTokenIssuer = opts.IsTrustedAuthTokenIssuer,
-                    TrustedPersonServers = opts.TrustedPersonServers,
-                    IsTrustedPersonServer = opts.IsTrustedPersonServer,
+                    Trust = opts.Trust,
                 };
 
             RequestDelegate afterVerify = req.Mode == AAuthAccessMode.RequireAuthToken

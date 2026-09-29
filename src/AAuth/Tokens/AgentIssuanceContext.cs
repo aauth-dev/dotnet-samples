@@ -46,7 +46,7 @@ public sealed record AgentIssuanceContext
     public static async Task<AgentIssuanceContext> VerifyAsync(
         string agentToken, string? subagentToken, string? upstreamToken, string personServer,
         TokenVerifier verifier, MetadataClient metadata, JwksClient jwks,
-        Func<string, bool> isTrustedAuthTokenIssuer, CancellationToken cancellationToken = default,
+        Func<string, CancellationToken, ValueTask<bool>> isTrustedAuthTokenIssuer, CancellationToken cancellationToken = default,
         TokenCredential? agentTokenCredential = null)
     {
         async Task<TokenVerifier.VerifiedToken> VerifyAgentAsync(string token, TokenCredential credential)

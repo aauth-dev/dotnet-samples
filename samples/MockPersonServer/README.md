@@ -93,7 +93,7 @@ The PS decides which role to play from the resource token's `aud` claim:
 The PS only federates to Access Servers listed in
 `MockPersonServer:TrustedAccessServers`; any other `aud` is rejected with
 `untrusted_access_server` (403). That pinning is this sample's explicit choice —
-the SDK default for an unset `TrustedAccessServers` is open (`null` ⇒ federate to
+the SDK default for an unset `Trust.AccessServers` is open (federate to
 the AS named in the verified resource token's `aud`).
 
 > **One call, pluggable decisions.** Both branches above — the three-party

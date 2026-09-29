@@ -28,35 +28,35 @@ namespace AAuth.Person;
 /// </summary>
 public sealed class AAuthPersonServerOptions
 {
-    public AAuthEgressPolicy EgressPolicy { get; init; } = AAuthEgressPolicy.Production;
-    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+    public AAuthEgressPolicy EgressPolicy { get; set; } = AAuthEgressPolicy.Production;
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 
     /// <summary>
     /// The PS token inventory; defaults to the DI <see cref="IJtiStore"/> or a new in-memory store.
     /// Hold the same instance to revoke agent-person bindings (<see cref="AgentPersonBinding.RevokeAsync"/>).
     /// </summary>
-    public IJtiStore? TokenInventory { get; init; }
-    public Func<PersonPendingEntry, ClarificationRequirement, System.Threading.CancellationToken, Task<ClarificationResponse?>>? TriageClarificationAsync { get; init; }
+    public IJtiStore? TokenInventory { get; set; }
+    public Func<PersonPendingEntry, ClarificationRequirement, System.Threading.CancellationToken, Task<ClarificationResponse?>>? TriageClarificationAsync { get; set; }
 
     /// <summary>HTTPS URL of this Person Server (<c>iss</c> of minted auth tokens).</summary>
-    public required string Issuer { get; init; }
+    public required string Issuer { get; set; }
 
     /// <summary>
     /// The PS signing keys, keyed by <c>kid</c>. Published at the JWKS and used
     /// to sign minted auth tokens (the first entry signs).
     /// </summary>
-    public required IReadOnlyDictionary<string, IAAuthKey> SigningKeys { get; init; }
+    public required IReadOnlyDictionary<string, IAAuthKey> SigningKeys { get; set; }
 
     /// <summary>The auth token endpoint path (<c>auth_token_endpoint</c>). Default <c>/token</c>.</summary>
-    public string TokenPath { get; init; } = "/token";
+    public string TokenPath { get; set; } = "/token";
 
     /// <summary>The person token endpoint path (<c>person_token_endpoint</c>). Default <c>/person</c>.</summary>
-    public string PersonTokenPath { get; init; } = "/person";
-    public string RevocationPath { get; init; } = "/revoke";
-    public Action<AAuthRevocationOptions>? ConfigureRevocation { get; init; }
+    public string PersonTokenPath { get; set; } = "/person";
+    public string RevocationPath { get; set; } = "/revoke";
+    public Action<AAuthRevocationOptions>? ConfigureRevocation { get; set; }
 
     /// <summary>The pending (poll) path prefix. Default <c>/pending</c>.</summary>
-    public string PendingPathPrefix { get; init; } = "/pending";
+    public string PendingPathPrefix { get; set; } = "/pending";
 
     /// <summary>
     /// The fallback scope when the resource token carries none. Default empty:
@@ -64,8 +64,8 @@ public sealed class AAuthPersonServerOptions
     /// a scopeless auth token (still valid via its <c>sub</c>) rather than
     /// injecting an arbitrary scope.
     /// </summary>
-    public string DefaultScope { get; init; } = "";
-    public IReadOnlyList<string>? ScopesSupported { get; init; }
+    public string DefaultScope { get; set; } = "";
+    public IReadOnlyList<string>? ScopesSupported { get; set; }
 
     /// <summary>
     /// The PS-hosted interaction/consent path advertised on
@@ -73,27 +73,20 @@ public sealed class AAuthPersonServerOptions
     /// maps this endpoint and resolves the verdict against the shared
     /// <see cref="IPersonPendingStore"/>.
     /// </summary>
-    public string InteractionPath { get; init; } = "/interaction";
-    public BrowserConsentSessions? ResourceInteractionSessions { get; init; }
+    public string InteractionPath { get; set; } = "/interaction";
+    public BrowserConsentSessions? ResourceInteractionSessions { get; set; }
 
     /// <summary>
-    /// Access Server allow-list for four-party federation. <b>Open by default
-    /// (spec-compliant):</b> when <c>null</c>, the PS federates to the AS named in
-    /// a <em>verified</em> resource token's <c>aud</c> — §PS-AS Trust Establishment
-    /// requires no separate registration step. An <b>empty</b> set disables the
-    /// four-party branch (three-party only). A non-empty set restricts to the listed
-    /// Access Servers. Composed by AND with <see cref="IsTrustedAccessServer"/>.
+    /// Trust for this Person Server. <see cref="AAuthTrustOptions.AccessServers"/> governs
+    /// four-party federation. <b>Open by default (spec-compliant):</b> the PS federates
+    /// to the AS named in a <em>verified</em> resource token's <c>aud</c>; §PS-AS Trust
+    /// Establishment requires no separate registration step. An <b>empty</b>
+    /// <see cref="AAuthTrustRule.Allowed"/> set disables the four-party branch.
+    /// Upstream auth tokens are accepted from this PS, and from an Access Server only
+    /// when Access Server trust is configured. Agent Provider trust applies to inbound
+    /// agent tokens.
     /// </summary>
-    public IReadOnlyCollection<string>? TrustedAccessServers { get; init; }
-
-    /// <summary>
-    /// Optional trust policy for Access Servers, evaluated per resource-token
-    /// <c>aud</c> before the PS→AS federation call and composed by AND with
-    /// <see cref="TrustedAccessServers"/>. <c>null</c> ⇒ no policy constraint.
-    /// Assign <see cref="AAuth.Server.AAuthTrust.Any"/> to state intentional open
-    /// federation explicitly.
-    /// </summary>
-    public Func<string, bool>? IsTrustedAccessServer { get; init; }
+    public AAuthTrustOptions Trust { get; set; } = new();
 
     /// <summary>
     /// The §Interaction Endpoint URL advertised in the PS metadata
@@ -102,16 +95,16 @@ public sealed class AAuthPersonServerOptions
     /// <see cref="InteractionPath"/> (the consent URL on <c>requirement=interaction</c>).
     /// When null the metadata falls back to <see cref="InteractionPath"/>.
     /// </summary>
-    public string? InteractionEndpoint { get; init; }
+    public string? InteractionEndpoint { get; set; }
 
     /// <summary>The mission endpoint URL advertised in the PS metadata (<c>mission_endpoint</c>), if any.</summary>
-    public string? MissionEndpoint { get; init; }
+    public string? MissionEndpoint { get; set; }
 
     /// <summary>The permission endpoint URL advertised in the PS metadata (<c>permission_endpoint</c>), if any.</summary>
-    public string? PermissionEndpoint { get; init; }
+    public string? PermissionEndpoint { get; set; }
 
     /// <summary>The audit endpoint URL advertised in the PS metadata (<c>audit_endpoint</c>), if any.</summary>
-    public string? AuditEndpoint { get; init; }
+    public string? AuditEndpoint { get; set; }
 
     /// <summary>
     /// Additional path prefixes the mapper's request-signature verification skips,
@@ -121,7 +114,7 @@ public sealed class AAuthPersonServerOptions
     /// PS authenticates the approving party is out of scope, so these stay the
     /// PS's own). Prefixes are matched with <c>StartsWithSegments</c>.
     /// </summary>
-    public IReadOnlyCollection<string>? UnsignedPathPrefixes { get; init; }
+    public IReadOnlyCollection<string>? UnsignedPathPrefixes { get; set; }
 }
 
 /// <summary>
@@ -176,12 +169,12 @@ public static class AAuthPersonServerEndpoints
             throw new InvalidOperationException(
                 "AAuthPersonServerOptions.InteractionPath must not contain a query or fragment.");
         }
-        foreach (var trustedAs in options.TrustedAccessServers ?? Array.Empty<string>())
+        foreach (var trustedAs in options.Trust.AccessServers.Allowed ?? new HashSet<string>())
         {
             if (!AAuth.AAuthUrl.IsHttpsOrLoopback(trustedAs, options.EgressPolicy))
             {
                 throw new InvalidOperationException(
-                    $"AAuthPersonServerOptions.TrustedAccessServers entry '{trustedAs}' must be an absolute https URL " +
+                    $"AAuthPersonServerOptions.Trust.AccessServers entry '{trustedAs}' must be an absolute https URL " +
                     "(loopback http allowed for development).");
             }
         }
@@ -208,18 +201,6 @@ public static class AAuthPersonServerEndpoints
             ? "/" + seg[0]
             : interactionPath;
         var interactionUrl = $"{issuer}{interactionPath}";
-
-        var trustedAccessServers = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var asUrl in options.TrustedAccessServers ?? Array.Empty<string>())
-        {
-            trustedAccessServers.Add(asUrl);
-        }
-
-        // Preserve null (open: federate to the AS named in a verified resource
-        // token's aud) vs. empty (three-party only). The materialized set drives
-        // membership; the nullable form drives the open/empty distinction.
-        IReadOnlyCollection<string>? trustedAccessServersOrNull =
-            options.TrustedAccessServers is null ? null : trustedAccessServers;
 
         var unsignedPrefixes = (options.UnsignedPathPrefixes ?? Array.Empty<string>())
             .Select(p => "/" + p.Trim('/'))
@@ -252,7 +233,8 @@ public static class AAuthPersonServerEndpoints
                 && !ctx.Request.Path.StartsWithSegments(interactionPrefix)
                 && !unsignedPrefixes.Any(p => ctx.Request.Path.StartsWithSegments(p)),
             branch => branch.UseAAuthVerification(new AAuthVerificationOptions { EgressPolicy = options.EgressPolicy,
-                AcceptedSchemes = ["jwt"], RequireBodyCoverage = true, TimeProvider = options.TimeProvider }));
+                AcceptedSchemes = ["jwt"], RequireBodyCoverage = true, TimeProvider = options.TimeProvider,
+                Trust = options.Trust }));
 
         var tokenVerifier = app.Services.GetRequiredService<TokenVerifier>();
         var metadataClient = app.Services.GetRequiredService<MetadataClient>();
@@ -266,17 +248,20 @@ public static class AAuthPersonServerEndpoints
         // default. Suppressed by any explicit policy (including AAuthTrust.Any).
         TrustConfigDiagnostics.WarnIfOpenFederation(
             logger,
-            trustConfigured: options.TrustedAccessServers is not null || options.IsTrustedAccessServer is not null,
+            trustConfigured: options.Trust.IsConfigured(AAuthTrustedParty.AccessServer, app.Services),
             "MapAAuthPersonServer",
             "this Person Server federates to any Access Server named in a verified resource token's aud " +
-            "because no TrustedAccessServers / IsTrustedAccessServer policy is configured (the AAuth spec " +
+            "because no Trust.AccessServers policy is configured (the AAuth spec " +
             "default). Configure a policy to restrict, or assign AAuthTrust.Any to declare intentional open " +
             "federation and silence this warning.");
 
-        bool IsTrustedAuthTokenIssuer(string candidate) =>
-            string.Equals(candidate, issuer, StringComparison.Ordinal)
-            || trustedAccessServers.Contains(candidate)
-            || (options.IsTrustedAccessServer?.Invoke(candidate) ?? false);
+        // An upstream auth token is this PS's own, or from an Access Server the PS is
+        // configured to trust; open federation does not extend to upstream tokens.
+        async ValueTask<bool> IsTrustedAuthTokenIssuer(string candidate, HttpContext ctx)
+            => string.Equals(candidate, issuer, StringComparison.Ordinal)
+                || (options.Trust.IsConfigured(AAuthTrustedParty.AccessServer, ctx.RequestServices)
+                    && await options.Trust.IsTrustedAsync(candidate, AAuthTrustedParty.AccessServer,
+                        ctx.RequestServices, ctx, AuthTokenBuilder.TokenType, ctx.RequestAborted).ConfigureAwait(false));
 
         // Presented and upstream person tokens are this PS's own: verify them with
         // its signing keys rather than fetching its own JWKS.
@@ -376,7 +361,7 @@ public static class AAuthPersonServerEndpoints
             {
                 var issuance = await AgentIssuanceContext.VerifyAsync(parsed.Jwt!,
                     StringMember(body, "subagent_token"), StringMember(body, "upstream_token"), issuer,
-                    selfVerifier, metadataClient, jwksClient, IsTrustedAuthTokenIssuer, ctx.RequestAborted);
+                    selfVerifier, metadataClient, jwksClient, (candidate, _) => IsTrustedAuthTokenIssuer(candidate, ctx), ctx.RequestAborted);
                 return (issuance, body, null);
             }
             catch (TokenVerificationException ex) { return (null, body, AAuthProblemDetails.TokenFailure(ex)); }
@@ -1185,13 +1170,14 @@ public static class AAuthPersonServerEndpoints
             // §PS-AS Trust Establishment: trust may be pre-established OR established
             // dynamically — "no separate registration step". Default open: federate to
             // the AS named in the (verified) resource-token aud. An empty
-            // TrustedAccessServers set disables four-party; a non-empty set and/or
-            // predicate restricts.
+            // Trust.AccessServers allow-list disables four-party; a non-empty list
+            // and/or predicate restricts.
             if (!AAuthUrl.IsHttpsOrLoopback(resourceAudience, options.EgressPolicy))
             {
                 return AAuth.Server.AAuthProblemDetails.Create("untrusted_access_server", $"Access Server audience '{resourceAudience}' must be an absolute https URL (loopback http allowed for development).", statusCode: StatusCodes.Status400BadRequest);
             }
-            if (!IssuerTrust.IsTrusted(trustedAccessServersOrNull, options.IsTrustedAccessServer, resourceAudience))
+            if (!await options.Trust.IsTrustedAsync(resourceAudience, AAuthTrustedParty.AccessServer,
+                    ctx.RequestServices, ctx, cancellationToken: ctx.RequestAborted).ConfigureAwait(false))
             {
                 return AAuth.Server.AAuthProblemDetails.Create("untrusted_access_server", $"'{resourceAudience}' is not a trusted Access Server.", statusCode: StatusCodes.Status403Forbidden);
             }

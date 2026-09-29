@@ -79,13 +79,13 @@ public sealed class UpstreamTokenValidator
     /// </param>
     /// <param name="isTrustedAuthTokenIssuer">
     /// At a PS: accepts an auth token's <c>iss</c> only when it is this PS or an AS
-    /// this PS federated with. At an AS, pass <c>_ =&gt; true</c>.
+    /// this PS federated with. At an AS, pass <c>(_, _) =&gt; ValueTask.FromResult(true)</c>.
     /// </param>
     public async Task<UpstreamTokenValidationResult> ValidateAsync(
         string upstreamToken,
         string intermediary,
         string expectedPersonServer,
-        Func<string, bool> isTrustedAuthTokenIssuer,
+        Func<string, CancellationToken, ValueTask<bool>> isTrustedAuthTokenIssuer,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(upstreamToken);
@@ -129,7 +129,7 @@ public sealed class UpstreamTokenValidator
             return Invalid($"upstream_token names person server '{personServer}', expected '{expectedPersonServer}'.");
         if (typ == AuthTokenBuilder.TokenType
             && !string.Equals(verified.Issuer, expectedPersonServer, StringComparison.Ordinal)
-            && !isTrustedAuthTokenIssuer(verified.Issuer))
+            && !await isTrustedAuthTokenIssuer(verified.Issuer, ct).ConfigureAwait(false))
             return Invalid($"upstream auth token issuer '{verified.Issuer}' is not trusted.");
 
         return new UpstreamTokenValidationResult

@@ -73,7 +73,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
             EgressPolicy = TestEgress.Policy,
             AcceptedSchemes = ["jwt", "hwk", "jkt-jwt"],
             ResourceIdentifier = ResourceId,
-            TrustedAuthTokenIssuers = new HashSet<string> { PsIssuer },
+            Trust = { AuthTokenIssuers = { Allowed = new HashSet<string> { PsIssuer } } },
         });
         app.MapGet("/protected", () => Results.Ok("hello"));
         await app.StartAsync();
@@ -392,7 +392,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         {
             EgressPolicy = TestEgress.Policy,
             ResourceIdentifier = ResourceId,
-            TrustedAgentProviderIssuers = new HashSet<string> { "https://trusted-only.example" },
+            Trust = { AgentProviders = { Allowed = new HashSet<string> { "https://trusted-only.example" } } },
         });
         app.MapGet("/protected", () => Results.Ok("hello"));
         await app.StartAsync();
@@ -420,7 +420,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         {
             EgressPolicy = TestEgress.Policy,
             ResourceIdentifier = ResourceId,
-            TrustedAuthTokenIssuers = new HashSet<string> { "https://trusted-ps-only.example" },
+            Trust = { AuthTokenIssuers = { Allowed = new HashSet<string> { "https://trusted-ps-only.example" } } },
         });
         app.MapGet("/protected", () => Results.Ok("hello"));
         await app.StartAsync();
@@ -459,7 +459,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         {
             EgressPolicy = TestEgress.Policy,
             ResourceIdentifier = ResourceId,
-            // TrustedAuthTokenIssuers + IsTrustedAuthTokenIssuer intentionally unset ⇒ open.
+            // Trust.AuthTokenIssuers intentionally unset ⇒ open.
         });
 
         var response = await SendSigned(BuildAuthToken());
@@ -473,7 +473,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         {
             EgressPolicy = TestEgress.Policy,
             ResourceIdentifier = ResourceId,
-            TrustedAuthTokenIssuers = new HashSet<string>(), // empty ⇒ deny-all
+            Trust = { AuthTokenIssuers = { Allowed = new HashSet<string>() } }, // empty ⇒ deny-all
         });
 
         var response = await SendSigned(BuildAuthToken());
@@ -487,7 +487,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         {
             EgressPolicy = TestEgress.Policy,
             ResourceIdentifier = ResourceId,
-            IsTrustedAuthTokenIssuer = iss => iss == "https://other-ps.example",
+            Trust = { AuthTokenIssuers = { Predicate = iss => iss == "https://other-ps.example" } },
         });
 
         var response = await SendSigned(BuildAuthToken()); // iss = PsIssuer, not matched
@@ -501,7 +501,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         {
             EgressPolicy = TestEgress.Policy,
             ResourceIdentifier = ResourceId,
-            IsTrustedAuthTokenIssuer = iss => iss == PsIssuer,
+            Trust = { AuthTokenIssuers = { Predicate = iss => iss == PsIssuer } },
         });
 
         var response = await SendSigned(BuildAuthToken());

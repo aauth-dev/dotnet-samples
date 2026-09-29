@@ -76,7 +76,7 @@ public class TrustConfigDiagnosticsTests
             new AAuthVerificationOptions
             {
                 EgressPolicy = TestEgress.Policy,
-                TrustedAuthTokenIssuers = new HashSet<string> { "https://ps.example" },
+                Trust = { AuthTokenIssuers = { Allowed = new HashSet<string> { "https://ps.example" } } },
             });
     }
 

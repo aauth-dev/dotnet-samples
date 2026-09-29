@@ -218,14 +218,14 @@ public class IssuanceBoundsTests
                 {
                     EgressPolicy = TestEgress.Policy,
                     Issuer = As, SigningKeys = new Dictionary<string, IAAuthKey> { ["key"] = issuerKey },
-                    TrustedPersonServers = [Ps], TimeProvider = clock,
+                    Trust = { PersonServers = { Allowed = new HashSet<string> { Ps } } }, TimeProvider = clock,
                 });
             else
                 app.MapAAuthPersonServer(new AAuthPersonServerOptions
                 {
                     EgressPolicy = TestEgress.Policy,
                     Issuer = Ps, SigningKeys = new Dictionary<string, IAAuthKey> { ["key"] = issuerKey },
-                    TrustedAccessServers = [], TimeProvider = clock,
+                    Trust = { AccessServers = { Allowed = new HashSet<string>() } }, TimeProvider = clock,
                 });
             await app.StartAsync();
             return new IssuerFixture { App = app, Access = access, Clock = clock, IssuerKey = issuerKey,

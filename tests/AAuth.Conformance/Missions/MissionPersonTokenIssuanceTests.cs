@@ -74,7 +74,7 @@ public class MissionPersonTokenIssuanceTests
             EgressPolicy = new AAuthEgressPolicy(dnsResolver: new PublicDns()),
             Issuer = PsIssuer,
             SigningKeys = new Dictionary<string, IAAuthKey> { [PsKid] = PsKey },
-            TrustedAccessServers = [],
+            Trust = { AccessServers = { Allowed = new HashSet<string>() } },
         });
         app.MapAAuthGovernance(options => options.PersonServer = PsIssuer);
         await app.StartAsync();

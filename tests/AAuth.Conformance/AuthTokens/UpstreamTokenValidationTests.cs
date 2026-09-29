@@ -109,7 +109,8 @@ public class UpstreamTokenValidationTests
     }
 
     private Task<UpstreamTokenValidationResult> Validate(string token, Func<string, bool>? trusted = null) =>
-        CreateValidator().ValidateAsync(token, Intermediary, PsIssuer, trusted ?? (_ => false));
+        CreateValidator().ValidateAsync(token, Intermediary, PsIssuer,
+            (iss, _) => ValueTask.FromResult((trusted ?? (_ => false))(iss)));
 
     [Fact(DisplayName = "§Upstream Token Verification — valid PS-issued auth token accepted")]
     public async Task ValidToken_Accepted()
@@ -199,7 +200,7 @@ public class UpstreamTokenValidationTests
             ? BuildAuthToken(personServer: "http://localhost:9999")
             : BuildPersonToken();
         var result = await CreateValidator().ValidateAsync(token, Intermediary,
-            kind == "auth" ? PsIssuer : "http://localhost:9999", _ => true);
+            kind == "auth" ? PsIssuer : "http://localhost:9999", (_, _) => ValueTask.FromResult(true));
 
         Assert.False(result.IsValid);
         Assert.Contains("person server", result.Error);

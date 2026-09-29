@@ -11,9 +11,9 @@ namespace AAuth.Server.Verification;
 public sealed class AAuthVerificationOptions
 {
     public AAuth.Discovery.AAuthEgressPolicy EgressPolicy { get; set; } = AAuth.Discovery.AAuthEgressPolicy.Production;
-    public IReadOnlyList<string> AcceptedSchemes { get; init; } = ["jwt"];
-    public string SignatureLabel { get; init; } = "sig";
-    public IReadOnlyCollection<string> RequiredComponents { get; init; } = [];
+    public IReadOnlyList<string> AcceptedSchemes { get; set; } = ["jwt"];
+    public string SignatureLabel { get; set; } = "sig";
+    public IReadOnlyCollection<string> RequiredComponents { get; set; } = [];
 
     /// <summary>
     /// When <see langword="true"/>, a request that carries a body MUST also cover
@@ -22,64 +22,23 @@ public sealed class AAuthVerificationOptions
     /// body is unaffected. A request that omits them fails with <c>invalid_input</c>
     /// naming them in <c>required_input</c>, before any handler runs.
     /// </summary>
-    public bool RequireBodyCoverage { get; init; }
-    public bool GenericSignatureKeys { get; init; }
-    /// <summary>
-    /// Optional allow-list of trusted Agent Provider issuers (for <c>aa-agent+jwt</c>).
-    /// When <c>null</c>, any issuer whose JWKS is resolvable is accepted; an empty
-    /// set denies all. Composed by AND with <see cref="IsTrustedAgentProviderIssuer"/>.
-    /// </summary>
-    public IReadOnlySet<string>? TrustedAgentProviderIssuers { get; init; }
+    public bool RequireBodyCoverage { get; set; }
+    public bool GenericSignatureKeys { get; set; }
 
     /// <summary>
-    /// Optional trust policy for Agent Provider issuers, evaluated per <c>iss</c>
-    /// during agent-token verification and composed by AND with
-    /// <see cref="TrustedAgentProviderIssuers"/>. <c>null</c> ⇒ no policy constraint.
+    /// Trust for agent-token, auth-token and person-token issuers. Open by default
+    /// (spec-compliant): any <em>verifiable</em> issuer is accepted, namespaced by
+    /// <c>iss</c> (§Trust Posture in PS-Asserted Access). Signature-only schemes
+    /// (<c>hwk</c>/<c>jkt-jwt</c>/<c>jwks_uri</c>) carry no issuer and are unaffected.
     /// </summary>
-    public Func<string, bool>? IsTrustedAgentProviderIssuer { get; init; }
-
-    /// <summary>
-    /// Optional allow-list of trusted Person Server / Access Server issuers (for
-    /// <c>aa-auth+jwt</c>).
-    /// <para>
-    /// <b>Open by default (spec-compliant):</b> when <c>null</c>, any auth token
-    /// from a <em>verifiable</em> issuer is accepted — PS-asserted access accepts
-    /// identity claims from any Person Server, namespaced by <c>iss</c> (§Trust
-    /// Posture in PS-Asserted Access). An <b>empty</b> set denies all (a deliberate
-    /// kill-switch). A non-empty set restricts to the listed issuers. Composed by
-    /// AND with <see cref="IsTrustedAuthTokenIssuer"/>. Signature-only flows
-    /// (<c>hwk</c>/<c>jkt-jwt</c>/<c>jwks_uri</c>) carry no auth-token issuer and
-    /// are unaffected.
-    /// </para>
-    /// </summary>
-    public IReadOnlySet<string>? TrustedAuthTokenIssuers { get; init; }
-
-    /// <summary>
-    /// Optional trust policy for auth-token issuers (Person Servers / Access
-    /// Servers), evaluated per <c>iss</c> during auth-token verification and
-    /// composed by AND with <see cref="TrustedAuthTokenIssuers"/>. <c>null</c> ⇒ no
-    /// policy constraint. Assign <see cref="AAuthTrust.Any"/> to state intentional
-    /// open trust explicitly (and suppress the startup warning).
-    /// </summary>
-    public Func<string, bool>? IsTrustedAuthTokenIssuer { get; init; }
-
-    /// <summary>
-    /// Allow-list of Person Servers whose person tokens (<c>aa-person+jwt</c>) are
-    /// accepted. When both this and <see cref="IsTrustedPersonServer"/> are null,
-    /// person tokens use the auth-token issuer policy (three-party, where the PS
-    /// issues both). Set it in four-party, where the AS issues the auth tokens.
-    /// </summary>
-    public IReadOnlySet<string>? TrustedPersonServers { get; init; }
-
-    /// <summary>Trust policy for person-token issuers, AND-composed with <see cref="TrustedPersonServers"/>.</summary>
-    public Func<string, bool>? IsTrustedPersonServer { get; init; }
+    public AAuthTrustOptions Trust { get; set; } = new();
 
     /// <summary>
     /// This resource's own identifier — used for <c>aud</c> validation on auth tokens.
     /// When null, audience is not validated by the middleware (caller must check).
     /// </summary>
-    public string? ResourceIdentifier { get; init; }
-    public Func<Microsoft.AspNetCore.Http.HttpContext, string?>? ExpectedAccount { get; init; }
+    public string? ResourceIdentifier { get; set; }
+    public Func<Microsoft.AspNetCore.Http.HttpContext, string?>? ExpectedAccount { get; set; }
 
     /// <summary>
     /// Enable implemented generic Signature Keys schemes. JWT assertions still
@@ -98,8 +57,8 @@ public sealed class AAuthVerificationOptions
     /// Tolerance applied to <c>exp</c>/<c>iat</c> checks on tokens.
     /// Default: 30 seconds.
     /// </summary>
-    public TimeSpan ClockSkew { get; init; } = TimeSpan.FromSeconds(30);
+    public TimeSpan ClockSkew { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>Time source for signature freshness and token expiry.</summary>
-    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 }

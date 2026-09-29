@@ -75,7 +75,7 @@ app.MapAAuthWellKnown();
 // only the configured Person Servers (fail-closed).
 app.UseRouting();
 app.UseAAuth(o =&gt;
-    o.TrustedAuthTokenIssuers = trustedPersonServers);
+    o.Trust.AuthTokenIssuers.Allowed = trustedPersonServers);
 
 app.UseAuthentication();
 app.UseAuthorization();

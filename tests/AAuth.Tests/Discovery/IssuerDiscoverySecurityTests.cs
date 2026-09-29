@@ -120,7 +120,7 @@ public class IssuerDiscoverySecurityTests
                     return true;
                 case "upstream":
                     return (await new UpstreamTokenValidator(_metadata, _jwks, _verifier)
-                        .ValidateAsync(jwt, Audience, Issuer, issuer => issuer == Issuer)).IsValid;
+                        .ValidateAsync(jwt, Audience, Issuer, (issuer, _) => ValueTask.FromResult(issuer == Issuer))).IsValid;
                 case "delivery":
                     return (await new AuthTokenResponseValidator(_metadata, _jwks, _verifier)
                         .ValidateAsync(jwt, Issuer, Audience, "person", Issuer, _agent, Start.AddHours(2))).IsValid;

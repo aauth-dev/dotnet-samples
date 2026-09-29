@@ -82,9 +82,9 @@ the full table). The identity claims asserted by a Person Server — `sub`
 > **`sub` alone is not an identity.** The same `sub` asserted by two different
 > Person Servers is two different users. Key your application records on
 > `(iss, sub)` (or the `aauth:sub_iss` claim), never on `sub` alone. Issuer trust
-> is open by default — an unset `AAuthVerificationOptions.TrustedAuthTokenIssuers`
-> honors any *verifiable* Person Server (namespaced by `iss`); set the list (or
-> the `IsTrustedAuthTokenIssuer` predicate) to restrict which issuers are honored.
+> is open by default — an unset `AAuthVerificationOptions.Trust.AuthTokenIssuers`
+> honors any *verifiable* Person Server (namespaced by `iss`); set its `Allowed`
+> list (or `Predicate`) to restrict which issuers are honored.
 
 ## Authorization (authZ)
 
@@ -142,7 +142,7 @@ app.MapAAuthWellKnown();
 // One declarative pipeline. Resource-level config is trust only; key and issuer
 // default from the DI metadata.
 app.UseRouting();
-app.UseAAuth(o => o.TrustedAuthTokenIssuers = trustedPersonServers);
+app.UseAAuth(o => o.Trust.AuthTokenIssuers.Allowed = trustedPersonServers);
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -193,7 +193,7 @@ app.MapAAuthWellKnown();
 app.UseAAuthVerification(new AAuthVerificationOptions
 {
     ResourceIdentifier = resourceUrl,
-    TrustedAuthTokenIssuers = trustedPersonServers,
+    Trust = { AuthTokenIssuers = { Allowed = trustedPersonServers } },
 });
 app.UseAAuthChallenge(challengeOptions);
 
