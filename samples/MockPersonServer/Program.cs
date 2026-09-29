@@ -936,15 +936,29 @@ app.MapMethods("/interaction", ["GET", "POST"], async (HttpContext ctx, IPersonP
         + "form{margin-top:1.5rem;display:inline-flex;gap:.75rem}"
         + "button{padding:.5rem 1rem;font-size:1rem;cursor:pointer;border-radius:.25rem;border:1px solid #999}"
         + "button.approve{background:#6ee7b7;border-color:#34d399}"
-        + "button.deny{background:#fecaca;border-color:#f87171}</style>"
+        + "button.deny{background:#fecaca;border-color:#f87171}"
+        + "section{border-radius:.4rem;padding:.5rem .9rem;margin:.9rem 0}section h2{font-size:.95rem;margin:.2rem 0 .4rem}"
+        + ".resource-asserted{background:#eff6ff;border:1px solid #bfdbfe}"
+        + ".agent-asserted{background:#fffbeb;border:1px dashed #f59e0b}"
+        + ".agent-asserted blockquote{white-space:pre-wrap;margin:.3rem 0;font-style:italic}</style>"
         + "<div class=badge><span class=dot></span>Person Server</div>"
         + "<div class=sub>localhost:5100 — the server that holds your resources and standing consent</div>"
         + "<h1>An agent is requesting access on your behalf</h1>"
         + "<p>Signed in as the isolated demo user at the <b>Person Server</b>.</p>"
         + $"<div class=row><b>Agent:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.AgentId)}</code></div>"
+        // §Consent Presentation: resource-asserted and agent-asserted content are
+        // shown apart, and the agent's words are attributed to the agent.
+        + "<section class=resource-asserted><h2>From the resource</h2>"
         + $"<div class=row><b>Resource:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.ResourceUrl)}</code></div>"
         + $"<div class=row><b>Scope:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.Scope)}</code></div>"
         + (entry.Account is null ? "" : $"<div class=row><b>Account:</b> <code>{System.Net.WebUtility.HtmlEncode(entry.Account)}</code></div>")
+        + "</section>"
+        + (entry.AgentAsserted is not { } agentSays ? "" :
+            "<section class=agent-asserted><h2>The agent says (not verified)</h2>"
+            + (agentSays.Justification is null ? "" : $"<blockquote>{System.Net.WebUtility.HtmlEncode(agentSays.Justification)}</blockquote>")
+            + (agentSays.Platform is null ? "" : $"<div class=row><b>Platform:</b> {System.Net.WebUtility.HtmlEncode(agentSays.Platform)}</div>")
+            + (agentSays.Device is null ? "" : $"<div class=row><b>Device:</b> {System.Net.WebUtility.HtmlEncode(agentSays.Device)}</div>")
+            + "</section>")
         + "<form method=post action=\"/interaction/approve\">"
         + decisionFields
         + "<button class=approve type=submit>Approve</button>"
@@ -1013,7 +1027,7 @@ app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent
             ResourceUrl = entry.ResourceUrl, Scope = entry.Scope, AgentId = entry.ConsentAgentId,
             Account = entry.Account, AgentKeyThumbprint = entry.ResourceKeyThumbprint,
             MissionS256 = entry.MissionS256, RequiredClaims = entry.RequiredIdentityClaims,
-            ResourceContext = entry.ResourceContext, InteractionId = entry.Id,
+            ResourceContext = entry.ResourceContext, AgentAsserted = entry.AgentAsserted, InteractionId = entry.Id,
         }, ctx.RequestAborted);
         if (asserted.Kind != IdentityAssertionKind.Assert)
             return AAuth.Server.AAuthProblemDetails.Create("denied", statusCode: 403);

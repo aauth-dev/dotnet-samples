@@ -356,7 +356,7 @@ Phase rule: resource/auth identity is ps/sub/key based; no agent/act/mission fal
 - [x] Missing body coverage/tampering fails before policy or consent mutation.
 - [x] Immediate/deferred expiry and AS error mapping tests pass.
 - [x] Clarification replacement rejects a mismatched or unverified pair.
-- [ ] Consent views attribute agent- and resource-asserted content separately.
+- [x] Consent views attribute agent- and resource-asserted content separately.
 - [x] Affected core/R3/Events projects and solution build are green.
 - [x] Minimum person-client and protected-ticket consumers work with new identity contracts.
 

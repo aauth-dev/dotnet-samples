@@ -504,6 +504,8 @@ public static class AAuthPersonServerEndpoints
 
             var prompt = StringMember(body, "prompt");
             var capabilities = ParseStringArray(body["capabilities"] as JsonArray);
+            if (!TryReadAgentAsserted(body, out var agentAsserted))
+                return AAuthProblemDetails.Create("invalid_request", "justification, platform and device must be strings", statusCode: StatusCodes.Status400BadRequest);
             var assertion = await asserter.AssertAsync(new IdentityAssertionRequest
             {
                 PersonTokenRequest = true,
@@ -515,6 +517,7 @@ public static class AAuthPersonServerEndpoints
                 LoginHint = StringMember(body, "login_hint"),
                 Prompt = prompt,
                 Capabilities = capabilities,
+                AgentAsserted = agentAsserted,
                 UpstreamAuthorization = issuance.Upstream,
             }, ctx.RequestAborted);
             switch (assertion.Kind)
@@ -538,6 +541,7 @@ public static class AAuthPersonServerEndpoints
                     entry.UpstreamAuthorization = issuance.Upstream;
                     entry.Prompt = prompt;
                     entry.Capabilities = capabilities;
+                    entry.AgentAsserted = agentAsserted;
                     return Pending202(ctx, entry, options, interactionUrl);
             }
         });
@@ -561,6 +565,8 @@ public static class AAuthPersonServerEndpoints
             // unknown values flow to the asserter, which MAY honor or ignore them.
             var prompt = StringMember(body, "prompt");
             var capabilities = ParseStringArray(body!["capabilities"] as JsonArray);
+            if (!TryReadAgentAsserted(body, out var agentAsserted))
+                return AAuthProblemDetails.Create("invalid_request", "justification, platform and device must be strings", statusCode: StatusCodes.Status400BadRequest);
 
             // Route on the resource token's `aud` (peeked, not trusted; both
             // branches fully verify the token afterwards). `aud == this PS` →
@@ -575,10 +581,10 @@ public static class AAuthPersonServerEndpoints
                 && !string.Equals(resourceAudience, issuer, StringComparison.Ordinal))
             {
                 return await HandleFederatedAsync(ctx, issuance!, resourceTokenJwt, presentedTokenJwt, body,
-                    resourceAudience, prompt, capabilities);
+                    resourceAudience, prompt, capabilities, agentAsserted);
             }
 
-            return await HandleThreePartyAsync(ctx, issuance!, resourceTokenJwt, presentedTokenJwt, prompt, capabilities);
+            return await HandleThreePartyAsync(ctx, issuance!, resourceTokenJwt, presentedTokenJwt, prompt, capabilities, agentAsserted);
         });
 
         // -------------------------------------------------------------------
@@ -853,6 +859,7 @@ public static class AAuthPersonServerEndpoints
                         Stage = MissionTokenConsentStage.Resolve,
                         Prompt = entry.Prompt,
                         Capabilities = entry.Capabilities,
+                        AgentAsserted = entry.AgentAsserted,
                         ClarificationHistory = entry.ClarificationAnswers,
                         ResourceContext = entry.ResourceContext,
                     });
@@ -919,6 +926,7 @@ public static class AAuthPersonServerEndpoints
                 MissionS256 = entry.MissionS256,
                 Prompt = entry.Prompt,
                 Capabilities = entry.Capabilities,
+                AgentAsserted = entry.AgentAsserted,
                 ResourceContext = entry.ResourceContext,
                 UpstreamAuthorization = entry.UpstreamAuthorization,
             });
@@ -938,7 +946,8 @@ public static class AAuthPersonServerEndpoints
         // ---- three-party (PS-issued) handler --------------------------------
         async Task<IResult> HandleThreePartyAsync(
             HttpContext ctx, AgentIssuanceContext issuance, string resourceTokenJwt, string presentedTokenJwt,
-            string? prompt = null, IReadOnlyList<string>? capabilities = null, PersonPendingEntry? resumed = null)
+            string? prompt = null, IReadOnlyList<string>? capabilities = null, AgentAssertedContent? agentAsserted = null,
+            PersonPendingEntry? resumed = null)
         {
             TokenVerifier.VerifiedToken resource, presented;
             try
@@ -991,6 +1000,7 @@ public static class AAuthPersonServerEndpoints
                 entry.UpstreamAuthorization = issuance.Upstream;
                 entry.Prompt = prompt;
                 entry.Capabilities = capabilities;
+                entry.AgentAsserted = agentAsserted;
                 return entry;
             }
 
@@ -1004,7 +1014,7 @@ public static class AAuthPersonServerEndpoints
                 resourceEntry.ResourceInteraction = resourceInteraction;
                 resourceEntry.InteractionUrl = interactionUrl + "/resource";
                 resourceEntry.ResumeAuthorization = active => HandleThreePartyAsync(active, issuance,
-                    resourceEntry.ResourceToken!, resourceEntry.PresentedToken!, prompt, capabilities, resourceEntry);
+                    resourceEntry.ResourceToken!, resourceEntry.PresentedToken!, prompt, capabilities, agentAsserted, resourceEntry);
                 return Pending202(ctx, resourceEntry, options, interactionUrl);
             }
 
@@ -1033,6 +1043,7 @@ public static class AAuthPersonServerEndpoints
                         Stage = MissionTokenConsentStage.Gate,
                         Prompt = prompt,
                         Capabilities = capabilities,
+                        AgentAsserted = agentAsserted,
                     });
                 }
                 catch (AAuthTokenExchangeException ex)
@@ -1055,6 +1066,7 @@ public static class AAuthPersonServerEndpoints
                             LoginHint = (string?)resourceContext["login_hint"],
                             Prompt = prompt,
                             Capabilities = capabilities,
+                            AgentAsserted = agentAsserted,
                             ResourceContext = resourceContext,
                             UpstreamAuthorization = issuance.Upstream,
                         });
@@ -1100,6 +1112,7 @@ public static class AAuthPersonServerEndpoints
                 LoginHint = (string?)resourceContext["login_hint"],
                 Prompt = prompt,
                 Capabilities = capabilities,
+                AgentAsserted = agentAsserted,
                 UpstreamAuthorization = issuance.Upstream,
                 ResourceContext = resourceContext,
             });
@@ -1122,7 +1135,8 @@ public static class AAuthPersonServerEndpoints
         // ---- four-party (federated) handler --------------------------------
         async Task<IResult> HandleFederatedAsync(
             HttpContext ctx, AgentIssuanceContext issuance, string resourceTokenJwt, string presentedTokenJwt,
-            JsonObject body, string resourceAudience, string? prompt, IReadOnlyList<string>? capabilities)
+            JsonObject body, string resourceAudience, string? prompt, IReadOnlyList<string>? capabilities,
+            AgentAssertedContent? agentAsserted)
         {
             // §PS-AS Trust Establishment: trust may be pre-established OR established
             // dynamically — "no separate registration step". Default open: federate to
@@ -1178,6 +1192,7 @@ public static class AAuthPersonServerEndpoints
             entry.SourceTokens = Keys(sourceTokens);
             entry.Prompt = prompt;
             entry.Capabilities = capabilities;
+            entry.AgentAsserted = agentAsserted;
             entry.PresentedToken = presentedTokenJwt;
             entry.PersonSubject = resource.Subject;
             entry.PersonTenant = resource.Tenant;
@@ -1214,6 +1229,7 @@ public static class AAuthPersonServerEndpoints
                         ConsentAgentId = entry.ConsentAgentId, UpstreamAuthorization = entry.UpstreamAuthorization,
                         AgentKeyThumbprint = entry.ResourceKeyThumbprint, Scope = entry.Scope, MissionS256 = mission,
                         Stage = MissionTokenConsentStage.Gate, Prompt = entry.Prompt, Capabilities = entry.Capabilities,
+                        AgentAsserted = entry.AgentAsserted,
                         ResourceContext = entry.ResourceContext, ClarificationHistory = entry.ClarificationAnswers,
                     });
                     if (decision.Kind == MissionTokenConsentKind.Deny)
@@ -1259,6 +1275,7 @@ public static class AAuthPersonServerEndpoints
                     LoginHint = (string?)entry.ResourceContext?["login_hint"],
                     Prompt = entry.Prompt,
                     Capabilities = entry.Capabilities,
+                    AgentAsserted = entry.AgentAsserted,
                     ResourceContext = entry.ResourceContext,
                     InteractionId = entry.Id,
                     UpstreamAuthorization = issuance.Upstream,
@@ -1540,6 +1557,21 @@ public static class AAuthPersonServerEndpoints
 
     private static string? StringMember(JsonObject? body, string name) =>
         body?[name] is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
+
+    // §Consent Presentation: justification, platform and device are agent-asserted.
+    // Each is optional; a present member that is not a string is malformed.
+    private static bool TryReadAgentAsserted(JsonObject? body, out AgentAssertedContent? content)
+    {
+        content = null;
+        string?[] values = [StringMember(body, "justification"), StringMember(body, "platform"), StringMember(body, "device")];
+        if ((body?.ContainsKey("justification") == true && values[0] is null)
+            || (body?.ContainsKey("platform") == true && values[1] is null)
+            || (body?.ContainsKey("device") == true && values[2] is null))
+            return false;
+        if (values.Any(value => value is not null))
+            content = new AgentAssertedContent { Justification = values[0], Platform = values[1], Device = values[2] };
+        return true;
+    }
 
     // The §requirement-clarification 202: emit the AAuth-Requirement header and a
     // body carrying the question (plus optional timeout/options).

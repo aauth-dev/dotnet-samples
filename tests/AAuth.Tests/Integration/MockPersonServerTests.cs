@@ -611,6 +611,39 @@ public class MockPersonServerConsentTests : IClassFixture<MockPersonServerConsen
     }
 
     [Fact]
+    public async Task Interaction_ConsentPage_AttributesAgentAssertedContentApartFromResource()
+    {
+        var agentKey = AAuthKey.Generate();
+        var (signedClient, plainHttp, _) = BuildSignedAgentClient(agentKey, "aauth:browser@ap.example");
+        var request = await PersonTokenFlow.TokenRequestAsync(signedClient, agentKey);
+        request["justification"] = "Trust me <script>alert(1)</script>";
+        request["platform"] = "ios";
+        request["device"] = "Pixel 8 (App)";
+        using var initial = await signedClient.PostAsJsonAsync("/token", request);
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        var interaction = AAuth.Headers.Interaction.FromRequirement(
+            AAuth.Headers.AAuthRequirementHeader.Parse(string.Join(", ", initial.Headers.GetValues("AAuth-Requirement"))));
+
+        string? html = null;
+        using var approve = await TestConsentBrowser.DecideAsync(plainHttp,
+            "/interaction?code=" + interaction!.Code, "/interaction/approve", page => html = page);
+
+        Assert.NotNull(html);
+        var resource = html!.IndexOf("<section class=resource-asserted>", StringComparison.Ordinal);
+        var agent = html.IndexOf("<section class=agent-asserted>", StringComparison.Ordinal);
+        Assert.True(resource >= 0 && agent >= 0);
+        var agentSection = html[agent..html.IndexOf("</section>", agent, StringComparison.Ordinal)];
+        Assert.Contains("The agent says (not verified)", agentSection);
+        Assert.Contains("Trust me &lt;script&gt;alert(1)&lt;/script&gt;", agentSection);
+        Assert.Contains("ios", agentSection);
+        Assert.Contains("Pixel 8 (App)", agentSection);
+        Assert.DoesNotContain("<script>", html);
+        var resourceSection = html[resource..html.IndexOf("</section>", resource, StringComparison.Ordinal)];
+        Assert.Contains(ResourceUrl, resourceSection);
+        Assert.DoesNotContain("Trust me", resourceSection);
+    }
+
+    [Fact]
     public async Task Interaction_PostApproveWithCodeAlone_Returns401()
     {
         var (_, plainHttp, _) = BuildSignedAgentClient();

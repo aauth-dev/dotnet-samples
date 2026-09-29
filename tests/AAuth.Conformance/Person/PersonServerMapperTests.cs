@@ -711,6 +711,81 @@ public class PersonServerMapperTests
         await host.StopAsync();
     }
 
+    [Theory(DisplayName = "§Consent Presentation — justification, platform and device reach the asserter as agent-asserted content, apart from resource claims")]
+    [InlineData("/token")]
+    [InlineData("/person")]
+    public async Task AgentAssertedContent_ReachesAsserterApartFromResourceContext(string path)
+    {
+        var agentKey = AAuthKey.Generate();
+        var asserter = new CapturingAsserter();
+        using var host = await BuildHostAsync(asserter);
+        using var http = SignedAgentClient(host, agentKey, AgentId);
+        var body = path == "/token" ? TokenRequest(agentKey) : new JsonObject { ["resource"] = ResourceUrl };
+        body["justification"] = "# Booking your trip";
+        body["platform"] = "ios";
+        body["device"] = "Pixel 8 (App)";
+
+        using var response = await http.PostAsJsonAsync(path, body);
+
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        Assert.Equal(new AgentAssertedContent { Justification = "# Booking your trip", Platform = "ios", Device = "Pixel 8 (App)" },
+            asserter.Last!.AgentAsserted);
+        if (path == "/token")
+        {
+            Assert.NotNull(asserter.Last.ResourceContext);
+            Assert.False(asserter.Last.ResourceContext!.ContainsKey("justification"));
+        }
+        await host.StopAsync();
+    }
+
+    [Theory(DisplayName = "§Consent Presentation — a non-string justification, platform or device is invalid_request before the asserter")]
+    [InlineData("justification")]
+    [InlineData("platform")]
+    [InlineData("device")]
+    public async Task AgentAssertedContent_NonString_Rejected(string member)
+    {
+        var agentKey = AAuthKey.Generate();
+        var asserter = new CapturingAsserter();
+        using var host = await BuildHostAsync(asserter);
+        using var http = SignedAgentClient(host, agentKey, AgentId);
+        var body = TokenRequest(agentKey);
+        body[member] = new JsonObject();
+
+        using var response = await http.PostAsJsonAsync("/token", body);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("invalid_request", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.Null(asserter.Last);
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Consent Presentation — the mission Supervisor receives agent-asserted content attributed, on the gate and after a deferral")]
+    public async Task AgentAssertedContent_ReachesMissionSupervisor()
+    {
+        var agentKey = AAuthKey.Generate();
+        var seen = new List<MissionTokenConsentContext>();
+        using var host = await BuildHostAsync(consent: new StubMissionConsent(context =>
+        {
+            seen.Add(context);
+            return context.ClarificationHistory.Count == 0
+                ? MissionTokenConsentDecision.Clarify("Why?") : MissionTokenConsentDecision.Grant();
+        }));
+        using var http = SignedAgentClient(host, agentKey, AgentId);
+        var body = TokenRequest(agentKey, missionS256: S256);
+        body["justification"] = "Needed for the itinerary";
+
+        using var first = await http.PostAsJsonAsync("/token", body);
+        Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+        using var answer = await http.PostAsJsonAsync(first.Headers.Location,
+            new JsonObject { ["action"] = "clarification_response", ["clarification_response"] = "because" });
+        using var result = await http.GetAsync(first.Headers.Location);
+
+        Assert.Equal(HttpStatusCode.OK, result.StatusCode);
+        Assert.True(seen.Count >= 2);
+        Assert.All(seen, context => Assert.Equal("Needed for the itinerary", context.AgentAsserted?.Justification));
+        await host.StopAsync();
+    }
+
     [Theory]
     [InlineData("GET", false)]
     [InlineData("POST", false)]

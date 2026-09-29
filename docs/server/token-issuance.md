@@ -431,6 +431,24 @@ collects the user's decision and resolves the parked entry via
 polling agent receives the minted token (or `403`). The consent UI stays a host
 concern — the SDK only owns the protocol mechanics.
 
+A consent surface carries content from two sources, and the spec requires the
+PS to keep them visually apart and to attribute the agent's words to the agent.
+The request and the parked entry hand you both:
+
+| Source | Property | Carries |
+| --- | --- | --- |
+| Resource-asserted | `ResourceContext` | The verified resource token's claims |
+| Agent-asserted | `AgentAsserted` (`AgentAssertedContent`) | The request's `justification`, `platform` and `device`; `null` when the agent sent none |
+
+`IMissionTokenConsent` receives the same `AgentAsserted` on
+`MissionTokenConsentContext`, so a supervision server sees the same
+distinction. Treat agent-asserted content as untrusted: sanitize the Markdown
+`Justification` before rendering, and don't decide on it alone when
+resource-asserted content covers the same operation. MockPersonServer's consent
+page renders it in a separate "The agent says (not verified)" panel. A request
+whose `justification`, `platform` or `device` isn't a string gets `400
+invalid_request`.
+
 The shipped [`DefaultIdentityClaimsAsserter`](../../samples/MockPersonServer/)
 asserts a fixed directed `sub` with no prompt (a non-interactive demo PS); a
 production PS swaps in an implementation that derives the principal's directed

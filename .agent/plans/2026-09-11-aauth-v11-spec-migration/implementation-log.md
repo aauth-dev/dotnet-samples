@@ -1018,6 +1018,44 @@ deferred (clarification) issuance.
 Gates: AAuth.Tests 1670, Conformance 1211, R3 325, Events 80; API and docs maps
 refreshed.
 
+### [2026-09-29] [Phase 4] Consent attributes agent-asserted content
+
+RESOLVED (SDK and sample). §Consent Presentation (L1031, L1039) requires a
+PS to visually separate resource-asserted from agent-asserted content and to
+attribute the latter to the agent, and to convey the same distinction to a
+supervision server. The PS ignored `justification`, `platform` and `device`,
+so no hook or consent page could show them. `MissionTokenConsentContext.Prompt`
+was also mis-documented as the justification (it is OIDC `prompt`).
+
+Changes:
+
+- **New type:** public record `AgentAssertedContent` (`Justification`,
+  `Platform`, `Device`).
+- **Parsing:** the PS reads these from `/person` and `/token` bodies. A
+  non-string value gets `400 invalid_request` before the asserter runs.
+- **Hooks:** `IdentityAssertionRequest.AgentAsserted` and
+  `MissionTokenConsentContext.AgentAsserted` carry the content;
+  `PersonPendingEntry.AgentAsserted` keeps it for re-review.
+- **Docs comments:** `ResourceContext` is now documented as resource-asserted.
+- **Sample:** the MockPersonServer consent page renders a "From the resource"
+  panel and a separately styled "The agent says (not verified)" panel, with
+  HTML-encoded values. Its approve handler forwards `AgentAsserted`.
+- **Docs:** `server/token-issuance.md` gains a resource-asserted versus
+  agent-asserted table.
+
+Evidence:
+
+- `AgentAssertedContent_ReachesAsserterApartFromResourceContext` (`/token`,
+  `/person`);
+- `AgentAssertedContent_NonString_Rejected` (each member);
+- `AgentAssertedContent_ReachesMissionSupervisor` (gate and post-clarification
+  review);
+- `Interaction_ConsentPage_AttributesAgentAssertedContentApartFromResource`:
+  separate sections, encoded `<script>`, and no agent text in the resource
+  section.
+
+Conformance 1217, AAuth.Tests 1671; API and docs maps refreshed.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate

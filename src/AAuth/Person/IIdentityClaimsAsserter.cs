@@ -102,7 +102,20 @@ public sealed class IdentityAssertionRequest
 
     /// <summary>The pending-entry id when the request resumes a parked consent.</summary>
     public string? InteractionId { get; init; }
+
+    /// <summary>
+    /// Resource-asserted content: the verified resource token's claims (§Consent
+    /// Presentation). Render it apart from <see cref="AgentAsserted"/>.
+    /// </summary>
     public JsonObject? ResourceContext { get; init; }
+
+    /// <summary>
+    /// Agent-asserted content from the request body (<c>justification</c>,
+    /// <c>platform</c>, <c>device</c>), or <see langword="null"/> when the agent sent
+    /// none. A consent surface MUST attribute it to the agent (§Consent Presentation).
+    /// </summary>
+    public AgentAssertedContent? AgentAsserted { get; init; }
+
     public UpstreamTokenValidationResult? UpstreamAuthorization { get; init; }
 }
 

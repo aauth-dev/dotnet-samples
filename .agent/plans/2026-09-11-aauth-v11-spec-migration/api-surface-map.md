@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 147 changed public-source files, 269 added/replacement declarations, 140 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 148 changed public-source files, 276 added/replacement declarations, 140 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -1142,6 +1142,19 @@ Concept/decision: [consent](#consent). Source: [AAuthPersonServerEndpoints.cs](.
 
 Public owners: `AAuth.Person.AAuthPersonServerEndpoints`, `AAuth.Person.AAuthPersonServerOptions`, `AAuth.Person`.
 
+### src/AAuth/Person/AgentAssertedContent.cs
+
+Concept/decision: [consent](#consent). Source: [AgentAssertedContent.cs](../../../src/AAuth/Person/AgentAssertedContent.cs).
+
+```diff
++ AAuth.Person.AgentAssertedContent: public string ? Device { get ; init ; }
++ AAuth.Person.AgentAssertedContent: public string ? Justification { get ; init ; }
++ AAuth.Person.AgentAssertedContent: public string ? Platform { get ; init ; }
++ AAuth.Person: public sealed record AgentAssertedContent
+```
+
+Public owners: `AAuth.Person.AgentAssertedContent`, `AAuth.Person`.
+
 ### src/AAuth/Person/AgentPersonBinding.cs
 
 Concept/decision: [consent](#consent). Source: [AgentPersonBinding.cs](../../../src/AAuth/Person/AgentPersonBinding.cs).
@@ -1160,6 +1173,7 @@ Concept/decision: [consent](#consent). Source: [IIdentityClaimsAsserter.cs](../.
 
 ```diff
 - AAuth.Person.IdentityAssertionRequest: public MissionClaim ? Mission { get ; init ; }
++ AAuth.Person.IdentityAssertionRequest: public AgentAssertedContent ? AgentAsserted { get ; init ; }
 + AAuth.Person.IdentityAssertionRequest: public bool PersonTokenRequest { get ; init ; }
 + AAuth.Person.IdentityAssertionRequest: public string ? LoginHint { get ; init ; }
 + AAuth.Person.IdentityAssertionRequest: public string ? MissionS256 { get ; init ; }
@@ -1179,6 +1193,7 @@ Concept/decision: [consent](#consent). Source: [IPersonPendingStore.cs](../../..
 - AAuth.Person.PersonPendingEntry: public MissionClaim ? Mission { get ; set ; }
 + AAuth.Person.IPersonPendingStore: PersonPendingEntry Add ( string resourceUrl , string scope , string agentId , IAAuthKey ? agentConfirmationKey , DateTimeOffset agentTokenExpiresAt , string ? missionS256 = null , DateTimeOffset ? authorizationExpiresAt = null )
 + AAuth.Person.InMemoryPersonPendingStore: public PersonPendingEntry Add ( string resourceUrl , string scope , string agentId , IAAuthKey ? agentConfirmationKey , DateTimeOffset agentTokenExpiresAt , string ? missionS256 = null , DateTimeOffset ? authorizationExpiresAt = null )
++ AAuth.Person.PersonPendingEntry: public AgentAssertedContent ? AgentAsserted { get ; set ; }
 + AAuth.Person.PersonPendingEntry: public bool PersonToken { get ; set ; }
 + AAuth.Person.PersonPendingEntry: public string ? MissionS256 { get ; set ; }
 + AAuth.Person.PersonPendingEntry: public string ? PersonSubject { get ; set ; }
@@ -1419,6 +1434,7 @@ Concept/decision: [consent](#consent). Source: [IMissionTokenConsent.cs](../../.
 
 ```diff
 - AAuth.Server.Governance.MissionTokenConsentContext: public required MissionClaim Mission { get ; init ; }
++ AAuth.Server.Governance.MissionTokenConsentContext: public AAuth . Person . AgentAssertedContent ? AgentAsserted { get ; init ; }
 + AAuth.Server.Governance.MissionTokenConsentContext: public required string MissionS256 { get ; init ; }
 ```
 

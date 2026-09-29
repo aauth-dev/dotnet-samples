@@ -153,8 +153,11 @@ public sealed class PersonPendingEntry
     /// </summary>
     public bool MissionGate { get; set; }
 
-    /// <summary>The agent's justification (#aauth-prompt), captured for re-review.</summary>
+    /// <summary>The OIDC <c>prompt</c> value from the token request, captured for re-review.</summary>
     public string? Prompt { get; set; }
+
+    /// <summary>The agent-asserted content of the request (§Consent Presentation), captured for re-review.</summary>
+    public AgentAssertedContent? AgentAsserted { get; set; }
 
     /// <summary>The agent's declared capabilities (#aauth-capabilities), captured for re-review.</summary>
     public IReadOnlyList<string>? Capabilities { get; set; }
