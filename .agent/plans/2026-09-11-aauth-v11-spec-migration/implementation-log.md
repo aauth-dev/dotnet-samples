@@ -1056,6 +1056,88 @@ Evidence:
 
 Conformance 1217, AAuth.Tests 1671; API and docs maps refreshed.
 
+### [2026-09-29] [Phase 5] `202` auth-token delivery, retained results, error outcomes and refresh margin
+
+Checked each Phase 5 box against the code, not only the cited tests. Two were
+real gaps, not missing tests.
+
+**`202` delivery (SDK fix, agent MUST).** §Deferred Delivery (L659, L663):
+agents MUST support both the `401` and the `202` form of
+`requirement=auth-token`. `ChallengeHandler` handled only `401`, so a held
+invocation came back to the caller as a bare `202`. It now accepts a `202` that
+carries `requirement=auth-token` and a `Location`, exchanges the resource token
+exactly as for a `401`, and then polls the validated pending URL with signed
+`GET`s. It never resends the original request. The poll carries the original
+request's options (account, mission, resource) except the body's covered
+components; that exception came from a failure in the first run of the test.
+
+**Retained results (SDK addition, selects RS-36).** L661: the resource runs
+the held invocation once, keeps its result keyed by the auth token's `jti`
+until that token's `exp`, and answers a repeat of the same token from it. The
+SDK had no resource-side support. New `AAuthHeldInvocations` provides:
+
+- `Hold(resourceToken, requiredScopes, execute)` answers `202` with
+  `Location` and the requirement;
+- `MapAAuthHeldInvocations` maps the poll endpoint;
+- the poll runs the invocation under a per-entry gate for the first valid
+  auth token bound to the resource token's `agent_jkt` with the required
+  scopes;
+- the result is retained per `jti` until `exp`; another token after
+  completion gets `410`, and another key gets `404`.
+
+`HeldInvocationResult` carries the exact response. The shipped samples keep
+using `401`. Docs: `server/challenge-middleware.md`.
+
+**Error detail.** `PollingErrorException` now carries the problem `detail`
+(AG-60 to AG-62); before, only the code reached the agent.
+
+**Refresh margin.** §Expiry and the Refresh Margin (L1301) says agents SHOULD
+refresh with fewer than five minutes left. `TokenRefreshHandler` defaulted to
+60 s; the default is now five minutes.
+
+Evidence per box:
+
+1. **Partitioning:** `CachedCarrierTracksRefreshedSourceAndRequestBindings`
+   (account, mission, key) and `CachedAuthToken_IsSelectedOnlyForMatchingAccount`
+   (resource). New `CachedCarrier_IsNotSharedAcrossUpstreamPeopleOrConcurrentAccounts`
+   covers another person's upstream token, no upstream token, and 200
+   concurrent requests alternating accounts. Mission person tokens are covered
+   by `MissionPersonToken_ReusedOnlyWhenItMatches`.
+2. **Exact presented token:** new `PresentedToken_SurvivesHolderRefresh` (the
+   holder rotates between the resource's challenge and the exchange;
+   `presented_token` is still the token the resource saw). Replacement is
+   covered by `ClarificationResponse_UpdatedRequest_PostsNewResourceToken`.
+3. **No resent body:** `DeferredAuthToken_PollsPendingUrlWithoutResendingBody`
+   checks the resource saw exactly one POST (with the person token) and one GET
+   of `/pending/1` (with the auth token).
+4. **Retained result:** `HeldInvocationTests`:
+   - pending until an auth token arrives;
+   - same `jti` gets the same body with one execution;
+   - another `jti` gets `410`;
+   - after `exp` the result is gone;
+   - 8 concurrent polls execute once;
+   - a foreign key or missing scope does not execute.
+5. **Distinct outcomes:** new `Exchange_EveryPublishedError_IsDistinct` covers
+   all 17 codes in §Token Endpoint Error Codes (code, status and detail, each
+   distinct). New `TerminalCodes_AreDistinctWithDetail` covers the six terminal
+   polling codes. `slow_down` is covered by the existing backoff test.
+6. **Refresh order, ownership, cancellation, recovery:**
+   - margin: new `DefaultMargin_IsFiveMinutes`;
+   - order: a refreshed agent token supersedes a cached auth token
+     (`CachedCarrierTracksRefreshedSourceAndRequestBindings`);
+   - concurrency: `ConcurrentRequests_OnlyRefreshOnce`;
+   - cancellation: `CancellationDuringRefreshDoesNotPublishToken` and
+     `RefreshAsync_CancellationDoesNotSend`;
+   - ownership: `PipelineOwnsFactoryRefresherButNotInjectedRefresher`,
+     `FailedBuildDisposesOwnedRefresher` and
+     `FactoryRefresherIsDisposableAndBorrowsInjectedHttpClient`;
+   - recovery: new `RevokedAuthToken_RecoversThroughFreshPersonToken` (Q14,
+     L2764) checks that `requirement=person-token` on a revoked auth token
+     leads to `/person` with no `presented_token`.
+
+Gates: AAuth.Tests 1678, Conformance 1228, R3 325, Events 80; API and docs maps
+refreshed; snippet and link tests 108.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate

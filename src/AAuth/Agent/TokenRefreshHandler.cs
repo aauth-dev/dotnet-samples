@@ -31,7 +31,8 @@ internal sealed class TokenRefreshHandler : DelegatingHandler
         _holder = holder;
         _refresher = refresher;
         _signingKeyThumbprint = signingKeyThumbprint;
-        _refreshThreshold = refreshThreshold ?? TimeSpan.FromSeconds(60);
+        // §Expiry and the Refresh Margin: refresh when fewer than five minutes remain.
+        _refreshThreshold = refreshThreshold ?? TimeSpan.FromMinutes(5);
     }
 
     protected override async Task<HttpResponseMessage> SendAsync(

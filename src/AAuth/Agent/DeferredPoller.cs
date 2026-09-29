@@ -208,13 +208,13 @@ public sealed class DeferredPoller
                     or (HttpStatusCode)429
                     or HttpStatusCode.InternalServerError)
                 {
-                    var errorCode = await TryParsePollingErrorAsync(response).ConfigureAwait(false);
+                    var (errorCode, detail) = await TryParsePollingErrorAsync(response).ConfigureAwait(false);
                     if (errorCode is not null)
                     {
                         var code = errorCode.Value;
                         // Terminal errors: throw typed exception.
                         response.Dispose();
-                        throw new PollingErrorException(code, (int)response.StatusCode);
+                        throw new PollingErrorException(code, (int)response.StatusCode, detail: detail);
                     }
                 }
 
@@ -281,19 +281,19 @@ public sealed class DeferredPoller
         return delay < _options.MinPollInterval ? _options.MinPollInterval : delay;
     }
 
-    private static async Task<PollingErrorCode?> TryParsePollingErrorAsync(HttpResponseMessage response)
+    private static async Task<(PollingErrorCode? Code, string? Detail)> TryParsePollingErrorAsync(HttpResponseMessage response)
     {
         try
         {
             var body = await response.Content.ReadFromJsonAsync<JsonObject>().ConfigureAwait(false);
             var errorStr = (string?)body?["error"];
             if (PollingErrorException.TryParseCode(errorStr, out var code))
-                return code;
+                return (code, body?["detail"] is JsonValue detail && detail.TryGetValue<string>(out var text) ? text : null);
         }
         catch
         {
             // If we can't parse the body, don't treat it as a polling error.
         }
-        return null;
+        return (null, null);
     }
 }

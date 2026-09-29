@@ -124,6 +124,30 @@ public class PollingErrorTests
         Assert.Equal(PollingErrorCode.Expired, ex.ErrorCode);
     }
 
+    [Theory(DisplayName = "§Polling Errors — each terminal code reaches the agent as its own typed outcome with detail")]
+    [InlineData("denied", 403, PollingErrorCode.Denied)]
+    [InlineData("abandoned", 403, PollingErrorCode.Abandoned)]
+    [InlineData("expired", 408, PollingErrorCode.Expired)]
+    [InlineData("revoked", 403, PollingErrorCode.Revoked)]
+    [InlineData("invalid_code", 410, PollingErrorCode.InvalidCode)]
+    [InlineData("server_error", 500, PollingErrorCode.ServerError)]
+    public async Task TerminalCodes_AreDistinctWithDetail(string wire, int status, PollingErrorCode expected)
+    {
+        var handler = new MockHandler(_ => new HttpResponseMessage((HttpStatusCode)status)
+        {
+            Content = new StringContent($"{{\"error\":\"{wire}\",\"detail\":\"why {wire}\"}}", Encoding.UTF8, "application/problem+json"),
+        });
+        var poller = new DeferredPoller(new InProcessHttpClient(handler));
+
+        var ex = await Assert.ThrowsAsync<PollingErrorException>(
+            () => poller.PollAsync(new Uri("http://localhost/pending/x")));
+
+        Assert.Equal(expected, ex.ErrorCode);
+        Assert.Equal(status, ex.StatusCode);
+        Assert.Equal($"why {wire}", ex.Detail);
+        Assert.Contains($"why {wire}", ex.Message);
+    }
+
     [Theory(DisplayName = "§Polling Errors — all codes parse correctly")]
     [InlineData("denied", PollingErrorCode.Denied)]
     [InlineData("abandoned", PollingErrorCode.Abandoned)]

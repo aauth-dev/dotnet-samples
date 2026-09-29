@@ -43,12 +43,16 @@ public sealed class PollingErrorException : Exception
     /// <summary>The HTTP status code from the response.</summary>
     public int StatusCode { get; }
 
+    /// <summary>The server's problem <c>detail</c>, when it sent one.</summary>
+    public string? Detail { get; }
+
     /// <summary>Create a polling error exception.</summary>
-    public PollingErrorException(PollingErrorCode errorCode, int statusCode, string? message = null)
-        : base(message ?? $"Polling error: {ToWireCode(errorCode)} (HTTP {statusCode})")
+    public PollingErrorException(PollingErrorCode errorCode, int statusCode, string? message = null, string? detail = null)
+        : base(message ?? $"Polling error: {ToWireCode(errorCode)} (HTTP {statusCode})" + (detail is null ? "" : $": {detail}"))
     {
         ErrorCode = errorCode;
         StatusCode = statusCode;
+        Detail = detail;
     }
 
     /// <summary>Convert a polling error code to wire format.</summary>

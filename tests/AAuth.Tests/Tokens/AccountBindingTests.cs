@@ -42,6 +42,49 @@ public class AccountBindingTests
     }
 
     [Fact]
+    public void CachedCarrier_IsNotSharedAcrossUpstreamPeopleOrConcurrentAccounts()
+    {
+        var key = AAuthKey.Generate();
+        var agent = new AgentTokenBuilder
+        {
+            Issuer = "https://ap.example", Subject = "aauth:agent@ap.example", Key = key, KeyId = "agent-key",
+        }.Build();
+        var auth = new AuthTokenBuilder
+        {
+            Issuer = "https://ps.example", Audience = "https://resource.example", PersonServer = "https://ps.example",
+            Key = key, KeyId = "ps-key", AgentConfirmationKey = key, AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10),
+            Subject = "person-a", Account = "personal",
+        }.Build();
+        var holder = new AAuth.Agent.AAuthTokenHolder();
+        System.Net.Http.HttpRequestMessage Request(string account, string? upstream)
+        {
+            var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, "https://resource.example/data");
+            request.Options.Set(AAuth.Agent.AAuthRequestOptions.Account, account);
+            request.Options.Set(AAuth.Agent.MissionForwardingHandler.UpstreamAuthorization, upstream);
+            return request;
+        }
+        using (var obtained = Request("personal", "upstream-person-a"))
+        {
+            holder.SelectForRequest(obtained, agent, key.ComputeJwkThumbprint());
+            holder.UpdateFromExchange(auth, obtained);
+        }
+
+        // Another person's call chain (a different upstream token) never gets person A's token.
+        using (var otherPerson = Request("personal", "upstream-person-b"))
+            Assert.Equal(agent, holder.SelectForRequest(otherPerson, agent, key.ComputeJwkThumbprint()));
+        using (var direct = Request("personal", null))
+            Assert.Equal(agent, holder.SelectForRequest(direct, agent, key.ComputeJwkThumbprint()));
+
+        // Concurrent requests for different accounts each see only their own binding.
+        System.Threading.Tasks.Parallel.For(0, 200, i =>
+        {
+            var account = i % 2 == 0 ? "personal" : "work";
+            using var request = Request(account, "upstream-person-a");
+            Assert.Equal(account == "personal" ? auth : agent, holder.SelectForRequest(request, agent, key.ComputeJwkThumbprint()));
+        });
+    }
+
+    [Fact]
     public void MissionIntent_AccountlessEntryIsNotAWildcard()
     {
         var script = new MockPersonServer.MissionConsentScript();

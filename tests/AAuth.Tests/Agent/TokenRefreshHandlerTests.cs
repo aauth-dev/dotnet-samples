@@ -148,6 +148,21 @@ public class TokenRefreshHandlerTests
         Assert.Equal(expiringToken, captured.CurrentToken);
     }
 
+    [Theory(DisplayName = "TokenRefreshHandler — the default margin refreshes inside five minutes, not outside")]
+    [InlineData(4, true)]
+    [InlineData(6, false)]
+    public async Task DefaultMargin_IsFiveMinutes(int minutesLeft, bool refreshes)
+    {
+        var token = BuildAgentToken(TimeSpan.FromMinutes(minutesLeft));
+        var refresher = new CountingRefresher(BuildAgentToken(TimeSpan.FromHours(1)));
+        var handler = new TokenRefreshHandler(new AAuthTokenHolder(token), refresher, "k1") { InnerHandler = new OkHandler() };
+        using var client = new InProcessHttpClient(handler);
+
+        await client.GetAsync("https://resource.example/api");
+
+        Assert.Equal(refreshes ? 1 : 0, refresher.CallCount);
+    }
+
     [Fact]
     public async Task ConcurrentRequests_OnlyRefreshOnce()
     {

@@ -192,9 +192,14 @@ public sealed class ChallengeHandler : DelegatingHandler
             .ConfigureAwait(false);
 
         var reusedMissionToken = false;
+        // §Deferred Delivery: a resource MAY hold the invocation and deliver
+        // requirement=auth-token as a 202 with a pending Location. The agent then
+        // polls that URL with signed GETs and never resends the original request.
+        Uri? pendingLocation = null;
         for (var attempt = 0; attempt < maxAuthTokenChallenges; attempt++)
         {
-            if (response.StatusCode != HttpStatusCode.Unauthorized)
+            var deferred = response.StatusCode == HttpStatusCode.Accepted;
+            if (response.StatusCode != HttpStatusCode.Unauthorized && !deferred)
             {
                 return response;
             }
@@ -203,6 +208,15 @@ public sealed class ChallengeHandler : DelegatingHandler
             if (requirement is null)
             {
                 return response;
+            }
+            if (deferred)
+            {
+                if (requirement.Requirement != AAuthRequirementHeader.AuthTokenRequirement
+                    || response.Headers.Location is not { } location || request.RequestUri is null)
+                    return response;
+                var basis = pendingLocation ?? request.RequestUri;
+                pendingLocation = _exchange.EgressPolicy.ValidatePendingLocation(basis,
+                    location.IsAbsoluteUri ? location : new Uri(basis, location));
             }
 
             // An intermediary routes every hop to the PS its upstream token names:
@@ -282,7 +296,9 @@ public sealed class ChallengeHandler : DelegatingHandler
             // verbatim; streaming bodies that are not re-readable will fail
             // here, which is a known limitation.
             response.Dispose();
-            var retry = await CloneAsync(request, cancellationToken).ConfigureAwait(false);
+            var retry = pendingLocation is null
+                ? await CloneAsync(request, cancellationToken).ConfigureAwait(false)
+                : PollRequest(request, pendingLocation);
             response = await SendWithAdaptiveSigningAsync(retry, cancellationToken).ConfigureAwait(false);
             if (retry.Options.TryGetValue(AAuthRequestOptions.PresentedToken, out var presentedToken))
                 request.Options.Set(AAuthRequestOptions.PresentedToken, presentedToken);
@@ -524,6 +540,18 @@ public sealed class ChallengeHandler : DelegatingHandler
                 UriComponents.Scheme | UriComponents.Host | UriComponents.Port,
                 UriFormat.UriEscaped)
             .ToLowerInvariant();
+
+    // A signed GET of the pending URL carrying the original request's options
+    // (account, mission, resource) so the signer presents the matching token.
+    // Body components the original request covered do not apply to a GET.
+    private static HttpRequestMessage PollRequest(HttpRequestMessage source, Uri location)
+    {
+        var poll = new HttpRequestMessage(HttpMethod.Get, location);
+        foreach (var option in source.Options)
+            if (option.Key != AAuthSigningHandler.AdditionalComponentsKey.Key)
+                ((IDictionary<string, object?>)poll.Options)[option.Key] = option.Value;
+        return poll;
+    }
 
     private static async Task<HttpRequestMessage> CloneAsync(
         HttpRequestMessage source, CancellationToken cancellationToken)

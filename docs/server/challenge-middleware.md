@@ -176,3 +176,30 @@ Because each endpoint declares its own scope, an agent that lacks the required s
 receives a challenge for that endpoint's scope and re-exchanges at its PS for an
 auth token carrying it. See `samples/MockResourceServers/Calendar` for the full set
 of endpoints.
+
+## Holding an Invocation (`202` Delivery)
+
+A resource can deliver `requirement=auth-token` as a `202 Accepted` instead of a
+`401`. It holds the invocation, and the agent completes it by polling the
+pending URL with signed `GET`s. Use this for a non-idempotent call the agent
+shouldn't resend. `AAuthHeldInvocations` does the bookkeeping:
+
+- the first poll that presents a valid auth token for the resource token's
+  `agent_jkt` and required scopes runs the invocation, once;
+- the result is kept, keyed by that token's `jti`, until the token's `exp`, and
+  a repeat of the same token gets it back without running the invocation again;
+- a different token after completion gets `410`, and another key gets `404`.
+
+```csharp
+var held = new AAuthHeldInvocations();          // pending URLs are /aauth/held/{id}
+
+app.MapPost("/orders", () =>
+    held.Hold(resourceToken, ["orders.write"], (context, ct) =>
+        Task.FromResult(HeldInvocationResult.Json(new { order = 1 }, StatusCodes.Status201Created))));
+app.MapAAuthHeldInvocations(held);              // behind the resource's AAuth verification
+```
+
+The agent side needs no configuration: the challenge handler exchanges the
+resource token for an auth token, then polls the `Location`. It never resends
+the original request body. The store is in-memory; the shipped samples keep
+answering with `401`.

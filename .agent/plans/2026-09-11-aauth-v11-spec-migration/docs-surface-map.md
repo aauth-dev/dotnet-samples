@@ -104,12 +104,12 @@ defer the walkthrough implementation until documentation time.
 
 ## Complete Inventory
 
-174 files; 663 blocks. Counts by validation class:
+174 files; 664 blocks. Counts by validation class:
 
 - 32: API excerpt: source member/type/sealed checks; not executable
 - 1: C# comment-only narrative: reviewed against the associated scenario; no executable statements
 - 39: Dynamic Razor binding: build plus mapped scenario browser/captured-wire tests
-- 277: Exact C# compiled with typed prior-step/host inputs
+- 278: Exact C# compiled with typed prior-step/host inputs
 - 1: External template: Azure.Security.KeyVault.Secrets/Azure.Core required; exportable Ed25519 secrets, not HSM signing; syntax checked only.
 - 1: External template: OpenTelemetry.Extensions.Hosting and Instrumentation.AspNetCore required; syntax checked, exporter not executed.
 - 3: Illustrative platform adapter: IWebAuthnService/DeviceCheck are host placeholders; IPlatformAttestor signature checked separately; no hardware or AP challenge/retry claim.
@@ -139,7 +139,7 @@ defer the walkthrough implementation until documentation time.
 | [docs/reference/dependency-injection.md](../../../docs/reference/dependency-injection.md) | `dbea842e493ee600f645461b53b7318191df16381f7dcb1fa5b7ac2d32295ec1` | 21 | Frozen source; links/patterns; blocks below; capability matrix for runtime/browser evidence |
 | [docs/server/authn-authz.md](../../../docs/server/authn-authz.md) | `b789807d36c6c64153b24515f34bf9982640fb332aecff8e7f0e6b8087c42f48` | 9 | Frozen source; links/patterns; blocks below; capability matrix for runtime/browser evidence |
 | [docs/server/authorization-policies.md](../../../docs/server/authorization-policies.md) | `839277a6a22efbe606bdf3b4d25abe210b531868687b9f8ddb3b136423aec6da` | 6 | Frozen source; links/patterns; blocks below; capability matrix for runtime/browser evidence |
-| [docs/server/challenge-middleware.md](../../../docs/server/challenge-middleware.md) | `7f021bd86159d9ade31595bf54f17e93394c107e9a12eb9b57fc0f69af7293e2` | 6 | Frozen source; links/patterns; blocks below; capability matrix for runtime/browser evidence |
+| [docs/server/challenge-middleware.md](../../../docs/server/challenge-middleware.md) | `e197869f055245c257cc47ac339c1c09218b8599dea58f28d7abf4a1ddfa5439` | 7 | Frozen source; links/patterns; blocks below; capability matrix for runtime/browser evidence |
 | [docs/server/mission-governance.md](../../../docs/server/mission-governance.md) | `bb94e7a5f581d0a68bc13308f0f90a3ee071a067d9982bbf47f02ff28087b435` | 11 | Frozen source; links/patterns; blocks below; capability matrix for runtime/browser evidence |
 | [docs/server/multi-scheme-verification.md](../../../docs/server/multi-scheme-verification.md) | `470bccea51901c714b72972393bd5034b6fe473db93ec715e47299ca57574f05` | 6 | Frozen source; links/patterns; blocks below; capability matrix for runtime/browser evidence |
 | [docs/server/replay-detection.md](../../../docs/server/replay-detection.md) | `3dfaa288679793adb00cd904f0f268b481c322bd8a703da07906741f6709c163` | 8 | Frozen source; links/patterns; blocks below; capability matrix for runtime/browser evidence |
@@ -423,6 +423,7 @@ defer the walkthrough implementation until documentation time.
 | [docs/server/challenge-middleware.md:fence-4](../../../docs/server/challenge-middleware.md#L112) | csharp | `f5ff6796f1fe9da989611e7fd1818758e8265eb4aa7a5545327712b8213b0073` | Exact C# compiled with typed prior-step/host inputs | [API owning-source map](api-surface-map.md), [section-specific source/tests](conformance-ledger.md), [exact compiler](../../../tests/AAuth.Tests/Api/SnippetCompilationTests.cs) |
 | [docs/server/challenge-middleware.md:fence-5](../../../docs/server/challenge-middleware.md#L134) | csharp | `ac0ae94ae6020651775673b522ddf06423a66c62845b86b7b3a4796f41d71334` | Exact C# compiled with typed prior-step/host inputs | [API owning-source map](api-surface-map.md), [section-specific source/tests](conformance-ledger.md), [exact compiler](../../../tests/AAuth.Tests/Api/SnippetCompilationTests.cs) |
 | [docs/server/challenge-middleware.md:fence-6](../../../docs/server/challenge-middleware.md#L162) | csharp | `374f914711d4156f59d55a15838c451a2cac9d93ca2d716a5ccd5a07af08d180` | Exact C# compiled with typed prior-step/host inputs | [API owning-source map](api-surface-map.md), [section-specific source/tests](conformance-ledger.md), [exact compiler](../../../tests/AAuth.Tests/Api/SnippetCompilationTests.cs) |
+| [docs/server/challenge-middleware.md:fence-7](../../../docs/server/challenge-middleware.md#L193) | csharp | `5753240f1f1708f80a4f3cad34585b1c780d5d7d9c7228f309ceba7bbbd1d927` | Exact C# compiled with typed prior-step/host inputs | [API owning-source map](api-surface-map.md), [section-specific source/tests](conformance-ledger.md), [exact compiler](../../../tests/AAuth.Tests/Api/SnippetCompilationTests.cs) |
 | [docs/server/mission-governance.md:fence-1](../../../docs/server/mission-governance.md#L27) | csharp | `0929174b6bf458f1d0db73f113cd005e00a5ce93407c5d69a738909adc120e34` | Exact C# compiled with typed prior-step/host inputs | [API owning-source map](api-surface-map.md), [section-specific source/tests](conformance-ledger.md), [exact compiler](../../../tests/AAuth.Tests/Api/SnippetCompilationTests.cs) |
 | [docs/server/mission-governance.md:fence-2](../../../docs/server/mission-governance.md#L44) | csharp | `5f5e80d997586d5411a8df1472b781a09021d48cbbc52657cb1cd7ef14d3efb7` | Exact C# compiled with typed prior-step/host inputs | [API owning-source map](api-surface-map.md), [section-specific source/tests](conformance-ledger.md), [exact compiler](../../../tests/AAuth.Tests/Api/SnippetCompilationTests.cs) |
 | [docs/server/mission-governance.md:fence-3](../../../docs/server/mission-governance.md#L72) | csharp | `a8404246de3f1e7822cc33ef206f7512eafcca57fd8531c9327cdc86d5aea309` | Exact C# compiled with typed prior-step/host inputs | [API owning-source map](api-surface-map.md), [section-specific source/tests](conformance-ledger.md), [exact compiler](../../../tests/AAuth.Tests/Api/SnippetCompilationTests.cs) |

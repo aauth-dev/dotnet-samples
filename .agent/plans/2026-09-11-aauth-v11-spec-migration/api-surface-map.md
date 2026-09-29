@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 148 changed public-source files, 276 added/replacement declarations, 140 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 150 changed public-source files, 288 added/replacement declarations, 141 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -743,6 +743,14 @@ Concept/decision: [agent-clients](#agent-clients). Source: [ClarificationExchang
 
 Public owners: `AAuth.Agent.ClarificationExchange`, `AAuth.Agent.ClarificationResponse.Kind`, `AAuth.Agent.ClarificationResponse`, `AAuth.Agent`.
 
+### src/AAuth/Agent/DeferredPoller.cs
+
+Concept/decision: [agent-clients](#agent-clients). Source: [DeferredPoller.cs](../../../src/AAuth/Agent/DeferredPoller.cs).
+
+Public signatures unchanged (12); behavior reviewed under agent-clients.
+
+Public owners: `AAuth.Agent.DeferredPollerOptions`, `AAuth.Agent.DeferredPoller`, `AAuth.Agent`.
+
 ### src/AAuth/Agent/Governance/AuditRecord.cs
 
 Concept/decision: [governance](#governance). Source: [AuditRecord.cs](../../../src/AAuth/Agent/Governance/AuditRecord.cs).
@@ -997,7 +1005,10 @@ Public owners: `AAuth.Discovery.MetadataClientExtensions`, `AAuth.Discovery.Reso
 Concept/decision: [server-contracts](#server-contracts). Source: [PollingError.cs](../../../src/AAuth/Errors/PollingError.cs).
 
 ```diff
+- AAuth.Errors.PollingErrorException: public PollingErrorException ( PollingErrorCode errorCode , int statusCode , string ? message = null )
 + AAuth.Errors.PollingErrorCode: Revoked
++ AAuth.Errors.PollingErrorException: public PollingErrorException ( PollingErrorCode errorCode , int statusCode , string ? message = null , string ? detail = null )
++ AAuth.Errors.PollingErrorException: public string ? Detail { get ; }
 ```
 
 Public owners: `AAuth.Errors.PollingErrorCode`, `AAuth.Errors.PollingErrorException`, `AAuth.Errors`.
@@ -1470,6 +1481,25 @@ Concept/decision: [governance](#governance). Source: [MissionPersonTokenExtensio
 ```
 
 Public owners: `AAuth.Server.Governance.MissionPersonTokenExtensions`, `AAuth.Server.Governance`.
+
+### src/AAuth/Server/HeldInvocations.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [HeldInvocations.cs](../../../src/AAuth/Server/HeldInvocations.cs).
+
+```diff
++ AAuth.Server.AAuthHeldInvocationExtensions: public static IEndpointConventionBuilder MapAAuthHeldInvocations ( this IEndpointRouteBuilder endpoints , AAuthHeldInvocations held )
++ AAuth.Server.AAuthHeldInvocations: public AAuthHeldInvocations ( string pathPrefix = "/aauth/held" , TimeSpan ? pendingLifetime = null , TimeProvider ? timeProvider = null )
++ AAuth.Server.AAuthHeldInvocations: public IResult Hold ( string resourceToken , IReadOnlyCollection < string > requiredScopes , Func < HttpContext , CancellationToken , Task < HeldInvocationResult > > execute )
++ AAuth.Server.AAuthHeldInvocations: public TimeSpan PendingLifetime { get ; }
++ AAuth.Server.AAuthHeldInvocations: public async Task < IResult > PollAsync ( HttpContext context , string id )
++ AAuth.Server.AAuthHeldInvocations: public string PathPrefix { get ; }
++ AAuth.Server.HeldInvocationResult: public static HeldInvocationResult Json ( object value , int statusCode = StatusCodes . Status200OK )
++ AAuth.Server: public sealed class AAuthHeldInvocations
++ AAuth.Server: public sealed record HeldInvocationResult ( int StatusCode , string ? ContentType , byte [  ] Body )
++ AAuth.Server: public static class AAuthHeldInvocationExtensions
+```
+
+Public owners: `AAuth.Server.AAuthHeldInvocationExtensions`, `AAuth.Server.AAuthHeldInvocations`, `AAuth.Server.HeldInvocationResult`, `AAuth.Server`.
 
 ### src/AAuth/Server/IJtiStore.cs
 

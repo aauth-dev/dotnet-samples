@@ -405,6 +405,9 @@ public sealed class AAuthClientBuilder
     /// The refresher remains caller-owned. A later explicit Use* selector
     /// disables refresh; resource flow options do not select a scheme.
     /// </summary>
+    /// <param name="refresher">Obtains a fresh agent token.</param>
+    /// <param name="refreshThreshold">Refresh when less than this remains before <c>exp</c>. Default five
+    /// minutes, the spec's refresh margin (§Expiry and the Refresh Margin).</param>
     public AAuthClientBuilder WithTokenRefresh(ITokenRefresher refresher, TimeSpan? refreshThreshold = null)
     {
         ArgumentNullException.ThrowIfNull(refresher);

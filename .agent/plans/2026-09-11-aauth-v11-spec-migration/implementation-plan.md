@@ -407,12 +407,12 @@ Phase rule: preserve original credential provenance; no blanket unsafe replay.
 
 ### Definition of Done
 
-- [ ] Concurrent people/missions/accounts/worker keys cannot share authorization state.
-- [ ] Exact presented token survives holder refresh and clarification/replacement.
-- [ ] 202 completion never resends the original non-idempotent request body.
-- [ ] A repeated auth token at the pending URL returns the retained result.
-- [ ] Each published token-endpoint and polling error has a distinct agent outcome.
-- [ ] Refresh order, ownership, cancellation and recovery tests pass.
+- [x] Concurrent people/missions/accounts/worker keys cannot share authorization state.
+- [x] Exact presented token survives holder refresh and clarification/replacement.
+- [x] 202 completion never resends the original non-idempotent request body.
+- [x] A repeated auth token at the pending URL returns the retained result.
+- [x] Each published token-endpoint and polling error has a distinct agent outcome.
+- [x] Refresh order, ownership, cancellation and recovery tests pass.
 - [x] Both primary apps exercise person and deferred flows with matching steps.
 - [x] Agents reuse an approved mission person token instead of calling `/person`; mismatched resource, mission, key or expiry falls back.
 - [x] MockAgentProvider refresh answers signature failures with `401` and `Signature-Error`.
