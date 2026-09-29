@@ -27,6 +27,117 @@ PROCEEDED (defaults as listed in
     `AddAAuthFederation` folded in.
   - **Q16**: the PS consent dashboard lands first.
 
+  > Partly superseded by the 2026-09-29 adversarial-review entries below.
+
+### [2026-09-29] [Phase 0] Adversarial review round — method
+
+RESOLVED. This responds to the owner's constraint that current usage is not
+the only usage, and that builders and DI must support trust lambdas and
+similar hooks.
+- Six adversarial subagents ran, one per question cluster.
+- The lead verified every load-bearing claim against source.
+- A red-team synthesis pass followed.
+- Five subagent claims were rejected as factually wrong; see research.md
+  §Adversarial review.
+- Outcome: the cross-cutting rule R0 (extensibility ladder) plus the revised
+  rulings below. They supersede the matching Q1–Q18 defaults.
+
+### [2026-09-29] [Phase 0] R0 — Extensibility ladder
+
+PROCEEDED (default: adopt).
+- Every decision point accepts data, a delegate, or a DI service,
+  normalized into one internal seam.
+- Precedence:
+  1. per-request or per-endpoint override;
+  2. an explicit instance or delegate;
+  3. DI keyed by instance name, then unkeyed. The fallback is implemented by
+     the SDK, because keyed DI does not fall back.
+  4. the default from data.
+- Seam contexts carry `IServiceProvider`.
+- Precedent: `JwtBearerOptions` delegate slots + `Events`/`EventsType`,
+  `TokenValidationParameters.IssuerValidator`, `AuthenticationBuilder`.
+
+### [2026-09-29] [Phase 0] Q3 — Options may hold delegates and instances (supersedes default)
+
+PROCEEDED (default: reversed). The "bindable scalars only / no `Func`
+ properties" DoDs are withdrawn.
+- Why: they would remove trust lambdas, call-chaining sources, and
+  console-friendly callbacks, which the owner explicitly requires.
+- Configuration binding ignores non-bindable members.
+
+### [2026-09-29] [Phase 0] Q4 — Callbacks: interfaces + delegates + per-request override (supersedes default)
+
+PROCEEDED (default: revised).
+- A singleton handler cannot reach the current end user in a web app. The
+  typed per-request key on `HttpRequestMessage.Options` solves that.
+- Capability inference keeps the current rule (ChallengeHandlingOptions.cs
+  L70-L76): inferred when `null`; an explicit list overrides, and an empty
+  list suppresses.
+
+### [2026-09-29] [Phase 0] Q6 — Add `IAAuthAgentFactory`
+
+PROCEEDED (default: add).
+- Named options and keyed services only cover agents known at startup.
+- Runtime agents (per tenant, per user, per-request intermediary) need a
+  factory, like `IHttpClientFactory` and `IAzureClientFactory<T>`.
+
+### [2026-09-29] [Phase 0] Q7 — Cache key is the existing guard tuple
+
+PROCEEDED (default: adopt).
+- `SelectForRequest` already guards on agent token, upstream, mission,
+  audience, account, `exp`, and cnf thumbprint. It is **not** leaking
+  (a subagent claim, rejected).
+- The multi-entry cache uses that tuple and is single-flight per key.
+
+### [2026-09-29] [Phase 0] Q9 — Named role instances + in-memory warning
+
+PROCEEDED (default: revised).
+- Named instances cover multi-tenant and co-hosted roles.
+- A per-request issuer resolver is out of scope (Out-of-scope table).
+- Any `TryAdd`ed in-memory default logs a warning outside Development.
+
+### [2026-09-29] [Phase 0] Q10 — Split single-use gate from held-invocation store
+
+PROCEEDED (default: revised).
+- The execute delegate is not serializable. The seams are therefore
+  claim/complete/result by `jti` and pending entries, both serializable.
+  This makes scale-out stores possible.
+
+### [2026-09-29] [Phase 0] Q11 — Extract the existing cascade engine
+
+PROCEEDED (default: refined).
+- `RevocationEndpoint.cs` already cascades privately (`CascadeAsync`, ~L228).
+- Make it a public service, shared by inbound endpoints and app code.
+- Check the Records (L2758) inventory gap before building on it.
+
+### [2026-09-29] [Phase 0] Q12 — Entitle at resource-token minting (supersedes default)
+
+PROCEEDED (default: corrected).
+- The R3 spec L725-L730 entitles the `aud` AS and the `ps` PS of a resource
+  token carrying the `r3_uri`. Entitlement is not "on approval".
+- `EntitleAsync` stays public for host-minted tokens.
+
+### [2026-09-29] [Phase 0] Q14 — Async context-rich trust policy (supersedes default)
+
+PROCEEDED (default: revised).
+- `IAAuthTrustPolicy.IsTrustedAsync(AAuthTrustContext)`.
+- Its default comes from `AAuthTrustOptions`, preserving AND composition,
+  `null` = open with a warning, and `AAuthTrust.Any`.
+- Per-endpoint override via `.RequireAAuth(trust:)`.
+
+### [2026-09-29] [Phase 0] Q18 — Constants, not a struct (supersedes default)
+
+PROCEEDED (default: reversed).
+- The SDK's open-set convention is `const string` classes in
+  `AAuthConstants` (`AccessModes`, L59). The `readonly struct` pattern is
+  for identifiers only.
+
+### [2026-09-29] [Phase 0] Plan restructured
+
+RESOLVED.
+- New Phase 3 (signing abstraction).
+- Former Phases 3–11 renumbered to 4–12.
+
 ## Deviations from plan
 
 None yet.
@@ -41,3 +152,17 @@ which Phases 3, 8, and 9 rewrite.
 
 The default is for the dashboard to land first. Confirm, or rule that this
 initiative goes first and the dashboard rebases.
+
+> After the 2026-09-29 renumbering, the overlapping phases are 4, 9, and 10.
+
+### [2026-09-29] [Phase 0] Q19 — Async signing abstraction (new)
+
+PROCEEDED (default: include as Phase 3). Owner review requested.
+- KMS/HSM keys need async, non-exportable signing. Today `IAAuthKey`
+  requires sync `Sign` and `ToPrivateJwk` (IAAuthKey.cs L19, L28).
+- Blast radius:
+  - five signing sites;
+  - every token builder's `Build()` becomes `BuildAsync()`;
+  - the `SigningKeys` dictionaries become `AAuthSigningKeySet`.
+- Alternative: keep sync signing and document that remote keys must be
+  loaded into memory. That does not support non-exportable keys.

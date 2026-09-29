@@ -333,6 +333,21 @@ AgentConsole, and CapabilitySupport.
 - `AddAAuthAgent` sets `SetHandlerLifetime(Timeout.InfiniteTimeSpan)` (L81),
   so the DI path does keep caches. Only the builder path loses them.
 
+> **Update (2026-09):** there is **no** cross-context leak, contrary to a
+> subagent claim.
+>
+> - The holder is single-valued, but `SelectForRequest`
+>   (AAuthTokenHolder.cs L50-L73) reuses the carrier only when all of these
+>   match: agent token, upstream, mission `s256`, audience, account, `exp`,
+>   and cnf thumbprint. On any mismatch it falls back to the agent token.
+> - The field is `volatile` over an immutable record, which makes the class
+>   remark "Not thread-safe by design" stale.
+> - The real defects:
+>   - alternating resources **thrash**: each switch forces a re-exchange;
+>   - concurrent first requests may each exchange;
+>   - per-`Build()` clients lose the cache.
+> - That guard tuple is the correct cache key for Q7.
+
 **F-C4 Callbacks are lambdas with divergent shapes (V).**
 
 - PS interaction: `ChallengeHandlingOptions.OnInteractionRequired` is
@@ -380,7 +395,173 @@ AgentConsole, and CapabilitySupport.
   L141).
 - A long-poll exchange behind a default `HttpClient` may hit an outer
   timeout first.
-- This was not reproduced. Phase 8 must confirm or refute it with a test.
+- This was not reproduced. Phase 9 must confirm or refute it with a test.
+
+### Added by the adversarial review
+
+**F-X5 Keys must be exportable and sign synchronously (V).**
+
+- `IAAuthKey` (src/AAuth/Crypto/IAAuthKey.cs L10) exposes sync
+  `byte[] Sign(byte[])` (L19) and `ToPrivateJwk()` (L28).
+- `ToPrivateJwk` is used only by `FileKeyStore` (L62).
+- Five sync signing sites:
+  - `JwtWriter.cs` L25
+  - `AgentTokenBuilder.cs` L211
+  - `AAuthSigningHandler.cs` L258 (already inside an async `SignAsync`,
+    L124)
+  - `R3Challenge.cs` L137
+  - `EventsTokens.cs` L24
+- Token builders expose sync `Build()`, e.g. `AuthTokenBuilder` L115,
+  `PersonTokenBuilder` L59, `ResourceTokenBuilder` L79.
+- Consequences:
+  - A KMS/HSM key can't be expressed without sync-over-async.
+  - A non-exportable key must throw from `ToPrivateJwk`.
+  - Roles take `SigningKeys` dictionaries with no "active kid" for rotation.
+
+**F-X6 Trust semantics today (V).**
+
+- Set and predicate are AND-composed by `IssuerTrust.IsTrusted`
+  (IssuerTrust.cs L31).
+- `null` means no constraint (open). `TrustConfigDiagnostics` logs a startup
+  warning, and `AAuthTrust.Any` (AAuthTrust.cs L30) declares intentional open
+  trust.
+- Predicates are sync and receive only the issuer string.
+- HttpContext-aware hooks exist separately:
+  - `ExpectedAccount` / `AccountSelector` (`Func<HttpContext, string?>`);
+  - `R3DocumentReaderPolicy.IsEntitledPersonServer`
+    (`Func<HttpContext, string, bool>`).
+- Async, context-rich policy interfaces already exist elsewhere:
+  `IAccessPolicy`, `IIdentityClaimsAsserter`, `IPermissionDecider`.
+
+**F-S5 correction (V).** Entitlement is **not** tied to approval.
+
+- The R3 spec (draft-hardt-aauth-r3.md, #r3-document-access-restriction,
+  L723; entitled parties L725-L730) makes two parties entitled readers of an
+  `r3_uri`: the AS in `aud` and the PS in `ps` of a resource token carrying
+  it.
+- Bookings calls `Entitle` right after minting such tokens (L304, L560).
+  `R3Challenge` mints them in the SDK (R3Challenge.cs ~L70).
+
+**F-S6 refinement (V).**
+
+- The cascade engine already exists, privately:
+  `RevocationEndpoint.cs` `CascadeAsync` (~L228), used by inbound
+  revocation endpoints.
+- What is missing is a public, app-callable entry point.
+- The spec Records paragraph (protocol L2758) requires:
+  - agent `(iss, jti)` + `sub`;
+  - person-token upstream `(iss, jti)`;
+  - AS `presented_jti`.
+- `TokenGrant` is `(TokenKey, Resource, ExpiresAt)` (TokenGrant.cs L5).
+  Whether the inventory already covers the `sub` index was not established.
+  Phase 6 checks it first.
+
+**Open-set convention (V).**
+
+- Open-set protocol values are `const string` classes in `AAuthConstants`
+  (e.g. `AccessModes`, L59).
+- Closed sets are enums (`TokenErrorCode`, `PollingErrorCode`).
+- `readonly struct` is used only for identifiers (`AgentId`, `ServerId`).
+
+## Adversarial review (2026-09-29)
+
+The owner's constraint: "The usage we have now is not the only way the SDK
+will be used. Our builder methods and DI need to support the various trust
+lambdas etc."
+
+**Method.**
+
+1. Six read-only adversarial subagents, one per cluster:
+   - options/config (Q1, Q2, Q3, Q13);
+   - trust (Q14);
+   - client construction (Q6, Q7, Q8, Q15);
+   - callbacks (Q4, Q5);
+   - server roles and revocation (Q9, Q11);
+   - server feature seams (Q10, Q12, Q18, Events).
+
+   Each attacked the proposed default against these scenarios:
+   - multi-tenant hosts;
+   - dynamic and async trust;
+   - KMS/HSM keys and rotation;
+   - scale-out;
+   - background jobs;
+   - console apps without DI;
+   - runtime-created agents and per-request intermediaries;
+   - tests and AOT.
+
+   Each then steelmanned alternatives and recommended a shape.
+2. Lead verification of every load-bearing claim against source (the facts
+   above).
+3. A red-team synthesis subagent attacked the combined draft rulings for
+   cross-question consistency.
+
+**Subagent claims rejected on verification.**
+
+| Claim | Reality |
+|---|---|
+| Shared token holder leaks tokens across upstream contexts (a "security bug") | `SelectForRequest` guards every context field (see F-C3 update) |
+| `TimeProvider` can't model a remote/NTP clock | `TimeProvider` is abstract with a virtual `GetUtcNow`; subclass it |
+| Keyed DI falls back to unkeyed registrations | It does not; the SDK must implement the fallback (R0) |
+| The signing handler is sync, so async signing is impossible | `AAuthSigningHandler.SignAsync` is already async (L124); the sync sites are the token writers |
+| Null set plus predicate is "not fail-closed" and ambiguous | The semantics are documented AND composition with an explicit open-trust warning (F-X6) |
+
+**Rulings changed by the review.**
+
+- **Q3.** The "no delegates or instances in options" rule is withdrawn. It
+  would have removed trust lambdas, call-chaining sources, and console-friendly
+  callbacks. It is replaced by the extensibility ladder, R0.
+- **Q4.** Delegates stay alongside the interfaces, plus a per-request
+  override. Capability inference keeps today's rule.
+- **Q12.** Entitlement moves from "on approval" to "at resource-token
+  minting". The seam stays public for host-minted tokens.
+- **Q14.** Sync set-and-predicate only becomes an async context-rich
+  `IAAuthTrustPolicy`, with today's semantics as the default.
+- **Q18.** The `readonly record struct` becomes `const string` constants,
+  matching the open-set convention.
+- **Q19 (new).** Signing abstraction, from F-X5.
+
+**R0: the extensibility ladder (cross-cutting).**
+
+- Every decision point accepts three forms: data, a delegate, or a DI
+  service. They normalize into one internal seam.
+- Precedence:
+  1. per-request or per-endpoint override;
+  2. an explicit instance or delegate;
+  3. a DI service, keyed by instance name and then unkeyed, with an
+     SDK-implemented fallback;
+  4. the default from data.
+- Seam contexts carry an `IServiceProvider`, so scoped dependencies work
+  with or without `HttpContext`.
+- .NET precedent: `JwtBearerOptions` (delegate slots + `Events` +
+  `EventsType`), `TokenValidationParameters.IssuerValidator`, and
+  `AuthenticationBuilder`.
+
+**Target shapes (illustrative).**
+
+```csharp
+// Trust: data, delegate, DI service, per-endpoint override
+builder.Services.AddAAuthResource(config.GetSection("AAuth:Resource"))
+    .WithTrust(t =>
+    {
+        t.PersonServers.Add("https://ps.example");                       // data
+        t.IsTrustedAuthTokenIssuerAsync = (ctx, ct) =>                   // async delegate
+            ctx.Services.GetRequiredService<ITenantTrust>().AllowsAsync(ctx.Issuer, ctx.HttpContext, ct);
+    });
+builder.Services.AddScoped<IAAuthTrustPolicy, DbTrustPolicy>();          // or a DI service
+app.MapGet("/partner", ...).RequireAAuth(scope: "read", trust: t => t.PersonServers.Add("https://partner-ps"));
+
+// Keys: KMS signer, rotation
+builder.Services.AddAAuthPersonServer("tenant-a", config.GetSection("AAuth:PersonServers:tenant-a"))
+    .WithSigningKeys(new AAuthSigningKeySet(active: "k2")
+        .Add("k1", previousSigner).Add("k2", new KmsSigner(kms, "arn:...")));
+
+// Agents: static from config, runtime per tenant, per-request callback routing
+builder.Services.AddAAuthAgent("calendar", config.GetSection("AAuth:Agents:calendar"))
+    .OnInteraction((i, ct) => Console.Out.WriteLineAsync(i.Url));        // delegate form
+var tenantAgent = agents.Create(new AAuthAgentDescriptor(tenantId) { Signer = kmsSigner, PersonServer = ps });
+using var req = new HttpRequestMessage(HttpMethod.Get, url);
+req.Options.Set(AAuthRequestOptions.InteractionHandler, new SignalRInteractionHandler(hub, userId));
+```
 
 ## Relationship to in-flight work
 
@@ -394,23 +575,27 @@ AgentConsole, and CapabilitySupport.
 Each question has a proposed default. Rulings are recorded in
 [implementation-log.md](implementation-log.md).
 
-| # | Question | Proposed default |
-|---|---|---|
-| Q1 | Options model | `IOptions<T>` everywhere. Named options keyed by client name on the agent side. `Add*` returns a builder type for chaining. `ValidateOnStart` via `IValidateOptions<T>` |
-| Q2 | Configuration binding and section names | `Add*(IConfiguration)` overloads bind scalars only. Sections: `AAuth:Resource`, `AAuth:PersonServer`, `AAuth:AccessServer`, `AAuth:Agents:<name>`. Use the configuration-binding source generator |
-| Q3 | Non-bindable members (keys, seams) | Remove key and seam instances from options. Keys come from DI (keyed `IAAuthKey` or a key-source seam) by role or client name; seams are DI services |
-| Q4 | Callbacks | DI interfaces are primary: `IAAuthInteractionHandler`, `IAAuthClarificationHandler`, `IAAuthApprovalObserver`. Builder lambda overloads adapt to the same interfaces; there is one internal representation |
-| Q5 | Interaction callback shape | One `Interaction` type for PS- and resource-initiated interaction, with a source discriminator. The `(url, code)` lambda shape is deleted |
-| Q6 | Builder vs DI | The builder stays the primitive layer. `AddAAuthAgent` composes it and reaches **full parity** (identity sources, mission, call chaining, clarification, capabilities, poll tuning). `AddAAuthClient` stays as the generic-signature primitive under the same options conventions |
-| Q7 | Token cache lifetime | New `IAAuthTokenCache` seam (in-memory default, singleton per agent name) that the builder can accept. Document the client lifetime: build once and reuse |
-| Q8 | Typed clients | Registered as keyed services by agent name (`[FromKeyedServices("x")] TokenExchangeClient`), sharing the agent's signed pipeline and the DI `MetadataClient` |
-| Q9 | PS/AS role registration | `AddAAuthPersonServer`/`AddAAuthAccessServer` hold identity once and `TryAdd` every seam default. Parameterless `MapAAuthPersonServer()`/`MapAAuthAccessServer()`. `AddAAuthFederation` folds into the PS registration |
-| Q10 | Held-invocation and single-use stores | `IAAuthHeldInvocationStore` + `IAAuthSingleUseGrantStore` with in-memory defaults, registered by `AddAAuthHeldInvocations()`. The execute delegate stays an in-process registry. Persistent implementations are out of scope |
-| Q11 | Revocation initiation | `IAAuthRevocationService` resolved from DI and signed with the role identity. Adds `RevokeAtAsync`, plus PS cascades for person tokens (L2752), missions (L2754), and agent tokens (L2755) over the token inventory. `MapAAuthIssuerRevocation` collapses into role registration |
-| Q12 | R3 entitlement | The SDK entitles on approval inside the R3 decision path. `Entitle` becomes internal |
-| Q13 | Clock | `TimeProvider` everywhere. Delete `Func<DateTimeOffset> Clock` |
-| Q14 | Trust configuration | One `AAuthTrustOptions` (sets and predicates) configured once per role and consumed by verification, pipeline, and endpoint requirements |
-| Q15 | Samples policy | Host apps (SampleApp, Concierge, MissionAgent, AgentConsole, mock servers) move to the DI/high-level path. Teaching panes keep the builder only where the lesson is the primitive (e.g. signing-mode pages) |
-| Q16 | Sequencing with the PS consent dashboard | The dashboard lands first; this initiative rebases on it |
-| Q17 | AP server endpoints (F-S10) | Out of scope. Tracked in the Out-of-scope table |
-| Q18 | Termination reason type | Extensible `readonly record struct MissionTerminationReason` with the five spec values as static members, used on both server and client |
+> **Update (2026-09):** the adversarial review revised the defaults. The
+> "Revised ruling" column supersedes "Proposed default" where it is filled.
+
+| # | Question | Proposed default | Revised ruling (2026-09-29) |
+|---|---|---|---|
+| Q1 | Options model | `IOptions<T>` everywhere. Named options keyed by client name on the agent side. `Add*` returns a builder type for chaining. `ValidateOnStart` via `IValidateOptions<T>` | Kept. Typed builders expose `Services` + `Name` (the `AuthenticationBuilder` pattern). Validation is sync and shape-only; async key loading fails at first use. Identity options are read once; no hot reload |
+| Q2 | Configuration binding and section names | `Add*(IConfiguration)` overloads bind scalars only. Sections: `AAuth:Resource`, `AAuth:PersonServer`, `AAuth:AccessServer`, `AAuth:Agents:<name>`. Use the configuration-binding source generator | Kept. `KeyHandle` binds and resolves through the registered `IKeyStore` |
+| Q3 | Non-bindable members (keys, seams) | Remove key and seam instances from options. Keys come from DI (keyed `IAAuthKey` or a key-source seam) by role or client name; seams are DI services | **Reversed.** Options MAY hold delegates and instances (binding ignores them). All three forms normalize into one seam via R0 |
+| Q4 | Callbacks | DI interfaces are primary: `IAAuthInteractionHandler`, `IAAuthClarificationHandler`, `IAAuthApprovalObserver`. Builder lambda overloads adapt to the same interfaces; there is one internal representation | **Revised.** Interfaces plus delegate properties plus a per-request `HttpRequestOptionsKey<T>` override. Precedence per R0. Capabilities keep today's rule: inferred, with an explicit list (possibly empty) as override |
+| Q5 | Interaction callback shape | One `Interaction` type for PS- and resource-initiated interaction, with a source discriminator. The `(url, code)` lambda shape is deleted | Kept. `Interaction(Url, Code)` gains `Source` |
+| Q6 | Builder vs DI | The builder stays the primitive layer. `AddAAuthAgent` composes it and reaches **full parity** (identity sources, mission, call chaining, clarification, capabilities, poll tuning). `AddAAuthClient` stays as the generic-signature primitive under the same options conventions | Kept, **plus `IAAuthAgentFactory`** for runtime-created agents (per tenant, per user, per-request intermediary). The parity test has an explicit exclusion list |
+| Q7 | Token cache lifetime | New `IAAuthTokenCache` seam (in-memory default, singleton per agent name) that the builder can accept. Document the client lifetime: build once and reuse | Kept. Multi-entry, keyed by the `SelectForRequest` guard tuple, thread-safe, single-flight per key |
+| Q8 | Typed clients | Registered as keyed services by agent name (`[FromKeyedServices("x")] TokenExchangeClient`), sharing the agent's signed pipeline and the DI `MetadataClient` | Kept. Factory-created agents expose the same clients on `AAuthAgent` |
+| Q9 | PS/AS role registration | `AddAAuthPersonServer`/`AddAAuthAccessServer` hold identity once and `TryAdd` every seam default. Parameterless `MapAAuthPersonServer()`/`MapAAuthAccessServer()`. `AddAAuthFederation` folds into the PS registration | Kept, with **named instances** (multi-tenant, co-hosted roles), `.Use*<T>()` helpers, and a startup warning for in-memory defaults outside Development. Identity signs via `IAAuthSigner`. A per-request issuer resolver is out of scope |
+| Q10 | Held-invocation and single-use stores | `IAAuthHeldInvocationStore` + `IAAuthSingleUseGrantStore` with in-memory defaults, registered by `AddAAuthHeldInvocations()`. The execute delegate stays an in-process registry. Persistent implementations are out of scope | **Revised.** `IAAuthSingleUseGate` (claim/complete/result by `jti`) plus `IAAuthHeldInvocationStore`, both serializable. Per-route lifetime via endpoint metadata |
+| Q11 | Revocation initiation | `IAAuthRevocationService` resolved from DI and signed with the role identity. Adds `RevokeAtAsync`, plus PS cascades for person tokens (L2752), missions (L2754), and agent tokens (L2755) over the token inventory. `MapAAuthIssuerRevocation` collapses into role registration | **Refined.** Extract the existing private cascade engine, so inbound endpoints and app code (background jobs) share it. Structured per-recipient results. Check the Records (L2758) gap first |
+| Q12 | R3 entitlement | The SDK entitles on approval inside the R3 decision path. `Entitle` becomes internal | **Corrected.** Entitle the `aud` AS and the `ps` PS whenever the SDK mints a resource token carrying `r3_uri` (r3 L725-L730), via `IR3DocumentEntitlements`. `EntitleAsync` stays public for host-minted tokens |
+| Q13 | Clock | `TimeProvider` everywhere. Delete `Func<DateTimeOffset> Clock` | Kept. Custom clocks subclass `TimeProvider` |
+| Q14 | Trust configuration | One `AAuthTrustOptions` (sets and predicates) configured once per role and consumed by verification, pipeline, and endpoint requirements | **Revised.** Async `IAAuthTrustPolicy(AAuthTrustContext)` carrying issuer, party, token type, `HttpContext?`, and `IServiceProvider`. The default is built from `AAuthTrustOptions` (sets plus sync or async predicates) and preserves today's semantics. Per-endpoint override via `.RequireAAuth(trust:)` |
+| Q15 | Samples policy | Host apps (SampleApp, Concierge, MissionAgent, AgentConsole, mock servers) move to the DI/high-level path. Teaching panes keep the builder only where the lesson is the primitive (e.g. signing-mode pages) | Kept |
+| Q16 | Sequencing with the PS consent dashboard | The dashboard lands first; this initiative rebases on it | Unchanged; owner input |
+| Q17 | AP server endpoints (F-S10) | Out of scope. Tracked in the Out-of-scope table | Unchanged |
+| Q18 | Termination reason type | Extensible `readonly record struct MissionTerminationReason` with the five spec values as static members, used on both server and client | **Reversed.** `AAuthConstants.MissionTerminationReasons` `const string` values. `TerminationReason` stays `string?`, matching the open-set convention |
+| Q19 | Signing abstraction (F-X5) | — | **New.** Split `IAAuthKey` into public identity plus async `IAAuthSigner`. `ToPrivateJwk` moves to an exportable subtype. Token builders get `BuildAsync`. `AAuthSigningKeySet` (kid → signer, active kid) handles rotation |
