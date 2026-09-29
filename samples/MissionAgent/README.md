@@ -134,7 +134,7 @@ sequenceDiagram
 ```
 
 > 🖥️ The **purple** blocks are the three browser-based **consent screens** (the
-> PS's `/interaction` page). **(1) Mission creation** — the human approves the
+> PS dashboard at `/dashboard`, or the PS's `/interaction` page for one request). **(1) Mission creation** — the human approves the
 > mission's intent and the tools it may use; this is the authority every later
 > request is checked against. **(2) Out-of-mission scope** — the elevated
 > `trips.book` falls outside the mission's intent, so the PS asks
@@ -232,9 +232,11 @@ the in-scope set only changes the PS's decision reason (silent `InScope` at gate
 watching.
 
 By default each out-of-scope prompt is **interactive**: the agent prints the
-Person Server's consent URL (and tries to open it) and waits while you click
-**Approve** or **Deny** in your browser. The PS holds the request at `202` until
-you decide, then the agent's next poll resolves.
+Person Server dashboard URL and the direct consent URL, opens the dashboard
+once per run, and waits while you click **Approve** or **Deny** in your
+browser. The dashboard lists every request waiting for you, so later prompts
+appear in the tab that is already open. The PS holds the request at `202`
+until you decide, then the agent's next poll resolves.
 
 For an unattended run (CI, smoke tests), use `--auto` to resolve every prompt
 via the PS's scripted defaults:

@@ -78,9 +78,17 @@ across runs. Reused `make demo` processes keep their own `HOME`.
   work after the SignalR circuit connects. Specs use `waitForInteractive` (waits
   for an enabled primary button) before interacting — never fixed sleeps.
 - **Deferred / consent paths.** MockPersonServer must run with
-  `RequireConsent=true` (the config sets this). The deferred specs open the PS
-  consent page in a popup and click **Approve** / **Deny**, then assert the
-  polling loop resolves. These specs use an extended per-test timeout.
+  `RequireConsent=true` (the config sets this). Agent pages render the shared
+  approval prompt (`CONSENT_ACTION` in `helpers/dashboard.ts`). For PS-hosted
+  consent its primary link opens the PS dashboard highlighted on the request.
+  - `approveInPopup` / `denyInPopup` decide either the dashboard or the
+    per-request page.
+  - `approveOnDashboard` / `denyOnDashboard` decide by agent, resource, scope
+    or mission, without touching the agent page.
+  - In the GuidedTour, `decidePersonServerPrompt` asserts that polling started
+    before any decision (poll on arrival).
+  - Specs then assert that the polling loop resolves. These specs use an
+    extended per-test timeout.
 - **Result assertions.** Every result-bearing spec asserts the actual on-page
   outcome — the rendered HTTP status (e.g. `200`) and the returned claims/scheme
   shown in the demo's response panel — not just that a step "completed".

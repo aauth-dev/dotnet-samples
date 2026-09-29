@@ -690,7 +690,8 @@ public sealed partial class TourSession : IAsyncDisposable
 
     /// <summary>
     /// True when the tour is parked on the "User approves" step in deferred mode
-    /// and the UI should expose the "Approve as user" action button.
+    /// and the UI should expose the consent link. Person Server consent never
+    /// stays here: <see cref="RunNextAsync"/> records the step and polls on arrival.
     /// </summary>
     public bool AwaitingUserApproval =>
         IsCapabilityMode
@@ -1286,7 +1287,8 @@ public sealed partial class TourSession : IAsyncDisposable
     }
 
     /// <summary>
-    /// Records the user-approval step: the user opened the PS's interaction page in a
+    /// Records the user-approval step: the person decides on the PS dashboard (or
+    /// the direct link), or opened an Access Server or resource page in a
     /// separate browser tab and (hopefully) clicked Approve. The Guided
     /// Tour itself does not make the HTTP call here — that happens
     /// out-of-band, between the user's browser and the Person Server,
@@ -2384,14 +2386,13 @@ public sealed partial class TourSession : IAsyncDisposable
 
     private void StepUserApprovesPlaceholder()
     {
-        // Placeholder branch: should not be reachable because the UI must
-        // call ApproveAsUserAsync() at the user-approval step. Defensive fallback in
-        // case "Run all" is invoked — it cannot proceed past the user-approval step on its
-        // own, the user must click "Approve as user".
+        // Person Server consent never reaches here: RunNextAsync records this
+        // step and polls on arrival. Access Server and resource pages need the
+        // user to open the consent link first, which records the step.
         if (!_userApproved)
         {
             throw new InvalidOperationException(
-                "The user-approval step requires the user to click \"Approve as user\". Call ApproveAsUserAsync() instead of RunNextAsync().");
+                "The user-approval step waits for the user to open the consent link. Call RecordUserApprovalOpenedAsync() instead of RunNextAsync().");
         }
     }
 

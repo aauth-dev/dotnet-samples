@@ -337,6 +337,33 @@ PROCEEDED.
     `Dashboard: http://localhost:5100/dashboard?code=…` and the
     `Or directly:` link.
 
+### [2026-09-29] [Phase 6] Samples, snippets and docs sweep
+
+PROCEEDED.
+- **MockPersonServer README.** New "Consent dashboard" section covering:
+  - sign-in and session;
+  - listing, including `code` highlighting and `settled`;
+  - decisions and their status codes;
+  - code consumption and reach;
+  - reset.
+- **Other READMEs.**
+  - GuidedTour: deferred steps 9 and 10, poll on arrival. This removes the
+    stale "Simulate deny" button reference; the button no longer exists.
+  - MissionAgent: dashboard once per run.
+  - `samples/README.md`: AgentConsole output.
+  - `tests/e2e/README.md`: the dashboard helpers.
+- **Docs.** `docs/workflows/ps-asserted-access.md` and
+  `docs/server/mission-governance.md` cite
+  `#user-interaction` (v11 L1011, verified with `sed -n 1011p`) for
+  out-of-band completion.
+- **Code copy.** Stale "Approve as user" / `ApproveAsUserAsync` copy is gone
+  from `TourSession`.
+- **Sweep.** It leaves only the following, which is intended:
+  - "Open consent page" as the label for Access Server and Inbox links;
+  - the Documents resource-first narrative, which really opens a tab.
+- **Verification.** Build clean. AAuth.Tests 1691 passed; docs inventory
+  refreshed.
+
 ## Open questions / inputs needed
 
 _None yet._

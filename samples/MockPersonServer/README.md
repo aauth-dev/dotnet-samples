@@ -32,8 +32,10 @@ A minimal AAuth Person Server for end-to-end demos and integration tests.
   - **Deny** (`POST /interaction/deny`) → next poll returns `403` with
     `{"error":"denied"}`.
   - No action → the agent's polling budget eventually expires.
-- `GET /interaction` renders a tiny built-in consent page used by the
-  `GuidedTour` "Open consent page" button.
+- `GET /interaction` renders a small built-in consent page for one request
+  (the agent's direct link).
+- `GET /dashboard` lists every consent request for the person; see
+  [Consent dashboard](#consent-dashboard).
 
 The mapper **verifies** the posted `resource_token` using the SDK helper
 `TokenVerifier.VerifyResourceTokenAsync` (JWKS discovery against the issuing
@@ -41,6 +43,36 @@ resource per §Resource Token Verification): `typ`/`dwk`/signature, `exp`/`iat`,
 `aud`, `agent`, and `agent_jkt`. Forged or expired tokens are rejected with
 `invalid_resource_token` / `expired_resource_token`. The consent screen and the
 issued auth token derive only from the verified token.
+
+## Consent dashboard
+
+`GET /dashboard` is the person's view of every consent request agents have
+made to this PS. It is a sample feature, not an AAuth endpoint: the protocol
+only requires that the agent keeps polling while the person decides, and the
+PS may complete the interaction however it likes.
+
+- **Sign in.** The dashboard uses the same isolated demo identity, loopback
+  guard and `AAuth:EnableIsolatedDemoConsent` flag as `/interaction`. It keeps
+  its own `AAuth.Person.Dashboard` session cookie (`HttpOnly`,
+  `SameSite=Strict`, `Path=/dashboard`).
+- **Listing.** `GET /dashboard/requests?group=none|mission|agent&code=` returns
+  pending and history groups as JSON. The page refreshes it every second.
+  - `code` highlights the request the agent's prompt linked to.
+  - `settled: true` means that link names nothing to decide right now.
+- **Deciding.** `POST /dashboard/requests/{id}/approve|deny` carries the
+  `X-CSRF-Token` header. Responses:
+  - `200` when the decision is applied;
+  - `409` for `already_decided`, `expired` or `not_decidable` (hosted by an
+    Access Server);
+  - `404` for an unknown request.
+- **Code consumption.** A dashboard decision consumes the request's
+  interaction code. The agent's direct link then stops working, and a
+  decision already open on that page fails.
+- **Reach.** Token, person-token, mission, mission-token and permission
+  requests are decided here. Access Server sign-ins are listed with a link to
+  the AS. Resource-first interactions (`/interaction/resource`) stay with
+  the resource.
+- **Reset.** `POST /admin/reset` clears the dashboard history.
 
 ## Three-party vs four-party
 

@@ -173,6 +173,17 @@ See [Dependency Injection](../reference/dependency-injection.md) for full option
 - **Autonomous**: PS has standing consent → returns auth token immediately (step 3→4)
 - **Deferred**: PS requires user approval → returns 202 + pending URL → agent polls (see [Deferred Consent](deferred-consent.md))
 
+Start polling as soon as the `202` arrives, before or while the person is
+shown the link. The host of the interaction URL MAY complete the interaction
+over a channel it already controls, without the person visiting `url` or
+presenting `code`. The code is consumed at that completion, and the pending
+URL returns the terminal response
+([User Interaction](../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#user-interaction),
+v11 L1011). The sample MockPersonServer uses this for its
+[consent dashboard](../../samples/MockPersonServer/README.md#consent-dashboard),
+which lists every request waiting for the person. An agent that waits for the
+person to click its own link can miss a decision made there.
+
 ## Person-Server-Side
 
 The PS half of this flow (steps 3–4) ships as the one-call host helper

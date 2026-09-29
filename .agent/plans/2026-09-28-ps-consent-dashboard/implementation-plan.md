@@ -334,9 +334,9 @@ Run after the code surface is frozen.
 
 **Definition of Done**
 
-- [ ] No stale consent-button copy remains in README files, snippets or
+- [x] No stale consent-button copy remains in README files, snippets or
       in-page code.
-- [ ] Docs cite the spec sections by anchor and line.
+- [x] Docs cite the spec sections by anchor and line.
 
 ## Phase 7 — Independent internal review
 

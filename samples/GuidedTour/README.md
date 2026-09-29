@@ -197,14 +197,16 @@ Steps 1–6 are the same as **Direct Grant**. From step 7 onward:
 7. Signed `POST /token` → **`202 Accepted`** with `Location: /pending/{id}`
    and interaction URL + single-use code.
 8. Agent surfaces the user-facing `{url}?code={code}` link.
-9. **User opens the PS's consent page.** The "Open consent page ↗"
-   button opens `{url}?code={code}` in a new browser tab. The Person
-   Server renders its own consent screen (agent + resource + scope); the
-   user clicks **Approve** or **Deny** there and the PS records the
-   choice. The agent is not on this channel. A "Simulate deny" button in
-   the tour topbar is wired to the same denial endpoint for quick
-   exercising of the denial path.
-10. Agent polls `Location` with a signed `GET`. While polling, the
+9. **The agent is already polling; the user decides at the PS.** The tour
+   records this step and starts polling as soon as step 8 surfaces the
+   request, so "Run all" keeps running. The polling banner offers **Open
+   Person Server dashboard** (every request waiting for the user, this one
+   highlighted) and a direct link to this one request. Either way the user
+   signs in and clicks **Approve** or **Deny**; the agent is not on this
+   channel. Access Server and resource-hosted consent (Federated, R3,
+   Resource-Managed, Documents) still wait for the user to open the link.
+10. The background poll of `Location` (a signed `GET`) resolves. While
+   polling, the
    sequence diagram shows a loop box with a live spinner and poll count.
    The loop resolves in one of three ways:
     * **Approve** → 200 + `auth_token`; the loop box turns solid green.

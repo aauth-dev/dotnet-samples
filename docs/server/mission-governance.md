@@ -281,6 +281,14 @@ public sealed class MyPermissionDecider : IPermissionDecider
 The audit sink records what the agent reports and MAY alert the user or revoke
 the mission; the interaction relay reaches the user for the PS.
 
+Mission creation, mission-token and permission prompts need not be decided at
+the per-request `/interaction` page. The PS hosts that URL, so it MAY complete
+the interaction over a channel it already controls and consume the code there
+([User Interaction](../../aauth-spec/v11/draft-hardt-oauth-aauth-protocol.md#user-interaction),
+v11 L1011). The sample
+[consent dashboard](../../samples/MockPersonServer/README.md#consent-dashboard)
+decides all three kinds, with an optional grouping by mission.
+
 ```csharp
 public interface IAuditSink
 {

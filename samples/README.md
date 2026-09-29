@@ -309,9 +309,10 @@ dotnet run --project samples/AgentConsole -- http://localhost:5003/wallet/charge
 >
 > ```
 > [interaction] User approval required: http://localhost:5100/interaction?code=...
+> [interaction] Or decide on the PS dashboard: http://localhost:5100/dashboard?code=...
 > ```
 >
-> Open that URL in a browser and click **Approve**, or pre-approve programmatically:
+> Open either URL in a browser and click **Approve**, or pre-approve programmatically:
 >
 > ```bash
 > curl -X POST http://localhost:5100/admin/consent \
