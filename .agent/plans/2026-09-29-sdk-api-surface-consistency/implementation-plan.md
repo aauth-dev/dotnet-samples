@@ -116,14 +116,14 @@ Resolve Q1–Q19 from [research.md](research.md#gaps-and-open-questions).
 
 - [x] Every question Q1–Q19 has a `RESOLVED` or `PROCEEDED (default X)`
       ruling in `implementation-log.md`.
-- [ ] Q16 sequencing is confirmed: the dashboard lands first (owner,
+- [x] Q16 sequencing is confirmed: the dashboard lands first (owner,
       2026-09-29). This branch is rebased onto it, and the research line
       citations for MockPersonServer, SampleApp, and GuidedTour are
       re-derived. The dashboard's services are added to the Phase 4 and
       Phase 10 inventories.
-- [ ] Baseline gates are green on the starting commit; test counts are
+- [x] Baseline gates are green on the starting commit; test counts are
       recorded in the log.
-- [ ] An `ApiSurface` snapshot of the starting commit is recorded for the final
+- [x] An `ApiSurface` snapshot of the starting commit is recorded for the final
       diff review.
 
 ## Phase 1 — Typed constants, labels, dead code (F-S7, F-S8, F-S9)
@@ -289,6 +289,19 @@ This is the highest-blast-radius server change.
   call sites.
 - Migrate MockPersonServer, the MockAccessServers, and the MockResourceServers
   in this phase to keep the build green.
+- **Consent dashboard seams (landed 2026-09-29; see the dashboard plan's
+  Phase 7 log).** Fold them into the PS builder:
+  - MockPersonServer `Program.cs` hand-registers `ConsentRegistry`,
+    `PersonConsentDecisions` and `ConsentDashboardSessions`, and maps
+    `MapConsentDashboard()`.
+  - The bridge store and `MissionPendingStore` call `registry.Register`
+    themselves. An SDK pending-store observer should replace that.
+  - `BrowserInteraction.Consume()` is public only for the sample decision
+    service. An SDK out-of-band decision API (#user-interaction, v11 L1011)
+    should own it.
+  - The four-party `Pending202` re-advertises a fresh PS interaction code
+    after an Access Server clarification, although nothing is asked of the
+    person. Decide whether it should return a bare `202`.
 
 ### Definition of Done
 
@@ -584,6 +597,12 @@ This is the highest-blast-radius client change.
     comment explaining why.
 - Remove per-request `using var client = ... .Build()` from request and page
   handlers.
+- Consent dashboard call sites that restate the PS identity:
+  - `PersonServerConsent.DashboardUrl(ps)` in ConsentSupport;
+  - MissionAgent and AgentConsole build `{ps}/dashboard?code=` inline;
+  - GuidedTour `TourSession.PersonServer`.
+
+  Each should read the PS from the agent registration once Phase 7 exists.
 
 ### Definition of Done
 

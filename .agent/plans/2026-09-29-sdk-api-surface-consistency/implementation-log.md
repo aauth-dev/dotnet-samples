@@ -159,6 +159,41 @@ RESOLVED (owner): "We will do it next."
   migration inventories.
 - Supersedes the open-question entry below.
 
+### [2026-09-29] [Phase 0] Baseline after the dashboard landed
+
+PROCEEDED.
+- **No rebase needed.** The dashboard landed on this branch
+  (`wip/aauth-draft-11`, `4692e8b`..`0ba8f78`). The baseline commit is
+  **`0ba8f78`**.
+- **Citations re-derived in research.md** (grep for the cited code, then
+  `sed -n` on the line):
+  - `MockPersonServer/Program.cs`: RevocationClient L213 → **L219**; signed
+    client L201 → **L207**.
+  - `GuidedTour/TourSession.Capabilities.cs` L1052 → **L1067**.
+  - `CapabilitySupport/WalletDemoSession.cs` L78 → **L79**.
+  - Unchanged:
+    - `CapabilitySupport/WalletScenarioCode.cs` L53;
+    - `SampleApp/Program.cs` L20;
+    - `Concierge/Program.cs` L43;
+    - `SampleApp/.../Jwt.razor` L151.
+  - `src/` changed only in `BrowserConsentSessions.cs` (`Consume()`), so the
+    SDK citations stand.
+- **Inventories.** The dashboard seams were added to Phase 4 (registry,
+  decisions, sessions, `Consume()`, the four-party `Pending202` re-advertise
+  finding) and Phase 10 (restated PS identity in ConsentSupport, the CLIs and
+  GuidedTour).
+- **Baseline gates at `0ba8f78`.**
+  - Build clean.
+  - Test projects: AAuth.Tests 1691 (includes the snippet and doc-link
+    tests), AAuth.Conformance 1254, AAuth.R3.Tests 327, AAuth.Events.Tests
+    80.
+  - e2e typecheck clean.
+  - Full Playwright suite: 78 passed, 1 skipped (Keycloak).
+- **ApiSurface snapshot.** The starting snapshot is the committed map at the
+  baseline:
+  `git show 0ba8f78:.agent/plans/2026-09-11-aauth-v11-spec-migration/api-surface-map.md`
+  (160 files, +420/-154 declarations against `v0.10.0-alpha.1`).
+
 ## Deviations from plan
 
 None yet.

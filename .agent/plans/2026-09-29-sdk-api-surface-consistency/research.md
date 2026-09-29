@@ -240,9 +240,9 @@ themselves. Bookings does so at L304 and L560, and wires
 
 - `RevocationClient(HttpClient signedHttp)` (RevocationClient.cs L24) is
   constructed per call with a hand-built PS-signed client in four places:
-  - `MockPersonServer/Program.cs` L213 (client built at L201)
-  - `GuidedTour/TourSession.Capabilities.cs` L1052
-  - `CapabilitySupport/WalletDemoSession.cs` L78
+  - `MockPersonServer/Program.cs` L219 (client built at L207)
+  - `GuidedTour/TourSession.Capabilities.cs` L1067
+  - `CapabilitySupport/WalletDemoSession.cs` L79
   - `CapabilitySupport/WalletScenarioCode.cs` L53
 - The spec's PS person-token fan-out (L2752) is hand-coded in the PS sample:
   it looks up `tokenInventory.GetGrantsAsync` and then revokes at each AS.
@@ -327,7 +327,7 @@ AgentConsole, and CapabilitySupport.
   Examples:
   - Concierge L151-L166 (per inbound request);
   - SampleApp pages such as Jwt.razor L151-L156;
-  - MockPersonServer L201.
+  - MockPersonServer L207.
 - The effect is that every call repeats the full challenge → token exchange.
   Nothing in the docs states the intended client lifetime.
 - `AddAAuthAgent` sets `SetHandlerLifetime(Timeout.InfiniteTimeSpan)` (L81),
