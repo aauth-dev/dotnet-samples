@@ -260,7 +260,8 @@ public sealed class MissionPendingEntry
     public string Id { get; } = Guid.NewGuid().ToString("N");
     public AAuth.Server.BrowserInteraction Browser { get; } = new();
     public AAuth.Server.DeferredState Lifecycle { get; } = new();
-    public DateTimeOffset ExpiresAt { get; } = DateTimeOffset.UtcNow.AddMinutes(10);
+    public DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset ExpiresAt => CreatedAt.AddMinutes(10);
     public string? OwnerIssuer { get; init; }
     public string? OwnerKeyThumbprint { get; init; }
 
@@ -327,7 +328,7 @@ public sealed class MissionPendingEntry
 }
 
 /// <summary>In-memory store of parked mission-governance requests.</summary>
-public sealed class MissionPendingStore
+public sealed class MissionPendingStore(ConsentRegistry registry)
 {
     private readonly ConcurrentDictionary<string, MissionPendingEntry> _entries = new(StringComparer.Ordinal);
 
@@ -337,6 +338,7 @@ public sealed class MissionPendingStore
         foreach (var pair in _entries)
             if (pair.Value.ExpiresAt.AddHours(1) <= DateTimeOffset.UtcNow) _entries.TryRemove(pair.Key, out _);
         _entries[entry.Id] = entry;
+        registry.Register(entry);
         return entry;
     }
 

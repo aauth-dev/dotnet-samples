@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 153 changed public-source files, 300 added/replacement declarations, 145 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 157 changed public-source files, 387 added/replacement declarations, 149 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -253,15 +253,45 @@ Public owners: `AAuth.Samples.FederatedWorkerScenario`, `AAuth.Samples`.
 
 Concept/decision: [sample-runtime](#sample-runtime). Source: [TourOptions.cs](../../../samples/GuidedTour/TourOptions.cs).
 
-Public signatures unchanged (31); behavior reviewed under sample-runtime.
+```diff
++ GuidedTour.TourMode: Catalog
++ GuidedTour.TourMode: Documents
++ GuidedTour.TourMode: Events
++ GuidedTour.TourMode: WalletProtocol
++ GuidedTour.TourOptions: public string CatalogUrl { get ; set ; } = "http://localhost:5006"
++ GuidedTour.TourOptions: public string DocumentsUrl { get ; set ; } = "http://localhost:5007"
+```
 
 Public owners: `GuidedTour.SigningMode`, `GuidedTour.TourMode`, `GuidedTour.TourOptions`, `GuidedTour`.
+
+### samples/GuidedTour/TourSession.Capabilities.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [TourSession.Capabilities.cs](../../../samples/GuidedTour/TourSession.Capabilities.cs).
+
+```diff
++ GuidedTour.TourSession: public WalletFlow WalletScenario { get ; set ; }
++ GuidedTour.TourSession: public bool EventsProtected { get ; set ; }
++ GuidedTour.TourSession: public bool IsCapabilityMode
++ GuidedTour.TourSession: public bool IsCatalogMode
++ GuidedTour.TourSession: public bool IsDocumentsMode
++ GuidedTour.TourSession: public bool IsEventsMode
++ GuidedTour.TourSession: public bool IsWalletProtocolMode
++ GuidedTour.TourSession: public string ? EventsPayload { get ; private set ; }
++ GuidedTour.TourSession: public string CatalogService { get ; set ; }
++ GuidedTour.TourSession: public string EventsAccount { get ; set ; }
++ GuidedTour: public sealed partial class TourSession
+```
+
+Public owners: `GuidedTour.TourSession`, `GuidedTour`.
 
 ### samples/GuidedTour/TourSession.cs
 
 Concept/decision: [sample-runtime](#sample-runtime). Source: [TourSession.cs](../../../samples/GuidedTour/TourSession.cs).
 
-Public signatures unchanged (57); behavior reviewed under sample-runtime.
+```diff
+- GuidedTour: public sealed class TourSession : IAsyncDisposable
++ GuidedTour: public sealed partial class TourSession : IAsyncDisposable
+```
 
 Public owners: `GuidedTour.TourSession`, `GuidedTour`.
 
@@ -302,24 +332,113 @@ Public owners: `MockAgentProvider`.
 Concept/decision: [sample-runtime](#sample-runtime). Source: [ConsentBridgePersonPendingStore.cs](../../../samples/MockPersonServer/ConsentBridgePersonPendingStore.cs).
 
 ```diff
+- MockPersonServer.ConsentBridgePersonPendingStore: public ConsentBridgePersonPendingStore ( ConsentStore consent , IReadOnlyList < string > demoRoles , IReadOnlyList < string > demoGroups )
 - MockPersonServer.ConsentBridgePersonPendingStore: public PersonPendingEntry Add ( string resourceUrl , string scope , string agentId , IAAuthKey ? agentConfirmationKey , DateTimeOffset agentTokenExpiresAt , JsonObject ? upstreamAct = null , MissionClaim ? mission = null , DateTimeOffset ? authorizationExpiresAt = null )
++ MockPersonServer.ConsentBridgePersonPendingStore: public ConsentBridgePersonPendingStore ( ConsentStore consent , ConsentRegistry registry , IReadOnlyList < string > demoRoles , IReadOnlyList < string > demoGroups )
 + MockPersonServer.ConsentBridgePersonPendingStore: public PersonPendingEntry Add ( string resourceUrl , string scope , string agentId , IAAuthKey ? agentConfirmationKey , DateTimeOffset agentTokenExpiresAt , string ? missionS256 = null , DateTimeOffset ? authorizationExpiresAt = null )
 ```
 
 Public owners: `MockPersonServer.ConsentBridgePersonPendingStore`, `MockPersonServer`.
+
+### samples/MockPersonServer/ConsentRegistry.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [ConsentRegistry.cs](../../../samples/MockPersonServer/ConsentRegistry.cs).
+
+```diff
++ MockPersonServer.ConsentDecider: Admin
++ MockPersonServer.ConsentDecider: Dashboard
++ MockPersonServer.ConsentDecider: Link
++ MockPersonServer.ConsentDecider: Policy
++ MockPersonServer.ConsentDecider: Script
++ MockPersonServer.ConsentKind: AccessServerInteraction
++ MockPersonServer.ConsentKind: FederatedConsent
++ MockPersonServer.ConsentKind: MissionCreation
++ MockPersonServer.ConsentKind: MissionToken
++ MockPersonServer.ConsentKind: Permission
++ MockPersonServer.ConsentKind: PersonToken
++ MockPersonServer.ConsentKind: Token
++ MockPersonServer.ConsentRecord: public BrowserInteraction Browser
++ MockPersonServer.ConsentRecord: public ConsentDecider ? DecidedBy { get ; private set ; }
++ MockPersonServer.ConsentRecord: public ConsentDecider ? Decider
++ MockPersonServer.ConsentRecord: public ConsentKind Kind
++ MockPersonServer.ConsentRecord: public ConsentStatus Status { get ; }
++ MockPersonServer.ConsentRecord: public DateTimeOffset ? DecidedAt { get ; private set ; }
++ MockPersonServer.ConsentRecord: public DateTimeOffset CreatedAt { get ; }
++ MockPersonServer.ConsentRecord: public DateTimeOffset ExpiresAt
++ MockPersonServer.ConsentRecord: public DeferredState Lifecycle
++ MockPersonServer.ConsentRecord: public MissionPendingEntry ? MissionEntry { get ; }
++ MockPersonServer.ConsentRecord: public PersonPendingEntry ? PersonEntry { get ; }
++ MockPersonServer.ConsentRecord: public bool IsDecidable
++ MockPersonServer.ConsentRecord: public bool IsListed
++ MockPersonServer.ConsentRecord: public string ? Account
++ MockPersonServer.ConsentRecord: public string ? Action
++ MockPersonServer.ConsentRecord: public string ? ExternalInteractionUrl
++ MockPersonServer.ConsentRecord: public string ? MissionDescription
++ MockPersonServer.ConsentRecord: public string ? MissionS256
++ MockPersonServer.ConsentRecord: public string ? Resource
++ MockPersonServer.ConsentRecord: public string ? Scope
++ MockPersonServer.ConsentRecord: public string AgentId
++ MockPersonServer.ConsentRecord: public string Id
++ MockPersonServer.ConsentRegistry: public ConsentRecord ? Find ( string id )
++ MockPersonServer.ConsentRegistry: public ConsentRecord ? FindPendingByCode ( string code )
++ MockPersonServer.ConsentRegistry: public IReadOnlyList < ConsentRecord > Snapshot ( )
++ MockPersonServer.ConsentRegistry: public const int Capacity = 500 ;
++ MockPersonServer.ConsentRegistry: public void Clear ( )
++ MockPersonServer.ConsentRegistry: public void MarkDecided ( string id , ConsentDecider by )
++ MockPersonServer.ConsentRegistry: public void Register ( MissionPendingEntry entry )
++ MockPersonServer.ConsentRegistry: public void Register ( PersonPendingEntry entry )
++ MockPersonServer.ConsentStatus: Approved
++ MockPersonServer.ConsentStatus: Delivered
++ MockPersonServer.ConsentStatus: Denied
++ MockPersonServer.ConsentStatus: Expired
++ MockPersonServer.ConsentStatus: Pending
++ MockPersonServer.ConsentStatus: Withdrawn
++ MockPersonServer: public enum ConsentDecider
++ MockPersonServer: public enum ConsentKind
++ MockPersonServer: public enum ConsentStatus
++ MockPersonServer: public sealed class ConsentRecord
++ MockPersonServer: public sealed class ConsentRegistry ( MissionPolicyStore policy )
+```
+
+Public owners: `MockPersonServer.ConsentDecider`, `MockPersonServer.ConsentKind`, `MockPersonServer.ConsentRecord`, `MockPersonServer.ConsentRegistry`, `MockPersonServer.ConsentStatus`, `MockPersonServer`.
 
 ### samples/MockPersonServer/MissionGovernance.cs
 
 Concept/decision: [sample-runtime](#sample-runtime). Source: [MissionGovernance.cs](../../../samples/MockPersonServer/MissionGovernance.cs).
 
 ```diff
+- MockPersonServer.MissionPendingEntry: public DateTimeOffset ExpiresAt { get ; } = DateTimeOffset . UtcNow . AddMinutes ( 10 )
 - MockPersonServer.MissionPendingEntry: public JsonObject ? UpstreamAct { get ; init ; }
 - MockPersonServer.MissionPendingEntry: public MissionClaim MissionClaim
 - MockPersonServer.MissionPendingEntry: public required string Approver { get ; init ; }
+- MockPersonServer: public sealed class MissionPendingStore
++ MockPersonServer.MissionPendingEntry: public DateTimeOffset CreatedAt { get ; } = DateTimeOffset . UtcNow
++ MockPersonServer.MissionPendingEntry: public DateTimeOffset ExpiresAt
 + MockPersonServer.MissionPendingEntry: public required string PersonServer { get ; init ; }
++ MockPersonServer: public sealed class MissionPendingStore ( ConsentRegistry registry )
 ```
 
 Public owners: `MockPersonServer.MissionConsentScript`, `MockPersonServer.MissionPendingEntry`, `MockPersonServer.MissionPendingKind`, `MockPersonServer.MissionPendingState`, `MockPersonServer.MissionPendingStore`, `MockPersonServer.MissionPolicyStore`, `MockPersonServer.SampleAuditSink`, `MockPersonServer.SampleInteractionRelay`, `MockPersonServer.SamplePermissionDecider`, `MockPersonServer`.
+
+### samples/MockPersonServer/PersonConsentDecisions.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [PersonConsentDecisions.cs](../../../samples/MockPersonServer/PersonConsentDecisions.cs).
+
+```diff
++ MockPersonServer.ConsentOutcome: AlreadyDecided
++ MockPersonServer.ConsentOutcome: Applied
++ MockPersonServer.ConsentOutcome: Expired
++ MockPersonServer.ConsentOutcome: NotDecidable
++ MockPersonServer.ConsentOutcome: Refused
++ MockPersonServer.ConsentOutcome: Unknown
++ MockPersonServer.PersonConsentDecisions: public ConsentOutcome ApplyHeld ( MissionPendingEntry entry , bool approve , ConsentDecider by )
++ MockPersonServer.PersonConsentDecisions: public async Task < ConsentOutcome > ApplyHeldAsync ( PersonPendingEntry entry , bool approve , ConsentDecider by , CancellationToken cancellationToken )
++ MockPersonServer.PersonConsentDecisions: public async Task < ConsentOutcome > DecideAsync ( string id , bool approve , ConsentDecider by , CancellationToken cancellationToken )
++ MockPersonServer: public enum ConsentOutcome
++ MockPersonServer: public sealed class PersonConsentDecisions ( ConsentStore consent , IIdentityClaimsAsserter asserter , ConsentRegistry registry )
+```
+
+Public owners: `MockPersonServer.ConsentOutcome`, `MockPersonServer.PersonConsentDecisions`, `MockPersonServer`.
 
 ### samples/MockPersonServer/Program.cs
 
@@ -1290,6 +1409,16 @@ Concept/decision: [server-contracts](#server-contracts). Source: [AuthTokenRespo
 ```
 
 Public owners: `AAuth.Server.AuthTokenResponse`, `AAuth.Server`.
+
+### src/AAuth/Server/BrowserConsentSessions.cs
+
+Concept/decision: [consent](#consent). Source: [BrowserConsentSessions.cs](../../../src/AAuth/Server/BrowserConsentSessions.cs).
+
+```diff
++ AAuth.Server.BrowserInteraction: public void Consume ( )
+```
+
+Public owners: `AAuth.Server.BrowserConsentDecision`, `AAuth.Server.BrowserConsentSessions`, `AAuth.Server.BrowserInteraction`, `AAuth.Server`.
 
 ### src/AAuth/Server/CallChaining/CallChainingHandler.cs
 

@@ -96,7 +96,12 @@ builder.Services.AddSingleton<IIdentityClaimsAsserter>(sp =>
     new SampleIdentityClaimsAsserter(
         sp.GetRequiredService<ConsentStore>(), requireConsent, demoRoles, demoGroups, demoUserClaims));
 builder.Services.AddSingleton<IPersonPendingStore>(sp =>
-    new ConsentBridgePersonPendingStore(sp.GetRequiredService<ConsentStore>(), demoRoles, demoGroups));
+    new ConsentBridgePersonPendingStore(sp.GetRequiredService<ConsentStore>(), sp.GetRequiredService<ConsentRegistry>(),
+        demoRoles, demoGroups));
+// Every PS-parked consent request and its outcome, and the one decision path the
+// per-request link and the dashboard share.
+builder.Services.AddSingleton<ConsentRegistry>();
+builder.Services.AddSingleton<PersonConsentDecisions>();
 
 // Mission governance (§PS Governance Endpoints). AddAAuthGovernance registers
 // the in-memory mission store + log; the PS supplies the policy/user-channel
@@ -583,7 +588,7 @@ app.MapPost("/mission/{missionS256}", async (
 // returns the (scripted) user decision.
 app.MapMethods("/permission-pending/{id}", ["GET", "DELETE"], async (
     HttpContext ctx, string id, MissionPendingStore pending,
-    IMissionLog log, MissionConsentScript script, IMissionStore missions) =>
+    IMissionLog log, MissionConsentScript script, IMissionStore missions, ConsentRegistry registry) =>
 {
     var entry = pending.Get(id);
     if (entry is null) return AAuth.Server.DeferredState.Missing(id);
@@ -618,6 +623,8 @@ app.MapMethods("/permission-pending/{id}", ["GET", "DELETE"], async (
         else
         {
             granted = script.ApprovePermission;
+            entry.Decision = granted;
+            registry.MarkDecided(entry.Id, ConsentDecider.Script);
         }
         await log.AppendAsync(new MissionLogEntry(
             entry.S256, MissionLogEntryKind.Permission, DateTimeOffset.UtcNow)
@@ -663,11 +670,13 @@ app.MapPost("/admin/revoke", async (HttpContext ctx, ConsentStore consent) =>
 // resetConsent helper). A production PS would never expose this. The SDK-owned
 // token pending entries are id-keyed + TTL-evicted, so clearing the demo
 // ConsentStore + mission stores is enough to re-baseline.
-app.MapPost("/admin/reset", (ConsentStore consent, MissionPendingStore missionPending, MissionConsentScript script) =>
+app.MapPost("/admin/reset", (ConsentStore consent, MissionPendingStore missionPending, MissionConsentScript script,
+    ConsentRegistry registry) =>
 {
     consent.Clear();
     missionPending.Clear();
     script.Reset();
+    registry.Clear();
     return Results.Ok(new { ok = true });
 });
 
@@ -974,7 +983,7 @@ app.MapMethods("/interaction", ["GET", "POST"], async (HttpContext ctx, IPersonP
 // consent for the entry's (agent, resource, scope) triple, and shows a
 // confirmation page. Idempotent: re-submitting a code whose entry is
 // already approved still 200s.
-app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent, IPersonPendingStore pending, MissionPendingStore missionPending, IIdentityClaimsAsserter asserter) =>
+app.MapPost("/interaction/approve", async (HttpContext ctx, IPersonPendingStore pending, MissionPendingStore missionPending, PersonConsentDecisions decisions) =>
 {
     var decision = await browserConsent.DecideAsync(ctx);
     if (decision.Error is not null) return decision.Error;
@@ -990,8 +999,8 @@ app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent
     {
         return await decision.Decision.ApplyAsync(ctx, () =>
         {
-            if (mission.Decision is not null) return AAuth.Server.AAuthProblemDetails.Create("invalid_code", statusCode: 400);
-            mission.Decision = true;
+            if (decisions.ApplyHeld(mission, approve: true, ConsentDecider.Link) != ConsentOutcome.Applied)
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_code", statusCode: 400);
             return Results.Content(
                 "<!doctype html><meta charset=utf-8><title>Approved — Person Server</title>"
                 + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
@@ -1013,32 +1022,11 @@ app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent
     }
     return await decision.Decision.ApplyAsync(ctx, async () =>
     {
-        if (entry.AwaitingResourceInteraction || entry.Status != PersonPendingStatus.Pending || entry.PendingExpiresAt <= DateTimeOffset.UtcNow)
-            return AAuth.Server.AAuthProblemDetails.Create("invalid_code", statusCode: 400);
-        // An out-of-scope mission token request (held interactively) resolves by
-        // marking the SDK-owned pending decision allowed with the demo identity; a
-        // plain three-party request records standing consent (the bridge mints).
-        if (!entry.MissionGate)
+        switch (await decisions.ApplyHeldAsync(entry, approve: true, ConsentDecider.Link, ctx.RequestAborted))
         {
-            consent.Grant(entry.ConsentAgentId, entry.ResourceUrl, entry.Scope, entry.Account, entry.ResourceKeyThumbprint);
+            case ConsentOutcome.Refused: return AAuth.Server.AAuthProblemDetails.Create("denied", statusCode: 403);
+            case not ConsentOutcome.Applied: return AAuth.Server.AAuthProblemDetails.Create("invalid_code", statusCode: 400);
         }
-        var asserted = await asserter.AssertAsync(new IdentityAssertionRequest
-        {
-            ResourceUrl = entry.ResourceUrl, Scope = entry.Scope, AgentId = entry.ConsentAgentId,
-            Account = entry.Account, AgentKeyThumbprint = entry.ResourceKeyThumbprint,
-            MissionS256 = entry.MissionS256, RequiredClaims = entry.RequiredIdentityClaims,
-            ResourceContext = entry.ResourceContext, AgentAsserted = entry.AgentAsserted, InteractionId = entry.Id,
-        }, ctx.RequestAborted);
-        if (asserted.Kind != IdentityAssertionKind.Assert)
-            return AAuth.Server.AAuthProblemDetails.Create("denied", statusCode: 403);
-        ctx.RequestAborted.ThrowIfCancellationRequested();
-        entry.Subject = asserted.Subject!;
-        entry.Tenant = asserted.Tenant;
-        entry.Roles = asserted.Roles;
-        entry.Groups = asserted.Groups;
-        entry.AdditionalClaims = asserted.AdditionalClaims;
-        if (entry.FederationConsent is { } consentCompletion) consentCompletion.TrySetResult(asserted);
-        else entry.Status = PersonPendingStatus.Allowed;
         return Results.Content(
             "<!doctype html><meta charset=utf-8><title>Approved — Person Server</title>"
             + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
@@ -1058,7 +1046,7 @@ app.MapPost("/interaction/approve", async (HttpContext ctx, ConsentStore consent
 // Deny handler. Marks the pending entry as denied (rather than removing
 // it) so the agent's next poll receives a deterministic
 // `403 denied` instead of an ambiguous `404 unknown_pending`.
-app.MapPost("/interaction/deny", async (HttpContext ctx, IPersonPendingStore pending, MissionPendingStore missionPending) =>
+app.MapPost("/interaction/deny", async (HttpContext ctx, IPersonPendingStore pending, MissionPendingStore missionPending, PersonConsentDecisions decisions) =>
 {
     var decision = await browserConsent.DecideAsync(ctx);
     if (decision.Error is not null) return decision.Error;
@@ -1074,8 +1062,8 @@ app.MapPost("/interaction/deny", async (HttpContext ctx, IPersonPendingStore pen
     {
         return await decision.Decision.ApplyAsync(ctx, () =>
         {
-            if (mission.Decision is not null) return AAuth.Server.AAuthProblemDetails.Create("invalid_code", statusCode: 400);
-            mission.Decision = false;
+            if (decisions.ApplyHeld(mission, approve: false, ConsentDecider.Link) != ConsentOutcome.Applied)
+                return AAuth.Server.AAuthProblemDetails.Create("invalid_code", statusCode: 400);
             return Results.Content(
                 "<!doctype html><meta charset=utf-8><title>Denied — Person Server</title>"
                 + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"
@@ -1095,14 +1083,10 @@ app.MapPost("/interaction/deny", async (HttpContext ctx, IPersonPendingStore pen
         return AAuth.Server.AAuthProblemDetails.Create("unknown_code", statusCode: StatusCodes.Status404NotFound,
             extensions: new Dictionary<string, object?> { ["code"] = code });
     }
-    return await decision.Decision.ApplyAsync(ctx, () =>
+    return await decision.Decision.ApplyAsync(ctx, async () =>
     {
-        if (entry.AwaitingResourceInteraction || entry.Status is PersonPendingStatus.Allowed or PersonPendingStatus.Denied or PersonPendingStatus.Withdrawn
-            || entry.PendingExpiresAt <= DateTimeOffset.UtcNow)
+        if (await decisions.ApplyHeldAsync(entry, approve: false, ConsentDecider.Link, ctx.RequestAborted) != ConsentOutcome.Applied)
             return AAuth.Server.AAuthProblemDetails.Create("invalid_code", statusCode: 400);
-        entry.Status = PersonPendingStatus.Denied;
-        entry.DenyReason = "the user denied this request";
-        entry.FederationConsent?.TrySetResult(IdentityAssertion.Deny(entry.DenyReason));
         return Results.Content(
             "<!doctype html><meta charset=utf-8><title>Denied — Person Server</title>"
             + "<style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:2rem auto;padding:0 1rem;line-height:1.5}"

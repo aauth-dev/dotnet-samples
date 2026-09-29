@@ -146,10 +146,10 @@ decision flows through one service. There is no user-visible change.
 
 **Definition of Done**
 
-- [ ] `PersonConsentDecisions` owns every PS consent mutation. `/interaction/*`
+- [x] `PersonConsentDecisions` owns every PS consent mutation. `/interaction/*`
       contain no mutation logic.
-- [ ] The registry records every PS-parked request with a derived status.
-- [ ] Existing MockPersonServer integration tests are green. The new registry
+- [x] The registry records every PS-parked request with a derived status.
+- [x] Existing MockPersonServer integration tests are green. The new registry
       tests are green.
 
 ## Phase 2 — PS dashboard

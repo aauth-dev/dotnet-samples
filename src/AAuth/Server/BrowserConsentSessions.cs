@@ -30,6 +30,21 @@ public sealed class BrowserInteraction
         }
         finally { Gate.Release(); }
     }
+
+    /// <summary>
+    /// Consume the code after an out-of-band decision (#interaction-code-format):
+    /// the code stops opening the consent page and in-flight page decisions fail.
+    /// </summary>
+    public void Consume()
+    {
+        Gate.Wait();
+        try
+        {
+            Generation++;
+            Consumed = true;
+        }
+        finally { Gate.Release(); }
+    }
 }
 
 public sealed record BrowserPendingRequest(string Id, DateTimeOffset ExpiresAt,

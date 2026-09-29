@@ -18,13 +18,15 @@ public sealed class ConsentBridgePersonPendingStore : IPersonPendingStore
 {
     private readonly InMemoryPersonPendingStore _inner = new();
     private readonly ConsentStore _consent;
+    private readonly ConsentRegistry _registry;
     private readonly IReadOnlyList<string> _demoRoles;
     private readonly IReadOnlyList<string> _demoGroups;
 
     public ConsentBridgePersonPendingStore(
-        ConsentStore consent, IReadOnlyList<string> demoRoles, IReadOnlyList<string> demoGroups)
+        ConsentStore consent, ConsentRegistry registry, IReadOnlyList<string> demoRoles, IReadOnlyList<string> demoGroups)
     {
         _consent = consent;
+        _registry = registry;
         _demoRoles = demoRoles;
         _demoGroups = demoGroups;
     }
@@ -34,8 +36,12 @@ public sealed class ConsentBridgePersonPendingStore : IPersonPendingStore
         DateTimeOffset agentTokenExpiresAt,
         string? missionS256 = null,
         DateTimeOffset? authorizationExpiresAt = null)
-        => _inner.Add(resourceUrl, scope, agentId, agentConfirmationKey, agentTokenExpiresAt,
+    {
+        var entry = _inner.Add(resourceUrl, scope, agentId, agentConfirmationKey, agentTokenExpiresAt,
             missionS256, authorizationExpiresAt);
+        _registry.Register(entry);
+        return entry;
+    }
 
     public PersonPendingEntry? Get(string id)
     {
@@ -58,6 +64,7 @@ public sealed class ConsentBridgePersonPendingStore : IPersonPendingStore
                 entry.Groups = isAdmin ? _demoGroups : null;
                 entry.AdditionalClaims = null;
                 entry.Status = PersonPendingStatus.Allowed;
+                _registry.MarkDecided(entry.Id, ConsentDecider.Admin);
             }
             return entry;
         }

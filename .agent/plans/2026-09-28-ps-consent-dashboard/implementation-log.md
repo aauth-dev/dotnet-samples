@@ -183,7 +183,40 @@ Phase 0 is complete.
 
 ## Deviations from plan
 
-_None yet._
+### [2026-09-29] [Phase 1] Q6 escalated — SDK `BrowserInteraction.Consume()`
+
+RESOLVED (Q6 fallback, as pre-authorised).
+- **Why `Renew()` was not enough.** `Renew()` issues a fresh code. In
+  four-party, the entry stays `Pending` while federation continues after PS
+  consent, and `Pending202` (AAuthPersonServerEndpoints.cs L1566) re-emits
+  `entry.Browser.Code`. A dashboard `Renew()` would therefore leak a fresh,
+  unconsumed code in the next `202`: exactly the side effect Q6 named.
+- **The fix.** A public `BrowserInteraction.Consume()` bumps `Generation`,
+  which fails any in-flight page decision, and marks the code consumed, so
+  arrivals return `invalid_code`. The code value itself is kept, which
+  matches the link path.
+- **Tests.**
+  - `BrowserConsentSessionTests.ConsumedCodeRejectsOpenDecisionAndNewArrival`.
+  - The API map was refreshed. It also picked up the unmapped `e2154a1`
+    GuidedTour/TourOptions additions.
+
+### [2026-09-29] [Phase 1] Registry scope details
+
+PROCEEDED.
+- A `PersonToken` kind was added, for `/person` identity consent, which the
+  plan did not name.
+- Four-party entries are listed only once the PS asks for consent
+  (`FederationConsent`) or relays an AS interaction. Background federation
+  that needs no person decision stays hidden.
+- The Delivered status applies only to approvals; a denial stays `Denied`.
+- Scripted permission resolutions record `Decision` and `DecidedBy = Script`.
+  Automated SDK decisions with no recorded decider display as
+  `Script` (mission kinds) or `Policy`.
+- The dashboard decision path (`DecideAsync`, which takes the lifecycle gate
+  and consumes the code) landed in Phase 1 with its tests, ahead of the
+  Phase 2 UI.
+- The full Playwright run is deferred to the end of Phase 2. Phase 1 changes
+  no UI.
 
 ## Open questions / inputs needed
 
