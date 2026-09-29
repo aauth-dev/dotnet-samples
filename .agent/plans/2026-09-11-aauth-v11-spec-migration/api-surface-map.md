@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 142 changed public-source files, 252 added/replacement declarations, 137 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 143 changed public-source files, 253 added/replacement declarations, 137 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -259,6 +259,14 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [Program.cs](../../
 Public signatures unchanged (1); behavior reviewed under sample-runtime.
 
 Public owners: `R3AccessServer`.
+
+### samples/MockAgentProvider/Program.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [Program.cs](../../../samples/MockAgentProvider/Program.cs).
+
+Public signatures unchanged (1); behavior reviewed under sample-runtime.
+
+Public owners: `MockAgentProvider`.
 
 ### samples/MockPersonServer/ConsentBridgePersonPendingStore.cs
 
@@ -1301,6 +1309,7 @@ Concept/decision: [consent](#consent). Source: [IDeferredConsentStore.cs](../../
 
 ```diff
 - AAuth.Server.Governance.DeferredConsent: public string Approver { get ; init ; } = string . Empty
++ AAuth.Server.Governance.DeferredConsent: public DateTimeOffset ? MissionExpiresAt { get ; init ; }
 + AAuth.Server.Governance.DeferredConsent: public string PersonServer { get ; init ; } = string . Empty
 ```
 

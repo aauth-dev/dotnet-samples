@@ -295,7 +295,7 @@ Phase rule: exact blob bytes and mission_s256, no legacy header compatibility.
 - [x] Agents reject an approval whose blob bytes do not match `mission_s256`.
 - [x] Compiled callers and focused governance/build checks pass.
 - [x] Approval issues `person_tokens` for asserted resources, omits the rest, and tracks each as an agent-token grant.
-- [ ] A deferred mission approval keeps the approver's `expires_at`.
+- [x] A deferred mission approval keeps the approver's `expires_at`.
 - [ ] MockPersonServer approvals carry `person_tokens`, and both apps show a proposal that names `resources`.
 
 ## Phase 4 - resource and exchange cutover

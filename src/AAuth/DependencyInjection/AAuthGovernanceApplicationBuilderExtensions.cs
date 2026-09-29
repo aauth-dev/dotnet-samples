@@ -133,6 +133,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
                     OwnerKeyThumbprint = verification.Jkt,
                     PersonServer = personServer,
                     Proposal = proposal,
+                    MissionExpiresAt = decision.ExpiresAt,
                 }, ctx.RequestAborted).ConfigureAwait(false);
                 return DeferredAccepted(ctx, options, parked);
             }
@@ -390,7 +391,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
             }
             var proposal = entry.Proposal!;
             return await CompleteMissionAsync(
-                ctx, missions, entry.PersonServer, entry.Agent, proposal, proposal.Tools).ConfigureAwait(false);
+                ctx, missions, entry.PersonServer, entry.Agent, proposal, proposal.Tools, entry.MissionExpiresAt).ConfigureAwait(false);
         }
 
         if (entry.Kind == DeferredConsentKind.Interaction)

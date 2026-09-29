@@ -676,6 +676,17 @@ tampered signature). The tests isolate the AP's key directory and databases:
 with the defaults, a stale `~/.aauth/ap-keys` key from an earlier release made
 the host fail to start.
 
+### [2026-09-28] [Phase 3] Deferred mission approval keeps `expires_at` (post-cutover item 8)
+
+RESOLVED. When `IMissionApprover` returned `Defer()` with an `ExpiresAt`, the
+parked `DeferredConsent` dropped it, so the mission approved after the user
+decided had no expiry. `DeferredConsent.MissionExpiresAt` now carries the
+approver's value, and the completion passes it to `CompleteMissionAsync`.
+
+Evidence: `Mission_Prompt_ApprovalKeepsApproverExpiry`. The mission parsed from
+the completed poll has the approver's `expires_at`. Governance mapper tests: 37
+passed.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate

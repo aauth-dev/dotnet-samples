@@ -61,6 +61,9 @@ public sealed class DeferredConsent
     /// <summary>The proposal (set when <see cref="Kind"/> is <see cref="DeferredConsentKind.MissionCreation"/>).</summary>
     public MissionProposal? Proposal { get; init; }
 
+    /// <summary>The approver's mission <c>expires_at</c>, applied when the user approves a parked proposal.</summary>
+    public DateTimeOffset? MissionExpiresAt { get; init; }
+
     /// <summary>The permission request (set when <see cref="Kind"/> is <see cref="DeferredConsentKind.Permission"/>).</summary>
     public PermissionRequest? Permission { get; init; }
 

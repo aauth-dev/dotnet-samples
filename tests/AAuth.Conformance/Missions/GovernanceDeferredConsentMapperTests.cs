@@ -321,6 +321,29 @@ public class GovernanceDeferredConsentMapperTests
         await host.StopAsync();
     }
 
+    [Fact(DisplayName = "§Deferred Consent — a deferred approval keeps the approver's expires_at")]
+    public async Task Mission_Prompt_ApprovalKeepsApproverExpiry()
+    {
+        var expiresAt = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeSeconds());
+        using var host = await BuildHostAsync(s =>
+        {
+            s.AddAAuthDeferredConsent();
+            s.AddSingleton<IMissionApprover>(new StubApprover(MissionApprovalDecision.Defer() with { ExpiresAt = expiresAt }));
+        });
+        using var client = host.GetTestServer().CreateClient();
+        var response = await client.PostAsync("https://localhost/mission",
+            JsonContent(new JsonObject { ["description"] = "# Plan a trip" }));
+        var location = response.Headers.Location!.ToString();
+        await host.Services.GetRequiredService<IDeferredConsentStore>()
+            .ResolveAsync(location[(location.LastIndexOf('/') + 1)..], approved: true);
+
+        using var done = await client.GetAsync("https://localhost" + location);
+
+        Assert.Equal(HttpStatusCode.OK, done.StatusCode);
+        Assert.Equal(expiresAt, Mission.FromApprovalResponse(await done.Content.ReadAsByteArrayAsync(), Ps).ExpiresAt);
+        await host.StopAsync();
+    }
+
     [Fact(DisplayName = "§Deferred Consent — a declined mission poll resolves to 403 denied")]
     public async Task Mission_Prompt_Declined_Forbidden()
     {
