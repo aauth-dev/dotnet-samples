@@ -170,6 +170,17 @@ PROCEEDED (default: include in Phase 4).
   waiting steps (`CapAuthority` L670-L684) get the same poll-on-arrival,
   prompt, and "Run all" behaviour as the classic tracks.
 
+### [2026-09-29] [Phase 0] Q4–Q15 — Owner review of defaults
+
+RESOLVED (owner): "accept". Every default ruling Q4–Q15 stands as recorded
+above, including:
+- Q6: `Renew()` code consumption, with the SDK `Consume()` fallback logged if
+  needed.
+- Q9: the dashboard decides PS-hosted requests only.
+- Q11: a new `samples/ConsentSupport` library.
+
+Phase 0 is complete.
+
 ## Deviations from plan
 
 _None yet._

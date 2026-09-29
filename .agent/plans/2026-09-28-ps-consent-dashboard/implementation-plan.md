@@ -90,8 +90,8 @@ consent:
 **Definition of Done**
 
 - [x] Every open question (Q1–Q15) has a ruling in `implementation-log.md`.
-- [ ] Owner has reviewed the default rulings Q3–Q15 (revert any by adding a new
-      dated entry).
+- [x] Owner has reviewed the default rulings Q3–Q15 (accepted 2026-09-29; Q3
+      superseded by the green build).
 - [x] MockPersonServer, SampleApp and GuidedTour compile on the branch (Q3 gate).
       The full solution is green at `1045186` (2026-09-29).
 - [x] Research line citations re-derived after `e2154a1` (research.md
