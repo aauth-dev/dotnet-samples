@@ -783,6 +783,83 @@ Evidence:
 
 Conformance 1172 passed.
 
+### [2026-09-29] [Phase 5] Agents reuse mission person tokens (post-cutover item 11)
+
+RESOLVED. `MissionContextHandler` now also sets
+`AAuthRequestOptions.MissionPersonTokens` from `Mission.PersonTokens`. On a
+`person-token` challenge, `ChallengeHandler` presents the approval's token for
+the resource instead of calling `/person` when all of these hold:
+
+- the request is not chained;
+- the token is a person token whose `iss` is the PS in use and whose `aud` is
+  the resource;
+- its `mission_s256` equals the request's mission;
+- its `cnf.jwk` is the signing key;
+- it has more than a minute left.
+
+Any mismatch falls back to `/person`. A reused token the resource then refuses
+is not offered again, and the next challenge calls `/person`. The token's
+signature is left to the resource; the agent received it over its signed PS
+channel.
+
+Evidence: `MissionPersonToken_ReusedOnlyWhenItMatches`. A match makes no PS
+call; resource, mission, key and expiry mismatches each fall back.
+
+### [2026-09-29] [Phase 3, 10] Sample mission approvals carry `person_tokens` (post-cutover item 10)
+
+RESOLVED. MockPersonServer's own `/mission` and its parked approval now return
+`person_tokens`. The SDK gains `HttpContext.IssueMissionPersonTokensAsync`, so
+a host that maps its own mission endpoint gets the tokens with one call instead
+of building `MissionPersonTokenRequest` by hand. `MapAAuthGovernance` uses the
+same helper, which removed a private duplicate.
+
+Both apps now propose missions naming the Trips resource in `resources`:
+
+- GuidedTour's raw proposal body and its narrative;
+- SampleApp's proposal. SampleApp also presents the returned person token
+  instead of calling `/person`, falling back when it is absent; its code sample
+  shows the same.
+
+Evidence: `MissionNamingResources_ApprovalCarriesPersonTokens` against the real
+MockPersonServer (one token keyed by the resource, with the mission's
+`mission_s256`, `iss` and `aud`).
+
+The first mission e2e run failed: the GuidedTour proposal got 400, because
+`GovernanceEndpoints.ParseMissionProposal` validated `resources` against the
+production (HTTPS-only) policy and the tour names `http://localhost:5002`. The
+parser now takes an optional egress policy. `MapAAuthGovernance` passes its
+`EgressPolicy`; MockPersonServer passes its sample policy. The default stays
+HTTPS-only. Evidence: `ParseMissionProposal_LoopbackResourcesNeedDevelopmentPolicy`;
+Playwright `--grep "[Mm]ission"`: 8 passed.
+
+### [2026-09-29] [Phase 3] Person-token lifetime bounds and request fields
+
+RESOLVED. Two DoD boxes lacked a `/person` test. The existing cited tests
+covered `/token` and auth tokens, not person tokens.
+
+- `PersonTokenEndpoint_LifetimeIsCappedByEveryBound`: the issued `exp` is capped
+  by the one-hour default, the agent token, the upstream token and the mission,
+  one case each.
+- `PersonTokenRequest_CapabilitiesAndLoginHintReachAsserter`: `capabilities` and
+  `login_hint` from the `/person` body reach the person asserter.
+
+### [2026-09-29] [Phase 3] Partial resource approval
+
+RESOLVED (SDK change). A PS could not approve only some proposed resources.
+`MissionApprovalDecision.ApprovedResources` (and
+`DeferredConsent.MissionApprovedResources` for the parked path) now set
+`approved_resources`. The governance pipeline keeps only the intersection with
+`proposal.resources` and issues person tokens only for those. Leaving it unset
+approves every proposed resource, as before.
+
+Evidence: `PartialResourceApproval_LimitsApprovedResourcesAndPersonTokens`, sync
+and deferred. An unproposed resource in the decision is dropped. That
+capabilities stay outside the mission hash is covered by
+`MissionModelTests.FromApprovalResponse_ParsesSessionMembers`.
+
+Gates: build 0 warnings; AAuth.Tests 1667, Conformance 1180, R3 323, Events 80;
+API and docs maps refreshed; snippet and link tests 108.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate

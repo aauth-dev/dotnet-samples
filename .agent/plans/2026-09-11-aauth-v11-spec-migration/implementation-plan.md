@@ -245,8 +245,8 @@ Phase rule: typed person verification, never person-to-auth fallback.
 
 - [x] Person typ/claims/DWK/issuer/audience/key and forbidden scope/account cases pass.
 - [x] Person tokens cannot satisfy auth-only authorization.
-- [ ] Person-token lifetime is capped by 1 h, agent, upstream and mission expiry.
-- [ ] `capabilities` and `login_hint` reach the person-token decision.
+- [x] Person-token lifetime is capped by 1 h, agent, upstream and mission expiry.
+- [x] `capabilities` and `login_hint` reach the person-token decision.
 - [x] Immediate/deferred issuance retains exact verified source expiry.
 - [x] Header/body expiry and optional future iat boundaries have separate tests.
 - [x] Metadata, compiled callers, focused tests and solution build pass.
@@ -289,14 +289,14 @@ Phase rule: exact blob bytes and mission_s256, no legacy header compatibility.
 ### Definition of Done
 
 - [x] Envelope formatting does not affect digest; modified blob bytes fail.
-- [ ] Capabilities are outside the hash and partial resource approvals work.
+- [x] Capabilities are outside the hash and partial resource approvals work.
 - [ ] Expiry and terminal-state invariants survive store mutation/races.
 - [ ] Accepted updates have retained exact bytes without changing mission identity.
 - [x] Agents reject an approval whose blob bytes do not match `mission_s256`.
 - [x] Compiled callers and focused governance/build checks pass.
 - [x] Approval issues `person_tokens` for asserted resources, omits the rest, and tracks each as an agent-token grant.
 - [x] A deferred mission approval keeps the approver's `expires_at`.
-- [ ] MockPersonServer approvals carry `person_tokens`, and both apps show a proposal that names `resources`.
+- [x] MockPersonServer approvals carry `person_tokens`, and both apps show a proposal that names `resources`.
 
 ## Phase 4 - resource and exchange cutover
 
@@ -414,7 +414,7 @@ Phase rule: preserve original credential provenance; no blanket unsafe replay.
 - [ ] Each published token-endpoint and polling error has a distinct agent outcome.
 - [ ] Refresh order, ownership, cancellation and recovery tests pass.
 - [x] Both primary apps exercise person and deferred flows with matching steps.
-- [ ] Agents reuse an approved mission person token instead of calling `/person`; mismatched resource, mission, key or expiry falls back.
+- [x] Agents reuse an approved mission person token instead of calling `/person`; mismatched resource, mission, key or expiry falls back.
 - [x] MockAgentProvider refresh answers signature failures with `401` and `Signature-Error`.
 
 ## Phase 6 - supervision, mission actions and delegation

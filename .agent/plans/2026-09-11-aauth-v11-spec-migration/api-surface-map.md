@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 144 changed public-source files, 262 added/replacement declarations, 139 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 145 changed public-source files, 268 added/replacement declarations, 140 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -698,6 +698,7 @@ Public owners: `AAuth.Access.AccessDecisionKind`, `AAuth.Access.AccessDecision`,
 Concept/decision: [resource-managed](#resource-managed). Source: [AAuthRequestOptions.cs](../../../src/AAuth/Agent/AAuthRequestOptions.cs).
 
 ```diff
++ AAuth.Agent.AAuthRequestOptions: public static readonly HttpRequestOptionsKey < System . Collections . Generic . IReadOnlyDictionary < string , string > > MissionPersonTokens = new ( "AAuth.MissionPersonTokens" ) ;
 + AAuth.Agent.AAuthRequestOptions: public static readonly HttpRequestOptionsKey < string > MissionS256 = new ( "AAuth.MissionS256" ) ;
 + AAuth.Agent.AAuthRequestOptions: public static string ? GetMissionS256 ( HttpRequestMessage request )
 ```
@@ -1325,10 +1326,12 @@ Concept/decision: [governance](#governance). Source: [GovernanceEndpoints.cs](..
 - AAuth.Server.Governance.GovernanceEndpoints: public static AuditRecord ParseAudit ( JsonObject body , AAuth . Discovery . AAuthEgressPolicy ? policy = null )
 - AAuth.Server.Governance.GovernanceEndpoints: public static IResult ? Authorize ( HttpContext context , MissionClaim ? reference , StoredMission ? mission )
 - AAuth.Server.Governance.GovernanceEndpoints: public static InteractionRequest ParseInteraction ( JsonObject body , AAuth . Discovery . AAuthEgressPolicy ? policy = null )
+- AAuth.Server.Governance.GovernanceEndpoints: public static MissionProposal ParseMissionProposal ( JsonObject body )
 - AAuth.Server.Governance.GovernanceEndpoints: public static PermissionRequest ParsePermission ( JsonObject body , AAuth . Discovery . AAuthEgressPolicy ? policy = null )
 + AAuth.Server.Governance.GovernanceEndpoints: public static AuditRecord ParseAudit ( JsonObject body )
 + AAuth.Server.Governance.GovernanceEndpoints: public static IResult ? Authorize ( HttpContext context , string ? missionS256 , StoredMission ? mission )
 + AAuth.Server.Governance.GovernanceEndpoints: public static InteractionRequest ParseInteraction ( JsonObject body )
++ AAuth.Server.Governance.GovernanceEndpoints: public static MissionProposal ParseMissionProposal ( JsonObject body , AAuth . Discovery . AAuthEgressPolicy ? egressPolicy = null )
 + AAuth.Server.Governance.GovernanceEndpoints: public static PermissionRequest ParsePermission ( JsonObject body )
 ```
 
@@ -1341,6 +1344,7 @@ Concept/decision: [consent](#consent). Source: [IDeferredConsentStore.cs](../../
 ```diff
 - AAuth.Server.Governance.DeferredConsent: public string Approver { get ; init ; } = string . Empty
 + AAuth.Server.Governance.DeferredConsent: public DateTimeOffset ? MissionExpiresAt { get ; init ; }
++ AAuth.Server.Governance.DeferredConsent: public IReadOnlyList < string > ? MissionApprovedResources { get ; init ; }
 + AAuth.Server.Governance.DeferredConsent: public string PersonServer { get ; init ; } = string . Empty
 ```
 
@@ -1352,6 +1356,7 @@ Concept/decision: [governance](#governance). Source: [IMissionApprover.cs](../..
 
 ```diff
 - AAuth.Server.Governance: public sealed record MissionApprovalContext ( string Agent , string Approver , MissionProposal Proposal )
++ AAuth.Server.Governance.MissionApprovalDecision: public IReadOnlyList < string > ? ApprovedResources { get ; init ; }
 + AAuth.Server.Governance.MissionApprovalDecision: public System . DateTimeOffset ? ExpiresAt { get ; init ; }
 + AAuth.Server.Governance: public sealed record MissionApprovalContext ( string Agent , string PersonServer , MissionProposal Proposal )
 ```
@@ -1422,6 +1427,17 @@ Concept/decision: [governance](#governance). Source: [MissionApprovalBuilder.cs]
 ```
 
 Public owners: `AAuth.Server.Governance.MissionApprovalBuilder`, `AAuth.Server.Governance`.
+
+### src/AAuth/Server/Governance/MissionPersonTokenExtensions.cs
+
+Concept/decision: [governance](#governance). Source: [MissionPersonTokenExtensions.cs](../../../src/AAuth/Server/Governance/MissionPersonTokenExtensions.cs).
+
+```diff
++ AAuth.Server.Governance.MissionPersonTokenExtensions: public static async Task < IReadOnlyDictionary < string , string > ? > IssueMissionPersonTokensAsync ( this HttpContext context , string personServer , string missionS256 , IReadOnlyList < string > resources , DateTimeOffset ? expiresAt = null )
++ AAuth.Server.Governance: public static class MissionPersonTokenExtensions
+```
+
+Public owners: `AAuth.Server.Governance.MissionPersonTokenExtensions`, `AAuth.Server.Governance`.
 
 ### src/AAuth/Server/IJtiStore.cs
 

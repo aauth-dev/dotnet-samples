@@ -88,7 +88,7 @@ public class PersonServerMapperTests
         return app;
     }
 
-    private static HttpClient SignedAgentClient(IHost host, AAuthKey agentKey, string agentId)
+    private static HttpClient SignedAgentClient(IHost host, AAuthKey agentKey, string agentId, TimeSpan? lifetime = null)
     {
         var agentToken = new AgentTokenBuilder
         {
@@ -99,6 +99,7 @@ public class PersonServerMapperTests
             Key = ResourceKey,
             ConfirmationKey = agentKey,
             PersonServer = PsIssuer,
+            Lifetime = lifetime ?? TimeSpan.FromHours(1),
         }.Build();
         var signing = new AAuthSigningHandler(agentKey, () => agentToken)
         {
@@ -228,6 +229,46 @@ public class PersonServerMapperTests
         var boundKey = AAuthKey.FromJwk((JsonObject)payload["cnf"]!["jwk"]!);
         Assert.Equal(agentKey.ComputeJwkThumbprint(), boundKey.ComputeJwkThumbprint());
 
+        await host.StopAsync();
+    }
+
+    [Theory(DisplayName = "§Person Token Structure — a person token is capped at 1 h and by the agent, upstream and mission expiry")]
+    [InlineData("hour")]
+    [InlineData("agent")]
+    [InlineData("upstream")]
+    [InlineData("mission")]
+    public async Task PersonTokenEndpoint_LifetimeIsCappedByEveryBound(string bound)
+    {
+        var agentKey = AAuthKey.Generate();
+        var now = DateTimeOffset.UtcNow;
+        using var host = await BuildHostAsync();
+        const string missionS256 = "Q7cOX4Oq4Fmc5L8FJbfyLmXDVz-lEVJbzsUNr8dlc2E";
+        await host.Services.GetRequiredService<IMissionStore>().SaveAsync(
+            new StoredMission(missionS256, PsIssuer, AgentId, new byte[] { 4, 5, 6 }) { ExpiresAt = now.AddMinutes(5) });
+        using var http = SignedAgentClient(host, agentKey, AgentId,
+            bound switch { "hour" => TimeSpan.FromHours(3), "agent" => TimeSpan.FromMinutes(10), _ => TimeSpan.FromHours(1) });
+        var body = new JsonObject { ["resource"] = ResourceUrl };
+        if (bound == "mission") body["mission_s256"] = missionS256;
+        if (bound == "upstream")
+            body["upstream_token"] = new PersonTokenBuilder
+            {
+                EgressPolicy = TestEgress.Policy, Issuer = PsIssuer, Audience = "https://ap.example", Subject = "upstream-user",
+                ConfirmationKey = AAuthKey.Generate(), AgentTokenExpiresAt = now.AddMinutes(7), Key = PsKey, KeyId = PsKid,
+            }.Build();
+
+        using var response = await http.PostAsJsonAsync("/person", body);
+
+        Assert.True(response.IsSuccessStatusCode, $"Status={(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+        var payload = DecodePayload((string)(await response.Content.ReadFromJsonAsync<JsonObject>())!["person_token"]!);
+        var expires = (long)payload["exp"]!;
+        var ceiling = bound switch
+        {
+            "hour" => (long)payload["iat"]! + 3600,
+            "agent" => now.AddMinutes(10).ToUnixTimeSeconds(),
+            "upstream" => now.AddMinutes(7).ToUnixTimeSeconds(),
+            _ => now.AddMinutes(5).ToUnixTimeSeconds(),
+        };
+        Assert.InRange(expires, ceiling - 5, ceiling);
         await host.StopAsync();
     }
 
@@ -388,6 +429,26 @@ public class PersonServerMapperTests
         Assert.Contains("interaction", asserter.Last.Capabilities!);
         Assert.Contains("payment", asserter.Last.Capabilities!);
 
+        await host.StopAsync();
+    }
+
+    [Fact(DisplayName = "§Person Token Request — capabilities and login_hint reach the person-token decision")]
+    public async Task PersonTokenRequest_CapabilitiesAndLoginHintReachAsserter()
+    {
+        var asserter = new CapturingAsserter();
+        using var host = await BuildHostAsync(asserter);
+        using var http = SignedAgentClient(host, AAuthKey.Generate(), AgentId);
+
+        using var response = await http.PostAsJsonAsync("/person", new JsonObject
+        {
+            ["resource"] = ResourceUrl, ["login_hint"] = "alice@example.com",
+            ["capabilities"] = new JsonArray("interaction", "payment"),
+        });
+
+        Assert.True(response.IsSuccessStatusCode, $"Status={(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+        Assert.True(asserter.Last!.PersonTokenRequest);
+        Assert.Equal("alice@example.com", asserter.Last.LoginHint);
+        Assert.Equal(["interaction", "payment"], asserter.Last.Capabilities!);
         await host.StopAsync();
     }
 
