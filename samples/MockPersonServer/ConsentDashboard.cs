@@ -171,9 +171,9 @@ public static class ConsentDashboard
                 ["key"] = group.Key,
                 ["label"] = grouping switch
                 {
-                    "mission" when group.Key.Length == 0 => "No mission",
-                    "mission" => first.MissionDescription ?? group.Key,
-                    "agent" => group.Key,
+                    "mission" when group.Key.Length == 0 => "Not under a mission",
+                    "mission" => "Mission: " + (first.MissionDescription ?? group.Key),
+                    "agent" => "Agent: " + group.Key,
                     _ => null,
                 },
                 ["mission_s256"] = grouping == "mission" ? first.MissionS256 : null,
@@ -199,6 +199,7 @@ public static class ConsentDashboard
             ["action"] = record.Action,
             ["mission_s256"] = record.MissionS256,
             ["mission"] = record.MissionDescription,
+            ["tools"] = record.ProposedTools.Count == 0 ? null : string.Join(", ", record.ProposedTools),
             // The SDK egress policy already validated this relayed AS URL; only
             // http(s) ever reaches an href.
             ["external_url"] = Uri.TryCreate(record.ExternalInteractionUrl, UriKind.Absolute, out var external)
@@ -301,6 +302,7 @@ public static class ConsentDashboard
           MissionToken: 'Extra access under a mission', MissionCreation: 'Start a new mission',
           Permission: 'Run a tool under a mission', FederatedConsent: 'Access through an Access Server',
           AccessServerInteraction: 'Sign-in at an Access Server' };
+        const statusLabels = { Delivered: 'Approved · agent has it', Withdrawn: 'Withdrawn by agent' };
         const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
         const when = iso => iso ? new Date(iso).toLocaleString() : '';
         function row(dl, label, value, asCode) {
@@ -315,13 +317,15 @@ public static class ConsentDashboard
           if (r.scope) c.dataset.scope = r.scope;
           if (r.mission_s256) c.dataset.mission = r.mission_s256;
           const body = el('div');
-          const title = el('div'); title.append(el('span', 'kind', labels[r.kind] || r.kind), ' ', el('span', 'pill s-' + r.status, r.status));
+          const title = el('div'); title.append(el('span', 'kind', labels[r.kind] || r.kind));
+          if (r.status !== 'Pending') title.append(' ', el('span', 'pill s-' + r.status, statusLabels[r.status] || r.status));
           body.append(title);
           const dl = el('dl', 'meta');
           row(dl, 'Agent', r.agent, true); row(dl, 'Resource', r.resource, true); row(dl, 'Scope', r.scope, true);
-          row(dl, 'Account', r.account, true); row(dl, 'Tool', r.action, true); row(dl, 'Mission', r.mission);
-          if (r.mission_s256) row(dl, 'Mission s256', r.mission_s256, true);
+          row(dl, 'Account', r.account, true); row(dl, 'Tool', r.action, true); if (group !== 'mission') row(dl, 'Mission', r.mission); row(dl, 'Tools', r.tools, true);
+          if (r.mission_s256 && group !== 'mission') row(dl, 'Mission s256', r.mission_s256, true);
           row(dl, 'Requested', when(r.created_at));
+          if (r.status === 'Pending') row(dl, 'Expires', when(r.expires_at));
           if (r.status !== 'Pending') row(dl, 'Decided', [when(r.decided_at), r.decided_by && 'via ' + r.decided_by.toLowerCase()].filter(Boolean).join(' '));
           body.append(dl); c.append(body);
           const actions = el('div', 'actions');

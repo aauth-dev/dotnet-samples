@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 160 changed public-source files, 419 added/replacement declarations, 154 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 160 changed public-source files, 420 added/replacement declarations, 154 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -430,6 +430,7 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [ConsentRegistry.cs
 + MockPersonServer.ConsentRecord: public DateTimeOffset CreatedAt { get ; }
 + MockPersonServer.ConsentRecord: public DateTimeOffset ExpiresAt
 + MockPersonServer.ConsentRecord: public DeferredState Lifecycle
++ MockPersonServer.ConsentRecord: public IReadOnlyList < string > ProposedTools
 + MockPersonServer.ConsentRecord: public MissionPendingEntry ? MissionEntry { get ; }
 + MockPersonServer.ConsentRecord: public PersonPendingEntry ? PersonEntry { get ; }
 + MockPersonServer.ConsentRecord: public bool IsDecidable

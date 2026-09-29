@@ -12,7 +12,8 @@
 
 .ps-direct {
     font-size: .85rem;
-    color: #64748b;
+    /* Inherit the host's text colour so the hint reads on light and dark pages. */
+    opacity: .8;
 }
 
 .ps-actions {

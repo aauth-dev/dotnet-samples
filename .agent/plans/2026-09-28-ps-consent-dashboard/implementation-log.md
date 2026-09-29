@@ -439,6 +439,37 @@ The reviewer passed these and spot-checks confirmed them:
 - Full Playwright suite (Phase 4 run, unchanged since except docs and this
   serializer guard): 78 passed, 1 skipped.
 
+### [2026-09-29] [Post-plan] Screenshot UX pass
+
+PROCEEDED. At the owner's request, I took screenshots after the plan, using
+`make demo`. The integrated browser only shows a 1024x768 viewport, so the
+full-page shots were taken with the container's Playwright and viewed as
+images. Fixes:
+- **Dashboard.**
+  - No status pill on pending cards; it only repeated the section heading.
+  - Friendly history labels: `Delivered` shows as "Approved · agent has it",
+    and `Withdrawn` as "Withdrawn by agent". The JSON `status` values are
+    unchanged.
+  - Pending cards show **Expires**.
+  - Mission-creation cards list the proposed **Tools**, matching the
+    per-request consent screen.
+  - In the Mission grouping, cards drop the Mission and s256 rows that the
+    group header already shows.
+  - Group headers read "Mission: …", "Agent: …" and "Not under a mission".
+- **Prompt.** A new `ShowWaiting` parameter lets a host hide the prompt's own
+  spinner. The GuidedTour polling banner now shows a single spinner. The
+  secondary hint inherits the host's text colour, so it reads on the dark
+  tour theme.
+- **Checked and left as is.**
+  - The SampleApp prompt: dashboard button, live poll count, direct link.
+  - The GuidedTour Mission banner.
+  - The dashboard highlight and the "Run all" continuation after a dashboard
+    approval.
+- **Verification.**
+  - Build clean; AAuth.Tests 1691 passed.
+  - API map and docs inventory refreshed.
+  - Full Playwright suite: 78 passed, 1 skipped (Keycloak), `--retries=0`.
+
 ## Open questions / inputs needed
 
 _None yet._

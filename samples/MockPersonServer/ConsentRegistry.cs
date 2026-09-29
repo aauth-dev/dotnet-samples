@@ -78,6 +78,10 @@ public sealed class ConsentRecord
     public string? MissionDescription => MissionEntry?.Proposal?.Description
         ?? (MissionS256 is { } s256 ? _policy.Describe(s256) : null);
 
+    /// <summary>Tool names a mission proposal asks for (mission creation only).</summary>
+    public IReadOnlyList<string> ProposedTools =>
+        MissionEntry?.Proposal?.Tools.Select(tool => tool.Name).ToArray() ?? [];
+
     public ConsentDecider? DecidedBy { get; private set; }
     public DateTimeOffset? DecidedAt { get; private set; }
 

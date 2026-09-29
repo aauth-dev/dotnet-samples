@@ -443,7 +443,7 @@
             </div>
             @if (Session.WorkerConsent is null && Session.IsPersonServerConsent && Session.CurrentInteraction is { } interaction)
             {
-                <ConsentSupport.PersonServerApprovalPrompt @key="interaction.Code" PersonServer="@Session.PersonServer" Interaction="interaction" />
+                <ConsentSupport.PersonServerApprovalPrompt @key="interaction.Code" PersonServer="@Session.PersonServer" Interaction="interaction" ShowWaiting="false" />
             }
             else
             {

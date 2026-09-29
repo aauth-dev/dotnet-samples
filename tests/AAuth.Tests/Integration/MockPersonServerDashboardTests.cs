@@ -134,7 +134,7 @@ public class MockPersonServerDashboardTests : IClassFixture<MockPersonServerCons
         var permissionId = asked.Headers.Location!.OriginalString.Split('/').Last();
         var byMission = (await dashboard.ListAsync("mission"))["pending"]!.AsArray()
             .Single(g => (string?)g!["mission_s256"] == s256)!;
-        Assert.Equal("Plan the team offsite", (string?)byMission["label"]);
+        Assert.Equal("Mission: Plan the team offsite", (string?)byMission["label"]);
         using var approvePermission = await dashboard.DecideAsync(permissionId, "approve");
         Assert.Equal(HttpStatusCode.OK, approvePermission.StatusCode);
         using var granted = await agent.GetAsync(asked.Headers.Location);
