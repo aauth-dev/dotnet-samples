@@ -289,6 +289,45 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
         Assert.True(await _jtiStore.IsRevokedAsync(known));
     }
 
+    [Fact(DisplayName = "§Token Revocation — one issuer beyond its entry bound is 429 rate_limited with Retry-After")]
+    public async Task Revocation_EntryBound_IsRateLimited()
+    {
+        await StartRevocationHost(options =>
+        {
+            options.IsAcceptedIssuer = AAuthTrust.Any;
+            options.Limits = new RevocationLimits { MaxEntriesPerIssuer = 2 };
+        });
+        Assert.Equal(HttpStatusCode.OK, (await SendSignedRevoke("entry-a")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await SendSignedRevoke("entry-b")).StatusCode);
+
+        var limited = await SendSignedRevoke("entry-c");
+
+        Assert.Equal((HttpStatusCode)429, limited.StatusCode);
+        Assert.Equal("rate_limited", (string?)(await limited.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        Assert.True(limited.Headers.RetryAfter?.Delta > TimeSpan.Zero);
+        Assert.False(await _jtiStore.IsRevokedAsync(new TokenKey(ApIssuer, "entry-c")));
+        // A repeat of a held entry is not a new entry.
+        Assert.Equal(HttpStatusCode.OK, (await SendSignedRevoke("entry-a")).StatusCode);
+    }
+
+    [Fact(DisplayName = "§Token Revocation — one issuer beyond its rate bound is 429 rate_limited with Retry-After")]
+    public async Task Revocation_RateBound_IsRateLimited()
+    {
+        await StartRevocationHost(options =>
+        {
+            options.IsAcceptedIssuer = AAuthTrust.Any;
+            options.Limits = new RevocationLimits { MaxRequestsPerIssuer = 2, Window = TimeSpan.FromMinutes(1) };
+        });
+        Assert.Equal(HttpStatusCode.OK, (await SendSignedRevoke("rate-a")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await SendSignedRevoke("rate-a")).StatusCode);
+
+        var limited = await SendSignedRevoke("rate-b");
+
+        Assert.Equal((HttpStatusCode)429, limited.StatusCode);
+        Assert.InRange(limited.Headers.RetryAfter!.Delta!.Value.TotalSeconds, 1, 60);
+        Assert.False(await _jtiStore.IsRevokedAsync(new TokenKey(ApIssuer, "rate-b")));
+    }
+
     [Fact(DisplayName = "§Token Revocation — a body 'iss' is ignored: the caller revokes only its own token")]
     public async Task Revocation_IssuerCannotRevokeOtherIssuerWithSameId()
     {

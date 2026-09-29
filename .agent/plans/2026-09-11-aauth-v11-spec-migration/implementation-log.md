@@ -719,6 +719,31 @@ Evidence:
   names the AS and its downstream Wallet. That result can only come from the
   recorded presentation.
 
+### [2026-09-29] [Phase 7] Per-issuer revocation bounds (post-cutover item 5)
+
+RESOLVED. L2745: a recipient that accepts any verified issuer SHOULD bound what
+one issuer can hold, in entries and in rate, and answer `rate_limited` beyond
+either (429, `Retry-After` REQUIRED, L2740). `AAuthRevocationOptions.Limits`
+(`RevocationLimits`) is on by default: 10,000 unexpired entries and 600
+requests a minute per issuer; `null` turns it off.
+
+The check runs after body validation and before anything is recorded:
+
+- an entry counts from acceptance until its `exp` plus clock skew;
+- a repeat of a held `jti` is not a new entry;
+- `Retry-After` is the time until the oldest request leaves the window, or
+  until the earliest entry expires.
+
+DECISION: bounds apply on every mapped endpoint, not only under
+`AAuthTrust.Any`, because an accepted-issuer list does not bound volume either.
+
+Not done: the limiter is in memory per endpoint instance. A scaled-out host
+needs a shared limiter; this is recorded as a deployment limit, not a gap.
+
+Evidence: `Revocation_EntryBound_IsRateLimited` and
+`Revocation_RateBound_IsRateLimited` (429 `rate_limited` with `Retry-After`,
+and the token is not recorded). Conformance 1168 passed.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate

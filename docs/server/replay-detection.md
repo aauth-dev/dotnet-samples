@@ -128,7 +128,9 @@ app.MapAAuthRevocationEndpoint(
 `IsAcceptedIssuer` decides whose revocations the recipient accepts; assign
 `AAuthTrust.Any` to accept any verified issuer. `MaxTokenLifetime` (default 24
 hours) bounds the `exp` a revocation may name, and so how long an unseen
-revocation is held.
+revocation is held. `Limits` (on by default: 10,000 unexpired entries and 600
+requests a minute per issuer) bounds what one accepted issuer can send; set it to
+`null` to turn the bounds off.
 
 ```http
 Content-Type: application/json
@@ -142,8 +144,10 @@ in order:
 | Condition | Response |
 |-----------|----------|
 | Caller has no verified AAuth signature | `401 Unauthorized` (`invalid_request`); a failed signature is `401` with `Signature-Error` |
+| Signature does not cover `content-digest` and `content-type` | `401` with `Signature-Error: error=invalid_input` and `required_input` |
 | Caller is not a server, or not accepted | `403 Forbidden` (`unsupported_iss`) |
 | Malformed JSON, or missing/malformed `jti` or `exp`, or `exp` beyond `MaxTokenLifetime` | `400 Bad Request` (`invalid_request`) |
+| The issuer is over its entry or rate bound | `429 Too Many Requests` (`rate_limited`) with `Retry-After` |
 | The revocation cannot be recorded (inventory full) | `500 Internal Server Error` (`server_error`) |
 | Recorded, seen or not, including repeated revocation | `200 OK` once every downstream revocation is terminal |
 

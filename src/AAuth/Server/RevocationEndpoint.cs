@@ -121,6 +121,7 @@ public static class RevocationEndpoint
 
         var options = new AAuthRevocationOptions();
         configure?.Invoke(options);
+        var limiter = options.Limits is { } limits ? new RevocationIssuerLimiter(limits, options.Clock) : null;
 
         endpoints.MapPost(path, async (HttpContext context) =>
         {
@@ -170,6 +171,11 @@ public static class RevocationEndpoint
 
             var token = new TokenKey(callerId, jti);
             var expiresAt = DateTimeOffset.FromUnixTimeSeconds(expSeconds);
+            if (limiter?.TryAdmit(callerId, jti, expiresAt + ClockSkew) is { } retryAfter)
+            {
+                context.Response.Headers.RetryAfter = retryAfter.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                return Error(RevocationErrorCode.RateLimited, $"'{callerId}' has sent more revocations than this recipient accepts for now.");
+            }
             try
             {
                 await jtiStore.RevokeAsync(token, expiresAt, cancellationToken);

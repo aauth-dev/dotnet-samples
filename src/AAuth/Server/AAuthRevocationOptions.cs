@@ -33,6 +33,12 @@ public sealed class AAuthRevocationOptions
     public TimeSpan MaxTokenLifetime { get; set; } = TimeSpan.FromHours(24);
 
     /// <summary>
+    /// Per-issuer entry and rate bounds; beyond either the caller gets <c>429 rate_limited</c>.
+    /// On by default; <see langword="null"/> disables them.
+    /// </summary>
+    public RevocationLimits? Limits { get; set; } = new();
+
+    /// <summary>
     /// Report the cascade in the <c>200</c> body's <c>downstream</c> array (an AS to a PS).
     /// A PS sets this to <see langword="false"/>: it answers an agent provider with an empty body.
     /// </summary>
