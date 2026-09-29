@@ -194,21 +194,32 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
     [InlineData("permission", "terminated")]
     [InlineData("audit", "terminated")]
     [InlineData("mission-interaction", "terminated")]
+    [InlineData("permission", "expired")]
+    [InlineData("audit", "expired")]
+    [InlineData("mission-interaction", "expired")]
+    [InlineData("mission-action", "foreign")]
+    [InlineData("mission-action", "terminated")]
+    [InlineData("mission-action", "expired")]
     public async Task MissionAuthorization_RejectsInvalidContext(string endpoint, string scenario)
     {
         using var client = Client();
         if (scenario == "foreign") client.DefaultRequestHeaders.Add("Test-Agent", "aauth:foreign@agent.example");
         if (scenario == "anonymous") client.DefaultRequestHeaders.Add("Test-No-Identity", "true");
+        var store = _host!.Services.GetRequiredService<IMissionStore>();
         if (scenario == "terminated")
-            await _host!.Services.GetRequiredService<IMissionStore>().SetStateAsync(_missionS256, MissionState.Terminated);
+            await store.SetStateAsync(_missionS256, MissionState.Terminated);
+        if (scenario == "expired")
+            await store.SaveAsync((await store.GetAsync(_missionS256))! with { ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(-1) });
         var body = new JsonObject
         {
-            ["mission_s256"] = _missionS256, ["action"] = "WebSearch", ["type"] = "question", ["question"] = "Refundable?",
+            ["mission_s256"] = _missionS256, ["action"] = endpoint == "mission-action" ? "update" : "WebSearch",
+            ["type"] = "question", ["question"] = "Refundable?", ["description"] = "Also a hotel",
         };
-        using var response = await client.PostAsync("https://localhost/" + endpoint, JsonContent(body));
+        var path = endpoint == "mission-action" ? "mission/" + _missionS256 : endpoint;
+        using var response = await client.PostAsync("https://localhost/" + path, JsonContent(body));
         // A foreign mission is indistinguishable from a missing one (§Mission Endpoint Errors).
         Assert.Equal(scenario == "foreign" ? HttpStatusCode.NotFound : HttpStatusCode.Forbidden, response.StatusCode);
-        var expected = scenario == "terminated" ? "mission_terminated"
+        var expected = scenario is "terminated" or "expired" ? "mission_terminated"
             : scenario == "anonymous" ? "invalid_request" : "mission_not_found";
         Assert.Equal(expected, (string?)(await ReadJson(response))?["error"]);
         Assert.False(response.Headers.Contains("Signature-Error"));

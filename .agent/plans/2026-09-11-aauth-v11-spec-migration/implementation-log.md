@@ -1138,6 +1138,73 @@ Evidence per box:
 Gates: AAuth.Tests 1678, Conformance 1228, R3 325, Events 80; API and docs maps
 refreshed; snippet and link tests 108.
 
+### [2026-09-29] [Phase 6] Mission meaning after updates; delegation checks
+
+Checked each box against the code. One real gap (fast-path consent) and
+several missing tests.
+
+**Accepted updates reach consent (SDK fix).** §Mission Update (L1481): from
+acceptance on, the mission means the blob plus its accepted updates. Two things
+were wrong:
+
+- `IMissionTokenConsent` saw only the blob;
+- the prior-consent fast path granted silently on a consent given before an
+  update.
+
+`MissionTokenConsentContext.AcceptedUpdates` now carries the update entries
+(retained bytes in `Detail`). A prior consent counts only if it was recorded
+after the latest accepted update.
+
+Evidence per box:
+
+1. **Owner, expiry, termination across continuations:**
+   - `MissionAuthorization_RejectsInvalidContext` now includes `expired` for
+     permission, audit and interaction, and the `/mission/{s256}` action for
+     foreign, terminated and expired;
+   - `Permission_Deferred_RevalidatesMissionBeforeDelivery` now includes
+     `expired` alongside `owner` and `terminated` (the resumed poll
+     re-checks);
+   - `Mission_Terminated_Rejected` covers terminated and expired at `/token`
+     and `/person`.
+2. **Updated meaning reaches consent and audit:**
+   - `AcceptedUpdate_ReachesConsentAndResetsFastPath`: the fast path grants
+     before the update; after it, the Supervisor is asked again and sees the
+     update; the new consent restores the fast path;
+   - `AcceptedUpdate_ReachesPermissionDecision`: the permission decider's log
+     holds the update with its bytes.
+3. **Distinct caller, intermediary and worker keys (Q3, Q4):**
+   `FourPartyUsesDistinctChildKeyAndUpstreamBounds` uses separate keys for the
+   upstream caller, the intermediary and the worker. It checks that:
+   - `cnf` is the worker key;
+   - `sub` is the PS's record, not the upstream `sub`;
+   - `mission_s256` is copied from the upstream;
+   - `exp` is capped by the upstream and the child.
+
+   Binding resolution is covered by `UpstreamFromRevokedBinding_IsRevokedUpstreamToken`.
+4. **`aud` mismatch, foreign-AP intermediary, copied `sub`:**
+   - new `CallChaining_UpstreamAudienceMustBeIntermediaryIssuer`: a PS person
+     token at `/token` and `/person`, and an AS auth token, audienced to
+     another AP give `invalid_upstream_token`; the same AS token audienced
+     correctly is allowed (`CallChaining_FourPartyUpstream_WithMission_Allowed`);
+   - a foreign-AP intermediary is the same check seen from the other side
+     (upstream `aud` ≠ intermediary `iss`); also covered by
+     `CombinedFederationRejectsMismatchedVerifiedContext(upstream-audience)`;
+   - copied `sub`: `CallChaining_ThreePartyUpstream_NoMission_Allowed` and the
+     four-party test.
+5. **`invalid_subagent_token`:** the check existed
+   (`AgentIssuanceContext.VerifyAsync`) but was untested. New
+   `SubagentTokenFromAnotherIssuerOrParent_IsInvalidSubagentToken` covers PS and
+   AS, each with another issuer and another parent. It asserts the error code
+   and that the binding check (not a signature failure) fired. Writing it
+   showed that a naive other-AP token fails earlier on its `sub` domain; the
+   test now keeps the `sub` consistent with its `iss`.
+6. **Direct worker and wrong parent:** `SubAgent_DirectRequest_Rejected` (a
+   sub-agent signing directly gets `400 invalid_request`) and the `parent`
+   cases above.
+
+Gates: AAuth.Tests 1678, Conformance 1247, R3 325, Events 80; API and docs maps
+refreshed.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate

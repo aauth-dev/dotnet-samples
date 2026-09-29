@@ -138,9 +138,10 @@ public class GovernanceDeferredConsentMapperTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Permission_Deferred_RevalidatesMissionBeforeDelivery(bool changedOwner)
+    [InlineData("owner")]
+    [InlineData("terminated")]
+    [InlineData("expired")]
+    public async Task Permission_Deferred_RevalidatesMissionBeforeDelivery(string change)
     {
         using var host = await BuildHostAsync(services =>
         {
@@ -161,8 +162,11 @@ public class GovernanceDeferredConsentMapperTests
         Assert.Equal(HttpStatusCode.Accepted, parked.StatusCode);
         var location = "https://localhost" + parked.Headers.Location;
         var missions = host.Services.GetRequiredService<IMissionStore>();
+        var changedOwner = change == "owner";
         if (changedOwner)
             await missions.SaveAsync(new StoredMission(mission.S256, Ps, "aauth:foreign@agent.example", mission.RawBytes));
+        else if (change == "expired")
+            await missions.SaveAsync((await missions.GetAsync(mission.S256))! with { ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(-1) });
         else
             await missions.SetStateAsync(mission.S256, MissionState.Terminated);
         await host.Services.GetRequiredService<IDeferredConsentStore>().ResolveAsync(
@@ -847,6 +851,35 @@ public class GovernanceDeferredConsentMapperTests
         public Task<PermissionDecision> DecideAsync(PermissionDecisionContext context, CancellationToken ct = default)
         {
             onCall();
+            return Task.FromResult(new PermissionDecision(PermissionOutcome.Prompt, PermissionDecisionReason.OutOfScope));
+        }
+    }
+
+    [Fact(DisplayName = "§Mission Update — the permission decision sees an accepted update in the mission log")]
+    public async Task AcceptedUpdate_ReachesPermissionDecision()
+    {
+        const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        PermissionDecisionContext? seen = null;
+        using var host = await BuildHostAsync(s => s.AddSingleton<IPermissionDecider>(new CapturingDecider(context => seen = context)));
+        await host.Services.GetRequiredService<IMissionStore>().SaveAsync(new StoredMission(s256, Ps, Agent, new byte[] { 1, 2, 3 }));
+        using var client = host.GetTestServer().CreateClient();
+
+        using var update = await client.PostAsync("https://localhost/mission/" + s256,
+            JsonContent(new JsonObject { ["action"] = "update", ["description"] = "Economy only." }));
+        using var permission = await client.PostAsync("https://localhost/permission",
+            JsonContent(new JsonObject { ["action"] = "BookFlight", ["mission_s256"] = s256 }));
+
+        Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+        var entry = Assert.Single(seen!.Log, e => e.Kind == MissionLogEntryKind.Update);
+        Assert.Equal("Economy only.", (string?)JsonNode.Parse(entry.Detail!)!["description"]);
+        await host.StopAsync();
+    }
+
+    private sealed class CapturingDecider(Action<PermissionDecisionContext> onDecide) : IPermissionDecider
+    {
+        public Task<PermissionDecision> DecideAsync(PermissionDecisionContext context, CancellationToken ct = default)
+        {
+            onDecide(context);
             return Task.FromResult(new PermissionDecision(PermissionOutcome.Prompt, PermissionDecisionReason.OutOfScope));
         }
     }

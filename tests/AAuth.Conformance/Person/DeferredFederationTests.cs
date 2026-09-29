@@ -748,6 +748,53 @@ public class DeferredFederationTests
     }
 
     [Theory]
+    [InlineData("issuer", false)]
+    [InlineData("issuer", true)]
+    [InlineData("parent", false)]
+    [InlineData("parent", true)]
+    public async Task SubagentTokenFromAnotherIssuerOrParent_IsInvalidSubagentToken(string variant, bool atAs)
+    {
+        await using var fixture = await Fixture.CreateAsync("immediate");
+        var childKey = AAuthKey.Generate();
+        // A verifiable agent token, but from another AP (issuer) or naming another parent.
+        var childToken = variant == "issuer"
+            ? ReissuedByOtherAp(new AgentTokenBuilder
+            {
+                Issuer = "https://ap.test", Subject = "aauth:demo+worker@ap.test", ParentAgent = "aauth:demo@ap.test",
+                Key = fixture.ApKey, KeyId = "key", ConfirmationKey = childKey,
+            }.Build())
+            : new AgentTokenBuilder
+            {
+                Issuer = "https://ap.test", Subject = "aauth:other+worker@ap.test", ParentAgent = "aauth:other@ap.test",
+                Key = fixture.ApKey, KeyId = "key", ConfirmationKey = childKey,
+            }.Build();
+        string ReissuedByOtherAp(string token)
+        {
+            var payload = Payload(token);
+            payload["iss"] = "https://other-ps.test";
+            payload["sub"] = "aauth:demo+worker@other-ps.test";
+            return JwtWriter.SignCompact(new JsonObject { ["alg"] = "Ed25519", ["typ"] = AgentTokenBuilder.TokenType, ["kid"] = "key" },
+                payload, fixture.SecondPsKey);
+        }
+        var body = new JsonObject
+        {
+            ["resource_token"] = fixture.ResourceToken("read", agentKey: childKey),
+            ["presented_token"] = fixture.PersonToken(confirmationKey: childKey),
+            ["subagent_token"] = childToken,
+        };
+        if (atAs) body["agent_token"] = fixture.AgentToken;
+
+        using var result = atAs ? await fixture.Ps.PostAsJsonAsync("/token", body) : await fixture.Agent.PostAsJsonAsync("/token", body);
+
+        Assert.Equal(HttpStatusCode.BadRequest, result.StatusCode);
+        var problem = (await result.Content.ReadFromJsonAsync<JsonObject>())!;
+        Assert.Equal("invalid_subagent_token", (string?)problem["error"]);
+        // The token verified; the parent/issuer binding is what failed.
+        Assert.Contains("share its issuer", (string?)problem["detail"]);
+        Assert.Null(fixture.Policy.Last);
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]
     [InlineData(false, true)]

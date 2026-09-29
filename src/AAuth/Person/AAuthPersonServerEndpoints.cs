@@ -801,12 +801,25 @@ public static class AAuthPersonServerEndpoints
         async Task<(MissionTokenConsentDecision Decision, string Detail)> ReviewMissionAsync(MissionTokenConsentContext context)
         {
             var approval = await ValidateMissionAsync(context.MissionS256, context.ConsentAgentId ?? context.AgentId, context.UpstreamAuthorization);
+            var missionLog = app.Services.GetRequiredService<IMissionLog>();
+            // §Mission Update: from acceptance on, the mission means the approved blob
+            // plus its accepted updates. A consent recorded before the latest update was
+            // given against the older meaning, so it no longer grants silently.
+            var history = await missionLog.ReadAsync(context.MissionS256);
+            var updates = history.Where(entry => entry.Kind == MissionLogEntryKind.Update).ToArray();
+            var sinceUpdate = updates.Length == 0 ? history
+                : history.Skip(history.ToList().LastIndexOf(updates[^1]) + 1).ToArray();
             if (context.Stage == MissionTokenConsentStage.Gate
-                && await app.Services.GetRequiredService<IMissionLog>().HasPriorConsentAsync(
+                && await missionLog.HasPriorConsentAsync(
                     context.MissionS256, context.ResourceUrl, context.Scope, account: context.Account,
-                    agentId: context.AgentId, agentKeyThumbprint: context.AgentKeyThumbprint))
+                    agentId: context.AgentId, agentKeyThumbprint: context.AgentKeyThumbprint)
+                && (updates.Length == 0 || sinceUpdate.Any(entry => entry.Kind == MissionLogEntryKind.Token && entry.Granted == true
+                    && AccountBinding.Matches(entry.Account, context.Account)
+                    && entry.AgentId == context.AgentId && entry.AgentKeyThumbprint == context.AgentKeyThumbprint
+                    && entry.Resource == context.ResourceUrl && entry.Scope == context.Scope)))
                 return (MissionTokenConsentDecision.Grant(), "PriorConsent");
-            return (await app.Services.GetRequiredService<IMissionTokenConsent>().ReviewAsync(context with { ValidatedApproval = approval }), "InScope");
+            return (await app.Services.GetRequiredService<IMissionTokenConsent>().ReviewAsync(
+                context with { ValidatedApproval = approval, AcceptedUpdates = updates }), "InScope");
         }
 
         async Task<IResult> ResolveMissionGateAsync(HttpContext ctx, PersonPendingEntry entry)

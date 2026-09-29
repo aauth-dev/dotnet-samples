@@ -203,13 +203,13 @@ public class PersonServerMapperTests
     // token's `iss` (= https://ap.example) per §Upstream Token Verification, and it
     // MUST name this PS. A PS-issued token is verified with this PS's own key; an
     // AS-issued one via the stub JWKS (ResourceKey).
-    private static string UpstreamToken(string issuer, string? missionS256 = null)
+    private static string UpstreamToken(string issuer, string? missionS256 = null, string audience = "https://ap.example")
         => issuer == PsIssuer
             ? new PersonTokenBuilder
             {
                 EgressPolicy = TestEgress.Policy,
                 Issuer = PsIssuer,
-                Audience = "https://ap.example",
+                Audience = audience,
                 Subject = "upstream-user",
                 ConfirmationKey = AAuthKey.Generate(),
                 AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
@@ -223,7 +223,7 @@ public class PersonServerMapperTests
                 AgentTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
                 Issuer = issuer,
                 Dwk = AuthTokenBuilder.AccessDwk,
-                Audience = "https://ap.example",
+                Audience = audience,
                 PersonServer = PsIssuer,
                 AgentConfirmationKey = AAuthKey.Generate(),
                 Key = ResourceKey,
@@ -786,6 +786,40 @@ public class PersonServerMapperTests
         await host.StopAsync();
     }
 
+    [Fact(DisplayName = "§Mission Update — an accepted update reaches the Supervisor and ends the prior-consent fast path")]
+    public async Task AcceptedUpdate_ReachesConsentAndResetsFastPath()
+    {
+        var agentKey = AAuthKey.Generate();
+        var reviews = new List<MissionTokenConsentContext>();
+        using var host = await BuildHostAsync(consent: new StubMissionConsent(context =>
+        {
+            reviews.Add(context);
+            return MissionTokenConsentDecision.Grant();
+        }));
+        using var http = SignedAgentClient(host, agentKey, AgentId);
+
+        using (var first = await http.PostAsJsonAsync("/token", TokenRequest(agentKey, missionS256: S256)))
+            Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        using (var repeat = await http.PostAsJsonAsync("/token", TokenRequest(agentKey, missionS256: S256)))
+            Assert.Equal(HttpStatusCode.OK, repeat.StatusCode);
+        Assert.Single(reviews);
+
+        await host.Services.GetRequiredService<IMissionLog>().AppendAsync(
+            new MissionLogEntry(S256, MissionLogEntryKind.Update, DateTimeOffset.UtcNow) { Detail = "{\"description\":\"Only economy\"}" });
+        using (var afterUpdate = await http.PostAsJsonAsync("/token", TokenRequest(agentKey, missionS256: S256)))
+            Assert.Equal(HttpStatusCode.OK, afterUpdate.StatusCode);
+
+        Assert.Equal(2, reviews.Count);
+        Assert.Empty(reviews[0].AcceptedUpdates);
+        Assert.Equal("{\"description\":\"Only economy\"}", Assert.Single(reviews[1].AcceptedUpdates).Detail);
+
+        // The consent given after the update restores the fast path.
+        using (var again = await http.PostAsJsonAsync("/token", TokenRequest(agentKey, missionS256: S256)))
+            Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+        Assert.Equal(2, reviews.Count);
+        await host.StopAsync();
+    }
+
     [Theory]
     [InlineData("GET", false)]
     [InlineData("POST", false)]
@@ -888,8 +922,12 @@ public class PersonServerMapperTests
         foreach (var response in responses) response.Dispose();
     }
 
-    [Fact(DisplayName = "§Mission Status Errors — a terminated mission is rejected (403 mission_terminated)")]
-    public async Task Mission_Terminated_Rejected()
+    [Theory(DisplayName = "§Mission Status Errors — a terminated or expired mission is rejected (403 mission_terminated) at /token and /person")]
+    [InlineData("/token", false)]
+    [InlineData("/token", true)]
+    [InlineData("/person", false)]
+    [InlineData("/person", true)]
+    public async Task Mission_Terminated_Rejected(string path, bool expired)
     {
         var agentKey = AAuthKey.Generate();
         using var host = await BuildHostAsync();
@@ -897,10 +935,13 @@ public class PersonServerMapperTests
 
         const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         var missions = host.Services.GetRequiredService<IMissionStore>();
-        await missions.SaveAsync(new StoredMission(s256, PsIssuer, AgentId, new byte[] { 1, 2, 3 }));
-        await missions.SetStateAsync(s256, MissionState.Terminated);
+        await missions.SaveAsync(new StoredMission(s256, PsIssuer, AgentId, new byte[] { 1, 2, 3 })
+            { ExpiresAt = expired ? DateTimeOffset.UtcNow.AddSeconds(-1) : null });
+        if (!expired) await missions.SetStateAsync(s256, MissionState.Terminated);
 
-        using var response = await http.PostAsJsonAsync("/token", TokenRequest(agentKey, missionS256: s256));
+        using var response = await http.PostAsJsonAsync(path, path == "/token"
+            ? TokenRequest(agentKey, missionS256: s256)
+            : new JsonObject { ["resource"] = ResourceUrl, ["mission_s256"] = s256 });
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
@@ -1105,6 +1146,26 @@ public class PersonServerMapperTests
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
         Assert.Equal("invalid_upstream_token", (string?)body!["error"]);
+        await host.StopAsync();
+    }
+
+    [Theory(DisplayName = "§Upstream Token Verification — an upstream token not audienced to the intermediary's own AP is rejected at the PS")]
+    [InlineData(PsIssuer, "/token")]
+    [InlineData(PsIssuer, "/person")]
+    [InlineData(AsIssuer, "/token")]
+    public async Task CallChaining_UpstreamAudienceMustBeIntermediaryIssuer(string upstreamIssuer, string path)
+    {
+        var agentKey = AAuthKey.Generate();
+        using var host = await BuildHostAsync();
+        using var http = SignedAgentClient(host, agentKey, AgentId);
+        var request = path == "/token" ? TokenRequest(agentKey) : new JsonObject { ["resource"] = ResourceUrl };
+        // The intermediary's agent token is from https://ap.example; this upstream names another AP.
+        request["upstream_token"] = UpstreamToken(upstreamIssuer, audience: "https://other-ap.example");
+
+        using var response = await http.PostAsJsonAsync(path, request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("invalid_upstream_token", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
         await host.StopAsync();
     }
 

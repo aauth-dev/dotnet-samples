@@ -458,12 +458,12 @@ Phase rule: no act-derived authority or direct-AS agent routing; explicit trust 
 
 ### Definition of Done
 
-- [ ] Actions enforce owner, expiry and irreversible termination across continuations.
-- [ ] Updated mission meaning reaches fast-path consent and audit.
-- [ ] Distinct caller/intermediary/worker-key cases validate Q3/Q4 rulings.
-- [ ] Upstream `aud` mismatch, foreign-AP intermediaries and copied `sub` fail.
-- [ ] Sub-agent `iss` mismatch fails with `invalid_subagent_token`.
-- [ ] Direct-worker and wrong-parent PS requests fail.
+- [x] Actions enforce owner, expiry and irreversible termination across continuations.
+- [x] Updated mission meaning reaches fast-path consent and audit.
+- [x] Distinct caller/intermediary/worker-key cases validate Q3/Q4 rulings.
+- [x] Upstream `aud` mismatch, foreign-AP intermediaries and copied `sub` fail.
+- [x] Sub-agent `iss` mismatch fails with `invalid_subagent_token`.
+- [x] Direct-worker and wrong-parent PS requests fail.
 - [x] Both apps' sequences and payload assertions use PS-recorded delegation.
 - [x] An upstream token issued from a revoked calling agent's agent token is `revoked_upstream_token`.
 - [x] A host-revoked agent-person binding makes the upstream token `revoked_upstream_token`.

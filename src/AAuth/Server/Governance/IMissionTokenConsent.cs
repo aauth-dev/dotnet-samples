@@ -102,6 +102,14 @@ public sealed record MissionTokenConsentContext
     public string? ConsentAgentId { get; init; }
     public UpstreamTokenValidationResult? UpstreamAuthorization { get; init; }
     public StoredMission? ValidatedApproval { get; internal init; }
+
+    /// <summary>
+    /// The mission's accepted updates, oldest first (§Mission Update). The mission
+    /// now means <see cref="ValidatedApproval"/> plus these; review against both.
+    /// Each entry's <see cref="MissionLogEntry.Detail"/> holds the update bytes as
+    /// the PS persisted them.
+    /// </summary>
+    public IReadOnlyList<MissionLogEntry> AcceptedUpdates { get; internal init; } = Array.Empty<MissionLogEntry>();
     /// <summary>The verified agent identifier.</summary>
     public required string AgentId { get; init; }
 

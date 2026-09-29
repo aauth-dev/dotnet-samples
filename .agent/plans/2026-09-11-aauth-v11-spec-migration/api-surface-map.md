@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 150 changed public-source files, 288 added/replacement declarations, 141 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 150 changed public-source files, 289 added/replacement declarations, 141 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -1446,6 +1446,7 @@ Concept/decision: [consent](#consent). Source: [IMissionTokenConsent.cs](../../.
 ```diff
 - AAuth.Server.Governance.MissionTokenConsentContext: public required MissionClaim Mission { get ; init ; }
 + AAuth.Server.Governance.MissionTokenConsentContext: public AAuth . Person . AgentAssertedContent ? AgentAsserted { get ; init ; }
++ AAuth.Server.Governance.MissionTokenConsentContext: public IReadOnlyList < MissionLogEntry > AcceptedUpdates { get ; internal init ; } = Array . Empty < MissionLogEntry > ( )
 + AAuth.Server.Governance.MissionTokenConsentContext: public required string MissionS256 { get ; init ; }
 ```
 
