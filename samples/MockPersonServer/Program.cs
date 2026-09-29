@@ -238,8 +238,8 @@ app.MapPost("/local/wallet/revoke", async (HttpContext context, MetadataClient m
 // -----------------------------------------------------------------------
 
 // mission_endpoint (§Mission Creation): the agent proposes a mission; the PS
-// records the approved mission and returns the verbatim approval blob plus the
-// `AAuth-Mission` header whose `s256` the agent verifies.
+// records the approved mission and returns the approval response: the verbatim
+// blob (base64url) and its `s256`, which the agent verifies (#mission-approval).
 app.MapPost("/mission", async (
     HttpContext ctx,
     IMissionStore missions,
@@ -327,8 +327,8 @@ app.MapPost("/mission", async (
 
 // Interactive mission-creation resolution (§Mission Creation). The agent polls
 // here while the user approves or declines the proposed mission in the browser.
-// On approval the PS builds and stores the verbatim approval blob and returns it
-// with the AAuth-Mission header — exactly what the synchronous path returns.
+// On approval the PS builds and stores the verbatim approval blob and returns the
+// same approval response the synchronous path returns.
 app.MapMethods("/mission-create-pending/{id}", ["GET", "DELETE"], async (
     HttpContext ctx, string id, MissionPendingStore pending,
     IMissionStore missions, MissionPolicyStore policy, MissionConsentScript script) =>

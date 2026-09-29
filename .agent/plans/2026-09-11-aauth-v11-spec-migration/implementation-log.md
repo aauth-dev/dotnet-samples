@@ -1469,6 +1469,91 @@ Gates: Release build 0 warnings; AAuth.Tests 1678, Conformance 1254, R3 327,
 Events 80; ApiSurface rewritten (0 unmapped); docs inventory refreshed; snippet
 and link tests 108.
 
+### [2026-09-29] [Phase 9] High-stakes findings reproduced at their controlling code
+
+Research rates 15 findings P1. Thirteen have an R (reproduced) source
+assessment; F15 and F20 are D (derived). Each R finding was checked by
+mutation on a clean tree: disable the controlling check with a temporary edit,
+build, run the discriminating test, then restore with `git checkout -- src`.
+Every targeted test failed under its mutation:
+
+| F | Controlling check disabled | Test that failed |
+|---|---|---|
+| F02 | `TokenVerifier`: person token carrying `scope`/`account` | `RawMalformedValuesHaveTypedErrorsWithoutTrustedContext` (both person cases) |
+| F03 | `AAuthChallengeMiddleware`: agent token answered with `requirement=person-token` | `ChallengesAgentTokenWithPersonTokenRequirement` |
+| F04 | `TokenVerifier.VerifyPresentedTokenAsync`: `presented_jti` match | `TokenRequest_MismatchedPresentedToken_Rejected` (`other-person-token`) |
+| F06 | `AAuthVerificationMiddleware`: person-token issuer trust separate from auth-token trust | `PersonTokenIssuerTrustIsIndependent` (PS trusted for person tokens only; separate run) |
+| F08 | PS mission review: prior consent must postdate the latest update | `AcceptedUpdate_ReachesConsentAndResetsFastPath` |
+| F09 | `InMemoryMissionStore.SetStateAsync`: terminal state is final | `MissionStore_TerminatedIsFinal` |
+| F10 | PS `TryReadAgentAsserted`: agent-asserted content reaches consent | `AgentAssertedContent_ReachesAsserterApartFromResourceContext` (both paths; separate run) |
+| F11 | `AgentIssuanceContext` and PS: sub-agent cannot request directly | `SubAgent_DirectRequest_Rejected` |
+| F12 | PS: auth-token ceiling includes mission `expires_at` | `AuthToken_IsCappedByMissionExpiry` (immediate and deferred) |
+| F13 | PS verification: `RequireBodyCoverage` | `PsBody_UncoveredOrTampered_FailsBeforeAsserter` (both uncovered paths) |
+| F14 | `InMemoryJtiStore.RevokeAsync`: record unseen tokens | `UnseenRevocation_IsRetainedUntilItsExpiryPlusRetention` |
+| F17 | `AAuthSingleUseGrants.ExecuteOnceAsync`: retain the result | `SingleUseGrant_ExecutesOncePerJti` |
+| F19 | `R3DocumentEndpoint`: entitlement check | `PersonServerEvaluator_ReadsOnlyDocumentsItIsEntitledTo` |
+
+F15 was reproduced earlier in this session: with the withdrawn-resource-token
+fix stashed, all four cases failed. The main batch of mutations was built
+once, and its targets ran together (14 Conformance, 29 AAuth.Tests, 1 R3), so
+a failure could come from a neighbouring mutation. Each failing test's display
+name matches its own mutation, which rules this out. The restored tree builds
+with 0 warnings.
+
+**API map (Phase 9).** `tools/ApiSurface` reports 153 changed public-source
+files, +300/-145 declarations and 0 unmapped files. It writes only
+`2026-09-11-aauth-v11-spec-migration/api-surface-map.md`, the default
+`--map`. The draft-10 plan folder changed only through `74f8d7e`, a
+repository-wide Markdown frontmatter change merged from `main`, and
+`e1e85c0`, which re-pinned 8 links to removed files to tag `v0.10.0-alpha.1`
+so the record stays readable. Its content is otherwise untouched.
+
+### [2026-09-29] [Phase 10] Old wire and API name sweep
+
+Swept `README.md`, `docs/`, `samples/`, `src/` and `tests/e2e` for the map's
+pattern list, case-insensitively and by both wire and .NET names. The terms
+were `token_endpoint` (word-bounded), `aauth-access-token`, `AAuth-Mission`,
+`MissionHeader*`, `MissionAware`, `mission_aware`, `MissionClaim`, `ActChain`,
+`act.agent`, `"act"`, `r3_conditional`, `openapi-gateway`, `unknown_token`,
+`TrustedPersonServers`, `PresentedTokenId`, `login_endpoint`,
+`person_token_jti`, `DirectAs`, `approver` mission references, R3
+`Conditional` and `{iss, jti}` revocation bodies.
+
+Stale live guidance found and fixed:
+
+- **MissionAgent** (`README.md`, `Program.cs`): the step list and sequence
+  diagram showed the agent sending an `AAuth-Mission` header and an
+  `Authorization:` auth token. They now show a person token carrying
+  `mission_s256` and an auth token in `Signature-Key`.
+- **MissionAgent runtime bug:** the console printed `first?["mission"]`, but
+  Trips returns `mission_s256`, so the "echoed mission" line was always empty.
+  It now reads `mission_s256`, and the comments no longer describe an
+  `{approver, s256}` claim.
+- **Trips** (`README.md`, `Program.cs`): mission-aware prose referred to the
+  `AAuth-Mission` header and a mission object.
+- **MockPersonServer** (`README.md`, `Program.cs`): the mission endpoint was
+  described as returning an `AAuth-Mission` header. It now describes the
+  approval response (`mission`, `s256`, `person_tokens`).
+- **SampleApp** `CallChain.razor`: the note described the draft-10
+  "no mission, `iss` is a PS" routing and `AAuth-Mission` forwarding. It now
+  says requests route to the PS the upstream token names, even when an AS
+  issued it, and that `mission_s256` travels on.
+- **Concierge** `README.md`: the flow and sample response showed a nested
+  `act` chain. They now show the person-token-with-`upstream_token` leg and the
+  actual response shape (`chain`, `upstream`, `concierge`, `downstream`).
+
+Kept, with reasons:
+
+- `TrustedPersonServers` is a current R3 and Access Server option.
+- "no act chain" appears in comments that assert the absence.
+- `Conditional` appears only as a requirement-level column value.
+- `wallet-protocol.md` explicitly says draft-11 has no direct agent-to-AS
+  path.
+
+The docs inventory was regenerated: 174 files, 662 blocks. `CheckSnippet`
+fails `Documentation_FrozenSurface` for any block it cannot classify, so every
+block carries a validation class. Snippet and link tests: 108 pass.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate

@@ -196,23 +196,23 @@ var session = await governance.ProposeMissionAsync(new MissionProposal(
         new MissionTool("compare_options", "Compare flight and hotel options"),
     },
 }, GovernanceFor("Approve this mission and its tools"));
-// The session wraps the approved mission and auto-threads its claim
-// (approver + s256) and the bound PS into every later governed call.
+// The session wraps the approved mission and auto-threads its mission_s256
+// and the bound PS into every later governed call.
 var mission = session.Mission;
 Console.WriteLine($"   description     : {mission.Description}");
 Console.WriteLine($"   approved by     : {mission.PersonServer}");
 Console.WriteLine($"   approved tools  : {string.Join(", ", mission.ApprovedTools.Select(t => t.Name))}");
-// The s256 is an RFC 7638-style thumbprint of the signed approval blob, NOT the
-// text: tokens carry only {approver, s256} as a compact, verifiable reference
-// to the mission above (§Mission Approval). The description/tools stay with the
-// approver, so a leaked token never exposes the mission's prose.
+// The s256 is the SHA-256 of the approval blob's exact bytes, NOT the text:
+// tokens carry only mission_s256 as a compact, verifiable reference to the
+// mission above (#mission-approval). The description and tools stay with the
+// PS, so a leaked token never exposes the mission's prose.
 Console.WriteLine($"   mission s256    : {mission.S256}  (thumbprint reference to the description above)");
 
 Section(resourceScopeMissionApproved
     ? "3. Access a mission-aware resource — IN SCOPE (silent, no prompt)"
     : "3. Access a mission-aware resource — first call is OUT OF SCOPE");
-// The Trips /trips endpoint is mission-aware: it copies the mission claim
-// from the AAuth-Mission header into the resource token it issues (§Terminology).
+// The Trips /trips endpoint is mission-aware: the agent's person token names
+// the mission as mission_s256, and the resource token it issues copies it.
 // The PS reads that claim and governs the token request. When this (resource,
 // scope) is mission-approved as in-scope it resolves silently at gate 2a;
 // otherwise it falls outside the mission's approved scope and the PS prompts.
@@ -222,9 +222,9 @@ if (resourceScopeMissionApproved)
 }
 var first = await AccessMissionResourceAsync(resourceUrl);
 Console.WriteLine($"   resource said   : access={first?["access"]}, scope={first?["scope"]}");
-// The resource echoes only the {approver, s256} reference from the token — the
+// The resource echoes only the mission_s256 reference from the token — the
 // same s256 printed in step 2, which maps back to "{mission.Description}".
-Console.WriteLine($"   echoed mission  : {first?["mission"]?.ToJsonString()}");
+Console.WriteLine($"   echoed mission  : {first?["mission_s256"]}");
 Console.WriteLine($"                     (s256 references: \"{mission.Description}\")");
 
 Section(resourceScopeMissionApproved
@@ -312,8 +312,8 @@ async Task<JsonObject?> AccessMissionResourceAsync(string url)
     agentToken = await apClient.RefreshAsync(refreshEndpoint, localKeyHandle);
 
     // One mission-aware client does the whole resource-access leg:
-    //   • WithMission emits the AAuth-Mission header, which the signing handler
-    //     covers as the aauth-mission component (§Mission Context at Resources);
+    //   • WithMission requests person tokens with the mission's mission_s256,
+    //     so resource and auth tokens carry it (#missions);
     //   • WithChallengeHandling drives the 401 -> token-exchange -> retry cycle
     //     and surfaces any out-of-scope consent prompt via OnInteractionRequired.
     // An out-of-scope exchange the user denies throws

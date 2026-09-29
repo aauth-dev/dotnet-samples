@@ -48,9 +48,9 @@ MockAgentProvider (:5301)  ->  MockPersonServer (:5100)  ->  Trips (:5002)
 1. **Enrol** with the Agent Provider to obtain a signing key + agent token.
 2. **Propose a mission** (with two approved tools) — the PS returns the signed
    approval blob and its `s256` thumbprint.
-3. **Access a mission-aware resource** (`Trips /trips`). The resource
-   copies the mission claim from the signed `AAuth-Mission` header into the
-   resource token it issues (§Terminology), so the PS governs the exchange.
+3. **Access a mission-aware resource** (`Trips /trips`). The agent's person
+   token names the mission as `mission_s256`, and the resource copies it into
+   the resource token it issues, so the PS governs the exchange.
    `trips.read` is **mission-approved** by default, so this call is granted
    **silently** (gate 2a — in scope), matching the SampleApp mission demo.
 4. **Access it again** — still granted **silently** (gate 2a, in scope).
@@ -95,16 +95,18 @@ sequenceDiagram
     PS-->>Agent: signed approval blob + s256 thumbprint
 
     Note over Agent,R: Access a mission-aware resource — trips.read is mission-approved
-    Agent->>R: GET /trips + AAuth-Mission: {approver, s256}
-    R-->>Agent: 401 + resource token (mission claim copied in)
+    Agent->>PS: person token request (resource, mission_s256)
+    PS-->>Agent: person token (mission_s256)
+    Agent->>R: GET /trips + person token
+    R-->>Agent: 401 + resource token (mission_s256 copied in)
     Agent->>PS: exchange resource token for an auth token
     Note right of PS: Token gate: trips.read is in scope (gate 2a)
     PS-->>Agent: auth token granted silently — no prompt
-    Agent->>R: GET /trips + Authorization: auth token
+    Agent->>R: GET /trips + auth token (Signature-Key)
     R-->>Agent: 200 — echoes the mission reference
 
     Note over Agent,R: Access an ELEVATED scope — out of the mission's intent
-    Agent->>R: GET /trips/book + AAuth-Mission: {approver, s256}
+    Agent->>R: GET /trips/book + person token
     R-->>Agent: 401 + resource token (trips.book)
     Agent->>PS: exchange resource token for an auth token
     Note right of PS: trips.book is out of the mission scope
@@ -114,7 +116,7 @@ sequenceDiagram
         User-->>PS: ✅ approve
     end
     PS-->>Agent: elevated auth token (consent accrues to the mission)
-    Agent->>R: GET /trips/book + Authorization: auth token
+    Agent->>R: GET /trips/book + auth token (Signature-Key)
     R-->>Agent: 200 — elevated claims
 
     Note over Agent,PS: Permission for a local action (no resource involved)

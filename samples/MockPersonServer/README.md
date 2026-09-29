@@ -86,7 +86,7 @@ It serves the four governance endpoints from the protocol exchange diagram:
 
 | Endpoint | Spec | Purpose |
 |---|---|---|
-| `POST /mission` | §Mission Creation | The agent proposes a mission in natural language; the PS stores the approval bytes verbatim, computes `s256`, and returns the `AAuth-Mission` header (`approver`, `s256`). |
+| `POST /mission` | §Mission Creation | The agent proposes a mission in natural language; the PS stores the approval bytes verbatim, computes `s256`, and returns the approval response (`mission` blob, `s256`, and `person_tokens` for approved `resources`). |
 | `POST /permission` | §Permission Endpoint | The agent asks whether an action is allowed. Pre-approved tools on the active mission short-circuit to *granted*; everything else runs the three-gate decision (in-scope / prior consent / prompt the user). |
 | `POST /audit` | §Audit Endpoint | The agent reports an action it took; the PS appends it to the mission log (fire-and-forget). |
 | `POST /mission-interaction` | §Interaction Endpoint | The agent relays a question, payment, or completion proposal to the user through the PS. |

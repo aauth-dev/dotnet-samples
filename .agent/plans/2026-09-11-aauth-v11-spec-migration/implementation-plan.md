@@ -604,8 +604,8 @@ Phase rule: report only verified checks; preserve generic and deployed-profile b
 ### Definition of Done
 
 - [x] Ledger negatives have execution evidence or explicit conditional/deployment dispositions.
-- [ ] High-stakes R findings are directly reproduced at their controlling code.
-- [ ] API map has no unmapped changed public-source files; historical maps untouched.
+- [x] High-stakes R findings are directly reproduced at their controlling code.
+- [x] API map has no unmapped changed public-source files; historical maps untouched.
 - [x] Release/full solution, explicit R3/Events and TypeScript gates pass.
 
 ## Phase 10 - samples, snippets and docs analysis-and-update sweep
@@ -631,8 +631,8 @@ Phase rule: current-format live guidance; preserve intentional generic/OIDC/hist
 
 ### Definition of Done
 
-- [ ] Every discovered instructional block has a validation class and disposition.
-- [ ] No unexplained old wire/API name remains in live guidance.
+- [x] Every discovered instructional block has a validation class and disposition.
+- [x] No unexplained old wire/API name remains in live guidance.
 - [ ] Both apps' real traces and static instructions agree for selected flows.
 - [ ] Stub/Keycloak browser results and external/unavailable limits are recorded separately.
 - [x] No Wallet flow is labelled as a direct agent-to-AS exchange.

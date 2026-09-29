@@ -38,14 +38,14 @@
     <small>
         <strong>Note:</strong> mission-based <strong>agent governance</strong> is
         optional and orthogonal to call chaining (AAuth §Agent Governance) and is
-        intentionally left out of this demo. With no <code>mission.approver</code>
-        in the upstream token, each hop follows §Call Chaining's
-        “no&nbsp;mission, <code>iss</code> is a PS” path. If a mission were present,
-        <code>WithCallChaining</code> would auto-forward the <code>AAuth-Mission</code>
-        header and route to the mission's PS. A no-mission AS-issued upstream
-        instead routes directly through <code>aauth-access.json</code>, with the
-        intermediary's agent token in <code>Signature-Key</code> and
-        <code>upstream_token</code> in the body. Cached downstream grants are
+        intentionally left out of this demo, so the upstream token carries no
+        <code>mission_s256</code>. Each hop routes its downstream token requests to
+        the Person Server the upstream token names: the <code>iss</code> of a person
+        token, or the <code>ps</code> of an auth token, even when an Access Server
+        issued it (§Call Chaining). A <code>mission_s256</code> in the upstream token
+        would travel on in the downstream person and auth tokens. The intermediary
+        signs with its own agent token and sends <code>upstream_token</code> in the
+        body. Cached downstream grants are
         reused only for the same upstream authorization, mission, account and key.
     </small>
 </p>
@@ -90,9 +90,9 @@ async Task&lt;IResult&gt; RunChainAsync(HttpContext ctx, string upstream)
         .As(conciergeUrl, agentId)
         .WithKid(kid)
         .WithPersonServer(psUrl)
-        .WithCallChaining(upstream)   // forwards upstream token
-                                      // (+ AAuth-Mission if a mission
-                                      //  were present — omitted here)
+        .WithCallChaining(upstream)   // sends upstream_token to the PS it
+                                      // names (a mission_s256 would travel
+                                      //  on; omitted here)
         .WithChallengeHandling(opts =&gt;
         {
             opts.OnInteractionRequired = (i, _) =&gt;
