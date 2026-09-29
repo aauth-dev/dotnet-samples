@@ -48,6 +48,7 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
                     Level = AAuthLevel.Identified, Scheme = "jwt", IssuerVerified = true,
                     TokenType = AAuthTokenType.AgentToken,
                     Agent = context.Request.Headers["Test-Agent"].FirstOrDefault() ?? "aauth:assistant@agent.example",
+                    CoveredComponents = new HashSet<string> { "@method", "@authority", "@path", "signature-key", "content-type", "content-digest" },
                 });
             await next();
         });

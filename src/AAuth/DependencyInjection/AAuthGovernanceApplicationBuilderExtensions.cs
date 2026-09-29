@@ -92,6 +92,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
             return AAuth.Server.AAuthProblemDetails.Create("invalid_request", "The mission endpoint requires an agent token.", statusCode: StatusCodes.Status403Forbidden);
         }
 
+        if (AAuth.Server.AAuthProblemDetails.MissingBodyCoverage(ctx) is { } uncovered) return uncovered;
         var body = await ReadJsonAsync(ctx).ConfigureAwait(false);
         if (body is null)
         {
@@ -154,6 +155,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         IMissionLog log,
         IPermissionDecider decider)
     {
+        if (AAuth.Server.AAuthProblemDetails.MissingBodyCoverage(ctx) is { } uncovered) return uncovered;
         var body = await ReadJsonAsync(ctx).ConfigureAwait(false);
         if (body is null)
         {
@@ -230,6 +232,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         IMissionStore missions,
         IAuditSink sink)
     {
+        if (AAuth.Server.AAuthProblemDetails.MissingBodyCoverage(ctx) is { } uncovered) return uncovered;
         var body = await ReadJsonAsync(ctx).ConfigureAwait(false);
         if (body is null)
         {
@@ -260,6 +263,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         IMissionLog log,
         IInteractionRelay relay)
     {
+        if (AAuth.Server.AAuthProblemDetails.MissingBodyCoverage(ctx) is { } uncovered) return uncovered;
         var body = await ReadJsonAsync(ctx).ConfigureAwait(false);
         if (body is null)
         {
@@ -476,6 +480,7 @@ public static class AAuthGovernanceApplicationBuilderExtensions
         IMissionLog log,
         IInteractionRelay relay)
     {
+        if (AAuth.Server.AAuthProblemDetails.MissingBodyCoverage(ctx) is { } uncovered) return uncovered;
         var body = await ReadJsonAsync(ctx).ConfigureAwait(false);
         var action = (string?)(body?["action"] as JsonValue);
         if (body is null || !AAuth.Tokens.MissionReference.IsValid(missionS256) || action is not ("update" or "completion"))

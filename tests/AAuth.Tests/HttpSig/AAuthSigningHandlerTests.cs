@@ -105,6 +105,9 @@ public class AAuthSigningHandlerTests
         baseBuilder.Append("\"@authority\": resource.example\n");
         baseBuilder.Append("\"@path\": /authorize\n");
         baseBuilder.Append("\"signature-key\": sig=jwt;jwt=\"abc.def.ghi\"\n");
+        // A body is always covered by content-type and content-digest (§Covered Components).
+        baseBuilder.Append("\"content-type\": ").Append(string.Join(", ", req.Content!.Headers.GetValues("Content-Type"))).Append('\n');
+        baseBuilder.Append("\"content-digest\": ").Append(string.Join(", ", req.Content.Headers.GetValues("Content-Digest"))).Append('\n');
         baseBuilder.Append("\"@signature-params\": ").Append(paramsLine);
 
         Assert.True(key.Verify(Encoding.ASCII.GetBytes(baseBuilder.ToString()), signature));
@@ -362,7 +365,7 @@ public class AAuthSigningHandlerTests
 
         var input = string.Join(',', req.Headers.GetValues("Signature-Input"));
         Assert.Equal(
-            $"sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\" \"content-digest\");created={clock.ToUnixTimeSeconds()}",
+            $"sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\" \"content-digest\" \"content-type\");created={clock.ToUnixTimeSeconds()}",
             input);
 
         // The auto-computed digest must be covered by the signature.
@@ -376,6 +379,7 @@ public class AAuthSigningHandlerTests
             .Append("\"@path\": /api\n")
             .Append("\"signature-key\": sig=jwt;jwt=\"abc.def.ghi\"\n")
             .Append("\"content-digest\": ").Append(expectedDigest).Append('\n')
+            .Append("\"content-type\": application/json; charset=utf-8\n")
             .Append("\"@signature-params\": ").Append(paramsLine)
             .ToString();
         Assert.True(key.Verify(Encoding.ASCII.GetBytes(baseStr), signature));

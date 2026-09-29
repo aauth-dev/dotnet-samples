@@ -14,6 +14,15 @@ public sealed class AAuthVerificationOptions
     public IReadOnlyList<string> AcceptedSchemes { get; init; } = ["jwt"];
     public string SignatureLabel { get; init; } = "sig";
     public IReadOnlyCollection<string> RequiredComponents { get; init; } = [];
+
+    /// <summary>
+    /// When <see langword="true"/>, a request that carries a body MUST also cover
+    /// <c>content-type</c> and <c>content-digest</c> (§Covered Components: required
+    /// on every body-bearing request to a PS or AS endpoint). A request without a
+    /// body is unaffected. A request that omits them fails with <c>invalid_input</c>
+    /// naming them in <c>required_input</c>, before any handler runs.
+    /// </summary>
+    public bool RequireBodyCoverage { get; init; }
     public bool GenericSignatureKeys { get; init; }
     /// <summary>
     /// Optional allow-list of trusted Agent Provider issuers (for <c>aa-agent+jwt</c>).

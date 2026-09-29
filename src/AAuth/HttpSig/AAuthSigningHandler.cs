@@ -123,8 +123,25 @@ public sealed class AAuthSigningHandler : DelegatingHandler
 
     public async Task SignAsync(HttpRequestMessage request, CancellationToken cancellationToken = default)
     {
+        CoverBody(request);
         await EnsureRequiredContentDigestAsync(request, cancellationToken).ConfigureAwait(false);
         Sign(request);
+    }
+
+    // §Covered Components: a body-bearing request to a PS or AS MUST cover
+    // content-type and content-digest. The signer cannot tell a PS or AS from a
+    // resource, so it covers both on every request with a body; covering more
+    // than a server requires is always accepted.
+    private static void CoverBody(HttpRequestMessage request)
+    {
+        if (request.Content is null)
+            return;
+        request.Options.TryGetValue(AdditionalComponentsKey, out var requested);
+        var body = request.Content.Headers.ContentType is null
+            ? new[] { "content-digest" }
+            : new[] { "content-type", "content-digest" };
+        request.Options.Set(AdditionalComponentsKey,
+            (requested ?? []).Concat(body).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
     }
 
     // When a resource requires `content-digest` as an additional covered

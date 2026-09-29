@@ -160,6 +160,27 @@ public class AccessEndpointR3Tests
     }
 
     [Theory]
+    [InlineData("uncovered")]
+    [InlineData("tampered")]
+    public async Task UncoveredOrTamperedBodyFailsBeforeDocumentPolicyOrAudit(string bodyMode)
+    {
+        var audit = new InMemoryR3AuditSink();
+        var fetches = 0;
+        var policies = 0;
+        var fixture = await R3AccessFixture.CreateAsync(auditSink: audit, onFetch: () => fetches++, onPolicy: () => policies++);
+        await using var app = fixture.App;
+
+        using var response = await fixture.PostTokenAsync(bodyMode: bodyMode);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Contains(bodyMode == "uncovered" ? "invalid_input" : "invalid_signature",
+            Assert.Single(response.Headers.GetValues("Signature-Error")));
+        Assert.Equal(0, fetches);
+        Assert.Equal(0, policies);
+        Assert.Empty(audit.Records);
+    }
+
+    [Theory]
     [InlineData(false, "added")]
     [InlineData(true, "added")]
     [InlineData(false, "stripped")]
@@ -1303,12 +1324,14 @@ public class AccessEndpointR3Tests
                 proposal ? ProposalUri : R3Uri, proposal ? ProposalS256 : R3S256, scope, account));
         }
 
-        public async Task<HttpResponseMessage> PostTokenAsync(string? resourceToken = null, JsonObject? extra = null)
+        public async Task<HttpResponseMessage> PostTokenAsync(string? resourceToken = null, JsonObject? extra = null, string? bodyMode = null)
         {
-            using var client = new AAuthClientBuilder(PsKey)
-                .UseJwksUri(R3TestData.PsIssuer, AAuthConstants.DwkFiles.Person, R3TestData.PsKid)
-                .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(App.GetTestServer().CreateHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
-                .Build();
+            using var client = bodyMode is null
+                ? new AAuthClientBuilder(PsKey)
+                    .UseJwksUri(R3TestData.PsIssuer, AAuthConstants.DwkFiles.Person, R3TestData.PsKid)
+                    .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(App.GetTestServer().CreateHandler(), AAuth.Discovery.AAuthTransportContract.InProcessOnly)
+                    .Build()
+                : UnsafeBodyClient(bodyMode);
             client.BaseAddress = new Uri(R3TestData.AsIssuer);
             var body = new JsonObject
             {
@@ -1324,6 +1347,24 @@ public class AccessEndpointR3Tests
                 }
             }
             return await client.PostAsJsonAsync("/token", body);
+        }
+
+        // "uncovered" signs without content-type/content-digest; "tampered" swaps the body after signing.
+        private HttpClient UnsafeBodyClient(string bodyMode)
+        {
+            var signer = new AAuth.HttpSig.AAuthSigningHandler(PsKey,
+                new AAuth.HttpSig.JwksUriSignatureKeyProvider(R3TestData.PsIssuer, AAuthConstants.DwkFiles.Person, R3TestData.PsKid));
+            HttpMessageHandler handler;
+            if (bodyMode == "uncovered")
+            {
+                handler = new UncoveredBodySigner(signer) { InnerHandler = App.GetTestServer().CreateHandler() };
+            }
+            else
+            {
+                signer.InnerHandler = new BodySwapHandler { InnerHandler = App.GetTestServer().CreateHandler() };
+                handler = signer;
+            }
+            return new InProcessHttpClient(handler) { BaseAddress = new Uri(R3TestData.AsIssuer) };
         }
 
         // Poll the AS pending Location the way the PS does: a signed GET over the

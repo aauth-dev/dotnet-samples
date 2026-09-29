@@ -199,7 +199,7 @@ public static class AAuthAccessServerEndpoints
             ctx => !ctx.Request.Path.StartsWithSegments("/.well-known")
                 && !ctx.Request.Path.StartsWithSegments(options.RevocationPath)
                 && !ctx.Request.Path.StartsWithSegments(interactionPrefix),
-            branch => branch.UseAAuthVerification(new AAuthVerificationOptions { EgressPolicy = options.EgressPolicy, AcceptedSchemes = ["jwks_uri"], Clock = () => options.TimeProvider.GetUtcNow() }));
+            branch => branch.UseAAuthVerification(new AAuthVerificationOptions { EgressPolicy = options.EgressPolicy, AcceptedSchemes = ["jwks_uri"], RequireBodyCoverage = true, Clock = () => options.TimeProvider.GetUtcNow() }));
 
         var tokenVerifier = app.Services.GetRequiredService<TokenVerifier>();
         var metadataClient = app.Services.GetRequiredService<MetadataClient>();

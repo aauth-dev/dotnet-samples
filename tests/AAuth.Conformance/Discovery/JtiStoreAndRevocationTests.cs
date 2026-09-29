@@ -635,13 +635,12 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
 
     private async Task<HttpResponseMessage> PostSignedRevoke(HttpContent content, bool asAgent = false, bool coverContent = true)
     {
-        using var client = SignedClient(asAgent);
+        using var client = SignedClient(asAgent, coverContent);
         using var request = new HttpRequestMessage(HttpMethod.Post, "/revoke") { Content = content };
-        if (coverContent) request.Options.Set(AAuthSigningHandler.AdditionalComponentsKey, ["content-type", "content-digest"]);
         return await client.SendAsync(request);
     }
 
-    private HttpClient SignedClient(bool asAgent = false)
+    private HttpClient SignedClient(bool asAgent = false, bool coverContent = true)
     {
         var agentToken = new AgentTokenBuilder
         {
@@ -657,10 +656,11 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
         ISignatureKeyProvider provider = asAgent
             ? new JwtSignatureKeyProvider(() => agentToken)
             : new JwksUriSignatureKeyProvider(ApIssuer, "aauth-agent.json", "ap-key-1");
-        var signing = new AAuthSigningHandler(asAgent ? _agentKey : _apKey, provider, () => FixedClock)
-        {
-            InnerHandler = _host!.GetTestServer().CreateHandler(),
-        };
+        var signing = new AAuthSigningHandler(asAgent ? _agentKey : _apKey, provider, () => FixedClock);
+        if (!coverContent)
+            return new HttpClient(new AAuth.Testing.UncoveredBodySigner(signing) { InnerHandler = _host!.GetTestServer().CreateHandler() })
+                { BaseAddress = new Uri("http://localhost") };
+        signing.InnerHandler = _host!.GetTestServer().CreateHandler();
         return new HttpClient(signing) { BaseAddress = new Uri("http://localhost") };
     }
 

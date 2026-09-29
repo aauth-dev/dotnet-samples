@@ -71,7 +71,8 @@ public static class R3DocumentEndpoint
         var authenticated = false;
         var middleware = new AAuthVerificationMiddleware(_ => { authenticated = true; return Task.CompletedTask; },
             verifier, new DefaultSignatureKeyResolver(jwks, metadata), metadata, jwks,
-            new AAuthVerificationOptions { EgressPolicy = metadata?.Policy ?? AAuth.Discovery.AAuthEgressPolicy.Production, AcceptedSchemes = ["jwks_uri"] });
+            new AAuthVerificationOptions { EgressPolicy = metadata?.Policy ?? AAuth.Discovery.AAuthEgressPolicy.Production, AcceptedSchemes = ["jwks_uri"],
+                RequireBodyCoverage = true });
         await middleware.InvokeAsync(context);
         if (!authenticated)
             throw new R3FetchVerificationException("R3 fetch signature verification failed.");

@@ -252,7 +252,7 @@ public static class AAuthPersonServerEndpoints
                 && !ctx.Request.Path.StartsWithSegments(interactionPrefix)
                 && !unsignedPrefixes.Any(p => ctx.Request.Path.StartsWithSegments(p)),
             branch => branch.UseAAuthVerification(new AAuthVerificationOptions { EgressPolicy = options.EgressPolicy,
-                AcceptedSchemes = ["jwt"], Clock = () => options.TimeProvider.GetUtcNow() }));
+                AcceptedSchemes = ["jwt"], RequireBodyCoverage = true, Clock = () => options.TimeProvider.GetUtcNow() }));
 
         var tokenVerifier = app.Services.GetRequiredService<TokenVerifier>();
         var metadataClient = app.Services.GetRequiredService<MetadataClient>();
@@ -1410,7 +1410,10 @@ public static class AAuthPersonServerEndpoints
                     }
                     finally { entry.Lifecycle.Gate.Release(); }
                 }
-                catch (Exception ex) when (ex is OperationCanceledException or AAuthClarificationCancelledException)
+                // Only the PS's own cancellation (agent DELETE or pending expiry) is
+                // `expired`; an AS call that times out is an unreachable AS.
+                catch (Exception ex) when (ex is AAuthClarificationCancelledException
+                    || ex is OperationCanceledException && entry.FederationCancellation.IsCancellationRequested)
                 {
                     entry.Error = "expired";
                     entry.ErrorStatus = StatusCodes.Status408RequestTimeout;

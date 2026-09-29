@@ -942,6 +942,82 @@ Stripping is covered by `TokenRequest_MissingPresentedToken_Rejected` (PS) and
 `TokenRequest_MismatchedPresentedToken_Rejected` (PS) and the AS
 `presented-key` case.
 
+### [2026-09-29] [Phase 4] PS and AS require body coverage
+
+RESOLVED (SDK fix). §Covered Components (L2211) requires every body-bearing
+request to a PS or AS to cover `content-type` and `content-digest`. The SDK
+enforced this only at revocation endpoints, and its own agent and PS clients did
+not cover a body. Neither side followed the rule.
+
+Changes:
+
+- **Signer:** `AAuthSigningHandler.SignAsync` now covers `content-type` and
+  `content-digest` on every request with a body, and computes the digest itself.
+  It can't tell a PS or AS from a resource, and covering more is always
+  accepted. Callers of the synchronous `Sign` are unchanged.
+- **Verifier:** new `AAuthVerificationOptions.RequireBodyCoverage`. When the
+  request has a body and doesn't cover both, verification answers `401
+  invalid_input` naming them in `required_input`, before replay recording or
+  any handler.
+- **Servers:** the option is on for the `MapAAuthPersonServer` branch
+  (initial, pending and governance paths), the `MapAAuthAccessServer` branch,
+  and R3 `VerifyFetcherAsync` (the R3 AS token endpoint).
+- **Governance:** `MapAAuthGovernance` handlers also check coverage themselves,
+  so a host that mounts governance without the PS branch still enforces it.
+- **Sample:** MockAgentProvider `/refresh` now passes header fields to
+  `AAuthVerifier.Verify`. Without them it couldn't resolve the newly covered
+  components, and the first full e2e run failed two flows (`inbox`, `jkt-jwt`).
+  Covered by `BodyCoveredRefresh_VerifiesSignature`.
+
+Evidence. Each test also checks that no policy, consent or pending state was
+touched:
+
+- PS: `PsBody_UncoveredOrTampered_FailsBeforeAsserter` (`/token`, `/person`;
+  uncovered gives `invalid_input`, a body swapped after signing gives
+  `invalid_signature`) and `PsPendingBodyWithoutCoverageFailsBeforePendingState`;
+- AS: `AsBodyUncoveredOrTampered_FailsBeforePolicyOrPendingState`;
+- governance: `UncoveredBody_RejectedBeforeSeams` (`/mission`, mission action,
+  `/permission`, `/audit`, `/mission-interaction`);
+- R3 AS: `UncoveredOrTamperedBodyFailsBeforeDocumentPolicyOrAudit`.
+
+Shared test helpers `UncoveredBodySigner` and `BodySwapHandler` live in
+`tests/TestEgress.cs`. The revocation coverage tests now use the former, since
+the signer would otherwise cover the body. Docs: `signing-modes/overview.md`
+describes the automatic coverage. The stale "Deferred `202` and `rate_limited`
+are not implemented" sentence in `replay-detection.md` is gone (items 5 and 6
+implemented both).
+
+Full Playwright run after the fix: 74 passed, 1 skipped; the two failures
+above pass on rerun.
+
+### [2026-09-29] [Phase 4] AS timeouts are not local cancellation
+
+RESOLVED (SDK fix). The PS mapped every `OperationCanceledException` from
+federation to `408 expired`. An AS call that timed out in `HttpClient` (also an
+`OperationCanceledException`) was therefore reported as a local expiry. Only the
+PS's own cancellation (agent `DELETE` or pending expiry) is `expired` now; an AS
+timeout is `502 as_unreachable`, like any other AS failure.
+
+Evidence: `AsOutcomesMapSeparatelyFromLocalCancellation`:
+
+- AS `deny` gives `403 denied`;
+- an unstructured AS `502`, an unverifiable AS token, and a client timeout each
+  give `502 as_unreachable`.
+
+Local cancellation stays covered by `ProductionPsRelaysClarificationAndResumes`
+(`cancel`) and `ClarificationDeadlineTerminatesBothPendingRequests` (`408`).
+
+Expiry: agent, parent and upstream bounds on immediate and deferred issuance
+are covered by `DirectAndDeferred_UseOriginalAgentAndParentBounds`,
+`Deferred_RejectsOriginalExpiryDespiteFreshPollCarrier`,
+`Direct_RejectsExpiredParentOrChild` and
+`UpstreamExpiry_IsPreservedThroughDeferredIssuance`. The mission bound had no
+auth-token test; `AuthToken_IsCappedByMissionExpiry` covers immediate and
+deferred (clarification) issuance.
+
+Gates: AAuth.Tests 1670, Conformance 1211, R3 325, Events 80; API and docs maps
+refreshed.
+
 ## Open questions
 
 ### [2026-09-11] [Phase 0] Q1-Q14 implementation decision gate

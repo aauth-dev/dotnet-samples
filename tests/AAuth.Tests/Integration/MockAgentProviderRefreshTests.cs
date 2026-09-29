@@ -51,6 +51,20 @@ public sealed class MockAgentProviderRefreshTests : System.IDisposable
     }
 
     [Fact]
+    public async Task BodyCoveredRefresh_VerifiesSignature()
+    {
+        // The SDK signer covers content-type and content-digest on a body; the AP
+        // must resolve them. An unenrolled key then fails enrolment lookup, not the signature.
+        using var client = new AAuthClientBuilder(AAuthKey.Generate()).UseHwk().WithEgressPolicy(TestEgress.Policy)
+            .WithInnerHandler(_factory.Server.CreateHandler(), AAuthTransportContract.InProcessOnly)
+            .Build();
+        using var response = await client.PostAsync(_factory.Server.BaseAddress + "refresh",
+            System.Net.Http.Json.JsonContent.Create(new System.Text.Json.Nodes.JsonObject()));
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.False(response.Headers.Contains("Signature-Error"));
+    }
+
+    [Fact]
     public async Task TamperedSignature_IsInvalidSignature()
     {
         using var client = new AAuthClientBuilder(AAuthKey.Generate()).UseHwk().WithEgressPolicy(TestEgress.Policy)

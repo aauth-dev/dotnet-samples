@@ -340,7 +340,7 @@ public class RevocationLifecycleTests
     public async Task IssuerRevocation_RequiresContentDigestCoverage()
     {
         await using var graph = await Graph.CreateAsync();
-        using var ap = graph.Signed(FirstProvider, "aauth-agent.json");
+        using var ap = graph.SignedUncovered(FirstProvider, "aauth-agent.json");
 
         using var response = await ap.PostAsJsonAsync(Person + "/revoke", new { jti = "uncovered", exp = DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds() });
 
@@ -504,6 +504,10 @@ public class RevocationLifecycleTests
 
         public HttpClient Signed(string issuer, string dwk) => new InProcessHttpClient(new AAuthSigningHandler(_keys[issuer],
             new JwksUriSignatureKeyProvider(issuer, dwk, "key")) { InnerHandler = new Router(this) });
+
+        // Signs without covering content-type/content-digest.
+        public HttpClient SignedUncovered(string issuer, string dwk) => new InProcessHttpClient(new UncoveredBodySigner(
+            new AAuthSigningHandler(_keys[issuer], new JwksUriSignatureKeyProvider(issuer, dwk, "key"))) { InnerHandler = new Router(this) });
 
         private AAuthKey AgentKey(string token)
         {

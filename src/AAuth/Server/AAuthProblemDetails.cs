@@ -59,6 +59,16 @@ public static class AAuthProblemDetails
         new SignatureErrorResult(Errors.SignatureError.Format(Errors.SignatureErrorCode.InvalidInput,
             requiredInput: HttpSig.AAuthSigningHandler.CoveredComponents.Concat(required).Distinct().ToArray()));
 
+    private static readonly string[] BodyComponents = ["content-type", "content-digest"];
+
+    // §Covered Components: a body-bearing request to a PS or AS endpoint MUST
+    // cover content-type and content-digest. Returns the 401 invalid_input
+    // response when the verified signature does not, else null.
+    internal static IResult? MissingBodyCoverage(HttpContext context) =>
+        context.Features.Get<Verification.AAuthVerificationResult>() is { } verified
+            && !verified.CoveredComponents.IsSupersetOf(BodyComponents)
+            ? MissingCoverage(BodyComponents) : null;
+
     private sealed class SignatureErrorResult(string header) : IResult
     {
         public Task ExecuteAsync(HttpContext httpContext)

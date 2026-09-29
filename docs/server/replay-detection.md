@@ -166,8 +166,7 @@ Content-Type: application/json
 or answered `unsupported_iss`; `revocation_unavailable` means it did not answer,
 failed with `5xx`, or sent a malformed response. A `200` with nothing downstream
 has an empty body, and a PS always answers its agent provider with an empty body
-(`ReportDownstream = false`). Deferred `202` responses and `rate_limited` are not
-implemented.
+(`ReportDownstream = false`).
 
 `RevocationClient` accepts a signed, admitted `HttpClient`, sends `{jti, exp}`
 with `content-type` and `content-digest` covered, and parses the answer:

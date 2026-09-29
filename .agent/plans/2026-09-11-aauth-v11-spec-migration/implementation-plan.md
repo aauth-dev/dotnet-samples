@@ -353,8 +353,8 @@ Phase rule: resource/auth identity is ps/sub/key based; no agent/act/mission fal
 - [x] Independent wire tests cover prerequisite, step-up and both exchange legs.
 - [x] Substitution/stripping/identity overwrite fails independently at PS and AS.
 - [x] Removed identity/mission fields are absent from active core producers/consumers.
-- [ ] Missing body coverage/tampering fails before policy or consent mutation.
-- [ ] Immediate/deferred expiry and AS error mapping tests pass.
+- [x] Missing body coverage/tampering fails before policy or consent mutation.
+- [x] Immediate/deferred expiry and AS error mapping tests pass.
 - [x] Clarification replacement rejects a mismatched or unverified pair.
 - [ ] Consent views attribute agent- and resource-asserted content separately.
 - [x] Affected core/R3/Events projects and solution build are green.

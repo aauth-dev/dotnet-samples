@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 146 changed public-source files, 268 added/replacement declarations, 140 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 147 changed public-source files, 269 added/replacement declarations, 140 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -575,6 +575,14 @@ Concept/decision: [r3](#r3). Source: [R3ClaimReader.cs](../../../src/AAuth.R3/R3
 ```
 
 Public owners: `AAuth.R3.R3ClaimReader.AuthTokenClaims`, `AAuth.R3.R3ClaimReader.ResourceDocumentClaims`, `AAuth.R3.R3ClaimReader`, `AAuth.R3`.
+
+### src/AAuth.R3/R3DocumentEndpoint.cs
+
+Concept/decision: [r3](#r3). Source: [R3DocumentEndpoint.cs](../../../src/AAuth.R3/R3DocumentEndpoint.cs).
+
+Public signatures unchanged (11); behavior reviewed under r3.
+
+Public owners: `AAuth.R3.R3DocumentEndpoint`, `AAuth.R3.R3FetchVerificationException`, `AAuth.R3.R3UntrustedJwksUriException`, `AAuth.R3`.
 
 ### src/AAuth.R3/R3Enforcement.cs
 
@@ -1621,6 +1629,7 @@ Concept/decision: [signatures](#signatures). Source: [AAuthVerificationOptions.c
 - AAuth.Server.Verification.AAuthVerificationOptions: public int MaxActDepth { get ; init ; } = 10
 + AAuth.Server.Verification.AAuthVerificationOptions: public Func < string , bool > ? IsTrustedPersonServer { get ; init ; }
 + AAuth.Server.Verification.AAuthVerificationOptions: public IReadOnlySet < string > ? TrustedPersonServers { get ; init ; }
++ AAuth.Server.Verification.AAuthVerificationOptions: public bool RequireBodyCoverage { get ; init ; }
 ```
 
 Public owners: `AAuth.Server.Verification.AAuthVerificationOptions`, `AAuth.Server.Verification`.

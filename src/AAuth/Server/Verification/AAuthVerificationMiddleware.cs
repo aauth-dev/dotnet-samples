@@ -86,12 +86,15 @@ public sealed class AAuthVerificationMiddleware
     public async Task InvokeAsync(HttpContext context)
     {
         var req = context.Request;
+        var requiredComponents = _options.RequireBodyCoverage && HasBody(req)
+            ? _options.RequiredComponents.Concat(BodyComponents).Distinct(StringComparer.Ordinal).ToArray()
+            : _options.RequiredComponents;
 
         if (!TryGetSingle(req, AAuthConstants.Headers.Signature, out var signature) ||
             !TryGetSingle(req, AAuthConstants.Headers.SignatureInput, out var signatureInput) ||
             !TryGetSingle(req, AAuthConstants.Headers.SignatureKey, out var signatureKey))
         {
-            WriteFailure(context, SignatureErrorCode.InvalidSignature);
+            WriteFailure(context, SignatureErrorCode.InvalidSignature, requiredComponents);
             return;
         }
 
@@ -104,7 +107,7 @@ public sealed class AAuthVerificationMiddleware
         try
         {
             _verifier.ValidateInput(signatureInput, label, req.Headers.Authorization.FirstOrDefault(),
-                _options.RequiredComponents);
+                requiredComponents);
             var scheme = SignatureKeyHeader.Parse(signatureKey, label).Scheme;
             if (!_options.AcceptedSchemes.Contains(scheme, StringComparer.Ordinal))
                 throw new AAuthVerificationException(SignatureErrorCode.UnsupportedScheme, "Scheme is not accepted by this endpoint.");
@@ -130,7 +133,7 @@ public sealed class AAuthVerificationMiddleware
                 authorization: req.Headers.Authorization.FirstOrDefault(),
                 label: label,
                 fields: req.Headers.ToDictionary(header => header.Key.ToLowerInvariant(), header => string.Join(", ", header.Value.ToArray())),
-                requiredComponents: _options.RequiredComponents,
+                requiredComponents: requiredComponents,
                 keyId: resolution.KeyId,
                 fieldValues: req.Headers.ToDictionary(header => header.Key.ToLowerInvariant(), header => header.Value.Select(value => value ?? "").ToArray()),
                 requestScheme: req.Scheme,
@@ -176,7 +179,7 @@ public sealed class AAuthVerificationMiddleware
                 OperationCanceledException => SignatureErrorCode.InvalidKey,
                 _ => SignatureErrorCode.InvalidRequest,
             };
-            WriteFailure(context, errorCode);
+            WriteFailure(context, errorCode, requiredComponents);
             return;
         }
 
@@ -376,11 +379,20 @@ public sealed class AAuthVerificationMiddleware
 
     public const string TokenStoreItemKey = "AAuth.TokenInventory";
 
-    private void WriteFailure(HttpContext context, SignatureErrorCode code)
+    private static readonly string[] BodyComponents = ["content-type", "content-digest"];
+
+    // A body is present when it has a positive length, or an unknown length with
+    // a content type or chunked transfer coding.
+    private static bool HasBody(HttpRequest request)
+        => request.ContentLength > 0
+            || request.ContentLength is null
+                && (request.ContentType is not null || request.Headers.ContainsKey("Transfer-Encoding"));
+
+    private void WriteFailure(HttpContext context, SignatureErrorCode code, IReadOnlyCollection<string>? requiredComponents = null)
     {
         context.Response.StatusCode = _options.GenericSignatureKeys ? StatusCodes.Status400BadRequest : StatusCodes.Status401Unauthorized;
         context.Response.Headers[SignatureError.HeaderName] = SignatureError.Format(code,
-            requiredInput: AAuthSigningHandler.CoveredComponents.Concat(_options.RequiredComponents).Distinct().ToArray());
+            requiredInput: AAuthSigningHandler.CoveredComponents.Concat(requiredComponents ?? _options.RequiredComponents).Distinct().ToArray());
         if (code == SignatureErrorCode.UnsupportedAlgorithm)
             context.Response.Headers["Accept-Signature-Alg"] = string.Join(", ", SupportedAlgorithms);
         if (code == SignatureErrorCode.UnsupportedScheme)

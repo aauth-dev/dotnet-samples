@@ -62,6 +62,9 @@ public class GovernanceDeferredConsentMapperTests
                 Jkt = ctx.Request.Headers["Test-Key"].FirstOrDefault() ?? "verified-key",
                 TokenType = AAuthTokenType.AgentToken,
                 Agent = ctx.Request.Headers["Test-Agent"].FirstOrDefault() ?? Agent,
+                CoveredComponents = ctx.Request.Headers.ContainsKey("Test-Uncovered-Body")
+                    ? new HashSet<string> { "@method", "@authority", "@path", "signature-key" }
+                    : new HashSet<string> { "@method", "@authority", "@path", "signature-key", "content-type", "content-digest" },
             });
             await next();
         });
@@ -789,6 +792,63 @@ public class GovernanceDeferredConsentMapperTests
         Assert.Equal("Yes, the refundable option.", (string?)json?["answer"]);
 
         await host.StopAsync();
+    }
+
+    [Theory(DisplayName = "§Covered Components — a governance body not covered by content-type/content-digest is 401 invalid_input before any seam or state change")]
+    [InlineData("/mission")]
+    [InlineData("/mission/dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")]
+    [InlineData("/permission")]
+    [InlineData("/audit")]
+    [InlineData("/mission-interaction")]
+    public async Task UncoveredBody_RejectedBeforeSeams(string path)
+    {
+        const string s256 = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        var seams = 0;
+        using var host = await BuildHostAsync(s =>
+        {
+            s.AddSingleton<IMissionApprover>(new CountingApprover(() => seams++));
+            s.AddSingleton<IPermissionDecider>(new CountingDecider(() => seams++));
+            s.AddAAuthInteractionRelay((_, _) => { seams++; return Task.FromResult(new InteractionRelayResult { Answer = "x" }); });
+        });
+        await host.Services.GetRequiredService<IMissionStore>().SaveAsync(new StoredMission(s256, Ps, Agent, new byte[] { 1, 2, 3 }));
+        using var client = host.GetTestServer().CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://localhost" + path)
+        {
+            Content = JsonContent(new JsonObject
+            {
+                ["description"] = "# Plan", ["action"] = "update", ["type"] = "question", ["question"] = "?",
+                ["mission_s256"] = s256, ["tool"] = "WebSearch",
+            }),
+        };
+        request.Headers.Add("Test-Uncovered-Body", "1");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var error = Assert.Single(response.Headers.GetValues("Signature-Error"));
+        Assert.Contains("invalid_input", error);
+        Assert.Contains("content-digest", error);
+        Assert.Equal(0, seams);
+        Assert.Empty(await host.Services.GetRequiredService<IMissionLog>().ReadAsync(s256));
+        await host.StopAsync();
+    }
+
+    private sealed class CountingApprover(Action onCall) : IMissionApprover
+    {
+        public Task<MissionApprovalDecision> ApproveAsync(MissionApprovalContext context, CancellationToken ct = default)
+        {
+            onCall();
+            return Task.FromResult(MissionApprovalDecision.Approve([]));
+        }
+    }
+
+    private sealed class CountingDecider(Action onCall) : IPermissionDecider
+    {
+        public Task<PermissionDecision> DecideAsync(PermissionDecisionContext context, CancellationToken ct = default)
+        {
+            onCall();
+            return Task.FromResult(new PermissionDecision(PermissionOutcome.Prompt, PermissionDecisionReason.OutOfScope));
+        }
     }
 
     private sealed class StubApprover(MissionApprovalDecision decision) : IMissionApprover

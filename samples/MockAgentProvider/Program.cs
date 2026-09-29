@@ -165,7 +165,10 @@ app.MapPost("/refresh", (HttpContext ctx) =>
             signatureKeyHeader,
             sigInput,
             sigHeader,
-            signingKey);
+            signingKey,
+            // The SDK signer covers content-type and content-digest on a body.
+            fields: ctx.Request.Headers.ToDictionary(h => h.Key.ToLowerInvariant(), h => string.Join(", ", h.Value.ToArray())),
+            fieldValues: ctx.Request.Headers.ToDictionary(h => h.Key.ToLowerInvariant(), h => h.Value.Select(v => v ?? "").ToArray()));
     }
     catch (AAuth.HttpSig.AAuthVerificationException ex)
     {

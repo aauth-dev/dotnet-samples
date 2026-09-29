@@ -88,7 +88,8 @@ public class PersonServerMapperTests
         return app;
     }
 
-    private static HttpClient SignedAgentClient(IHost host, AAuthKey agentKey, string agentId, TimeSpan? lifetime = null)
+    private static HttpClient SignedAgentClient(IHost host, AAuthKey agentKey, string agentId, TimeSpan? lifetime = null,
+        string? body = null)
     {
         var agentToken = new AgentTokenBuilder
         {
@@ -101,11 +102,47 @@ public class PersonServerMapperTests
             PersonServer = PsIssuer,
             Lifetime = lifetime ?? TimeSpan.FromHours(1),
         }.Build();
-        var signing = new AAuthSigningHandler(agentKey, () => agentToken)
-        {
-            InnerHandler = host.GetTestServer().CreateHandler(),
-        };
+        var signing = new AAuthSigningHandler(agentKey, () => agentToken);
+        // body: "uncovered" signs without content-type/content-digest; "tampered"
+        // swaps the body after signing, keeping the signed Content-Digest.
+        if (body == "uncovered")
+            return new InProcessHttpClient(new UncoveredBodySigner(signing) { InnerHandler = host.GetTestServer().CreateHandler() })
+                { BaseAddress = new Uri(PsIssuer) };
+        signing.InnerHandler = body == "tampered"
+            ? new BodySwapHandler { InnerHandler = host.GetTestServer().CreateHandler() }
+            : host.GetTestServer().CreateHandler();
         return new InProcessHttpClient(signing) { BaseAddress = new Uri(PsIssuer) };
+    }
+
+    [Theory(DisplayName = "§Covered Components — a PS body not covered by content-type/content-digest, or not matching its digest, fails before the asserter")]
+    [InlineData("/token", "uncovered")]
+    [InlineData("/token", "tampered")]
+    [InlineData("/person", "uncovered")]
+    [InlineData("/person", "tampered")]
+    public async Task PsBody_UncoveredOrTampered_FailsBeforeAsserter(string path, string body)
+    {
+        var agentKey = AAuthKey.Generate();
+        var asserter = new CapturingAsserter();
+        using var host = await BuildHostAsync(asserter);
+        using var http = SignedAgentClient(host, agentKey, AgentId, body: body);
+
+        using var response = await http.PostAsJsonAsync(path,
+            path == "/token" ? TokenRequest(agentKey) : new JsonObject { ["resource"] = ResourceUrl });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var error = Assert.Single(response.Headers.GetValues("Signature-Error"));
+        if (body == "uncovered")
+        {
+            Assert.Contains("invalid_input", error);
+            Assert.Contains("content-type", error);
+            Assert.Contains("content-digest", error);
+        }
+        else
+        {
+            Assert.Contains("invalid_signature", error);
+        }
+        Assert.Null(asserter.Last);
+        await host.StopAsync();
     }
 
     // A person token this PS issued to the agent for the resource (§Person Token Structure).
@@ -634,6 +671,43 @@ public class PersonServerMapperTests
         var payload = DecodePayload((string)body!["auth_token"]!);
         // The auth token's sub is the verified resource token's, not the consent verdict's.
         Assert.Equal("user-42", (string?)payload["sub"]);
+        await host.StopAsync();
+    }
+
+    [Theory(DisplayName = "§Auth Token Structure — an auth token never outlives its mission, immediate or deferred")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AuthToken_IsCappedByMissionExpiry(bool deferred)
+    {
+        const string missionS256 = "Q7cOX4Oq4Fmc5L8FJbfyLmXDVz-lEVJbzsUNr8dlc2E";
+        var agentKey = AAuthKey.Generate();
+        var missionExpiry = DateTimeOffset.UtcNow.AddMinutes(5);
+        using var host = await BuildHostAsync(consent: new StubMissionConsent(context =>
+            deferred && context.ClarificationHistory.Count == 0
+                ? MissionTokenConsentDecision.Clarify("Why?") : MissionTokenConsentDecision.Grant()));
+        await host.Services.GetRequiredService<IMissionStore>().SaveAsync(
+            new StoredMission(missionS256, PsIssuer, AgentId, new byte[] { 4, 5, 6 }) { ExpiresAt = missionExpiry });
+        using var http = SignedAgentClient(host, agentKey, AgentId);
+
+        var response = await http.PostAsJsonAsync("/token", TokenRequest(agentKey, missionS256: missionS256));
+        if (deferred)
+        {
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            var location = response.Headers.Location;
+            response.Dispose();
+            using var answer = await http.PostAsJsonAsync(location,
+                new JsonObject { ["action"] = "clarification_response", ["clarification_response"] = "for the trip" });
+            Assert.Equal(HttpStatusCode.NoContent, answer.StatusCode);
+            response = await http.GetAsync(location);
+        }
+
+        using (response)
+        {
+            Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+            var payload = DecodePayload((string)(await response.Content.ReadFromJsonAsync<JsonObject>())!["auth_token"]!);
+            Assert.True((long)payload["exp"]! <= missionExpiry.ToUnixTimeSeconds());
+            Assert.Equal(missionS256, (string?)payload["mission_s256"]);
+        }
         await host.StopAsync();
     }
 

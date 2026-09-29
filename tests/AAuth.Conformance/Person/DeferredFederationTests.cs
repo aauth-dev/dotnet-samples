@@ -327,6 +327,29 @@ public class DeferredFederationTests
     }
 
     [Fact]
+    public async Task PsPendingBodyWithoutCoverageFailsBeforePendingState()
+    {
+        var asserter = new ConsentAsserter(IdentityAssertion.Assert("person"));
+        await using var fixture = await Fixture.CreateAsync("immediate", asserter);
+        var token = fixture.ResourceToken("read", interaction: new Interaction("https://8.8.8.8/permission", "ABCDEFGH"));
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", new { resource_token = token, presented_token = fixture.PersonToken() });
+        Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
+        using var uncovered = new InProcessHttpClient(new UncoveredBodySigner(
+            new AAuthSigningHandler(fixture.AgentKey, () => fixture.AgentToken))
+            { InnerHandler = fixture.PersonApp.GetTestServer().CreateHandler() }) { BaseAddress = new Uri(Fixture.PsIssuer) };
+
+        using var update = await uncovered.PostAsJsonAsync(initial.Headers.Location,
+            new { action = "updated_request", resource_token = token, presented_token = fixture.PersonToken() });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, update.StatusCode);
+        Assert.Contains("invalid_input", Assert.Single(update.Headers.GetValues("Signature-Error")));
+        using var poll = await fixture.Agent.GetAsync(initial.Headers.Location);
+        Assert.Equal(HttpStatusCode.Accepted, poll.StatusCode);
+        Assert.Equal(0, asserter.Calls);
+        Assert.Null(fixture.Policy.Last);
+    }
+
+    [Fact]
     public async Task UnstructuredFederationErrorsNeverReachPersonLogs()
     {
         await using var fixture = await Fixture.CreateAsync("unstructured-error");
@@ -403,6 +426,35 @@ public class DeferredFederationTests
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("invalid_request", (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
         Assert.Null(fixture.Policy.Last);
+    }
+
+    [Theory]
+    [InlineData("uncovered")]
+    [InlineData("tampered")]
+    public async Task AsBodyUncoveredOrTampered_FailsBeforePolicyOrPendingState(string body)
+    {
+        await using var fixture = await Fixture.CreateAsync("interaction");
+        var signer = new AAuthSigningHandler(fixture.PsKey,
+            new JwksUriSignatureKeyProvider(Fixture.PsIssuer, AAuthConstants.DwkFiles.Person, "key"));
+        HttpMessageHandler handler;
+        if (body == "uncovered")
+        {
+            handler = new UncoveredBodySigner(signer) { InnerHandler = fixture.AccessApp.GetTestServer().CreateHandler() };
+        }
+        else
+        {
+            signer.InnerHandler = new BodySwapHandler { InnerHandler = fixture.AccessApp.GetTestServer().CreateHandler() };
+            handler = signer;
+        }
+        using var ps = new InProcessHttpClient(handler) { BaseAddress = new Uri("https://as.test") };
+
+        using var response = await ps.PostAsJsonAsync("/token", fixture.Body("read", agentToken: true));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Contains(body == "uncovered" ? "invalid_input" : "invalid_signature",
+            Assert.Single(response.Headers.GetValues("Signature-Error")));
+        Assert.Null(fixture.Policy.Last);
+        Assert.Null(fixture.Store.Last);
     }
 
     [Theory]
@@ -953,6 +1005,31 @@ public class DeferredFederationTests
         throw new TimeoutException("PS relay did not complete.");
     }
 
+    [Theory]
+    [InlineData("deny", HttpStatusCode.Forbidden, "denied")]
+    [InlineData("unstructured-error", HttpStatusCode.BadGateway, "as_unreachable")]
+    [InlineData("unverifiable-token", HttpStatusCode.BadGateway, "as_unreachable")]
+    [InlineData("client-timeout", HttpStatusCode.BadGateway, "as_unreachable")]
+    public async Task AsOutcomesMapSeparatelyFromLocalCancellation(string outcome, HttpStatusCode status, string error)
+    {
+        await using var fixture = await Fixture.CreateAsync(outcome);
+        using var initial = await fixture.Agent.PostAsJsonAsync("/token", fixture.Body("read"));
+        using var result = initial.StatusCode == HttpStatusCode.Accepted
+            ? await PollAsync(fixture.Agent, initial.Headers.Location!) : null;
+        var response = result ?? initial;
+
+        Assert.Equal(status, response.StatusCode);
+        Assert.Equal(error, (string?)(await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+    }
+
+    private sealed class TimeoutHandler : DelegatingHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => request.RequestUri!.AbsolutePath == "/token"
+                ? throw new TaskCanceledException("The request timed out.", new TimeoutException())
+                : base.SendAsync(request, cancellationToken);
+    }
+
     [Fact]
     public async Task PsCanTriageLocallyWithoutRelayingToAgent()
     {
@@ -1167,6 +1244,11 @@ public class DeferredFederationTests
                 context.Response.StatusCode = 502;
                 await context.Response.WriteAsync("TOKEN-SECRET-SENTINEL person-sentinel@example.test\nforged-log-line");
             });
+            if (outcome == "unverifiable-token") access.Use(async (context, next) =>
+            {
+                if (context.Request.Path != "/token") { await next(); return; }
+                await context.Response.WriteAsJsonAsync(new { auth_token = "not.a.token" });
+            });
             access.MapAAuthAccessServer(new AAuthAccessServerOptions { Issuer = AsIssuer, SigningKeys = new Dictionary<string, IAAuthKey> { ["key"] = asKey } });
             var accessSessions = new BrowserConsentSessions("as-consent-tests", "test-person", isolatedDemoAccess: _ => true);
             access.MapMethods("/interaction/login", ["GET", "POST"], async (HttpContext context) =>
@@ -1190,7 +1272,9 @@ public class DeferredFederationTests
             });
             await access.StartAsync();
             var ps = new AAuthClientBuilder(psKey).UseJwksUri(PsIssuer, AAuthConstants.DwkFiles.Person, "key")
-                .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(access.GetTestServer().CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
+                .WithEgressPolicy(TestEgress.Policy).WithInnerHandler(outcome == "client-timeout"
+                    ? new TimeoutHandler { InnerHandler = access.GetTestServer().CreateHandler() }
+                    : access.GetTestServer().CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
             ps.BaseAddress = new Uri(AsIssuer);
             var personBuilder = WebApplication.CreateBuilder();
             personBuilder.WebHost.UseTestServer();

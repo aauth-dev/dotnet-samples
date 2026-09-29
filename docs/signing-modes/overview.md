@@ -145,8 +145,19 @@ The `AAuthSigningHandler` handles construction automatically.
 
 Every signed request always covers the four base AAuth components shown above
 (`@method`, `@authority`, `@path`, `signature-key`), plus `authorization` when
-that header is present. A resource MAY require **additional** covered components
-(for example `content-digest` for request-body integrity, or `content-type`).
+that header is present.
+
+A request with a body also covers `content-type` and `content-digest`. The spec
+requires both on every body-bearing request to a PS or AS, and on revocation
+requests. The signing handler can't tell a PS or AS from a resource, so it
+covers them on every request with a body and computes `Content-Digest` itself.
+PS and AS endpoints (`MapAAuthPersonServer`, `MapAAuthAccessServer`,
+`MapAAuthGovernance`, `MapR3AccessTokenEndpoint`) answer an uncovered body with
+`401` `invalid_input` before any policy or consent hook runs. Other hosts can opt
+in with `AAuthVerificationOptions.RequireBodyCoverage`.
+
+A resource MAY require further covered components through its
+`additional_signature_components` metadata.
 The agent discovers these in one of two ways:
 
 1. **From resource metadata.** If you know a resource publishes
