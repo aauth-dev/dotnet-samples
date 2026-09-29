@@ -156,13 +156,18 @@ public class GovernanceServerTests
 
     // ---- §Mission Status Errors ----
 
-    [Fact(DisplayName = "§Mission Status Errors — helper emits the spec 403 body")]
+    [Fact(DisplayName = "§Mission Status Errors — helper emits the spec 403 body; status stays terminated and the reason is separate")]
     public void MissionTerminatedBody_MatchesSpec()
     {
         var body = GovernanceEndpoints.MissionTerminatedBody();
         Assert.Equal(403, GovernanceEndpoints.MissionTerminatedStatus);
         Assert.Equal("mission_terminated", (string?)body["error"]);
         Assert.Equal("terminated", (string?)body["mission_status"]);
+        Assert.False(body.ContainsKey("termination_reason"));
+
+        var expired = GovernanceEndpoints.MissionTerminatedBody("expired");
+        Assert.Equal("terminated", (string?)expired["mission_status"]);
+        Assert.Equal("expired", (string?)expired["termination_reason"]);
     }
 
     // ---- §Mission Approval / §Mission Management (store) ----

@@ -849,6 +849,41 @@ public class PersonServerMapperTests
         await host.StopAsync();
     }
 
+    [Theory(DisplayName = "§Token Revocation — a withdrawn resource token is revoked_resource_token, and ends a pending request with revoked")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RevokedResourceToken_RejectedAndEndsPending(bool pending)
+    {
+        var inventory = new InMemoryJtiStore();
+        var agentKey = AAuthKey.Generate();
+        using var host = await BuildHostAsync(inventory: inventory,
+            consent: pending ? new StubMissionConsent(_ => MissionTokenConsentDecision.Clarify("Why?")) : null);
+        using var http = SignedAgentClient(host, agentKey, AgentId);
+        var request = pending ? TokenRequest(agentKey, missionS256: S256) : TokenRequest(agentKey);
+        var resource = DecodePayload((string)request["resource_token"]!);
+        var resourceKey = new TokenKey((string)resource["iss"]!, (string)resource["jti"]!);
+        var resourceExp = DateTimeOffset.FromUnixTimeSeconds((long)resource["exp"]!);
+
+        if (!pending)
+        {
+            // The resource withdrew the token before the agent sent it: recorded unseen, refused by name.
+            await inventory.RevokeAsync(resourceKey, resourceExp);
+            using var rejected = await http.PostAsJsonAsync("/token", request);
+            Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+            Assert.Equal("revoked_resource_token", (string?)(await rejected.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        }
+        else
+        {
+            using var first = await http.PostAsJsonAsync("/token", request);
+            Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+            await inventory.RevokeAsync(resourceKey, resourceExp);
+            using var poll = await http.GetAsync(first.Headers.Location);
+            Assert.Equal(HttpStatusCode.Forbidden, poll.StatusCode);
+            Assert.Equal("revoked", (string?)(await poll.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+        }
+        await host.StopAsync();
+    }
+
     private sealed class InventoryClock : TimeProvider
     {
         public DateTimeOffset Now { get; set; } = DateTimeOffset.UtcNow;
@@ -981,6 +1016,9 @@ public class PersonServerMapperTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonObject>();
         Assert.Equal("mission_terminated", (string?)body!["error"]);
+        // mission_status is always "terminated"; expiry is the termination_reason.
+        Assert.Equal("terminated", (string?)body["mission_status"]);
+        Assert.Equal(expired ? "expired" : null, (string?)body["termination_reason"]);
         await host.StopAsync();
     }
 

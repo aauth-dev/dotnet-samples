@@ -221,7 +221,13 @@ public class GovernanceEndpointMapperTests : IAsyncLifetime
         Assert.Equal(scenario == "foreign" ? HttpStatusCode.NotFound : HttpStatusCode.Forbidden, response.StatusCode);
         var expected = scenario is "terminated" or "expired" ? "mission_terminated"
             : scenario == "anonymous" ? "invalid_request" : "mission_not_found";
-        Assert.Equal(expected, (string?)(await ReadJson(response))?["error"]);
+        var rejected = await ReadJson(response);
+        Assert.Equal(expected, (string?)rejected?["error"]);
+        if (scenario is "terminated" or "expired")
+        {
+            Assert.Equal("terminated", (string?)rejected?["mission_status"]);
+            Assert.Equal(scenario == "expired" ? "expired" : null, (string?)rejected?["termination_reason"]);
+        }
         Assert.False(response.Headers.Contains("Signature-Error"));
         Assert.Empty(await _host!.Services.GetRequiredService<IMissionLog>().ReadAsync(_missionS256));
     }

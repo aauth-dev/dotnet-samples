@@ -40,9 +40,9 @@ public static class GovernanceEndpoints
         {
             return AAuthProblemDetails.Create("mission_not_found", statusCode: StatusCodes.Status404NotFound);
         }
-        return mission.State == MissionState.Terminated
-            || mission.ExpiresAt is { } expiresAt && expiresAt <= DateTimeOffset.UtcNow
-            ? MissionTerminated() : null;
+        if (mission.State == MissionState.Terminated) return MissionTerminated();
+        return mission.ExpiresAt is { } expiresAt && expiresAt <= DateTimeOffset.UtcNow
+            ? MissionTerminated("expired") : null;
     }
 
     private static string? ReadMission(JsonObject body)
@@ -152,23 +152,36 @@ public static class GovernanceEndpoints
 
     /// <summary>
     /// The canonical <c>mission_terminated</c> response body (§Mission Status
-    /// Errors): <c>{ "error": "mission_terminated", "mission_status": "..." }</c>.
+    /// Errors): <c>{ "error": "mission_terminated", "mission_status": "terminated" }</c>,
+    /// plus <c>termination_reason</c> when <paramref name="terminationReason"/> is set.
     /// </summary>
-    public static JsonObject MissionTerminatedBody(string missionStatus = "terminated")
-        => new()
+    /// <param name="terminationReason">
+    /// OPTIONAL reason from §Mission Management: <c>completed</c>, <c>revoked</c>,
+    /// <c>expired</c>, <c>superseded</c> or <c>administrative</c>.
+    /// </param>
+    public static JsonObject MissionTerminatedBody(string? terminationReason = null)
+    {
+        var body = new JsonObject
         {
             ["error"] = AAuthMissionTerminatedException.ErrorCode,
-            ["mission_status"] = missionStatus,
+            ["mission_status"] = "terminated",
         };
+        if (terminationReason is not null) body["termination_reason"] = terminationReason;
+        return body;
+    }
 
     /// <summary>
     /// An ASP.NET Core <see cref="IResult"/> emitting the spec
     /// <c>403 mission_terminated</c> response (§Mission Status Errors).
     /// </summary>
-    public static IResult MissionTerminated(string missionStatus = "terminated")
-        => AAuthProblemDetails.Create(AAuthMissionTerminatedException.ErrorCode,
-            statusCode: MissionTerminatedStatus,
-            extensions: new Dictionary<string, object?> { ["mission_status"] = missionStatus });
+    /// <param name="terminationReason">OPTIONAL <c>termination_reason</c>; see <see cref="MissionTerminatedBody"/>.</param>
+    public static IResult MissionTerminated(string? terminationReason = null)
+    {
+        var extensions = new Dictionary<string, object?> { ["mission_status"] = "terminated" };
+        if (terminationReason is not null) extensions["termination_reason"] = terminationReason;
+        return AAuthProblemDetails.Create(AAuthMissionTerminatedException.ErrorCode,
+            statusCode: MissionTerminatedStatus, extensions: extensions);
+    }
 
     private static IReadOnlyList<MissionTool> ParseTools(JsonArray? tools)
     {

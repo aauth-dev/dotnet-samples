@@ -347,6 +347,9 @@ public static class AAuthAccessServerEndpoints
                     issuance.ConfirmationKey.ComputeJwkThumbprint(), metadataClient, jwksClient,
                     expectedPersonServer: personServer, cancellationToken: ctx.RequestAborted);
                 _ = resource.Account;
+                // §Token Revocation: a resource token its resource withdrew never backs an auth token.
+                if (await inventory.IsRevokedAsync(TokenRegistration.FromVerified(resource).Token, ctx.RequestAborted))
+                    throw new TokenVerificationException(AAuth.Errors.SignatureErrorCode.RevokedJwt, "The resource token has been revoked.");
             }
             catch (TokenVerificationException ex)
             {
@@ -486,6 +489,11 @@ public static class AAuthAccessServerEndpoints
 
             return await entry.Lifecycle.ExecuteAsync(ctx, entry.PendingExpiresAt, options.TimeProvider, async () =>
             {
+                // A pending request started against a resource token its resource then
+                // withdrew terminates with polling error `revoked` (#token-revocation).
+                if (entry.ResourceContext is { } pendingResource
+                    && await inventory.IsRevokedAsync(TokenRegistration.FromPayload(pendingResource).Token, ctx.RequestAborted))
+                    return AAuthProblemDetails.Create("revoked", "The resource token was revoked.", statusCode: StatusCodes.Status403Forbidden);
                 if (entry.Status == AccessPendingStatus.Review)
                 {
                     var review = await EvaluatePendingAsync(entry, ctx);

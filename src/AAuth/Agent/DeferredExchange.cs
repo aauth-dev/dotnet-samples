@@ -224,10 +224,10 @@ internal sealed class DeferredExchange
             // mission referenced by the request is no longer active.
             if (response.StatusCode == HttpStatusCode.Forbidden
                 && await TryReadMissionTerminatedAsync(response, cancellationToken).ConfigureAwait(false)
-                    is var (terminated, missionStatus) && terminated)
+                    is var (terminated, missionStatus, terminationReason) && terminated)
             {
                 response.Dispose();
-                throw new AAuthMissionTerminatedException(missionStatus);
+                throw new AAuthMissionTerminatedException(missionStatus, terminationReason);
             }
 
             ownsResponse = false;
@@ -295,7 +295,7 @@ internal sealed class DeferredExchange
             : baseOptions with { StopWhenAccepted = Stop };
     }
 
-    private static (bool Terminated, string? MissionStatus) ReadMissionTerminated(string body)
+    private static (bool Terminated, string? MissionStatus, string? TerminationReason) ReadMissionTerminated(string body)
     {
         try
         {
@@ -304,17 +304,20 @@ internal sealed class DeferredExchange
                 && errorValue.TryGetValue<string>(out var error)
                 && error == AAuthMissionTerminatedException.ErrorCode)
             {
-                return (true, (string?)json?["mission_status"]);
+                return (true, Text(json["mission_status"]), Text(json["termination_reason"]));
             }
         }
         catch (JsonException)
         {
             // Not a mission-terminated body.
         }
-        return (false, null);
+        return (false, null, null);
+
+        static string? Text(JsonNode? node)
+            => node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
     }
 
-    internal static async Task<(bool Terminated, string? MissionStatus)> TryReadMissionTerminatedAsync(
+    internal static async Task<(bool Terminated, string? MissionStatus, string? TerminationReason)> TryReadMissionTerminatedAsync(
         HttpResponseMessage response, CancellationToken cancellationToken)
     {
         var body = await BufferBodyAsync(response, cancellationToken).ConfigureAwait(false);

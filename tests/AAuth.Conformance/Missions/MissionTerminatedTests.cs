@@ -38,6 +38,7 @@ public class MissionTerminatedTests
             client.ExchangeAsync(Ps, TestTokens.Resource, "presented.person.token"));
 
         Assert.Equal("terminated", ex.MissionStatus);
+        Assert.Equal("expired", ex.TerminationReason);
     }
 
     [Fact(DisplayName = "§Mission Status Errors — 403 mission_terminated surfaced during polling")]
@@ -58,6 +59,7 @@ public class MissionTerminatedTests
             }));
 
         Assert.Equal("terminated", ex.MissionStatus);
+        Assert.Equal("expired", ex.TerminationReason);
     }
 
     [Fact(DisplayName = "§Mission Status Errors — error/mission_status codes round-trip via TokenErrorCode")]
@@ -114,6 +116,7 @@ public class MissionTerminatedTests
             {
                 ["error"] = "mission_terminated",
                 ["mission_status"] = "terminated",
+                ["termination_reason"] = "expired",
             });
 
         private static HttpResponseMessage Json(HttpStatusCode status, JsonObject body)

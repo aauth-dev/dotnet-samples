@@ -398,8 +398,23 @@ public static class AAuthPersonServerEndpoints
             }
             catch (TokenVerificationException ex)
             { throw new TokenVerificationException(ex.Message, ex) { Credential = TokenCredential.Resource }; }
+            // §Token Revocation: a resource token its resource withdrew never backs an auth token.
+            if (await inventory.IsRevokedAsync(TokenRegistration.FromVerified(resource).Token, ct))
+                throw new TokenVerificationException(AAuth.Errors.SignatureErrorCode.RevokedJwt,
+                    "The resource token has been revoked.") { Credential = TokenCredential.Resource };
             var presented = await selfVerifier.VerifyPresentedTokenAsync(presentedTokenJwt, resource, metadataClient, jwksClient, ct);
             return (resource, presented);
+        }
+
+        // A pending request started against a resource token its resource then withdrew
+        // terminates with polling error `revoked` (#token-revocation).
+        async Task<IResult?> WithdrawnResourceAsync(string? resourceTokenJwt, System.Threading.CancellationToken ct)
+        {
+            if (resourceTokenJwt is null) return null;
+            var key = TokenRegistration.FromPayload(TokenVerifier.DecodeJsonSegment(resourceTokenJwt.Split('.')[1], "payload")).Token;
+            return await inventory.IsRevokedAsync(key, ct)
+                ? AAuthProblemDetails.Create("revoked", "The resource token was revoked.", statusCode: StatusCodes.Status403Forbidden)
+                : null;
         }
 
         async Task<(IReadOnlyList<TokenRegistration>? Sources, IResult? Failure)> RegisterSourcesAsync(
@@ -415,6 +430,13 @@ public static class AAuthPersonServerEndpoints
 
         static IReadOnlyList<TokenKey> Keys(IReadOnlyList<TokenRegistration> sources) => sources.Select(source => source.Token).ToArray();
         IResult? MissionExpired(string? missionS256) => missionS256 is null ? null : GovernanceEndpoints.MissionTerminated("expired");
+
+        // §Mission Status Errors: every mission_terminated carries mission_status,
+        // and termination_reason when the PS knows it (the detail of its own throw).
+        static IResult ExchangeFailure(string error, string? detail, int status)
+            => error == AAuthMissionTerminatedException.ErrorCode
+                ? GovernanceEndpoints.MissionTerminated(detail)
+                : AAuthProblemDetails.Create(error, detail, statusCode: status);
 
         static DateTimeOffset Earliest(DateTimeOffset left, DateTimeOffset right) => left < right ? left : right;
 
@@ -494,7 +516,7 @@ public static class AAuthPersonServerEndpoints
             {
                 try { missionExpiresAt = (await ValidateMissionAsync(missionS256, issuance!.AgentId, issuance.Upstream)).ExpiresAt; }
                 catch (AAuthTokenExchangeException ex)
-                { return AAuthProblemDetails.Create(ex.ErrorCode, ex.Detail, statusCode: ex.StatusCode); }
+                { return ExchangeFailure(ex.ErrorCode, ex.Detail, ex.StatusCode); }
             }
             var ceiling = missionExpiresAt is { } missionExpiry ? Earliest(issuance!.ExpiresAt, missionExpiry) : issuance!.ExpiresAt;
 
@@ -610,6 +632,11 @@ public static class AAuthPersonServerEndpoints
                     entry.FederationCancellation.Cancel();
                     return GovernanceEndpoints.MissionTerminated();
                 }
+                if (await WithdrawnResourceAsync(entry.ResourceToken, ctx.RequestAborted) is { } withdrawn)
+                {
+                    entry.FederationCancellation.Cancel();
+                    return withdrawn;
+                }
                 if (entry.ResourceInteraction is { Error: not null } failedResource)
                     return AAuthProblemDetails.Create(failedResource.Error, statusCode: failedResource.ErrorStatus);
                 if (entry.AwaitingResourceInteraction)
@@ -640,7 +667,7 @@ public static class AAuthPersonServerEndpoints
                         {
                             ctx.Response.Headers.Location = entry.ErrorLocation;
                         }
-                        return AAuth.Server.AAuthProblemDetails.Create(entry.Error ?? "denied", statusCode: entry.ErrorStatus ?? StatusCodes.Status403Forbidden);
+                        return ExchangeFailure(entry.Error ?? "denied", null, entry.ErrorStatus ?? StatusCodes.Status403Forbidden);
                     }
                     return Pending202(ctx, entry, options, interactionUrl);
                 }
@@ -792,9 +819,11 @@ public static class AAuthPersonServerEndpoints
                     || upstream is { IsValid: true } && upstream.MissionS256 == missionS256);
             if (!authorized)
                 throw new AAuthTokenExchangeException("mission_not_found", null, StatusCodes.Status404NotFound, true);
-            if (stored!.State == MissionState.Terminated
-                || stored.ExpiresAt is { } expiresAt && expiresAt.ToUnixTimeSeconds() <= options.TimeProvider.GetUtcNow().ToUnixTimeSeconds())
+            if (stored!.State == MissionState.Terminated)
                 throw new AAuthTokenExchangeException("mission_terminated", null, StatusCodes.Status403Forbidden, true);
+            // The detail carries the termination_reason ExchangeFailure reports.
+            if (stored.ExpiresAt is { } expiresAt && expiresAt.ToUnixTimeSeconds() <= options.TimeProvider.GetUtcNow().ToUnixTimeSeconds())
+                throw new AAuthTokenExchangeException("mission_terminated", "expired", StatusCodes.Status403Forbidden, true);
             return stored;
         }
 
@@ -830,7 +859,7 @@ public static class AAuthPersonServerEndpoints
             catch (AAuthTokenExchangeException ex)
             {
                 entry.FederationMissionConsent?.TrySetException(ex);
-                return AAuthProblemDetails.Create(ex.ErrorCode, ex.Detail, statusCode: ex.StatusCode);
+                return ExchangeFailure(ex.ErrorCode, ex.Detail, ex.StatusCode);
             }
             var missionLog = app.Services.GetRequiredService<IMissionLog>();
 
@@ -993,7 +1022,7 @@ public static class AAuthPersonServerEndpoints
                         ceiling = Earliest(ceiling, missionExpiry);
                 }
                 catch (AAuthTokenExchangeException ex)
-                { return AAuthProblemDetails.Create(ex.ErrorCode, ex.Detail, statusCode: ex.StatusCode); }
+                { return ExchangeFailure(ex.ErrorCode, ex.Detail, ex.StatusCode); }
             }
 
             var (registered, sourceFailure) = await RegisterSourcesAsync(issuance, presented, ctx.RequestAborted);
@@ -1061,7 +1090,7 @@ public static class AAuthPersonServerEndpoints
                 }
                 catch (AAuthTokenExchangeException ex)
                 {
-                    return AAuthProblemDetails.Create(ex.ErrorCode, ex.Detail, statusCode: ex.StatusCode);
+                    return ExchangeFailure(ex.ErrorCode, ex.Detail, ex.StatusCode);
                 }
                 switch (decision.Kind)
                 {
@@ -1191,7 +1220,7 @@ public static class AAuthPersonServerEndpoints
                         ceiling = Earliest(ceiling, missionExpiry);
                 }
                 catch (AAuthTokenExchangeException ex)
-                { return AAuthProblemDetails.Create(ex.ErrorCode, ex.Detail, statusCode: ex.StatusCode); }
+                { return ExchangeFailure(ex.ErrorCode, ex.Detail, ex.StatusCode); }
             }
             var (registered, sourceFailure) = await RegisterSourcesAsync(issuance, presented, ctx.RequestAborted);
             if (sourceFailure is not null) return sourceFailure;
@@ -1517,7 +1546,7 @@ public static class AAuthPersonServerEndpoints
             {
                 ctx.Response.Headers.Location = entry.ErrorLocation;
             }
-            return AAuth.Server.AAuthProblemDetails.Create(entry.Error ?? "denied", statusCode: entry.ErrorStatus ?? StatusCodes.Status403Forbidden);
+            return ExchangeFailure(entry.Error ?? "denied", null, entry.ErrorStatus ?? StatusCodes.Status403Forbidden);
         }
     }
 

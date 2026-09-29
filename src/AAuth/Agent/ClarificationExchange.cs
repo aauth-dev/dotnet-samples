@@ -213,6 +213,6 @@ public sealed class ClarificationExchange
     {
         if (response.StatusCode != System.Net.HttpStatusCode.Forbidden) return;
         var state = await DeferredExchange.TryReadMissionTerminatedAsync(response, cancellationToken).ConfigureAwait(false);
-        if (state.Terminated) throw new AAuth.Errors.AAuthMissionTerminatedException(state.MissionStatus);
+        if (state.Terminated) throw new AAuth.Errors.AAuthMissionTerminatedException(state.MissionStatus, state.TerminationReason);
     }
 }

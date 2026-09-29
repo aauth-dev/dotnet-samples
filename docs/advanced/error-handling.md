@@ -315,7 +315,8 @@ namespace AAuth.Errors;
 public sealed class AAuthMissionTerminatedException : Exception
 {
     public const string ErrorCode = "mission_terminated";
-    public string? MissionStatus { get; }   // e.g. "terminated"
+    public string? MissionStatus { get; }       // always "terminated"
+    public string? TerminationReason { get; }   // optional, e.g. "expired" or "revoked"
 }
 ```
 
@@ -326,13 +327,17 @@ try
 }
 catch (AAuthMissionTerminatedException ex)
 {
-    // The mission is over — stop acting under it and start a new one if needed.
-    Console.WriteLine($"Mission terminated ({ex.MissionStatus}).");
+    // The mission is over: stop acting under it. An expired mission invites a
+    // new proposal; a revoked one does not.
+    Console.WriteLine($"Mission terminated ({ex.TerminationReason ?? "no reason given"}).");
 }
 ```
 
 On the PS side, emit the canonical `application/problem+json` body with
-`GovernanceEndpoints.MissionTerminated()`. See
+`GovernanceEndpoints.MissionTerminated()`, or
+`GovernanceEndpoints.MissionTerminated("expired")` to add a
+`termination_reason`. The SDK's own endpoints report `expired` when a
+mission's `expires_at` has passed and omit the reason otherwise. See
 [Mission Governance (Server)](../server/mission-governance.md#terminating-a-mission).
 
 ## Clarification Exceptions

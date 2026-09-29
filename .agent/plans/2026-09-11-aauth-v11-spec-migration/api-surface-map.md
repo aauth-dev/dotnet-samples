@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 152 changed public-source files, 295 added/replacement declarations, 141 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 153 changed public-source files, 300 added/replacement declarations, 145 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -1021,6 +1021,20 @@ Concept/decision: [discovery](#discovery). Source: [ServerMetadata.cs](../../../
 
 Public owners: `AAuth.Discovery.MetadataClientExtensions`, `AAuth.Discovery.ResourceMetadata`, `AAuth.Discovery.ServerMetadata`, `AAuth.Discovery`.
 
+### src/AAuth/Errors/AAuthMissionTerminatedException.cs
+
+Concept/decision: [server-contracts](#server-contracts). Source: [AAuthMissionTerminatedException.cs](../../../src/AAuth/Errors/AAuthMissionTerminatedException.cs).
+
+```diff
+- AAuth.Errors.AAuthMissionTerminatedException: public AAuthMissionTerminatedException ( string ? missionStatus = null )
+- AAuth.Errors.AAuthMissionTerminatedException: public AAuthMissionTerminatedException ( string message , string ? missionStatus )
++ AAuth.Errors.AAuthMissionTerminatedException: public AAuthMissionTerminatedException ( string ? missionStatus = null , string ? terminationReason = null )
++ AAuth.Errors.AAuthMissionTerminatedException: public AAuthMissionTerminatedException ( string message , string ? missionStatus , string ? terminationReason = null )
++ AAuth.Errors.AAuthMissionTerminatedException: public string ? TerminationReason { get ; }
+```
+
+Public owners: `AAuth.Errors.AAuthMissionTerminatedException`, `AAuth.Errors`.
+
 ### src/AAuth/Errors/PollingError.cs
 
 Concept/decision: [server-contracts](#server-contracts). Source: [PollingError.cs](../../../src/AAuth/Errors/PollingError.cs).
@@ -1380,12 +1394,16 @@ Concept/decision: [governance](#governance). Source: [GovernanceEndpoints.cs](..
 ```diff
 - AAuth.Server.Governance.GovernanceEndpoints: public static AuditRecord ParseAudit ( JsonObject body , AAuth . Discovery . AAuthEgressPolicy ? policy = null )
 - AAuth.Server.Governance.GovernanceEndpoints: public static IResult ? Authorize ( HttpContext context , MissionClaim ? reference , StoredMission ? mission )
+- AAuth.Server.Governance.GovernanceEndpoints: public static IResult MissionTerminated ( string missionStatus = "terminated" )
 - AAuth.Server.Governance.GovernanceEndpoints: public static InteractionRequest ParseInteraction ( JsonObject body , AAuth . Discovery . AAuthEgressPolicy ? policy = null )
+- AAuth.Server.Governance.GovernanceEndpoints: public static JsonObject MissionTerminatedBody ( string missionStatus = "terminated" )
 - AAuth.Server.Governance.GovernanceEndpoints: public static MissionProposal ParseMissionProposal ( JsonObject body )
 - AAuth.Server.Governance.GovernanceEndpoints: public static PermissionRequest ParsePermission ( JsonObject body , AAuth . Discovery . AAuthEgressPolicy ? policy = null )
 + AAuth.Server.Governance.GovernanceEndpoints: public static AuditRecord ParseAudit ( JsonObject body )
 + AAuth.Server.Governance.GovernanceEndpoints: public static IResult ? Authorize ( HttpContext context , string ? missionS256 , StoredMission ? mission )
++ AAuth.Server.Governance.GovernanceEndpoints: public static IResult MissionTerminated ( string ? terminationReason = null )
 + AAuth.Server.Governance.GovernanceEndpoints: public static InteractionRequest ParseInteraction ( JsonObject body )
++ AAuth.Server.Governance.GovernanceEndpoints: public static JsonObject MissionTerminatedBody ( string ? terminationReason = null )
 + AAuth.Server.Governance.GovernanceEndpoints: public static MissionProposal ParseMissionProposal ( JsonObject body , AAuth . Discovery . AAuthEgressPolicy ? egressPolicy = null )
 + AAuth.Server.Governance.GovernanceEndpoints: public static PermissionRequest ParsePermission ( JsonObject body )
 ```

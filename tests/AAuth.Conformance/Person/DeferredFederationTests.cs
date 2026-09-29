@@ -482,6 +482,41 @@ public class DeferredFederationTests
         Assert.Null(fixture.Policy.Last);
     }
 
+    [Theory(DisplayName = "§Token Revocation — the AS refuses a withdrawn resource token, and ends a pending request with revoked")]
+    [InlineData("immediate")]
+    [InlineData("interaction")]
+    public async Task AsRefusesWithdrawnResourceToken(string outcome)
+    {
+        await using var fixture = await Fixture.CreateAsync(outcome);
+        var body = fixture.Body("read", agentToken: true);
+        var resource = Payload((string)body["resource_token"]!);
+        // The resource withdraws its token at the AS named in `aud`, signing as itself.
+        using var resourceClient = new AAuthClientBuilder(fixture.ResourceKey)
+            .UseJwksUri("https://resource.test", AAuthConstants.DwkFiles.Resource, "key").WithEgressPolicy(TestEgress.Policy)
+            .WithInnerHandler(fixture.AccessApp.GetTestServer().CreateHandler(), AAuthTransportContract.InProcessOnly).Build();
+        async Task WithdrawAsync()
+        {
+            var result = await new RevocationClient(resourceClient).RevokeAsync(new Uri("https://as.test/revoke"),
+                (string)resource["jti"]!, DateTimeOffset.FromUnixTimeSeconds((long)resource["exp"]!));
+            Assert.Equal(HttpStatusCode.OK, result.StatusCode);
+        }
+        if (outcome == "immediate")
+        {
+            await WithdrawAsync();
+            using var rejected = await fixture.Ps.PostAsJsonAsync("/token", body);
+            Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+            Assert.Equal("revoked_resource_token", (string?)(await rejected.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+            Assert.Null(fixture.Policy.Last);
+            return;
+        }
+        using var first = await fixture.Ps.PostAsJsonAsync("/token", body);
+        Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+        await WithdrawAsync();
+        using var poll = await fixture.Ps.GetAsync(first.Headers.Location);
+        Assert.Equal(HttpStatusCode.Forbidden, poll.StatusCode);
+        Assert.Equal("revoked", (string?)(await poll.Content.ReadFromJsonAsync<JsonObject>())!["error"]);
+    }
+
     [Theory]
     [InlineData(true, "immediate")]
     [InlineData(true, "claims")]
