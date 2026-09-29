@@ -41,7 +41,7 @@ public class ResourceR3Tests
             AdditionalClaims = R3AuthClaims.AuthToken(proposal.ProposalUri!, proposal.ProposalS256!, R3Grant.Mcp("book")),
         }.Build();
         clock.Now = issued.AddMinutes(11);
-        var verified = new AAuth.Tokens.TokenVerifier { Clock = () => clock.Now }.VerifyAuthToken(
+        var verified = new AAuth.Tokens.TokenVerifier { TimeProvider = clock }.VerifyAuthToken(
             token, issuerKey, R3TestData.ResourceIssuer, agentKey);
         var approved = R3ClaimReader.ReadAuthToken(verified.Payload);
         Assert.True(store.TryGet(document.S256, out var documentBytes));

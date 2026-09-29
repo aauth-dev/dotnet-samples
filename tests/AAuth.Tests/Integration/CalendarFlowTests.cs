@@ -23,6 +23,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Tests.Integration;
@@ -148,7 +149,7 @@ public class CalendarFlowTests : IAsyncLifetime
             TokenId = "calendar-revocation",
         }.Build();
         using var agent = new InProcessHttpClient(new AAuthSigningHandler(key, () => token,
-            () => DateTimeOffset.UtcNow.AddSeconds(-2)) { InnerHandler = _calendar!.Server.CreateHandler() });
+            new FakeTimeProvider(DateTimeOffset.UtcNow.AddSeconds(-2))) { InnerHandler = _calendar!.Server.CreateHandler() });
         using var initial = await agent.GetAsync(CalendarIssuer + "/events");
         Assert.Equal(HttpStatusCode.Unauthorized, initial.StatusCode);
         Assert.True(initial.Headers.Contains("AAuth-Requirement"));
@@ -167,7 +168,7 @@ public class CalendarFlowTests : IAsyncLifetime
         Assert.Equal("unsupported_iss", refused.Error);
         Assert.Equal(AAuth.Errors.RevocationDownstreamError.RevocationUnsupported, refused.Failure);
         using var stillValid = await new InProcessHttpClient(new AAuthSigningHandler(key, () => token,
-            () => DateTimeOffset.UtcNow.AddSeconds(-1)) { InnerHandler = _calendar.Server.CreateHandler() }).GetAsync(CalendarIssuer + "/events");
+            new FakeTimeProvider(DateTimeOffset.UtcNow.AddSeconds(-1))) { InnerHandler = _calendar.Server.CreateHandler() }).GetAsync(CalendarIssuer + "/events");
         Assert.True(stillValid.Headers.Contains("AAuth-Requirement"));
         Assert.False(stillValid.Headers.Contains("Signature-Error"));
 

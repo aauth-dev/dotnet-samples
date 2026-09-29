@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Discovery;
 using AAuth.Errors;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Tests.Discovery;
@@ -41,7 +42,7 @@ public class MetadataClientTests
     {
         var stub = new StubHandler();
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
-        var client = new MetadataClient(new HttpClient(stub), TimeSpan.FromMinutes(5), () => clock, transportContract: AAuthTransportContract.InProcessOnly);
+        var client = new MetadataClient(new HttpClient(stub), TimeSpan.FromMinutes(5), new FakeTimeProvider(clock), transportContract: AAuthTransportContract.InProcessOnly);
 
         var url = new Uri("https://x.example/.well-known/aauth-resource.json");
         await client.FetchAsync(url);
@@ -54,12 +55,12 @@ public class MetadataClientTests
     public async Task FetchAsync_RefreshesAfterTtl()
     {
         var stub = new StubHandler();
-        var time = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
-        var client = new MetadataClient(new HttpClient(stub), TimeSpan.FromMinutes(5), () => time, transportContract: AAuthTransportContract.InProcessOnly);
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero));
+        var client = new MetadataClient(new HttpClient(stub), TimeSpan.FromMinutes(5), time, transportContract: AAuthTransportContract.InProcessOnly);
 
         var url = new Uri("https://x.example/.well-known/aauth-resource.json");
         await client.FetchAsync(url);
-        time = time.AddMinutes(10);
+        time.Advance(TimeSpan.FromMinutes(10));
         await client.FetchAsync(url);
 
         Assert.Equal(2, stub.Calls);

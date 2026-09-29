@@ -77,8 +77,8 @@ public sealed class AAuthVerificationOptions
     // Tolerance for exp/iat validation (default: 30s)
     public TimeSpan ClockSkew { get; init; } = TimeSpan.FromSeconds(30);
 
-    // Clock source for all time checks (null = UtcNow; inject for testing)
-    public Func<DateTimeOffset>? Clock { get; init; }
+    // Clock source for all time checks (default: TimeProvider.System; inject for testing)
+    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 }
 ```
 

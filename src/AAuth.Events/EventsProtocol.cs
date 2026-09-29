@@ -17,14 +17,15 @@ public sealed class EventsProtocol
     public TokenVerifier TokenVerifier { get; }
 
     public EventsProtocol(HttpClient http, IEnumerable<ISignatureTokenVerifier> tokenVerifiers,
-        Func<DateTimeOffset>? clock = null)
+        TimeProvider? timeProvider = null)
     {
         _http = http;
         var policy = AAuthHttpTransport.GetPolicy(http);
+        timeProvider ??= TimeProvider.System;
         TokenVerifier = new TokenVerifier { EgressPolicy = policy, ClockSkew = TimeSpan.Zero,
-            Clock = clock ?? (() => DateTimeOffset.UtcNow) };
-        _metadata = new MetadataClient(http, clock: clock);
-        _jwks = new JwksClient(http, clock: clock);
+            TimeProvider = timeProvider };
+        _metadata = new MetadataClient(http, timeProvider: timeProvider);
+        _jwks = new JwksClient(http, timeProvider: timeProvider);
         _resolver = new DefaultSignatureKeyResolver(_jwks, _metadata, TokenVerifier, tokenVerifiers);
     }
 
@@ -58,10 +59,10 @@ public sealed class EventsProtocol
                 next.Response.StatusCode = 401;
             else verified = assertion;
             return Task.CompletedTask;
-        }, new AAuthVerifier { Clock = TokenVerifier.Clock }, _resolver, _metadata, _jwks,
+        }, new AAuthVerifier { TimeProvider = TokenVerifier.TimeProvider }, _resolver, _metadata, _jwks,
         new AAuthVerificationOptions
         {
-            EgressPolicy = TokenVerifier.EgressPolicy, Clock = TokenVerifier.Clock, ClockSkew = TimeSpan.Zero,
+            EgressPolicy = TokenVerifier.EgressPolicy, TimeProvider = TokenVerifier.TimeProvider, ClockSkew = TimeSpan.Zero,
             AcceptedSchemes = [type == EventsTokens.EventType ? "self-jwt" : "jwt"],
             RequiredComponents = context.Request.ContentType is null ? ["content-digest"] : ["content-digest", "content-type"]
         });
@@ -94,7 +95,7 @@ public sealed class EventsProtocol
         request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         request.Options.Set(AAuthSigningHandler.AdditionalComponentsKey, ["content-type", "content-digest"]);
         using var signer = new AAuthSigningHandler(key, selfIssued
-            ? new SelfJwtSignatureKeyProvider(() => jwt) : new JwtSignatureKeyProvider(() => jwt), TokenVerifier.Clock);
+            ? new SelfJwtSignatureKeyProvider(() => jwt) : new JwtSignatureKeyProvider(() => jwt), TokenVerifier.TimeProvider);
         await signer.SignAsync(request, cancellationToken).ConfigureAwait(false);
         return await AAuthHttpTransport.SendAsync(_http, request, cancellationToken).ConfigureAwait(false);
     }

@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Tests.Discovery;
@@ -34,17 +35,17 @@ public class DiscoveryCacheSecurityTests
     [Fact]
     public async Task IssuerFailuresBackOffAcrossUrlChangesAndCacheInvalidation()
     {
-        var time = DateTimeOffset.UtcNow;
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var handler = new Handler(() => throw new HttpRequestException("offline"));
-        var client = Create(handler, () => time);
+        var client = Create(handler, time);
         await Assert.ThrowsAsync<HttpRequestException>(() => client.ResolveKeyAsync(Address, "key", "https://issuer.example"));
-        time = time.AddSeconds(61);
+        time.Advance(TimeSpan.FromSeconds(61));
         await Assert.ThrowsAsync<HttpRequestException>(() => client.ForceRefreshKeyAsync(new Uri("https://issuer.example/second"), "key", "https://issuer.example"));
-        time = time.AddSeconds(61);
+        time.Advance(TimeSpan.FromSeconds(61));
         client.ClearCache();
         await Assert.ThrowsAsync<HttpRequestException>(() => client.ResolveKeyAsync(new Uri("https://issuer.example/third"), "key", "https://issuer.example"));
         Assert.Equal(2, handler.Calls);
-        time = time.AddSeconds(60);
+        time.Advance(TimeSpan.FromSeconds(60));
         await Assert.ThrowsAsync<HttpRequestException>(() => client.ResolveKeyAsync(new Uri("https://issuer.example/third"), "key", "https://issuer.example"));
         Assert.Equal(3, handler.Calls);
     }
@@ -65,11 +66,11 @@ public class DiscoveryCacheSecurityTests
     [Fact]
     public async Task CapacityPressureCannotEvictIssuerFloorAfterUriBecomesEvictable()
     {
-        var time = DateTimeOffset.UtcNow;
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var handler = new Handler(() => Task.FromResult("{\"keys\":[]}"));
-        var client = Create(handler, () => time, capacity: 2);
+        var client = Create(handler, time, capacity: 2);
         await client.ResolveKeyAsync(Address, "key", "https://issuer.example");
-        time = time.AddSeconds(61);
+        time.Advance(TimeSpan.FromSeconds(61));
         await client.ResolveKeyAsync(new Uri("https://issuer.example/second"), "key", "https://issuer.example");
         await client.ResolveKeyAsync(new Uri("https://other.example/keys"), "key", "https://other.example");
         await Assert.ThrowsAsync<HttpRequestException>(() => client.ResolveKeyAsync(Address, "key", "https://issuer.example"));
@@ -122,21 +123,21 @@ public class DiscoveryCacheSecurityTests
     [Fact]
     public async Task FailedRefreshReturnsStaleOnlyBeforeHardMaximumAge()
     {
-        var time = DateTimeOffset.UtcNow;
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var key = AAuthKey.Generate();
         var jwk = key.ToPublicJwk();
         jwk["kid"] = "key";
         var fail = false;
         var handler = new Handler(() => fail ? throw new HttpRequestException("offline")
             : Task.FromResult(new JsonObject { ["keys"] = new JsonArray(jwk) }.ToJsonString()));
-        var client = Create(handler, () => time, ttl: TimeSpan.FromSeconds(1));
+        var client = Create(handler, time, ttl: TimeSpan.FromSeconds(1));
         var first = await client.ResolveKeyAsync(Address, "key");
         fail = true;
-        time = time.AddMinutes(1);
+        time.Advance(TimeSpan.FromMinutes(1));
         var stale = await client.ResolveKeyAsync(Address, "key");
         Assert.Equal(first!.ComputeJwkThumbprint(), stale!.ComputeJwkThumbprint());
         Assert.Equal(2, handler.Calls);
-        time = time.AddHours(24);
+        time.Advance(TimeSpan.FromHours(24));
         await Assert.ThrowsAsync<HttpRequestException>(() => client.ResolveKeyAsync(Address, "key"));
         Assert.Equal(3, handler.Calls);
     }
@@ -144,16 +145,16 @@ public class DiscoveryCacheSecurityTests
     [Fact]
     public async Task FailedAttemptsBackOffAcrossResolveAndForcedRefresh()
     {
-        var time = DateTimeOffset.UtcNow;
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var handler = new Handler(() => throw new HttpRequestException("offline"));
-        var client = Create(handler, () => time);
+        var client = Create(handler, time);
         await Assert.ThrowsAsync<HttpRequestException>(() => client.ResolveKeyAsync(Address, "key"));
-        time = time.AddMinutes(1);
+        time.Advance(TimeSpan.FromMinutes(1));
         await Assert.ThrowsAsync<HttpRequestException>(() => client.ForceRefreshKeyAsync(Address, "key"));
-        time = time.AddMinutes(1);
+        time.Advance(TimeSpan.FromMinutes(1));
         await Assert.ThrowsAsync<HttpRequestException>(() => client.ResolveKeyAsync(Address, "key"));
         Assert.Equal(2, handler.Calls);
-        time = time.AddMinutes(1);
+        time.Advance(TimeSpan.FromMinutes(1));
         await Assert.ThrowsAsync<HttpRequestException>(() => client.ResolveKeyAsync(Address, "key"));
         Assert.Equal(3, handler.Calls);
     }
@@ -161,15 +162,15 @@ public class DiscoveryCacheSecurityTests
     [Fact]
     public async Task CapacityCannotEvictProtectedAttemptState()
     {
-        var time = DateTimeOffset.UtcNow;
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var handler = new Handler(() => Task.FromResult("{\"keys\":[]}"));
-        var client = Create(handler, () => time, capacity: 2);
+        var client = Create(handler, time, capacity: 2);
         await client.ResolveKeyAsync(Address, "key");
         await client.ResolveKeyAsync(new Uri("https://issuer.example/second"), "key");
         await Assert.ThrowsAsync<HttpRequestException>(() => client.ResolveKeyAsync(new Uri("https://issuer.example/third"), "key"));
         await client.ResolveKeyAsync(Address, "key");
         Assert.Equal(2, handler.Calls);
-        time = time.AddMinutes(1);
+        time.Advance(TimeSpan.FromMinutes(1));
         await client.ResolveKeyAsync(new Uri("https://issuer.example/third"), "key");
         Assert.Equal(3, handler.Calls);
     }
@@ -202,8 +203,8 @@ public class DiscoveryCacheSecurityTests
         Assert.Throws<ArgumentOutOfRangeException>(() => new JwksClient(maxCacheAge: TimeSpan.FromHours(25)));
     }
 
-    private static JwksClient Create(Handler handler, Func<DateTimeOffset>? clock = null,
-        TimeSpan? ttl = null, int capacity = 1024) => new(new HttpClient(handler), clock: clock,
+    private static JwksClient Create(Handler handler, TimeProvider? timeProvider = null,
+        TimeSpan? ttl = null, int capacity = 1024) => new(new HttpClient(handler), timeProvider: timeProvider,
             cacheTtl: ttl, maxCacheEntries: capacity, transportContract: AAuthTransportContract.InProcessOnly);
 
     private sealed class Handler(Func<Task<string>> body) : HttpMessageHandler

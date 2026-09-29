@@ -42,7 +42,7 @@ public static class LocalEventProvider
                 KeyId = keyId, ConfirmationKey = assertion.HttpSigningKey, MaxUses = maximum,
                 Verifier = protocol.TokenVerifier
             }.Build();
-            try { store.Create(new(eid, agent, resource, protocol.TokenVerifier.Clock().AddHours(1), maximum)); }
+            try { store.Create(new(eid, agent, resource, protocol.TokenVerifier.TimeProvider.GetUtcNow().AddHours(1), maximum)); }
             catch (Exception exception) when (exception is not OperationCanceledException)
             { return AAuthProblemDetails.Create("temporarily_unavailable", statusCode: 503); }
             return Results.Json(new { subscribe_token = jwt, eid });

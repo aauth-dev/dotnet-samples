@@ -59,7 +59,7 @@ public static class RevocationEndpoint
                 {
                     EgressPolicy = egressPolicy, AcceptedSchemes = ["jwks_uri", "jwks", "self-jwt"],
                     RequiredComponents = ["content-type", "content-digest"],
-                    Clock = () => clock.GetUtcNow(),
+                    TimeProvider = clock,
                 }).InvokeAsync));
         // Deferred-revocation polls are bodyless signed GETs.
         app.UseWhen(context => context.Request.Path.StartsWithSegments(path.TrimEnd('/') + "/pending"), branch => branch.Use(next =>
@@ -67,7 +67,7 @@ public static class RevocationEndpoint
                 resolver, metadata, jwks, new AAuthVerificationOptions
                 {
                     EgressPolicy = egressPolicy, AcceptedSchemes = ["jwks_uri", "jwks", "self-jwt"],
-                    Clock = () => clock.GetUtcNow(),
+                    TimeProvider = clock,
                 }).InvokeAsync));
 
         async Task<RevocationDownstreamError?> RevokeAtAsync(TokenGrant grant, string recipientDwk, CancellationToken cancellationToken)

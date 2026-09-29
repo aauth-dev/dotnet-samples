@@ -20,7 +20,7 @@ public static class EventsEndpoints
         var envelope = new EventEnvelope(assertion.CompactToken, EventsTokens.RequireText(token.Payload, "eid"),
             token.Jti, token.Issuer, EventsTokens.RequireText(token.Payload, "aud"), token.ExpiresAt, body.ToArray());
         EventAcceptance acceptance;
-        try { acceptance = store.Accept(envelope, protocol.TokenVerifier.Clock()); }
+        try { acceptance = store.Accept(envelope, protocol.TokenVerifier.TimeProvider.GetUtcNow()); }
         catch (Exception exception) when (exception is not OperationCanceledException)
         { return AAuthProblemDetails.Create("temporarily_unavailable", "Durable event acceptance failed.", statusCode: 503); }
         if (acceptance.StatusCode != 202)
@@ -49,10 +49,10 @@ public static class EventsEndpoints
         await protocol.ResolveEventEndpointAsync(token.Issuer, context.RequestAborted).ConfigureAwait(false);
         var subscription = new ResourceSubscription(EventsTokens.RequireText(token.Payload, "eid"), token.Issuer,
             EventsTokens.RequireText(token.Payload, "sub"), operation, null, "public",
-            protocol.TokenVerifier.Clock().Add(subscriptionLifetime ?? TimeSpan.FromHours(1)),
+            protocol.TokenVerifier.TimeProvider.GetUtcNow().Add(subscriptionLifetime ?? TimeSpan.FromHours(1)),
             assertion.HttpSigningKey.ComputeJwkThumbprint());
         RegistrationResult registration;
-        try { registration = store.Register(subscription, ticket, protocol.TokenVerifier.Clock()); }
+        try { registration = store.Register(subscription, ticket, protocol.TokenVerifier.TimeProvider.GetUtcNow()); }
         catch (Exception exception) when (exception is not OperationCanceledException)
         { return AAuthProblemDetails.Create("temporarily_unavailable", "Durable registration failed.", statusCode: 503); }
         return registration.StatusCode == 200

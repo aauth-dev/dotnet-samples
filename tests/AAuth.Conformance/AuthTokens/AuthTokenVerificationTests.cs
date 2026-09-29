@@ -95,7 +95,7 @@ public class AuthTokenVerificationTests
             Lifetime = TimeSpan.FromSeconds(1),
         }.Build();
 
-        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, Clock = () => issued.AddHours(2) };
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, TimeProvider = new IssuanceTestClock(issued.AddHours(2)) };
         Assert.Throws<TokenVerificationException>(() =>
             verifier.VerifyAuthToken(jwt, psKey, Aud, agentKey));
     }

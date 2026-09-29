@@ -9,12 +9,14 @@ using AAuth.HttpSig;
 using AAuth.Server.Verification;
 using AAuth.Tokens;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Time.Testing;
 
 namespace AAuth.Tests.HttpSig;
 
 public class SignatureV10AdversarialTests
 {
     private static readonly DateTimeOffset Now = DateTimeOffset.FromUnixTimeSeconds(1800000000);
+    private static readonly FakeTimeProvider Time = new(Now);
 
     [Theory]
     [InlineData("GuidedTour", "http://localhost:5400")]
@@ -57,13 +59,13 @@ public class SignatureV10AdversarialTests
             + Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Encode(payload);
         var jwt = input + "." + Microsoft.IdentityModel.Tokens.Base64UrlEncoder.Encode(key.Sign(Encoding.ASCII.GetBytes(input)));
         Assert.Equal(SignatureErrorCode.InvalidJwt, Assert.Throws<TokenVerificationException>(() =>
-            new TokenVerifier { Clock = () => Now }.Verify(jwt, key, AuthTokenBuilder.TokenType, AuthTokenBuilder.PersonDwk)).Code);
+            new TokenVerifier { TimeProvider = Time }.Verify(jwt, key, AuthTokenBuilder.TokenType, AuthTokenBuilder.PersonDwk)).Code);
         var discovery = new DuplicateDiscoveryProbe();
         using var http = new InProcessHttpClient(discovery);
         using var metadata = new MetadataClient(http);
         using var jwks = new JwksClient(http);
         Assert.Equal(SignatureErrorCode.InvalidJwt, (await Assert.ThrowsAsync<TokenVerificationException>(() =>
-            new TokenVerifier { Clock = () => Now }.VerifyWithJwksAsync(jwt, metadata, jwks,
+            new TokenVerifier { TimeProvider = Time }.VerifyWithJwksAsync(jwt, metadata, jwks,
                 AuthTokenBuilder.TokenType, AuthTokenBuilder.PersonDwk, "https://resource.example"))).Code);
         foreach (var scheme in new[] { "jwt", "jkt-jwt", "self-jwt" })
         {
@@ -71,7 +73,7 @@ public class SignatureV10AdversarialTests
                 SignatureKeyParser.ParseAny($"sig={scheme};jwt=\"{jwt}\"")).Code);
             var context = Signed(key, $"sig={scheme};jwt=\"{jwt}\"");
             using var activity = new System.Diagnostics.Activity("duplicate-jwt").Start();
-            await Middleware(http, AAuthVerificationOptions.Generic(() => Now)).InvokeAsync(context);
+            await Middleware(http, AAuthVerificationOptions.Generic(Time)).InvokeAsync(context);
             Assert.Equal(401, context.Response.StatusCode);
             Assert.Equal("error=invalid_jwt", context.Response.Headers["Signature-Error"].ToString());
             Assert.Null(context.Features.Get<AAuthVerificationResult>());
@@ -137,7 +139,7 @@ public class SignatureV10AdversarialTests
         var discovery = new DuplicateDiscoveryProbe();
         using var http = new InProcessHttpClient(discovery);
         var context = Signed(confirmation, SignatureKeyHeader.FormatJktJwt(jwt));
-        await Middleware(http, AAuthVerificationOptions.Generic(() => Now)).InvokeAsync(context);
+        await Middleware(http, AAuthVerificationOptions.Generic(Time)).InvokeAsync(context);
         Assert.Equal(401, context.Response.StatusCode);
         Assert.Equal("error=invalid_jwt", context.Response.Headers["Signature-Error"].ToString());
         Assert.Null(context.Features.Get<AAuthVerifiedAssertion>());
@@ -183,7 +185,7 @@ public class SignatureV10AdversarialTests
     {
         var key = AAuthKey.Generate();
         var jwt = TestTokens.Raw(key, type, (_, payload) => payload[claim] = JsonNode.Parse(json));
-        var verifier = new TokenVerifier { Clock = () => Now };
+        var verifier = new TokenVerifier { TimeProvider = Time };
         Assert.Equal(SignatureErrorCode.InvalidJwt, Assert.Throws<TokenVerificationException>(() => verifier.Verify(jwt, key, type,
             type == AgentTokenBuilder.TokenType ? AgentTokenBuilder.AgentDwk : AuthTokenBuilder.PersonDwk)).Code);
         var context = Signed(key, SignatureKeyHeader.FormatJwt(jwt));
@@ -212,9 +214,9 @@ public class SignatureV10AdversarialTests
         var custom = new CustomVerifier(allow);
         using var http = new InProcessHttpClient(new Discovery(key, ""));
         var context = Signed(key, SignatureKeyHeader.FormatJwt(jwt));
-        var middleware = new AAuthVerificationMiddleware(_ => Task.CompletedTask, new AAuthVerifier { Clock = () => Now },
+        var middleware = new AAuthVerificationMiddleware(_ => Task.CompletedTask, new AAuthVerifier { TimeProvider = Time },
             new DefaultSignatureKeyResolver(tokenVerifiers: [custom]), new MetadataClient(http), new JwksClient(http),
-            new() { Clock = () => Now });
+            new() { TimeProvider = Time });
         await middleware.InvokeAsync(context);
         Assert.Equal(1, custom.Calls);
         Assert.Equal(allow ? 200 : 401, context.Response.StatusCode);
@@ -249,9 +251,9 @@ public class SignatureV10AdversarialTests
             payload["parent_agent"] = "aauth:parent@" + host;
             payload["ps"] = issuer;
         });
-        Assert.Throws<TokenVerificationException>(() => new TokenVerifier { Clock = () => Now }
+        Assert.Throws<TokenVerificationException>(() => new TokenVerifier { TimeProvider = Time }
             .VerifySelfIssuedAgentToken(jwt, key));
-        Assert.NotNull(new TokenVerifier { Clock = () => Now, EgressPolicy = AAuthEgressPolicy.ForDevelopmentLoopback(issuer) }
+        Assert.NotNull(new TokenVerifier { TimeProvider = Time, EgressPolicy = AAuthEgressPolicy.ForDevelopmentLoopback(issuer) }
             .VerifySelfIssuedAgentToken(jwt, key));
     }
 
@@ -262,7 +264,7 @@ public class SignatureV10AdversarialTests
         var key = AAuthKey.Generate();
         var jwt = TestTokens.Raw(key, type, (header, payload) => TestTokens.Mutate(header, payload, claim, mutation));
         var context = Signed(key, SignatureKeyHeader.FormatJwt(jwt));
-        await Middleware(null, new() { Clock = () => Now, ResourceIdentifier = "https://resource.example" }).InvokeAsync(context);
+        await Middleware(null, new() { TimeProvider = Time, ResourceIdentifier = "https://resource.example" }).InvokeAsync(context);
         Assert.Equal(401, context.Response.StatusCode);
         Assert.Equal("error=invalid_jwt", context.Response.Headers["Signature-Error"].ToString());
         Assert.Null(context.Features.Get<AAuthVerificationResult>());
@@ -315,7 +317,7 @@ public class SignatureV10AdversarialTests
     {
         var key = AAuthKey.Generate();
         var context = Signed(key, "sig=unregistered;flag");
-        await Middleware(null, new() { GenericSignatureKeys = generic, Clock = () => Now }).InvokeAsync(context);
+        await Middleware(null, new() { GenericSignatureKeys = generic, TimeProvider = Time }).InvokeAsync(context);
         Assert.Equal(status, context.Response.StatusCode);
         Assert.Equal("error=unsupported_scheme", context.Response.Headers["Signature-Error"].ToString());
         Assert.Equal("jwt", context.Response.Headers["Accept-Signature-Scheme"].ToString());
@@ -326,7 +328,7 @@ public class SignatureV10AdversarialTests
     {
         var key = AAuthKey.Generate();
         var context = Signed(key, SignatureKeyHeader.FormatHwk(key));
-        await Middleware(null, AAuthVerificationOptions.Generic(() => Now), deny: true).InvokeAsync(context);
+        await Middleware(null, AAuthVerificationOptions.Generic(Time), deny: true).InvokeAsync(context);
         Assert.Equal(403, context.Response.StatusCode);
         Assert.False(context.Response.Headers.ContainsKey("Signature-Error"));
         Assert.False(context.Response.Headers.ContainsKey("Accept-Signature-Scheme"));
@@ -338,7 +340,7 @@ public class SignatureV10AdversarialTests
     {
         var key = AAuthKey.Generate();
         var context = Signed(key, SignatureKeyHeader.FormatHwk(key), ";keyid=\"wrong\"");
-        var failure = Assert.Throws<AAuthVerificationException>(() => new AAuthVerifier { Clock = () => Now }.Verify("POST", "resource.example", "/wire",
+        var failure = Assert.Throws<AAuthVerificationException>(() => new AAuthVerifier { TimeProvider = Time }.Verify("POST", "resource.example", "/wire",
             context.Request.Headers["Signature-Key"]!, context.Request.Headers["Signature-Input"]!, context.Request.Headers["Signature"]!, key));
         Assert.Equal(SignatureErrorCode.InvalidKey, failure.Code);
     }
@@ -389,7 +391,7 @@ public class SignatureV10AdversarialTests
         context.Request.Headers["Signature-Input"] = "sig=" + parameters;
         context.Request.Headers["Signature"] = "sig=:" + Convert.ToBase64String(key.Sign(Encoding.ASCII.GetBytes(signatureBase))) + ":";
         context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(tampered ? "{\"value\":2}" : body));
-        await Middleware(null, AAuthVerificationOptions.Generic(() => Now)).InvokeAsync(context);
+        await Middleware(null, AAuthVerificationOptions.Generic(Time)).InvokeAsync(context);
         Assert.Equal(tampered ? 401 : 204, context.Response.StatusCode);
         Assert.Equal(0, context.Request.Body.Position);
     }
@@ -403,7 +405,7 @@ public class SignatureV10AdversarialTests
         context.Request.Headers["Signature-Key"] = new Microsoft.Extensions.Primitives.StringValues(["ignored=unknown", SignatureKeyHeader.FormatHwk(key)]);
         context.Request.Headers.Append("Signature-Input", "ignored=(\"@method\");created=1");
         context.Request.Headers.Append("Signature", "ignored=:AQID:");
-        await Middleware(null, AAuthVerificationOptions.Generic(() => Now)).InvokeAsync(context);
+        await Middleware(null, AAuthVerificationOptions.Generic(Time)).InvokeAsync(context);
         Assert.Equal(204, context.Response.StatusCode);
     }
 
@@ -417,7 +419,7 @@ public class SignatureV10AdversarialTests
     {
         var key = AAuthKey.Generate();
         var input = "sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\" " + component + ");created=1800000000";
-        var error = Assert.Throws<AAuthVerificationException>(() => new AAuthVerifier { Clock = () => Now }.Verify("POST", "resource.example", "/wire",
+        var error = Assert.Throws<AAuthVerificationException>(() => new AAuthVerifier { TimeProvider = Time }.Verify("POST", "resource.example", "/wire",
             SignatureKeyHeader.FormatHwk(key), input, "sig=:AQID:", key, fields: new Dictionary<string, string> { [name] = value }));
         Assert.Equal(SignatureErrorCode.InvalidInput, error.Code);
     }
@@ -433,7 +435,7 @@ public class SignatureV10AdversarialTests
         var parameters = "(\"@method\" \"@authority\" \"@path\" \"signature-key\" " + component + ");created=1800000000";
         var signatureBase = $"\"@method\": POST\n\"@authority\": resource.example\n\"@path\": /wire\n\"signature-key\": {carrier}\n{component}: {expected}\n\"@signature-params\": {parameters}";
         var signature = "sig=:" + Convert.ToBase64String(key.Sign(Encoding.ASCII.GetBytes(signatureBase))) + ":";
-        new AAuthVerifier { Clock = () => Now, StructuredFieldTypes = new Dictionary<string, StructuredFieldType> { ["example"] = StructuredFieldType.Dictionary } }
+        new AAuthVerifier { TimeProvider = Time, StructuredFieldTypes = new Dictionary<string, StructuredFieldType> { ["example"] = StructuredFieldType.Dictionary } }
             .Verify("POST", "resource.example", "/wire", carrier, "sig=" + parameters, signature, key,
                 fields: new Dictionary<string, string> { ["example"] = binary ? "value, with, lots, of, commas" : " a=1,    b=2;x=1;y=2, c=(a   b   c) " },
                 fieldValues: binary ? new Dictionary<string, string[]> { ["example"] = ["value, with, lots", "of, commas"] } : null);
@@ -441,9 +443,9 @@ public class SignatureV10AdversarialTests
 
     private static AAuthVerificationMiddleware Middleware(HttpClient? http, AAuthVerificationOptions? options = null, bool deny = false) => new(
         context => { context.Response.StatusCode = deny ? 403 : 204; return Task.CompletedTask; },
-        new AAuthVerifier { Clock = () => Now }, new DefaultSignatureKeyResolver(),
+        new AAuthVerifier { TimeProvider = Time }, new DefaultSignatureKeyResolver(),
         http is null ? null : new MetadataClient(http), http is null ? null : new JwksClient(http),
-        options ?? new() { Clock = () => Now, ClockSkew = TimeSpan.Zero });
+        options ?? new() { TimeProvider = Time, ClockSkew = TimeSpan.Zero });
 
     [Fact]
     public async Task UnexpectedResolverDefectsAreNotAuthenticationFailures()
@@ -451,7 +453,7 @@ public class SignatureV10AdversarialTests
         var key = AAuthKey.Generate();
         var context = Signed(key, SignatureKeyHeader.FormatHwk(key));
         var middleware = new AAuthVerificationMiddleware(_ => Task.CompletedTask,
-            new AAuthVerifier { Clock = () => Now }, new BrokenResolver(), null, null, AAuthVerificationOptions.Generic(() => Now));
+            new AAuthVerifier { TimeProvider = Time }, new BrokenResolver(), null, null, AAuthVerificationOptions.Generic(Time));
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => middleware.InvokeAsync(context));
         Assert.Equal("Programming defect", error.Message);
         Assert.False(context.Response.Headers.ContainsKey("Signature-Error"));

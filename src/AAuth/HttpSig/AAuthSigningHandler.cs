@@ -55,7 +55,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     private readonly IAAuthKey _key;
     internal static readonly HttpRequestOptionsKey<IAAuthKey> SigningKeyContext = new("AAuth.LocalSigningKey");
     private readonly ISignatureKeyProvider _signatureKeyProvider;
-    private readonly Func<DateTimeOffset> _clock;
+    private readonly TimeProvider _time;
 
     /// <summary>
     /// Optional observability hook. When set, the canonical RFC 9421
@@ -77,11 +77,11 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     /// <summary>Create a signing handler with a strategy-based key provider.</summary>
     /// <param name="key">The agent's signing key (must have private component).</param>
     /// <param name="signatureKeyProvider">Strategy that produces the Signature-Key header value.</param>
-    /// <param name="clock">Optional clock for deterministic tests.</param>
+    /// <param name="timeProvider">Time source for the <c>created</c> parameter.</param>
     public AAuthSigningHandler(
         IAAuthKey key,
         ISignatureKeyProvider signatureKeyProvider,
-        Func<DateTimeOffset>? clock = null)
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(signatureKeyProvider);
@@ -92,7 +92,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
 
         _key = key;
         _signatureKeyProvider = signatureKeyProvider;
-        _clock = clock ?? (() => DateTimeOffset.UtcNow);
+        _time = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>Create a signing handler (convenience for the <c>jwt</c> scheme).</summary>
@@ -104,12 +104,12 @@ public sealed class AAuthSigningHandler : DelegatingHandler
     /// out of <see cref="SendAsync"/>; callers are responsible for handling
     /// token-acquisition failures.
     /// </param>
-    /// <param name="clock">Optional clock for deterministic tests.</param>
+    /// <param name="timeProvider">Time source for the <c>created</c> parameter.</param>
     public AAuthSigningHandler(
         IAAuthKey key,
         Func<string> tokenFactory,
-        Func<DateTimeOffset>? clock = null)
-        : this(key, new JwtSignatureKeyProvider(tokenFactory), clock)
+        TimeProvider? timeProvider = null)
+        : this(key, new JwtSignatureKeyProvider(tokenFactory), timeProvider)
     {
     }
 
@@ -201,7 +201,7 @@ public sealed class AAuthSigningHandler : DelegatingHandler
         var signatureKey = _signatureKeyProvider is JwtSignatureKeyProvider jwtProvider
             ? jwtProvider.GetSignatureKeyHeader(request) : _signatureKeyProvider.GetSignatureKeyHeader();
         request.Options.Set(SigningKeyContext, _key);
-        var created = _clock().ToUnixTimeSeconds();
+        var created = _time.GetUtcNow().ToUnixTimeSeconds();
 
         var method = request.Method.Method;
         // RFC 9421 §2.2.3 / RFC 3986 §3.2.2: @authority MUST be lowercase.

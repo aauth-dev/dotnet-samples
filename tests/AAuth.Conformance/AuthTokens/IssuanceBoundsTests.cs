@@ -202,7 +202,7 @@ public class IssuanceBoundsTests
             var builder = WebApplication.CreateBuilder();
             builder.WebHost.UseTestServer();
             builder.Services.AddSingleton(new AAuthVerifier());
-            builder.Services.AddSingleton(new TokenVerifier { EgressPolicy = TestEgress.Policy, Clock = clock.GetUtcNow });
+            builder.Services.AddSingleton(new TokenVerifier { EgressPolicy = TestEgress.Policy, TimeProvider = clock });
             builder.Services.AddSingleton(new MetadataClient(new InProcessHttpClient(discovery)));
             builder.Services.AddSingleton(new JwksClient(new InProcessHttpClient(discovery)));
             builder.Services.AddSingleton<IPersonPendingStore, InMemoryPersonPendingStore>();

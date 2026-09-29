@@ -81,7 +81,7 @@ for non-compiled content and [conformance-ledger.md](conformance-ledger.md) for 
 
 ## Complete declaration delta
 
-Baseline `v0.10.0-alpha.1`; 160 changed public-source files, 426 added/replacement declarations, 154 removed/replaced declarations.
+Baseline `v0.10.0-alpha.1`; 163 changed public-source files, 437 added/replacement declarations, 165 removed/replaced declarations.
 
 Generated from all current SDK source files, including untracked additions, and the baseline tree. Public/protected declarations include containing namespaces/types, overload parameters, required members, attributes, optional defaults, primary constructors and interface members. Compiler-synthesized/inherited members are represented by their source declarations, not expanded. Unchanged signatures in changed files are listed by containing type as behavior-review entries; the concept table above supplies their entry point, ownership, callers and tests. No source file is excluded by guessed file role.
 
@@ -263,6 +263,14 @@ Concept/decision: [sample-runtime](#sample-runtime). Source: [EventDemoSession.c
 ```
 
 Public owners: `AAuth.Samples.Events.EventDemoSession`, `AAuth.Samples.Events`.
+
+### samples/EventSupport/LocalEventProvider.cs
+
+Concept/decision: [sample-runtime](#sample-runtime). Source: [LocalEventProvider.cs](../../../samples/EventSupport/LocalEventProvider.cs).
+
+Public signatures unchanged (2); behavior reviewed under sample-runtime.
+
+Public owners: `AAuth.Samples.Events.LocalEventProvider`, `AAuth.Samples.Events`.
 
 ### samples/EventSupport/SqliteEventStore.cs
 
@@ -627,6 +635,17 @@ Public signatures unchanged (3); behavior reviewed under events.
 
 Public owners: `AAuth.Events.EventsEndpoints`, `AAuth.Events`.
 
+### src/AAuth.Events/EventsProtocol.cs
+
+Concept/decision: [events](#events). Source: [EventsProtocol.cs](../../../src/AAuth.Events/EventsProtocol.cs).
+
+```diff
+- AAuth.Events.EventsProtocol: public EventsProtocol ( HttpClient http , IEnumerable < ISignatureTokenVerifier > tokenVerifiers , Func < DateTimeOffset > ? clock = null )
++ AAuth.Events.EventsProtocol: public EventsProtocol ( HttpClient http , IEnumerable < ISignatureTokenVerifier > tokenVerifiers , TimeProvider ? timeProvider = null )
+```
+
+Public owners: `AAuth.Events.EventsProtocol`, `AAuth.Events`.
+
 ### src/AAuth.Events/EventsTokens.cs
 
 Concept/decision: [events](#events). Source: [EventsTokens.cs](../../../src/AAuth.Events/EventsTokens.cs).
@@ -742,9 +761,11 @@ Public owners: `AAuth.R3.R3AuthClaims`, `AAuth.R3`.
 Concept/decision: [r3](#r3). Source: [R3Challenge.cs](../../../src/AAuth.R3/R3Challenge.cs).
 
 ```diff
+- AAuth.R3.R3Challenge: public Func < DateTimeOffset > Clock { get ; init ; } = ( ) => DateTimeOffset . UtcNow
 - AAuth.R3.R3Challenge: public IResult Challenge ( HttpContext context , string agent , string agentJkt , string r3Uri , string r3S256 , string ? scope = null , string ? account = null )
 - AAuth.R3.R3Challenge: public string BuildResourceToken ( string agent , string agentJkt , string r3Uri , string r3S256 , string ? scope = null , string ? account = null )
 + AAuth.R3.R3Challenge: public IResult Challenge ( HttpContext context , string r3Uri , string r3S256 , string ? scope = null , string ? account = null )
++ AAuth.R3.R3Challenge: public TimeProvider TimeProvider { get ; init ; } = TimeProvider . System
 + AAuth.R3.R3Challenge: public string BuildResourceToken ( TokenVerifier . VerifiedToken presented , string agentJkt , string r3Uri , string r3S256 , string ? scope = null , string ? account = null )
 ```
 
@@ -1168,7 +1189,9 @@ Public owners: `Microsoft.Extensions.DependencyInjection.AAuthGovernanceServiceC
 Concept/decision: [di](#di). Source: [AAuthResourceOptions.cs](../../../src/AAuth/DependencyInjection/AAuthResourceOptions.cs).
 
 ```diff
+- AAuth.AAuthResourceOptions: public Func < DateTimeOffset > ? Clock { get ; set ; }
 - AAuth.AAuthResourceOptions: public TimeSpan MaxFutureSkew { get ; set ; } = TimeSpan . FromSeconds ( 5 )
++ AAuth.AAuthResourceOptions: public TimeProvider TimeProvider { get ; set ; } = TimeProvider . System
 ```
 
 Public owners: `AAuth.AAuthResourceOptions`, `AAuth`.
@@ -1192,11 +1215,25 @@ Public signatures unchanged (6); behavior reviewed under di.
 
 Public owners: `Microsoft.Extensions.DependencyInjection.AAuthResourceServiceCollectionExtensions`, `Microsoft.Extensions.DependencyInjection`.
 
+### src/AAuth/Discovery/JwksClient.cs
+
+Concept/decision: [discovery](#discovery). Source: [JwksClient.cs](../../../src/AAuth/Discovery/JwksClient.cs).
+
+```diff
+- AAuth.Discovery.JwksClient: public JwksClient ( HttpClient ? http = null , TimeSpan ? cacheTtl = null , TimeSpan ? minRefreshInterval = null , Func < DateTimeOffset > ? clock = null , int maxCacheEntries = 1024 , TimeSpan ? maxCacheAge = null , AAuthEgressPolicy ? policy = null , AAuthTransportContract ? transportContract = null )
++ AAuth.Discovery.JwksClient: public JwksClient ( HttpClient ? http = null , TimeSpan ? cacheTtl = null , TimeSpan ? minRefreshInterval = null , TimeProvider ? timeProvider = null , int maxCacheEntries = 1024 , TimeSpan ? maxCacheAge = null , AAuthEgressPolicy ? policy = null , AAuthTransportContract ? transportContract = null )
+```
+
+Public owners: `AAuth.Discovery.JwksClient`, `AAuth.Discovery`.
+
 ### src/AAuth/Discovery/MetadataClient.cs
 
 Concept/decision: [discovery](#discovery). Source: [MetadataClient.cs](../../../src/AAuth/Discovery/MetadataClient.cs).
 
-Public signatures unchanged (8); behavior reviewed under discovery.
+```diff
+- AAuth.Discovery.MetadataClient: public MetadataClient ( HttpClient ? http = null , TimeSpan ? cacheTtl = null , Func < DateTimeOffset > ? clock = null , AAuthEgressPolicy ? policy = null , AAuthTransportContract ? transportContract = null , int maxCacheEntries = 1024 , TimeSpan ? maxCacheAge = null )
++ AAuth.Discovery.MetadataClient: public MetadataClient ( HttpClient ? http = null , TimeSpan ? cacheTtl = null , TimeProvider ? timeProvider = null , AAuthEgressPolicy ? policy = null , AAuthTransportContract ? transportContract = null , int maxCacheEntries = 1024 , TimeSpan ? maxCacheAge = null )
+```
 
 Public owners: `AAuth.Discovery.MetadataClient`, `AAuth.Discovery`.
 
@@ -1320,7 +1357,12 @@ Public owners: `AAuth.Headers.ClaimsResponse`, `AAuth.Headers`.
 
 Concept/decision: [signatures](#signatures). Source: [AAuthSigningHandler.cs](../../../src/AAuth/HttpSig/AAuthSigningHandler.cs).
 
-Public signatures unchanged (13); behavior reviewed under signatures.
+```diff
+- AAuth.HttpSig.AAuthSigningHandler: public AAuthSigningHandler ( IAAuthKey key , Func < string > tokenFactory , Func < DateTimeOffset > ? clock = null )
+- AAuth.HttpSig.AAuthSigningHandler: public AAuthSigningHandler ( IAAuthKey key , ISignatureKeyProvider signatureKeyProvider , Func < DateTimeOffset > ? clock = null )
++ AAuth.HttpSig.AAuthSigningHandler: public AAuthSigningHandler ( IAAuthKey key , Func < string > tokenFactory , TimeProvider ? timeProvider = null )
++ AAuth.HttpSig.AAuthSigningHandler: public AAuthSigningHandler ( IAAuthKey key , ISignatureKeyProvider signatureKeyProvider , TimeProvider ? timeProvider = null )
+```
 
 Public owners: `AAuth.HttpSig.AAuthSigningHandler`, `AAuth.HttpSig`.
 
@@ -1329,8 +1371,10 @@ Public owners: `AAuth.HttpSig.AAuthSigningHandler`, `AAuth.HttpSig`.
 Concept/decision: [signatures](#signatures). Source: [AAuthVerifier.cs](../../../src/AAuth/HttpSig/AAuthVerifier.cs).
 
 ```diff
+- AAuth.HttpSig.AAuthVerifier: public Func < DateTimeOffset > Clock { get ; init ; } = ( ) => DateTimeOffset . UtcNow
 - AAuth.HttpSig.AAuthVerifier: public TimeSpan MaxFutureSkew { get ; init ; } = TimeSpan . FromSeconds ( 5 )
 - AAuth.HttpSig.AAuthVerifier: public string Verify ( string method , string authority , string path , string signatureKey , string signatureInput , string signatureHeader , IAAuthKey publicKey , string ? authorization = null , string ? mission = null , string label = "sig" , IReadOnlyDictionary < string , string > ? fields = null , IReadOnlyCollection < string > ? requiredComponents = null , string ? keyId = null , IReadOnlyDictionary < string , string [  ] > ? fieldValues = null , string ? requestScheme = null , string ? query = null , string ? requestTarget = null )
++ AAuth.HttpSig.AAuthVerifier: public TimeProvider TimeProvider { get ; init ; } = TimeProvider . System
 + AAuth.HttpSig.AAuthVerifier: public string Verify ( string method , string authority , string path , string signatureKey , string signatureInput , string signatureHeader , IAAuthKey publicKey , string ? authorization = null , string label = "sig" , IReadOnlyDictionary < string , string > ? fields = null , IReadOnlyCollection < string > ? requiredComponents = null , string ? keyId = null , IReadOnlyDictionary < string , string [  ] > ? fieldValues = null , string ? requestScheme = null , string ? query = null , string ? requestTarget = null )
 ```
 
@@ -1915,11 +1959,15 @@ Public owners: `AAuth.Server.Verification.AAuthVerificationMiddleware`, `AAuth.S
 Concept/decision: [signatures](#signatures). Source: [AAuthVerificationOptions.cs](../../../src/AAuth/Server/Verification/AAuthVerificationOptions.cs).
 
 ```diff
+- AAuth.Server.Verification.AAuthVerificationOptions: public Func < DateTimeOffset > ? Clock { get ; init ; }
 - AAuth.Server.Verification.AAuthVerificationOptions: public TimeSpan MaxFutureSkew { get ; init ; } = TimeSpan . FromSeconds ( 5 )
 - AAuth.Server.Verification.AAuthVerificationOptions: public int MaxActDepth { get ; init ; } = 10
+- AAuth.Server.Verification.AAuthVerificationOptions: public static AAuthVerificationOptions Generic ( Func < DateTimeOffset > ? clock = null )
 + AAuth.Server.Verification.AAuthVerificationOptions: public Func < string , bool > ? IsTrustedPersonServer { get ; init ; }
 + AAuth.Server.Verification.AAuthVerificationOptions: public IReadOnlySet < string > ? TrustedPersonServers { get ; init ; }
++ AAuth.Server.Verification.AAuthVerificationOptions: public TimeProvider TimeProvider { get ; init ; } = TimeProvider . System
 + AAuth.Server.Verification.AAuthVerificationOptions: public bool RequireBodyCoverage { get ; init ; }
++ AAuth.Server.Verification.AAuthVerificationOptions: public static AAuthVerificationOptions Generic ( TimeProvider ? timeProvider = null )
 ```
 
 Public owners: `AAuth.Server.Verification.AAuthVerificationOptions`, `AAuth.Server.Verification`.
@@ -2095,6 +2143,7 @@ Concept/decision: [tokens](#tokens). Source: [TokenVerifier.cs](../../../src/AAu
 
 ```diff
 - AAuth.Tokens.TokenVerifier.VerifiedToken: public MissionClaim ? Mission
+- AAuth.Tokens.TokenVerifier: public Func < DateTimeOffset > Clock { get ; init ; } = ( ) => DateTimeOffset . UtcNow
 - AAuth.Tokens.TokenVerifier: public TimeSpan ClockSkew { get ; init ; } = TimeSpan . FromSeconds ( 30 )
 - AAuth.Tokens.TokenVerifier: public VerifiedToken VerifyAuthToken ( string jwt , IAAuthKey issuerKey , string expectedAudience , IAAuthKey httpSignatureKey , string expectedAgentId , string ? expectedDwk = null , string ? expectedMaxScope = null , AccountExpectation ? accountExpectation = null )
 - AAuth.Tokens.TokenVerifier: public async Task < VerifiedToken > VerifyAuthTokenWithJwksAsync ( string jwt , MetadataClient metadata , JwksClient jwks , string expectedAudience , IAAuthKey httpSignatureKey , string expectedAgentId , string ? expectedMaxScope = null , CancellationToken cancellationToken = default , AccountExpectation ? accountExpectation = null )
@@ -2108,6 +2157,7 @@ Concept/decision: [tokens](#tokens). Source: [TokenVerifier.cs](../../../src/AAu
 + AAuth.Tokens.TokenVerifier: public Func < string , string , IAAuthKey ? > ? LocalIssuerKeys { get ; init ; }
 + AAuth.Tokens.TokenVerifier: public Task < VerifiedToken > VerifyAuthTokenWithJwksAsync ( string jwt , MetadataClient metadata , JwksClient jwks , string expectedAudience , IAAuthKey httpSignatureKey , string ? expectedMaxScope = null , CancellationToken cancellationToken = default , AccountExpectation ? accountExpectation = null )
 + AAuth.Tokens.TokenVerifier: public Task < VerifiedToken > VerifyPersonTokenWithJwksAsync ( string jwt , MetadataClient metadata , JwksClient jwks , string expectedAudience , IAAuthKey httpSignatureKey , CancellationToken cancellationToken = default )
++ AAuth.Tokens.TokenVerifier: public TimeProvider TimeProvider { get ; init ; } = TimeProvider . System
 + AAuth.Tokens.TokenVerifier: public TimeSpan ClockSkew { get ; init ; } = TimeSpan . FromSeconds ( 60 )
 + AAuth.Tokens.TokenVerifier: public TokenVerifier WithLocalIssuer ( string issuer , IReadOnlyDictionary < string , IAAuthKey > keys )
 + AAuth.Tokens.TokenVerifier: public VerifiedToken VerifyAuthToken ( string jwt , IAAuthKey issuerKey , string expectedAudience , IAAuthKey httpSignatureKey , string ? expectedDwk = null , string ? expectedMaxScope = null , AccountExpectation ? accountExpectation = null )

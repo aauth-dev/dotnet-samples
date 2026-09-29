@@ -17,6 +17,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Conformance.HttpSignatures;
@@ -49,7 +50,7 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddSingleton(new AAuthVerifier { Clock = () => FixedClock });
+        builder.Services.AddSingleton(new AAuthVerifier { TimeProvider = new FakeTimeProvider(FixedClock) });
         // Registering an IJtiStore turns on replay detection in the middleware.
         builder.Services.AddSingleton<IJtiStore>(_jtiStore);
         var discovery = new InProcessHttpClient(new IssuerDiscoveryFixture(PsIssuer, _psKey, "ps-key-1"));
@@ -137,7 +138,7 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
         alternate.CopyTo(signature.AsSpan(64 - alternate.Length));
         signed.Headers.Remove("Signature");
         signed.Headers.TryAddWithoutValidation("Signature", "sig=:" + Convert.ToBase64String(signature) + ":");
-        new AAuthVerifier { Clock = () => FixedClock }.Verify("GET", "localhost:5000", "/protected",
+        new AAuthVerifier { TimeProvider = new FakeTimeProvider(FixedClock) }.Verify("GET", "localhost:5000", "/protected",
             signed.Headers.GetValues("Signature-Key").Single(), signed.Headers.GetValues("Signature-Input").Single(),
             signed.Headers.GetValues("Signature").Single(), _agentKey);
 
@@ -172,7 +173,7 @@ public class ReplayDetectionMiddlewareTests : IAsyncLifetime
     {
         var capture = new CaptureHandler();
         var provider = new JwtSignatureKeyProvider(() => token);
-        var handler = new AAuthSigningHandler(_agentKey, provider, () => created)
+        var handler = new AAuthSigningHandler(_agentKey, provider, new FakeTimeProvider(created))
         {
             InnerHandler = capture,
         };

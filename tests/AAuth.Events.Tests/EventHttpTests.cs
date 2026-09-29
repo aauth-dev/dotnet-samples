@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.IdentityModel.Tokens;
 
 namespace AAuth.Events.Tests;
@@ -218,7 +219,7 @@ public class EventHttpTests
         host.Store.Remember(new("eid", host.Issuer, EventHost.Agent, "reservation"));
         var receiver = new EventReceiver(host.Protocol, host.Store, EventHost.Agent);
         var oldVerifier = new TokenVerifier { EgressPolicy = host.Protocol.TokenVerifier.EgressPolicy,
-            Clock = () => DateTimeOffset.UtcNow.AddHours(-1) };
+            TimeProvider = new FakeTimeProvider(DateTimeOffset.UtcNow.AddHours(-1)) };
         var expired = new EventTokenBuilder { Issuer = host.Issuer, Audience = EventHost.Agent, Eid = "eid", Key = host.ResourceKey,
             KeyId = "key", Verifier = oldVerifier }.Build();
         var expiration = await Assert.ThrowsAsync<AAuthVerificationException>(() => receiver.ReceiveAsync(expired, []));

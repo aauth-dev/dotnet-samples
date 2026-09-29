@@ -21,8 +21,8 @@ namespace AAuth.Tokens;
 public sealed class TokenVerifier
 {
     public AAuthEgressPolicy EgressPolicy { get; init; } = AAuthEgressPolicy.Production;
-    /// <summary>Clock injection point.</summary>
-    public Func<DateTimeOffset> Clock { get; init; } = () => DateTimeOffset.UtcNow;
+    /// <summary>Time source for temporal checks.</summary>
+    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
     /// <summary>
     /// How far a JWT <c>iat</c> may be ahead of this verifier's clock before it is
@@ -47,7 +47,7 @@ public sealed class TokenVerifier
         return new TokenVerifier
         {
             EgressPolicy = EgressPolicy,
-            Clock = Clock,
+            TimeProvider = TimeProvider,
             ClockSkew = ClockSkew,
             LocalIssuerKeys = (iss, kid) => string.Equals(iss, issuer, StringComparison.Ordinal)
                 && keys.TryGetValue(kid, out var key) ? key : LocalIssuerKeys?.Invoke(iss, kid),
@@ -138,7 +138,7 @@ public sealed class TokenVerifier
 
         // Temporal claims (§Common Verification): exp has no tolerance; a future
         // iat beyond the window is clock_skew, not an invalid token.
-        var now = Clock();
+        var now = TimeProvider.GetUtcNow();
         var nowUnix = now.ToUnixTimeSeconds();
 
         if (TryGetUnixTime(payload, "exp", out var exp))

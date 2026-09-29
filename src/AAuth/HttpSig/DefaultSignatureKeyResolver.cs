@@ -45,7 +45,7 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
             return await ResolveAssertionAsync(info, ct).ConfigureAwait(false);
         if (info.Scheme == "jkt-jwt")
         {
-            var naming = NamingTokenVerifier.Verify(info.Jwt!, _tokenVerifier.Clock(), _tokenVerifier.ClockSkew);
+            var naming = NamingTokenVerifier.Verify(info.Jwt!, _tokenVerifier.TimeProvider.GetUtcNow(), _tokenVerifier.ClockSkew);
             return new() { PublicKey = naming.ConfirmationKey, Info = WithKey(info, naming.ConfirmationKey, naming.DurableKey.ComputeJwkThumbprint()),
                 DurableThumbprint = naming.DurableKey.ComputeJwkThumbprint(), KeyId = naming.ConfirmationKey.ComputeJwkThumbprint() };
         }
@@ -69,7 +69,7 @@ public sealed class DefaultSignatureKeyResolver : ISignatureKeyResolver
         if (!builtin && companion is null)
             throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "Unexpected JWT typ for this signing scheme.");
         TokenVerifier.ValidateStructure(info.Header!, info.Payload!, typ, _tokenVerifier.EgressPolicy);
-        NamingTokenVerifier.ValidateTime(info.Payload!, _tokenVerifier.Clock(), builtin ? TimeSpan.Zero : _tokenVerifier.ClockSkew,
+        NamingTokenVerifier.ValidateTime(info.Payload!, _tokenVerifier.TimeProvider.GetUtcNow(), builtin ? TimeSpan.Zero : _tokenVerifier.ClockSkew,
             requireIssuedAt: builtin, issuedAtWindow: _tokenVerifier.ClockSkew);
         var issuer = SignatureKeyParser.Text(info.Payload, "iss")
             ?? throw new AAuthVerificationException(SignatureErrorCode.InvalidJwt, "JWT requires iss.");

@@ -18,6 +18,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Conformance.Discovery;
@@ -608,7 +609,7 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
 
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddSingleton(new AAuthVerifier { Clock = () => FixedClock });
+        builder.Services.AddSingleton(new AAuthVerifier { TimeProvider = new FakeTimeProvider(FixedClock) });
         builder.Services.AddSingleton<HttpClient>(_metadataHost!.GetTestClient());
         builder.Services.AddSingleton(sp => new MetadataClient(sp.GetRequiredService<HttpClient>(),
             policy: TestEgress.Policy, transportContract: AAuthTransportContract.InProcessOnly));
@@ -656,7 +657,7 @@ public class JtiStoreAndRevocationTests : IAsyncLifetime
         ISignatureKeyProvider provider = asAgent
             ? new JwtSignatureKeyProvider(() => agentToken)
             : new JwksUriSignatureKeyProvider(ApIssuer, "aauth-agent.json", "ap-key-1");
-        var signing = new AAuthSigningHandler(asAgent ? _agentKey : _apKey, provider, () => FixedClock);
+        var signing = new AAuthSigningHandler(asAgent ? _agentKey : _apKey, provider, new FakeTimeProvider(FixedClock));
         if (!coverContent)
             return new HttpClient(new AAuth.Testing.UncoveredBodySigner(signing) { InnerHandler = _host!.GetTestServer().CreateHandler() })
                 { BaseAddress = new Uri("http://localhost") };

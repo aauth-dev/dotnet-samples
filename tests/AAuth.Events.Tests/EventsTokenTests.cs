@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
 using AAuth.Tokens;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.IdentityModel.Tokens;
 using Xunit;
 
@@ -10,7 +11,7 @@ namespace AAuth.Events.Tests;
 public class EventsTokenTests
 {
     private static readonly DateTimeOffset Now = DateTimeOffset.FromUnixTimeSeconds(1788880000);
-    private static readonly TokenVerifier Verifier = new() { Clock = () => Now };
+    private static readonly TokenVerifier Verifier = new() { TimeProvider = new FakeTimeProvider(Now) };
 
     [Fact]
     public void EventWithJtiAndWithoutCnfVerifies()

@@ -1,5 +1,6 @@
 using System;
 using AAuth.Server.Verification;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Tests.Server;
@@ -17,7 +18,7 @@ public class AAuthVerificationOptionsTests
     {
         var options = AAuthVerificationOptions.Generic();
         Assert.Contains("hwk", options.AcceptedSchemes);
-        Assert.Null(options.Clock);
+        Assert.Same(TimeProvider.System, options.TimeProvider);
     }
 
     [Fact]
@@ -27,10 +28,10 @@ public class AAuthVerificationOptionsTests
     }
 
     [Fact]
-    public void SignatureOnly_ForwardsClock()
+    public void SignatureOnly_ForwardsTimeProvider()
     {
-        var clock = () => DateTimeOffset.UnixEpoch;
-        var options = AAuthVerificationOptions.Generic(clock);
-        Assert.Same(clock, options.Clock);
+        var timeProvider = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        var options = AAuthVerificationOptions.Generic(timeProvider);
+        Assert.Same(timeProvider, options.TimeProvider);
     }
 }

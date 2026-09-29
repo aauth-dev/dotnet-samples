@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.Tokens;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Tests.Tokens;
@@ -20,7 +21,7 @@ public class TokenVerifierTests
     {
         var key = AAuthKey.Generate();
         var jwt = TestTokens.Raw(key, type, (header, payload) => TestTokens.Mutate(header, payload, claim, mutation));
-        var verifier = new TokenVerifier { Clock = () => DateTimeOffset.FromUnixTimeSeconds(1800000000) };
+        var verifier = new TokenVerifier { TimeProvider = new FakeTimeProvider(DateTimeOffset.FromUnixTimeSeconds(1800000000)) };
         var dwk = type == AgentTokenBuilder.TokenType ? AgentTokenBuilder.AgentDwk
             : type == ResourceTokenBuilder.TokenType ? ResourceTokenBuilder.ResourceDwk : AuthTokenBuilder.PersonDwk;
         Assert.Equal(AAuth.Errors.SignatureErrorCode.InvalidJwt,
@@ -57,7 +58,7 @@ public class TokenVerifierTests
             }
             else payload["scope"] = "";
         });
-        Assert.NotNull(new TokenVerifier { Clock = () => DateTimeOffset.FromUnixTimeSeconds(1800000000) }
+        Assert.NotNull(new TokenVerifier { TimeProvider = new FakeTimeProvider(DateTimeOffset.FromUnixTimeSeconds(1800000000)) }
             .Verify(jwt, key, ResourceTokenBuilder.TokenType, ResourceTokenBuilder.ResourceDwk));
     }
 
@@ -148,7 +149,7 @@ public class TokenVerifierTests
             Lifetime = TimeSpan.FromMinutes(1),
         }.Build();
 
-        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, Clock = () => issued.AddHours(1) };
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, TimeProvider = new FakeTimeProvider(issued.AddHours(1)) };
         Assert.Throws<TokenVerificationException>(() =>
             verifier.VerifySelfIssuedAgentToken(jwt, key));
     }
@@ -299,7 +300,7 @@ public class TokenVerifierTests
         var jwt = BuildResourceToken(resKey, agentKey, issuedAt: issued, lifetime: TimeSpan.FromMinutes(1));
         var (meta, jwks) = Discovery(resKey);
 
-        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, Clock = () => issued.AddHours(1) };
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, TimeProvider = new FakeTimeProvider(issued.AddHours(1)) };
         await Assert.ThrowsAsync<TokenVerificationException>(() =>
             verifier.VerifyResourceTokenAsync(
                 jwt, PsAud, agentKey.ComputeJwkThumbprint(), meta, jwks));

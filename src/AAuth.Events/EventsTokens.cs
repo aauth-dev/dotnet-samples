@@ -37,7 +37,7 @@ public static class EventsTokens
         var actualAudience = RequireText(payload, "aud");
         if (audience is not null && actualAudience != audience)
             throw new TokenVerificationException("Event audience mismatch.");
-        var now = verifier.Clock().ToUnixTimeSeconds();
+        var now = verifier.TimeProvider.GetUtcNow().ToUnixTimeSeconds();
         if (payload["iat"] is not JsonValue issued || !issued.TryGetValue<long>(out var iat) || iat > now
             || token.ExpiresAt.ToUnixTimeSeconds() <= now || token.ExpiresAt.ToUnixTimeSeconds() <= iat)
             throw new TokenVerificationException("Events require a current iat and a future exp.");

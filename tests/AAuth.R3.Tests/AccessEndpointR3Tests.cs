@@ -409,7 +409,7 @@ public class AccessEndpointR3Tests
     public async Task Pending_RequiresPersonRole(string method)
     {
         var discoveryClock = new IssuanceClock();
-        var fixture = await R3AccessFixture.CreateAsync(requireProposalConsent: true, discoveryClock: discoveryClock.GetUtcNow);
+        var fixture = await R3AccessFixture.CreateAsync(requireProposalConsent: true, discoveryClock: discoveryClock);
         await using var app = fixture.App;
         using var pending = await fixture.PostTokenAsync(fixture.ProposalResourceToken);
         Assert.Equal(HttpStatusCode.Accepted, pending.StatusCode);
@@ -604,7 +604,7 @@ public class AccessEndpointR3Tests
         {
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var body = await ReadAuthPayloadAsync(response);
-            var verified = new TokenVerifier { EgressPolicy = TestEgress.Policy, Clock = clock.GetUtcNow }.VerifyAuthToken((string)body["auth_token"]!,
+            var verified = new TokenVerifier { EgressPolicy = TestEgress.Policy, TimeProvider = clock }.VerifyAuthToken((string)body["auth_token"]!,
                 fixture.AsKey, R3TestData.ResourceIssuer, boundKey);
             Assert.Equal(expectedExpiry, verified.ExpiresAt);
             Assert.Equal("workspace/17", verified.Account);
@@ -1200,7 +1200,7 @@ public class AccessEndpointR3Tests
             TimeProvider? timeProvider = null,
             string? documentAccount = null,
             Func<string, string, bool>? isScopeAllowed = null,
-            Func<DateTimeOffset>? discoveryClock = null,
+            TimeProvider? discoveryClock = null,
             byte[]? documentBytesOverride = null,
             byte[]? proposalBytesOverride = null,
             R3VocabularySchemas? vocabularySchemas = null,
@@ -1251,7 +1251,7 @@ public class AccessEndpointR3Tests
 
             var builder = WebApplication.CreateBuilder();
             builder.WebHost.UseTestServer();
-            builder.Services.AddSingleton(new JwksClient(new InProcessHttpClient(discovery), clock: discoveryClock));
+            builder.Services.AddSingleton(new JwksClient(new InProcessHttpClient(discovery), timeProvider: discoveryClock));
             builder.Services.AddSingleton(new MetadataClient(new InProcessHttpClient(discovery)));
             if (jtiStore is not null)
             {

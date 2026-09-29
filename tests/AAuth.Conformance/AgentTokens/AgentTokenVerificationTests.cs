@@ -4,6 +4,7 @@ using AAuth.Crypto;
 using AAuth.HttpSig;
 using AAuth.Tokens;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Conformance.AgentTokens;
@@ -82,7 +83,7 @@ public class AgentTokenVerificationTests
             Lifetime = TimeSpan.FromSeconds(1),
         }.Build();
 
-        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, Clock = () => issued.AddHours(1) };
+        var verifier = new TokenVerifier { EgressPolicy = TestEgress.Policy, TimeProvider = new FakeTimeProvider(issued.AddHours(1)) };
         Assert.Throws<TokenVerificationException>(() =>
             verifier.VerifySelfIssuedAgentToken(jwt, key));
     }

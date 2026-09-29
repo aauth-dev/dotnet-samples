@@ -32,8 +32,8 @@ public sealed class AAuthVerifier
     /// </summary>
     public TimeSpan MaxAge { get; init; } = TimeSpan.FromSeconds(60);
 
-    /// <summary>Clock injection point for deterministic tests.</summary>
-    public Func<DateTimeOffset> Clock { get; init; } = () => DateTimeOffset.UtcNow;
+    /// <summary>Time source for the <c>created</c> window.</summary>
+    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
     /// <summary>
     /// Verify an inbound AAuth-signed HTTP request.
@@ -134,7 +134,7 @@ public sealed class AAuthVerifier
             throw new AAuthVerificationException(SignatureErrorCode.InvalidInput, "Required covered components are missing.");
         if (!input.Parameters.TryGetValue("created", out var createdValue) || createdValue is not long created)
             throw new AAuthVerificationException(SignatureErrorCode.InvalidSignature, "Signature-Input requires integer created.");
-        var now = Clock().ToUnixTimeSeconds();
+        var now = TimeProvider.GetUtcNow().ToUnixTimeSeconds();
         if (created < now - (long)MaxAge.TotalSeconds)
             throw new AAuthVerificationException(SignatureErrorCode.InvalidSignature, "Signature is older than the validity window.");
         if (created > now + (long)MaxAge.TotalSeconds)

@@ -78,7 +78,7 @@ public sealed class AAuthVerificationMiddleware
         {
             EgressPolicy = options.EgressPolicy,
             ClockSkew = options.ClockSkew,
-            Clock = options.Clock ?? (() => DateTimeOffset.UtcNow),
+            TimeProvider = options.TimeProvider,
         };
     }
 
@@ -271,7 +271,7 @@ public sealed class AAuthVerificationMiddleware
                 WriteFailure(context, SignatureErrorCode.RevokedJwt);
                 return;
             }
-            if (revocableToken.ExpiresAt > (_options.Clock?.Invoke() ?? DateTimeOffset.UtcNow)
+            if (revocableToken.ExpiresAt > _options.TimeProvider.GetUtcNow()
                 && !await inventory.RegisterAsync(tokenKey, revocableToken.ExpiresAt, context.RequestAborted).ConfigureAwait(false))
             {
                 WriteFailure(context, SignatureErrorCode.InvalidJwt);

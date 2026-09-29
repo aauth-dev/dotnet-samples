@@ -10,6 +10,7 @@ using AAuth.Server.Metadata;
 using AAuth.Server.Verification;
 using AAuth.Tokens;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Tests.Configuration;
@@ -19,14 +20,14 @@ namespace AAuth.Tests.Configuration;
 /// </summary>
 public class OptionsThreadingTests
 {
-    [Fact(DisplayName = "AAuthVerificationOptions.Clock threads to TokenVerifier")]
-    public void VerificationOptions_Clock_ThreadsToTokenVerifier()
+    [Fact(DisplayName = "AAuthVerificationOptions.TimeProvider threads to TokenVerifier")]
+    public void VerificationOptions_TimeProvider_ThreadsToTokenVerifier()
     {
-        var fixedTime = new DateTimeOffset(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
+        var fixedTime = new FakeTimeProvider(new DateTimeOffset(2026, 6, 1, 12, 0, 0, TimeSpan.Zero));
         var options = new AAuthVerificationOptions
         {
             EgressPolicy = TestEgress.Policy,
-            Clock = () => fixedTime,
+            TimeProvider = fixedTime,
             ClockSkew = TimeSpan.FromSeconds(10),
         };
 
@@ -36,29 +37,30 @@ public class OptionsThreadingTests
         {
             EgressPolicy = TestEgress.Policy,
             ClockSkew = options.ClockSkew,
-            Clock = options.Clock ?? (() => DateTimeOffset.UtcNow),
+            TimeProvider = options.TimeProvider,
         };
 
         Assert.Equal(TimeSpan.FromSeconds(10), verifier.ClockSkew);
-        Assert.Equal(fixedTime, verifier.Clock());
+        Assert.Same(fixedTime, verifier.TimeProvider);
     }
 
-    [Fact(DisplayName = "AAuthResourceOptions threads MaxSignatureAge and Clock to AAuthVerifier")]
+    [Fact(DisplayName = "AAuthResourceOptions threads MaxSignatureAge and TimeProvider to AAuthVerifier")]
     public void ResourceOptions_ThreadsToAAuthVerifier()
     {
         var fixedTime = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var timeProvider = new FakeTimeProvider(fixedTime);
         var services = new ServiceCollection();
         services.AddAAuthResource(options =>
         {
             options.Issuer = "https://example.com";
             options.MaxSignatureAge = TimeSpan.FromSeconds(120);
-            options.Clock = () => fixedTime;
+            options.TimeProvider = timeProvider;
         });
         using var provider = services.BuildServiceProvider();
         var verifier = provider.GetRequiredService<AAuthVerifier>();
 
         Assert.Equal(TimeSpan.FromSeconds(120), verifier.MaxAge);
-        Assert.Equal(fixedTime, verifier.Clock());
+        Assert.Same(timeProvider, verifier.TimeProvider);
         var ahead = fixedTime.AddSeconds(90).ToUnixTimeSeconds();
         verifier.ValidateInput("sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\");created=" + ahead, "sig");
     }
@@ -106,11 +108,11 @@ public class OptionsThreadingTests
     {
         var verification = new AAuthVerificationOptions();
         Assert.Equal(TimeSpan.FromSeconds(30), verification.ClockSkew);
-        Assert.Null(verification.Clock);
+        Assert.Same(TimeProvider.System, verification.TimeProvider);
 
         var resource = new AAuthResourceOptions();
         Assert.Equal(TimeSpan.FromSeconds(60), resource.MaxSignatureAge);
-        Assert.Null(resource.Clock);
+        Assert.Same(TimeProvider.System, resource.TimeProvider);
 
         var challenge = new ChallengeHandlingOptions();
         Assert.Equal(TimeSpan.FromMinutes(5), challenge.PollingTimeout);

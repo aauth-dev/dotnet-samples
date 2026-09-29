@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Tests.Discovery;
@@ -31,19 +32,19 @@ public class DiscoveryFreshnessTests
     {
         foreach (var metadataMode in new[] { false, true })
         {
-            var time = DateTimeOffset.UtcNow;
-            var handler = new Handler(() => time, cacheControl, expiresSeconds, ageSeconds, dateAgeSeconds);
+            var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+            var handler = new Handler(time, cacheControl, expiresSeconds, ageSeconds, dateAgeSeconds);
             using var http = AAuthHttpTransport.AttachPolicy(new HttpClient(handler), AAuthEgressPolicy.Production,
                 AAuthTransportContract.InProcessOnly);
-            var jwks = new JwksClient(http, cacheTtl: TimeSpan.FromSeconds(fallbackSeconds), clock: () => time);
-            var metadata = new MetadataClient(http, cacheTtl: TimeSpan.FromSeconds(fallbackSeconds), clock: () => time);
+            var jwks = new JwksClient(http, cacheTtl: TimeSpan.FromSeconds(fallbackSeconds), timeProvider: time);
+            var metadata = new MetadataClient(http, cacheTtl: TimeSpan.FromSeconds(fallbackSeconds), timeProvider: time);
             async Task Fetch()
             {
                 if (metadataMode) await metadata.FetchAsync(new Uri("https://issuer.example/.well-known/aauth-agent.json"));
                 else Assert.NotNull(await jwks.ResolveKeyAsync(new Uri("https://issuer.example/jwks"), "key"));
             }
             await Fetch();
-            time = time.AddSeconds(elapsedSeconds);
+            time.Advance(TimeSpan.FromSeconds(elapsedSeconds));
             await Fetch();
             Assert.Equal(expectedCalls, handler.Calls);
         }
@@ -57,29 +58,29 @@ public class DiscoveryFreshnessTests
     {
         foreach (var metadataMode in new[] { false, true })
         {
-            var time = DateTimeOffset.UtcNow;
-            var handler = new Handler(() => time, cacheControl);
+            var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+            var handler = new Handler(time, cacheControl);
             using var http = AAuthHttpTransport.AttachPolicy(new HttpClient(handler), AAuthEgressPolicy.Production,
                 AAuthTransportContract.InProcessOnly);
-            var jwks = new JwksClient(http, clock: () => time);
-            var metadata = new MetadataClient(http, clock: () => time);
+            var jwks = new JwksClient(http, timeProvider: time);
+            var metadata = new MetadataClient(http, timeProvider: time);
             async Task Fetch()
             {
                 if (metadataMode) await metadata.FetchAsync(new Uri("https://issuer.example/.well-known/aauth-agent.json"));
                 else await jwks.ResolveKeyAsync(new Uri("https://issuer.example/jwks"), "key");
             }
             await Fetch();
-            time = time.AddSeconds(1);
+            time.Advance(TimeSpan.FromSeconds(1));
             await Assert.ThrowsAsync<HttpRequestException>(Fetch);
             Assert.Equal(1, handler.Calls);
             handler.Fail = true;
-            time = time.AddSeconds(60);
+            time.Advance(TimeSpan.FromSeconds(60));
             await Assert.ThrowsAsync<HttpRequestException>(Fetch);
             Assert.Equal(2, handler.Calls);
         }
     }
 
-    private sealed class Handler(Func<DateTimeOffset> clock, string? cacheControl,
+    private sealed class Handler(TimeProvider clock, string? cacheControl,
         int? expiresSeconds = null, int ageSeconds = 0, int dateAgeSeconds = 0) : HttpMessageHandler
     {
         private readonly AAuthKey _key = AAuthKey.Generate();
@@ -95,10 +96,10 @@ public class DiscoveryFreshnessTests
                 ? new JsonObject { ["issuer"] = "https://issuer.example", ["jwks_uri"] = "https://issuer.example/jwks" }
                 : new JsonObject { ["keys"] = new JsonArray(jwk) };
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body.ToJsonString()) };
-            response.Headers.Date = clock().AddSeconds(-dateAgeSeconds);
+            response.Headers.Date = clock.GetUtcNow().AddSeconds(-dateAgeSeconds);
             response.Headers.Age = TimeSpan.FromSeconds(ageSeconds);
             if (cacheControl is not null) response.Headers.TryAddWithoutValidation("Cache-Control", cacheControl);
-            if (expiresSeconds is { } seconds) response.Content.Headers.Expires = clock().AddSeconds(seconds);
+            if (expiresSeconds is { } seconds) response.Content.Headers.Expires = clock.GetUtcNow().AddSeconds(seconds);
             return Task.FromResult(response);
         }
     }

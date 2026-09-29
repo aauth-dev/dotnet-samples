@@ -19,9 +19,9 @@ internal sealed class DiscoveryCache<T> where T : class
     private readonly TimeSpan _floor;
     private readonly TimeSpan _maxAge;
     private readonly int _capacity;
-    private readonly Func<DateTimeOffset> _clock;
+    private readonly TimeProvider _time;
 
-    public DiscoveryCache(TimeSpan ttl, TimeSpan floor, Func<DateTimeOffset> clock,
+    public DiscoveryCache(TimeSpan ttl, TimeSpan floor, TimeProvider timeProvider,
         int capacity = 1024, TimeSpan? maxAge = null)
     {
         if (ttl < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(ttl));
@@ -33,12 +33,12 @@ internal sealed class DiscoveryCache<T> where T : class
         _ttl = ttl < _maxAge ? ttl : _maxAge;
         _floor = floor;
         _capacity = capacity;
-        _clock = clock;
+        _time = timeProvider;
     }
 
     public DiscoveryResponse<T> Response(T value, HttpResponseMessage response)
     {
-        var now = _clock();
+        var now = _time.GetUtcNow();
         var control = response.Headers.CacheControl;
         var date = response.Headers.Date ?? now;
         var apparentAge = now > date ? now - date : TimeSpan.Zero;
@@ -58,7 +58,7 @@ internal sealed class DiscoveryCache<T> where T : class
         cancellationToken.ThrowIfCancellationRequested();
         lock (_gate)
         {
-            var now = _clock();
+            var now = _time.GetUtcNow();
             if (!_entries.TryGetValue(key, out var entry))
             {
                 if (_entries.Count >= _capacity)
@@ -118,7 +118,7 @@ internal sealed class DiscoveryCache<T> where T : class
             lock (_gate)
             {
                 entry.Value = value.Store ? value.Value : null;
-                entry.FetchedAt = _clock();
+                entry.FetchedAt = _time.GetUtcNow();
                 entry.FreshUntil = entry.FetchedAt + value.Freshness;
                 entry.AllowStale = value.AllowStale;
                 entry.Failure = null;
@@ -136,10 +136,11 @@ internal sealed class DiscoveryCache<T> where T : class
                 if (attempt is not null) attempt.Failures = Math.Min(attempt.Failures + 1, 7);
                 var backoff = TimeSpan.FromTicks((long)Math.Min(
                     _floor.Ticks * Math.Pow(2, Math.Max(entry.Failures, attempt?.Failures ?? 0) - 1), TimeSpan.FromHours(1).Ticks));
-                entry.NextAttempt = _clock() + (backoff > _floor ? backoff : _floor);
+                var now = _time.GetUtcNow();
+                entry.NextAttempt = now + (backoff > _floor ? backoff : _floor);
                 if (attempt is not null) attempt.NextAttempt = entry.NextAttempt;
-                if (entry.Value is not null && _clock() - entry.FetchedAt < _maxAge
-                    && (entry.AllowStale || _clock() < entry.FreshUntil)) return entry.Value;
+                if (entry.Value is not null && now - entry.FetchedAt < _maxAge
+                    && (entry.AllowStale || now < entry.FreshUntil)) return entry.Value;
                 entry.Value = null;
             }
             throw;

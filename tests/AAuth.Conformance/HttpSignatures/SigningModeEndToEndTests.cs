@@ -7,6 +7,7 @@ using AAuth.Crypto;
 using AAuth.Discovery;
 using AAuth.HttpSig;
 using AAuth.Tokens;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Conformance.HttpSignatures;
@@ -34,7 +35,7 @@ public class SigningModeEndToEndTests
         IAAuthKey key, ISignatureKeyProvider provider, string url = "https://r.example/resource")
     {
         var capture = new CaptureHandler();
-        var handler = new AAuthSigningHandler(key, provider, () => FixedClock)
+        var handler = new AAuthSigningHandler(key, provider, new FakeTimeProvider(FixedClock))
         {
             InnerHandler = capture
         };
@@ -45,7 +46,7 @@ public class SigningModeEndToEndTests
 
     private static AAuthVerifier CreateVerifier() => new()
     {
-        Clock = () => FixedClock,
+        TimeProvider = new FakeTimeProvider(FixedClock),
     };
 
     // ────────────────────────────────────────────────────────────────────────

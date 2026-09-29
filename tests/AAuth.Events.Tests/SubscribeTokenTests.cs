@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using AAuth.Crypto;
 using AAuth.Tokens;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.IdentityModel.Tokens;
 
 namespace AAuth.Events.Tests;
@@ -9,7 +10,7 @@ namespace AAuth.Events.Tests;
 public class SubscribeTokenTests
 {
     private static readonly DateTimeOffset Now = DateTimeOffset.UtcNow;
-    private static readonly TokenVerifier Verifier = new() { Clock = () => Now };
+    private static readonly TokenVerifier Verifier = new() { TimeProvider = new FakeTimeProvider(Now) };
 
     [Theory]
     [InlineData("https://evil.example", "aauth:victim@ap.example", false)]
@@ -25,7 +26,7 @@ public class SubscribeTokenTests
         var payload = Payload(key);
         payload["iss"] = issuer;
         payload["sub"] = subject;
-        var verifier = new TokenVerifier { Clock = () => Now,
+        var verifier = new TokenVerifier { TimeProvider = new FakeTimeProvider(Now),
             EgressPolicy = new AAuth.Discovery.AAuthEgressPolicy(["http://127.0.0.1:5301"]) };
         if (valid) EventsTokens.Verify(Sign(key, payload), key, true, verifier);
         else Assert.Throws<TokenVerificationException>(() => EventsTokens.Verify(Sign(key, payload), key, true, verifier));

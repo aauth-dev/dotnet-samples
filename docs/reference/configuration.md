@@ -9,7 +9,7 @@ All configurable options across the AAuth .NET SDK, grouped by component.
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `MaxAge` | `TimeSpan` | 60 seconds | Signature validity window for `created`, in both directions: older is `invalid_signature`, further ahead is `clock_skew` |
-| `Clock` | `Func<DateTimeOffset>` | `UtcNow` | Clock source (override for testing) |
+| `TimeProvider` | `TimeProvider` | System | Clock source (override for testing) |
 
 ### AAuthServerOptions (via UseAAuth)
 
@@ -46,7 +46,7 @@ metadata (issuer + first signing key); a typical resource sets only trust.
 | `TrustedAuthTokenIssuers` | `IReadOnlySet<string>?` | `null` | Allow-list of trusted auth token (PS/AS) issuers. `null` ⇒ accept any *verifiable* PS (the spec default); empty ⇒ deny all PS-asserted tokens; non-empty ⇒ restrict to the listed issuers. AND-composed with `IsTrustedAuthTokenIssuer`. |
 | `IsTrustedAuthTokenIssuer` | `Func<string, bool>?` | `null` | Optional predicate AND-composed with `TrustedAuthTokenIssuers` (each only narrows). Assign `AAuthTrust.Any` to trust any verifiable issuer explicitly and suppress the open-trust startup warning. |
 | `ClockSkew` | `TimeSpan` | 30 seconds | Tolerance applied to `exp`/`iat` checks |
-| `Clock` | `Func<DateTimeOffset>?` | `null` (UtcNow) | Clock source for all time-dependent checks. Inject for deterministic testing. |
+| `TimeProvider` | `TimeProvider` | System | Clock source for all time-dependent checks. Inject for deterministic testing. |
 
 > Startup diagnostics do not change runtime trust policy:
 >
@@ -131,7 +131,7 @@ The helper resolves `IIdentityClaimsAsserter` and `IPersonPendingStore` from DI
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `Clock` | `Func<DateTimeOffset>` | `UtcNow` | Clock source |
+| `TimeProvider` | `TimeProvider` | System | Clock source |
 | `ClockSkew` | `TimeSpan` | 60 seconds | Tolerance for exp/iat validation |
 
 ## Deferred Consent (Polling)
@@ -179,7 +179,7 @@ Server `Retry-After` headers override `DefaultPollInterval` (clamped to `MinPoll
 |-----------|------|---------|-------------|
 | `http` | `HttpClient?` | `null` | Optional HTTP client for fetching documents; supplied transports require an explicit transport contract |
 | `cacheTtl` | `TimeSpan?` | `null` (5 minutes) | Cache entry lifetime |
-| `clock` | `Func<DateTimeOffset>?` | `UtcNow` | Clock source for cache expiration |
+| `timeProvider` | `TimeProvider?` | System | Clock source for cache expiration |
 
 Methods:
 
@@ -224,7 +224,7 @@ Methods:
 A `DelegatingHandler` constructed with an `IAAuthKey` containing the private
 signing key and an `ISignatureKeyProvider` supplying the `Signature-Key` header
 value. The provider does not supply the private key. The constructor also accepts
-an optional clock for deterministic tests.
+an optional `TimeProvider` for deterministic tests.
 
 Configure `Label` (default `"sig"`) to match the provider's signature label,
 `Capabilities` to declare outbound capabilities, and `OnSignatureBase` to inspect

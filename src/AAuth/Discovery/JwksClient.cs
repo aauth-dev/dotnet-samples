@@ -31,19 +31,19 @@ public sealed class JwksClient : IDisposable
     /// <param name="http">HttpClient used for fetches.</param>
     /// <param name="cacheTtl">Cache TTL. Default 1 hour.</param>
     /// <param name="minRefreshInterval">Minimum interval between refresh fetches. Default 1 minute.</param>
-    /// <param name="clock">Clock injection point.</param>
+    /// <param name="timeProvider">Time source for cache freshness.</param>
     public JwksClient(
         HttpClient? http = null,
         TimeSpan? cacheTtl = null,
         TimeSpan? minRefreshInterval = null,
-        Func<DateTimeOffset>? clock = null,
+        TimeProvider? timeProvider = null,
         int maxCacheEntries = 1024,
         TimeSpan? maxCacheAge = null,
         AAuthEgressPolicy? policy = null,
         AAuthTransportContract? transportContract = null)
     {
         _cache = new(cacheTtl ?? TimeSpan.FromHours(1), minRefreshInterval ?? TimeSpan.FromMinutes(1),
-            clock ?? (() => DateTimeOffset.UtcNow), maxCacheEntries, maxCacheAge);
+            timeProvider ?? TimeProvider.System, maxCacheEntries, maxCacheAge);
         _ownsHttp = http is null;
         http ??= AAuthHttpTransport.CreateClient(policy);
         if (transportContract is { } contract)

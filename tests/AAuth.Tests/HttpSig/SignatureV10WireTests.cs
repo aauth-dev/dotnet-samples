@@ -6,6 +6,7 @@ using AAuth.Discovery;
 using AAuth.Errors;
 using AAuth.HttpSig;
 using AAuth.Tokens;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.IdentityModel.Tokens;
 
 namespace AAuth.Tests.HttpSig;
@@ -13,6 +14,7 @@ namespace AAuth.Tests.HttpSig;
 public class SignatureV10WireTests
 {
     private static readonly DateTimeOffset Now = DateTimeOffset.FromUnixTimeSeconds(1800000000);
+    private static readonly FakeTimeProvider Time = new(Now);
 
     public static IEnumerable<object[]> Schemes => new[] { "hwk", "jwt", "jkt-jwt", "jwks_uri", "jwks", "self-jwt" }
         .SelectMany(scheme => new[] { new object[] { scheme, false }, new object[] { scheme, true } });
@@ -58,12 +60,12 @@ public class SignatureV10WireTests
         using var http = new InProcessHttpClient(new DiscoveryHandler(issuerKey, key),
             policy: new AAuthEgressPolicy(crossOriginJwks: [("https://issuer.example", "https://keys.example")]));
         var resolver = new DefaultSignatureKeyResolver(new JwksClient(http), new MetadataClient(http),
-            new TokenVerifier { EgressPolicy = TestEgress.Policy, Clock = () => Now, ClockSkew = TimeSpan.Zero }, [new EventVerifier()]);
+            new TokenVerifier { EgressPolicy = TestEgress.Policy, TimeProvider = Time, ClockSkew = TimeSpan.Zero }, [new EventVerifier()]);
         var resolution = await resolver.ResolveAsync(SignatureKeyParser.ParseAny(wire, "chosen"));
         var parameters = "(\"@path\" \"content-type\" \"@method\" \"signature-key\" \"@authority\");created=1800000000;expires=1800000010;nonce=\"a\\\"b\\\\c\";alg=\"ignored\"";
         var signatureBase = $"\"@path\": /wire%2Fpath\n\"content-type\": application/json\n\"@method\": POST\n\"signature-key\": {wire}\n\"@authority\": resource.example\n\"@signature-params\": {parameters}";
         var signature = key.Sign(Encoding.ASCII.GetBytes(signatureBase));
-        new AAuthVerifier { Clock = () => Now }.Verify("POST", "resource.example", "/wire%2Fpath", wire,
+        new AAuthVerifier { TimeProvider = Time }.Verify("POST", "resource.example", "/wire%2Fpath", wire,
             "ignored=(\"@method\");created=1, chosen=" + parameters,
             "ignored=:AQID:, chosen=:" + Convert.ToBase64String(signature) + ":", resolution.PublicKey,
             label: "chosen", fields: new Dictionary<string, string> { ["content-type"] = "application/json" },
@@ -94,7 +96,7 @@ public class SignatureV10WireTests
         parameters[parameter] = value;
         var input = "sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\");created=" + parameters["created"] + ";expires=" + parameters["expires"];
         Assert.Equal(code, Assert.Throws<AAuthVerificationException>(() =>
-            new AAuthVerifier { Clock = () => Now }.ValidateInput(input, "sig")).Code);
+            new AAuthVerifier { TimeProvider = Time }.ValidateInput(input, "sig")).Code);
     }
 
     [Theory]
@@ -104,7 +106,7 @@ public class SignatureV10WireTests
     public void CreatedWindowIsSymmetric(long created)
     {
         var input = "sig=(\"@method\" \"@authority\" \"@path\" \"signature-key\");created=" + created;
-        new AAuthVerifier { Clock = () => Now }.ValidateInput(input, "sig");
+        new AAuthVerifier { TimeProvider = Time }.ValidateInput(input, "sig");
     }
 
     internal static string Jwt(JsonObject header, JsonObject payload, IAAuthKey key)
@@ -126,7 +128,7 @@ public class SignatureV10WireTests
         var signatures = "first=:" + Convert.ToBase64String(first.Sign(Encoding.ASCII.GetBytes(signatureBase)))
             + ":, second=:" + Convert.ToBase64String(second.Sign(Encoding.ASCII.GetBytes(signatureBase))) + ":";
         var inputs = "first=" + parameters + ", second=" + parameters;
-        var verifier = new AAuthVerifier { Clock = () => Now };
+        var verifier = new AAuthVerifier { TimeProvider = Time };
         var firstIdentity = verifier.Verify("GET", "resource.example", "/wire", carrier, inputs, signatures, first, label: "first");
         var secondIdentity = verifier.Verify("GET", "resource.example", "/wire", carrier, inputs, signatures, second, label: "second");
         var store = new AAuth.Server.InMemoryJtiStore();
@@ -154,7 +156,7 @@ public class SignatureV10WireTests
                 + (component == "nonce" ? ";nonce=\"" + value + "\"" : "");
             var signatureBase = $"\"@method\": GET\n\"@authority\": resource.example\n\"@path\": /wire\n\"signature-key\": {carrier}\n"
                 + (extra.Length > 0 ? $"\"{component}\": {value}\n" : "") + "\"@signature-params\": " + parameters;
-            return new AAuthVerifier { Clock = () => Now }.Verify("GET", "resource.example", "/wire", carrier,
+            return new AAuthVerifier { TimeProvider = Time }.Verify("GET", "resource.example", "/wire", carrier,
                 "sig=" + parameters, "sig=:" + Convert.ToBase64String(key.Sign(Encoding.ASCII.GetBytes(signatureBase))) + ":", key,
                 authorization: component == "authorization" ? value : null,
                 fields: new Dictionary<string, string> { [component] = value });

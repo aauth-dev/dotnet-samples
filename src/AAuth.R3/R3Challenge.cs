@@ -19,7 +19,7 @@ public sealed class R3Challenge
     public required IAAuthKey Key { get; init; }
     public required string KeyId { get; init; }
     public TimeSpan Lifetime { get; init; } = TimeSpan.FromMinutes(5);
-    public Func<DateTimeOffset> Clock { get; init; } = () => DateTimeOffset.UtcNow;
+    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
     /// <summary>
     /// Build an R3 resource token naming <paramref name="presented"/> — the verified
@@ -63,7 +63,7 @@ public sealed class R3Challenge
             throw new InvalidOperationException("Resource token Lifetime must not exceed 5 minutes.");
         }
 
-        var iat = Clock();
+        var iat = TimeProvider.GetUtcNow();
         var header = new JsonObject
         {
             ["alg"] = Key.Algorithm,

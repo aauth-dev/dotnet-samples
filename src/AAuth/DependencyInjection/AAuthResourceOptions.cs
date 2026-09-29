@@ -29,10 +29,8 @@ public sealed class AAuthResourceOptions
     /// </summary>
     public TimeSpan MaxSignatureAge { get; set; } = TimeSpan.FromSeconds(60);
 
-    /// <summary>
-    /// Clock function for deterministic testing. Default: <c>null</c> (uses UtcNow).
-    /// </summary>
-    public Func<DateTimeOffset>? Clock { get; set; }
+    /// <summary>Time source for signature and token checks.</summary>
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 
     /// <summary>
     /// Enable request replay detection using the signing-key thumbprint and

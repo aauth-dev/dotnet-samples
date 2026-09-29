@@ -41,10 +41,10 @@ public class NamingJwtValidationTests : IAsyncLifetime
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddSingleton(new AAuthVerifier { Clock = () => FixedClock });
+        builder.Services.AddSingleton(new AAuthVerifier { TimeProvider = new FixedTimeProvider() });
         builder.Services.AddSingleton<IJtiStore>(new InMemoryJtiStore(new FixedTimeProvider()));
         var app = builder.Build();
-        app.UseAAuthVerification(AAuthVerificationOptions.Generic(() => FixedClock));
+        app.UseAAuthVerification(AAuthVerificationOptions.Generic(new FixedTimeProvider()));
         app.MapGet("/jkt-jwt", () => Results.Ok("ok"));
         await app.StartAsync();
         _host = app;
@@ -225,7 +225,7 @@ public class NamingJwtValidationTests : IAsyncLifetime
         var signingHandler = new AAuthSigningHandler(
             _ephemeralKey,
             new JktJwtSignatureKeyProvider(() => namingJwt),
-            () => FixedClock)
+            new FixedTimeProvider())
         {
             InnerHandler = capture,
         };

@@ -85,13 +85,13 @@ public sealed class AAuthVerificationOptions
     /// Enable implemented generic Signature Keys schemes. JWT assertions still
     /// require issuer verification. AAuth-only endpoints use the default jwt policy.
     /// </summary>
-    /// <param name="clock">Optional clock for signature-freshness checks (testing).</param>
+    /// <param name="timeProvider">Optional time source for signature-freshness checks (testing).</param>
     /// <returns>A fresh generic-scheme policy.</returns>
-    public static AAuthVerificationOptions Generic(Func<DateTimeOffset>? clock = null)
+    public static AAuthVerificationOptions Generic(TimeProvider? timeProvider = null)
         => new()
         {
             AcceptedSchemes = ["jwt", "hwk", "jkt-jwt", "jwks_uri", "jwks", "self-jwt"],
-            Clock = clock,
+            TimeProvider = timeProvider ?? TimeProvider.System,
         };
 
     /// <summary>
@@ -100,10 +100,6 @@ public sealed class AAuthVerificationOptions
     /// </summary>
     public TimeSpan ClockSkew { get; init; } = TimeSpan.FromSeconds(30);
 
-    /// <summary>
-    /// Clock function for time-dependent checks (signature freshness, token expiry).
-    /// Default: <c>null</c> (uses <see cref="DateTimeOffset.UtcNow"/>).
-    /// Inject a fixed clock for deterministic testing.
-    /// </summary>
-    public Func<DateTimeOffset>? Clock { get; init; }
+    /// <summary>Time source for signature freshness and token expiry.</summary>
+    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 }

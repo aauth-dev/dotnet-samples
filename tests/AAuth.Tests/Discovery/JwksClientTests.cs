@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.Discovery;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Tests.Discovery;
@@ -15,13 +16,13 @@ public class JwksClientTests
     [Fact]
     public async Task ExpiredCache_StillHonorsAttemptFloor()
     {
-        var time = DateTimeOffset.UtcNow;
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var stub = new StubHandler();
         var client = new JwksClient(new HttpClient(stub),
-            cacheTtl: TimeSpan.FromSeconds(1), clock: () => time, transportContract: AAuthTransportContract.InProcessOnly);
+            cacheTtl: TimeSpan.FromSeconds(1), timeProvider: time, transportContract: AAuthTransportContract.InProcessOnly);
         var uri = new Uri("https://ps.example/jwks");
         await client.ResolveKeyAsync(uri, "missing");
-        time = time.AddSeconds(2);
+        time.Advance(TimeSpan.FromSeconds(2));
         await client.ResolveKeyAsync(uri, "missing");
         Assert.Equal(1, stub.Calls);
     }
@@ -79,9 +80,9 @@ public class JwksClientTests
     public async Task ResolveKey_ReturnsNullForUnknownKidWithinRateLimit()
     {
         var key = AAuthKey.Generate();
-        var time = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero));
         var stub = new StubHandler { Body = _ => JwksOf("k1", key) };
-        var client = new JwksClient(new HttpClient(stub), minRefreshInterval: TimeSpan.FromMinutes(1), clock: () => time,
+        var client = new JwksClient(new HttpClient(stub), minRefreshInterval: TimeSpan.FromMinutes(1), timeProvider: time,
             transportContract: AAuthTransportContract.InProcessOnly);
 
         await client.ResolveKeyAsync(new Uri("https://ps.example/jwks"), "k1"); // primes cache.
@@ -96,17 +97,17 @@ public class JwksClientTests
     {
         var oldKey = AAuthKey.Generate();
         var newKey = AAuthKey.Generate();
-        var time = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero));
         var stub = new StubHandler
         {
             Body = call => call == 1 ? JwksOf("k1", oldKey) : JwksOf("k2", newKey),
         };
         var client = new JwksClient(new HttpClient(stub),
             minRefreshInterval: TimeSpan.FromMinutes(1),
-            clock: () => time, transportContract: AAuthTransportContract.InProcessOnly);
+            timeProvider: time, transportContract: AAuthTransportContract.InProcessOnly);
 
         await client.ResolveKeyAsync(new Uri("https://ps.example/jwks"), "k1");
-        time = time.AddMinutes(2);
+        time.Advance(TimeSpan.FromMinutes(2));
         var resolved = await client.ResolveKeyAsync(new Uri("https://ps.example/jwks"), "k2");
 
         Assert.NotNull(resolved);
@@ -119,14 +120,14 @@ public class JwksClientTests
         // Silent re-keying: the issuer rotates key material under an UNCHANGED kid.
         var oldKey = AAuthKey.Generate();
         var newKey = AAuthKey.Generate();
-        var time = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero));
         var stub = new StubHandler
         {
             Body = call => call == 1 ? JwksOf("k1", oldKey) : JwksOf("k1", newKey),
         };
         var client = new JwksClient(new HttpClient(stub),
             minRefreshInterval: TimeSpan.FromMinutes(1),
-            clock: () => time, transportContract: AAuthTransportContract.InProcessOnly);
+            timeProvider: time, transportContract: AAuthTransportContract.InProcessOnly);
         var uri = new Uri("https://ps.example/jwks");
 
         // Prime the cache with the stale key.
@@ -140,7 +141,7 @@ public class JwksClientTests
         Assert.Equal(1, stub.Calls);
 
         // Past the floor: ForceRefresh fetches once and surfaces the new material.
-        time = time.AddMinutes(2);
+        time.Advance(TimeSpan.FromMinutes(2));
         var rotated = await client.ForceRefreshKeyAsync(uri, "k1");
         Assert.Equal(newKey.ComputeJwkThumbprint(), rotated!.ComputeJwkThumbprint());
         Assert.Equal(2, stub.Calls);

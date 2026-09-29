@@ -25,6 +25,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Conformance.HttpSignatures;
@@ -59,7 +60,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         // Start the resource server with full verification middleware.
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddSingleton(new AAuthVerifier { Clock = () => FixedClock });
+        builder.Services.AddSingleton(new AAuthVerifier { TimeProvider = new FakeTimeProvider(FixedClock) });
         builder.Services.AddSingleton<HttpClient>(_metadataHost.GetTestClient());
         builder.Services.AddSingleton(sp =>
             new MetadataClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
@@ -209,7 +210,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
     {
         var capture = new CaptureHandler();
         var provider = new JwtSignatureKeyProvider(() => token);
-        var handler = new AAuthSigningHandler(_agentKey, provider, () => FixedClock)
+        var handler = new AAuthSigningHandler(_agentKey, provider, new FakeTimeProvider(FixedClock))
         {
             InnerHandler = capture,
         };
@@ -262,7 +263,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
 
         var capture = new CaptureHandler();
         var provider = new JktJwtSignatureKeyProvider(() => namingJwt);
-        var handler = new AAuthSigningHandler(ephemeral, provider, () => FixedClock) { InnerHandler = capture };
+        var handler = new AAuthSigningHandler(ephemeral, provider, new FakeTimeProvider(FixedClock)) { InnerHandler = capture };
         using var client = new InProcessHttpClient(handler);
         await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "http://localhost:5000/protected"));
         var signed = capture.Captured!;
@@ -382,7 +383,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
 
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddSingleton(new AAuthVerifier { Clock = () => FixedClock });
+        builder.Services.AddSingleton(new AAuthVerifier { TimeProvider = new FakeTimeProvider(FixedClock) });
         builder.Services.AddSingleton<HttpClient>(_metadataHost!.GetTestClient());
         builder.Services.AddSingleton(sp => new MetadataClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
         builder.Services.AddSingleton(sp => new JwksClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
@@ -410,7 +411,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
 
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddSingleton(new AAuthVerifier { Clock = () => FixedClock });
+        builder.Services.AddSingleton(new AAuthVerifier { TimeProvider = new FakeTimeProvider(FixedClock) });
         builder.Services.AddSingleton<HttpClient>(_metadataHost!.GetTestClient());
         builder.Services.AddSingleton(sp => new MetadataClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
         builder.Services.AddSingleton(sp => new JwksClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
@@ -438,7 +439,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
 
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddSingleton(new AAuthVerifier { Clock = () => FixedClock });
+        builder.Services.AddSingleton(new AAuthVerifier { TimeProvider = new FakeTimeProvider(FixedClock) });
         builder.Services.AddSingleton<HttpClient>(_metadataHost!.GetTestClient());
         builder.Services.AddSingleton(sp => new MetadataClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
         builder.Services.AddSingleton(sp => new JwksClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
@@ -549,7 +550,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         var key = AAuthKey.Generate();
         var capture = new CaptureHandler();
         var provider = new HwkSignatureKeyProvider(key);
-        var handler = new AAuthSigningHandler(key, provider, () => FixedClock)
+        var handler = new AAuthSigningHandler(key, provider, new FakeTimeProvider(FixedClock))
         {
             InnerHandler = capture,
         };
@@ -586,7 +587,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
         // For self-issued, the agent signs with its own key.
         var capture = new CaptureHandler();
         var provider = new JwtSignatureKeyProvider(() => selfToken);
-        var handler = new AAuthSigningHandler(selfKey, provider, () => FixedClock)
+        var handler = new AAuthSigningHandler(selfKey, provider, new FakeTimeProvider(FixedClock))
         {
             InnerHandler = capture,
         };
@@ -611,7 +612,7 @@ public class VerificationMiddlewareTests : IAsyncLifetime
 
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddSingleton(new AAuthVerifier { Clock = () => FixedClock });
+        builder.Services.AddSingleton(new AAuthVerifier { TimeProvider = new FakeTimeProvider(FixedClock) });
         builder.Services.AddSingleton<HttpClient>(_metadataHost!.GetTestClient());
         builder.Services.AddSingleton(sp => new MetadataClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));
         builder.Services.AddSingleton(sp => new JwksClient(sp.GetRequiredService<HttpClient>(), policy: TestEgress.Policy, transportContract: AAuth.Discovery.AAuthTransportContract.InProcessOnly));

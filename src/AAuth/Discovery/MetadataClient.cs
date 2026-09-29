@@ -28,13 +28,13 @@ public sealed class MetadataClient : IDisposable
     /// <summary>Create a metadata client.</summary>
     /// <param name="http">HttpClient used for fetches; left undisposed.</param>
     /// <param name="cacheTtl">Cache TTL. Default 5 minutes.</param>
-    /// <param name="clock">Clock injection point.</param>
-    public MetadataClient(HttpClient? http = null, TimeSpan? cacheTtl = null, Func<DateTimeOffset>? clock = null,
+    /// <param name="timeProvider">Time source for cache freshness.</param>
+    public MetadataClient(HttpClient? http = null, TimeSpan? cacheTtl = null, TimeProvider? timeProvider = null,
         AAuthEgressPolicy? policy = null, AAuthTransportContract? transportContract = null,
         int maxCacheEntries = 1024, TimeSpan? maxCacheAge = null)
     {
         _cache = new(cacheTtl ?? TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(1),
-            clock ?? (() => DateTimeOffset.UtcNow), maxCacheEntries, maxCacheAge);
+            timeProvider ?? TimeProvider.System, maxCacheEntries, maxCacheAge);
         _ownsHttp = http is null;
         http ??= AAuthHttpTransport.CreateClient(policy);
         if (transportContract is { } contract)

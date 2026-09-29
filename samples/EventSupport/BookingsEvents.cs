@@ -23,7 +23,7 @@ public sealed class BookingsEvents(string issuer, IAAuthKey key, string keyId, E
         var cnf = authorization.Payload["cnf"]?["jwk"] as JsonObject
             ?? throw new InvalidOperationException("auth token missing cnf.jwk");
         store.IssueTicket(new(ticket, KeyFactory.FromJwk(cnf).ComputeJwkThumbprint(), Operation,
-            account, state, protocol.TokenVerifier.Clock().AddMinutes(5)));
+            account, state, protocol.TokenVerifier.TimeProvider.GetUtcNow().AddMinutes(5)));
         return new { subscribe_url = issuer + "/events/subscriptions/" + ticket,
             event_types = new[] { EventType }, operation = Operation, account };
     }
@@ -44,12 +44,12 @@ public sealed class BookingsEvents(string issuer, IAAuthKey key, string keyId, E
                 return Results.StatusCode(403);
             var receipt = store.DeliveryReceipt(subscription);
             if (receipt is not null) return Results.Content(receipt, "application/json", statusCode: 202);
-            if (store.Find(subscription.Provider, eid, protocol.TokenVerifier.Clock()) is null) return Results.NotFound();
+            if (store.Find(subscription.Provider, eid, protocol.TokenVerifier.TimeProvider.GetUtcNow()) is null) return Results.NotFound();
             var envelope = store.PrepareDelivery(subscription.Provider, eid, () =>
             {
                 var builder = new EventTokenBuilder { Issuer = issuer, Audience = subscription.Agent, Eid = eid,
                     Key = key, KeyId = keyId, Verifier = protocol.TokenVerifier };
-                return new EventEnvelope(builder.Build(), eid, builder.Jti, issuer, subscription.Agent, protocol.TokenVerifier.Clock().AddMinutes(5),
+                return new EventEnvelope(builder.Build(), eid, builder.Jti, issuer, subscription.Agent, protocol.TokenVerifier.TimeProvider.GetUtcNow().AddMinutes(5),
                     System.Text.Encoding.UTF8.GetBytes(new JsonObject { ["event_type"] = EventType,
                         ["reservation_id"] = "dining-lumiere-001", ["account"] = subscription.Account }.ToJsonString()));
             });

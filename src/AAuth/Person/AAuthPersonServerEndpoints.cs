@@ -252,7 +252,7 @@ public static class AAuthPersonServerEndpoints
                 && !ctx.Request.Path.StartsWithSegments(interactionPrefix)
                 && !unsignedPrefixes.Any(p => ctx.Request.Path.StartsWithSegments(p)),
             branch => branch.UseAAuthVerification(new AAuthVerificationOptions { EgressPolicy = options.EgressPolicy,
-                AcceptedSchemes = ["jwt"], RequireBodyCoverage = true, Clock = () => options.TimeProvider.GetUtcNow() }));
+                AcceptedSchemes = ["jwt"], RequireBodyCoverage = true, TimeProvider = options.TimeProvider }));
 
         var tokenVerifier = app.Services.GetRequiredService<TokenVerifier>();
         var metadataClient = app.Services.GetRequiredService<MetadataClient>();

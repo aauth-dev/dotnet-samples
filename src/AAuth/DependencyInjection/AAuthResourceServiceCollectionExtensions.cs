@@ -40,7 +40,7 @@ public static class AAuthResourceServiceCollectionExtensions
         services.TryAddSingleton(sp => new AAuthVerifier
         {
             MaxAge = options.MaxSignatureAge,
-            Clock = options.Clock ?? (() => DateTimeOffset.UtcNow),
+            TimeProvider = options.TimeProvider,
         });
 
         // Register the shared discovery clients (MetadataClient + JwksClient) with

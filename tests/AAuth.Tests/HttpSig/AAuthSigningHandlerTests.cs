@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.HttpSig;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.IdentityModel.Tokens;
 using Xunit;
 
@@ -34,7 +35,7 @@ public class AAuthSigningHandlerTests
         var capture = new CaptureHandler();
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
 
-        var signing = new AAuthSigningHandler(key, () => "eyJ.HEADER.PAYLOAD", () => clock)
+        var signing = new AAuthSigningHandler(key, () => "eyJ.HEADER.PAYLOAD", new FakeTimeProvider(clock))
         {
             InnerHandler = capture,
         };
@@ -69,7 +70,7 @@ public class AAuthSigningHandlerTests
         var key = AAuthKey.Generate();
         var capture = new CaptureHandler();
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
-        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
+        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", new FakeTimeProvider(clock)) { InnerHandler = capture };
         using var client = new InProcessHttpClient(signing);
 
         await client.GetAsync("https://resource.example/api");
@@ -85,7 +86,7 @@ public class AAuthSigningHandlerTests
         var capture = new CaptureHandler();
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
         var jwt = "abc.def.ghi";
-        var signing = new AAuthSigningHandler(key, () => jwt, () => clock) { InnerHandler = capture };
+        var signing = new AAuthSigningHandler(key, () => jwt, new FakeTimeProvider(clock)) { InnerHandler = capture };
         using var client = new InProcessHttpClient(signing);
 
         await client.PostAsync("https://resource.example/authorize", new StringContent(""));
@@ -126,7 +127,7 @@ public class AAuthSigningHandlerTests
         var key = AAuthKey.Generate();
         var capture = new CaptureHandler();
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
-        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
+        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", new FakeTimeProvider(clock)) { InnerHandler = capture };
         using var client = new InProcessHttpClient(signing);
 
         // Mixed-case host: RFC 9421 §2.2.3 requires the signed @authority
@@ -168,7 +169,7 @@ public class AAuthSigningHandlerTests
         var key = AAuthKey.Generate();
         var capture = new CaptureHandler();
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
-        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
+        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", new FakeTimeProvider(clock)) { InnerHandler = capture };
         using var client = new InProcessHttpClient(signing);
 
         // Path contains a space (percent-encoded as %20) and a non-ASCII
@@ -243,7 +244,7 @@ public class AAuthSigningHandlerTests
         var key = AAuthKey.Generate();
         var capture = new CaptureHandler();
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
-        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
+        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", new FakeTimeProvider(clock)) { InnerHandler = capture };
         using var client = new InProcessHttpClient(signing);
 
         await client.GetAsync("https://resource.example/api");
@@ -260,7 +261,7 @@ public class AAuthSigningHandlerTests
         var key = AAuthKey.Generate();
         var capture = new CaptureHandler();
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
-        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
+        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", new FakeTimeProvider(clock)) { InnerHandler = capture };
         using var client = new InProcessHttpClient(signing);
 
         var request = new HttpRequestMessage(HttpMethod.Post, "https://resource.example/api")
@@ -303,7 +304,7 @@ public class AAuthSigningHandlerTests
         var key = AAuthKey.Generate();
         var capture = new CaptureHandler();
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
-        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
+        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", new FakeTimeProvider(clock)) { InnerHandler = capture };
         using var client = new InProcessHttpClient(signing);
 
         var request = new HttpRequestMessage(HttpMethod.Get, "https://resource.example/api");
@@ -343,7 +344,7 @@ public class AAuthSigningHandlerTests
         var key = AAuthKey.Generate();
         var capture = new CaptureHandler();
         var clock = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
-        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", () => clock) { InnerHandler = capture };
+        var signing = new AAuthSigningHandler(key, () => "abc.def.ghi", new FakeTimeProvider(clock)) { InnerHandler = capture };
         using var client = new InProcessHttpClient(signing);
 
         const string bodyText = "{\"hello\":\"world\"}";

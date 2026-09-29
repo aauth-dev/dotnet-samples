@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AAuth.Crypto;
 using AAuth.HttpSig;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Conformance.HttpSignatures;
@@ -30,7 +31,7 @@ public class CoveredComponentsTests
     private static async Task<HttpRequestMessage> Sign(AAuthKey key, string token, DateTimeOffset clock)
     {
         var capture = new CaptureHandler();
-        var pipeline = new AAuthSigningHandler(key, () => token, () => clock) { InnerHandler = capture };
+        var pipeline = new AAuthSigningHandler(key, () => token, new FakeTimeProvider(clock)) { InnerHandler = capture };
         using var client = new InProcessHttpClient(pipeline);
         await client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://r.example/path"));
         return capture.Captured!;
@@ -88,7 +89,7 @@ public class CoveredComponentsTests
         var signed = new DateTimeOffset(2026, 5, 18, 12, 0, 0, TimeSpan.Zero);
         var req = await Sign(key, "a.b.c", signed);
 
-        var verifier = new AAuthVerifier { Clock = () => signed.AddMinutes(10) };
+        var verifier = new AAuthVerifier { TimeProvider = new FakeTimeProvider(signed.AddMinutes(10)) };
         Assert.Throws<AAuthVerificationException>(() =>
             verifier.Verify("GET", "r.example", "/path",
                 req.Headers.GetValues("Signature-Key").Single(),

@@ -95,7 +95,7 @@ public sealed record AgentIssuanceContext
             sources.Add(TokenRegistration.FromVerified(bound, TokenCredential.Subagent));
         }
         if (bound.ExpiresAt < ceiling) ceiling = bound.ExpiresAt;
-        if (ceiling.ToUnixTimeSeconds() <= verifier.Clock().ToUnixTimeSeconds())
+        if (ceiling.ToUnixTimeSeconds() <= verifier.TimeProvider.GetUtcNow().ToUnixTimeSeconds())
             throw new TokenVerificationException(AAuth.Errors.SignatureErrorCode.ExpiredJwt, "The verified authorization context has expired.");
         var confirmation = bound.Payload["cnf"]?["jwk"] as JsonObject
             ?? throw new TokenVerificationException("agent_token missing cnf.jwk");

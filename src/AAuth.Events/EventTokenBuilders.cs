@@ -19,7 +19,7 @@ public sealed class SubscribeTokenBuilder
 
     public string Build()
     {
-        var now = Verifier.Clock();
+        var now = Verifier.TimeProvider.GetUtcNow();
         var payload = new JsonObject
         {
             ["iss"] = Issuer, ["dwk"] = EventsTokens.AgentDwk, ["sub"] = Subject,
@@ -47,7 +47,7 @@ public sealed class EventTokenBuilder
 
     public string Build()
     {
-        var now = Verifier.Clock();
+        var now = Verifier.TimeProvider.GetUtcNow();
         return EventsTokens.Create(Key, KeyId, new JsonObject
         {
             ["iss"] = Issuer, ["dwk"] = EventsTokens.ResourceDwk, ["aud"] = Audience, ["eid"] = Eid, ["jti"] = Jti,

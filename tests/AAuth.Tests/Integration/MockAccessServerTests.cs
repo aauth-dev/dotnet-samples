@@ -16,6 +16,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AAuth.Tests.Integration;
@@ -84,7 +85,7 @@ public class MockAccessServerTests : IDisposable
     public async Task CollocatedRolesCannotActAsPersonServer(string role, bool sharedKey, bool spoofPersonRole)
     {
         var policy = new ClaimTrackingPolicy();
-        var discoveryTime = DateTimeOffset.UtcNow;
+        var discoveryTime = new FakeTimeProvider(DateTimeOffset.UtcNow);
         using var factory = CreateFactory(builder => builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<IAccessPolicy>();
@@ -92,7 +93,7 @@ public class MockAccessServerTests : IDisposable
             services.RemoveAll<MetadataClient>();
             services.RemoveAll<JwksClient>();
             services.AddSingleton(new MetadataClient(new InProcessHttpClient(new StubDiscoveryHandler(sharedKey))));
-            services.AddSingleton(new JwksClient(new InProcessHttpClient(new StubDiscoveryHandler(sharedKey)), clock: () => discoveryTime));
+            services.AddSingleton(new JwksClient(new InProcessHttpClient(new StubDiscoveryHandler(sharedKey)), timeProvider: discoveryTime));
         }));
         var roleKey = sharedKey ? PsKey : role switch
         {
@@ -110,7 +111,7 @@ public class MockAccessServerTests : IDisposable
         Assert.Empty(policy.Requests);
         Assert.DoesNotContain("auth_token", await tokenAttack.Content.ReadAsStringAsync());
 
-        discoveryTime = discoveryTime.AddMinutes(1);
+        discoveryTime.Advance(TimeSpan.FromMinutes(1));
         using var person = BuildPsSignedClient(factory);
         using var parked = await person.PostAsJsonAsync("/token", body);
         Assert.Equal(HttpStatusCode.Accepted, parked.StatusCode);
